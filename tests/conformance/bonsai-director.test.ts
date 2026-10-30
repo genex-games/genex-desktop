@@ -90,7 +90,12 @@ it("a local director uses real persisted local workers, integrates their work an
           if (!prior.includes("judge"))
             return call("judge", { target: "integration", against: "none", question: "Does it work?" });
           if (!prior.includes("finish"))
-            return call("finish", { summary: "Both local parts integrated", land: "yes", victory: "yes" });
+            return call("finish", {
+              summary: "Both local parts integrated",
+              land: "yes",
+              victory: "yes",
+              review: "yes",
+            });
           return done("Finished");
         }
         if (!prior.includes("write_file")) {

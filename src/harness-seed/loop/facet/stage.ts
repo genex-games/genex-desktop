@@ -74,9 +74,9 @@ export const polishEscalates = (spec: Staged): boolean =>
   polishCountsInStage(spec) && spec?.moveOwner !== MoveOwner.Director;
 
 /**
- * Is a finish-stage worker done? The judge preferred its build, the build runs and every identity
- * check holds: the polish is in, so the worker ends. The strict `satisfied` the build stage waits
- * for is not required — a finisher's contract is "better, and nothing broken". Returns the
+ * Is a finish-stage worker done? Its polished build is kept, it runs and every identity check
+ * holds: the polish is in, so the worker ends. A finisher's contract is "polished, and nothing
+ * broken"; no judge has a say (Loop phase 4). Returns the
  * sentence for `stoppedBecause`, or null while there is still work to do.
  */
 export function finishDone({
@@ -89,7 +89,7 @@ export function finishDone({
   summary?: { identityAllPass?: boolean } | null;
 }): string | null {
   const done = Boolean(won) && !broken && summary?.identityAllPass === true;
-  return done ? "the finish is in: the judge preferred the polished build and every identity check holds" : null;
+  return done ? "the finish is in: the polished build is kept and every identity check holds" : null;
 }
 
 /**

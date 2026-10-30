@@ -738,7 +738,11 @@ describe("the web director under its cap", () => {
     const answers: string[] = [];
     const { turns, reviews, events, runId } = await webLoop(async (call, turn) => {
       if (turn > 1) return turnResult("Nothing more");
-      answers.push(text(await call("finish", { summary: "The dusk scene is playable", land: "yes", victory: "yes" })));
+      answers.push(
+        text(
+          await call("finish", { summary: "The dusk scene is playable", land: "yes", victory: "yes", review: "yes" }),
+        ),
+      );
       return turnResult("First playable");
     });
     assert.doesNotMatch(String(answers[0]), /finish refused/);

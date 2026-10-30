@@ -3,6 +3,7 @@
  * round hands back and a resumed one reads again (`RESUMABLE_FIELDS`), and one round's own state.
  */
 import { CRITIC_PRINCIPLES, referenceStats } from "../judge.ts";
+import { withoutJudgesHold } from "./kept-round.ts";
 import { criticFor } from "../kinds.ts";
 import { loadContractLessons, loadRecipes } from "../library.ts";
 import { roleEngine, RoleKey, supportsSessions } from "../model-roles.ts";
@@ -527,6 +528,9 @@ export function partCritic(spec: AnyRecord, game: AnyRecord | null): string {
 function facetOf(options: FacetOptions, raw: FacetLoopOptions) {
   const { run, worktree, projectDir } = options;
   const spec = Array.isArray(raw.facet?.checks) ? raw.facet : normalizeFacetSpec(raw.facet ?? {}, 0);
+  // A spec from before Loop phase 4 may carry a judge's own questions and the art director's
+  // blockers as contract: neither holds a round or a part now.
+  withoutJudgesHold(spec);
   // What kind of game this is, and therefore which critic can answer it: a place a player walks
   // through, or a screen that has to read. Stamped on the run at launch (M4.4).
   const game = run.game ?? null;

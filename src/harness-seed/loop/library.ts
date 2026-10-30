@@ -922,7 +922,7 @@ function briefHeader(
 
 /**
  * What the art director says already works in the whole game (director/art-direction.ts): every
- * builder keeps it, and the round's taste judge calls losing one a regression. Nothing when no
+ * builder keeps it where its part touches it. Nothing when no
  * review has named any.
  */
 function doNotRegressSection(doNotRegress: readonly string[] | undefined): string[] {
@@ -930,7 +930,7 @@ function doNotRegressSection(doNotRegress: readonly string[] | undefined): strin
   return [
     `## Do not regress — what already works in the whole game, as the art director last named it`,
     ...doNotRegress.map((item) => `- ${item}`),
-    `A build that loses one of these where your part touches it has regressed: the taste judge rolls it back.`,
+    `Keep these where your part touches them: a build that loses one has regressed what the lead asked to keep.`,
     ``,
   ];
 }
@@ -951,8 +951,8 @@ function moveSection(move: AnyRecord | null): string[] {
     move.what,
     move.why ? `Why now: ${move.why}` : "",
     move.check
-      ? `Measured by check ${move.check.id} (on the board above); the taste judge also answers whether the move is visible.`
-      : "The taste judge answers whether this change is visible in your build; make it unmistakable.",
+      ? `Measured by check ${move.check.id} (on the board above).`
+      : "No check measures it: make it unmistakable, and say in your notes that it is built.",
     `Alongside the move, fix up to three items from the defect ledger below — the move first, the polish second. Never spend the iteration on the ledger alone.`,
     moveEscalated(move)
       ? `ESCALATE: the last ${move.polishStreak} accepted builds were polish only. The move is mandatory now, and it stays owed until a build delivers it.`
@@ -993,7 +993,7 @@ function fixSection(fix: AnyRecord | null, template: boolean, finishing = false)
     fix.what,
     fix.checkId
       ? `Measured by check ${fix.checkId} on the board below. It fails on the accepted build; your build must flip it.`
-      : "The taste judge answers whether it is gone: if it is still the biggest gap after your build, it stays owed.",
+      : "No check measures it: close it, and say in your notes that it is closed.",
     fix.recipe
       ? `The library has a recipe for exactly this: ${fix.recipe.title} (${fix.recipe.id}) — it is under "Recipes that apply" below. Port it; do not invent a fourth way.`
       : "",

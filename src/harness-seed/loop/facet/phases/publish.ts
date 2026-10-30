@@ -9,6 +9,7 @@ import type { AnyRecord } from "../../../types/harness.d.ts";
 import type { FacetLoop, FacetRound } from "../state.ts";
 import { RoundFlow } from "../flow.ts";
 import { brokenStreakWords, facetIsDone, grownCheckIds, smooth } from "../rules.ts";
+import { ladderHasRungsLeft } from "../kept-round.ts";
 import { recordDecision, unjudgedMove } from "../record.ts";
 import { FacetStage, finishDone, isFinishing, roundStage } from "../stage.ts";
 import { Side } from "../../judge.ts";
@@ -230,14 +231,14 @@ export async function decideExit(loop: FacetLoop, round: FacetRound): Promise<Ro
   const { result } = loop;
   // ── exit: the work it was given is done ──
   const exit = { won: round.won, broken: round.challengerBroken, summary: round.summary };
-  // A finishing worker is done when the judge preferred its polish and nothing broke: the strict
-  // `satisfied` the build stage waits for is not its contract (facet/stage.ts). Only a round that
-  // ran as a finish ends that way, and only while the worker still finishes: a build round in
+  // A finishing worker is done when its polish is kept and nothing broke: the ladder the build stage
+  // waits for is not its contract (facet/stage.ts). Only a round that ran as a finish ends that way, and only while the worker still finishes: a build round in
   // flight when the steer to finish landed, or a finish round whose worker a move took back to
   // building, keeps the build stage's exit.
   const ranAsFinish = roundStage(round, loop.spec) === FacetStage.Finish;
   const finishing = ranAsFinish && isFinishing(loop.spec) && !loop.legacy;
-  round.finished = finishing ? finishDone(exit) : facetIsDone({ ...exit, verdict: round.verdict, legacy: loop.legacy });
+  const rungsLeft = ladderHasRungsLeft(loop.spec, loop.milestonesDone, loop.milestonesSetAside);
+  round.finished = finishing ? finishDone(exit) : facetIsDone({ ...exit, legacy: loop.legacy, rungsLeft });
   if (round.finished) {
     result.satisfied = true;
     stopWith(result, StopCode.Done, round.finished);

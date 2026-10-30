@@ -2835,7 +2835,7 @@ describe("the director's finish claim", () => {
     assert.deepEqual(reviewers(report.rec), [], "victory=no is a report, not a claim");
     assert.equal(report.closes[0]?.victory, false);
     const theirs = claimingLoopRun([], { finishing: true });
-    await finish(theirs.loopRun as never, { summary: "as far as it got", land: "no", victory: "yes" });
+    await finish(theirs.loopRun as never, { summary: "as far as it got", land: "no", victory: "yes", review: "yes" });
     assert.deepEqual(reviewers(theirs.rec), [], "a Finish asked of the run ends it with no check");
     // Flipped: the chat's agent's finish_run asks the same Finish, so only a reviewer's yes records a victory.
     assert.equal(theirs.closes[0]?.victory, false, "and with no victory nobody checked");
@@ -2871,7 +2871,7 @@ describe("the director's finish claim", () => {
     const { loopRun, rec, closes, checks } = claimingLoopRun([]);
     const answer = await finish(
       loopRun as never,
-      { summary: "done", land: "no", victory: "yes" },
+      { summary: "done", land: "no", victory: "yes", review: "yes" },
       {
         started: Date.now() - 8 * 60_000,
       },
@@ -2893,14 +2893,14 @@ describe("the director's finish claim", () => {
     };
     const late = await finish(
       loopRun as never,
-      { summary: "red", land: "yes", victory: "yes" },
+      { summary: "red", land: "yes", victory: "yes", review: "yes" },
       // The finish moment and the art director's look and judge took the call's first three minutes.
       { started: Date.now() - 3 * 60_000 },
     );
     assert.equal(gates, 1);
     assert.equal(closes.length, 0, "not closed as no claim");
     assert.match(String(late), /Call finish again/);
-    const again = await finish(loopRun as never, { summary: "red", land: "yes", victory: "yes" });
+    const again = await finish(loopRun as never, { summary: "red", land: "yes", victory: "yes", review: "yes" });
     assert.equal(reviewers(rec).length, 1, "the second claim was checked");
     assert.equal(closes[0]?.victory, true, `closed on the reviewer's yes: ${again}`);
     assert.deepEqual(
@@ -2909,39 +2909,30 @@ describe("the director's finish claim", () => {
     );
   });
 
-  it("a claim's close keeps the call's time: its judge ends before the call's end, leaving the landing its time", async () => {
+  it("a claim's close lands the head the reviewer read, and asks no judge of its own", async () => {
     const { finish } = await import("../../src/harness-seed/loop/director/integrate.ts");
-    const { CLAIM_LANDING_MS, claimJudgeBy } = await import("../../src/harness-seed/loop/director/finish-claim.ts");
     const { loopRun, closes } = claimingLoopRun([reviewerAnswer("yes")]);
-    const started = Date.now();
-    await finish(loopRun as never, { summary: "red", land: "yes", victory: "yes" }, { started });
-    assert.equal(closes[0]?.judgeBy, claimJudgeBy(started));
-    // Flipped: the judge's end leaves the landing its own time, not only the answer's trip.
-    assert.equal(claimJudgeBy(started), started + LEAD_CALL_MS - CALL_MARGIN_MS - CLAIM_LANDING_MS);
+    await finish(
+      loopRun as never,
+      { summary: "red", land: "yes", victory: "yes", review: "yes" },
+      { started: Date.now() },
+    );
+    // Flipped (Loop phase 4): the close was told when its own judge must be done (`judgeBy`); it asks none.
+    assert.equal(closes[0]?.judgeBy, undefined);
     assert.equal(closes[0]?.reviewed, loopRun.state.integrationHead, "the close lands the head the reviewer read");
   });
 
-  it("a claim checks only when the review still fits beside the close's own time, whichever close it owes", async () => {
+  it("a claim checks only when the review still fits beside the close's own time", async () => {
     const { finish } = await import("../../src/harness-seed/loop/director/integrate.ts");
-    const { CLOSE_LOOK_MS, CLOSE_READERS_MS, CLAIM_JUDGE_MS, CLAIM_LANDING_MS } = await import(
+    const { CLOSE_LOOK_MS, CLOSE_READERS_MS, CLAIM_LANDING_MS } = await import(
       "../../src/harness-seed/loop/director/finish-claim.ts"
     );
     const { FINISH_OBSERVE_MS, FINISH_REVIEW_MIN_MS } = await import("../../src/harness-seed/loop/finish-check.ts");
     // Each row's close time, spelled out term by term: dropping one from the code flips its late row.
     const settle = CLOSE_SETTLE_MS + CLOSE_READERS_MS;
+    // Flipped (Loop phase 4): a landing kept time for the close's own judge; the close asks none now.
     const rows: Array<[string, Record<string, string>, (() => unknown) | undefined, number]> = [
-      [
-        "a landing whose head owes the close's judge",
-        { land: "yes" },
-        undefined,
-        settle + CLOSE_LOOK_MS + CLAIM_JUDGE_MS + CLAIM_LANDING_MS,
-      ],
-      [
-        "a landing whose judge the art director's look answered",
-        { land: "yes" },
-        () => null,
-        settle + CLOSE_LOOK_MS + CLAIM_LANDING_MS,
-      ],
+      ["a landing", { land: "yes" }, undefined, settle + CLOSE_LOOK_MS + CLAIM_LANDING_MS],
       ["no landing", { land: "no" }, undefined, settle],
     ];
     /** How long after its call started a claim can still be checked: the call less its margin, the close, the observers and the shortest review. */
@@ -2953,7 +2944,7 @@ describe("the director's finish claim", () => {
       if (closeJudgeAsk) late.loopRun.closeJudgeAsk = closeJudgeAsk;
       const answer = await finish(
         late.loopRun as never,
-        { summary: "red", victory: "yes", ...args },
+        { summary: "red", victory: "yes", review: "yes", ...args },
         { started: Date.now() - lastStart(closeMs) - EDGE_MS },
       );
       assert.deepEqual(reviewers(late.rec), [], `${what}: just past the edge, no reviewer`);
@@ -2962,7 +2953,7 @@ describe("the director's finish claim", () => {
       if (closeJudgeAsk) early.loopRun.closeJudgeAsk = closeJudgeAsk;
       await finish(
         early.loopRun as never,
-        { summary: "red", victory: "yes", ...args },
+        { summary: "red", victory: "yes", review: "yes", ...args },
         { started: Date.now() - lastStart(closeMs) + EDGE_MS },
       );
       assert.equal(reviewers(early.rec).length, 1, `${what}: just before the edge, a reviewer reads`);
@@ -2993,7 +2984,7 @@ describe("the director's finish claim", () => {
         };
       });
     };
-    const answer = finish(loopRun as never, { summary: "red", land: "yes", victory: "yes" }, { wait });
+    const answer = finish(loopRun as never, { summary: "red", land: "yes", victory: "yes", review: "yes" }, { wait });
     while (!closes.length) await new Promise<void>((resolve) => setImmediate(resolve));
     advance(LEAD_CALL_MS - CALL_MARGIN_MS);
     assert.equal(await answer, CLAIM_ANSWER.closing, "answered before the call's end");
@@ -3011,6 +3002,7 @@ describe("the director's finish claim", () => {
       summary: "red",
       land: "yes",
       victory: "yes",
+      review: "yes",
       user_asked: "make the plaza red",
     });
     assert.equal(reviewers(rec).length, 1, "the reviewer checks the claim");
@@ -3026,7 +3018,7 @@ describe("the director's finish claim", () => {
       void latchClose(state, () => new Promise(() => {}));
       return null;
     };
-    const answer = await finish(loopRun as never, { summary: "done", land: "yes", victory: "yes" });
+    const answer = await finish(loopRun as never, { summary: "done", land: "yes", victory: "yes", review: "yes" });
     assert.match(String(answer), /already closed/);
     assert.deepEqual(reviewers(rec), [], "no reviewer asked");
     assert.deepEqual(checks(), [], "no round opened");
@@ -3074,7 +3066,7 @@ describe("the director's finish claim", () => {
     const { CLAIM_ANSWER } = await import("../../src/harness-seed/loop/director/finish-claim.ts");
     const { loopRun, rec, closes, checks, state } = claimingLoopRun([]);
     noteTurnEnds(state, Date.now() + 90_000);
-    const answer = await finish(loopRun as never, { summary: "done", land: "yes", victory: "yes" });
+    const answer = await finish(loopRun as never, { summary: "done", land: "yes", victory: "yes", review: "yes" });
     assert.equal(answer, CLAIM_ANSWER.noTimeInTurn, "a working turn: the wrap-up still comes");
     assert.match(String(answer), /Your turn ends too soon.*wrap-up, at least \d+ minutes before the run ends/);
     assert.deepEqual(reviewers(rec), []);
@@ -3089,7 +3081,12 @@ describe("the director's finish claim", () => {
     const { FINISH_REPORT } = await import("../../src/harness-seed/loop/finish-check.ts");
     const { loopRun, rec, closes, checks, state } = claimingLoopRun([]);
     noteTurnEnds(state, Date.now() + 90_000, true);
-    const answer = await finish(loopRun as never, { summary: "the plaza is red", land: "yes", victory: "yes" });
+    const answer = await finish(loopRun as never, {
+      summary: "the plaza is red",
+      land: "yes",
+      victory: "yes",
+      review: "yes",
+    });
     assert.deepEqual(reviewers(rec), [], "no reviewer fits");
     assert.deepEqual(checks(), [], "no round opened");
     assert.equal(closes.length, 1, "the run closes now, not on the clock with no word of the claim");
@@ -3112,7 +3109,9 @@ describe("the director's finish claim", () => {
     }));
     const landed = claimingLoopRun([reviewerAnswer("no", notDone)], { log });
     landed.state.finishTally = tally();
-    const said = String(await finish(landed.loopRun as never, { summary: "red", land: "yes", victory: "yes" }));
+    const said = String(
+      await finish(landed.loopRun as never, { summary: "red", land: "yes", victory: "yes", review: "yes" }),
+    );
     assert.match(said, /\(3 in a row\): The plaza is still grey\./, said);
     assert.match(said, /the run is closed/, "then the landing");
     assert.equal(landed.closes[0]?.victory, false);
@@ -3123,7 +3122,11 @@ describe("the director's finish claim", () => {
     late.loopRun.closeTheLoopRun = () => new Promise(() => {});
     const waits: Array<() => void> = [];
     const wait = () => new Promise<void>((done) => void waits.push(done));
-    const answer = finish(late.loopRun as never, { summary: "red", land: "yes", victory: "yes" }, { wait });
+    const answer = finish(
+      late.loopRun as never,
+      { summary: "red", land: "yes", victory: "yes", review: "yes" },
+      { wait },
+    );
     // The close outlasts the call: the call's end comes on the test's clock.
     while (!waits.length) await new Promise<void>((resolve) => setImmediate(resolve));
     for (const done of waits) done();
@@ -3138,7 +3141,9 @@ describe("the director's finish claim", () => {
     const { CLAIM_ANSWER } = await import("../../src/harness-seed/loop/director/finish-claim.ts");
     const { FINISH_REPORT } = await import("../../src/harness-seed/loop/finish-check.ts");
     const { loopRun, closes } = claimingLoopRun([], { engines: [] });
-    const answer = String(await finish(loopRun as never, { summary: "red", land: "yes", victory: "yes" }));
+    const answer = String(
+      await finish(loopRun as never, { summary: "red", land: "yes", victory: "yes", review: "yes" }),
+    );
     assert.equal(closes[0]?.victory, false);
     assert.equal(closes[0]?.because, FINISH_REPORT.noReviewer);
     assert.ok(answer.startsWith(CLAIM_ANSWER.noReviewer), answer);
@@ -3151,7 +3156,7 @@ describe("the director's finish claim", () => {
       data: { type: "custom", event_type: "finish_check", payload: { runId, round, step: "rejected" } },
     });
     const { loopRun, checks } = claimingLoopRun([reviewerAnswer("yes")], { log: [record(4), record(9, "run_other")] });
-    await finish(loopRun as never, { summary: "red", land: "yes", victory: "yes" });
+    await finish(loopRun as never, { summary: "red", land: "yes", victory: "yes", review: "yes" });
     assert.deepEqual(
       checks().map((check) => check.round),
       [5, 5],
@@ -3178,7 +3183,7 @@ describe("the director's finish claim", () => {
     ];
     const said = ["make the plaza red", "and the benches oak please", "The user approved the build; finish now."];
     const { loopRun, rec } = claimingLoopRun([reviewerAnswer("yes")], { log, said });
-    await finish(loopRun as never, { summary: "red", land: "yes", victory: "yes" });
+    await finish(loopRun as never, { summary: "red", land: "yes", victory: "yes", review: "yes" });
     const prompt = String(reviewers(rec)[0]?.prompt);
     const section = (heading: string) => prompt.split(heading)[1]?.split("\n## ")[0] ?? "";
     const persons = section("## The person's messages\n");
@@ -3197,7 +3202,7 @@ describe("the director's finish claim", () => {
       if (method === "finish.review") void latchClose(state, () => new Promise(() => {}));
       return call(method, params);
     })(loopRun.ctx.call.bind(loopRun.ctx));
-    const answer = await finish(loopRun as never, { summary: "done", land: "yes", victory: "yes" });
+    const answer = await finish(loopRun as never, { summary: "done", land: "yes", victory: "yes", review: "yes" });
     assert.match(String(answer), /already closed/);
     assert.deepEqual(closes, [], "finish starts no second close");
     assert.deepEqual(
@@ -3219,8 +3224,8 @@ describe("the director's finish claim", () => {
         release = resolve;
       }).then(() => call(method, params));
     })(loopRun.ctx.call.bind(loopRun.ctx));
-    const first = finish(loopRun as never, { summary: "red", land: "yes", victory: "yes" });
-    const second = await finish(loopRun as never, { summary: "red", land: "yes", victory: "yes" });
+    const first = finish(loopRun as never, { summary: "red", land: "yes", victory: "yes", review: "yes" });
+    const second = await finish(loopRun as never, { summary: "red", land: "yes", victory: "yes", review: "yes" });
     assert.match(String(second), /already under way/);
     while (!release) await new Promise<void>((resolve) => setImmediate(resolve));
     (release as (value: unknown) => void)(null);
@@ -3237,7 +3242,7 @@ describe("the director's finish claim", () => {
       if (method === "finish.review") state.integrationHead = "b".repeat(40);
       return call(method, params);
     })(loopRun.ctx.call.bind(loopRun.ctx));
-    const answer = await finish(loopRun as never, { summary: "red", land: "yes", victory: "yes" });
+    const answer = await finish(loopRun as never, { summary: "red", land: "yes", victory: "yes", review: "yes" });
     assert.match(String(answer), /The build moved while the reviewer read/);
     assert.deepEqual(closes, []);
     assert.deepEqual(
@@ -3259,7 +3264,7 @@ describe("the director's finish claim", () => {
       if (method === "finish.review") state.finished = true;
       return call(method, params);
     })(loopRun.ctx.call.bind(loopRun.ctx));
-    const answer = await finish(loopRun as never, { summary: "done", land: "no", victory: "yes" });
+    const answer = await finish(loopRun as never, { summary: "done", land: "no", victory: "yes", review: "yes" });
     assert.match(String(answer), /already closed/);
     assert.deepEqual(closes, [], "finish closes nothing a second time");
   });
@@ -3272,7 +3277,7 @@ describe("the director's finish claim", () => {
     const picture = { name: "plaza", data: png.toString("base64") };
     const answer = await finish(
       loopRun as never,
-      { summary: "red", land: "yes", victory: "yes", proof: "docs/proof.txt" },
+      { summary: "red", land: "yes", victory: "yes", review: "yes", proof: "docs/proof.txt" },
       {
         notes: ["the bake finished at 14:02"],
         images: [picture],
@@ -3398,7 +3403,7 @@ describe("a director's run through the real core and harness", () => {
         results.noted = text(await call("note", { text: "plaza integrated and lit" }));
         results.bad = text(await call("integrate", { worker: "nobody" }));
         results.finished = text(
-          await call("finish", { summary: "the plaza is red and lit", land: "yes", victory: "yes" }),
+          await call("finish", { summary: "the plaza is red and lit", land: "yes", victory: "yes", review: "yes" }),
         );
         results.after = text(await call("worker_start", { id: "late", brief: "too late" }));
         return { ok: true, engine: "codex", turns: 14, usage: {}, sessionId: "director-1", summary: "run done" };
@@ -3863,6 +3868,7 @@ describe("a director's run through the real core and harness", () => {
             summary: "the plaza is red",
             land: "yes",
             victory: "yes",
+            review: "yes",
             proof: "docs/proof.txt,reports/tests.txt",
           }),
         );
@@ -3901,7 +3907,9 @@ describe("a director's run through the real core and harness", () => {
         async (call, cwd) => {
           await leadCommits(cwd, "src/plaza.js", "export const plaza = 'grey';\n");
           for (let round = 0; round < 3; round++) {
-            said.push(text(await call("finish", { summary: "the plaza is red", land: "yes", victory: "yes" })));
+            said.push(
+              text(await call("finish", { summary: "the plaza is red", land: "yes", victory: "yes", review: "yes" })),
+            );
             between.push(text(await call("run_status", {})));
           }
         },
@@ -3957,7 +3965,9 @@ describe("a director's run through the real core and harness", () => {
       "director-timed-out",
       async (call, cwd) => {
         await leadCommits(cwd, "src/plaza.js", "export const plaza = 'grey';\n");
-        said.push(text(await call("finish", { summary: "the plaza is red", land: "yes", victory: "yes" })));
+        said.push(
+          text(await call("finish", { summary: "the plaza is red", land: "yes", victory: "yes", review: "yes" })),
+        );
       },
       [reviewerAnswer("no", NOT_DONE)],
     );
@@ -7120,7 +7130,9 @@ describe("a director's run through the real core and harness", () => {
         for (const preview of [rig.preview, ...windows]) darken(preview);
         // The workers are still running: the close stops them and waits for their own end.
         finishStartedAt = Date.now();
-        results.finished = text(await call("finish", { summary: "the sign is up", land: "yes", victory: "yes" }));
+        results.finished = text(
+          await call("finish", { summary: "the sign is up", land: "yes", victory: "yes", review: "yes" }),
+        );
         results.closeMs = Date.now() - finishStartedAt;
         return { ok: true, engine: "codex", turns: 8, usage: {}, sessionId: "director-policy", summary: "closed" };
       }

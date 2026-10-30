@@ -9,7 +9,7 @@ import { readHarnessFlags } from "./phases/flags.ts";
 import { reviewCode } from "./phases/review.ts";
 import { gatherRoundEvidence } from "./phases/observe.ts";
 import { verifyChallenger } from "./phases/verify.ts";
-import { critiqueLiveness, growDefectChecks } from "./phases/learn.ts";
+import { growDefectChecks } from "./phases/learn.ts";
 import { keepOrRollBack, measureStyle, rememberAttempt } from "./phases/keep.ts";
 import { settleMoveAndGap } from "./phases/settle.ts";
 import { decideExit, publishRound } from "./phases/publish.ts";
@@ -36,7 +36,6 @@ const ROUND_PHASES = [
   reviewCode,
   gatherRoundEvidence,
   verifyChallenger,
-  critiqueLiveness,
   growDefectChecks,
   keepOrRollBack,
   measureStyle,

@@ -1425,9 +1425,8 @@ describe("a lead's claim inside the wake loop (wake.ts, director/finish-claim.ts
     assert.equal(turns.length, 1, turns.map((turn) => turn.prompt.slice(0, 80)).join("\n---\n"));
   });
 
-  it("a claim late in the wrap-up turn is bounded by that turn and, it being the last, closes the run as no claim", async (t) => {
+  it("a review asked late in the wrap-up turn is bounded by that turn: the lead hears there is no time, and no review closes the run", async (t) => {
     const { finish } = await import("../../src/harness-seed/loop/director/integrate.ts");
-    const { FINISH_REPORT } = await import("../../src/harness-seed/loop/finish-check.ts");
     const { CLAIM_ANSWER } = await import("../../src/harness-seed/loop/director/finish-claim.ts");
     // Less than a review's time before the wrap-up turn ends, though a review's time before the run does.
     const late = CLOCK.finalDeadline - WRAP_UP_MARGIN_MS - 120_000;
@@ -1444,12 +1443,14 @@ describe("a lead's claim inside the wake loop (wake.ts, director/finish-claim.ts
     const { talk, turns } = lead(() => ({ ok: true, sessionId: "lead-1" }));
     const session = talk.session;
     talk.session = async (prompt, sid, timeoutMs) => {
-      said = String(await finish(loopRun, { summary: "the plaza is red", land: "yes", victory: "yes" }));
+      said = String(await finish(loopRun, { summary: "the plaza is red", land: "yes", victory: "yes", review: "yes" }));
       return session(prompt, sid, timeoutMs);
     };
     await runWakeLoop(loopRun, talk, BRIEF, fakeClock(late));
     assert.equal(turns.length, 1, "the wrap-up is the only turn");
-    assert.equal(closes[0]?.because, FINISH_REPORT.tooLate, `the turn's own end bounded the review: ${said}`);
+    // Flipped (Loop phase 4): in the last turn such a claim closed the run as too late; a review that
+    // cannot run decides nothing, and the lead may finish without one.
+    assert.ok(!closes.some((close) => close.victory === true), `no close on the review: ${said}`);
     assert.ok(said.startsWith(CLAIM_ANSWER.tooLate), said);
     assert.ok(!host.calls.some((call) => call.method === HostMethod.EngineDescribe), "no reviewer's seat was sought");
     const records = host.calls.flatMap((call) => (call.method === HostMethod.EventsAppend ? call.params.batch : []));

@@ -78,10 +78,10 @@ export function priorCommitWords({
 }): string {
   const bringIn = (commit: string) =>
     lead ? LEAD_PRIOR_BRINGS_IN : `\`git merge ${commit}\` in your worktree brings it in`;
-  // A round the run stopped left its work committed beyond what was accepted: unjudged, so it is
-  // judged against the build before it goes in, never merged by hand (kept-work.ts).
+  // A round the run stopped left its work committed beyond what was accepted: a worker started from
+  // it builds on it (kept-work.ts).
   if (kept && kept !== lastCommit)
-    return `the run stopped its round before a verdict; that work is kept as ${shortSha(kept)} on ${ref}, never judged — ${KEPT_WORDS.judgedFirst(kept)}`;
+    return `the run stopped its round before a verdict; that work is kept as ${shortSha(kept)} on ${ref} — ${KEPT_WORDS.judgedFirst(kept)}`;
   if (!lastCommit || lastCommit === from) return "it left no commit of its own";
   return `its last commit ${shortSha(lastCommit)} is kept on ${ref} — worker_start from=${lastCommit} builds on it, ${bringIn(lastCommit)}`;
 }

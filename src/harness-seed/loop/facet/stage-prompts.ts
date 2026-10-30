@@ -1,5 +1,6 @@
 /**
- * What the finish stage (facet/stage.ts) says to its builder and its judge. The build stage's
+ * What the finish stage (facet/stage.ts) says to its builder, and to a judge an older caller still
+ * asks. The build stage's
  * words stay where they are, byte for byte; these replace them only for a worker finishing what
  * exists, where polish is the work.
  */
@@ -7,20 +8,20 @@
 /** The brief's section in place of THE MOVE, for a finishing worker. */
 export const FINISH_SECTION_HEAD = "## THE FINISH this iteration — polish wins";
 
-/** What a finishing builder works on, and how its build is judged. */
+/** What a finishing builder works on, and how its build is kept. */
 export const FINISH_RULES: readonly string[] = [
-  "This iteration finishes what exists. Work the judge's polish list below and the defect ledger, worst first.",
+  "This iteration finishes what exists. Work the polish list below and the defect ledger, worst first, and what your own look at the window finds.",
   "Change how what exists looks, sounds and feels — materials, light, readability, motion, the HUD's craft — not what exists: no new systems, no new mechanics.",
   "Keep every passing check: a regression still rolls the build back.",
-  "Capture and look at the real window before you stop: the judge looks blind at your build beside the accepted one, and only a regression it names rolls yours back.",
+  "Capture and look at the real window before you stop: nobody judges your build, so your own look is the one it gets.",
 ];
 
 /** The polish list's heading inside the finish section. */
-export const FINISH_POLISH_HEAD = "The judge's polish list (this is the work, worst first):";
+export const FINISH_POLISH_HEAD = "The polish list (this is the work, worst first):";
 
 /** The one line a finishing builder's prompt carries where THE MOVE's would be. */
 export const FINISH_PROMPT_LINE =
-  "THE FINISH THIS ITERATION: polish what exists — the judge's polish list and defect ledger in the brief, worst first. No new systems. Your build is kept unless it regresses.";
+  "THE FINISH THIS ITERATION: polish what exists — the polish list and defect ledger in the brief, worst first, and what you see in the window. No new systems. Your build is kept unless it regresses.";
 
 /** THE FIX's last line in a finish-stage brief: tuning is allowed when tuning is what closes it. */
 export const FINISH_FIX_LINE =
@@ -32,7 +33,7 @@ export const FINISH_FIX_ASK =
 
 /** A finishing builder's loss streak: change the approach, not "never tune". */
 export const finishLossEscalate = (losses: number): string =>
-  `ESCALATE: ${losses} losses in a row — the judge kept the build before yours. Change the approach to what a player sees, not more of the same.`;
+  `ESCALATE: ${losses} losses in a row — your builds regressed what worked. Change the approach to what a player sees, not more of the same.`;
 
 /** The taste judge's user-content line for a finish-stage round. */
 export const FINISH_STAGE_LINE =
@@ -40,12 +41,12 @@ export const FINISH_STAGE_LINE =
 
 /** What `worker_start` answers about a finishing worker's moves. */
 export const FINISH_START_MOVES =
-  "stage finish: no move and no ladder — each round works the judge's polish list and defect ledger, wins on the blind pick, and a regression still rolls it back; worker_steer move= puts it back to building";
+  "stage finish: no move and no ladder — each round polishes what exists and is kept unless it regresses a check that passed; worker_steer move= puts it back to building";
 
 /** What `worker_steer stage=` answers: the stage the worker's next round runs in. */
 export const steerStageWords = (id: string, finishing: boolean): string =>
   finishing
-    ? `${id}'s next round finishes: no move, the judge's polish list and defects are the work; a round wins on the blind pick and a regression still rolls back`
+    ? `${id}'s next round finishes: no move, polishing what exists is the work; a round is kept unless it regresses a check that passed`
     : `${id}'s next round builds again: its ladder, or the move the harness names`;
 
 /** What `worker_steer move=` adds when it took a finishing worker back to the build stage. */

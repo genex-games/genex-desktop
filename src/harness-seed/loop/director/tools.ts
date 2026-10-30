@@ -50,7 +50,6 @@ import { priorWorkerStatus, priorWorkersStatus } from "./journal.ts";
 import { commitLeadEdits } from "./lead-session.ts";
 import { LEAD_DIRTY, LEAD_LIVE_DIRTY } from "./lead-session-prompts.ts";
 import { BuildTarget, WindowLease } from "./loop-run.ts";
-import { finalJudgeQuestion } from "./close-prompts.ts";
 import { routeShipDefects, shipParts } from "./art-direction.ts";
 import { defectsByPart, SHIP_ALONE, SHIP_QUESTION, shipNext } from "./art-direction-prompts.ts";
 import { SHIP_VIEW, shipReview } from "../ship-review.ts";
@@ -58,7 +57,6 @@ import { JudgeParse } from "../judge-provenance.ts";
 import { plainly } from "./rules.ts";
 import { DirectorTool, headSynced } from "./tool-specs.ts";
 import { passDeadline } from "./wake-schedule.ts";
-import { workingGoal } from "../goal-prompts.ts";
 import { WorkerTool } from "../workers/contract.ts";
 import {
   briefOf,
@@ -814,59 +812,23 @@ function holdsVerdict(judged: LastJudge | null, head: string | null): boolean {
 }
 
 /**
- * Whether the judge standing on `head` is already the final word the close owes: the close's own
- * verdict or answer (one that came to nothing, on a resume, is asked again), or a lead's blind pick
- * over the build the user had. A lead's free-text question, or a pick over a worker's branch, is
- * not that judgement, and the close judges again.
+ * The close no longer judges the build it makes live (Loop phase 4): it lands what moved beyond the
+ * start and loads (integrate.ts `landWhatRuns`), and a judge is the lead's to ask for. The name
+ * stays for a kept older integrate.ts that still calls it, and it asks nobody.
  */
-function finallyJudged(judged: LastJudge | null, head: string | null): boolean {
-  if (!judged || judged.head !== head) return false;
-  if (judged.final === true) return Boolean(judged.pick) || typeof judged.answer === "boolean";
-  const againstTheStart = judged.against === Against.Start || judged.against === Against.Live;
-  return againstTheStart && Boolean(judged.pick);
-}
+export async function judgeTheLanding(_loopRun: LoopRun, _head: string | null, _judgeBy?: number): Promise<void> {}
 
-/**
- * The close's judge of the build it is about to make live (integrate.ts `landWhatRuns`), whoever
- * ended the run and however fast the user wanted it. Judging was the lead's choice, and every
- * prompt of a hurried run (the wrap-up, the user's finish, the goal card) sent it straight to
- * finish, so builds went live with no judge having looked. A build the user had a picture of is
- * compared blind with it; a new game, or one whose start nobody could photograph, is asked whether
- * it shows what the user asked for. It looks through the studio's window when every other is
- * taken, its calls end by `FINAL_JUDGE_MS` (or `judgeBy`, a lead's call's end, when sooner; and
- * with the user's Stop), and its word is kept as every judge's is (`state.lastJudge`, a judge
- * verdict), for the landing's claim.
- */
-export async function judgeTheLanding(loopRun: LoopRun, head: string | null, judgeBy?: number): Promise<void> {
-  const { note } = loopRun;
-  const ask = closeJudgeAsk(loopRun, head);
-  if (!ask) return;
-  const options = { borrow: true, final: true, until: landingJudgeUntil(Date.now(), judgeBy) };
-  await judge(loopRun, ask, options).catch((err: unknown) =>
-    note(
-      `the close could not judge ${shortSha(head)}: ${String((err as Error)?.message ?? err).slice(0, CLIP_REASON)}`,
-    ),
-  );
-}
-
-/** When the close's judge must be done, from `now`: its own time at most, and by `judgeBy` when that is sooner (a claim's call). */
+/** When a judge asked inside a lead's call must be done, from `now`: its own time at most, and by `judgeBy` when that is sooner. */
 export function landingJudgeUntil(now: number, judgeBy?: number): number {
   return Math.min(now + FINAL_JUDGE_MS, judgeBy ?? Number.POSITIVE_INFINITY);
 }
 
 /**
- * The judge the close owes `head`, as `judge` arguments: blind against the build the user had when
- * there is a picture of it, else the goal question on its own — or null when the run is stopping or
- * a judge on that head already holds the close's word (`finallyJudged`). The art director's finish
- * gate reads it, so its one look can answer the question and the close need not look again.
+ * The judge the close owes `head`: none (Loop phase 4). The name stays for a kept older caller (a
+ * finish gate, a claim's time budget), which reads null as "nothing owed".
  */
-export function closeJudgeAsk(loopRun: LoopRun, head: string | null): AnyRecord | null {
-  const { ctx, run, state } = loopRun;
-  if (ctx.cancelled || finallyJudged(state.lastJudge, head)) return null;
-  const comparable = !state.fromScratch && Boolean(state.startEvidence);
-  return comparable
-    ? { target: BuildTarget.Integration, against: Against.Start }
-    : { target: BuildTarget.Integration, against: Against.None, question: finalJudgeQuestion(workingGoal(run)) };
+export function closeJudgeAsk(_loopRun: LoopRun, _head: string | null): AnyRecord | null {
+  return null;
 }
 
 // ── playtest ──
@@ -1399,14 +1361,14 @@ async function stopWorkerTool(loopRun: LoopRun, args: AnyRecord): Promise<string
     `stopped the builder working on ${worker.title}${why ? ` — ${why}` : ""}`,
   );
   // What actually happens, so the director does not have to guess: the edits it had
-  // written are committed where they stand, the round is recorded as stopped rather
-  // than judged, and integrate still takes only what the loop accepted.
+  // written are committed where they stand, the round is recorded as stopped, and integrate takes
+  // it as it is.
   return [
     `stop requested for ${worker.id}${why ? ` (${why})` : ""}.`,
     worker.mode === WorkerMode.Loop
       ? `Its unfinished edits are committed in ${worker.worktree}, kept on ${attemptRef(run.runId, worker.id, at, { stopped: true })} — nothing is reset, and that round is recorded as stopped, not judged.`
       : `Whatever it had written is committed in ${worker.worktree} as its last commit.`,
-    `Its last accepted commit${worker.lastCommit ? ` (${shortSha(worker.lastCommit)})` : ""} is what integrate would take; the stopped round goes in only once judge target=${worker.id} against=integration prefers it. worker_status once it settles.`,
+    `integrate takes the stopped round as it is${worker.lastCommit ? ` (its last accepted commit was ${shortSha(worker.lastCommit)})` : ""}. worker_status once it settles.`,
   ].join(" ");
 }
 

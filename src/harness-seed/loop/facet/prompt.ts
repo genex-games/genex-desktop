@@ -115,7 +115,7 @@ function rulesBeforeHistory(body: string): string {
 function withDoneSection(body: string, spec: AnyRecord | null | undefined): string {
   if (!spec?.done?.length || body.includes("## Done means")) return body;
   const block = [
-    `## Done means (this facet ends when these pass and the taste judge agrees)`,
+    `## Done means (this facet ends when these pass)`,
     ...spec.done.map((d: AnyRecord) => `- ${d.what} — measured by check ${d.id}`),
     ``,
   ].join("\n");
@@ -337,7 +337,7 @@ function moveAsk(move: AnyRecord | null): string {
   if (!move?.what) return "";
   const measured = move.check
     ? ` — measured by check ${move.check.id}`
-    : " — the taste judge answers whether it is visible";
+    : " — no check measures it: say in your notes that it is built";
   const lead = move.mandatory ? "It stays owed until a build delivers it; make" : "Make";
   const escalate = moveEscalated(move)
     ? ` ESCALATE: your last ${move.polishStreak} accepted builds were polish only.`
@@ -350,7 +350,7 @@ function fixAsk(fix: AnyRecord | null, finishing = false): string {
   if (!fix?.what) return "";
   const weight = fix.mandatory
     ? "mandatory — it stays owed until a build closes it"
-    : "the judge has named it " + fix.streak + " times; next time it is mandatory";
+    : "named " + fix.streak + " times; next time it is mandatory";
   const how = finishing
     ? FINISH_FIX_ASK
     : "Replace the mechanism, do not tune it: if it is a shape, rebuild the shape; if it is a material, change the material kind (foliage.js for anything leafy).";
@@ -462,8 +462,8 @@ function resumedBoardLine(p: PromptInput): string {
   if (failing.length)
     return `STILL FAILING (identity first): ${cappedList(failing.sort(byIdentityFirst).map((e) => `${e.id} — ${String(e.reason).slice(0, FAILING_REASON_CHARS)}`)).join("; ")}`;
   if (p.legacy) return `THE BIGGEST REMAINING GAP: ${p.defectList[0] ?? ""}`;
-  if (p.move?.what) return "Every check passes — make THE MOVE above, then work the judge's defect list in the brief.";
-  return "Every check passes — this iteration is taste: work the judge's defect list in the brief.";
+  if (p.move?.what) return "Every check passes — make THE MOVE above, then work the defect list in the brief.";
+  return "Every check passes — this iteration is yours: make what a player sees better, and work the defect list in the brief.";
 }
 
 /** The ledger is not the prompt's to carry: a legacy loop, a brief that points at it, or an empty one. */
@@ -536,13 +536,13 @@ function openingHead(p: PromptInput): string[] {
       : "",
     // What the loop will actually stop on, in the words the director wrote it in.
     !pointsAtBrief && facet.done?.length
-      ? `DONE MEANS (this facet ends when these pass and the taste judge agrees):\n${facet.done.map((d: AnyRecord) => `- ${d.what} — measured by check ${d.id}`).join("\n")}`
+      ? `DONE MEANS (this facet ends when these pass):\n${facet.done.map((d: AnyRecord) => `- ${d.what} — measured by check ${d.id}`).join("\n")}`
       : "",
     ``,
     p.briefPointer,
     p.legacy || pointsAtBrief
       ? ``
-      : `THE CONTRACT — these checks are verified mechanically after every build; a build is kept unless it regresses one that passed (or the judge names a regression):\n${renderChecks(p.spec.checks)}`,
+      : `THE CONTRACT — these checks are verified mechanically after every build; a build is kept unless it regresses one that passed:\n${renderChecks(p.spec.checks)}`,
     ``,
     p.worktree
       ? `You are working in an isolated copy of the game. Touch only what this facet needs — other facets are being built in parallel and their accepted work is merged into your copy between iterations.`
@@ -755,7 +755,7 @@ function closingLines({ run, worktree, pointsAtBrief }: PromptInput): string[] {
     "",
     `Before you finish:`,
     `- Re-read the checks and verify each one you can see in your frames. A check ignored every iteration becomes the run's final gap.`,
-    `- Compare your captured frames against the accepted build's shots: if you cannot see your change, neither can the verifier — an invisible diff is rejected without a judge.`,
+    `- Compare your captured frames against the accepted build's shots: nobody judges your build, so your own look is the one it gets.`,
     ...(pointsAtBrief
       ? []
       : [

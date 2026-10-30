@@ -15,10 +15,10 @@
 import { runGauntlet } from "./gauntlet.ts";
 import { gatherEvidence, observationOnlyFailure } from "./evidence.ts";
 import { runFacetLoop } from "./facet-loop.ts";
-import { runOptimization, skipOptimization } from "./optimization.ts";
+import { skipOptimization } from "./optimization.ts";
 import { optimizationAllowance } from "./performance.ts";
 import { buildTurn } from "./build-turn.ts";
-import { blindCompare, judgeAgainstReference, parseVerdict, referenceStats } from "./judge.ts";
+import { parseVerdict } from "./judge.ts";
 import { EngineId, plannerModel, roleEffort, roleEngine, RoleKey, supportsSessions } from "./model-roles.ts";
 import {
   CheckKind,
@@ -41,8 +41,7 @@ import { learningOn } from "./learning.ts";
 import { renderScoutForPlanner, runScout, setupVerifyExpr } from "./scout.ts";
 import { KIND_NAMES, readDeclaredGame, writeDeclaredGame } from "./kinds.ts";
 import * as library from "./library.ts";
-import { renderScoreboard, summarizeScoreboard } from "./checks.ts";
-import { bestStyleDistance } from "./style.ts";
+import { summarizeScoreboard } from "./checks.ts";
 import { EngineFailure, outageDelays, withProviderPatience } from "./outage.ts";
 import { unionMergeMain } from "./merge.ts";
 import { parsePlanSteering } from "./replan.ts";
@@ -95,8 +94,6 @@ type Pipeline = AnyRecord;
 type PipelineEnd = { value: unknown } | undefined | void;
 
 /** Headless previews a delegated run assumes when the studio does not say (WP6). */
-/** Why a run closes when its global judge gave no usable verdict. */
-const GLOBAL_JUDGE_UNUSABLE = "the judge replied three times without a usable verdict";
 const DEFAULT_PREVIEW_POOL = 6;
 /** How many facets build at once on a delegated engine when the plan's size is not known yet. */
 const DEFAULT_PARALLEL = 3;
@@ -170,8 +167,8 @@ const MERGED_PROBLEMS_KEPT = 5;
 const MAX_INITIAL_DEFECTS = 24;
 /** The iteration id of the run's last evidence pass. */
 const FINAL_ITERATION = "final";
-/** The iteration id the optimization pass is judged under. */
-const OPTIMIZATION_ITERATION = "optimization-final";
+/** Why a classic run's optimization pass is skipped: it waited on a preservation judge, a gate (Loop phase 4). */
+const OPTIMIZATION_SKIPPED = "Classic runs finish without the optimization stage, as the director's do";
 /** The blind judge's pick for the build under test. */
 const VERDICT_CHALLENGER = "challenger";
 /** What a facet or a run that the user stopped says. */
@@ -196,14 +193,6 @@ function stopRunUnlessStopped(report: AnyRecord, code: StopCode | undefined, tex
 const FinalizationOrigin = {
   Single: "autopilot_single",
   Multi: "autopilot_multi",
-} as const;
-
-/** Which judgement a provider outage held up (`autopilot_provider_outage`). */
-const OutagePhase = {
-  Plan: "plan",
-  Ledger: "ledger",
-  Final: "final",
-  Panel: "panel",
 } as const;
 
 /**
@@ -2178,9 +2167,7 @@ async function commitReconciled(pipeline: Pipeline): Promise<void> {
 async function judgeIntegration(pipeline: Pipeline): Promise<PipelineEnd> {
   const { catalogue, ctx, deadline, journal, ownShape, plan, projectDir, report, run, threadId, total } = pipeline;
   const { worktreeMode } = pipeline;
-  // ── the ledger comes before integration: the merged build is judged first, and its defect
-  // list is the integration facet's brief. Produced after the run, the same ledger was a
-  // wasted judge call nobody could act on. ──
+  // ── the merged build is looked at first (does it run?): no judge compares it (Loop phase 4) ──
   const integrationFacet = integrationSpec(plan, journal.facets, { screen: !ownShape });
   pipeline.integrationFacet = integrationFacet;
   pipeline.integrationRoot = worktreeMode ? pipeline.integrationWorktree : projectDir;
@@ -2188,7 +2175,7 @@ async function judgeIntegration(pipeline: Pipeline): Promise<PipelineEnd> {
   const hasChecks = integrationFacet.checks.length > 0;
   const anythingBuilt = (Object.values(journal.facets) as AnyRecord[]).some((r) => r?.lastCommit || r?.iterations > 0);
   if (!ctx.cancelled && hasChecks && anythingBuilt) {
-    const ended = await judgeMergedBuild(pipeline);
+    const ended = await lookAtMergedBuild(pipeline);
     if (ended) return ended;
   }
   // ── the integration facet: the merged build gets its own scoreboard and iterations ──
@@ -2204,12 +2191,12 @@ async function judgeIntegration(pipeline: Pipeline): Promise<PipelineEnd> {
   }
 }
 
-/** The merged build, judged against the starting point: its defects are the integration facet's brief. */
-async function judgeMergedBuild(pipeline: Pipeline): Promise<PipelineEnd> {
+/** The merged build, looked at: whether it runs goes on the record. No judge compares it with the start. */
+async function lookAtMergedBuild(pipeline: Pipeline): Promise<PipelineEnd> {
   const { catalogue, ctx, journal, report, run, saveJournal, threadId } = pipeline;
   journal.phase = JournalPhase.Ledger;
   await saveJournal();
-  ctx.setStatus(`run ${run.runId} · judging the merged build`);
+  ctx.setStatus(`run ${run.runId} · looking at the merged build`);
   const handle = await acquirePreview(pipeline, LEDGER_LABEL);
   try {
     const mergedEvidence = await mergedBuildEvidence(pipeline, handle);
@@ -2223,17 +2210,13 @@ async function judgeMergedBuild(pipeline: Pipeline): Promise<PipelineEnd> {
         problems: (mergedEvidence.problems ?? []).slice(0, MERGED_PROBLEMS_KEPT),
       });
     }
-    if (!mergedEvidence.ok) {
-      report.ledgerError = `merged build not judgeable: ${mergedEvidence.problems.join("; ")}`;
-      return;
-    }
-    await recordLedger(pipeline, mergedEvidence);
+    if (!mergedEvidence.ok) report.ledgerError = `merged build does not run: ${mergedEvidence.problems.join("; ")}`;
   } catch (err: any) {
     if (err?.kind === EngineFailure.Aborted || ctx.cancelled) {
       stopRun(report, StopCode.UserStop, STOPPED_BY_USER);
       return { value: closeRun(ctx, { threadId, run, report, journal, catalogue }) };
     }
-    report.ledgerError = `ledger unavailable: ${err?.message ?? err}`;
+    report.ledgerError = `merged build could not be looked at: ${err?.message ?? err}`;
   } finally {
     await releasePreview(ctx, handle);
   }
@@ -2256,38 +2239,7 @@ function mergedBuildEvidence(pipeline: Pipeline, handle: string | null): Promise
   });
 }
 
-/** The ledger judge's verdict on the merged build, on the report and the record. */
-async function recordLedger(pipeline: Pipeline, mergedEvidence: AnyRecord): Promise<void> {
-  const { ctx, deadline, incumbent, integrationFacet, report, run, threadId } = pipeline;
-  const verdict = await withProviderPatience(
-    ctx,
-    () =>
-      blindCompare(ctx, {
-        run,
-        challenger: mergedEvidence,
-        incumbentSnapshot: incumbent,
-        incumbentEvidence: pipeline.startEvidence,
-        iterationId: "merged",
-        cameras: integrationFacet.cameras,
-      }),
-    {
-      deadline,
-      delays: outageDelays(run),
-      label: "the ledger judge",
-      onWait: (w) => providerOutage(ctx, run, { phase: OutagePhase.Ledger, ...w }),
-    },
-  );
-  pipeline.ledger = { verdict, evidence: mergedEvidence };
-  report.ledger = verdict.defects ?? [];
-  await appendRunEvent(ctx, threadId, RunEvent.IntegrationLedger, {
-    runId: run.runId,
-    defects: verdict.defects ?? [],
-    pick: verdict.pick,
-    reason: verdict.reason ?? "",
-  });
-}
-
-/** The integration facet: the merged build's own loop of rounds, fed the ledger's defects. */
+/** The integration facet: the merged build's own loop of rounds, fed the facets' defects nobody owns. */
 async function runIntegrationFacet(pipeline: Pipeline): Promise<void> {
   const { ctx, journal, report, run, saveJournal, worktreeMode } = pipeline;
   journal.phase = JournalPhase.IntegrationFacet;
@@ -2341,7 +2293,7 @@ function integrationLoopOptions(pipeline: Pipeline, facetThreadId: string, handl
     projectDir,
     extraReads: (Object.values(journal.facets) as AnyRecord[]).map((r) => r?.worktree).filter(Boolean),
     onIteration: (record: AnyRecord) => report.iterations.push(iterationForReport(record)),
-    initialDefects: [...(pipeline.ledger?.verdict?.defects ?? []), ...integrationDefects].slice(0, MAX_INITIAL_DEFECTS),
+    initialDefects: integrationDefects.slice(0, MAX_INITIAL_DEFECTS),
     baseShots: pipeline.startEvidence?.shots ?? [],
   };
 }
@@ -2391,13 +2343,15 @@ async function removeWorktrees(pipeline: Pipeline): Promise<void> {
   }
 }
 
-/** The global verdict: the integrated build against the base it forked from. */
+/**
+ * The integrated build's last look: kept when it runs (Loop phase 4) — no judge compares it with the
+ * base it forked from, and nothing rolls it back on a judge's word.
+ */
 async function judgeGlobally(pipeline: Pipeline): Promise<PipelineEnd> {
-  const { catalogue, ctx, journal, report, run, saveJournal, threadId } = pipeline;
-  // ── global verdict: the integrated build against the base it forked from, never the scaffold ──
+  const { journal, report, run, saveJournal, ctx } = pipeline;
   journal.phase = JournalPhase.Verdict;
   await saveJournal();
-  ctx.setStatus(`run ${run.runId} · global verdict`);
+  ctx.setStatus(`run ${run.runId} · looking at the integrated build`);
   await snapshotIntegrated(pipeline);
   pipeline.finalEvidence = await finalEvidence(pipeline);
   if (!pipeline.finalEvidence.ok) return refuseUnjudgeable(pipeline);
@@ -2409,33 +2363,18 @@ async function judgeGlobally(pipeline: Pipeline): Promise<PipelineEnd> {
     ];
     report.lostDemos = lostDemos;
   }
-  const integrationBoard = journal.facets.integration?.board ?? null;
-  pipeline.integrationBoard = integrationBoard;
-  pipeline.verdict = null;
-  const ledgerStands =
-    pipeline.ledger?.verdict &&
-    pipeline.ledger.verdict.unusable !== true &&
-    !pipeline.integrationRan &&
-    !lostDemos.length;
-  if (ledgerStands) {
-    // Nothing changed since the merged build was judged: the ledger verdict IS the global
-    // verdict, and the judge is not paid to look at the same frames twice.
-    pipeline.verdict = { ...pipeline.ledger.verdict, iterationId: FINAL_ITERATION, reusedLedger: true };
-  } else {
-    try {
-      pipeline.verdict = await globalVerdict(pipeline);
-      // A judge that never gave usable JSON gave no verdict. Read as a tie it rolled the
-      // whole integrated build back; as no verdict the run closes and the build stays unjudged.
-      if (pipeline.verdict?.unusable === true) throw new Error(GLOBAL_JUDGE_UNUSABLE);
-    } catch (err: any) {
-      stopRun(report, StopCode.JudgeDown, `global judge unavailable: ${err?.message ?? err}`);
-      return { value: closeRun(ctx, { threadId, run, report, journal, catalogue }) };
-    }
-  }
+  pipeline.integrationBoard = journal.facets.integration?.board ?? null;
+  pipeline.verdict = {
+    pick: VERDICT_CHALLENGER,
+    satisfied: false,
+    biggest_gap: "",
+    reason: "the integrated build runs, so it is kept — nobody judges it",
+    defects: [],
+  };
   report.globalVerdict = pipeline.verdict;
 }
 
-/** The integrated build, kept as a snapshot before anything judges it. */
+/** The integrated build, kept as a snapshot before its last look. */
 async function snapshotIntegrated(pipeline: Pipeline): Promise<void> {
   const { ctx, report, run } = pipeline;
   try {
@@ -2554,61 +2493,21 @@ function lostDemosOf(pipeline: Pipeline): string[] {
   return lostDemos;
 }
 
-/**
- * The global verdict is the one call that must not die with a 529: the whole run's
- * work is judged here. A provider hiccup is waited out (about half an hour at most).
- */
-function globalVerdict(pipeline: Pipeline): Promise<AnyRecord> {
-  const { ctx, incumbent, integrationBoard, integrationFacet, run } = pipeline;
-  const defects: AnyRecord[] = pipeline.ledger?.verdict?.defects ?? [];
-  const extraContext = [
-    integrationBoard
-      ? `INTEGRATION SCOREBOARD (verified mechanically on the build under test):\n${renderScoreboard(integrationBoard)}`
-      : "",
-    defects.length
-      ? `DEFECTS NAMED ON THE MERGED BUILD BEFORE INTEGRATION (say which are gone):\n${defects.map((d, i) => `${i + 1}. ${d}`).join("\n")}`
-      : "",
-  ]
-    .filter(Boolean)
-    .join("\n\n");
-  return withProviderPatience(
-    ctx,
-    () =>
-      blindCompare(ctx, {
-        run,
-        challenger: pipeline.finalEvidence,
-        incumbentSnapshot: incumbent,
-        incumbentEvidence: pipeline.startEvidence,
-        iterationId: FINAL_ITERATION,
-        cameras: integrationFacet.cameras,
-        extraContext,
-      }),
-    {
-      delays: outageDelays(run),
-      label: "the global judge",
-      onWait: (w) => providerOutage(ctx, run, { phase: OutagePhase.Final, ...w }),
-    },
-  );
-}
-
 /** Steering that came too late, the verified baseline, and the run's close. */
 async function closePipeline(pipeline: Pipeline): Promise<PipelineEnd> {
   const { catalogue, ctx, finalDeadline, journal, report, run, steeringBacklog, threadId } = pipeline;
   // Steering that arrived after the last builder hand-off is kept with this build and said so —
   // never dropped in silence, and never handed to a later build.
   await keepSteeringBacklog(ctx, { threadId, run, report, backlog: await steeringBacklog() });
-  const verifiedBaseline =
-    pipeline.verdict.pick === VERDICT_CHALLENGER ? await acceptIntegrated(pipeline) : await rejectIntegrated(pipeline);
-  if (verifiedBaseline) {
-    await recordFinalization(pipeline, verifiedBaseline);
-    await finalizeOptimization(ctx, { threadId, run, journal, report, deadline: finalDeadline });
-  }
+  const verifiedBaseline = await acceptIntegrated(pipeline);
+  await recordFinalization(pipeline, verifiedBaseline);
+  await finalizeOptimization(ctx, { threadId, run, journal, report, deadline: finalDeadline });
   return { value: closeRun(ctx, { threadId, run, report, journal, catalogue }) };
 }
 
 /**
- * The integrated build beat its base: it becomes the healthy snapshot, and the run says how it
- * ended — the reference panel's word when there is a reference, the facets' when there is none.
+ * The integrated build runs: it becomes the healthy snapshot, and the run says how its facets
+ * settled. No panel judges it against the reference (Loop phase 4).
  */
 async function acceptIntegrated(pipeline: Pipeline): Promise<AnyRecord> {
   const { ctx, plan, report, run } = pipeline;
@@ -2624,95 +2523,8 @@ async function acceptIntegrated(pipeline: Pipeline): Promise<AnyRecord> {
   const settledText = deadEarly.length
     ? `${deadEarly.length} of ${plan.facets.length} facets died early, their work unmerged (${deadEarly.map(([id, r]) => `${id}: ${r.stoppedBecause}`).join(" · ")})`
     : null;
-  const hasReference = run.reference?.kind !== ReferenceKind.Direction && Boolean(run.reference?.name);
-  if (hasReference) await judgeAgainstThePanel(pipeline, settledText);
-  else stopRunUnlessStopped(report, StopCode.Done, settledText || "facets settled toward the direction");
+  stopRunUnlessStopped(report, StopCode.Done, settledText || "facets settled toward the direction");
   return winning;
-}
-
-/** The blind reference panel on the accepted build: victory, or why it was not one. */
-async function judgeAgainstThePanel(pipeline: Pipeline, settledText: string | null): Promise<void> {
-  const { ctx, integrationBoard, report, run } = pipeline;
-  try {
-    // The floor (WP7): until a calibrated threshold exists, "no worse than the base build"
-    // on the best camera. A run that never measured the base has no floor to fail.
-    const refs = referenceStats(run);
-    const baseBest = bestStyleDistance(pipeline.startEvidence?.shots ?? [], refs);
-    const finalBest = bestStyleDistance(pipeline.finalEvidence.shots ?? [], refs);
-    report.styleDistance = { base: baseBest, final: finalBest };
-    const panel = await withProviderPatience(
-      ctx,
-      () =>
-        judgeAgainstReference(ctx, {
-          run,
-          evidence: pipeline.finalEvidence,
-          iterationId: FINAL_ITERATION,
-          styleFloor: baseBest?.distance ?? null,
-          integrationBoard: integrationBoard ? renderScoreboard(integrationBoard) : null,
-        }),
-      {
-        delays: outageDelays(run),
-        label: "the reference panel",
-        onWait: (w) => providerOutage(ctx, run, { phase: OutagePhase.Panel, ...w }),
-      },
-    );
-    report.panel = panel;
-    if (panel?.beatsReference) {
-      report.victory = true;
-      stopRun(
-        report,
-        StopCode.Victory,
-        `the panel picked our build over ${run.reference?.name} (${panel.votes}${styleDistanceNote(panel.styleDistance)})`,
-      );
-      return;
-    }
-    stopRunUnlessStopped(
-      report,
-      StopCode.ReferenceUnbeaten,
-      `${settledText ?? "facets settled"}; ${panelRefusal(run, panel)}`,
-    );
-  } catch (err: any) {
-    stopRunUnlessStopped(
-      report,
-      StopCode.JudgeDown,
-      `${settledText ?? "facets settled"}; reference panel unavailable (${err?.message ?? err})`,
-    );
-  }
-}
-
-/** "; style distance 0.42 on eye:spawn" — when the panel measured one. */
-function styleDistanceNote(styleDistance: AnyRecord | null | undefined): string {
-  const distance = styleDistance?.distance;
-  if (distance === null || distance === undefined) return "";
-  return `; style distance ${distance.toFixed(2)} on ${styleDistance?.camera}`;
-}
-
-/** Why the panel did not pick the build: the style floor, or its votes. */
-function panelRefusal(run: Run, panel: AnyRecord | null | undefined): string {
-  const style = panel?.styleDistance;
-  if (style && style.ok === false)
-    return `style distance ${style.distance?.toFixed(2)} is above the floor ${style.floor?.toFixed(2)}`;
-  return `the panel still prefers ${run.reference?.name} (${panel?.votes ?? "no votes"})`;
-}
-
-/** The integrated build lost the global blind comparison: roll it back, and say whether that happened. */
-async function rejectIntegrated(pipeline: Pipeline): Promise<null> {
-  const { ctx, incumbent, report, run } = pipeline;
-  const rollback = await rollBackGame(ctx, {
-    run,
-    snapshot: incumbent,
-    reason: `run ${run.runId}: integrated build lost the global blind comparison`,
-  });
-  report.rolledBack = rollback.rolledBack;
-  const after = rollback.rolledBack
-    ? "rolled back"
-    : `the rollback was refused (${rollback.refusal}), so the integrated build is still in the game folder`;
-  stopRun(
-    report,
-    StopCode.NoImprovement,
-    `the integrated build did not beat the base it forked from (${pipeline.verdict.biggest_gap ?? "no gap named"}) — ${after}`,
-  );
-  return null;
 }
 
 /** What the optimization pass starts from, saved in the journal so a resume can finish it. */
@@ -2898,71 +2710,6 @@ async function finalizeOptimization(
   }: { threadId: string; run: Run; journal: AnyRecord; report: AnyRecord; deadline: number },
 ): Promise<void> {
   const f = journal.finalization;
-  const baselineEvidence = await restoreFrames(f.baselineEvidence);
-  const startingEvidence = await restoreFrames(f.startingEvidence);
-  report.optimization = await runOptimization(ctx, {
-    threadId,
-    run,
-    journal,
-    deadline,
-    origin: f.origin,
-    baselineSnapshot: f.baselineSnapshot,
-    baselineVerified: f.baselineVerified,
-    baselineEvidence,
-    baselineVerdict: f.baselineVerdict,
-    specs: f.specs,
-    requiredChecks: f.requiredChecks,
-    quality: (bounded: HarnessCtx, { run: boundedRun, evidence }: { run: Run; evidence: AnyRecord }) =>
-      optimizedQualityHolds(bounded, { run: boundedRun, evidence, finalization: f, startingEvidence, report }),
-  });
-  if (report.optimization.candidateAdopted) {
-    if (report.optimizationQuality) report.globalVerdict = report.optimizationQuality;
-    if (report.optimizationPanel) report.panel = report.optimizationPanel;
-    const final = await ctx.call(HostMethod.SnapshotCreate, {
-      scope: "game",
-      project: run.project,
-      healthy: true,
-      reason: `run ${run.runId}: verified optimization retained`,
-    });
-    report.finalSnapshot = final.snapshot_id;
-  }
+  report.optimization = await skipOptimization(ctx, { threadId, run, reason: OPTIMIZATION_SKIPPED });
   f.report = withoutFrames(report);
-}
-
-/**
- * Does the optimized build still beat the starting point (and the reference, when the run
- * beat it)? Same quality boundary as before the pass; an accepted change cannot reuse the ledger.
- */
-async function optimizedQualityHolds(
-  bounded: HarnessCtx,
-  {
-    run,
-    evidence,
-    finalization: f,
-    startingEvidence,
-    report,
-  }: { run: Run; evidence: AnyRecord; finalization: AnyRecord; startingEvidence: AnyRecord; report: AnyRecord },
-): Promise<boolean> {
-  const fresh = await blindCompare(bounded, {
-    run,
-    challenger: evidence,
-    incumbentSnapshot: f.startingSnapshot,
-    incumbentEvidence: startingEvidence,
-    iterationId: OPTIMIZATION_ITERATION,
-    cameras: [...new Set<string>(f.specs.flatMap((s: AnyRecord) => s.cameras ?? []))],
-  });
-  if (fresh.pick !== VERDICT_CHALLENGER) return false;
-  if (f.report?.panel?.beatsReference) {
-    const panel = await judgeAgainstReference(bounded, {
-      run,
-      evidence,
-      iterationId: OPTIMIZATION_ITERATION,
-      styleFloor: f.report.panel.styleDistance?.floor ?? null,
-    });
-    if (!panel?.beatsReference) return false;
-    report.optimizationPanel = panel;
-  }
-  // Same quality boundary as before the pass; an accepted change cannot reuse the ledger.
-  report.optimizationQuality = fresh;
-  return true;
 }

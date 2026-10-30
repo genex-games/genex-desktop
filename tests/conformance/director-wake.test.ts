@@ -378,21 +378,6 @@ describe("when the lead is woken (wake-schedule.ts)", () => {
     assert.deepEqual(nextWake(view({ running: 0, finishMarkAt: mark })), { at: T0, reasons: [WakeCause.IdleAsk] });
   });
 
-  it("W10c. the art director's regular look is a timer of its own: due at its time, uncapped, and never in the wrap-up", () => {
-    const shipLook = WakeCause.ShipLook;
-    const look = T0 + 10 * MINUTE_MS;
-    const at = (over: Partial<WakeView>) => nextWake(view(over));
-    assert.deepEqual(at({ shipLookAt: look }), { at: look, reasons: [shipLook] });
-    // The hourly cap holds the heartbeat back, never the look: four busy workers fill the cap.
-    const wakesAt = Array.from({ length: MAX_WAKES_PER_HOUR }, (_, i) => T0 - 50 * MINUTE_MS + i * MINUTE_MS);
-    assert.deepEqual(at({ shipLookAt: look, wakesAt }), { at: look, reasons: [shipLook] });
-    // Due already (the wave came in while the lead was busy): now.
-    assert.deepEqual(at({ now: look + MINUTE_MS, shipLookAt: look }), { at: look + MINUTE_MS, reasons: [shipLook] });
-    // The wrap-up takes no look: wrapping, or a working time already over.
-    assert.equal(at({ shipLookAt: look, wrapping: true, running: 0 }), null);
-    assert.deepEqual(at({ softDeadline: T0 - 1_000, shipLookAt: look, running: 2 })?.reasons, [WakeCause.WrapUp]);
-  });
-
   it("W10b. a finish mark still unsaid when the wrap-up is due gives way to the wrap-up: the two never share a wake", () => {
     // A Mac that slept through both times, or a Resume of a run paused in its wrap-up (soft deadline now).
     const mark = T0 - 40 * MINUTE_MS;
@@ -406,7 +391,7 @@ describe("when the lead is woken (wake-schedule.ts)", () => {
     assert.deepEqual(nextWake(view({ now: mark, finishMarkAt: mark })), { at: mark, reasons: [WakeCause.FinishMark] });
   });
 
-  it("W11. a goal run idle twice with no ship review on its head is sent to art direction once, then wraps up", () => {
+  it("W11. a goal run idle twice wraps up: the studio sends it to no art director first", () => {
     const idle = {
       ok: true,
       closed: false,
@@ -416,15 +401,10 @@ describe("when the lead is woken (wake-schedule.ts)", () => {
       idleAsked: true,
       workingTimeLeft: true,
       finishRequested: false,
-      artDirectionOwed: true,
     };
-    assert.deepEqual(afterTurn(idle), { next: TurnEnd.ArtDirection, idleAsked: true });
-    // Art direction said (or never owed): the second idle turn wraps up as before.
-    assert.deepEqual(afterTurn({ ...idle, artDirectionOwed: false }), {
-      next: TurnEnd.WrapUp,
-      idleAsked: true,
-      wrapCause: WrapCause.Idle,
-    });
+    // Flipped (Loop phase 4): a goal run idle twice was sent to art direction once first; the art
+    // director's look is the lead's to ask for now, so the second idle turn wraps up.
+    assert.deepEqual(afterTurn(idle), { next: TurnEnd.WrapUp, idleAsked: true, wrapCause: WrapCause.Idle });
     // The first idle turn is still asked what next, a busy one sleeps, and no working time wraps up.
     assert.deepEqual(afterTurn({ ...idle, idleAsked: false }), { next: TurnEnd.AskIdle, idleAsked: true });
     assert.deepEqual(afterTurn({ ...idle, running: 1 }), { next: TurnEnd.Sleep, idleAsked: false });
@@ -659,13 +639,13 @@ describe("what the message that wakes the lead says (wake-prompts.ts)", () => {
       assert.ok(card.split("\n").length <= CARD_MAX_LINES, `the card is ${card.split("\n").length} lines`);
   });
 
-  it("P7b. a goal build's card and brief say the art director's blockers are required finishing, and its visible flaws and nits go in the report, never a round", () => {
+  it("P7b. a goal build's card and brief say the art director's blockers are worth finishing when the lead asks for its look, its visible flaws and nits go in the report, and its word holds nothing back", () => {
     const goal = wakeDigest(facts({ card: { ...facts().card, direction: false, goalCommission: true } }));
     const card = goal.slice(goal.indexOf("BUILD CARD")).split("\n\n")[0]!;
     assert.match(card, /do not continue optional polish/, "optional polish is still not the goal build's work");
-    // Flipped: visible defects were required finishing too.
-    assert.match(card, /art director's blockers are required finishing/);
-    assert.match(card, /visible flaws and nits go in your report and never start a round/);
+    // Flipped (Loop phase 4): its blockers were required finishing; the art director is a second opinion now.
+    assert.match(card, /art director, its blockers are worth finishing/);
+    assert.match(card, /visible flaws and nits go in your report; its word holds nothing back/);
     assert.ok(card.split("\n").length <= CARD_MAX_LINES, `the card is ${card.split("\n").length} lines`);
     // A legacy run that is neither a goal nor a duration commission has no finish the art director
     // turns back: its card, like its brief, says nothing of the art director's defects.
@@ -695,7 +675,7 @@ describe("what the message that wakes the lead says (wake-prompts.ts)", () => {
     } as never);
     const time = brief.split("\n").find((line) => line.startsWith("TIME:"))!;
     assert.match(time, /Report blockers instead of optional polish/);
-    assert.match(time, /art director's blockers are required finishing; its visible flaws and nits go in your report/);
+    assert.match(time, /its blockers are worth finishing and its visible flaws and nits go in your report/);
   });
 
   it("P8. a worker from before a pause is brought in by a worker for a lead, and by a merge in its worktree for a director with its own hands", () => {

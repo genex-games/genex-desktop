@@ -14,7 +14,6 @@ import { isRunning } from "../outcomes.ts";
 import { KIND_NAMES } from "../kinds.ts";
 import { minutes } from "../time.ts";
 import { CLAIM_BEFORE_END_MINUTES } from "../finish-check.ts";
-import { stopRuleWords } from "../finish-check-prompts.ts";
 import { LEAD_BRIEF, LEAD_RESUMED_MEMORY } from "./lead-session-prompts.ts";
 import { MAX_DIRECTOR_MEMORY } from "./memory.ts";
 import { DIRECTOR_TOOLS } from "./tool-specs.ts";
@@ -249,7 +248,7 @@ function rulesThatNeverMove(run: Run, loop: DirectorLoop, leads: boolean): strin
     `- First playable: prioritize a small complete playable loop and integrate its healthy revision before broad atmosphere or asset polish. Continue judging normally; a preview is not acceptance or landing.`,
     `- Asset truth: run_status.assets lists generated originals and current workspace copies. Read it before answering asset questions. Preserve delivered local files; integrate checkpoints them through the host. Never move them to /tmp or swap in remote URLs: assets live in the game folder. State generated-but-unused assets and procedural fallbacks explicitly in completion reports.`,
     `- Completion reporting: distinguish delivered changes from passed, failed and unverified checks. The Studio outcome card counts integrations separately from evaluated attempts; never call all requested features verified merely because the structural board passed.`,
-    `- Evidence, not reports: judge, playtest or look at a session's "done" before you integrate (kept loop rounds were judged) and at the build before you finish; pictures outrank files.`,
+    `- Evidence, not reports: look at a session's "done" before you integrate and at the build before you finish (a judge is a second opinion); pictures outrank files.`,
     userSaysWords(loop),
     leads
       ? ""
@@ -260,16 +259,15 @@ function rulesThatNeverMove(run: Run, loop: DirectorLoop, leads: boolean): strin
 
 /**
  * When the run is done, as the TIME line says it: a timed build's hours are a cap it may finish
- * under with a claim (a finish that claims nothing waits for the wrap-up); any other
- * finishes once verified and skips optional polish — and a goal commission, whose first finish the
- * art director turns back with its defects (art-direction.ts `shipFinishGate`), hears that those
- * defects are not that polish.
+ * under with a claim (a finish that claims nothing waits for the wrap-up); any other finishes once
+ * the lead judges it done and skips optional polish — and a goal commission hears what the art
+ * director's blockers are, when it asks for its look.
  */
 function completionWords(run: Run): string {
   if (durationCommission(run))
-    return `The hours are a cap: call finish with victory=yes once the goal is reached (a reviewer's yes ends the build); a finish that claims nothing waits for the wrap-up, unless the user asks. On a no, ${stopRuleWords(false, "new commits")}`;
+    return "The hours are a cap: call finish with victory=yes once the goal is reached (your word ends the build; review=yes asks a reviewer first); a finish that claims nothing waits for the wrap-up, unless the user asks.";
   const words =
-    "Finish once required outcomes are verified; time is a ceiling. Report blockers instead of optional polish.";
+    "Finish once you judge the required outcomes reached; time is a ceiling. Report blockers instead of optional polish.";
   return goalCommission(run) ? `${words} ${SHIP_DEFECTS_NOT_POLISH}` : words;
 }
 

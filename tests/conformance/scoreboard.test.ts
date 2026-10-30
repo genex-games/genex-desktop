@@ -1354,7 +1354,7 @@ describe("judges that keep the right build", () => {
     assert.deepEqual([preferred.accepted, preferred.source], [true, "taste"]);
   });
 
-  it("a planner check flipping still wins on its own, and only a named regression undoes it", () => {
+  it("a planner check flipping still wins on its own, and only a measured regression undoes it", () => {
     const board = toScoreboard([
       { id: "shell-lit", kind: "vision", weight: "normal", pass: true, confidence: 0.9 },
     ] as never);
@@ -1368,8 +1368,15 @@ describe("judges that keep the right build", () => {
     assert.equal(kept.accepted, true, "a measured flip beats a bare preference");
     assert.equal(kept.source, "checks");
     const vetoed = acceptRound({ spec: plan, board, comparison, taste: { pick: "incumbent", veto: true } });
-    assert.equal(vetoed.accepted, false);
-    assert.equal(vetoed.source, "taste-veto");
+    // Flipped (Loop phase 4): a judge's veto undid the round; a judge's word decides nothing now.
+    assert.equal(vetoed.accepted, true);
+    assert.equal(vetoed.source, "checks");
+    const regressed = acceptRound({ spec: plan, board, comparison: { flips: [], regressions: ["wheels-turn"] } });
+    assert.deepEqual(
+      [regressed.accepted, regressed.source],
+      [false, "checks"],
+      "a check that passed and fails undoes it",
+    );
     // No flip at all and a move that never arrived. Flipped (Loop phase 2): kept, the move stays owed.
     const nothing = acceptRound({
       spec: plan,
@@ -1830,7 +1837,7 @@ describe("code reviewer, mechanical half", () => {
     assert.deepEqual(files.get("src/x.js")?.removed, ["removed"]);
   });
 
-  it("flags untagged batches and edits outside ownership, and never the game's randomness or clock", () => {
+  it("flags edits outside ownership, and never the game's randomness, clock or untagged objects", () => {
     const diff = [
       "+++ b/src/city.js",
       "@@ -1,0 +1,5 @@",
@@ -1847,7 +1854,8 @@ describe("code reviewer, mechanical half", () => {
     // Flipped (Loop phase 2): Math.random and the wall clock are the game's own.
     assert.ok(!violations.some((v) => /Math\.random/.test(v.what)));
     assert.ok(!violations.some((v) => /wall-clock/.test(v.what)));
-    assert.ok(violations.some((v) => /none tagged/.test(v.what)));
+    // Flipped (Loop phase 4): untagged new objects were a finding; the scene's tags are the game's own.
+    assert.ok(!violations.some((v) => /tagged/.test(v.what)));
     assert.ok(violations.some((v) => /outside this facet's ownership \(src\/lighting\.js\)/.test(v.what)));
     assert.ok(violations.every((v) => v.source === "mechanical"));
   });
@@ -1905,67 +1913,19 @@ describe("code reviewer, mechanical half", () => {
     );
   });
 
-  /**
-   * One owner of the screen: a part that does not own the screen publishes its values; drawing
-   * them is the owner's call.
-   */
-  it("finds a part drawing on a screen another part owns, and says nothing when no part owns it", () => {
+  it("finds nothing when a part draws on or changes a screen another part leads: how it shows its own is its builder's", () => {
     const meter = [
       "+++ b/src/race/pursuit.js",
-      "@@ -1,0 +1,4 @@",
+      "@@ -1,0 +1,5 @@",
       "+export const heat = { value: 0 };",
       "+__studio.hud.bar('heat', { value: heat.value, anchor: 'top-right' });",
       "+hud.text('wanted', 'WANTED');",
-      "+const label = hud.textLabel;",
-    ].join("\n");
-    const race = { id: "race", owns: ["src/race/"], checks: [], screenOwner: "hud" };
-    const found = mechanicalReview(meter, race).filter((v) => v.category === "screen-owner");
-    assert.deepEqual(
-      found.map((v) => v.line),
-      [2, 3],
-      `one finding per drawing line: ${found.map((v) => v.what).join(" | ")}`,
-    );
-    assert.match(found[0]!.what, /"hud" owns/);
-    assert.match(String(found[0]!.fix), /__studio\.state\(\)/);
-    const owner = { id: "hud", owns: ["src/race/"], checks: [], ownsScreen: true, screenOwner: "hud" };
-    assert.deepEqual(
-      mechanicalReview(meter, owner).filter((v) => v.category === "screen-owner"),
-      [],
-      "the owner draws",
-    );
-    const nobody = mechanicalReview(meter, { id: "race", owns: ["src/race/"], checks: [] });
-    assert.deepEqual(
-      nobody.filter((v) => v.category === "screen-owner"),
-      [],
-      "with no part owning the screen the rule is inert, as before",
-    );
-    const own = mechanicalReview(meter, race, { template: false });
-    assert.deepEqual(
-      own.filter((v) => v.category === "screen-owner"),
-      [],
-      "a game of its own draws however it already does",
-    );
-    const quiet = mechanicalReview("+++ b/src/race/pursuit.js\n@@ -1,0 +1,1 @@\n+export const heat = 1;\n", race);
-    assert.deepEqual(quiet, []);
-  });
-
-  /** Review of WP-SCOPE-2: reading the HUD (a probe of what it shows) is not drawing on it. */
-  it("lets a part read the HUD another part owns, and finds it changing it", () => {
-    const lines = [
-      "+const shown = { hudIds: () => __studio.hud.items() };",
-      "+const speed = hud.get('speed');",
       "+__studio.hud.remove('speed');",
       "+hud.clear();",
-      "+__studio.hud.enable(false);",
-    ];
-    const diff = ["+++ b/src/race/probe.js", `@@ -1,0 +1,${lines.length} @@`, ...lines].join("\n");
+    ].join("\n");
     const race = { id: "race", owns: ["src/race/"], checks: [], screenOwner: "hud" };
-    const found = mechanicalReview(diff, race).filter((v) => v.category === "screen-owner");
-    assert.deepEqual(
-      found.map((v) => v.line),
-      [3, 4, 5],
-      `reads pass, changes are the owner's: ${found.map((v) => v.line).join(", ")}`,
-    );
+    // Flipped (Loop phase 4): each drawing or changing line was a screen-owner finding.
+    assert.deepEqual(mechanicalReview(meter, race), []);
   });
 
   /**

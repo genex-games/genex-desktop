@@ -46,8 +46,6 @@ import {
 import {
   judgeAgainstReference,
   normalizeBallot,
-  normalizeLiveness,
-  renderLiveness,
   visionCheck,
   blindCompare,
   combineFacetVerdict,
@@ -748,6 +746,15 @@ function defaultJudge(text: string, request: CompleteRequest): string {
   return "ok";
 }
 
+/**
+ * A ladder of `rungs` steps for a facet, none with a check of its own. Since Loop phase 4 no judge's
+ * "not satisfied" keeps a facet going: a part whose checks hold is done unless its ladder has a rung
+ * left, and a kept round climbs one. A row that needs a facet to run several rounds gives it one.
+ */
+function ladderOf(id: string, rungs: number) {
+  return Array.from({ length: rungs }, (_, i) => ({ id: `${id}-step-${i + 1}`, what: `step ${i + 1} of the ${id}` }));
+}
+
 function twoFacetPlan(extra: { waterChecks?: unknown[]; skyChecks?: unknown[]; more?: unknown[] } = {}) {
   return {
     facets: [
@@ -822,6 +829,9 @@ describe("harness incidents", () => {
     const plan = twoFacetPlan();
     (plan.facets[0] as { owns: string[] }).owns = ["src/water.js", "src/palette.js"];
     (plan.facets[1] as { owns: string[] }).owns = ["src/sky.js", "src/palette.js"];
+    // Since Loop phase 4 a ladder, not a judge never satisfied, keeps both going past their first round.
+    for (const facet of plan.facets as Array<{ id: string }>)
+      Object.assign(facet, { milestones: ladderOf(facet.id, 3) });
     const builds: Record<string, number> = { water: 0, sky: 0 };
     const judged: string[] = [];
     registerFakeEngine(rig, {
@@ -1271,13 +1281,10 @@ describe("harness incidents", () => {
       JSON.stringify(waterSpec.checks.map((c) => c.id)),
     );
     assert.deepEqual(finished.referenceStills, ["dock", "strider"]);
-    // The panel ran with the new ballots and, with the scripted reference-preferring votes, no victory.
+    // Flipped (Loop phase 4): a panel judged the integrated build against the stills and decided the
+    // victory; no panel runs now, and the classic pipeline claims none.
     assert.equal(finished.victory, false);
-    const panel = finished.panel as { ballots: Array<{ looks: string; counts: boolean }> } | undefined;
-    assert.ok(
-      panel && panel.ballots.length === 3 && panel.ballots.every((b) => b.looks === "reference" && b.counts === false),
-      JSON.stringify(panel),
-    );
+    assert.equal(finished.panel, undefined, "no panel judged the build");
   });
 
   it("7. D6 replan: a spike verdict of `unsatisfiable` re-points the check through the planner, and the old camera is gone from the board", async () => {
@@ -1451,6 +1458,8 @@ describe("harness incidents", () => {
         identity: [id],
         budgetShare: 0.2,
         checks: [{ id: `${id}-lit`, kind: "pixel", camera: "default", expr: "litFraction > 0.5", weight: "identity" }],
+        // Flipped (Loop phase 4): a judge that was never satisfied kept each facet going; its ladder does now.
+        milestones: ladderOf(id, 6),
       })),
       mainOwner: "terrain",
       base: null,
@@ -1878,9 +1887,13 @@ describe("harness incidents", () => {
       "+scene.add(new THREE.Mesh(g, m));",
     ].join("\n");
     const onTemplate = mechanicalReview(diff, spec, { ownsMain: true });
-    // Flipped (Loop phase 2): randomness and the clock are no rule; the untagged objects still are.
-    assert.deepEqual(onTemplate.map((v) => v.category).sort(), ["tags"]);
-    for (const violation of onTemplate) assert.equal(templateOnlyFinding(violation), true, violation.what);
+    // Flipped (Loop phase 2): randomness and the clock are no rule. Flipped (Loop phase 4): nor are the untagged objects.
+    assert.deepEqual(onTemplate, []);
+    assert.equal(
+      templateOnlyFinding({ category: "tags", what: "untagged" }),
+      true,
+      "an older finding is still the template's",
+    );
     assert.deepEqual(
       mechanicalReview(diff, spec, { ownsMain: true, template: false }),
       [],
@@ -2219,12 +2232,12 @@ describe("harness incidents", () => {
         await mkdir(path.join(request.cwd, "src"), { recursive: true });
         await writeFile(path.join(request.cwd, "src", `${facet}.js`), `export const ${facet} = ${builds[facet]};\n`);
         // Build 3 of water digs the pools: the milestone's scene check passes from now on.
-        if (facet === "water" && builds.water === 3)
-          rig.preview.evaluations.push({ match: "count('pool')", value: { value: true } });
+        if (facet === "water" && builds.water === 3) pools.value = { value: true };
         return { sessionId: `ses_${facet}` };
       },
     });
-    rig.preview.evaluations.push({ match: "count('pool') >= 3", value: { value: false } });
+    const pools = { match: "count('pool') >= 3", value: { value: false } as unknown };
+    rig.preview.evaluations.push(pools);
     // Twelve iterations across two facets: water needs four — climb, lose, climb, planner move.
     const { events } = await runAutopilot(rig, "moveworld", { budgets: { maxIterations: 12 } });
     const water = customEvents(events, "facet_iteration").filter((i) => i.facetId === "water");
@@ -2239,8 +2252,9 @@ describe("harness incidents", () => {
       ]),
     );
     // Iteration 2: identity holds, the first milestone is the move, nothing flipped, the judge saw polish.
-    // Flipped (Loop phase 2): the round is kept, and the move stays owed.
-    const missed = water.find((i) => /the move was not delivered/.test(String(i.reason)));
+    // Flipped (Loop phase 2): the round is kept, and the move stays owed. Flipped (Loop phase 4): the
+    // rung's own check says so, not a judge.
+    const missed = water.find((i) => /the move's own check does not pass yet/.test(String(i.reason)));
     assert.ok(missed, `a polish-only build without the move says so: ${debug}`);
     assert.equal(missed!.winner, "challenger", `and is kept: ${debug}`);
     assert.match(String(missed!.reason), /stays owed/);
@@ -2256,10 +2270,8 @@ describe("harness incidents", () => {
       later.some((m) => m.milestoneId === "herons"),
       `herons followed: ${JSON.stringify(later.map((m) => [m.iteration, m.milestoneId, m.source]))}`,
     );
-    assert.ok(
-      tasteAsks.length >= 1 && /three pools|herons|jetty/.test(tasteAsks[0]!),
-      "the taste judge was told the move",
-    );
+    // Flipped (Loop phase 4): a taste judge was told the move and decided whether it landed; none is asked.
+    assert.deepEqual(tasteAsks, [], "no judge was asked about the move");
     const finished = customEvents(events, "run_finished")[0]!;
     const waterSpec = (finished.facets as Record<string, { spec: { checks: Array<{ id: string; origin?: string }> } }>)
       .water!.spec;
@@ -2267,97 +2279,6 @@ describe("harness incidents", () => {
       waterSpec.checks.some((c) => c.id === "milestone-three-pools" && c.origin === "milestone"),
       "the milestone's check stays on the board as a regression guard",
     );
-  });
-
-  it("V2b. the derby run: a round the judge preferred is not undone for a move the harness invented, and the miss is on the record", async () => {
-    // dirt2 it2: the director's brief said mud; the harness planner made "a wet-mud puddle zone
-    // system" mandatory, the taste judge preferred the build anyway, and the round was reset for
-    // missing what nobody had asked for. Now the move is guidance until two accepted builds in a
-    // row have only polished — then the escalation makes it mandatory again.
-    const rig = await startRig();
-    rigs.push(rig);
-    const plan = twoFacetPlan();
-    const builds: Record<string, number> = { water: 0, sky: 0 };
-    registerFakeEngine(rig, {
-      complete: (text, request) => {
-        if (text.includes("ENGINE HINT: maxParallel")) return JSON.stringify(plan);
-        if (text.includes("Name the ONE structural move"))
-          return JSON.stringify({
-            what: "a wet-mud puddle zone system",
-            why: "the marsh has nowhere to go",
-            check: null,
-          });
-        if (text.includes("THE FACET UNDER JUDGEMENT") && /Water/.test(text)) {
-          const pick = newestFixtureBuild(request);
-          // The judge likes every build and never sees the move: the case that used to lose.
-          return JSON.stringify({
-            pick,
-            satisfied: false,
-            regression: null,
-            newCheck: null,
-            defects: [],
-            moveDelivered: /THE MOVE the builder of build [AB]/.test(text) ? false : null,
-            scale: "polish",
-            reason: "scripted",
-          });
-        }
-        return null;
-      },
-      delegate: async (request) => {
-        const facet = /YOUR FACET: Water|facet "Water"/.test(request.prompt)
-          ? "water"
-          : /YOUR FACET: Sky|facet "Sky"/.test(request.prompt)
-            ? "sky"
-            : null;
-        if (!facet)
-          return request.playtest
-            ? { summary: JSON.stringify({ answers: { "integration-play": { answer: "yes" } }, report: "played" }) }
-            : null;
-        builds[facet]!++;
-        await mkdir(path.join(request.cwd, "src"), { recursive: true });
-        await writeFile(path.join(request.cwd, "src", `${facet}.js`), `export const ${facet} = ${builds[facet]};\n`);
-        return { sessionId: `ses_${facet}` };
-      },
-    });
-    const { events } = await runAutopilot(rig, "moveguidance", { budgets: { maxIterations: 8 } });
-    const water = customEvents(events, "facet_iteration").filter((i) => i.facetId === "water");
-    type Move = {
-      what?: string;
-      source?: string;
-      mandatory?: boolean;
-      delivered?: boolean | null;
-      note?: string | null;
-    };
-    const debug = JSON.stringify(
-      water.map((i) => [
-        i.iteration,
-        i.winner,
-        i.verdictSource,
-        (i.move as Move | null)?.mandatory,
-        (i.move as Move | null)?.delivered,
-      ]),
-    );
-    const asked = water.filter((i) => (i.move as Move | null)?.what);
-    assert.ok(asked.length >= 2, `the planner named a move from the second iteration on: ${debug}`);
-    const kept = asked[0]!;
-    assert.equal(kept.winner, "challenger", `the round the judge preferred stands: ${debug}`);
-    assert.equal((kept.move as Move).mandatory, false, "nobody asked for this move");
-    assert.equal((kept.move as Move).delivered, false);
-    assert.match(String((kept.move as Move).note), /it did not cost the round/);
-    assert.match(String(kept.reason), /the move was not delivered/);
-    // The same move is re-issued rather than a fresh one being invented (MOVE_ATTEMPTS).
-    const moves = customEvents(events, "facet_move").filter((m) => m.facetId === "water" && m.delivered === null);
-    assert.ok(
-      moves.length >= 2 && moves[0]!.what === moves[1]!.what,
-      `it is asked again: ${JSON.stringify(moves.map((m) => [m.iteration, m.what, m.mandatory]))}`,
-    );
-    // And when two accepted builds in a row have only polished, the escalation makes the move
-    // mandatory. Flipped (Loop phase 2): the build without it is kept, and the move stays owed.
-    const escalated = asked.find((i) => (i.move as Move).mandatory === true);
-    assert.ok(escalated, `after two polish-only accepted builds the move is mandatory again: ${debug}`);
-    assert.notEqual(escalated!.verdictSource, "no-move", `and the build without it is kept: ${debug}`);
-    assert.equal(escalated!.winner, "challenger");
-    assert.match(String((escalated!.move as Move).note), /stays owed/);
   });
 
   it("V3. a builder flag naming another facet moves the check there, blocks its class here, and the defect does not re-grow", async () => {
@@ -2403,22 +2324,26 @@ describe("harness incidents", () => {
 
     const rig = await startRig();
     rigs.push(rig);
-    const plan = twoFacetPlan();
+    // Flipped (Loop phase 4): the haze check grew from a judge's defects; no judge runs in a round
+    // now, so the planner asks it, and a ladder keeps both facets building.
+    const plan = twoFacetPlan({
+      waterChecks: [
+        { id: "lit", kind: "pixel", camera: "default", expr: "litFraction > 0.5", weight: "identity" },
+        {
+          id: "haze-plane",
+          kind: "vision",
+          camera: "default",
+          ask: "Is the marsh clear of a milky band at knee height?",
+          weight: "normal",
+        },
+      ],
+    });
+    for (const facet of plan.facets as Array<{ id: string }>)
+      Object.assign(facet, { milestones: ladderOf(facet.id, 3) });
     const builds: Record<string, number> = { water: 0, sky: 0 };
     registerFakeEngine(rig, {
-      complete: (text, request) => {
+      complete: (text) => {
         if (text.includes("ENGINE HINT: maxParallel")) return JSON.stringify(plan);
-        if (text.includes("THE FACET UNDER JUDGEMENT") && /Water/.test(text)) {
-          const pick = newestFixtureBuild(request);
-          return JSON.stringify({
-            pick,
-            satisfied: false,
-            regression: null,
-            newCheck: null,
-            defects: ["[haze-plane] a milky band cuts the marsh at knee height — default"],
-            reason: "scripted",
-          });
-        }
         if (text.includes("QUESTION:") && /milky/.test(text))
           return JSON.stringify({ answer: "no", confidence: 0.9, note: "still there" });
         if (text.includes("QUESTIONS (")) return answerBatch(text, { no: /milky/, note: "still there" });
@@ -2438,9 +2363,9 @@ describe("harness incidents", () => {
         await mkdir(path.join(request.cwd, "src"), { recursive: true });
         await writeFile(path.join(request.cwd, "src", `${facet}.js`), `export const ${facet} = ${builds[facet]};\n`);
         if (facet === "water" && builds.water >= 2) {
-          // The builder reads its brief, finds the judge-grown haze check, and disowns it.
+          // The builder reads its brief, finds the haze check, and disowns it.
           const brief = await readFile(path.join(request.cwd, ".studio", "BRIEF.md"), "utf8").catch(() => "");
-          const id = /\b(defect-haze-plane[a-z0-9-]*)/.exec(brief)?.[1];
+          const id = /\b(haze-plane)\b/.exec(brief)?.[1];
           if (id) {
             await mkdir(path.join(request.cwd, "docs", "notes"), { recursive: true });
             await writeFile(
@@ -2468,40 +2393,32 @@ describe("harness incidents", () => {
     const finished = customEvents(events, "run_finished")[0]!;
     const specs = finished.facets as Record<string, { spec: { checks: Array<{ id: string; defect?: string }> } }>;
     assert.ok(
-      specs.water!.spec.checks.every((c) => !/^\[haze-plane\]/.test(c.defect ?? "")),
-      `no haze check survives or re-grows on water: ${JSON.stringify(specs.water!.spec.checks.map((c) => c.id))}`,
+      specs.water!.spec.checks.every((c) => c.id !== "haze-plane"),
+      `no haze check survives on water: ${JSON.stringify(specs.water!.spec.checks.map((c) => c.id))}`,
     );
     assert.ok(
-      specs.sky!.spec.checks.some((c) => /^\[haze-plane\]/.test(c.defect ?? "")),
+      specs.sky!.spec.checks.some((c) => c.id === "haze-plane"),
       "sky carries the haze check now",
     );
   });
 
-  it("V4. playtester gate: a judge-grown vision check that keeps failing does not keep the play check unmeasured", async () => {
+  it("V4. playtester gate: a vision check that keeps failing does not keep the play check unmeasured", async () => {
     const rig = await startRig();
     rigs.push(rig);
+    // Flipped (Loop phase 4): the failing vision check grew from a judge's defects; no judge runs in
+    // a round now, so the planner asks it.
     const plan = twoFacetPlan({
       waterChecks: [
         { id: "lit", kind: "pixel", camera: "default", expr: "litFraction > 0.5", weight: "identity" },
         { id: "wade", kind: "play", ask: "Could you wade into the marsh?", weight: "normal" },
+        { id: "reeds", kind: "vision", camera: "default", ask: "Are the reeds textured, not boxes?", weight: "normal" },
       ],
     });
     const builds: Record<string, number> = { water: 0, sky: 0 };
     let played = 0;
     registerFakeEngine(rig, {
-      complete: (text, request) => {
+      complete: (text) => {
         if (text.includes("ENGINE HINT: maxParallel")) return JSON.stringify(plan);
-        if (text.includes("THE FACET UNDER JUDGEMENT") && /Water/.test(text)) {
-          const pick = newestFixtureBuild(request);
-          return JSON.stringify({
-            pick,
-            satisfied: false,
-            regression: null,
-            newCheck: null,
-            defects: ["[primitive] the reeds are untextured boxes — default"],
-            reason: "scripted",
-          });
-        }
         if (text.includes("QUESTION:") && /reeds/.test(text))
           return JSON.stringify({ answer: "no", confidence: 0.9, note: "boxes" });
         if (text.includes("QUESTIONS (")) return answerBatch(text, { no: /reeds/, note: "boxes" });
@@ -2538,7 +2455,7 @@ describe("harness incidents", () => {
     );
     assert.ok(
       withFailingVision.length >= 1,
-      `a judge-grown vision check failed on some water iteration: ${JSON.stringify(water.map((i) => (i.scoreboard as { results: Array<{ id: string; pass: boolean | null }> })?.results?.map((r) => [r.id, r.pass])))}`,
+      `the vision check failed on some water iteration: ${JSON.stringify(water.map((i) => (i.scoreboard as { results: Array<{ id: string; pass: boolean | null }> })?.results?.map((r) => [r.id, r.pass])))}`,
     );
     const measuredPlay = withFailingVision.filter((i) =>
       (i.scoreboard as { results: Array<{ id: string; pass: boolean | null }> }).results.some(
@@ -2550,118 +2467,6 @@ describe("harness incidents", () => {
       `the play check was measured despite the failing vision check: ${JSON.stringify(withFailingVision.map((i) => (i.scoreboard as { results: Array<{ id: string; pass: boolean | null }> }).results.map((r) => [r.id, r.pass])))}`,
     );
     assert.ok(played >= 1, "the playtester actually played");
-  });
-
-  it("V5. the liveness critic: eight principles scored from the frames; a grow gap becomes the next move, a polish gap stays on its card and never pads the ledger", async () => {
-    const parsed = normalizeLiveness({
-      extent: { score: 1, reason: "ends at the well", fix: "a lane of houses behind the well" },
-      life: { score: 0, reason: "nothing moves", fix: "chimney smoke and a dog" },
-      wear: { score: 1, reason: "clean walls", fix: "soot above the hearth" },
-      material: { score: 3, reason: "fine", fix: "" },
-      biggest: "life",
-      summary: "a set",
-    });
-    assert.equal(parsed.total, 5);
-    assert.equal(parsed.max, 12);
-    assert.deepEqual(
-      parsed.grow.map((g: { key: string }) => g.key),
-      ["life", "extent"],
-      "grow gaps, worst first",
-    );
-    assert.deepEqual(
-      parsed.polish.map((p: { key: string }) => p.key),
-      ["wear"],
-    );
-    assert.match(renderLiveness(parsed), /life 0\/3 \(grow\) — nothing moves → chimney smoke and a dog/);
-    for (const id of ["no-bare-ground", "three-scales", "life-tagged", "world-continues"])
-      assert.equal((await seedCheck(id)).id, id, `${id} is in the seed's craft library`);
-
-    const rig = await startRig();
-    rigs.push(rig);
-    const plan = twoFacetPlan();
-    const builds: Record<string, number> = { water: 0, sky: 0 };
-    let critiques = 0;
-    let sawCard = false;
-    let sawLedger = false;
-    registerFakeEngine(rig, {
-      complete: (text, request) => {
-        if (text.includes("ENGINE HINT: maxParallel")) return JSON.stringify(plan);
-        if (text.includes("liveness critic") && /Water/.test(text)) {
-          critiques++;
-          return JSON.stringify({
-            extent: {
-              score: 1,
-              reason: "the marsh ends at the frame edge",
-              fix: "extend the marsh past the horizon with a second pool and a reed bank",
-            },
-            scales: { score: 2, reason: "no small things", fix: "stones and driftwood" },
-            purpose: { score: 2, reason: "", fix: "" },
-            life: { score: 0, reason: "nothing moves", fix: "ripples and a heron" },
-            "next-step": { score: 1, reason: "no path", fix: "a plank walk leading out" },
-            wear: { score: 1, reason: "the jetty is new", fix: "moss and rot on the jetty posts" },
-            light: { score: 2, reason: "", fix: "" },
-            material: { score: 2, reason: "", fix: "" },
-            biggest: "life",
-            summary: "a still model of a marsh",
-          });
-        }
-        if (text.includes("THE FACET UNDER JUDGEMENT") && /Water/.test(text)) {
-          const pick = newestFixtureBuild(request);
-          const moveAsked = /THE MOVE the builder of build [AB]/.test(text);
-          return JSON.stringify({
-            pick,
-            satisfied: false,
-            regression: null,
-            newCheck: null,
-            defects: [],
-            moveDelivered: moveAsked ? true : null,
-            scale: "structural",
-            reason: "scripted",
-          });
-        }
-        return null;
-      },
-      delegate: async (request) => {
-        const facet = /YOUR FACET: Water|facet "Water"/.test(request.prompt)
-          ? "water"
-          : /YOUR FACET: Sky|facet "Sky"/.test(request.prompt)
-            ? "sky"
-            : null;
-        if (!facet)
-          return request.playtest
-            ? { summary: JSON.stringify({ answers: { "integration-play": { answer: "yes" } }, report: "played" }) }
-            : null;
-        builds[facet]!++;
-        if (facet === "water") {
-          const brief = await readFile(path.join(request.cwd, ".studio", "BRIEF.md"), "utf8").catch(() => "");
-          if (/wear 1\/3 \(polish\) — the jetty is new → moss and rot on the jetty posts/.test(brief)) sawCard = true;
-          if (/\[wear\] the jetty is new/.test(brief)) sawLedger = true;
-        }
-        await mkdir(path.join(request.cwd, "src"), { recursive: true });
-        await writeFile(path.join(request.cwd, "src", `${facet}.js`), `export const ${facet} = ${builds[facet]};\n`);
-        return { sessionId: `ses_${facet}` };
-      },
-    });
-    const { events } = await runAutopilot(rig, "aliveworld", { budgets: { maxIterations: 8 } });
-    const alive = customEvents(events, "facet_liveness").filter((e) => e.facetId === "water");
-    assert.ok(
-      alive.length >= 1 && critiques >= 1,
-      `the critic ran on water: ${JSON.stringify(alive.map((a) => [a.iteration, a.total, a.biggest]))}`,
-    );
-    assert.equal(alive[0]!.total, 11);
-    assert.deepEqual(alive[0]!.grow, ["life", "extent", "next-step"]);
-    // Water has no ladder, so its first move after identity is the critic's worst grow gap, not a planner guess.
-    const moves = customEvents(events, "facet_move").filter((m) => m.facetId === "water" && m.source === "critic");
-    assert.ok(
-      moves.length >= 1,
-      `a critic move was asked: ${JSON.stringify(customEvents(events, "facet_move").map((m) => [m.facetId, m.iteration, m.source, m.what]))}`,
-    );
-    assert.match(String(moves[0]!.what), /ripples and a heron/);
-    // Flipped: the critic's polish fixes padded the defect ledger,
-    // and the builders spent their rounds on nits. The polish gap stays on the critic's card, as
-    // an optional note; the ledger is the judge's defects.
-    assert.ok(sawCard, "the critic's polish fix is on its card in a later brief");
-    assert.equal(sawLedger, false, "and never in the defect ledger");
   });
 
   it("V6. agents at once: the setting sizes the preview pool live, and the planner's hint follows it", async () => {
@@ -2687,238 +2492,6 @@ describe("harness incidents", () => {
   });
 
   // ── trees that read as boulders ────────────────────────────────────────────
-
-  it("T1. the fix: the judge's biggest gap becomes a check at first sight, is mandatory after two repeats, a build that leaves it is kept with the fix owed, and a stuck fix goes to the planner", async () => {
-    // Unit: the biggest gap never waits for room on a full board.
-    const full = {
-      id: "g",
-      checks: [1, 2, 3, 4].map((n) => ({
-        id: `defect-${n}`,
-        kind: "vision",
-        origin: "judge",
-        defect: `[floating] barrel ${n} hovers — camA`,
-      })),
-      cameras: ["camA"],
-    };
-    const tree = "[blob] the trees are grey faceted balls on posts — camA";
-    assert.equal(
-      defectsToChecks(full as never, [tree], { iteration: 2 }).length,
-      0,
-      "no room: an ordinary defect waits",
-    );
-    const grown = defectsToChecks(full as never, [tree], { iteration: 2, priority: tree } as never);
-    assert.equal(grown.length, 1, "the biggest gap is promoted over a full board");
-    assert.equal(grown[0]!.camera, "camA");
-    // Unit: the brief and the prompt carry THE FIX in their own section, and say mandatory when it is.
-    const spec = { id: "water", title: "Water", intent: "a marsh", checks: [], cameras: ["default"], identity: [] };
-    const brief = renderBrief({
-      run: { runId: "r", goal: "g" },
-      spec,
-      iteration: 4,
-      board: {},
-      comparison: null,
-      fix: { what: tree, checkId: "defect-blob-the-trees", streak: 3, mandatory: true },
-    } as never);
-    assert.match(brief, /## THE FIX this iteration \(mandatory/);
-    assert.match(brief, /Measured by check defect-blob-the-trees/);
-    assert.match(brief, /foliage\.js/);
-    const prompt = facetPrompt({
-      run: { runId: "r", goal: "g" },
-      spec,
-      iteration: 4,
-      resumed: false,
-      briefFile: null,
-      worktree: null,
-      fix: { what: tree, checkId: null, streak: 2, mandatory: false },
-    } as never);
-    assert.match(prompt, /THE FIX THIS ITERATION \(the judge has named it 2 times; next time it is mandatory\)/);
-
-    const rig = await startRig();
-    rigs.push(rig);
-    const plan = twoFacetPlan();
-    const builds: Record<string, number> = { water: 0, sky: 0 };
-    const briefs: string[] = [];
-    registerFakeEngine(rig, {
-      complete: (text, request) => {
-        if (text.includes("ENGINE HINT: maxParallel")) return JSON.stringify(plan);
-        if (text.includes("THE FACET UNDER JUDGEMENT") && /Water/.test(text)) {
-          const pick = newestFixtureBuild(request);
-          // Every build is preferred, and every time the reeds are the worst thing in it.
-          return JSON.stringify({
-            pick,
-            satisfied: false,
-            regression: null,
-            newCheck: null,
-            defects: [
-              "[blob] the reeds are grey faceted balls on sticks — default",
-              "[floating] a barrel hovers by the bank — default",
-            ],
-            moveDelivered: null,
-            scale: "polish",
-            reason: "scripted",
-          });
-        }
-        if (text.includes("QUESTION:") && /reeds/.test(text))
-          return JSON.stringify({ answer: "no", confidence: 0.95, note: "still balls" });
-        if (text.includes("QUESTIONS (")) return answerBatch(text, { no: /reeds/, note: "still balls" });
-        return null;
-      },
-      delegate: async (request) => {
-        const facet = /YOUR FACET: Water|facet "Water"/.test(request.prompt)
-          ? "water"
-          : /YOUR FACET: Sky|facet "Sky"/.test(request.prompt)
-            ? "sky"
-            : null;
-        if (!facet)
-          return request.playtest
-            ? { summary: JSON.stringify({ answers: { "integration-play": { answer: "yes" } }, report: "played" }) }
-            : null;
-        builds[facet]!++;
-        if (facet === "water")
-          briefs.push(await readFile(path.join(request.cwd, ".studio", "BRIEF.md"), "utf8").catch(() => ""));
-        await mkdir(path.join(request.cwd, "src"), { recursive: true });
-        await writeFile(path.join(request.cwd, "src", `${facet}.js`), `export const ${facet} = ${builds[facet]};\n`);
-        return { sessionId: `ses_${facet}` };
-      },
-    });
-    const { events } = await runAutopilot(rig, "fixworld", { budgets: { maxIterations: 14 } });
-    const water = customEvents(events, "facet_iteration").filter((i) => i.facetId === "water");
-    const fixes = customEvents(events, "facet_fix").filter((f) => f.facetId === "water");
-    const debug = JSON.stringify(
-      water.map((i) => [
-        i.iteration,
-        i.winner,
-        i.verdictSource,
-        (i.fix as { streak?: number; mandatory?: boolean; delivered?: boolean | null } | null)?.streak,
-        (i.fix as { mandatory?: boolean } | null)?.mandatory,
-      ]),
-    );
-    // Iteration 1: the reeds are the biggest gap → their check exists from the very next brief.
-    const added = customEvents(events, "facet_check_added").filter(
-      (a) => a.facetId === "water" && /reeds/.test(String((a.check as { defect?: string })?.defect ?? "")),
-    );
-    assert.ok(
-      added.length >= 1 && Number(added[0]!.iteration) === 1,
-      `the biggest gap became a check at iteration 1: ${JSON.stringify(added.map((a) => a.iteration))}`,
-    );
-    // After two verdicts naming it, the brief carries THE FIX; after three it is mandatory.
-    assert.ok(
-      fixes.some((f) => f.delivered === null && Number(f.streak) >= 2),
-      `the fix was asked: ${JSON.stringify(fixes.map((f) => [f.iteration, f.streak, f.mandatory, f.delivered]))} — gaps: ${JSON.stringify(water.map((i) => [i.iteration, i.verdictSource, String(i.biggest_gap).slice(0, 50)]))} — events: ${JSON.stringify(
-        Object.entries(
-          events
-            .filter((e) => e.data.type === "custom")
-            .reduce(
-              (m, e) => {
-                const k = (e.data as { event_type: string }).event_type;
-                m[k] = (m[k] ?? 0) + 1;
-                return m;
-              },
-              {} as Record<string, number>,
-            ),
-        ),
-      )} — facets: ${JSON.stringify(Object.fromEntries(Object.entries((customEvents(events, "run_finished")[0]?.facets ?? {}) as Record<string, { stoppedBecause?: string; iterations?: number }>).map(([k, v]) => [k, [v.stoppedBecause, v.iterations]])))}`,
-    );
-    assert.ok(
-      briefs.some((b) => /## THE FIX this iteration/.test(b) && /reeds/.test(b)),
-      "the builder's brief named the fix in its own section",
-    );
-    // Flipped (Loop phase 2): a preferred build that leaves the mandatory fix is kept, and the fix stays owed.
-    const left = water.filter((i) => /the fix stays owed/.test(String(i.reason)));
-    assert.ok(left.length >= 1, `a preferred build that left the mandatory fix says so: ${debug}`);
-    assert.match(String(left[0]!.reason), /the fix was mandatory/);
-    assert.equal(left[0]!.winner, "challenger");
-    assert.ok(
-      water.every((i) => i.verdictSource !== "unfixed"),
-      `no round is undone for it: ${debug}`,
-    );
-    // Two builds that leave it hand the check to the planner and stop asking.
-    const stuck = customEvents(events, "autopilot_decision").filter((d) =>
-      /was left by 2 builds in a row/.test(String(d.decision)),
-    );
-    assert.ok(
-      stuck.length >= 1,
-      `the stuck fix went to the planner: ${JSON.stringify(customEvents(events, "autopilot_decision").map((d) => String(d.decision).slice(0, 80)))}`,
-    );
-    const afterStuck = fixes.filter(
-      (f) => Number(f.iteration) > Number(left[left.length - 1]!.iteration) && f.delivered === null,
-    );
-    assert.equal(
-      afterStuck.length,
-      0,
-      `no fix is asked again once it is with the planner: ${JSON.stringify(fixes.map((f) => [f.iteration, f.delivered]))}`,
-    );
-  });
-
-  it("T2. the last round is a full round: the liveness critic and a pending move are not skipped when the build overran the facet's clock", async () => {
-    const rig = await startRig();
-    rigs.push(rig);
-    const plan = twoFacetPlan();
-    const builds: Record<string, number> = { water: 0, sky: 0 };
-    let critiques = 0;
-    registerFakeEngine(rig, {
-      complete: (text) => {
-        if (text.includes("ENGINE HINT: maxParallel")) return JSON.stringify(plan);
-        if (text.includes("liveness critic") && /Water/.test(text)) {
-          critiques++;
-          return JSON.stringify({
-            extent: { score: 1, reason: "ends", fix: "more marsh" },
-            scales: { score: 2, reason: "", fix: "" },
-            purpose: { score: 2, reason: "", fix: "" },
-            life: { score: 2, reason: "", fix: "" },
-            "next-step": { score: 2, reason: "", fix: "" },
-            wear: { score: 2, reason: "", fix: "" },
-            light: { score: 2, reason: "", fix: "" },
-            material: { score: 2, reason: "", fix: "" },
-            biggest: "extent",
-            summary: "a set",
-          });
-        }
-        return null;
-      },
-      delegate: async (request) => {
-        const facet = /YOUR FACET: Water|facet "Water"/.test(request.prompt)
-          ? "water"
-          : /YOUR FACET: Sky|facet "Sky"/.test(request.prompt)
-            ? "sky"
-            : null;
-        if (!facet)
-          return request.playtest
-            ? { summary: JSON.stringify({ answers: { "integration-play": { answer: "yes" } }, report: "played" }) }
-            : null;
-        builds[facet]!++;
-        // Synchronize to the actual admitted round, not a guessed sleep that can expire during setup.
-        if (facet === "water") {
-          const events = await rig.core.listAllEvents();
-          const start = customEvents(events, "facet_build_started")
-            .filter((e) => e.facetId === "water")
-            .at(-1);
-          assert.ok(typeof start?.deadlineMs === "number", "the admitted round publishes its deadline");
-          await new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(start.deadlineMs) - Date.now()) + 50));
-        }
-        await mkdir(path.join(request.cwd, "src"), { recursive: true });
-        await writeFile(path.join(request.cwd, "src", `${facet}.js`), `export const ${facet} = ${builds[facet]};\n`);
-        return { sessionId: `ses_${facet}` };
-      },
-    });
-    const { events } = await runAutopilot(rig, "lastround", { budgets: { wallClockMs: 60_000, maxIterations: 6 } });
-    const water = customEvents(events, "facet_iteration").filter((i) => i.facetId === "water");
-    const alive = customEvents(events, "facet_liveness").filter((l) => l.facetId === "water");
-    assert.ok(
-      water.length >= 1,
-      `water was judged at least once: ${JSON.stringify(customEvents(events, "run_finished"))}; starts=${JSON.stringify(customEvents(events, "facet_build_started"))}`,
-    );
-    assert.equal(
-      alive.length,
-      water.length,
-      `every judged water iteration was critiqued, the last one included: ${water.length} judged, ${alive.length} critiqued (${critiques} calls)`,
-    );
-    const finished = customEvents(events, "run_finished")[0]!;
-    const stopped = (finished.facets as Record<string, { stoppedBecause: string }>).water?.stoppedBecause ?? "";
-    // The clock ends the facet either way: it runs out, or the loop sees that the next round
-    // will not fit in what is left and stops early instead of being cut mid-build (M3.4).
-    assert.match(stopped, /budget exhausted|^stopped early to finish cleanly/, `the clock ended the facet: ${stopped}`);
-  });
 
   it("T3. a dog defect finds the life facet: the plan's own words route it, not the file names of the facet that was judged", () => {
     const ground = {
@@ -4655,44 +4228,6 @@ describe("the lead's later turns (wake loop)", () => {
     assert.match(String(finished.stoppedBecause), /lost its sign-in/);
     assert.match(String(finished.stoppedBecause), /disabled Claude subscription access/);
     assert.match(String(finished.stoppedBecause), /nothing was landed/);
-  });
-
-  it("D15. a judge's disabled account: the round waits instead of an auto-tie, one call reaches it, and the run pauses", async () => {
-    const disabled =
-      "Your organization has disabled Claude subscription access for Claude Code · Use an Anthropic API key instead, or ask your admin to enable access";
-    const judgeCalls: string[] = [];
-    const { turns, events, finished } = await lateTurnLoopRun(
-      "judge-access-lost",
-      async (request, turn) => {
-        const call = (name: string, args: Record<string, unknown>) => request.onLiveTool!(name, args);
-        if (turn === 1) {
-          await call("plan", plan);
-          await call("worker_start", { ...start, mode: "loop" });
-          return { sessionId: "lead-1", summary: "the sky worker is building" };
-        }
-        await call("finish", { summary: "the sky is blue", land: "no" });
-        return { sessionId: "lead-1", summary: "finished" };
-      },
-      { providerPollMs: 200 },
-      (text) => {
-        judgeCalls.push(text.replace(/\s+/g, " ").slice(0, 300));
-        throw new EngineError("auth", "fake-delegate", disabled);
-      },
-    );
-    assert.equal(turns.length, 1, "the lead is not woken into a dead account: the run pauses first");
-    assert.equal(finished.executionStatus, "paused", String(finished.stoppedBecause));
-    assert.equal((finished.limit as { kind?: string }).kind, "auth");
-    assert.equal(judgeCalls.length, 1, `one call reached the dead account: ${judgeCalls.join(" | ")}`);
-    assert.equal(customEvents(events, "run_learning").length, 0, "nor is the paused run learned from against it");
-    const sky = (type: string) => customEvents(events, type).filter((e) => e.facetId === "sky");
-    assert.deepEqual(
-      sky("facet_provider_outage").map((o) => [o.phase, o.lost]),
-      [["verify", "auth"]],
-    );
-    assert.ok(
-      sky("facet_iteration").every((r) => r.verdictSource !== "outage" && r.verdictSource !== "broken"),
-      JSON.stringify(sky("facet_iteration").map((r) => [r.verdictSource, r.reason])),
-    );
   });
 });
 
@@ -7640,6 +7175,9 @@ describe("a pitch that says neither what the game is nor how it looks (ask-first
 });
 
 /**
+ * Loop phase 4: the close asks no judge; a judge is a second opinion the lead asks for, and the
+ * build lands on its own look. The rows below keep the hurried run and say what it does now.
+ *
  * hurry: a build whose user asked for it fast — "just make it", or Finish pressed before the run
  * was done — landed on its lead's word that it loads. Judging was the lead's choice, and every
  * prompt of a hurried run (the wrap-up, the user's finish, the goal card) told it to call finish,
@@ -7775,59 +7313,30 @@ describe("the final judge when the user is in a hurry", () => {
     return { asked, events, finished, judgedLanding, project, results };
   }
 
-  it("hurry-1. a game the user had, finished in a hurry without the lead judging it: the close judges what it makes live against that game", async () => {
+  it("hurry-1. a game the user had, finished in a hurry without the lead judging it: the close makes it live on its own look, asking no judge", async () => {
     const { asked, finished, judgedLanding, results } = await hurriedLoopRun("hurry-existing");
 
     assert.equal(finished.landed, true, `${finished.stoppedBecause} | ${results.finished}`);
-    assert.equal(judgedLanding.length, 1, "the build made live was judged once, by the close");
-    assert.equal(judgedLanding[0].seen.pick, "challenger", JSON.stringify(judgedLanding[0]));
+    // Flipped (Loop phase 4): the close judged what it made live against the game the user had.
+    assert.deepEqual(judgedLanding, [], "no judge looked at the build made live");
     assert.ok(
-      asked.some((text) => text.includes("BUILD A") && text.includes("BUILD B")),
-      "a blind comparison with the game the user had",
+      !asked.some((text) => text.includes("BUILD A") && text.includes("BUILD B")),
+      "no blind comparison with the game the user had",
     );
-    assert.equal(finished.landingResult.how, LandingHow.JudgePick, JSON.stringify(finished.landingResult));
-    assert.match(results.finished, /a judge preferred it/, "the lead hears the judge's word before it sums up");
+    assert.notEqual(finished.landingResult.how, LandingHow.JudgePick, JSON.stringify(finished.landingResult));
+    assert.doesNotMatch(results.finished, /a judge preferred it/);
   });
 
-  it("hurry-2. a new game finished in a hurry: the close asks a judge whether the build does what was asked, and the card says what it answered", async () => {
-    const { finished, judgedLanding, results } = await hurriedLoopRun("hurry-scratch", { fromScratch: true });
+  it("hurry-2. a new game finished in a hurry: the close asks no judge whether the build does what was asked, and the card claims no judge's answer", async () => {
+    const { asked, finished, judgedLanding, results } = await hurriedLoopRun("hurry-scratch", { fromScratch: true });
 
     assert.equal(finished.landed, true, `${finished.stoppedBecause} | ${results.finished}`);
-    assert.equal(judgedLanding.length, 1, "the build made live was judged once, by the close");
-    const [verdict] = judgedLanding;
-    assert.match(String(verdict.seen.question), /a blue sky over the plaza/, "asked about the user's own goal");
-    assert.equal(verdict.seen.answer, true, JSON.stringify(verdict));
-    assert.equal(finished.landingResult.how, LandingHow.JudgeAnsweredYes, JSON.stringify(finished.landingResult));
-    assert.match(finished.landingResult.line, /a judge found it does what you asked/);
-    assert.match(results.finished, /a judge found it does what you asked/);
-  });
-
-  it("hurry-3. a new game whose judge gave no usable answer: the card does not say the judge found it wanting", async () => {
-    const { finished, judgedLanding, results } = await hurriedLoopRun("hurry-unsure", {
-      fromScratch: true,
-      judge: (text) => (text.includes("QUESTION:") ? "sorry, I cannot tell from one picture" : null),
-    });
-
-    assert.equal(finished.landed, true, `${finished.stoppedBecause} | ${results.finished}`);
-    assert.equal(judgedLanding.length, 1, "the close still asked");
-    assert.equal(judgedLanding[0].seen.answer, null, "recorded as no answer, not as a failed check");
-    assert.equal(finished.landingResult.how, LandingHow.FreshHealthPass, JSON.stringify(finished.landingResult));
-    assert.doesNotMatch(finished.landingResult.line, /does not do what you asked/);
-  });
-
-  it("hurry-4. Stop pressed while the close's judge is out: the build is not made live", async () => {
-    const { finished, project, results } = await hurriedLoopRun("hurry-stopped", {
-      judge: async (text, runId, rig) => {
-        if (!(text.includes("BUILD A") && text.includes("BUILD B"))) return null;
-        await rig.core.host.dispatch({ type: "run_stop", runId }, 30_000);
-        return null;
-      },
-    });
-
-    assert.equal(finished.landed, false, `${finished.stoppedBecause} | ${results.finished}`);
-    assert.equal(finished.landingResult.why, "stopped", JSON.stringify(finished.landingResult));
-    assert.equal(finished.stoppedBecause, "stopped by the user", "the chat reads the run as stopped, not finished");
-    assert.equal(await readFile(path.join(project.dir, "src", "sky.js"), "utf8").catch(() => null), null);
+    // Flipped (Loop phase 4): the close asked a judge whether the build does what was asked.
+    assert.deepEqual(judgedLanding, [], "no judge looked at the build made live");
+    assert.ok(!asked.some((text) => /a blue sky over the plaza/.test(text) && text.includes("QUESTION:")));
+    assert.notEqual(finished.landingResult.how, LandingHow.JudgeAnsweredYes, JSON.stringify(finished.landingResult));
+    assert.doesNotMatch(String(finished.landingResult.line), /a judge found/);
+    assert.doesNotMatch(results.finished, /a judge found/);
   });
 });
 
@@ -9800,35 +9309,18 @@ describe("the finish stage and the false ESCALATE", () => {
     assert.match(String((await exit({ stage: "finish" })).stoppedBecause), /the finish is in/);
     assert.equal((await exit({ stage: "finish" })).satisfied, true, "the work it was given is done");
     assert.equal((await exit({ stage: "finish" }, { identityAllPass: false })).stoppedBecause, undefined);
-    assert.equal((await exit({})).stoppedBecause, undefined, "the build stage still waits for the judge's `satisfied`");
+    // Flipped (Loop phase 4): no judge's `satisfied` holds the build stage; its own checks and ladder do.
+    assert.match(String((await exit({})).stoppedBecause), /the work it was given is done/);
+    const rung = { id: "m2", what: "rivals race the player" };
+    assert.equal((await exit({ milestones: [rung] })).stoppedBecause, undefined, "a rung left keeps it building");
   });
 
-  it("FIN-6. a stage steered mid-round lands on the next round: the round in flight is judged, settled and exited in the stage it was briefed in", async () => {
+  it("FIN-6. a stage steered mid-round lands on the next round: the round in flight is kept, settled and exited in the stage it was briefed in", async () => {
     const { chooseRoundMove } = await import("../../src/harness-seed/loop/facet/phases/plan.ts");
     const { tasteVerdict } = await import("../../src/harness-seed/loop/facet/phases/taste.ts");
     const { settleMoveAndGap } = await import("../../src/harness-seed/loop/facet/phases/settle.ts");
     const { decideExit } = await import("../../src/harness-seed/loop/facet/phases/publish.ts");
-    const polish = Array.from({ length: 10 }, (_, i) => `polish ${i + 1}: the kerb paint reads flat`);
-    let reply: Record<string, unknown> = {};
-    // The judge picks the build the checks accepted (the challenger), whichever letter the shuffle gave it.
-    const challengerLetter = (params: Record<string, unknown>) => {
-      const user = String((params.messages as Array<{ content?: unknown }> | undefined)?.[0]?.content ?? "");
-      return /build ([AB]) is the one the checks accepted/.exec(user)?.[1] ?? "A";
-    };
-    const recorder = ctxRecorder({
-      handlers: {
-        "engine.complete": (params) => ({
-          message: { content: JSON.stringify({ ...reply, pick: challengerLetter(params) }) },
-        }),
-      },
-    });
-    const lastAsk = () => {
-      const params = recorder.paramsOf("engine.complete").at(-1) as {
-        systemPrompt?: string;
-        messages?: Array<{ content?: unknown }>;
-      };
-      return `${params?.systemPrompt ?? ""}\n${String(params?.messages?.[0]?.content ?? "")}`;
-    };
+    const recorder = ctxRecorder({ handlers: {} });
     const pending = { what: "a jetty to walk out on", source: "planner", delivered: false, attempts: 1 };
     const planned = await planLoop({
       spec: { ...spec, cameras: ["default"], checks: [], milestones: [] } as Record<string, unknown>,
@@ -9869,26 +9361,25 @@ describe("the finish stage and the false ESCALATE", () => {
       await settleMoveAndGap(loop as never, round as never);
       loop.result = {};
       await decideExit(loop as never, round as never);
-      return { round, asked: lastAsk(), stopped: loop.result.stoppedBecause as string | undefined };
+      return { round, stopped: loop.result.stoppedBecause as string | undefined };
     };
-    const judged = { pick: "A", satisfied: false, regression: null, newCheck: null, bigMove: null, defects: [] };
     // A build round with a mandatory move is in flight when worker_steer stage=finish writes the
     // spec the loop holds. The builder delivers the move; the round is still a build round.
-    reply = { ...judged, polish, moveDelivered: true, scale: "structural", reason: "the jetty is there" };
+    // Flipped (Loop phase 4): no judge is asked about any of these rounds, so none of them is judged
+    // in a stage and no judge's polish list is kept; the stage still decides the move and the exit.
     const building = await play(5, () => {
       assert.equal(loop.currentMove?.mandatory, true, "the round in flight carries a mandatory move");
       (loop.spec as Record<string, unknown>).stage = "finish";
     });
     assert.equal(building.round.won, true);
-    assert.doesNotMatch(building.asked, /STAGE: finish|## The finish stage/, "judged as the build round it was");
-    assert.equal(building.round.taste.polish.length, 3, "the build stage's three nits");
-    assert.equal(building.stopped, undefined, "no finish is in before a single finish round has run");
-    // The next round reads the steer: no move, the finish rubric, and a won round ends the worker.
-    reply = { ...judged, polish, moveDelivered: null, scale: "polish", reason: "A reads wetter" };
+    assert.equal(building.round.taste, null, "nobody judged it");
+    // Flipped (Loop phase 4): a judge that was not satisfied held the build round open for the finish
+    // round; a build round whose own checks hold and whose ladder is climbed ends the worker, in the
+    // stage it was briefed in.
+    assert.match(String(building.stopped), /the work it was given is done/, "exited as a build round");
+    // The next round reads the steer: no move, and a kept round ends the worker.
     const finishing = await play(6, () => {});
     assert.equal(loop.currentMove, null);
-    assert.match(finishing.asked, /STAGE: finish/);
-    assert.equal(loop.polishList.length, 8);
     assert.match(String(finishing.stopped), /the finish is in/);
     // The other way: a finish round in flight when worker_steer move= takes it back to building.
     const backToBuild = await play(7, () => {
@@ -9898,8 +9389,6 @@ describe("the finish stage and the false ESCALATE", () => {
         milestones: [{ id: "traffic", what: "traffic weaves in both lanes" }],
       });
     });
-    assert.match(backToBuild.asked, /STAGE: finish/, "the polish round is judged as the finish it was briefed as");
-    assert.equal(loop.polishList.length, 8, "and keeps the judge's whole polish list");
     assert.equal(loop.polishStreak, 0, "a finishing round's polish is no streak");
     assert.equal(backToBuild.stopped, undefined, "the director asked for a move: the worker does not end on a finish");
   });
@@ -9915,7 +9404,7 @@ describe("the finish stage and the false ESCALATE", () => {
     assert.match(lesson!, /regression|preferred/);
   });
 
-  it("FIN-1. a finishing worker's polish round wins on the blind pick, nothing escalates, and a regression still rolls back", async () => {
+  it("FIN-1. a finishing worker's polish round is kept with no judge asked, nothing escalates, and a regression still rolls back", async () => {
     // Every window reports the score the worker's own file decides: a build that writes
     // "regress" breaks a probe that passes on the accepted build.
     const scoreFrom = (preview: FakePreview): FakePreview => {
@@ -10059,11 +9548,12 @@ describe("the finish stage and the false ESCALATE", () => {
     const regressed = rounds.find((i) => i.iteration === 2)!;
     assert.equal(regressed.verdictSource, "checks", debug);
     assert.equal(regressed.winner, "incumbent", debug);
-    // And the polish round after it wins on the judge's blind preference.
+    // Flipped (Loop phase 4): the polish round after it won on the judge's blind preference; it is kept
+    // because nothing regressed, and no judge is asked.
     const polished = rounds.find((i) => i.iteration === 3)!;
-    assert.equal(polished.verdictSource, "taste", debug);
+    assert.equal(polished.verdictSource, "no-regression", debug);
     assert.equal(polished.winner, "challenger", debug);
-    assert.ok(finishAsks.length >= 1, "the taste judge was told this round finishes");
+    assert.deepEqual(finishAsks, [], "no taste judge was asked");
     const decisions = customEvents(events, "autopilot_decision").map((d) => String(d.decision));
     assert.deepEqual(
       decisions.filter((d) => /polished for/.test(d)),
@@ -11473,6 +10963,9 @@ describe("ownership after a merge", () => {
     rigs.push(rig);
     const plan = twoFacetPlan();
     (plan.facets[0] as { owns: string[] }).owns = ["src/water.js", "src/shared.js"];
+    // Since Loop phase 4 a ladder, not a judge never satisfied, keeps both going past their first round.
+    for (const facet of plan.facets as Array<{ id: string }>)
+      Object.assign(facet, { milestones: ladderOf(facet.id, 3) });
     const builds: Record<string, number> = { water: 0, sky: 0 };
     const skyPrompts: string[] = [];
     registerFakeEngine(rig, {
@@ -11840,23 +11333,36 @@ describe("facet rounds: the build block, kept fixes and the lead's merged fixes"
     });
   }
 
-  /** car-feel at round 5: the spray rung mandatory, both owed defects flipped on its build. */
+  /**
+   * car-feel at round 5: the spray rung mandatory, both owed defects flipped on its build, decided on
+   * the board as a round is (`regressed`: a check that passed before fails on it).
+   */
   async function sprayRound(
     pick: "challenger" | "incumbent",
     extra: Record<string, unknown> = {},
     regression: { camera: string; what: string } | null = null,
+    regressed: string[] = [],
   ) {
     const { FACET_POLICY } = await import("../../src/harness-seed/loop/facet/policy.ts");
-    const { tasteVerdict } = await import("../../src/harness-seed/loop/facet/phases/taste.ts");
+    const { decideOnBoard } = await import("../../src/harness-seed/loop/facet/phases/verify.ts");
     const { settleMoveAndGap } = await import("../../src/harness-seed/loop/facet/phases/settle.ts");
     const recorder = tasteJudge(pick, false, regression);
-    const failing = Object.fromEntries(owedChecks.map((c) => [c.id, { ...c, pass: false, reason: "still there" }]));
-    const passing = Object.fromEntries(owedChecks.map((c) => [c.id, { ...c, pass: true, reason: "" }]));
+    const failing: Record<string, Record<string, unknown>> = Object.fromEntries(
+      owedChecks.map((c) => [c.id, { ...c, pass: false, reason: "still there" }]),
+    );
+    const passing: Record<string, Record<string, unknown>> = Object.fromEntries(
+      owedChecks.map((c) => [c.id, { ...c, pass: true, reason: "" }]),
+    );
+    for (const id of regressed) {
+      failing[id] = { id, kind: "probe", weight: "normal", pass: true, reason: "" };
+      passing[id] = { id, kind: "probe", weight: "normal", pass: false, reason: "lost" };
+    }
     const appended: Array<{ type: string; payload: Record<string, unknown> }> = [];
     const loop: Record<string, any> = {
       ctx: recorder.ctx,
       run: racingRun,
       facet: { id: "car-feel", title: "Car" },
+      facets: [],
       spec: {
         id: "car-feel",
         title: "Car",
@@ -11889,14 +11395,16 @@ describe("facet rounds: the build block, kept fixes and the lead's merged fixes"
     const round: Record<string, any> = {
       iteration: 5,
       iterationId: "005",
-      evidence: { eyes: [], state: { phase: "race" } },
+      evidence: { ok: true, problems: [], eyes: [], state: { phase: "race" } },
       nextBoard: passing,
-      comparison: { flips: owedChecks.map((c) => c.id), regressions: [] },
+      comparison: { flips: owedChecks.map((c) => c.id), regressions: regressed },
+      diffs: { default: { diffFraction: 0.2, compared: 100 } },
       challengerBroken: false,
       defectNotes: [],
       attemptBranch: null,
     };
-    await tasteVerdict(loop as never, round as never);
+    // The judge `pick` and `regression` script is never asked now (Loop phase 4).
+    await decideOnBoard(loop as never, round as never);
     round.won = round.verdict.pick === "challenger";
     round.attemptBoard = round.nextBoard;
     if (!round.won) round.attemptBranch = "refs/studio/runs/run_nfs/attempts/car-feel/5";
@@ -11908,12 +11416,13 @@ describe("facet rounds: the build block, kept fixes and the lead's merged fixes"
   it("FR-5. a round that fixed owed defects and missed its mandatory move is kept with the fixes credited and the rung still owed (car-feel round 5)", async () => {
     const { loop, round } = await sprayRound("challenger");
     assert.equal(round.won, true, `kept: ${round.verdict.reason}`);
-    assert.equal(round.verdictSource, "taste", "kept on the judge's blind preference, not on the missed move");
+    // Flipped (Loop phase 4): kept with no judge asked (the flips are the judge's own questions, so no
+    // strong flip), and a rung no check measures is the builder's to say it built: the kept round climbs it.
+    assert.equal(round.verdictSource, "no-regression", "kept because nothing regressed, not on a judge's preference");
     assert.match(round.verdict.reason, /defect-haze-plane/);
-    assert.match(round.verdict.reason, /the move was not delivered and stays owed/);
-    assert.equal(loop.milestonesDone.has(sprayRung.id), false, "the rung was not delivered: it is not climbed");
-    assert.equal(round.moveRecord.delivered, false);
-    assert.match(String(round.moveRecord.note), /stays owed/);
+    assert.match(round.verdict.reason, /taken as built/);
+    assert.equal(loop.milestonesDone.has(sprayRung.id), true, "the kept round climbed the unchecked rung");
+    assert.equal(round.moveRecord.delivered, true);
   });
 
   it("FR-5b. a missed move never undoes a round, and only a named regression does (Loop phase 2)", async () => {
@@ -11929,17 +11438,21 @@ describe("facet rounds: the build block, kept fixes and the lead's merged fixes"
     const notPreferred = acceptRound({ spec, board: {}, comparison: { flips }, taste: { pick: "incumbent" } });
     assert.deepEqual([notPreferred.accepted, notPreferred.source], [true, "no-regression"]);
     const vetoed = acceptRound({ spec, board: {}, comparison: { flips }, taste: { pick: "incumbent", veto: true } });
-    assert.deepEqual([vetoed.accepted, vetoed.source], [false, "taste-veto"], "a named regression undoes it");
+    // Flipped (Loop phase 4): a judge's veto decides nothing; only a measured regression undoes a round.
+    assert.deepEqual([vetoed.accepted, vetoed.source], [true, "no-regression"], "a judge's veto keeps nothing out");
+    const regressed = acceptRound({ spec, board: {}, comparison: { flips, regressions: ["keeps-car-visible"] } });
+    assert.deepEqual(
+      [regressed.accepted, regressed.source],
+      [false, "checks"],
+      "a check that passed and fails undoes it",
+    );
   });
 
   it("FR-6. a round undone for a named regression leaves its demonstrated fixes to carry over: the next brief and prompt say to re-apply them", async () => {
     const { writeBrief } = await import("../../src/harness-seed/loop/facet/phases/brief.ts");
-    // Updated (Loop phase 2): a pick of the round before alone keeps the work; a named regression undoes it.
-    const { loop, round } = await sprayRound(
-      "incumbent",
-      {},
-      { camera: "default", what: "the car is hidden in spray" },
-    );
+    // Updated (Loop phase 4): no judge's named regression undoes a round; a check that passed and now
+    // fails does.
+    const { loop, round } = await sprayRound("incumbent", {}, null, ["keeps-car-visible"]);
     assert.equal(round.won, false);
     // The next round's brief and prompt, in the same session.
     Object.assign(loop, {
@@ -12007,9 +11520,10 @@ describe("facet rounds: the build block, kept fixes and the lead's merged fixes"
       moves: [{ what: "stage the race's three big moments", source: "reviewer", delivered: false, attempts: 1 }],
     });
     assert.equal(round.won, true);
-    assert.equal(round.moveRecord.delivered, false);
-    assert.equal(loop.moves[0].delivered, false, "the reviewer's move is still open");
-    assert.equal(loop.milestonesDone.size, 0);
+    // Flipped (Loop phase 4): no judge says the move is missing; one no check measures is taken as built.
+    assert.equal(round.moveRecord.delivered, true);
+    assert.equal(loop.moves[0].delivered, true, "the kept round delivered the reviewer's move");
+    assert.equal(loop.milestonesDone.size, 0, "it was no rung");
   });
 
   // ── the build block: a long first round, kept on the checks ──
@@ -12131,7 +11645,7 @@ describe("facet rounds: the build block, kept fixes and the lead's merged fixes"
     assert.equal(second.turns.length, 1, "round two is a normal round");
   });
 
-  it("FR-10. the block is kept on the checks: the judge looks once for notes and its pick is no verdict", async () => {
+  it("FR-10. the block is kept on the checks: no judge's pick is a verdict", async () => {
     const { tasteVerdict } = await import("../../src/harness-seed/loop/facet/phases/taste.ts");
     // The judge prefers the start and names a regression: a veto, in any later round.
     const recorder = tasteJudge("incumbent", true, { camera: "default", what: "the paint reads flatter" });
@@ -12166,11 +11680,9 @@ describe("facet rounds: the build block, kept fixes and the lead's merged fixes"
     assert.equal(round.verdict.pick, "challenger", `the block is kept: ${round.verdict.reason}`);
     assert.equal(round.verdictSource, "checks");
     assert.match(round.verdict.reason, /build block/);
-    assert.deepEqual(
-      round.verdict.defects,
-      ["rival spray does not read from the chase camera"],
-      "the judge's notes go to round two",
-    );
+    // Flipped (Loop phase 4): no judge looks at the block, not even for notes.
+    assert.deepEqual(round.verdict.defects, [], "no judge's notes");
+    assert.deepEqual(recorder.paramsOf("engine.complete"), [], "no judge call");
   });
 
   it("FR-10b. the block's brief and opening prompt say what the round is: the bench page, the screenshot-and-fix loop, kept on the checks", async () => {
@@ -12194,7 +11706,7 @@ describe("facet rounds: the build block, kept fixes and the lead's merged fixes"
     });
     assert.match(prompt, /THE BUILD BLOCK \(your first round, 60–90 min\)/);
     const second = renderBrief({ run: racingRun, spec, iteration: 2 } as never);
-    assert.doesNotMatch(second, /BUILD BLOCK/, "round two is judged side by side");
+    assert.doesNotMatch(second, /BUILD BLOCK/, "round two is a normal round");
   });
 
   it("FR-11. the block's long build turn sizes no later round: not the worker's own estimate, not the run's median", async () => {
@@ -12826,9 +12338,8 @@ describe("MAP-5. scope inflated without the user", () => {
    * new card each round; the planner, never told what was already put to the user, proposed it again.
    * The critic's and the player's steps beyond the ask never reached the user at all.
    */
-  it("MAP-5g. a reviewer that rewords the helicopter every round asks the user twice at most, the planner hears what was already put to them, and the critic's and the player's steps beyond the ask are cards too", async () => {
+  it("MAP-5g. a reviewer that rewords the helicopter every round asks the user twice at most, the planner hears what was already put to them, and the player's steps beyond the ask are cards too", async () => {
     const { chooseRoundMove } = await import("../../src/harness-seed/loop/facet/phases/plan.ts");
-    const { critiqueLiveness } = await import("../../src/harness-seed/loop/facet/phases/learn.ts");
     const { BEYOND_CARDS_PER_PART, playtestStepWords } = await import("../../src/harness-seed/loop/facet/beyond.ts");
     const { FACET_POLICY } = await import("../../src/harness-seed/loop/facet/policy.ts");
     const run = { ...(await apexRun()), engine: "fake" } as Run;
@@ -12887,35 +12398,7 @@ describe("MAP-5. scope inflated without the user", () => {
       "the planner hears what the user was already asked",
     );
 
-    // The liveness critic's fix that needs something not in scope is put to the user too, once.
-    const critic = {
-      ...loop,
-      surfacedBeyond: [] as string[],
-      ctx: ctxRecorder({
-        handlers: {
-          "engine.complete": () => ({
-            message: {
-              content: JSON.stringify({
-                life: { score: 0, reason: "nothing moves", fix: "pedestrians on the pavements", adds: true },
-                extent: { score: 1, reason: "the course ends", fix: "grandstands along the course" },
-                biggest: "life",
-              }),
-            },
-          }),
-        },
-      }).ctx,
-    };
-    const before = cards().length;
-    const round = { won: true, iteration: 5, iterationId: "i5", evidence: { shots: [{ camera: "default" }] } };
-    await critiqueLiveness(critic as never, round as never);
-    const fromCritic = cards().slice(before);
-    assert.equal(fromCritic.length, 1, `one card for the fix beyond the ask: ${JSON.stringify(events.slice(-3))}`);
-    assert.match(
-      String(fromCritic[0]!.payload.decision),
-      /pedestrians on the pavements, which is outside what you asked/,
-    );
-    await critiqueLiveness(critic as never, round as never);
-    assert.equal(cards().length, before + 1, "asked once");
+    // Removed (Loop phase 4): the liveness critic's card — no critic looks at a round any more.
 
     // The player's big step: labelled for the lead, and a card for the user, only when it adds.
     const beyond = playtestStepWords({ what: "a police helicopter", scope: "adds" });
@@ -13209,47 +12692,6 @@ describe("growth has a way into the move", () => {
     };
     return { loop, events, answerWith: (next: () => unknown) => void (answer = next) };
   };
-  /** One judged round's critic card, on the build that won it. */
-  const judged = (iteration: number) => ({
-    won: true,
-    iteration,
-    iterationId: `i${iteration}`,
-    evidence: { shots: [{ camera: "default" }] },
-  });
-
-  it("GROW-1. extent stood at 2 card after card and never became a move: three cards of the same 2 make its fix the move, and a polish 2 joins the ledger, not the move", async () => {
-    const { critiqueLiveness } = await import("../../src/harness-seed/loop/facet/phases/learn.ts");
-    const { chooseRoundMove } = await import("../../src/harness-seed/loop/facet/phases/plan.ts");
-    const { chooseMove, MoveSource } = await import(rulesUrl);
-    const part = await partLoop(() => card(2));
-    const choose = () => chooseMove({ spec: part.loop.spec, lastLiveness: part.loop.lastLiveness });
-    for (const iteration of [1, 2]) await critiqueLiveness(part.loop as never, judged(iteration) as never);
-    assert.equal(choose().source, MoveSource.Planner, "two cards at 2 are still 'almost there'");
-    await critiqueLiveness(part.loop as never, judged(3) as never);
-    const third = choose();
-    assert.equal(
-      third.source,
-      MoveSource.Critic,
-      `the third card at 2 makes extent the move: ${JSON.stringify(third)}`,
-    );
-    assert.equal(third.gap?.key, "extent");
-    assert.equal(third.gap?.fix, SKYLINE);
-    const polish = (part.loop.lastLiveness?.polish ?? []).map((p: { key: string }) => p.key);
-    assert.deepEqual(polish, ["light"], "a polish principle stuck at 2 joins the ledger by its kind");
-    // The builder's brief says why: the critic's own words, and how long it has stood.
-    await chooseRoundMove(part.loop as never, { iteration: 4 } as never);
-    assert.equal(part.loop.currentMove?.what, SKYLINE);
-    assert.equal(part.loop.currentMove?.source, MoveSource.Critic);
-    assert.match(String(part.loop.currentMove?.why), /extent scored 2\/3 for 3 critic cards running/);
-    // A convincing card ends the streak: extent at 3 is nobody's move any more.
-    part.answerWith(() => card(3));
-    await critiqueLiveness(part.loop as never, judged(5) as never);
-    assert.deepEqual(
-      (part.loop.lastLiveness?.grow ?? []).map((p: { key: string }) => p.key),
-      [],
-      "a 3 ends the streak",
-    );
-  });
 
   it("GROW-2. the critic's biggest reaches the move: its own pick, a grow principle inside the ask, is a candidate at 2", async () => {
     const { normalizeLiveness } = await import("../../src/harness-seed/loop/judge.ts");
@@ -13329,31 +12771,6 @@ describe("growth has a way into the move", () => {
     assert.equal(filled.milestone?.filledBy, MoveSource.Critic);
     // With nothing to fill it, the open rung is passed over: the climbed ladder reads as before.
     assert.deepEqual(chooseMove({ spec: fresh, milestonesDone: done }), { source: MoveSource.None, mandatory: false });
-  });
-
-  it("GROW-4. a step beyond the ask is still never a move: not the open rung's, not a stuck principle's", async () => {
-    const { critiqueLiveness } = await import("../../src/harness-seed/loop/facet/phases/learn.ts");
-    const { compileWorkerSpec } = await import("../../src/harness-seed/loop/director/rules.ts");
-    const { chooseMove, MoveSource } = await import(rulesUrl);
-    const pursuit = card(3, {
-      life: { score: 2, reason: "nobody chases you", fix: "a police pursuit with a helicopter", adds: true },
-      biggest: "life",
-    });
-    const part = await partLoop(() => pursuit);
-    for (const iteration of [1, 2, 3, 4]) await critiqueLiveness(part.loop as never, judged(iteration) as never);
-    assert.deepEqual(part.loop.lastLiveness?.grow, [], "a fix beyond the ask never counts toward a streak");
-    const { spec } = compileWorkerSpec(
-      { id: "city", brief: "the city", milestones: [{ what: "the wet asphalt becomes the hero" }] } as never,
-      null,
-    );
-    const done = [String((spec.milestones as Array<{ id: string }>)[0]!.id)];
-    const helicopter = { what: "a police helicopter over the course", why: "pressure", scope: "adds" };
-    const lastLiveness = part.loop.lastLiveness;
-    const choice = chooseMove({ spec, milestonesDone: done, lastBigMove: helicopter, lastLiveness });
-    assert.equal(choice.source, MoveSource.None, `the open rung is passed over: ${JSON.stringify(choice)}`);
-    assert.equal(choice.beyond?.what, helicopter.what, "the helicopter goes to the user as a card");
-    const unowned = chooseMove({ spec: { id: "city", checks: [] }, lastBigMove: helicopter, lastLiveness });
-    assert.equal(unowned.source, MoveSource.Planner);
   });
 });
 
@@ -14962,7 +14379,8 @@ describe("workers the run's pause stopped, and their kept work", () => {
     assert.match(words, new RegExp(`worker_start from=${stoppedCommit}`));
     // Flipped: it told a director with its own hands to merge the unjudged round by hand.
     assert.doesNotMatch(words, new RegExp(`git merge ${stoppedCommit}`));
-    assert.match(words, /judge that worker against=integration before you integrate it/);
+    // Flipped (Loop phase 4): it asked for a judge against integration before integrating.
+    assert.match(words, /integrate takes that worker's work as it is/);
   });
 });
 
@@ -15156,6 +14574,7 @@ describe("a finish claim with known gaps", () => {
           await writeFile(path.join(dir, "a.txt"), "a");
           await tool("save_point", { label: "Scene", summary: "the scene" });
           await tool("finish", {
+            review: "yes",
             summary: `${"The scene holds the town. ".repeat(160)}`,
             remaining: GAPS,
             proof: "a.txt",
@@ -15185,14 +14604,20 @@ describe("a finish claim with known gaps", () => {
         async ({ tool }) => {
           await writeFile(path.join(dir, "a.txt"), "a");
           await tool("save_point", { label: "Scene", summary: "the scene" });
-          answers.push(await tool("finish", { summary: "The scene is built.", remaining: GAPS, proof: "a.txt" }));
+          answers.push(
+            await tool("finish", { review: "yes", summary: "The scene is built.", remaining: GAPS, proof: "a.txt" }),
+          );
           return undefined;
         },
         async ({ tool }) => {
           await writeFile(path.join(dir, "b.txt"), "b");
           await tool("save_point", { label: "Walk", summary: "the walk and the arms" });
           answers.push(
-            await tool("finish", { summary: "The scene is built and the gaps are closed.", proof: "b.txt" }),
+            await tool("finish", {
+              review: "yes",
+              summary: "The scene is built and the gaps are closed.",
+              proof: "b.txt",
+            }),
           );
           return undefined;
         },
@@ -15217,7 +14642,9 @@ describe("a finish claim with known gaps", () => {
         async ({ tool }) => {
           await writeFile(path.join(dir, "a.txt"), "a");
           await tool("save_point", { label: "Scene", summary: "the scene" });
-          answers.push(await tool("finish", { summary: "The scene is built.", remaining: GAPS, proof: "a.txt" }));
+          answers.push(
+            await tool("finish", { review: "yes", summary: "The scene is built.", remaining: GAPS, proof: "a.txt" }),
+          );
           return undefined;
         },
       ],
@@ -15747,35 +15174,31 @@ describe("a worker's stopped round, kept without a verdict", () => {
       "../../src/harness-seed/loop/director/kept-judge.ts"
     );
     const worker = ended();
-    assert.equal(keptToMerge(worker as never), null, "unjudged: integrate takes the accepted round");
-    assert.match(String(keptLeftOut(worker as never)), /judge target=world against=integration/);
-
+    // Flipped (Loop phase 4): integrate takes the stopped round as it is; no judge has to prefer it.
+    assert.equal(keptToMerge(worker as never), KEPT, "unjudged: integrate takes the stopped round");
+    assert.equal(keptLeftOut(worker as never), null, "nothing is left out for want of a judge");
     noteKeptJudged(worker as never, KEPT, false);
-    assert.equal(keptToMerge(worker as never), null, "a judge that kept the build, or judged another, keeps it out");
-    noteKeptJudged(worker as never, "d".repeat(40), true);
-    assert.equal(keptToMerge(worker as never), null, "a verdict on another head says nothing of it");
-    noteKeptJudged(worker as never, KEPT, true);
-    assert.equal(keptToMerge(worker as never), KEPT, "preferred to the integration branch: it may go in");
-    assert.equal(keptLeftOut(worker as never), null);
+    assert.equal(keptToMerge(worker as never), KEPT, "a judge's word keeps nothing out");
     assert.equal(keptToMerge(ended({ state: "running" }) as never), null, "a running worker's round is its own");
+    assert.equal(keptToMerge(ended({ keptInBuild: true }) as never), null, "work already in the build");
   });
 
-  it("KJ2. the lead is never told to merge a stopped round by hand: it is judged first, through a worker started from it", async () => {
+  it("KJ2. the lead is never told to merge a stopped round by hand: a worker started from it builds on it", async () => {
     const { priorCommitWords } = await import("../../src/harness-seed/loop/director/journal-prompts.ts");
     const ref = "refs/studio/runs/run_k/workers/world";
     for (const lead of [false, true]) {
       const words = priorCommitWords({ lastCommit: ACCEPTED, from: FROM, ref, kept: KEPT, lead });
-      assert.doesNotMatch(words, new RegExp(`git merge ${KEPT}`), "no hand merge of unjudged work");
+      assert.doesNotMatch(words, new RegExp(`git merge ${KEPT}`), "no hand merge of a stopped round");
       assert.match(words, new RegExp(`worker_start from=${KEPT}`));
-      assert.match(words, /against=integration/, "judged against the build before it goes in");
+      // Flipped (Loop phase 4): the words asked for a judge against integration first.
+      assert.doesNotMatch(words, /against=integration/, "no judge is asked of it first");
     }
     const accepted = priorCommitWords({ lastCommit: ACCEPTED, from: FROM, ref });
-    assert.match(accepted, new RegExp(`git merge ${ACCEPTED}`), "a judged round still merges as before");
+    assert.match(accepted, new RegExp(`git merge ${ACCEPTED}`), "an accepted round still merges as before");
   });
 
-  it("KJ3. a stopped round that reaches the build inside a judged worker's merge is not called unjudged; one merged by hand is, and a look with no verdict changes nothing", async () => {
+  it("KJ3. a stopped round that reaches the build inside a worker's merge is said nothing of; one merged by hand is told", async () => {
     const { noteKeptWork } = await import("../../src/harness-seed/loop/director/kept-work.ts");
-    const { noteKeptJudged, keptToMerge } = await import("../../src/harness-seed/loop/director/kept-judge.ts");
     const HEAD = "e".repeat(40);
     const keptRun = () => {
       const notes: string[] = [];
@@ -15793,21 +15216,13 @@ describe("a worker's stopped round, kept without a verdict", () => {
       };
       return { loopRun, notes, events };
     };
-    // worker_start from=<kept>, judged, then integrated: the merge brings the stopped round in.
     const merged = keptRun();
     await noteKeptWork(merged.loopRun as never, HEAD, true);
     assert.deepEqual(merged.events, ["integration_merge"], "its part is on the record as added");
-    assert.deepEqual(merged.notes, [], "never said to be in the build without a judge");
+    assert.deepEqual(merged.notes, [], "nothing to tell: the merge's health pass looked");
     const byHand = keptRun();
     await noteKeptWork(byHand.loopRun as never, HEAD);
-    assert.match(byHand.notes.join("\n"), /in the build without a judge/);
-
-    const worker = ended();
-    noteKeptJudged(worker as never, KEPT, true);
-    noteKeptJudged(worker as never, KEPT, null);
-    assert.equal(keptToMerge(worker as never), KEPT, "a judge that could not look keeps the verdict standing");
-    noteKeptJudged(worker as never, KEPT, false);
-    assert.equal(keptToMerge(worker as never), null, "a judge that kept the build takes it back");
+    assert.match(byHand.notes.join("\n"), /is in the build; nobody judged it/);
   });
 });
 
@@ -15983,7 +15398,8 @@ describe("a chat in a game linked to an engine other than Unreal", () => {
       /builders working in parallel/,
       "with no Loop named, another engine's is the one Loop",
     );
-    assert.match(unnamedLoop, /reviewer/);
+    // Flipped (Loop phase 4): a reviewer checked its finish; the lead finishes it.
+    assert.match(unnamedLoop, /finishes it when the goal is reached/);
     assert.match(launchRules("claude-code", launch, "unreal").join("\n"), /the Unreal Loop/, "Unreal's stays Unreal's");
   });
 });
@@ -16052,28 +15468,14 @@ describe("a game its engine plugin plays in its editor, with judges", () => {
     assert.equal(leadJudgeTool(plain), undefined, "a game no plugin plays in its editor offers none");
   });
 
-  it("EJ2. after a turn keeps a save point every judge plays it in turn, each as itself; the answers open the lead's next turn and reach the run's checks", async () => {
+  it("EJ2. after a turn keeps a save point no judge plays it: the game's judges play only when the lead asks", async () => {
     const host = await toyLoop([savesOne, finishes]);
     await host.start();
-    assert.deepEqual(judgesPlayed(host), ["crowd", "plain"]);
-    for (const params of host.judged()) assert.equal((params.playtest as { role?: string }).role, "judge");
-    const second = host.prompts()[1] ?? "";
-    assert.match(second, /The Crowd judge played save point "One": The judge answered yes/, second);
-    assert.match(second, /The Plain judge played save point "One"/);
-    const checks = host.appended("run_interaction_evidence").map((payload) => String(payload.label));
-    assert.equal(checks.length, 2, JSON.stringify(checks));
-    assert.match(checks[0] ?? "", /Crowd judge/);
-    assert.match(checks[1] ?? "", /Plain judge/);
-  });
-
-  it("EJ3. a stop while a judge plays cancels the judges not played yet", async () => {
-    const host = await toyLoop([savesOne, finishes]);
-    host.judging = () => {
-      host.rec.ctx.cancelled = true;
-      return undefined;
-    };
-    await host.start();
-    assert.deepEqual(judgesPlayed(host), ["crowd"]);
+    // Flipped (Loop phase 4): every judge played each save point in turn, unasked.
+    assert.deepEqual(judgesPlayed(host), [], "nobody played");
+    assert.equal(host.prompts().length, 2, "the Loop went on to its second turn");
+    assert.doesNotMatch(host.prompts()[1] ?? "", /judge played save point/);
+    assert.match(host.prompts()[0] ?? "", /None plays unless you ask one with judge_play/);
   });
 
   it("EJ4. no judges, no rounds: a toy game whose plugin declares none, and an Unreal game", async () => {
@@ -16085,35 +15487,6 @@ describe("a game its engine plugin plays in its editor, with judges", () => {
     await unreal.start();
     assert.deepEqual(unreal.judged(), []);
     assert.ok(leadJudgeTool(unreal), "the Unreal lead keeps judge_play, as before");
-  });
-
-  it("EJ5. a round keeps to the Loop's hours: with a few minutes of working time left no judge plays, and the lead hears why", async () => {
-    const host = await toyLoop([
-      async (call) => {
-        await savesOne(call);
-        call.host.pass(3 * 60 * 60_000 - 2 * 60_000);
-        return undefined;
-      },
-      finishes,
-    ]);
-    await host.start();
-    assert.deepEqual(host.judged(), []);
-    assert.match(host.prompts()[1] ?? "", /No judge played save point "One": the Loop's working time is nearly over/);
-  });
-
-  it("EJ7. a round whose working time runs out while a judge plays starts no further judge, and the lead hears which didn't play", async () => {
-    const host = await toyLoop([savesOne, finishes]);
-    host.judging = () => {
-      // The first judge plays past the Loop's working time.
-      host.pass(3 * 60 * 60_000);
-      return undefined;
-    };
-    await host.start();
-    assert.deepEqual(judgesPlayed(host), ["crowd"]);
-    assert.match(
-      host.prompts()[1] ?? "",
-      /The judges' round after save point "One" stopped before the Plain judge played: the Loop's working time is over/,
-    );
   });
 
   it("EJ6. the chat's judge_play plays as the judge it names; a kept older judge that can't is refused, playing nothing", async () => {
@@ -16239,7 +15612,7 @@ describe("the reviewer's no's in a Loop that still has time", () => {
   const MINUTE = 60 * 1000;
   const MET = "The hands, the boss and the full run were already accepted and still hold.";
   const NOT_DONE = "The enemy in the game shows none of the armour its model has.";
-  const CLAIM = { summary: "The enemy wears its armour in the game.", proof: "shots/enemy.png" };
+  const CLAIM = { review: "yes", summary: "The enemy wears its armour in the game.", proof: "shots/enemy.png" };
 
   /** A web game with a close picture the lead names as proof, made before the Loop. */
   async function gameWithProof(prefix: string): Promise<string> {
@@ -16280,7 +15653,8 @@ describe("the reviewer's no's in a Loop that still has time", () => {
     for (let n = 0; n < MAX_FINISH_REJECTIONS; n++)
       host.reviews.push(reviewerAnswer("no", [MET], "claude-code", [NOT_DONE]));
     const report = await host.start();
-    assert.match(String(answers[MAX_FINISH_REJECTIONS - 1]), /time left, so it goes on/, "the third no keeps it going");
+    // Flipped (Loop phase 4): a no is a second opinion, whatever the time left: it decides nothing.
+    assert.match(String(answers[MAX_FINISH_REJECTIONS - 1]), /decides nothing/, "the third no keeps it going");
     assert.match(
       String(answers[MAX_FINISH_REJECTIONS]),
       /new work since the last no/,
@@ -16345,7 +15719,8 @@ describe("the reviewer's no's in a Loop that still has time", () => {
     for (let n = 0; n < MAX_FINISH_REJECTIONS; n++)
       host.reviews.push(reviewerAnswer("no", [MET], "claude-code", [NOT_DONE], ["Laps run"]));
     const report = await host.start();
-    assert.deepEqual(report.stillToFix, { done: ["Laps run"], notDone: [NOT_DONE], why: StopWhy.Stuck, hours: null });
+    // Flipped (Loop phase 4): the no's stopped the Loop (`stuck`); they decide nothing, and it ended another way.
+    assert.deepEqual(report.stillToFix, { done: ["Laps run"], notDone: [NOT_DONE], why: StopWhy.Ended, hours: null });
   });
 
   it("FC4. a Loop the person stopped after a no paused, and its card offered Keep building beside Resume: a pause carries no list", async () => {
@@ -16619,7 +15994,7 @@ describe("builders build the game, not the harness's checks (Loop phase 2)", () 
       iteration: 3,
       iterationId: "003",
       evidence: { eyes: [], state: { phase: "race" } },
-      nextBoard: board,
+      nextBoard: loop.board,
       comparison: { flips: [], regressions: [] },
       challengerBroken: false,
       defectNotes: [],
@@ -16636,19 +16011,28 @@ describe("builders build the game, not the harness's checks (Loop phase 2)", () 
     const { loop, round } = await stillRound("incumbent");
     assert.equal(round.won, true, `kept: ${round.verdict.reason}`);
     assert.equal(round.verdictSource, "no-regression");
-    assert.match(round.verdict.reason, /nothing regressed/);
-    assert.match(round.verdict.reason, /stays owed/);
-    assert.equal(loop.milestonesDone.has("m2-rivals"), false, "the rung was not delivered: it is not climbed");
-    assert.equal(round.moveRecord.delivered, false);
+    assert.match(round.verdict.reason, /nothing that worked before stopped working/);
+    // Flipped (Loop phase 4): no judge looks at a round, so nobody says its rung is missing; a rung
+    // with no check of its own is the builder's to say it built, and a kept round climbs it (LQ3).
+    assert.equal(loop.milestonesDone.has("m2-rivals"), true, "the kept round climbed its unchecked rung");
+    assert.equal(round.moveRecord.delivered, true);
     const { roundRule } = await import("../../src/harness-seed/loop/verdict.ts");
     assert.equal(roundRule({ source: round.verdictSource, won: true }), "no-regression");
   });
 
   it("LP4. a veto that names a regression still undoes the round, and so does a check that passed and now fails", async () => {
     const vetoed = await stillRound("incumbent", { camera: "default", what: "the car lost its wheels" });
-    assert.equal(vetoed.round.won, false);
-    assert.equal(vetoed.round.verdictSource, "taste-veto");
+    // Flipped (Loop phase 4): a judge's veto decides nothing; only the measured regression below does.
+    assert.equal(vetoed.round.won, true);
+    assert.equal(vetoed.round.verdictSource, "no-regression");
     const { acceptRound } = await import("../../src/harness-seed/loop/facet/rules.ts");
+    const olderVeto = acceptRound({
+      spec: { checks: [] },
+      board: {},
+      comparison: { flips: [], regressions: [] },
+      taste: { pick: "incumbent", veto: true },
+    });
+    assert.equal(olderVeto.accepted, true, "an older caller's veto keeps nothing out");
     const regressed = acceptRound({
       spec: { checks: [] },
       board: {},
@@ -16659,11 +16043,17 @@ describe("builders build the game, not the harness's checks (Loop phase 2)", () 
   });
 
   it("LP5. a round that left the mandatory fix was thrown away though nothing regressed: it is kept and the fix stays owed", async () => {
-    const fix = { what: "the rivals' cars are grey boxes", checkId: null, streak: 3, mandatory: true };
+    // Flipped (Loop phase 4): a fix no check measures was held by the judge still naming it; no judge
+    // looks now, so the fix here has a check of its own, and that check is what holds it.
+    const fix = { what: "the rivals' cars are grey boxes", checkId: "rivals-lit", streak: 3, mandatory: true };
+    const rivalsLit = { id: "rivals-lit", kind: "pixel", pass: false, reason: "grey" };
+    const carMoves = { id: "car-moves", kind: "probe", weight: "identity", pass: true, reason: "" };
     const { loop, round } = await stillRound("challenger", null, {
       currentFix: fix,
       biggestGap: fix.what,
       currentMove: null,
+      board: { "car-moves": carMoves, "rivals-lit": rivalsLit },
+      gapStreak: { text: fix.what, count: 3, checkId: fix.checkId, losses: 0, routed: false },
     });
     assert.equal(round.won, true, `kept: ${round.verdict.reason}`);
     assert.notEqual(round.verdictSource, "unfixed");
@@ -16918,5 +16308,226 @@ describe("the lead and its workers are free agents (Loop phase 3)", () => {
     const spoke = await waitFor("200", () => said.push("make it night"));
     assert.ok(spoke.waitedSeconds < 200, "it ended when the user spoke");
     assert.deepEqual(consumed, [], "the user's words are left for the lead's turn and digest");
+  });
+});
+
+describe("judges inform the Loop and decide nothing (Loop phase 4)", () => {
+  /** A host that records every call. */
+  const recordingCtx = () => {
+    const asked: string[] = [];
+    return { asked, ctx: { cancelled: false, call: async (method: string) => void asked.push(method) } };
+  };
+
+  /** A round of `car` past the board: nothing regressed, the frames changed, one rung on its ladder with no check. */
+  async function roundPastTheBoard(extra: Record<string, unknown> = {}) {
+    const { FACET_POLICY } = await import("../../src/harness-seed/loop/facet/policy.ts");
+    const { asked, ctx } = recordingCtx();
+    const rung = { id: "m2-rivals", what: "Five rival cars race the player" };
+    const board = { "car-moves": { id: "car-moves", kind: "probe", weight: "identity", pass: true, reason: "" } };
+    const loop: Record<string, any> = {
+      ctx,
+      run: { runId: "run_free", project: "racer", goal: "a night street race", model: "opus" },
+      facet: { id: "car", title: "Car" },
+      facets: [],
+      spec: {
+        id: "car",
+        title: "Car",
+        cameras: ["default"],
+        checks: [{ id: "car-moves", kind: "probe", expr: "speed > 0", weight: "identity" }],
+        milestones: [rung],
+        moveOwner: "director",
+      },
+      currentMove: { what: rung.what, milestoneId: rung.id, source: "milestone", mandatory: true },
+      currentFix: null,
+      board,
+      incumbentEvidence: { eyes: [], state: { phase: "race" } },
+      milestonesDone: new Set<string>(),
+      milestonesSetAside: new Set<string>(),
+      rungMisses: {},
+      moves: [],
+      polishStreak: 0,
+      policy: FACET_POLICY,
+      gapHistory: [],
+      biggestGap: "",
+      gapStreak: null,
+      defectList: [],
+      polishList: [],
+      loseStreak: 0,
+      lastFailure: null,
+      lastBigMove: null,
+      appendRun: async () => undefined,
+      ...extra,
+    };
+    const round: Record<string, any> = {
+      iteration: 3,
+      iterationId: "003",
+      evidence: { ok: true, problems: [], eyes: [], state: { phase: "race" } },
+      nextBoard: board,
+      comparison: { flips: [], regressions: [] },
+      diffs: { default: { diffFraction: 0.2, compared: 100 } },
+      challengerBroken: false,
+      defectNotes: [],
+      attemptBranch: null,
+    };
+    return { loop, round, asked };
+  }
+
+  /** A kept round's verdict, as the board leaves it. */
+  const keptVerdict = () => ({ pick: "challenger", satisfied: false, biggest_gap: "", reason: "kept", defects: [] });
+
+  it("LQ1. every round past the board waited on a blind taste judge: a round that changed what a player sees and regressed nothing is kept with no judge call", async () => {
+    const { decideOnBoard } = await import("../../src/harness-seed/loop/facet/phases/verify.ts");
+    const { loop, round, asked } = await roundPastTheBoard();
+    await decideOnBoard(loop as never, round as never);
+    assert.equal(round.verdict.pick, "challenger", `kept: ${round.verdict.reason}`);
+    assert.equal(round.verdictSource, "no-regression");
+    assert.match(round.verdict.reason, /nothing that worked before stopped working/);
+    assert.equal(round.taste ?? null, null, "no taste verdict was asked for");
+    assert.deepEqual(asked, [], "no judge call spent");
+  });
+
+  it("LQ1b. only a check that passed before and now fails undoes a round", async () => {
+    const { decideOnBoard } = await import("../../src/harness-seed/loop/facet/phases/verify.ts");
+    const { loop, round, asked } = await roundPastTheBoard();
+    round.nextBoard = { "car-moves": { ...round.nextBoard["car-moves"], pass: false, reason: "speed 0" } };
+    round.comparison = { flips: [], regressions: ["car-moves"] };
+    await decideOnBoard(loop as never, round as never);
+    assert.equal(round.verdict.pick, "incumbent");
+    assert.equal(round.verdictSource, "checks");
+    assert.deepEqual(asked, []);
+  });
+
+  it("LQ2. a prose-only plan's round was decided by a blind A/B judge: a build that runs is kept, with no judge call", async () => {
+    const { verifyChallenger } = await import("../../src/harness-seed/loop/facet/phases/verify.ts");
+    const { loop, round, asked } = await roundPastTheBoard({ legacy: true });
+    await verifyChallenger(loop as never, round as never);
+    assert.equal(round.won, true, `kept: ${round.verdict.reason}`);
+    assert.equal(round.verdictSource, "no-regression");
+    assert.deepEqual(asked, [], "no facet judge was asked");
+  });
+
+  it("LQ3. a rung no check measures climbed only on the judge's word: a kept round climbs it, and a rung whose check fails does not", async () => {
+    const { settleMoveAndGap } = await import("../../src/harness-seed/loop/facet/phases/settle.ts");
+    const { loop, round } = await roundPastTheBoard();
+    round.won = true;
+    round.verdict = keptVerdict();
+    round.attemptBoard = round.nextBoard;
+    await settleMoveAndGap(loop as never, round as never);
+    assert.equal(loop.milestonesDone.has("m2-rivals"), true, "the builder built its rung; nobody judges it");
+    assert.equal(round.moveRecord.delivered, true);
+
+    const checked = await roundPastTheBoard();
+    const rivals = { id: "rivals-race", kind: "probe", expr: "rivals.length >= 5" };
+    checked.loop.currentMove = { ...checked.loop.currentMove, check: rivals };
+    checked.round.won = true;
+    checked.round.verdict = keptVerdict();
+    checked.round.attemptBoard = { ...checked.round.nextBoard, "rivals-race": { id: "rivals-race", pass: false } };
+    await settleMoveAndGap(checked.loop as never, checked.round as never);
+    assert.equal(checked.loop.milestonesDone.has("m2-rivals"), false, "its own check says it is not there yet");
+    assert.equal(checked.round.moveRecord.delivered, false);
+    assert.match(String(checked.round.moveRecord.note), /stays owed/);
+  });
+
+  it("LQ4. a worker ended only on a judge's 'satisfied': it is done when its build is kept and its own checks hold, and not while its ladder has a rung left", async () => {
+    const { facetIsDone } = await import("../../src/harness-seed/loop/facet/rules.ts");
+    const summary = { identityAllPass: true };
+    assert.ok(facetIsDone({ won: true, verdict: { satisfied: false }, summary }), "no judge's word needed");
+    assert.equal(facetIsDone({ won: true, summary: { identityAllPass: false } }), null, "its checks do not hold yet");
+    assert.equal(facetIsDone({ won: false, summary }), null, "an undone round finishes nothing");
+    assert.equal(facetIsDone({ won: true, summary, rungsLeft: true }), null, "the ladder still has a rung");
+    assert.ok(facetIsDone({ won: true, legacy: true }), "a part with no checks of its own is done on its kept build");
+  });
+
+  it("LQ5. a reviewer's 'gamed' finding failed a check that passed before, undoing the round on a model's word: the check reads unmeasured", async () => {
+    const { markGamedChecks } = await import("../../src/harness-seed/loop/facet/phases/verify.ts");
+    const before = { "car-moves": { id: "car-moves", kind: "probe", pass: true, reason: "" } };
+    const after = markGamedChecks({ "car-moves": { id: "car-moves", kind: "probe", pass: true, reason: "" } }, [
+      { id: "car-moves", what: "speed is forced to 1 in the probe" },
+    ]);
+    assert.equal(after["car-moves"].pass, null, "neither a pass nor a regression");
+    assert.equal(after["car-moves"].gamed, true);
+    assert.match(after["car-moves"].reason, /speed is forced/);
+    assert.deepEqual(compareScoreboards(before as never, after as never).regressions, []);
+  });
+
+  it("LQ7. a worker's stopped round went into the build only once a judge preferred it: integrate takes it as it is, and leaves nothing out for want of a judge", async () => {
+    const { keptLeftOut, keptToMerge } = await import("../../src/harness-seed/loop/director/kept-judge.ts");
+    const kept = "c".repeat(40);
+    const worker = { id: "car", state: "stopped", keptCommit: kept, keptInBuild: false, keptJudged: null };
+    assert.equal(keptToMerge(worker as never), kept, "the stopped round is taken unjudged");
+    assert.equal(keptLeftOut(worker as never), null);
+    assert.equal(keptToMerge({ ...worker, keptInBuild: true } as never), null, "work already in the build");
+  });
+
+  it("LQ6. the liveness critic ran on every round: a round asks no critic, even from an older round.ts that still calls it", async () => {
+    const { critiqueLiveness } = await import("../../src/harness-seed/loop/facet/phases/learn.ts");
+    const { loop, round, asked } = await roundPastTheBoard({ critic: "world" });
+    round.won = true;
+    round.evidence = { ...round.evidence, shots: [{ camera: "default", path: "/tmp/a.png" }] };
+    await critiqueLiveness(loop as never, round as never);
+    assert.deepEqual(asked, []);
+    assert.equal(round.liveness ?? null, null);
+  });
+
+  it("LQ8. a part that drew on a screen another part owned, or added objects without tags, was a code-review finding it had to undo: a builder decides its screen and its scene", async () => {
+    const spec = { id: "car", owns: ["src/car.js"], checks: [], screenOwner: "hud" };
+    const diff = [
+      "+++ b/src/car.js",
+      "@@ -1,0 +1,4 @@",
+      "+hud.text('speed', 120);",
+      "+const body = new THREE.Mesh();",
+      "+const wheel = new THREE.Mesh();",
+      "+const rig = new THREE.Group();",
+    ].join("\n");
+    assert.deepEqual(mechanicalReview(diff, spec, { ownsMain: false }), []);
+    const { screenOwnerLine } = await import("../../src/harness-seed/loop/screen-owner-prompts.ts");
+    const told = String(screenOwnerLine(spec));
+    assert.match(told, /hud/, "the part still hears who leads the screen");
+    assert.doesNotMatch(told, /never draw|code-review finding/i, "and is not told it may not draw");
+  });
+
+  it("LQ9. a resumed run's boards still carried the questions a judge grew, asked by a judge every round, and the art director's blockers as part of a part's contract: the questions leave, the blockers inform", async () => {
+    const { withoutJudgesHold } = await import("../../src/harness-seed/loop/facet/kept-round.ts");
+    const spec = {
+      id: "car",
+      checks: [
+        { id: "car-moves", kind: "probe", weight: "identity", origin: "planner" },
+        { id: "defect-trunk-flat", kind: "vision", weight: "normal", origin: "judge", defect: "the trunk is flat" },
+        { id: "ship-digits", kind: "vision", weight: "identity", origin: "director", askedBy: "art-director" },
+      ],
+    };
+    withoutJudgesHold(spec);
+    assert.deepEqual(
+      spec.checks.map((check) => check.id),
+      ["car-moves", "ship-digits"],
+      "a judge's own question is gone",
+    );
+    assert.equal(spec.checks[0]?.weight, "identity", "the part's own contract stands");
+    assert.equal(spec.checks[1]?.weight, "normal", "the art director's word no longer holds the contract");
+  });
+
+  it("LQ10. a claim that the goal was reached waited on a reviewer's yes, and an unplayed goal or the art director's blocker turned it back: the lead's word closes the build", async () => {
+    const { finish } = await import("../../src/harness-seed/loop/director/integrate.ts");
+    const { createGoals } = await import("../../src/harness-seed/loop/director/goals.ts");
+    const { fakeHost, fakeLoopRun } = await import("../helpers/director-run.ts");
+    const host = fakeHost();
+    const loopRun = fakeLoopRun(host);
+    // A goal no playtest verified, and the art director's blocker on the head that would land.
+    loopRun.state.goals = createGoals([{ id: "plaza", done: ["the plaza is red"] }]);
+    const blocker = { what: "the plaza is grey", camera: null, part: null, severity: "blocker" };
+    loopRun.state.lastShip = { head: loopRun.state.integrationHead, ship: false, defects: [blocker], at: 0 };
+    loopRun.shipReviewOn = () => loopRun.state.lastShip;
+    const closes: Array<Record<string, unknown>> = [];
+    loopRun.closeTheLoopRun = async (options: Record<string, unknown>) => {
+      closes.push(options);
+      loopRun.state.finished = true;
+      return { ok: true, line: "it loaded at the close" };
+    };
+    const said = String(await finish(loopRun, { summary: "the plaza is red", land: "yes", victory: "yes" }));
+    assert.equal(closes.length, 1, `closed: ${said}`);
+    assert.equal(closes[0]?.victory, true, "the lead's claim stands");
+    const asked = host.calls.map((call) => call.method);
+    assert.ok(!asked.includes("finish.review"), "no reviewer was asked");
+    assert.ok(!asked.includes("engine.complete"), "no judge was asked");
   });
 });

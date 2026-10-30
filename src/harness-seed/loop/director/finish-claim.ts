@@ -1,20 +1,17 @@
 /**
- * The director's claim that the goal is reached (`finish victory=yes`; the person's own Finish is no
- * claim), checked by a reviewer that did none of the work (`../finish-check.ts`) before the close.
- * The reviewer reads the integration worktree (the build that would land), the lead's proof, the
- * finish moment's notes and pictures, the run's job results and Genex's captures of the build; a yes
- * closes the run as before, a no goes back to the lead, and the no's that stop a Loop close it with
- * what isn't done. A claim the call (or the lead's turn) has no time left to check is not counted: the
- * lead is told to call finish again (the art director's look, which may have used the time, then
- * stands on the head), or, in the run's last turn, the run closes as no claim and says the time ran
- * out. A yes for a head that moved while the reviewer read is no answer; a close that lands another
- * head is no victory (integrate.ts).
+ * The director's claim that the goal is reached, when it asks a reviewer that did none of the work for
+ * a second opinion first (`finish victory=yes review=yes`; without `review` the claim closes on the
+ * lead's word, integrate.ts). The reviewer (`../finish-check.ts`) reads the integration worktree
+ * (the build that would land), the lead's proof, the finish moment's notes and pictures, the run's
+ * job results and Genex's captures of the build; a yes closes the run as reviewed, and a no — or no
+ * answer, no time, no reviewer to seat — goes back to the lead, who decides (Loop phase 4: no row of
+ * no's closes a run). A yes for a head that moved while the reviewer read is no answer; a close that
+ * lands another head is no victory (integrate.ts).
  * Everything runs inside the lead's one `finish` call, whose time the close still needs: its settle,
- * the readers' stop, its look and, when the head still owes one, its judge (`closeMsOf`); that judge
- * ends before the call's end, leaving the landing its time (`claimJudgeBy`), and a close still running
- * at the call's end answers the lead that the run is closing (`closedBy`) and lands after it. A module
- * of its own, so the shipped parts that use it (integrate.ts, tools.ts, the journal, director.ts)
- * need no new name from a module an agent may have kept.
+ * the readers' stop, its look and the landing (`closeMsOf`), and a close still running at the call's
+ * end answers the lead that the run is closing (`closedBy`) and lands after it. A module of its own,
+ * so the shipped parts that use it (integrate.ts, tools.ts, the journal, director.ts) need no new
+ * name from a module an agent may have kept.
  */
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -25,12 +22,10 @@ import {
   CALL_MARGIN_MS,
   CLAIM_BEFORE_END_MINUTES,
   checkFinish,
-  FINISH_REPORT,
   type FinishOutcome,
   type FinishTally,
   finishAnswer,
   type NoTime,
-  notDoneOf,
   tallyOf as savedTally,
 } from "../finish-check.ts";
 import { FINISH_ANSWER } from "../finish-check-prompts.ts";
@@ -45,30 +40,27 @@ import { MINUTE_MS, SECOND_MS } from "../time.ts";
 import { list } from "./args.ts";
 import { CLOSE_SETTLE_MS } from "./budgets.ts";
 import { closeUnderWay } from "./close-latch.ts";
+import { secondOpinionNo } from "./second-opinion-prompts.ts";
 import { type LoopRun, WindowLease } from "./loop-run.ts";
 import { GIT_WITHOUT_PROOF } from "./proof-git.ts";
 import { type TurnEnds, turnEndsOf } from "./turn-ends.ts";
 
 /**
- * How soon after it starts the close's own judge must be done asking (tools.ts `judgeTheLanding`).
- * The close runs inside the lead's `finish` call, which the engine gives up on after ten minutes, and
- * the settle, the close's look and the judge's own look share that time.
+ * How soon after it starts a judge asked inside a lead's call must be done asking (tools.ts
+ * `landingJudgeUntil`): the engine gives up on the call after ten minutes.
  */
 export const FINAL_JUDGE_MS = 4 * MINUTE_MS;
 /** The close's look at the head it lands, as a finish call budgets it (art-direction.ts budgets the same look). */
 export const CLOSE_LOOK_MS = 2 * MINUTE_MS;
-/** What a claim keeps for the close's judge: it ends before the call's end (`claimJudgeBy`), at most `FINAL_JUDGE_MS` after it starts. */
-export const CLAIM_JUDGE_MS = 2 * MINUTE_MS;
 /** What the close gives the run's readers to stop, as the worker pool does (workers/pool.ts `SETTLE_WAIT_MS`). */
 export const CLOSE_READERS_MS = 30 * SECOND_MS;
-/** What a claim keeps after the close's judge: the landing in the game folder and the run's close. */
+/** What a claim keeps after the close's look: the landing in the game folder and the run's close. */
 export const CLAIM_LANDING_MS = 30 * SECOND_MS;
 /**
  * What a yes still needs of the lead's `finish` call after the check, at most (`closeMsOf`): the
- * close's settle, readers, look, judge and landing.
+ * close's settle, readers, look and landing.
  */
-export const CLAIM_CLOSE_MAX_MS =
-  CLOSE_SETTLE_MS + CLOSE_READERS_MS + CLOSE_LOOK_MS + CLAIM_JUDGE_MS + CLAIM_LANDING_MS;
+export const CLAIM_CLOSE_MAX_MS = CLOSE_SETTLE_MS + CLOSE_READERS_MS + CLOSE_LOOK_MS + CLAIM_LANDING_MS;
 
 /**
  * What a claim's answer says when the run closed under it, the build moved while the reviewer read,
@@ -80,10 +72,9 @@ export const CLAIM_ANSWER = {
     "The build moved while the reviewer read your claim (something was integrated meanwhile), so its yes does not speak for what would land. Call finish again, with nothing else in the same turn.",
   noTimeInTurn: `Your turn ends too soon for a reviewer to check your claim, so it is not counted. Call finish early in your wrap-up, at least ${CLAIM_BEFORE_END_MINUTES} minutes before the run ends, with nothing else in the same turn.`,
   tooLate:
-    "No time is left in this run for a reviewer to check your claim, so the run closes without a yes and its report says the time ran out.",
-  noReviewer: "No engine here can hold a reviewer to check your claim, so the run closes without a yes.",
-  stopped: (no: { rejections: number; reasons: readonly string[]; notDone: readonly string[] }) =>
-    FINISH_ANSWER.stopped(no.rejections, no.reasons, no.notDone),
+    "No time is left in this run for a reviewer to read your claim. Call finish again without review to close the build as you judge it.",
+  noReviewer:
+    "No engine here can hold a reviewer to read your claim. Call finish again without review to close the build as you judge it.",
   closing:
     "The reviewer accepted that the goal is reached and the run is closing: Genex lands the build if it runs when it is checked at the end, and the report says so. End your session now with a one-paragraph summary for the user; do not say the build is live.",
   closingUnwon:
@@ -135,7 +126,7 @@ export function claimAnswerBy(callStarted: number): number {
   return callStarted + LEAD_CALL_MS - CALL_MARGIN_MS;
 }
 
-/** When the close's judge after a claim must be done: before the call's answer, leaving the landing its time. */
+/** When a judge inside a claim's call must be done: before the call's answer, leaving the landing its time. */
 export function claimJudgeBy(callStarted: number): number {
   return claimAnswerBy(callStarted) - CLAIM_LANDING_MS;
 }
@@ -166,16 +157,9 @@ function realWait(ms: number): Promise<void> {
   return delay(ms, undefined, { ref: false });
 }
 
-/**
- * What a yes still needs of the call: the settle and the readers' stop; with a landing, the close's
- * look, the judge when the head still owes one (none when the art director's gate already answered
- * it) and the landing itself.
- */
-function closeMsOf(loopRun: LoopRun, land: boolean): number {
-  if (!land) return CLOSE_SETTLE_MS + CLOSE_READERS_MS;
-  const owed =
-    typeof loopRun.closeJudgeAsk === "function" ? loopRun.closeJudgeAsk(loopRun.state.integrationHead) : true;
-  return owed ? CLAIM_CLOSE_MAX_MS : CLAIM_CLOSE_MAX_MS - CLAIM_JUDGE_MS;
+/** What a yes still needs of the call: the settle and the readers' stop; with a landing, the close's look and the landing itself. */
+function closeMsOf(land: boolean): number {
+  return land ? CLAIM_CLOSE_MAX_MS : CLOSE_SETTLE_MS + CLOSE_READERS_MS;
 }
 
 /** Whether the run is closing or closed: a check under way then records no answer. */
@@ -233,10 +217,6 @@ function tallyFor(loopRun: LoopRun, lastRound: number): FinishTally {
   return tally;
 }
 
-/** The lead's summary, and what the reviewer's last no found not done after it, when it found any. */
-const withNotDone = (summary: string, notDone: readonly string[]): string =>
-  notDone.length ? `${summary}\n\n${FINISH_REPORT.summaryNotDone(notDone)}` : summary;
-
 /**
  * The lead's turn the claim is in: as wake.ts noted it, else (a kept older wake loop notes none) the
  * run's own working deadline, or its end once that passed; none for a run that has neither.
@@ -252,35 +232,23 @@ function turnOf(loopRun: LoopRun): Partial<TurnEnds> {
 }
 
 /**
- * A claim with no time for a review: not counted while a later turn comes (its call again, or the
- * wrap-up); in the run's last turn, the run closes as no claim, the time having run out.
+ * A review with no time to read the claim: nothing is decided, and the lead hears it — call finish
+ * again (in a later turn, or without review to close as it judges).
  */
 function noTimeVerdict(outcome: NoTime, claim: ClaimContext): ClaimVerdict {
   if (!outcome.turnEnds) return { close: false, answer: finishAnswer(outcome) };
-  if (!claim.lastTurn) return { close: false, answer: CLAIM_ANSWER.noTimeInTurn };
-  const notDone = notDoneOf(claim.tally);
-  return {
-    close: true,
-    victory: false,
-    because: FINISH_REPORT.tooLate,
-    summary: withNotDone(claim.summary, notDone),
-    ...(notDone.length ? { notDone } : {}),
-    told: CLAIM_ANSWER.tooLate,
-    why: StopWhy.Time,
-  };
+  return { close: false, answer: claim.lastTurn ? CLAIM_ANSWER.tooLate : CLAIM_ANSWER.noTimeInTurn };
 }
 
-/** What a verdict reads besides the check's outcome: the lead's summary, whether its turn is the last, and the tally. */
+/** What a verdict reads besides the check's outcome: whether the lead's turn is the last. */
 interface ClaimContext {
-  summary: string;
   lastTurn: boolean;
-  tally: FinishTally;
 }
 
 /**
- * What a check came to for the close: a yes and the stopping no close the run; no reviewer closes it
- * as no claim; no time is not counted, and the lead calls again (in the last turn the run closes as
- * no claim); a yes for a head that moved neither. A close without a yes tells the lead why.
+ * What a review the lead asked for came to: a yes closes the run as reviewed; anything else — a no,
+ * no answer, no time, no reviewer to seat, a yes for a head that moved — goes back to the lead, who
+ * decides. A reviewer's no never closes a run (Loop phase 4).
  */
 function verdictOf(outcome: FinishOutcome, claim: ClaimContext): ClaimVerdict {
   if ("noTime" in outcome) return noTimeVerdict(outcome, claim);
@@ -288,19 +256,10 @@ function verdictOf(outcome: FinishOutcome, claim: ClaimContext): ClaimVerdict {
   if (outcome.step === FinishCheckStep.Unanswered && outcome.lapsed)
     return { close: false, answer: CLAIM_ANSWER.moved };
   if (outcome.step === FinishCheckStep.Unanswered && outcome.seatless)
-    return { close: true, victory: false, because: FINISH_REPORT.noReviewer, told: CLAIM_ANSWER.noReviewer };
-  if (outcome.step !== FinishCheckStep.Rejected || !outcome.stop)
-    return { close: false, answer: finishAnswer(outcome) };
-  const notDone = notDoneOf(outcome);
-  return {
-    close: true,
-    victory: false,
-    because: FINISH_REPORT.notAccepted,
-    summary: withNotDone(claim.summary, notDone),
-    notDone,
-    told: CLAIM_ANSWER.stopped(outcome),
-    why: StopWhy.Stuck,
-  };
+    return { close: false, answer: CLAIM_ANSWER.noReviewer };
+  if (outcome.step === FinishCheckStep.Rejected)
+    return { close: false, answer: secondOpinionNo(outcome.reasons, outcome.notDone) };
+  return { close: false, answer: finishAnswer(outcome) };
 }
 
 /** Why a yes no longer speaks for the head the reviewer read (`head`, when the caller named it), or null. */
@@ -333,7 +292,7 @@ export async function checkClaim(
       tally,
       now: Date.now,
       callStarted: call.started ?? Date.now(),
-      closeMs: closeMsOf(loopRun, claim.land !== false),
+      closeMs: closeMsOf(claim.land !== false),
       ...(turn.endsBy === undefined ? {} : { endsBy: turn.endsBy }),
       said: log.said,
       relayed: log.relayed,
@@ -348,5 +307,5 @@ export async function checkClaim(
   );
   await loopRun.saveJournal().catch(() => {});
   if (closing(loopRun)) return { close: false, answer: CLAIM_ANSWER.alreadyClosed };
-  return verdictOf(outcome, { summary, lastTurn: turn.last === true, tally });
+  return verdictOf(outcome, { lastTurn: turn.last === true });
 }

@@ -85,7 +85,7 @@ async function hostOn(
 
 /** A turn that claims the goal is reached, naming a file of the folder as proof. */
 const finishes: LoopTurn = async ({ tool }) => {
-  await tool("finish", { summary: "The level is built and the door opens.", proof: "project.godot" });
+  await tool("finish", { review: "yes", summary: "The level is built and the door opens.", proof: "project.godot" });
   return undefined;
 };
 
@@ -340,12 +340,13 @@ describe("kept older parts, finished Loops and the chat's words", () => {
     assert.notEqual(await finishedLoopRun(web as never, "t1", run), null, "a web Loop's finished build still reopens");
   });
 
-  it("the chat tells a Loop on a project that isn't a web game that the lead builds in place and a reviewer checks its finish", () => {
+  it("the chat tells a Loop on a project that isn't a web game that the lead builds in place and finishes it", () => {
     const unlimited = { toolName: "start_autopilot", hours: null, frameCount: 2 };
     const open = launchRules("claude-code", unlimited, GameEngine.Web, LoopProfile.Open).join("\n");
     assert.doesNotMatch(open, /builder|judge/i);
     assert.doesNotMatch(open, /Unreal/);
-    assert.match(open, /until a reviewer accepts the finish, 24 h at most/);
+    // Flipped (Loop phase 4): it ran until a reviewer accepted the finish.
+    assert.match(open, /until the lead finishes it, 24 h at most/);
     assert.match(open, /the lead builds the whole project itself in this folder/);
     const timed = launchRules(
       "claude-code",
@@ -810,7 +811,8 @@ describe("after a Loop in place", () => {
         const said = JSON.stringify(host.rec.paramsOf("events.append"));
         assert.doesNotMatch(said, /studio's connection/, "no web connection is promised");
         assert.doesNotMatch(said, /required outcomes/);
-        if (until) assert.match(said, /a reviewer accepts the lead's finish/);
+        // Flipped (Loop phase 4): it ended when a reviewer accepted the lead's finish.
+        if (until) assert.match(said, /when the lead says the goal is reached/);
         else assert.match(said, /Building until about/);
       }
     },
@@ -925,7 +927,11 @@ describe("what a Loop in place teaches", () => {
     async () => {
       const notes: LoopTurn = async ({ tool }) => {
         await tool("note", { text: "Rooms first, then the door." });
-        await tool("finish", { summary: "The level is built and the door opens.", proof: "project.godot" });
+        await tool("finish", {
+          review: "yes",
+          summary: "The level is built and the door opens.",
+          proof: "project.godot",
+        });
         return undefined;
       };
       const host = await hostOn(Project.GodotGame, { facts: GODOT, turns: [notes] });

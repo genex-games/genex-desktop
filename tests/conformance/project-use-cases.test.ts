@@ -148,7 +148,7 @@ async function unrealLoopHost(turns: LoopTurn[], run: Record<string, unknown> = 
 
 /** A lead turn that claims the goal is reached, naming the project file as proof. */
 const finishesLoop: LoopTurn = async ({ tool }) => {
-  await tool("finish", { summary: "The level is built and the door opens.", proof: "Lantern.uproject" });
+  await tool("finish", { review: "yes", summary: "The level is built and the door opens.", proof: "Lantern.uproject" });
   return undefined;
 };
 
@@ -1166,7 +1166,11 @@ describe("a new Unreal game, plugin on: the editor under its lock, workers in co
         async ({ tool }) => {
           await tool("save_point", { label: "One", summary: "the first room" });
           answers.push(textOf(await tool(WORKER_START, { type: "cpp", title: "Door", task: "A door that opens." })));
-          await tool("finish", { summary: "The level is built and the door opens.", proof: "Lantern.uproject" });
+          await tool("finish", {
+            review: "yes",
+            summary: "The level is built and the door opens.",
+            proof: "Lantern.uproject",
+          });
           return undefined;
         },
       ]);
@@ -2118,7 +2122,7 @@ describe("an unlimited Loop on any of these: the lead, the facts' hooks and obse
         [
           async ({ tool }) => {
             await tool(WORKER_START, { type: "cpp", title: "Door", task: "A door that opens." });
-            await tool("finish", { summary: "The level is built.", proof: "Lantern.uproject" });
+            await tool("finish", { review: "yes", summary: "The level is built.", proof: "Lantern.uproject" });
             return undefined;
           },
           finishesLoop,

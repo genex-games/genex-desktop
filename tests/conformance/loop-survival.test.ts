@@ -452,8 +452,7 @@ const ONE_LOOP_TRAIL = [
   "tool:unreal__log-errors",
   "snapshot.create",
   "tool:unreal__hero-shots",
-  "finish.review",
-  "finish.settle",
+  // Flipped (Loop phase 4): the claim closes on the lead's word, with no review (finish.review, finish.settle).
   "tool:unreal__save-all",
   "tool:unreal__log-errors",
   "snapshot.create",
@@ -519,7 +518,7 @@ describe("a canonical Unreal Loop on the one Loop, as Genex sees it", () => {
         "facet_iteration",
         "integration_merge",
         "director_continued",
-        "finish_check",
+        // Flipped (Loop phase 4): no finish_check, as no reviewer reads a claim the lead asked none for.
         "run_finished",
       ],
     );
@@ -532,7 +531,8 @@ describe("a canonical Unreal Loop on the one Loop, as Genex sees it", () => {
     assert.ok(graph);
     assert.deepEqual(
       graph.nodes.map((node) => node.kind),
-      ["run", "base", "lead", "facet", "iteration", "iteration", "iteration", "integration", "final", "finish_check"],
+      // Flipped (Loop phase 4): no finish_check node.
+      ["run", "base", "lead", "facet", "iteration", "iteration", "iteration", "integration", "final"],
     );
     const final = graph.nodes.find((node) => node.kind === GraphNodeKind.Final);
     assert.ok(final?.kind === GraphNodeKind.Final);

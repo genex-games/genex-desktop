@@ -116,30 +116,33 @@ export function pinFixRecipe<
 /**
  * Is the work done? The contract is the identity checks the facet was started on — a
  * director's `done` list, the planner's identity features, the harness's own — and nothing
- * else. Checks the judge grows during the run are on the board and steer the next
- * iteration, but a facet that met its contract is finished even while the judge is still
- * naming polish; the alternative (every check, judge-grown included) is a worker that can
- * never stop, which is exactly what a run of 4-of-7 boards looked like.
+ * else. Checks a judge grew in an older run are on the board and steer the next iteration, but a
+ * facet that met its contract is finished; the alternative (every check, grown included) is a
+ * worker that can never stop, which is exactly what a run of 4-of-7 boards looked like.
+ *
+ * No judge has a say (Loop phase 4): the round's build was kept, its identity checks hold (a part
+ * with no checks of its own, `legacy`, is done on its kept build), and the director's ladder has no
+ * rung left (`rungsLeft`). `verdict` is read by nobody; an older caller may still pass it.
  *
  * Returns the sentence for `stoppedBecause`, or null while there is still work to do.
  */
 export function facetIsDone({
   won,
   broken = false,
-  verdict = null,
   summary = null,
   legacy = false,
+  rungsLeft = false,
 }: {
   won: unknown;
   broken?: boolean;
   verdict?: { satisfied?: boolean } | null;
   summary?: { identityAllPass?: boolean } | null;
   legacy?: boolean;
+  rungsLeft?: boolean;
 }): string | null {
-  const satisfiedWin = won && !broken && verdict?.satisfied;
-  if (!satisfiedWin) return null;
-  if (!legacy && summary?.identityAllPass !== true) return null;
-  return legacy ? "facet critic satisfied" : "the work it was given is done";
+  if (!won || broken || rungsLeft) return null;
+  if (legacy) return "its build is kept: a part with no checks of its own is done when its build runs";
+  return summary?.identityAllPass === true ? "the work it was given is done" : null;
 }
 
 /** One exponential step of a worker's own average, seeded by the first measurement it gets. */
@@ -271,14 +274,14 @@ export function strongFlips(
 }
 
 /**
- * Whether a round is kept. Its work stands unless something got worse: the taste judge vetoed it
- * with a named regression, or a check that passed on the accepted build now fails (the board
- * refuses such a round before the judge is asked; the rule holds it as well). No check moving,
- * only the judge's own notes flipping, the judge preferring the round before without naming what
- * got worse, and a move that did not arrive cost the round nothing — the move stays owed
- * (`moveVerdict` never climbs it), as THE FIX does (facet/phases/taste.ts `holdTheFix`).
+ * Whether a round is kept. Its work stands unless a check that passed on the accepted build now
+ * fails (the board refuses such a round first, phases/verify.ts; the rule holds it as well). No
+ * check moving, only a judge's own notes flipping, a move that did not arrive and a judge's opinion
+ * cost the round nothing (Loop phase 4): a veto an older caller still passes, even one naming a
+ * regression, is not a measurement and keeps nothing out. The move stays owed while its own check
+ * fails (`moveVerdict`), as THE FIX does (facet/kept-round.ts).
  *
- * `source` says why: a veto, a regression or a strong flip, the judge's preference, or nothing
+ * `source` says why: a regression or a strong flip, an older judge's preference, or nothing
  * regressed (`VerdictSource.NoRegression`).
  */
 export function acceptRound({
@@ -293,26 +296,22 @@ export function acceptRound({
   taste?: { veto?: boolean; pick?: string | null } | null;
 }): { accepted: boolean; strong: string[]; source: string } {
   const strong = strongFlips(spec, board, comparison?.flips ?? []);
-  const veto = taste?.veto === true;
   const regressed = (comparison?.regressions ?? []).length > 0;
   const preferred = taste?.pick === Side.Challenger;
-  const source = acceptanceSource({ veto, regressed, strong: strong.length > 0, preferred });
-  return { accepted: !veto && !regressed, strong, source };
+  const source = acceptanceSource({ regressed, strong: strong.length > 0, preferred });
+  return { accepted: !regressed, strong, source };
 }
 
-/** Which rule a kept-or-not round was decided by, in `acceptRound`'s order: a veto, the board, taste, or nothing regressed. */
+/** Which rule a kept-or-not round was decided by, in `acceptRound`'s order: the board, an older judge's taste, or nothing regressed. */
 function acceptanceSource({
-  veto,
   regressed,
   strong,
   preferred,
 }: {
-  veto: boolean;
   regressed: boolean;
   strong: boolean;
   preferred: boolean;
 }): VerdictSource {
-  if (veto) return VerdictSource.TasteVeto;
   if (regressed || strong) return VerdictSource.Checks;
   if (preferred) return VerdictSource.Taste;
   return VerdictSource.NoRegression;
@@ -469,8 +468,9 @@ function isOpenMove(move: AnyRecord, policy: FacetPolicy): boolean {
 }
 
 /**
- * What became of the move: measured by its own check when it has one, else answered by the
- * taste judge (a judge that did not answer gives the benefit of the doubt). A miss never costs
+ * What became of the move: measured by its own check when it has one, else the builder's word — a
+ * kept round delivers it (Loop phase 4: no judge looks at a round; an older caller's taste verdict
+ * is still read). A miss never costs
  * the round (`acceptRound`): it is `note`, which rides into the round's record and the director's
  * digest so the run can steer instead of the worker losing the work, and a move somebody asked for
  * (`mandatory`) stays owed.
@@ -501,10 +501,13 @@ export function moveVerdict({
   if (!what || !move) return { measured: false, missing: false, delivered: null, already: false, note: null };
   const measured = Boolean(move.check && board?.[move.check.id]?.pass === true);
   const already = !measured && taste?.moveAlreadyPresent === true;
-  const missing = !measured && !already && taste?.moveDelivered === false;
+  // With no judge (Loop phase 4) a move is missing only when its own check says so; one no check
+  // measures is the builder's to say it built, so a kept round delivers it.
+  const missing = !measured && !already && (taste ? taste.moveDelivered === false : Boolean(move.check));
   // Visible without being asked: a structural change the judge did not say was missing.
   const looksStructural = taste?.moveDelivered !== false && taste?.scale === ChangeScale.Structural;
-  const landed = measured || taste?.moveDelivered === true || looksStructural;
+  const trusted = !taste && !move.check;
+  const landed = measured || trusted || taste?.moveDelivered === true || looksStructural;
   const delivered = won === null ? null : already || Boolean(won && landed);
   const note = moveNote(what, { missing, owed: move.mandatory === true, already });
   return { measured, missing, delivered, already, note };

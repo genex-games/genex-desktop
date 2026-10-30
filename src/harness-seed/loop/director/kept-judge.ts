@@ -1,12 +1,11 @@
 /**
- * A worker's stopped round goes into the build only once a judge prefers it to the integration
- * branch (`judge target=<id> against=integration`): what `integrate` takes, what it says it left
- * out, and what a judge's verdict on that round decides. A new module, so a kept older kept-work.ts
- * or integrate.ts never stands between it and its callers.
+ * A worker's stopped round, and what `integrate` does with it: it takes it as it is (Loop phase 4) —
+ * the merge's health pass looks at what it brings, and no judge has to prefer it first. A judge the
+ * lead asks about it (`judge target=<id> against=integration`) informs the lead and decides nothing.
+ * A new module, so a kept older kept-work.ts or integrate.ts never stands between it and its callers.
  */
 import { isRunning } from "../outcomes.ts";
 import { isCommit } from "../shell.ts";
-import { KEPT_WORDS } from "./kept-work-prompts.ts";
 import type { Worker } from "./loop-run.ts";
 
 /** An ended worker's stopped round not in the build yet: its kept commit, or null. */
@@ -15,26 +14,26 @@ function keptOutside(worker: Pick<Worker, "state" | "keptCommit" | "keptInBuild"
   return outside ? String(worker.keptCommit) : null;
 }
 
-/** The stopped round `integrate` takes for `worker`: its kept commit, once a judge preferred it to the integration branch. */
+/** The stopped round `integrate` takes for `worker`: its kept commit while the build does not hold it yet. */
 export function keptToMerge(
   worker: Pick<Worker, "state" | "keptCommit" | "keptInBuild" | "keptJudged">,
 ): string | null {
-  const kept = keptOutside(worker);
-  return kept && worker.keptJudged === kept ? kept : null;
-}
-
-/** What `integrate` says of a stopped round it left out because no judge let it in, or null. */
-export function keptLeftOut(
-  worker: Pick<Worker, "id" | "state" | "keptCommit" | "keptInBuild" | "keptJudged">,
-): string | null {
-  const kept = keptOutside(worker);
-  return kept && worker.keptJudged !== kept ? KEPT_WORDS.leftOut(worker.id, kept) : null;
+  return keptOutside(worker);
 }
 
 /**
- * A judge looked at a worker's kept work (`head`): preferred to the integration branch, it may go
- * into the build (`keptToMerge`); preferred to any other build, or not preferred, it may not. A look
- * that reached no verdict (`null`: the build could not be observed) leaves the last one standing.
+ * What `integrate` says of a stopped round it left out for want of a judge: nothing, any more. The
+ * name stays for a kept older integrate.ts that still asks.
+ */
+export function keptLeftOut(
+  _worker: Pick<Worker, "id" | "state" | "keptCommit" | "keptInBuild" | "keptJudged">,
+): string | null {
+  return null;
+}
+
+/**
+ * A judge the lead asked looked at a worker's kept work (`head`): recorded, so the build's record can
+ * say a judge looked at it. A look that reached no verdict (`null`) leaves the last one standing.
  */
 export function noteKeptJudged(
   worker: Pick<Worker, "keptCommit" | "keptJudged">,

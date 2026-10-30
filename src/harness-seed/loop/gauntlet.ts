@@ -15,11 +15,11 @@
  */
 import { roleEffort, roleEngine, RoleKey } from "./model-roles.ts";
 import { buildTurn } from "./build-turn.ts";
-import { blindCompare, judgeAgainstReference, Side } from "./judge.ts";
+import { Side } from "./judge.ts";
 import { EngineFailure } from "./outage.ts";
 import { Against, againstWords, observedFrom, VerdictPass, verdictRecord, VerdictRule } from "./verdict.ts";
 import { StopCode, stopWith } from "./outcomes.ts";
-import { appendRun, EventKind, REFERENCE_MIN_STILLS, ReferenceKind, RunEvent, RunMode } from "./run-events.ts";
+import { appendRun, EventKind, RunEvent, RunMode } from "./run-events.ts";
 import { HostMethod } from "./host-methods.ts";
 import { ProjectStarter } from "./folder-facts.ts";
 import { HOUR_MS, MINUTE_MS, SECOND_MS, sleepUnlessCancelled } from "./time.ts";
@@ -34,11 +34,6 @@ import type { Evidence, Shot } from "./evidence.ts";
 // Engine failures come in bursts — a dead login, an hour-long throttle. After this many build
 // turns in a row lost to the engine itself, another retry is denial, not persistence.
 const MAX_ENGINE_FAILURES = 3;
-
-// The judge's outages are capped tighter than the engine's: one dead verdict (retries and
-// fallback already spent inside askJudge) is weather and costs its iteration as an auto-tie;
-// a second in a row is an outage for the run to end on honestly.
-const MAX_JUDGE_OUTAGES = 2;
 
 /** Observation outages in a row that mean the observation layer is down, not blinking. */
 const MAX_OBSERVATION_OUTAGES = 2;
@@ -104,9 +99,13 @@ const CLASSIC_WALL_CLOCK_MS = 4 * HOUR_MS;
 /** A classic run's iteration budget when its budget names none. */
 const DEFAULT_MAX_ITERATIONS = 200;
 
-/** Run the classic gauntlet: build, look, judge and keep-or-restore until the run wins or its budget ends. */
+/**
+ * Run the classic gauntlet: build, look, and keep the build when it runs (Loop phase 4: no blind
+ * judge picks between it and the incumbent, and no panel judges it against the reference). A kept
+ * build is the run's: its builder's turn decided when it was done.
+ */
 export async function runGauntlet(ctx: HarnessCtx, options: GauntletOptions): Promise<AnyRecord> {
-  const { threadId, run, beforeFinalPublication = null, origin = null, creativeDeadline = null } = options;
+  const { threadId, run, origin = null, creativeDeadline = null } = options;
   const resumeState = options.resumeState ?? null;
   const started = Date.now();
   const report: AnyRecord = resumeState?.report ?? {
@@ -127,27 +126,6 @@ export async function runGauntlet(ctx: HarnessCtx, options: GauntletOptions): Pr
     kind: ProjectStarter.Web,
   });
   await ctx.call(HostMethod.PreviewLoad, { project: run.project });
-
-  // A named bar without pixels is the hollow comparison the first run already suffered.
-  // Direction mode is allowed to run without frames; "beat a real game" is not.
-  if (lacksReferenceStills(run)) {
-    stopWith(
-      report,
-      StopCode.NoReference,
-      "no reference screenshots — a beat-a-real-game run needs at least two stills of the bar",
-    );
-    if (beforeFinalPublication)
-      await beforeFinalPublication({
-        report,
-        incumbent: null,
-        incumbentEvidence: null,
-        startingSnapshot: null,
-        startingEvidence: null,
-      });
-    finishReport(report, started);
-    await announceRunFinished(ctx, threadId, report);
-    return report;
-  }
 
   const loop = await openGauntletLoop(ctx, options, { started, report, creativeDeadline });
   for (let iteration = (report.iterations?.length ?? 0) + 1; iteration <= loop.maxIterations; iteration++) {
@@ -190,13 +168,6 @@ async function announceRunStart(ctx: HarnessCtx, threadId: string, run: Run, ori
       },
     ],
   });
-}
-
-/** A beat-a-real-game run with fewer than two stills of the bar. */
-function lacksReferenceStills(run: Run): boolean {
-  if (run.reference?.kind !== ReferenceKind.Reference) return false;
-  const frames = run.reference.frames?.filter((frame: AnyRecord | null) => frame?.data)?.length ?? 0;
-  return frames < REFERENCE_MIN_STILLS;
 }
 
 /** Stamp when the run finished and how long it took. */
@@ -319,7 +290,7 @@ const ITERATION_PHASES = [
   judgeChallenger,
   keepOrRestore,
   recordIteration,
-  askThePanel,
+  endOnAKeptBuild,
   checkEngineHealth,
 ];
 
@@ -523,94 +494,33 @@ function brokenVerdict(round: GauntletRound): AnyRecord {
   };
 }
 
-/** The blind judge: fresh context, pick-not-score; one outage is an auto-tie, a second in a row ends the run. */
+/** A broken build keeps the incumbent; a build that runs is kept — no judge is asked (Loop phase 4). */
 async function judgeChallenger(loop: GauntletLoop, round: GauntletRound): Promise<RoundFlow> {
-  const { ctx, run } = loop;
-  round.verdict = undefined;
-  if (round.challengerBroken) {
-    round.verdict = brokenVerdict(round);
-    return;
-  }
-  // ── judge: fresh context, blind, pick-not-score ──
-  try {
-    round.verdict = await blindCompare(ctx, {
-      run,
-      challenger: round.evidence,
-      incumbentSnapshot: loop.incumbent,
-      incumbentEvidence: loop.incumbentEvidence,
-      iterationId: round.iterationId,
-    });
-    loop.judgeOutages = 0;
-  } catch (err: any) {
-    return judgeFailed(loop, round, err);
-  }
+  round.verdict = round.challengerBroken
+    ? brokenVerdict(round)
+    : {
+        pick: Side.Challenger,
+        confidence: "high",
+        biggest_gap: loop.biggestGap,
+        reason: "the build runs, so it is kept — nobody judges it",
+      };
 }
 
-/** The blind judge threw: a stop keeps the incumbent, a first outage is an auto-tie, a second ends the run. */
-async function judgeFailed(loop: GauntletLoop, round: GauntletRound, err: any): Promise<RoundFlow> {
-  const { ctx, report, run } = loop;
-  if (err?.kind === EngineFailure.Aborted || ctx.cancelled) {
-    // Stop landed mid-judgement: keep the best known build, exit at the loop head.
-    round.verdict = {
-      pick: Side.Incumbent,
-      confidence: "high",
-      biggest_gap: loop.biggestGap,
-      reason: "run stopped by the user during judging",
-    };
-    return;
-  }
-  loop.judgeOutages += 1;
-  if (loop.judgeOutages < MAX_JUDGE_OUTAGES) {
-    // The first outage in a row buys exactly one auto-tie. The judge returned nothing, so
-    // this replaces no real verdict; it rides the normal not-won path — rolled back,
-    // logged, an iteration visibly spent — and the record's reason string is where the
-    // morning review reads the incident.
-    loop.firstOutageIteration = round.iteration;
-    round.verdict = {
-      pick: Side.Incumbent,
-      confidence: "low",
-      reason: `judge unavailable — auto-tie (1 of ${MAX_JUDGE_OUTAGES}): ${err?.message ?? err}`,
-    };
-    return;
-  }
-  // Two dead verdicts in a row: no more may be invented, so the run ends the way a tie
-  // resolves: incumbent kept, the unjudged attempt rolled back — its snapshot survives
-  // for the morning — and run_finished plus report.json still written, so the run
-  // closes honestly.
-  stopWith(
-    report,
-    StopCode.JudgeDown,
-    `judge unavailable on iterations ${loop.firstOutageIteration} and ${round.iteration} — two in a row: ${err?.message ?? err}`,
-  );
-  try {
-    await ctx.call(HostMethod.SnapshotRestore, {
-      snapshotId: loop.incumbent.snapshot_id,
-      project: run.project,
-      scope: "game",
-      reason: `run ${run.runId} iteration ${round.iteration}: judge unavailable`,
-    });
-    await ctx.call(HostMethod.PreviewReload, {});
-  } catch {
-    /* closing the run with a truthful report matters more than this rollback */
-  }
-  return RoundFlow.Stop;
-}
-
-/** A win is the new incumbent; a tie, a regression or a broken build restores the incumbent. The gap and the failure the next brief carries. */
+/** A kept build is the new incumbent; a broken build restores the incumbent. The gap and the failure the next brief carries. */
 async function keepOrRestore(loop: GauntletLoop, round: GauntletRound): Promise<RoundFlow> {
   const { ctx, gapHistory, run } = loop;
   round.challengerWon = round.verdict.pick === Side.Challenger;
   if (round.challengerWon) {
     loop.incumbent = await ctx.call(HostMethod.SnapshotCreate, {
       scope: "both",
-      reason: `run ${run.runId} iteration ${round.iteration}: challenger won — ${round.verdict.biggest_gap ?? ""}`,
+      reason: `run ${run.runId} iteration ${round.iteration}: the build runs and is kept`,
       project: run.project,
       healthy: true,
     });
     loop.incumbentEvidence = round.evidence;
   } else {
-    // TIE / REGRESSION / BROKEN ⇒ KEEP INCUMBENT. Nothing is ever lost: the attempt stays in
-    // the log and in git history, the working tree goes back to the best known version.
+    // BROKEN ⇒ KEEP INCUMBENT. Nothing is ever lost: the attempt stays in the log and in git
+    // history, the working tree goes back to the best known version.
     // Game scope only: losing a round is a verdict about the game, not about the coder —
     // rewinding the harness with it would erase self-edits the round never judged. The run's
     // starting-point snapshot stays scope "both"; that one is the morning catastrophe anchor.
@@ -654,8 +564,8 @@ async function recordIteration(loop: GauntletLoop, round: GauntletRound): Promis
     winner: round.challengerWon ? Side.Challenger : Side.Incumbent,
     biggest_gap: round.verdict.biggest_gap ?? loop.biggestGap,
     reason: round.verdict.reason ?? "",
-    // Which judge said so: model, prompt hash, reply, usage.
-    judgeCall: round.verdict.judgeCall ?? null,
+    // No judge is asked any more; an older record may name one.
+    judgeCall: null,
     snapshot: loop.incumbent.snapshot_id,
     attemptSnapshot: round.attemptSnapshot?.snapshot_id ?? null,
     shots: loggedShots(round.evidence.shots),
@@ -663,15 +573,15 @@ async function recordIteration(loop: GauntletLoop, round: GauntletRound): Promis
     state: round.evidence.state,
     consoleErrors: round.evidence.consoleErrors,
     gpuErrors: round.evidence.gpuErrors,
-    // The programmed pipeline judges by taste alone, but its rounds reach the same cards as a
-    // worker's: it writes the same record, so nothing on screen has to know which ran.
+    // Its rounds reach the same cards as a worker's: it writes the same record, so nothing on
+    // screen has to know which ran.
     verdict: verdictRecord({
       pass: VerdictPass.Round,
       round: round.iteration,
       against: againstWords(round.iteration === 1 ? Against.Start : Against.Round),
       ...observedFrom(round.evidence),
       pick: round.verdict.pick ?? null,
-      judgeCalls: round.challengerBroken ? 0 : 1,
+      judgeCalls: 0,
       kept: round.challengerWon,
       rule: iterationRule(round),
       gap: round.verdict.biggest_gap ?? "",
@@ -698,64 +608,19 @@ async function recordIteration(loop: GauntletLoop, round: GauntletRound): Promis
     });
 }
 
-/** Exit on a blind win against the reference, never on a round count. */
-async function askThePanel(loop: GauntletLoop, round: GauntletRound): Promise<RoundFlow> {
-  const { ctx, report, run } = loop;
-  // ── exit on a blind win against the reference, never on a round count ──
-  // A "direction" run has no reference game to beat — convening a panel against a vibe would
-  // be theater (and the first run spent 7 minutes per win on exactly that). It runs the clock.
-  round.hasReference = run.reference?.kind !== ReferenceKind.Direction && Boolean(run.reference?.name);
-  const cleanWin = round.challengerWon && !round.challengerBroken;
-  if (!cleanWin || !round.hasReference) return;
-  let panel = null;
-  try {
-    panel = await judgeAgainstReference(ctx, { run, evidence: round.evidence, iterationId: round.iterationId });
-    loop.judgeOutages = 0;
-  } catch (err: any) {
-    const flow = panelFailed(loop, round, err);
-    if (flow) return flow;
-  }
-  if (panel?.beatsReference) {
-    report.victory = true;
-    stopWith(report, StopCode.Victory, `blind panel picked our build over ${run.reference?.name} (${panel.votes})`);
-    report.panel = panel;
-    return RoundFlow.Stop;
-  }
-  if (panel) loop.biggestGap = panel.biggest_gap ?? loop.biggestGap;
-}
-
 /**
- * The reference panel threw. The winner is already snapshotted as the new incumbent; only the
- * exit question went unanswered. A stop reads as a stop; a dead panel spends the same outage
- * allowance as the blind comparison — the win stands, the exit question waits for the next
- * round, and a second dead call in a row ends the run with its report intact.
+ * A kept build ends the run: its builder's turn decided it was done, and no judge or panel asks for
+ * another round (Loop phase 4). A broken one goes on to the next iteration.
  */
-function panelFailed(loop: GauntletLoop, round: GauntletRound, err: any): RoundFlow {
-  const { ctx, report } = loop;
-  if (err?.kind === EngineFailure.Aborted || ctx.cancelled) {
-    stopWith(report, StopCode.UserStop, "stopped by the user");
-    return RoundFlow.Stop;
-  }
-  loop.judgeOutages += 1;
-  if (loop.judgeOutages >= MAX_JUDGE_OUTAGES) {
-    stopWith(
-      report,
-      StopCode.JudgeDown,
-      `judge unavailable on iterations ${loop.firstOutageIteration} and ${round.iteration} — two in a row: ${err?.message ?? err}`,
-    );
-    return RoundFlow.Stop;
-  }
-  loop.firstOutageIteration = round.iteration;
-  // This iteration's record and events have already shipped; the report is the surface
-  // still open, so the incident lands there for the morning review.
-  round.record.judgeOutage = `reference panel unavailable — no exit vote (outage 1 of ${MAX_JUDGE_OUTAGES}): ${err?.message ?? err}`;
-  return null;
+async function endOnAKeptBuild(loop: GauntletLoop, round: GauntletRound): Promise<RoundFlow> {
+  if (!round.challengerWon || round.challengerBroken) return;
+  stopWith(loop.report, StopCode.Done, "the build runs and is kept: nobody judges it");
+  return RoundFlow.Stop;
 }
 
 /** The rule a classic iteration's verdict record names. */
 function iterationRule(round: GauntletRound): VerdictRule {
-  if (round.challengerBroken) return VerdictRule.Broken;
-  return round.challengerWon ? VerdictRule.JudgePreferred : VerdictRule.Vetoed;
+  return round.challengerBroken ? VerdictRule.Broken : VerdictRule.NoRegression;
 }
 
 /** Engine health: a throttled or dead engine must not eat the run one lost turn at a time. */

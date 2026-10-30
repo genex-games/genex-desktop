@@ -1,20 +1,20 @@
 /**
  * What a chat and a run are told about a Loop on a project that isn't a web game (an open Loop):
- * the chat's own session leads it in the game folder, workers work in copies, and a reviewer who did
- * none of the work checks its finish. No builders and no judges: those are a web game's Loop. A
- * module new to the seed, so the shipped launch words and run dispatch take these from here.
+ * the chat's own session leads it in the game folder, workers work in copies, and the lead's finish
+ * ends it (a reviewer reads it first only when the lead asks). A module new to the seed, so the
+ * shipped launch words and run dispatch take these from here.
  */
 import { MAX_RUN_HOURS } from "./config.ts";
 
-/** How long an open Loop runs, as the chat reads it: until a reviewer accepts its finish, or its hours. */
+/** How long an open Loop runs, as the chat reads it: until its lead finishes it, or its hours. */
 function openBudgetWords(hours: number | null | undefined): string {
   if (typeof hours === "number" && hours > 0) return `up to ${hours} h`;
-  return `until a reviewer accepts the finish, ${MAX_RUN_HOURS} h at most`;
+  return `until the lead finishes it, ${MAX_RUN_HOURS} h at most`;
 }
 
 /** What a build is on a project that isn't a web game, as a Loop chat is told. */
 export function openBuildWords(hours: number | null | undefined): string {
-  return `the Loop: the lead builds the whole project itself in this folder, with workers in copies of it, and a reviewer who did none of the work checks its finish (${openBudgetWords(hours)})`;
+  return `the Loop: the lead builds the whole project itself in this folder, with workers in copies of it, and finishes it when the goal is reached (${openBudgetWords(hours)})`;
 }
 
 /** A hurry changes how long an open Loop runs, never whether a new project is one. */
@@ -26,15 +26,14 @@ export function openStillsWords(frames: number): string {
 }
 
 /**
- * When a Loop on a project that isn't a web game ends, as the chat promises it at launch: a reviewer's
- * yes on the lead's finish within its safety stop (∞), or its hours. No connection to add: it works
- * in place, and a reviewer checks it.
+ * When a Loop on a project that isn't a web game ends, as the chat promises it at launch: the lead's
+ * finish within its safety stop (∞), or its hours. No connection to add: it works in place.
  */
 export const OPEN_LAUNCH_WORDS = {
   untilFinish: (ceiling: string) =>
-    `It finishes when a reviewer accepts the lead's finish, with a safety stop by about ${ceiling} — keep the app open and the computer awake. `,
+    `It finishes when the lead says the goal is reached, with a safety stop by about ${ceiling} — keep the app open and the computer awake. `,
   /** What the launch tool answers for an ∞ Loop on such a project. */
-  building: `Building until a reviewer accepts the finish, ${MAX_RUN_HOURS} h at most`,
+  building: `Building until the lead finishes it, ${MAX_RUN_HOURS} h at most`,
 } as const;
 
 /** Why a run on a project that isn't a web game did not start, as its close and the chat say it. */

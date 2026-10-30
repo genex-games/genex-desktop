@@ -2,11 +2,10 @@
  * The art director (loop/ship-review.ts, director/art-direction.ts), without a rig: one absolute
  * look at the whole game — every camera it registered, its eyes, its demos' end frames and its
  * motion — asked "would you ship this as the user's demo today?", with each defect typed to the
- * plan part that owns it. The lead can ask for it (`judge ship=yes`); the studio runs it itself at
- * the finish mark of a timed build, and once for a goal build whose lead idles or finishes with no
- * review on its head. Its defects go to their owners' boards as the director's own checks. It is
- * reported, never a landing veto. Every clock here is a number the test chooses, and the judge is
- * a host that answers what the row needs.
+ * plan part that owns it. The lead asks for it (`judge ship=yes`); since Loop phase 4 the studio
+ * never runs it on its own. Its defects go to their owners' boards as the director's own checks, of
+ * normal weight. It is reported, never a landing veto, and it turns no finish back. Every clock here
+ * is a number the test chooses, and the judge is a host that answers what the row needs.
  */
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
@@ -34,11 +33,7 @@ import * as toolFunctions from "../../src/harness-seed/loop/director/tools.ts";
 import * as workerFunctions from "../../src/harness-seed/loop/director/workers.ts";
 import * as integrateFunctions from "../../src/harness-seed/loop/director/integrate.ts";
 import * as artDirectionFunctions from "../../src/harness-seed/loop/director/art-direction.ts";
-import {
-  ART_DIRECTION_JUDGE_MS,
-  SHIP_LOOK_EVERY_MS,
-  shipDefectsToChecks,
-} from "../../src/harness-seed/loop/director/art-direction.ts";
+import { shipDefectsToChecks } from "../../src/harness-seed/loop/director/art-direction.ts";
 import { SHIP_QUESTION, shipFinishLine } from "../../src/harness-seed/loop/director/art-direction-prompts.ts";
 import { finishMarkMs } from "../../src/harness-seed/loop/director/budgets.ts";
 import { priorWorkersStatus, restoreLoopRun } from "../../src/harness-seed/loop/director/journal.ts";
@@ -52,8 +47,6 @@ import { ctxRecorder } from "../helpers/ctx-recorder.ts";
 const T0 = Date.UTC(2026, 9, 6, 1, 0, 0);
 const FORK = "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f";
 const HEAD = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678";
-/** The integration head after a later wave. */
-const HEAD2 = "b2c3d4e5f60718293a4b5c6d7e8f9012345678a1";
 const BRIEF = () => "You are the DIRECTOR of run run_ad";
 
 /** The plan's parts, as `plan` keeps them. */
@@ -106,17 +99,6 @@ const SHIP_BLOCKED = {
 
 /** The seed's own folder, as a workspace laid down from it reads it. */
 const SEED = path.resolve(import.meta.dirname, "../../src/harness-seed");
-
-/** A blind pick over the start the lead already won on HEAD. */
-const LEAD_PICK = {
-  head: HEAD,
-  ok: true,
-  against: "start",
-  pick: "challenger",
-  answer: null,
-  boardAllPass: null,
-  at: T0,
-};
 
 /** What the fake host saw: every call, and each journal as it was written. */
 interface FakeHost {
@@ -305,12 +287,6 @@ function fakeLoopRun(
 const isShipCall = (params: Record<string, any>): boolean =>
   (params.messages?.[0]?.images ?? []).some((image: { label: string }) => image.label.startsWith("MOTION"));
 
-/** A judge that answers the art director with `ship` and any vision question with a sure yes. */
-const shipAndQuestion =
-  (ship: unknown = SHIP_NO) =>
-  (params: Record<string, any>) =>
-    replying(isShipCall(params) ? ship : { answer: "yes", confidence: 0.9, note: "a race at dusk" })();
-
 /** The judge calls the art director made. */
 const shipCalls = (host: FakeHost) =>
   host.calls.filter((c) => c.method === HostMethod.EngineComplete && isShipCall(c.params));
@@ -485,7 +461,8 @@ describe("the lead's judge ship=yes (director/tools.ts)", () => {
     const hud = loopRun.state.workers.get("hud");
     const routed = hud.spec.checks.find((c: Record<string, unknown>) => /speed digits/.test(String(c.defect)));
     assert.equal(routed?.origin, CheckOrigin.Director);
-    assert.equal(routed?.weight, CheckWeight.Identity);
+    // Flipped (Loop phase 4): a blocker was an identity check; the art director's word holds no part's contract now.
+    assert.equal(routed?.weight, CheckWeight.Normal);
     assert.ok(
       hud.steering.some((line: string) => /speed digits/.test(line)),
       "and the worker is told",
@@ -502,7 +479,7 @@ describe("the lead's judge ship=yes (director/tools.ts)", () => {
     assert.equal(resumed.state.lastShip.defects.length, 3);
   });
 
-  it("AD-4. a ship defect lands on the board of the running worker whose part it names as a director check, weighted by severity, and its fix is a strong flip", () => {
+  it("AD-4. a ship defect lands on the board of the running worker whose part it names as a director check, of normal weight, and its fix is a strong flip", () => {
     const hud = loopWorker("hud");
     const workers = new Map<string, any>([
       ["hud", hud],
@@ -525,7 +502,8 @@ describe("the lead's judge ship=yes (director/tools.ts)", () => {
     assert.equal(blocker!.check.expect, "yes");
     assert.equal(blocker!.check.camera, "default");
     assert.match(String(blocker!.check.ask), /^Is this gone\?/);
-    assert.equal(blocker!.check.weight, CheckWeight.Identity);
+    // Flipped (Loop phase 4): a blocker was an identity check; no defect of the art director's holds a part's contract.
+    assert.equal(blocker!.check.weight, CheckWeight.Normal);
     assert.equal(hudNit!.check.weight, CheckWeight.Normal, "a nit counts, but decides nothing");
     assert.equal(nit!.check.camera, "top");
     assert.notEqual(blocker!.check.id, hudNit!.check.id, "two checks on one board never share an id");
@@ -610,7 +588,8 @@ describe("the lead's judge ship=yes (director/tools.ts)", () => {
     const ship = finisher.spec.checks.find((c: Record<string, unknown>) => /road texture/.test(String(c.defect)));
     assert.ok(ship, "the finisher is asked about the art director's defect in its part");
     assert.equal(ship.origin, CheckOrigin.Director);
-    assert.equal(ship.weight, CheckWeight.Identity, "a blocker decides whether the part is done");
+    // Flipped (Loop phase 4): a blocker was an identity check; it is of normal weight now.
+    assert.equal(ship.weight, CheckWeight.Normal, "the art director's word holds no contract of its own");
     assert.equal(ship.camera, "chase", "asked on the camera the art director saw it through");
     assert.ok(
       finisher.steering.some((line: string) => /road texture/.test(line)),
@@ -813,21 +792,6 @@ describe("the lead's judge ship=yes (director/tools.ts)", () => {
     assert.equal(host.calls.filter((c) => c.method === HostMethod.EngineComplete).length, 1, "nothing looked at");
   });
 
-  it("AD-11. the studio's own ship look keeps the lead's blind pick over the start on that head, so the close does not judge again", async () => {
-    const host = fakeHost();
-    const { loopRun } = fakeLoopRun(host, { answers: { [HostMethod.EngineComplete]: replying(SHIP_NO) } });
-    loopRun.state.startEvidence = gameEvidence();
-    loopRun.state.lastJudge = { ...LEAD_PICK };
-    loopRun.journal.director.lastJudge = { ...LEAD_PICK };
-    const { review } = await loopRun.artDirectionPass();
-    assert.equal(review?.ship, false, "the art director looked");
-    assert.equal(loopRun.state.lastJudge.pick, "challenger", "the lead's pick stands");
-    assert.equal(host.journals.at(-1)!.director.lastJudge.pick, "challenger", "and the journal keeps it");
-    const calls = host.calls.filter((c) => c.method === HostMethod.EngineComplete).length;
-    await loopRun.judgeTheLanding(HEAD);
-    assert.equal(host.calls.filter((c) => c.method === HostMethod.EngineComplete).length, calls, "no second judge");
-  });
-
   it("AD-12. a defect's camera is one the review was shown, or the default: an invented camera never reaches a board", async () => {
     const invented = {
       ship: false,
@@ -915,35 +879,6 @@ describe("the finish mark (director/budgets.ts, wake.ts, art-direction.ts)", () 
     assert.equal(finishMarkMs(goal, 10 * HOUR_MS), null);
   });
 
-  it("AD-3. a timed build reaching its finish mark is judged ship-or-not by the studio itself, and the lead is woken once with the defects by part", async () => {
-    const host = fakeHost();
-    const { loopRun, seen } = fakeLoopRun(host, { answers: { [HostMethod.EngineComplete]: replying(SHIP_NO) } });
-    loopRun.state.workers.set("hud", loopWorker("hud"));
-    const mark = loopRun.clock.softDeadline - finishMarkMs(loopRun.run, 4 * HOUR_MS)!;
-    const { talk, turns } = lead((turn) => {
-      if (turn === 2) loopRun.state.finished = true;
-      return { ok: true, sessionId: "lead-1", turns: 1 };
-    });
-    await runWakeLoop(loopRun, talk, BRIEF, fakeClock(mark - 2 * MINUTE_MS));
-
-    assert.equal(turns.length, 2, turns.map((t) => t.prompt.slice(0, 120)).join("\n---\n"));
-    const woken = turns[1]!.prompt;
-    assert.match(woken, /finish mark/i);
-    assert.match(woken, /would not ship/);
-    assert.match(woken, /hud[^\n]*speed digits/);
-    assert.match(woken, /stage=finish/);
-    assert.match(woken, /no new parts or systems/);
-    assert.equal(imageLabels(host).length, 1, "one review");
-    assert.deepEqual(seen[0]!.viewport, SHIP_VIEW);
-    assert.equal(loopRun.state.lastShip.head, HEAD);
-    const continued = host.calls
-      .filter((c) => c.method === HostMethod.EventsAppend)
-      .flatMap((c) => c.params.batch)
-      .filter((e: Record<string, any>) => e.event_type === "director_continued");
-    assert.ok(continued.some((e: Record<string, any>) => e.payload.reasons.includes(WakeCause.FinishMark)));
-    assert.equal(host.journals.at(-1)!.director.wake.finishMarkSaid, true, "said once, and the journal keeps it");
-  });
-
   it("AD-3c. past the finish mark every later wake repeats the finish rule: the room for workers and the idle question never ask for new parts", async () => {
     const host = fakeHost();
     const { loopRun } = fakeLoopRun(host, { answers: { [HostMethod.EngineComplete]: replying(SHIP_NO) } });
@@ -991,12 +926,10 @@ describe("the finish mark (director/budgets.ts, wake.ts, art-direction.ts)", () 
     assert.match(atMark, /- worker track \(track\): running · stage finish/);
     assert.doesNotMatch(atMark, /spend the working time building/);
     assert.match(atMark, /BUILD CARD:[\s\S]*finish stage[^\n]*no new parts or systems/);
-    // The mark's own look routes its defects before the lead flips hud to stage=finish: hud is
-    // told as a finisher, never to keep its move first.
-    const hudTold = loopRun.state.workers.get("hud").steering.at(-1) ?? "";
-    assert.match(hudTold, /speed digits/);
-    assert.doesNotMatch(hudTold, /beside your move|ahead of your move/, "past the mark no move comes first");
-    assert.match(hudTold, /this round's work/);
+    // Flipped (Loop phase 4): the mark ran the art director's own look and routed its defects to hud;
+    // nobody looks at the mark now, so nothing reaches a board and no judge is asked.
+    assert.deepEqual(loopRun.state.workers.get("hud").steering, []);
+    assert.equal(host.calls.filter((c) => c.method === HostMethod.EngineComplete).length, 0, "no judge at the mark");
   });
 
   it("AD-3c. a timed build that slept through its finish mark and its wrap-up wraps up without the art director's pass", async () => {
@@ -1028,33 +961,6 @@ describe("the finish mark (director/budgets.ts, wake.ts, art-direction.ts)", () 
       .filter((e: Record<string, any>) => e.event_type === "director_continued");
     assert.ok(continued.every((e: Record<string, any>) => !e.payload.reasons.includes(WakeCause.FinishMark)));
   });
-
-  it("AD-3b. a goal build whose lead idles twice with no ship review on its head is reviewed once before its wrap-up", async () => {
-    const host = fakeHost();
-    const { loopRun } = fakeLoopRun(host, {
-      answers: { [HostMethod.EngineComplete]: replying(SHIP_NO) },
-      budgets: { wallClockMs: 2 * HOUR_MS, completionPolicy: "goal" },
-      clock: { started: T0, softDeadline: T0 + HOUR_MS, finalDeadline: T0 + HOUR_MS + 10 * MINUTE_MS },
-    });
-    const { talk, turns } = lead((turn) => {
-      if (turn === 4) loopRun.state.finished = true;
-      return { ok: true, sessionId: "lead-1", turns: 1 };
-    });
-    await runWakeLoop(loopRun, talk, BRIEF, fakeClock(T0 + MINUTE_MS));
-
-    assert.equal(turns.length, 4, turns.map((t) => t.prompt.slice(0, 160)).join("\n---\n"));
-    assert.match(turns[1]!.prompt, /What next\?/, "asked what next first");
-    assert.match(
-      turns[1]!.prompt,
-      /BUILD CARD:[\s\S]*art director's blockers are required finishing; its visible flaws and nits go in your report/,
-      "a goal commission's card says the art director's defects are not optional polish",
-    );
-    assert.match(turns[2]!.prompt, /would not ship/, "then sent to art direction");
-    // A goal build's completion rule does not change at its mark, so its card is not sent again.
-    assert.doesNotMatch(turns[2]!.prompt, /BUILD CARD/, "the goal card did not change at the mark");
-    assert.match(turns[3]!.prompt, /wrap-up/i, "then the wrap-up");
-    assert.equal(imageLabels(host).length, 1, "reviewed once");
-  });
 });
 
 describe("the ship verdict on the record (director/integrate.ts)", () => {
@@ -1071,110 +977,6 @@ describe("the ship verdict on the record (director/integrate.ts)", () => {
     assert.equal(live.shipReview.defectsLeft, 3);
     assert.equal(live.shipReview.blockers, 1);
     assert.equal((await reported(FORK)).shipReview, undefined, "a review of another head says nothing of this one");
-  });
-
-  it("AD-8. a goal build's finish with no ship review on its head is reviewed once and refused once on a no; the next finish closes and says how many defects are left", async () => {
-    const host = fakeHost();
-    const { loopRun } = fakeLoopRun(host, {
-      answers: { [HostMethod.EngineComplete]: shipAndQuestion() },
-      budgets: { wallClockMs: 2 * HOUR_MS, completionPolicy: "goal" },
-      clock: { started: Date.now(), softDeadline: Date.now() + HOUR_MS, finalDeadline: Date.now() + 2 * HOUR_MS },
-    });
-    const closes: unknown[] = [];
-    loopRun.closeTheLoopRun = async (options: unknown) => {
-      closes.push(options);
-      return { ok: true, line: "made live" };
-    };
-    const first = await loopRun.finish({ summary: "the race is ready" });
-    // Flipped: the refusal said the art director would not ship; it names the blockers now.
-    assert.match(first, /names blockers on this build — hud: blocker: the speed digits/);
-    assert.equal(closes.length, 0, "the first finish is turned back once, with the defects");
-    // A claim on this head is refused while its blocker stands: only a finish that claims nothing closes it.
-    assert.match(first, /Calling finish again with victory=no closes the build as it stands/);
-    const second = await loopRun.finish({ summary: "the race is ready" });
-    assert.equal(closes.length, 1, "never refused twice");
-    assert.match(second, /names 1 blocker on this build; 2 visible flaws and nits for your report/);
-    assert.equal(shipCalls(host).length, 1, "reviewed once");
-    // The finish call holds the look and the close: the gate's judging ends by its own bound, and
-    // its one look answered the close's own question, so the close does not judge it again.
-    for (const call of host.calls.filter((c) => c.method === HostMethod.EngineComplete))
-      assert.ok(call.params.timeoutMs <= ART_DIRECTION_JUDGE_MS, `${call.params.timeoutMs} ms`);
-    assert.equal(loopRun.state.lastJudge.final, true);
-    const before = host.calls.length;
-    await loopRun.judgeTheLanding(HEAD);
-    assert.equal(host.calls.length, before, "the close does not judge the head again");
-
-    // A user who asks to finish is never turned back, and nothing is looked at for it.
-    const quick = fakeHost();
-    const asked = fakeLoopRun(quick, {
-      answers: { [HostMethod.EngineComplete]: replying(SHIP_NO) },
-      budgets: { wallClockMs: 2 * HOUR_MS, completionPolicy: "goal" },
-      clock: { started: Date.now(), softDeadline: Date.now() + HOUR_MS, finalDeadline: Date.now() + 2 * HOUR_MS },
-    }).loopRun;
-    asked.inbox.finishing = async () => true;
-    asked.closeTheLoopRun = async () => ({ ok: true, line: "made live" });
-    assert.doesNotMatch(await asked.finish({ summary: "done" }), /refused|would not ship/);
-    assert.equal(imageLabels(quick).length, 0);
-  });
-
-  it("AD-8d. a claim that the goal is reached is refused while the art director's look at its head names a blocker, never for a visible flaw", async () => {
-    const host = fakeHost();
-    const { loopRun } = fakeLoopRun(host, {
-      answers: { [HostMethod.EngineComplete]: replying(SHIP_NO) },
-      budgets: { wallClockMs: 2 * HOUR_MS, completionPolicy: "goal" },
-      clock: { started: Date.now(), softDeadline: Date.now() + HOUR_MS, finalDeadline: Date.now() + 2 * HOUR_MS },
-    });
-    await loopRun.judge({ target: "integration", ship: "yes" });
-    const claimed = await loopRun.finish({ summary: "the race is ready", victory: "yes" });
-    assert.match(claimed, /^finish cannot claim victory: the art director names blockers on this build — hud:/);
-    assert.equal(loopRun.state.finish, null, "nothing closed");
-
-    loopRun.state.lastShip = { ...loopRun.state.lastShip, ship: true, defects: SHIP_NO.defects.slice(1) };
-    loopRun.closeTheLoopRun = async () => ({ ok: true, line: "made live" });
-    const noBlocker = String(await loopRun.finish({ summary: "the race is ready", victory: "yes" }));
-    assert.doesNotMatch(noBlocker, /cannot claim victory: the art director/, "a visible flaw holds no claim back");
-  });
-
-  it("AD-8b. a goal build's finish whose close still owes a blind judge against the start is not held for the art director: the finish call has no time for both", async () => {
-    const goalLoopRun = (host: FakeHost) =>
-      fakeLoopRun(host, {
-        answers: { [HostMethod.EngineComplete]: replying(SHIP_NO) },
-        budgets: { wallClockMs: 2 * HOUR_MS, completionPolicy: "goal" },
-        clock: { started: Date.now(), softDeadline: Date.now() + HOUR_MS, finalDeadline: Date.now() + 2 * HOUR_MS },
-      }).loopRun;
-    const host = fakeHost();
-    const loopRun = goalLoopRun(host);
-    loopRun.state.startEvidence = gameEvidence();
-    const closes: unknown[] = [];
-    loopRun.closeTheLoopRun = async (options: unknown) => {
-      closes.push(options);
-      return { ok: true, line: "made live" };
-    };
-    await loopRun.finish({ summary: "the race is ready" });
-    assert.equal(closes.length, 1, "it closes");
-    assert.equal(shipCalls(host).length, 0, "and the art director did not look inside the finish call");
-
-    // With the lead's pick over the start already on the head, the close owes no judge and the art director looks.
-    const picked = fakeHost();
-    const second = goalLoopRun(picked);
-    second.state.startEvidence = gameEvidence();
-    second.state.lastJudge = { ...LEAD_PICK };
-    second.closeTheLoopRun = async () => ({ ok: true, line: "made live" });
-    assert.match(await second.finish({ summary: "the race is ready" }), /names blockers/);
-    assert.equal(second.state.lastJudge.pick, "challenger");
-  });
-
-  it("AD-8c. the finish gate asks whether there is time to act on the clock it is given, not the wall clock", async () => {
-    const host = fakeHost();
-    const softDeadline = Date.now() + HOUR_MS;
-    const { loopRun } = fakeLoopRun(host, {
-      answers: { [HostMethod.EngineComplete]: shipAndQuestion() },
-      budgets: { wallClockMs: 2 * HOUR_MS, completionPolicy: "goal" },
-      clock: { started: softDeadline - HOUR_MS, softDeadline, finalDeadline: softDeadline + HOUR_MS },
-    });
-    // On the loop's clock the working time is over, though the wall clock still has an hour of it.
-    assert.equal(await loopRun.shipFinishGate(false, () => softDeadline + MINUTE_MS), null, "no time to act on a no");
-    assert.equal(shipCalls(host).length, 0, "and nothing is looked at for it");
   });
 
   it("the finish answer counts the blockers, and the flaws and nits for the report", () => {
@@ -1224,152 +1026,7 @@ function busyWorkers(loopRun: any, ids: readonly string[], notIn: readonly strin
   for (const id of ids) loopRun.state.workers.set(id, loopWorker(id, notIn.includes(id) ? {} : { integrated: true }));
 }
 
-/** A judge that answers the art director with SHIP_NO and keeps the loop clock's time of each look. */
-const shipAt = (times: number[], clock: { at: number }) => (params: Record<string, any>) => {
-  if (isShipCall(params)) times.push(clock.at);
-  return replying(SHIP_NO)();
-};
-
-/** The reasons of every wake the run recorded. */
-const wakeReasons = (host: FakeHost): string[][] =>
-  host.calls
-    .filter((c) => c.method === HostMethod.EventsAppend)
-    .flatMap((c) => c.params.batch)
-    .filter((e: Record<string, any>) => e.event_type === "director_continued")
-    .map((e: Record<string, any>) => e.payload.reasons);
-
 describe("the art director's regular look at the whole game (director/art-direction.ts, wake.ts)", () => {
-  it("AD-14. an ∞ build with four busy workers is looked at once the first wave is in, while its lead is busy, and the defects reach their owners as building work", async () => {
-    const host = fakeHost();
-    const { loopRun } = fakeLoopRun(host, { answers: { [HostMethod.EngineComplete]: replying(SHIP_NO) }, ...INFINITE });
-    busyWorkers(loopRun, ["hud", "track", "car", "city"]);
-    const { talk, turns } = lead((turn) => {
-      if (turn === 2) loopRun.state.finished = true;
-      return DECIDED;
-    });
-    await runWakeLoop(loopRun, talk, BRIEF, fakeClock(T0 + 30 * MINUTE_MS));
-
-    assert.equal(shipCalls(host).length, 1, "the art director looked at the whole game");
-    assert.equal(turns.length, 2, turns.map((t) => t.prompt.slice(0, 160)).join("\n---\n"));
-    const woken = turns[1]!.prompt;
-    assert.match(woken, /art director's look at the whole game/i);
-    assert.match(woken, /would not ship/);
-    assert.match(woken, /hud[^\n]*speed digits/);
-    assert.doesNotMatch(woken, /FINISH MARK|no new parts or systems|past the finish mark/, "not the finish stage");
-    const hudTold = loopRun.state.workers.get("hud").steering.at(-1) ?? "";
-    assert.match(hudTold, /speed digits/);
-    assert.match(hudTold, /beside your move/, "a building owner fixes it beside its move");
-    assert.ok(
-      wakeReasons(host).some((reasons) => reasons.includes(WakeCause.ShipLook)),
-      "the wake says why",
-    );
-    assert.equal(host.journals.at(-1)!.director.wake.finishMarkSaid, undefined, "the regular look is no finish mark");
-  });
-
-  it("AD-14d. once the user asked to finish, the regular look no longer comes: no round would take its blockers", async () => {
-    const host = fakeHost();
-    const { loopRun } = fakeLoopRun(host, { answers: { [HostMethod.EngineComplete]: replying(SHIP_NO) }, ...INFINITE });
-    busyWorkers(loopRun, ["hud", "track", "car", "city"]);
-    // The lead recorded the user's ask (wrap_up): its workers end the rounds they are in.
-    loopRun.inbox.finishing = async () => true;
-    loopRun.state.finishAsk = { at: T0, words: "wait for the last workers" };
-    const { talk, turns } = lead((turn) => {
-      if (turn === 2) loopRun.state.finished = true;
-      return DECIDED;
-    });
-    await runWakeLoop(loopRun, talk, BRIEF, fakeClock(T0 + 30 * MINUTE_MS));
-
-    assert.equal(shipCalls(host).length, 0, "no look while the build is finishing");
-    assert.equal(turns.length, 2, turns.map((t) => t.prompt.slice(0, 160)).join("\n---\n"));
-  });
-
-  it("AD-14c. the user is never kept waiting for a regular look: their words wake the lead first, and the look comes with the next wake", async () => {
-    const host = fakeHost();
-    const { loopRun } = fakeLoopRun(host, { answers: { [HostMethod.EngineComplete]: replying(SHIP_NO) }, ...INFINITE });
-    busyWorkers(loopRun, ["hud", "track"]);
-    let untold: string[] = [];
-    loopRun.inbox.steering = async (_worker: unknown, take: boolean) => {
-      const words = [...untold];
-      if (take) untold = [];
-      return words;
-    };
-    const looksBefore: number[] = [];
-    const { talk, turns } = lead((turn) => {
-      looksBefore.push(shipCalls(host).length);
-      if (turn === 1) untold = ["make the sky darker"];
-      if (turn === 3) loopRun.state.finished = true;
-      return DECIDED;
-    });
-    await runWakeLoop(loopRun, talk, BRIEF, fakeClock(T0 + 30 * MINUTE_MS));
-
-    assert.equal(turns.length, 3, turns.map((t) => t.prompt.slice(0, 160)).join("\n---\n"));
-    assert.match(turns[1]!.prompt, /make the sky darker/);
-    assert.doesNotMatch(turns[1]!.prompt, /art director's look at the whole game/i, "the user's turn is not held");
-    assert.deepEqual(looksBefore, [0, 0, 1], "the look comes with the next wake");
-    assert.match(turns[2]!.prompt, /art director's look at the whole game/i);
-  });
-
-  it("AD-14b. the first look waits for every running worker's kept work to be merged — at most 90 working minutes", async () => {
-    const host = fakeHost();
-    const looks: number[] = [];
-    const clock = fakeClock(T0 + 30 * MINUTE_MS);
-    const { loopRun } = fakeLoopRun(host, {
-      answers: { [HostMethod.EngineComplete]: shipAt(looks, clock) },
-      ...INFINITE,
-    });
-    busyWorkers(loopRun, ["hud", "track", "car", "city"], ["city"]);
-    const { talk } = lead(() => {
-      if (clock.at >= T0 + 95 * MINUTE_MS) loopRun.state.finished = true;
-      return DECIDED;
-    });
-    await runWakeLoop(loopRun, talk, BRIEF, clock);
-
-    assert.deepEqual(looks, [T0 + SHIP_LOOK_EVERY_MS], "no look before the wave is in, one at 90 working minutes");
-  });
-
-  it("AD-15. the art director looks again 90 working minutes after its last look, once the head has moved — never sooner, never twice at one head", async () => {
-    const host = fakeHost();
-    const looks: number[] = [];
-    const clock = fakeClock(T0 + 30 * MINUTE_MS);
-    const { loopRun } = fakeLoopRun(host, {
-      answers: { [HostMethod.EngineComplete]: shipAt(looks, clock) },
-      ...INFINITE,
-    });
-    busyWorkers(loopRun, ["hud", "track", "car", "city"]);
-    const { talk } = lead((turn) => {
-      // The lead integrates the next wave early on: the next look still waits for its time.
-      if (turn === 3) {
-        loopRun.state.integrationHead = HEAD2;
-        loopRun.state.healthByHead.set(HEAD2, true);
-      }
-      if (clock.at >= T0 + 30 * MINUTE_MS + SHIP_LOOK_EVERY_MS + 40 * MINUTE_MS) loopRun.state.finished = true;
-      return DECIDED;
-    });
-    await runWakeLoop(loopRun, talk, BRIEF, clock);
-
-    assert.deepEqual(looks, [T0 + 30 * MINUTE_MS, T0 + 30 * MINUTE_MS + SHIP_LOOK_EVERY_MS]);
-    assert.equal(loopRun.state.lastShip.head, HEAD2);
-  });
-
-  it("AD-15b. a timed build's regular look never comes within 30 minutes before its finish mark: the mark's own look takes its place", async () => {
-    const host = fakeHost();
-    const looks: number[] = [];
-    const timed = { reference: null, budgets: { completionPolicy: "duration" } } as never;
-    const mark = T0 + 4 * HOUR_MS - finishMarkMs(timed, 4 * HOUR_MS)!;
-    // Twenty minutes before the mark: inside the gap the mark keeps clear of a second look.
-    const clock = fakeClock(mark - 20 * MINUTE_MS);
-    const { loopRun } = fakeLoopRun(host, { answers: { [HostMethod.EngineComplete]: shipAt(looks, clock) } });
-    busyWorkers(loopRun, ["hud", "track"]);
-    const { talk, turns } = lead(() => {
-      if (clock.at >= mark) loopRun.state.finished = true;
-      return DECIDED;
-    });
-    await runWakeLoop(loopRun, talk, BRIEF, clock);
-
-    assert.deepEqual(looks, [mark], "one look, at the mark");
-    assert.match(turns.at(-1)!.prompt, /THE FINISH MARK/);
-  });
-
   it("AD-16. the art director names at most eight things that already work and must stay, each cut at a word, and a rubric that still says strengths is read the same way", async () => {
     const long =
       "the wet asphalt reflects every neon sign along the boulevard with a believable falloff that sells the rain";
@@ -1456,7 +1113,7 @@ describe("the goal ledger on every wake (director/progress.ts, wake.ts)", () => 
     const track = loopRun.state.goals.entries[1];
     track.status = GoalStatus.Passed;
     track.head = HEAD;
-    // Its kept work is not merged yet: the art director's first look comes at 90 working minutes.
+    // Flipped (Loop phase 4): the studio's own look came at 90 working minutes; nobody looks unasked now.
     busyWorkers(loopRun, ["hud"], ["hud"]);
     const at: number[] = [];
     const { talk, turns } = lead(() => {
@@ -1469,12 +1126,12 @@ describe("the goal ledger on every wake (director/progress.ts, wake.ts)", () => 
     const minute = (ms: number) => Math.round((ms - T0) / MINUTE_MS);
     const wakes = turns.slice(1).map((t) => t.prompt);
     for (const prompt of wakes) assert.match(prompt, /required outcomes: 1\/2 verified[^\n]*hud/, prompt.slice(0, 600));
-    assert.deepEqual(at.map(minute), [0, 20, 40, 60, 80, 90, 110, 130, 150]);
+    assert.deepEqual(at.map(minute), [0, 20, 40, 60, 80, 100, 120, 140, 160]);
     const nudged = wakes.map((prompt, i) => (/VERIFY THE OUTCOMES/.test(prompt) ? minute(at[i + 1]!) : null));
     assert.deepEqual(
       nudged.filter((m) => m !== null),
-      [60, 90, 150],
-      "every 60 working minutes, and after the look at 90",
+      [60, 120],
+      "every 60 working minutes",
     );
     assert.match(wakes[2]!, /playtest goal=hud/);
   });

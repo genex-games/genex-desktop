@@ -1,10 +1,9 @@
 /**
  * Work a worker kept without a verdict: a round the run's close or the lead stopped, committed on
- * its `…-stopped` ref (facet/stop.ts). Nobody judged it, so it goes into the build only once a
- * judge prefers it to the integration branch (`judge target=<id> against=integration`, then
- * `integrate`) — or through a worker started from it, judged the same way. The studio puts it on the
- * record (an `integration_merge` for its part) once the build holds it, so the Builds graph shows
- * that work added, never left out; one that went in unjudged is said to the lead.
+ * its `…-stopped` ref (facet/stop.ts). `integrate` takes it as it is (kept-judge.ts), or a worker
+ * started from it builds on it; nobody has to judge it first. The studio puts it on the record (an
+ * `integration_merge` for its part) once the build holds it, so the Builds graph shows that work
+ * added, never left out; one that went in by hand is said to the lead.
  */
 import { headOf, isAncestor } from "../git.ts";
 import { isCommit } from "../shell.ts";
@@ -66,9 +65,9 @@ function pendingKept(loopRun: LoopRun): PendingKept[] {
 /**
  * Put on the record each kept work the build at `head` now holds: one `integration_merge` for its
  * part, once. Called whenever the integration head moves (the lead's own commits, a worker's merge).
- * Work no judge let in is said to the lead — the build now holds something nobody looked at — unless
- * a worker's merge brought it (`throughMerge`): `integrate` takes only judged work, so a worker
- * started from kept work was judged on top of it.
+ * Work that went in by hand, with no judge's look, is said to the lead — the build now holds
+ * something nobody looked at — unless a worker's merge brought it (`throughMerge`), whose health
+ * pass looked.
  */
 export async function noteKeptWork(loopRun: LoopRun, head: string | null, throughMerge = false): Promise<void> {
   const { appendRun, ctx, integrationWorktree, note, run } = loopRun;

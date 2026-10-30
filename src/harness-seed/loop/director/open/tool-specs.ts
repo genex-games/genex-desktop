@@ -18,17 +18,18 @@ import { MAX_SAVE_POINT_LABEL, OpenTool } from "./contract.ts";
 /** One string property of a tool's schema. */
 const text = (description: string) => ({ type: "string", description });
 
-/** The open lead's `finish`: a claim, checked by a reviewer; a yes closes the Loop in place. */
+/** The open lead's `finish`: a claim on its word, or after a review it asks for; it closes the Loop in place. */
 const OPEN_FINISH: LiveToolSpec = {
   name: DirectorTool.Finish,
-  description: `Claim the goal is reached. A reviewer who did none of the work checks the project in its folder, your proof and Genex's captures; a yes closes the Loop, a no comes back with its reasons. While you name something that remains and more than ${minutes(GAPS_FIRST_MIN_MS)} minutes are left, no reviewer reads the claim: you work on what remains first. Call it with nothing else in the same turn.`,
+  description: `Claim the goal is reached: your word closes the Loop. With review=yes a reviewer who did none of the work reads the project in its folder, your proof and Genex's captures first: its yes closes the Loop, its no comes back with its reasons and decides nothing. While you name something that remains and more than ${minutes(GAPS_FIRST_MIN_MS)} minutes are left, you work on what remains first. Call it with nothing else in the same turn.`,
   parameters: {
     type: "object",
     properties: {
       summary: text("What the project holds now and what you checked: the person's report."),
       remaining: text(
-        "Everything you know is not done or not right yet, one item per line; empty only when nothing is. The reviewer reads it first.",
+        "Everything you know is not done or not right yet, one item per line; empty only when nothing is. A reviewer reads it first.",
       ),
+      review: text("yes asks a reviewer for a second opinion before the Loop closes (default no)."),
       proof: text(
         "Comma-separated paths in the project's folder that show the goal is reached (a test report, a picture, a log).",
       ),

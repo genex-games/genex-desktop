@@ -167,7 +167,7 @@ export interface LastJudge extends AnyRecord {
   /** The vision judge's yes or no to the question asked, when one was. */
   answer?: boolean | null;
   boardAllPass?: boolean;
-  /** The close's own judge of the build it made live (integrate.ts `judgeTheLanding`), not a lead's. */
+  /** A judge a kept older close asked of the build it made live (integrate.ts), not a lead's. */
   final?: boolean;
 }
 
@@ -401,20 +401,7 @@ type BoundModule<M> = { readonly [K in Exclude<FunctionKey<M>, "bindLoopRun" | "
  */
 type ArtDirectionParts = Partial<
   BoundModule<
-    Pick<
-      typeof artDirectionFunctions,
-      | "artDirectionPass"
-      | "finishMarkAt"
-      | "firstWaveIn"
-      | "shipLookAfter"
-      | "shipLookAt"
-      | "shipLookPass"
-      | "shipOwed"
-      | "shipFinishGate"
-      | "shipReport"
-      | "shipReviewOn"
-      | "takeShelvedShipDefects"
-    >
+    Pick<typeof artDirectionFunctions, "finishMarkAt" | "shipReport" | "shipReviewOn" | "takeShelvedShipDefects">
   >
 >;
 

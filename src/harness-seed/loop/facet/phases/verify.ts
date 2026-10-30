@@ -1,7 +1,11 @@
-/** Verify: diffs, checks, vision, play → the scoreboard, a same-session follow-up on a regression, then the acceptance rule and the taste judge. */
+/**
+ * Verify: diffs, checks, vision, play → the scoreboard, a same-session follow-up on a regression,
+ * then the keep rule: only a check that passed before and now fails undoes a round, and no judge is
+ * asked (facet/kept-round.ts).
+ */
 import { withObservationPatience } from "../../evidence.ts";
-import { facetCompare, Side } from "../../judge.ts";
-import { compareScoreboards, isInvisibleDiff } from "../../checks.ts";
+import { Side } from "../../judge.ts";
+import { compareScoreboards } from "../../checks.ts";
 import { isTransientProviderError, outageDelays } from "../../outage.ts";
 import { RunEvent } from "../../run-events.ts";
 import { MINUTE_MS, SECOND_MS } from "../../time.ts";
@@ -14,11 +18,10 @@ import { VerdictSource } from "../../verdict.ts";
 import { diffAgainstIncumbent, scoreEvidence } from "../scoring.ts";
 import { noisyRegressions, remeasurable } from "../round-judgement.ts";
 import { OutagePhase, recordDecision, roundFields } from "../record.ts";
-import { tasteVerdict } from "./taste.ts";
+import { keepOnBoard } from "../kept-round.ts";
 import { lostProviderOf, waitForProvider } from "../provider.ts";
 import { clockRoom, sleepOnPausedClock } from "../paused-clock.ts";
 import { registryRefusal } from "../../registry.ts";
-import { FacetStage, isZeroDiff, roundStage } from "../stage.ts";
 
 /** A regression is followed up in the builder's session only with this much of the facet's clock left (or a slice of a short one). */
 const FOLLOW_UP_MIN_MS = 5 * MINUTE_MS;
@@ -27,7 +30,7 @@ const VERIFY_PASSES = 2;
 /** A regression is looked at again only with this much of the facet's clock left: one more evidence pass. */
 const LOOK_AGAIN_MIN_MS = 3 * MINUTE_MS;
 
-/** Verify: diffs, checks, vision, play → the scoreboard, a same-session follow-up on a regression, then the acceptance rule and the taste judge. */
+/** Verify: diffs, checks, vision, play → the scoreboard, a same-session follow-up on a regression, then the keep rule. */
 export async function verifyChallenger(loop: FacetLoop, round: FacetRound): Promise<RoundFlow> {
   // ── verify: diffs, checks, vision, play → scoreboard; then the acceptance rule ──
   round.verdict = undefined;
@@ -38,10 +41,8 @@ export async function verifyChallenger(loop: FacetLoop, round: FacetRound): Prom
   round.taste = null;
   round.followedUp = false;
   if (round.challengerBroken) brokenVerdict(round);
-  else if (loop.legacy) {
-    const flow = await legacyVerdict(loop, round);
-    if (flow) return flow;
-  } else {
+  else if (loop.legacy) keepItsBuild(loop, round);
+  else {
     const flow = await scoreboardVerdict(loop, round);
     if (flow) return flow;
   }
@@ -64,31 +65,19 @@ function brokenVerdict(round: FacetRound): void {
 }
 
 /**
- * A prose-only plan (the v1 rule): the blind A/B facet judge picks, and a judge that cannot answer
- * ties — unless its provider is lost: then the round waits for it (`waitForJudge`).
+ * A part with no checks of its own (a prose-only plan): its build runs, so it is kept. Nobody judges
+ * it side by side any more; the lead may look, or ask a judge, when it wants a second opinion.
  */
-async function legacyVerdict(loop: FacetLoop, round: FacetRound): Promise<RoundFlow> {
-  const { ctx, facet, run } = loop;
-  for (;;) {
-    try {
-      round.verdict = await facetCompare(ctx, {
-        run,
-        facet,
-        challenger: round.evidence,
-        incumbentEvidence: loop.incumbentEvidence,
-        iterationId: round.iterationId,
-      });
-      break;
-    } catch (err: any) {
-      if (isStopped(err, ctx)) return stoppedByUser(loop);
-      const waited = await waitForJudge(loop, round, err);
-      if (waited?.again) continue;
-      if (waited) return waited.flow;
-      round.verdict = autoTie(loop, `facet judge unavailable — auto-tie: ${err?.message ?? err}`);
-      break;
-    }
-  }
-  round.verdictSource = VerdictSource.Legacy;
+function keepItsBuild(loop: FacetLoop, round: FacetRound): void {
+  round.taste = null;
+  round.verdict = {
+    pick: Side.Challenger,
+    satisfied: false,
+    biggest_gap: loop.biggestGap ?? "",
+    reason: "a part with no checks of its own: its build runs, so it is kept — nobody judges it",
+    defects: [],
+  };
+  round.verdictSource = VerdictSource.NoRegression;
 }
 
 /** A verdict nobody could give: the incumbent stands and the gap is the one already known. */
@@ -252,17 +241,27 @@ async function scoreOnce(loop: FacetLoop, round: FacetRound): Promise<void> {
     wobbles: loop.wobbles,
     stucks: loop.stucks,
   });
-  round.nextBoard = scored.board;
-  for (const gamed of round.gamedChecks) {
-    if (round.nextBoard[gamed.id])
-      round.nextBoard[gamed.id] = {
-        ...round.nextBoard[gamed.id],
-        pass: false,
-        gamed: true,
-        reason: `gamed — code review: ${gamed.what.slice(0, CLIP_DETAIL)}`,
-      };
-  }
+  round.nextBoard = markGamedChecks(scored.board, round.gamedChecks);
   round.comparison = compareScoreboards(loop.board, round.nextBoard);
+}
+
+/**
+ * The checks the code reviewer says were made to pass without the work read unmeasured, with its
+ * words as the reason: its finding goes back to the builder (review.ts), and a model's word neither
+ * passes a check nor fails one, so it can never undo a round.
+ */
+export function markGamedChecks(board: AnyRecord, gamed: ReadonlyArray<{ id: string; what: string }>): AnyRecord {
+  const marked = { ...board };
+  for (const { id, what } of gamed) {
+    if (!marked[id]) continue;
+    marked[id] = {
+      ...marked[id],
+      pass: null,
+      gamed: true,
+      reason: `gamed — code review: ${what.slice(0, CLIP_DETAIL)}`,
+    };
+  }
+  return marked;
 }
 
 /**
@@ -333,8 +332,8 @@ function followUpPrompt(round: FacetRound): string {
 }
 
 /**
- * The verdict the board gives: a broken follow-up or a regression undoes the round, a round no
- * camera saw change is kept without a judge call — or, past all three, the taste judge's.
+ * The verdict the board gives: a broken follow-up, a regression or a lost camera or demo undoes the
+ * round; past all three the round is kept, with no judge call (facet/kept-round.ts).
  */
 export async function decideOnBoard(loop: FacetLoop, round: FacetRound): Promise<void> {
   const { comparison, evidence } = round;
@@ -364,29 +363,5 @@ export async function decideOnBoard(loop: FacetLoop, round: FacetRound): Promise
     refuse(VerdictSource.Checks, lost.gap, lost.reason);
     return;
   }
-  // A finishing round's polish can sit under the build stage's "no visible change" line at the
-  // judge's window size: it is refused unseen only when nothing at all was redrawn.
-  const finishing = roundStage(round, loop.spec) === FacetStage.Finish;
-  const invisible = finishing ? isZeroDiff(round.diffs) : isInvisibleDiff(round.diffs);
-  if (comparison.flips.length === 0 && invisible) {
-    keepUnseen(loop, round);
-    return;
-  }
-  await tasteVerdict(loop, round);
-}
-
-/**
- * Every camera reads identical to the accepted build and nothing regressed: the round's work —
- * sound, logic, a feel no frame shows — is kept, and no judge call is spent on a pair it could not
- * tell apart.
- */
-function keepUnseen(loop: FacetLoop, round: FacetRound): void {
-  round.verdict = {
-    pick: Side.Challenger,
-    satisfied: false,
-    biggest_gap: loop.biggestGap,
-    reason: "no visible change and nothing regressed — kept without a judge call",
-    defects: [],
-  };
-  round.verdictSource = VerdictSource.NoRegression;
+  keepOnBoard(loop, round);
 }

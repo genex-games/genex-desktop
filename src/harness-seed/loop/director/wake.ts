@@ -103,13 +103,12 @@ import {
 } from "./wake-schedule.ts";
 import { cutShortWake, midTurnUserSays } from "./live-prompts.ts";
 import { turnEndAtCap, keepRunClock, withCapWatch, withCapWords } from "./cap-lines.ts";
-import { artDirectionBlock, ART_SKIPPED, shipLookBlock } from "./art-direction-prompts.ts";
+import { finishMarkBlock } from "./second-opinion-prompts.ts";
 import { workingGoal } from "../goal-prompts.ts";
 import { runScope } from "../scope.ts";
 import { FacetStage, isFinishing } from "../facet/stage.ts";
 import type { AnyRecord, HarnessCtx } from "../../types/harness.d.ts";
 import type { DelegateResult } from "../../types/host-api.d.ts";
-import type { ArtDirection, LastShip } from "./art-direction.ts";
 import type { RestoredWake } from "./journal.ts";
 import type { LeadLine } from "./lead-line.ts";
 import type { LoopRun, LoopRunState, Worker } from "./loop-run.ts";
@@ -231,12 +230,6 @@ export interface WakeState {
   planWindowSaid: number | null;
   /** The finish mark was said (art-direction.ts): once a run, and the journal keeps it. */
   finishMarkSaid: boolean;
-  /** A goal build idle with no ship review on its head is owed its finish mark now (`TurnEnd.ArtDirection`). */
-  finishMarkDue: boolean;
-  /** The working time the art director's next regular look is due at; null until its first (art-direction.ts `shipLookAt`). */
-  nextShipLookWorkedMs: number | null;
-  /** The art director's last review the loop has counted as a look (`noteShipLooks`). */
-  shipSeen: LastShip | null;
   /** The working time the lead was last nudged to verify its outcomes; null before the first. */
   verifyNudgedWorkedMs: number | null;
   /** The art director's review (`LastShip.at`) the last nudge came after: a newer one is owed a nudge. */
@@ -301,9 +294,6 @@ function newWakeState(restored: RestoredWake = { idleAsked: false, wakesAt: [] }
     finishSaid: false,
     planWindowSaid: null,
     finishMarkSaid: restored.finishMarkSaid === true,
-    finishMarkDue: false,
-    nextShipLookWorkedMs: restored.nextShipLookWorkedMs ?? null,
-    shipSeen: null,
     verifyNudgedWorkedMs: restored.verifyNudgedWorkedMs ?? null,
     verifyNudgedShipAt: null,
     journaledSeq: 0,
@@ -468,7 +458,6 @@ async function turnFacts(
     workingTimeLeft: now < loopRun.softDeadline && !finishRequested,
     finishRequested,
     lastRoundsRunning: finishRequested && roundsRunning && now < loopRun.softDeadline,
-    artDirectionOwed: artDirectionOwed(loopRun, wake),
     capped: cutByItsCap(wake, result),
     // An open Loop's lead builds by itself: a turn that did something is never idle.
     worked: leadsOpenLoop(loopRun) && loopRun.open?.turnWorked === true,
@@ -490,37 +479,17 @@ function cutByItsCap(wake: WakeState, result: Partial<DelegateResult>): boolean 
   return returnedAt >= cap || result?.stopReason === StopReason.Deadline;
 }
 
-/** A goal build the art director has not looked at yet, on a run that has the art director. */
-function artDirectionOwed(loopRun: LoopRun, wake: WakeState): boolean {
-  if (wake.finishMarkSaid || typeof loopRun.shipOwed !== "function") return false;
-  return loopRun.shipOwed();
-}
-
 /**
- * When the finish mark wakes the lead: now for a goal build sent to art direction, a timed build's
- * mark (art-direction.ts `finishMarkAt`) while it is ahead of the wrap-up, or never once it was
- * said, or once the wrap-up is due (the mark gives way to it) — or on a run without the art director.
+ * When the finish mark wakes the lead: a timed build's mark (art-direction.ts `finishMarkAt`) while
+ * it is ahead of the wrap-up, or never once it was said, or once the wrap-up is due (the mark gives
+ * way to it). A goal build has no mark.
  */
 function finishMarkView(loopRun: LoopRun, wake: WakeState, now: number): number | null {
   // An open Loop has no art director: no mark wakes its lead.
   if (wake.finishMarkSaid || !WakeCause.FinishMark || leadsOpenLoop(loopRun)) return null;
   if (now >= loopRun.softDeadline) return null;
-  if (wake.finishMarkDue) return now;
   const at = typeof loopRun.finishMarkAt === "function" ? loopRun.finishMarkAt() : null;
   return at !== null && at < loopRun.softDeadline ? at : null;
-}
-
-/**
- * When the art director's regular look at the whole game wakes the lead (art-direction.ts
- * `shipLookAt`) — whatever the lead is doing, so a lead kept busy by its workers is still told —
- * or never: in the wrap-up or once the user asked to finish (no round would take its blockers), or
- * on a run without the art director's regular look.
- */
-function shipLookView(loopRun: LoopRun, wake: WakeState, now: number): number | null {
-  const finishing = wake.wrapping || wake.finishSaid;
-  if (finishing || typeof loopRun.shipLookAt !== "function" || leadsOpenLoop(loopRun)) return null;
-  const finishMarkAt = finishMarkView(loopRun, wake, now);
-  return loopRun.shipLookAt({ nextAtWorkedMs: wake.nextShipLookWorkedMs, now, finishMarkAt });
 }
 
 /**
@@ -544,23 +513,9 @@ function settleTurn(
 ) {
   wake.idleAsked = verdict.idleAsked;
   if (verdict.next === TurnEnd.AskIdle) wake.idleDue = true;
-  if (verdict.next === TurnEnd.ArtDirection) wake.finishMarkDue = true;
   if (verdict.next !== TurnEnd.WrapUp) return;
   if (verdict.wrapCause === WrapCause.Failed) wake.failed = result;
   startWrapUp(loopRun, wake, verdict.wrapCause ?? WrapCause.Deadline, now);
-}
-
-/**
- * A review on integration the loop did not run itself — the lead's own `judge ship=yes`, the finish
- * mark's or the finish gate's look — counts as the art director's look: the next regular one waits
- * a whole period from it (art-direction.ts `shipLookAfter`), so two looks never come close together.
- */
-function noteShipLooks(loopRun: LoopRun, wake: WakeState, now: number): void {
-  const last = loopRun.state.lastShip ?? null;
-  if (last === wake.shipSeen) return;
-  wake.shipSeen = last;
-  if (last && typeof loopRun.shipLookAfter === "function")
-    wake.nextShipLookWorkedMs = loopRun.shipLookAfter({ now, looked: last.ship !== null });
 }
 
 /**
@@ -580,7 +535,6 @@ async function watchJobs(loopRun: LoopRun, wake: WakeState, now: number): Promis
 /** Read the inbox while the lead rests: what the user said, a finish request, steers addressed to a worker, and job ends. */
 async function collect(loopRun: LoopRun, wake: WakeState, now: number): Promise<void> {
   const { inbox, routeUserSteers, state } = loopRun;
-  noteShipLooks(loopRun, wake, now);
   await reviewProgress(loopRun, now);
   await watchJobs(loopRun, wake, now);
   if (leadsOpenLoop(loopRun)) await collectOpen(loopRun, now);
@@ -631,7 +585,6 @@ function wakeView(loopRun: LoopRun, wake: WakeState, now: number): WakeView {
     idleAsked: wake.idleAsked,
     wakesAt: wake.wakesAt,
     finishMarkAt: finishMarkView(loopRun, wake, now),
-    shipLookAt: shipLookView(loopRun, wake, now),
   };
 }
 
@@ -696,7 +649,6 @@ function markSaid(loopRun: LoopRun, wake: WakeState, reasons: readonly WakeReaso
   if (reasons.includes(WakeCause.PlanWindow)) wake.planWindowSaid = state.planReviewUntil;
   if (reasons.includes(WakeCause.FinishMark)) {
     wake.finishMarkSaid = true;
-    wake.finishMarkDue = false;
   }
   // The workers' limit has lifted: gone from the run, so nothing names it or wakes for it again.
   if (reasons.includes(WakeCause.WorkersLimitLifted)) state.workerLimit = null;
@@ -880,23 +832,12 @@ function digestFacts(
   };
 }
 
-/**
- * A wake the user is part of does not take the art director's regular look, which holds the turn
- * for minutes: the look stays due and comes with the next wake.
- */
-function userFirst(due: Wake): Wake {
-  if (!due.reasons.some((reason) => USER_WAKES.has(reason))) return due;
-  return { ...due, reasons: due.reasons.filter((reason) => reason !== WakeCause.ShipLook) };
-}
-
 /** The message that wakes the lead: the user's words, the news, the run, the card and the closing. */
 async function wakePrompt(loopRun: LoopRun, wake: WakeState, woken: Wake, clock: WakeClock): Promise<string> {
   if (leadsOpenLoop(loopRun)) return openWakePrompt(loopRun, wake, woken, clock);
-  const due = userFirst(woken);
-  // The art director looks before anything is read, so where its defects went is this wake's news.
-  const art = await artFor(loopRun, wake, due.reasons, clock);
+  const due = woken;
+  const art = artFor(due.reasons);
   const now = clock.now();
-  noteShipLooks(loopRun, wake, now);
   const userSays = await tellUser(loopRun, wake);
   const happened = readUnread(loopRun);
   const finishNew = wake.finishNew;
@@ -955,50 +896,9 @@ async function openWakePrompt(loopRun: LoopRun, wake: WakeState, due: Wake, cloc
   return prompt;
 }
 
-/**
- * The art director's paragraph a wake carries: the finish mark's, which also covers a regular look
- * due with it, or the regular look's (`regularLook`) — or none.
- */
-function artFor(loopRun: LoopRun, wake: WakeState, reasons: readonly WakeReason[], clock: WakeClock): Promise<string> {
-  if (reasons.includes(WakeCause.FinishMark)) return finishMarkBlock(loopRun);
-  if (reasons.includes(WakeCause.ShipLook)) return regularLook(loopRun, wake, clock);
-  return Promise.resolve("");
-}
-
-/**
- * The art director's regular look at the whole game (art-direction.ts `shipLookPass`): its defects
- * go to their owners while they keep building, and the lead reads the verdict, the defects by part
- * and what must not regress. A look that gave no review is tried again a shorter wait later; one
- * that did is counted by `noteShipLooks`, as every review on integration is.
- */
-async function regularLook(loopRun: LoopRun, wake: WakeState, clock: WakeClock): Promise<string> {
-  if (typeof loopRun.shipLookPass !== "function") return "";
-  const before = loopRun.state.lastShip ?? null;
-  const pass: ArtDirection = await loopRun.shipLookPass().catch((err: unknown) => ({
-    head: loopRun.state.integrationHead,
-    review: null,
-    skipped: String((err as Error)?.message ?? err),
-  }));
-  const reviewed = (loopRun.state.lastShip ?? null) !== before;
-  if (!reviewed && typeof loopRun.shipLookAfter === "function")
-    wake.nextShipLookWorkedMs = loopRun.shipLookAfter({ now: clock.now(), looked: false });
-  return shipLookBlock(pass);
-}
-
-/**
- * The finish mark's paragraph: the studio's own ship review of the integrated build
- * (art-direction.ts `artDirectionPass`), its defects by part, and the rule from here — or, on a
- * run bound without the art director, the rule alone.
- */
-async function finishMarkBlock(loopRun: LoopRun): Promise<string> {
-  if (typeof loopRun.artDirectionPass !== "function")
-    return artDirectionBlock({ head: loopRun.state.integrationHead, review: null, skipped: ART_SKIPPED.olderTools });
-  const pass = await loopRun.artDirectionPass().catch((err: unknown) => ({
-    head: loopRun.state.integrationHead,
-    review: null,
-    skipped: String((err as Error)?.message ?? err),
-  }));
-  return artDirectionBlock(pass);
+/** The finish mark's paragraph a wake carries: the rule from here on, when the mark is due — or none. */
+function artFor(reasons: readonly WakeReason[]): string {
+  return reasons.includes(WakeCause.FinishMark) ? finishMarkBlock() : "";
 }
 
 /** The digest's build card on its own, or nothing from an older wake-prompts.ts that cannot render one. */
@@ -1795,8 +1695,7 @@ export async function runWakeLoop(
     ? restoredWake(loopRun.priorJournal?.director?.wake, clock.now())
     : undefined;
   const wake = newWakeState(restored);
-  // A review a Resume restored was counted, and nudged after, before the pause.
-  wake.shipSeen = loopRun.state.lastShip ?? null;
+  // A review a Resume restored was nudged after, before the pause.
   wake.verifyNudgedShipAt = loopRun.state.lastShip?.at ?? null;
   const kit: TurnKit = { talk, brief, clock, line };
   // This loop answers for what its lead hears of the chat: what it never hears goes back at the end.

@@ -127,7 +127,9 @@ describe("a run on two subscriptions", () => {
           codex: completes.codex!.length,
           codexModels: completes.codex!.map((r) => r.model),
         };
-        results.finished = text(await call("finish", { summary: "the plaza is red", land: "yes", victory: "yes" }));
+        results.finished = text(
+          await call("finish", { summary: "the plaza is red", land: "yes", victory: "yes", review: "yes" }),
+        );
         return { ok: true, engine, turns: 7, usage: {}, sessionId: "director-cross", summary: "run done" };
       }
       await mkdir(path.join(request.cwd, "src"), { recursive: true });
@@ -326,7 +328,9 @@ describe("a run on two subscriptions", () => {
           await call("judge", { target: "integration", against: "none", question: "is the plaza red?" }),
         );
         results.judgeCalls = { claude: completes["claude-code"]!.length, local: local.map((r) => r.model) };
-        results.finished = text(await call("finish", { summary: "the plaza is red", land: "yes", victory: "yes" }));
+        results.finished = text(
+          await call("finish", { summary: "the plaza is red", land: "yes", victory: "yes", review: "yes" }),
+        );
         return { ok: true, engine, turns: 7, usage: {}, sessionId: "director-local", summary: "run done" };
       }
       await mkdir(path.join(request.cwd, "src"), { recursive: true });

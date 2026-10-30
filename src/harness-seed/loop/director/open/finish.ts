@@ -1,10 +1,11 @@
 /**
  * The open lead's `finish`: its claim that the project meets the request. Genex's finish moment runs
- * first (a plugin may hold the finish back: the lead hears why and keeps working); then a reviewer
- * that did none of the work checks the claim (`../../finish-check.ts`), reading the game folder, the
- * lead's proof and the observers' captures. A yes closes the Loop in place inside the call; a no
- * comes back with its reasons, and the no's that stop a Loop close it with what isn't done. A finish
- * the person asked for needs no claim. Everything runs on the Loop's clock, inside the lead's call
+ * first (a plugin may hold the finish back: the lead hears why and keeps working); then the claim
+ * closes the Loop in place on the lead's word (Loop phase 4). With `review=yes` the lead asks a
+ * reviewer that did none of the work for a second opinion first (`../../finish-check.ts`), reading
+ * the game folder, the lead's proof and the observers' captures: a yes closes the Loop as reviewed,
+ * and a no comes back with its reasons and decides nothing. A finish the person asked for needs no
+ * claim. Everything runs on the Loop's clock, inside the lead's call
  * and its turn, which the close's own time (`OPEN_CLOSE_MS`) shares: a close that outlasts the call
  * goes on after the lead is told it was accepted. A claim whose turn ended while the reviewer read,
  * or whose folder went back to a save point meanwhile, gets no answer. No claim is made while Genex
@@ -17,17 +18,15 @@ import type { DelegateResult } from "../../../types/host-api.d.ts";
 import {
   CALL_MARGIN_MS,
   checkFinish,
-  FINISH_REPORT,
   type FinishClaim,
   type FinishOutcome,
   type FinishTally,
   finishAnswer,
-  notDoneOf,
   staleClaim,
   tallyOf,
 } from "../../finish-check.ts";
 import { FINISH_ANSWER } from "../../finish-check-prompts.ts";
-import { FinishCheckStep, LEAD_CALL_MS, MAX_FINISH_REJECTIONS, StopWhy } from "../../finish-contract.ts";
+import { FinishCheckStep, LEAD_CALL_MS, MAX_FINISH_REJECTIONS } from "../../finish-contract.ts";
 import { readFinishLog } from "../../finish-log.ts";
 import { GAPS_FIRST_MIN_MS, remainingOf } from "../../finish-remaining.ts";
 import { fireHooks, HookEvent, runScope } from "../../hooks.ts";
@@ -35,7 +34,9 @@ import { HOOK_PROMPTS } from "../../hooks-prompts.ts";
 import { CLIP_REASON, clipMarked, hasText } from "../../text.ts";
 import { timeLeftOf } from "../../time-cap.ts";
 import { minutes, SECOND_MS, sleep } from "../../time.ts";
+import { yes } from "../args.ts";
 import { closeUnderWay, holdFinish, releaseFinish } from "../close-latch.ts";
+import { CLAIM_WORDS, secondOpinionNo } from "../second-opinion-prompts.ts";
 import { heldTurnEnding } from "../held-words.ts";
 import type { LoopRun } from "../loop-run.ts";
 import { WrapCause } from "../wake-schedule.ts";
@@ -49,6 +50,8 @@ import { writersInPlace } from "./writers.ts";
 /** Why the Loop ended when its lead's claim was accepted, the person asked it to finish, or its time ran out. */
 export const MESSAGE = {
   goalReached: "the reviewer accepted that the goal is reached",
+  /** The lead claimed the goal is reached and asked no reviewer: its word closes the Loop. */
+  leadClaimed: "the lead says the goal is reached",
   personFinished: "the person asked the Loop to finish",
   timeUpNoClaim: "the Loop's time ran out before a reviewer accepted the goal; here is where it stands",
   /** The Loop's time ran out while a reviewer still checked the lead's claim. */
@@ -151,28 +154,22 @@ function gapsFirst(loopRun: LoopRun, remaining: readonly string[]): string | nul
   return left > GAPS_FIRST_MIN_MS ? gapsFirstWords(remaining, minutes(left), minutes(GAPS_FIRST_MIN_MS)) : null;
 }
 
-/** What a check came to: the close it calls for and what the lead is told then, or null while the Loop goes on. */
-function endOf(loopRun: LoopRun, outcome: FinishOutcome): { end: OpenEnd; told: string; closing?: string } | null {
-  if ("noTime" in outcome) {
-    const last = turnEndsOf(loopRun.state)?.last === true;
-    if (!outcome.turnEnds || !last) return null;
-    return { end: { victory: false, because: FINISH_REPORT.tooLate, why: StopWhy.Time }, told: OPEN_WORDS.noTimeLeft };
-  }
-  if (outcome.step === FinishCheckStep.Accepted) {
-    const end = { victory: true, because: MESSAGE.goalReached, checked: true };
-    return { end, told: OPEN_WORDS.accepted, closing: OPEN_WORDS.acceptedClosing };
-  }
-  if (outcome.step === FinishCheckStep.Unanswered && outcome.seatless)
-    return { end: { victory: false, because: FINISH_REPORT.noReviewer, checked: true }, told: OPEN_WORDS.noReviewer };
-  if (outcome.step !== FinishCheckStep.Rejected || !outcome.stop) return null;
-  const end = {
-    victory: false,
-    because: FINISH_REPORT.notAccepted,
-    notDone: notDoneOf(outcome),
-    checked: true,
-    why: StopWhy.Stuck,
-  };
-  return { end, told: finishAnswer(outcome) };
+/**
+ * What a review the lead asked for came to: a yes closes the Loop as reviewed; anything else — a no,
+ * no answer, no time, no reviewer to seat — goes back to the lead, who decides (null).
+ */
+function endOf(outcome: FinishOutcome): { end: OpenEnd; told: string; closing?: string } | null {
+  if ("noTime" in outcome || outcome.step !== FinishCheckStep.Accepted) return null;
+  const end = { victory: true, because: MESSAGE.goalReached, checked: true };
+  return { end, told: OPEN_WORDS.accepted, closing: OPEN_WORDS.acceptedClosing };
+}
+
+/** What the lead hears when its review did not close the Loop: the reviewer's no as a second opinion, or why there was none. */
+function reviewAnswer(outcome: FinishOutcome): string {
+  if ("noTime" in outcome) return finishAnswer(outcome);
+  if (outcome.step === FinishCheckStep.Rejected) return secondOpinionNo(outcome.reasons, outcome.notDone);
+  if (outcome.step === FinishCheckStep.Unanswered && outcome.seatless) return CLAIM_WORDS.noReviewer;
+  return finishAnswer(outcome);
 }
 
 /**
@@ -220,7 +217,7 @@ async function checked(loopRun: LoopRun, claim: FinishClaim, started: number): P
   }
 }
 
-/** The claim itself, once the finish is the lead's alone: the moment, the check, and the close it calls for. */
+/** The claim itself, once the finish is the lead's alone: the moment, then the close on the lead's word or after the review it asked for. */
 async function claimFinish(loopRun: LoopRun, args: AnyRecord, started: number): Promise<string> {
   if (await loopRun.inbox.finishing().catch(() => false)) {
     const closed = await closeWithinCall(loopRun, { victory: false, because: MESSAGE.personFinished }, started);
@@ -228,11 +225,27 @@ async function claimFinish(loopRun: LoopRun, args: AnyRecord, started: number): 
   }
   const refused = claimRefusal(loopRun, args);
   if (refused) return refused;
-  // Nothing new since the row of no's the Loop went on past: no plugin step and no reviewer for it.
-  if (await staleClaim(tallyFor(loopRun, 0), loopRun.projectDir, proofOf(args), workMarkOf(loopRun)))
-    return FINISH_ANSWER.staleProof(MAX_FINISH_REJECTIONS);
+  const review = yes(args.review, false);
+  // Nothing new since the row of no's: the reviewer is not asked about the same work again.
+  const stale =
+    review && (await staleClaim(tallyFor(loopRun, 0), loopRun.projectDir, proofOf(args), workMarkOf(loopRun)));
+  if (stale) return FINISH_ANSWER.staleProof(MAX_FINISH_REJECTIONS);
   const held = await fireHooks(loopRun.ctx, loopRun.game, HookEvent.Finish, runScope(loopRun));
   if (held.blocked) return HOOK_PROMPTS.finishHeld(held.blocked.reason);
+  if (!review) {
+    const closed = await closeWithinCall(loopRun, { victory: true, because: MESSAGE.leadClaimed }, started);
+    return closed ? CLAIM_WORDS.closedOnClaim : OPEN_WORDS.closing;
+  }
+  return reviewedClaim(loopRun, args, held, started);
+}
+
+/** A claim the lead asked a reviewer to read first: the review, then the close on its yes, or its answer. */
+async function reviewedClaim(
+  loopRun: LoopRun,
+  args: AnyRecord,
+  held: Awaited<ReturnType<typeof fireHooks>>,
+  started: number,
+): Promise<string> {
   const claim: FinishClaim = {
     summary: args.summary.trim(),
     remaining: remainingOf(args.remaining),
@@ -244,11 +257,11 @@ async function claimFinish(loopRun: LoopRun, args: AnyRecord, started: number): 
   await loopRun.saveJournal().catch(() => {});
   // The Loop closed while the reviewer read (its clock, a Stop): nothing more is ended here.
   if (closing(loopRun)) return OPEN_WORDS.ending;
-  const ends = endOf(loopRun, outcome);
+  const ends = endOf(outcome);
   // Turned down with the Loop going on: the lead's turn did something, whatever else it changed.
   const turnedDown = "step" in outcome && outcome.step === FinishCheckStep.Rejected;
   if (!ends && turnedDown && loopRun.open) loopRun.open.claimTurnedDown = true;
-  if (!ends) return finishAnswer(outcome);
+  if (!ends) return reviewAnswer(outcome);
   // Told how it ended and that the Loop closes, though the close outlasts the call: never "carry on".
   if (await closeWithinCall(loopRun, ends.end, started)) return ends.told;
   return ends.closing ?? OPEN_WORDS.closing;

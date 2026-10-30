@@ -112,16 +112,8 @@ export const WakeCause = {
   WrapUp: "wrap_up",
   WorkersLimitLifted: "workers_limit_lifted",
   IdleAsk: "idle_ask",
-  /**
-   * The finish mark: the art director has looked at the whole game (art-direction.ts), and from
-   * here the owners finish their parts. A timed build's timer, or a goal build idle with no review.
-   */
+  /** The finish mark: a timed build's last stretch, from which the owners finish their parts (art-direction.ts). */
   FinishMark: "finish_mark",
-  /**
-   * The art director's regular look at the whole game while workers build (art-direction.ts
-   * `shipLookAt`): its defects go to their owners, and the build stage goes on.
-   */
-  ShipLook: "ship_look",
   /** An open Loop's lead reached its turn's cap with working time left: it goes on at once. */
   TurnCap: "turn_cap",
   /** An open Loop's lead whose turn worked, woken at once to go on: never the question of what next. */
@@ -147,8 +139,6 @@ export const TurnEnd = {
   AskIdle: "ask_idle",
   WrapUp: "wrap_up",
   Close: "close",
-  /** A goal build idle twice with no ship review on its head: the finish mark is due now, once. */
-  ArtDirection: "art_direction",
   /** An open Loop's turn reached its own cap: the lead is woken again at once, never rested. */
   Continue: "continue",
   /** An open Loop's lead whose turn worked: woken again at once to go on, whatever else is at work. */
@@ -203,8 +193,6 @@ export interface WakeView {
   wakesAt: readonly number[];
   /** When the finish mark is due, while it is ahead of the wrap-up and not yet said (absent: none). */
   finishMarkAt?: number | null;
-  /** When the art director's regular look at the whole game is due (absent: none). */
-  shipLookAt?: number | null;
 }
 
 /** When to wake the lead, and why. */
@@ -259,10 +247,6 @@ function userCandidates(view: WakeView): Candidate[] {
 const markAheadOfWrapUp = (view: WakeView): view is WakeView & { finishMarkAt: number } =>
   !view.wrapping && typeof view.finishMarkAt === "number" && view.now < view.softDeadline;
 
-/** The art director's regular look, like the mark, only in working time: the wrap-up has no room for it. */
-const lookAheadOfWrapUp = (view: WakeView): view is WakeView & { shipLookAt: number } =>
-  !view.wrapping && typeof view.shipLookAt === "number" && view.now < view.softDeadline;
-
 /** The studio's own reasons: the idle ask, and the timers. */
 function timerCandidates(view: WakeView): Candidate[] {
   const out: Candidate[] = [];
@@ -271,8 +255,6 @@ function timerCandidates(view: WakeView): Candidate[] {
   if (view.planWindowEndsAt !== null) add(view.planWindowEndsAt, WakeCause.PlanWindow, false);
   if (!view.wrapping) add(view.softDeadline, WakeCause.WrapUp, false);
   if (markAheadOfWrapUp(view)) add(view.finishMarkAt, WakeCause.FinishMark, false);
-  // Uncapped: busy workers fill the hourly cap with rounds, and the look is what they were missing.
-  if (lookAheadOfWrapUp(view)) add(view.shipLookAt, WakeCause.ShipLook, false);
   if (view.workersLimitLiftsAt !== null) add(view.workersLimitLiftsAt, WakeCause.WorkersLimitLifted, true);
   if (view.running > 0) add(view.asleepSince + HEARTBEAT_MS, WakeCause.Heartbeat, true);
   return out;
@@ -341,8 +323,6 @@ export interface TurnFacts {
    * left: the wrap-up waits for them (absent: no). Only the director's: an open Loop wraps up at once.
    */
   lastRoundsRunning?: boolean;
-  /** A goal build with no ship review on its head, not yet sent to art direction (absent: never). */
-  artDirectionOwed?: boolean;
   /** The turn ended because it reached its own cap (an open Loop's), not because the lead ended it (absent: no). */
   capped?: boolean;
   /**
@@ -350,7 +330,7 @@ export interface TurnFacts {
    * changed the folder, merged a worker, asked for a rewind or a restart, or had a claim turned down.
    */
   worked?: boolean;
-  /** The Loop runs until a reviewer accepts its finish (an open Loop's ∞), not for its hours (absent: no). */
+  /** The Loop runs until its lead finishes it (an open Loop's ∞), not for its hours (absent: no). */
   untilFinish?: boolean;
 }
 
@@ -366,12 +346,11 @@ const busy = (turn: TurnFacts): boolean => turn.running > 0 || turn.planWindowOp
 
 /**
  * A turn has ended. With work going on the lead rests until something happens; with nothing
- * running and time left it is asked once what next, and a second idle turn starts the wrap-up —
- * unless the art director is owed a look first (a goal build, once: `artDirectionOwed`). An open
- * Loop's lead builds by itself: after a turn that `worked` it goes on at once, whatever else is at
- * work (news reaches a working lead mid-turn), and the question is not spent on it; under ∞
- * (`untilFinish`) an idle lead rests until something happens, since only a reviewer's yes or its
- * hours end that Loop.
+ * running and time left it is asked once what next, and a second idle turn starts the wrap-up. An
+ * open Loop's lead builds by itself: after a turn that `worked` it goes on at once, whatever else is
+ * at work (news reaches a working lead mid-turn), and the question is not spent on it; under ∞
+ * (`untilFinish`) an idle lead rests until something happens, since only its own finish or its hours
+ * end that Loop.
  * Out of working time — or asked by the user to finish — it wraps up; a failed turn does too,
  * unless a lost provider failed it: then the run closes paused, and no wrap-up lands a build. Asked
  * to finish while workers end the rounds they are in, it rests until the last one lands, as a
@@ -391,7 +370,6 @@ export function afterTurn(turn: TurnFacts): TurnVerdict {
   if (turn.worked === true) return { next: TurnEnd.CarryOn, idleAsked: false };
   if (busy(turn)) return { next: TurnEnd.Sleep, idleAsked: false };
   if (!turn.idleAsked) return { next: TurnEnd.AskIdle, idleAsked: true };
-  if (turn.artDirectionOwed === true) return { next: TurnEnd.ArtDirection, idleAsked: true };
   if (turn.untilFinish === true) return { next: TurnEnd.Sleep, idleAsked: true };
   return { next: TurnEnd.WrapUp, idleAsked: true, wrapCause: WrapCause.Idle };
 }

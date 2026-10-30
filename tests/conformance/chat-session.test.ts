@@ -243,7 +243,7 @@ describe("the brief of a game that builds in Unreal", () => {
     assert.doesNotMatch(brief, WEB_PAGE);
   });
 
-  it("a Loop chat in an Unreal game is told a build is the one Loop, its lead building in place, a reviewer checking its finish", () => {
+  it("a Loop chat in an Unreal game is told a build is the one Loop, its lead building in place and finishing it", () => {
     const launch = { toolName: "start_autopilot", hours: 1, project: "fog-valley" };
     const unreal = buildContractorBrief({
       ask: "make me a survival game in a misty valley",
@@ -255,7 +255,8 @@ describe("the brief of a game that builds in Unreal", () => {
     });
     assert.match(unreal, /mcp__studio__start_autopilot/);
     assert.match(unreal, /the lead builds the whole project itself in this folder, with workers in copies of it/);
-    assert.match(unreal, /a reviewer who did none of the work checks its finish/);
+    // Flipped (Loop phase 4): a reviewer checked its finish; the lead finishes it now.
+    assert.match(unreal, /finishes it when the goal is reached/);
     assert.match(unreal, /Write an Unreal build's goal with the look first/);
     assert.doesNotMatch(unreal, /builders|judges/);
     const web = buildContractorBrief({

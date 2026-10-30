@@ -185,13 +185,10 @@ const SELFTEST_STEPS: readonly SelftestStep[] = [
         { id: "defect-milky-water", kind: "vision", weight: "normal", pass: false, reason: "still milky" },
       ] as CheckResult[]);
       const summary = summarizeScoreboard(board, { checks: [1, 2] } as never);
+      check("done", facetIsDone({ won: true, summary }) === "the work it was given is done");
       check(
-        "done",
-        facetIsDone({ won: true, verdict: { satisfied: true }, summary }) === "the work it was given is done",
-      );
-      check(
-        "the taste judge still has a vote",
-        facetIsDone({ won: true, verdict: { satisfied: false }, summary }) === null,
+        "no judge has a vote",
+        facetIsDone({ won: true, verdict: { satisfied: false }, summary }) === "the work it was given is done",
       );
       const failing = summarizeScoreboard(
         toScoreboard([
@@ -482,10 +479,7 @@ const SELFTEST_STEPS: readonly SelftestStep[] = [
       ].join("\n");
       const violations = mechanicalReview(diff, { id: "city", owns: ["src/city.js"], checks: [] });
       check("randomness is the game's", !violations.some((v) => /Math\.random/.test(v.what)));
-      check(
-        "untagged flagged",
-        violations.some((v) => /none tagged/.test(v.what)),
-      );
+      check("the scene's tags are the game's", !violations.some((v) => /tagged/.test(v.what)));
       check(
         "clean diff",
         mechanicalReview("+++ b/src/city.js\n@@ -1,0 +1,1 @@\n+mesh.userData.tag = 'roof';\n", {

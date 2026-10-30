@@ -1,74 +1,24 @@
-/** What the round teaches the board: the liveness critic, and the defects that become checks. */
-import { livenessCritique } from "../../judge.ts";
+/** What the round teaches the board: the defects that become checks, and the grown ones that retire. */
 import { summarizeScoreboard } from "../../checks.ts";
 import { CheckKind, CheckOrigin, type Check } from "../../spec.ts";
 import { RunEvent } from "../../run-events.ts";
 import type { AnyRecord } from "../../../types/harness.d.ts";
 import type { FacetLoop, FacetRound } from "../state.ts";
-import { isStopped, stoppedByUser } from "../flow.ts";
 import type { RoundFlow } from "../flow.ts";
 import { isNewOwnCamera, judgeChecksToRetire, RetireReason } from "../rules.ts";
 import { judgedGap } from "../round-judgement.ts";
 import { defectClass, defectsToChecks, similarDefect } from "../defects.ts";
 import { roundFields } from "../record.ts";
-import { askUserAboutBeyond, BEYOND_MESSAGE } from "../beyond.ts";
-import { countPrincipleStreaks, withStuckPrinciples } from "../growth.ts";
 
-/** The harness's eyes the liveness critic looks through beside the facet's own cameras. */
-const LIVENESS_EYES = ["eye:spawn", "eye:here"];
 /** The retired and blocked defects a spec remembers, newest last. */
 const MAX_REMEMBERED_DEFECTS = 24;
 
-/** The liveness critic: why the better build does not feel like a real place yet. */
-export async function critiqueLiveness(loop: FacetLoop, round: FacetRound): Promise<RoundFlow> {
-  const { appendRun, critic, ctx, facet, legacy, run, spec } = loop;
-  // ── the liveness critic: why the better build does not feel like a real place yet ──
-  // One call per judged iteration on the build that stands after it. Grow gaps become the
-  // next moves, polish gaps join the ledger; the score is on the record so a run can be read
-  // as "alive 9/24 → 17/24" and not only as checks passed.
+/**
+ * The liveness critic no longer looks at every round (Loop phase 4): a round waits on no judge. The
+ * name stays for a kept older round.ts that still calls it, and it asks nobody.
+ */
+export async function critiqueLiveness(_loop: FacetLoop, round: FacetRound): Promise<RoundFlow> {
   round.liveness = null;
-  // The clock does not gate it: the run that motivated it lost the critic on every facet's
-  // last round, exactly where "what is still wrong" mattered most.
-  if (legacy || round.challengerBroken || ctx.cancelled) return;
-  const judged = round.won ? round.evidence : loop.incumbentEvidence;
-  if (!judged?.shots?.length) return;
-  try {
-    const eyes = (judged.eyes ?? []).filter((e: string) => LIVENESS_EYES.includes(e));
-    const cameras = [...new Set([...spec.cameras, ...eyes])];
-    round.liveness = await livenessCritique(ctx, {
-      run,
-      facet,
-      evidence: judged,
-      cameras,
-      iterationId: round.iterationId,
-      critic,
-    });
-  } catch (err: any) {
-    if (isStopped(err, ctx)) return stoppedByUser(loop);
-    round.liveness = null;
-  }
-  if (!(round.liveness?.max > 0)) return;
-  // A principle kept short of convincing card after card is stuck, and actionable at a 2.
-  loop.principleStreaks = countPrincipleStreaks(loop.principleStreaks, round.liveness);
-  round.liveness = withStuckPrinciples(round.liveness, loop.principleStreaks);
-  loop.lastLiveness = round.liveness;
-  // A fix that needs something the user did not ask for is theirs to decide (facet/beyond.ts).
-  for (const principle of round.liveness.beyond ?? [])
-    await askUserAboutBeyond(loop, { what: principle.fix }, BEYOND_MESSAGE.critic);
-  await appendRun(RunEvent.FacetLiveness, {
-    runId: run.runId,
-    facetId: facet.id,
-    facetTitle: facet.title,
-    iteration: round.iteration,
-    critic,
-    total: round.liveness.total,
-    max: round.liveness.max,
-    biggest: round.liveness.biggest,
-    summary: round.liveness.summary,
-    grow: round.liveness.grow.map((g: AnyRecord) => g.key),
-    polish: round.liveness.polish.map((p: AnyRecord) => p.key),
-    principles: round.liveness.principles,
-  });
 }
 
 /** Defects become checks; judge-grown checks that did their job retire. */

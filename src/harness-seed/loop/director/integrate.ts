@@ -36,7 +36,6 @@ import { skipOptimization } from "../optimization.ts";
 import { EventKind, ExecutionStatus, JournalPhase, RunEvent, writeRunArtifact } from "../run-events.ts";
 import { isCommit } from "../shell.ts";
 import { CheckOrigin, loadCatalogue, recordCatalogueOutcomes, saveCatalogue } from "../spec.ts";
-import { blockersOf } from "../ship-blockers.ts";
 import { CLIP_DETAIL, CLIP_REASON } from "../text.ts";
 import { minutes, SECOND_MS, sleep } from "../time.ts";
 import { againstWords, NotLandedReason, observedFrom, VerdictPass, VerdictRule } from "../verdict.ts";
@@ -56,7 +55,6 @@ import { BuildTarget, WindowLease } from "./loop-run.ts";
 import { LandingHow, landingWords } from "./rules.ts";
 import { closeReaders } from "../workers/director-pool.ts";
 import { shipFinishLine } from "./art-direction-prompts.ts";
-import { shipClaimRefusal } from "./blocker-prompts.ts";
 import { closeUnderWay, holdFinish, latchClose, releaseFinish } from "./close-latch.ts";
 import { FINISH_REPORT, type StillToFix, stillToFixOf } from "../finish-check.ts";
 import { StopWhy } from "../finish-contract.ts";
@@ -64,7 +62,6 @@ import {
   CLAIM_ANSWER,
   checkClaim,
   claimAnswerBy,
-  claimJudgeBy,
   closedBy,
   type FinishCall,
   keepProofOut,
@@ -74,7 +71,7 @@ import { GIT_WITHOUT_PROOF } from "./proof-git.ts";
 import type { LastJudge, LoopRun, Worker } from "./loop-run.ts";
 import { holdBaseForMerge, releaseMergeHold, unlookedAfterMerge } from "./merge-hold.ts";
 import { noteKeptWork } from "./kept-work.ts";
-import { keptLeftOut, keptToMerge } from "./kept-judge.ts";
+import { keptToMerge } from "./kept-judge.ts";
 import { userQuoted } from "./wrap-up.ts";
 import type { LastShip } from "./art-direction.ts";
 import type { Evidence } from "../evidence.ts";
@@ -107,7 +104,7 @@ const WAVE_WORDS = {
   health: (known: boolean | undefined) => {
     if (known === true) return "ok";
     if (known === false) return "does not run — fix it before workers build on it";
-    return "not looked at yet — judge integration";
+    return "not looked at yet — look at integration";
   },
   lost: (words: string) => `the merged build ${words} — put it back before workers merge this head`,
   lostNext:
@@ -276,7 +273,7 @@ async function resolveWorkerCommit(
   worker: Worker,
 ): Promise<{ commit: string; refusal?: undefined } | { refusal: string }> {
   const { ctx, integrationWorktree, workerCommit } = loopRun;
-  // A stopped round goes in only once a judge preferred it to this branch; else the accepted one.
+  // A stopped round goes in as it is (kept-judge.ts); else the accepted one.
   const commit = keptToMerge(worker) ?? (await workerCommit(worker));
   if (!commit) return { refusal: INTEGRATE_REFUSAL.noCommit(worker.id) };
   if (!isCommit(commit)) return { refusal: INTEGRATE_REFUSAL.notACommit(worker.id) };
@@ -372,7 +369,7 @@ async function mergeWorker(
       answer: JSON.stringify({
         merged: false,
         conflict: merge.conflicts,
-        how: `run \`git merge ${commit}\` in your worktree, resolve keeping both sides' work, then commit (\`git add -A\`, then \`git commit\`); then judge integration`,
+        how: `run \`git merge ${commit}\` in your worktree, resolve keeping both sides' work, then commit (\`git add -A\`, then \`git commit\`); then look at integration`,
       }),
     };
   }
@@ -685,11 +682,7 @@ async function integrateOne(loopRun: LoopRun, args: AnyRecord): Promise<string> 
   const pass = await healthPass(loopRun, [worker], label, previousHead);
   closeWaveIfHealthy(loopRun, pass.health);
   await recordHealth(loopRun, [worker], pass);
-  const leftOut = keptLeftOut(worker);
-  return integrationAnswer(loopRun, pass.health, merged.union, ready.committed, {
-    lost: pass.lost,
-    ...(leftOut ? { extra: { keptLeftOut: leftOut } } : {}),
-  });
+  return integrationAnswer(loopRun, pass.health, merged.union, ready.committed, { lost: pass.lost });
 }
 
 /**
@@ -724,45 +717,11 @@ function judgeSawItLoad(judged: LastJudge | null, head: string | null): boolean 
 }
 
 /**
- * The close's judge of the build it is about to make live (tools.ts `judgeTheLanding`, beside the
- * judging it shares). A kept older tools.ts has none, and would ignore the bounds this judge needs,
- * so that close lands as it always did and says it did not judge. With `judgeBy` (a close inside a
- * lead's call), the close waits for its judge until then and no longer, whatever tools.ts does.
+ * The close's own look at the head the worktree stands on, and the landing it earns: no judge is
+ * asked (Loop phase 4). A judge the lead asked that saw this very sha load counts as a look too; on a
+ * resume it may be last session's, kept in the journal.
  */
-async function judgeForTheClose(
-  loopRun: LoopRun,
-  head: string | null,
-  bound: { judgeBy?: number; wait?: (ms: number) => Promise<void> } = {},
-): Promise<void> {
-  const { judgeTheLanding, note } = loopRun;
-  if (typeof judgeTheLanding !== "function") {
-    note(`the close did not judge ${shortSha(head)}: this workspace keeps an older tools.ts without the close's judge`);
-    return;
-  }
-  const { judgeBy, wait } = bound;
-  const judging = judgeTheLanding(head, judgeBy);
-  if (judgeBy === undefined) return judging;
-  if (
-    await closedBy(
-      judging.then(() => ({})),
-      judgeBy,
-      wait,
-    )
-  )
-    return;
-  note(`the close's judge of ${shortSha(head)} ran past the lead's call: the close lands by its own look`);
-}
-
-/**
- * The close's own look at the head the worktree stands on, its judge of that head, and the landing
- * they earn. The judge's word counts only for the head it looked at — the same sha this close
- * observed. On a resume it may be last session's, kept in the journal. `judgeBy` is when the
- * judge must be done, when the close runs inside a lead's call that ends then (`wait` its clock).
- */
-async function landWhatRuns(
-  loopRun: LoopRun,
-  bound: { judgeBy?: number; wait?: (ms: number) => Promise<void> } = {},
-): Promise<AnyRecord> {
+async function landWhatRuns(loopRun: LoopRun): Promise<AnyRecord> {
   const { baseCommit, ctx, decision, integrationRef, landIntegration, state, syncHead } = loopRun;
   // Whatever the director committed last is the build this close is about — not the head
   // the last integrate happened to leave behind.
@@ -775,7 +734,7 @@ async function landWhatRuns(
   const atStart = !last || last === baseCommit || state.baseHeads.has(last) || contractAloneOnStart(loopRun, last);
   if (atStart) return notLanded(NOTHING_BEYOND_THE_START, NotLandedReason.NothingNew);
   // A director's own uncommitted edits become a commit before anybody looks, so the build the
-  // close looks at and judges is the very commit it lands.
+  // close looks at is the very commit it lands.
   const uncommitted = await commitFinalEdits(loopRun);
   if (uncommitted) return uncommitted;
   const head = await syncHead();
@@ -786,13 +745,9 @@ async function landWhatRuns(
     scaffold: state.baseHeads.has(head),
   });
   await recordHeadHealth(loopRun, head, label, health);
-  const before = state.lastJudge;
-  await judgeForTheClose(loopRun, head, bound);
-  // A Stop pressed while the close looked or judged is obeyed: nothing is made live.
+  // A Stop pressed while the close looked is obeyed: nothing is made live.
   if (ctx.cancelled) return notLanded(STOPPED_BY_USER, NotLandedReason.Stopped);
-  // A judge that saw this head load still speaks for it when the close's own judge raced the load.
-  if (judgeSawItLoad(before, head) && !judgeSawItLoad(state.lastJudge, head)) state.lastJudge = before;
-  // The judge's look may carry the landing, but what the landing claims is the close's own look.
+  // A lead's judge that saw this head load may carry the landing, but what it claims is the close's own look.
   state.healthByHead.set(head, health.ok === true);
   const judged = judgeSawItLoad(state.lastJudge, head);
   if (health.ok === true || judged) return landIntegration(true);
@@ -811,11 +766,10 @@ async function landWhatRuns(
  * harness's clock path — and they end the same way: stop the workers, wait for them, look at
  * the head the worktree actually stands on, and land under one rule.
  *
- * THE RULE: the branch moved beyond the starting point AND (it loaded just now OR a judge
- * passed it on this same sha). Before that rule is read the close judges the head itself
- * (tools.ts `judgeTheLanding`), so no build is made live that no judge looked at, however the run
- * ended; a Stop before or during the close lands nothing. `finish land=yes` used to skip the
- * fresh look entirely and land whatever HEAD happened to be — so a director could hand the user
+ * THE RULE: the branch moved beyond the starting point AND (it loaded just now OR a judge the lead
+ * asked saw it load on this same sha). The close asks no judge of its own (Loop phase 4): what it
+ * lands is what runs; a Stop before or during the close lands nothing. `finish land=yes` used to skip
+ * the fresh look entirely and land whatever HEAD happened to be — so a director could hand the user
  * a build that does not start, while the tool's own description has always promised "when it is
  * healthy". The clock path already looked; now they are the same code and there is one thing to
  * be right about.
@@ -841,10 +795,6 @@ interface CloseOptions {
   victory?: boolean;
   /** A lost provider paused the run: it lands nothing, and says so. */
   paused?: boolean;
-  /** When the close's judge must be done (a close inside a lead's call that ends then). */
-  judgeBy?: number;
-  /** The wait the close's judge is bounded on (a test may drive it); a real timer without. */
-  wait?: (ms: number) => Promise<void>;
   /** The head a reviewer said yes to: a close that lands any other head is no victory. */
   reviewed?: string | null;
   /** Why the run stops short of its goal, for its result card (`leftToFixOf`): its time, or the no's. */
@@ -862,8 +812,6 @@ async function closeOnce(
     summary = null,
     victory = false,
     paused = false,
-    judgeBy,
-    wait,
     reviewed,
     ended,
   }: CloseOptions,
@@ -878,7 +826,7 @@ async function closeOnce(
   if (ctx.cancelled) landed = notLanded(STOPPED_BY_USER, NotLandedReason.Stopped);
   else if (paused) landed = notLanded(PAUSED_UNLANDED, NotLandedReason.Paused);
   else if (!land) landed = notLanded("land=no", NotLandedReason.NotAsked);
-  else landed = await landWhatRuns(loopRun, { judgeBy, wait });
+  else landed = await landWhatRuns(loopRun);
   // A reviewer's yes speaks for the head it read: a close that landed another is no victory.
   const moved = reviewed !== undefined && landed.ok === true && loopRun.state.integrationHead !== reviewed;
   report.victory = victory === true && landed.ok === true && !moved;
@@ -919,9 +867,11 @@ function finishAnswer(loopRun: LoopRun, landed: AnyRecord): string {
  * reached: a finish that claims nothing ends it early only for the user — Finish, or their own words
  * in a message to this run, which the lead quotes as `user_asked`, so a request to stop is never
  * refused for the rest of the working time. A claim that the goal is reached (`victory=yes` with no
- * Finish of the person's) is checked by a reviewer first whenever it comes (finish-claim.ts), on the
- * head the close would land, and a yes ends the build; `call` is the lead's call (its start and the
- * finish moment's notes and pictures), absent from a kept older tools.ts.
+ * Finish of the person's) closes the build on the lead's word (Loop phase 4): no judge or reviewer
+ * has to agree. With `review=yes` the lead asks a reviewer for a second opinion first
+ * (finish-claim.ts), on the head the close would land: a yes closes the build as reviewed, a no comes
+ * back to the lead, who decides. `call` is the lead's call (its start and the finish moment's notes
+ * and pictures), absent from a kept older tools.ts.
  */
 export async function finish(loopRun: LoopRun, args: AnyRecord, call: FinishCall = {}) {
   const started = call.started ?? Date.now();
@@ -944,24 +894,20 @@ async function finishHeld(loopRun: LoopRun, args: AnyRecord, call: FinishCall & 
   const userEnds = finishing || (await userQuoted(inbox, args.user_asked));
   const land = yes(args.land, true);
   // A Finish asked of the run (the person's, or the chat's agent's finish_run: the log does not say
-  // which) ends it with no check, and so with no victory: only a reviewer's yes records one. Words the
-  // lead quotes may lift a timed build's refusal, never stand in for that yes.
+  // which) ends it as the person's, with no victory. Words the lead quotes may lift a timed build's
+  // refusal, never stand in for a claim.
   const victory = yes(args.victory, false) && !finishing;
   const refused = finishRefusal(loopRun, { userEnds, victory });
   if (refused) return refused;
-  const claims = victory;
-  // A claim's reviewer reads what would land: the lead's edits are committed before the art
-  // director looks, so its review stands on that head and a second claim needs no second look. The
-  // files it names as proof that git does not track stay out of the build.
+  // A claim is the lead's word; only a review the lead asks for reads it first.
+  const claims = victory && yes(args.review, false);
+  // A claim's reviewer reads what would land: the lead's edits are committed first, and the files it
+  // names as proof that git does not track stay out of the build.
   if (claims) {
     await keepProofOut(loopRun, list(args.proof));
     await commitWhatWouldLand(loopRun);
   }
-  // A goal build's finish with no ship review on its head: the art director looks once first.
-  const shipRefusal =
-    land && typeof loopRun.shipFinishGate === "function" ? await loopRun.shipFinishGate(userEnds) : null;
-  if (shipRefusal) return shipRefusal;
-  // The run began closing while the gates looked (the clock's close, a Stop): no claim is checked.
+  // The run began closing meanwhile (the clock's close, a Stop): no claim is checked.
   if (state.finish || closeUnderWay(state)) return CLAIM_ANSWER.alreadyClosed;
   const close = await closingOf(loopRun, { summary, args, call, victory, claims, land });
   if (!close.close) return close.answer;
@@ -990,7 +936,6 @@ async function closeOnFinish(
     because: close.because,
     summary: close.summary,
     victory: close.victory,
-    ...(claims ? { judgeBy: claimJudgeBy(call.started), ...(call.wait ? { wait: call.wait } : {}) } : {}),
     ...(close.reviewed === undefined ? {} : { reviewed: close.reviewed }),
     ...(close.why ? { ended: close.why } : {}),
   });
@@ -1016,22 +961,16 @@ interface ClosingVerdict {
 
 /**
  * Why a finish is turned back before anything looks: a timed build's working time for a finish that
- * claims nothing (a claim goes to its reviewer whenever it comes, time-cap.ts), or a claim its goals
- * don't back.
+ * claims nothing (a claim may come whenever the lead makes it, time-cap.ts). No judge's word — a
+ * goal's playtest, the art director's blockers — turns a claim back (Loop phase 4): the lead hears
+ * them and decides.
  */
 function finishRefusal(loopRun: LoopRun, finishing: { userEnds: boolean; victory: boolean }): string | null {
-  const { ctx, run, softDeadline, state } = loopRun;
+  const { ctx, run, softDeadline } = loopRun;
   const waits = { softDeadline, now: Date.now(), userEnds: finishing.userEnds, claims: finishing.victory };
   if (!ctx.cancelled && finishWaitsForCap(run, waits)) {
     return `finish refused: ${minutes(softDeadline - Date.now())} working minutes remain in this timed build. Call run_status, plan and delegate the next concrete improvement, then test and integrate it. Keep working until the wrap-up window; do not idle or repeat finish. Only the user ends it early: when they asked you in a message to finish, call wrap_up quoting their words exactly (the running rounds end first); to stop now, call finish again with user_asked quoting them.`;
   }
-  const unverified = state.goals && goalDecision(state.goals, state.integrationHead) !== GoalStatus.Passed;
-  if (finishing.victory && unverified) {
-    return "finish cannot claim victory: required acceptance is not verified on the integrated revision. Run playtest goal=<id>, or finish with victory=no and explain the gaps.";
-  }
-  // The goal is reached when its outcomes are verified and the art director names no blocker on the head.
-  const review = shipOnHead(loopRun);
-  if (finishing.victory && review && blockersOf(review.defects).length) return shipClaimRefusal(review);
   return null;
 }
 

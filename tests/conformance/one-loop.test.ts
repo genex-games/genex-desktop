@@ -135,7 +135,7 @@ async function hostOn(
 
 /** A turn that claims the goal is reached, naming a file of the folder as proof. */
 const finishes: LoopTurn = async ({ tool }) => {
-  await tool("finish", { summary: "The level is built and the door opens.", proof: "project.godot" });
+  await tool("finish", { review: "yes", summary: "The level is built and the door opens.", proof: "project.godot" });
   return undefined;
 };
 
@@ -372,7 +372,7 @@ describe("the one Loop's workers", () => {
             await writeFile(path.join(host.dir, "scenes", "key.tscn"), "the lead's key\n");
             answers.push(String(await tool("worker_mark", { id: "w2", verdict: "used" })));
             answers.push(String(await tool("worker_mark", { id: "w1", verdict: "used" })));
-            await tool("finish", { summary: "The door is in.", proof: "scenes/door.tscn" });
+            await tool("finish", { review: "yes", summary: "The door is in.", proof: "scenes/door.tscn" });
             return undefined;
           },
         ],
@@ -442,7 +442,7 @@ describe("the one Loop's end", () => {
         turns: [
           async ({ tool, host }) => {
             await writeFile(path.join(host.dir, "scenes", "hall.toyscene"), "a hall\n");
-            const claim = { summary: "The hall is built.", proof: "scenes/hall.toyscene" };
+            const claim = { review: "yes", summary: "The hall is built.", proof: "scenes/hall.toyscene" };
             for (let n = 0; n <= MAX_FINISH_REJECTIONS; n++) answers.push(String(await tool("finish", claim)));
             return undefined;
           },
@@ -478,7 +478,9 @@ describe("the one Loop's end", () => {
             await writeFile(path.join(host.dir, "scenes", "hall.toyscene"), "a hall\n");
             await tool("worker_start", { title: "Survey", task: "Read the scenes", isolation: "read" });
             answers.push(
-              String(await tool("finish", { summary: "The hall is built.", proof: "scenes/hall.toyscene" })),
+              String(
+                await tool("finish", { review: "yes", summary: "The hall is built.", proof: "scenes/hall.toyscene" }),
+              ),
             );
             return undefined;
           },
@@ -1074,7 +1076,7 @@ describe("the one Loop's wrap-up", () => {
           async ({ params, tool }) => {
             // The goal isn't reached: a lead that follows its wrap-up's words makes no claim.
             if (!/only if the goal is reached/i.test(String(params.prompt)))
-              await tool("finish", { summary: "Not done yet.", proof: "project.godot" });
+              await tool("finish", { review: "yes", summary: "Not done yet.", proof: "project.godot" });
             return undefined;
           },
         ],
@@ -1304,7 +1306,7 @@ describe("the one Loop's recovery beside its wake loop", () => {
           toy.state.broken = true;
           assert.ok(await host.until(() => toy.state.reopens === 1), "the recovery began");
           answers.push(String(await tool("save_point", { label: "Mid", summary: "mid crash" })));
-          answers.push(String(await tool("finish", { summary: "Done.", proof: "project.toyproj" })));
+          answers.push(String(await tool("finish", { review: "yes", summary: "Done.", proof: "project.toyproj" })));
           release();
           return undefined;
         },
@@ -1502,14 +1504,16 @@ describe("the one Loop's claim whose turn ended", () => {
         turns: [
           async ({ host, tool }) => {
             // The session ends while its claim is checked (its CLI died mid-call): the reviewer is at work.
-            void tool("finish", { summary: "The level is built.", proof: "project.godot" });
+            void tool("finish", { review: "yes", summary: "The level is built.", proof: "project.godot" });
             await host.until(() => host.reviewed().length > 0);
             return undefined;
           },
           async ({ host, tool }) => {
             release(reviewerAnswer("yes", ["it holds what was asked"]));
             await host.until(() => host.appended("finish_check").some((check) => check.step !== "checking"));
-            answers.push(String(await tool("finish", { summary: "The level is built.", proof: "project.godot" })));
+            answers.push(
+              String(await tool("finish", { review: "yes", summary: "The level is built.", proof: "project.godot" })),
+            );
             return undefined;
           },
         ],
@@ -1560,7 +1564,7 @@ describe("the one Loop's status, notes and fresh look", () => {
           asked = host.now();
           status = JSON.parse(String(await tool("run_status")));
           answered = host.now();
-          await tool("finish", { summary: "The level is built.", proof: "project.godot" });
+          await tool("finish", { review: "yes", summary: "The level is built.", proof: "project.godot" });
           return undefined;
         },
       ],
@@ -1590,7 +1594,7 @@ describe("the one Loop's status, notes and fresh look", () => {
       turns: [
         async ({ tool }) => {
           answer = String(await tool("note", { text: "Chose the cave layout over the tower." }));
-          await tool("finish", { summary: "The level is built.", proof: "project.godot" });
+          await tool("finish", { review: "yes", summary: "The level is built.", proof: "project.godot" });
           return undefined;
         },
       ],
@@ -1710,7 +1714,9 @@ describe("the one Loop's close inside the lead's call", () => {
           async ({ tool, host }) => {
             await writeFile(path.join(host.dir, "scenes", "hall.toyscene"), "a hall\n");
             answers.push(
-              String(await tool("finish", { summary: "The hall is built.", proof: "scenes/hall.toyscene" })),
+              String(
+                await tool("finish", { review: "yes", summary: "The hall is built.", proof: "scenes/hall.toyscene" }),
+              ),
             );
             return undefined;
           },
@@ -1929,7 +1935,7 @@ describe("the one Loop's turns that fail or wait", () => {
         facts: GODOT,
         turns: [
           async ({ host, tool, params }) => {
-            void tool("finish", { summary: "The level is built.", proof: "project.godot" });
+            void tool("finish", { review: "yes", summary: "The level is built.", proof: "project.godot" });
             assert.ok(await host.until(() => host.reviewed().length === 1), "a reviewer reads the claim");
             host.pass((minutesLeftIn(params.prompt) + 1) * MINUTE);
             return undefined;
@@ -1958,7 +1964,9 @@ describe("the one Loop's turns that fail or wait", () => {
         turns: [
           async ({ host, tool }) => {
             host.pass(OPEN_TURN_MS - 3 * MINUTE);
-            answers.push(await tool("finish", { summary: "The level is built.", proof: "project.godot" }));
+            answers.push(
+              await tool("finish", { review: "yes", summary: "The level is built.", proof: "project.godot" }),
+            );
             return undefined;
           },
           finishes,
@@ -2416,7 +2424,9 @@ describe("the one Loop's acts once it pauses or closes", () => {
             // The host had not seated this session when Genex first ended it: it goes on working.
             resent = await host.until(() => host.rec.paramsOf("engine.abort").length >= 3);
             answers.push(await tool("save_point", { label: "Late", summary: "after the pause" }));
-            answers.push(await tool("finish", { summary: "The level is built.", proof: "project.godot" }));
+            answers.push(
+              await tool("finish", { review: "yes", summary: "The level is built.", proof: "project.godot" }),
+            );
             return { ok: false, stopReason: "aborted" };
           },
         ],
@@ -2438,7 +2448,7 @@ describe("the one Loop's acts once it pauses or closes", () => {
       turns: [
         async ({ tool }) => {
           await tool("restart");
-          answers.push(await tool("finish", { summary: "The level is built.", proof: "project.godot" }));
+          answers.push(await tool("finish", { review: "yes", summary: "The level is built.", proof: "project.godot" }));
           return undefined;
         },
         finishes,
@@ -2459,7 +2469,7 @@ describe("the one Loop's acts once it pauses or closes", () => {
           await writeFile(path.join(host.dir, "two.txt"), "two\n");
           await tool("rewind", { label: "One" });
           host.inbox.finishing = true;
-          await tool("finish", { summary: "The level is built.", proof: "project.godot" });
+          await tool("finish", { review: "yes", summary: "The level is built.", proof: "project.godot" });
           return undefined;
         },
       ],
@@ -2482,7 +2492,7 @@ describe("the one Loop's acts once it pauses or closes", () => {
         turns: [
           async ({ host, tool }) => {
             host.pass(SAVE_REMINDER_MS - MINUTE);
-            const claim = tool("finish", { summary: "The level is built.", proof: "project.godot" });
+            const claim = tool("finish", { review: "yes", summary: "The level is built.", proof: "project.godot" });
             assert.ok(await host.until(() => host.reviewed().length === 1), "a reviewer reads the claim");
             // The reviewer reads past the time a reminder to save would be due.
             await host.sleep(3 * MINUTE);
@@ -2569,7 +2579,11 @@ describe("the one Loop's close and a recovery under way", () => {
             assert.ok(await host.until(heard), "the lead heard the folder went back");
             await writeFile(path.join(host.dir, "redo.txt"), "the work done again\n");
             for (let tries = 0; tries < 50; tries += 1) {
-              const answer = await tool("finish", { summary: "The level is built again.", proof: "redo.txt" });
+              const answer = await tool("finish", {
+                review: "yes",
+                summary: "The level is built again.",
+                proof: "redo.txt",
+              });
               answers.push(answer);
               if (!/bringing the project's app back/.test(String(answer))) break;
               await delay(5);
@@ -3673,7 +3687,9 @@ describe("the one Loop's claims that are turned back before a reviewer reads", (
         turns: [
           async (call) => {
             await startsWriter(call);
-            answers.push(String(await call.tool("finish", { summary: "Done.", proof: "project.godot" })));
+            answers.push(
+              String(await call.tool("finish", { review: "yes", summary: "Done.", proof: "project.godot" })),
+            );
             return undefined;
           },
           finishes,
@@ -3702,7 +3718,9 @@ describe("the one Loop's finish outcomes", () => {
         run: { budgets: { wallClockMs: 3 * 60 * MINUTE, completionPolicy: "duration" } },
         turns: [
           async ({ tool }) => {
-            answers.push(String(await tool("finish", { summary: "The level is built.", proof: "project.godot" })));
+            answers.push(
+              String(await tool("finish", { review: "yes", summary: "The level is built.", proof: "project.godot" })),
+            );
             return undefined;
           },
           ({ host, params }) => {
@@ -3722,21 +3740,42 @@ describe("the one Loop's finish outcomes", () => {
   );
 
   it(
-    "three no's in a row close the Loop as not accepted, with what isn't done, and no fourth review",
+    "a reviewer's no's decide nothing: after three the lead's claim with no review closes the Loop on its word",
     TEST_TIMEOUT,
     async () => {
+      const onItsWord: LoopTurn = async ({ tool }) => {
+        await tool("finish", { summary: "The level is built and the door opens." });
+        return undefined;
+      };
       const host = await hostOn(Project.GodotGame, {
         facts: GODOT,
-        turns: [finishes, finishes, finishes, finishes],
+        turns: [finishes, finishes, finishes, onItsWord],
       });
       for (let n = 0; n < 3; n += 1) host.reviews.push(reviewerAnswer("no", ["the door does not open"]));
       const report = await host.start();
-      assert.equal(host.reviewed().length, 3);
-      assert.equal(report.stoppedBecause, FINISH_REPORT.notAccepted);
-      assert.ok((report.notDone as string[] | undefined)?.length, "what isn't done is in the report");
-      assert.equal(report.victory, false);
+      // Flipped (Loop phase 4): three no's closed the Loop as not accepted; a no is a second opinion now.
+      assert.equal(host.reviewed().length, 3, "the lead asked three times, and the fourth claim asked nobody");
+      assert.notEqual(report.stoppedBecause, FINISH_REPORT.notAccepted);
+      assert.equal(report.victory, true, String(report.stoppedBecause));
     },
   );
+
+  it("a claim with no review closes the Loop on the lead's word: no reviewer reads it", TEST_TIMEOUT, async () => {
+    const answers: string[] = [];
+    const host = await hostOn(Project.GodotGame, {
+      facts: GODOT,
+      turns: [
+        async ({ tool }) => {
+          answers.push(String(await tool("finish", { summary: "The level is built.", proof: "project.godot" })));
+          return undefined;
+        },
+      ],
+    });
+    const report = await host.start();
+    assert.equal(host.reviewed().length, 0, "nobody was asked");
+    assert.equal(report.victory, true, String(report.stoppedBecause));
+    assert.match(answers[0] ?? "", /closed on your word|closing/);
+  });
 
   it(
     "a plugin that holds the finish back is told to the lead, no reviewer reads, and the Loop goes on",
@@ -3751,7 +3790,7 @@ describe("the one Loop's finish outcomes", () => {
             host.stepAnswers.set("capture", (hook) =>
               hook.on === "finish" ? { block: "The toy viewport is closed." } : {},
             );
-            answers.push(String(await tool("finish", { summary: "Done.", proof: "project.godot" })));
+            answers.push(String(await tool("finish", { review: "yes", summary: "Done.", proof: "project.godot" })));
             host.stepAnswers.delete("capture");
             return undefined;
           },
@@ -3765,14 +3804,17 @@ describe("the one Loop's finish outcomes", () => {
     },
   );
 
-  it("a claim no engine here can review closes the Loop as having no reviewer", TEST_TIMEOUT, async () => {
+  it("a review no engine here can hold goes back to the lead, who finishes on its word", TEST_TIMEOUT, async () => {
     let seatless = false;
+    const answers: string[] = [];
     const host = await hostOn(Project.GodotGame, {
       facts: GODOT,
       turns: [
-        async (call) => {
+        async ({ tool }) => {
           seatless = true;
-          return finishes(call);
+          answers.push(String(await tool("finish", { review: "yes", summary: "Done.", proof: "project.godot" })));
+          answers.push(String(await tool("finish", { summary: "Done." })));
+          return undefined;
         },
       ],
     });
@@ -3781,33 +3823,40 @@ describe("the one Loop's finish outcomes", () => {
       method === "engine.describe" && seatless ? Promise.resolve([]) : plain(method, params)) as never;
     const report = await host.start();
     assert.equal(host.reviewed().length, 0);
-    assert.equal(report.stoppedBecause, FINISH_REPORT.noReviewer);
-    assert.equal(report.victory, false);
+    // Flipped (Loop phase 4): with no reviewer to seat the Loop closed without a yes; the lead decides now.
+    assert.match(answers[0] ?? "", /No engine here can hold a reviewer/);
+    assert.notEqual(report.stoppedBecause, FINISH_REPORT.noReviewer);
+    assert.equal(report.victory, true, String(report.stoppedBecause));
   });
 
-  it("a claim too late in the last turn closes the Loop as too late", TEST_TIMEOUT, async () => {
-    const answers: string[] = [];
-    const host = await hostOn(Project.GodotGame, {
-      facts: GODOT,
-      run: { budgets: { wallClockMs: 30 * MINUTE, completionPolicy: "goal" } },
-      turns: [
-        ({ host, params }) => {
-          host.pass((minutesLeftIn(params.prompt) + 1) * MINUTE);
-          return undefined;
-        },
-        async ({ host, tool }) => {
-          const status = JSON.parse(String(await tool("run_status"))) as { time: { hardMinutesLeft: number } };
-          host.pass(Math.max(0, status.time.hardMinutesLeft - 1) * MINUTE);
-          answers.push(String(await tool("finish", { summary: "Done.", proof: "project.godot" })));
-          return undefined;
-        },
-      ],
-    });
-    const report = await host.start();
-    assert.equal(answers[0], OPEN_WORDS.noTimeLeft);
-    assert.equal(host.reviewed().length, 0);
-    assert.equal(report.stoppedBecause, FINISH_REPORT.tooLate);
-  });
+  it(
+    "a review too late in the last turn is answered as no time left, and the Loop does not close on it",
+    TEST_TIMEOUT,
+    async () => {
+      const answers: string[] = [];
+      const host = await hostOn(Project.GodotGame, {
+        facts: GODOT,
+        run: { budgets: { wallClockMs: 30 * MINUTE, completionPolicy: "goal" } },
+        turns: [
+          ({ host, params }) => {
+            host.pass((minutesLeftIn(params.prompt) + 1) * MINUTE);
+            return undefined;
+          },
+          async ({ host, tool }) => {
+            const status = JSON.parse(String(await tool("run_status"))) as { time: { hardMinutesLeft: number } };
+            host.pass(Math.max(0, status.time.hardMinutesLeft - 1) * MINUTE);
+            answers.push(String(await tool("finish", { review: "yes", summary: "Done.", proof: "project.godot" })));
+            return undefined;
+          },
+        ],
+      });
+      const report = await host.start();
+      // Flipped (Loop phase 4): such a claim closed the Loop as too late; a review that cannot run decides nothing.
+      assert.match(answers[0] ?? "", /too soon|no time|too late/i);
+      assert.equal(host.reviewed().length, 0);
+      assert.notEqual(report.stoppedBecause, FINISH_REPORT.tooLate);
+    },
+  );
 });
 
 describe("the one Loop's rewinds, restores and writers in place", () => {
@@ -4353,10 +4402,7 @@ describe("the one Loop's reads of the game folder", () => {
 });
 
 describe("the open lead's finish words", () => {
-  it("a timed Loop's no's stop it only once little time is left, an ∞ Loop's at the cap, and a picture outranks the files", async () => {
-    const { FINISH_TIME_LEFT_MS, MAX_FINISH_REJECTIONS } = await import(
-      "../../src/harness-seed/loop/finish-contract.ts"
-    );
+  it("the lead's word closes a Loop, a review is a second opinion it may ask for, and a picture outranks the files", async () => {
     const finishLine = (untilFinish: boolean) =>
       openBrief({
         goal: "A level.",
@@ -4382,11 +4428,12 @@ describe("the open lead's finish words", () => {
         .find((one) => one.startsWith("FINISH:")) ?? "";
     const timed = finishLine(false);
     const endless = finishLine(true);
-    assert.ok(timed.includes(`while over ${FINISH_TIME_LEFT_MS / MINUTE} minutes are left, no's never stop the Loop`));
-    assert.match(timed, /a new claim needs a new save point and new proof/);
-    assert.ok(endless.includes(`${MAX_FINISH_REJECTIONS} no's in a row stop the Loop.`));
-    assert.doesNotMatch(endless, /never stop/);
-    for (const line of [timed, endless])
+    // Flipped (Loop phase 4): the line said when a reviewer's no's stop the Loop; no row of no's does now.
+    for (const line of [timed, endless]) {
+      assert.match(line, /Your word closes the Loop/);
+      assert.match(line, /review=yes/);
+      assert.doesNotMatch(line, /no's in a row/);
       assert.match(line, /Your own pictures of the running project outrank what its files say/);
+    }
   });
 });

@@ -181,7 +181,6 @@ export const REASON_WORDS = {
   [WakeCause.WorkersLimitLifted]: "the workers' engine limit has reset",
   [WakeCause.IdleAsk]: "nothing is running",
   [WakeCause.FinishMark]: "the finish mark — the art director looked at the whole game",
-  [WakeCause.ShipLook]: "the art director's regular look at the whole game",
   [WakeCause.TurnCap]: "your turn reached its cap",
   [WakeCause.CarryOn]: "your turn ended; carry on",
 } as const satisfies Record<WakeReason, string>;
@@ -194,7 +193,7 @@ const FINISH_ASKED =
 const CARD_RULES = [
   "- The user outranks the plan: answer them in the chat, directly and briefly, and act on what they ask. An ask to finish, wrap up or stop adding — asked again as a question too — is wrap_up first; a question alone stops no worker.",
   '- What you write is the user\'s chat: otherwise speak only when a part lands, the build can be looked at, something broke, the plan changed, or the build is done. A wake with nothing of that kind ends with no text at all — never "waiting" or "nothing new".',
-  "- Evidence, not reports: judge, playtest or look at a single session's work before you integrate (a loop's kept rounds were judged), and look at the integrated build before you finish.",
+  "- Evidence, not reports: look at a single session's work before you integrate (a judge or playtest is a second opinion), and look at the integrated build before you finish.",
   "- Plan before worker_start; parallel workers only on independent files.",
 ] as const;
 const CARD_RULES_AFTER = [
@@ -384,9 +383,9 @@ function standsSection(facts: DigestFacts): string {
 /** A timed build's completion rule, before its finish mark and from it on. */
 const TIMED_RULE = {
   building:
-    "- An explicit duration commission: its hours are a cap. Build, test and improve; call finish with victory=yes as soon as the goal is reached, and a reviewer's yes ends the build. A finish that claims nothing waits for the wrap-up, unless the user asks.",
+    "- An explicit duration commission: its hours are a cap. Build, test and improve; call finish with victory=yes as soon as the goal is reached, and your word ends the build. A finish that claims nothing waits for the wrap-up, unless the user asks.",
   finishing:
-    "- An explicit duration commission in its finish stage: no new parts or systems — the owners finish theirs (stage=finish), integrate, judge ship=yes; call finish with victory=yes once the goal is reached (a reviewer's yes ends the build). A finish that claims nothing waits for the wrap-up, unless the user asks.",
+    "- An explicit duration commission in its finish stage: no new parts or systems — the owners finish theirs (stage=finish), integrate; call finish with victory=yes once the goal is reached (your word ends the build). A finish that claims nothing waits for the wrap-up, unless the user asks.",
 } as const;
 
 /** A build's completion rule when it is not a duration commission: optional polish is not its work. */

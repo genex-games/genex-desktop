@@ -32,7 +32,7 @@ export function blockBriefSection(bench: string | null): string[] {
       ? `- First set up your bench page ${bench} (a page that mounts just your module), then work in a screenshot-and-fix loop: capture ${captureWhat(bench)}, LOOK, fix the worst thing you see, capture again.`
       : `- Work in a screenshot-and-fix loop: capture your cameras, LOOK, fix the worst thing you see, capture again.`,
     `- Build the move first, then keep climbing your ladder in order. If you stop early, the studio asks you to keep going until the block's time is up.`,
-    `- The block is kept on the checks alone: the game must run, regress nothing and change what a player sees. The judge looks once and its notes are your next round's work; from round two every round is judged blind against the accepted build.`,
+    `- The block is kept on the checks alone, like every round after it: the game must run and regress nothing that worked. Nobody judges it; your own eyes on your captures are the look.`,
     ``,
   ];
 }
@@ -54,5 +54,5 @@ export function blockContinueAsk({ minutesLeft, bench }: { minutesLeft: number; 
 /** Why a build block was kept: on the checks, and what it flipped. */
 export function blockReason(strong: readonly string[]): string {
   const flipped = strong.length ? `flipped ${strong.join(", ")}; ` : "";
-  return `build block: kept on the checks (${flipped}it runs and regresses nothing) — the judge's notes are the next round's work, and the next round is judged side by side`;
+  return `build block: kept on the checks (${flipped}it runs and regresses nothing)`;
 }

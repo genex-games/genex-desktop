@@ -140,8 +140,9 @@ function rememberGap(loop: FacetLoop, round: FacetRound): void {
 }
 
 /**
- * Did the round close THE FIX? Measured by its own check when it has one, else by the judge no
- * longer naming it; a lost round fixed nothing. Null when the round carried no fix.
+ * Did the round close THE FIX? Measured by its own check when it has one; else, in an older run, by
+ * the judge no longer naming it, and with no judge (Loop phase 4) by the builder's kept build. A
+ * lost round fixed nothing. Null when the round carried no fix.
  */
 function judgeTheFix(loop: FacetLoop, round: FacetRound): boolean | null {
   loop.fixedForRecord = null;
@@ -149,7 +150,8 @@ function judgeTheFix(loop: FacetLoop, round: FacetRound): boolean | null {
   if (!fix) return null;
   const entry = fix.checkId ? (round.attemptBoard[fix.checkId] ?? loop.board[fix.checkId]) : null;
   const gap = round.verdict.biggest_gap;
-  const closed = entry ? entry.pass === true : Boolean(gap) && !similarDefect(gap, fix.what);
+  const unnamed = !round.taste || (Boolean(gap) && !similarDefect(gap, fix.what));
+  const closed = entry ? entry.pass === true : unnamed;
   const fixed = round.won ? closed : false;
   loop.fixedForRecord = fixed;
   return fixed;

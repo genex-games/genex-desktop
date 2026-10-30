@@ -41,7 +41,6 @@ import {
   writeArchitecture,
 } from "../../src/harness-seed/loop/director/contract-gate.ts";
 import { closeTheLoopRun, integrate } from "../../src/harness-seed/loop/director/integrate.ts";
-import { firstWaveIn, shipOwed } from "../../src/harness-seed/loop/director/art-direction.ts";
 import { CompletionPolicy } from "../../src/harness-seed/loop/completion-policy.ts";
 import { CONFLICT_MERGE } from "../../src/harness-seed/loop/director/conflict-worker.ts";
 import {
@@ -717,31 +716,6 @@ describe("integration in waves", () => {
     assert.equal(await hook.head(), merged, "a judge or a fork gate that saw it load lets them take it");
   });
 
-  it("a clean merge brings each merged loop worker into the first wave the art director waits for", async () => {
-    const { repo, head } = await integrationRepo();
-    const { loopRun } = stubLoopRun(repo, head, null);
-    const car = await workerBranch(repo, head, "car", { "src/car.js": "export const car = 1;\n" });
-    const city = await workerBranch(repo, head, "city", { "src/city.js": "export const city = 1;\n" });
-    const building = (id: string, commit: string) => ({
-      id,
-      title: id,
-      from: head,
-      lastCommit: commit,
-      merging: null,
-      mode: WorkerMode.Loop,
-      state: "running",
-      spec: { id, checks: [] },
-    });
-    loopRun.state.workers.set("car", building("car", car));
-    loopRun.state.workers.set("city", building("city", city));
-    const waveIn = () => firstWaveIn(loopRun as never);
-    assert.equal(waveIn(), false, "nothing merged yet");
-    JSON.parse(await integrate(loopRun as never, { worker: "car" }));
-    assert.equal(waveIn(), false, "city's kept work is not in yet");
-    JSON.parse(await integrate(loopRun as never, { worker: "city" }));
-    assert.equal(waveIn(), true, "every running loop worker has kept work on the integration branch");
-  });
-
   it("answers a single worker's merge with exactly the keys it always had", async () => {
     const { repo, head } = await integrationRepo();
     const { loopRun } = stubLoopRun(repo, head, null);
@@ -1096,7 +1070,6 @@ describe("a contract written on the run's starting point (review)", () => {
         stopWorker: async () => {},
         closeRun: async () => {},
       });
-      assert.equal(shipOwed(loopRun as never), false, name);
       const landed = await closeTheLoopRun(loopRun as never, { land: true, settleMs: 0 });
       assert.equal(landed.why, NotLandedReason.NothingNew, `${name}: ${JSON.stringify(landed)}`);
       assert.equal(loopRun.state.healthByHead.size, looked, `${name}: the close did not look`);
@@ -1339,29 +1312,18 @@ describe("a claim's close inside the lead's call (integrate.ts, director/tools.t
     return { ...stub, built, judged, landings };
   }
 
-  it("a judge that runs past the lead's call is left behind: the close lands by its own look, on the call's clock", {
+  it("the close asks no judge: even a run bound with a judge that never answers lands by the close's own look", {
     timeout: 10_000,
   }, async () => {
-    const { loopRun, built, judged, landings, notes } = await builtClose();
-    const waits: Array<() => void> = [];
-    const wait = () => new Promise<void>((done) => void waits.push(done));
-    const judgeBy = Date.now() + 60_000;
-    const closing = closeTheLoopRun(loopRun as never, { land: true, settleMs: 0, judgeBy, wait });
-    while (!waits.length) await new Promise<void>((resolve) => setImmediate(resolve));
-    assert.deepEqual(judged, [[built, judgeBy]], "the judge was told when to be done");
-    assert.deepEqual(landings, [], "nothing lands while the judge still has its time");
-    // The judge's time runs out on the test's clock, never on a real timer.
-    for (const done of waits) done();
-    const landed = await closing;
+    const { loopRun, judged, landings } = await builtClose();
+    // Flipped (Loop phase 4): the close waited for its own judge until the lead's call's end.
+    const landed = await closeTheLoopRun(loopRun as never, { land: true, settleMs: 0 });
     assert.equal(landed.ok, true, JSON.stringify(landed));
+    assert.deepEqual(judged, [], "no judge was asked");
     assert.deepEqual(landings, [true], "landed by the close's own look");
-    assert.ok(
-      notes.some((note) => /ran past the lead's call: the close lands by its own look/.test(note)),
-      notes.join("\n"),
-    );
   });
 
-  it("the close's judge is done by the claim's time when that is sooner than its own", async () => {
+  it("a judge asked inside a lead's call is done by the claim's time when that is sooner than its own", async () => {
     const { landingJudgeUntil } = await import("../../src/harness-seed/loop/director/tools.ts");
     const { FINAL_JUDGE_MS } = await import("../../src/harness-seed/loop/director/finish-claim.ts");
     const now = 1_000_000;

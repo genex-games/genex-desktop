@@ -4,7 +4,6 @@
  * `director_tool` dispatch forwards a call through to the live session's handler (tools.ts).
  */
 import { FACET_POLICY } from "../facet-loop.ts";
-import { stopRuleWords } from "../finish-check-prompts.ts";
 import { KIND_NAMES } from "../kinds.ts";
 import { CHECK_KINDS, MAX_DONE, MAX_MILESTONES, renderCheckGrammar } from "../spec.ts";
 import { WorkerIsolation, WorkerTool, WorkerVerdict } from "../workers/contract.ts";
@@ -214,7 +213,7 @@ export const DIRECTOR_TOOLS: LiveToolSpec[] = [
         },
         stage: {
           type: "string",
-          description: "finish: polish what exists, no move; blind pick wins, regressions roll back (default build).",
+          description: "finish: polish what exists, no move; kept unless it regresses a check (default build).",
         },
         identity: {
           type: "string",
@@ -463,7 +462,11 @@ export const DIRECTOR_TOOLS: LiveToolSpec[] = [
         land: { type: "string", description: "yes (default) or no." },
         victory: {
           type: "string",
-          description: `yes claims the goal is reached; a reviewer who did none of the work checks your proof (default no). ${stopRuleWords(null)}`,
+          description: "yes claims the goal is reached (default no).",
+        },
+        review: {
+          type: "string",
+          description: "yes: a reviewer reads your claim and proof first; its no decides nothing (default no).",
         },
         proof: {
           type: "string",

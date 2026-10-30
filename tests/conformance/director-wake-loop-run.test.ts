@@ -1175,7 +1175,7 @@ it("G3. current integrated acceptance permits early completion and keeps a recov
     assert.ok(request.onLiveTool);
     await request.onLiveTool("plan", plan);
     assert.match(
-      text(await request.onLiveTool("finish", { summary: "unverified", land: "no", victory: "yes" })),
+      text(await request.onLiveTool("finish", { summary: "unverified", land: "no", victory: "yes", review: "yes" })),
       /cannot claim victory/,
     );
     const played = json(await request.onLiveTool("playtest", { target: "integration", goal: "sky" }));
@@ -1186,7 +1186,7 @@ it("G3. current integrated acceptance permits early completion and keeps a recov
       /verified|complete|finish/,
     );
     assert.match(
-      text(await request.onLiveTool("finish", { summary: "Dusk verified", land: "no", victory: "yes" })),
+      text(await request.onLiveTool("finish", { summary: "Dusk verified", land: "no", victory: "yes", review: "yes" })),
       /closed/,
     );
     return turnResult("lead", "Dusk verified");

@@ -9,7 +9,7 @@ import { type HookHeldBy, HookHold, holdOf } from "../../hooks.ts";
 import { resumeHeldWords, runHeldWords } from "../held-words.ts";
 import { FACT_ROOT, type FactRef, type FolderHolds } from "../../folder-facts.ts";
 import { CLAIM_BEFORE_END_MINUTES } from "../../finish-check.ts";
-import { PICTURE_OUTRANKS_FILES, stopRuleWords } from "../../finish-check-prompts.ts";
+import { PICTURE_OUTRANKS_FILES } from "../../finish-check-prompts.ts";
 import { GAPS_FIRST_MIN_MS } from "../../finish-remaining.ts";
 import { JUDGE_PLAY_TOOL } from "../../judge-play-prompts.ts";
 import type { JudgeRef } from "../../engine-judges.ts";
@@ -78,7 +78,7 @@ export interface OpenBriefFacts {
   cppRestart: boolean;
   /** Whether the studio plays the game in its engine's editor, so the lead is offered `judge_play`. */
   judge: boolean;
-  /** The judges the game's engine plugin declares for it, which play after each turn that keeps a save point. */
+  /** The judges the game's engine plugin declares for it, which play only when the lead asks (`judge_play`). */
   judges?: readonly JudgeRef[];
   savePoints: readonly OpenSavePoint[];
   now: number;
@@ -95,13 +95,13 @@ const factLine = (fact: FactRef): string =>
   `${fact.id} ${fact.path === FACT_ROOT ? "at the folder's root" : `in ${fact.path}`}`;
 
 /**
- * The brief's time paragraph: how long the Loop runs (its hours are a soft cap: a reviewer's yes ends
+ * The brief's time paragraph: how long the Loop runs (its hours are a soft cap: the lead's finish ends
  * it sooner, a short grace follows them), and how much working time is left.
  */
 function timeWords(facts: OpenBriefFacts): string {
   const hours = Math.max(1, Math.round((facts.softDeadline - facts.now) / (60 * MINUTE_MS)));
   const span = facts.untilFinish
-    ? `until a reviewer accepts your finish, at most ${hours} hours`
+    ? `until you finish it, at most ${hours} hours`
     : `for up to ${hours} hours: use them to make the project better, and call finish as soon as the goal is reached`;
   const left = Math.max(0, minutes(facts.softDeadline - facts.now));
   return `TIME: this Loop runs ${span}. You have about ${left} minutes of working time left. Genex tells you shortly before the time is up and when it is: then start nothing new, bring in finished worker work, make sure the project runs, keep a save point, and call finish only if the goal is reached.`;
@@ -143,7 +143,7 @@ function savePointWords(facts: Pick<OpenBriefFacts, "restart" | "cppRestart" | "
   if (facts.restart && facts.cppRestart) lines.push("After changing the game's C++ source, call restart: it rebuilds.");
   if (facts.judge)
     lines.push(
-      `${JUDGE_PLAY_TOOL}: a blind judge plays the game and answers one yes/no; ask it before you claim a mechanic works.`,
+      `${JUDGE_PLAY_TOOL}: a blind judge plays the game and answers one yes/no, when you want a second opinion on a mechanic.`,
     );
   if (facts.judge && facts.judges?.length) lines.push(ENGINE_JUDGE_WORDS.briefRounds(facts.judges));
   return lines.join(" ");
@@ -165,7 +165,7 @@ export function openBrief(facts: OpenBriefFacts): string {
     savePointWords(facts),
     "JOBS AND LOOKS: run a long command as a job and keep working while it runs; look at any window of the project's app with app_look, when the chat offers them.",
     `BLOCKED: when the goal needs what only the person can do (a tool, editor or app the work needs is gone or can't run here and nothing you can call brings it back, an install, a sign-in), call ${OpenTool.Pause} with what they should do. While such a block lasts, never fill the Loop's time with work that can't reach the project. A card waiting for the person's answer is no block: only the call that asked waits, and nobody answering is not a no — go on with the rest of the work.`,
-    `FINISH: when the goal is reached, call finish with a summary, what remains (everything you know is not done or not right yet) and proof: the files in the folder that show it (a test report, a close-up picture, a log). A reviewer who did none of the work checks it; ${stopRuleWords(facts.untilFinish)} While something remains and more than ${minutes(GAPS_FIRST_MIN_MS)} minutes are left, no reviewer reads the claim: you work on what remains first. ${PICTURE_OUTRANKS_FILES}`,
+    `FINISH: when the goal is reached, call finish with a summary, what remains (everything you know is not done or not right yet) and proof: the files in the folder that show it (a test report, a close-up picture, a log). Your word closes the Loop; when you want a second opinion first, add review=yes and a reviewer who did none of the work reads it — its no decides nothing. While something remains and more than ${minutes(GAPS_FIRST_MIN_MS)} minutes are left, you work on what remains first. ${PICTURE_OUTRANKS_FILES}`,
     ...(facts.appSaved ? [] : ["SAVING: Genex's save points keep the files on disk only: save inside the app first."]),
     ...(facts.skills.length ? [["SKILLS FOR THIS PROJECT:", ...facts.skills].join("\n\n")] : []),
   ].join("\n\n");
@@ -225,8 +225,10 @@ export const OPEN_WORDS = {
     "The Loop is closing, and Genex keeps its last work now. Change nothing more; end your turn with a one-paragraph summary for the person.",
   personFinished:
     "The person asked the Loop to finish: it is closed. End your turn with a one-paragraph summary for the person.",
+  /** A kept older finish.ts's: no reviewer could be seated, and that Loop closed without a yes. */
   noReviewer:
     "No engine here can hold a reviewer to check your claim, so the Loop closed without a yes. End your turn.",
+  /** A kept older finish.ts's: no time was left for a review, and that Loop closed. */
   noTimeLeft:
     "The Loop's time ends too soon for a reviewer to check your claim, so it is not counted and the Loop closed. End your turn with a one-paragraph summary for the person.",
   needsLabel: `${OpenTool.SavePoint} needs a label: a few words naming what works now.`,
