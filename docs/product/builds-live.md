@@ -32,15 +32,15 @@ preview's network is open, as a web page's. Other folders' views:
 works. Tries at one step fold into one node; what reached the build forms the line, the rest
 hangs below. Tries a pause cut off show Paused until added. An eye marks (and opens) the reviewers'
 notes. A new build is “Checking it starts…” until it runs. A working node shows its agent's
-screen and action; a selected one opens as a card. **Follow up in chat** notes the next message to its build.
+screen and action; a selected one opens as a card. Workers show pictures they delivered. **Follow up in chat** notes the next message to its build.
 Tabs (one per build; past three, one picker, newest first) and chat cards open earlier builds. A Loop, workers, jobs or a claim make a tree: the lead (jobs
-below), then a finish check the lead asked for, tinted Checking, Not yet (reasons), Done or Stopped, a
-chat line each round. In place, save points form one line showing each change; workers hang off
+below), then, once the lead asks for one, a finish check: Checking, Not yet (reasons), Done or Stopped. In place, save points form one line showing each change; workers hang off
 it, solid under the save point taking their work, else ghosts.
 
-Agents test hidden (Godot too), never Live; a judge gives a second opinion when the lead asks. A finished worker, integration and Live's
+Agents test hidden (Godot too), never Live. A finished worker, integration and Live's
 revision are distinct facts; chat shows a delivery's capture, failures too. Before integrating or
-landing, one health check: the page loads, throws nothing uncaught, and is not blank.
+landing, one health check: the page loads, throws nothing uncaught, and is not blank. Its screenshot
+is Latest build's picture, and a merged worker's when it delivered none.
 
 ## Continuation and interruption
 

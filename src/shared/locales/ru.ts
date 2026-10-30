@@ -3192,7 +3192,6 @@ export default {
   "Running {script}": "Запускает {script}",
   "Running…": "Выполняется…",
   "Runs and improvements will show up here.": "Здесь появятся сборки и улучшения.",
-  "Runs at the end": "Запустится в конце",
   "Runs outside its sandbox": "Работает вне своей песочницы",
   "Runs without asking: {tools}.": "Разрешено без спроса: {tools}.",
   "Runtime context is unknown; 8K is an estimated planning budget. Load the model to measure it.":

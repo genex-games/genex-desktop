@@ -211,13 +211,13 @@ export const leftOf = (round: FinishRound): string[] => (round.notDone.length ? 
 
 /**
  * The line under the final look's state: looking, how many things a no left, no answer, all done.
- * It reads the run's current ask only (`node.round`, null before its first claim).
+ * It reads the run's current ask only (`node.round`); a node drawn before its first claim says nothing.
  */
 function finishCheckLine(node: FinishCheckNode): string {
   if (node.state === FinishCheckState.Checking) return FINISH_CHECK_WORDS.checking;
   if (node.state === FinishCheckState.Done) return FINISH_CHECK_WORDS.doneWord;
   const newest = currentRound(node);
-  if (!newest) return FINISH_CHECK_WORDS.placeholder;
+  if (!newest) return "";
   if (newest.step === FinishCheckStep.Unanswered) return FINISH_CHECK_WORDS.unanswered;
   return FINISH_CHECK_WORDS.leftWord(leftOf(newest).length);
 }
@@ -228,12 +228,8 @@ export const finishCheckFace = (node: FinishCheckNode): FinishCheckFace => ({
   word: finishCheckLine(node),
 });
 
-/**
- * The finish check's five looks: a ghost until the current ask's first claim, then the owner's
- * four states (not yet after a no or no answer, checking, done, stopped).
- */
+/** The finish check's four looks, the owner's states: not yet after a no or no answer, checking, done, stopped. */
 export const FinishLook = {
-  Placeholder: "placeholder",
   NotYet: "not_yet",
   Checking: "checking",
   Done: "done",
@@ -251,7 +247,6 @@ export interface FinishCheckLook {
 
 /** Each look's ink, edge and fill, in the design's tokens: only the finish check wears these. */
 const FINISH_LOOKS: Record<FinishLook, FinishCheckLook> = {
-  [FinishLook.Placeholder]: { look: FinishLook.Placeholder, tone: Tone.Muted, edge: null, fill: null },
   [FinishLook.NotYet]: { look: FinishLook.NotYet, tone: Tone.Orange, edge: "var(--orange)", fill: null },
   [FinishLook.Checking]: {
     look: FinishLook.Checking,
@@ -263,12 +258,12 @@ const FINISH_LOOKS: Record<FinishLook, FinishCheckLook> = {
   [FinishLook.Stopped]: { look: FinishLook.Stopped, tone: Tone.Red, edge: "var(--red)", fill: "var(--red-tint)" },
 };
 
-/** Which look a finish check wears: not yet is a ghost until the current ask has a round, as its line says. */
+/** Which look a finish check wears, by its state. */
 function lookOf(node: FinishCheckNode): FinishLook {
   if (node.state === FinishCheckState.Checking) return FinishLook.Checking;
   if (node.state === FinishCheckState.Done) return FinishLook.Done;
   if (node.state === FinishCheckState.Stopped) return FinishLook.Stopped;
-  return currentRound(node) ? FinishLook.NotYet : FinishLook.Placeholder;
+  return FinishLook.NotYet;
 }
 
 /** The finish check node's colours (`FINISH_LOOKS`). */

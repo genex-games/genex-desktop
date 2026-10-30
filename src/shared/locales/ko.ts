@@ -3129,7 +3129,6 @@ export default {
   "Running {script}": "{script} 실행하는 중",
   "Running…": "실행 중…",
   "Runs and improvements will show up here.": "빌드와 개선 사항이 여기에 표시돼요.",
-  "Runs at the end": "마지막에 실행",
   "Runs outside its sandbox": "샌드박스 밖에서 실행",
   "Runs without asking: {tools}.": "묻지 않고 실행: {tools}.",
   "Runtime context is unknown; 8K is an estimated planning budget. Load the model to measure it.":

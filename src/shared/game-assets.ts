@@ -97,6 +97,12 @@ export interface AssetDeliveredPayload {
    * Records written before this field existed say neither; their `runId` is the tell.
    */
   workspace?: "game" | "build";
+  /**
+   * A copy of the delivery's first picture under the run's folder (`readRunStill`), kept by the host
+   * for a Loop's delivery into a build workspace: the game folder has the files only once the build
+   * lands, and a worker's copy is removed after its merge. Absent on records written before it.
+   */
+  picture?: string;
 }
 
 /**

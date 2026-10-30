@@ -31,6 +31,7 @@ import {
 } from "../../src/renderer/run-tree.ts";
 import { CustomEvent } from "../../src/shared/custom-events.ts";
 import { type EventData, type EventEnvelope, EventKind } from "../../src/shared/event-log.ts";
+import { FinishCheckStep } from "../../src/shared/finish-check.ts";
 import { GameEngine } from "../../src/shared/game-engine.ts";
 import { turnGraphKey } from "../../src/shared/run-graph-events.ts";
 import { JobRole, JobState, JobStopper } from "../../src/shared/jobs.ts";
@@ -98,6 +99,10 @@ const TRACK = poolWorkerId("w3");
 const SOUND = "agent-sound-1";
 
 /** A Loop's lead with three workers: one studied, one added to the game, one still building in Unreal. */
+/** The lead asked a reviewer whether the run is done: the run's finish check is drawn from then. */
+const reviewAsked = (): EventEnvelope =>
+  inRun(CustomEvent.FinishCheck, { round: 1, step: FinishCheckStep.Checking, claim: "The race runs." });
+
 function loopWithWorkers(extra: EventEnvelope[] = []): EventEnvelope[] {
   seq = 0;
   return [
@@ -344,7 +349,7 @@ describe("what hangs on the tree", () => {
   });
 
   it("the finish check is the last node, after the result, on a dotted line", () => {
-    const { graph, summary, rows } = fold(loopWithWorkers());
+    const { graph, summary, rows } = fold(loopWithWorkers([reviewAsked()]));
     const layout = buildsLayout(graph, rows, summary);
     const { final } = layout.rects;
     const check = layout.rects[GraphNodeKind.FinishCheck];
@@ -367,6 +372,12 @@ describe("what hangs on the tree", () => {
       buildsLayout(over.graph, over.rows, over.summary).rects[GraphNodeKind.FinishCheck],
       undefined,
       "a finished run with no check has none",
+    );
+    // Flipped: a running Loop whose lead asked no reviewer has no check waiting at its end.
+    const unasked = fold(loopWithWorkers());
+    assert.equal(
+      buildsLayout(unasked.graph, unasked.rows, unasked.summary).rects[GraphNodeKind.FinishCheck],
+      undefined,
     );
   });
 
@@ -556,7 +567,7 @@ describe("Previous and Next", () => {
   });
 
   it("a Loop's tree steps from the start to the lead and its background work, every worker, the result, then the finish check", () => {
-    assert.deepEqual(order(loopWithWorkers()), [
+    assert.deepEqual(order(loopWithWorkers([reviewAsked()])), [
       "start",
       "lead",
       "jobs",

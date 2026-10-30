@@ -5926,3 +5926,37 @@ describe("the Loop's stop and nudge rules, audited after phase 5", () => {
     assert.doesNotMatch(words, /First change|ART\.md/);
   });
 });
+
+describe("pictures of a Loop's builds (Loop phase 5)", () => {
+  it("GP1. a merge's health check kept a screenshot but its record named neither it nor the worker: Builds drew the worker's card and the latest build blank", async () => {
+    const { appended, fakeHost, fakeLoopRun } = await import("../helpers/director-run.ts");
+    const { RunEvent } = await import("../../src/harness-seed/loop/run-events.ts");
+    const head = "4".repeat(40);
+    const shot = "/runs/run_j/director/merge_w4_4444444444.jpg";
+    const answers = {
+      [HostMethod.PreviewAcquire]: { handle: "pool:1" },
+      [HostMethod.PreviewLoad]: { ok: true },
+      [HostMethod.PreviewReady]: { ready: true },
+      [HostMethod.PreviewObserve]: { ok: true, reasons: [] },
+      [HostMethod.PreviewScreenshot]: { path: shot },
+      [HostMethod.RunExec]: (params: Record<string, unknown>) =>
+        String(params.command ?? "").startsWith("git rev-parse HEAD")
+          ? { code: 0, stdout: `${head}\n` }
+          : { code: 0, stdout: "" },
+    };
+    const host = fakeHost();
+    const loopRun = fakeLoopRun(host, {}, answers);
+    await loopRun.afterMerge({ id: "w4" });
+    await loopRun.finish({ summary: "The rival car is in.", land: false });
+    const checks = appended(host)
+      .filter((event) => event.type === RunEvent.IntegrationHealth)
+      .map((event) => [event.payload.head, event.payload.picture, event.payload.worker]);
+    assert.deepEqual(checks, [[head, shot, "pool.w4"]], "the merge's check names its picture and its worker");
+
+    const finishing = fakeHost();
+    await fakeLoopRun(finishing, {}, answers).finish({ summary: "The rival car is in." });
+    const [atFinish] = appended(finishing).filter((event) => event.type === RunEvent.IntegrationHealth);
+    assert.equal(atFinish?.payload.picture, shot, "the finish's check names its picture");
+    assert.equal(atFinish?.payload.worker, undefined, "and no worker: no merge came before it");
+  });
+});

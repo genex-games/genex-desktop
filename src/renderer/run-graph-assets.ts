@@ -67,6 +67,11 @@ export interface AssetLedger {
   /** An open in-game check, by call, naming the Studio job it checks. */
   checkByCall: Map<string, string>;
   foldedInto: Map<AssetInfo, AssetInfo>;
+  /**
+   * The copy the host kept of a delivery's picture (`asset_delivered.picture`), by each file the
+   * delivery listed: a call's card (Blender's names no job) is joined to it by the files it holds.
+   */
+  pictures: Map<string, string>;
 }
 
 /** An empty ledger, before the run asked for anything. */
@@ -79,6 +84,7 @@ export function newAssetLedger(): AssetLedger {
     dropped: new Set(),
     checkByCall: new Map(),
     foldedInto: new Map(),
+    pictures: new Map(),
   };
 }
 
@@ -132,6 +138,7 @@ const sameAsset = (failed: AssetInfo, later: AssetInfo): boolean =>
  * not finished: nothing will deliver it now, so it is never "making" after the end.
  */
 export function settleAssetJobs(ledger: AssetLedger, over: boolean): void {
+  for (const job of ledger.jobs) job.picture ??= keptPictureOf(ledger, job);
   ledger.jobs.forEach((job, index) => {
     if (job.state !== AssetCardState.Failed || job.facetId === null) return;
     const retried = ledger.jobs
@@ -199,6 +206,15 @@ export function blenderAsset(payload: Payload, place: AssetPlace): AssetInfo {
     state: ok ? AssetCardState.Delivered : AssetCardState.Failed,
     files: file ? [file] : [],
   };
+}
+
+/** The copy the host kept of a picture this card's files delivered, when it kept one. */
+function keptPictureOf(ledger: AssetLedger, job: AssetInfo): string | undefined {
+  for (const file of job.files) {
+    const kept = ledger.pictures.get(file);
+    if (kept) return kept;
+  }
+  return undefined;
 }
 
 /** Two records of one asset: the card that was asked for keeps what the other one learned. */
@@ -425,16 +441,19 @@ function foldDerivedWork(ledger: AssetLedger, job: AssetInfo, payload: Payload):
 /**
  * `asset_delivered`: the host's own record of files that landed. It joins the open call on
  * `jobId`; a delivery nothing asked for in this run still earns a card, except Blender's, which
- * already has one.
+ * already has one. The copy the host kept of its picture goes to whichever card holds its files.
  */
 export function assetDelivered(ledger: AssetLedger, payload: Payload, place: AssetPlace): void {
   const jobId = strOrNull(payload.jobId);
   const source = str(payload.source, "plugin");
-  if (!jobId || source === BLENDER_SOURCE) return;
+  if (!jobId) return;
   const rows = records(payload.files);
   const files = rows.map((row) => str(row.file)).filter(Boolean);
   // A delivery that landed no file (a lookup the host still records) made nothing.
   if (!files.length) return;
+  const picture = strOrNull(payload.picture);
+  if (picture) for (const file of files) ledger.pictures.set(file, picture);
+  if (source === BLENDER_SOURCE) return;
   const bytes = rows.reduce((total, row) => total + (num(row.bytes) ?? 0), 0);
   const at = strOrNull(payload.at) ?? place.at;
   const job = ledger.byJob.get(jobId) ?? openDeliveryCard(ledger, place, { jobId, source, at, payload });

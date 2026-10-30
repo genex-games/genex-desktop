@@ -730,6 +730,19 @@ export interface CustomEventMap {
   /** `lost`: the provider was lost (an engine failure kind), and the round waits for it rather than retry on a ladder. */
   facet_provider_outage: RunScope & { phase?: string; wait?: number; attempt?: number; error?: string; lost?: string };
   improvement_applied: { file?: string; reason?: string; snapshot_id?: string };
+  /**
+   * The Loop's health check of its integration head (seed `loop/director/integrate.ts`): the page
+   * loads, throws no uncaught error and its frame is not blank. `picture`: the screenshot the check
+   * kept, under the run's folder (`readRunStill`); `worker`: the worker whose merge it checked, as
+   * its own records name it (`pool.w2`). Records written before either existed have neither.
+   */
+  integration_health: RunScope & {
+    head?: string | null;
+    ok?: boolean;
+    problems?: string[];
+    picture?: string;
+    worker?: string;
+  };
   /** `recap`: one line the agent wrote on what it found or did, shown above the question. */
   interview_question: { question?: string; recap?: string; choices?: InterviewChoice[] };
   /** A provider signed out mid-turn (harness `turn-loop.ts`); `message` is the provider's own error. */

@@ -114,7 +114,10 @@ export interface Step {
   verdict: VerdictRecord | null;
   /** What a worker's own records say, on the one node of its row: it picks the node's words. */
   worker?: WorkerInfo;
-  /** A worker's picture: what it delivered, else for a reader the save point it looked at. */
+  /**
+   * A worker's picture: what it delivered, else the build right after its merge, else for a reader
+   * the save point it looked at.
+   */
   picture?: WorkerPicture;
   /** A save point after the first: the one before it, whose pictures its own are compared with. */
   earlier?: IterationNode;
@@ -126,10 +129,14 @@ export const PictureSource = {
   File: "file",
   /** Blender's render of a model it made, under the run's folder */
   Render: "render",
+  /** the copy Genex kept of a picture it delivered, under the run's folder: there before its build lands */
+  Kept: "kept",
   /** a model or image it delivered, drawn as the Assets stage draws it */
   Asset: "asset",
   /** a reader that delivered nothing: the save point it looked at */
   Reviewed: "reviewed",
+  /** a worker whose work was merged: the health check's screenshot of the build right after its merge */
+  Build: "build",
 } as const;
 export type PictureSource = (typeof PictureSource)[keyof typeof PictureSource];
 
@@ -137,6 +144,8 @@ export type PictureSource = (typeof PictureSource)[keyof typeof PictureSource];
 export type WorkerPicture =
   | { source: typeof PictureSource.File; file: string }
   | { source: typeof PictureSource.Render; path: string }
+  | { source: typeof PictureSource.Kept; path: string }
+  | { source: typeof PictureSource.Build; path: string }
   | { source: typeof PictureSource.Asset; asset: ProjectAsset }
   | { source: typeof PictureSource.Reviewed; round: IterationNode };
 
@@ -363,6 +372,7 @@ function savePointsOf(graph: RunGraph): IterationNode[] {
 interface Delivery {
   files: string[];
   render: string | null;
+  picture?: string;
   preview?: ProjectAsset;
   inGame?: boolean;
 }
@@ -381,25 +391,41 @@ function deliveriesOf(graph: RunGraph, facetId: string): Delivery[] {
   return [...own, ...folded].sort((a, b) => (a.at < b.at ? -1 : Number(a.at > b.at)));
 }
 
-/** A delivery's picture: an image it delivered, the modeller's render, else the model as the Assets stage draws it. */
+/**
+ * A delivery's picture: the copy Genex kept of an image it delivered (readable before its build
+ * lands), the image in the game, the modeller's render, else the model as the Assets stage draws it.
+ */
 function deliveryPicture(delivery: Delivery): WorkerPicture | null {
+  if (delivery.picture) return { source: PictureSource.Kept, path: delivery.picture };
   const image = delivery.files.find((file) => assetFormat(file)?.raster);
   if (image) return { source: PictureSource.File, file: image };
   if (delivery.render) return { source: PictureSource.Render, path: delivery.render };
   return delivery.preview ? { source: PictureSource.Asset, asset: delivery.preview } : null;
 }
 
+/** The health check's screenshot of the build right after this part's worker was merged (its newest merge). */
+function mergedBuildPicture(graph: RunGraph, facetId: string): string | null {
+  return graph.health.findLast((look) => look.worker === facetId && look.picture !== null)?.picture ?? null;
+}
+
 /**
  * A worker's picture: what it delivered, newest first and what is in the game before what is not;
- * a reader that delivered nothing shows the save point that was current when it started to look.
+ * else, once its work was merged, the build right after that merge; a reader that delivered nothing
+ * shows the save point that was current when it started to look.
  */
-function workerPicture(facet: FacetNode, made: Delivery[], saves: IterationNode[]): WorkerPicture | undefined {
+function workerPicture(
+  facet: FacetNode,
+  made: Delivery[],
+  saves: IterationNode[],
+  merged: string | null,
+): WorkerPicture | undefined {
   const newest = [...made].reverse();
   const inGame = newest.filter((delivery) => delivery.inGame === true);
   for (const delivery of [...inGame, ...newest]) {
     const picture = deliveryPicture(delivery);
     if (picture) return picture;
   }
+  if (merged) return { source: PictureSource.Build, path: merged };
   const worker = facet.worker;
   if (worker?.isolation !== WorkerIsolation.Read || worker.startedSeq === null) return undefined;
   const startedAt = worker.startedSeq;
@@ -434,7 +460,9 @@ function sessionStep(
   const verdict = sessionVerdict(graph, facet, task);
   const made = facet.worker ? deliveriesOf(graph, facet.facetId) : [];
   const state = sessionState(graph, facet, task, { ...part, nothingMade: madeNothing(facet, made) });
-  const picture = facet.worker ? workerPicture(facet, made, savePointsOf(graph)) : undefined;
+  const picture = facet.worker
+    ? workerPicture(facet, made, savePointsOf(graph), mergedBuildPicture(graph, facet.facetId))
+    : undefined;
   return {
     id: `session:${facet.facetId}`,
     facetId: facet.facetId,
