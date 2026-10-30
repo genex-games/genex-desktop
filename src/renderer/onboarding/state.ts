@@ -16,7 +16,7 @@ import { STORAGE_KEYS } from "../storage.ts";
 
 /** Set once the welcome is finished or skipped on this profile. */
 export const WELCOMED_KEY = STORAGE_KEYS.welcomed;
-/** The demo prompt names the game the Judges' screen plays. */
+/** The demo prompt names the game the second opinion's screen plays. */
 export const DEMO_IDEA = t("A tiny space shooter in a field of asteroids");
 
 /** Welcome only a first launch: the session allows it, the library is empty and this profile was never welcomed. */

@@ -161,7 +161,7 @@ export interface PlayEngine {
   args: string[];
 }
 
-/** What the served page does with the contract the judge reads — a word, not a sentence. Wire values: never rename one. */
+/** What the served page does with the studio's page layer — a word, not a sentence. Wire values: never rename one. */
 export const ContractWord = {
   Loaded: "loaded",
   Attached: "attached",
@@ -189,7 +189,7 @@ export interface FolderPreflight {
   install: string | null;
   /** Dependencies are declared and `node_modules` is not there: the build cannot run yet. */
   needsInstall: boolean;
-  /** Whether the page the studio serves actually loads the contract the judge reads. */
+  /** Whether the page the studio serves actually loads the studio's page layer. */
   contract: ContractWord;
   /** The candidate's own repository, and any repository one folder under it. */
   git: "none" | "repo";
@@ -282,8 +282,8 @@ export interface ExportResult {
  *
  * `game.validate` answers the same question from the folder's sources — a static judgement
  * about a page nobody loaded. This is the live one: the page is served, waited for and asked
- * what the hook attached to. `installed` is a game that calls `installStudio` itself,
- * `attached` is a game the hook found by watching it render, `none` is neither.
+ * what the hook attached to. `installed` is a renderer handed to the hook directly (nothing in
+ * the app does today), `attached` is a game the hook found by watching it render, `none` is neither.
  */
 export interface AttachReport {
   ok: boolean;

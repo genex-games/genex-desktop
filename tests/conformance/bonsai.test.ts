@@ -1340,8 +1340,9 @@ it("a local Loop chat that keeps reading is told to finish or launch, not to imp
   try {
     await sessions.run({ cwd, prompt: "What engine should this use?", interviewTools: [launchTool] }, model);
     const nudge = seen.find((s) => s.includes("Progress check: 6")) ?? "";
-    assert.match(nudge, /Finish now: answer, make the change, or launch the build with start_autopilot/);
-    assert.doesNotMatch(nudge, /go on, or reply/);
+    // Flipped (phase 5): no "Finish now" hurry; the chat is told which tool starts the build, as a fact.
+    assert.match(nudge, /go on, or reply with what you found or what you need\. start_autopilot starts the build\./);
+    assert.doesNotMatch(nudge, /Finish now/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

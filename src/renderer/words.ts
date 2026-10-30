@@ -170,8 +170,6 @@ const PHRASES: Array<[RegExp, (match: RegExpMatchArray) => StatusWords]> = [
     /^building the (?:shared base|starting point)$/i,
     () => ({ line: t("Building the starting point"), short: t("Starting point") }),
   ],
-  // The run's other first step: a game the user brought that the studio cannot see into yet.
-  [/^making the game judgeable$/i, () => ({ line: t("Connecting your game to the studio"), short: t("Connecting") })],
   [
     /^plan ready — waiting for steering$/i,
     () => ({ line: t("The plan is ready — waiting for your go-ahead"), short: t("Plan ready") }),
@@ -269,13 +267,6 @@ const PART_PHRASES: Array<[RegExp, (part: string, match: RegExpMatchArray) => St
     }),
   ],
   [
-    /^judge overloaded, retrying verification in (\d+)s$/i,
-    (part, m) => ({
-      line: t("{part} · the reviewer is busy — trying again in {seconds}s", { part, seconds: m[1] }),
-      short: t("{part} · waiting", { part }),
-    }),
-  ],
-  [
     /^waiting for its model provider \((.+)\)$/i,
     (part, m) => ({
       line: t("{part} · waiting for the model provider ({provider})", { part, provider: m[1] }),
@@ -286,7 +277,7 @@ const PART_PHRASES: Array<[RegExp, (part: string, match: RegExpMatchArray) => St
 
 /** The phases the harness hangs off a title with " — ": stripped when the title itself has a dash. */
 const PHASE_SUFFIX =
-  /\s+—\s+(iteration \d+|verifying|spike on .+|fixing review findings|reverting a regression|(?:provider|judge) overloaded.*|waiting for its model provider.*)$/i;
+  /\s+—\s+(iteration \d+|verifying|spike on .+|fixing review findings|reverting a regression|provider overloaded.*|waiting for its model provider.*)$/i;
 
 /**
  * Turn a harness status line into what the user reads. The harness prefixes almost every status
@@ -397,7 +388,6 @@ export function isKept(winner: string | null | undefined): boolean {
 
 const UNDONE_BECAUSE: Record<string, string> = {
   invisible: t("nothing visible changed"),
-  "taste-veto": t("the reviewer preferred the round before"),
   "no-move": t("the step it was asked for was not delivered"),
   unfixed: t("the must-fix was not fixed"),
   broken: t("the build was broken"),
@@ -567,7 +557,6 @@ export function sideBySideWords(node: { status: IterationStatus; satisfied: bool
   if (savedByLead(node.source)) return t("Not reviewed — the lead saved it after looking at its own captures.");
   if (node.status === "unjudged") return t("Not reviewed — no verdict was recorded for this round.");
   if (node.status === "rolled") {
-    if (node.source === "taste-veto") return t("The reviewer preferred the round before.");
     if (node.source === "no-move") return t("Not asked — the step did not land.");
     return t("Not needed — the round was undone on the checks.");
   }
@@ -1059,30 +1048,14 @@ export function partRoundWords(part: PartRound): string {
 }
 
 /**
- * What the run is: the reference it was given, if it was given one, and which model judges it.
- *
- * The judge is named because it is the one role a saved preference can quietly get wrong — a
- * run was judged by the orchestrator's model and nothing said so. `judge` is the model's own
- * short name (model-roles' `roleName`); "default" is not a name a person can act on, so a run
- * whose critic is whatever the engine happens to use says nothing about it.
+ * What the run is, for the records that name a reference it was given ("direction" or a bar):
+ * nothing for a run that has none, which the chat already shows as the person's own message.
  */
-export function runStartWords(
-  reference: { name?: string | null; kind?: string | null } | null | undefined,
-  judge: string | null = null,
-): string {
+export function runStartWords(reference: { name?: string | null; kind?: string | null } | null | undefined): string {
   const name = withoutIds((reference?.name ?? "").trim());
-  const named = name && name.toLowerCase() !== "unnamed" ? name : "";
-  const who = withoutIds((judge ?? "").trim());
-  const rule =
-    who && !/^(default|same)$/i.test(who)
-      ? t(
-          "each round has to beat the one before, and {reviewer}, reviewing without being told which build is which, picks the winner",
-          { reviewer: who },
-        )
-      : t("each round has to beat the one before, and a reviewer that cannot see which is which picks the winner");
-  if (reference?.kind === "direction")
-    return named ? t('heading in the direction of "{name}" — {rule}', { name: named, rule }) : rule;
-  return named ? t('the bar for this build is "{name}" — {rule}', { name: named, rule }) : rule;
+  if (!name || name.toLowerCase() === "unnamed") return "";
+  if (reference?.kind === "direction") return t('heading in the direction of "{name}"', { name });
+  return t('the bar for this build is "{name}"', { name });
 }
 
 /** How the run is organised — the first thing the user reads after pressing send. */

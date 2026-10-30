@@ -5,8 +5,8 @@
  * own `three` at a wrapper module that re-exports the same module record and calls `hook()` with
  * it; from there the studio watches what the game's renderers actually draw and reads the scene,
  * the camera and the renderer off the frames themselves. A game whose `three` is inside its own
- * bundle, out of the import map's reach, gets the same thing from two lines:
- * `installStudio({ renderer, player })` calls `wrapRenderer(renderer)`.
+ * bundle, out of the import map's reach, is not attached: the report says so (`attachReason`) and
+ * the game is asked for nothing.
  *
  * TWO FACTS DECIDE THE MECHANISM.
  *
@@ -57,7 +57,7 @@ export const UNAVAILABLE = "the game's scene graph is not available";
 
 /** Why `inspect()` has nothing to answer with. Reported, never thrown, so a check can say it. */
 export const NO_RENDER_REASON =
-  "no scene has been rendered yet — the game has not called renderer.render(scene, camera) since load, and installStudio was not given a scene";
+  "no scene has been rendered yet — the game has not called renderer.render(scene, camera) since load";
 
 // ── module state ─────────────────────────────────────────────────────────────
 
@@ -279,8 +279,8 @@ function installTrap(proto: Foreign, method: Foreign) {
 }
 
 /**
- * Watch one renderer INSTANCE — the two-line install, for a game whose `three` is inside its own
- * bundle and never passed through the serve layer's wrapper.
+ * Watch one renderer INSTANCE, for a caller that holds it: a `three` inside the game's own bundle
+ * never passes through the serve layer's wrapper (nothing in the app calls this today).
  */
 export function wrapRenderer(instance: Foreign) {
   if (!instance || typeof instance !== "object") return false;
@@ -638,7 +638,7 @@ function canvasOf(renderer: Foreign) {
 
 /**
  * The helpers every `scene` check is evaluated against. One implementation for both paths: the
- * game the studio attached to and the game that called `installStudio` share this code, so a
+ * scene the studio attached to and a scene handed in through `options` share this code, so a
  * check written against one means the same thing against the other.
  */
 export function sceneHelpers(source: InspectOptions = {}) {
@@ -900,9 +900,8 @@ export function unavailable(reason = NO_RENDER_REASON) {
 }
 
 /**
- * Read-only helpers over whatever the studio can see. `options` lets the installed contract pass
- * its own scene, camera, player and probes in; with nothing passed, the world the page rendered
- * is the answer.
+ * Read-only helpers over whatever the studio can see. `options` lets a caller pass its own scene,
+ * camera, player and probes in; with nothing passed, the world the page rendered is the answer.
  */
 export function inspect(options: InspectOptions = {}): Foreign {
   const world = current();
@@ -996,7 +995,7 @@ export function hookState() {
  */
 function attachReason() {
   if (!state.namespaces.length && instancesWrapped === 0) {
-    return "the studio never reached this page's three — its renderer is inside its own bundle; call installStudio({ renderer, player }) from the game's entry";
+    return "the studio never reached this page's three — its renderer is inside its own bundle, out of the import map's reach";
   }
   if (state.renders === 0 && state.frames > 30) {
     return "the page has drawn frames but no wrapped renderer was called — a game that replaces renderer.render after construction is invisible to the studio";

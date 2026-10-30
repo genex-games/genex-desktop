@@ -52,17 +52,13 @@ import {
   type ExportReview,
   type PluginBinding,
   PluginCapability,
-  type PluginClipAnswer,
-  type PluginClipOrder,
   type PluginStillAnswer,
   type PluginStillOrder,
   PluginToolAudience,
   NativeRuntimeState,
 } from "../shared/plugins.ts";
 import { EngineHostAction, type EngineLinkUndo, type EngineUndoSetUpArgs } from "../shared/game-engine.ts";
-import { type ViewOpener, viewStill, type ViewStillOptions } from "./core/view-still.ts";
-import { type ReelView, throughCoverReel } from "./core/cover-reel.ts";
-import { viewClip, type ViewClipOptions } from "./core/view-clip.ts";
+import { viewStill, type ViewStillOptions } from "./core/view-still.ts";
 import { ToolPermissionBy } from "../shared/permissions.ts";
 import { type JobRecord, JobScopeKind, JobStopper } from "../shared/jobs.ts";
 import { recordJobEnded, recordJobStarted } from "./core/job-records.ts";
@@ -192,7 +188,6 @@ import { PreviewService } from "./core/previews.ts";
 import { AutoResumeService, type AutoResumeDeps } from "./core/auto-resume.ts";
 import { heldStartAsk, heldStartRuns } from "./core/held-start.ts";
 import { coverStepAsk, coverStepRuns } from "./core/cover-step.ts";
-import { CoreFact, hasFact } from "../shared/project-facts.ts";
 import { availableMemory } from "../substrate/hardware.ts";
 import { RecoveryService } from "./core/recovery.ts";
 import { ChatRewindService } from "./core/rewind.ts";
@@ -246,8 +241,6 @@ const HARNESS_CRASH_LOOP = { count: 3, windowMs: 5 * MINUTE_MS } as const;
 const GAMES_ROOT_FILE = "games-root.json";
 /** The folder in the sandbox's scratch where each engine plugin's sandbox job keeps its own. */
 const PLUGIN_JOBS_FOLDER = "plugin-jobs";
-/** The folder in the sandbox's scratch where an engine game's cover reel is staged for a still or clip. */
-const COVER_REEL_FOLDER = "cover-reels";
 /** The folder in the sandbox's scratch where Node keeps the harness's compiled modules between boots. */
 const HARNESS_COMPILE_CACHE_FOLDER = "harness-compile-cache";
 /** The prefix of the scratch folder an engine's game runs with (its private home and temp files). */
@@ -458,8 +451,6 @@ export interface StudioCoreOptions {
   autoResume?: Partial<Pick<AutoResumeDeps, "now" | "setTimer" | "clearTimer" | "freeMb">>;
   /** A plugin still's budget (default one minute) and the clock it runs on (`core/view-still.ts`); a test seam. */
   pluginStill?: ViewStillOptions;
-  /** A plugin clip's budget (default its seconds and a minute) and the clock it runs on (`core/view-clip.ts`); a test seam. */
-  pluginClip?: ViewClipOptions;
   /** A planned automatic resume started (true) or stopped (false) waiting; main holds the Mac awake meanwhile. */
   onAutoResumePending?: (pending: boolean) => void;
   onUiEvent?: (event: UiEvent) => void;
@@ -1104,10 +1095,7 @@ export class StudioCore {
     this.pluginServices = new PluginServices(
       path.join(this.layout.engineHomes, "plugins", "data"),
       { genex: path.join(this.layout.engineHomes, "genex") },
-      (binding, files, still, clip) => {
-        if (clip) return this.#observeClip(binding, clip);
-        return still ? this.#observeStill(binding, still) : this.#observeAssets(binding, files);
-      },
+      (binding, files, still) => (still ? this.#observeStill(binding, still) : this.#observeAssets(binding, files)),
     );
     this.pluginServices.onEvent = (id, event, binding) =>
       this.emit(UiEvent.PluginEvent, { id, event, project: binding?.project, threadId: binding?.threadId });
@@ -1342,38 +1330,11 @@ export class StudioCore {
   }
 
   /**
-   * A plugin's still of one named view (`observe` with `still`): on a hidden window of its own at
-   * the asked size, never Live, given back however it ends (`core/view-still.ts`).
+   * A plugin's still (`observe` with `still`): a plain frame of the game's page on a hidden window
+   * of its own at the asked size, never Live, given back however it ends (`core/view-still.ts`).
    */
   #observeStill(binding: PluginBinding, still: PluginStillOrder): Promise<PluginStillAnswer> {
-    const view = still.demo === undefined ? {} : { stillDemo: still.demo };
-    return this.#throughReel(binding, view, (open) =>
-      viewStill(this.#previews, binding, still, { ...this.options.pluginStill, ...(open ? { open } : {}) }),
-    );
-  }
-
-  /**
-   * A plugin's clip of a moment a demo stages (`observe` with `clip`): recorded on a hidden window
-   * of its own at the asked size, never Live, given back however it ends (`core/view-clip.ts`).
-   */
-  #observeClip(binding: PluginBinding, clip: PluginClipOrder): Promise<PluginClipAnswer> {
-    return this.#throughReel(binding, { clipDemo: clip.demo }, (open) =>
-      viewClip(this.#previews, binding, clip, { ...this.options.pluginClip, ...(open ? { open } : {}) }),
-    );
-  }
-
-  /**
-   * A still or clip of an engine game is taken of the cover its agent rendered in the engine
-   * (`core/cover-reel.ts`): a web page of a game that runs as an app shows nothing of it.
-   */
-  async #throughReel<A>(
-    binding: PluginBinding,
-    view: ReelView,
-    take: (open: ViewOpener | undefined) => Promise<A>,
-  ): Promise<A> {
-    const game = await this.games.kindOf(binding.project).catch(() => null);
-    const scratch = path.join(this.layout.scratch, COVER_REEL_FOLDER);
-    return throughCoverReel({ game, gameDir: binding.directory, scratch }, view, take);
+    return viewStill(this.#previews, binding, still, this.options.pluginStill);
   }
 
   /**
@@ -1833,16 +1794,16 @@ export class StudioCore {
   }
 
   /**
-   * A run that landed its build in a web game while the Genex plugin is on: the chat's agent makes
-   * the game's Genex cover now, as a step of its own (`core/cover-step.ts`).
+   * A run that landed its build in a game while the Genex plugin is on: the chat's agent makes the
+   * game's Genex cover now, as a step of its own (`core/cover-step.ts`). A game made as an app
+   * (Unity, Godot, Unreal) gets the same step: its agent renders the picture its own way.
    */
   async #askForCover(threadId: string, runId: string): Promise<void> {
     try {
       if (!this.plugins?.enabled(GENEX_PLUGIN_ID)) return;
       const project = gameOfThread((await this.store.getRecord(threadId).catch(() => null))?.metadata);
       if (!project) return;
-      const kind = await this.games.kindOf(project).catch(() => null);
-      if (!kind || !hasFact(kind.facts, CoreFact.WebGame, ".")) return;
+      if (!(await this.games.kindOf(project).catch(() => null))) return;
       const ask = coverStepAsk(threadId, await this.store.listEvents(threadId), runId);
       if (ask) await this.sendUserMessage(ask.text, ask.options);
     } catch (err) {

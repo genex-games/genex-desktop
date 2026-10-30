@@ -17,8 +17,8 @@ An engine plugin (native/Rust, Godot, Unity, Unreal) counts as done when it pass
 
 ## Which games use it
 
-- A **web game** runs in the studio's browser preview and is driven through `window.__studio`
-  (the game template's `src/studio.js`). It does not speak this protocol.
+- A **web game** runs in the studio's browser preview and is driven with real input and read from
+  outside (screenshots, console, the page shim's clock). It does not speak this protocol.
 - A **native game** speaks this protocol. An engine that has both a web and a native build
   implements the protocol in its native player; its web build still runs in the browser preview.
 - The studio plays only games it starts. There is no attach transport yet (see Transport).

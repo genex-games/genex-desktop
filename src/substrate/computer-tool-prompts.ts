@@ -74,7 +74,7 @@ const APPS_LINE =
 
 /** The batch sentence: several moves in one call. */
 const BATCH_LINE =
-  'batch actions=[{"action":"key","text":"w"},{"action":"wait","duration":0.5}]: up to 8 input actions and waits in one call, run in order, stopping at the first that fails. ';
+  'batch actions=[{"action":"key","text":"space"},{"action":"wait","duration":0.5}]: up to 8 input actions and waits in one call, run in order, stopping at the first that fails. ';
 
 /** The players sentence, for a target that plays several at once. */
 function playersLine(caps: TargetCapabilities): string {
@@ -96,25 +96,21 @@ function clockLine(role: ComputerToolRole): string {
 
 /** What `state` reads, by what the target can tell. */
 const STATE_LINE = {
-  game: "state: the game's own numbers (a claim — a screenshot is the proof).",
+  game: "state: what the target reports about itself (a claim — a screenshot is the proof).",
   a11y: "state: the accessibility tree of the app in front — its windows, buttons and fields (a screenshot is the proof).",
 } as const;
 
-/** The studio's own verbs a target has: camera, state, console. */
-function studioVerbLines(caps: TargetCapabilities, cameras: string): string {
-  const camera = caps.cameras
-    ? `camera text=<name>: jump the view to a studio camera (eye:here is the player's eyes, default the game's own).${cameras} `
-    : "";
+/** The studio's own verbs a target has: state, console. */
+function studioVerbLines(caps: TargetCapabilities): string {
   const state = hasState(caps) ? STATE_LINE[caps.state === StateLevel.A11y ? "a11y" : "game"] : "";
   const console = caps.console ? `${state ? " " : ""}console: errors since load.` : "";
-  return camera + state + console;
+  return state + console;
 }
 
-/** The tool's description, for a role, a window size, the cameras the game names and what the target can do. */
+/** The tool's description, for a role, a window size and what the target can do. */
 export function computerToolDescription(options: {
   role: ComputerToolRole;
   view: { width: number; height: number };
-  cameras: string;
   capabilities?: TargetCapabilities;
   /** Whether an input action brings back its picture when the model does not say. */
   observeByDefault?: boolean;
@@ -132,19 +128,19 @@ export function computerToolDescription(options: {
     (canPoint(caps) ? POINTER_LINES : "") +
     (!canPoint(caps) && caps.aimedClicks ? AIMED_CLICK_LINE : "") +
     "scroll scroll_direction=up|down|left|right scroll_amount=<notches> [coordinate=x,y]. " +
-    "type text=<literal text>. key text=<a key or +chord: w, i, Return, Escape, space, ctrl+s> [repeat=n]. hold_key text=w duration=<seconds> (walks, grinds). " +
+    "type text=<literal text>. key text=<a key or +chord: a, Return, Escape, space, ctrl+s> [repeat=n]. hold_key text=<a key> duration=<seconds>: held down for that long. " +
     "wait duration=<seconds>. " +
     (canPoint(caps) ? "cursor_position. " : "") +
     (caps.pointer !== PointerLevel.None ? "look dx=<pixels> dy=<pixels>: turn the view (mouse-look). " : "") +
     (caps.actions
-      ? "act text=<action> [duration=<seconds>]: the game's own named action (jump, attack), pressed once or held. "
+      ? "act text=<action> [duration=<seconds>]: the game's own named action, pressed once or held. "
       : "") +
     (caps.dom ? WEB_LINES : "") +
     (caps.apps ? APPS_LINE : "") +
     BATCH_LINE +
     playersLine(caps) +
     observeLine(options.observeByDefault ?? false) +
-    studioVerbLines(caps, options.cameras) +
+    studioVerbLines(caps) +
     reload +
     surface +
     `Coordinates are pixels of the last screenshot, origin top-left. ${clockLine(options.role)} ` +
@@ -164,11 +160,6 @@ const CLOSING_LINES = {
     "Never build or play-test a game in a game engine's editor here: use the engine's own tools. An engine's editor is driven only for a step the person asked for through its plugin (a setup click, or publishing).",
 } as const;
 
-/** The known cameras, as the sentence the description carries (empty when the game names none). */
-export function knownCamerasLine(cameras: string[]): string {
-  return cameras.length ? ` Known cameras: ${cameras.join(", ")}.` : "";
-}
-
 /** Each parameter's description, beside the action list the schema is built with. */
 export const COMPUTER_PARAMETER_TEXT = {
   action: (actions: string) => `one of ${actions}`,
@@ -185,7 +176,7 @@ export const COMPUTER_PARAMETER_TEXT = {
   dx: "look only: how far to turn the view sideways, in view pixels of mouse motion",
   dy: "look only: how far to turn the view up or down, in view pixels of mouse motion",
   observe: "screenshot, canvas or none: what an input action, wait or batch brings back with its answer",
-  actions: 'batch only: a JSON list of steps, e.g. [{"action":"key","text":"w"},{"action":"wait","duration":0.5}]',
+  actions: 'batch only: a JSON list of steps, e.g. [{"action":"key","text":"space"},{"action":"wait","duration":0.5}]',
   ref: "web_click and web_type: the element ref web_read listed, e.g. p3:12",
   submit: "web_type only: true presses Enter after the text (submits a search or a form)",
   window: "bring_to_front only: part of the title of the app's window to raise, when it has several open",
@@ -223,7 +214,7 @@ export const COMPUTER_ARG_PROBLEM = {
     `player ${player} is not in this play: it has ${players} player${players === 1 ? "" : "s"}`,
   unknownObserve: (raw: string) => `observe "${raw}" is not screenshot, canvas or none — the studio decided itself`,
   batchNeedsActions:
-    'batch needs actions=[…]: a JSON list of steps, e.g. [{"action":"key","text":"w"},{"action":"wait","duration":0.5}]',
+    'batch needs actions=[…]: a JSON list of steps, e.g. [{"action":"key","text":"space"},{"action":"wait","duration":0.5}]',
   batchTooLong: (max: number) => `batch takes at most ${max} steps — split it into two calls`,
   batchOnlyInput: (step: number) =>
     `batch step ${step}: a batch holds only input actions and wait — take screenshots, zoom, camera, state and reload as their own calls`,

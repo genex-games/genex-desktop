@@ -58,8 +58,6 @@ const FORK_CRASH_LOOP = { count: 1, windowMs: MINUTE_MS } as const;
 /** A proposed file's path may hold no control character and no backslash. */
 // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are what this refuses
 const UNSAFE_PATH_CHARS = /[\x00-\x1f\\]/;
-/** The top-level folder a proposed change may never write: the frozen judge's. */
-const FROZEN_TOP = "judge";
 /** Folders a proposed change may never write into at any depth: git's own and installed packages. */
 const NEVER_WRITTEN = [".git", "node_modules"] as const;
 
@@ -423,12 +421,12 @@ function diagnosticKey(line: string): string {
   return line.replace(/^(.+?)\(\d+,\d+\): error (TS\d+): /, "$1 $2 ");
 }
 
-/** A workspace-relative path the agent may propose: no escape, not the frozen judge/, not git's. */
+/** A workspace-relative path the agent may propose: no escape, not git's, not an installed package's. */
 function checkedRel(file: unknown): string | null {
   if (typeof file !== "string" || !isPlainRelative(file)) return null;
   const parts = file.split("/");
   if (parts.some(isEmptyOrDots)) return null;
-  const offLimits = parts[0] === FROZEN_TOP || NEVER_WRITTEN.some((folder) => parts.includes(folder));
+  const offLimits = NEVER_WRITTEN.some((folder) => parts.includes(folder));
   return offLimits ? null : file;
 }
 

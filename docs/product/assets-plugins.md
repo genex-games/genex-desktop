@@ -30,7 +30,7 @@ host tools run the pinned CLI outside the game: `genex__cli` and `genex__package
 player identity; template games map Studio's copies) free; `genex__cli-paid` after consent; a
 `shop add --json` draft becomes chat's [Listing draft card](../play.md#the-item-store). Publish (host-drawn)
 refuses empty starters, connects SDK-less games, tests the draft, goes public, sends the cover and clip
-the agent kept (after a landed web build it hands `genex__cover` a picture, clip optional, as files in
+the agent kept (after a landed build, a web or engine game's agent hands `genex__cover` a picture, clip optional, as files in
 the game folder; [rules](../plugins.md#first-party-privileges)), plus its project if remixable
 ([Remix](../play.md)); else Studio's plain frame, never blank; consented `genex__cover-set` sends it now; chat shows it. Multiplayer (built, single-player) asks chat (Genex
 off: enable it); Publish needs only the account; both offer Update while older. Agents read

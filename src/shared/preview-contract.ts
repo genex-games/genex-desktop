@@ -6,15 +6,11 @@
  */
 
 /**
- * The `__studio` verbs that hold a game's clock (`src/game-template/src/studio.js`, `src/page/shim.ts`):
- * start and pause it, step it by a number of milliseconds, and reseed its `Math.random`.
+ * The verbs of the page shim's own clock (`window.__studioClock`, `src/page/shim.ts`) that hold a
+ * page's time: start and pause it, and step it by a number of milliseconds. The game is never asked.
  */
-export const GameClock = { Start: "start", Pause: "pause", Step: "step", Seed: "seed" } as const;
+export const GameClock = { Start: "start", Pause: "pause", Step: "step" } as const;
 export type GameClock = (typeof GameClock)[keyof typeof GameClock];
-
-/** The `__studio` verb that lets a racing game's own line (`config.steer`) steer the held keys. */
-export const GameSteer = { Assist: "assist" } as const;
-export type GameSteer = (typeof GameSteer)[keyof typeof GameSteer];
 
 /**
  * Which surface a capture photographs (M4.5/M4.9a). `canvas` is what the game draws, `page` is
@@ -299,27 +295,11 @@ export interface PreviewSetup {
   gesture?: true | { x?: number; y?: number; keys?: string[] };
   /** Input actions in order (tap, hold, click, wait …), capped like any script. */
   actions?: PreviewInputAction[];
-  /** A `config.demos` entry that reaches the state deterministically — preferred when it exists. */
-  demo?: string;
   /** Milliseconds to let the game settle after the script; default 400. */
   settleMs?: number;
   /** One sentence for the log and the briefs: what this reaches and why. */
   note?: string;
 }
-
-/**
- * The `__studio` verbs that put a named view on screen (`src/game-template/src/studio.js`): the
- * game's demo names, one demo run to its end state, the game's camera names and its built-in eye
- * cameras, and one camera placed.
- */
-export const GameView = {
-  Demos: "demos",
-  Demo: "demo",
-  Cameras: "cameras",
-  Eyes: "eyes",
-  DebugCamera: "debugCamera",
-} as const;
-export type GameView = (typeof GameView)[keyof typeof GameView];
 
 /** How a still is encoded: lossless PNG, or a high-quality JPEG when the PNG is over its byte limit. */
 export const StillMimeType = { Png: "image/png", Jpeg: "image/jpeg" } as const;

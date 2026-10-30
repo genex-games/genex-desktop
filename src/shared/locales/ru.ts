@@ -903,9 +903,7 @@ export default {
   "Connect {name}": "Подключить {name}",
   Connected: "Подключено",
   "Connected to {name}.": "Подключено к проекту {name}.",
-  Connecting: "Подключает",
   "Connecting tools": "Подключает инструменты",
-  "Connecting your game to the studio": "Подключает твою игру к Studio",
   "Connecting…": "Подключение…",
   "Connection cancelled": "Подключение отменено",
   Connections: "Подключения",
@@ -3092,8 +3090,6 @@ export default {
   "Reviewers model": "Модель проверяющих",
   "Reviewers preferred it": "Проверяющие предпочли новую версию",
   "Reviewers preferred the game you had": "Проверяющие предпочли прежнюю игру",
-  "Reviewers test every result and decide when the game is done.":
-    "Проверяющие тестируют каждый результат и решают, когда игра готова.",
   "A second opinion": "Второе мнение",
   "Reviewers undid it": "Проверяющие отменили",
   "Reviewers undid {count, plural, other {# tries}}":
@@ -3881,7 +3877,6 @@ export default {
   "The reviewer is satisfied with this part.": "Проверяющий доволен этой частью.",
   "The reviewer preferred the new build to the round before.":
     "Проверяющему новая сборка понравилась больше предыдущего раунда.",
-  "The reviewer preferred the round before.": "Проверяющему больше понравился предыдущий раунд.",
   "The reviewers are looking at try {tryNumber}.": "Проверяющие смотрят попытку {tryNumber}.",
   "The reviewers kept it on the first try.": "Проверяющие оставили результат с первой попытки.",
   "The reviewers kept try {tryNumber} after undoing the one before it.":
@@ -4564,7 +4559,6 @@ export default {
     "{count, plural, one {Сделан # шаг} few {Сделано # шага} many {Сделано # шагов} other {Сделано # шага}}",
   Worker: "Помощник",
   Workers: "Помощники",
-  "Workers build the parts of the plan, several at once.": "Помощники собирают части плана, по несколько сразу.",
   "Workers model": "Модель помощников",
   "Workers: {model}": "Помощники: {model}",
   Working: "Работает",
@@ -4835,10 +4829,6 @@ export default {
   "development build": "сборка для разработки",
   done: "готово",
   "down {percent}%": "падение на {percent}%",
-  "each round has to beat the one before, and a reviewer that cannot see which is which picks the winner":
-    "каждый раунд должен превзойти предыдущий, а победителя выбирает проверяющий, который не знает, где какая сборка",
-  "each round has to beat the one before, and {reviewer}, reviewing without being told which build is which, picks the winner":
-    "каждый раунд должен превзойти предыдущий, а победителя выбирает {reviewer}, не зная, какая сборка какая",
   "edited itself": "изменил свой код",
   "edited the code": "изменил код",
   "editor\u0004Waiting for you": "Ждёт тебя",
@@ -4892,7 +4882,7 @@ export default {
   "had a judge play the game": "дал судье сыграть в игру",
   "handed the work to a worker": "передал работу помощнику",
   "heading\u0004Installed": "Установленные",
-  'heading in the direction of "{name}" — {rule}': "движемся в сторону «{name}» — {rule}",
+  'heading in the direction of "{name}"': "движемся в сторону «{name}»",
   "how Genex runs this game": "как Genex запускает эту игру",
   "how Harness leads a build": "как Harness ведёт сборку",
   "how Harness plans a build": "как Harness планирует сборку",
@@ -5113,7 +5103,7 @@ export default {
   "that snapshot has no game to play": "в этом снимке нет игры",
   "the Claude Agent SDK is not installed": "Claude Agent SDK не установлен",
   "the Genex CLI": "Genex CLI",
-  'the bar for this build is "{name}" — {rule}': "планка этой сборки: «{name}» — {rule}",
+  'the bar for this build is "{name}"': "планка этой сборки: «{name}»",
   "the build finished": "сборка завершена",
   "the build finished but its output could not be kept": "сборка завершилась, но её результат не удалось сохранить",
   "the build finished but wrote nothing to {folder}/": "сборка завершилась, но ничего не записала в {folder}/",
@@ -5172,7 +5162,6 @@ export default {
   "the player's word": "со слов игрока",
   "the preview shows the current build": "превью показывает текущую сборку",
   "the reviewer preferred it to the round before": "проверяющему этот раунд понравился больше предыдущего",
-  "the reviewer preferred the round before": "проверяющему больше понравился предыдущий раунд",
   "the reviewers are looking at try {tryNumber} of {step}": "проверяющие смотрят попытку {tryNumber} шага «{step}»",
   "the run's record is incomplete": "запись сборки неполная",
   "the server": "сервер",
@@ -5622,7 +5611,6 @@ export default {
   "{model} (selected)": "{model} (выбрана)",
   "{model} animations": "Анимации {model}",
   "{model} is not installed in Ollama.": "Модель {model} не установлена в Ollama.",
-  "{model} on {provider}": "{model} через {provider}",
   "{model} ready": "{model}: готово",
   "{name} account": "Аккаунт {name}",
   "{name} already builds in {title}.": "Плейс {name} уже занят игрой «{title}».",
@@ -5692,8 +5680,6 @@ export default {
   "{part} · fixing what the review found": "{part} · исправляет замечания проверки",
   "{part} · round {round}": "{part} · раунд {round}",
   "{part} · the model is busy — trying again in {seconds}s": "{part} · модель занята — пробуем снова через {seconds} с",
-  "{part} · the reviewer is busy — trying again in {seconds}s":
-    "{part} · проверяющий занят — пробуем снова через {seconds} с",
   "{part} · undoing": "{part} · откатывает",
   "{part} · undoing something that broke": "{part} · откатывает то, что сломалось",
   "{part} · waiting": "{part} · ждёт",
@@ -6136,4 +6122,7 @@ export default {
   "Show us where Genex gets in your way.": "Покажи, где Genex тебе мешает.",
   "Where you go, what fails and how long it takes": "Куда ты заходишь, что ломается и сколько всё длится",
   "usage data\u0004Share": "Делиться",
+  "Reviewers give a second opinion when the lead asks for one.":
+    "Проверяющие дают второе мнение, когда главный агент просит.",
+  "Workers take parts of the build, several at once.": "Помощники берут части сборки, по несколько сразу.",
 } satisfies LocaleCatalog;

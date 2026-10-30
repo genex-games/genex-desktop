@@ -940,9 +940,7 @@ export default {
   "Connect {name}": "Conectar {name}",
   Connected: "Conectado",
   "Connected to {name}.": "Conectado a {name}.",
-  Connecting: "Conectando",
   "Connecting tools": "Conectando ferramentas",
-  "Connecting your game to the studio": "Conectando seu jogo ao Studio",
   "Connecting…": "Conectando…",
   "Connection cancelled": "Conexão cancelada",
   Connections: "Conexões",
@@ -3153,8 +3151,6 @@ export default {
   "Reviewers model": "Modelo dos revisores",
   "Reviewers preferred it": "Os revisores preferiram a nova versão",
   "Reviewers preferred the game you had": "Os revisores preferiram o jogo que você tinha",
-  "Reviewers test every result and decide when the game is done.":
-    "Os revisores testam cada resultado e decidem quando o jogo está pronto.",
   "A second opinion": "Uma segunda opinião",
   "Reviewers undid it": "Os revisores desfizeram",
   "Reviewers undid {count, plural, other {# tries}}":
@@ -3949,7 +3945,6 @@ export default {
   "The rest of this file is too long to show here.": "O restante deste arquivo é longo demais para mostrar aqui.",
   "The reviewer is satisfied with this part.": "O revisor está satisfeito com esta parte.",
   "The reviewer preferred the new build to the round before.": "O revisor preferiu o novo build à rodada anterior.",
-  "The reviewer preferred the round before.": "O revisor preferiu a rodada anterior.",
   "The reviewers are looking at try {tryNumber}.": "Os revisores estão vendo a tentativa {tryNumber}.",
   "The reviewers kept it on the first try.": "Os revisores mantiveram na primeira tentativa.",
   "The reviewers kept try {tryNumber} after undoing the one before it.":
@@ -4638,8 +4633,6 @@ export default {
   "Worked on {count, plural, one {# step} other {# steps}}": "Fez {count, plural, one {# passo} other {# passos}}",
   Worker: "Ajudante",
   Workers: "Ajudantes",
-  "Workers build the parts of the plan, several at once.":
-    "Os ajudantes criam as partes do plano, várias ao mesmo tempo.",
   "Workers model": "Modelo dos ajudantes",
   "Workers: {model}": "Ajudantes: {model}",
   Working: "Trabalhando",
@@ -4910,10 +4903,6 @@ export default {
   "development build": "versão de desenvolvimento",
   done: "pronto",
   "down {percent}%": "queda de {percent}%",
-  "each round has to beat the one before, and a reviewer that cannot see which is which picks the winner":
-    "cada rodada tem que superar a anterior, e um revisor que não sabe qual é qual escolhe a vencedora",
-  "each round has to beat the one before, and {reviewer}, reviewing without being told which build is which, picks the winner":
-    "cada rodada tem que superar a anterior, e {reviewer}, revisando sem saber qual build é qual, escolhe a vencedora",
   "edited itself": "editou o próprio código",
   "edited the code": "editou o código",
   "editor\u0004Waiting for you": "Esperando por você",
@@ -4969,7 +4958,7 @@ export default {
   "had a judge play the game": "pôs um juiz para jogar o jogo",
   "handed the work to a worker": "passou o trabalho para um ajudante",
   "heading\u0004Installed": "Instalados",
-  'heading in the direction of "{name}" — {rule}': "rumo a “{name}” — {rule}",
+  'heading in the direction of "{name}"': "rumo a “{name}”",
   "how Genex runs this game": "como o Genex roda este jogo",
   "how Harness leads a build": "como o Harness conduz um build",
   "how Harness plans a build": "como o Harness planeja um build",
@@ -5191,7 +5180,7 @@ export default {
   "that snapshot has no game to play": "esse snapshot não tem nenhum jogo para jogar",
   "the Claude Agent SDK is not installed": "o Claude Agent SDK não está instalado",
   "the Genex CLI": "a CLI do Genex",
-  'the bar for this build is "{name}" — {rule}': "a referência deste build é “{name}” — {rule}",
+  'the bar for this build is "{name}"': "a referência deste build é “{name}”",
   "the build finished": "o build terminou",
   "the build finished but its output could not be kept": "o build terminou, mas o resultado não pôde ser guardado",
   "the build finished but wrote nothing to {folder}/": "o build terminou, mas não gravou nada em {folder}/",
@@ -5251,7 +5240,6 @@ export default {
   "the player's word": "segundo o jogador",
   "the preview shows the current build": "a prévia mostra o build atual",
   "the reviewer preferred it to the round before": "o revisor preferiu esta rodada à anterior",
-  "the reviewer preferred the round before": "o revisor preferiu a rodada anterior",
   "the reviewers are looking at try {tryNumber} of {step}":
     "os revisores estão vendo a tentativa {tryNumber} de {step}",
   "the run's record is incomplete": "o registro do build está incompleto",
@@ -5658,7 +5646,6 @@ export default {
   "{model} (selected)": "{model} (selecionado)",
   "{model} animations": "Animações de {model}",
   "{model} is not installed in Ollama.": "{model} não está instalado no Ollama.",
-  "{model} on {provider}": "{model} em {provider}",
   "{model} ready": "{model} pronto",
   "{name} account": "Conta de {name}",
   "{name} already builds in {title}.": "{name} já é usado por {title}.",
@@ -5728,8 +5715,6 @@ export default {
   "{part} · round {round}": "{part} · rodada {round}",
   "{part} · the model is busy — trying again in {seconds}s":
     "{part} · o modelo está sobrecarregado — tentando de novo em {seconds} s",
-  "{part} · the reviewer is busy — trying again in {seconds}s":
-    "{part} · o revisor está ocupado — tentando de novo em {seconds} s",
   "{part} · undoing": "{part} · desfazendo",
   "{part} · undoing something that broke": "{part} · desfazendo algo que quebrou",
   "{part} · waiting": "{part} · esperando",
@@ -6169,4 +6154,7 @@ export default {
   "Show us where Genex gets in your way.": "Mostre onde o Genex atrapalha você.",
   "Where you go, what fails and how long it takes": "Aonde você vai, o que falha e quanto tempo leva",
   "usage data\u0004Share": "Compartilhar",
+  "Reviewers give a second opinion when the lead asks for one.":
+    "Os revisores dão uma segunda opinião quando o agente principal pede.",
+  "Workers take parts of the build, several at once.": "Os ajudantes assumem partes do build, vários ao mesmo tempo.",
 } satisfies LocaleCatalog;

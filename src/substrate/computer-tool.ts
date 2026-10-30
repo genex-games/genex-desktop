@@ -10,8 +10,9 @@
  *
  * The action vocabulary is Anthropic's `computer_toolset_20260801` (screenshot, zoom,
  * left_click …, key, type, scroll, wait) so both models already know how to hold it, plus the
- * studio verbs a game needs: `camera` (a named studio viewpoint), `state` (the game's own
- * numbers), `reload` (rebuild + reload after edits), `console` (errors since load).
+ * studio verbs a target may have: `state` (what it reports about itself), `reload` (rebuild +
+ * reload after edits), `console` (errors since load), and `camera` (a named viewpoint; no target
+ * offers one today).
  *
  * Electron-free: this file parses the flat arguments the bridge shim and the MCP schema
  * deliver and maps an action onto {@link PreviewInputAction}s. The port that executes them
@@ -45,7 +46,6 @@ import {
   COMPUTER_PARAMETER_TEXT,
   computerToolDescription,
   type ComputerToolRole,
-  knownCamerasLine,
 } from "./computer-tool-prompts.ts";
 
 export const COMPUTER_TOOL_NAME = "computer";
@@ -190,8 +190,6 @@ export const COMPUTER_VIEW = { width: 960, height: 600 } as const;
 const DEFAULT_SCROLL_NOTCHES = 3;
 /** Seconds a wait or a held key lasts when it names none. */
 const DEFAULT_DURATION_S = 1;
-/** How many camera names the tool description lists. */
-const MAX_LISTED_CAMERAS = 12;
 /** How much of an unknown surface word the note quotes back. */
 const MAX_QUOTED_SURFACE_CHARS = 40;
 /** How much of typed text a caption quotes. */
@@ -652,7 +650,6 @@ export interface ComputerToolSchema {
 export function computerToolDefinition(
   options: {
     role?: ComputerToolRole;
-    cameras?: string[];
     capabilities?: TargetCapabilities;
     view?: { width: number; height: number };
     observeByDefault?: boolean;
@@ -661,7 +658,6 @@ export function computerToolDefinition(
   } = {},
 ): ComputerToolSchema {
   const capabilities = options.capabilities ?? BROWSER_CAPABILITIES;
-  const cameras = knownCamerasLine((options.cameras ?? []).slice(0, MAX_LISTED_CAMERAS));
   const text = COMPUTER_PARAMETER_TEXT;
   const view = options.view ?? COMPUTER_VIEW;
   return {
@@ -669,7 +665,6 @@ export function computerToolDefinition(
     description: computerToolDescription({
       role: options.role ?? "builder",
       view,
-      cameras,
       capabilities,
       ...(options.observeByDefault ? { observeByDefault: true } : {}),
     }),
@@ -841,8 +836,6 @@ function describeWebAction(request: ComputerRequest): string {
 export type { PreviewSetup };
 
 const MAX_SETUP_ACTIONS = 24;
-/** The longest demo name a setup keeps. */
-const MAX_DEMO_CHARS = 80;
 /** The longest settle a setup may ask for. */
 const MAX_SETTLE_MS = 10 * SECOND_MS;
 /** The longest note a setup keeps. */
@@ -885,11 +878,9 @@ export function normalizeSetup(raw: unknown): PreviewSetup | null {
     const actions = capActions(o.actions).slice(0, MAX_SETUP_ACTIONS);
     if (actions.length) setup.actions = actions;
   }
-  const demo = trimmedText(o.demo, MAX_DEMO_CHARS);
-  if (demo) setup.demo = demo;
   const settle = Number(o.settleMs);
   if (Number.isFinite(settle) && settle > 0) setup.settleMs = Math.min(MAX_SETTLE_MS, Math.round(settle));
   const note = trimmedText(o.note, MAX_SETUP_NOTE_CHARS);
   if (note) setup.note = note;
-  return setup.actions || setup.demo || setup.gesture ? setup : null;
+  return setup.actions || setup.gesture ? setup : null;
 }

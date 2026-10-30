@@ -61,7 +61,6 @@ import { capActions, type PreviewInputAction } from "../substrate/preview-input.
 import { applyInputAction, type PageDispatch } from "./preview-input-driver.ts";
 import { cropImageFile, diffImageFiles, encodedImageStats, pairJpeg, resizeToJpeg } from "./preview-images.ts";
 import { DEFAULT_SHOT_QUALITY, encodeStill, stillFit } from "./core/capture.ts";
-import { clipPageOn, recordClip } from "./preview-clip.ts";
 import {
   ATTACH_PROBE,
   GL_PROBE,
@@ -79,8 +78,6 @@ import { chooseCapture, probePageUi, resolveSurface, type PageUi } from "../subs
 import type {
   CropRect,
   PageAttachReport,
-  PreviewClipAnswer,
-  PreviewClipRequest,
   PreviewStillAnswer,
   PreviewStillRequest,
   ShimOptions,
@@ -976,41 +973,6 @@ export class GamePreview {
         preview: scaledTo(image, size, request.previewMaxPx).toJPEG(STILL_PREVIEW_QUALITY),
       },
     };
-  }
-
-  /**
-   * A plugin's clip: `seconds` of the canvas a still reads, recorded in the page as the game draws
-   * it (`preview-clip.ts`), never longer, with a JPEG poster of its first frame and its motion. An
-   * offscreen window paints at least `fps` frames a second while it records, and its own rate after.
-   */
-  async clip(request: PreviewClipRequest): Promise<PreviewClipAnswer> {
-    const wc = this.#page();
-    const rate = this.options.offscreen ? wc.getFrameRate() : null;
-    if (rate !== null && rate < request.fps) wc.setFrameRate(request.fps);
-    if (this.options.offscreen && !wc.isPainting()) wc.startPainting();
-    try {
-      return await recordClip(
-        {
-          page: clipPageOn((expression) => wc.executeJavaScript(expression, true)),
-          sleep,
-          now: () => performance.now(),
-          bitmap: (dataUrl) => {
-            const image = nativeImage.createFromDataURL(dataUrl);
-            if (image.isEmpty()) return null;
-            const size = image.getSize();
-            return { bgra: image.toBitmap(), width: size.width, height: size.height };
-          },
-          jpeg: (dataUrl, maxPx) => {
-            const image = nativeImage.createFromDataURL(dataUrl);
-            if (image.isEmpty()) return null;
-            return scaledTo(image, image.getSize(), maxPx).toJPEG(STILL_PREVIEW_QUALITY);
-          },
-        },
-        request,
-      );
-    } finally {
-      if (rate !== null && rate < request.fps && !wc.isDestroyed()) wc.setFrameRate(rate);
-    }
   }
 
   /**
