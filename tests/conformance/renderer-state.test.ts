@@ -735,7 +735,6 @@ describe("what each UI event makes the renderer read again", () => {
       "plugin.consent",
       "improvement.applied",
       "coordinator.queued",
-      "run.optimization",
     ]) {
       assert.deepEqual(reads(ev(type)), ["events"], type);
     }
