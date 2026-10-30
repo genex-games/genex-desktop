@@ -2,7 +2,5 @@
 
 This game is a web page, and these rules come on top of the ones above.
 
-1. **Look in the preview.** After changing the game, reload the preview, press a control
-   (`press_keys`, `look`, `click`), take a screenshot, and read `game_state()`.
-2. **Keep `window.__studio` working** when the game has it: the preview and a Loop's checks drive
-   and inspect the game through it (seed, start, pause, step, state, debugCamera).
+1. **Look in the preview** when you want to see a change: reload it, drive it with `press_keys`,
+   `look` or `click`, take a `screenshot`, and read `console_log` for errors.

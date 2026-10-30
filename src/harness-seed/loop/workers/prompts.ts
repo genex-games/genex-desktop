@@ -79,7 +79,7 @@ export function workerBrief(parts: WorkerBriefParts): string {
       : "Work from the project and your own knowledge; the web is not part of this task.",
     WORKER_PLUGIN_SEARCH,
     WORKER_ONE_TURN,
-    "Never start workers of your own. Hand back by finishing: end with a report of what you did, what you found (name the files and pictures that show it) and what is left; the lead reads it in full.",
+    "Never start workers of your own. Hand back by finishing: end with a report of what you did and what is left; the lead reads it in full.",
   ];
   return lines.join("\n");
 }

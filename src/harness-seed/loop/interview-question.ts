@@ -85,19 +85,17 @@ export async function recordInterviewQuestion(ctx: ToolCtx, args: AnyRecord): Pr
 export const askUser: HarnessTool = {
   name: "ask_user",
   description:
-    "Ask one necessary question in the chat's answer panel. Offer up to 3 concise choices, recommended first. The user can also type a different answer. End your reply after calling this; wait for the next user message before starting a run. Before a build, ask it when you do not know what the game is or how it should look. Never use this for progress updates, permission to do work already requested, or a reply to a greeting or small talk (answer that in words).",
+    "Ask one necessary question in the chat's answer panel. Offer up to 3 concise choices, recommended first. The user can also type a different answer. End your reply after calling this; wait for the next user message before starting a run. Never use this for progress updates, permission to do work already requested, or a reply to a greeting or small talk (answer that in words).",
   parameters: {
     type: "object",
     properties: {
       recap: {
         type: "string",
-        description:
-          "Optional: one short sentence on what you found or just did, shown above the question (for example: The road, two cars and the lap timer are in.).",
+        description: "Optional: one short sentence on what you found or just did, shown above the question.",
       },
       question: {
         type: "string",
-        description:
-          "One short question whose answer changes what you do next (for example: what the player does or how the game should look, before a build; or a build versus research and a plan first).",
+        description: "One short question whose answer changes what you do next.",
       },
       options: {
         type: "string",

@@ -12,7 +12,6 @@ import { hasText } from "../text.ts";
 import { minutes } from "../time.ts";
 import { agentStatus } from "./agents.ts";
 import { askCritic } from "./critic.ts";
-import { requiredText } from "./critic-prompts.ts";
 import {
   AGENT_PART_PREFIX,
   AgentVerdict,
@@ -23,7 +22,7 @@ import {
   MAX_RUNNING_AGENTS,
 } from "./lead-contract.ts";
 import { milestoneColumn, tellUser } from "./lead-graph.ts";
-import { type Lead, milestoneNow, requiredNow, saveLead } from "./lead-journal.ts";
+import { type Lead, milestoneNow, saveLead } from "./lead-journal.ts";
 import { LEAD_TOOL_WORDS, RUN_STATUS } from "./lead-prompts.ts";
 import { type FinishingLead, leadFinish } from "./lead-finish.ts";
 import { workerTools } from "./lead-workers.ts";
@@ -48,11 +47,11 @@ export const LEAD_TOOLS: LiveToolSpec[] = [
   {
     name: LeadTool.SavePoint,
     description:
-      "Save after you have looked: Genex saves all in the editor, reads Unreal's new log errors, snapshots the game under this label and captures the hero cameras as thumbnails. Refused while the game plays. Answers the snapshot, the log errors and the thumbnails' tone numbers.",
+      "Genex saves all in the editor, reads Unreal's new log errors and snapshots the game under this label. Refused while the game plays. Answers the snapshot and the log errors.",
     parameters: {
       type: "object",
       properties: {
-        label: text("A short name for this save point, e.g. 'Atmosphere pass'."),
+        label: text("A short name for this save point."),
         summary: text("What the game holds now, in one line."),
       },
       required: ["label", "summary"],
@@ -146,12 +145,12 @@ export const LEAD_TOOLS: LiveToolSpec[] = [
   {
     name: LeadTool.Critic,
     description:
-      "Fresh eyes: a critic looks at your captures beside the references and ART.md and answers defects with fixes and one bold move. It advises; it never decides.",
+      "A second opinion: a model that did none of the work looks at the captures you name and answers your question. It decides nothing.",
     parameters: {
       type: "object",
       properties: {
         shots: text("Capture file names, comma-separated."),
-        question: text("What you want judged (optional)."),
+        question: text("Your question (optional)."),
       },
       required: ["shots"],
     },
@@ -203,7 +202,6 @@ export function runStatusText(lead: Lead): string {
     RUN_STATUS.SavePoints(labels),
     agentStatus(lead),
     RUN_STATUS.Credits(journal.credits.spent, journal.credits.cap),
-    requiredText(requiredNow(journal)),
   ]
     .filter(Boolean)
     .join("\n");

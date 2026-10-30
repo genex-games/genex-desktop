@@ -135,7 +135,7 @@ export function pendingKindRule(
   if (asked && offered.length > 0) return [engineChoiceRule(engine, unreal, offered)];
   const start = toolCall(engine, ProjectTool.StartWebGame);
   return [
-    `${newProjectWords(holds)} For a game that plays in Genex (the default when the request names no engine), call ${start} first, then build the game in the page it writes.`,
+    `${newProjectWords(holds)} For a game that plays in Genex as a web page, ${start} writes a starter page; it is one option, not a requirement.`,
     ...offered.map((kind) => {
       const name = offerName(kind);
       return `When the request names ${name}, call ${toolCall(engine, kind.tool)}: it makes the game's ${name} project in this folder; then build it with that plugin's tools.`;
@@ -240,6 +240,6 @@ export function unrealWithoutPlugin(engine: string | undefined): string[] {
 export function factsReadyPrompt(facts: readonly FactRef[], launch?: string): string {
   const ready = `The project now holds ${holdsWords(facts)}; your tools fit it now.`;
   if (launch)
-    return `${ready} Loop is on, so decide as your Loop rules say: when the ask is to build the game or change it substantially, start that build now with ${launch} (call it last, then recap in one short paragraph) and do not build it yourself; anything smaller, finish it here and tell the user what you did.`;
-  return `${ready} Go on with what you said you would build first, look at the result, then tell the user what you made and what to try.`;
+    return `${ready} Loop is on, so decide as your Loop rules say: when the ask is to build the game or change it substantially, start it now with ${launch} (call it last, then recap in one short paragraph); anything smaller, finish it here and tell the user what you did.`;
+  return `${ready} Go on with what you said you would do, then tell the user what you made.`;
 }

@@ -56,7 +56,7 @@ import { sourceStamp } from "./restore.ts";
 import { autosave } from "./save-point.ts";
 import { TemplateKind, templateKind } from "./template-kind.ts";
 
-export { SAVE_STEER_MS, TURN_MS, WRAP_UP_MS } from "./lead-turn.ts";
+export { TURN_MS, WRAP_UP_MS } from "./lead-turn.ts";
 
 /** A run without its own budget gets one hour. */
 const DEFAULT_RUN_MS = HOUR_MS;

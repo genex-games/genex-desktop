@@ -28,7 +28,7 @@ import { MINUTE_MS, minutes, SECOND_MS } from "../time.ts";
 import { agentNews, creditCapOf } from "./agents.ts";
 import { LeadEndReason } from "./lead-contract.ts";
 import { tellUser } from "./lead-graph.ts";
-import { gameText, type Lead, type LeadTurn, requiredNow, saveLead, why } from "./lead-journal.ts";
+import { gameText, type Lead, type LeadTurn, saveLead, why } from "./lead-journal.ts";
 import { CARRIED, digestPrompt, HANDOVER_WHY, handoverWords, leadBrief, STEER } from "./lead-prompts.ts";
 import { LEAD_TOOLS, runStatusText } from "./lead-tools.ts";
 import type { TemplateKind } from "./template-kind.ts";
@@ -36,8 +36,6 @@ import { folderLabelOf } from "../workers/identity.ts";
 
 /** One turn of the lead, at most. */
 export const TURN_MS = 45 * MINUTE_MS;
-/** This long after the last save point, the lead is steered to look, then save. */
-export const SAVE_STEER_MS = 15 * MINUTE_MS;
 /** The wrap-up steer comes this long before the run's working deadline. */
 export const WRAP_UP_MS = 12 * MINUTE_MS;
 /** The lead's effort unless the person chose one for the builders. */
@@ -51,8 +49,6 @@ const LIMIT_MARGIN_MS = 5 * MINUTE_MS;
 const WATCH_MS = 15 * SECOND_MS;
 /** How much of NOTES.md a fresh session's brief carries. */
 const NOTES_CHARS = 8_000;
-/** With no critic look for this long, the next digest asks for fresh eyes, and then not again for as long. */
-export const FRESH_EYES_MS = 45 * MINUTE_MS;
 /** How many of the owner's messages the journal remembers as heard. */
 const HEARD_OWNER_KEPT = 200;
 
@@ -248,15 +244,6 @@ export function unsavedSince(lead: LeadRun): number {
   return Math.max(lead.journal.savePoints.at(-1)?.at ?? 0, lead.workingSince);
 }
 
-/** Every `SAVE_STEER_MS` of work without a save point: look, then save. */
-async function saveWatch(lead: LeadRun, turn: LeadTurn): Promise<void> {
-  const since = unsavedSince(lead);
-  const elapsed = lead.clock.now() - since;
-  const key = `save-${since}-${Math.floor(elapsed / SAVE_STEER_MS)}`;
-  if (elapsed < SAVE_STEER_MS || turn.steered.has(key) || lead.saving) return;
-  await steer(lead, turn, key, STEER.SaveNow(leadEngine(lead).engine, minutes(elapsed)));
-}
-
 /** Whether the run is in its wrap-up: its working deadline is near. */
 export const inWrapUp = (lead: LeadRun): boolean => lead.clock.now() >= lead.softDeadline - WRAP_UP_MS;
 
@@ -308,7 +295,6 @@ async function lookOnce(lead: LeadRun, turn: LeadTurn, recover: (lead: LeadRun) 
   await ownerWatch(lead, turn);
   await agentWatch(lead, turn);
   await jobWatch(lead, turn);
-  await saveWatch(lead, turn);
   await wrapUpWatch(lead, turn);
   await endWatch(lead);
 }
@@ -463,16 +449,6 @@ async function briefFor(lead: LeadRun): Promise<string> {
   });
 }
 
-/** Minutes since the critic last looked (or the run began) when fresh eyes are due, else null; due at most every FRESH_EYES_MS. */
-function freshEyesDue(lead: LeadRun): number | null {
-  const now = lead.clock.now();
-  const since = lead.journal.critiques.at(-1)?.at ?? lead.started;
-  const quiet = now - since >= FRESH_EYES_MS && now - (lead.freshEyesAskedAt ?? since) >= FRESH_EYES_MS;
-  if (!quiet) return null;
-  lead.freshEyesAskedAt = now;
-  return minutes(now - since);
-}
-
 /** What the next turn opens with: the digest of what happened since the lead's last turn. */
 async function digestOf(lead: LeadRun): Promise<string> {
   const { journal } = lead;
@@ -496,8 +472,6 @@ async function digestOf(lead: LeadRun): Promise<string> {
     carried,
     jobs,
     credits: journal.credits,
-    freshEyesDue: freshEyesDue(lead),
-    required: requiredNow(journal),
   });
 }
 

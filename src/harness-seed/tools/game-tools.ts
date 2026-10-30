@@ -136,13 +136,13 @@ export const tools: HarnessTool[] = [
   {
     name: "new_game",
     description:
-      "Create a new game project. With kind 'web' Genex writes its three.js starter, which already satisfies the studio contract (window.__studio), so the first screenshot works immediately. Leave kind out for an empty folder you fill yourself.",
+      "Create a new game project. With kind 'web' Genex writes a starter web page; leave kind out for an empty folder you fill yourself.",
     parameters: {
       type: "object",
       properties: {
         name: str("lowercase project id, e.g. 'pong'"),
         title: str("human title"),
-        kind: { type: "string", enum: [ProjectStarter.Web], description: "'web' for the three.js starter" },
+        kind: { type: "string", enum: [ProjectStarter.Web], description: "'web' for a starter web page" },
       },
       required: ["name"],
     },
@@ -165,7 +165,7 @@ export const tools: HarnessTool[] = [
   {
     name: ProjectTool.StartWebGame,
     description:
-      "Make this game a web game: Genex writes its three.js starter here, which Live shows beside the chat. Only while the folder has no kind yet.",
+      "Make this game a web game: Genex writes a starter web page here, which Live shows beside the chat. Only while the folder has no kind yet.",
     parameters: { type: "object", properties: { project: str("project id; defaults to this chat's folder") } },
     async execute(args, ctx) {
       const pin = pinProject(args, ctx);
@@ -179,7 +179,7 @@ export const tools: HarnessTool[] = [
       });
       if ("blocker" in started) return started.message;
       await ctx.call(HostMethod.PreviewLoad, { project });
-      return "Genex wrote the game's page: index.html and src/main.js, both yours to rewrite from scratch, as plain as the game wants. Its import map serves three.js r185 (`three`, `three/addons/`, `three/webgpu`) from Genex's own copy at /vendor/, not from this folder: import it, never search the disk for it. The rest of src/ and docs/ is Genex's own instrumentation for its Loop builds: you need none of it.";
+      return "Genex wrote the game's page: index.html and src/main.js, yours to change or replace. Its import map serves three.js (`three`, `three/addons/`, `three/webgpu`) from Genex's own copy at /vendor/, not from this folder.";
     },
   },
 
@@ -262,7 +262,7 @@ export const tools: HarnessTool[] = [
   {
     name: "check_game",
     description:
-      "Static check of a project before judging it: entry point present, studio contract installed, and the page loads nothing the preview cannot reach.",
+      "Static check of a project: its entry point is present and the page loads nothing the preview cannot reach.",
     parameters: { type: "object", properties: { project: str("project id; defaults to this chat's folder") } },
     async execute(args, ctx) {
       const pin = pinProject(args, ctx);
@@ -295,7 +295,7 @@ export const tools: HarnessTool[] = [
   {
     name: "delegate_to_contractor",
     description:
-      "Hand a well-specified build task to a vendor harness (Claude Code or Codex, whichever subscription is signed in) working in the game workspace. Use for large, mechanical work. Write the brief carefully: the brief is the part you control and improve.",
+      "Hand a well-specified build task to a vendor harness (Claude Code or Codex, whichever subscription is signed in) working in the game workspace. Use for large, mechanical work: write a complete brief, with how to tell the task is done.",
     parameters: {
       type: "object",
       properties: {
@@ -326,7 +326,7 @@ export const tools: HarnessTool[] = [
   {
     name: "run_command",
     description:
-      "Run a shell command inside the sandbox (no network, writes limited to the workspaces). Use for git, grep, or file inspection. Your own code (loop/, tools/, memory/, types/, tsconfig.json, package.json) is read-only here: change it with write_own_file or install_tool.",
+      "Run a shell command inside the sandbox (no network, writes limited to the workspaces). Use for git, grep, or file inspection. Your own code (loop/, tools/, types/, tsconfig.json, package.json) is read-only here: change it with write_own_file or install_tool.",
     parameters: {
       type: "object",
       properties: {

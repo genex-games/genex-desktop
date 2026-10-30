@@ -164,7 +164,7 @@ export function reviewerBrief(input: ReviewerBriefInput): string {
     [
       "## Your answer",
       `End with one JSON object: ${ANSWER_FORMAT}.`,
-      'In "reasons", say briefly what you checked and what you found, met or not. In "done", name each thing the person asked for that the proof shows, a few words each in their words ("Robot hands back"). In "notDone", on a no, name each thing they asked for that the proof does not show yet, one short line each (under 15 words) and nothing that is met; on a yes it is empty. The person reads "done" and "notDone" as a checklist.',
+      'In "reasons", say briefly what you checked and what you found, met or not. In "done", name each thing the person asked for that the proof shows, a few words each in their words ("the second level"). In "notDone", on a no, name each thing they asked for that the proof does not show yet, one short line each (under 15 words) and nothing that is met; on a yes it is empty. The person reads "done" and "notDone" as a checklist.',
       "Say no when the proof does not show it; say what is missing, concretely.",
     ].join("\n"),
   ]
