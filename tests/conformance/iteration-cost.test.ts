@@ -857,13 +857,12 @@ describe("a fast self-look at a bench page", () => {
     assert.match(answer, /^Captured your CURRENT build/, answer);
   });
 
-  it("captures only the part's own cameras when the grant names them", async () => {
+  it("takes one frame of the page, whatever cameras the grant or the builder names", async () => {
+    // Flipped from "captures only the part's own cameras": a game has no studio cameras now.
     const { capture } = await benchCapture();
-    const answer = await capture({ cameras: ["chase"] })({});
-    assert.match(answer, /c1_chase\.jpg/);
-    assert.doesNotMatch(answer, /c1_top\.jpg|c1_dash\.jpg/);
-    const asked = await capture({ cameras: ["chase"] })({ cameras: "top" });
-    assert.match(asked, /c\d+_top\.jpg/, "a camera the builder names still wins");
+    const answer = await capture({ cameras: ["chase"] })({ cameras: "top" });
+    assert.match(answer, /c1_default\.jpg/);
+    assert.doesNotMatch(answer, /c1_chase\.jpg|c1_top\.jpg|c1_dash\.jpg/);
   });
 });
 
@@ -875,10 +874,8 @@ describe("every builder engine can look at a bench page", () => {
       [{ page: "   " }, {}],
       [{ page: null }, {}],
       [{ page: 7 }, {}],
-      [
-        { cameras: "chase", page: "bench/hud.html" },
-        { cameras: "chase", page: "bench/hud.html" },
-      ],
+      // Flipped: cameras are no longer handed on; a capture photographs the page.
+      [{ cameras: "chase", page: "bench/hud.html" }, { page: "bench/hud.html" }],
       [{ cameras: "" }, {}],
       [{}, {}],
     ];

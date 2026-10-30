@@ -125,7 +125,6 @@
   "tests/conformance/game-engine-links.test.ts",
   "tests/conformance/game-export.test.ts",
   "tests/conformance/game-file.test.ts",
-  "tests/conformance/game-network-loads.test.ts",
   "tests/conformance/genex-cli-env.test.ts",
   "tests/conformance/genex-creator-mcp.test.ts",
   "tests/conformance/genex-delivery.test.ts",

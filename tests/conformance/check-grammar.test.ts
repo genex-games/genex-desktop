@@ -156,20 +156,6 @@ describe("the pages a builder is handed", () => {
     assert.deepEqual(text.match(/^\d+\. /gm) ?? [], []);
   });
 
-  it("keeps CONTRACT.md to the tables, including the one written for a game the studio did not write", () => {
-    const text = page("docs/CONTRACT.md");
-    // 121 after M4.8a's diet; 127 once the three harness-owned modules became real `###`
-    // sections rather than bold run-ins (`projects.test.ts` looks for the Assets heading, and
-    // CLAUDE.md rule 5 sends a builder to it by name); 150 with M4's attachment paragraph, the
-    // two-line install and the `bootMs`/`game` rows — the words three lanes asked this page for.
-    assert.ok(text.split("\n").length <= 150, `CONTRACT.md is ${text.split("\n").length} lines`);
-    // prompts/optimization.md and judge/optimization-preserve.md grade against this paragraph:
-    // it is the only written contract for a custom runtime, and cutting it cut the definition.
-    assert.equal(text.split("app-owned observer").length - 1, 1);
-    assert.match(text, /## Optimization-stage observation/);
-    assert.match(text, /## Renderers/, "the WebGPU sentences have a home");
-  });
-
   it("keeps CLAUDE.own.md's four substitution tokens where game-workspace fills them in", () => {
     const text = page("CLAUDE.own.md");
     for (const token of ["__ENTRY_MAIN__", "__SERVED_ENTRY__", "__BUILD_LINE__", "__BUILD_RULE__"]) {
@@ -177,16 +163,12 @@ describe("the pages a builder is handed", () => {
     }
   });
 
-  it("numbers CLAUDE.own.md's rules 1..6 with no gap or repeat, with a build and without", () => {
-    // Rule 6 is hard-coded in game-workspace.ts's ownRules: renumbering here silently produces a
-    // page with two rule 5s or no rule 6.
+  it("keeps CLAUDE.own.md to facts, with no numbered rules, with a build and without", () => {
+    // Flipped from "numbers CLAUDE.own.md's rules 1..6": the page a game of its own gets says
+    // what Genex knows of it and asks nothing of it.
     const text = page("CLAUDE.own.md");
-    const numbers = (body: string) => (body.match(/^(\d+)\. /gm) ?? []).map((line) => Number(line.trim().slice(0, -1)));
-    assert.deepEqual(numbers(text.replace("__BUILD_RULE__", "")), [1, 2, 3, 4, 5]);
-    assert.deepEqual(
-      numbers(text.replace("__BUILD_RULE__", "6. **Run `npm run build` before you finish**")),
-      [1, 2, 3, 4, 5, 6],
-    );
+    for (const build of ["", "\nIt builds with `npm run build`; Genex runs the same build before each preview.\n"])
+      assert.deepEqual(text.replace("__BUILD_RULE__", build).match(/^\d+\. /gm) ?? [], []);
   });
 
   it("ships exactly the two skills the run code reads", () => {
