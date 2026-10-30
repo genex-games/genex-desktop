@@ -56,10 +56,10 @@ host for arrives over the harness RPC, which is therefore an untrusted surface:
   `sandbox.allowWrite`.
 - Only whoever answers the person in a game chat asks them: its own Claude session, or a build's
   lead or the run's coordinator, in the chat's mode
-  ([tool permissions](../tool-permissions.md)), decided from the host's records. `thread.create` takes a title only; `events.append` and
+  ([tool permissions](../tool-permissions.md)), decided from the host's records. The harness makes no threads; `events.append` and
   `turn.append` refuse `tool_permission` and `plugin_consent` rows. No agent process writes a
   game's `.claude` folder; no landing or promotion brings one.
-- `preview.load` and `game.attached` accept only a library game, and a `root` only when its
+- `preview.load` accepts only a library game, and a `root` only when its
   realpath is strictly inside scratch or equals that game's registered folder; the preview pins
   the real path at load. `snapshot.worktree` and `snapshot.removeWorktree` refuse a symlinked
   component below scratch. `game.read`/`game.write` check the real target (a write never follows a
@@ -649,9 +649,6 @@ rows from `shape-words.ts` `openOptions`) lists candidates, runners, run blocker
 writes (`plannedWrites`); only its button calls `studio:project.adopt` with the row's `OpenChoice`. A nested game is adopted as the project;
 keeping the parent passes `template: false`. Adoption never writes the template's entry or pages
 beside a real entry; an own game gets `CLAUDE.md`/`NOTES.md` from `game-template/*.own.md`.
-`game.upgradeContract` replaces only unedited shipped `src/studio.js`/`src/hud.js` copies older than the
-template's (kept as `<name>.v<generation>.js`); an edited contract keeps its HUD, and an edited
-older HUD is noted and narrows builders' HUD rule (`loop/held-hud.ts`).
 
 **Builds.** `preview.load`/`preview.reload` build through `GameBuilds`
 ([`src/main/game-build.ts`](../../src/main/game-build.ts)) and serve the output, never in a folder the
@@ -718,8 +715,7 @@ waits for a fact (`READY_PROBE`, `via: shim | contract | none`) and never throws
 ready → gesture → setup → start, with one boot budget (`bootBudget`, 1000–60000 ms, default 15000,
 `studio.json` `bootMs`). A spent budget is a note (`timedOut`), not a failure; `phase: "failed"` is
 only a page's own boot failure. `validateAt` answers `loaded`, `attached` or `missing`;
-`game.attached` asks the live page what the studio attached to. `preview.ready`, `preview.gesture`,
-`preview.pageUi` and `game.attached` are host RPC calls, not agent tools.
+`preview.ready` and `preview.observe` are host RPC calls, not agent tools.
 
 **Worker windows and computer use.** Every building delegation and every looking read-only session
 gets one pooled preview window
@@ -917,8 +913,7 @@ managed local runtime; core has no Blender tool of its own.
   ship with the renderer and the CSP allows WebAssembly and blob workers, not arbitrary evaluation.
   Viewers never mutate usage evidence.
 - **Checkpoints.** [`src/main/asset-checkpoints.ts`](../../src/main/asset-checkpoints.ts) commits only
-  unchanged recorded assets with a separate index and re-hashes the staged blob before committing;
-  the director calls `assets.checkpoint` before merging.
+  unchanged recorded assets with a separate index and re-hashes the staged blob before committing.
 - **Export.** [`src/substrate/game-export.ts`](../../src/substrate/game-export.ts) stages fresh public
   files and replaces only an app-managed destination; hidden files, env files, private-key names,
   dependencies and symlinks are excluded or refused; parsed imports and references prune the

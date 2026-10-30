@@ -126,8 +126,7 @@ describe("which Loop a run gets", () => {
     const [first] = inPlaceLeads(host);
     assert.ok(first, "the lead worked in place");
     assert.equal(first.resume, CHAT_SESSION, "the chat's own session leads");
-    for (const method of ["game.scaffold", "game.upgradeContract", "preview.load"])
-      assert.ok(!host.trail().includes(method), `no ${method}`);
+    for (const method of ["game.scaffold", "preview.load"]) assert.ok(!host.trail().includes(method), `no ${method}`);
     assert.equal(host.appended("run_finished").length, 1);
   });
 
@@ -869,7 +868,6 @@ describe("what a Loop in place teaches", () => {
         return undefined;
       };
       const host = await hostOn(Project.GodotGame, { facts: GODOT, turns: [notes] });
-      host.rec.handle("learning.enabled", () => true);
       await host.dispatch();
       assert.equal(host.appended("run_finished").at(-1)?.victory, true);
       assert.deepEqual(host.appended("run_learning"), [], "no learning pass");
@@ -1146,7 +1144,7 @@ describe("a run's route when its journal, its folder or the game list can't be r
       await host.dispatch();
       const [closed] = host.appended("run_finished");
       assert.equal(closed?.stoppedBecause, OPEN_LOOP_REFUSAL.gamesUnreadable);
-      for (const method of ["game.scaffold", "game.start", "game.upgradeContract", "preview.load", "engine.delegate"])
+      for (const method of ["game.scaffold", "game.start", "preview.load", "engine.delegate"])
         assert.equal(host.rec.paramsOf(method).length, 0, `no ${method}`);
     },
   );

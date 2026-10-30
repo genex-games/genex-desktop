@@ -97,7 +97,7 @@ names: one it reads is one Accept edits writes without asking.
 
 ## The harness cannot forge it
 
-- `thread.create` takes a title and nothing else: no id, kind, game or mode.
+- The harness makes no threads (there is no `thread.create`), so none of its own can read as a person's chat.
 - `events.append` and `turn.append` refuse `tool_permission` and `plugin_consent` rows
   (`refuseHostQuestions`); the host appends both.
 - A session a person answers reads beyond its game only the folders the thread records

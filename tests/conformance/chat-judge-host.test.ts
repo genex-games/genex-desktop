@@ -156,48 +156,4 @@ describe("a chat's judge on the host", () => {
       await core.plugins.setEnabled("unreal", false);
     }
   });
-
-  it("runs judge.play for the harness's own loop (Ollama) only in a chat, with its model, on a game the studio plays in a window", {
-    timeout: CASE_TIMEOUT_MS,
-  }, async () => {
-    const { core, api, game, project, other, threadId } = await workerChat();
-    const sent: DispatchAction[] = [];
-    core.host.hasCapability = (capability) => capability === HarnessCapability.ChatJudge;
-    core.host.dispatch = async (action) => {
-      sent.push(action);
-      return { status: "failed", answer: "no", note: "Hit the block.", objective: "model-said", trace: null };
-    };
-    const play = (params: Record<string, unknown>) =>
-      api["judge.play"]!({ project: game, args: { ask: "Can you win?" }, ...params }) as Promise<
-        { answer: LiveToolResult } | { unavailable: string }
-      >;
-    assert.ok("unavailable" in (await play({ engine: "ollama" })), "no chat to record in");
-    assert.ok("unavailable" in (await play({ threadId })), "no model to play with");
-    // The harness is the agent's: a line goes only to this game's own chat, never another's.
-    const elsewhere = await core.threadForGame(other.name);
-    for (const [label, chat] of [
-      ["another game's chat", elsewhere],
-      ["a chat that does not exist", "no-such-thread"],
-    ] as const) {
-      assert.ok("unavailable" in (await play({ threadId: chat, engine: "ollama" })), `${label}: no judge`);
-    }
-    assert.equal(sent.length, 0, "nothing was played for a chat that is not this game's");
-    const strays = (await core.store.listEvents(elsewhere)).filter(
-      (event) => event.data.type === "custom" && event.data.event_type === CustomEvent.ChatJudgeResult,
-    );
-    assert.equal(strays.length, 0, "another game's chat got no line");
-    const answered = await play({ threadId, engine: "ollama", model: "qwen3.5:4b" });
-    assert.ok("answer" in answered);
-    assert.match(String(answered.answer), /Failed\. The judge answered no/);
-    assert.deepEqual(
-      sent
-        .filter((action) => action.type === "chat_judge")
-        .map((action) => action.type === "chat_judge" && [action.root, action.engine, action.model]),
-      [[project.dir, "ollama", "qwen3.5:4b"]],
-    );
-    const lines = (await core.store.listEvents(threadId)).filter(
-      (event) => event.data.type === "custom" && event.data.event_type === CustomEvent.ChatJudgeResult,
-    );
-    assert.equal(lines.length, 1);
-  });
 });

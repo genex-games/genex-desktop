@@ -105,19 +105,14 @@ describe("settings: the one self-improving switch", () => {
     assert.equal(rig.core.settings.learning, false, "off by default: self-improvement is stopped");
     await rig.core.updateSettings({ learning: true });
     await rig.core.updateSettings({ learning: false });
-    assert.equal(
-      await rig.core.api()["learning.enabled"]!({} as never),
-      false,
-      "the harness is told before it learns anything",
-    );
 
     // A waiting suggestion is not swept in, even when automatic apply is switched on.
-    const file = path.join(rig.core.layout.harnessWs, "skills", "facet-decomposition.md");
+    const file = path.join(rig.core.layout.harnessWs, "prompts", "operating-rules.md");
     const before = await readFile(file, "utf8");
     await rig.core.store.writeArtifact(rig.core.mainThread, "skillopt_staged", [
       {
-        skill: "facet-decomposition",
-        file: "skills/facet-decomposition.md",
+        skill: "operating-rules",
+        file: "prompts/operating-rules.md",
         currentText: before,
         proposedText: `${before}\n- Waiting.\n`,
         gate: {},
@@ -138,7 +133,7 @@ describe("settings: the one self-improving switch", () => {
     await rig.core.init();
     assert.equal(rig.core.settings.learning, false, "the switch survives a relaunch");
     await rig.core.updateSettings({ learning: true });
-    assert.equal(await rig.core.api()["learning.enabled"]!({} as never), true);
+    assert.equal(rig.core.settings.learning, true);
   });
 });
 

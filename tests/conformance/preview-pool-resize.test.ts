@@ -1,14 +1,11 @@
 /**
- * One leased window at another size, for that lease only (`preview.viewport`). The art director's
- * final look judges a build at 1600×900 while every worker's window, the computer tool's view of
- * it, Live and the stand-in stay as they are; the window is back at the facet size when its lease
- * is given back. A size the host cannot honour is refused before anything moves.
+ * One leased window at another size, for that lease only (`PreviewPool.resize`, a plugin
+ * observer's still at its own size): every other window, Live and the stand-in stay as they are,
+ * and the window is back at the facet size when its lease is given back. A size the host cannot
+ * honour is refused before anything moves.
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { PreviewService } from "../../src/main/core/previews.ts";
-import { idleWork, unservedPreviews, type CoreInternals } from "../../src/main/core/internals.ts";
-import type { StudioCore } from "../../src/main/studio-core.ts";
 import { LIVE_HANDLE, PreviewPool, STAND_IN_HANDLE } from "../../src/substrate/preview-pool.ts";
 import { HostMethod } from "../../src/shared/harness-api.ts";
 import { PreviewGone, previewGone } from "../../src/shared/preview-contract.ts";
@@ -82,8 +79,7 @@ const snapshot = (ports: SizedPort[]) =>
 const refusedFor = (reason: RegExp) => (error: unknown) =>
   error instanceof Error && !(error instanceof TypeError) && reason.test(error.message);
 const BAD_SIZE = /two finite positive numbers/;
-const NO_LEASE = /only a leased pooled window|unknown preview handle|sizes one leased window/;
-const IN_SESSION = /a computer session's/;
+const NO_LEASE = /only a leased pooled window|unknown preview handle/;
 
 /** Sizes the host refuses outright: not a finite positive number. Nothing may move for any of them. */
 const HOSTILE: Array<[label: string, width: unknown, height: unknown]> = [
@@ -193,124 +189,6 @@ describe("one pooled window at another size", () => {
     const pool = new PreviewPool({ live: {} as never, createHeadless: async () => ({}) as never, max: 2 });
     const lease = await pool.acquire({ label: "old-port" });
     assert.throws(() => pool.resize(lease.handle, { width: 1600, height: 900 }), refusedFor(/cannot change size/));
-  });
-});
-
-/** A preview service over sized fake windows, with the computer sessions the host would open. */
-function serviceFixture() {
-  const ports = sizedPorts();
-  const core = {
-    options: { preview: ports.live, previewPoolMax: 4, createHeadlessPreview: ports.create },
-    games: { dirFor: () => "/nowhere" },
-  } as unknown as StudioCore;
-  const state = { ...idleWork(), ...unservedPreviews() } as CoreInternals;
-  const service = new PreviewService(core, state);
-  return { ports, service };
-}
-
-describe("a computer session's window", () => {
-  it("is refused while a session plays in it, so the computer tool's view never changes size", async () => {
-    const { ports, service } = serviceFixture();
-    const worker = await service.pool().acquire({ label: "facet" });
-    const session = service.sessionPortFor({ handle: worker.handle, label: "build:hud" });
-    const port = await session.get();
-    assert.throws(() => service.viewport({ handle: worker.handle, width: 1600, height: 900 }), refusedFor(IN_SESSION));
-    assert.deepEqual(port.viewSize?.(), FACET);
-    assert.deepEqual(ports.made[0]?.asked, []);
-    await session.release();
-    assert.deepEqual(service.viewport({ handle: worker.handle, width: 1600, height: 900 }), {
-      handle: worker.handle,
-      width: 1600,
-      height: 900,
-    });
-  });
-
-  it("a session handed a resized window plays it at the facet size", async () => {
-    const { service } = serviceFixture();
-    const lease = await service.pool().acquire({ label: "facet" });
-    service.viewport({ handle: lease.handle, width: 1600, height: 900 });
-    const session = service.sessionPortFor({ handle: lease.handle, label: "playtester:hud" });
-    const port = await session.get();
-    assert.deepEqual(port.viewSize?.(), FACET);
-    await session.release();
-  });
-
-  it("a session's own lease is refused too", async () => {
-    const { service } = serviceFixture();
-    const session = service.sessionPortFor({ label: "director:run-1" });
-    await session.get();
-    const handle = session.handle();
-    assert.ok(handle);
-    assert.throws(() => service.viewport({ handle, width: 1600, height: 900 }), refusedFor(IN_SESSION));
-    await session.release();
-  });
-});
-
-describe("preview.viewport over the harness RPC", () => {
-  const start = async () => {
-    const ports = sizedPorts();
-    const lite = await coreLite({
-      preview: ports.live as never,
-      createHeadlessPreview: ports.create,
-      previewPoolMax: 4,
-    });
-    const api = lite.api() as unknown as Record<string, (input?: unknown) => Promise<unknown>>;
-    const call = (method: string, params?: unknown) => api[method]!(params);
-    const acquire = async () =>
-      ((await call(HostMethod.PreviewAcquire, { label: "ship-review" })) as { handle: string }).handle;
-    return { ...lite, ports, call, acquire };
-  };
-
-  it("sizes one leased window and gives it back at the facet size", async () => {
-    const { ports, call, acquire, close } = await start();
-    const judge = await acquire();
-    await acquire();
-    assert.deepEqual(await call(HostMethod.PreviewViewport, { handle: judge, width: 1600, height: 900 }), {
-      handle: judge,
-      width: 1600,
-      height: 900,
-    });
-    assert.deepEqual(ports.made[0]?.size, { width: 1600, height: 900 });
-    assert.deepEqual(ports.made[1]?.size, FACET);
-    await call(HostMethod.PreviewRelease, { handle: judge });
-    assert.deepEqual(ports.made[0]?.disposedAt, FACET);
-    await close();
-  });
-
-  it("preview.status says the size a window is at now, so a caller sees its look was put back", async () => {
-    const { call, acquire, close } = await start();
-    const judge = await acquire();
-    const worker = await acquire();
-    const sizeOf = async (handle: string) =>
-      ((await call(HostMethod.PreviewStatus, { handle })) as { viewSize?: Size }).viewSize;
-    await call(HostMethod.PreviewViewport, { handle: judge, width: 1600, height: 900 });
-    assert.deepEqual(await sizeOf(judge), { width: 1600, height: 900 });
-    assert.deepEqual(await sizeOf(worker), FACET);
-    await close();
-  });
-
-  it("refuses hostile params, Live and the stand-in, and moves nothing", async () => {
-    const { ports, call, acquire, close } = await start();
-    const judge = await acquire();
-    const before = snapshot(ports.everyPort());
-    const refused: unknown[] = [
-      ...HOSTILE.map(([, width, height]) => ({ handle: judge, width, height })),
-      { width: 1600, height: 900 },
-      { handle: LIVE_HANDLE, width: 1600, height: 900 },
-      { handle: STAND_IN_HANDLE, width: 1600, height: 900 },
-      { handle: 42, width: 1600, height: 900 },
-      null,
-      undefined,
-    ];
-    for (const params of refused) {
-      await assert.rejects(
-        call(HostMethod.PreviewViewport, params),
-        refusedFor(new RegExp(`${BAD_SIZE.source}|${NO_LEASE.source}`)),
-        JSON.stringify(params) ?? "undefined",
-      );
-    }
-    assert.deepEqual(snapshot(ports.everyPort()), before);
-    await close();
   });
 });
 

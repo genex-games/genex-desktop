@@ -45,7 +45,6 @@ import { SECOND_MS } from "../../shared/duration.ts";
 import { UiEvent } from "../../shared/ui-events.ts";
 import { stopMoments } from "./moment-stops.ts";
 import { releaseHarnessDesktops } from "../harness-rpc/desktop.ts";
-import { forgetHarnessComputers } from "../harness-rpc/preview.ts";
 import { RetainedState } from "../../substrate/game-candidate.ts";
 
 /**
@@ -684,9 +683,7 @@ export class RecoveryService {
     const owner = `harness:${boot}`;
     const released = (await this.#x.previewPool?.releaseOwnedBy(owner).catch(() => [] as string[])) ?? [];
     for (const handle of released) this.#x.profileSources.delete(handle);
-    // The computers it played on those windows end with them (a Play Protocol game's process, an
-    // editor's play), and its sessions on the person's computer let it go.
-    await forgetHarnessComputers(this.#x, released);
+    // Its sessions on the person's computer let it go.
     await releaseHarnessDesktops(this.#x);
   }
 

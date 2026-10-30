@@ -6,7 +6,7 @@ How agents play and look at what they build: one tool, one referee, swappable ta
 
 | Layer | What | Code |
 | --- | --- | --- |
-| 0 · delivery | How a provider's CLI receives the tool: Claude Code as an in-process MCP tool (deferred behind its tool search, like every live and connector tool, while the studio's `checkpoint`, `capture`, `run_command` and a chat's interview tools load with the prompt), OpenCode as a local MCP server relayed over the file bridge (`studio-mcp-shim.ts`, pictures inline), Codex through the file bridge (`studio-bridge.ts`, the fallback) or app-server dynamic tools where enabled, Bonsai and OpenRouter in `LocalSessions`, Ollama through `preview.computer` | `src/substrate/engines/*` |
+| 0 · delivery | How a provider's CLI receives the tool: Claude Code as an in-process MCP tool (deferred behind its tool search, like every live and connector tool, while the studio's `checkpoint`, `capture`, `run_command` and a chat's interview tools load with the prompt), OpenCode as a local MCP server relayed over the file bridge (`studio-mcp-shim.ts`, pictures inline), Codex through the file bridge (`studio-bridge.ts`, the fallback) or app-server dynamic tools where enabled, Bonsai and OpenRouter in `LocalSessions`; Ollama's plain chat holds no game `computer` tool | `src/substrate/engines/*` |
 | 1 · tool | One `computer` tool: Anthropic's `computer_toolset_20260801` actions, the studio verbs (`camera`, `state`, `reload`, `console`), `batch` and `observe`. Its description and action list are built from the target's capabilities, so a verb the target lacks is never offered and calling it gets a sentence, not a silent no-op | `src/substrate/computer-tool.ts`, `computer-tool-prompts.ts`, `computer-vocabulary.ts` |
 | 2 · session | The referee: parse, refuse what the target cannot do, keep the action budget, pace the clock, answer, check a goal, write the trace | `src/main/core/computer-session.ts`, `src/substrate/computer-trace.ts` |
 | 3 · targets | A `ComputerTarget` with graded capabilities: the browser preview, a game speaking the Genex Play Protocol, and the person's desktop or a VM (cua-driver) | `src/substrate/computer-target.ts`, `src/shared/computer-target.ts`, `src/main/core/browser-preview-target.ts` |
@@ -85,8 +85,7 @@ build's path. Its interaction evidence carries `source: hands-on-judge` and
 
 **A judge for the chat (`judge_play`).** The chat's own session on a game the studio plays in a
 window is offered `judge_play` where the harness claims `chat-judge` (`judge-play-tool.ts`,
-`#offerJudge` in delegation; the harness's own loop calls `judge.play`, which answers only for a
-chat of that game). It takes one yes/no `ask`
+`#offerJudge` in delegation). It takes one yes/no `ask`
 and an optional `goal_state`, and the host dispatches `chat_judge` to the harness, which runs the
 same `runHandsOnJudge` a build uses (`loop/chat-judge.ts`) on a leased hidden window, never Live or
 the desktop, so it needs no consent card. The judge plays the folder as it is: a blind, read-only
@@ -96,16 +95,6 @@ the host keeps "verified by the studio" only when `takeVerified` vouches for the
 and records one `chat_judge_result` row (host-only), drawn as one chat line in the checks list's
 words. Nothing changes unless the tool is called; an older kept seed without `SERVES_CHAT_JUDGE`
 claims no capability and the tool is not offered.
-
-`preview.computer` runs the same session on a window the harness leased, for engines whose tool loop
-is the harness's own (Ollama). It refuses Live and the stand-in, and accepts only the game's folder
-or a build under this game's run folder: the run id is a plain name, its folder is checked by real
-path, and the host's own records must say the run is this game's. One session per leased window and
-round (run, part, iteration, role, goal, entry, setup); a `describe` or `fresh` starts a new one, so
-the next player on a window never inherits a spent budget; calls on one window build one session at
-a time, and a replaced or released session stops what it started. A harness that ends (a crash or a
-restart) never sends its `preview.release`, so the host forgets the sessions on the windows it gives
-back for it (`releaseHarnessLeases`): a Play Protocol game's process stops and an editor's play is let go.
 
 Codex's own computer use and browsers (`computer_use`, `in_app_browser`, `browser_use`,
 `browser_use_external`) are disabled on every launch: they would drive the person's real screen past

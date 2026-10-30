@@ -511,107 +511,6 @@ export interface HarnessDelegateParams {
 }
 // ↑ src/shared/harness-api.ts
 
-export interface AssetAvailability {
-  assetId: string;
-  generationId?: string;
-  originalAvailable: boolean;
-  deliveries: Array<{
-    workspaceId: string;
-    scope: "project" | "integration" | "worker";
-    relativePath: string;
-    present: boolean;
-    revision?: string;
-  }>;
-  usage: "unverified" | "observed" | "verified";
-}
-// ↑ src/shared/game-assets.ts
-
-export type AssetKind = "image" | "model" | "audio" | "video" | "other";
-// ↑ src/shared/game-assets.ts
-
-/** `genex` and `blender` are the two the studio ships; any other value is a plugin id. */
-export type AssetSource = "genex" | "blender" | "imported" | (string & {});
-// ↑ src/shared/game-assets.ts
-
-export interface ProjectAsset {
-  availability?: AssetAvailability;
-  /** Host-issued reference for a retained original; never an arbitrary root. */
-  assetRef?: string;
-  variants?: Array<{ role: string; url: string; bytes?: number }>;
-  preferredFile?: string;
-  derivedFrom?: string;
-  file: string;
-  kind: AssetKind;
-  bytes: number;
-  mtime: string;
-  source: AssetSource;
-  jobId?: string;
-  generationId?: string;
-  operation?: string;
-  prompt?: string;
-  /**
-   * The plugin's own word for the job that made this file (`downloaded`, `failed`,
-   * `retrieval_failed`, …). Where the file is lives in `availability`; neither is a sentence.
-   */
-  pluginStatus?: string;
-  at?: string;
-  /** Evidence a plugin recorded about the file being loaded by the running game — an observation, never proof. */
-  use?: { stage: "unconfirmed" | "integrated" | "verified"; inspectionId?: string; observedAt?: string };
-  /** Absolute path of a render PNG under the run folder, readable through `readRunStill`. */
-  render?: string | null;
-  renderFront?: string | null;
-  runId?: string;
-  facetId?: string;
-  iteration?: number;
-}
-// ↑ src/shared/game-assets.ts
-
-export type MakingKind = 'character' | 'creature' | 'model' | 'rigged-model' | 'animation' | 'image' | 'texture' | 'video' | 'sound-effect' | 'music' | 'voice';
-// ↑ src/shared/asset-making.ts
-
-export type MakingPhase = 'queued' | 'making' | 'review' | 'not-fetched' | 'not-in-game' | 'failed' | 'stopped' | 'unsure' | 'needs-credits';
-// ↑ src/shared/asset-making.ts
-
-/**
- * One job still on its way, as the Assets inventory lists it and every surface reads it. `source` is
- * the plugin id (or `genex`), or a connector's id for a server no plugin ships; `sourceName` how the
- * person knows it. `tool` is the outside service doing the work, when known (a `GenexTool`, or a
- * plugin's own word). `kind` absent: an asset of a kind the plugin did not say. A call making an
- * asset is its own job while it runs: its `jobId` is the call's id.
- */
-export interface MakingJob {
-  source: string;
-  sourceName?: string;
-  jobId: string;
-  at?: string;
-  kind?: MakingKind;
-  phase: MakingPhase;
-  tool?: string;
-  prompt?: string;
-  /** The plugin's own word for the job and its own name for what was asked: kept for its own page. */
-  pluginStatus?: string;
-  operation?: string;
-  /** It delivered files earlier that the game no longer holds. */
-  delivered?: boolean;
-  /** What it costs in Genex credits, as Genex quoted or charged it (after refunds); absent when unknown. */
-  credits?: number;
-}
-// ↑ src/shared/asset-making.ts
-
-export interface ProjectAssets {
-  project: string;
-  assets: ProjectAsset[];
-  /**
-   * Jobs with no file in the game yet, any plugin's, in the shared words (`shared/asset-making.ts`):
-   * what each makes, where it is and who makes it.
-   */
-  jobs?: MakingJob[];
-  /** The walk hit its entry or depth cap: some files under `assets/` are not listed. */
-  truncated: boolean;
-  skipped: Array<{ file: string; why: string }>;
-}
-// ↑ src/shared/game-assets.ts
-
 /** One model's share of a session, in `Usage`'s units (a row of Claude's `modelUsage`). */
 export interface ModelTokenUsage {
   input_tokens: number;
@@ -742,27 +641,6 @@ export interface ConversationRecord {
   metadata?: Record<string, unknown>;
 }
 // ↑ src/shared/event-log.ts
-
-/** Durable, additive Optimization stage JSON. Page observations never supply revision identity. */
-export interface Revision {
-  snapshotId: string | null;
-  commit: string;
-  tree: string;
-}
-// ↑ src/shared/optimization.ts
-
-/** A host-owned optimizer worktree (`substrate/game-candidate.ts`), as `optimization.open` answers it. */
-export interface OptimizationCandidate {
-  candidateId: string;
-  project: string;
-  runId: string;
-  root: string;
-  baselineRoot: string;
-  baseline: Revision;
-  frozen: Revision | null;
-  closed: boolean;
-}
-// ↑ src/shared/optimization.ts
 
 /**
  * One entry of the snapshot index (`substrate/snapshots.ts`): the commits a snapshot holds, plus —
@@ -1698,39 +1576,6 @@ export interface StartHeldInPlan {
 export type ContractWord = 'loaded' | 'attached' | 'missing';
 // ↑ src/shared/game-project.ts
 
-/**
- * What the studio's instrumentation actually got hold of on a page it just served (M4.2b).
- *
- * `game.validate` answers the same question from the folder's sources — a static judgement
- * about a page nobody loaded. This is the live one: the page is served, waited for and asked
- * what the hook attached to. `installed` is a game that calls `installStudio` itself,
- * `attached` is a game the hook found by watching it render, `none` is neither.
- */
-export interface AttachReport {
-  ok: boolean;
-  contract: "installed" | "attached" | "none";
-  /**
-   * Did the studio's own page layer load at all? Every number below is read through it, so a
-   * `false` here says the report is empty because the instrumentation never arrived — not
-   * because the game is unconnected.
-   */
-  shim: boolean;
-  reach: string | null;
-  renderer: string | null;
-  scene: string | null;
-  camera: string | null;
-  cameras: string[];
-  eyes: string[];
-  player: boolean;
-  renders: number;
-  frames: number;
-  three: string[];
-  reason: string | null;
-  loadError: string | null;
-  consoleErrors: number | null;
-}
-// ↑ src/shared/game-project.ts
-
 /** What `game.export` wrote: the public roots it assembled, and what it left out. */
 export interface ExportResult {
   dir: string;
@@ -1749,21 +1594,12 @@ export interface ReferenceFrame {
 }
 // ↑ src/shared/protocol.ts
 
-/** `preview.profile`: begin a sampling session on a stage preview, then read, start or end it. */
-export interface ProfileBegin {
-  action: "begin";
-  runId: string;
-  stageId: string;
-  scenarioId: string;
-  handle: string;
-  expectedRevision: Revision;
-  warmupMs: number;
-  sampleMs: number;
-  counters?: boolean;
+/** Durable, additive Optimization stage JSON. Page observations never supply revision identity. */
+export interface Revision {
+  snapshotId: string | null;
+  commit: string;
+  tree: string;
 }
-// ↑ src/shared/optimization.ts
-
-export type ProfileRequest = ProfileBegin | { action: "read" | "end" | "start"; sessionId: string };
 // ↑ src/shared/optimization.ts
 
 export type CaptureSurface = 'page' | 'canvas' | 'auto';
@@ -1840,18 +1676,6 @@ export interface PreviewPixelStats extends PixelStats {
 export type CropRect = [number, number, number, number];
 // ↑ src/shared/preview-contract.ts
 
-export interface PixelDiff {
-  /** Fraction of compared pixels whose luma moved by more than DIFF_THRESHOLD. */
-  diffFraction: number;
-  /** Mean absolute luma difference, 0–255. */
-  meanAbsDiff: number;
-  /** diffFraction per cell of a 3×3 grid, row-major (top-left first). */
-  grid: number[];
-  /** Compared pixel count; 0 when the frames could not be compared (size mismatch, empty). */
-  compared: number;
-}
-// ↑ src/shared/preview-contract.ts
-
 export interface PreviewConsoleEntry {
   at: number;
   level: string;
@@ -1890,7 +1714,7 @@ export interface PreviewPortStatus {
 export type ReadyVia = 'shim' | 'contract' | 'none';
 // ↑ src/shared/preview-contract.ts
 
-export type ReadyPhase = 'failed' | 'ready' | 'boot' | 'unknown';
+export type ReadyPhase = 'ready' | 'boot' | 'failed' | 'unknown';
 // ↑ src/shared/preview-contract.ts
 
 /** What the studio waited for, and what it got. `preview.ready` answers with exactly this. */
@@ -1925,50 +1749,10 @@ export interface BuildObservation {
 }
 // ↑ src/shared/preview-contract.ts
 
-export type AgentScreenRole = 'judge' | 'playtester' | 'builder' | 'scout' | 'director' | 'operator';
-// ↑ src/shared/agent-screen.ts
-
-export interface AgentScreen {
-  /** The preview-pool handle — the card's identity for the life of the session. */
-  handle: string;
-  /** Who is at the keyboard: the facet's title or id, "playtester", "scout", "director". */
-  label: string;
-  project: string;
-  runId: string | null;
-  facetId: string | null;
-  role: AgentScreenRole;
-}
-// ↑ src/shared/agent-screen.ts
-
-export type ScreenDeed = 'load' | 'look' | 'click' | 'press' | 'type' | 'drag' | 'move' | 'scroll' | 'wait' | 'reload';
-// ↑ src/shared/agent-screen.ts
-
-/** One action at a screen: what it was, and for a press the keys as the agent named them ("space", "ArrowRight"). */
-export interface ScreenAct {
-  deed: ScreenDeed;
-  keys?: string[];
-}
-// ↑ src/shared/agent-screen.ts
-
-export interface AgentScreenFrame extends AgentScreen {
-  /** A JPEG of the window, downscaled for the card, base64. */
-  jpeg: string;
-  /** The window's size — the coordinate space of `cursor`. */
-  width: number;
-  height: number;
-  cursor: { x: number; y: number };
-  /** What the agent just did ("left click at 412,300", "key i", "capture default"). */
-  caption: string | null;
-  /** The same action as a code; absent from a producer that predates it. */
-  act?: ScreenAct;
-  at: number;
-}
-// ↑ src/shared/agent-screen.ts
-
 export type JobRole = 'lead' | 'chat' | 'worker';
 // ↑ src/shared/jobs.ts
 
-export type JobState = 'failed' | 'stopped' | 'running' | 'succeeded' | 'timed_out' | 'interrupted';
+export type JobState = 'failed' | 'running' | 'succeeded' | 'stopped' | 'timed_out' | 'interrupted';
 // ↑ src/shared/jobs.ts
 
 export type JobStopper = 'agent' | 'person' | 'scope_ended' | 'quit';
@@ -2000,13 +1784,6 @@ export interface JobView {
  * call resolves to. A method that takes nothing has `void` params.
  */
 export interface HarnessHostApi {
-  // — assets —
-  "assets.inventory": { params: { project: string }; result: ProjectAssets };
-  "assets.checkpoint": {
-    params: { project: string; runId: string; assetIds?: string[] };
-    result: { revision: string; files: string[] };
-  };
-
   // — event log —
   "events.append": { params: { threadId?: string; batch: EventData[] }; result: string };
   "events.list": { params: { threadId?: string; after?: string; limit?: number }; result: EventEnvelope[] };
@@ -2019,7 +1796,6 @@ export interface HarnessHostApi {
    */
   "events.inbox": { params: void; result: Array<{ threadId: string; events: EventEnvelope[] }> };
   "thread.main": { params: void; result: string };
-  "thread.create": { params: { title?: string }; result: string };
   "thread.list": { params: void; result: ConversationRecord[] };
   "thread.fork": { params: { threadId: string; upToInclusive: string; title?: string }; result: string };
   "artifact.read": { params: { threadId?: string; artifactId: string }; result: unknown };
@@ -2036,29 +1812,6 @@ export interface HarnessHostApi {
     params: { turnId: string; status?: "ok" | "error" | "cancelled"; outcome?: string };
     result: string | null;
   };
-
-  // — optimization: registered, isolated source authority —
-  "optimization.baseline": {
-    params: { project: string; snapshotId: string };
-    result: { snapshotId: string; commit: string; tree: string };
-  };
-  "optimization.open": {
-    params: { project: string; runId: string; baselineSnapshotId: string };
-    result: OptimizationCandidate;
-  };
-  "optimization.freeze": {
-    params: { candidateId: string };
-    result: { diff: string; changedFiles: string[]; revision: Revision };
-  };
-  "optimization.promote": {
-    params: { candidateId: string; expectedLive: Revision; verifiedCandidate: Revision; resultArtifact: string };
-    result: { outcome: string; revision: Revision; reason: string | null };
-  };
-  "optimization.reconcile": {
-    params: { project: string; baseline: Revision; candidate: Revision | null };
-    result: { revision: Revision; retained: string };
-  };
-  "optimization.close": { params: { candidateId: string }; result: { closed: boolean } };
 
   // — snapshots —
   "snapshot.create": {
@@ -2089,10 +1842,6 @@ export interface HarnessHostApi {
   "snapshot.removeWorktree": { params: { project: string; path: string }; result: boolean };
 
   // — plugins and connectors —
-  "plugins.preflightMultiplayer": {
-    params: { project: string; threadId?: string };
-    result: { ready: boolean; reason: string; hostedVerified: false };
-  };
   /**
    * The plugin tools and guidance for the game `project` names, by its facts (none named, or a
    * game with no kind yet: a web game's), and the tools on offer that make a kind of project.
@@ -2236,8 +1985,6 @@ export interface HarnessHostApi {
    */
   "studio.language": { params: void; result: { tag: string; name: string } };
   "context.policy": { params: { engine: string; model?: string; threadId?: string }; result: ContextSettings };
-  /** The Self-improvement switch, asked by the harness before each thing it would learn. */
-  "learning.enabled": { params: void; result: boolean };
   "engine.complete": { params: HarnessCompleteParams; result: CompleteResponse };
   /**
    * Stop: aborts a thread's completions, a project's delegations, or the delegation in one worktree
@@ -2344,30 +2091,6 @@ export interface HarnessHostApi {
     /** `missing`: the files a web page needs that are not there, by name (`problems` says it in sentences). */
     result: { ok: boolean; problems: string[]; missing: string[]; warnings: string[]; contract: ContractWord };
   };
-  /** The live half of `game.validate`: serve the page, wait for it, ask what the hook got hold of. */
-  "game.attached": {
-    params: { project: string; root?: string; entry?: string; candidateId?: string };
-    result: AttachReport;
-  };
-  /**
-   * v2 contract upgrade: an older `src/studio.js` that is a copy the studio shipped gets the template's
-   * copy, the old one kept beside it. An older copy anyone edited is left alone and answered with
-   * `edited` and the `generation` it stays at; its `src/hud.js` stays with it.
-   * `hud` is there when the game's `src/hud.js` was older than the template's: replaced (a shipped copy,
-   * kept as `backup`) or left alone (an edited copy, or one beside a kept contract, still at `generation`).
-   */
-  "game.upgradeContract": {
-    params: { project: string };
-    result: {
-      upgraded: boolean;
-      reason?: string;
-      materialsAdded?: boolean;
-      backup?: string | null;
-      edited?: boolean;
-      generation?: number;
-      hud?: { generation: number; replaced: boolean; backup?: string };
-    };
-  };
   "game.read": { params: { project: string; file: string; candidateId?: string }; result: string | GameImageRead };
   "game.write": {
     params: { project: string; file: string; contents: string; candidateId?: string };
@@ -2394,7 +2117,6 @@ export interface HarnessHostApi {
     };
     result: string;
   };
-  "preview.profile": { params: ProfileRequest & { handle: string }; result: unknown };
   "preview.reload": { params: { handle?: string; retry?: boolean }; result: boolean };
   "preview.screenshot": {
     params: {
@@ -2413,41 +2135,10 @@ export interface HarnessHostApi {
       surface: CaptureSurface | null;
     };
   };
-  /** What the page holds outside the canvas: a DOM menu, an HTML HUD, a loader. */
-  "preview.pageUi": { params: { handle?: string }; result: unknown };
-  /**
-   * `__studio.state()`, bounded by structure: over the studio's budget its largest lists become
-   * `{__elided, length, chars}` stubs and the root names them under `__cut`. `keep` names the
-   * dotted paths a board reads (at most 64, each up to 120 characters); they are cut last.
-   */
-  "preview.state": { params: { handle?: string; keep?: string[] }; result: unknown };
-  "preview.call": { params: { method: string; arg?: unknown; handle?: string }; result: unknown };
-  /** Read-only JS over the game's own graph; the answer is untrusted JSON, size-capped by the port. */
-  "preview.evaluate": { params: { expression: string; handle?: string }; result: unknown };
   /** A `vision` check's crop, cut from a saved judged frame — never re-captured. */
   "preview.crop": {
     params: { runId: string; path: string; crop: CropRect; label?: string; handle?: string; quality?: number };
     result: { path: string; base64: string; bytes: number; width: number; height: number } | null;
-  };
-  /** Challenger against incumbent on one camera: diff fraction and heatmap. */
-  "preview.diff": {
-    params: { runId: string; a: string; b: string; label?: string; handle?: string };
-    result: (PixelDiff & { heatmapPath: string | null }) | null;
-  };
-  /**
-   * The `computer` tool, run by the host on a window the harness leased: the same tool every
-   * session engine holds, for an engine whose tool loop is the harness's own (Ollama). `describe`
-   * answers the tool's schema instead of running an action; otherwise `args` is one call.
-   */
-  "preview.computer": {
-    params: DelegatePlaytestGrant & {
-      handle: string;
-      args?: Record<string, unknown>;
-      describe?: boolean;
-      /** Start a new session on this window even when one for the same build and round exists: reloaded, reseeded, its own trace. */
-      fresh?: boolean;
-    };
-    result: { tool: LiveToolSpec } | { answer: LiveToolResult; trace: ComputerTraceSummary };
   };
   /**
    * The `desktop` tool, run by the host for an engine whose tool loop is the harness's own
@@ -2459,23 +2150,6 @@ export interface HarnessHostApi {
     params: { project: string; threadId?: string; args?: Record<string, unknown>; describe?: boolean };
     result: { tool: LiveToolSpec } | { answer: LiveToolResult } | { unavailable: string };
   };
-  /**
-   * `judge_play`, run by the host for an engine whose tool loop is the harness's own (Ollama), as
-   * session engines are handed it (`core/judge-play-tool.ts`): a blind judge plays the game, the
-   * chat's model playing, and the outcome is one line in `threadId`. `unavailable` says why not
-   * (no chat to record in, a game the studio does not play in a window).
-   */
-  "judge.play": {
-    params: {
-      project: string;
-      threadId?: string;
-      args?: Record<string, unknown>;
-      engine?: string;
-      model?: string;
-      effort?: string;
-    };
-    result: { answer: LiveToolResult } | { unavailable: string };
-  };
   "preview.input": {
     params: { actions?: PreviewInputAction[]; handle?: string };
     result: { ok: boolean; applied: number; width: number; height: number };
@@ -2485,11 +2159,6 @@ export interface HarnessHostApi {
   "preview.status": { params: { handle?: string }; result: PreviewPortStatus };
   /** Readiness is a fact the page reports, not a sleep. */
   "preview.ready": { params: { handle?: string; timeoutMs?: number; gesture?: boolean }; result: ReadyResult };
-  /** A knock: the trusted click that grants user activation. */
-  "preview.gesture": {
-    params: { handle?: string; x?: number; y?: number; keys?: string[] };
-    result: { knocked: boolean; trusted: boolean | null };
-  };
   /** What the user's own window is showing right now: their game folder, or a build they chose to play. */
   "preview.showing": {
     params: void;
@@ -2498,28 +2167,6 @@ export interface HarnessHostApi {
   "preview.observe": { params: { handle?: string }; result: BuildObservation };
   "preview.acquire": { params: { label?: string; purpose?: "optimization" }; result: { handle: string } };
   "preview.release": { params: { handle: string }; result: boolean };
-  /**
-   * One leased window at another size (the art director's 1600×900 look), for that lease only:
-   * clamped to 320–1920 × 240–1200 and back at the facet size when the lease is released. Never
-   * Live, the stand-in or a window a computer session plays in, so its view never changes size:
-   * handing the lease to a session puts it back at the facet size, and the caller sizes it again
-   * afterwards (`preview.status` `viewSize` says the size it is at now).
-   */
-  "preview.viewport": {
-    params: { handle: string; width: number; height: number };
-    result: { handle: string; width: number; height: number };
-  };
-  /** Pixel stats of an encoded still — the same numbers a capture yields. */
-  "preview.statsOf": {
-    params: { base64?: string; path?: string; handle?: string };
-    result: { stats: PixelStats; width: number; height: number } | null;
-  };
-  /** LEFT | RIGHT composite of a reference still and a build frame. */
-  "preview.pair": {
-    params: { runId: string; left: StillSource; right: StillSource; label?: string; height?: number; handle?: string };
-    result: { path: string; base64: string; bytes: number } | null;
-  };
-  "preview.screens": { params: void; result: AgentScreenFrame[] };
   "preview.capacity": {
     params: void;
     result: {

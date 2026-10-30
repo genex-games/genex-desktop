@@ -426,7 +426,7 @@ describe("plugin search by seat", () => {
 
   it("a lead may look for a plugin and show its card in the chat it answers; a worker may only look; a builder of a classic run gets neither", async () => {
     const chat = await workerChat();
-    const { api, core, game, seen, threadId, worktree } = chat;
+    const { core, game, seen, threadId, worktree } = chat;
     /** What each session was handed of Genex's project tools, and what its calls answered. */
     const projectToolsOf = (index: number) =>
       (seen[index]?.liveTools ?? [])
@@ -443,7 +443,7 @@ describe("plugin search by seat", () => {
     const cardsIn = async (thread: string, kind: CustomEventName) =>
       (await core.store.listEvents(thread)).filter((event) => customEvent(event, kind)).length;
     // The thread the harness names for its run: never a chat the card may show in.
-    const runThread = String(await api[HostMethod.ThreadCreate]!({ title: "run" }));
+    const runThread = await core.store.createThread({ title: "run" });
     const integration = await chat.copyOf(RUN_ID, "integration");
     const suggest: [string, Record<string, unknown>] = [
       ProjectTool.PluginsSuggest,

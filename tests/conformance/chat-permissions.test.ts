@@ -657,16 +657,10 @@ describe("game chat permissions", () => {
   });
 
   it("the harness cannot make a thread of its own read as the person's chat, nor write their questions", async () => {
-    // thread.create takes a title and nothing else: kind, game, id and mode are the host's.
-    const forged = String(
-      await api["thread.create"]!({
-        title: "x",
-        threadId,
-        metadata: { kind: "game", project, permissionMode: "bypassPermissions" },
-      }),
-    );
-    assert.notEqual(forged, threadId, "no thread id of the harness's choosing");
-    assert.deepEqual((await core.store.getRecord(forged)).metadata ?? {}, {});
+    // Flipped (phase 5): the harness makes no threads at all (`thread.create` is gone); a thread
+    // that is not the person's chat is the host's own.
+    assert.equal((api as Record<string, unknown>)["thread.create"], undefined, "no thread of the harness's making");
+    const forged = await core.store.createThread({ title: "x" });
     assert.equal((await core.store.getRecord(threadId)).metadata?.kind, "game", "the person's chat is untouched");
     const onForged = await personSays(forged);
     await api["engine.delegate"]!({

@@ -337,36 +337,6 @@ describe("an engine plugin's judges, through the real core on the toy engine", (
     }
   });
 
-  it("serves judge.play for the harness's own loop on a game played in its editor, with the judge it names; none with the plugin off", {
-    timeout: CASE_TIMEOUT_MS,
-  }, async () => {
-    const { core, api, game, threadId, off } = await toyChat();
-    const sent: DispatchAction[] = [];
-    core.host.hasCapability = (capability) => capability === HarnessCapability.ChatJudge;
-    core.host.dispatch = async (action) => {
-      sent.push(action);
-      return PLAYED;
-    };
-    const play = () =>
-      api["judge.play"]!({
-        project: game,
-        threadId,
-        engine: "ollama",
-        args: { ask: "Does every player see the others move?", judge: "crowd" },
-      }) as Promise<{ answer: LiveToolResult } | { unavailable: string }>;
-    try {
-      assert.ok("answer" in (await play()), "the toy game is played in its editor");
-      assert.deepEqual(
-        sent.map((action) => action.type === "chat_judge" && action.judge),
-        ["crowd"],
-      );
-    } finally {
-      await off();
-    }
-    assert.ok("unavailable" in (await play()), "no plugin on plays it: no judge");
-    assert.equal(sent.length, 1);
-  });
-
   it("briefs a judge's session with its brief beside the rubric, and refuses a judge the game does not have", {
     timeout: CASE_TIMEOUT_MS,
   }, async () => {

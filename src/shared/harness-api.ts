@@ -13,7 +13,6 @@
  * here is still resolved by realpath and refused outside its root by the handler.
  */
 import { z } from "zod";
-import type { AgentScreenFrame } from "./agent-screen.ts";
 import type { ContextSettings } from "./context.ts";
 import type { CompletionProvenance } from "./custom-events.ts";
 import type { EngineDescriptor } from "./engine-descriptor.ts";
@@ -31,23 +30,14 @@ import type {
   StudioToolSpec,
   ToolDefinition,
 } from "./engine-requests.ts";
-import type { ComputerTraceSummary } from "./computer-target.ts";
 import type { ConversationRecord, EventData, EventEnvelope, Message, SnapshotRecord } from "./event-log.ts";
 import { FINISH_REASON_CHARS, type FinishCheckStep } from "./finish-check.ts";
-import type { ProjectAssets } from "./game-assets.ts";
-import type {
-  AttachReport,
-  ContentStamps,
-  ContractWord,
-  ExportResult,
-  GameProject,
-  ProjectRecent,
-} from "./game-project.ts";
+import type { ContentStamps, ContractWord, ExportResult, GameProject, ProjectRecent } from "./game-project.ts";
 import type { JobView } from "./jobs.ts";
 import type { McpLiveTool } from "./mcp.ts";
 import type { SteerDelivery } from "./message-queue.ts";
 import type { ModelPreferences } from "./model-preferences.ts";
-import type { OptimizationCandidate, ProfileRequest, Revision } from "./optimization.ts";
+import type { Revision } from "./optimization.ts";
 import {
   type CheckpointAnswer,
   type HookEvent,
@@ -61,8 +51,6 @@ import type {
   BuildObservation,
   CaptureSurface,
   CropRect,
-  PixelDiff,
-  PixelStats,
   PreviewConsoleEntry,
   PreviewInputAction,
   PreviewPixelStats,
@@ -286,13 +274,6 @@ export interface HarnessDelegateParams {
  * call resolves to. A method that takes nothing has `void` params.
  */
 export interface HarnessHostApi {
-  // — assets —
-  "assets.inventory": { params: { project: string }; result: ProjectAssets };
-  "assets.checkpoint": {
-    params: { project: string; runId: string; assetIds?: string[] };
-    result: { revision: string; files: string[] };
-  };
-
   // — event log —
   "events.append": { params: { threadId?: string; batch: EventData[] }; result: string };
   "events.list": { params: { threadId?: string; after?: string; limit?: number }; result: EventEnvelope[] };
@@ -305,7 +286,6 @@ export interface HarnessHostApi {
    */
   "events.inbox": { params: void; result: Array<{ threadId: string; events: EventEnvelope[] }> };
   "thread.main": { params: void; result: string };
-  "thread.create": { params: { title?: string }; result: string };
   "thread.list": { params: void; result: ConversationRecord[] };
   "thread.fork": { params: { threadId: string; upToInclusive: string; title?: string }; result: string };
   "artifact.read": { params: { threadId?: string; artifactId: string }; result: unknown };
@@ -322,29 +302,6 @@ export interface HarnessHostApi {
     params: { turnId: string; status?: "ok" | "error" | "cancelled"; outcome?: string };
     result: string | null;
   };
-
-  // — optimization: registered, isolated source authority —
-  "optimization.baseline": {
-    params: { project: string; snapshotId: string };
-    result: { snapshotId: string; commit: string; tree: string };
-  };
-  "optimization.open": {
-    params: { project: string; runId: string; baselineSnapshotId: string };
-    result: OptimizationCandidate;
-  };
-  "optimization.freeze": {
-    params: { candidateId: string };
-    result: { diff: string; changedFiles: string[]; revision: Revision };
-  };
-  "optimization.promote": {
-    params: { candidateId: string; expectedLive: Revision; verifiedCandidate: Revision; resultArtifact: string };
-    result: { outcome: string; revision: Revision; reason: string | null };
-  };
-  "optimization.reconcile": {
-    params: { project: string; baseline: Revision; candidate: Revision | null };
-    result: { revision: Revision; retained: string };
-  };
-  "optimization.close": { params: { candidateId: string }; result: { closed: boolean } };
 
   // — snapshots —
   "snapshot.create": {
@@ -375,10 +332,6 @@ export interface HarnessHostApi {
   "snapshot.removeWorktree": { params: { project: string; path: string }; result: boolean };
 
   // — plugins and connectors —
-  "plugins.preflightMultiplayer": {
-    params: { project: string; threadId?: string };
-    result: { ready: boolean; reason: string; hostedVerified: false };
-  };
   /**
    * The plugin tools and guidance for the game `project` names, by its facts (none named, or a
    * game with no kind yet: a web game's), and the tools on offer that make a kind of project.
@@ -522,8 +475,6 @@ export interface HarnessHostApi {
    */
   "studio.language": { params: void; result: { tag: string; name: string } };
   "context.policy": { params: { engine: string; model?: string; threadId?: string }; result: ContextSettings };
-  /** The Self-improvement switch, asked by the harness before each thing it would learn. */
-  "learning.enabled": { params: void; result: boolean };
   "engine.complete": { params: HarnessCompleteParams; result: CompleteResponse };
   /**
    * Stop: aborts a thread's completions, a project's delegations, or the delegation in one worktree
@@ -630,30 +581,6 @@ export interface HarnessHostApi {
     /** `missing`: the files a web page needs that are not there, by name (`problems` says it in sentences). */
     result: { ok: boolean; problems: string[]; missing: string[]; warnings: string[]; contract: ContractWord };
   };
-  /** The live half of `game.validate`: serve the page, wait for it, ask what the hook got hold of. */
-  "game.attached": {
-    params: { project: string; root?: string; entry?: string; candidateId?: string };
-    result: AttachReport;
-  };
-  /**
-   * v2 contract upgrade: an older `src/studio.js` that is a copy the studio shipped gets the template's
-   * copy, the old one kept beside it. An older copy anyone edited is left alone and answered with
-   * `edited` and the `generation` it stays at; its `src/hud.js` stays with it.
-   * `hud` is there when the game's `src/hud.js` was older than the template's: replaced (a shipped copy,
-   * kept as `backup`) or left alone (an edited copy, or one beside a kept contract, still at `generation`).
-   */
-  "game.upgradeContract": {
-    params: { project: string };
-    result: {
-      upgraded: boolean;
-      reason?: string;
-      materialsAdded?: boolean;
-      backup?: string | null;
-      edited?: boolean;
-      generation?: number;
-      hud?: { generation: number; replaced: boolean; backup?: string };
-    };
-  };
   "game.read": { params: { project: string; file: string; candidateId?: string }; result: string | GameImageRead };
   "game.write": {
     params: { project: string; file: string; contents: string; candidateId?: string };
@@ -680,7 +607,6 @@ export interface HarnessHostApi {
     };
     result: string;
   };
-  "preview.profile": { params: ProfileRequest & { handle: string }; result: unknown };
   "preview.reload": { params: { handle?: string; retry?: boolean }; result: boolean };
   "preview.screenshot": {
     params: {
@@ -699,41 +625,10 @@ export interface HarnessHostApi {
       surface: CaptureSurface | null;
     };
   };
-  /** What the page holds outside the canvas: a DOM menu, an HTML HUD, a loader. */
-  "preview.pageUi": { params: { handle?: string }; result: unknown };
-  /**
-   * `__studio.state()`, bounded by structure: over the studio's budget its largest lists become
-   * `{__elided, length, chars}` stubs and the root names them under `__cut`. `keep` names the
-   * dotted paths a board reads (at most 64, each up to 120 characters); they are cut last.
-   */
-  "preview.state": { params: { handle?: string; keep?: string[] }; result: unknown };
-  "preview.call": { params: { method: string; arg?: unknown; handle?: string }; result: unknown };
-  /** Read-only JS over the game's own graph; the answer is untrusted JSON, size-capped by the port. */
-  "preview.evaluate": { params: { expression: string; handle?: string }; result: unknown };
   /** A `vision` check's crop, cut from a saved judged frame — never re-captured. */
   "preview.crop": {
     params: { runId: string; path: string; crop: CropRect; label?: string; handle?: string; quality?: number };
     result: { path: string; base64: string; bytes: number; width: number; height: number } | null;
-  };
-  /** Challenger against incumbent on one camera: diff fraction and heatmap. */
-  "preview.diff": {
-    params: { runId: string; a: string; b: string; label?: string; handle?: string };
-    result: (PixelDiff & { heatmapPath: string | null }) | null;
-  };
-  /**
-   * The `computer` tool, run by the host on a window the harness leased: the same tool every
-   * session engine holds, for an engine whose tool loop is the harness's own (Ollama). `describe`
-   * answers the tool's schema instead of running an action; otherwise `args` is one call.
-   */
-  "preview.computer": {
-    params: DelegatePlaytestGrant & {
-      handle: string;
-      args?: Record<string, unknown>;
-      describe?: boolean;
-      /** Start a new session on this window even when one for the same build and round exists: reloaded, reseeded, its own trace. */
-      fresh?: boolean;
-    };
-    result: { tool: LiveToolSpec } | { answer: LiveToolResult; trace: ComputerTraceSummary };
   };
   /**
    * The `desktop` tool, run by the host for an engine whose tool loop is the harness's own
@@ -745,23 +640,6 @@ export interface HarnessHostApi {
     params: { project: string; threadId?: string; args?: Record<string, unknown>; describe?: boolean };
     result: { tool: LiveToolSpec } | { answer: LiveToolResult } | { unavailable: string };
   };
-  /**
-   * `judge_play`, run by the host for an engine whose tool loop is the harness's own (Ollama), as
-   * session engines are handed it (`core/judge-play-tool.ts`): a blind judge plays the game, the
-   * chat's model playing, and the outcome is one line in `threadId`. `unavailable` says why not
-   * (no chat to record in, a game the studio does not play in a window).
-   */
-  "judge.play": {
-    params: {
-      project: string;
-      threadId?: string;
-      args?: Record<string, unknown>;
-      engine?: string;
-      model?: string;
-      effort?: string;
-    };
-    result: { answer: LiveToolResult } | { unavailable: string };
-  };
   "preview.input": {
     params: { actions?: PreviewInputAction[]; handle?: string };
     result: { ok: boolean; applied: number; width: number; height: number };
@@ -771,11 +649,6 @@ export interface HarnessHostApi {
   "preview.status": { params: { handle?: string }; result: PreviewPortStatus };
   /** Readiness is a fact the page reports, not a sleep. */
   "preview.ready": { params: { handle?: string; timeoutMs?: number; gesture?: boolean }; result: ReadyResult };
-  /** A knock: the trusted click that grants user activation. */
-  "preview.gesture": {
-    params: { handle?: string; x?: number; y?: number; keys?: string[] };
-    result: { knocked: boolean; trusted: boolean | null };
-  };
   /** What the user's own window is showing right now: their game folder, or a build they chose to play. */
   "preview.showing": {
     params: void;
@@ -784,28 +657,6 @@ export interface HarnessHostApi {
   "preview.observe": { params: { handle?: string }; result: BuildObservation };
   "preview.acquire": { params: { label?: string; purpose?: "optimization" }; result: { handle: string } };
   "preview.release": { params: { handle: string }; result: boolean };
-  /**
-   * One leased window at another size (the art director's 1600×900 look), for that lease only:
-   * clamped to 320–1920 × 240–1200 and back at the facet size when the lease is released. Never
-   * Live, the stand-in or a window a computer session plays in, so its view never changes size:
-   * handing the lease to a session puts it back at the facet size, and the caller sizes it again
-   * afterwards (`preview.status` `viewSize` says the size it is at now).
-   */
-  "preview.viewport": {
-    params: { handle: string; width: number; height: number };
-    result: { handle: string; width: number; height: number };
-  };
-  /** Pixel stats of an encoded still — the same numbers a capture yields. */
-  "preview.statsOf": {
-    params: { base64?: string; path?: string; handle?: string };
-    result: { stats: PixelStats; width: number; height: number } | null;
-  };
-  /** LEFT | RIGHT composite of a reference still and a build frame. */
-  "preview.pair": {
-    params: { runId: string; left: StillSource; right: StillSource; label?: string; height?: number; handle?: string };
-    result: { path: string; base64: string; bytes: number } | null;
-  };
-  "preview.screens": { params: void; result: AgentScreenFrame[] };
   "preview.capacity": {
     params: void;
     result: {
@@ -877,15 +728,12 @@ export type HostRefusal = (typeof HostRefusal)[keyof typeof HostRefusal];
  * copies this object into the seed (`harness-seed/loop/host-methods.ts`).
  */
 export const HostMethod = {
-  AssetsInventory: "assets.inventory",
-  AssetsCheckpoint: "assets.checkpoint",
   EventsAppend: "events.append",
   EventsList: "events.list",
   EventsHead: "events.head",
   EventsMessages: "events.messages",
   EventsInbox: "events.inbox",
   ThreadMain: "thread.main",
-  ThreadCreate: "thread.create",
   ThreadList: "thread.list",
   ThreadFork: "thread.fork",
   ArtifactRead: "artifact.read",
@@ -893,12 +741,6 @@ export const HostMethod = {
   TurnBegin: "turn.begin",
   TurnAppend: "turn.append",
   TurnEnd: "turn.end",
-  OptimizationBaseline: "optimization.baseline",
-  OptimizationOpen: "optimization.open",
-  OptimizationFreeze: "optimization.freeze",
-  OptimizationPromote: "optimization.promote",
-  OptimizationReconcile: "optimization.reconcile",
-  OptimizationClose: "optimization.close",
   SnapshotCreate: "snapshot.create",
   SnapshotRestore: "snapshot.restore",
   SnapshotList: "snapshot.list",
@@ -910,7 +752,6 @@ export const HostMethod = {
   PluginsWorkerTypes: "plugins.workerTypes",
   PluginsFind: "plugins.find",
   PluginsSuggest: "plugins.suggest",
-  PluginsPreflightMultiplayer: "plugins.preflightMultiplayer",
   CapabilitiesDescribe: "capabilities.describe",
   PluginsInvoke: "plugins.invoke",
   McpTools: "mcp.tools",
@@ -925,7 +766,6 @@ export const HostMethod = {
   StudioContext: "studio.context",
   StudioLanguage: "studio.language",
   ContextPolicy: "context.policy",
-  LearningEnabled: "learning.enabled",
   EngineComplete: "engine.complete",
   EngineAbort: "engine.abort",
   EngineInterrupt: "engine.interrupt",
@@ -944,8 +784,6 @@ export const HostMethod = {
   GameScaffold: "game.scaffold",
   GameStart: "game.start",
   GameValidate: "game.validate",
-  GameAttached: "game.attached",
-  GameUpgradeContract: "game.upgradeContract",
   GameRead: "game.read",
   GameWrite: "game.write",
   GameTree: "game.tree",
@@ -953,32 +791,19 @@ export const HostMethod = {
   GameReferences: "game.references",
   JobsList: "jobs.list",
   PreviewLoad: "preview.load",
-  PreviewProfile: "preview.profile",
   PreviewReload: "preview.reload",
   PreviewScreenshot: "preview.screenshot",
-  PreviewPageUi: "preview.pageUi",
-  PreviewState: "preview.state",
-  PreviewCall: "preview.call",
-  PreviewEvaluate: "preview.evaluate",
   PreviewCrop: "preview.crop",
-  PreviewDiff: "preview.diff",
   PreviewInput: "preview.input",
-  PreviewComputer: "preview.computer",
   DesktopComputer: "desktop.computer",
-  JudgePlay: "judge.play",
   PreviewConsole: "preview.console",
   PreviewGpuErrors: "preview.gpuErrors",
   PreviewStatus: "preview.status",
   PreviewReady: "preview.ready",
-  PreviewGesture: "preview.gesture",
   PreviewShowing: "preview.showing",
   PreviewObserve: "preview.observe",
   PreviewAcquire: "preview.acquire",
   PreviewRelease: "preview.release",
-  PreviewViewport: "preview.viewport",
-  PreviewStatsOf: "preview.statsOf",
-  PreviewPair: "preview.pair",
-  PreviewScreens: "preview.screens",
   PreviewCapacity: "preview.capacity",
   RunArtifact: "run.artifact",
   GuardianRebuildAndRestart: "guardian.rebuild_and_restart",
@@ -1027,12 +852,6 @@ const observerKey = z.custom<string>(isPluginObserverKey);
  * whatever the harness sends.
  */
 export const HARNESS_PARAM_SCHEMAS = {
-  "assets.inventory": z.object({ project }),
-  "assets.checkpoint": z.object({ project, runId: text }),
-  "optimization.baseline": z.object({ project }),
-  "optimization.open": z.object({ project, runId: text }),
-  "optimization.promote": z.object({ candidateId: text, resultArtifact: text }),
-  "optimization.reconcile": z.object({ project }),
   "snapshot.create": z.object({ project: optionalText }),
   "snapshot.restore": z.object({ project: optionalText, threadId: optionalText, runId: optionalText }),
   "snapshot.diff": z.object({ workspace: optionalText }),
@@ -1045,7 +864,6 @@ export const HARNESS_PARAM_SCHEMAS = {
   "plugins.find": z.object({ project: optionalText }).nullish(),
   "plugins.suggest": z.object({ project, threadId: text }),
   "plugins.invoke": z.object({ project, step: z.boolean().optional(), checkpoint: z.boolean().optional() }),
-  "plugins.preflightMultiplayer": z.object({ project, threadId: optionalText }),
   "mcp.tools": z.object({ project: optionalText }).nullish(),
   "mcp.invoke": z.object({ project }),
   "locks.hold": z.object({
@@ -1118,17 +936,13 @@ export const HARNESS_PARAM_SCHEMAS = {
       .nullish(),
     timeLeftMs: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).nullish(),
   }),
-  "preview.computer": z.object({ project, root: text, handle: text, runId: optionalText, facetId: optionalText }),
   "desktop.computer": z.object({ project }),
-  "judge.play": z.object({ project }),
   "game.setCover": z.object({ project }),
   "game.setCoverShader": z.object({ project }),
   "game.contentStamp": z.object({ project }),
   "game.scaffold": z.object({ name: text, kind: optionalText }),
   "game.start": z.object({ project, starter: z.enum([ProjectStarter.Web]), threadId: optionalText }),
   "game.validate": z.object({ project }),
-  "game.attached": z.object({ project, root: optionalText, entry: optionalText }),
-  "game.upgradeContract": z.object({ project }),
   "game.read": z.object({ project, file: text }),
   "game.write": z.object({ project, file: text }),
   "game.tree": z.object({ project }),
@@ -1136,15 +950,6 @@ export const HARNESS_PARAM_SCHEMAS = {
   "game.references": z.object({ project }),
   "preview.load": z.object({ project, entry: optionalText, root: optionalText }),
   "preview.crop": z.object({ runId: text, path: text }).nullish(),
-  "preview.diff": z.object({ runId: text, a: text, b: text }).nullish(),
-  "preview.statsOf": z.object({ path: optionalText }).nullish(),
-  "preview.pair": z
-    .object({
-      runId: text,
-      left: z.object({ path: optionalText }).nullish(),
-      right: z.object({ path: optionalText }).nullish(),
-    })
-    .nullish(),
   "run.artifact": z.object({ runId: text, name: text }),
   "guardian.validate_edit": z.object({ files: z.array(z.object({ file: text, contents: text })) }),
   "guardian.write_self": z.object({

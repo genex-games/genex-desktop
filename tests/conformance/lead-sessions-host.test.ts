@@ -834,7 +834,7 @@ async function leadChat({ leadAskTimeoutMs }: { leadAskTimeoutMs?: number } = {}
  */
 describe("a build's lead and the run's coordinator ask the person they answer", () => {
   it("hands a way to ask only to the lead answering its chat and the coordinator of its run", async () => {
-    const { core, api, game, threadId, worktree, runId, seen, delegate, leadBrief, personSays } = await leadChat();
+    const { core, game, threadId, worktree, runId, seen, delegate, leadBrief, personSays } = await leadChat();
     const said = await personSays();
     const other = await core.games.scaffold("lead-asks-other");
     const otherChat = await core.threadForGame(other.name);
@@ -842,7 +842,7 @@ describe("a build's lead and the run's coordinator ask the person they answer", 
       title: "Second chat",
       metadata: { kind: "game", project: game },
     });
-    const forged = String(await api["thread.create"]!({ title: "x" }));
+    const forged = await core.store.createThread({ title: "x" });
     const cases: Array<{ label: string; extra: Record<string, unknown>; thread?: string; asks: boolean }> = [
       { label: "the lead answering its chat", extra: leadBrief(), asks: true },
       {

@@ -822,58 +822,6 @@ describe("live chat during a build", () => {
     assert.equal(chats[0]!.images?.[0]?.data, "iVBORw0KGgo=", "with the picture");
   });
 
-  it("L6. the chat is free as soon as the run closes: a message during its self-improvement pass is answered then", {
-    timeout: RIG_TIMEOUT_MS,
-  }, async () => {
-    const { rig, project, runId, dispatch, finished } = await loopRun("live-learning");
-    const chats: DelegateRequest[] = [];
-    let learning = () => {};
-    const learned = new Promise<void>((resolve) => {
-      learning = resolve;
-    });
-    let learningAsked = false;
-    // The pass after the run starts by asking whether to learn: held here until the test lets it go.
-    // (The run asks too, before it closes; those answers are not held.)
-    const api = rig.core.host.options.api as Record<string, (params: unknown) => Promise<unknown>>;
-    const closed = async () =>
-      customEvents(await rig.core.listAllEvents(), "run_finished").some((e) => e.runId === runId);
-    api["learning.enabled"] = async () => {
-      if (!(await closed())) return false;
-      learningAsked = true;
-      await learned;
-      return false;
-    };
-    fakeEngine(rig, async (request) => {
-      if (answersChat(request)) {
-        chats.push(request);
-        return turnResult(request.resume ?? "chat", "It finished with nothing to build.");
-      }
-      if (!request.director) return turnResult("worker", "nothing");
-      await request.onLiveTool!("finish", { summary: "nothing to do", land: "no" });
-      return turnResult("lead-1", "done");
-    });
-    const running = dispatch();
-    try {
-      await finished();
-      await until(() => learningAsked, "the run's self-improvement pass to begin");
-      const { thread, messageId } = await say(rig, project.name, "what did you finish?");
-      await waitForLog(
-        rig.core,
-        (log) => customEvents(log, "coordinator_message_handled").some((e) => e.messageId === messageId),
-        20_000,
-        "the message to be answered while the pass still runs",
-      );
-      assert.equal(chats.length, 1, "the chat answered after the run closed, not after its pass");
-      assert.equal(chats[0]!.coordinator, undefined, "in its own session, not a coordinator's");
-      assert.equal(chats[0]!.resume, "lead-1", "the session that led the run");
-      const log = await rig.core.store.listEvents(thread);
-      assert.ok(customEvents(log, "run_finished").some((e) => e.runId === runId));
-    } finally {
-      learning();
-      await running;
-    }
-  });
-
   it("L7. a run that crashes gives back what its lead never heard before the run closes: the chat keeps it Queued, and answers it", {
     timeout: RIG_TIMEOUT_MS,
   }, async () => {
@@ -999,68 +947,6 @@ describe("live chat during a build", () => {
     assert.ok(back >= 0, "the lead never heard it: it went back to the chat");
     assert.ok(back < closedAt, `given back (${back}) before the run closed (${closedAt})`);
     assert.equal(chats.length, 1, "the chat answered it");
-  });
-
-  it("L8. Stop while a new build waits out the last run's learning pass stops that build too", {
-    timeout: RIG_TIMEOUT_MS,
-  }, async () => {
-    const { rig, project, runId, dispatch, finished } = await loopRun("live-learning-stop");
-    let learning = () => {};
-    const learned = new Promise<void>((resolve) => {
-      learning = resolve;
-    });
-    let learningAsked = false;
-    const api = rig.core.host.options.api as Record<string, (params: unknown) => Promise<unknown>>;
-    const closed = async () =>
-      customEvents(await rig.core.listAllEvents(), "run_finished").some((e) => e.runId === runId);
-    api["learning.enabled"] = async () => {
-      if (!(await closed())) return false;
-      learningAsked = true;
-      await learned;
-      return false;
-    };
-    fakeEngine(rig, async (request) => {
-      if (!request.director) return turnResult("worker", "nothing");
-      await request.onLiveTool!("finish", { summary: "nothing to do", land: "no" });
-      return turnResult("lead-1", "done");
-    });
-    const running = dispatch();
-    const thread = await rig.core.threadForGame(project.name);
-    const second = rig.core.newRunId();
-    try {
-      await finished();
-      await until(() => learningAsked, "the run's self-improvement pass to begin");
-      // A second build for the same game: it waits for the pass to end.
-      void rig.core.host
-        .dispatch(
-          {
-            type: "run_start",
-            threadId: thread,
-            run: {
-              runId: second,
-              goal: "a dusk plaza, again",
-              project: project.name,
-              mode: "autopilot",
-              engine: "codex",
-              reference: { name: "Dusk", shots: [] },
-              budgets: { wallClockMs: 15 * 60_000 },
-            },
-          } as never,
-          120_000,
-        )
-        .catch(() => {});
-      await new Promise((resolve) => setTimeout(resolve, 1_000));
-      await rig.core.stopThread(thread);
-    } finally {
-      learning();
-      await running;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 3_000));
-    const log = await rig.core.store.listEvents(thread);
-    assert.ok(
-      !customEvents(log, "run_registered").some((e) => e.runId === second),
-      "the build that waited on the pass was stopped with it",
-    );
   });
 
   it("L5. the long turn keeps the old way: a message waits for the run, and the chat answers it after", {

@@ -54,11 +54,9 @@ before(async () => {
   const baseline = (await api["snapshot.create"]!({ scope: "game", project: "pong", reason: "baseline" })) as {
     snapshot_id: string;
   };
-  candidate = (await api["optimization.open"]!({
-    project: "pong",
-    runId: "run_tq1",
-    baselineSnapshotId: baseline.snapshot_id,
-  })) as { candidateId: string; root: string };
+  const baselineCommit = core.snapshotIndex.get(baseline.snapshot_id)?.git.game;
+  assert.ok(baselineCommit, "the baseline snapshot holds the game");
+  candidate = await core.candidates.open("pong", "run_tq1", baseline.snapshot_id, baselineCommit);
 
   outside = await tmpDir("studio-outside-");
   await sentinel(path.join(outside, ".ssh"));
@@ -143,7 +141,7 @@ describe("harness RPC authority", () => {
     assert.equal(typeof lite.core.adoptProject, "function", "the user's own Open Game path still adopts");
   });
 
-  for (const method of ["preview.load", "game.attached"]) {
+  for (const method of ["preview.load"]) {
     it(`${method} refuses every folder that is not a studio worktree or the game's own`, async () => {
       for (const { label, root } of hostileRoots()) {
         loads.length = 0;

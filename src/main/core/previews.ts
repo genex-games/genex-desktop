@@ -156,9 +156,6 @@ const MESSAGE = {
     t("The selected preview changed while this build was preparing. Open the build again when ready."),
   noGameInSnapshot: () => t("that snapshot has no game to play"),
   sessionEnded: "the session ended before its window opened",
-  viewportNeedsLease: "preview.viewport sizes one leased window: name its handle (never Live or the stand-in)",
-  viewportInSession: (handle: string) =>
-    `preview window ${handle} is a computer session's: its view stays the size the agent plays at`,
   notRunArtefact: (file: string) => `not a run artefact: ${file}`,
   notStill: (file: string) => `not a run artefact or a reference still: ${file}`,
   notCommitHash: (commit: string) => `"${commit}" is not a commit hash`,
@@ -385,8 +382,6 @@ export class PreviewService {
   #liveObservers = 0;
   /** What the Live game's sound depends on, bar the stage and the agents that `#applySound` reads. */
   #sound: Pick<LiveSound, "on" | "foreground"> = { on: true, foreground: true };
-  /** Pooled windows a computer session plays in, by how many sessions hold each: none changes size. */
-  readonly #sessionWindows = new Map<string, number>();
   /** The engine's web build Live last loaded with its game folder (`engineWebFolderOf`), and its files' print. */
   #liveWebBuild: WebBuildSeen | null = null;
   /** The person stopped Live's game (`stopLive`): nothing loads into it until Play or a load of theirs. */
@@ -803,18 +798,12 @@ export class PreviewService {
     let observing = false;
     const ended = new AbortController();
     const named = options.handle && !SHARED_WINDOWS.has(options.handle) ? options.handle : null;
-    let held: string | null = null;
-    const hold = (window: string): void => {
-      held = window;
-      this.#holdSessionWindow(window);
-    };
     if (named) {
       try {
         port = this.pool().port(named);
         handle = named;
-        // The computer tool plays at the facet size: a window the harness resized for a look is put back.
+        // The computer tool plays at the facet size: a window resized for a still is put back.
         this.pool().restoreSize(named);
-        hold(named);
       } catch {
         port = null;
       }
@@ -841,7 +830,6 @@ export class PreviewService {
       }
       lease = taken;
       handle = taken.handle;
-      hold(taken.handle);
       port = pool.port(taken.handle);
       return port;
     };
@@ -863,8 +851,6 @@ export class PreviewService {
             .catch(() => {});
         lease = null;
         if (handle) this.closeScreen(handle);
-        if (held) this.#dropSessionWindow(held);
-        held = null;
         port = null;
         if (observing) {
           observing = false;
@@ -874,29 +860,6 @@ export class PreviewService {
       },
     };
     return session;
-  }
-
-  #holdSessionWindow(handle: string): void {
-    this.#sessionWindows.set(handle, (this.#sessionWindows.get(handle) ?? 0) + 1);
-  }
-
-  #dropSessionWindow(handle: string): void {
-    const held = (this.#sessionWindows.get(handle) ?? 0) - 1;
-    if (held > 0) this.#sessionWindows.set(handle, held);
-    else this.#sessionWindows.delete(handle);
-  }
-
-  /**
-   * `preview.viewport`: one leased window at another size for a look (`PreviewPool.resize`),
-   * back at the facet size when the lease is released. Refused, with nothing moved, for no
-   * handle, Live, the stand-in and a window a computer session plays in, so the computer tool's
-   * view of a worker's or the lead's window never changes size.
-   */
-  viewport(p: HarnessParams<"preview.viewport">): HarnessResult<"preview.viewport"> {
-    const handle = p?.handle;
-    if (typeof handle !== "string" || SHARED_WINDOWS.has(handle)) throw new Error(MESSAGE.viewportNeedsLease);
-    if (this.#sessionWindows.has(handle)) throw new Error(MESSAGE.viewportInSession(handle));
-    return { handle, ...this.pool().resize(handle, p) };
   }
 
   /** What the studio asks the page to wait for: the folder's own `bootMs`, or the default. */

@@ -491,71 +491,6 @@ describe("the computer tool's host", () => {
     assert.match(text(answers.capture!), /c1_default\.jpg/);
   });
 
-  it("answers preview.pageUi, and the null-ish shape for a preview that cannot see outside the canvas", async () => {
-    const rig = await startRig({ replies: [] });
-    rigs.push(rig);
-    const api = rig.core.api() as unknown as Record<string, (p: unknown) => Promise<unknown>>;
-    assert.ok(api["preview.pageUi"], "preview.pageUi resolves through core.api()");
-    // The probe answered nothing: one shape to read, never null, so the evidence pass and the
-    // check that reads it need no branch of their own.
-    assert.deepEqual(await api["preview.pageUi"]!({}), {
-      entries: [],
-      coverage: 0,
-      canvas: null,
-      viewport: null,
-      uiPrimary: false,
-    });
-    rig.preview.pageUiNext = {
-      entries: ["nav.menu"],
-      coverage: 0.42,
-      canvas: { width: 960, height: 600 },
-      viewport: { width: 960, height: 600 },
-      uiPrimary: true,
-    };
-    assert.deepEqual(await api["preview.pageUi"]!({}), rig.preview.pageUiNext);
-    // A port that never heard of the probe answers the same null-ish shape, not an error.
-    const probe = rig.preview.pageUi;
-    delete (rig.preview as { pageUi?: unknown }).pageUi;
-    assert.deepEqual(await api["preview.pageUi"]!({}), {
-      entries: [],
-      coverage: 0,
-      canvas: null,
-      viewport: null,
-      uiPrimary: false,
-    });
-    (rig.preview as { pageUi?: unknown }).pageUi = probe;
-  });
-
-  it("hands preview.state's keep paths to the window only after validating them, and ignores a hostile keep", async () => {
-    const rig = await startRig({ replies: [] });
-    rigs.push(rig);
-    const api = rig.core.api() as unknown as Record<string, (p: unknown) => Promise<unknown>>;
-    const before = Object.getOwnPropertyNames(Object.prototype).sort();
-    const cases: Array<[unknown, { keep?: readonly string[] } | undefined]> = [
-      [{}, undefined],
-      [undefined, undefined],
-      [{ keep: ["race.cars", "player.x"] }, { keep: ["race.cars", "player.x"] }],
-      [{ keep: "race.cars" }, undefined],
-      [{ keep: [1, null, {}, ["race"]] }, undefined],
-      [{ keep: ["__proto__.polluted", "a.constructor", "prototype", "race.cars"] }, { keep: ["race.cars"] }],
-      [
-        { keep: Array.from({ length: 10_000 }, (_, i) => `p${i}`) },
-        { keep: Array.from({ length: 64 }, (_, i) => `p${i}`) },
-      ],
-    ];
-    for (const [params, handed] of cases) {
-      rig.preview.stateOpts.length = 0;
-      assert.deepEqual(await api["preview.state"]!(params), rig.preview.next, JSON.stringify(params)?.slice(0, 80));
-      assert.deepEqual(rig.preview.stateOpts, [handed], JSON.stringify(params)?.slice(0, 80));
-    }
-    assert.deepEqual(Object.getOwnPropertyNames(Object.prototype).sort(), before);
-    assert.equal(({} as Record<string, unknown>).polluted, undefined);
-  });
-
-  // Flipped: with every pooled window leased, the director's session used to fall
-  // back to the live view — the person's own window, for the whole run — and say so on the
-  // run's thread. Live is the person's alone now: the session gets a window past the pool's
-  // ceiling for its own length, and there is no borrow to announce.
   it("never lends the director's session the window the user is watching, even with the pool full", async () => {
     const rig = await startRig(
       { replies: [] },
@@ -722,13 +657,12 @@ describe("what a load waits for", () => {
     assert.ok(screens.includes("opened"), "the worker's screen was opened all the same");
   });
 
-  it("answers preview.ready and preview.gesture over the substrate RPC — host calls, not agent tools", async () => {
+  it("answers preview.ready over the substrate RPC — a host call, not an agent tool", async () => {
     const rig = await startRig({ replies: [] });
     rigs.push(rig);
     const game = await bootGame(rig, "ready-rpc", 1_000);
     const api = rig.core.api() as unknown as Record<string, (p: unknown) => Promise<unknown>>;
     assert.ok(api["preview.ready"], "preview.ready resolves through core.api()");
-    assert.ok(api["preview.gesture"], "preview.gesture resolves through core.api()");
     await api["preview.load"]!({ project: game.name });
     rig.preview.evaluations.push({
       match: "__studioClock",
@@ -744,78 +678,6 @@ describe("what a load waits for", () => {
       { ready: ready.ready, pageMs: ready.pageMs, via: ready.via, polls: ready.polls },
       { ready: true, pageMs: 240, via: "shim", polls: 1 },
     );
-    rig.preview.inputs.length = 0;
-    const knock = (await api["preview.gesture"]!({ x: 100, y: 200, keys: ["Return"] })) as {
-      knocked: boolean;
-      trusted: boolean | null;
-    };
-    assert.equal(knock.knocked, true);
-    assert.equal(knock.trusted, null, "a port that does not say whether its input was trusted says null");
-    assert.deepEqual(
-      (rig.preview.inputs as Array<{ type: string }>).map((a) => a.type),
-      ["move", "click", "tap"],
-    );
-  });
-
-  it("answers game.attached from the page it just served — the live half of game.validate", async () => {
-    const rig = await startRig({ replies: [] });
-    rigs.push(rig);
-    const game = await bootGame(rig, "attach-rpc", 1_000);
-    const api = rig.core.api() as unknown as Record<string, (p: unknown) => Promise<unknown>>;
-    assert.ok(api["game.attached"], "game.attached resolves through core.api()");
-    rig.preview.evaluations.push({
-      match: "__studioClock",
-      value: booting({ ready: true, phase: "ready", attached: true }),
-    });
-    type Report = {
-      ok: boolean;
-      contract: string;
-      reach: string | null;
-      renderer: string | null;
-      renders: number;
-      reason: string | null;
-      consoleErrors: number;
-    };
-    const port = rig.preview as unknown as { attachReport?: () => Promise<Record<string, unknown> | null> };
-
-    // A port that cannot answer the question does not get to imply the page was reached.
-    const blind = (await api["game.attached"]!({ project: game.name })) as Report;
-    assert.equal(blind.ok, false);
-    assert.equal(blind.contract, "none");
-    assert.equal(blind.renders, 0);
-
-    port.attachReport = async () => ({
-      contract: "attached",
-      reach: "import-map",
-      renderer: "WebGLRenderer",
-      scene: "Scene",
-      camera: "PerspectiveCamera",
-      cameras: ["default"],
-      eyes: [],
-      player: false,
-      renders: 3,
-      frames: 12,
-      three: ["/vendor/three.module.js"],
-      reason: null,
-    });
-    try {
-      const attached = (await api["game.attached"]!({ project: game.name, root: game.dir })) as Report;
-      assert.equal(attached.ok, true, "a page the hook attached to is judgeable without the two lines");
-      assert.equal(attached.contract, "attached");
-      assert.equal(attached.reach, "import-map");
-      assert.equal(attached.renderer, "WebGLRenderer");
-      assert.equal(attached.renders, 3);
-      assert.equal(attached.consoleErrors, 0);
-
-      // A page nothing reached at all: the word, not a guess.
-      port.attachReport = async () => ({ contract: "none", reason: "no renderer has drawn since the page loaded" });
-      const nothing = (await api["game.attached"]!({ project: game.name })) as Report;
-      assert.equal(nothing.ok, false);
-      assert.equal(nothing.contract, "none");
-      assert.equal(nothing.reason, "no renderer has drawn since the page loaded");
-    } finally {
-      delete port.attachReport;
-    }
   });
 
   it("refuses a page that says it failed to boot, and one that has left the address the studio serves", async () => {

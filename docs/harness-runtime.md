@@ -51,8 +51,8 @@ are typed in `types/host-api.d.ts` and named in `loop/host-methods.ts` (`HostMet
 generated from `src/shared/harness-api.ts` by `scripts/gen-harness-types.ts` (the build writes
 fresh copies into the seed it ships, and `harness-types.test.ts` holds the committed copies to
 the contract); the ctx a loop function is
-handed is `types/harness.d.ts`. The seed asks nothing of a game page's own code (no
-`preview.call` or `preview.state`): Genex looks at a page only from outside. The bootstrap imports `loop/main.ts`, and a workspace from
+handed is `types/harness.d.ts`. The seed asks nothing of a game page's own code: Genex looks
+at a page only from outside. The bootstrap imports `loop/main.ts`, and a workspace from
 before the conversion that has only `loop/main.mjs` still boots from that. The tool registry
 loads `tools/*.ts` and a legacy `tools/*.mjs`, and when both `x.ts` and `x.mjs` are there `x.ts`
 wins and `x.mjs` is not loaded; `install_tool` takes a `.ts` file name (`.mjs` still passes).
@@ -297,7 +297,7 @@ ask in it, boxed and never reaching the never-touch list in any mode
 ([workers](tool-permissions.md#workers)); a reviewer and a second opinion are unattended: `acceptEdits`, a sandboxed shell auto-allowed inside the workspace,
 and no questions. A harness edit can make a
 session ask only about a message the person sent that is still unanswered, and never chooses its
-mode or answers a card: `thread.create` takes only a title and `events.append`/`turn.append`
+mode or answers a card: it makes no threads, and `events.append`/`turn.append`
 refuse `tool_permission` and `plugin_consent` rows. Nor does it write a game's `.claude` folder,
 whose settings and hooks the person's session loads. Deny rules name
 absolute paths (`absoluteRule`: `//abs/path`, on Windows `//c/...`), because Claude Code reads a

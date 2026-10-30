@@ -182,7 +182,7 @@ describe("the one Loop's start", () => {
     assert.equal(director.root, host.dir);
     assert.equal(first.cwd, undefined);
     assert.equal(first.readOnly, undefined);
-    for (const method of ["snapshot.worktree", "preview.load", "game.scaffold", "game.upgradeContract"])
+    for (const method of ["snapshot.worktree", "preview.load", "game.scaffold"])
       assert.ok(!host.trail().includes(method), `no ${method}`);
   });
 

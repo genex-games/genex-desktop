@@ -346,7 +346,6 @@ describe("a local plugin's tools ask one by one", () => {
       [HostMethod.PluginsWorkerTypes]: { project: PROJECT },
       [HostMethod.PluginsFind]: { project: PROJECT, text: "toy" },
       [HostMethod.PluginsSuggest]: { project: PROJECT, threadId, plugin: TOY_PLUGIN_ID, reason: "a toy project" },
-      [HostMethod.PluginsPreflightMultiplayer]: { project: PROJECT, threadId },
       [HostMethod.PluginsInvoke]: { project: PROJECT, threadId, name: build, args: {} },
     };
     const pluginMethods = Object.values(HostMethod).filter((method) => method.startsWith("plugins."));

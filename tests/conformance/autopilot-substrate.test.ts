@@ -4,7 +4,7 @@
  * for existing callers — these tests assert the new seams and the old defaults side by side.
  */
 import assert from "node:assert/strict";
-import { readFile, stat, writeFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { after, describe, it } from "node:test";
 import { BudgetLedger, usageTokens, workClassOf } from "../../src/substrate/budget.ts";
@@ -302,50 +302,6 @@ describe("autopilot substrate over the real rig", () => {
     await assert.rejects(
       api["snapshot.removeWorktree"]!({ project, path: rig.core.games.dirFor(project) }),
       /outside scratch/,
-    );
-  });
-});
-
-describe("v2 contract upgrade", () => {
-  it("replaces a pre-v2 studio.js with the template's and keeps the old copy", async () => {
-    const rig = await startRig();
-    rigs.push(rig);
-    const api = rig.core.api() as Record<string, (p: never) => Promise<unknown>>;
-    await api["game.scaffold"]!({ name: "oldgame", title: "Old", kind: "web" } as never);
-    const dir = path.join(rig.core.layout.gamesRoot, "oldgame");
-    // A fresh scaffold already carries v2: nothing to do.
-    // A fresh scaffold already carries v2 and the material library: nothing to do.
-    assert.deepEqual(await api["game.upgradeContract"]!({ project: "oldgame" } as never), {
-      upgraded: false,
-      materialsAdded: false,
-    });
-    // A v1 contract (no inspect()) the studio shipped is upgraded, the old file kept beside it.
-    await writeFile(
-      path.join(dir, "src", "studio.js"),
-      await readFile(path.join(import.meta.dirname, "..", "fixtures", "shipped", "studio-generation-1.js.txt"), "utf8"),
-    );
-    const before = (await api["game.validate"]!({ project: "oldgame" } as never)) as { warnings: string[] };
-    assert.ok(
-      before.warnings.some((w) => /predates the v2 contract/.test(w)),
-      "validate names the old contract",
-    );
-    const result = (await api["game.upgradeContract"]!({ project: "oldgame" } as never)) as {
-      upgraded: boolean;
-      backup: string;
-    };
-    assert.equal(result.upgraded, true);
-    assert.equal(result.backup, "src/studio.v1.js");
-    assert.match(await readFile(path.join(dir, "src", "studio.js"), "utf8"), /inspect/);
-    assert.match(await readFile(path.join(dir, "src", "studio.v1.js"), "utf8"), /version: 1/);
-    // A v1 main.js on the v2 studio.js: the contract exists, the game does not feed it yet.
-    await writeFile(
-      path.join(dir, "src", "main.js"),
-      'import { installStudio } from "./studio.js";\ninstallStudio({ update() {}, render() {} });\n',
-    );
-    const validation = (await api["game.validate"]!({ project: "oldgame" } as never)) as { warnings: string[] };
-    assert.ok(
-      validation.warnings.some((w) => /without scene\/camera\/player/.test(w)),
-      "validate now asks main.js to pass the v2 config",
     );
   });
 });

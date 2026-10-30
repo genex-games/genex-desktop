@@ -218,11 +218,9 @@ import { engineRpc } from "./harness-rpc/engine.ts";
 import { eventsRpc } from "./harness-rpc/events.ts";
 import { gameRpc } from "./harness-rpc/game.ts";
 import { jobsRpc } from "./harness-rpc/jobs.ts";
-import { optimizationRpc } from "./harness-rpc/optimization.ts";
 import { pluginsRpc } from "./harness-rpc/plugins.ts";
 import { previewRpc } from "./harness-rpc/preview.ts";
 import { desktopRpc } from "./harness-rpc/desktop.ts";
-import { judgeRpc } from "./harness-rpc/judge.ts";
 import { runsRpc } from "./harness-rpc/runs.ts";
 import { snapshotRpc } from "./harness-rpc/snapshot.ts";
 import { hooksRpc } from "./harness-rpc/hooks.ts";
@@ -2482,7 +2480,6 @@ export class StudioCore {
     const table: HarnessHostHandlers = {
       ...gameRpc(this, this.#x),
       ...eventsRpc(this, this.#x),
-      ...optimizationRpc(this, this.#x),
       ...snapshotRpc(this, this.#x),
       ...hooksRpc(this, this.#x),
       ...observersRpc(this, this.#x),
@@ -2494,7 +2491,6 @@ export class StudioCore {
       ...studioRpc(this, this.#x),
       ...previewRpc(this, this.#x),
       ...desktopRpc(this, this.#x),
-      ...judgeRpc(this),
     };
     return table;
   }

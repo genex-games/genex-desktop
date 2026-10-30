@@ -19,8 +19,6 @@ export function studioRpc(core: StudioCore, x: CoreInternals) {
     // Main's language: the one its menus speak, resolved from Settings and the computer's list.
     [HostMethod.StudioLanguage]: async () => ({ tag: currentLocale(), name: LOCALE_NAMES[currentLocale()] }),
     [HostMethod.ContextPolicy]: async (p) => core.contextPreferences.get(p.engine, p.model ?? "", p.threadId),
-    // The Self-improvement switch, asked by the harness before each thing it would learn.
-    [HostMethod.LearningEnabled]: async () => x.settings.learning,
   } satisfies Partial<HarnessHostHandlers>;
 }
 
