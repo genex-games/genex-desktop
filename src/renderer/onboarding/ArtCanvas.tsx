@@ -1,5 +1,5 @@
 /**
- * A first-launch canvas, also the stage's Planner. Sized for the display, coloured from the theme
+ * A first-launch canvas, also the stage's plan sheet. Sized for the display, coloured from the theme
  * (the canvas' own CSS colours, see `.onboarding-art`), and redrawn every frame (or `fps` times a
  * second) while it is on screen, uninert, in a visible window; under Reduce Motion it paints one
  * still frame whenever its inputs change.
