@@ -3498,12 +3498,14 @@ describe("a director's run through the real core and harness", () => {
     const folderLabel = project.dir.split("/").slice(-2).join("/");
     assert.ok(director.prompt.includes(`the folder \`${folderLabel}\``), "the game's folder");
     assert.match(director.prompt, /it holds a web game at its root, Blender files in `art\/`/, "the game's facts");
-    // Flipped (one session): the lead is its chat's own session — it sits in the game folder and
-    // writes nothing; the integration worktree is the build it leads (its grant's root).
+    // Flipped (one session): the lead is its chat's own session — it sits in the game folder; the
+    // integration worktree is the build it leads (its grant's root).
     const worktree = director.director!.root;
     assert.equal(await realpath(director.cwd), await realpath(project.dir), "the lead sits in the game folder");
     assert.ok(worktree.includes(path.join("autopilot", runId, "integration")), worktree);
-    assert.equal(director.readOnly, true, "and only reads");
+    // Flipped (Loop phase 3): it only read; it builds in that worktree with its own hands now.
+    assert.notEqual(director.readOnly, true, "never read-only");
+    assert.equal(director.leadBuilds, worktree, "its box writes the build it leads");
     for (const name of [
       "computer",
       "look",
@@ -3516,11 +3518,11 @@ describe("a director's run through the real core and harness", () => {
       "finish",
     ])
       assert.ok(results.tools.includes(name), `${name} offered`);
-    // A waking lead ends its turn instead of waiting inside it (director/wake.ts), so
-    // `worker_wait` is not offered. Its handler still answers the call above, and the old name
-    // `wait` too, for a playbook the agent kept that names it.
-    assert.ok(!results.tools.includes("worker_wait"), "worker_wait is not offered to a waking lead");
-    assert.ok(!results.tools.includes("wait"), "nor the old name");
+    // Flipped (Loop phase 3): a waking lead may wait explicitly inside its turn, or end it and be
+    // woken (director/wake.ts), so `worker_wait` is offered. Its handler still answers the old name
+    // `wait` too, for a playbook the agent kept that names it, which is not offered.
+    assert.ok(results.tools.includes("worker_wait"), "worker_wait is offered to a waking lead");
+    assert.ok(!results.tools.includes("wait"), "never the old name");
     assert.ok(results.tools.includes("worker_mark"), "worker_mark is offered");
 
     // Tool answers, across the studio → harness dispatch.
@@ -3714,6 +3716,8 @@ describe("a director's run through the real core and harness", () => {
         "worker_status",
         "worker_steer",
         "worker_stop",
+        // Flipped (Loop phase 3): a waking lead may wait for its workers explicitly.
+        "worker_wait",
         // Flipped: the user's ask to finish is recorded by the lead, quoting them.
         "wrap_up",
       ],
@@ -3729,11 +3733,12 @@ describe("a director's run through the real core and harness", () => {
         "autopilot_started",
         "session_activity",
         "autopilot_plan_review",
-        "director_verdict",
         "director_worker",
         // Flipped: a builder also leaves the worker records every lead's workers leave.
         "worker_started",
         "autopilot_decision",
+        // Flipped (Loop phase 3): the fork gate's verdict follows the start, which no longer waits for it.
+        "director_verdict",
         "worker_finished",
         "integration_merge",
         "integration_health",
@@ -4380,9 +4385,16 @@ describe("a director's run through the real core and harness", () => {
         // A fork from the worker's own commit is gated too — and that one is not a starting point.
         // Flipped (one session): the gate refuses a loop worker; a single one is a lead's repair
         // and starts on a build that does not run.
+        // Flipped (Loop phase 3): worker_start answers at once and the gate runs in the background:
+        // the refusal comes back as that worker's end.
         results.refusedFork = text(
           await call("worker_start", { id: "sky", brief: "a sky", mode: "loop", from: "plaza" }),
         );
+        for (let i = 0; i < 30; i++) {
+          results.skyWait = json(await call("worker_wait", { seconds: "5", worker: "sky" }));
+          const sky = results.skyWait.status.workers.find((w: { id: string }) => w.id === "sky");
+          if (sky?.state !== "running") break;
+        }
         results.workers = json(await call("worker_status", {}));
         // A single worker is a lead's hands: it starts on that same build, to repair it.
         results.repair = json(
@@ -4504,13 +4516,19 @@ describe("a director's run through the real core and harness", () => {
     );
 
     // Every other fork is gated as well, and the worker's own build is not a starting point.
-    assert.match(results.refusedFork, /does not run/);
-    assert.match(results.refusedFork, /from=plaza/);
-    assert.match(results.refusedFork, /renders effectively black/);
-    assert.deepEqual(
-      results.workers.map((w: { id: string }) => w.id),
-      ["plaza"],
-      "the refused fork left no worker behind",
+    // Flipped (Loop phase 3): the start answered at once; the gate's refusal ended the worker.
+    assert.match(results.refusedFork, /"started":"sky"/);
+    assert.match(results.refusedFork, /looked at before it builds/);
+    const sky = results.workers.find((w: { id: string }) => w.id === "sky");
+    assert.equal(sky?.state, "failed", JSON.stringify(results.workers));
+    const ended = JSON.stringify(results.skyWait);
+    assert.match(ended, /does not run/, ended);
+    assert.match(ended, /from=plaza/);
+    assert.match(ended, /renders effectively black/);
+    assert.equal(
+      seen.workers.filter((request) => request.selfCapture?.facetId === "sky").length,
+      0,
+      "no session ran on the fork that does not run",
     );
     // A lead's single worker starts on the build that does not run: repairing it is the job.
     assert.equal(results.repair.started, "repair", JSON.stringify(results.repair));

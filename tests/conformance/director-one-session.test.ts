@@ -668,7 +668,7 @@ describe("a conflict worker that leaves conflict markers", () => {
   });
 });
 
-describe("the studio's hands for a lead that writes nothing", () => {
+describe("the studio's hands beside a lead that builds", () => {
   it("S5. what the lead leaves uncommitted in the build it leads is committed as its work, a playtest of the game folder plays a copy of its commit, and each answer speaks to a lead", {
     timeout: RIG_TIMEOUT_MS,
   }, async () => {
