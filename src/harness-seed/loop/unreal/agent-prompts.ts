@@ -22,11 +22,6 @@ import {
 /** Local Blender's tool a Blender brief names, by its agent name (`src/plugins/blender/plugin.json`). */
 export const LocalBlenderTool = { Model: `${AgentPluginTool.Blender}model` } as const;
 
-/** A prop's triangle budget after its prep, unless its brief calls it a hero piece. */
-export const PROP_TRIANGLES = 30_000;
-/** The longest side of a delivered texture, unless its brief calls it a hero piece. */
-const TEXTURE_PX = 2048;
-
 /** Each kind's word on the graph and in the lead's news: "Blender: Katana". */
 export const AGENT_KIND_WORD = {
   [AgentKind.BlenderModel]: "Blender",
@@ -120,30 +115,26 @@ function manifestShape(options: AgentBriefOptions): string {
   return JSON.stringify(example, null, 2);
 }
 
-/** How a mesh is made ready for Unreal, for every kind that delivers one. */
+/** What the import needs to know of a mesh, for every kind that delivers one: the facts the manifest records. */
 const MESH_CHECKS = [
-  "One mesh object per file: join the parts, or one file per moving part named for it. Only when the brief asks for several meshes in one file, set meshes to their count and meshesAsked to true.",
-  "Real size in metres in Blender with +Z up and the front along +X (Unreal imports metres as centimetres), except a rigged character, which keeps the facing it came with (say which way it faces in notes); put the measured bounds in sizeCm.",
-  "The pivot at the base (or where the brief asks), and say where in pivot.",
-  "Welded (merge by distance, about 0.0001 m) before any decimate, with no open edges added.",
-  `At most ${PROP_TRIANGLES.toLocaleString("en-US")} triangles per prop unless the brief calls it a hero piece; put the count in triangles.`,
-  "At most three material slots, each named, each with its base colour set as its viewport colour so the renders show colour.",
-  "UVs on every mesh.",
-  "Renders you have looked at (each Local Blender job draws a three-quarter and a front view), copied into your folder (role render) and listed in renders; a rigged character also with its arms down (posed, or at a frame of a clip), where cloth webbed to the arms shows.",
+  "One mesh object per file (Unreal imports each as its own asset): join the parts, or one file per moving part named for it. Say how many mesh objects a file holds in meshes.",
+  "Size in metres in Blender with +Z up and the front along +X (Unreal imports metres as centimetres), except a rigged character, which keeps the facing it came with (say which way it faces in notes); put the measured bounds in sizeCm.",
+  "Say where the pivot is in pivot, and the triangle count in triangles.",
+  "Renders, when you made them (each Local Blender job draws a three-quarter and a front view): copy them into your folder (role render) and list them in renders.",
 ] as const;
 
 /** What each kind makes and how; the tools are spelled for the agent's engine. */
 const KIND_WORK = {
   [AgentKind.BlenderModel]: (o: AgentBriefOptions) =>
-    `Model it in Local Blender: write the bpy script in assets/src/, call ${toolCall(o.engine, LocalBlenderTool.Model)}, look at its renders and fix the script until they look right. Copy the finished GLB and its render into ${o.folder}/.`,
+    `Model it in Local Blender: write the bpy script in assets/src/, call ${toolCall(o.engine, LocalBlenderTool.Model)}. Copy the finished GLB and its render into ${o.folder}/.`,
   [AgentKind.BlenderPrep]: (o: AgentBriefOptions) =>
     `Prepare the inputs in Local Blender with ${toolCall(o.engine, LocalBlenderTool.Model)} (its model and inputs arguments stage them read-only): weld, decimate, scale, set the pivot, join, or make LODs, as the brief asks. Keep each source as it is; write the prepared GLBs and their renders into ${o.folder}/.`,
   [AgentKind.GenexCast]: (o: AgentBriefOptions) =>
-    `Make it with ${toolCall(o.engine, AgentPluginTool.GenexAsset)} (its character or creature operation, rigged, with the catalog clips the brief names). A long open coat, cloak, cape or heavy armour can make Meshy's rig fail (Genex then rigs it with Uthana and says so). Use the rigged file Genex's answer names; Meshy's rigs hang under a 0.01 armature scale, which import_character takes out of the GLB by itself, so pass it through Local Blender (${toolCall(o.engine, LocalBlenderTool.Model)} with the GLB as its model and rig on) to delete helper objects such as a stray Icosphere, to decimate it when over budget, or to fix its rig. Prefer a rig with finger bones (Genex's character import rigs them). Local Blender can fix a rig, skin weights or finger bones with your own bpy script. Check the height in metres, then copy the GLB (role skeletal) and its renders into ${o.folder}/. Genex jobs spend the user's credits: one job per thing asked, no retries for variety.`,
+    `Make it with ${toolCall(o.engine, AgentPluginTool.GenexAsset)} (its character or creature operation, rigged, with the catalog clips the brief names). When Meshy's rig fails, Genex rigs it with Uthana and says so. Use the rigged file Genex's answer names; Meshy's rigs hang under a 0.01 armature scale, which import_character takes out of the GLB by itself, so pass it through Local Blender (${toolCall(o.engine, LocalBlenderTool.Model)} with the GLB as its model and rig on) to delete helper objects such as a stray Icosphere, to decimate it when over budget, or to fix its rig. Local Blender can fix a rig or its skin weights with your own bpy script. Check the height in metres, then copy the GLB (role skeletal) and its renders into ${o.folder}/. Genex jobs spend the user's credits: one job per thing asked, no retries for variety.`,
   [AgentKind.Sound]: (o: AgentBriefOptions) =>
-    `Make it with ${toolCall(o.engine, AgentPluginTool.GenexAsset)} (its sfx or music operation), each sound as long as the brief asks, loops clean at their ends. Deliver WAV, 44.1 kHz, 16-bit, into ${o.folder}/ (convert an MP3 with afconvert -f WAVE -d LEI16@44100 <in> <out>). Genex jobs spend the user's credits: one job per sound asked.`,
+    `Make it with ${toolCall(o.engine, AgentPluginTool.GenexAsset)} (its sfx or music operation), each sound as long as the brief asks. Deliver WAV, 44.1 kHz, 16-bit, into ${o.folder}/ (convert an MP3 with afconvert -f WAVE -d LEI16@44100 <in> <out>). Genex jobs spend the user's credits: one job per sound asked.`,
   [AgentKind.Texture]: (o: AgentBriefOptions) =>
-    `Make it with ${toolCall(o.engine, AgentPluginTool.GenexAsset)} (its texture or image operation), or bake it in Local Blender (${toolCall(o.engine, LocalBlenderTool.Model)}). Deliver PNG, at most ${TEXTURE_PX} pixels on a side unless the brief calls it a hero piece, tileable when it covers a surface, into ${o.folder}/; say which map each file is (base colour, normal, roughness) in notes.`,
+    `Make it with ${toolCall(o.engine, AgentPluginTool.GenexAsset)} (its texture or image operation), or bake it in Local Blender (${toolCall(o.engine, LocalBlenderTool.Model)}). Deliver PNG into ${o.folder}/; say which map each file is (base colour, normal, roughness) in notes.`,
   [AgentKind.Cpp]: (o: AgentBriefOptions) => {
     const folder = o.cppFolder ?? o.folder;
     const part = cppPartOf(folder);
@@ -171,12 +162,8 @@ export const deliversMesh = (kind: AgentKind): boolean => MESH_KINDS.has(kind);
 /** The checks a kind runs before it says done, one line each. */
 function checksOf(kind: AgentKind): readonly string[] {
   if (MESH_KINDS.has(kind)) return MESH_CHECKS;
-  if (kind === AgentKind.Sound)
-    return ["Each file plays, is the length asked for, and a loop has no click at its seam."];
-  if (kind === AgentKind.Texture)
-    return [
-      "Each image is the size asked for, tiles without a seam when it covers a surface, and shows no text or logo.",
-    ];
+  if (kind === AgentKind.Sound) return ["Each file plays and is the length asked for."];
+  if (kind === AgentKind.Texture) return ["Each image is the size asked for."];
   return ["It compiles with the check, and every class it adds is named in notes."];
 }
 
@@ -248,7 +235,7 @@ export type DeliveryNews = {
   engine: string;
 };
 
-/** A delivered worker's news, repeated until the lead marks it: its files, hero render, import calls and notes. */
+/** A delivered worker's news, repeated until the lead marks it: its files, render, import calls and notes. */
 export function deliveredNews(news: DeliveryNews): string {
   const { manifest } = news;
   const head = `Worker ${news.id} (${agentTitle(news.kind, news.title)}) delivered into ${news.folder}/:`;
@@ -258,8 +245,8 @@ export function deliveredNews(news: DeliveryNews): string {
     : named.map((path) => `- ${path.split("/").at(-1) ?? path}`);
   const lines = [head, ...files];
   if (news.pending.length) lines.push(DELIVERY_WORDS.NotLandedYet);
-  const [hero] = manifest?.renders ?? [];
-  if (hero) lines.push(`Hero render: ${hero}`);
+  const [render] = manifest?.renders ?? [];
+  if (render) lines.push(`Render: ${render}`);
   if (manifest?.importCalls.length) lines.push(`Import: ${manifest.importCalls.join("\n  ")}`);
   if (manifest?.notes) lines.push(`Notes: ${manifest.notes}`);
   if (news.refused.length) lines.push(`Left out: ${news.refused.join("; ")}.`);
@@ -331,10 +318,6 @@ export const DELIVERY_WORDS = {
   NothingToLand: "it delivered nothing Genex could land",
   NoManifest: `it wrote no ${AGENT_MANIFEST_FILE}: look at the files yourself`,
   BadManifest: (why: string) => `its ${AGENT_MANIFEST_FILE} could not be read (${why}): look at the files yourself`,
-  MultiMesh: (path: string, meshes: number) =>
-    `${path} holds ${meshes} meshes, and one file holds one mesh unless the brief asked for more`,
-  OverBudget: (path: string, triangles: number) =>
-    `${path} has ${triangles.toLocaleString("en-US")} triangles; a prop is at most ${PROP_TRIANGLES.toLocaleString("en-US")} unless it is a hero piece`,
   NotDelivered: (path: string) => `its manifest lists ${path}, which it did not deliver`,
   RunEnded: "the run ended while it worked",
   NotLandedYet:

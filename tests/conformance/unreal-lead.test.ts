@@ -1356,8 +1356,8 @@ describe("the Unreal lead's finish", () => {
     // The critic's last look left a required item open when the run paused.
     const journal = journalOf(host);
     const open = { defect: "The far walls are as dark as the near ones", fix: "Lift the fog's far colour" };
-    const look = { at: host.now(), shots: [], question: null, milestoneId: "lead", round: null, boldMove: "" };
-    journal.critiques.push({ ...look, defects: [open], gates: [], required: [open] });
+    const look = { at: host.now(), shots: [], question: null, milestoneId: "lead", round: null };
+    journal.critiques.push({ ...look, defects: [open], required: [open] });
     host.artifacts.set(`autopilot_${RUN.runId}`, structuredClone(journal));
     host.clock.now += 5 * MINUTE;
     const report = await run(host, { resume: true });

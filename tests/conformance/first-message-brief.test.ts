@@ -152,7 +152,7 @@ describe("the first message on a project with no kind", () => {
     assert.ok(plain.includes(START_WEB_GAME), "web is still the default");
     assert.ok(plain.includes(`When the request names Unreal Engine, call ${toolCall(CLAUDE, UNREAL_NEW_GAME_TOOL)}`));
     assert.ok(plain.includes(`When the request names Toy Engine, call ${toolCall(CLAUDE, TOY_KIND.tool)}`));
-    assert.doesNotMatch(plain, /FIRST, THE ENGINE/, "no question without the card");
+    assert.doesNotMatch(plain, /THE ENGINE:/, "no question without the card");
   });
 
   it("a folder of notes is new but not empty: the notes are read first, and web still starts with start_web_game", async () => {
@@ -187,7 +187,7 @@ describe("the first message on a project with no kind", () => {
     for (const [label, facts] of Object.entries(kinds)) {
       const { prompt, bridged } = await firstMessage(game(facts), UNREAL_ON);
       assert.deepEqual(bridged, [AUTO_LOOP], label);
-      assert.doesNotMatch(prompt, /FIRST, THE ENGINE/, label);
+      assert.doesNotMatch(prompt, /THE ENGINE:/, label);
       assert.ok(!prompt.includes(START_WEB_GAME), `${label}: nothing to start`);
     }
   });

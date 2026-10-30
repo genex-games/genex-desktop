@@ -294,8 +294,13 @@ describe("a lead's sub-agent, started", () => {
     assert.deepEqual(delegation.attribution, { runId: "run-lead", agentId: "agent-blender_model-1" });
     assert.equal(delegation.creditCap, 600, "the run's Genex credit cap, which the host holds its paid jobs to");
     const prompt = String(delegation.prompt);
-    for (const said of [`${FOLDER}/manifest.json`, "+X", "pivot", "30,000 triangles", "metres", "import_model", "Weld"])
+    for (const said of [`${FOLDER}/manifest.json`, "+X", "pivot", "triangles", "metres", "import_model"])
       assert.ok(prompt.includes(said), `the brief says ${said}`);
+    assert.doesNotMatch(
+      prompt,
+      /30,000|hero piece|Weld|material slots|until they look right/,
+      "no budget or craft advice",
+    );
     assert.match(prompt, /never open, call or script the Unreal Editor/);
   });
 
@@ -596,28 +601,19 @@ describe("a sub-agent's delivery on its way into the game", () => {
     assert.match(String(agent.error), /200 files, more than the 64/);
   });
 
-  it("keeps a file holding several meshes out, with the reason, unless its brief asked for several", async () => {
-    const asked = await leadOn();
-    asked.host.manifest = manifest([katanaFile({ meshes: 3, meshesAsked: true })]);
-    assert.ok((await deliver(asked.lead)).landed.includes(MODEL), "asked for: it lands");
+  // Flipped (phase 5 audit): a file holding several meshes was kept out of the game folder unless its
+  // brief asked for several, and a prop over 30,000 triangles was named in the news. Budgets are the
+  // lead's to give in a brief; Genex lands what a worker delivered and says what it measured.
+  it("lands a file holding several meshes and a heavy prop as delivered, with what was measured in the news", async () => {
     const { lead, host, rec } = await leadOn();
-    host.manifest = manifest([katanaFile({ meshes: 3 })]);
+    host.manifest = manifest([katanaFile({ meshes: 3, triangles: 148_000 })]);
     const agent = await deliver(lead);
-    assert.ok(!checkedOut(rec).includes("katana.glb"), "not asked for: it stays out");
-    assert.ok(agent.landed.includes(RENDER), "the rest lands");
-    const [news] = agentNews(lead);
-    assert.match(
-      news?.text ?? "",
-      /katana\.glb holds 3 meshes, and one file holds one mesh unless the brief asked for more/,
-    );
-  });
-
-  it("names a prop over its triangle budget in the news, and still lands it", async () => {
-    const { lead, host } = await leadOn();
-    host.manifest = manifest([katanaFile({ triangles: 148_000 })]);
-    const agent = await deliver(lead);
+    assert.ok(checkedOut(rec).includes("katana.glb"), "it lands");
     assert.ok(agent.landed.includes(MODEL));
-    assert.match(agentNews(lead)[0]?.text ?? "", /148,000 triangles; a prop is at most 30,000/);
+    const text = agentNews(lead)[0]?.text ?? "";
+    assert.match(text, /katana\.glb: mesh, 148,000 triangles/);
+    assert.match(text, /3 meshes/);
+    assert.doesNotMatch(text, /Left out|a prop is at most/);
   });
 
   it("lands a delivery without a manifest, and tells the lead to look at the files itself", async () => {
@@ -721,13 +717,13 @@ describe("a delivered model", () => {
     assert.equal(agent.state, AgentState.Done);
     assert.deepEqual(rec.paramsOf("engine.complete"), [], "no model was asked about it");
     const text = agentNews(lead)[0]?.text ?? "";
-    assert.match(text, /Hero render:/);
+    assert.match(text, /Render:/);
     assert.doesNotMatch(text, /critic/i);
   });
 });
 
 describe("the lead's news of its sub-agents", () => {
-  it("repeats a delivery's news, with its files, hero render and import call, until the lead marks it", async () => {
+  it("repeats a delivery's news, with its files, render and import call, until the lead marks it", async () => {
     const { lead } = await leadOn();
     await deliver(lead);
     const first = agentNews(lead);
@@ -735,7 +731,7 @@ describe("the lead's news of its sub-agents", () => {
     const text = first[0]?.text ?? "";
     assert.match(text, /Worker blender_model-1 \(Blender: Katana\) delivered/);
     assert.match(text, /katana\.glb: mesh, 12,400 triangles, 96 × 4 × 12 cm, pivot grip/);
-    assert.match(text, new RegExp(`Hero render: ${RENDER}`));
+    assert.match(text, new RegExp(`Render: ${RENDER}`));
     assert.match(text, /import_model \{"file": "assets\/agents\/blender_model-1\/katana\.glb"/);
     assert.match(text, /mcp__studio__worker_mark with id=blender_model-1/);
     assert.equal(agentNews(lead).length, 1, "again, while unmarked");

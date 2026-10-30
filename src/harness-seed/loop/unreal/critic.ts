@@ -1,10 +1,9 @@
 /**
  * The lead's critic: fresh eyes on the lead's own captures. `critic` sends the named captures (each
- * by realpath inside the project's `Saved/Genex/captures/`), the game's `references/` stills and
- * ART.md to a fresh vision call whose rubric counts light, atmosphere, materials and composition as
- * structure, not polish. It answers at most five defects with their fixes, one bold move and its
- * yes or no to its own art checks (`CRITIC_CHECKS`, not the brief's Gate 0–2). It is advice: it
- * changes nothing in the game or the run, and the graph shows it on the round it reviewed.
+ * by realpath inside the project's `Saved/Genex/captures/`) and the game's `references/` stills to a
+ * fresh vision call that answers the lead's question: at most five defects, each with its fix when
+ * one is clear. It is a second opinion: it changes nothing in the game or the run, and the graph
+ * shows it on the round it reviewed.
  */
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
@@ -17,7 +16,7 @@ import { modelOn, RoleKey, roleEffort, roleEngine } from "../model-roles.ts";
 import { boundedEffort } from "../effort-cap.ts";
 import { CLIP_DETAIL, CLIP_REASON, clip, hasText } from "../text.ts";
 import { MINUTE_MS } from "../time.ts";
-import { adviceWords, CRITIC_CHECKS, CRITIC_SYSTEM, CRITIC_WORDS, criticAsk } from "./critic-prompts.ts";
+import { adviceWords, CRITIC_SYSTEM, CRITIC_WORDS, criticAsk } from "./critic-prompts.ts";
 import { pathShapeProblem, realInside } from "./game-paths.ts";
 import { type CriticAdvice, type CriticDefect, MAX_CRITIC_DEFECTS, WHOLE_FRAME } from "./lead-contract.ts";
 import { criticAdvice } from "./lead-graph.ts";
@@ -39,13 +38,6 @@ const REFERENCE_PX = 1024;
 /** A capture is read when it is at most this large, and sent as it is when it is at most this large (else as a JPEG). */
 const MAX_SHOT_BYTES = 40 * 1024 * 1024;
 const MAX_RAW_SHOT_BYTES = 3 * 1024 * 1024;
-/** How much of ART.md the critic reads. */
-const ART_CHARS = 6000;
-const ART_FILE = "ART.md";
-/** A critic may split an art check across two lines now and then: a couple of spare lines, and no more, are kept. */
-const SPARE_CHECK_LINES = 2;
-/** How many lines of art-check answers the advice keeps. */
-const MAX_CHECK_LINES = CRITIC_CHECKS.length + SPARE_CHECK_LINES;
 
 /** The first bytes of the two image formats a capture may be in. */
 const MAGIC: ReadonlyArray<{ mimeType: string; bytes: readonly number[] }> = [
@@ -142,14 +134,6 @@ async function referenceImages(lead: Lead): Promise<MessageImage[]> {
   return (found?.frames ?? []).map((frame) => ({ mimeType: frame.mimeType, data: frame.data, label: frame.label }));
 }
 
-/** ART.md, when it is a file inside the game folder ("" otherwise). */
-async function artBible(lead: Lead): Promise<string> {
-  const found = await realInside(lead.game.dir, ART_FILE);
-  if ("problem" in found) return "";
-  const text = await readFile(found.real, "utf8").catch(() => "");
-  return clip(text.trim(), ART_CHARS);
-}
-
 /** The open items of the critic's last look: its required items first, then its new defects (none before a first look). */
 export function openItems(lead: Lead): CriticDefect[] {
   const last = lead.journal.critiques.at(-1);
@@ -166,7 +150,7 @@ function stillOpen(raw: unknown, open: readonly CriticDefect[]): CriticDefect[] 
     .slice(0, MAX_CRITIC_DEFECTS);
 }
 
-/** The critic's answer as advice, or null when it gave neither a defect nor a bold move. */
+/** The critic's answer as advice, or null when it is no list of defects (an empty list is an answer: it sees nothing wrong). */
 function adviceOf(
   answer: AnyRecord | null,
   lead: Lead,
@@ -174,10 +158,9 @@ function adviceOf(
 ): CriticAdvice | null {
   const { shots, question } = look;
   if (!answer) return null;
+  if (!Array.isArray(answer.defects)) return null;
   const defects = defectsOf(answer);
-  const boldMove = hasText(answer.boldMove) ? clip(answer.boldMove.trim(), CLIP_REASON) : "";
-  if (!defects.length && !boldMove) return null;
-  const gates = (Array.isArray(answer.gates) ? answer.gates : []).filter(hasText).slice(0, MAX_CHECK_LINES);
+  const required = stillOpen(answer.stillOpen, look.open);
   const milestone = milestoneNow(lead.journal);
   const lastSave = lead.journal.savePoints.filter((point) => point.milestoneId === milestone.id).at(-1);
   return {
@@ -187,9 +170,7 @@ function adviceOf(
     milestoneId: milestone.id,
     round: lastSave?.round ?? null,
     defects,
-    boldMove,
-    gates: gates.map((gate) => clip(gate.trim(), CLIP_DETAIL)),
-    required: stillOpen(answer.stillOpen, look.open),
+    required,
   };
 }
 
@@ -221,14 +202,13 @@ export async function askCritic(lead: Lead, args: AnyRecord): Promise<string> {
   if (!hasText(args.shots)) return CRITIC_WORDS.NoShots;
   const shots = await readShots(lead, args.shots);
   if (!shots.images.length) return CRITIC_WORDS.CouldNotLook(shots.left);
-  const [references, art] = await Promise.all([referenceImages(lead), artBible(lead)]);
+  const references = await referenceImages(lead);
   const question = hasText(args.question) ? clip(args.question.trim(), CLIP_REASON) : null;
   const names = shots.images.map((image) => image.label ?? "");
   const open = openItems(lead);
   const content = criticAsk({
     goal: lead.run.goal ?? "",
     question,
-    art,
     shots: names,
     references: references.length,
     open,
@@ -244,7 +224,7 @@ export async function askCritic(lead: Lead, args: AnyRecord): Promise<string> {
   lead.journal.critiques.push(advice);
   await criticAdvice(lead, advice);
   await saveLead(lead);
-  return adviceWords(advice, { references: references.length, art: Boolean(art), left: shots.left });
+  return adviceWords(advice, { references: references.length, left: shots.left });
 }
 
 /** The critic's defects in an answer, at most MAX_CRITIC_DEFECTS, each with its fix. */

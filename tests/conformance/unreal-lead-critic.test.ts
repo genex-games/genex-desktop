@@ -1,8 +1,7 @@
 /**
  * The Unreal lead's critic (loop/unreal/critic.ts): one fresh vision call on the lead's captures,
  * each read by realpath inside the project's Saved/Genex/captures folder, beside the game's
- * reference stills and ART.md. It answers defects with fixes, one bold move and its gate answers,
- * and changes nothing: a capture path that leads anywhere else is refused before any call.
+ * reference stills. It answers defects with fixes and changes nothing: a capture path that leads anywhere else is refused before any call.
  */
 import assert from "node:assert/strict";
 import { mkdir, symlink, writeFile } from "node:fs/promises";
@@ -36,8 +35,6 @@ const ANSWER = {
     { defect: "The far walls are as dark as the near ones", fix: "Lift the fog's far colour" },
     { defect: "Nothing in the air", fix: "Add slow dust in the light shaft" },
   ],
-  boldMove: "Drop the camera to the floor of the shaft",
-  gates: ["Light: yes — one key light from above", "Atmosphere: no — no depth by value"],
 };
 
 /** A lead in a real game folder with one capture, ART.md and a reference still; the critic answers `answer`, then each of `later` in turn. */
@@ -100,7 +97,7 @@ const records = (rec: CtxRecorder) =>
     .flatMap((p) => p.batch as Array<{ event_type: string; payload: Record<string, unknown> }>);
 
 describe("the Unreal lead's critic", () => {
-  it("shows a fresh vision call the captures, the references and ART.md, and asks it the lead's own question as a second opinion", async () => {
+  it("shows a fresh vision call the captures and the references, and asks it the lead's own question as a second opinion", async () => {
     const { lead, rec } = await criticOn();
     const answer = await askCritic(lead, { shots: "vista.png", question: "Does the shaft read as huge?" });
     const [call] = rec.paramsOf("engine.complete");
@@ -118,15 +115,16 @@ describe("the Unreal lead's critic", () => {
         ["image/jpeg", "ref-1"],
       ],
     );
-    assert.match(String(message?.content), /wet stone, one cold key light/);
+    // Flipped (phase 5 audit): the lead's ART.md was read and put in the ask; nothing asks the lead to write one.
+    assert.doesNotMatch(String(message?.content), /wet stone, one cold key light|ART\.md/);
     assert.match(String(message?.content), /Does the shaft read as huge\?/);
-    assert.match(
-      answer,
-      /The critic looked at vista\.png beside 1 reference still and ART\.md\. It advises; you decide\./,
-    );
+    assert.match(answer, /The critic looked at vista\.png beside 1 reference still\. It advises; you decide\./);
     assert.match(answer, /1\. The far walls are as dark as the near ones — fix: Lift the fog's far colour/);
-    assert.match(answer, /First change it would make: Drop the camera to the floor of the shaft/);
-    assert.doesNotMatch(answer, /Art checks|Atmosphere: no/, "no art checks reach the lead");
+    assert.doesNotMatch(
+      answer,
+      /First change|Art checks|Atmosphere: no/,
+      "no bold move and no art checks reach the lead",
+    );
   });
 
   it("records its advice on the latest save point's round as advice, never as a verdict", async () => {
@@ -166,7 +164,7 @@ describe("the Unreal lead's critic", () => {
 
   const FAR_WALLS = ANSWER.defects[0];
   const RAILING = { defect: "The stair has no railing", fix: "Add a rail along the drop" };
-  const SECOND = { defects: [RAILING], boldMove: "Light the stair from below", gates: [], stillOpen: [1] };
+  const SECOND = { defects: [RAILING], stillOpen: [1] };
 
   it("shows a later look its last look's open items, and tells the lead those it still sees", async () => {
     const { lead, rec } = await criticOn(ANSWER, [SECOND]);
@@ -190,8 +188,8 @@ describe("the Unreal lead's critic", () => {
   });
 
   it("keeps an item required while it still sees it, and lets it go when it doesn't", async () => {
-    const stillSees = { defects: [], boldMove: "Hang cables in the shaft", gates: [], stillOpen: [1] };
-    const gone = { defects: [], boldMove: "Hang cables in the shaft", gates: [], stillOpen: [] };
+    const stillSees = { defects: [], stillOpen: [1] };
+    const gone = { defects: [], stillOpen: [] };
     const { lead } = await criticOn(ANSWER, [SECOND, stillSees, gone]);
     for (let i = 0; i < 4; i++) await askCritic(lead, { shots: "vista.png" });
     assert.deepEqual(lead.journal.critiques[2]?.required, [FAR_WALLS], "the required item is item 1 of the next look");
@@ -208,7 +206,7 @@ describe("the Unreal lead's critic", () => {
 
   const UNANSWERED: Array<[string, unknown, RegExp]> = [
     ["an answer it can't read", "Looks great to me!", /could not be read/],
-    ["an answer with neither a defect nor a bold move", { gates: ["Light: yes"] }, /could not be read/],
+    ["an answer with no list of defects", { boldMove: "Hang cables in the shaft" }, /could not be read/],
     [
       "an engine that fails",
       new Error("the judge engine is not signed in"),

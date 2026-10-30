@@ -198,9 +198,8 @@ export type AgentManifestFile = {
   /** Where its pivot sits, in words ("base centre", "grip"). */
   pivot?: string;
   materials?: string[];
-  /** How many mesh objects the file holds: one, unless its brief asked for several (`meshesAsked`). */
+  /** How many mesh objects the file holds. */
   meshes?: number;
-  meshesAsked?: boolean;
 };
 
 /**
@@ -252,32 +251,12 @@ export type AgentRecord = AgentRequest & {
 // ── save points, captures and the critic ───────────────────────────────────────────────────
 
 /** The most of a checkpoint's pictures a save point keeps as thumbnails. */
-export const MAX_HERO_SHOTS = 6;
+export const MAX_THUMBNAILS = 6;
 
-/** A capture's tone numbers, each 0 to 1, as the Unreal plugin's bridge measures them (its `Tone`). */
-export type ShotTone = {
-  /** The 2nd luminance percentile: the black point. */
-  p2: number;
-  /** The 98th luminance percentile: the white point. */
-  p98: number;
-  mean: number;
-  /** The luminance standard deviation: the contrast. */
-  std: number;
-  /** The lower third's luminance std (the near ground) and the upper middle band's (the distance): aerial perspective. */
-  nearStd: number;
-  farStd: number;
-  /** The mean saturation. */
-  saturation: number;
-  /** The share of pixels at full white. */
-  clipped: number;
-};
-
-/** One thumbnail of a save point: its camera, its capture file and its tone numbers when measured. */
+/** One thumbnail of a save point: its camera and its capture file. */
 export type SavePointShot = {
   camera: string;
   path: string;
-  /** Tone numbers, kept by a save point from before they stopped being read. */
-  tone?: ShotTone | null;
 };
 
 /**
@@ -310,8 +289,7 @@ export type CriticDefect = { defect: string; fix: string };
 
 /**
  * The critic's advice: what it looked at, the round it reviewed (null before the first save
- * point), at most {@link MAX_CRITIC_DEFECTS} defects with fixes, one bold move, and (`gates`) its
- * yes or no to its own art checks, one line each, which are not the brief's Gate 0–2. `required`
+ * point) and at most {@link MAX_CRITIC_DEFECTS} defects with fixes. `required`
  * holds the open items of its last look it still saw in this one: a defect seen in two looks in a
  * row, which the lead fixes before anything new (absent in an older journal). It changes nothing.
  */
@@ -322,8 +300,6 @@ export type CriticAdvice = {
   milestoneId: string;
   round: number | null;
   defects: CriticDefect[];
-  boldMove: string;
-  gates: string[];
   required?: CriticDefect[];
 };
 
@@ -377,14 +353,10 @@ export const LeadEndReason = {
   /** Unreal could not be reopened. */
   Halted: "halted",
   Failed: "failed",
-  /** The lead ended several turns in a row within minutes: it had nothing more to build. */
+  /** The lead ended several turns in a row within minutes, saving nothing. */
   Idle: "idle",
-  /** A reviewer accepted the lead's claim that the game meets the request. */
+  /** The lead's claim that the game meets the request closed the run. */
   GoalReached: "goal-reached",
-  /** The reviewer turned the lead's claim down too many times in a row: the run stopped with what isn't done. */
-  NotDone: "not-done",
-  /** The lead claimed, and no engine here can hold a reviewer to check it: the run ended without a yes. */
-  NoReviewer: "no-reviewer",
 } as const;
 export type LeadEndReason = (typeof LeadEndReason)[keyof typeof LeadEndReason];
 
@@ -503,7 +475,5 @@ export type CriticAdvicePayload = {
   iteration: number | null;
   at: string;
   defects: CriticDefect[];
-  boldMove: string;
-  gates: string[];
   shots: string[];
 };

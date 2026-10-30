@@ -74,7 +74,7 @@ describe("the Unreal lead's brief", () => {
     const brief = leadBrief(OPTIONS);
     assert.doesNotMatch(brief, /holds only the game's notes/);
     assert.doesNotMatch(brief, /folder `Tower`/);
-    assert.match(brief, /NOTES\.md/);
+    assert.doesNotMatch(brief, /keep NOTES\.md|current with what you built/i, "no upkeep of notes is ordered");
   });
 
   it("offers only the workers the plugins on now can run, by the worker types they declare", () => {
@@ -214,8 +214,6 @@ describe("a save point's answer", () => {
       milestoneId: "lead",
       round: 1,
       defects: [],
-      boldMove: "",
-      gates: [],
       required: [SLAB],
     });
     const lead = { journal, clock: { now: () => 0 }, softDeadline: 60_000 } as unknown as Lead;

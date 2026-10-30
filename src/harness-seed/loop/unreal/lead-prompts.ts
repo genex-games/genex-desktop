@@ -1,7 +1,7 @@
 /**
  * The Unreal lead's words to its session: the brief its first turn opens with (lean: the whole goal,
- * the look-first discipline, hands and eyes, the checklist, the asset policy, sub-agents, saving,
- * and the facts of the template the game is actually built on), the digest every later turn opens
+ * hands and eyes, the assets the plugins on can make, workers, saving, and the facts of the template
+ * the game is actually built on), the digest every later turn opens
  * with, the steers the harness sends mid-turn, a fresh session's handover, and the run tools' plain
  * answers. Pure text from plain facts: nothing here reads the run. Tools are spelled the way the
  * session's engine calls them.
@@ -131,7 +131,7 @@ function referencesText(references: readonly string[]): string {
 function handsAndEyesText(): string {
   return `HANDS AND EYES (the toolset ${BUILD_TOOLSET}, through the Unreal tools):
 - Hands: run_script runs a Python file of yours in ${BUILD_SCRIPTS}/ with the full unreal module and the gx library, in one undo transaction; gx.scope(tag) clears what a script made last time, and gx.instances places repeated pieces. execute_tool_script runs a small query.
-- Eyes: capture_shot from a named camera, capture_play while the game plays, motion_strip for movement. Each answers the image, tone numbers and fps.
+- Eyes: capture_shot from a named camera, capture_play while the game plays, motion_strip for movement. Each answers the image and fps.
 - An MCP timeout does not cancel an edit: look before you run it again.
 - ${PYTHON_TUPLES}
 - Never call the ${LOOP_TOOLSET} toolset: it is Genex's own.`;
@@ -199,7 +199,7 @@ export type LeadDigest = {
 /** One critic answer, in a few lines. */
 function adviceText(advice: CriticAdvice): string {
   const defects = advice.defects.map((d) => `  - ${d.defect} Fix: ${d.fix}`);
-  return [`- On ${advice.shots.join(", ")}:`, ...defects, `  Bold move: ${advice.boldMove}`].join("\n");
+  return [`- On ${advice.shots.join(", ")}:`, ...defects].join("\n");
 }
 
 /** The digest's lines, each a section only when it says something. */
@@ -223,11 +223,7 @@ function digestSections(engine: string | undefined, digest: LeadDigest): string[
 /** A later turn's prompt: the digest, then "go on". */
 export function digestPrompt(engine: string | undefined, digest: LeadDigest): string {
   const left = digest.minutesLeft === null ? "" : ` About ${digest.minutesLeft} minutes are left.`;
-  return [
-    `YOUR NEXT TURN of the Unreal Loop.${left}`,
-    ...digestSections(engine, digest),
-    "Go on with the work, or call finish when the goal is reached.",
-  ].join("\n\n");
+  return [`YOUR NEXT TURN of the Unreal Loop.${left}`, ...digestSections(engine, digest)].join("\n\n");
 }
 
 /** What the harness steers into the lead's turn; a steer that names a run tool spells it for the session's engine. */
@@ -241,13 +237,12 @@ export const STEER = {
   JobEnded: (line: string): string => `Job news:\n${line}`,
   /** Unreal crashed at `at` and was reopened; work since the save point `label` may be lost. */
   Crashed: (at: string, label: string | null): string =>
-    `Unreal crashed at ${at} and was reopened. Unsaved work since ${label ? `save point '${label}'` : "the run began"} may be lost: check the level and continue.`,
+    `Unreal crashed at ${at} and was reopened. Unsaved work since ${label ? `save point '${label}'` : "the run began"} may be lost.`,
   /** Unreal could not be reopened, so the game went back to the save point `label`. */
   Restored: (at: string, label: string): string =>
-    `Unreal crashed at ${at} and couldn't be reopened on the level as it was, so Genex put the game back to save point '${label}' and reopened it. Look at the level as it is now before you go on.`,
+    `Unreal crashed at ${at} and couldn't be reopened on the level as it was, so Genex put the game back to save point '${label}' and reopened it.`,
   /** The run's end is near. */
-  WrapUp: (engine: string | undefined, minutesLeft: number): string =>
-    `About ${minutesLeft} minutes are left: wrap up. Call ${runTool(engine, LeadTool.Finish)} with your summary before the end.`,
+  WrapUp: (minutesLeft: number): string => `About ${minutesLeft} minutes are left.`,
 } as const;
 
 /** Why a session was handed over, in the handover's words. */
@@ -270,7 +265,7 @@ export const CARRIED = {
   Rebuilt: "Genex restarted Unreal (building the game's C++ first, when it has any) before this turn.",
   NotBuilt: (why: string, label: string) =>
     `Your C++ didn't build (${why}), so Genex went back to save point '${label}' and reopened Unreal. Fix the C++ before you rebuild again.`,
-  Resumed: "The run was paused and goes on now: look at the level as it is before you build.",
+  Resumed: "The run was paused and goes on now.",
   TurnHeld: (why: string) => `Genex didn't start your last turn: ${clause(why)}.`,
 } as const;
 

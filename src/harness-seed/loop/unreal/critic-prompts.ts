@@ -4,16 +4,11 @@
  */
 import { type CriticAdvice, type CriticDefect, MAX_CRITIC_DEFECTS } from "./lead-contract.ts";
 
-/**
- * How many check lines an answer may carry back (`gates`), the critic's own words: no list of checks is asked of it.
- */
-export const CRITIC_CHECKS = ["Answer"] as const;
-
 /** The critic's rubric: what it looks for, in what order, and the one JSON shape it answers in. */
 export const CRITIC_SYSTEM = [
   "You give a second opinion on captures of a game being built in Unreal Engine. The lead who builds it decides what to do; you advise.",
   "Answer the lead's question about what the pictures show. Name only what you can see.",
-  `Answer with JSON only: {"defects": [{"defect": "what you see that answers the question, and where in the frame", "fix": "a concrete change, when one is clear"}], "boldMove": "the change you would make first, or empty", "gates": [], "stillOpen": [1, 3]}.`,
+  `Answer with JSON only: {"defects": [{"defect": "what you see that answers the question, and where in the frame", "fix": "a concrete change, when one is clear"}], "stillOpen": [1, 3]}.`,
   `At most ${MAX_CRITIC_DEFECTS} items, the biggest first.`,
   "stillOpen: the numbers of your last look's open items you still see in these images (an empty list when there were none, or these images don't show them).",
 ].join("\n");
@@ -24,8 +19,6 @@ export type CriticAskOptions = {
   goal: string;
   /** The lead's question, or null for a general look. */
   question: string | null;
-  /** ART.md as the lead wrote it ("" when there is none). */
-  art: string;
   /** The captures shown, by file name, in order. */
   shots: string[];
   /** How many reference stills follow the captures. */
@@ -37,16 +30,15 @@ export type CriticAskOptions = {
 /** One defect and its fix, as a line. */
 const defectLine = (item: CriticDefect) => `${item.defect}${item.fix ? ` — fix: ${item.fix}` : ""}`;
 
-/** The critic's ask: the goal, the art bible, the question, and what each attached picture is. */
+/** The critic's ask: the goal, the question, and what each attached picture is. */
 export function criticAsk(options: CriticAskOptions): string {
-  const { goal, question, art, shots, references, open } = options;
+  const { goal, question, shots, references, open } = options;
   const pictures = [
     ...shots.map((shot, i) => `IMAGE ${i + 1}: the game now, capture ${shot}`),
     ...Array.from({ length: references }, (_, i) => `IMAGE ${shots.length + i + 1}: a reference still the owner gave`),
   ];
   return [
     `THE GOAL:\n${goal}`,
-    art ? `THE LEAD'S NOTES (ART.md):\n${art}` : "",
     `THE QUESTION: ${question ?? "What do you see in these frames?"}`,
     open.length
       ? `YOUR LAST LOOK'S OPEN ITEMS (put the numbers of those you still see in stillOpen):\n${open.map((item, i) => `${i + 1}. ${defectLine(item)}`).join("\n")}`
@@ -72,12 +64,11 @@ export const CRITIC_WORDS = {
   TooMany: (max: number) => `only the first ${max} shots were shown`,
 } as const;
 
-/** The critic's advice as the lead reads it: what it looked at, its defects with fixes, what it still sees from its last look, and the change it would make first. */
-export function adviceWords(advice: CriticAdvice, seen: { references: number; art: boolean; left: string[] }): string {
+/** The critic's advice as the lead reads it: what it looked at, its defects with fixes, and what it still sees from its last look. */
+export function adviceWords(advice: CriticAdvice, seen: { references: number; left: string[] }): string {
   const looked = [
     advice.shots.join(", "),
     seen.references ? `beside ${seen.references} reference still${seen.references === 1 ? "" : "s"}` : "",
-    seen.art ? "and ART.md" : "",
   ]
     .filter(Boolean)
     .join(" ");
@@ -90,7 +81,6 @@ export function adviceWords(advice: CriticAdvice, seen: { references: number; ar
   }
   if (advice.required?.length)
     lines.push("Still there since its last look:", ...advice.required.map((item) => `- ${defectLine(item)}`));
-  if (advice.boldMove) lines.push(`First change it would make: ${advice.boldMove}`);
   if (seen.left.length) lines.push(`Left out: ${seen.left.join("; ")}.`);
   return lines.join("\n");
 }

@@ -274,8 +274,6 @@ export async function criticAdvice(lead: Lead, advice: CriticAdvice): Promise<vo
     iteration: advice.round,
     at: new Date(advice.at).toISOString(),
     defects: advice.defects,
-    boldMove: advice.boldMove,
-    gates: advice.gates,
     shots: advice.shots,
   };
   await append(lead, RunEvent.DirectorVerdict, payload);

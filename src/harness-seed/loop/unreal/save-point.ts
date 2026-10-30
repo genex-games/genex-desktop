@@ -12,33 +12,16 @@
 import type { CheckpointAnswer, HookImage } from "../../types/host-api.d.ts";
 import { CheckpointSkip, type HookHeldBy, notesText, runScope, takeCheckpoint } from "../hooks.ts";
 import { HostMethod } from "../host-methods.ts";
-import { minutes, SECOND_MS } from "../time.ts";
-import { MAX_HERO_SHOTS, type SavePoint, type SavePointShot, WHOLE_FRAME } from "./lead-contract.ts";
+import { minutes } from "../time.ts";
+import { MAX_THUMBNAILS, type SavePoint, type SavePointShot, WHOLE_FRAME } from "./lead-contract.ts";
 import { savePointRound } from "./lead-graph.ts";
 import { type Lead, milestoneNow, oneGitWrite, saveLead } from "./lead-journal.ts";
 import { SAVE_POINT_WORDS } from "./lead-prompts.ts";
-
-/** How long a save point once took at most. Kept for an older copy of a module that imports it. */
-export const SAVE_POINT_MS = 90 * SECOND_MS;
-
-/**
- * The Unreal plugin's harness tools a save point once asked for by name. Kept for an older copy of
- * a module that imports it: no current module calls them, since the plugin's own steps run at
- * Genex's checkpoint. Never rename a value.
- */
-export const LeadPluginTool = {
-  EditorActivity: "unreal__editor-activity",
-  HeroShots: "unreal__hero-shots",
-} as const;
-export type LeadPluginTool = (typeof LeadPluginTool)[keyof typeof LeadPluginTool];
 
 const MESSAGE = {
   Autosave: "Autosave",
   AutosaveSummary: "Saved by Genex: the lead's turn ended with unsaved work.",
 } as const;
-
-/** What the editor once answered it was doing, as an older copy of a module reads `editorActivity`. */
-type EditorActivity = { playing: boolean; dirty: number };
 
 /** What a save point is asked for: its label and summary, and whether the harness asked (an autosave). */
 export type SavePointAsk = { label: string; summary: string; auto: boolean };
@@ -54,17 +37,6 @@ type Refusal = { refused: string } & HookHeldBy;
 
 /** A save point made, or why none was. */
 type Made = { point: SavePoint } | Refusal;
-
-/**
- * Kept for an older copy of a module that imports it: the editor's activity is what the editor
- * lock's probe answers Genex now, so this answers that it can't say.
- */
-export async function editorActivity(_lead: Lead): Promise<EditorActivity | null> {
-  return null;
-}
-
-/** Kept for an older copy of a module that imports it: the plugin marks its log at Genex's run start now. */
-export async function markLog(_lead: Lead): Promise<void> {}
 
 /** One picture as a JPEG run artefact: the PNG saved in the run's folder, then re-encoded whole; its path. */
 async function jpegOf(lead: Lead, image: HookImage, label: string): Promise<string | null> {
@@ -82,7 +54,7 @@ async function jpegOf(lead: Lead, image: HookImage, label: string): Promise<stri
 /** The save point's thumbnails: the checkpoint's pictures, as JPEG run artefacts. */
 async function thumbnailsOf(lead: Lead, round: number, images: readonly HookImage[]): Promise<SavePointShot[]> {
   const made: SavePointShot[] = [];
-  for (const image of images.slice(0, MAX_HERO_SHOTS)) {
+  for (const image of images.slice(0, MAX_THUMBNAILS)) {
     const label = `unreal/save-${round}/${image.name.replace(/[^a-z0-9-]+/gi, "-")}`;
     const path = await jpegOf(lead, image, label);
     if (path) made.push({ camera: image.name, path });

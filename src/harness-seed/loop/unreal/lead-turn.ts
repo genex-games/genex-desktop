@@ -3,9 +3,8 @@
  * tools (the director grant) and no window, resumed in the same session turn after turn; the first
  * opens with the brief, every later one with a digest. While a turn runs, the harness watches it:
  * the owner's words are steered at once, a finished sub-agent's news and a job of the run that
- * ended too (one no steer reached rides the next digest), a save is asked for after
- * `SAVE_STEER_MS` of work since the last save point, a crash (Genex's health check blocked) is
- * recovered and the lead told what may be lost, the wrap-up is asked for near the end, and the
+ * ended too (one no steer reached rides the next digest), a crash (Genex's health check blocked) is
+ * recovered and the lead told what may be lost, the minutes left are said near the end, and the
  * owner's finish ends the turn. Genex's turn moments run around each turn (`turn.start` may stop
  * it). A lost or full session hands the run to a fresh one; a rate limit is waited out, a usage cap
  * pauses the run.
@@ -249,9 +248,9 @@ export const inWrapUp = (lead: LeadRun): boolean => lead.clock.now() >= lead.sof
 
 /** The wrap-up's words now. */
 export const wrapUpWords = (lead: LeadRun): string =>
-  STEER.WrapUp(leadEngine(lead).engine, minutes(Math.max(0, lead.softDeadline - lead.clock.now())));
+  STEER.WrapUp(minutes(Math.max(0, lead.softDeadline - lead.clock.now())));
 
-/** Near the working deadline, once: fix what is visible, set the hero cameras, save "Final", update NOTES.md. */
+/** Near the working deadline, once: the minutes left. */
 async function wrapUpWatch(lead: LeadRun, turn: LeadTurn): Promise<void> {
   if (lead.wrapUpSaid || !inWrapUp(lead)) return;
   lead.wrapUpSaid = await steer(lead, turn, "wrap-up", wrapUpWords(lead));

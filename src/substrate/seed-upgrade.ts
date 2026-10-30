@@ -450,10 +450,11 @@ async function deletedBeforeMigration(
  * `loop/unreal/live.ts` (a kept `run-dispatch.ts`'s `runUnrealLive`, the lead now) and
  * `loop/unreal/live-journal.ts` (a kept `restore.ts`'s `unrealTool`, in `SEED_MOVES`). So do the
  * lead's own reading of whether Unreal is there (`editor-life.ts`) and a chat's own waits and reads
- * of Unreal (`editor-wait.ts`, `editor-wait-prompts.ts`, `editor-activity.ts`): no current module
- * calls them since Genex's `health`, checkpoint and kinds' readiness took them over, but kept copies
- * of `delegated-turn.ts`, `unreal-prompts.ts`, `lead-turn.ts`, `restore.ts` and `save-point.ts`
- * still import them, so they stay until the Unreal runner's last by-name calls go.
+ * of Unreal (`editor-wait.ts`, `editor-activity.ts`): no current module calls them since Genex's
+ * `health`, checkpoint and kinds' readiness took them over, but kept copies of `delegated-turn.ts`,
+ * `unreal-prompts.ts`, `lead-turn.ts`, `restore.ts` and `save-point.ts` still import them, so they
+ * stay until the Unreal runner's last by-name calls go. The prompt a chat's session once resumed
+ * with (`editor-wait-prompts.ts`) is retired with the chat's own look-first wording.
  *
  * The JavaScript modules the TypeScript seed replaced (`loop/*.mjs` → `loop/*.ts`) are not listed
  * here: retiring an agent-edited `x.mjs` would keep it for ever beside an `x.ts` that is the one
@@ -481,6 +482,7 @@ export const RETIRED_SEED_PATHS: readonly string[] = [
   "loop/unreal/probe-prompts.ts",
   "loop/unreal/probes.ts",
   "loop/unreal/runner.ts",
+  "loop/unreal/editor-wait-prompts.ts",
   // Renamed modules (seed-renames.ts): an untouched copy at the old path goes, an edited one moves.
   ...Object.keys(RENAMED_SEED_FILES),
 ];

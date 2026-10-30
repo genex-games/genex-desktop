@@ -1,13 +1,11 @@
 /**
- * The Unreal Loop's lead: ONE session builds the whole game in the user's visible Unreal editor and
- * judges its own captures. The run prepares (C++ status, then Genex's run start, at which the
+ * The Unreal Loop's lead: ONE session builds the whole game in the user's visible Unreal editor. The run prepares (C++ status, then Genex's run start, at which the
  * plugins that are on open what the game needs, and the template's facts), seats a fresh lead
  * session by default, and then works in turns of
  * at most `TURN_MS`, resumed in the same session: the first opens with the brief, every later one
  * with a digest (time left, the owner's words, finished sub-agents, the last save point, the
  * critic's advice). Mid-turn the harness steers the owner's words at once, a finished sub-agent's
- * news, a save after `SAVE_STEER_MS` without one, a crash and its reopen, and the wrap-up at the
- * soft deadline (`lead-turn.ts`). Between turns it saves what the lead left unsaved
+ * news, a crash and its reopen, and the minutes left near the soft deadline (`lead-turn.ts`). Between turns it saves what the lead left unsaved
  * (`lead-between.ts`); at the end it settles the sub-agents (keeping every delivered file), fires
  * Genex's run end and closes the run. The Builds graph reads it as a director's run (`lead-graph.ts`).
  * The runner never names a plugin's steps: what the editor does at each moment is the plugin's
@@ -92,7 +90,7 @@ const MESSAGE = {
   StartBlocked: (reason: string) => `${sentence(reason)} Then start the Loop again.`,
   OlderLoop: "This run was made by an older Unreal Loop, which can't be resumed; start a new run.",
   TimeUp: "the run's time ran out",
-  Idle: (turns: number) => `the lead ended ${turns} turns in a row within minutes: it had nothing more to build`,
+  Idle: (turns: number) => `the lead ended ${turns} turns in a row within minutes, saving nothing`,
   EngineFailed: (turns: number, why: string) => `the lead's engine failed ${turns} turns in a row: ${why}`,
   NotSavedAtClose: (why: string) =>
     `Genex didn't save Unreal's last work as the Loop ended: ${sentence(why)} Save it in Unreal.`,
@@ -395,7 +393,6 @@ function reportOf(lead: LeadRun, end: RunEnd): AnyRecord {
 
 /** Why a run that ended short of the goal stopped, by its end reason, as its result card says it. */
 const STOP_WHY_OF_END: Partial<Record<LeadEndReason, StopWhy>> = {
-  [LeadEndReason.NotDone]: StopWhy.Stuck,
   [LeadEndReason.TimeUp]: StopWhy.Time,
 };
 
@@ -408,12 +405,11 @@ function leftToFix(lead: LeadRun, end: RunEnd): { stillToFix?: AnyRecord } {
 }
 
 /**
- * What the reviewer's last no found not done, for a run that ended on the no's or on the time after
- * one: in the report's own field, and as the summary the person reads on the run's card.
+ * What the reviewer's last no found not done, for a run that ended on the time after one: in the
+ * report's own field, and as the summary the person reads on the run's card.
  */
 function notDoneOfEnd(lead: LeadRun, end: RunEnd): { notDone?: string[]; summary?: string } {
-  const named = end.reason === LeadEndReason.NotDone || end.reason === LeadEndReason.TimeUp;
-  const notDone = named ? notDoneOf(lead.journal.finishTally) : [];
+  const notDone = end.reason === LeadEndReason.TimeUp ? notDoneOf(lead.journal.finishTally) : [];
   return notDone.length ? { notDone, summary: FINISH_REPORT.summaryNotDone(notDone) } : {};
 }
 

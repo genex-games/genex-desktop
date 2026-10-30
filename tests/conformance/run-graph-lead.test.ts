@@ -105,7 +105,7 @@ function save(milestoneId: string, round: number, label: string, summary: string
     snapshotId: `snap-${label}`,
     at: Date.UTC(2026, 9, 6, 9, round),
     summary,
-    thumbnails: [{ camera: "GX_Shot_Vista", path: `/runs/${RUN_ID}/unreal/${label}/vista.jpg`, tone: null }],
+    thumbnails: [{ camera: "GX_Shot_Vista", path: `/runs/${RUN_ID}/unreal/${label}/vista.jpg` }],
     milestoneId,
     round,
     auto: false,
