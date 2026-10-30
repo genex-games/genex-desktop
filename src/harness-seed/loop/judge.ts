@@ -1674,7 +1674,7 @@ export async function reviewDiff(
     ctx,
     "code-review.md",
     [
-      "Review ONE diff of a three.js game for studio-contract violations only (lying probes, broken __studio, untagged new meshes, edits outside the facet's files). No style comments; the game's randomness and clock are its own.",
+      "Review ONE diff of a three.js game for studio-contract violations only (lying probes, broken __studio, writes to the studio's evidence globals, edits outside the facet's files). No style comments; the game's randomness and clock, its scene's tags and who draws on its screen are its own.",
       'Set "gaming": true only on a finding where a check is made to pass without the work — a probe, flag or value forced to what the check wants — and name that check\'s id in "what".',
       'Reply with JSON only: {"violations":[{"file":"…","line":0,"what":"…","fix":"…","gaming":false}],"summary":"…"}',
     ].join("\n"),
@@ -1686,7 +1686,7 @@ export async function reviewDiff(
     // is cheaper than dropping the findings after the call, which is what happens anyway.
     template
       ? ""
-      : "THIS GAME IS NOT THE STUDIO'S TEMPLATE — it is the user's own code. Two of the rules above DO NOT APPLY here and must not be raised: untagged new objects (this game's scene graph is its own) and the FACET WIRING block (there is none). Judge the seam and the studio contract only.",
+      : "THIS GAME IS NOT THE STUDIO'S TEMPLATE — it is the user's own code. The FACET WIRING block rule above DOES NOT APPLY here and must not be raised (there is none). Judge the seam and the studio contract only.",
     "",
     "DIFF:",
     "```diff",

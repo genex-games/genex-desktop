@@ -1,9 +1,8 @@
 /**
- * Builders hear who owns the screen. The screen-owner rule (loop/screen-owner.ts) turns a non-owner's
- * call into the contract HUD into a code-review finding, but a builder that reads nothing about the
- * owner draws its own readouts beside the HUD part's and learns the rule only from the review. The
- * brief and the opening prompt say it,
- * from the spec's typed `ownsScreen` / `screenOwner` fields; a run with no owner reads as before.
+ * Builders hear which part leads the screen (loop/screen-owner.ts), so they can coordinate: the
+ * brief and the opening prompt say it, from the spec's typed `ownsScreen` / `screenOwner` fields; a
+ * run with no owner reads as before. How a part shows what it owns is its builder's (Loop phase 4):
+ * drawing on the screen is no code-review finding, and no line tells a part it may not draw.
  *
  * And the chat that launches a build narrows it without cutting the game's own front-end: "a
  * system they did not name goes in cut" must not read a title screen and a start key as systems.
@@ -45,7 +44,7 @@ function prompt(spec: Record<string, unknown>, extra: Record<string, unknown> = 
 function withoutOwnerLines(text: string, owner: string): string {
   return text
     .split("\n")
-    .filter((line) => !line.includes(`screen owner ${owner}`) && !line.startsWith("- YOU OWN THE SCREEN"))
+    .filter((line) => !line.includes(`PART "${owner}" LEADS THE SCREEN`) && !line.startsWith("- YOU OWN THE SCREEN"))
     .join("\n")
     .replace(/\n{3,}/g, "\n\n");
 }
@@ -65,19 +64,17 @@ describe("who owns the screen, as a builder reads it", () => {
       assert.match(line, /the HUD, the menus and the layout/);
       // The owner builds the front-end, so it hears the front-end's obligation where it hears the job.
       assert.match(line, /config\.begin.*config\.flow/, "a title without begin/flow shows every judge the title");
-      assert.ok(!text.includes("the screen owner hud draws them"), "the owner is not told to keep off its own screen");
+      assert.ok(!text.includes('PART "hud" LEADS THE SCREEN'), "the owner is not told another part leads it");
     });
 
-    it(`tells every other part in ${where} to publish its values for the owner to draw`, () => {
+    it(`tells every other part in ${where} which part leads the screen, and that how it shows its own is its own`, () => {
       const text = render(NON_OWNER);
-      const line = text.split("\n").find((each) => each.includes("the screen owner hud draws them"));
+      const line = text.split("\n").find((each) => each.includes('PART "hud" LEADS THE SCREEN'));
       assert.ok(line, text);
       assert.match(line, /publish .*state\(\).*module's API/);
-      assert.match(line, /code-review finding/, "the rule is enforced, and the line says how");
-      // Every call the rule flags is named, so a hit flash or a crosshair does not read as allowed.
-      for (const call of ["text", "bar", "arc", "path", "image", "panel", "font", "crosshair", "flash"])
-        assert.match(line, new RegExp(`\\b${call}\\b`), call);
-      assert.match(line, /THE SCREEN BELONGS TO PART "hud"/);
+      // Flipped (Loop phase 4): the line said drawing was a code-review finding and named every call it flagged.
+      assert.doesNotMatch(line, /code-review finding|never draw/i, "no part is told it may not draw");
+      assert.match(line, /yours to decide/);
       assert.ok(!text.includes("YOU OWN THE SCREEN"));
     });
 
@@ -96,7 +93,7 @@ describe("who owns the screen, as a builder reads it", () => {
     });
   }
 
-  it("tells the line's side exactly as the screen-owner rule decides it, for well-formed and malformed fields", () => {
+  it("tells the line's side from the typed fields alone, for well-formed and malformed fields, and flags no drawing", () => {
     const fields: Array<Record<string, unknown>> = [
       {},
       { ownsScreen: true },
@@ -118,7 +115,11 @@ describe("who owns the screen, as a builder reads it", () => {
         template: true,
       }).length;
       const line = screenOwnerLine(spec) ?? "";
-      assert.equal(line.includes("code-review finding"), flagged > 0, JSON.stringify(spec));
+      // Flipped (Loop phase 4): a non-owner's call into the HUD was a finding; it is no rule now.
+      assert.equal(flagged, 0, JSON.stringify(spec));
+      const leadsElsewhere =
+        spec.ownsScreen !== true && typeof spec.screenOwner === "string" && spec.screenOwner !== "";
+      assert.equal(line.includes("LEADS THE SCREEN"), leadsElsewhere, JSON.stringify(spec));
       assert.equal(line.startsWith("- YOU OWN THE SCREEN"), spec.ownsScreen === true, JSON.stringify(spec));
     }
   });
@@ -137,15 +138,15 @@ describe("a finishing part and a resumed session hear who owns the screen", () =
   const HUD_CRAFT = "the HUD's craft";
   /** The brief's finish section, up to its polish list. */
   const finishOf = (text: string) =>
-    text.slice(text.indexOf("## THE FINISH"), text.indexOf("The judge's polish list")).split("\n");
+    text.slice(text.indexOf("## THE FINISH"), text.indexOf("The polish list")).split("\n");
 
   it("never tells a finishing part that does not own the screen to polish the HUD's craft", () => {
     const text = brief(NON_OWNER, finish);
     assert.ok(!text.includes(HUD_CRAFT), text);
-    assert.ok(text.includes("the screen owner hud draws them"), "the owner's line is still there");
-    // A polish item about the HUD is handed to the owner, not left as this part's work.
+    assert.ok(text.includes('PART "hud" LEADS THE SCREEN'), "the owner's line is still there");
+    // A polish item about the HUD is coordinated with the part that leads it.
     assert.ok(
-      finishOf(text).some((line) => line.includes("screen owner")),
+      finishOf(text).some((line) => line.includes("leads the HUD")),
       text,
     );
   });
@@ -174,7 +175,7 @@ describe("a finishing part and a resumed session hear who owns the screen", () =
 
   it("repeats the owner's line in a direct engine's resumed prompt, which has no brief to point at", () => {
     const direct = { briefFile: null };
-    assert.ok(resumed(NON_OWNER, direct).includes("the screen owner hud draws them"));
+    assert.ok(resumed(NON_OWNER, direct).includes('PART "hud" LEADS THE SCREEN'));
     assert.ok(
       resumed(OWNER, direct)
         .split("\n")
@@ -182,7 +183,7 @@ describe("a finishing part and a resumed session hear who owns the screen", () =
     );
     // The resumed prompt keeps its blank lines as it always has, so only the one line is taken out.
     const lines = resumed(NON_OWNER, direct).split("\n");
-    const at = lines.findIndex((line) => line.includes("the screen owner hud draws them"));
+    const at = lines.findIndex((line) => line.includes('PART "hud" LEADS THE SCREEN'));
     assert.equal([...lines.slice(0, at), ...lines.slice(at + 1)].join("\n"), resumed(BASE, direct));
   });
 

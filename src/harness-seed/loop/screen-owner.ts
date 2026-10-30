@@ -1,14 +1,10 @@
 /**
- * One owner of the screen. The part the director starts with `critic=screen` owns what the player
- * sees laid over the game — the HUD, the menus, the layout — and every other part publishes its
- * values (in `__studio.state()`, or the owner's model) instead of drawing them, so no part draws
- * readouts of its own beside the HUD part's.
- *
- * The rule is a source-code pattern over a diff's added lines, like the reviewer's Math.random rule:
- * a call into the template's contract HUD (`__studio.hud.…`, or `hud.text(…)` and its siblings) in
- * a part that does not own the screen, while another part does. A game of its own shape draws however
- * it already did, and a run where no part owns the screen is as it was. A new module, so a kept older
- * sibling can never shadow these names; it imports only a type from review.ts.
+ * The part that leads the screen. The part the director starts with `critic=screen` is reviewed as
+ * the screen's (judge.ts `CRITIC_PRINCIPLES`) and answers for the HUD's layout checks a plan writes
+ * (`HUD_LAYOUT_CHECKS`), and every part hears which part that is, so they can coordinate. How a part
+ * draws on the screen is its builder's to decide (Loop phase 4): drawing there is no finding, and
+ * `screenOwnership` finds nothing; its name stays for a kept older review.ts. A new module, so a
+ * kept older sibling can never shadow these names; it imports only a type from review.ts.
  */
 import type { Violation } from "./review.ts";
 import { HUD_LAYOUT_CHECKS } from "./hud-layout.ts";
@@ -16,7 +12,7 @@ import { HUD_LAYOUT_CHECKS } from "./hud-layout.ts";
 /** The critic a part is reviewed by when it is the screen's (judge.ts `CRITIC_PRINCIPLES` key). */
 export const SCREEN_CRITIC = "screen";
 
-/** A finding's category: a part drew on the screen another part owns. */
+/** A finding's category an older reviewer gave a part that drew on the screen another part owns: no longer raised. */
 export const SCREEN_OWNER_CATEGORY = "screen-owner";
 
 /** Take the HUD's layout checks off a part that does not draw it: it could never pass them by its own work. */
@@ -24,25 +20,6 @@ function dropHudLayout(spec: ScreenSpec): void {
   if (!Array.isArray(spec.checks)) return;
   spec.checks = spec.checks.filter((check: { id?: unknown }) => !HUD_LAYOUT_CHECKS.includes(String(check?.id)));
 }
-
-/**
- * A line that draws on or changes the contract HUD, on `__studio.hud` or a handle to it: the
- * drawing calls (template `src/hud.js` `HudItemKind`, the screen flash, a font) and the ones that
- * remove, clear or switch it. Reading it (`get`, `items`) is a probe, not drawing.
- */
-const HUD_CALL = /\bhud\.(?:text|bar|crosshair|flash|arc|path|image|panel|font|remove|clear|enable)\s*\(/;
-
-/** Game code the rule reads: JavaScript or TypeScript. */
-const SOURCE_FILE = /\.(?:m?js|ts)$/;
-
-/** The contract's own modules, beside the entry's contract file: the HUD is defined there, not drawn. */
-const CONTRACT_FILES = ["studio.js", "studio.d.ts", "hud.js"] as const;
-
-/** What the rule says to a part that drew on a screen it does not own. */
-const MESSAGE = {
-  what: (owner: string) => `draws on the screen, which part "${owner}" owns`,
-  fix: "publish the value in __studio.state() or the screen owner's model; the screen owner decides where it goes",
-} as const;
 
 /** The part as the rule reads it: does it own the screen, and which part does. */
 export interface ScreenSpec {
@@ -59,32 +36,12 @@ export interface ScreenReview {
   template: boolean;
 }
 
-/** The part that owns the screen while this one does not: its id, or null when the rule is inert. */
-function otherOwner(spec: ScreenSpec): string | null {
-  if (spec.ownsScreen === true) return null;
-  return typeof spec.screenOwner === "string" && spec.screenOwner ? spec.screenOwner : null;
-}
-
-/** Is this file game code the rule reads, and not the contract's own module? */
-function drawsFrom(file: string): boolean {
-  const base = file.slice(file.lastIndexOf("/") + 1);
-  return SOURCE_FILE.test(file) && !CONTRACT_FILES.some((name) => name === base);
-}
-
-/** The added lines of one file that draw on a screen another part owns; none in a game of its own shape. */
-export function screenOwnership({ file, added, spec, template }: ScreenReview): Violation[] {
-  const owner = otherOwner(spec);
-  if (!template || !owner || !drawsFrom(file)) return [];
-  return added
-    .filter(({ text }) => HUD_CALL.test(text))
-    .map(({ line }) => ({
-      file,
-      line,
-      category: SCREEN_OWNER_CATEGORY,
-      what: MESSAGE.what(owner),
-      fix: MESSAGE.fix,
-      source: "mechanical",
-    }));
+/**
+ * A part drawing on a screen another part leads: no finding (Loop phase 4). The name stays for a kept
+ * older review.ts that still asks.
+ */
+export function screenOwnership(_review: ScreenReview): Violation[] {
+  return [];
 }
 
 /** A worker as the screen rule reads it. */

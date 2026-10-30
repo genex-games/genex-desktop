@@ -1,15 +1,15 @@
 /**
  * The code reviewer — HARNESS-REWORK.md §4.7. A cheap pass over an attempt's diff for
  * contract violations before any evidence is spent: the mechanical scan finds what a regex
- * can (a removed installStudio, untagged new meshes, edits outside the facet's files); the
- * model pass, when enabled and the diff is small, finds what a regex
- * cannot (a probe that lies). Findings are handed back to the builder in the same session.
+ * can (a removed installStudio, a write to the studio's evidence globals, edits outside the
+ * facet's files); the model pass, when enabled and the diff is small, finds what a regex
+ * cannot (a probe that lies). Findings are handed back to the builder in the same session. How a
+ * part draws on the screen and how it tags its scene are the builder's (Loop phase 4): no finding.
  */
 import { reviewDiff } from "./judge.ts";
 import { facetNotes } from "./repo.ts";
 import { commitArg, isCommit, shellQuote } from "./shell.ts";
 import { GIT } from "./git.ts";
-import { isBenchFile } from "./bench.ts";
 import {
   arrivedByMerge,
   EnforcedAction,
@@ -18,7 +18,6 @@ import {
   ReviewCategory,
 } from "./merge-ownership.ts";
 import { GIT_TIMEOUT_MS } from "./config.ts";
-import { screenOwnership } from "./screen-owner.ts";
 import { HostMethod } from "./host-methods.ts";
 import { EngineFailure } from "./outage.ts";
 import type { HarnessCtx, Run } from "../types/harness.d.ts";
@@ -62,8 +61,6 @@ export interface ReviewOutcome {
 
 /** The largest diff the model half of the review is asked about; a larger one gets the mechanical scan alone. */
 const MAX_MODEL_DIFF_CHARS = 40_000;
-/** New objects a template file may create before it must tag at least one of them. */
-const UNTAGGED_OBJECT_LIMIT = 3;
 /** Lines beyond its wiring a facet may add to an entry it does not own. */
 const WIRING_LINE_LIMIT = 3;
 /** Where the template keeps its entry module and the studio contract. */
@@ -256,6 +253,20 @@ function determinismFinding(violation: Partial<Violation>): boolean {
   return DETERMINISM_FINDING.test(text) && !EVIDENCE_GLOBAL.test(text);
 }
 
+/** What a finding about the scene's tags, or a part drawing on a screen another part leads, says. */
+const LAYOUT_FINDING =
+  /untagged|userData\.tag|not tagged|tag them|none tagged|screen[- ]owner|owns the screen|draws on the screen/i;
+
+/**
+ * Is this a finding about how a part tags its scene or draws on the screen? Neither is a rule any
+ * more (Loop phase 4): a builder decides its screen and its scene, and a kept older rubric that
+ * still raises one is not heard.
+ */
+function layoutFinding(violation: Partial<Violation>): boolean {
+  if (violation.category === "tags" || violation.category === "screen-owner") return true;
+  return LAYOUT_FINDING.test(`${violation.what ?? ""} ${violation.fix ?? ""}`);
+}
+
 /** The contract methods the harness calls; removing one from the contract module is a finding. */
 const CONTRACT_METHODS = ["capture", "inspect", "debugCamera", "state"] as const;
 
@@ -295,12 +306,10 @@ export function mechanicalReview(
   for (const [file, { added, removed }] of parseDiff(diff)) {
     const review: FileReview = { file, added, removed, spec: shaped, ownsMain, template, entryMain, entryStudio };
     violations.push(
-      ...templateFindings(review),
       ...evidenceWrites(review),
       ...contractRemovals(review),
       ...wiringOverreach(review),
       ...ownershipBreach(review),
-      ...screenOwnership(review),
     );
   }
   return violations;
@@ -309,32 +318,6 @@ export function mechanicalReview(
 /** Is this file game code (JavaScript or TypeScript)? */
 function isSourceFile(file: string): boolean {
   return /\.(m?js|ts)$/.test(file);
-}
-
-/**
- * Inside the template's game code (never a bench page's, which the game never loads): new objects
- * are tagged. Randomness and the clock are the game's: a seeded game compares better, and nothing
- * requires it.
- */
-function templateFindings({ file, added, template }: FileReview): Violation[] {
-  const templateSource = template && isSourceFile(file) && !file.endsWith("studio.js") && !isBenchFile(file);
-  if (!templateSource) return [];
-  const violations: Violation[] = [];
-  const newMeshes = added.filter(({ text }) =>
-    /new\s+THREE\.(Mesh|InstancedMesh|SkinnedMesh|Group|Points|Line|Sprite)\b/.test(text),
-  ).length;
-  const newTags = added.filter(({ text }) => /userData\.tag\s*=|userData\s*=\s*\{[^}]*tag/.test(text)).length;
-  if (newMeshes >= UNTAGGED_OBJECT_LIMIT && newTags === 0) {
-    violations.push({
-      file,
-      line: 0,
-      category: "tags",
-      what: `${newMeshes} new objects created and none tagged — scene checks cannot see them`,
-      fix: 'set obj.userData.tag = "<tag>" on every object (a group tag covers its children)',
-      source: "mechanical",
-    });
-  }
-  return violations;
 }
 
 /** A line that assigns to one of the studio's evidence globals, or defines one. */
@@ -580,7 +563,7 @@ async function modelReview(
       // template — the same rules the mechanical half above never ran — and randomness and the
       // clock, which a kept older rubric may still raise, are no rule on any game.
       if (template === false && templateOnlyFinding(v)) continue;
-      if (determinismFinding(v)) continue;
+      if (determinismFinding(v) || layoutFinding(v)) continue;
       if (!violations.some((m) => m.file === v.file && m.what === v.what)) violations.push(v);
     }
     return reviewed.summary || summary;
