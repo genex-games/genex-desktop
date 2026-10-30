@@ -22,6 +22,10 @@
  * Files the agent created itself (memory, self-installed tools) are never touched. Replaced
  * files are backed up first, so even a wrong call here is recoverable without git archaeology.
  *
+ * One upgrade per archive epoch (seed-archive.ts) is different: what the runs learned, and the
+ * agent's edits of files the new seed removes or changes, are moved into the workspace's
+ * `archive/<date>/` and the seed's copies laid down, once; later upgrades keep edits again.
+ *
  * Installs from before this file exist have no manifest. They also predate the first
  * self-edit (the manifest ships before the first unattended run), so the one-time migration
  * treats the whole workspace as untouched: the new seed is applied file by file and the
@@ -33,6 +37,15 @@ import { cp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { atomicWriteJson, pathExists, readJsonIfExists, readRegularFile, writeFileNoFollow } from "./fsx.ts";
 import { containedReal, isBelow } from "./paths.ts";
+import {
+  ARCHIVE_EPOCH,
+  archiveFolderFor,
+  archiveLearned,
+  LEARNED_PATHS,
+  moveIntoArchive,
+  openArchive,
+  type SeedArchive,
+} from "./seed-archive.ts";
 import { RENAMED_SEED_FILES, renameInSource } from "./seed-renames.ts";
 
 /** What a boot's seed pass did: first launch, something changed, or nothing to do. Read by the boot notice. */
@@ -85,6 +98,8 @@ export interface SeedUpgradeReport {
    * (`x.mjs`): laid down by `migrateHarnessLayout` once a fork proves the migrated self boots.
    */
   deferred?: string[];
+  /** Upgrading into the archive epoch: what was moved into `archive/<date>/` (seed-archive.ts). */
+  archive?: SeedArchive;
   /**
    * The manifest was last written by an older build of the app, one from before the TypeScript
    * layout (it keeps no `writer`), over a workspace this build had already moved or begun to move.
@@ -488,6 +503,8 @@ interface SeedManifest {
   layoutVersion?: number;
   /** The last layout migration that failed its fork boot, so the next boot does not repeat it unchanged. */
   layoutAttempt?: { key: string; at: string; error: string };
+  /** The last archive epoch (seed-archive.ts) this workspace's upgrades reached; absent means none. */
+  archiveEpoch?: number;
   /**
    * The build that last wrote the manifest: its layout, and its app version when the caller knew
    * it. Every write by this build stamps it; a build from before the TypeScript layout rewrites the
@@ -652,6 +669,8 @@ export interface ApplySeedOptions {
   updatesDir?: string;
   /** The running app's version, stamped into the manifest's `writer`. */
   appVersion?: string;
+  /** The clock an archive's folder is dated by (seed-archive.ts); the wall clock when absent. */
+  now?: () => Date;
   /**
    * Lays the seed's `files` into an empty workspace on a first launch, instead of a copy: the core
    * makes the workspace's repository as it does (`checkOutNewRepo`).
@@ -699,7 +718,31 @@ interface SeedPass {
   /** rel → hash of the workspace file before the pass (null: none), read ahead in parallel. */
   targetHashes: Map<string, string | null>;
   report: SeedUpgradeReport;
+  /** Every path this seed ships. */
+  seedRels: ReadonlySet<string>;
+  /** Upgrading into the archive epoch: the archive's real folder and what went into it; else null. */
+  archive: (SeedArchive & { abs: string }) | null;
 }
+
+/**
+ * The archive this upgrade moves into, when it is the upgrade into the archive epoch: a workspace
+ * whose manifest has not reached it, upgraded with a backup (never the crash-recovery reseed). Its
+ * learned paths are moved first. Null otherwise, or when the archive folder would lead out.
+ */
+async function epochArchive(
+  options: ApplySeedOptions,
+  body: SeedManifest | null,
+): Promise<(SeedArchive & { abs: string }) | null> {
+  if (!options.backupDir || (body?.archiveEpoch ?? 0) >= ARCHIVE_EPOCH) return null;
+  const dir = archiveFolderFor(options.now?.() ?? new Date());
+  const abs = await openArchive(options.workspaceDir, dir);
+  if (abs === null) return null;
+  return { dir, abs, learned: await archiveLearned(options.workspaceDir, abs), edits: [] };
+}
+
+/** Whether `rel` is, or is inside, one of the learned paths. */
+const isLearned = (rel: string): boolean =>
+  LEARNED_PATHS.some((learned) => rel === learned || rel.startsWith(`${learned}/`));
 
 export async function applySeed(options: ApplySeedOptions): Promise<SeedUpgradeReport> {
   const seedHashes = await hashTree(options.seedDir);
@@ -722,10 +765,13 @@ export async function applySeed(options: ApplySeedOptions): Promise<SeedUpgradeR
   if (renamed.length > 0) report.renamed = renamed;
   const seedModules = [...seedHashes.keys()].filter(isTsModule);
   const deferred = await deferredByLayout(seedModules, options.workspaceDir, body);
+  // Before the read-ahead: the learned paths it moves are no longer the workspace's.
+  const archive = await epochArchive(options, body);
   // Read ahead: each file of the pass writes only its own path, so a hash read before the loop
   // is the one the loop would read.
   const targetHashes = await hashTargets(options.workspaceDir, [...seedHashes.keys()]);
-  const pass: SeedPass = { options, manifest, applied, deferred, targetHashes, report };
+  const seedRels = new Set(seedHashes.keys());
+  const pass: SeedPass = { options, manifest, applied, deferred, targetHashes, report, seedRels, archive };
 
   for (const [rel, seedHash] of [...seedHashes.entries()].sort(([a], [b]) => (a < b ? -1 : 1))) {
     await applySeedFile(pass, rel, seedHash);
@@ -775,6 +821,8 @@ async function seedEmptyWorkspace(
   await writeManifest(options.manifestFile, seedHashes, {
     ...writtenBy(options),
     ...(javascriptSeed ? {} : { layoutVersion: LAYOUT_VERSION }),
+    // A fresh workspace has learned nothing and edited nothing: it starts at the archive epoch.
+    archiveEpoch: ARCHIVE_EPOCH,
   });
   // A fresh workspace is a copy of the seed, and the seed no longer ships the retired paths:
   // there is nothing to retire, and nothing to record.
@@ -803,6 +851,11 @@ async function applySeedFile(pass: SeedPass, rel: string, seedHash: string): Pro
   }
   const targetHash = pass.targetHashes.get(rel) ?? null;
   const lastApplied = pass.manifest?.[rel] ?? null;
+  // A learned path the archive took: the seed's copy goes back in its place.
+  if (pass.archive && isLearned(rel) && targetHash === null) {
+    await layDownSeedFile(pass, rel, seedHash, null);
+    return;
+  }
 
   if (targetHash === seedHash) {
     pass.applied.set(rel, seedHash); // already current, whoever wrote it
@@ -825,7 +878,9 @@ async function applySeedFile(pass: SeedPass, rel: string, seedHash: string): Pro
   // With a manifest, `lastApplied` is known here (a brand-new file returned above); without one
   // (a pre-manifest install, which predates all self-edits) it is null and the file is the app's.
   if (lastApplied !== null && targetHash !== lastApplied) {
-    keepAgentVersion(pass, rel, targetHash, lastApplied);
+    // The epoch's one exception: an edit of a file this seed changes is archived and replaced.
+    const archived = seedHash !== lastApplied && (await archiveEdit(pass, rel, seedHash, targetHash));
+    if (!archived) keepAgentVersion(pass, rel, targetHash, lastApplied);
     return;
   }
   // Untouched since last seeding (or pre-manifest install, which predates all self-edits).
@@ -854,7 +909,7 @@ async function applyNewSeedFile(
   targetHash: string | null,
 ): Promise<void> {
   if (targetHash !== null && !(await vintageHashes(pass.options.updatesDir, rel)).has(targetHash)) {
-    pass.report.kept.push(rel);
+    if (!(await archiveEdit(pass, rel, seedHash, targetHash))) pass.report.kept.push(rel);
     return;
   }
   await layDownSeedFile(pass, rel, seedHash, targetHash);
@@ -870,6 +925,48 @@ async function layDownSeedFile(
   await copyIn(pass.options, rel, targetHash);
   pass.applied.set(rel, seedHash);
   (targetHash === null ? pass.report.added : pass.report.updated).push(rel);
+}
+
+/**
+ * Upgrading into the archive epoch: the agent's copy of `rel` (an edit, or a file of its own where
+ * the seed now ships one) moves into the archive and the seed's copy is laid down. A copy the
+ * agent deleted has nothing to keep. False when this is no archiving upgrade or the move was
+ * refused (the copy is then kept as before).
+ */
+async function archiveEdit(pass: SeedPass, rel: string, seedHash: string, targetHash: string | null): Promise<boolean> {
+  const archive = pass.archive;
+  if (!archive) return false;
+  if (targetHash !== null) {
+    if (!(await moveIntoArchive(pass.options.workspaceDir, archive.abs, rel))) return false;
+    archive.edits.push(rel);
+  }
+  await copyIn(pass.options, rel, null);
+  pass.applied.set(rel, seedHash);
+  pass.report.updated.push(rel);
+  return true;
+}
+
+/**
+ * Upgrading into the archive epoch: every file an earlier seed laid down that this one no longer
+ * ships goes — an untouched copy backed up and removed (retired), an edited one moved into the
+ * archive. The renamed and layout-migrated modules are left to their own passes.
+ */
+async function retireForEpoch(pass: SeedPass, alreadyRetired: Record<string, string>): Promise<string[]> {
+  const { archive, manifest, options } = pass;
+  if (!archive || manifest === null) return [];
+  const retired: string[] = [];
+  for (const [rel, lastApplied] of Object.entries(manifest)) {
+    const ownPass = pass.seedRels.has(rel) || isLegacyModule(rel) || rel in RENAMED_SEED_FILES;
+    if (ownPass || rel in alreadyRetired) continue;
+    const target = path.join(options.workspaceDir, rel);
+    if (!(await pathExists(target))) continue;
+    if ((await hashFile(target)) === lastApplied) {
+      await backUp(options, rel);
+      await rm(target, { force: true });
+      retired.push(rel);
+    } else if (await moveIntoArchive(options.workspaceDir, archive.abs, rel)) archive.edits.push(rel);
+  }
+  return retired;
 }
 
 /** Merge the shipped check ids into the installed catalogue and run the craft migration on it. */
@@ -918,8 +1015,14 @@ function restoredByMigration(pass: SeedPass, rel: string): boolean {
 async function finishSeedPass(pass: SeedPass, body: SeedManifest | null): Promise<void> {
   const { options, report, deferred } = pass;
   const alreadyRetired = body?.retired ?? {};
-  const retiredNow = await retireDroppedSeedFiles(options, pass.manifest, alreadyRetired, pass.applied);
+  const retiredForEpoch = await retireForEpoch(pass, alreadyRetired);
+  const retiredNow = [
+    ...retiredForEpoch,
+    ...(await retireDroppedSeedFiles(options, pass.manifest, alreadyRetired, pass.applied)),
+  ];
   report.retired.push(...retiredNow);
+  if (pass.archive)
+    report.archive = { dir: pass.archive.dir, learned: pass.archive.learned, edits: pass.archive.edits };
   // Every boot, not only an upgrading one: the answer holds until the agent acts on it, and the
   // boot keeps the agent's note in step with it (StudioCore, seed-upgrade-notice.ts).
   report.moved.push(...(await splitMoves(options.workspaceDir, report.kept)));
@@ -935,8 +1038,11 @@ async function finishSeedPass(pass: SeedPass, body: SeedManifest | null): Promis
     ...writtenBy(options),
     retired: { ...alreadyRetired, ...Object.fromEntries(retiredNow.map((rel) => [rel, new Date().toISOString()])) },
     ...(deferred.size > 0 ? {} : { layoutVersion: LAYOUT_VERSION }),
+    ...(pass.archive ? { archiveEpoch: ARCHIVE_EPOCH } : {}),
   });
-  if (report.added.length + report.updated.length + report.retired.length > 0) report.mode = SeedUpgradeMode.Upgraded;
+  const archived = (report.archive?.learned.length ?? 0) + (report.archive?.edits.length ?? 0);
+  if (report.added.length + report.updated.length + report.retired.length + archived > 0)
+    report.mode = SeedUpgradeMode.Upgraded;
 }
 
 /**
@@ -1750,6 +1856,7 @@ async function writeManifest(file: string, hashes: Map<string, string>, extras: 
     body.retired = Object.fromEntries(Object.entries(retired).sort(([a], [b]) => (a < b ? -1 : 1)));
   if (extras.layoutVersion !== undefined) body.layoutVersion = extras.layoutVersion;
   if (extras.layoutAttempt) body.layoutAttempt = extras.layoutAttempt;
+  if (extras.archiveEpoch !== undefined) body.archiveEpoch = extras.archiveEpoch;
   // Every write is this build's (see `writer`), whichever path made it.
   body.writer = { layout: LAYOUT_VERSION, ...(extras.writer?.app ? { app: extras.writer.app } : {}) };
   await atomicWriteJson(file, body);

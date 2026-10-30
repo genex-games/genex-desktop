@@ -26,7 +26,9 @@ historical task records at startup.
 - The renderer is a browser: no Node, Electron, main, preload or substrate imports. It talks
   only through the fixed named calls in `src/shared/studio-api.ts`.
 - Every spawned agent or game process goes through ProcessSandbox; Bypass agents run unboxed.
-- Seed upgrades keep the in-app agent's harness edits.
+- Seed upgrades keep the in-app agent's harness edits, except the one upgrade into an archive
+  epoch (`substrate/seed-archive.ts`): edits of files that seed removes or changes, and what the
+  runs learned, move to `<harness workspace>/archive/<date>/` and the seed's copies replace them.
 - Every new IPC channel is classified fixture-safe or native in `src/main/dev/native-policy.ts`.
 - Preserve the normal profile and `~/AI Games`; use owned `studio:dev` profiles. Automated
   checks use disposable fixtures. A request to run the real app for manual testing authorizes

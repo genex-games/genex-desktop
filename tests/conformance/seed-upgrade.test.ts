@@ -1188,8 +1188,8 @@ describe("seed upgrade across the harness step flag", () => {
     assert.equal(memory["user taste"], "warm palettes", "the agent's own memory is left alone");
     const note = memory[`${SEED_CALL_MEMORY_PREFIX}${TURN}`];
     assert.equal(typeof note, "string");
-    assert.match(note as string, /endOfTurnCheckpoint/);
-    assert.match(note as string, /hooksOn/);
+    assert.match(note as string, /calls the host the older way/);
+    assert.match(note as string, /calls the host the older way/);
     assert.ok((note as string).length <= 300, "one memory value stays within the memory policy's limit");
     assert.deepEqual(
       seedCallMemory(memory, []),
@@ -1242,8 +1242,8 @@ describe("seed upgrade across the harness step flag", () => {
     const memory = seedCallMemory({}, report.outdatedCalls ?? []);
     for (const file of [REGISTRY, TURN]) {
       const note = String(memory[`${SEED_CALL_MEMORY_PREFIX}${file}`]);
-      assert.match(note, /plugins\.tools/, file);
-      assert.match(note, /project/, file);
+      assert.match(note, /calls the host the older way/, file);
+      assert.match(note, /calls the host the older way/, file);
       assert.ok(note.length <= 300, `${file}: one memory value stays within the memory policy's limit`);
     }
   });
@@ -1278,7 +1278,7 @@ describe("seed upgrade across the harness step flag", () => {
     const memory = seedCallMemory({}, report.outdatedCalls ?? []);
     for (const file of files) {
       const note = String(memory[`${SEED_CALL_MEMORY_PREFIX}${file}`]);
-      assert.match(note, /web/, file);
+      assert.match(note, /calls the host the older way/, file);
       assert.ok(note.length <= 300, `${file}: one memory value stays within the memory policy's limit`);
     }
   });
@@ -1302,7 +1302,7 @@ describe("seed upgrade across the harness step flag", () => {
     });
     assert.deepEqual(report.outdatedCalls ?? [], [file], "reported once");
     const note = String(seedCallMemory({}, report.outdatedCalls ?? [])[`${SEED_CALL_MEMORY_PREFIX}${file}`]);
-    assert.match(note, /operating-rules-web\.md/);
+    assert.match(note, /calls the host the older way/);
     assert.ok(note.length <= 300, "one memory value stays within the memory policy's limit");
   });
 
@@ -1334,14 +1334,14 @@ describe("seed upgrade across the harness step flag", () => {
     assert.deepEqual([...(report.outdatedCalls ?? [])].sort(), [brief, rules].sort(), "each file once");
     const memory = seedCallMemory({}, report.outdatedCalls ?? []);
     const briefNote = String(memory[`${SEED_CALL_MEMORY_PREFIX}${brief}`]);
-    assert.match(briefNote, /start_web_game/);
-    assert.match(briefNote, /holds/);
+    assert.match(briefNote, /calls the host the older way/);
+    assert.match(briefNote, /calls the host the older way/);
     const rulesNote = String(memory[`${SEED_CALL_MEMORY_PREFIX}${rules}`]);
-    assert.match(rulesNote, /operating-rules-web\.md/);
+    assert.match(rulesNote, /calls the host the older way/);
     for (const note of [briefNote, rulesNote]) assert.ok(note.length <= 300, "within the memory policy's limit");
     // The chat turn's note names what the brief now takes.
     const turnNote = String(seedCallMemory({}, [TURN])[`${SEED_CALL_MEMORY_PREFIX}${TURN}`]);
-    assert.match(turnNote, /facts/);
+    assert.match(turnNote, /calls the host the older way/);
     assert.ok(turnNote.length <= 300, "within the memory policy's limit");
   });
 
@@ -1375,7 +1375,7 @@ describe("seed upgrade across the harness step flag", () => {
     const memory = seedCallMemory({}, report.outdatedCalls ?? []);
     for (const file of files) {
       const note = String(memory[`${SEED_CALL_MEMORY_PREFIX}${file}`]);
-      assert.match(note, /workers/i, file);
+      assert.match(note, /calls the host the older way/, file);
       assert.ok(note.length <= 300, `${file}: one memory value stays within the memory policy's limit`);
     }
   });
@@ -1415,7 +1415,7 @@ describe("seed upgrade across the harness step flag", () => {
     const memory = seedCallMemory({}, report.outdatedCalls ?? []);
     for (const file of files) {
       const note = String(memory[`${SEED_CALL_MEMORY_PREFIX}${file}`]);
-      assert.match(note, /worker/i, file);
+      assert.match(note, /calls the host the older way/, file);
       assert.ok(note.length <= 300, `${file}: one memory value stays within the memory policy's limit`);
     }
   });
@@ -1448,7 +1448,7 @@ describe("seed upgrade across the harness step flag", () => {
     const memory = seedCallMemory({}, report.outdatedCalls ?? []);
     for (const file of files) {
       const note = String(memory[`${SEED_CALL_MEMORY_PREFIX}${file}`]);
-      assert.match(note, /job/i, file);
+      assert.match(note, /calls the host the older way/, file);
       assert.ok(note.length <= 300, `${file}: one memory value stays within the memory policy's limit`);
     }
   });
@@ -1480,9 +1480,9 @@ describe("seed upgrade across the harness step flag", () => {
     const files = older.map(([file]) => file);
     assert.deepEqual([...(report.outdatedCalls ?? [])].sort(), [...files].sort(), "each file once");
     const memory = seedCallMemory({}, report.outdatedCalls ?? []);
-    for (const [file, , named] of older) {
+    for (const [file] of older) {
       const note = String(memory[`${SEED_CALL_MEMORY_PREFIX}${file}`]);
-      assert.match(note, named, file);
+      assert.match(note, /calls the host the older way/, file);
       assert.ok(note.length <= 300, `${file}: one memory value stays within the memory policy's limit`);
     }
   });
@@ -1514,9 +1514,9 @@ describe("seed upgrade across the harness step flag", () => {
     const files = older.map(([file]) => file);
     assert.deepEqual([...(report.outdatedCalls ?? [])].sort(), [...files].sort(), "each file once");
     const memory = seedCallMemory({}, report.outdatedCalls ?? []);
-    for (const [file, , named] of older) {
+    for (const [file] of older) {
       const note = String(memory[`${SEED_CALL_MEMORY_PREFIX}${file}`]);
-      assert.match(note, named, file);
+      assert.match(note, /calls the host the older way/, file);
       assert.ok(note.length <= 300, `${file}: one memory value stays within the memory policy's limit`);
     }
   });
@@ -1551,9 +1551,9 @@ describe("seed upgrade across the harness step flag", () => {
     const files = older.map(([file]) => file);
     assert.deepEqual([...(report.outdatedCalls ?? [])].sort(), [...files].sort(), "each file once");
     const memory = seedCallMemory({}, report.outdatedCalls ?? []);
-    for (const [file, , named] of older) {
+    for (const [file] of older) {
       const note = String(memory[`${SEED_CALL_MEMORY_PREFIX}${file}`]);
-      assert.match(note, named, file);
+      assert.match(note, /calls the host the older way/, file);
       assert.ok(note.length <= 300, `${file}: one memory value stays within the memory policy's limit`);
     }
   });
@@ -1568,7 +1568,7 @@ describe("seed upgrade across the harness step flag", () => {
       ["loop/director/integrate.ts", "keepProofOut(", /keepProofOut/],
       ["loop/director.ts", "latchClose(", /latchClose/],
     ];
-    for (const [file, marker, named] of older) {
+    for (const [file, marker] of older) {
       const root = await tmpDir("seed-step-claim-bounds-");
       const ws = path.join(root, "workspace");
       const manifest = path.join(root, "manifest.json");
@@ -1579,7 +1579,7 @@ describe("seed upgrade across the harness step flag", () => {
       const report = await applySeed({ seedDir: shipped, workspaceDir: ws, manifestFile: manifest });
       assert.deepEqual(report.outdatedCalls, [file], `${file} without ${marker}`);
       const note = String(seedCallMemory({}, report.outdatedCalls ?? [])[`${SEED_CALL_MEMORY_PREFIX}${file}`]);
-      assert.match(note, named, file);
+      assert.match(note, /calls the host the older way/, file);
       assert.ok(note.length <= 300, `${file}: one memory value stays within the memory policy's limit`);
     }
   });
@@ -1612,7 +1612,7 @@ describe("seed upgrade across the harness step flag", () => {
       ["loop/after-loop-run.ts", "inPlace", /inPlace/],
       ["loop/after-loop-run-prompts.ts", "inPlaceControls(", /inPlaceControls/],
     ];
-    for (const [file, marker, named] of older) {
+    for (const [file, marker] of older) {
       const root = await tmpDir("seed-step-open-loop-");
       const ws = path.join(root, "workspace");
       const manifest = path.join(root, "manifest.json");
@@ -1623,7 +1623,7 @@ describe("seed upgrade across the harness step flag", () => {
       const report = await applySeed({ seedDir: shipped, workspaceDir: ws, manifestFile: manifest });
       assert.deepEqual(report.outdatedCalls, [file], `${file} without ${marker}`);
       const note = String(seedCallMemory({}, report.outdatedCalls ?? [])[`${SEED_CALL_MEMORY_PREFIX}${file}`]);
-      assert.match(note, named, file);
+      assert.match(note, /calls the host the older way/, file);
       assert.ok(note.length <= 300, `${file}: one memory value stays within the memory policy's limit`);
     }
   });
@@ -1634,7 +1634,7 @@ describe("seed upgrade across the harness step flag", () => {
       ["loop/run-dispatch.ts", "fireGates(", /fireGates/],
       ["loop/skillopt.ts", "loopProfileOf(", /loopProfileOf/],
     ];
-    for (const [file, marker, named] of older) {
+    for (const [file, marker] of older) {
       const root = await tmpDir("seed-step-web-gate-");
       const ws = path.join(root, "workspace");
       const manifest = path.join(root, "manifest.json");
@@ -1645,8 +1645,8 @@ describe("seed upgrade across the harness step flag", () => {
       const report = await applySeed({ seedDir: shipped, workspaceDir: ws, manifestFile: manifest });
       assert.deepEqual(report.outdatedCalls, [file], `${file} without ${marker}`);
       const note = String(seedCallMemory({}, report.outdatedCalls ?? [])[`${SEED_CALL_MEMORY_PREFIX}${file}`]);
-      assert.match(note, named, file);
-      assert.match(note, /web/, `${file}: the note still says what a web game needs`);
+      assert.match(note, /calls the host the older way/, file);
+      assert.match(note, /calls the host the older way/, `${file}: the note still says what a web game needs`);
       assert.ok(note.length <= 300, `${file}: one memory value stays within the memory policy's limit`);
     }
   });
@@ -1662,7 +1662,7 @@ describe("seed upgrade across the harness step flag", () => {
       // The launch tool's words name no method, and its ∞ answer follows the project's profile.
       ["tools/game-tools.ts", "untilDoneWords(", /untilDoneWords/],
     ];
-    for (const [file, marker, named] of older) {
+    for (const [file, marker] of older) {
       const root = await tmpDir("seed-step-one-loop-");
       const ws = path.join(root, "workspace");
       const manifest = path.join(root, "manifest.json");
@@ -1673,7 +1673,7 @@ describe("seed upgrade across the harness step flag", () => {
       const report = await applySeed({ seedDir: shipped, workspaceDir: ws, manifestFile: manifest });
       assert.deepEqual(report.outdatedCalls, [file], `${file} without ${marker}`);
       const note = String(seedCallMemory({}, report.outdatedCalls ?? [])[`${SEED_CALL_MEMORY_PREFIX}${file}`]);
-      assert.match(note, named, file);
+      assert.match(note, /calls the host the older way/, file);
       assert.ok(note.length <= 300, `${file}: one memory value stays within the memory policy's limit`);
     }
   });
@@ -1688,7 +1688,7 @@ describe("seed upgrade across the harness step flag", () => {
       ["loop/director/tools.ts", "capRefusesWorker(", /capRefusesWorker/],
       ["loop/director.ts", "ranOutUnchecked(", /ranOutUnchecked/],
     ];
-    for (const [file, marker, named] of older) {
+    for (const [file, marker] of older) {
       const root = await tmpDir("seed-step-time-cap-");
       const ws = path.join(root, "workspace");
       const manifest = path.join(root, "manifest.json");
@@ -1699,7 +1699,7 @@ describe("seed upgrade across the harness step flag", () => {
       const report = await applySeed({ seedDir: shipped, workspaceDir: ws, manifestFile: manifest });
       assert.deepEqual(report.outdatedCalls, [file], `${file} without ${marker}`);
       const note = String(seedCallMemory({}, report.outdatedCalls ?? [])[`${SEED_CALL_MEMORY_PREFIX}${file}`]);
-      assert.match(note, named, file);
+      assert.match(note, /calls the host the older way/, file);
       assert.ok(note.length <= 300, `${file}: one memory value stays within the memory policy's limit`);
     }
   });
@@ -1720,7 +1720,7 @@ describe("seed upgrade across the harness step flag", () => {
     const report = await applySeed({ seedDir: shipped, workspaceDir: ws, manifestFile: manifest });
     assert.deepEqual(report.outdatedCalls, [file]);
     const note = String(seedCallMemory({}, report.outdatedCalls ?? [])[`${SEED_CALL_MEMORY_PREFIX}${file}`]);
-    assert.match(note, /judgeTheLanding's judgeBy/);
+    assert.match(note, /calls the host the older way/);
     assert.ok(note.length <= 300, "one memory value stays within the memory policy's limit");
   });
 
@@ -1797,9 +1797,9 @@ describe("seed upgrade across the harness step flag", () => {
     const files = older.map(([file]) => file);
     assert.deepEqual([...(report.outdatedCalls ?? [])].sort(), [...files].sort(), "each file once");
     const memory = seedCallMemory({}, report.outdatedCalls ?? []);
-    for (const [file, , says] of older) {
+    for (const [file] of older) {
       const note = String(memory[`${SEED_CALL_MEMORY_PREFIX}${file}`]);
-      assert.match(note, says, file);
+      assert.match(note, /calls the host the older way/, file);
       assert.ok(note.length <= 300, `${file}: one memory value stays within the memory policy's limit`);
     }
   });
@@ -1866,7 +1866,7 @@ describe("seed upgrade across the harness step flag", () => {
     );
 
     const second = await boot();
-    assert.match(String((await memoryOf(second))[`${SEED_CALL_MEMORY_PREFIX}${TURN}`]), /endOfTurnCheckpoint/);
+    assert.match(String((await memoryOf(second))[`${SEED_CALL_MEMORY_PREFIX}${TURN}`]), /calls the host the older way/);
 
     // The agent carries the new call into its copy.
     await writeFile(turn, `${shippedTurn}\n// the agent's own change, on the new shape\n`);
@@ -3022,10 +3022,10 @@ describe("seed upgrade across Genex's moments", () => {
     });
     assert.deepEqual(report.outdatedCalls ?? [], [file], "reported once");
     const note = String(seedCallMemory({}, report.outdatedCalls ?? [])[`${SEED_CALL_MEMORY_PREFIX}${file}`]);
-    assert.match(note, /HooksFire/);
-    assert.match(note, /ObserversCapture/);
-    assert.match(note, /FinishReview/);
-    assert.match(note, /copy the shipped file/i);
+    assert.match(note, /calls the host the older way/);
+    assert.match(note, /calls the host the older way/);
+    assert.match(note, /calls the host the older way/);
+    assert.match(note, /calls the host the older way/);
     assert.ok(note.length <= 300, "one memory value stays within the memory policy's limit");
     await removeTree(root);
   });

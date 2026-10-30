@@ -11,6 +11,9 @@ every user's workspace, where in-app engines read them.
 - This is the seed of the in-app harness. `substrate/seed-upgrade.ts` (`applySeed`) copies it
   into the user's editable harness workspace and keeps files the in-app agent has edited, so a
   seed change may not reach an existing profile. Check the seed-upgrade report for `kept` files.
+  The upgrade into a new `ARCHIVE_EPOCH` (`substrate/seed-archive.ts`) is the exception: it moves
+  the agent's edits of files that seed removes or changes, and the learned data in
+  `LEARNED_PATHS`/`LEARNED_ARTIFACTS`, into `archive/<date>/` and lays the seed down.
   When you move exported code from one seed file to another, add the move to `SEED_MOVES` in
   `substrate/seed-upgrade.ts` so a kept copy of the old file is reported (`moved`). When you
   rename an exported name or a module, add it to `substrate/seed-renames.ts`: the upgrade rewrites
@@ -42,12 +45,11 @@ every user's workspace, where in-app engines read them.
 
 ## game-template
 
-- The starting project of every new game. `CLAUDE.md`, `CLAUDE.own.md`, `NOTES*.md` and
-  `docs/CONTRACT.md` are payload for in-app builders.
-- `src/studio.js` installs `window.__studio`, the contract the harness and preview use to
-  inspect, step and capture a game. Never remove a method.
-- A change affects every new game. Run `npm run test:shapes:e2e` when the contract or boot
-  path changes.
+- The starting project of every new web game: `index.html` (an import map naming the three.js
+  Genex serves at `/vendor/`, and `src/main.js`), an empty `src/main.js`, a `CLAUDE.md` of facts
+  and a `references/` note. `CLAUDE.own.md` is the page a game the person brought gets instead.
+  It is payload for in-app builders and asks nothing of a game: Genex observes a page from outside
+  (screenshots, console, real input) and needs no contract in it.
 
 ## main and substrate
 

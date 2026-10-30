@@ -28,7 +28,7 @@ import {
 } from "../../substrate/seed-upgrade.ts";
 import { type TypeCheckResult, diagnosticsFor, typeCheckText, TypeCheckFailure } from "../../substrate/type-gate.ts";
 import type { ForkBoot } from "./self-edit-gate.ts";
-import { seedCallMemory, seedMoveMemory } from "../seed-upgrade-notice.ts";
+import { archiveArtifacts, seedCallMemory, seedMoveMemory } from "../seed-upgrade-notice.ts";
 import { type SnapshotRecord, checkOutNewRepo, HARNESS_WORKSPACE } from "../../substrate/snapshots.ts";
 import type { ThreadFold } from "../../substrate/event-store.ts";
 import { interruptedTurnsIn } from "../../substrate/turns.ts";
@@ -381,6 +381,7 @@ export class RecoveryService {
   async noteSeedMoves(): Promise<void> {
     const report = this.#x.seedReport;
     if (!report) return;
+    await this.#archiveArtifacts(report.archive?.dir ?? null);
     try {
       const memory = ((await this.#core.store.readArtifact<Record<string, unknown>>(this.#core.mainThread, "memory")) ??
         {}) as Record<string, unknown>;
@@ -389,6 +390,27 @@ export class RecoveryService {
         await this.#core.store.writeArtifact(this.#core.mainThread, "memory", next);
     } catch (err) {
       this.#core.options.onLog?.(`[core] noting the seed's moved code failed: ${errorMessage(err)}`, "stderr");
+    }
+  }
+
+  /**
+   * Upgrading into the archive epoch (seed-archive.ts): the Studio thread's learned artifacts go into
+   * the workspace's archive beside the files the seed pass moved, and are cleared. Needs the event
+   * store; a failure is logged, never fatal to the boot.
+   */
+  async #archiveArtifacts(dir: string | null): Promise<void> {
+    if (dir === null) return;
+    const thread = this.#core.mainThread;
+    try {
+      await archiveArtifacts(
+        {
+          read: (id) => this.#core.store.readArtifact(thread, id),
+          write: (id, value) => this.#core.store.writeArtifact(thread, id, value),
+        },
+        path.join(this.#core.layout.harnessWs, dir),
+      );
+    } catch (err) {
+      this.#core.options.onLog?.(`[core] archiving the learned artifacts failed: ${errorMessage(err)}`, "stderr");
     }
   }
 
