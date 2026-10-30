@@ -318,8 +318,11 @@ minutes), and every call but a read or a studio tool screened by the host ahead 
 to. A lead also has the chat's own session's plugins and connectors, its plugins acting on the
 build it leads. A Loop's lead has one of two seats in its game folder, each the host's own finding
 (`DelegationService#leadRoot`): in a web Loop (`loopProfileOf` in `shared/project-facts.ts`: a web
-game at the root beside nothing but `web-game`/`blender-assets` facts) it is read-only and leads
-the run's integration worktree, and only it is lent the preview window; in any other Loop it works
+game at the root beside nothing but `web-game`/`blender-assets` facts) it leads the run's
+integration worktree and builds there with its own hands — never read-only, its box writing that
+build on every engine (`leadBuilds`), what it leaves uncommitted committed on the integration
+branch as its work before a merge, a playtest or a worker's fork (`commitLeadEdits`) — and only it
+is lent the preview window; in any other Loop it works
 in the game folder itself (`director.inPlace`, honoured only for a writing lead whose root is the
 game folder by name and real path, of a run of this game started in the chat its delegation and
 grant name), its plugins acting there and its run's consent covering its engine connector. A
@@ -336,9 +339,9 @@ absolute paths (`absoluteRule`: `//abs/path`, on Windows `//c/...`), because Cla
 rule's `/x` relative to the settings root. A worktree's session still reads its own game, and a
 folder's neighbours are denied only inside the games root or scratch
 ([tool permissions](tool-permissions.md)). A Claude Code chat,
-long-turn director and builder may use WebSearch and WebFetch; judges (`complete()`), read-only
-sessions (the coordinator, playtester, scout and a waking run's lead; the lead and coordinator
-only by asking) and performance-optimization candidates may not, and an unattended
+long-turn director, lead and builder may use WebSearch and WebFetch; judges (`complete()`), read-only
+sessions (the coordinator, playtester and scout; the coordinator only by asking) and
+performance-optimization candidates may not, and an unattended
 shell keeps its sandboxed network. Every delegated Claude session asks for thinking summaries
 (`showThinkingSummaries`); the chat shows a chat or lead session's non-empty summary under the
 work disclosure's Thinking details, never a builder's or judge's. Codex keeps its CLI's own web
@@ -725,8 +728,9 @@ an engine that can't read mid-turn (Codex, Bonsai) hears news only when its turn
 One Loop for every project. Run dispatch (`conductRun`) takes the game from the list it already
 read and its profile (`loopProfileOf`): a web game keeps the director on an engine that keeps a
 session and classic Autopilot on a direct engine or `run.classic`; any other project runs the open
-Loop on an agent engine the host seats in place (`leadsInPlace`: Claude Code, Codex, OpenCode), and on
-any other (Ollama, Bonsai, OpenRouter) closes at once saying it needs one (`RunnerKind.NeedsSession`), which the chat's launch says before it promises anything
+Loop on any engine that keeps a session, which the host seats in place (`leadsInPlace`: Claude Code,
+Codex, OpenCode, and a local model's session — Bonsai, OpenRouter, a local server — alike), and on
+one with no session of its own (Ollama) closes at once saying it needs one (`RunnerKind.NeedsSession`), which the chat's launch says before it promises anything
 (`launchFromIntake`). Classic is a web game's internal only, and the gauntlet works on web games only
 (`RunnerKind.WebOnly`). An open Loop whose parts include a kept older one without `SERVES_OPEN_LOOP`
 is refused with words (the chat's launch says so before its promise, `openLoopServed`); a resume
@@ -938,7 +942,8 @@ words that fit each: the game is too large to copy, so the work belongs in the g
 
 ### Workers in a chat
 
-The chat's own session, answering a turn on a delegated engine, may start workers. The harness
+The chat's own session, answering a turn on an engine that keeps a session (a delegated agent, or a
+local model's session: `hasSessionRoles`), may start workers. The harness
 claims `workers` (`loop/main.ts`), opens a pool for the turn before its session starts and closes
 it when the turn ends, failure and Stop included (`loop/workers/chat-workers.ts`
 `withChatWorkers`). While the pool is open the turn's delegation carries `workers: { tools }`. The
@@ -949,8 +954,10 @@ the pool of that turn; a call for any other turn starts nothing.
 The pool (`loop/workers/pool.ts`, `pool-start.ts`, `pool-merge.ts`) runs as many workers at once
 as the person's Settings allow (`preview.capacity` `workers`, the ceiling the host keeps per chat on
 its workers, readers and writers alike), at most `MAX_WORKERS_AT_ONCE` (8): `worker_start`'s
-description says the number, and a start past it is refused in its own answer, before anything is made. A chat turn on a local model's engine opens no pool: only a
-delegated engine carries a worker's seat.
+description says the number, and a start past it is refused in its own answer, before anything is made. Every
+engine that keeps a session carries a worker's seat and runs the same six worker tools, Bonsai,
+OpenRouter and a local server too (local-session.ts honours the seat's mode, write roots and
+never-touch list); only Ollama's tool loop, which keeps no session, opens no pool.
 
 - `worker_start {title, task, isolation, type?, research?, inputs?}`: a reader (`read`) works in the
   game folder, read-only, with web search only when `research` is `yes`. A writer in a copy
@@ -961,7 +968,8 @@ delegated engine carries a worker's seat.
   plugin locks (answering their labels, written as the start record's `where`), never waiting, and
   `locks.release` at its end or the pool's close lets them go (an older host keeps one per pool). A
   `type` names a kind of worker a plugin that is on declares (`plugins.workerTypes`); it gives
-  that kind's tools (`toolAllow`) and its isolation.
+  that kind's know-how (its brief's line) and its isolation, never a tool fence: every writing worker
+  has every enabled plugin's tools and the connectors its lead has, an engine's editor included.
 - Every worker's delegation carries the `worker` grant (`{id, title, turn, research}`), which the
   host honours by seating it in the chat's permission mode.
 - `worker_status` and `worker_wait` (at most `MAX_WORKER_WAIT_S`) read each worker's line. A worker
@@ -1013,7 +1021,15 @@ scope left without an end (its harness restarted, or its session outlived the cl
 A run's lead offers the same six worker tools; a director's `autopilot_started` says
 `workerRecords: true`, so Builds draws its run as a tree from the start. The director (`loop/director/tool-specs.ts`) names
 its wait `worker_wait` (`WorkerTool.Wait`; the handler still answers the old name `wait`, which a
-kept playbook or journal may say) and adds `worker_mark`. Its `worker_start` takes `task` (a kept
+kept playbook or journal may say) and adds `worker_mark`. A waking lead is offered `worker_wait`
+too: it may go on with its own work, start more workers, wait explicitly (its wait ends for the
+user's words without taking them off the inbox: its turn and digest hand them over) or end its
+turn and be woken. `worker_start` never waits on the commit a worker forks from: it answers at
+once, and the fork gate (`forkGate`) looks at that commit in the background before the worker's
+session (`gatedRun`); a fork that does not run ends the worker naming the problems, its goal attempt
+given back, its end waking the lead. A worker's or a job's end is said into a web lead's turn under
+way as it comes (`turn-news.ts`, `interrupt: false`, as an open Loop's lead hears its news); a line
+the turn read is not told again. Its `worker_start` takes `task` (a kept
 prompt's `brief` is still read), `isolation` and `research`: `copy`, the default, is its builder in
 its own worktree; `read` starts a reader from the run's shared pool (`loop/workers/run-pool.ts`,
 `director-pool.ts`) in the game folder, which never integrates, and may research the web; `lock` is

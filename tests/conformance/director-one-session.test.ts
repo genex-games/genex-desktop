@@ -1,7 +1,7 @@
 /**
  * One session through the real core and harness (loop/director/lead-session.ts): a waking run
  * launched from a chat is led by that chat's own contractor session — resumed in the game folder,
- * read-only, leading the integration worktree it reads — and the chat goes on in the same session
+ * building in the integration worktree it leads, never read-only — and the chat goes on in the same session
  * once the run closes, with its hands back and the run's controls (loop/after-loop-run.ts); with Loop
  * on it reopens a finished build — the same run, led by the same session (loop/reopen-run.ts). A
  * session that cannot be resumed is replaced by a fresh one told the brief, the chat so far and the
@@ -285,7 +285,9 @@ for (const engine of ["claude-code", "codex"]) {
       assert.equal(lead[0]!.resume, chatSession, "the lead resumes the chat's own session");
       for (const turn of lead) {
         assert.equal(await realpath(turn.cwd), await realpath(project.dir), "the lead sits in the game folder");
-        assert.equal(turn.readOnly, true, "and writes nothing while the build runs");
+        // Flipped (Loop phase 3): the lead was read-only while the build ran; it builds in it now.
+        assert.notEqual(turn.readOnly, true, "never read-only");
+        assert.equal(turn.leadBuilds, turn.director?.root, "its box writes the build it leads");
         assert.equal(turn.resume, chatSession, "every turn is that one session");
       }
       assert.equal(await realpath(chat.cwd), await realpath(project.dir), "where the chat's session lives");
@@ -587,8 +589,8 @@ describe("a merge conflict goes to a worker", () => {
       .split("\n")
       .find((line) => line.includes("worker merge-right: Merge right"));
     assert.equal(mergeCommit?.split(" ").filter((part) => /^[0-9a-f]{40}$/.test(part)).length, 2, "a merge commit");
-    for (const turn of requests.filter((r) => r.kind === Kind.Lead))
-      assert.equal(turn.request.readOnly, true, "the lead's own hands never touched it");
+    // Flipped (Loop phase 3): no lead is read-only; the conflict still went to a worker.
+    for (const turn of requests.filter((r) => r.kind === Kind.Lead)) assert.notEqual(turn.request.readOnly, true);
   });
 });
 
@@ -667,7 +669,7 @@ describe("a conflict worker that leaves conflict markers", () => {
 });
 
 describe("the studio's hands for a lead that writes nothing", () => {
-  it("S5. what no worker made in the build it leads is set aside on a ref, a playtest of the game folder plays a copy of its commit, and each answer speaks to a lead", {
+  it("S5. what the lead leaves uncommitted in the build it leads is committed as its work, a playtest of the game folder plays a copy of its commit, and each answer speaks to a lead", {
     timeout: RIG_TIMEOUT_MS,
   }, async () => {
     const engine = "codex";
@@ -694,7 +696,7 @@ describe("the studio's hands for a lead that writes nothing", () => {
         }
         const status = JSON.parse(text(await call("worker_status", {}))) as Array<{ id: string; state: string }>;
         if (results.merged || !status.some((w) => w.id === "sky" && w.state !== "running")) return;
-        // A stray git cannot read: the studio cannot set it aside, and says so.
+        // A file git cannot read: the studio cannot commit it as the lead's work, and says so.
         const locked = path.join(root, "locked.txt");
         await writeFile(locked, "unreadable\n");
         await chmod(locked, 0o000);
@@ -739,21 +741,19 @@ describe("the studio's hands for a lead that writes nothing", () => {
     assert.equal(results.playHead, results.gameHead, "at the game folder's commit");
     assert.match(results.liveDirty, /the game folder has uncommitted changes/, results.liveDirty);
     assert.match(results.liveDirty, /playtest integration or a worker instead/);
-    // What no worker made: told at worker_start in a lead's words, kept aside at integrate.
+    // Flipped (Loop phase 3): what the lead's build leaves is its work — committed before the fork
+    // and before a merge, never set aside on a side ref — and it lands with the run.
     assert.equal(results.started.started, "sky", JSON.stringify(results.started));
-    assert.match(results.started.note, /no worker made/, results.started.note);
-    assert.doesNotMatch(results.started.note, /commit first/);
-    assert.match(results.stuck, /could not set them aside/, results.stuck);
+    assert.equal(results.started.note, undefined, "nothing was left uncommitted for the worker to fork without");
+    assert.match(results.stuck, /could not commit them as your work/, results.stuck);
     assert.doesNotMatch(results.stuck, /do not try to clear/);
     assert.equal(results.merged.merged, true, JSON.stringify(results.merged));
-    const ref = /refs\/studio\/runs\/[^ ]+\/set-aside\/\d+/.exec(results.merged.setAside)?.[0];
-    assert.ok(ref, results.merged.setAside);
-    assert.match(results.merged.setAside, /built\.txt/);
-    assert.equal(await git(project.dir, ["show", `${ref}:built.txt`]), "made by a build", "kept on the ref");
-    assert.equal(results.cleanAfter, "", "and the worktree reset to the integration head");
+    assert.match(results.merged.yourEdits, /locked\.txt/, results.merged.yourEdits);
+    assert.equal(results.merged.setAside, undefined);
+    assert.equal(results.cleanAfter, "", "nothing is left to hold a merge off");
     assert.equal(finished.landed, true, String(finished.stoppedBecause));
     assert.equal(await readFile(path.join(project.dir, "src", "sky.js"), "utf8"), "export const sky = 'dusk';\n");
-    await assert.rejects(readFile(path.join(project.dir, "built.txt")), "what was set aside never landed");
+    assert.equal(await readFile(path.join(project.dir, "built.txt"), "utf8"), "made by a build\n", "it landed with the run");
   });
 });
 

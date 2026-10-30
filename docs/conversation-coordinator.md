@@ -346,11 +346,11 @@ it builds…" instead of "Sends when the build finishes…" (renderer `chat/live
   merge when it stops, and the lead integrates that worker. A session that leaves a conflict hunk
   in any file it was to resolve (`markersLeft`) — done, unfinished or stopped — commits nothing:
   the merge is aborted, the worker fails naming the files, and `integrate` refuses it
-  (`unresolvedOf`). Changes no worker made in the integration worktree (a game that builds in
-  place) are set aside for a lead before a merge or a playtest of integration (`setAsideStrays`: a
-  commit over the integration head on `refs/studio/runs/<runId>/set-aside/<stamp>`, then a reset),
-  and the answer says what was kept where. For a lead a single worker starts on a fork that does
-  not run (its repair; a loop worker is still refused), a playtest of the game folder plays a
+  (`unresolvedOf`). The lead builds in the integration worktree with its own hands, never
+  read-only: what is uncommitted there (its edits, a game that builds in place) is committed on the
+  integration branch as its work before a merge, a playtest of integration or a worker's fork
+  (`commitLeadEdits`), and the answer says so. For a lead a single worker starts on a fork that does
+  not run (its repair; a loop worker ends at once, its fork gate run in the background), a playtest of the game folder plays a
   worktree at its commit, and a merged build that does not run is answered in the lead's words.
   After the close the chat goes on in it with its hands back
   ([after the build](#after-the-build-the-same-session)), and a Resume leads in it again.
@@ -739,10 +739,10 @@ before the close — each answered after by the chat's own session — and Stop 
 tool-call guard, owed words, the wake cap, the release races, a picture among messages and a
 first turn cut for the words (LC12–LC14).
 `director-one-session.test.ts` (S1–S13) covers one session: the chat's session leading its run
-read-only in the game folder and answering after the close in the same session with the run's
+from the game folder, building in the worktree it leads, and answering after the close in the same session with the run's
 controls and no coordinator (Claude and Codex), a chat session that cannot be resumed, a merge
 conflict given to a worker, a conflict worker that leaves markers, the studio's hands for a lead
-(strays set aside, the game folder played from a worktree), showing, landing and changing the game
+(its uncommitted edits committed as its work, the game folder played from a worktree), showing, landing and changing the game
 after a finished run, a paused run a question leaves alone and an instruction resumes with
 the same lead, a message sent during that resuming reply held for the resumed run, Stop in that
 window keeping it paused, and a message naming no engine or another engine (S7b, S10b: with Loop
@@ -766,7 +766,7 @@ command's result's Loop (`reportCommissions`); `chat-feedback.test.ts` one row p
 `lead-sessions-host.test.ts` covers the lead's grant, lock and bookmark on the host, hostile roots
 and links too, and the run's controls (only for the chat's own session, the asker's own hold, a
 dirty folder, another run); `harness-incidents.test.ts`
-OS1–OS6 the markers a conflict worker leaves, strays set aside, a first turn refused while the
+OS1–OS6 the markers a conflict worker leaves, a lead's uncommitted edits committed as its work, a first turn refused while the
 lead's lock is held, and a landing over the game folder's uncommitted changes (named, blamed on
 nobody, a merge of the user's own under way never undone), and a run started again after a close of its own (a crashed reopen still
 closes, and a loop crash under it too, RO3; its inbox from the ask on, RO2 after a replay and

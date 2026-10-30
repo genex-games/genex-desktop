@@ -2,7 +2,7 @@
 
 ## From a request to a game
 
-Auto edits directly or starts a Loop when asked; Loop delegates workers while the chat leads.
+Auto edits directly or starts a Loop when asked; Loop: the chat leads and builds beside workers.
 Parts grow boldly within the ask; an art director reviews the whole game; only its blockers send a
 part back. Other
 projects' Loops run [in place](projects-engines.md#loops-in-place). Loop hours are a soft cap (a

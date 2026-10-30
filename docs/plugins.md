@@ -2032,8 +2032,10 @@ other plugin being on); the first declaration of an id wins. The bundled plugins
 Unreal lead's kinds: Unreal `cpp` (`check-part`, so only on an Unreal game), Local Blender
 `blender_model` and `blender_prep`, Genex `genex_cast`, `sound` and `texture`, all in copies.
 The harness reads a game's kinds with `plugins.workerTypes {project}` (by the game's facts, as
-`plugins.tools`); `worker_start`'s `type` gives a worker its kind's tools (`toolAllow`) and, unless
-the lead says otherwise, its isolation ([harness runtime](harness-runtime.md#workers-in-a-chat)).
+`plugins.tools`); `worker_start`'s `type` gives a worker its kind's know-how and, unless the lead
+says otherwise, its isolation. A kind's `tools` no longer fence a building worker: it has every
+enabled plugin's tools and the connectors its lead has; only the developer-only Unreal runner's
+typed agents are still held to them ([harness runtime](harness-runtime.md#workers-in-a-chat)).
 
 ### Scaffolds
 

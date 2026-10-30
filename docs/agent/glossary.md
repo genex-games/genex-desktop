@@ -86,8 +86,9 @@ is product copy, not this glossary.
   wake: the user's words verbatim, what happened, where the run stands and a short build card
   (`wake-prompts.ts`). `run.directorLoop: "turn"` (or `STUDIO_DIRECTOR_LOOP=turn` in the studio's
   environment) keeps the older long turn with `worker_wait`.
-- **Lead / one session**: a waking web run's director that is its chat's own session, leaving the
-  game's changes to its workers while the build runs (`loop/director/lead-session.ts`). After the close the same
+- **Lead / one session**: a waking web run's director that is its chat's own session, building in
+  the integration worktree with its own hands beside its workers, never read-only
+  (`loop/director/lead-session.ts`). After the close the same
   session answers the chat with its hands back and the run's controls — `run_status`,
   `show_build`, `land_build` (`runControls`) and a paused run's recorded `resume_run`
   (`loop/after-loop-run.ts`).
@@ -136,7 +137,7 @@ Every project's Loop is the director's wake loop, in one of two profiles (`LoopP
 - **Open Loop / lead in place**: the open profile (`loop/director/open/`): the chat's own session
   writes in the game folder (`director.inPlace`), in turns of at most 45 minutes, starts workers
   from the run pool (the plugins' worker types among them) and claims `finish`, which a reviewer
-  checks. Not the web run's **Lead / one session**, which leaves building to its workers.
+  checks. Not the web run's **Lead / one session**, which builds in the integration worktree.
 - **Save point**: the open lead's checkpoint (`save_point`): Genex's snapshot of the game folder
   with the project's plugins' steps around it; `rewind` goes back to one and `restart` closes and
   reopens the project's app between turns (`open/save-point.ts`, `open/between.ts`). The harness
@@ -182,8 +183,10 @@ Every project's Loop is the director's wake loop, in one of two profiles (`LoopP
   open profile's **lead in place**; the role the UI calls Main agent. Run copy says "the lead".
 - **Worker**: a session the lead or the chat's session starts (`worker_start`, `worker_status`,
   `worker_stop`), depth one, in the chat's permission mode, standing in the project as a reader,
-  in a copy or in place under a lock (`WorkerIsolation`, `src/shared/workers.ts`); a plugin's
-  worker types give it tools (`src/main/core/worker-tools.ts`, `loop/workers/run-pool.ts`).
+  in a copy or in place under a lock (`WorkerIsolation`, `src/shared/workers.ts`), with every
+  plugin tool and connector its lead has; a plugin's worker type gives it know-how and an
+  isolation, never a tool fence (`src/main/core/worker-tools.ts`, `loop/workers/run-pool.ts`).
+  `worker_start` answers at once; a worker's end reaches its lead as it comes.
 - **Reviewer**: the UI's word for a judge (the Reviewers role); a Loop's reviewer also answers its
   finish check, seated read-only by the host.
 - **Finish check**: the lead's `finish` claim checked by a reviewer. The seed asks `finish.review`

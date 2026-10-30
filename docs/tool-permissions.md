@@ -161,7 +161,12 @@ other folders, what fills the disk), and only the chat's mode decides each call.
 other folders. The note is the host's, so neither an agent-edited seed kept on upgrade nor a resumed
 transcript that holds an older brief narrows it. An unattended session reads none of it.
 
-A run's sub-agent (a worktree session the Unreal runner's lead starts for one small job) is narrowed by its
+A building worker (any worker brief that writes) keeps no `toolAllow`: the host drops it
+(`workerBrief`), so a worker has every enabled plugin's tools, its jobs, `app_look` and the
+connectors its lead has, whatever worker type it was started with; a type is the kind of work (its
+brief's know-how and default isolation), never a fence. A reader keeps its type's list, and a
+reviewer its empty one. A run's sub-agent (a worktree session the developer-only Unreal runner's lead
+starts for one small job) is still narrowed by its
 delegation's `toolAllow`: it is offered only the plugin tools and connectors whose names start
 with one of the entries, and the guidance, skills and skill reader of only the plugins those
 belong to (`substrate/plugins/tool-allow.ts`, `PluginRegistry.snapshot`). A call to any other host
@@ -172,9 +177,15 @@ recorded under the run with the agent id as `facetId`, so its asset cards land o
 its words never stream as the chat's reply.
 
 A lead also has the chat's own session's plugins, connectors and cover, whether or not it asks
-(`hostToolsEligible`): its brief's `readOnly` (or `inPlace`) marks its seat in the game folder
+(`hostToolsEligible`): its director grant (`root`, or `inPlace`) marks its seat in the game folder
 (`#leadRoot`), and the host's own finding of that seat (`seat.leads`) decides, never the brief; a
-read-only session that leads nothing, the playtester and the coordinator get none. Its plugin calls
+read-only session that leads nothing, the playtester and the coordinator get none. No lead is
+read-only: a `readOnly` a kept older seed's brief still sends seats it no differently and never
+reaches its engine (`playtestFields`), and a lead of the integration worktree is handed that build
+(`DelegateRequest.leadBuilds`), which every engine's box writes beside its own folder — Codex's,
+OpenCode's, Grok Build's and Cursor's writable roots, Claude Code's unattended sandbox and its
+folders, a local session's files and commands (`leadBuildWrites`). On an engine that does not ask
+about each call it runs in the chat's mode (`#placedLeadSession`): Bypass unboxed, Plan read-only. Its plugin calls
 act on the worktree it leads (`DelegationSession.leads` as the binding's directory), as a
 director's in its worktree, so a delivery is recorded as the build's and reaches the game when the
 run lands, and its brief says so without naming the build's path (`leadToolsNote`); a lead in place
@@ -227,8 +238,9 @@ planning between parts.
 
 A lead runs its workers with a `worker` grant on `engine.delegate` (`HarnessDelegateParams.worker`:
 `id`, `title`, the `runId` or chat `turn` it belongs to, and `research`). The host honours it only on
-its own finding ([`delegation.ts`](../src/main/core/delegation.ts) `#workerSeat`), on a delegated
-engine, never for a coordinator or a candidate:
+its own finding ([`delegation.ts`](../src/main/core/delegation.ts) `#workerSeat`), on an engine that
+keeps a session (`#seatsWorkers`: a delegated agent, or a local model's session Genex runs), never for
+a coordinator or a candidate:
 
 - a run worker: its run is running by the host's records (`activityItems`) and was started in
   exactly one chat, this game's open chat, naming no other game (`#runChat`); the delegation names
@@ -267,9 +279,11 @@ it starts beside no other session holding it (`loopWorkerBusy`). A brief naming 
 seated (`workerBrief`). `engine.abort` with `{ cwd, lead }` reaches only the session seated there as
 that run's lead in place (`ActiveDelegation.leadsInPlace`), never another chat's turn in the
 folder; that turn, refused meanwhile, is told the Loop holds the folder (`loopLeadBusy`). Making a build live waits while anyone,
-an in-place worker included, works in the game folder (`delegationsIn`). A worker, seated or not,
-is never handed a connector its game's kind brings (an engine's live editor, `kindServers: false`):
-the lead drives that editor alone.
+an in-place worker included, works in the game folder (`delegationsIn`). A building worker is
+handed the connector its game's kind brings (an engine's live editor) as its lead is, and a seated
+run worker's call to its game's engine connector stands on its run's consent (`#runConsentFor`); a
+worker in a copy is told the editor works on the game folder, not on its copy. A run's own call (its
+lead's or a worker's) asks with a card that outlives the chat's other turns (`outlivesTurn`).
 
 Its seat (`WorkerSeat`, `#workerReach`) carries:
 
@@ -352,8 +366,10 @@ Its questions go to the chat ([`chat-permissions.ts`](../src/main/core/chat-perm
 mode, Plan denies, and anything else is a `tool_permission` card naming the worker
 (`ToolPermissionEvent.worker`; the card reads "Scene builder wants to …"). A run worker's card waits
 as a lead's does (`#workerCard`): it outlives the chat's turns and is withdrawn when nobody answers
-within `LEAD_ASK_TIMEOUT_MS`, a no the worker reads as such; a turn worker's waits until its turn
-ends. The person's answer, a switch to Bypass, a Stop or the worker's end settle it too. "Always" keeps grants as for the chat's own session (never a
+within `LEAD_ASK_TIMEOUT_MS`, which the worker reads as not a no: the person may be away, the call
+did not run, and it carries on with the rest of the work; a turn worker's waits until its turn
+ends. Only the asking call waits: the lead and the other workers go on, and no run halts or drops
+work over a pending card (`goal_update blocker=approval_required` leaves the run going). The person's answer, a switch to Bypass, a Stop or the worker's end settle it too. "Always" keeps grants as for the chat's own session (never a
 mode), so the next worker and the chat's own session stand on them. No agent's message answers a
 card: the harness cannot write `tool_permission` rows (`refuseHostRecords`), and a steered message
 saying "approved" is a message, not an answer.
@@ -369,8 +385,9 @@ A job is a long command the app runs in the background for an agent and owns
 [`src/substrate/jobs.ts`](../src/substrate/jobs.ts)): `job_start {title, command, cwd?, hours?}`,
 `job_status {id?}`, `job_tail {id, lines?, contains?}`, `job_stop {id}`. The chat's own session, a
 run's lead and a worker the host seated that writes get them, on an engine that carries a seat
-(`jobToolsFor`); a reader worker, a playtester, the coordinator, a builder no host seated, a judge
-and a local model's session get none. A plugin tool of the same name is refused.
+(`jobToolsFor`): every engine that keeps a session, a local model's (Bonsai, OpenRouter, a local
+server) included; a reader worker, a playtester, the coordinator, a builder no host seated, a judge
+and Ollama's tool loop get none. A plugin tool of the same name is refused.
 
 A start reads the chat's mode at the moment of the call (`ChatPermissionService.modeOf`, `jobGate`),
 never the mode the session began in:
@@ -523,7 +540,7 @@ thread keeps the mode the person picked, so a chat moved back to Claude Code fin
 | Engine | Modes | How |
 | --- | --- | --- |
 | Claude Code | all five | asks mid-turn ([The session](#the-session)) |
-| Bonsai, OpenRouter, Local server | Auto, Manual, Accept edits, Plan | the studio runs its tools and asks before each change |
+| Bonsai, OpenRouter, Local server | Auto, Manual, Accept edits, Plan | the studio runs its tools and asks before each change; Auto has each command checked by the session's own model |
 | Codex | Auto, Plan, Bypass | `codex exec` cannot ask mid-turn; the mode picks its sandbox |
 | OpenCode | Auto, Plan | `opencode run` cannot ask mid-turn and always runs in the studio's sandbox |
 | Grok Build | Auto, Plan, Bypass | `grok -p` cannot ask mid-turn: Auto runs it in the studio's sandbox, Bypass as the person outside it, as Codex's; Plan reads from a folder of its own |
@@ -545,7 +562,14 @@ any change unasked; a local model's `start_web_game` sends its chat with `game.s
 nothing while that chat is in Plan (a harness that names no chat is not checked, as with a kept older
 `tools/game-tools.ts`). Its commands always run in the studio's sandbox, so it has no Bypass. The picker
 switches a running session (`onControl`): the next call is decided in the new mode, and the model
-reads of it at its next round.
+reads of it at its next round. In Auto, which has no classifier of its own, each `run_command` is
+first checked by the same engine and model in a call of its own with a clean context and no tools
+([`auto-approver.ts`](../src/substrate/engines/auto-approver.ts)): allowed, it runs; refused, the
+model reads why (`AUTO_REFUSED`); an answer it cannot read, a failed call or a timeout asks the
+person, never allows by itself. Edits stay unasked in the sandbox. A worker of the chat's lead on a
+local session runs in its seat's mode, asking through its seat (`seatAsks`), writing its write roots
+and never reaching its never-touch list, as on Claude Code and Codex; Codex's Auto stays its
+sandbox (`approval_policy=never`), with no check of its own yet.
 
 Codex runs Auto as before (`workspace-write` in the game folder, no network, never asks), Bypass
 with `--dangerously-bypass-approvals-and-sandbox`, and Plan from a folder of its own (`startsElsewhere`,
@@ -656,7 +680,7 @@ emits `tool.permission` and waits on `ToolPermissions`
 ([`src/main/tool-permissions.ts`](../src/main/tool-permissions.ts)): the plugin consent ledger
 without a timeout (a worker's card included), except a lead's or coordinator's card, withdrawn after `LEAD_ASK_TIMEOUT_MS`
 (5 minutes, `by: timeout`, "Withdrawn: nobody answered"; Claude reads "Nobody answered within 5
-minutes…"). The person's answer, Stop (`stopThread`, `engine.abort`, harness death, app
+minutes: the person may be away. This is not a no…", carrying on with the rest). The person's answer, Stop (`stopThread`, `engine.abort`, harness death, app
 stop), the session's abort or the end of the turn settles it; a lead's or coordinator's card is not
 the chat's turn (`outlivesTurn`), so another turn ending (a picture or slash command answered on its
 own) leaves it waiting. A withdrawn request reaches Claude as a deny in the host's own words ("The user stopped this work before answering."), never as words
@@ -719,8 +743,8 @@ Loop run must confirm the two known changes: builders can no longer read sibling
   merge, and what is left at the close is committed with its final edits and lands with the run.
   A run with nothing beyond its starting point (no worker's merge, no commit of the lead's) lands
   nothing (`nothing-new`), deliveries included. What else a plugin writes there (a package install)
-  is set aside with the lead's other leftovers at the next merge, or lands with the final edits
-  after the last one.
+  is committed with the lead's own uncommitted edits before the next merge, playtest or worker fork
+  (`commitLeadEdits`), or lands with the final edits after the last one.
 - A plugin's consent card holds a lead's call for up to nine minutes, the plugins' own timeout
   rather than `LEAD_ASK_TIMEOUT_MS`. A lead nobody answers through (another engine, a turn that is
   not the chat's) has its plugins and connectors too, acting on its build as a director's in its
