@@ -58,6 +58,7 @@ import { scanPackage } from "../substrate/plugins/scan.ts";
 import {
   createReloadPolicy,
   installProcessHandlers,
+  installQuitSignals,
   PageRecovery,
   pageRecovery,
   QuitQuestion,
@@ -529,6 +530,9 @@ installProcessHandlers(
   },
   (kind, reason) => appDiagnostics.fault(kind, reason),
 );
+// SIGTERM and SIGINT quit through `before-quit`, as Chromium's own handler would have, had the
+// process sandbox's runtime not taken both for its clean-up (`installQuitSignals`).
+installQuitSignals(process, { quit: () => app.quit(), exit: () => app.exit(0) });
 // Native crash dumps stay on this Mac, beside the log in this launch's own data; nothing is uploaded.
 app.setPath("crashDumps", path.join(userDataRoot, "Crashpad"));
 crashReporter.start({ uploadToServer: false });

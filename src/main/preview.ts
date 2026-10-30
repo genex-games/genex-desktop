@@ -7,7 +7,7 @@ import {
   PreviewConsoleSource,
   previewGone,
 } from "../shared/preview-contract.ts";
-import { failedLoad } from "./preview-load-failure.ts";
+import { failedLoad, PageLoadWait, waitForLoad } from "./preview-load-failure.ts";
 /**
  * Game preview.
  *
@@ -55,7 +55,7 @@ import {
   unpackedResponse,
 } from "./page-serve.ts";
 import { PAGE_DISPATCH } from "./page-dispatch.ts";
-import { anchoredBounds } from "./preview-anchor.ts";
+import { anchoredBounds, placedBounds, slotHidden } from "./preview-anchor.ts";
 import { gameViewPreferences } from "./game-view.ts";
 import { capActions, type PreviewInputAction } from "../substrate/preview-input.ts";
 import { applyInputAction, type PageDispatch } from "./preview-input-driver.ts";
@@ -85,7 +85,7 @@ import type {
   PreviewStillRequest,
   ShimOptions,
 } from "../substrate/preview-port.ts";
-import { SECOND_MS } from "../shared/duration.ts";
+import { MINUTE_MS, SECOND_MS } from "../shared/duration.ts";
 import type { PreviewPixelStats } from "./studio-core.ts";
 import { errorMessage } from "../shared/errors.ts";
 import { setTimeout as delay } from "node:timers/promises";
@@ -104,6 +104,8 @@ const MESSAGE = {
   consoleUnavailable: "Console observation unavailable; no console-clean claim is possible",
   closed: "this game window was closed",
   noPage: (why: string | null) => `this game window holds no page: ${why ?? "nothing was loaded into it"}`,
+  loadStalled: (url: string, seconds: number) =>
+    `${url} had not finished loading after ${seconds} s: a script that never ends (a loop at start-up) or a request that never answers holds it`,
 } as const;
 
 export type { PageCaptureInfo };
@@ -165,6 +167,11 @@ export interface GamePreviewOptions {
 const SCHEME = "game";
 /** What a stopped game's view holds: an empty page, allowed by the game partition (`data:`). */
 const STOPPED_PAGE = "data:text/html;charset=utf-8,";
+/**
+ * The longest a load, Play, Reload or Stop waits for its page: past it the page is noted as
+ * stalled (`waitForLoad`). Longer than Live's own loader (45 s), which gives up first.
+ */
+const PAGE_LOAD_MAX_MS = MINUTE_MS;
 /** The pause before the one compositor retry a failed capture gets. */
 const COMPOSITOR_RETRY_MS = 250;
 /** How long a dialog waits for the stage's cover frame before the game view leaves without one. */
@@ -228,7 +235,6 @@ export class GamePreview {
    * this window's handlers serving the next window opened on the same partition.
    */
   #closed = false;
-  #observed = false;
   #renderingVisible = true;
   /** The most frames a second the page draws (`live-pace.ts`), 0 for the display's rate. */
   #maxFps = 0;
@@ -239,6 +245,7 @@ export class GamePreview {
   #fill: Electron.Rectangle | null = null;
   /** The stopped game's address, kept for `resume`; null while the game runs. */
   #stoppedUrl: string | null = null;
+  /** The last size the view was shown at: the size it keeps out of sight (`placedBounds`). */
   #visibleBounds: Electron.Rectangle = { x: 0, y: 0, width: 960, height: 600 };
   /** The stage's slot as last measured, and the window size it was measured in. */
   #slot: { bounds: Electron.Rectangle; viewport: Electron.Size | null } | null = null;
@@ -417,10 +424,11 @@ export class GamePreview {
     return view;
   }
 
+  /** Put the view in `window` at `bounds`; a zero rectangle keeps it hidden, as the stage does (`placedBounds`). */
   attachTo(window: BaseWindow, bounds: Electron.Rectangle): void {
     const view = this.create();
     window.contentView.addChildView(view);
-    view.setBounds(bounds);
+    this.#request(bounds);
   }
 
   /** The stage's slot, measured in a window of `viewport` size (null: place it as measured). */
@@ -438,38 +446,32 @@ export class GamePreview {
   #placeSlot(): void {
     const slot = this.#slot;
     if (!slot) return;
-    const bounds = anchoredBounds(slot.bounds, slot.viewport, this.#content);
-    this.#requestedBounds = bounds;
-    if (bounds.width > 0 && bounds.height > 0) this.#visibleBounds = bounds;
-    this.#applyBounds();
+    this.#request(anchoredBounds(slot.bounds, slot.viewport, this.#content));
   }
 
-  /** Preserve the observation size when the stage moves the live view out of sight. */
-  setObserved(observed: boolean): void {
-    this.#observed = observed;
+  /** The rectangle the view is asked to take; one with an area is also the size it keeps while hidden. */
+  #request(bounds: Electron.Rectangle): void {
+    this.#requestedBounds = bounds;
+    if (!slotHidden(bounds)) this.#visibleBounds = bounds;
     this.#applyBounds();
   }
 
   /** Full screen: cover `bounds` (the window's content) until called with null, then the slot again. */
   fill(bounds: Electron.Rectangle | null): void {
     this.#fill = bounds;
-    if (bounds) this.#view?.setBounds(bounds);
-    else this.#applyBounds();
+    this.#applyBounds();
   }
 
   #applyBounds(): void {
-    if (this.#fill) {
-      this.#view?.setBounds(this.#fill);
-      return;
-    }
-    const bounds = this.#requestedBounds;
-    if (!bounds) return;
-    const observingHidden = this.#observed && (bounds.width === 0 || bounds.height === 0);
-    this.#view?.setBounds(
-      observingHidden
-        ? { ...this.#visibleBounds, x: -this.#visibleBounds.width, y: -this.#visibleBounds.height }
-        : bounds,
-    );
+    const requested = this.#requestedBounds;
+    const target = this.#fill ?? (requested ? placedBounds(requested, this.#visibleBounds) : null);
+    if (!target) return;
+    const onStage = this.#fill !== null || (requested !== null && !slotHidden(requested));
+    // Sized first, then hidden, in the same task (no frame paints between the two): Chromium
+    // hands a hidden view's new size to its page only once it is shown again, so a view hidden
+    // first, as Live's is from the moment it is attached, would lay its page out at 0x0.
+    this.#view?.setBounds(target);
+    this.#visibility.setPlaced(onStage);
   }
 
   /** Record stage/observer visibility independently of an occluding HTML modal. */
@@ -713,11 +715,24 @@ export class GamePreview {
       const url = options.loopback
         ? `http://localhost:${loopbackPortFor(project)}/${entry}`
         : `${SCHEME}://${project}/${entry}`;
-      await view.webContents.loadURL(url);
+      await this.#arrive(view.webContents.loadURL(url), url);
       return url;
     } finally {
       this.#navigating = false;
     }
+  }
+
+  /**
+   * Wait for this page's navigation, at most `PAGE_LOAD_MAX_MS`: a page still loading then (a
+   * script that never yields) is noted as stalled, and its caller (Live's load queue, an agent,
+   * the person's Play or Reload) waits for it no longer.
+   */
+  async #arrive(loading: Promise<unknown>, url: string): Promise<void> {
+    if ((await waitForLoad(loading, PAGE_LOAD_MAX_MS)) === PageLoadWait.Finished) return;
+    this.note("error", MESSAGE.loadStalled(url, PAGE_LOAD_MAX_MS / SECOND_MS), {
+      loadError: true,
+      failure: LiveLoadFailure.Stalled,
+    });
   }
 
   /**
@@ -730,7 +745,7 @@ export class GamePreview {
     this.#stoppedUrl = wc.getURL();
     this.#navigating = true;
     try {
-      await wc.loadURL(STOPPED_PAGE);
+      await waitForLoad(wc.loadURL(STOPPED_PAGE), PAGE_LOAD_MAX_MS);
     } finally {
       this.#navigating = false;
     }
@@ -751,7 +766,7 @@ export class GamePreview {
     this.#loadFailure = null;
     this.#navigating = true;
     try {
-      await wc.loadURL(url);
+      await this.#arrive(wc.loadURL(url), url);
     } finally {
       this.#navigating = false;
     }
@@ -771,17 +786,20 @@ export class GamePreview {
     // The user pressing Reload means "show me what is on disk NOW" — never a cached copy.
     this.#navigating = true;
     const wc = this.#view.webContents;
-    wc.reloadIgnoringCache();
-    await new Promise<void>((resolve) => {
-      const done = () => {
-        wc.off("did-finish-load", done);
-        wc.off("did-fail-load", done);
-        this.#navigating = false;
-        resolve();
-      };
+    let done = (): void => {};
+    const finished = new Promise<void>((resolve) => {
+      done = () => resolve();
       wc.once("did-finish-load", done);
       wc.once("did-fail-load", done);
     });
+    wc.reloadIgnoringCache();
+    try {
+      await this.#arrive(finished, wc.getURL());
+    } finally {
+      wc.off("did-finish-load", done);
+      wc.off("did-fail-load", done);
+      this.#navigating = false;
+    }
   }
 
   /**

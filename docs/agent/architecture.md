@@ -729,7 +729,13 @@ and playtest answer *no window free*; unskippable passes look through the stand-
 `preview.frame` and `preview.screen`.
 
 **Native preview layering.** Modal dialogs hide the WebContentsView; popovers hide it only while
-their rectangle intersects the Live slot; identical bounds do not repeat IPC.
+their rectangle intersects the Live slot; identical bounds do not repeat IPC. A view whose slot is
+hidden (the loader, a dialog) stays in the rectangle it was last shown in, sized before it is hidden
+(`placedBounds`, `previewVisibility`): Chromium lays a zero-size view, or one wholly outside its
+window, out at 0x0, and a game that sizes its world from its canvas at start-up can then never
+finish loading. A load, Play, Reload or Stop waits at most a minute for its page (`waitForLoad`); a
+page still loading then (a script that never yields) is noted as stalled
+(`LiveLoadFailure.Stalled`), and Live's load queue moves on to the next load.
 
 ## Plugins, MCP and Genex
 
@@ -1021,7 +1027,10 @@ managed local runtime; core has no Blender tool of its own.
   page; pushes skip it. Mid-run, close hides the window on a Mac and asks to quit
   elsewhere (`windowClose`). `runShutdown` runs quit steps in order, each bounded (`shutdownSteps`),
   logging and passing a failed or hung one.
-  `before-quit` calls `app.exit(0)` in a `finally`. `StudioCore.stop` stops the harness, then every
+  `before-quit` calls `app.exit(0)` in a `finally`; a developer launch's stop does too, whatever
+  its steps do (`stopThenExit`). SIGTERM and SIGINT quit through `before-quit`, a second one exits
+  at once (`installQuitSignals`): the process sandbox's runtime listens for both, which takes them
+  from Chromium's own handler. `StudioCore.stop` stops the harness, then every
   agent job, and logs a failed plugin lease release, skipping nothing after it.
 - **Diagnostics.** [`src/main/diagnostics.ts`](../../src/main/diagnostics.ts) builds the redacted
   Settings → Harness → Copy diagnostics text (versions, OS, data and log paths, provider and CLI

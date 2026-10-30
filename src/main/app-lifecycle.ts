@@ -49,6 +49,31 @@ export function installProcessHandlers(
   target.on("unhandledRejection", record(MainDiagnostic.Rejection, "unhandled rejection"));
 }
 
+/** The signals that end the app, which a Node listener in main takes from Chromium's own quit. */
+const QUIT_SIGNALS = ["SIGTERM", "SIGINT"] as const;
+
+/** The part of `process` the quit signals are heard on. */
+export interface SignalEvents {
+  on(event: (typeof QUIT_SIGNALS)[number], listener: () => void): unknown;
+}
+
+/**
+ * Quit on SIGTERM and SIGINT: the first asks for the app's own quit (`before-quit` and its bounded
+ * steps), a second exits at once. Chromium quits on them by itself, but any Node listener takes a
+ * signal from it, and the process sandbox's runtime adds one for each, for its own clean-up
+ * (`@anthropic-ai/sandbox-runtime`, `sandbox-manager.js`): a SIGTERM then cleaned the sandbox up
+ * and left the app running.
+ */
+export function installQuitSignals(target: SignalEvents, app: { quit(): void; exit(): void }): void {
+  let asked = false;
+  const heard = (): void => {
+    if (asked) return app.exit();
+    asked = true;
+    app.quit();
+  };
+  for (const signal of QUIT_SIGNALS) target.on(signal, heard);
+}
+
 /** What to do after `render-process-gone`: reload, leave a clean exit alone, or stop retrying. */
 export const ReloadDecision = { Reload: "reload", CleanExit: "clean-exit", GiveUp: "give-up" } as const;
 export type ReloadDecision = (typeof ReloadDecision)[keyof typeof ReloadDecision];
@@ -261,4 +286,49 @@ export async function runShutdown(
     note(`${step.name} ${problem}`);
   }
   return failed;
+}
+
+/** What a developer launch's stop does, in this order (`main/dev/runtime.ts`). */
+export interface DevStopParts {
+  /** Saves the profiles or trace still recording, if their surfaces answer. */
+  diagnostics(): Promise<unknown>;
+  /** The quit steps (`runShutdown`); throws when one did not finish. */
+  shutdown(): Promise<void>;
+  /** Writes the launch's records and closes its channel; `failure` says why the stop was unclean, or null. */
+  close(failure: string | null): Promise<void>;
+  exit(): void;
+}
+
+/**
+ * A developer launch's stop, which every quit hands its work to while the channel is open (a
+ * SIGTERM's included). It always ends in `exit`: a quit step that did not finish, a diagnostic
+ * whose page never answers (the debugger's stop of a page that never yields), or a close that
+ * hangs or throws is passed over, never left to keep the app running with nothing to stop it.
+ */
+export async function stopThenExit(
+  parts: DevStopParts,
+  { diagnosticsMs, closeMs, timers = realTimers }: { diagnosticsMs: number; closeMs: number; timers?: ShutdownTimers },
+): Promise<void> {
+  let failure: string | null = null;
+  try {
+    await settleWithin(
+      Promise.resolve().then(() => parts.diagnostics()),
+      diagnosticsMs,
+      undefined,
+      timers,
+    );
+    await parts.shutdown();
+  } catch (error) {
+    failure = errorMessage(error);
+  }
+  try {
+    await settleWithin(
+      Promise.resolve().then(() => parts.close(failure)),
+      closeMs,
+      undefined,
+      timers,
+    );
+  } finally {
+    parts.exit();
+  }
 }
