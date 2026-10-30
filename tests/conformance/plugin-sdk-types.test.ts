@@ -202,13 +202,6 @@ test("the SDK manifest mirror, its skills and tool hosts, and src/shared/plugins
       export const argsToShared: SharedArgs = sdkArgs;
       export const argsToSdk: SdkArgs = sharedArgs;
     `,
-    "judge.ts": `
-      import type { PluginJudge as SdkJudge } from ${quote(sdk)};
-      import type { PluginJudge as SharedJudge } from ${quote(shared)};
-      declare const sdkJudge: SdkJudge; declare const sharedJudge: SharedJudge;
-      export const judgeToShared: SharedJudge = sdkJudge;
-      export const judgeToSdk: SdkJudge = sharedJudge;
-    `,
   });
   assert.equal(diagnostics.length, 0, report(diagnostics));
 });

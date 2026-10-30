@@ -114,20 +114,19 @@ describe("a Claude session sees the studio tools it is expected to call from its
     }
   });
 
-  it("live and connector tools stay deferred, for a builder and for a blind judge", async () => {
+  it("live and connector tools stay deferred, for a builder and for a read-only session", async () => {
     const live = { liveTools: LIVE_TOOLS, onLiveTool: async () => "ok" };
     const builder = await session(live);
-    const judge = await session({ ...live, readOnly: true, blind: true });
+    const reader = await session({ ...live, readOnly: true });
     for (const [label, record] of [
       ["builder", builder],
-      ["blind judge", judge],
+      ["read-only", reader],
     ] as const) {
       for (const { name } of LIVE_TOOLS) {
         assert.ok(record.tools.includes(name), `${label}: ${name} is registered`);
         assert.equal(alwaysLoaded(record, name), false, `${label}: ${name} waits for tool search`);
       }
     }
-    assert.deepEqual(judge.options?.tools, ["ToolSearch"], "the blind judge loads them through tool search alone");
   });
 });
 
