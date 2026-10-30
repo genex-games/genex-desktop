@@ -46,6 +46,9 @@ export const RENAMED_SEED_NAMES: Readonly<Record<string, string>> = {
   restoreNight: "restoreLoopRun",
   servesAfterNight: "servesAfterLoopRun",
   tonight: "runLedger",
+  // The pictures a launch will carry are the user's attached stills, not a mood board.
+  moodBoards: "attachedPictures",
+  rewindMoodBoard: "rewindAttachedPictures",
 };
 
 /**
