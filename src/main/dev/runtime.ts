@@ -418,8 +418,11 @@ function resizeWindow(rt: Runtime, params: WindowResizeParams) {
 
 /** Is the game view on screen with an area to capture? */
 function gameViewShown(preview: GamePreview): boolean {
-  const bounds = preview.view?.getBounds();
-  return Boolean(bounds && bounds.width > 0 && bounds.height > 0);
+  const view = preview.view;
+  // A view the stage hides keeps its size where it was last shown (`placedBounds`); it is not drawn.
+  if (!view?.getVisible()) return false;
+  const bounds = view.getBounds();
+  return bounds.width > 0 && bounds.height > 0;
 }
 
 function surfaceWidth(rt: Runtime, surface: DevSurface): number {

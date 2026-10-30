@@ -437,10 +437,7 @@ export class PreviewService {
   }
 
   #updateVisibility(): void {
-    const observed = this.#liveObserved();
-    const preview = this.#optionalPreview();
-    preview?.setObserved?.(observed);
-    preview?.setVisible?.(this.#stageVisible || observed);
+    this.#optionalPreview()?.setVisible?.(this.#stageVisible || this.#liveObserved());
     this.#applySound();
     this.#applyPace();
   }

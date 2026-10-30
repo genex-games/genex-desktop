@@ -56,7 +56,7 @@ import {
   unpackedResponse,
 } from "./page-serve.ts";
 import { PAGE_DISPATCH } from "./page-dispatch.ts";
-import { anchoredBounds } from "./preview-anchor.ts";
+import { anchoredBounds, placedBounds, slotHidden } from "./preview-anchor.ts";
 import { gameViewPreferences } from "./game-view.ts";
 import { capActions, type PreviewInputAction } from "../substrate/preview-input.ts";
 import { applyInputAction, type PageDispatch } from "./preview-input-driver.ts";
@@ -229,7 +229,6 @@ export class GamePreview {
    * this window's handlers serving the next window opened on the same partition.
    */
   #closed = false;
-  #observed = false;
   #renderingVisible = true;
   /** The most frames a second the page draws (`live-pace.ts`), 0 for the display's rate. */
   #maxFps = 0;
@@ -240,6 +239,7 @@ export class GamePreview {
   #fill: Electron.Rectangle | null = null;
   /** The stopped game's address, kept for `resume`; null while the game runs. */
   #stoppedUrl: string | null = null;
+  /** The last size the view was shown at: the size it keeps out of sight (`placedBounds`). */
   #visibleBounds: Electron.Rectangle = { x: 0, y: 0, width: 960, height: 600 };
   /** The stage's slot as last measured, and the window size it was measured in. */
   #slot: { bounds: Electron.Rectangle; viewport: Electron.Size | null } | null = null;
@@ -444,10 +444,11 @@ export class GamePreview {
     return view;
   }
 
+  /** Put the view in `window` at `bounds`; a zero rectangle keeps it hidden, as the stage does (`placedBounds`). */
   attachTo(window: BaseWindow, bounds: Electron.Rectangle): void {
     const view = this.create();
     window.contentView.addChildView(view);
-    view.setBounds(bounds);
+    this.#request(bounds);
   }
 
   /** The stage's slot, measured in a window of `viewport` size (null: place it as measured). */
@@ -466,38 +467,32 @@ export class GamePreview {
     const slot = this.#slot;
     if (!slot) return;
     void this.#profiler.invalidate("preview resized");
-    const bounds = anchoredBounds(slot.bounds, slot.viewport, this.#content);
-    this.#requestedBounds = bounds;
-    if (bounds.width > 0 && bounds.height > 0) this.#visibleBounds = bounds;
-    this.#applyBounds();
+    this.#request(anchoredBounds(slot.bounds, slot.viewport, this.#content));
   }
 
-  /** Preserve the observation size when the stage moves the live view out of sight. */
-  setObserved(observed: boolean): void {
-    this.#observed = observed;
+  /** The rectangle the view is asked to take; one with an area is also the size it keeps while hidden. */
+  #request(bounds: Electron.Rectangle): void {
+    this.#requestedBounds = bounds;
+    if (!slotHidden(bounds)) this.#visibleBounds = bounds;
     this.#applyBounds();
   }
 
   /** Full screen: cover `bounds` (the window's content) until called with null, then the slot again. */
   fill(bounds: Electron.Rectangle | null): void {
     this.#fill = bounds;
-    if (bounds) this.#view?.setBounds(bounds);
-    else this.#applyBounds();
+    this.#applyBounds();
   }
 
   #applyBounds(): void {
-    if (this.#fill) {
-      this.#view?.setBounds(this.#fill);
-      return;
-    }
-    const bounds = this.#requestedBounds;
-    if (!bounds) return;
-    const observingHidden = this.#observed && (bounds.width === 0 || bounds.height === 0);
-    this.#view?.setBounds(
-      observingHidden
-        ? { ...this.#visibleBounds, x: -this.#visibleBounds.width, y: -this.#visibleBounds.height }
-        : bounds,
-    );
+    const requested = this.#requestedBounds;
+    const target = this.#fill ?? (requested ? placedBounds(requested, this.#visibleBounds) : null);
+    if (!target) return;
+    const onStage = this.#fill !== null || (requested !== null && !slotHidden(requested));
+    // Sized first, then hidden, in the same task (no frame paints between the two): Chromium
+    // hands a hidden view's new size to its page only once it is shown again, so a view hidden
+    // first, as Live's is from the moment it is attached, would lay its page out at 0x0.
+    this.#view?.setBounds(target);
+    this.#visibility.setPlaced(onStage);
   }
 
   /** Record stage/observer visibility independently of an occluding HTML modal. */

@@ -152,8 +152,6 @@ export interface PreviewPort {
   setVisible?(visible: boolean): void;
   /** Pace the page's frames to at most this many a second; 0 for the display's own rate. */
   setMaxFps?(fps: number): void;
-  /** Keep simulation alive while an agent observes the hidden stage. */
-  setObserved?(observed: boolean): void;
   /** Silence the page's speakers; its own audio graph keeps running. */
   setAudioMuted?(muted: boolean): void;
   /**
