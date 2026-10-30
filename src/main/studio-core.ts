@@ -39,6 +39,7 @@ import { CodedError, errorMessage } from "../shared/errors.ts";
 import { t } from "../shared/i18n.ts";
 import { EventKind, ThreadKind, SnapshotScope } from "../shared/event-log.ts";
 import { assetKind, isAudioFile, type AssetDeliveredPayload } from "../shared/game-assets.ts";
+import { keepDeliveredPicture } from "./delivery-picture.ts";
 import {
   coverFromBrief,
   ExportRefusal,
@@ -1398,6 +1399,17 @@ export class StudioCore {
     const game = await realpath(this.games.dirFor(binding.project)).catch(() => null);
     const workspace: AssetDeliveredPayload["workspace"] =
       game && (await realpath(root).catch(() => root)) === game ? "game" : "build";
+    // A Loop's files reach the game folder only when its build lands: Builds reads this copy until then.
+    const picture =
+      workspace === "build" && asked?.runId
+        ? await keepDeliveredPicture(
+            { root, files: landed.map((row) => row.file), runId: asked.runId, jobId },
+            {
+              save: (runId, name, data) => this.saveRunArtifact(runId, name, data),
+              resize: (data, maxPx) => this.#previews.resizeStill(data, maxPx),
+            },
+          )
+        : null;
     const payload: AssetDeliveredPayload = {
       project: binding.project,
       source: id,
@@ -1410,6 +1422,7 @@ export class StudioCore {
       ...(asked?.runId ? { runId: asked.runId } : {}),
       ...(asked?.facetId ? { facetId: asked.facetId } : {}),
       ...(asked?.iteration !== undefined ? { iteration: asked.iteration } : {}),
+      ...(picture ? { picture } : {}),
     };
     await this.append(
       [customEventData(CustomEvent.AssetDelivered, { ...payload })],
