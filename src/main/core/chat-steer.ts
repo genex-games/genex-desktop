@@ -81,13 +81,12 @@ function doorSend(door: SteerDoor): Promise<SteerSend | null> {
 interface NarrowerPurpose {
   director: { runId: string } | null;
   playtest: unknown;
-  candidate: unknown;
 }
 
 /**
  * The chat turn a delegation answers (`chatTurn`): a chat's own session, by the message it
- * answers — or a run's lead, by its own run and nothing else. Never a build worktree, a
- * playtester or an optimization candidate, whatever the caller claims.
+ * answers — or a run's lead, by its own run and nothing else. Never a build worktree or a
+ * playtester, whatever the caller claims.
  */
 export function chatTurnOf(p: DelegateParams, narrower: NarrowerPurpose): string | undefined {
   const messageId = p.chatTurn?.messageId;
@@ -96,9 +95,9 @@ export function chatTurnOf(p: DelegateParams, narrower: NarrowerPurpose): string
   return servesNarrowerPurpose(p, narrower) ? undefined : messageId;
 }
 
-/** A build worktree (`cwd`), a director, a playtester or an optimization candidate. */
+/** A build worktree (`cwd`), a director or a playtester. */
 function servesNarrowerPurpose(p: DelegateParams, narrower: NarrowerPurpose): boolean {
-  return Boolean(p.cwd || narrower.director || narrower.playtest || narrower.candidate);
+  return Boolean(p.cwd || narrower.director || narrower.playtest);
 }
 
 /** The messages as a session takes them: an id, the words and a few pictures, nothing else. */

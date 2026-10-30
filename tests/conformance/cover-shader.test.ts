@@ -390,16 +390,6 @@ it("the builder picks a recipe once; it stays bound to its game and never replac
     await rig.core.updateGame(other.name, { cover: { kind: "image", dataUrl: poster } });
     assert.match(await api["game.setCover"]!({ project: other.name, family: "clouds", palette: "day" }), /kept/);
     assert.deepEqual((await rig.core.games.presentation(other.name)).cover, { kind: "image", dataUrl: poster });
-    const candidate = await createToolRegistry(
-      {
-        workspace: rig.core.layout.harnessWs,
-        call: () => {
-          throw Error("unexpected");
-        },
-      } as never,
-      { candidateId: "fixture" },
-    );
-    assert.ok(!candidate.names().includes(COVER_TOOL.name));
   } finally {
     await rig.stop();
   }

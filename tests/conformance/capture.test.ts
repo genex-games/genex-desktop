@@ -18,11 +18,13 @@ import {
   createFrameCapture,
 } from "../../src/page/capture.ts";
 import {
+  chooseCapture,
   PAGE_UI_MAX_ENTRIES,
   PAGE_UI_PRIMARY_COVERAGE,
   PAGE_UI_PROBE,
   probePageUi,
   readPageUi,
+  resolveSurface,
 } from "../../src/substrate/page-ui.ts";
 
 type Descriptor = {
@@ -709,4 +711,53 @@ describe("reading what the page answered", () => {
     });
     assert.equal(ui?.uiPrimary, true);
   });
+});
+
+// ── which surface a capture photographs ──────────────────────────────────────
+/**
+ * The surface ladder, without a window. `chooseCapture` is the whole of `#capture`'s decision: the
+ * studio photographs the page as the player sees it (the compositor frame, DOM included) unless a
+ * caller names the canvas, and a page frame that cannot be had falls back to the canvas — a
+ * picture beats none.
+ */
+/** A ladder whose callbacks are declared per case and whose calls are recorded. */
+function ladder(spec: { canvas?: string | Error; page?: string | Error }) {
+  const calls: string[] = [];
+  const give = (what: string | Error | undefined, name: string) => async () => {
+    calls.push(name);
+    if (what instanceof Error) throw what;
+    return what ?? name;
+  };
+  return {
+    calls,
+    deps: { canvas: give(spec.canvas, "canvas-frame"), page: give(spec.page, "page-frame") },
+  };
+}
+
+it("photographs the page, DOM included, unless the canvas is named", async () => {
+  // Flipped from "neither means the canvas" and an `auto` that probed the page first: every
+  // capture the app takes is the page as the player sees it.
+  assert.equal(resolveSurface({}), "page");
+  assert.equal(resolveSurface({ page: true }), "page");
+  assert.equal(resolveSurface({ page: true, surface: "canvas" }), "canvas");
+  for (const asked of ["page", "auto"] as const) {
+    const rig = ladder({});
+    assert.deepEqual(await chooseCapture(asked, rig.deps), { shot: "page-frame", surface: "page" });
+    assert.deepEqual(rig.calls, ["page-frame"], `${asked} asks the page nothing first`);
+  }
+  const canvasOnly = ladder({});
+  assert.deepEqual(await chooseCapture("canvas", canvasOnly.deps), { shot: "canvas-frame", surface: "canvas" });
+  assert.deepEqual(canvasOnly.calls, ["canvas-frame"]);
+});
+
+it("falls back to the canvas when the page frame cannot be had, and fails only when neither can", async () => {
+  const noCompositor = ladder({ page: new Error("display surface not available") });
+  const fell = await chooseCapture("page", noCompositor.deps);
+  assert.equal(fell.shot, "canvas-frame");
+  assert.equal(fell.surface, "canvas");
+  const both = ladder({
+    page: new Error("display surface not available"),
+    canvas: new Error("the page never answered"),
+  });
+  await assert.rejects(chooseCapture("auto", both.deps), /display surface not available/);
 });

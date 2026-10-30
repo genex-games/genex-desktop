@@ -44,7 +44,6 @@ import { isAssetPath, ruleMatches, webFolderOf } from "../../shared/project-work
 import { engineWebFolderOf, isEngineWebFolder } from "../../shared/project-facts.ts";
 import type { DelegateRequest } from "../../substrate/engines/types.ts";
 import type { ReferenceFrame } from "../../shared/protocol.ts";
-import type { Revision } from "../../shared/optimization.ts";
 import { capActions } from "../../substrate/preview-input.ts";
 import type { PreviewPort } from "../../substrate/preview-port.ts";
 import { LIVE_HANDLE, PreviewPool, STAND_IN_HANDLE } from "../../substrate/preview-pool.ts";
@@ -151,7 +150,6 @@ const MESSAGE = {
     "this game is served from its build output, not from this workspace, so a bench page cannot load; capture the game",
   benchCaptured: (entry: string, workspace: string) => `Captured the bench page ${entry} (workspace ${workspace}):`,
   benchAfter: "The window shows the bench page now: the computer tool loads your game again on its next action.",
-  profilingNeedsStage: "profiling requires a stage preview",
   previewChanged: () =>
     t("The selected preview changed while this build was preparing. Open the build again when ready."),
   noGameInSnapshot: () => t("that snapshot has no game to play"),
@@ -559,32 +557,9 @@ export class PreviewService {
   loadPreview(p: HarnessParams<"preview.load">): Promise<string> {
     const handle = p.handle ?? LIVE_HANDLE;
     return serial(this.#x.previewOperations, handle, async () => {
-      const profiling = Boolean(p.candidateId && p.revision);
-      const checkedRoot = await this.#x.assertHarnessRoot(p.project, profiling ? null : p.root);
-      this.#x.profileSources.delete(handle);
-      const port = this.preview(p.handle);
-      if (p.candidateId && p.revision)
-        return this.#loadCandidate(p, { candidateId: p.candidateId, revision: p.revision }, port);
-      return this.#loadServedPreview(p, handle, checkedRoot, port);
+      const checkedRoot = await this.#x.assertHarnessRoot(p.project, p.root);
+      return this.#loadServedPreview(p, handle, checkedRoot, this.preview(p.handle));
     });
-  }
-
-  /** A profiling load: an optimizer candidate's frozen revision, on a stage preview only. */
-  async #loadCandidate(
-    p: HarnessParams<"preview.load">,
-    candidate: { candidateId: string; revision: Revision },
-    port: PreviewPort,
-  ): Promise<string> {
-    const source = await this.#core.candidates.source(candidate.candidateId, candidate.revision);
-    const onStage = p.handle === LIVE_HANDLE || p.handle === STAND_IN_HANDLE;
-    const stageHandle = p.handle && !onStage ? p.handle : null;
-    if (source.project !== p.project || !stageHandle) throw new Error(MESSAGE.profilingNeedsStage);
-    const served = await this.servedEntry(p.project, source.root, p.entry, port);
-    const url = served
-      ? await port.load(p.project, served.entry, served.root, { loopback: served.loopback })
-      : unservedUrl(p);
-    this.#x.profileSources.set(stageHandle, candidate);
-    return url;
   }
 
   async #loadServedPreview(
@@ -1470,7 +1445,6 @@ export class PreviewService {
       if (!now.finished) return WebBuildLoad.Unfinished;
       try {
         const checkedRoot = await this.#x.assertHarnessRoot(project, null);
-        this.#x.profileSources.delete(LIVE_HANDLE);
         await this.#loadServedPreview({ project }, LIVE_HANDLE, checkedRoot, this.preview());
         return WebBuildLoad.Loaded;
       } catch {

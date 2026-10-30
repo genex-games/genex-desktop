@@ -50,7 +50,7 @@ export const tools: HarnessTool[] = [
       required: ["family"],
     },
     async execute(args, ctx) {
-      if (!ctx.project || ctx.candidateId) return { ok: false, content: "Open a writable game first." };
+      if (!ctx.project) return { ok: false, content: "Open a writable game first." };
       const { family, palette, seed, motion } = args;
       return {
         ok: true,

@@ -71,7 +71,6 @@ import { WORKER_TOOL_ANSWER } from "./worker-tools-prompts.ts";
 import { DispatchActionType, HarnessCapability, type ReferenceFrame } from "../../shared/protocol.ts";
 import { COMPUTER_TOOL_NAME, DESKTOP_TOOL_NAME } from "../../substrate/computer-tool.ts";
 import { WorkClass, workClassOf } from "../../substrate/budget.ts";
-import type { OptimizationCandidate } from "../../shared/optimization.ts";
 import type { CoreInternals, StudioCore } from "../studio-core.ts";
 import { chatTurnOf, openDoor, recordSteerDelivered, settleDoor, type SteerDoor } from "./chat-steer.ts";
 import type { LeadAnswers, LeadSession, PersonSession } from "./chat-permissions.ts";
@@ -163,9 +162,7 @@ const MESSAGE = {
     `${tool} drives the studio's browser window, and this game runs as its own process — use the computer tool instead`,
   directEngine: (engineId: string) => `${engineId} is a direct engine; use engine.complete`,
   cannotCompact: (engineId: string) => `${engineId} has no compaction of its own, or no session was named to compact`,
-  coordinatorOnCandidate: "coordinator cannot edit an optimization candidate",
   coordinatorNeedsThread: "coordinator needs a thread",
-  candidateFrozen: "candidate is frozen",
   folderBusy: (where: string, minutes: number) =>
     `a contractor is already building in ${where} (started ${minutes} min ago) — wait for it to finish before sending another brief`,
   /** A worker of this game's Loop works in the folder beside its lead (`#assertNoRunWorkerBeside`). */
@@ -286,12 +283,10 @@ interface DelegationTarget {
   engineId: string;
   delegateTo: (request: DelegateRequest) => Promise<DelegateResult>;
   workClass: WorkClass;
-  candidate: OptimizationCandidate | null;
   /** Where the contractor runs: the checked real path. */
   workCwd: string;
   /** The delegation's key: the name its caller used, which engine.abort and engine.interrupt send. */
   cwd: string;
-  optimization: { denyWrites: string[] } | null;
   /** The engine reads the person's messages mid-turn (`Engine.steersMidTurn`). */
   steersMidTurn: boolean;
 }
@@ -452,16 +447,15 @@ interface SessionTools {
 
 /**
  * The one condition that decides whether this session gets host tools at all. Judges and
- * critics never reach here (they `complete()`); a playtester or another read-only session, the
- * coordinator and an optimization candidate are all sessions with a narrower job than "build this
- * game", and a connector is exactly the kind of reach they should not have. A chat that may launch
+ * critics never reach here (they `complete()`); a playtester or another read-only session and the
+ * coordinator are sessions with a narrower job than "build this game", and a connector is exactly the kind of reach they should not have. A chat that may launch
  * a build is a full contractor and gets what the Auto chat gets, and so does a build's lead: the
  * `readOnly` (or `inPlace`) of its brief marks its seat in the game folder (`#leadRoot`), the host's
  * own finding decides, and its plugins act on the build it leads (`DelegationSession.leads`).
  */
-function hostToolsEligible(p: DelegateParams, candidate: OptimizationCandidate | null, seat: DelegationSeat): boolean {
+function hostToolsEligible(p: DelegateParams, seat: DelegationSeat): boolean {
   const readOnlyJob = p.readOnly && !seat.leads;
-  const narrowerJob = readOnlyJob || p.playtest || p.coordinator || candidate;
+  const narrowerJob = readOnlyJob || p.playtest || p.coordinator;
   return !narrowerJob;
 }
 
@@ -531,21 +525,12 @@ function askedScope(p: DelegateParams, grants: AskedGrants = p) {
 
 /**
  * A brief shaped for work nobody answers: a run's builder, a worker, a playtester, the coordinator,
- * a run's lead, an optimization candidate, improvement work, or anything with a clock or a
+ * a run's lead, improvement work, or anything with a clock or a
  * folder of its own. Read from what the caller asked for: forging the absence of these fields only
  * makes a session ask the person, in the mode the person chose.
  */
 function unattendedBrief(p: DelegateParams): boolean {
-  const narrower = [
-    p.readOnly,
-    p.candidateId,
-    p.playtest,
-    p.selfCapture?.runId,
-    p.coordinator,
-    p.director,
-    p.attribution,
-    p.worker,
-  ];
+  const narrower = [p.readOnly, p.playtest, p.selfCapture?.runId, p.coordinator, p.director, p.attribution, p.worker];
   if (narrower.some(Boolean) || p.cwd) return true;
   return p.timeoutMs !== undefined || workClassOf(p.class) === WorkClass.Improvement;
 }
@@ -572,7 +557,7 @@ interface DelegationSeat {
   leads: string | null;
   /** A Loop's lead in the game folder itself (`#leadRoot`'s in-place branch): it writes there. */
   leadsInPlace: boolean;
-  /** It sits in its game's own folder: no build worktree, no coordinator home, no candidate. */
+  /** It sits in its game's own folder: no build worktree and no coordinator home. */
   gameFolder: boolean;
   /** The engine its game's record links it to: whether a chat's checkpoint without a hook is a snapshot. */
   engine: EngineId;
@@ -1765,27 +1750,22 @@ export class DelegationService {
     if (p.compact && !(engine.compactsNatively && p.resume)) throw new Error(MESSAGE.cannotCompact(engineId));
     const workClass = workClassOf(p.class);
     this.#core.budget.assertAllowed(workClass);
-    // Coordinators and optimization workers have separate workspace authority.
-    if (p.coordinator && p.candidateId) throw new Error(MESSAGE.coordinatorOnCandidate);
+    // A coordinator has a workspace authority of its own, keyed by its chat.
     if (p.coordinator && !p.threadId) throw new Error(MESSAGE.coordinatorNeedsThread);
-    const candidate = p.candidateId ? await this.#core.candidates.get(p.candidateId, p.project) : null;
-    if (candidate?.frozen) throw new Error(MESSAGE.candidateFrozen);
-    const workCwd = await this.#workCwd(p, engineId, candidate);
+    const workCwd = await this.#workCwd(p, engineId);
     // The contractor runs in the checked real path (M1); the delegation stays keyed by the
     // name its caller used, which is the name engine.abort and engine.interrupt send.
-    const cwd = !p.coordinator && !candidate && p.cwd ? path.resolve(p.cwd) : workCwd;
-    const optimization = candidate ? await this.#optimizationFence(p.project, candidate) : null;
-    return { engineId, delegateTo, workClass, candidate, workCwd, cwd, optimization, steersMidTurn };
+    const cwd = !p.coordinator && p.cwd ? path.resolve(p.cwd) : workCwd;
+    return { engineId, delegateTo, workClass, workCwd, cwd, steersMidTurn };
   }
 
-  async #workCwd(p: DelegateParams, engineId: string, candidate: OptimizationCandidate | null): Promise<string> {
+  async #workCwd(p: DelegateParams, engineId: string): Promise<string> {
     // The registrar has a stable, separate home. It can read the game but cannot write
     // the live folder or collide with a base builder's session/bridge/lock.
     if (p.coordinator && p.threadId) {
       const home = createHash("sha256").update(p.threadId).digest("hex").slice(0, 24);
       return path.join(this.#core.layout.scratch, "coordinators", home, engineId);
     }
-    if (candidate) return candidate.root;
     // A reviewer (honoured, or `delegate` refused it) sits in its run's home: the lead holds its folder.
     if (p.reviewer) return this.#reviewerHome(p.reviewer.runId, engineId);
     return this.delegationCwd(p.project, p.cwd);
@@ -1872,19 +1852,6 @@ export class DelegationService {
     return (await sameRepository(live, real)) ? real : null;
   }
 
-  /** What an optimization candidate's worker may never write: the game, its git and the runs. */
-  async #optimizationFence(project: string, candidate: OptimizationCandidate): Promise<{ denyWrites: string[] }> {
-    const gameDir = this.#core.games.dirFor(project);
-    return {
-      denyWrites: [
-        path.join(candidate.root, ".git"),
-        gameDir,
-        (await git(gameDir, ["rev-parse", "--absolute-git-dir"])).trim(),
-        this.#core.layout.runs,
-      ],
-    };
-  }
-
   /** The engine the delegation's game builds in; a game whose record can't be read is a web game. */
   async #gameEngine(project: string): Promise<EngineId> {
     const directory = this.#core.games.dirFor(project);
@@ -1899,8 +1866,8 @@ export class DelegationService {
    */
   async #seatOf(p: DelegateParams, target: DelegationTarget): Promise<DelegationSeat> {
     const live = path.resolve(this.#core.games.dirFor(p.project));
-    // The game's own folder: no build worktree, no coordinator home, no candidate.
-    const gameFolder = !p.coordinator && !target.candidate && target.cwd === live;
+    // The game's own folder: no build worktree and no coordinator home.
+    const gameFolder = !p.coordinator && target.cwd === live;
     const leads = gameFolder ? await this.#leadRoot(p, live) : null;
     const { facts, holds } = await this.#core.games
       .kindOf(p.project)
@@ -2023,11 +1990,11 @@ export class DelegationService {
    * then runs unattended, as before): a worker of a run that is running and was started in exactly
    * one open chat of this game, in the game's folder or a copy of the game in that run's own folder;
    * or a worker of the chat turn the chat's own session answers now, on that chat, in the game's
-   * folder or a copy of the game under scratch. Never for a coordinator or a candidate.
+   * folder or a copy of the game under scratch. Never for a coordinator.
    */
   async #workerSeat(p: DelegateParams, target: DelegationTarget): Promise<WorkerFinding | null> {
     const asked = p.worker;
-    if (typeof asked?.id !== "string" || !asked.id || p.coordinator || target.candidate) return null;
+    if (typeof asked?.id !== "string" || !asked.id || p.coordinator) return null;
     if (!this.#seatsWorkers(target.engineId)) return null;
     const inPlace = target.workCwd === path.resolve(this.#core.games.dirFor(p.project));
     const runId = typeof asked.runId === "string" && asked.runId ? asked.runId : null;
@@ -2044,11 +2011,11 @@ export class DelegationService {
    * The holder of a worker the harness asked for in the game's own folder whose session the host
    * does not seat (`#workerSeat` answered null): the harness held its in-place locks for its life
    * under this name (`locks.hold`), so its own calls pass them instead of waiting behind itself.
-   * Null for a coordinator, a candidate, a worker in a copy, or a session that names no worker.
+   * Null for a coordinator, a worker in a copy, or a session that names no worker.
    */
   #unseatedHolder(p: DelegateParams, target: DelegationTarget): string | null {
     const asked = p.worker;
-    if (typeof asked?.id !== "string" || !asked.id || p.coordinator || target.candidate) return null;
+    if (typeof asked?.id !== "string" || !asked.id || p.coordinator) return null;
     if (typeof p.threadId !== "string" || !p.threadId) return null;
     if (target.workCwd !== path.resolve(this.#core.games.dirFor(p.project))) return null;
     const runId = typeof asked.runId === "string" && asked.runId ? asked.runId : null;
@@ -2272,7 +2239,7 @@ export class DelegationService {
       delegationId: uuidv7(),
       ...askedScope(p, { director, selfCapture, playtest }),
     };
-    const chatTurn = chatTurnOf(p, { director, playtest, candidate: target.candidate });
+    const chatTurn = chatTurnOf(p, { director, playtest });
     const runControls = honouredRunControls(p);
     // A run's worker's plugin calls are its run's: recorded on its own node, answering to its chat.
     // A builder with a round of its own (its capture grant) keeps it: its calls stay on that round.
@@ -2284,7 +2251,7 @@ export class DelegationService {
       ...(chatTurn && target.steersMidTurn ? { door: openDoor() } : {}),
       ...(chatTurn ? { tools: toolsInFlight(target.engineId), personWrote: personWroteWatch() } : {}),
       threadId,
-      hostTools: hostToolsEligible(p, target.candidate, seat),
+      hostTools: hostToolsEligible(p, seat),
       offered: toolAllowRule(p.toolAllow),
       attribution,
       credits: runCreditCap(p.creditCap, attribution?.runId ?? worker?.runId ?? director?.runId),
@@ -2577,13 +2544,12 @@ export class DelegationService {
     tools: SessionTools,
     reach: SessionReach,
   ): Promise<DelegateRequest> {
-    const { engineId, optimization } = target;
+    const { engineId } = target;
     const { blindness, workCwd, extraReads, denyReads } = await this.#sessionReach(target, grants, reach);
     return {
       ...blindness,
       contextPolicy: (await this.#core.contextPreferences.get(engineId, p.model ?? "", p.threadId)).policy,
       ...(await this.#settingsAndReads(p, session)),
-      ...(optimization ? { optimization } : {}),
       ...this.#brief(p, session, tools, reach, engineId),
       cwd: workCwd,
       signal: session.abort.signal,

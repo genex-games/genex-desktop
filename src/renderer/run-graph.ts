@@ -26,7 +26,6 @@ import { type EventEnvelope, EventKind } from "../shared/event-log.ts";
 import type { MakingPhase } from "../shared/asset-making.ts";
 import type { ProjectAsset, ProjectAssets } from "../shared/game-assets.ts";
 import { messageQueueState, QueueState, type QueueView } from "../shared/message-queue.ts";
-import { normalizeOptimization, type OptimizationResultV1 } from "../shared/optimization.ts";
 import {
   executionStep,
   isExecutionEvent,
@@ -107,7 +106,6 @@ export const GraphNodeKind = {
   Facet: "facet",
   Iteration: "iteration",
   Integration: "integration",
-  Optimization: "optimization",
   Final: "final",
   Blender: "blender",
   Assets: "assets",
@@ -568,12 +566,6 @@ export interface BlenderNode {
   assets: AssetInfo[];
 }
 
-export interface OptimizationNode {
-  kind: "optimization";
-  id: "optimization";
-  result: OptimizationResultV1;
-}
-
 /** The lead of a tree, carrying the background work (jobs) of its run or chat turn, oldest first. */
 export interface LeadNode {
   kind: "lead";
@@ -597,7 +589,6 @@ export type GraphNode =
   | FacetNode
   | IterationNode
   | IntegrationNode
-  | OptimizationNode
   | FinalNode
   | BlenderNode
   | AssetsNode
@@ -708,7 +699,6 @@ interface GraphDraft {
   baseStarted: boolean;
   integration: IntegrationNode;
   final: FinalNode;
-  optimization: OptimizationNode | null;
   blender: BlenderNode | null;
   assets: AssetLedger;
   facets: Map<string, FacetDraft>;
@@ -910,7 +900,6 @@ function newGraphDraft(runId: string, turn: string | null): GraphDraft {
       ledger: null,
     },
     final: newFinalNode(),
-    optimization: null,
     blender: null,
     assets: newAssetLedger(),
     facets: new Map(),
@@ -1176,9 +1165,6 @@ function applyRunEvent(graph: GraphDraft, custom: { event_type: string }, entry:
       break;
     case CustomEvent.IntegrationLedger:
       onLedger(graph.integration, payload);
-      break;
-    case CustomEvent.OptimizationUpdated:
-      updateOptimization(graph, payload);
       break;
     case CustomEvent.RunFinished:
       onRunFinished(graph, entry);
@@ -1601,19 +1587,9 @@ function onLedger(integration: IntegrationNode, payload: Payload): void {
   };
 }
 
-/** The newest optimisation result of this run wins; one for another run, or an older one, is ignored. */
-function updateOptimization(graph: GraphDraft, raw: unknown): void {
-  const result = normalizeOptimization(raw);
-  if (result?.runId !== graph.runId) return;
-  const current = graph.optimization;
-  if (!current || result.sequence > current.result.sequence)
-    graph.optimization = { kind: GraphNodeKind.Optimization, id: GraphNodeKind.Optimization, result };
-}
-
 function onRunFinished(graph: GraphDraft, entry: RunEntry): void {
   const { run, final } = graph;
   const { payload } = entry;
-  updateOptimization(graph, payload.optimization);
   run.finishedAt = entry.event.created_at;
   run.victory = bool(payload.victory);
   run.stoppedBecause = strOrNull(payload.stoppedBecause);
@@ -1821,19 +1797,14 @@ function settleAssets(graph: GraphDraft): AssetInfo[] {
   return keptAssetJobs(graph.assets);
 }
 
-/** The integration, the optimisation when there was one, the final card, and the modeller and asset nodes. */
+/** The integration, the final card, and the modeller and asset nodes. */
 function drawClose(graph: GraphDraft, nodes: GraphNode[], edges: GraphEdge[]): void {
-  const { optimization, blender } = graph;
-  nodes.push(graph.integration, ...(optimization ? [optimization] : []), graph.final);
+  const { blender } = graph;
+  nodes.push(graph.integration, graph.final);
   if (blender) nodes.push(blender);
   const jobs = settleAssets(graph);
   if (jobs.length) nodes.push({ kind: GraphNodeKind.Assets, id: GraphNodeKind.Assets, jobs });
-  if (!optimization) {
-    edges.push(flowEdge(GraphNodeKind.Integration, GraphNodeKind.Final));
-    return;
-  }
-  edges.push(flowEdge(GraphNodeKind.Integration, GraphNodeKind.Optimization));
-  edges.push(flowEdge(GraphNodeKind.Optimization, GraphNodeKind.Final));
+  edges.push(flowEdge(GraphNodeKind.Integration, GraphNodeKind.Final));
 }
 
 /** Cross edges resolve to iteration nodes where they exist, otherwise the facet header; repeats are counted. */
@@ -2173,10 +2144,7 @@ export function joinBuildsView(
   summary: RunSummary | null,
   inventory: ProjectAssets | null,
 ): RunGraph {
-  const nodes = joinAssetInventory(
-    restored.nodes.filter((node) => node.kind !== GraphNodeKind.Optimization || node.result.outcome !== "skipped"),
-    inventory,
-  );
+  const nodes = joinAssetInventory(restored.nodes, inventory);
   return { ...restored, nodes, runDir: summary?.runDirectory ?? restored.runDir, summary: summary ?? undefined };
 }
 

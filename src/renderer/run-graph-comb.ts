@@ -173,7 +173,7 @@ export function layoutComb(rows: PartRow[], options: LayoutOptions = {}): StepsL
   placeSaves(draft, spine.saves, midY);
   for (const [gap, steps] of spine.gaps) placeGap(draft, steps, gap + 1, midY);
   const into = columnX(columns);
-  const final = placeResult(draft, into, midY, options.optimization === true);
+  const final = placeResult(draft, into, midY);
   placeEnd(draft, final, midY, options);
   const lastNode: Rect | undefined = draft.rects[spine.saves.at(-1)?.id ?? "lead"];
   const from = lastNode ? lastNode.x + lastNode.w : columnX(0) + S.nodeW;

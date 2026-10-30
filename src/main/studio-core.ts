@@ -110,7 +110,6 @@ import type { Engine, LiveToolResult } from "../substrate/engines/types.ts";
 import { EventStore } from "../substrate/event-store.ts";
 import { atomicWriteJson, ensureDir, readJsonIfExists } from "../substrate/fsx.ts";
 import type { ExportResult } from "../substrate/game-export.ts";
-import { GameCandidates } from "../substrate/game-candidate.ts";
 import {
   GameWorkspaces,
   readProjectShape,
@@ -396,7 +395,7 @@ export interface StudioCoreOptions {
    * Factory for headless observation ports (a hidden window on the same `game://` protocol).
    * Absent = the pool serves only the live view and `preview.acquire` refuses loudly.
    */
-  createHeadlessPreview?: (options?: { purpose?: "optimization" }) => Promise<PreviewPort>;
+  createHeadlessPreview?: () => Promise<PreviewPort>;
   /** Max concurrent headless preview leases (default 4). */
   previewPoolMax?: number;
   /** Idle-architect pacing — overridable so tests need not wait ten real minutes. */
@@ -504,7 +503,6 @@ export class StudioCore {
   readonly layout: StudioLayout;
   readonly snapshots: SnapshotEngine;
   readonly snapshotIndex = new SnapshotIndex();
-  readonly candidates: GameCandidates;
   readonly engines = new EngineRegistry();
   readonly contextPreferences: ContextPreferences;
   readonly games: GameWorkspaces;
@@ -622,7 +620,6 @@ export class StudioCore {
     this.screenAccess = options.screenAccess ?? null;
     if (options.gamesRoot) this.layout.gamesRoot = options.gamesRoot;
     this.snapshots = new SnapshotEngine([{ name: HARNESS_WORKSPACE, dir: this.layout.harnessWs }]);
-    this.candidates = new GameCandidates(this.snapshots, path.join(this.layout.scratch, "optimization"));
     this.games = new GameWorkspaces({
       root: this.layout.gamesRoot,
       templateDir: path.join(options.paths.resources, "game-template"),

@@ -7,7 +7,6 @@ import type {
   AssetsNode,
   BaseNode,
   BlenderNode,
-  OptimizationNode,
   RunGraph as RunGraphModel,
   RunNode,
 } from "../../run-graph.ts";
@@ -45,7 +44,6 @@ export interface InspectorProps {
   base: BaseNode | null;
   blender: BlenderNode | null;
   assets: AssetsNode | null;
-  optimization: OptimizationNode | null;
   project: string | null;
   references: ReferenceFrame[];
   baseSrc: string | null;

@@ -3,7 +3,7 @@ import { PerformanceBoundary } from "../../performance.tsx";
 import { PerformanceComponent } from "../../../shared/performance.ts";
 import { t } from "../../../shared/i18n.ts";
 /**
- * The Builds graph's nodes: what you asked, the assets tile, every step, the optimization tile,
+ * The Builds graph's nodes: what you asked, the assets tile, every step,
  * your build and the lead — in a tree for the whole run, with its background tile and the finish
  * check; otherwise while it has the run between parts. Every picture node is one size:
  * its picture fills it and its words sit on the picture, so no state changes its height. A node at
@@ -18,7 +18,6 @@ import type {
   BaseNode,
   BlenderNode,
   FinishCheckNode as FinishCheckModel,
-  OptimizationNode,
   Rect,
   RunNode,
 } from "../../run-graph.ts";
@@ -39,7 +38,6 @@ import { FinishLook, finishCheckFace, finishCheckLook, jobsTileStatus, LeadFace 
 import { useStill } from "../../stills.ts";
 import { Icon } from "../../ui/icons.tsx";
 import { ASSET_THUMB_PX, assetsStatus, blenderRender, firstImage, isMaking } from "../inspector/asset-jobs.ts";
-import { optimizationStatus } from "../inspector/OptimizationPanel.tsx";
 import { IMAGE_OUTLINE } from "../inspector/pictures.tsx";
 import { GraphSelection } from "../inspector/selection.ts";
 import { NodeCursor, ScreenWords, useFrameSrc, usePartFrame } from "../inspector/screen.tsx";
@@ -698,38 +696,6 @@ export function AssetsTile({
           color={TONE[status.tone]}
         />
       </span>
-    </NodeFrame>
-  );
-}
-
-/** The Optimization stage, after the parts and before your build. */
-export function OptimizationTile({
-  node,
-  rect,
-  selected,
-  onSelect,
-}: {
-  node: OptimizationNode;
-  rect: Rect;
-  selected: boolean;
-  onSelect: () => void;
-}): JSX.Element {
-  return (
-    <NodeFrame
-      id={GraphSelection.Optimization}
-      rect={rect}
-      selected={selected}
-      label={t("Optimization stage details")}
-      onSelect={onSelect}
-    >
-      <NodeFace
-        src={null}
-        fill={Fill.Flat}
-        name={t("Optimization")}
-        word={optimizationStatus(node)}
-        tone={Tone.Muted}
-        glyph={null}
-      />
     </NodeFrame>
   );
 }

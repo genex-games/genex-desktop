@@ -179,7 +179,6 @@ describe("the lead is woken, not kept in one long turn", () => {
   }, async () => {
     const { rig, project, runId, dispatch, finished } = await loopRun("wake-by-user");
     const lead: Array<{ request: DelegateRequest; at: number }> = [];
-    const results: Record<string, any> = {};
     let rested = false;
     fakeEngine(rig, async (request) => {
       if (!request.director) return hangUntilStopped(request, () => {});

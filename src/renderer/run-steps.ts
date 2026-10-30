@@ -1238,8 +1238,6 @@ export const STEPS = {
 const EMPTY_BUS_REACH = 40;
 /** How far a row's label stops short of the result's bus. */
 const LABEL_INSET = 8;
-/** The link between the optimisation card and the result. */
-const OPTIMIZATION_LINK = 24;
 
 /** How an edge is drawn: merged, merging later, never merged, or in hand now. */
 export const StepEdgeKind = { Solid: "solid", Pending: "pending", Dotted: "dotted", Live: "live" } as const;
@@ -1263,7 +1261,7 @@ export interface StepsLayout {
   /** The steps in reading order when the layout has one of its own (a lead's tree in place); else row by row. */
   order?: string[];
   /**
-   * `start`, `assets`, `optimization`, `final`, `lead`, every step id, `row:<facetId>` for a label,
+   * `start`, `assets`, `final`, `lead`, every step id, `row:<facetId>` for a label,
    * and in a tree `jobs` and `finish_check`
    */
   rects: Record<string, Rect>;
@@ -1289,7 +1287,6 @@ export interface LayoutOptions {
   assets?: boolean;
   /** the start shows the person's pictures, its words in a strip under them */
   startWords?: boolean;
-  optimization?: boolean;
   resultGate?: Gate | null;
   /** the lead has the run to itself: drawn after the result, or in a tree, on a live line into it */
   lead?: boolean;
@@ -1383,7 +1380,7 @@ export function layoutSteps(rows: PartRow[], options: LayoutOptions = {}): Steps
     if (label) label.w = Math.max(S.nodeW, rightBus - origin.rowX - LABEL_INSET);
   }
   const into = rightBus + S.resultGap;
-  const final = placeResult(draft, into, midY, options.optimization === true);
+  const final = placeResult(draft, into, midY);
   placeEnd(draft, final, midY, options);
   draft.edges.unshift(...busIn(drawn, midY, into, origin));
   draft.edges.push(...busOut(drawn, rightBus, midY, into));
@@ -1487,21 +1484,10 @@ export function placeStart(draft: LayoutDraft, midY: number, assets: boolean, wo
   });
 }
 
-/** The result, with the optimisation card before it when there is one; returns the result's rect. */
-export function placeResult(draft: LayoutDraft, into: number, midY: number, optimization: boolean): Rect {
+/** The result; returns its rect. */
+export function placeResult(draft: LayoutDraft, into: number, midY: number): Rect {
   const S = STEPS;
-  const y = midY - S.resultH / 2;
-  if (!optimization) {
-    draft.rects.final = { x: into, y, w: S.resultW, h: S.resultH };
-    return draft.rects.final;
-  }
-  draft.rects.optimization = { x: into, y, w: S.resultW, h: S.resultH };
-  draft.edges.push({
-    id: "optimization",
-    d: `M${into + S.resultW} ${midY} H${into + S.resultW + OPTIMIZATION_LINK}`,
-    kind: StepEdgeKind.Solid,
-  });
-  draft.rects.final = { x: into + S.resultW + OPTIMIZATION_LINK, y, w: S.resultW, h: S.resultH };
+  draft.rects.final = { x: into, y: midY - S.resultH / 2, w: S.resultW, h: S.resultH };
   return draft.rects.final;
 }
 

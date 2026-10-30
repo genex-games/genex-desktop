@@ -471,7 +471,6 @@ export interface HarnessDelegateParams {
    * is refused before Genex is asked. Anything but a whole number allows none; absent, no cap.
    */
   creditCap?: number;
-  candidateId?: string;
   /**
    * A worker of a chat's lead: honoured only by the host's own finding (a running run started in
    * this game's open chat, or the chat turn its own session answers now), and then run in the
@@ -1577,14 +1576,6 @@ export interface ReferenceFrame {
 }
 // ↑ src/shared/protocol.ts
 
-/** Durable, additive Optimization stage JSON. Page observations never supply revision identity. */
-export interface Revision {
-  snapshotId: string | null;
-  commit: string;
-  tree: string;
-}
-// ↑ src/shared/optimization.ts
-
 export type CaptureSurface = 'page' | 'canvas' | 'auto';
 // ↑ src/shared/preview-contract.ts
 
@@ -2070,16 +2061,13 @@ export interface HarnessHostApi {
     result: GameProject | StartHeldInPlan;
   };
   "game.validate": {
-    params: { project: string; candidateId?: string };
+    params: { project: string };
     /** `missing`: the files a web page needs that are not there, by name (`problems` says it in sentences). */
     result: { ok: boolean; problems: string[]; missing: string[]; warnings: string[]; contract: ContractWord };
   };
-  "game.read": { params: { project: string; file: string; candidateId?: string }; result: string | GameImageRead };
-  "game.write": {
-    params: { project: string; file: string; contents: string; candidateId?: string };
-    result: { bytes: number };
-  };
-  "game.tree": { params: { project: string; candidateId?: string }; result: string[] };
+  "game.read": { params: { project: string; file: string }; result: string | GameImageRead };
+  "game.write": { params: { project: string; file: string; contents: string }; result: { bytes: number } };
+  "game.tree": { params: { project: string }; result: string[] };
   "game.export": { params: { project: string; target?: string }; result: ExportResult };
   /** The stills in `<project>/references/`, sniffed and resized. */
   "game.references": {
@@ -2095,8 +2083,6 @@ export interface HarnessHostApi {
       entry?: string;
       root?: string | null;
       handle?: string;
-      candidateId?: string;
-      revision?: Revision;
     };
     result: string;
   };
@@ -2148,7 +2134,7 @@ export interface HarnessHostApi {
     result: { project: string; root: string | null; entry: string | undefined; loaded: string | null } | null;
   };
   "preview.observe": { params: { handle?: string }; result: BuildObservation };
-  "preview.acquire": { params: { label?: string; purpose?: "optimization" }; result: { handle: string } };
+  "preview.acquire": { params: { label?: string }; result: { handle: string } };
   "preview.release": { params: { handle: string }; result: boolean };
   "preview.capacity": {
     params: void;

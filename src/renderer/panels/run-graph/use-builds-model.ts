@@ -11,7 +11,6 @@ import {
   GraphNodeKind,
   type IntegrationNode,
   type IterationNode,
-  type OptimizationNode,
   type RunGraph as RunGraphModel,
   type RunNode,
   runIdOf,
@@ -83,7 +82,6 @@ export function useBuildsModel(suppliedGraph: RunGraphModel, project: string | n
   const base = nodeOfKind<BaseNode>(graph, GraphNodeKind.Base);
   const blender = useMemo(() => nodeOfKind<BlenderNode>(graph, GraphNodeKind.Blender), [graph]);
   const assets = useMemo(() => nodeOfKind<AssetsNode>(graph, GraphNodeKind.Assets), [graph]);
-  const optimization = useMemo(() => nodeOfKind<OptimizationNode>(graph, GraphNodeKind.Optimization), [graph]);
   const finishCheck = useMemo(() => nodeOfKind<FinishCheckNode>(graph, GraphNodeKind.FinishCheck), [graph]);
   const loaded = graphLoaded(graph, outcome);
   const leadNode = useMemo(() => leadNodeOf(graph), [graph]);
@@ -114,7 +112,6 @@ export function useBuildsModel(suppliedGraph: RunGraphModel, project: string | n
       base,
       blender,
       assets,
-      optimization,
       finishCheck,
       leadNode,
       face,
@@ -135,7 +132,6 @@ export function useBuildsModel(suppliedGraph: RunGraphModel, project: string | n
       base,
       blender,
       assets,
-      optimization,
       finishCheck,
       leadNode,
       face,

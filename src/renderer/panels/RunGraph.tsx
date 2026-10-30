@@ -49,7 +49,6 @@ import {
   FinishCheckNode,
   JobsTile,
   LeadNode,
-  OptimizationTile,
   ResultNode,
   StartNode,
   StepNode,
@@ -439,7 +438,6 @@ function SelectedPanel({
       base={model.base}
       blender={model.blender}
       assets={model.assets}
-      optimization={model.optimization}
       project={project}
       references={references}
       baseSrc={stills.baseSrc}
@@ -657,7 +655,7 @@ const GraphNodes = memo(function GraphNodes({
   selected: string | null;
   onSelect: (id: string) => void;
 }): JSX.Element {
-  const { graph, layout, optimization, leadNode, finishCheck } = model;
+  const { graph, layout, leadNode, finishCheck } = model;
   const lastSave = useMemo(() => lastSavePoint(model.rows), [model.rows]);
   const jobsRect = layout.rects[GraphSelection.Jobs];
   const finishRect = layout.rects[GraphSelection.FinishCheck];
@@ -696,14 +694,6 @@ const GraphNodes = memo(function GraphNodes({
           onSelect={onSelect}
         />
       ))}
-      {optimization && layout.rects.optimization ? (
-        <OptimizationTile
-          node={optimization}
-          rect={layout.rects.optimization}
-          selected={selected === GraphSelection.Optimization}
-          onSelect={() => onSelect(GraphSelection.Optimization)}
-        />
-      ) : null}
       <ResultNode
         active={graph.active}
         status={stills.result}

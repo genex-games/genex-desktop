@@ -7,7 +7,6 @@
 import path from "node:path";
 import type { BuildProblem } from "../../shared/build-problem.ts";
 import type { AgentScreen, AgentScreenFrame } from "../../shared/agent-screen.ts";
-import type { Revision } from "../../shared/optimization.ts";
 import type { PermissionMode } from "../../shared/permissions.ts";
 import type { PluginAppliedSet, PluginBinding } from "../../shared/plugins.ts";
 import type { LiveToolResult } from "../../substrate/engines/types.ts";
@@ -229,7 +228,6 @@ export interface PreviewState {
   readonly previewOperations: Map<string, Promise<unknown>>;
   /** Observation ports by handle; null until a preview is attached. */
   previewPool: PreviewPool | null;
-  readonly profileSources: Map<string, { candidateId: string; revision: Revision }>;
   /**
    * Folders the user named in chat that sit outside the project — stills to look at, not to write.
    * Keyed by project id. Restored from thread metadata so an unattended run still sees them.
@@ -371,7 +369,6 @@ export function unservedPreviews(): PreviewState {
     harnessBoot: 1,
     previewOperations: new Map(),
     previewPool: null,
-    profileSources: new Map(),
     readRoots: new Map(),
     runPreview: { project: null, head: null, state: PreviewIdentityState.Unknown, error: null },
     screens: new Map(),

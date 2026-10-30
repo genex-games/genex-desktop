@@ -207,8 +207,6 @@ export type DelegateEvent =
 
 export interface DelegateRequest {
   contextPolicy?: import("../../shared/context.ts").ContextPolicy;
-  /** Host-derived final optimizer scope; never taken from model arguments. */
-  optimization?: { denyWrites: string[] };
   /** The brief — written by the harness, improved by SkillOpt. */
   prompt: string;
   /**

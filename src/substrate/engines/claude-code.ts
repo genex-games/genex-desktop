@@ -2347,13 +2347,10 @@ function shellAllows(request: DelegateRequest, genexShell: boolean): string[] {
 /**
  * Research is part of the work: the chat, a director and its builders may search and read the
  * web, and so may a read-only lead or coordinator the person may talk to (`leadAsks`), the chat's
- * main agent. Another read-only session answers from what it was handed, and a
- * performance-optimization candidate (an isolated copy of the game) is measured against its
- * baseline alone. A worker researches when it writes, or when its lead asked for research
+ * main agent. Another read-only session answers from what it was handed. A worker researches when it writes, or when its lead asked for research
  * (`WorkerSeat.research`); a reader or a worker in Plan otherwise does not.
  */
 function researches(request: DelegateRequest): boolean {
-  if (request.optimization) return false;
   if (request.worker) return request.worker.research || !workerReadOnly(request.worker, Boolean(request.readOnly));
   return !request.readOnly || Boolean(request.leadAsks);
 }
@@ -2378,12 +2375,7 @@ function refusedTools(request: DelegateRequest): string[] {
   if (request.worker) return workerDisallowedTools(request);
   if (request.readOnly && !request.leadAsks)
     return [...MESSAGING_TOOLS, ...EDIT_TOOLS, SHELL_TOOL, ...SUBAGENT_TOOLS, ...WEB_TOOLS];
-  return [
-    ...MESSAGING_TOOLS,
-    ...SUBAGENT_TOOLS,
-    ...(request.optimization ? WEB_TOOLS : []),
-    ...(asksOf(request) ? ASKING_TOOLS : []),
-  ];
+  return [...MESSAGING_TOOLS, ...SUBAGENT_TOOLS, ...(asksOf(request) ? ASKING_TOOLS : [])];
 }
 
 /** The only built-in a blind judge may load: tool search, which brings in its deferred live tools. */
@@ -2537,7 +2529,7 @@ function leadBuilds(request: DelegateRequest): string[] {
 /**
  * An unattended session's shell: sandboxed, auto-allowed only because it cannot step outside
  * (allowUnsandboxedCommands: false makes the CLI ignore dangerouslyDisableSandbox entirely), and
- * never writing the studio's protected folders or an optimization candidate's fence. It writes its
+ * never writing the studio's protected folders. It writes its
  * folder, and a lead the build it leads.
  */
 function unattendedSandbox(request: DelegateRequest, protectedPaths: string[]): Record<string, unknown> {
@@ -2548,7 +2540,7 @@ function unattendedSandbox(request: DelegateRequest, protectedPaths: string[]): 
     allowUnsandboxedCommands: false,
     filesystem: {
       ...(builds.length ? { allowWrite: builds } : {}),
-      denyWrite: [...protectedPaths, ...(request.optimization?.denyWrites ?? [])],
+      denyWrite: [...protectedPaths],
       denyRead: [...baseDenyRead(), ...(request.denyReads ?? []), ...protectedPaths],
     },
   };
@@ -2657,7 +2649,6 @@ async function shellBox(
       ...protectedPaths,
       ...signIns,
       ...fence.writes,
-      ...(request.optimization?.denyWrites ?? []),
       ...(seat ? workerClaudeFolders(request.cwd, roots) : []),
     ],
   };

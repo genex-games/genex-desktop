@@ -79,7 +79,6 @@ export function buildsLayout(graph: RunGraph, rows: PartRow[], summary: RunSumma
   const options = {
     assets: hasNode(graph, GraphNodeKind.Blender) || hasNode(graph, GraphNodeKind.Assets),
     startWords: asksWithPictures(graph),
-    optimization: hasNode(graph, GraphNodeKind.Optimization),
     resultGate: resultGate(graph),
     lead: leadWorking(graph, summary, rows),
     ...tree,
@@ -154,7 +153,6 @@ export interface ReadingNodes {
   assets: boolean;
   tree: boolean;
   jobs: boolean;
-  optimization: boolean;
   finishCheck: boolean;
   /** the lead has the run to itself: in a graph that is no tree, drawn after the result */
   lead: boolean;
@@ -166,7 +164,6 @@ export function readingNodes(graph: RunGraph, rows: PartRow[], summary: RunSumma
     assets: hasNode(graph, GraphNodeKind.Blender) || hasNode(graph, GraphNodeKind.Assets),
     tree: graph.tree,
     jobs: (leadNodeOf(graph)?.jobs.length ?? 0) > 0,
-    optimization: hasNode(graph, GraphNodeKind.Optimization),
     finishCheck: hasNode(graph, GraphNodeKind.FinishCheck),
     lead: leadWorking(graph, summary, rows),
   };
@@ -175,7 +172,7 @@ export function readingNodes(graph: RunGraph, rows: PartRow[], summary: RunSumma
 /**
  * The graph's reading order, left to right: what you asked and its assets, the lead and its
  * background work (in a tree), every step (row by row, or in the layout's own `steps` order), the
- * optimisation card, the result, then the finish check (in a tree) or the lead while it has the run.
+ * result, then the finish check (in a tree) or the lead while it has the run.
  */
 export function readingOrder(
   rows: PartRow[],
@@ -190,7 +187,6 @@ export function readingOrder(
     ...(nodes.assets ? [GraphSelection.Assets] : []),
     ...head,
     ...steps,
-    ...(nodes.optimization ? [GraphSelection.Optimization] : []),
     GraphSelection.Final,
     ...tail,
   ];

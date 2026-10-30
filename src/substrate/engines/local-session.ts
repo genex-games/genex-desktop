@@ -402,11 +402,7 @@ export class LocalSessions {
     // The coding CLIs' sign-in homes, from the one shared list the sandbox and contractors use (SEC-3).
     const fenced = [...this.options.protectedPaths, ...credentialHomes(), ...(request.denyReads ?? [])];
     const forbidden = [...fenced, ...(seat ? neverTouchWhole(seat.neverTouch) : [])].map((p) => path.resolve(p));
-    const deniedWrites = [
-      ...this.options.protectedPaths,
-      ...credentialHomes(),
-      ...(request.optimization?.denyWrites ?? []),
-    ];
+    const deniedWrites = [...this.options.protectedPaths, ...credentialHomes()];
     return { readRoots, writeRoots, forbidden, deniedWrites };
   }
 

@@ -8,11 +8,6 @@ import { observeBuild } from "../../substrate/build-probe.ts";
 import type { CoreInternals, StudioCore } from "../studio-core.ts";
 import { DEFAULT_STILL_QUALITY, DEFAULT_SHOT_QUALITY, captureSurface, encodedJpeg } from "../core/capture.ts";
 
-/** The one purpose a borrowed window may name: a headless window fit for profiling. */
-const OPTIMIZATION_PURPOSE = "optimization" satisfies NonNullable<
-  HarnessParams<typeof HostMethod.PreviewAcquire>["purpose"]
->;
-
 /** What the harness reads when a preview call is refused or cannot be served. */
 const MESSAGE = {
   harnessRestarted: "the harness that asked for this preview window has restarted",
@@ -80,7 +75,6 @@ export function previewRpc(core: StudioCore, x: CoreInternals) {
     ),
     [HostMethod.PreviewAcquire]: async (p) => acquire(x, p),
     [HostMethod.PreviewRelease]: async (p) => {
-      x.profileSources.delete(p.handle);
       await x.previewPool?.release(p.handle);
       return true;
     },
@@ -152,7 +146,6 @@ async function acquire(x: CoreInternals, p: HarnessParams<typeof HostMethod.Prev
   const boot = x.harnessBoot;
   const lease = await x.previews.pool().acquire({
     label: p?.label ?? "facet",
-    purpose: p?.purpose === OPTIMIZATION_PURPOSE ? OPTIMIZATION_PURPOSE : undefined,
     owner: `harness:${boot}`,
   });
   // The harness that asked died while the window was opening: nobody is left to release it.

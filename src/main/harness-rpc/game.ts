@@ -79,32 +79,21 @@ export function gameRpc(core: StudioCore, x: CoreInternals) {
       x.readyProject(await core.games.start(p.project, p.starter)),
     // No `game.adopt` here (ARCH-1): adopting a folder widens the sandbox, so it is the user's
     // Open Game sheet's to do (`adoptProject`), never the agent-editable harness's.
-    [HostMethod.GameValidate]: async (p) =>
-      p.candidateId
-        ? core.games.validateAt((await core.candidates.get(p.candidateId, p.project)).root)
-        : core.games.validate(p.project),
+    [HostMethod.GameValidate]: async (p) => core.games.validate(p.project),
     [HostMethod.GameRead]: async (p) => {
-      const target = p.candidateId
-        ? await core.candidates.file(p.candidateId, p.project, p.file)
-        : await x.delegation.gameFile(p.project, p.file, "read");
+      const target = await x.delegation.gameFile(p.project, p.file, "read");
       if (isImageFile(target)) return readImage(target, p.file);
       return readFile(target, "utf8");
     },
     [HostMethod.GameWrite]: async (p) => {
-      const target = p.candidateId
-        ? await core.candidates.file(p.candidateId, p.project, p.file, true)
-        : await x.delegation.gameFile(p.project, p.file, "write");
-      const root = p.candidateId
-        ? (await core.candidates.get(p.candidateId, p.project)).root
-        : core.games.dirFor(p.project);
-      await refuseProjectControlFolder(root, target, p.file);
+      const target = await x.delegation.gameFile(p.project, p.file, "write");
+      await refuseProjectControlFolder(core.games.dirFor(p.project), target, p.file);
       await ensureDir(path.dirname(target));
       await writeFileNoFollow(target, p.contents);
-      if (!p.candidateId) core.emit(UiEvent.GameChanged, { project: p.project, file: p.file });
+      core.emit(UiEvent.GameChanged, { project: p.project, file: p.file });
       return { bytes: p.contents.length };
     },
-    [HostMethod.GameTree]: async (p) =>
-      p.candidateId ? core.candidates.tree(p.candidateId, p.project) : x.delegation.gameTree(p.project),
+    [HostMethod.GameTree]: async (p) => x.delegation.gameTree(p.project),
     [HostMethod.GameExport]: async (p) => {
       await x.assertHarnessRoot(p.project, null);
       if (p.target !== undefined && p.target !== null) await assertExportTarget(core, String(p.target));

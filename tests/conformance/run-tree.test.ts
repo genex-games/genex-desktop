@@ -152,10 +152,7 @@ describe("a graph without workers or jobs keeps today's layout", () => {
     const lead = leadWorking(graph, summary, rows);
     assert.equal(lead, true);
     const layout = buildsLayout(graph, rows, summary);
-    assert.deepEqual(
-      layout,
-      layoutSteps(rows, { assets: false, optimization: false, resultGate: resultGate(graph), lead }),
-    );
+    assert.deepEqual(layout, layoutSteps(rows, { assets: false, resultGate: resultGate(graph), lead }));
     assert.equal(layout.rects["session:sword"]?.x, STEPS.pad + STEPS.startW + 2 * STEPS.busGap);
     assert.ok(layout.rects.lead && layout.rects.final);
     assert.equal(layout.rects.lead.x, layout.rects.final.x + STEPS.resultW + STEPS.leadGap, "after the result");
@@ -172,7 +169,6 @@ describe("a graph without workers or jobs keeps today's layout", () => {
       const assets = graph.nodes.some(
         (node) => node.kind === GraphNodeKind.Assets || node.kind === GraphNodeKind.Blender,
       );
-      const optimization = graph.nodes.some((node) => node.kind === GraphNodeKind.Optimization);
       // The running run answers a message sent with pictures: its start keeps a strip for its words.
       const startWords = graph.nodes.some((node) => node.kind === GraphNodeKind.Run && node.asked !== null);
       assert.equal(startWords, runId === "fixture-graph-live", runId);
@@ -181,7 +177,6 @@ describe("a graph without workers or jobs keeps today's layout", () => {
         layoutSteps(rows, {
           assets,
           startWords,
-          optimization,
           resultGate: resultGate(graph),
           lead: leadWorking(graph, summary, rows),
         }),
@@ -207,7 +202,7 @@ describe("a graph with its assets or its optimisation keeps today's layout and o
       assert.deepEqual(readingOrder(rows, readingNodes(graph, rows, summary)), steps, runId);
       const layout = buildsLayout(graph, rows, summary);
       const lead = leadWorking(graph, summary, rows);
-      const today = layoutSteps(rows, { assets: true, optimization: false, resultGate: resultGate(graph), lead });
+      const today = layoutSteps(rows, { assets: true, resultGate: resultGate(graph), lead });
       assert.deepEqual(layout, today, runId);
       assert.ok(layout.rects.assets && layout.rects.start, runId);
       assert.equal(layout.rects.assets.x, layout.rects.start.x, "the assets card stands under the start");
@@ -554,14 +549,7 @@ describe("Previous and Next", () => {
       const { graph, summary, rows } = fold(events, runId);
       const nodes = readingNodes(graph, rows, summary);
       const steps = rows.flatMap((row) => row.steps.map((step) => step.id));
-      const before = [
-        "start",
-        ...(nodes.assets ? ["assets"] : []),
-        ...steps,
-        ...(nodes.optimization ? ["optimization"] : []),
-        "final",
-        ...(nodes.lead ? ["lead"] : []),
-      ];
+      const before = ["start", ...(nodes.assets ? ["assets"] : []), ...steps, "final", ...(nodes.lead ? ["lead"] : [])];
       assert.equal(nodes.tree, false, runId);
       assert.deepEqual(readingOrder(rows, nodes), before, runId);
     }

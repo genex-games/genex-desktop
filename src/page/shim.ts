@@ -783,8 +783,8 @@ function canvasesOf(watch: CanvasWatch) {
   return { elements, descriptors };
 }
 
-/** Publishes `__studioGl`: the GL errors, and the switch the optimization observer turns the counters off with. */
-function installGlGlobal(win: Foreign, watch: CanvasWatch, counters: boolean) {
+/** Publishes `__studioGl`: the GL errors the page's graphics reported. */
+function installGlGlobal(win: Foreign, watch: CanvasWatch) {
   // A page that took the studio's older probe first (it is installed again on did-navigate)
   // keeps whatever it already saw: the shim owns the surface from here, not the history.
   try {
@@ -792,7 +792,6 @@ function installGlGlobal(win: Foreign, watch: CanvasWatch, counters: boolean) {
   } catch {
     /* an unreadable predecessor is not worth a throw */
   }
-  let counting = counters;
   installPageGlobal(
     win,
     "__studioGl",
@@ -802,17 +801,6 @@ function installGlGlobal(win: Foreign, watch: CanvasWatch, counters: boolean) {
         return watch.glErrors.slice();
       },
       note: (message: unknown) => noteGl(watch, String(message)),
-      /** The optimization observer turns the draw counters off around a sample. */
-      count: (on: Foreign) => {
-        counting = on !== false;
-        try {
-          (globalThis as PageGlobal).__studioDraw?.enable?.(counting);
-        } catch {
-          /* the counters may not be installed yet; the flag below is the contract */
-        }
-        return counting;
-      },
-      counting: () => counting,
     }),
   );
 }
@@ -1358,7 +1346,7 @@ export function installStudioShim(rawOptions: Foreign) {
     );
   }
   const watch = watchCanvases(win);
-  installGlGlobal(win, watch, options.counters);
+  installGlGlobal(win, watch);
   // ── the draw counters, at the graphics API, installed before any game code runs ──
   // `renderer.info` misses a composer's passes and every replayed render bundle, so the honest
   // whole-frame figure is counted here. `mark()` closes each frame from the clock's own frame

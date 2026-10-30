@@ -194,7 +194,7 @@ test("a well-formed call reaches its handler with the params exactly as the harn
     // handler reads as "not given".
     const accepted: Array<[string, unknown]> = [
       ["game.read", { project: "pong", file: "NOTES.md" }],
-      ["game.export", { project: "pong", candidateId: "opt-1" }],
+      ["game.export", { project: "pong" }],
       ["mcp.tools", { project: null }],
       ["snapshot.worktree", { project: "pong", commit: null, name: "integration", runId: "run-1" }],
       ["preview.load", { project: "pong", root: null, entry: "index.html", handle: "stage-1" }],

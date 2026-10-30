@@ -126,8 +126,6 @@ export interface PageAttachReport {
 
 /** One observation port on a game. Implemented by Electron's GamePreview. */
 export interface PreviewPort {
-  invalidateProfile?(reason: string): Promise<void>;
-  profile?(request: import("./preview-profiler.ts").ProfileRequest): Promise<unknown>;
   /** `root` is a playable worktree; omit it to serve the live game folder. `loopback` serves it as http://localhost:<port>/ — what a game with its own shape expects. `shim` overrides the page shim for this load (the boot budget is the one that changes per game). */
   load(
     project: string,

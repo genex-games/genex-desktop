@@ -8,7 +8,6 @@ import {
   previewGone,
 } from "../shared/preview-contract.ts";
 import { failedLoad } from "./preview-load-failure.ts";
-import { PreviewProfiler, type ProfileRequest } from "../substrate/preview-profiler.ts";
 /**
  * Game preview.
  *
@@ -33,7 +32,7 @@ import {
   session,
 } from "electron";
 import path from "node:path";
-import { readFile, realpath, stat } from "node:fs/promises";
+import { realpath, stat } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import {
   HttpRouteKind,
@@ -293,29 +292,6 @@ export class GamePreview {
   /** How the studio reached this page's `three`, recorded when the entry was rewritten. */
   #reach: { reach: string; hooked: Record<string, string> } = { reach: "none", hooked: {} };
 
-  #profiler = new PreviewProfiler(
-    (s) => this.evaluate(s),
-    async () => {
-      const manifest = JSON.parse(await readFile(path.join(this.options.vendorDir, "VERSION.json"), "utf8"));
-      return String(manifest.three);
-    },
-  );
-
-  async profile(request: ProfileRequest) {
-    const result = (await this.#profiler.profile(request)) as {
-      state?: string;
-      sample?: { configuration: Record<string, unknown> };
-    };
-    if (result.state === "finished" && result.sample) {
-      result.sample.configuration.surface = this.options.offscreen ? "electron-gpu-offscreen" : "electron-window";
-      result.sample.configuration.frameRateLimit = this.options.offscreen ? 60 : null;
-    }
-    return result;
-  }
-  invalidateProfile(reason: string) {
-    return this.#profiler.invalidate(reason);
-  }
-
   constructor(options: GamePreviewOptions) {
     this.options = options;
     this.#audioMuted = options.muted ?? false;
@@ -366,9 +342,6 @@ export class GamePreview {
     const wc = view.webContents;
     if (this.options.offscreen) wc.setFrameRate(60);
     if (this.#audioMuted) wc.setAudioMuted(true);
-    wc.on("did-start-navigation", () => {
-      void this.#profiler.invalidate("navigation changed");
-    });
     wc.setWindowOpenHandler(() => ({ action: "deny" }));
     // The page stays on game:// or its loopback origin: a remote page inside the studio's chrome,
     // which has no URL bar, is a sign-in form nobody can tell from the studio's own (SECUI-3).
@@ -465,7 +438,6 @@ export class GamePreview {
   #placeSlot(): void {
     const slot = this.#slot;
     if (!slot) return;
-    void this.#profiler.invalidate("preview resized");
     const bounds = anchoredBounds(slot.bounds, slot.viewport, this.#content);
     this.#requestedBounds = bounds;
     if (bounds.width > 0 && bounds.height > 0) this.#visibleBounds = bounds;
@@ -724,7 +696,6 @@ export class GamePreview {
       this.#entryPath = String(entry ?? "index.html").split(/[?#]/)[0] ?? "index.html";
       this.#shimLoad = options.shim ?? null;
       this.#reach = { reach: "none", hooked: {} };
-      await this.#profiler.invalidate("source loaded");
       const view = this.create();
       // Entries cached before no-store shipped would otherwise outlive it.
       await this.#session?.clearCache().catch(() => {});
@@ -757,7 +728,6 @@ export class GamePreview {
     const wc = this.#view?.webContents;
     if (!wc || wc.isDestroyed() || this.#stoppedUrl !== null) return;
     this.#stoppedUrl = wc.getURL();
-    await this.#profiler.invalidate("preview stopped");
     this.#navigating = true;
     try {
       await wc.loadURL(STOPPED_PAGE);
@@ -792,7 +762,6 @@ export class GamePreview {
     if (this.#stoppedUrl !== null) return this.resume();
     this.#nativeDelivery = null;
     this.#pageSurfaceNoted = false;
-    await this.#profiler.invalidate("preview reloaded");
     if (!this.#view) return;
     this.#console = [];
     this.#blockedNoted.clear();
@@ -841,13 +810,11 @@ export class GamePreview {
 
   /** JPEG because these go straight into a vision model's context. */
   async screenshot(quality = DEFAULT_SHOT_QUALITY): Promise<Buffer> {
-    await this.#profiler.invalidate("screenshot during sample");
     return (await this.#capture()).image.toJPEG(quality);
   }
 
   /** A card-sized photograph using bounded statistics and a single JPEG encode. */
   async screenshotCard(quality: number, maxPx: number): Promise<Buffer | null> {
-    await this.#profiler.invalidate("screenshot during sample");
     const shot = await this.#capture();
     const size = shot.image.getSize();
     const stats = computePixelStats(shot.image.toBitmap(), size.width, size.height, {
@@ -875,7 +842,6 @@ export class GamePreview {
     quality = DEFAULT_SHOT_QUALITY,
     opts: { page?: boolean; surface?: CaptureSurface } = {},
   ): Promise<{ jpeg: Buffer; stats: PreviewPixelStats; surface: CaptureSurface }> {
-    await this.#profiler.invalidate("screenshot during sample");
     const { image, source, info } = await this.#capture(opts);
     const size = image.getSize();
     const stats = computePixelStats(image.toBitmap(), size.width, size.height);
@@ -941,7 +907,6 @@ export class GamePreview {
     quality = 85,
     opts: { page?: boolean; surface?: CaptureSurface } = {},
   ): Promise<{ jpeg: Buffer; width: number; height: number; region: [number, number, number, number] }> {
-    await this.#profiler.invalidate("zoom during sample");
     const { image } = await this.#capture(opts);
     const size = image.getSize();
     const clamp = (v: number, max: number) => Math.max(0, Math.min(max, Math.round(v)));
@@ -970,7 +935,6 @@ export class GamePreview {
    * compositor is the fallback exactly as for any canvas capture.
    */
   async still(request: PreviewStillRequest): Promise<PreviewStillAnswer> {
-    await this.#profiler.invalidate("still during sample");
     const shot = await this.#captureCanvas(STILL_PAGE_CAPTURE_TIMEOUT_MS);
     const taken = shot.image.getSize();
     const size = stillFit(taken, request);
@@ -1002,7 +966,6 @@ export class GamePreview {
    * offscreen window paints at least `fps` frames a second while it records, and its own rate after.
    */
   async clip(request: PreviewClipRequest): Promise<PreviewClipAnswer> {
-    await this.#profiler.invalidate("clip during sample");
     const wc = this.#page();
     const rate = this.options.offscreen ? wc.getFrameRate() : null;
     if (rate !== null && rate < request.fps) wc.setFrameRate(request.fps);
@@ -1332,7 +1295,6 @@ export class GamePreview {
   }
 
   async studioCall(method: string, arg?: unknown): Promise<unknown> {
-    await this.#profiler.invalidate(`studio ${method} during sample`);
     // The method name is interpolated into page JS: only a plain identifier may travel.
     if (!/^[A-Za-z_$][\w$]*$/.test(method)) throw new Error(MESSAGE.notMethodName(method));
     const argument = arg === undefined ? "" : JSON.stringify(arg);
@@ -1387,7 +1349,6 @@ export class GamePreview {
    * DOM events, so a paused `step()` playthrough still sees the keys held.
    */
   async input(actions: PreviewInputAction[]): Promise<{ ok: boolean; applied: number; width: number; height: number }> {
-    await this.#profiler.invalidate("input during sample");
     this.#page();
     const view = this.create();
     const bounds = view.getBounds();
@@ -1529,7 +1490,6 @@ export class GamePreview {
   }
 
   async destroy(): Promise<void> {
-    void this.#profiler.invalidate("preview disposed");
     this.#closed = true;
     this.#view?.webContents.close();
     this.#view = null;

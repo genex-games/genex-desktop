@@ -39,7 +39,6 @@ type RegisteredTool = HarnessTool & { source: string };
 
 /** The turn's options a registry is built for; every one reaches each tool's ctx. */
 export interface RegistryOptions {
-  candidateId?: string;
   project?: string | null;
   [option: string]: unknown;
 }
@@ -192,9 +191,7 @@ function toolAnswer(result: ToolOutcome | string): ToolOutcome & { ok: boolean; 
 export async function createToolRegistry(ctx: HarnessCtx, options: RegistryOptions = {}) {
   const { modules, broken } = await loadToolModules(ctx.workspace);
   const byName = moduleTools(modules);
-  const host: HostTools = options.candidateId
-    ? { pluginGuidance: "", connectorGuidance: "", toolRegistryRevision: undefined }
-    : await addHostTools(ctx, byName, options);
+  const host: HostTools = await addHostTools(ctx, byName, options);
 
   return {
     broken,

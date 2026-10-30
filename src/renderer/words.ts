@@ -3093,9 +3093,6 @@ export const SETUP_SCRIPTS_WORDS = {
 
 /** The fixed titles and sentences of the Builds tab's progress line (`build-progress.ts`). */
 export const PROGRESS_WORDS = {
-  optimizationFinished: t("Optimization finished"),
-  optimization: t("Optimization"),
-  optimizing: t("The assembled game is being measured and checked for safe improvements."),
   buildingStart: t("Building the starting point"),
   startBeforeParts: t("The starting point is built and checked before the lead delegates the parts."),
   startReady: t("The starting point is ready"),

@@ -255,7 +255,6 @@ test("delegated background work never becomes the main reply, while a direct cha
     runId: "run",
     facetId: "bridge",
   });
-  assert.equal(delegationActivityScope({ candidateId: "experiment" }).role, "builder");
   assert.deepEqual(delegationActivityScope({ coordinator: { runId: "run" }, readOnly: true }), {
     role: "planner",
     runId: "run",

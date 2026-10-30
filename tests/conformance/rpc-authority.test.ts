@@ -25,7 +25,6 @@ let outside: string;
 const loads: Array<{ project: string; root: string | undefined }> = [];
 const sentinels: string[] = [];
 const delegations: string[] = [];
-let candidate: { candidateId: string; root: string };
 
 async function sentinel(dir: string): Promise<void> {
   await mkdir(dir, { recursive: true });
@@ -50,13 +49,6 @@ before(async () => {
   await core.games.scaffold("pong");
   // Registers the game with the snapshot engine, as a run does before it removes anything.
   await api["snapshot.worktree"]!({ project: "pong", name: "first", runId: "run-0" });
-  // An optimization candidate opens only from a clean game with no links, so before they are planted.
-  const baseline = (await api["snapshot.create"]!({ scope: "game", project: "pong", reason: "baseline" })) as {
-    snapshot_id: string;
-  };
-  const baselineCommit = core.snapshotIndex.get(baseline.snapshot_id)?.git.game;
-  assert.ok(baselineCommit, "the baseline snapshot holds the game");
-  candidate = await core.candidates.open("pong", "run_tq1", baseline.snapshot_id, baselineCommit);
 
   outside = await tmpDir("studio-outside-");
   await sentinel(path.join(outside, ".ssh"));
@@ -221,31 +213,12 @@ describe("harness RPC authority", () => {
     assert.equal(await api["game.read"]!({ project: "pong", file: "notes/own.txt" }), "mine");
   });
 
-  it("game.write and game.read on an optimization candidate refuse the same links", async () => {
-    await symlink(path.join(outside, "victim", "rc"), path.join(candidate.root, "planted-write.txt"));
-    await symlink(path.join(outside, "victim", "secret.txt"), path.join(candidate.root, "planted-read.txt"));
-    await symlink(path.join(outside, "victim"), path.join(candidate.root, "linkdir"));
-    for (const { label, file } of plantedGameLinks()) {
-      await assert.rejects(
-        api["game.write"]!({ project: "pong", candidateId: candidate.candidateId, file, contents: "PWNED" }),
-        /escapes|symlink/,
-        `candidate write: ${label}`,
-      );
-      await assert.rejects(
-        api["game.read"]!({ project: "pong", candidateId: candidate.candidateId, file }),
-        /escapes|symlink/,
-        `candidate read: ${label}`,
-      );
-      await assertUntouched(`candidate: ${label}`);
-    }
-  });
-
   /**
    * A game's `.claude` folder holds Claude Code's project settings: allow rules and hooks that
    * the person's own, unsandboxed session in the game loads (`settingSources: ["project"]`). The
-   * harness writes it under no spelling, and lands no build or candidate that changes it.
+   * harness writes it under no spelling, and lands no build that changes it.
    */
-  it("game.write never writes a game's or a candidate's .claude folder", async () => {
+  it("game.write never writes a game's .claude folder", async () => {
     const game = lite.core.games.dirFor("pong");
     // The person's own settings folder exists, and a link inside the game points at it.
     await mkdir(path.join(game, ".claude"), { recursive: true });
@@ -270,14 +243,6 @@ describe("harness RPC authority", () => {
     }
     assert.deepEqual(await readdir(path.join(game, ".claude")), [], "nothing landed in the settings folder");
     await assert.rejects(stat(path.join(game, "levels", ".claude")), /ENOENT/);
-    for (const file of [".claude/settings.json", "src/.Claude/agents/x.md"]) {
-      await assert.rejects(
-        api["game.write"]!({ project: "pong", candidateId: candidate.candidateId, file, contents: "{}" }),
-        /refused.*\.claude/,
-        `candidate write: ${file}`,
-      );
-    }
-    await assert.rejects(stat(path.join(candidate.root, ".claude")), /ENOENT/);
     // A look-alike name is still the game's own file.
     await api["game.write"]!({ project: "pong", file: "docs/.claude-notes.md", contents: "ok" });
     assert.equal(await readFile(path.join(game, "docs", ".claude-notes.md"), "utf8"), "ok");

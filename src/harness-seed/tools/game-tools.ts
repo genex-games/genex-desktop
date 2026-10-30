@@ -193,7 +193,6 @@ export const tools: HarnessTool[] = [
       if (pin.error) return { ok: false, content: pin.error };
       const files = await ctx.call(HostMethod.GameTree, {
         project: pin.project!,
-        ...(ctx.candidateId ? { candidateId: ctx.candidateId } : {}),
       });
       const image = /\.(png|jpe?g|webp|gif)$/i;
       return files
@@ -220,7 +219,6 @@ export const tools: HarnessTool[] = [
       const contents = await ctx.call(HostMethod.GameRead, {
         project: pin.project!,
         file: args.file,
-        ...(ctx.candidateId ? { candidateId: ctx.candidateId } : {}),
       });
       if (isRecord(contents) && contents.kind === "image") {
         return {
@@ -253,7 +251,6 @@ export const tools: HarnessTool[] = [
         project: pin.project!,
         file: args.file,
         contents: args.contents,
-        ...(ctx.candidateId ? { candidateId: ctx.candidateId } : {}),
       });
       return `Wrote ${args.file} (${result.bytes} bytes).`;
     },
@@ -269,7 +266,6 @@ export const tools: HarnessTool[] = [
       if (pin.error) return { ok: false, content: pin.error };
       const result = await ctx.call(HostMethod.GameValidate, {
         project: pin.project!,
-        ...(ctx.candidateId ? { candidateId: ctx.candidateId } : {}),
       });
       const lines = [result.ok ? "OK" : "PROBLEMS:", ...result.problems.map((p) => `- ${p}`)];
       if (result.warnings.length) lines.push("WARNINGS:", ...result.warnings.map((w) => `- ${w}`));
@@ -286,7 +282,6 @@ export const tools: HarnessTool[] = [
       if (pin.error) return { ok: false, content: pin.error };
       const result = await ctx.call(HostMethod.GameExport, {
         project: pin.project!,
-        ...(ctx.candidateId ? { candidateId: ctx.candidateId } : {}),
       });
       return `Exported to ${result.dir}.`;
     },

@@ -236,19 +236,14 @@ describe("the draw counters count what the frame actually submitted", () => {
     draw.end();
   });
 
-  it("enable(false) quiets the tally without unpatching, and end() restores every method", () => {
+  it("end() restores every method", () => {
     const world = page();
     const draw = installStudioDrawCounters({ scope: world.scope, note: () => {} });
     const gl = new world.WebGL2RenderingContext() as unknown as Record<string, (...a: unknown[]) => unknown>;
-    draw.enable(false);
-    gl.drawElements(TRIANGLES, 36, 0, 0);
-    assert.equal(draw.totals().drawCalls, 0);
-    assert.equal(draw.totals().counting, false);
-    draw.enable(true);
     gl.drawElements(TRIANGLES, 36, 0, 0);
     assert.equal(draw.totals().drawCalls, 1);
-    // The game's own calls still reached the driver both times.
-    assert.equal(world.calls.filter((name) => name === "drawElements").length, 2);
+    // The game's own call still reached the driver.
+    assert.equal(world.calls.filter((name) => name === "drawElements").length, 1);
 
     draw.end();
     for (const [path, original] of world.originals) {

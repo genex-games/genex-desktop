@@ -66,7 +66,6 @@
       "sources": [
         "src/main/**",
         "src/substrate/**",
-        "src/preview-profiler/**",
         "src/page/**",
         "src/plugins/**",
         "src/plugin-sdk/**",
@@ -167,7 +166,6 @@
         "src/main/page-serve.ts",
         "src/main/page-dispatch.ts",
         "src/page/**",
-        "src/preview-profiler/**",
         "src/substrate/preview-*.ts",
         "src/substrate/page-ui.ts",
         "src/substrate/build-preview.ts",

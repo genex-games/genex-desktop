@@ -7,7 +7,6 @@
 export const GraphSelection = {
   Start: "start",
   Assets: "assets",
-  Optimization: "optimization",
   Final: "final",
   /** the lead of a run or a chat turn: in a tree for the whole run, else while it has the run between parts */
   Lead: "lead",

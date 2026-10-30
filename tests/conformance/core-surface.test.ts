@@ -140,7 +140,6 @@ const FIELDS = [
   "appLook",
   "budget",
   "builds",
-  "candidates",
   "contextPreferences",
   "engineLinks",
   "engines",
