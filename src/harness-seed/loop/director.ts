@@ -124,7 +124,6 @@ function delegateTurn(
       threadId,
       project: run.project,
       root: integrationWorktree,
-      setup: run.setup ?? null,
       tools,
       ...(lead?.chatSession ? { chatSession: true } : {}),
       ...(leadsOpenLoop(loopRun) ? { inPlace: true } : {}),
@@ -258,13 +257,13 @@ function sessionEndWords(
   if (state.limit) return pauseEnding(state.limit.kind, String(state.limit.message).slice(0, CLIP_QUOTE));
   const held = heldTurnEnding(result);
   if (held) return held;
-  if (wrapCause === WrapCause.Idle || wrapCause === WrapCause.Finish) return WAKE_ENDING[wrapCause];
+  if (wrapCause === WrapCause.Finish) return WAKE_ENDING[wrapCause];
   if (wrapCause !== WrapCause.Failed && at >= softDeadline - OUT_OF_TIME_MS)
     return "the lead ran out of time without calling finish";
   return `the lead's session ended (${result?.stopReason ?? (result?.ok ? "on its own" : "failed")}) before it called finish`;
 }
 
-/** Whether a web run's session ended on its clock: no Stop, limit, held turn, idle lead, finish or failed turn ended it first. */
+/** Whether a web run's session ended on its clock: no Stop, limit, held turn, finish or failed turn ended it first. */
 function endedOnTheClock(
   loopRun: LoopRun,
   result: Partial<DelegateResult>,
@@ -273,7 +272,7 @@ function endedOnTheClock(
 ): boolean {
   const { ctx, softDeadline, state } = loopRun;
   if (ctx.cancelled || state.limit || heldTurnEnding(result)) return false;
-  if (wrapCause === WrapCause.Idle || wrapCause === WrapCause.Finish || wrapCause === WrapCause.Failed) return false;
+  if (wrapCause === WrapCause.Finish || wrapCause === WrapCause.Failed) return false;
   return at >= softDeadline - OUT_OF_TIME_MS;
 }
 

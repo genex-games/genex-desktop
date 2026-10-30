@@ -97,15 +97,15 @@ describe("a Loop's clock under its cap", () => {
     for (const line of words) {
       assert.doesNotMatch(line, /night|morning|tonight|builder|sub-agent/i, line);
     }
-    assert.match(TIME_CAP_WORDS.headsUp(15), /^About 15 minutes left: don't start anything big\./);
-    assert.match(TIME_CAP_WORDS.timesUp, /^Time's up: put the build together\. Bring in finished worker work/);
+    assert.match(TIME_CAP_WORDS.headsUp(15), /^About 15 minutes left\.$/);
+    assert.match(TIME_CAP_WORDS.timesUp, /^Time's up\. Call finish/);
     assert.match(TIME_CAP_WORDS.noNewWorkers, /no new workers/);
-    assert.match(TIME_CAP_WORDS.notChecked, /^The time ran out before a final look/);
+    assert.match(TIME_CAP_WORDS.notChecked, /^The time ran out\./);
   });
 
   it("the time's up never tells a lead to claim a goal it hasn't reached", () => {
     for (const line of [TIME_CAP_WORDS.timesUp, TIME_CAP_WORDS.noNewWorkers])
-      assert.match(line, /call finish, claiming the goal only if it is reached\.$/, line);
+      assert.match(line, /Call finish, claiming the goal only if it is reached\.$/, line);
     const brief = directorBrief({
       run: { runId: "run_o", project: "level", goal: "a level", engine: "codex", budgets: { wallClockMs: HOUR_MS } },
       softDeadline: T0 + HOUR_MS,
@@ -173,7 +173,7 @@ describe("the open Loop under its cap", () => {
         [[TIME_CAP_WORDS.timesUp, true]],
         "said once, cutting the turn",
       );
-      assert.match(String(host.prompts()[1]), /^Time's up: put the build together\./, "the wrap-up opens with it");
+      assert.match(String(host.prompts()[1]), /^Time's up\./, "the wrap-up opens with it");
       assert.equal(report.victory, true, String(report.stoppedBecause));
     },
   );
@@ -214,16 +214,16 @@ describe("the open Loop under its cap", () => {
       ]);
       const report = await host.start();
       assert.equal(host.reviewed().length, 0);
-      assert.match(String(host.prompts()[1]), /^Time's up: put the build together\./, "the wrap-up opens with it");
+      assert.match(String(host.prompts()[1]), /^Time's up\./, "the wrap-up opens with it");
       assert.equal(report.stoppedBecause, OPEN_END.timeUpNoClaim);
       assert.deepEqual(report.notDone, [TIME_CAP_WORDS.notChecked]);
       assert.deepEqual(
         report.stillToFix,
         { done: [], notDone: [], why: StopWhy.Time, hours: 0.5 },
-        "its card says its time ran out before a final look, with Keep building",
+        "its card says its time ran out, with Keep building",
       );
       assert.match(String(report.summary), /Door/);
-      assert.match(String(report.summary), /time ran out before a final look/);
+      assert.match(String(report.summary), /The time ran out\./);
       assert.deepEqual(
         (report.savePoints as Array<{ label: string }>).map((point) => point.label),
         ["Door"],
@@ -237,7 +237,7 @@ describe("a web Loop's close and its result card (director/integrate.ts)", () =>
   it("a Stop that refused a closing finish's landing pauses the build; one after it landed ends nothing more", async () => {
     const { endedAs } = await import("../../src/harness-seed/loop/director/integrate.ts");
     const STOPPED = { ok: false, why: "stopped", reason: "stopped by the user" };
-    const LANDED = { ok: true, how: "judge-pick", line: "made live" };
+    const LANDED = { ok: true, how: "fresh-health-pass", line: "made live" };
     const closing = (over: { cancelled: boolean; state: Record<string, unknown> }, landed: object = STOPPED) => {
       const loopRun = {
         ctx: { cancelled: over.cancelled },
@@ -331,7 +331,7 @@ describe("the web director under its cap", () => {
     assert.equal(closing({ ...noClaim, round: 1, asked: true }), false, "a claim a reviewer got and never answered");
     assert.equal(closing({ ...noClaim, checking: true }), false, "a claim still under review");
     assert.equal(closing(noClaim, { at: softDeadline - 10 * MINUTE_MS }), false, "before the time ran out");
-    for (const wrapCause of [WrapCause.Idle, WrapCause.Finish, WrapCause.Failed])
+    for (const wrapCause of [WrapCause.Finish, WrapCause.Failed])
       assert.equal(closing(noClaim, { wrapCause }), false, `a wrap-up for ${wrapCause}`);
     assert.equal(closing(noClaim, { held: true }), false, "a held turn");
   });

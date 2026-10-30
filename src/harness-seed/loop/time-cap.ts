@@ -15,7 +15,7 @@ import type { Run } from "../types/harness.d.ts";
 export const HEADS_UP_MS = 15 * MINUTE_MS;
 /** After its cap, a Loop's lead has this long to put the build together before Genex closes it. */
 export const GRACE_MS = 15 * MINUTE_MS;
-/** An ∞ Loop runs until a reviewer's yes, this long at most. */
+/** An ∞ Loop runs until its lead's finish, this long at most. */
 export const UNTIL_DONE_CAP_MS = 24 * HOUR_MS;
 /** A close this close to the working deadline counts as the time running out (a turn ends a margin early). */
 const OUT_OF_TIME_MS = MINUTE_MS;
@@ -99,9 +99,8 @@ export function noClaimRead(tally: Partial<FinishTally> | null | undefined): boo
 }
 
 /**
- * A timed Loop's working time left at `now`, for its finish check: with more than the finish
- * contract's `FINISH_TIME_LEFT_MS` left, no row of the reviewer's no's stops it. Null for an ∞ Loop
- * (its no's stop it as they always have) and for one with no working deadline.
+ * A timed Loop's working time left at `now`, for its finish check (the host's record of the round).
+ * Null for an ∞ Loop and for one with no working deadline.
  */
 export function timeLeftOf(run: Pick<Run, "reference" | "budgets">, softDeadline: number, now: number): number | null {
   if (!timedLoop(run) || !Number.isFinite(softDeadline)) return null;
@@ -110,8 +109,8 @@ export function timeLeftOf(run: Pick<Run, "reference" | "budgets">, softDeadline
 
 /**
  * Whether a Loop closing at `at` closes as "not checked by a reviewer": its time ran out (`at` is at
- * its working deadline, less a minute), nothing else ended it (a Stop, a limit, a held turn, an idle
- * lead, the person's finish, a failed turn), and no claim reached a reviewer since it last opened.
+ * its working deadline, less a minute), nothing else ended it (a Stop, a limit, a held turn, the
+ * person's finish, a failed turn), and no claim reached a reviewer since it last opened.
  */
 export function ranOutUnchecked(
   run: ClosingRun,
@@ -120,6 +119,6 @@ export function ranOutUnchecked(
   const { ctx, softDeadline, state } = run;
   if (ctx.cancelled || state.limit || close.held || !noClaimRead(state.finishTally)) return false;
   const { wrapCause } = close;
-  if (wrapCause === WrapCause.Idle || wrapCause === WrapCause.Finish || wrapCause === WrapCause.Failed) return false;
+  if (wrapCause === WrapCause.Finish || wrapCause === WrapCause.Failed) return false;
   return close.at >= softDeadline - OUT_OF_TIME_MS;
 }

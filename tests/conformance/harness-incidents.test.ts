@@ -22,7 +22,7 @@ import { createRunInbox, type RunInbox } from "../../src/harness-seed/loop/run-i
 import { runWakeLoop, type DirectorTalk } from "../../src/harness-seed/loop/director/wake.ts";
 import { landIntegration } from "../../src/harness-seed/loop/director/integrate.ts";
 import { MessageQueue, messageQueueState } from "../../src/harness-seed/loop/message-queue.ts";
-import { chatWaitsFor, leadDoor, passCtx, stopRunsOf } from "../../src/harness-seed/loop/live-chat.ts";
+import { chatWaitsFor, leadDoor, stopRunsOf } from "../../src/harness-seed/loop/live-chat.ts";
 import { factsReadyPrompt } from "../../src/harness-seed/loop/project-prompts.ts";
 import { steeredCall } from "../../src/harness-seed/loop/chat-steer.ts";
 import { switchedTurnPrompt } from "../../src/harness-seed/loop/steer-switch-prompts.ts";
@@ -52,7 +52,7 @@ it("AUDIT-STOP-RACE: cancellation is visible before a delayed queue-pause write"
     host: { call: async () => null, notify: () => {}, heartbeat: () => {}, workspace: "/fixture" } as Host,
     cancels: new Set(),
     stoppedMessages: new Set(),
-    moodBoards: new Map(),
+    attachedPictures: new Map(),
     activeRuns: new Map(),
     startingRuns: new Map(),
     orphanRuns: new Map(),
@@ -937,7 +937,6 @@ describe("a change after a paused build (stale-pause)", () => {
       run: { runId: "run_paused", state: "paused" },
       text: "update our multiplayer",
       journal: null,
-      savedPlan: null,
       history: "",
     });
     const resume = coordinatorTools.find((tool) => tool.name === "resume_run")?.description ?? "";
@@ -1682,7 +1681,7 @@ function liveChat() {
   const studio = {
     host,
     cancels: new Set<string>(),
-    moodBoards: new Map(),
+    attachedPictures: new Map(),
     activeRuns: new Map([[RUN, build]]),
     startingRuns: new Map(),
     orphanRuns: new Map(),
@@ -2183,7 +2182,7 @@ describe("live chat during a build, reviewed", () => {
     assert.deepEqual(back, [["is it started?", "and the sky?"]]);
   });
 
-  it("LC10. a message after Stop does not undo it for the run's learning pass: the chat takes the message, the pass stays stopped", async () => {
+  it("LC10. a message after Stop does not undo it for the run: the chat takes the message, the run stays stopped", async () => {
     const cancels = new Set<string>();
     const host = {
       call: async (method: string) => {
@@ -2210,21 +2209,20 @@ describe("live chat during a build, reviewed", () => {
     const studio = {
       host,
       cancels,
-      moodBoards: new Map(),
+      attachedPictures: new Map(),
       activeRuns: new Map([["run_done", closedRun]]),
       startingRuns: new Map(),
       orphanRuns: new Map(),
       scoped: threadCtx,
     };
-    // The run has closed; its learning pass works on.
-    const pass = passCtx(threadCtx("t_pass") as never, closedRun as never);
+    // The run has closed and settles.
     // Stop in its chat, as the loop's dispatch takes it.
     cancels.add("t_pass");
     stopRunsOf(studio as never, "t_pass");
     // A new message: the chat's own stop is over, and it answers.
     await handleUserMessage(studio as never, { threadId: "t_pass", text: "what did you finish?" }).catch(() => {});
     assert.equal(cancels.has("t_pass"), false, "the chat takes the message");
-    assert.equal(pass.cancelled, true, "the learning pass Stop reached stays stopped");
+    assert.equal((closedRun as { stopped?: boolean }).stopped, true, "the Stop that reached the run stays");
   });
 
   /*
@@ -2854,7 +2852,7 @@ describe("a run started again after a close of its own", () => {
     const studio = {
       host,
       cancels: new Set<string>(),
-      moodBoards: new Map(),
+      attachedPictures: new Map(),
       activeRuns: new Map(),
       startingRuns: new Map(),
       orphanRuns: new Map(),
@@ -2955,7 +2953,7 @@ describe("a run started again after a close of its own", () => {
         return null;
       },
     };
-    const studio = { host, cancels: new Set<string>(), moodBoards: new Map(), activeRuns: new Map() };
+    const studio = { host, cancels: new Set<string>(), attachedPictures: new Map(), activeRuns: new Map() };
     const loopRun = {
       runId,
       state: "finished",
@@ -3119,7 +3117,7 @@ describe("a run started again after a close of its own", () => {
           return null;
         },
       };
-      const studio = { host, cancels: new Set<string>(), moodBoards: new Map(), activeRuns: new Map() };
+      const studio = { host, cancels: new Set<string>(), attachedPictures: new Map(), activeRuns: new Map() };
       const loopRun = { runId, state: "finished", engine: "codex", model: null, messageId: "m9", reopenable: true };
       let cursor: unknown = null;
       // Not started: the app dies before the run is registered again.
@@ -3279,7 +3277,7 @@ describe("a Loop message after a finished build the run's coordinator answers fo
     const studio: Json = {
       host,
       cancels: new Set<string>(),
-      moodBoards: new Map(),
+      attachedPictures: new Map(),
       activeRuns: new Map(),
       startingRuns: new Map(),
       orphanRuns: new Map(),
@@ -3552,7 +3550,6 @@ describe("a quick fix after a finished Loop build (golden-boot-glory)", () => {
       run: { runId: "run_gb" },
       text: "fix it quickly",
       journal: null,
-      savedPlan: null,
       history: "",
       reopen: { hours: 3 },
     });
@@ -3763,7 +3760,7 @@ describe("two starts of a run on one chat at once", () => {
     const studio = {
       host,
       cancels: new Set<string>(),
-      moodBoards: new Map(),
+      attachedPictures: new Map(),
       activeRuns: new Map(),
       startingRuns: new Map(),
       orphanRuns: new Map(),
@@ -4062,7 +4059,7 @@ describe("the coordinator's prompt for a small model", () => {
       events: [],
       run: { runId: "r1" },
       text: "is the sky done?",
-      journal: { phase: "facets", facets: big },
+      journal: { phase: "running", director: big },
       savedPlan: big,
       history,
     };
@@ -4471,7 +4468,7 @@ describe("an Unreal Loop that threw its work away", () => {
 });
 
 /** How the engine question opens in a brief, whatever words each kind's plugin offers it with. */
-const ENGINE_QUESTION = "FIRST, THE ENGINE:";
+const ENGINE_QUESTION = "THE ENGINE:";
 
 /**
  * New game makes the game before the chat's first ask, as an empty folder with no kind; with the
@@ -4886,7 +4883,7 @@ describe("the Unreal lead's sub-agents and critic", () => {
     recorder.handle("game.references", () => ({ frames: [], skipped: [] }));
     recorder.handle("engine.complete", () => ({
       message: {
-        content: JSON.stringify({ defects: [{ defect: "flat light", fix: "one key light" }], boldMove: "fog" }),
+        content: JSON.stringify({ defects: [{ defect: "flat light", fix: "one key light" }] }),
       },
     }));
     const answer = await askCritic(lead, { shots: "vista.png" });
@@ -5830,5 +5827,97 @@ describe("the lead and its workers are free agents (Loop phase 3)", () => {
     for (const engine of ["claude-code", "codex", "bonsai", "openrouter", "local-server", "opencode"])
       assert.equal(hasSessionRoles(engine), true, engine);
     assert.equal(hasSessionRoles("ollama"), false);
+  });
+});
+
+describe("the Loop's stop and nudge rules, audited after phase 5", () => {
+  // Flipped: a lead whose turn ended with nothing running was asked once what next, and a second quiet
+  // turn started the wrap-up (`WrapCause.Idle`); the phase 5 rules wake a lead on events and time only.
+  it("PA1. a lead that ends a turn with nothing running rests: nothing asks it what next, and being quiet starts no wrap-up", async () => {
+    const { afterTurn, nextWake, TurnEnd, WakeCause, WrapCause } = await import(
+      "../../src/harness-seed/loop/director/wake-schedule.ts"
+    );
+    const { wakeRules } = await import("../../src/harness-seed/loop/director/wake-prompts.ts");
+    const quiet = { ok: true, closed: false, workingTimeLeft: true, finishRequested: false };
+    assert.equal(afterTurn(quiet).next, TurnEnd.Sleep, "the first quiet turn");
+    assert.equal(afterTurn(quiet).next, TurnEnd.Sleep, "and every one after it");
+    assert.equal(Object.values(WrapCause).includes("idle" as never), false, "no wrap-up is started by idleness");
+    const hour = 3_600_000;
+    const resting = nextWake({
+      now: 1_000,
+      unread: [],
+      asleepFromSeq: 0,
+      asleepSince: 1_000,
+      userWaiting: false,
+      finishNew: false,
+      softDeadline: 1_000 + hour,
+      wrapping: false,
+      wakesAt: [],
+    });
+    assert.deepEqual(resting, { at: 1_000 + hour, reasons: [WakeCause.WrapUp] }, "only the working time wakes it");
+    assert.doesNotMatch(wakeRules(), /asks once what next|the wrap-up starts/);
+  });
+
+  // Flipped: the lead's answer to a reviewer's no counted a row of no's ("2 of 3 in a row stop the Loop")
+  // and told it the Loop "has time left, so it goes on"; no row stops a Loop, and a no is a second opinion.
+  it("PA2. a reviewer's no reaches the lead as a second opinion that decides nothing, with no row of no's counted", async () => {
+    const { finishAnswer } = await import("../../src/harness-seed/loop/finish-check.ts");
+    const answer = finishAnswer({
+      step: "rejected",
+      reasons: ["the timer never shows"],
+      notDone: ["the third lap"],
+      done: [],
+      rejections: 2,
+      timeLeft: true,
+    } as never);
+    assert.match(answer, /decides nothing/);
+    assert.match(answer, /the timer never shows/);
+    assert.match(answer, /Not done: the third lap/);
+    assert.doesNotMatch(answer, /in a row|stop the Loop|has time left|Say nothing to the person/);
+  });
+
+  // Flipped: the fallback coordinator's prompt carried a SAVED PLAN and the classic pipeline's facets.
+  it("PA3. the coordinator's prompt carries no facets and no plan section when there is no plan: only the run's progress, snapshot and conversation", async () => {
+    const { coordinatorPrompt } = await import("../../src/harness-seed/loop/coordinator-prompts.ts");
+    const prompt = coordinatorPrompt({
+      events: [],
+      run: { runId: "r1" },
+      text: "how is it going?",
+      journal: { phase: "director", facets: { old: true }, director: { wake: { wakes: 1 } } },
+      history: "user: hi",
+    } as never);
+    assert.doesNotMatch(prompt, /SAVED PLAN|facets|intake interview|planning/i, "no plan, no facets, no old steps");
+    assert.match(prompt, /SAVED PROGRESS/);
+    assert.match(prompt, /"wakes":1/);
+    const planned = coordinatorPrompt({
+      events: [],
+      run: { runId: "r1" },
+      text: "?",
+      journal: null,
+      savedPlan: { a: 1 },
+      history: "",
+    } as never);
+    assert.match(planned, /SAVED PLAN[^\n]*\n\{"a":1\}/, "a plan the person reviewed is still carried");
+  });
+
+  // Flipped: the critic needed a `boldMove` or a defect, read the lead's ART.md and put its notes in the ask.
+  it("PA4. the critic's ask has no art bible and its advice no bold move: an answer with no defect is unreadable", async () => {
+    const { criticAsk, adviceWords, CRITIC_SYSTEM } = await import(
+      "../../src/harness-seed/loop/unreal/critic-prompts.ts"
+    );
+    const ask = criticAsk({ goal: "a lighthouse", question: null, shots: ["a.png"], references: 0, open: [] });
+    assert.doesNotMatch(`${ask}\n${CRITIC_SYSTEM}`, /ART\.md|boldMove|bold move|gates/i);
+    const words = adviceWords(
+      {
+        at: 0,
+        shots: ["a.png"],
+        question: null,
+        milestoneId: "lead",
+        round: 1,
+        defects: [{ defect: "flat light", fix: "one key light" }],
+      },
+      { references: 0, left: [] },
+    );
+    assert.doesNotMatch(words, /First change|ART\.md/);
   });
 });

@@ -977,7 +977,8 @@ describe("a Loop's lead through the real core and harness", () => {
     );
   });
 
-  it("a lead that ends its turn with nothing running is asked once what next, and the person's Finish closes the run", async () => {
+  it("a lead that ends its turn with nothing running is never asked what next: the person's Finish closes the run", async () => {
+    // Flipped (phase 5 audit): the lead was woken once with "idle_ask" (what next) before the Finish.
     let turns = 0;
     let finishedAnswer = "";
     let finishAsked: (runId: string, threadId: string) => Promise<void> = async () => {};
@@ -986,9 +987,11 @@ describe("a Loop's lead through the real core and harness", () => {
       async (request) => {
         if (!request.director) return result("worker", "nothing");
         turns += 1;
-        if (turns === 1) return result("timed-session", "first look");
+        if (turns === 1) {
+          await finishAsked(request.director.runId, request.director.threadId);
+          return result("timed-session", "first look");
+        }
         assert.equal(request.resume, "timed-session");
-        await finishAsked(request.director.runId, request.director.threadId);
         finishedAnswer = await liveCall(request)("finish", {
           summary: "Stopped early at the user's request",
           land: "no",
@@ -1009,10 +1012,8 @@ describe("a Loop's lead through the real core and harness", () => {
     );
     assert.equal(turns, 2);
     assert.match(finishedAnswer, /^The Loop is closed/, finishedAnswer);
-    const continued = customEvents(events, "director_continued");
-    assert.equal(continued.length, 1);
-    // The lead was woken once, to be asked what next (director/wake.ts): nothing else woke it.
-    assert.deepEqual(continued[0]?.reasons, ["idle_ask"]);
+    const reasons = customEvents(events, "director_continued").flatMap((event) => (event.reasons as string[]) ?? []);
+    assert.ok(!reasons.includes("idle_ask"), `the lead was never asked what next: ${reasons.join(", ")}`);
   });
 });
 

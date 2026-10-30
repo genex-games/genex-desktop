@@ -57,10 +57,9 @@ export const WakeCause = {
   /** A line with no kind, written while the lead slept. */
   News: "news",
   WrapUp: "wrap_up",
-  IdleAsk: "idle_ask",
   /** An open Loop's lead reached its turn's cap with working time left: it goes on at once. */
   TurnCap: "turn_cap",
-  /** An open Loop's lead whose turn worked, woken at once to go on. */
+  /** An open Loop's lead whose turn changed something, woken at once with whatever else is due. */
   CarryOn: "carry_on",
 } as const;
 export type WakeCause = (typeof WakeCause)[keyof typeof WakeCause];
@@ -70,8 +69,6 @@ export type WakeReason = NoteKind | WakeCause;
 /** Why the wrap-up started. The journal keeps it: never rename a value. */
 export const WrapCause = {
   Deadline: "deadline",
-  /** Nothing ran, the lead was asked what next, and its next turn started nothing either. */
-  Idle: "idle",
   Failed: "failed",
   Finish: "finish",
 } as const;
@@ -80,12 +77,11 @@ export type WrapCause = (typeof WrapCause)[keyof typeof WrapCause];
 /** What the loop does when a turn of the lead's ends. */
 export const TurnEnd = {
   Sleep: "sleep",
-  AskIdle: "ask_idle",
   WrapUp: "wrap_up",
   Close: "close",
   /** An open Loop's turn reached its own cap: the lead is woken again at once, never rested. */
   Continue: "continue",
-  /** An open Loop's lead whose turn worked: woken again at once to go on. */
+  /** An open Loop's lead whose turn changed something: woken again at once. */
   CarryOn: "carry_on",
 } as const;
 export type TurnEnd = (typeof TurnEnd)[keyof typeof TurnEnd];
@@ -119,14 +115,8 @@ export interface WakeView {
   userWaiting: boolean;
   /** The user asked to finish, and no message has said so yet. */
   finishNew: boolean;
-  /** Workers and jobs at work. */
-  running: number;
   softDeadline: number;
   wrapping: boolean;
-  /** The lead ended an idle turn and is owed the question of what next. */
-  idleDue: boolean;
-  /** The lead was asked what next and has not been busy since. */
-  idleAsked: boolean;
   /** When the lead was woken, recently. */
   wakesAt: readonly number[];
 }
@@ -172,22 +162,10 @@ function userCandidates(view: WakeView): Candidate[] {
   return out;
 }
 
-/** The studio's own reasons: the idle question, and the end of the working time. */
+/** The studio's own reason: the end of the working time. */
 function timerCandidates(view: WakeView): Candidate[] {
-  const out: Candidate[] = [];
-  if (view.idleDue) out.push({ at: view.now, reason: WakeCause.IdleAsk, capped: false });
-  if (!view.wrapping) out.push({ at: view.softDeadline, reason: WakeCause.WrapUp, capped: false });
-  return out;
-}
-
-/**
- * The question of what next, for a lead that went to sleep busy when the run has gone idle under it:
- * nothing runs, nothing but the wrap-up is ahead, and it was not asked yet.
- */
-function wentIdle(view: WakeView, others: readonly Candidate[]): Candidate[] {
-  const onlyTheWrapUp = others.every((c) => c.reason === WakeCause.WrapUp);
-  const askable = view.running === 0 && !view.idleAsked && !view.wrapping && view.softDeadline > view.now;
-  return onlyTheWrapUp && askable ? [{ at: view.now, reason: WakeCause.IdleAsk, capped: false }] : [];
+  if (view.wrapping) return [];
+  return [{ at: view.softDeadline, reason: WakeCause.WrapUp, capped: false }];
 }
 
 /** The earliest a capped wake may happen: once the oldest wake of a full window has left it, or now. */
@@ -205,7 +183,7 @@ function capLiftsAt(view: WakeView): number {
 export function nextWake(view: WakeView): Wake | null {
   const liftsAt = capLiftsAt(view);
   const due = [...userCandidates(view), ...lineCandidates(view), ...timerCandidates(view)];
-  const candidates = [...due, ...wentIdle(view, due)].map((c) => ({
+  const candidates = due.map((c) => ({
     ...c,
     at: c.capped ? Math.max(c.at, liftsAt) : c.at,
   }));
@@ -222,48 +200,39 @@ export interface TurnFacts {
   closed: boolean;
   /** A provider is lost under the run: the run pauses. */
   providerLost?: boolean;
-  /** Workers and jobs at work. */
-  running: number;
-  /** The lead was already asked what next and has not been busy since. */
-  idleAsked: boolean;
   /** Working time is left and nobody asked to finish. */
   workingTimeLeft: boolean;
   finishRequested: boolean;
   /** The turn ended because it reached its own cap (an open Loop's), not because the lead ended it. */
   capped?: boolean;
-  /** The turn did something (an open Loop's lead builds by itself). */
+  /** The turn changed something (an open Loop's lead builds by itself). */
   worked?: boolean;
-  /** The Loop runs until its lead finishes it (∞), not for its hours. */
-  untilFinish?: boolean;
 }
 
-/** What the loop does next, whether the idle question has been asked, and why a wrap-up starts. */
+/** What the loop does next, and why a wrap-up starts. */
 export interface TurnVerdict {
   next: TurnEnd;
-  idleAsked: boolean;
   wrapCause?: WrapCause;
 }
 
 /**
- * A turn has ended. With work going on the lead rests until something happens; with nothing running
- * and time left it is asked once what next, and a second idle turn starts the wrap-up (under ∞ it
- * rests instead). An open Loop's lead whose turn worked goes on at once. Out of working time — or
- * asked by the user to finish — it wraps up; a failed turn does too, unless a lost provider failed
- * it: then the run closes paused.
+ * A turn has ended. The lead rests until something happens — the person speaks or asks to finish, a
+ * worker or job ends, the working time ends — however much is running: nothing wakes it to ask what
+ * next, and a quiet lead is never wrapped up for being quiet. A turn cut by its own cap (an open
+ * Loop's), or one that changed something (an open Loop's lead builds by itself), goes on at once.
+ * Out of working time — or asked by the user to finish — it wraps up; a failed turn does too, unless
+ * a lost provider failed it: then the run closes paused.
  */
 export function afterTurn(turn: TurnFacts): TurnVerdict {
-  if (turn.closed || turn.providerLost === true) return { next: TurnEnd.Close, idleAsked: turn.idleAsked };
+  if (turn.closed || turn.providerLost === true) return { next: TurnEnd.Close };
   if (!turn.workingTimeLeft) {
     const wrapCause = turn.finishRequested ? WrapCause.Finish : WrapCause.Deadline;
-    return { next: TurnEnd.WrapUp, idleAsked: turn.idleAsked, wrapCause };
+    return { next: TurnEnd.WrapUp, wrapCause };
   }
-  if (turn.capped === true) return { next: TurnEnd.Continue, idleAsked: false };
-  if (!turn.ok) return { next: TurnEnd.WrapUp, idleAsked: turn.idleAsked, wrapCause: WrapCause.Failed };
-  if (turn.worked === true) return { next: TurnEnd.CarryOn, idleAsked: false };
-  if (turn.running > 0) return { next: TurnEnd.Sleep, idleAsked: false };
-  if (!turn.idleAsked) return { next: TurnEnd.AskIdle, idleAsked: true };
-  if (turn.untilFinish === true) return { next: TurnEnd.Sleep, idleAsked: true };
-  return { next: TurnEnd.WrapUp, idleAsked: true, wrapCause: WrapCause.Idle };
+  if (turn.capped === true) return { next: TurnEnd.Continue };
+  if (!turn.ok) return { next: TurnEnd.WrapUp, wrapCause: WrapCause.Failed };
+  if (turn.worked === true) return { next: TurnEnd.CarryOn };
+  return { next: TurnEnd.Sleep };
 }
 
 /** The clocks a pass is held to. */

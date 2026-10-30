@@ -35,9 +35,8 @@ export const REASON_WORDS = {
   [WakeCause.FinishRequested]: "the user asked to finish",
   [WakeCause.News]: "news",
   [WakeCause.WrapUp]: "the working time is over",
-  [WakeCause.IdleAsk]: "nothing is running",
   [WakeCause.TurnCap]: "your turn reached its cap",
-  [WakeCause.CarryOn]: "your turn ended; carry on",
+  [WakeCause.CarryOn]: "your turn ended",
 } as const satisfies Record<WakeReason, string>;
 
 /** One worker as the web digest names it. */
@@ -154,15 +153,9 @@ export function carryOn(): string {
   return "Act on it, and end your turn when you are done; Genex wakes you when something happens.";
 }
 
-/** The closing when the lead's last turn ended with nothing running: asked once, what next. */
-export function idleAsk({ minutesLeft }: { minutesLeft: number }): string {
-  return `Nothing is running and ${minutesLeft} working minutes remain. Go on with the work, or call finish if the goal is reached. If you end this turn with nothing running, the wrap-up starts.`;
-}
-
 /** Why a wrap-up that is not the deadline's started. */
 const WRAP_LEADS = {
   [WrapCause.Deadline]: "",
-  [WrapCause.Idle]: "Nothing was running and your last turn started nothing, so the wrap-up starts now.",
   [WrapCause.Failed]: "Your last turn failed, so the wrap-up starts now.",
   [WrapCause.Finish]: "The user asked to finish, so the wrap-up starts now.",
 } as const satisfies Record<WrapCause, string>;
@@ -218,6 +211,6 @@ export function wakeRules(): string {
     "- worker_start answers at once; workers work in the background while you go on. To wait for one, call worker_wait or end your turn.",
     "- Genex wakes you in this same session when something happens — the user speaks or asks to finish, a worker ends or asks the person something, the working time ends. Each message opens with what happened.",
     "- The user outranks everything else: answer them in the chat and act on what they ask. An ask to finish is wrap_up first, quoting their words; a question alone stops nothing.",
-    "- End a turn with nothing running and Genex asks once what next; end the next one idle too and the wrap-up starts.",
+    "- Ending a turn only rests you: the Loop stays open until you call finish or the working time ends.",
   ].join("\n");
 }

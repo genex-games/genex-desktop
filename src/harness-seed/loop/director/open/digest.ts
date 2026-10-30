@@ -5,10 +5,9 @@
  * once: the message takes them off the journal. Also how such a message ends (`openClosing`).
  */
 import type { LoopRun } from "../loop-run.ts";
-import { WakeCause, type WakeReason, type WrapCause } from "../wake-schedule.ts";
+import type { WakeReason, WrapCause } from "../wake-schedule.ts";
 import { workAtHand } from "./active-work.ts";
 import { openClosing, openDigest } from "./prompts.ts";
-import { minutes } from "../../time.ts";
 
 /** What the wake loop read for this message. */
 export interface OpenWake {
@@ -37,15 +36,7 @@ export function openDigestOf(loopRun: LoopRun, wake: OpenWake): string {
   });
 }
 
-/** How an open wake message ends: the wrap-up, the question of what next, or carry on. */
-export function openClosingOf(
-  loopRun: LoopRun,
-  how: { wrapping: boolean; wrapCause?: WrapCause | null; reasons: readonly WakeReason[]; now: number },
-): string {
-  return openClosing({
-    wrapping: how.wrapping,
-    wrapCause: how.wrapCause ?? null,
-    idleAsk: how.reasons.includes(WakeCause.IdleAsk),
-    minutesLeft: Math.max(0, minutes(loopRun.softDeadline - how.now)),
-  });
+/** How an open wake message ends: the wrap-up (saying why), or the ordinary closing. */
+export function openClosingOf(how: { wrapping: boolean; wrapCause?: WrapCause | null }): string {
+  return openClosing({ wrapping: how.wrapping, wrapCause: how.wrapCause ?? null });
 }

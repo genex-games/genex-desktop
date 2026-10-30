@@ -547,7 +547,7 @@ describe("the one Loop's turns", () => {
     await host.start();
     const [first, second] = host.leadCalls();
     assert.ok(Number(first?.timeoutMs) <= OPEN_TURN_MS, `the turn's time (${String(first?.timeoutMs)})`);
-    assert.match(String(second?.prompt), /^Your turn reached its 45 minutes; carry on where you were\./);
+    assert.match(String(second?.prompt), /^Your turn reached its 45 minutes\./);
     const [woke] = host.appended("director_continued");
     assert.deepEqual(woke?.reasons, ["turn_cap"], "woken at once by its cap, never rested or wrapped up");
     assert.equal(host.appended("run_finished")[0]?.victory, true);
@@ -779,9 +779,17 @@ describe("the one Loop's autosaves", () => {
 });
 
 /** A toy Loop whose app stops when `broken` says so; `reopens` counts its crash steps. */
-async function crashingToy(turns: LoopTurn[], options: { reopenFixes: boolean; backFixes?: boolean }) {
+async function crashingToy(
+  turns: LoopTurn[],
+  options: { reopenFixes: boolean; backFixes?: boolean; run?: Record<string, unknown> },
+) {
   const state = { broken: false, reopens: 0 };
-  const host = await hostOn(Project.ToyProject, { facts: TOY, manifest: TOY_MANIFEST, turns });
+  const host = await hostOn(Project.ToyProject, {
+    facts: TOY,
+    manifest: TOY_MANIFEST,
+    turns,
+    ...(options.run ? { run: options.run } : {}),
+  });
   host.stepAnswers.set("editor-state", (hook) => {
     const back = options.backFixes === true && host.trail().includes("snapshot.restore");
     return hook.on === "health" && state.broken && !back ? { block: "The toy editor stopped." } : {};
@@ -1024,13 +1032,28 @@ describe("the one Loop's lead builds by itself", () => {
     },
   );
 
-  it("a lead that asked what next keeps and changes nothing wraps up in the lead's words", TEST_TIMEOUT, async () => {
-    const host = await hostOn(Project.GodotGame, { facts: GODOT, turns: [async () => undefined] });
-    const report = await host.start();
-    assert.match(String(host.prompts()[1]), /Nothing of yours is at work/);
-    assert.equal(report.stoppedBecause, OPEN_END.idle);
-    assert.doesNotMatch(String(report.stoppedBecause), /director/);
-  });
+  it(
+    "a lead whose turn keeps and changes nothing rests, and the Loop closes on its time in the Loop's words",
+    TEST_TIMEOUT,
+    async () => {
+      // Flipped (phase 5 audit): a quiet turn used to be answered with "what next", and the next quiet
+      // turn wrapped the Loop up as idle.
+      const host = await hostOn(Project.GodotGame, {
+        facts: GODOT,
+        run: { budgets: { wallClockMs: 10 * MINUTE, completionPolicy: "goal" } },
+        turns: [async () => undefined],
+      });
+      const report = await host.start();
+      assert.doesNotMatch(host.prompts().join("\n"), /Nothing of yours is at work/);
+      assert.match(
+        String(host.prompts()[1]),
+        /YOUR WORKING TIME IS OVER/,
+        "the next message is the wrap-up at the cap",
+      );
+      assert.equal(report.stoppedBecause, OPEN_END.timeUpNoClaim);
+      assert.doesNotMatch(String(report.stoppedBecause), /director/);
+    },
+  );
 });
 
 describe("the one Loop's turn cap", () => {
@@ -1879,19 +1902,24 @@ describe("the one Loop's idle rule", () => {
     },
   );
 
-  it("one quiet turn after work is asked what next, never wrapped up at once", TEST_TIMEOUT, async () => {
-    const host = await hostOn(Project.GodotGame, {
-      facts: GODOT,
-      turns: [keepsRoom(1), async () => undefined, finishes],
-    });
-    const report = await host.start();
-    assert.match(String(host.prompts()[2]), /Nothing of yours is at work/);
-    assert.equal(wrappedUp(host), false);
-    assert.equal(report.victory, true, String(report.stoppedBecause));
-  });
+  it(
+    "one quiet turn after work rests the lead: nothing asks what next, and the wrap-up waits for the cap",
+    TEST_TIMEOUT,
+    async () => {
+      const host = await hostOn(Project.GodotGame, {
+        facts: GODOT,
+        run: { budgets: { wallClockMs: 10 * MINUTE, completionPolicy: "goal" } },
+        turns: [keepsRoom(1), async () => undefined, finishes],
+      });
+      const report = await host.start();
+      assert.doesNotMatch(host.prompts().join("\n"), /Nothing of yours is at work/);
+      assert.match(String(host.prompts()[2]), /YOUR WORKING TIME IS OVER/);
+      assert.equal(report.victory, true, String(report.stoppedBecause));
+    },
+  );
 
   it(
-    "an autosave Genex holds back makes no quiet turn a worked one: the lead is not asked again and again",
+    "an autosave Genex holds back makes no quiet turn a worked one: the lead rests instead of being woken again and again",
     TEST_TIMEOUT,
     async () => {
       const host = await hostOn(Project.GodotGame, {
@@ -1907,13 +1935,13 @@ describe("the one Loop's idle rule", () => {
         ],
       });
       const report = await host.start();
-      assert.ok(host.prompts().length <= 4, `${host.prompts().length} turns`);
-      assert.equal(report.stoppedBecause, OPEN_END.idle);
+      assert.ok(host.prompts().length <= 2, `${host.prompts().length} turns`);
+      assert.equal(report.stoppedBecause, OPEN_END.timeUpNoClaim);
     },
   );
 
   it(
-    "a file Genex's save always leaves out makes no quiet turn a worked one: the idle lead is asked once, then wraps up",
+    "a file Genex's save always leaves out makes no quiet turn a worked one: the lead rests until the cap wraps it up",
     TEST_TIMEOUT,
     async () => {
       const host = await hostOn(Project.GodotGame, {
@@ -1928,13 +1956,9 @@ describe("the one Loop's idle rule", () => {
         ],
       });
       const report = await host.start();
-      assert.equal(
-        host.prompts().filter((prompt) => /Nothing of yours is at work/.test(prompt)).length,
-        1,
-        "asked once",
-      );
-      assert.ok(host.prompts().length <= 4, `${host.prompts().length} turns`);
-      assert.equal(report.stoppedBecause, OPEN_END.idle);
+      assert.doesNotMatch(host.prompts().join("\n"), /Nothing of yours is at work/);
+      assert.ok(host.prompts().length <= 2, `${host.prompts().length} turns`);
+      assert.equal(report.stoppedBecause, OPEN_END.timeUpNoClaim);
     },
   );
 
@@ -1958,7 +1982,7 @@ describe("the one Loop's idle rule", () => {
         ],
       });
       await host.start();
-      assert.doesNotMatch(String(host.prompts()[2]), /Nothing of yours is at work/, "the second edit was work");
+      assert.doesNotMatch(String(host.prompts()[2]), /YOUR WORKING TIME IS OVER/, "the second edit was work");
       assert.match(String(host.prompts()[2]), /Act on it, and end your turn when you are done/);
     },
   );
@@ -1970,10 +1994,10 @@ describe("the one Loop's idle rule", () => {
       const host = await hostOn(Project.GodotGame, {
         facts: GODOT,
         run: { budgets: { untilSatisfied: true, completionPolicy: "goal" } },
-        turns: [async () => undefined, async () => undefined, finishes],
+        turns: [async () => undefined, finishes],
       });
       const done = host.start();
-      assert.ok(await host.until(restsAfter(host, 2)), "the lead rests after the question of what next");
+      assert.ok(await host.until(restsAfter(host, 1)), "the lead rests after its quiet turn");
       assert.equal(wrappedUp(host), false);
       host.inbox.said.push("Is the door done?");
       const report = await done;
@@ -2522,7 +2546,7 @@ describe("the one Loop's work read from the lead's own acts", () => {
   );
 
   it(
-    "a lead that keeps an unchanged save point every turn is asked what next, then wraps up",
+    "a lead that keeps an unchanged save point every turn rests after the first: an unchanged save point is no work",
     TEST_TIMEOUT,
     async () => {
       const savesOnly =
@@ -2533,12 +2557,13 @@ describe("the one Loop's work read from the lead's own acts", () => {
         };
       const host = await hostOn(Project.GodotGame, {
         facts: GODOT,
+        run: { budgets: { wallClockMs: 10 * MINUTE, completionPolicy: "goal" } },
         turns: [keepsRoom(1), ...Array.from({ length: 12 }, (_, n) => savesOnly(n))],
       });
       const report = await host.start();
-      assert.match(String(host.prompts()[2]), /Nothing of yours is at work/);
-      assert.ok(host.prompts().length <= 4, `${host.prompts().length} turns`);
-      assert.equal(report.stoppedBecause, OPEN_END.idle);
+      assert.match(String(host.prompts()[2]), /YOUR WORKING TIME IS OVER/);
+      assert.ok(host.prompts().length <= 3, `${host.prompts().length} turns`);
+      assert.equal(report.stoppedBecause, OPEN_END.timeUpNoClaim);
     },
   );
 
@@ -2550,6 +2575,7 @@ describe("the one Loop's work read from the lead's own acts", () => {
         const host = await hostOn(Project.UnrealGame, {
           facts: UNREAL,
           manifest: UNREAL_MANIFEST,
+          run: { budgets: { wallClockMs: 10 * MINUTE, completionPolicy: "goal" } },
           turns: [
             keepsRoom(1),
             ({ host }) => {
@@ -2568,7 +2594,7 @@ describe("the one Loop's work read from the lead's own acts", () => {
         const third = String(host.prompts()[2]);
         if (appHeld)
           assert.match(third, /Act on it, and end your turn when you are done/, "the app's save was the lead's work");
-        else assert.match(third, /Nothing of yours is at work/, "an autosave that kept nothing more is no work");
+        else assert.match(third, /YOUR WORKING TIME IS OVER/, "an autosave that kept nothing more is no work");
       }
     },
   );
@@ -2764,22 +2790,23 @@ describe("the one Loop's work beside its jobs and its other writers", () => {
   );
 
   it(
-    "turns whose only change came beside a writer in place carry on at most twice in a row, then the lead is asked what next",
+    "turns whose only change came beside a writer in place carry on at most twice in a row, then the lead rests",
     TEST_TIMEOUT,
     async () => {
       const host = await hostOn(Project.GodotGame, {
         facts: GODOT,
+        run: { budgets: { wallClockMs: 10 * MINUTE, completionPolicy: "goal" } },
         turns: [writerWithinTurn(1), writerWithinTurn(2), writerWithinTurn(3)],
       });
       await host.start();
       assert.match(String(host.prompts()[1]), /Act on it, and end your turn when you are done/);
       assert.match(String(host.prompts()[2]), /Act on it, and end your turn when you are done/);
-      assert.match(String(host.prompts()[3]), /Nothing of yours is at work/);
+      assert.match(String(host.prompts()[3]), /YOUR WORKING TIME IS OVER/);
     },
   );
 
   it(
-    "a folder something else changes each turn while the lead does nothing carries on a few turns at most, then it is asked what next",
+    "a folder something else changes each turn while the lead does nothing carries on a few turns at most, then the lead rests",
     TEST_TIMEOUT,
     async () => {
       // The project's own tool appends to its log while the lead's turns do nothing: each session only answers.
@@ -2793,9 +2820,9 @@ describe("the one Loop's work beside its jobs and its other writers", () => {
         turns: Array.from({ length: 12 }, () => outside),
       });
       const report = await host.start();
-      const asked = host.prompts().findIndex((prompt) => /Nothing of yours is at work/.test(prompt));
-      assert.ok(asked > 0 && asked <= MAX_FOLDER_ONLY_TURNS + 1, `asked what next at prompt ${asked}`);
-      assert.equal(report.stoppedBecause, OPEN_END.idle);
+      const rested = host.prompts().findIndex((prompt) => /YOUR WORKING TIME IS OVER/.test(prompt));
+      assert.ok(rested > 0 && rested <= MAX_FOLDER_ONLY_TURNS + 1, `rested after prompt ${rested}`);
+      assert.equal(report.stoppedBecause, OPEN_END.timeUpNoClaim);
     },
   );
 
@@ -2874,7 +2901,11 @@ describe("the one Loop's work beside its jobs and its other writers", () => {
             return undefined;
           },
         ],
-        { reopenFixes: false, backFixes: true },
+        {
+          reopenFixes: false,
+          backFixes: true,
+          run: { budgets: { wallClockMs: 30 * MINUTE, completionPolicy: "goal" } },
+        },
       );
       const { host, state } = toy;
       host.stepAnswers.set("reopen-editor", async () => {
@@ -2896,7 +2927,7 @@ describe("the one Loop's work beside its jobs and its other writers", () => {
       const turn = host.prompts().findIndex((prompt) => prompt.includes("Is the door done?"));
       assert.ok(turn > 0, "the person's words woke the lead");
       assert.doesNotMatch(String(host.prompts()[turn + 1]), /Act on it, and end your turn when you are done/);
-      assert.match(String(host.prompts()[turn + 1]), /Nothing of yours is at work/);
+      assert.match(String(host.prompts()[turn + 1]), /YOUR WORKING TIME IS OVER/, "a quiet turn rests the lead");
     },
   );
 });
@@ -3085,6 +3116,7 @@ describe("the one Loop's lead that edits without save points of its own", () => 
     async () => {
       const host = await hostOn(Project.GodotGame, {
         facts: GODOT,
+        run: { budgets: { wallClockMs: 30 * MINUTE, completionPolicy: "goal" } },
         turns: [
           writerWithinTurn(1),
           writerWithinTurn(2),
@@ -3101,8 +3133,8 @@ describe("the one Loop's lead that edits without save points of its own", () => 
       assert.match(String(host.prompts()[2]), /Act on it, and end your turn when you are done/);
       assert.match(
         String(host.prompts()[3]),
-        /Nothing of yours is at work/,
-        "the third turn beside others is not the lead's",
+        /YOUR WORKING TIME IS OVER/,
+        "the third turn beside others is not the lead's: the lead rests",
       );
     },
   );
@@ -3114,6 +3146,7 @@ describe("the one Loop's lead that edits without save points of its own", () => 
       const host = await hostOn(Project.GodotGame, {
         facts: GODOT,
         threadId: "t-answered-ended",
+        run: { budgets: { wallClockMs: 30 * MINUTE, completionPolicy: "goal" } },
         turns: [
           writerWithinTurn(1),
           writerWithinTurn(2),
@@ -3135,9 +3168,9 @@ describe("the one Loop's lead that edits without save points of its own", () => 
         ],
       });
       await host.start();
-      const asked = host.prompts().findIndex((prompt, n) => n >= 4 && /Nothing of yours is at work/.test(prompt));
+      const rested = host.prompts().findIndex((prompt, n) => n >= 4 && /YOUR WORKING TIME IS OVER/.test(prompt));
       assert.equal(
-        asked,
+        rested,
         4,
         host
           .prompts()
@@ -3156,6 +3189,7 @@ describe("the one Loop's writers that end while Genex reads the folder", () => {
       let armed = false;
       const host = await hostOn(Project.GodotGame, {
         facts: GODOT,
+        run: { budgets: { wallClockMs: 30 * MINUTE, completionPolicy: "goal" } },
         turns: [
           writerWithinTurn(1),
           writerWithinTurn(2),
@@ -3184,7 +3218,7 @@ describe("the one Loop's writers that end while Genex reads the folder", () => {
         return answer;
       }) as never;
       await host.start();
-      assert.match(String(host.prompts()[3]), /Nothing of yours is at work/);
+      assert.match(String(host.prompts()[3]), /YOUR WORKING TIME IS OVER/);
       assert.doesNotMatch(
         String(host.prompts()[4]),
         /Act on it, and end your turn when you are done/,

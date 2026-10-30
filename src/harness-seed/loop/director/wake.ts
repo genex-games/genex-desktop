@@ -37,7 +37,7 @@ import { recordLoopRun, restoredWake, resumedFromJournal, wakeRecord } from "./j
 import { folderBusy } from "./lead-session.ts";
 import { noteTurnEnds, noteTurnOver } from "./turn-ends.ts";
 import { closeUnderWay } from "./close-latch.ts";
-import { activeWork, leadsOpenLoop, workAtHand } from "./open/active-work.ts";
+import { activeWork, leadsOpenLoop } from "./open/active-work.ts";
 import { OPEN_TURN_MS, OPEN_WALL_CLOCK } from "./open/contract.ts";
 import { openClosingOf, openDigestOf } from "./open/digest.ts";
 import { healthWatch } from "./open/health.ts";
@@ -50,7 +50,6 @@ import {
   FRESH_LOG_LINES,
   FRESH_NOTES,
   freshStart,
-  idleAsk,
   SESSION_LOST_WHY,
   sinceThen,
   userSaysBlock,
@@ -130,7 +129,6 @@ export const SYSTEM_CLOCK: WakeClock = { now: () => Date.now(), sleep: (ms) => O
 
 /** Why a run the waking lead left open ended, when the wrap-up had a cause of its own (the report's sentence). */
 export const WAKE_ENDING = {
-  [WrapCause.Idle]: "the lead had nothing left to run and did not call finish in its wrap-up",
   [WrapCause.Finish]: "the user asked to finish and the lead did not call finish in its wrap-up",
 } as const satisfies Partial<Record<WrapCause, string>>;
 
@@ -139,8 +137,6 @@ export interface WakeState {
   turns: number;
   asleepFromSeq: number;
   asleepSince: number | null;
-  idleAsked: boolean;
-  idleDue: boolean;
   wrapping: boolean;
   wrapCause: WrapCause | null;
   wakes: number;
@@ -200,13 +196,11 @@ interface TurnAsk {
 }
 
 /** The loop's state as a run starts: a resumed one takes back what its journal kept of it. */
-function newWakeState(restored: RestoredWake = { idleAsked: false, wakesAt: [] }): WakeState {
+function newWakeState(restored: RestoredWake = { wakesAt: [] }): WakeState {
   return {
     turns: 0,
     asleepFromSeq: 0,
     asleepSince: null,
-    idleAsked: restored.idleAsked,
-    idleDue: false,
     wrapping: false,
     wrapCause: null,
     wakes: 0,
@@ -325,21 +319,15 @@ async function turnFacts(
 ): Promise<TurnFacts> {
   const { inbox, state } = loopRun;
   const finishRequested = await inbox.finishing().catch(() => false);
-  const open = leadsOpenLoop(loopRun);
-  const running = open ? await activeWork(loopRun, now) : loopRun.runningWorkers().length;
   return {
     ok: result?.ok === true,
     closed: loopRunOver(loopRun) || wake.wrapping,
     providerLost: Boolean(state.limit) || (await pauseOnLostSignIn(loopRun, now)),
-    running,
-    idleAsked: wake.idleAsked,
     workingTimeLeft: now < loopRun.softDeadline && !finishRequested,
     finishRequested,
     capped: cutByItsCap(wake, result),
-    // An open Loop's lead builds by itself: a turn that did something is never idle.
-    worked: open && loopRun.open?.turnWorked === true,
-    // An ∞ Loop ends on its lead's finish or its hours, never because its lead went quiet.
-    untilFinish: loopRun.run.budgets?.untilSatisfied === true,
+    // An open Loop's lead builds by itself: a turn that changed something is woken again at once.
+    worked: leadsOpenLoop(loopRun) && loopRun.open?.turnWorked === true,
   };
 }
 
@@ -359,7 +347,7 @@ function startWrapUp(loopRun: LoopRun, wake: WakeState, cause: WrapCause, now: n
   loopRun.state.softDeadline = at;
 }
 
-/** Act on the end of a turn: owe the lead the idle question, or start the wrap-up. */
+/** Act on the end of a turn: start the wrap-up when the verdict says so. */
 function settleTurn(
   loopRun: LoopRun,
   wake: WakeState,
@@ -367,8 +355,6 @@ function settleTurn(
   result: Partial<DelegateResult>,
   now: number,
 ) {
-  wake.idleAsked = verdict.idleAsked;
-  if (verdict.next === TurnEnd.AskIdle) wake.idleDue = true;
   if (verdict.next !== TurnEnd.WrapUp) return;
   if (verdict.wrapCause === WrapCause.Failed) wake.failed = result;
   startWrapUp(loopRun, wake, verdict.wrapCause ?? WrapCause.Deadline, now);
@@ -410,11 +396,8 @@ function wakeView(loopRun: LoopRun, wake: WakeState, now: number): WakeView {
     asleepSince: wake.asleepSince ?? now,
     userWaiting: wake.userWaiting,
     finishNew: wake.finishNew,
-    running: leadsOpenLoop(loopRun) ? workAtHand(loopRun) : loopRun.runningWorkers().length,
     softDeadline: loopRun.softDeadline,
     wrapping: wake.wrapping,
-    idleDue: wake.idleDue,
-    idleAsked: wake.idleAsked,
     wakesAt: wake.wakesAt,
   };
 }
@@ -462,8 +445,6 @@ function markSaid(wake: WakeState, reasons: readonly WakeReason[], now: number):
   const selfContinued = reasons.some((reason) => SELF_CONTINUED.has(reason));
   const capped = !selfContinued && reasons.some((reason) => !USER_WAKES.has(reason));
   wake.wakesAt = [...wake.wakesAt.filter((at) => at > now - WAKE_WINDOW_MS), ...(capped ? [now] : [])];
-  wake.idleDue = false;
-  if (reasons.includes(WakeCause.IdleAsk)) wake.idleAsked = true;
   wake.userWaiting = false;
   if (wake.finishNew) wake.finishSaid = true;
   wake.finishNew = false;
@@ -472,10 +453,9 @@ function markSaid(wake: WakeState, reasons: readonly WakeReason[], now: number):
   if (!wake.wrapCause) wake.wrapCause = WrapCause.Deadline;
 }
 
-/** How this wake's message ends: the wrap-up, the idle question, or carry on. */
+/** How this wake's message ends: the wrap-up, or the ordinary closing. */
 function closingFor(loopRun: LoopRun, wake: WakeState, reasons: readonly WakeReason[], now: number): string {
-  if (leadsOpenLoop(loopRun))
-    return openClosingOf(loopRun, { wrapping: wake.wrapping, wrapCause: wake.wrapCause ?? null, reasons, now });
+  if (leadsOpenLoop(loopRun)) return openClosingOf({ wrapping: wake.wrapping, wrapCause: wake.wrapCause ?? null });
   const { finalDeadline, run, state } = loopRun;
   if (wake.wrapping) {
     const wrapUp = wrapUpPrompt({
@@ -488,7 +468,6 @@ function closingFor(loopRun: LoopRun, wake: WakeState, reasons: readonly WakeRea
     });
     return wrapLead(wake.wrapCause ?? WrapCause.Deadline, wrapUp);
   }
-  if (reasons.includes(WakeCause.IdleAsk)) return idleAsk({ minutesLeft: minutes(loopRun.softDeadline - now) });
   return carryOn();
 }
 
@@ -1277,8 +1256,7 @@ async function turnThenBetween(
 
 /**
  * When the lead is woken next: at once for a turn its own cap cut short, or an open Loop's lead's
- * turn that worked (it is never rested then), else once something is due while it rests (null: the
- * run ended under it).
+ * turn that changed something, else once something is due while it rests (null: the run ended under it).
  */
 async function dueAfter(loopRun: LoopRun, wake: WakeState, kit: TurnKit, verdict: TurnVerdict): Promise<Wake | null> {
   if (verdict.next === TurnEnd.Continue) return { at: kit.clock.now(), reasons: [WakeCause.TurnCap] };
@@ -1289,13 +1267,12 @@ async function dueAfter(loopRun: LoopRun, wake: WakeState, kit: TurnKit, verdict
   return due;
 }
 
-/** An open Loop's lead whose turn worked goes on at once, told whatever else is due now. */
+/** An open Loop's lead whose turn changed something is woken at once, told whatever else is due now. */
 async function carryOnWake(loopRun: LoopRun, wake: WakeState, kit: TurnKit): Promise<Wake> {
   const now = kit.clock.now();
   await collect(loopRun, wake, now);
   const due = nextWake(wakeView(loopRun, wake, now));
-  // Never the question of what next: a lead whose turn worked is not asked it.
-  const also = due && due.at <= now ? due.reasons.filter((reason) => reason !== WakeCause.IdleAsk) : [];
+  const also = due && due.at <= now ? due.reasons : [];
   return { at: now, reasons: [...new Set([...also, WakeCause.CarryOn])] };
 }
 
@@ -1314,7 +1291,7 @@ export async function runWakeLoop(
 ): Promise<WakeOutcome> {
   // The run's tools read its time on this clock (a worker refused from the cap on).
   keepRunClock(loopRun, () => clock.now());
-  // A resumed run takes back what its journal kept of the loop: the idle question, the wake cap.
+  // A resumed run takes back what its journal kept of the loop: the wake cap.
   const restored = resumedFromJournal(loopRun)
     ? restoredWake(loopRun.priorJournal?.director?.wake, clock.now())
     : undefined;

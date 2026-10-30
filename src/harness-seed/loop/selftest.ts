@@ -3,7 +3,7 @@
  * what the end of a turn means, the health check's line, which runner a run goes to, the run's clock, the
  * plain sentence a card falls back on, what a landing claims, the wrap-up's reserve and a reviewer's no. No engine, no preview, no network: seconds, deterministic.
  */
-import { afterTurn, nextWake, TurnEnd, WakeCause, WrapCause } from "./director/wake-schedule.ts";
+import { afterTurn, nextWake, TurnEnd, WakeCause } from "./director/wake-schedule.ts";
 import { landingWords, plainly } from "./director/rules.ts";
 import { wrapReserveMs } from "./director/journal.ts";
 import { secondOpinionNo } from "./director/second-opinion-prompts.ts";
@@ -30,43 +30,28 @@ const quietView = (now: number) => ({
   asleepSince: now,
   userWaiting: false,
   finishNew: false,
-  running: 0,
   softDeadline: now + HOUR_MS,
   wrapping: false,
-  idleDue: false,
-  idleAsked: false,
   wakesAt: [],
 });
 
 /** The self-test, step by step, in the order it runs. */
 const SELFTEST_STEPS: readonly SelftestStep[] = [
   [
-    "wake: the user wakes the lead at once; a quiet run asks once what next",
+    "wake: the user wakes the lead at once; a quiet run waits for the wrap-up",
     () => {
       const now = 1_000_000;
       const spoke = nextWake({ ...quietView(now), userWaiting: true });
       check("user wakes now", spoke?.at === now && spoke.reasons.includes(WakeCause.UserMessage));
-      const idle = nextWake(quietView(now));
-      check("idle run is asked", idle?.reasons.includes(WakeCause.IdleAsk));
-      const busy = nextWake({ ...quietView(now), running: 1 });
-      check("a busy run waits for the wrap-up", busy?.at === now + HOUR_MS);
+      const quiet = nextWake(quietView(now));
+      check("a quiet run waits for the wrap-up", quiet?.at === now + HOUR_MS && quiet.reasons[0] === WakeCause.WrapUp);
     },
   ],
   [
-    "turn end: busy rests, idle is asked once, then wraps up",
+    "turn end: the lead rests, never wrapped up for being quiet; out of time wraps up",
     () => {
-      const base = {
-        ok: true,
-        closed: false,
-        running: 0,
-        idleAsked: false,
-        workingTimeLeft: true,
-        finishRequested: false,
-      };
-      check("busy sleeps", afterTurn({ ...base, running: 2 }).next === TurnEnd.Sleep);
-      check("idle asks", afterTurn(base).next === TurnEnd.AskIdle);
-      const twice = afterTurn({ ...base, idleAsked: true });
-      check("idle twice wraps up", twice.next === TurnEnd.WrapUp && twice.wrapCause === WrapCause.Idle);
+      const base = { ok: true, closed: false, workingTimeLeft: true, finishRequested: false };
+      check("a turn end rests", afterTurn(base).next === TurnEnd.Sleep);
       check("out of time wraps up", afterTurn({ ...base, workingTimeLeft: false }).next === TurnEnd.WrapUp);
     },
   ],

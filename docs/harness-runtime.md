@@ -3,14 +3,11 @@
 Read this when changing the in-app game-building harness. External developer memory is
 owned by [AGENTS.md](../AGENTS.md); this page describes product behavior.
 
-What the harness may assume of any served page (studio-ultra M4). Every page the studio serves
-carries the studio's own shim before the game's first line, so `window.__studio` answers on a game
-that never heard of the contract, the studio owns the clock, `seed(n)` is reproducible, draw calls
-are counted at the graphics API, and readiness is a fact the page reports rather than a wait. That
-holds for any Three.js game of any shape — inline, ES modules with an import map, a Vite bundle
-(which adds the two-line `installStudio({ renderer, player })` and nothing else), WebGL or WebGPU.
-It does not hold for Phaser, plain canvas 2D or an engine export: those are out of scope, and a
-folder whose kind is `engine-export` can be played and photographed but can never start a run.
+What the harness may assume of a served page: nothing. The studio observes a page from outside — it
+serves it, takes page screenshots (the compositor's, DOM included), reads the console's errors, and agents
+drive the game with real input through the `computer` tool or scripts of their own — so any game of any
+shape works, and a folder whose kind is `engine-export` can be played and photographed but can never
+start a run.
 
 The Loop. A Loop is its lead's session and the workers the lead may start. The lead plans or not,
 starts workers or not (`worker_start`, Genex's one worker pool: a worker gets a task and the lead's
@@ -147,7 +144,7 @@ vintages are `seed-exports-pre-wake.json`, `seed-exports-pre-journal.json`,
 `seed-exports-pre-one-loop.json`; the goals',
 the lead's and the moments' are kept one module at a time, the lead's and the moments' with each
 module's own imports as they were, so a retired module a kept caller still imports stays as a shim:
-`loop/unreal/live.ts`, `live-journal.ts`, `editor-life.ts`, `editor-wait.ts`, `editor-wait-prompts.ts`, `editor-activity.ts`). Where a kept older
+`loop/unreal/live.ts`, `live-journal.ts`, `editor-life.ts`, `editor-wait.ts`, `editor-activity.ts`). Where a kept older
 part would contradict a newer one, the loop asks before it relies on it: a waking run seats its
 chat's session as its lead only when every part that lead depends on exports
 `SERVES_LEAD` (`director.ts` `seatsLead`), and otherwise a director with its own hands leads, as
@@ -550,17 +547,18 @@ unclear when the lead acted; a turn in which a recovery took the folder back cou
 acts and save points; an autosave only when it kept what the turn's end didn't show; a nested
 repository's own changes count (with the folder's ignore rules), and no read writes into the game's
 object store: the run's reads share a store of their own in the game's git folder, removed at the close)
-goes on at once (`TurnEnd.CarryOn`), the question of what next unspent; neither it nor `TurnCap` counts in the hourly
-wake cap. A quiet turn is asked it, and a second wraps up, its words saying why (`openClosing` by
-`WrapCause`). Under ∞ an idle lead rests until something happens instead. The person's finish reaching a resting
-lead opens its last turn. A lead whose game folder
+goes on at once (`TurnEnd.CarryOn`, its message headed "Your turn ended."); neither it nor `TurnCap` counts in the
+hourly wake cap. Any other turn end rests the lead until the person speaks or asks to finish, a worker or job
+ends or the working time does: nothing asks it what next and a quiet lead is never wrapped up for being quiet
+(`afterTurn`). The wrap-up says why it began (`openClosing` by `WrapCause`: the time, a failed turn, the
+person's finish). The person's finish reaching a resting lead opens its last turn. A lead whose game folder
 another chat's turn holds waits for it within its working time, outside the outage ladder
 (`waitsForFolder`), never a failed turn; a Stop during the wait opens no session, and one before any
 session of this attempt worked keeps nothing and spends none of its hours. Its wrap-up asks for a claim only
 if the goal is reached. Its wake messages are
 `openDigest` (`open/digest.ts`: the person's words first, news no turn took, the lines Genex carried,
 its latest save points with the rest counted, its own
-wrap-up and idle question). `save_point {label, summary, shows?}` is Genex's checkpoint on the git-write
+wrap-up). `save_point {label, summary, shows?}` is Genex's checkpoint on the git-write
 queue (the plugins' steps around the snapshot; their notes in the answer, their pictures the round's
 thumbnails on the "lead" part (its `facet_iteration` record) and `integration_merge`; the host keeps them as the
 observer's capture); a block or Genex's hold keeps nothing and says why. `shows` names the picture in
@@ -622,7 +620,7 @@ finished one's reopen is refused before any promise, and a Loop message starts t
 so does one the open setup can't pick up (`refuseResume`), while one no version reads closes for
 good. A Loop in place runs no self-improvement pass, and Genex's `web.ready` gate reaches only a web
 game's Loop. ∞ runs an open Loop until a reviewer accepts its finish, 24 hours at most: the lead may
-claim at any time, an idle lead rests, and a time-out with no yes closes in the Loop's own words with
+claim at any time, a lead that ended a turn rests, and a time-out with no yes closes in the Loop's own words with
 no reviewer asked. The chat's launch words and its launch promise describe the lead building in place, workers in
 copies and a reviewer checking its finish (`loop/open-loop-prompts.ts`). A run the Unreal runner paused (`kind:
 "unreal-lead"`) resumes in the one Loop: `director/open/older-journal.ts` turns its run, worked time,
@@ -933,7 +931,7 @@ Loop of 15 minutes or less); at the cap it hears that the time is up, and `worke
 from then on. A turn whose engine reads that line goes on into `GRACE_MS` (15 minutes) of grace; one
 whose engine can't is cut short (never inside a tool call or a claim's check), and its wrap-up turn
 opens with the line, as does any turn that never took a line it was due. A wrap-up that began before
-the cap (the person's Finish, an idle lead, a failed turn) hears no line and is never cut for it, and
+the cap (the person's Finish, a failed turn) hears no line and is never cut for it, and
 a turn that may run to the grace's end is the run's last for a claim. At the grace's end Genex closes
 the Loop; its report's `notDone` holds the reviewer's last no, else, when no claim reached a reviewer
 since the run last opened, that no reviewer read one, which its summary says too; an open Loop keeps

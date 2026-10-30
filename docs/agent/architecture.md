@@ -580,7 +580,8 @@ studio forwards each call to the harness (`HarnessHost.dispatch`, `director_tool
   lead ends its turn and the harness resumes the session with a digest (the user's words verbatim,
   what happened, where the run stands) when the user speaks or asks to finish, a worker ends or
   asks, a job ends, the app crashes, a turn reaches its cap or the wrap-up is due; no heartbeat or
-  reminder wakes it. An idle run asks once, then wraps up; each wake appends `director_continued`.
+  reminder wakes it, and a lead that ended a turn simply rests until one of those happens (an open Loop's lead
+  whose turn changed something is woken again at once); each wake appends `director_continued`.
 - The full journal (`loop/director/journal.ts`): each save writes the run's record on
   `journal.director` (clock with `workedMs`, health, recent log, wake state). A Resume gets the
   working time left (`loopRunClock`, paused time excluded), a reopen (`director/reopen.ts`) a fresh

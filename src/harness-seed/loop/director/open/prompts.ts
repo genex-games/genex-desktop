@@ -313,10 +313,8 @@ export interface OpenDigestFacts {
 /** The digest's first line: a resumed Loop, a turn its cap cut, or what woke the lead. */
 function digestHeading(facts: OpenDigestFacts): string {
   if (facts.resumed) return "The Loop picks up where it paused; Genex kept its save points.";
-  if (facts.reasons.includes(WakeCause.TurnCap))
-    return `Your turn reached its ${minutes(OPEN_TURN_MS)} minutes; carry on where you were.`;
-  if (facts.reasons.length === 1 && facts.reasons[0] === WakeCause.CarryOn)
-    return "Your turn ended; go on with the next step.";
+  if (facts.reasons.includes(WakeCause.TurnCap)) return `Your turn reached its ${minutes(OPEN_TURN_MS)} minutes.`;
+  if (facts.reasons.length === 1 && facts.reasons[0] === WakeCause.CarryOn) return "Your turn ended.";
   const why = facts.reasons.map((reason) => REASON_WORDS[reason] ?? reason);
   return `Genex woke you: ${why.join("; ") || REASON_WORDS[WakeCause.News]}.`;
 }
@@ -353,7 +351,6 @@ export function openDigest(facts: OpenDigestFacts): string {
 /** Why the open Loop wraps up, as its last turn's message opens: its time, or what ended it sooner. */
 const WRAP_OPENING = {
   [WrapCause.Deadline]: "YOUR WORKING TIME IS OVER",
-  [WrapCause.Idle]: "YOU WERE ASKED WHAT NEXT AND DID NOTHING, SO THE LOOP WRAPS UP",
   [WrapCause.Failed]: "YOUR LAST TURN FAILED, SO THE LOOP WRAPS UP",
   [WrapCause.Finish]: "THE PERSON ASKED THE LOOP TO FINISH",
 } as const satisfies Record<WrapCause, string>;
@@ -370,19 +367,12 @@ const WRAP_FINISH = {
     "Call finish with your summary: the person asked to finish, so the Loop closes as it stands, with no reviewer's check.",
 } as const;
 
-/** How an open wake message ends: the wrap-up (saying why), the question of what next, or carry on. */
-export function openClosing(how: {
-  wrapping: boolean;
-  wrapCause?: WrapCause | null;
-  idleAsk: boolean;
-  minutesLeft: number;
-}): string {
+/** How an open wake message ends: the wrap-up (saying why), or the ordinary closing. */
+export function openClosing(how: { wrapping: boolean; wrapCause?: WrapCause | null }): string {
   if (how.wrapping) {
     const cause = how.wrapCause ?? WrapCause.Deadline;
     const finish = cause === WrapCause.Finish ? WRAP_FINISH.asked : WRAP_FINISH.claim;
     return `${WRAP_OPENING[cause]}: this is your last turn. ${finish}`;
   }
-  if (how.idleAsk)
-    return `Nothing of yours is at work and about ${how.minutesLeft} minutes of working time are left. Go on with the work, or call finish if the goal is reached.`;
   return "Act on it, and end your turn when you are done.";
 }

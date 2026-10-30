@@ -36,7 +36,6 @@ export interface LoopRunClock {
 
 /** What the wake loop takes back from the journal on a Resume. */
 export interface RestoredWake {
-  idleAsked: boolean;
   wakesAt: number[];
   /** Lost sessions the run has already replaced: the allowance does not start again on a Resume. */
   freshSessions?: number;
@@ -136,13 +135,12 @@ export function journalText(journal: AnyRecord): string | null {
 
 /** The wake loop's own state, as the journal keeps it (wake.ts `journalWake` writes it). */
 export function wakeRecord(
-  wake: Pick<WakeState, "idleAsked" | "wrapCause" | "wakes" | "wakesAt" | "lastWakeAt" | "asleepSince"> & {
+  wake: Pick<WakeState, "wrapCause" | "wakes" | "wakesAt" | "lastWakeAt" | "asleepSince"> & {
     freshSessions?: number;
   },
 ): AnyRecord {
   return {
     loop: DirectorLoop.Wake,
-    idleAsked: wake.idleAsked,
     freshSessions: wake.freshSessions ?? 0,
     wrapCause: wake.wrapCause,
     wakes: wake.wakes,
@@ -184,12 +182,12 @@ export function restoreLoopRun(loopRun: LoopRun): void {
   if (saved.finishTally !== undefined) state.finishTally = tallyOf(saved.finishTally);
 }
 
-/** The wake loop's own state as the journal kept it: whether the lead was asked what next, and the wakes still in the cap's window. */
+/** The wake loop's own state as the journal kept it: the wakes still in the cap's window and the fresh sessions used. */
 export function restoredWake(saved: unknown, now: number): RestoredWake {
   const record = (saved ?? {}) as AnyRecord;
   const wakesAt = (Array.isArray(record.wakesAt) ? record.wakesAt : [])
     .map(msOf)
     .filter((at: number | null): at is number => at !== null && at > now - WAKE_WINDOW_MS && at <= now);
   const freshSessions = Number.isInteger(record.freshSessions) && record.freshSessions > 0 ? record.freshSessions : 0;
-  return { idleAsked: record.idleAsked === true, wakesAt, ...(freshSessions ? { freshSessions } : {}) };
+  return { wakesAt, ...(freshSessions ? { freshSessions } : {}) };
 }

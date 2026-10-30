@@ -34,7 +34,7 @@ import { timeLeftOf } from "../../time-cap.ts";
 import { SECOND_MS, sleep } from "../../time.ts";
 import { yes } from "../args.ts";
 import { closeUnderWay, holdFinish, releaseFinish } from "../close-latch.ts";
-import { CLAIM_WORDS, secondOpinionNo } from "../second-opinion-prompts.ts";
+import { CLAIM_WORDS } from "../second-opinion-prompts.ts";
 import { heldTurnEnding } from "../held-words.ts";
 import type { LoopRun } from "../loop-run.ts";
 import { WrapCause } from "../wake-schedule.ts";
@@ -50,13 +50,11 @@ export const MESSAGE = {
   /** The lead claimed the goal is reached and asked no reviewer: its word closes the Loop. */
   leadClaimed: "the lead says the goal is reached",
   personFinished: "the person asked the Loop to finish",
-  timeUpNoClaim: "the Loop's time ran out before a reviewer accepted the goal; here is where it stands",
+  timeUpNoClaim: "the Loop's time ran out; here is where it stands",
   /** The Loop's time ran out while a reviewer still checked the lead's claim. */
   timeUpUnderReview: "the Loop's time ran out while a reviewer checked the lead's claim; here is where it stands",
   /** The lead's session ended before it claimed the goal (`how`: how it ended). */
   sessionEnded: (how: string) => `the lead's session ended (${how}) before it claimed the goal`,
-  /** The Loop's lead had nothing left at work and kept or changed nothing in the turn it was asked what next. */
-  idle: "the lead had nothing left to do and did not claim the goal",
   /** The person asked to finish, and the lead did not claim the goal in its last turn. */
   finishAsked: "the person asked the Loop to finish, and the lead did not claim the goal in its last turn",
   /** A reviewer's yes given across a way back to a save point no longer speaks for the folder. */
@@ -154,7 +152,6 @@ function endOf(outcome: FinishOutcome): { end: OpenEnd; told: string; closing?: 
 /** What the lead hears when its review did not close the Loop: the reviewer's no as a second opinion, or why there was none. */
 function reviewAnswer(outcome: FinishOutcome): string {
   if ("noTime" in outcome) return finishAnswer(outcome);
-  if (outcome.step === FinishCheckStep.Rejected) return secondOpinionNo(outcome.reasons, outcome.notDone);
   if (outcome.step === FinishCheckStep.Unanswered && outcome.seatless) return CLAIM_WORDS.noReviewer;
   return finishAnswer(outcome);
 }
@@ -265,7 +262,7 @@ const endedHow = (result: Partial<DelegateResult>): string =>
 
 /**
  * Why an open Loop its lead left open ended, in its own words (the lead, never the director's), for
- * the closes whose words are the Loop's own: an idle lead, the person's finish, the time running out
+ * the closes whose words are the Loop's own: the person's finish, the time running out
  * under a claim's review, a session that ended. Null for the rest (a Stop, a lost provider, a turn
  * Genex's moments held back), whose words are every Loop's.
  */
@@ -276,7 +273,6 @@ export function openEndWords(
 ): string | null {
   const { ctx, softDeadline, state } = loopRun;
   if (ctx.cancelled || state.limit || heldTurnEnding(result) !== null) return null;
-  if (wrapCause === WrapCause.Idle) return MESSAGE.idle;
   if (wrapCause === WrapCause.Finish) return MESSAGE.finishAsked;
   const onTheClock = wrapCause !== WrapCause.Failed && clockOf(loopRun).now() >= softDeadline;
   if (onTheClock && state.finishTally?.checking) return MESSAGE.timeUpUnderReview;
