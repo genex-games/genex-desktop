@@ -355,7 +355,7 @@ export const ownerHolds = (view: CoverView | null) => view?.coverSource === OWNE
 const everPublic = (state: Pick<GenexPublishState, "status" | "lastPublishAt">) =>
   state.status === GenexHostedStatus.Published || state.lastPublishAt !== undefined;
 
-/** Whether a publish shoots and sends the cover: a gallery publish, or a draft of a game never public. */
+/** Whether a publish sends the kept cover: a gallery publish, or a draft of a game never public. */
 export const coverRides = (kind: GenexPublishKind, state: Pick<GenexPublishState, "status" | "lastPublishAt">) =>
   kind === GenexPublishKind.Gallery || !everPublic(state);
 
@@ -634,8 +634,8 @@ export async function readCandidates(dir: string): Promise<GenexCoverShot[]> {
 }
 
 /**
- * Make one candidate the kept shot, pinned: the person chose it, so neither Studio nor a publish
- * shoots a new frame over it. Null when no candidate by that sha256 is whole on disk.
+ * Make one candidate the kept shot, pinned: the person chose it, so Studio takes no frame of its own
+ * over it. Null when no candidate by that sha256 is whole on disk.
  */
 export async function pickCandidate(dir: string, sha: unknown): Promise<GenexCoverShot | null> {
   if (typeof sha !== "string" || !CANDIDATE_SHA.test(sha)) return null;

@@ -301,7 +301,7 @@ class GenexTermsPending extends Error {
 /** `genex cover` exits 0 for a frame set or outranked and 1 for any other answer: both are answers. */
 const COVER_ANSWER_EXIT_CODES = [0, 1] as const;
 /** How a cover answer names the shot it sent, in place of its path in Studio's storage. */
-const COVER_SHOT_NAME = "the genex-cover shot";
+const COVER_SHOT_NAME = "the kept cover picture";
 
 /** The preview candidates a user may pick from. */
 const PREVIEW_CANDIDATES = [1, 2, 3];
@@ -489,7 +489,7 @@ export class GenexTools {
   /** How long a publish's new draft has to pass its test before the publish gives up on going public. */
   readonly #draftTestMs: number;
   readonly #coverTimeouts: CoverTimeouts;
-  /** The tools' clock: a publish's shot is measured against the invocation it runs in. */
+  /** The tools' clock: when a cover was kept or sent, and how long ago Studio last took a frame. */
   readonly #now: () => number;
   /** The folder of the browser SDK a published game that brings none of its own is connected with. */
   readonly #embedSdk: string | undefined;
