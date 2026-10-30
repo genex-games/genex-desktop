@@ -73,6 +73,12 @@ test("a backend written against the SDK declaration compiles clean", (t) => {
     "services.ts": `
       import type { PluginContext } from ${quote(sdk)};
       export async function everyService(ctx: PluginContext) {
+        const backgroundJob: { id: string } = await ctx.host('native.run', { job: 'make', inputs: {}, values: {}, background: true });
+        const result = await ctx.host('native.result', backgroundJob);
+        const jobs = await ctx.host('native.jobs');
+        const cancelled: boolean = await ctx.host('native.cancel', backgroundJob);
+        const foreground = await ctx.host('native.run', { job: 'make', inputs: {}, values: {} });
+        void result; void jobs; void cancelled; void foreground.state;
         const root: string = await ctx.host('storage.root');
         const text: string = await ctx.host('project.read', { path: 'index.html' });
         const written: { file: string } = await ctx.host('project.write', { path: 'a.txt', text: 'x' });

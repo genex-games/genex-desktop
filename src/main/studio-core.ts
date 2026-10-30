@@ -52,12 +52,15 @@ import {
   type ExportReview,
   type PluginBinding,
   PluginCapability,
+  PluginChangeReason,
+  type PluginChange,
   type PluginClipAnswer,
   type PluginClipOrder,
   type PluginStillAnswer,
   type PluginStillOrder,
   PluginToolAudience,
   NativeRuntimeState,
+  type PluginNativeResult,
 } from "../shared/plugins.ts";
 import { EngineHostAction, type EngineLinkUndo, type EngineUndoSetUpArgs } from "../shared/game-engine.ts";
 import { type ViewOpener, viewStill, type ViewStillOptions } from "./core/view-still.ts";
@@ -1160,6 +1163,7 @@ export class StudioCore {
     );
     const nativePlugins = this.#nativeServices();
     this.#nativePlugins = nativePlugins;
+    nativePlugins.hold = (id) => this.plugins.lease([id]);
     this.plugins.nativeService = (manifest, directory, method, args, binding, invocation) =>
       nativePlugins.call(
         manifest,
@@ -1192,10 +1196,7 @@ export class StudioCore {
     this.plugins.appAccount = { id: GENEX_PLUGIN_ID, actions: GENEX_ACCOUNT_ACTIONS };
     // A development profile on a stand: the Genex plugin (its publish) talks to the stand as its account.
     this.plugins.hostAccount = genexPluginAccount(this.options.genexStand);
-    this.plugins.onChange = (c) => {
-      this.emit(UiEvent.PluginsChanged, c);
-      this.#connections.changed();
-    };
+    this.plugins.onChange = (change) => this.#pluginChanged(change);
     this.plugins.consent = (id, tool, args, binding, signal, options) =>
       this.requestConsent(id, tool, args, binding, signal, undefined, options);
     this.plugins.agentWritable = (directory) => this.#agentWritable(directory);
@@ -1212,6 +1213,14 @@ export class StudioCore {
       return result;
     };
     await this.#initPlugins();
+  }
+
+  /** Stop withdrawn plugin workers before notifying the rest of the app. */
+  #pluginChanged(change: PluginChange): void {
+    const withdrawn = change.reason === PluginChangeReason.Disabled || change.reason === PluginChangeReason.Removed;
+    if (withdrawn) void this.#nativePlugins?.stop(this.pluginServices.root(change.id));
+    this.emit(UiEvent.PluginsChanged, change);
+    this.#connections.changed();
   }
 
   /** Do it for me's host services (`desktop-assist.ts`). */
@@ -1721,6 +1730,7 @@ export class StudioCore {
     // the jobs it was handed and gives the sandbox back.
     if (!this.#started) {
       await this.#stopJobs();
+      await this.#nativePlugins?.stop();
       return this.sandbox?.dispose();
     }
     this.#started = false;
@@ -1742,6 +1752,7 @@ export class StudioCore {
     // running, and nothing below (a lease release, previews, slow connectors) may use up its time.
     await this.host.stop().catch(() => {});
     // Jobs next: detached process groups too, and nothing below may keep them running.
+    await this.#nativePlugins?.stop();
     await this.#stopJobs();
     // A release that fails (a pending plugin update that cannot activate) is logged, never allowed
     // to skip the previews and connectors below it. It runs before the connectors close, so a
@@ -2179,6 +2190,31 @@ export class StudioCore {
   /** The person's Stop on a job's chat line: the job's record, or null for a job this game never had. */
   async stopJob(project: string, jobId: string): Promise<JobRecord | null> {
     return this.jobs.stop(project, jobId, JobStopper.Person);
+  }
+
+  #nativePluginRoot(id: string): string {
+    const plugin = this.plugins.list().find((item) => item.manifest.id === id);
+    if (!plugin?.manifest.capabilities.includes(PluginCapability.NativeRuntime))
+      throw new Error("Native plugin not found");
+    return this.pluginServices.root(id);
+  }
+
+  /** The plugin page reads host-owned receipts without invoking the plugin backend. */
+  async pluginNativeJobs(id: string): Promise<import("../shared/plugins.ts").PluginNativeJobSummary[]> {
+    const root = this.#nativePluginRoot(id);
+    return this.#nativePlugins?.jobs(root) ?? [];
+  }
+
+  /** The host reads a full receipt only when someone opens a job. */
+  async pluginNativeJob(id: string, jobId: string): Promise<PluginNativeResult | null> {
+    const root = this.#nativePluginRoot(id);
+    return this.#nativePlugins?.result(root, jobId) ?? null;
+  }
+
+  /** The person's Cancel works even when a plugin backend has stopped responding. */
+  async pluginCancelNativeJob(id: string, jobId: string): Promise<boolean> {
+    const root = this.#nativePluginRoot(id);
+    return this.#nativePlugins?.cancelJob(root, jobId) ?? false;
   }
 
   /**

@@ -153,6 +153,34 @@ test("updates wait for sessions and failed activation retains working version", 
     await f.close();
   }
 });
+test("a job's targeted package lease defers its update without holding unrelated plugins", async () => {
+  const f = await fixture({ installed: "local" });
+  try {
+    const other = await copyOf(f.root, "other", (m) => {
+      m.id = "other";
+    });
+    await installLocalOn(f.registry, other);
+    const release = f.registry.lease(["example"]);
+    const exampleUpdate = await copyOf(f.root, "example-update", (m) => {
+      m.version = "1.1.0";
+    });
+    const otherUpdate = await copyOf(f.root, "other-update", (m) => {
+      m.id = "other";
+      m.version = "1.1.0";
+    });
+    await f.registry.installLocal(exampleUpdate);
+    await f.registry.installLocal(otherUpdate);
+    const info = (id: string) => f.registry.list().find((p) => p.manifest.id === id);
+    assert.equal(info("example")?.manifest.version, "1.0.0");
+    assert.equal(info("example")?.pendingVersion, "1.1.0");
+    assert.equal(info("other")?.manifest.version, "1.1.0");
+    await release();
+    assert.equal(info("example")?.manifest.version, "1.1.0");
+  } finally {
+    await f.close();
+  }
+});
+
 test("permission expansion requires approval, process crashes do not replay", async () => {
   const f = await fixture({ installed: "local" });
   try {

@@ -8,6 +8,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { setLocale } from "../../src/shared/i18n.ts";
+import { Locale } from "../../src/shared/locale.ts";
+import russian from "../../src/shared/locales/ru.ts";
+import { nativeJobDisclosure } from "../../src/shared/native-job-disclosure.ts";
 import { type PluginManifest, type PluginScan, type PluginSource, PluginSourceKind } from "../../src/shared/plugins.ts";
 import { validateManifest } from "../../src/substrate/plugins/manifest.ts";
 import {
@@ -35,6 +39,49 @@ const SCANNED: PluginScan = {
 
 /** The dialog's blocks, split where it leaves a blank line. */
 const blocks = (detail: string): string[] => detail.split("\n\n");
+
+test("native install consent discloses the declared duration and GPU use", () => {
+  const manifest: PluginManifest = {
+    ...example,
+    nativeJobs: [
+      {
+        id: "shape",
+        runtime: "worker",
+        args: [],
+        inputs: [],
+        values: {},
+        outputs: ["shape.glb"],
+        timeoutMs: 2100000,
+        maxOutputBytes: 1000,
+        maxAssetBytes: 4096,
+        gpu: true,
+      },
+      {
+        id: "export",
+        runtime: "worker",
+        args: [],
+        inputs: [],
+        values: {},
+        outputs: ["a.txt"],
+        timeoutMs: 1000,
+        maxOutputBytes: 1000,
+        maxAssetBytes: 4096,
+      },
+    ],
+  };
+  const detail = installDetail({ manifest, origin: INDEX });
+  assert.ok(detail.includes("shape: up to 35 minutes per background job; uses the GPU."));
+  assert.ok(detail.includes("export: up to 1 second per background job."));
+  setLocale(Locale.Russian, russian);
+  try {
+    assert.deepEqual(nativeJobDisclosure(manifest), [
+      "shape: до 35 минут на фоновую задачу; использует GPU.",
+      "export: до 1 секунды на фоновую задачу.",
+    ]);
+  } finally {
+    setLocale(Locale.English, {});
+  }
+});
 
 test("characterization: a first install from the catalog gives one block each, in plain words", () => {
   assert.deepEqual(blocks(installDetail({ manifest: genex, origin: INDEX, scan: SCANNED })), [

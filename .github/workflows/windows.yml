@@ -84,6 +84,9 @@ jobs:
       # Computer control on the runner's own desktop: the bundled driver embedded on its named pipe,
       # driven through the desktop tool by a scripted agent (Notepad, the refusals, the stop, no
       # driver left behind).
+      - name: Native background jobs UI
+        if: ${{ !cancelled() && !inputs.desktop && (!inputs.files || contains(inputs.files, 'native-background.test.ts')) }}
+        run: npm run test:ui -- native-jobs-ui
       - name: Computer control on the desktop
         if: ${{ !cancelled() && !inputs.files }}
         run: node tests/e2e/run-windows-desktop-control.mjs

@@ -6218,4 +6218,21 @@ export default {
   "Show us where Genex gets in your way.": "Покажи, где Genex тебе мешает.",
   "Where you go, what fails and how long it takes": "Куда ты заходишь, что ломается и сколько всё длится",
   "usage data\u0004Share": "Делиться",
+  "Background jobs": "Фоновые задачи",
+  "Agents can start background jobs. Cancel a running job here.":
+    "Агенты могут запускать фоновые задачи. Здесь можно отменить работающую задачу.",
+  "Cancelling…": "Отмена…",
+  "Hide details": "Скрыть подробности",
+  "Loading details…": "Загрузка подробностей…",
+  "Job details are unavailable.": "Подробности задачи недоступны.",
+  "No logs or output files yet.": "Пока нет журнала или файлов результата.",
+  Log: "Журнал",
+  "Output files": "Файлы результата",
+  Cancelled: "Отменено",
+  "Details for {recipe}": "Подробности: {recipe}",
+  "Show details for {recipe}": "Показать подробности: {recipe}",
+  "Hide details for {recipe}": "Скрыть подробности: {recipe}",
+  "Cancel {recipe}": "Отменить {recipe}",
+  "{id}: up to {unit, select, minutes {{count, plural, one {# minute} other {# minutes}}} other {{count, plural, one {# second} other {# seconds}}}} per background job{gpu, select, yes {; uses the GPU} other {}}.":
+    "{id}: до {unit, select, minutes {{count, plural, one {# минуты} few {# минут} many {# минут} other {# минуты}}} other {{count, plural, one {# секунды} few {# секунд} many {# секунд} other {# секунды}}}} на фоновую задачу{gpu, select, yes {; использует GPU} other {}}.",
 } satisfies LocaleCatalog;

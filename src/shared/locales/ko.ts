@@ -6033,4 +6033,21 @@ export default {
   "Show us where Genex gets in your way.": "Genex가 어디서 방해되는지 알려 주세요.",
   "Where you go, what fails and how long it takes": "어디로 가고, 무엇이 실패하고, 얼마나 걸리는지",
   "usage data\u0004Share": "공유",
+  "Background jobs": "백그라운드 작업",
+  "Agents can start background jobs. Cancel a running job here.":
+    "에이전트가 백그라운드 작업을 시작할 수 있어요. 실행 중인 작업을 여기서 취소하세요.",
+  "Cancelling…": "취소 중…",
+  "Hide details": "상세 정보 숨기기",
+  "Loading details…": "상세 정보 불러오는 중…",
+  "Job details are unavailable.": "작업 상세 정보를 볼 수 없어요.",
+  "No logs or output files yet.": "아직 로그나 출력 파일이 없어요.",
+  Log: "로그",
+  "Output files": "출력 파일",
+  Cancelled: "취소됨",
+  "Details for {recipe}": "{recipe} 상세 정보",
+  "Show details for {recipe}": "{recipe} 상세 정보 보기",
+  "Hide details for {recipe}": "{recipe} 상세 정보 숨기기",
+  "Cancel {recipe}": "{recipe} 취소",
+  "{id}: up to {unit, select, minutes {{count, plural, one {# minute} other {# minutes}}} other {{count, plural, one {# second} other {# seconds}}}} per background job{gpu, select, yes {; uses the GPU} other {}}.":
+    "{id}: 백그라운드 작업당 최대 {unit, select, minutes {{count, plural, other {#분}}} other {{count, plural, other {#초}}}}{gpu, select, yes {, GPU 사용} other {}}.",
 } satisfies LocaleCatalog;

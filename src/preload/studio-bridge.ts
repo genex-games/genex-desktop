@@ -367,6 +367,9 @@ function pluginCalls(bridge: BridgeCalls) {
   return {
     pluginsList: () => invoke("studio:plugins.list"),
     pluginsCatalog: () => invoke("studio:plugins.catalog"),
+    pluginNativeJobs: (id) => invoke("studio:plugins.native-jobs", { id }),
+    pluginNativeJob: (id, jobId) => invoke("studio:plugins.native-job", { id, jobId }),
+    pluginCancelNativeJob: (id, jobId) => invoke("studio:plugins.cancel-native-job", { id, jobId }),
     pluginEnable: (id, enabled) => invoke("studio:plugins.enable", { id, enabled }),
     pluginRemove: (id) => invoke("studio:plugins.remove", { id }),
     pluginInstall: (id) => invoke("studio:plugins.install", { id }),

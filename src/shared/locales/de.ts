@@ -6321,4 +6321,21 @@ export default {
   "Show us where Genex gets in your way.": "Zeig uns, wo Genex dir im Weg steht.",
   "Where you go, what fails and how long it takes": "Wohin du gehst, was schiefgeht und wie lange es dauert",
   "usage data\u0004Share": "Teilen",
+  "Background jobs": "Hintergrundaufgaben",
+  "Agents can start background jobs. Cancel a running job here.":
+    "Agenten können Hintergrundaufgaben starten. Laufende Aufgaben kannst du hier abbrechen.",
+  "Cancelling…": "Wird abgebrochen…",
+  "Hide details": "Details ausblenden",
+  "Loading details…": "Details werden geladen…",
+  "Job details are unavailable.": "Aufgabendetails sind nicht verfügbar.",
+  "No logs or output files yet.": "Noch keine Protokolle oder Ausgabedateien.",
+  Log: "Protokoll",
+  "Output files": "Ausgabedateien",
+  Cancelled: "Abgebrochen",
+  "Details for {recipe}": "Details für {recipe}",
+  "Show details for {recipe}": "Details für {recipe} anzeigen",
+  "Hide details for {recipe}": "Details für {recipe} ausblenden",
+  "Cancel {recipe}": "{recipe} abbrechen",
+  "{id}: up to {unit, select, minutes {{count, plural, one {# minute} other {# minutes}}} other {{count, plural, one {# second} other {# seconds}}}} per background job{gpu, select, yes {; uses the GPU} other {}}.":
+    "{id}: bis zu {unit, select, minutes {{count, plural, one {# Minute} other {# Minuten}}} other {{count, plural, one {# Sekunde} other {# Sekunden}}}} pro Hintergrundaufgabe{gpu, select, yes {; nutzt die GPU} other {}}.",
 } satisfies LocaleCatalog;

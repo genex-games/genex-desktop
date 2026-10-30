@@ -299,6 +299,8 @@ jobs:
       # without blocking the draft: 12 of its 198 checks broke while it ran only here (0.1.0:
       # launches now open at home, and the runner is too small for Bonsai); restore it once green.
       - run: npm run build && node tests/e2e/run-electron-e2e.mjs && npm run test:agentic-readiness
+      - name: Native background jobs UI
+        run: node tests/e2e/run-native-jobs-ui.mjs
       - name: Build smoke (non-blocking until fixed)
         continue-on-error: true
         run: node tests/e2e/run-build-smoke.mjs

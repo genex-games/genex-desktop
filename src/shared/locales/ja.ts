@@ -6167,4 +6167,21 @@ export default {
   "Show us where Genex gets in your way.": "Genexで困っているところを教えてください。",
   "Where you go, what fails and how long it takes": "どこへ行き、何が失敗し、どれだけ時間がかかったか",
   "usage data\u0004Share": "共有する",
+  "Background jobs": "バックグラウンドタスク",
+  "Agents can start background jobs. Cancel a running job here.":
+    "エージェントはバックグラウンドタスクを開始できます。実行中のタスクはここでキャンセルできます。",
+  "Cancelling…": "キャンセル中…",
+  "Hide details": "詳細を隠す",
+  "Loading details…": "詳細を読み込み中…",
+  "Job details are unavailable.": "タスクの詳細を取得できません。",
+  "No logs or output files yet.": "ログや出力ファイルはまだありません。",
+  Log: "ログ",
+  "Output files": "出力ファイル",
+  Cancelled: "キャンセル済み",
+  "Details for {recipe}": "{recipe}の詳細",
+  "Show details for {recipe}": "{recipe}の詳細を表示",
+  "Hide details for {recipe}": "{recipe}の詳細を隠す",
+  "Cancel {recipe}": "{recipe}をキャンセル",
+  "{id}: up to {unit, select, minutes {{count, plural, one {# minute} other {# minutes}}} other {{count, plural, one {# second} other {# seconds}}}} per background job{gpu, select, yes {; uses the GPU} other {}}.":
+    "{id}：バックグラウンドタスク1件につき最大{unit, select, minutes {{count, plural, other {#分}}} other {{count, plural, other {#秒}}}}{gpu, select, yes {。GPUを使用します} other {}}。",
 } satisfies LocaleCatalog;

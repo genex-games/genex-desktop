@@ -37,6 +37,8 @@ import {
   PluginAccountState,
   PluginCapability,
   PluginChangeReason,
+  NATIVE_JOB_TIMEOUT_MS,
+  NATIVE_JOB_CLEANUP_TIMEOUT_MS,
   PluginFailure,
   PluginHealth,
   PluginInstallProblem,
@@ -172,8 +174,8 @@ export const PLUGIN_CALL_TIMEOUT_MS = 190_000;
 
 /** A plugin tool's call, checked and consented to (`PluginRegistry.prepareTool`): answers as its backend does. */
 export type PreparedToolCall = () => ReturnType<PluginProcess["call"]>;
-/** A tool that runs a native job may wait for its longest job plus this margin. */
-const NATIVE_JOB_MARGIN_MS = 10 * SECOND_MS;
+/** Existing preflight/delivery margin plus the separate cleanup budget; no extra worker compute. */
+const NATIVE_JOB_MARGIN_MS = 10 * SECOND_MS + NATIVE_JOB_CLEANUP_TIMEOUT_MS;
 /**
  * The longest page of a skill file one read answers: under the Claude CLI's ceiling for an MCP
  * tool result, and small enough for a local model, whose plugin tool results are not clipped.
@@ -1530,7 +1532,9 @@ export class PluginRegistry {
   callCeilingOf(agentName: string): number {
     const [id = "", tool = ""] = agentName.split("__");
     const p = this.#installed.get(id);
-    const nativeJobTimeouts = (p?.manifest.nativeJobs ?? []).map((j) => j.timeoutMs + NATIVE_JOB_MARGIN_MS);
+    const nativeJobTimeouts = (p?.manifest.nativeJobs ?? []).map(
+      (j) => Math.min(j.timeoutMs, NATIVE_JOB_TIMEOUT_MS) + NATIVE_JOB_MARGIN_MS,
+    );
     const declared = p?.manifest.tools.find((t) => t.name === tool)?.timeoutMs ?? 0;
     return Math.max(PLUGIN_CALL_TIMEOUT_MS, declared, ...nativeJobTimeouts);
   }
@@ -1564,8 +1568,10 @@ export class PluginRegistry {
    * Hold every live plugin at its current version while a session uses it; an update that arrives
    * meanwhile waits in `#pending` and activates when the last lease on it is released.
    */
-  lease() {
-    const ids = this.#live().map((p) => p.manifest.id);
+  lease(pluginIds?: readonly string[]) {
+    const ids = this.#live()
+      .map((p) => p.manifest.id)
+      .filter((id) => !pluginIds || pluginIds.includes(id));
     for (const id of ids) this.#leases.set(id, (this.#leases.get(id) ?? 0) + 1);
     let released = false;
     return async () => {
@@ -2141,7 +2147,9 @@ export class PluginRegistry {
         this.#active(id);
         return this.#runHostTool(id, host, args, binding, signal);
       };
-    const nativeJobTimeouts = (p.manifest.nativeJobs ?? []).map((j) => j.timeoutMs + NATIVE_JOB_MARGIN_MS);
+    const nativeJobTimeouts = (p.manifest.nativeJobs ?? []).map(
+      (j) => Math.min(j.timeoutMs, NATIVE_JOB_TIMEOUT_MS) + NATIVE_JOB_MARGIN_MS,
+    );
     const ceiling = Math.max(PLUGIN_CALL_TIMEOUT_MS, timeoutMs, declaration.timeoutMs ?? 0, ...nativeJobTimeouts);
     // The person's edit on the card (`confirmationInput`) is the call's value for that parameter.
     const parameter = declaration.confirmationInput?.parameter;

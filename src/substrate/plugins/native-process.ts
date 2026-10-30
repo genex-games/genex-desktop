@@ -6,6 +6,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { SECOND_MS } from "../../shared/duration.ts";
 import { StudioPlatform } from "../../shared/boot.ts";
+import { NATIVE_JOB_CLEANUP_TIMEOUT_MS } from "../../shared/plugins.ts";
 import { isGenexSlug } from "../genex-game-settings.ts";
 import { killProcessTree } from "../process-tree.ts";
 import { type ProcessSandbox, shellQuote } from "../spawn.ts";
@@ -53,7 +54,16 @@ const SHEBANG_READ_BYTES = 256;
 const MESSAGE = {
   InvalidCacheIdentity: "Invalid native application cache identity",
   CacheCrossesSymlink: "Native runtime cache crosses a symlink",
+  CleanupFailed: "Native job cleanup failed or exceeded its ten-second budget. Inspect the runtime before retrying.",
 } as const;
+
+/** Cleanup failure must fail every caller, even one that only reads the worker's exit code. */
+export class NativeCleanupError extends Error {
+  constructor() {
+    super(MESSAGE.CleanupFailed);
+    this.name = "NativeCleanupError";
+  }
+}
 
 /** The folder a runtime may start programs from: its `.app` bundle, or the executable's own directory. */
 export function runtimeRoot(binary: string): string {
@@ -330,7 +340,11 @@ async function descendants(root: number): Promise<number[]> {
   return found;
 }
 /** Why a native process ended (`NativeProcessResult.reason`); a signal at exit replaces `exit` with its name. */
-export const NativeEndReason = { Exit: "exit", Cancelled: "cancelled", Timeout: "timeout" } as const;
+export const NativeEndReason = {
+  Exit: "exit",
+  Cancelled: "cancelled",
+  Timeout: "timeout",
+} as const;
 export type NativeEndReason = (typeof NativeEndReason)[keyof typeof NativeEndReason];
 
 /** One confined native run: what it runs, what it may read and write, and its limits. */
@@ -407,21 +421,24 @@ async function prepareSandbox(p: SandboxRequest): Promise<{ profile: string; hom
 }
 
 /** Kill a child's whole tree: descendants are listed first, while each still has its parent. */
-export function treeKiller(child: ChildProcess) {
-  const kill = (pid: number) => {
+export function treeKiller(child: Pick<ChildProcess, "pid" | "exitCode" | "signalCode">) {
+  const kill = (pid: number, signal: NodeJS.Signals = "SIGKILL") => {
     try {
-      process.kill(pid, "SIGKILL");
-    } catch {}
-  };
-  const killGroup = () => {
-    if (!child.pid) return;
-    try {
-      process.kill(-child.pid, "SIGKILL");
-    } catch {
-      kill(child.pid);
+      process.kill(pid, signal);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
     }
   };
-  // The tree is read before the group is stopped, while every descendant still has its parent.
+  const signalGroup = (signal: NodeJS.Signals) => {
+    if (!child.pid) return;
+    try {
+      process.kill(-child.pid, signal);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+      if (child.exitCode === null && child.signalCode === null) kill(child.pid, signal);
+    }
+  };
+  // Freeze compute immediately, then read the tree while every descendant still has its parent.
   // Windows has no `ps` or process groups: `taskkill /T` walks the tree itself.
   return async () => {
     const running = child.pid && child.exitCode === null && child.signalCode === null;
@@ -429,14 +446,20 @@ export function treeKiller(child: ChildProcess) {
       if (running) await killProcessTree(child.pid);
       return;
     }
+    if (running) signalGroup("SIGSTOP");
     const tree = running ? await descendants(child.pid as number) : [];
-    killGroup();
+    signalGroup("SIGKILL");
     for (const pid of tree) kill(pid);
   };
 }
 
 /** The tail of a child's stdout and stderr, each kept to `maxBytes`. */
-function captureOutput(child: ChildProcessByStdio<null, Readable, Readable>, maxBytes: number) {
+type NativeWorker = Pick<ChildProcess, "pid" | "exitCode" | "signalCode" | "on" | "once"> & {
+  stdout: Readable;
+  stderr: Readable;
+};
+
+function captureOutput(child: NativeWorker, maxBytes: number) {
   const output = { stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
   child.stdout.on("data", (b) => {
     output.stdout = Buffer.concat([output.stdout, b]).subarray(-maxBytes);
@@ -448,69 +471,91 @@ function captureOutput(child: ChildProcessByStdio<null, Readable, Readable>, max
 }
 
 /**
- * Watch a started job until it is recorded: a stop or the timeout kills its whole tree, and its
- * exit settles the result once its pipes close (or a short grace later).
+ * Watch worker compute separately from bounded cleanup; neither a late abort nor pipe draining
+ * can turn a timely exit into a compute timeout. Injectable tree cleanup proves deadline races.
  */
-function superviseJob(
-  child: ChildProcessByStdio<null, Readable, Readable>,
+export function superviseNativeJob(
+  child: NativeWorker,
   p: NativeProcessRequest,
   resolve: (result: NativeProcessResult) => void,
   reject: (error: Error) => void,
+  killAll = treeKiller(child),
 ) {
-  let reason: string = NativeEndReason.Exit,
-    settled = false;
-  const killAll = treeKiller(child);
-  const abort = () => {
-    reason = NativeEndReason.Cancelled;
-    void killAll();
-  };
-  const timer = setTimeout(() => {
-    reason = NativeEndReason.Timeout;
-    void killAll();
-  }, p.timeoutMs);
-  timer.unref();
-  p.signal.addEventListener("abort", abort, { once: true });
-  if (p.signal.aborted) abort();
+  let reason: string = NativeEndReason.Exit;
+  let settled = false,
+    exited = false;
+  let code: number | null = null,
+    signal: NodeJS.Signals | null = null;
+  let exitError: Error | undefined, killing: Promise<void> | undefined;
+  let cleanupTimer: ReturnType<typeof setTimeout> | undefined, grace: ReturnType<typeof setTimeout> | undefined;
   const output = captureOutput(child, p.maxOutputBytes);
-  const cleanup = () => {
-    clearTimeout(timer);
-    p.signal.removeEventListener("abort", abort);
-  };
-  const finish = async (code: number | null, signal: NodeJS.Signals | null) => {
+  const finish = (clean: boolean) => {
     if (settled) return;
     settled = true;
-    cleanup();
-    // Nothing the job started may keep writing to its output once the job is recorded.
-    await killAll();
+    clearTimeout(timer);
+    clearTimeout(cleanupTimer);
+    clearTimeout(grace);
+    p.signal.removeEventListener("abort", abort);
+    child.stdout.destroy();
+    child.stderr.destroy();
+    if (!clean) {
+      reject(new NativeCleanupError());
+      return;
+    }
+    if (exitError) {
+      reject(exitError);
+      return;
+    }
+    const ended = reason === NativeEndReason.Exit && signal ? `Runtime terminated by ${signal}` : reason;
     resolve({
       code,
       signal,
       stdout: output.stdout.toString("utf8"),
       stderr: output.stderr.toString("utf8"),
-      reason: reason === NativeEndReason.Exit && signal ? `Runtime terminated by ${signal}` : reason,
+      reason: ended,
       pid: child.pid ?? null,
     });
   };
-  child.on("error", (e) => {
-    if (settled) return;
-    settled = true;
-    cleanup();
-    void killAll().finally(() => reject(e));
+  const beginCleanup = () => {
+    clearTimeout(timer);
+    p.signal.removeEventListener("abort", abort);
+    cleanupTimer ??= setTimeout(() => finish(false), NATIVE_JOB_CLEANUP_TIMEOUT_MS);
+    killing ??= killAll();
+    return killing;
+  };
+  const drain = () => {
+    void beginCleanup().then(
+      () => finish(true),
+      () => finish(false),
+    );
+  };
+  const stop = (why: NativeEndReason) => {
+    if (exited || reason !== NativeEndReason.Exit) return;
+    reason = why;
+    void beginCleanup().catch(() => finish(false));
+  };
+  const abort = () => stop(NativeEndReason.Cancelled);
+  const timer = setTimeout(() => stop(NativeEndReason.Timeout), p.timeoutMs);
+  timer.unref();
+  p.signal.addEventListener("abort", abort, { once: true });
+  if (p.signal.aborted) abort();
+  child.once("error", (error) => {
+    exitError = error;
+    exited = true;
+    drain();
   });
   // 'close' waits for every pipe. A descendant holding one must not keep the job running after
   // it exited: wait a bounded moment for the last output, then record the result regardless.
-  child.on("exit", (code, signal) => {
-    void killAll();
-    const grace = setTimeout(() => {
-      child.stdout.destroy();
-      child.stderr.destroy();
-      void finish(code, signal);
-    }, CLOSE_GRACE_MS);
+  child.once("exit", (exitCode, exitSignal) => {
+    exited = true;
+    code = exitCode;
+    signal = exitSignal;
+    void beginCleanup().catch(() => finish(false));
+    grace = setTimeout(drain, CLOSE_GRACE_MS);
     grace.unref();
-    child.once("close", () => {
-      clearTimeout(grace);
-      void finish(code, signal);
-    });
+  });
+  child.once("close", () => {
+    if (exited) drain();
   });
 }
 
@@ -532,7 +577,7 @@ export async function spawnNativeLongLived(
   });
   const killAll = treeKiller(child);
   // Nothing the game started outlives it.
-  child.once("exit", () => void killAll());
+  child.once("exit", () => void killAll().catch(() => {}));
   return child;
 }
 
@@ -546,7 +591,7 @@ export async function runNativeProcess(p: NativeProcessRequest): Promise<NativeP
       detached: true,
       stdio: ["ignore", "pipe", "pipe"],
     });
-    superviseJob(child, p, resolve, reject);
+    superviseNativeJob(child, p, resolve, reject);
   });
 }
 
