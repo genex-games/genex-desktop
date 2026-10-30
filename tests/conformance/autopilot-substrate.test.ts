@@ -1,6 +1,6 @@
 /**
  * Substrate additions for Autopilot: preview pool, worktree RPC,
- * per-directory delegation lock, budget ledger, and the judge/ freeze. All behavior-preserving
+ * per-directory delegation lock and budget ledger. All behavior-preserving
  * for existing callers — these tests assert the new seams and the old defaults side by side.
  */
 import assert from "node:assert/strict";
@@ -12,7 +12,6 @@ import { EngineId } from "../../src/shared/providers.ts";
 import { PreviewPool } from "../../src/substrate/preview-pool.ts";
 import type { PreviewPort } from "../../src/substrate/preview-port.ts";
 import type { DelegateResult } from "../../src/substrate/engines/types.ts";
-import { tools as selfTools } from "../../src/harness-seed/tools/self-tools.ts";
 import { makeFakePreview, startRig, type Rig } from "../helpers/studio-rig.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
@@ -164,28 +163,9 @@ describe("budget ledger", () => {
   });
 });
 
-describe("judge freeze (seed guard)", () => {
-  it("write_own_file refuses judge/ before touching anything", async () => {
-    const write = selfTools.find((tool: { name: string }) => tool.name === "write_own_file") as {
-      execute: (args: Record<string, unknown>, ctx: unknown) => Promise<unknown>;
-    };
-    const ctx = {
-      workspace: "/nowhere",
-      call: async () => {
-        throw new Error("must refuse before any substrate call");
-      },
-      notify: () => {},
-    };
-    await assert.rejects(
-      write.execute({ file: "judge/blind-compare.md", contents: "x", reason: "test" }, ctx),
-      /judge\/ is frozen/,
-    );
-    await assert.rejects(write.execute({ file: "judge", contents: "x", reason: "test" }, ctx), /frozen/);
-  });
-});
-
 describe("autopilot substrate over the real rig", () => {
-  it("worktree RPC, per-cwd delegation lock, cwd jail, and the sandboxed judge/ denial", async () => {
+  // Flipped (phase 5): the seed ships no judge rubrics, so there is no judge/ folder to deny or read.
+  it("worktree RPC, per-cwd delegation lock and cwd jail", async () => {
     const rig = await startRig();
     rigs.push(rig);
     const api = apiOf(rig);
@@ -215,26 +195,14 @@ describe("autopilot substrate over the real rig", () => {
     assert.equal(exec.code, 0);
     assert.equal((await readFile(path.join(wt1.path, "facet-note.txt"), "utf8")).trim(), "facet-work");
 
-    // — the sandbox denies writes into judge/ even via raw shell —
-    const judgeFiles = await api["run.exec"]!({ command: "ls judge" }).then((r) => (r as { stdout: string }).stdout);
-    assert.ok(judgeFiles.trim().length > 0, "the seed ships judge rubrics");
-    const denied = (await api["run.exec"]!({
-      command: "echo bent-yardstick >> judge/$(ls judge | head -1)",
-    })) as { code: number | null };
-    assert.notEqual(denied.code, 0, "a judge/ write must be denied by the sandbox");
-    const readsFine = (await api["run.exec"]!({
-      command: "cat judge/$(ls judge | head -1) > /dev/null && echo ok",
-    })) as { code: number | null; stdout: string };
-    assert.equal(readsFine.stdout.trim(), "ok", "judge/ stays readable — frozen, not hidden");
-
-    // — nor into the harness's own code, from its folder or any other: that goes through the
+    // — the sandbox denies writes into the harness's own code, from its folder or any other: that goes through the
     //   self-edit gate (write_own_file), never around it —
     const harnessWs = rig.core.layout.harnessWs;
     for (const [command, cwd] of [
       ["echo 'export const x = 1;' > tools/x.ts", undefined],
       ["echo '// bent' >> loop/main.ts", undefined],
       ["echo '{}' > tsconfig.json", undefined],
-      // B7: prompts and skills change only through guardian.write_self, like the judge never does.
+      // B7: prompts and skills change only through guardian.write_self.
       ["echo note > skills/.probe", undefined],
       ["echo note > prompts/.probe", undefined],
       [`echo 'export const y = 1;' > ${JSON.stringify(path.join(harnessWs, "memory", "y.ts"))}`, wt1.path],
