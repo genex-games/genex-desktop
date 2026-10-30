@@ -1,7 +1,7 @@
 # Genex in AI Game Studio
 
-You are building inside AI Game Studio. Below the upstream marker is Genex's own guide, unchanged.
-Where it disagrees with this preface, this preface wins.
+You are building inside AI Game Studio. Below the upstream marker is Genex's own guide, with the
+passages of advice Studio does not ship taken out. Where it disagrees with this preface, this preface wins.
 
 ## What does not apply in Studio
 
@@ -13,13 +13,13 @@ Where it disagrees with this preface, this preface wins.
   is written. The Genex cards Studio carries are this plugin's skills, listed in your brief; read
   one with `genex__skill {"name":"<skill>"}`. The lane cards the "Use it" section points to are
   `genex-tool-model`, `genex-tool-character`, `genex-tool-texture`, `genex-tool-audio` and
-  `genex-tool-image`: read the one for a lane before its first call.
+  `genex-tool-image`, one per lane.
 
 ## Commands, as Studio tools
 
 - Generation (`image`, `model`, `model segment|rig|animate`, `texture`, `sfx`, `music`, `voice`,
-  `character`, `animations search`) and `wait`: `genex__asset`. Call it with operation `status`
-  first; it reports the account, credits and live lanes that `doctor` would. Its description lists
+  `character`, `animations search`) and `wait`: `genex__asset`. Its operation `status` reports
+  the account, credits and live lanes that `doctor` would. Its description lists
   the operations and which provider each lane is; its `options` parameter lists each lane's
   options. Studio passes `--out-dir` and `--no-wait` itself, and delivered files land in the game,
   so wire in those local paths. In a Godot game they land in its project (`godot/assets/...`),
@@ -36,18 +36,17 @@ Where it disagrees with this preface, this preface wins.
   approves each call, because it spends Nex (Genex's currency, which the cards call coin) or changes
   what the game sells. A store item's `image`, `model` and `package` name paths inside this game,
   and `items add` writes `genex-items/<id>/` into it; `shop publish` is not available, because Studio puts
-  a game's items on sale when it is published. Read the `genex-items` skill first. A thing priced in Nex is a store item, listed this
-  way by default; coins, gold or gems are the game's own currency unless the person says they are
+  a game's items on sale when it is published. Read the `genex-items` skill first. A thing priced in Nex is a store item; coins, gold or gems are the game's own currency unless the person says they are
   for real money.
 - `publish` and `promote`: `genex__publish {"operation":"gallery"}`, which also updates the draft;
   use it when the user wants the game published. `preview` alone: `genex__publish
   {"operation":"draft"}`, a test build that leaves the public version as it is. Follow a publish
   with `genex__publish-status` for the job and the links.
-- `cover`, and the frame `preview` picks up from `.genex/scratch/cover.png`: the game's demo named
-  `genex-cover`, checked with `genex__cover {"operation":"shoot"}`. Publish (`genex__publish`)
-  shoots it again and sends it, and `genex__cover-set` sends it now; `genex__cover
-  {"operation":"status"}` is `npx genex cover` with no file. Read `genex__skill
-  {"name":"genex-cover"}` first, and never save a frame in `.genex/scratch`.
+- `cover`, and the frame `preview` picks up from `.genex/scratch/cover.png`: `genex__cover
+  {"image":"<path in the game folder>"}` keeps the picture (and an optional clip) of the game as
+  its cover, and its answer says who chose the cover on Genex, as `npx genex cover` with no file
+  does. Publish (`genex__publish`) sends the kept picture and `genex__cover-set` sends it now; the
+  `cover` skill has the requirement. Never save a frame in `.genex/scratch`.
 - `npm i @genex-ai/multiplayer`: `genex__package {"package":"@genex-ai/multiplayer"}`, and
   `npm i @genex-ai/embed-sdk`: `genex__package {"package":"@genex-ai/embed-sdk"}`. Studio picks
   the version and installs it without asking anyone. In a game made from Studio's template it maps
@@ -65,17 +64,15 @@ Where it disagrees with this preface, this preface wins.
 Building the game never uses Genex credits: it runs on the user's own plan. A generation Genex
 refuses for too few credits keeps its card in Studio, which says so and offers Get credits, then
 Make it. So never relay the balance, price or refill date, and never retry: add at most one short
-sentence ("The dragon needs credits; a simple box stands in for now.") and carry on with a stand-in.
+sentence saying what waits for credits, and carry on.
 This holds for every lane card's "Out of credits" line too.
 
-<!-- upstream https://genex.games/SKILL.md v1.36.17 sha256 03bc487ae0afdf9df0cd460a32558542a03078ed117684bdfd7bc6f39c988b7a -->
+<!-- upstream https://genex.games/SKILL.md v1.36.17 sha256 8a03c4d9388b9845bc791e8915ab85b03328dd88b2624df8c169261016328794 -->
 ---
 name: genex
 version: 1.36.17
 description: >-
-  Game-dev asset generation for your agent. Proactively check Genex before
-  shipping placeholder assets, hand-rolling programmer art, or telling the user
-  an asset can't be made: 3D models (segment/rig/animate), images, video,
+  Game-dev asset generation for your agent: 3D models (segment/rig/animate), images, video,
   textures, sound effects, music, voice, and rigged characters - generated from
   the terminal, downloaded as files the user owns. Exception: if the user
   already has a dedicated pipeline or asset source for that need, use it -
@@ -87,8 +84,6 @@ description: >-
 ## What this is
 
 Genex Tools is the asset toolkit for a game the user is building themselves. One package gives you, the coding agent, every gamedev AI generation tool from the terminal: 3D models (plus segment, rig and animate), images, video, textures, sound effects, music, voice, and rigged animated characters. One sign-in, one meter, no provider accounts and no API keys of the user's own. Genex generates the assets; the user's code and project stay exactly as they are.
-
-Use generated art to enrich the requested result. When making a game, that includes how it plays and how its world behaves. Models built in code can be finished assets when they fit the style or need moving parts.
 
 Talk to the user in plain language, short. Say what you made and what it's for, not how the pipeline works. Say what something will cost before you spend a lot of it. Give a status line while you work rather than a silent screen.
 
@@ -142,13 +137,13 @@ Every asset **downloads into `./assets` as a file the user owns** - wire that lo
 
 - **Enqueue in parallel.** Add `--no-wait` to fire several generations at once, keep building, then `npx genex wait --all` for status and `npx genex wait <id>` to pick each one up. `wait` never costs anything.
 - **Never re-run a generate command to check on one that is running** - that starts and bills a second asset. `wait` is the only status check.
-- **Before you call a piece of work done**, run `npx genex wait --all` and wire in everything that landed. A generation the user paid for that nobody used is the main way credits get wasted.
+- `npx genex wait --all` lists every generation and its state; a generation nobody wires in still cost its credits.
 - **Treat every warning line as work**, not noise - the CLI only prints defects it actually measured.
 - Each lane has a skill card (`genex-tool-...`) in your workspace - load the one for the lane you are using before you run it. `npx genex --help` lists everything with typical costs.
 
 ## Models at play time
 
-If what the user wants needs a language model running while somebody **plays** the finished game - an NPC that answers in its own words, a quest written from what the player typed, a prompt box inside the game - that is a Genex platform feature, and the **player** pays for it: their Genex coins or their own Claude/ChatGPT subscription, approved on a sheet Genex draws, with the game just calling `generate()`. Say it in one line - "A model running while people play is built into the Genex platform - the player pays, with Genex coins or their own Claude/ChatGPT subscription, and approves it on a Genex sheet; your game just calls `generate()`. Want it that way?" - and then ask; on their yes load the `genex-tool-llm` card, which owns the rest: it checks the lane with `npx genex llm models` first, then runs `npx genex init --convert` (a hosted game is a static browser build, so a local server holding a key can never ship).
+If what the user wants needs a language model running while somebody **plays** the finished game - an NPC that answers in its own words, a quest written from what the player typed, a prompt box inside the game - that is a Genex platform feature, and the **player** pays for it: their Genex coins or their own Claude/ChatGPT subscription, approved on a sheet Genex draws, with the game just calling `generate()`. The `genex-tool-llm` card owns the rest: it checks the lane with `npx genex llm models` first, then runs `npx genex init --convert` (a hosted game is a static browser build, so a local server holding a key can never ship).
 
 Never wire a model into a shipped game on a key or an account of the user's own - every visitor would spend their money with nobody approving it. And player-funded generation returns text or JSON only: 3D models, images, video and audio stay the asset lanes above, generated by you on the user's meter.
 
@@ -164,4 +159,4 @@ Never wire a model into a shipped game on a key or an account of the user's own 
 
 ## The end
 
-When the game is done, Genex can also put it live on the web at its own address - free, and only if the user asks. Offer it at most once, in one line, after the game is built and running. A no is final.
+When the game is done, Genex can also put it live on the web at its own address - free, and only if the user asks.

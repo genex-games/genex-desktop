@@ -140,7 +140,7 @@ Rules that keep it correct:
   when they expire, so destruction is acknowledged and idempotent across reconnects. **Always cap
   them**: every spawned id counts against the room's 128-object limit until removed, and each live
   projectile publishing at 30 Hz spends 30/s of your bulk budget. Keep a small per-player cap
-  (2–3, netcode-park ships 2) and remove the OLDEST before spawning past it:
+  and remove the OLDEST before spawning past it:
 
   ```ts
   const live = new Map<string, Projectile>(); // insertion order = age
@@ -217,23 +217,8 @@ Chat has its own channel — **never build it on `send`**. The relay stamps the 
 verified session, sanitizes the text, and replays the recent history to late joiners; `send` gives
 you none of that and lets a client post under any name it likes.
 
-Install the overlay with `npx genex controller chat` (writes `src/controllers/chat/chat-overlay.ts`),
-then wire it:
 
-```ts
-import { ChatOverlay } from "./controllers/chat/chat-overlay.ts";
-
-const chat = new ChatOverlay({
-  room,
-  onTypingChange: (typing) => { keyboard.enabled = !typing; },   // ← REQUIRED, see below
-});
-```
-
-**The one bug everybody ships: the game reads the keyboard while the player types.** Someone
-types "was that a wall?" and their character walks, reverses and jumps. Either pass
-`onTypingChange` (above) or check `chat.isTyping` in your input code. There is no third option.
-
-Rolling your own UI instead? Three rules:
+The API's three behaviours:
 
 ```ts
 room.chat.send("on my way");            // your OWN line comes back via on() — don't also append it

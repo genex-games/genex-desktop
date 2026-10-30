@@ -1,17 +1,17 @@
 # Genex player identity in AI Game Studio
 
 You are building inside AI Game Studio. Below the upstream marker is Genex's embed-auth card,
-unchanged. Where it disagrees with this preface, this preface wins.
+with the passages of advice Studio does not ship taken out. Where it disagrees with this preface, this preface wins.
 
 ## Where each part can be tested
 
 - Studio's preview opens a game that uses `@genex-ai/embed-sdk` in local test mode
-  (`?genex_local_test=1`) for you. Rendering, controls, HUD and feel can be checked there.
+  (`?genex_local_test=1`) for you. Rendering and controls run there.
   Sign-in, saves, leaderboards and multiplayer cannot: that is expected, not a bug to chase.
 - The owner can try sign-in and multiplayer on the published Genex draft: build the game, add the
   package with `genex__package {"package":"@genex-ai/embed-sdk"}`, publish a draft with
   `genex__publish {"operation":"draft"}`, wait with `genex__publish-status`, then hand the draft
-  link to the user. Label your evidence as the card asks.
+  link to the user.
 - Server saves never persist on the draft: loads and saves resolve `{ staging: true }` there by
   design, as the card says. They persist only once the game is published to the gallery, which
   happens only when the user wants it public. Keep the card's localStorage fallback.
@@ -55,16 +55,16 @@ export const GENEX = {
 does not apply: Studio pins its Genex packages. Other commands map onto Studio tools as the
 `genex` skill describes (`genex__skill {"name":"genex"}`).
 
-<!-- upstream @genex-ai/cli-demo/templates/skills/genex-threejs-embed-auth/SKILL.md v1.36.17 sha256 fecb950fd6dfcb576ea6e80410d644d189fb965701a4091b28c825ad0e27f810 -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-threejs-embed-auth/SKILL.md v1.36.17 sha256 793bc239e122181cbfee1552efa6141ec29eaf2383cb188696109c6af10e39ae -->
 ---
 name: genex-threejs-embed-auth
-description: Wire up player identity AND durable game state for a Genex game via @genex-ai/embed-sdk. Load this UNCONDITIONALLY for every game, multiplayer or not, BEFORE writing any boot code — every player gets an identity (signed-in account or guest); per-player saves, shared world state, and leaderboards are one-line SDK calls; multiplayer requires the SDK's token either way. Also holds the shells table: what a game may do on its Genex page, in the app and on its own link.
+description: Wire up player identity AND durable game state for a Genex game via @genex-ai/embed-sdk. Every player gets an identity (signed-in account or guest); per-player saves, shared world state, and leaderboards are one-line SDK calls; multiplayer requires the SDK's token either way. Also holds the shells table: what a game may do on its Genex page, in the app and on its own link.
 ---
 
 # Genex Three.js Embed Auth
 
 `@genex-ai/embed-sdk` is how a Genex game learns **who is playing it** — and
-how it **saves**. Every game needs it. Published games are playable by
+how it **saves**. Published games are playable by
 **guests** (no account — the SDK mints a temporary identity like `Guest-1234`
 automatically), while **signing in** unlocks saving/loading progress (each
 player gets their own save slot) and leaderboard entries; multiplayer works
@@ -126,7 +126,7 @@ npm i @genex-ai/embed-sdk
 (Already installed if you followed Step 3 of the scaffold; repeated here so
 this skill is self-contained.)
 
-## Bootstrap (required, every game)
+## Bootstrap
 
 ```ts
 // main.ts — the FIRST thing in the boot sequence, before any other game code
@@ -148,10 +148,6 @@ shows black for all of them — and forever when `initEmbed()` was never called,
 because nothing else resolves that promise. Renderer, scene, camera, first
 frame, then the await, down where the name or the avatar is actually used.
 
-Also give `<body>` a dark background in `index.html` (e.g.
-`<body style="margin:0;background:#080a14">`) — it makes the pre-boot frame
-(before any JS runs) match the SDK's own loading overlay instead of flashing
-white, and every Genex surface assumes a dark canvas anyway.
 
 Scene setup and asset loading may continue immediately after this call — auth
 never blocks rendering. There are **two gates**, and picking the right one
@@ -454,13 +450,9 @@ download link and a browser dialog all work here and are dead there
 
 Rules:
 
-- **Label the evidence** in your handoff: "validated in local test mode —
-  auth, saves, and multiplayer not exercised." Presenting a local-test
-  capture as full validation is an over-claim.
 - Pointer lock still can't be acquired headlessly (`requestPointerLock`
   throws in headless Chromium): for aim games validate the unlocked "click
-  to aim" cue and the wiring, not the lock itself (see
-  `$genex-threejs-visual-validation` step 6).
+  to aim" cue and the wiring, not the lock itself.
 - The marker is inert on any hosted URL, on https, and inside any iframe —
   local test mode cannot open the hosted draft; hosted draft access stays
   owner-only. Do NOT work around that gate: no undocumented URL fragments,
@@ -471,11 +463,8 @@ Rules:
   works on every SDK since 0.5.0. `?genex_auth=1` opts that dev-server tab
   back into the real identity flow — that's for debugging real sign-in, not
   for self-testing.
-- The owner's draft run-through stays a required beat, not a fallback: push
-  `genex preview` at each playable milestone and hand it off plainly ("check
-  the draft — you can now X; ping me if something feels off"), then keep
-  building while they look. Hosted QA catches what local test mode can't:
-  real identity, saves, multiplayer, feel. Once the game is **published**,
+- A hosted draft exercises what local test mode can't: real identity,
+  saves, multiplayer. Once the game is **published**,
   any fresh browser gets in as a guest, so full visual validation also works
   without the marker.
 
@@ -497,8 +486,6 @@ Rules:
 - [ ] No token value is ever logged or sent to analytics.
 - [ ] No custom sign-in prompt, guest badge, or auth overlay — the SDK popover/
       overlay and the dashboard own all of that UX.
-- [ ] Self-test evidence captured in local test mode is labeled as such in the
-      handoff ("local test mode — auth, saves, and multiplayer not exercised").
 - [ ] Every browser or device API the game calls has its row in
       [references/shells.md](references/shells.md): sharing, copying, links
       out, file saves and fullscreen go through the SDK calls, from a click

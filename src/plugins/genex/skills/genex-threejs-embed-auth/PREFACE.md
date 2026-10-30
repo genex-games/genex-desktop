@@ -1,17 +1,17 @@
 # Genex player identity in AI Game Studio
 
 You are building inside AI Game Studio. Below the upstream marker is Genex's embed-auth card,
-unchanged. Where it disagrees with this preface, this preface wins.
+with the passages of advice Studio does not ship taken out. Where it disagrees with this preface, this preface wins.
 
 ## Where each part can be tested
 
 - Studio's preview opens a game that uses `@genex-ai/embed-sdk` in local test mode
-  (`?genex_local_test=1`) for you. Rendering, controls, HUD and feel can be checked there.
+  (`?genex_local_test=1`) for you. Rendering and controls run there.
   Sign-in, saves, leaderboards and multiplayer cannot: that is expected, not a bug to chase.
 - The owner can try sign-in and multiplayer on the published Genex draft: build the game, add the
   package with `genex__package {"package":"@genex-ai/embed-sdk"}`, publish a draft with
   `genex__publish {"operation":"draft"}`, wait with `genex__publish-status`, then hand the draft
-  link to the user. Label your evidence as the card asks.
+  link to the user.
 - Server saves never persist on the draft: loads and saves resolve `{ staging: true }` there by
   design, as the card says. They persist only once the game is published to the gallery, which
   happens only when the user wants it public. Keep the card's localStorage fallback.

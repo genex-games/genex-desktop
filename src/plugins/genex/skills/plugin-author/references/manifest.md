@@ -48,7 +48,7 @@ manifest requires may be empty). `plugin_check` names the first thing Genex refu
   `restore.after`, `worker.start`, `worker.end`, `tool.before`, `tool.after`, `health`, `crash`,
   `finish`. A handler answers `{}`, `{note}`, `{block}` (stops what blocks, a note elsewhere),
   `{pending}` or `{images}`.
-- `observers` (API 3): what Genex captures as evidence for the reviewer, `{id, facts, tool, live?, label?}`,
+- `observers` (API 3): pictures Genex captures of a game, `{id, facts, tool, live?, label?}`,
   the tool a harness tool answering `{images}` (base64 PNG); `"live": "stills"` shows them in Live,
   and `label` names that view's tab when a folder has more than one view (else the plugin's name).
 - `workspace` (API 3): `ignore` (kept out of the project's history) and `copySkip` (not copied into
@@ -60,9 +60,9 @@ manifest requires may be empty). `plugin_check` names the first thing Genex refu
   place, one at a time).
 - `scaffolds` (API 3): the kinds of project its tools make, `{id, label, tool}`, the tool one that
   declares `makes`; the label names the kind beside the project.
-- `judges` (API 3, beside `engine`): blind judges that play the engine's games in its editor,
-  `{id, label, facts?, brief, players?, probe?}`. `brief` is a Markdown file in the package (at most
-  16 000 characters) added to the judge's rubric; `players` at most the engine's `play.players`;
+- `judges` (API 3, beside `engine`): judges that play the engine's games in its editor when a lead
+  asks for a second opinion, `{id, label, facts?, brief, players?, probe?}`. `brief` is a Markdown
+  file in the package (at most 16 000 characters) the judge reads; `players` at most the engine's `play.players`;
   `probe` a harness tool that needs every lock `play-open` needs, which Genex runs once right after
   the judge's play opens (its `note` and `images`, never source, open the judge's first answer).
 
@@ -189,12 +189,12 @@ Write `genex-plugins/sketch/plugin.json`:
 }
 ```
 
-A judge's brief says what it checks, in the player's words; it never mentions code. Write
+A judge's brief says what it looks at, in the player's words. Write
 `genex-plugins/sketch/judges/first-play.md`:
 
 ```markdown
 # First play
 
-Play from the game's first screen as someone who has never seen it. Check that you can tell what to
-do within a minute, that the controls answer at once, and that the first goal can be reached.
+Play from the game's first screen as someone who has never seen it, and report what you could and
+could not do.
 ```

@@ -1,7 +1,8 @@
 # Genex images in AI Game Studio
 
 You are building inside AI Game Studio. Below the upstream marker is Genex's image card,
-unchanged. Where it disagrees with this preface, this preface wins.
+with the passages of advice Studio does not ship taken out. Where it disagrees with this preface,
+this preface wins.
 
 - Run every command through `genex__asset`, never `npx genex`. `npx genex image "<subject>"
   --transparent` is `genex__asset {"operation":"image","prompt":"<subject>","options":
@@ -10,10 +11,8 @@ unchanged. Where it disagrees with this preface, this preface wins.
 - `open` and `glass` are not available in Studio, and neither are `out-dir`, `no-wait` or
   `no-download`: Studio submits every create without waiting and delivers the file into the
   game. Pick it up with operation `wait` and its generationId.
-- An image is for something flat: a decal, a sign, a poster, UI art or an icon. Never stand one in
-  for something the game shows in 3D, such as a crowd, a building or scenery.
 
-<!-- upstream @genex-ai/cli-demo/templates/skills/genex-tool-image/SKILL.md v1.36.17 sha256 d74589a791d7a89475566e72bbc5364e090f2f6fcec7ed78ee36c52a88661f02 -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-tool-image/SKILL.md v1.36.17 sha256 1d288416330d47d7a40823422241bafe76494d3149117eea31307e3e33c9a371 -->
 ---
 name: genex-tool-image
 description: Generate a real image (PNG/JPEG) from a text prompt with `npx genex image` — posters, signs, logos, sprites, icons, card and item art, loading screens, decals, art for in-game screens. Pass `--transparent` for an alpha channel, `--edit` to modify an existing image, `--remove-bg` to cut a background. The file downloads to ./assets and is yours.
@@ -27,7 +26,7 @@ any aspect. It is also the tool for editing an image you already have.
 ## Run
 
 ```bash
-npx genex image "hand-painted wooden tavern sign, weathered iron brackets"
+npx genex image "wooden sign with iron brackets"
 npx genex image "chalk graffiti tag" --transparent    # alpha channel — sprites, icons, logos
 ```
 

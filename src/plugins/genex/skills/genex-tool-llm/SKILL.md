@@ -11,7 +11,7 @@ model lane, unchanged. Where it disagrees with this preface, this preface wins.
 - Other commands map onto Studio tools as the `genex` skill describes
   (`genex__skill {"name":"genex"}`).
 
-<!-- upstream @genex-ai/cli-demo/templates/skills/genex-tool-llm/SKILL.md v1.36.17 sha256 5c36a3715b43ceee8aef777769298d8a686b5fa64b81013b4d4babf49c99ca42 -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-tool-llm/SKILL.md v1.36.17 sha256 2a6574505929f6b51349b4a3766bf39b44f58367f4c641b134d2dafbbb2c223f -->
 ---
 name: genex-tool-llm
 description: A language model running while somebody PLAYS the finished game — an NPC that answers in its own words, a quest written from what the player typed, a prompt box in the game. On Genex the player pays and approves it, so this is a platform feature, never a key on the author's meter. Read this the moment a request implies a model at play time, before building anything.
@@ -49,19 +49,7 @@ Any of these means a model at PLAY time, however it is phrased:
 - "let the player choose a model", "use my API key in the game", "hook a chatbot into it"
 - a judge, a grader, or a referee that reads free-form player input
 
-## Offer it in one line, then ASK
-
-Say this and stop:
-
-> A model running while people play is built into the Genex platform — the
-> player pays, with Genex coins or their own Claude/ChatGPT subscription, and
-> approves it on a Genex sheet; your game just calls `generate()`. Want it
-> that way?
-
-Wait for the answer. Do not start building either version first, and do not
-expand the offer into a pitch — one line, one question.
-
-## On a yes
+## Building it
 
 1. `npx genex llm models` — whether this stand serves the lane at all, and
    which models. It answers in this folder as it is, before anything is

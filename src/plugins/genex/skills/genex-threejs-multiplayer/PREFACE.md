@@ -1,44 +1,47 @@
 # Genex multiplayer in AI Game Studio
 
-You are building inside AI Game Studio. Below the upstream marker is Genex's multiplayer card,
-unchanged. Where it disagrees with this preface, this preface wins.
+You are building inside AI Game Studio. Below the upstream marker is Genex's multiplayer API card,
+with the passages of design advice Studio does not ship taken out. Where it disagrees with this
+preface, this preface wins. How to shape a multiplayer game (menus, lobbies, teams, testing
+routines) is the game's own call; the optional `genex-recommendations` plugin holds Genex's advice
+on it when it is on.
 
 ## A Godot or Unity game has its own
 
 This card is for web games written with npm and three.js. A Godot game gets Genex multiplayer from
 `godot__multiplayer`, then `godot__skill {"name":"godot-multiplayer"}`; a Unity game from
-`unity__multiplayer`, then `unity__skill {"name":"unity-multiplayer"}`. Stop reading here for those,
-and never write a relay server of your own: Genex's relays already serve web, Godot and Unity players.
+`unity__multiplayer`, then `unity__skill {"name":"unity-multiplayer"}`. Genex's relays already
+serve web, Godot and Unity players.
 
-## The player is in their own lobby from the first click
+## Facts the card's removed passages carried
 
-While `mm.matchmaking.status` is `'searching'` the player is in no room yet, so `players`,
-`connectedPlayers` and `opponents` are all empty, and with `minPlayers === maxPlayers` the room
-skips `'waiting'` altogether. A lobby drawn from `players` alone shows the person's own slot empty
-until a match forms, then everyone at once. From the moment they press Play, draw their own slot
-from what this client already knows (their name from `waitForPlayer()`, their colour or avatar),
-count `Math.max(queue.size, 1)` while searching, and fill the other slots from the roster once
-seated. Never wait for the network to show the person to themselves.
+- `connect()` joins the one shared room of the game's slug at once; `matchmake()` puts the player
+  in the queue and the server seats them in capped rooms by the preset in `genex.matchmaking`.
+- A queued or seated player counts toward `minPlayers` until `mm.cancel()` (or `room.leave()` for
+  `connect()`); `matchmake()` and `connect()` are the only calls that reach the relay.
+- While `mm.matchmaking.status` is `'searching'` the player is in no room: `players`,
+  `connectedPlayers` and `opponents` are empty, `queue.size` counts this player, and with
+  `minPlayers === maxPlayers` the room skips `'waiting'`.
+- For `open`, `status` goes `searching` → `waiting` → `playing` once and never back; `matchStart`
+  and `matchEnded` never fire, and `teams`, `myTeam`, `scores` and `winnerId` stay empty.
+  `connectedPlayers` / `session.activePlayers` leave out seats in their reconnect grace.
+- The relay runs no game simulation and no anti-cheat: it enforces identity, ownership, seating
+  and rate and size caps; a client reports its own state.
 
-## Multiplayer runs on the Genex draft link, with two different players
+## Multiplayer runs on the Genex draft link
 
 - Studio's preview is single-player. It opens a game that uses `@genex-ai/embed-sdk` in local
   test mode (`?genex_local_test=1`): the relay gets no credential there, so `connect()` and
-  `matchmake()` fail by design. Rendering, controls and feel can still be checked in the preview.
+  `matchmake()` fail by design. Rendering and controls still run in the preview.
 - The draft link is multiplayer. A draft plays in rooms of its own, apart from the live game, so
   testers on the draft link meet each other and never real players. Anyone with the link can join,
-  as a guest or signed in, before the game is published to the gallery.
-- Check prerequisites before building online features: the pinned SDKs and an authorized hosted
-  test route. Add both SDKs in one call with
-  `genex__package {"package":"@genex-ai/multiplayer"}` (it includes embed-sdk; nobody is asked).
-  Then build the game; publish a draft with
-  `genex__publish {"operation":"draft"}`; wait with `genex__publish-status`; then test on the draft
-  link as TWO DIFFERENT players. Hand the user the link and tell them exactly how: open it in a
-  normal window and an incognito window (the incognito one plays as a guest), or send it to a
-  friend. Two tabs on one account are one player: the newer tab takes the seat. Until two players
-  have played the draft, say plainly that multiplayer was not exercised.
-- Nobody can save or buy on the draft link, the owner included. Test saves and purchases after
-  publishing.
+  as a guest or signed in, before the game is published to the gallery. Two tabs on one account
+  are one player: the newer tab takes the seat (close code 4409).
+- `genex__package {"package":"@genex-ai/multiplayer"}` adds both SDKs in one call (it includes
+  embed-sdk; nobody is asked). `genex__publish {"operation":"draft"}` puts a draft online and
+  `genex__publish-status` gives its link.
+- Nobody can save or buy on the draft link, the owner included: saves and purchases work once the
+  game is published.
 - Studio installs the version it pins, which satisfies the card's `^0.17.0`. Never run
   `npm i` for these packages yourself.
 - A game made from Studio's template has no `package.json`: it loads three.js through an import
@@ -50,13 +53,9 @@ seated. Never wait for the network to show the person to themselves.
   template has no TypeScript build, so leave out the card's type annotations. Its settings go in
   `genex.json` at the game's root (`{"matchmaking": {...}}`) wherever the card says package.json's
   `genex` field. Never copy the SDK into the game by hand.
-- A game with its own build but no `package.json` needs one first: give it one, then call
-  `genex__package`. A game's shape is never a reason to refuse multiplayer: restructure what you
-  must, and keep its single-player play working.
-
-- If approval is declined or times out, or the hosted test route is unavailable, report the
-  specific blocker. Preserve local play; do not retry without changed authorization or claim
-  multiplayer works. Finish independent required work before optional visual polish.
+- A game with its own build but no `package.json` needs one before `genex__package`.
+- When approval is declined or times out, or the hosted test route is unavailable, the answer
+  names the blocker; a declined request is not repeated without the user asking again.
 
 ## Config without `genex init`
 
@@ -79,20 +78,14 @@ export const GENEX = {
 } as const;
 ```
 
-## Reading the references
+## Reading the reference
 
-The card links its references by relative path. Read one with `genex__skill` and the file exactly
-as listed:
-
-- `skills/genex-threejs-multiplayer/references/realtime-patterns.md`
-- `skills/genex-threejs-multiplayer/references/genre-recipes.md`
-- `skills/genex-threejs-multiplayer/references/host-physics.md`
-- `skills/genex-threejs-multiplayer/references/genex-netcode-feel-checklist.md`
-
-For example: `genex__skill {"name":"genex-threejs-multiplayer","file":"skills/genex-threejs-multiplayer/references/genre-recipes.md"}`.
+The card links its reference by relative path. Read it with `genex__skill` and the file exactly as
+listed: `skills/genex-threejs-multiplayer/references/realtime-patterns.md`, for example
+`genex__skill {"name":"genex-threejs-multiplayer","file":"skills/genex-threejs-multiplayer/references/realtime-patterns.md"}`.
 
 ## Commands
 
-`npx genex controller chat`, `npx genex controller voice` and `genex controller character` are not
-available in Studio: build chat, voice and the character from the SDK calls the card shows.
-Commands map onto Studio tools as the `genex` skill describes (`genex__skill {"name":"genex"}`).
+`npx genex controller …` commands are not available in Studio: chat, voice and the character are
+built from the SDK calls the card shows. Commands map onto Studio tools as the `genex` skill
+describes (`genex__skill {"name":"genex"}`).

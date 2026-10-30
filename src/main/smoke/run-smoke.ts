@@ -989,7 +989,7 @@ async function checkPluginSearchAndZoom(buildSmoke: BuildSmoke): Promise<void> {
   check(
     "Skills lists actual installed plugin contributions",
     await waitFor(
-      `document.querySelector('[data-plugins-page] h1')?.textContent==='Skills'&&document.querySelector('[data-plugins-page]')?.textContent.includes('asset-preference')`,
+      `document.querySelector('[data-plugins-page] h1')?.textContent==='Skills'&&document.querySelector('[data-plugins-page]')?.textContent.includes('creator-mcp')`,
     ),
   );
   await capturePlugins("skills");

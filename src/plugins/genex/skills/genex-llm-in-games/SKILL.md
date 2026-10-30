@@ -26,7 +26,7 @@ Read the pricing reference with
 
 Other commands map onto Studio tools as the `genex` skill describes (`genex__skill {"name":"genex"}`).
 
-<!-- upstream @genex-ai/cli-demo/templates/skills/genex-llm-in-games/SKILL.md v1.36.17 sha256 18d32f25298790f1efc9dc3d757aa84cf72e63476448cf9fc73c3594584f2135 -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-llm-in-games/SKILL.md v1.36.17 sha256 69764ecbe9f49aa8eb7f078e6582875a83bcf9107ce62c5c52938d9d528f2fb3 -->
 ---
 name: genex-llm-in-games
 description: Call a language model from inside a running game — an NPC that answers in its own words, a quest written for this save, a judge that reads what the player typed. The PLAYER pays and approves, on a Genex surface the game cannot forge. Covers the two modes (a popup per call, or one standing budget then many silent calls), benchmarking the price before declaring it, the receiver pattern, and honest handling of every refusal.
@@ -220,8 +220,7 @@ await savePlayerState({ ...state, grantId: grant.grantId });
 ```
 
 **The disclosure is computed from this game's own loop, never wished for.** Five
-NPCs deciding once every thirty seconds is ten calls a minute — write that
-arithmetic into `DESIGN.md` beside the feature. The player sees your estimate
+NPCs deciding once every thirty seconds is ten calls a minute. The player sees your estimate
 attributed to the game, beside the platform's own worst case; an estimate that
 is transparently low is a grant that dies mid-session.
 
@@ -230,7 +229,7 @@ into ONE call returning five decisions, cache a decision until the situation
 that caused it changes, pick the cheapest model that passes your own check, and
 never fire on a timer the player cannot see.
 
-Grant endings are ordinary game states with in-fiction copy, never an error toast:
+What each grant-ending code means:
 
 | code | what happened | what the game does |
 | --- | --- | --- |
@@ -281,8 +280,8 @@ There is no compensation lane, so this is all work you do before the call:
 - **Keep prompts short.** Long context is the price.
 - **Never loop `generate()` without a grant**, and never retry in a loop — each
   attempt is a separate charge.
-- **Map every code through `generationErrorMessage(code)`** into in-fiction
-  copy. A player should never read a raw error code inside your game.
+- **`generationErrorMessage(code)`** turns every code into words a player can
+  read.
 - **`status: 'unknown'` is not a failure.** It means the charge is not known
   yet, billing pending. Say "still settling", keep the reserved figure in the
   readout, re-read with `getGeneration(id)` — never call it failed, never retry.
@@ -322,9 +321,9 @@ These are source contracts, not a claim that every stand runs this lane —
 - [ ] A bench refused as `generation_limit` was answered with `npx genex llm status`, never a retry
 - [ ] `generate()` / `requestSpendGrant()` is the first statement of a click handler
 - [ ] A repeated-call feature uses a grant; a one-off uses `generate()`
-- [ ] Disclosure numbers derive from the real loop and are written in `DESIGN.md`
+- [ ] Disclosure numbers derive from the real loop
 - [ ] Calls are batched and cached; nothing fires on an invisible timer
-- [ ] Every grant-ending code has in-fiction copy and a playable fallback
+- [ ] Every grant-ending code is handled
 - [ ] In the Genex app (`getShell() === "app"`) the feature's entry point is left out and the authored fallback plays
 - [ ] The in-game readout comes from `getSpendGrant()`
 - [ ] Exactly one `applyGeneration()` writer; boot re-attaches with `waitForGeneration()`
@@ -348,8 +347,7 @@ as sign-in-to-use rather than hiding it (`$genex-threejs-embed-auth`). Signed
 in and still refused — this is a `genex preview` draft, which never spends:
 check the layout there, and the call itself only after `genex promote`. The
 SDK's stock sentence for this code is "Sign in to Genex to use this", which is
-right for the guest and wrong on a draft, so write the in-fiction line per
-cause rather than showing it for both.
+right for the guest and wrong on a draft.
 
 **`grant_price_unreasonable`** — the declared per-call price is far above what
 that prompt can cost on that model. Re-benchmark and declare what it prints.
