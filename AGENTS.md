@@ -73,9 +73,11 @@ when relevant.
 - Biome must pass (`npm run lint`; `check:static` lints changed files) and the types must check
   under TypeScript 7 (`npm run typecheck`, which runs `scripts/tsc.ts`). Code that needs the
   TypeScript JS API imports `@typescript/typescript6`, never `typescript`.
-- Harness (`src/harness-seed/`): the modes (director, autopilot, facet loop, gauntlet, spike)
-  keep their own control flow and share primitives from `loop/git.ts`, `evidence.ts`,
-  `build-turn.ts`, `config.ts` and `outcomes.ts`; no classes, DI or FSM libraries. It is
+- Harness (`src/harness-seed/`): the modes (director, the one Loop; the classic pipeline's
+  autopilot, facet loop, gauntlet and spike) keep their own control flow and share primitives from
+  `loop/git.ts`, `evidence.ts`, `build-turn.ts`, `config.ts` and `outcomes.ts`; no classes, DI or
+  FSM libraries. A judge is a second opinion the lead asks for: it gates no round, merge, finish
+  or close. It is
   TypeScript, type-checked in CI (`tsconfig.harness.json`) and, for the agent's own code edits,
   by the in-app TS 7 gate (`guardian.validate_edit` with the compiler vendored in
   `dist/resources/tsc`).

@@ -31,8 +31,12 @@ Malformed facet ballots hold the current build and report an unmeasured comparis
 faceted vote needs all four explicit A/B/tie answers; an invalid legacy facet pick cannot
 declare satisfaction or contribute observed defects. Genuine ties retain their existing rules.
 A judge reply with no JSON is asked again, twice at most; one that stays garbled is `unusable`
-(a tie pick and no `biggest_gap`), which no caller may read as a tie, a defect or a failure: the
-autopilot's global judge then closes the run `judge-down` with the build kept unjudged.
+(a tie pick and no `biggest_gap`), which no caller may read as a tie, a defect or a failure.
+Since Loop phase 4 no pipeline asks a judge on its own: the classic pipeline keeps a facet's round on
+its board, looks at the merged and integrated build only to see that it runs (no ledger judge, no
+global blind judge, no reference panel), skips its optimization pass (its preservation judge was a
+gate) and never rolls the integrated build back on a judge's word; the gauntlet keeps a build that
+runs and ends on it.
 Every A/B verdict (`blindCompare`, `facetCompare`, `tasteVeto`) carries `judged`
 (`loop/judge-provenance.ts`): the system prompt's SHA-256, `parse` valid or invalid, the
 challenger's placement (`challenger-a` or `challenger-b`, from an injectable `random` shuffle), the
@@ -44,7 +48,8 @@ An evaluation profile may pin the judge with `judge/pin.json` in the harness wor
 (`{engine?, model?, fallback?}`); a missing, invalid, oversized or symlinked pin is no pin, and
 `"fallback": false` forbids moving a throttled judge to its fallback engine. Each direct model call is recorded by the host as `completion_call`
 with the caller's role (judge, playtester or SkillOpt gate). An autopilot close carries its
-`stopCode`, including `base-failed`, `not-judgeable`, `no-improvement` and `reference-unbeaten`
+`stopCode`, including `base-failed` and `not-judgeable` (`no-improvement`, `reference-unbeaten` and
+`judge-down` only in older runs)
 (the landing-conflict and integration-stage Stop closes keep only their sentence); a kept older `outcomes.ts` leaves only the sentence. The [evals](evals.md)
 read these signals.
 
@@ -553,10 +558,11 @@ chat's newest card until the person writes again, and on Builds' newest ended bu
 or waits paused. It sends through the composer's Loop (`loopOn`) marked `keepBuilding`, and goes once
 it went out. That mark reopens the finished build, or launches the next Loop as the launch tool would (an
 Autopilot run on the base goal plus what is left, its reference, ∞ under `MAX_RUN_HOURS`), with no
-turn deciding (chat-dispatch.ts `keepBuildingNow`); a tap always takes a turn of its own. Yes ends the Loop, no
-goes back to the lead with both, and `MAX_FINISH_REJECTIONS` (3) no's in a row stop it, a timed Loop
-only once little time is left; after a row it went on past, a claim whose proof names no file made
-since the last no is turned back before any review (`freshProofIn`), and nothing is recorded. An answer
+turn deciding (chat-dispatch.ts `keepBuildingNow`); a tap always takes a turn of its own. A review
+is asked only with `review=yes`: yes ends the Loop, and a no goes back to the lead with both and
+decides nothing (the host still counts the no's, which close nothing); after `MAX_FINISH_REJECTIONS`
+(3) in a row, a review asked on proof that names no file made since the last no is turned back before
+any review (`freshProofIn`), and nothing is recorded. An answer
 that says neither, a failed session or a Stop neither counts nor breaks the row. Every step is a
 `finish_check` record the host writes (`checking`, then `accepted`, `rejected` or `unanswered`, with
 the round, the reasons, the count and the reviewer); a claim no engine here can review, or one whose
@@ -691,15 +697,11 @@ settles first, and no recovery starts during it) first autosaves a turn that kep
 folder changed, or `onlyIfUnsaved` where a plugin saves the app; never while a writer in place works),
 then restores the save point (`snapshot.restore`, then `waitReady`; Plan mode holds it even where no
 plugin hooks `restore.*`) or fires `restore.before` and `restore.after` with no file changed, both
-waiting while a writer in place works, each outcome a carried line. When the turn kept a save point
-(its own or the autosave) and the folder was not taken back, the judges the game's engine plugin
-declares (`game.list`'s `judges`, on a game marked `editorPlay`) play it one at a time
-(`open/judge-rounds.ts`): each a blind `judge_play` naming its judge, its answer recorded as a run check
-and carried to the lead. A round starts only with `ROUND_MIN_MS` (3 minutes) of working time left and
-no finish asked for, plays no judge past the working time, and a Stop, a hold or the close ends it
-before the next judge. A game with no judges (Unreal, a web game) has no rounds; the lead's
-`judge_play` is offered for any game marked `editorPlay` (an older host's: an Unreal game), naming the
-game's judges by id. `finish` waits for that turn's
+waiting while a writer in place works, each outcome a carried line. No judge plays between turns
+(Loop phase 4; `open/judge-rounds.ts` `judgeRound` stays a no-op for a kept older `between.ts`): the
+judges the game's engine plugin declares (`game.list`'s `judges`, on a game marked `editorPlay`) play
+only when the lead asks with `judge_play`, offered for any game marked `editorPlay` (an older host's:
+an Unreal game) and naming the game's judges by id; each answer is recorded as a run check. `finish` waits for that turn's
 end and for a writer in place, and a timed Loop's claim waits for its last turn. The health
 watch (`open/health.ts`) rides the wake loop's rounds and a turn's, one look at a time beside them
 (never awaited): `health` every `HEALTH_POLL_MS` when hooked, never once the Loop closes or its
@@ -754,7 +756,7 @@ with words when it can't read them. For developers only, `STUDIO_UNREAL_RUNNER=l
 resume of a run that runner wrote, to the Unreal runner (`loop/loop-switch.ts`) until a live Unreal
 Loop passes on the one Loop. Through the real studio (`one-loop-projects.test.ts`), a Loop on the toy
 plugin's project, and on a copy of that plugin with every tool renamed, runs the plugin's steps at its
-moments, its worker type and its observer, and ends on the reviewer's yes with no seed change; a Loop
+moments, its worker type and its observer, and ends on the lead's claim with no seed change; a Loop
 on a Godot folder with its plugin off runs with Genex's own tools, lends no window and writes no web file.
 
 One seam per worker. In a game the user brought, a worker is given a path, a folder or a glob to
@@ -788,12 +790,11 @@ or check asks for one seed or the step clock. A steer that interrupts a worker's
 revert is handed over in the same session and the turn goes on (`loop/facet/follow-up.ts`); only a
 stop with no steer waiting ends the round. A round the run's own close stops (a pause, the end)
 keeps its work on its `…-stopped` ref with `stopCode: run_ended` on its records; the resumed lead
-hears that commit (`journal-prompts.ts`). Nobody judged it, so it goes in only once a judge prefers
-it to the integration branch (`judge target=<id> against=integration`, then `integrate`:
-`director/kept-judge.ts`), or inside a judged worker started from it; never by a merge by hand. Once
-the build holds it the studio records an `integration_merge` for its part (`director/kept-work.ts`),
-and tells the lead if it went in with no judge: Builds shows it Paused until then, Added after, Left
-out only if the run ends without it. A judge's look at a part that does not own the entry, like its
+hears that commit (`journal-prompts.ts`). `integrate` takes it as it is (`director/kept-judge.ts`),
+or a worker started from it builds on it; nobody has to judge it first. Once the build holds it the
+studio records an `integration_merge` for its part (`director/kept-work.ts`), and tells the lead if
+it went in by hand: Builds shows it Paused until then, Added after, Left out only if the run ends
+without it. A judge's look at a part that does not own the entry, like its
 own rounds' looks, reads cameras that all show one frame as a warning (`facet/camera-wiring.ts`), and
 only the part that draws the HUD (critic=screen, a restart of it, or the entry's owner while no
 part of the run owns the screen: `director/hud-owner.ts`) is held to the HUD's coverage and overlap.
@@ -831,7 +832,7 @@ a plan of two or more looping parts it is committed beside the contract, in the 
 `docs/VISION.md`, and a loop worker is refused until it is there (the refusal names whether the
 contract, the vision or both are missing); after two refusals the build goes on without one and
 the lead hears it. Every worker brief (the facet opening prompt and a single worker's brief) and
-the taste judge, liveness critic and ship review read a bounded excerpt (`loop/vision-prompts.ts`)
+a judge the lead asks (taste, ship review) reads a bounded excerpt (`loop/vision-prompts.ts`)
 as the direction to grow toward: growth toward its headroom deepens the ask.
 
 A game from scratch whose run has an hour of working time and room for two loop workers at once
@@ -850,7 +851,7 @@ says; the build draws its picture and lists it with `genex__cli shop add`, which
 without one. Store items are never tied to a launch: any agent adds or changes one at any time. Every agent that reads the goal
 reads `scopeLines(run)` beside it (`loop/scope-prompts.ts`: judges add `SCOPE_RULE`, the lead's
 rules `DIRECTOR_SCOPE_RULE`), and every proposal — a taste judge's or player's `bigMove`, the
-planner's move, a liveness fix (`adds`) — carries a typed `scope`, `deepens` or `adds`: a vista,
+planner's move — carries a typed `scope`, `deepens` or `adds`: a vista,
 skyline, water, landmark or set-piece serving the mood the user asked for deepens, and only a new
 system, mechanic or mode adds (the lead's rule cuts systems and deepens the world). An `adds`
 proposal is never a move: it becomes a decision card (`loop/facet/beyond.ts`, at most
@@ -867,22 +868,19 @@ existence test passes, and a board stored before the lint scores as it did.
 
 Where a round's move comes from (`loop/facet/rules.ts` `chooseMove`). A director's ladder goes
 first, steered rungs ahead, and ends with one open rung (`loop/facet/growth.ts`: `worker_start`
-and `worker_steer move=` append it; a lead's `{"open":true}` only marks it). When reached it is
-filled with the reviewers' best step inside the ask — a liveness principle short of 3 with an
-in-scope fix for `STUCK_PRINCIPLE_CARDS` (3) critic cards running, else the taste judge's
-`bigMove`, else the critic's `biggest` (a grow principle below 3), else its other grow gaps —
-written onto the ladder with a decision card, and mandatory like the lead's rungs; with none it
-is passed over. A stuck principle also joins its card's `grow` or `polish` list by kind. Past the
-ladder the reviewer's `bigMove` is guidance; with no director ladder the same candidates, then the
-planner, name the move.
+and `worker_steer move=` append it; a lead's `{"open":true}` only marks it). An open rung is filled
+only from a reviewer's step a resumed older run still carries (its critic card or `bigMove`);
+since Loop phase 4 no taste judge or liveness critic looks at a round, so it is passed over. With
+no director ladder the planner names the move. A rung with a check climbs when its check passes;
+one with none climbs on a kept round (the builder says it built it); a checked rung its check
+misses `RUNG_MISSES` rounds running is set aside.
 
 Two stages. A worker's `spec.stage` is `build` (the default) or `finish` (`loop/facet/stage.ts`;
 `worker_start stage=`, never on a single session, or `worker_steer stage=` from its next round;
 and `worker_steer move=` puts a finisher back to building). A finish round has no move, ladder or
-polish streak: its brief works the taste judge's polish list (up to eight; `judge/taste-finish.md`
-is appended to the taste rubric) and the defect ledger, it is kept unless it regresses, and the
-worker ends once a preferred, unbroken build holds every identity
-check. The art director's finish mark (below) is when the lead turns owners to it.
+polish streak: it polishes what exists and works the defect ledger, it is kept unless it regresses,
+and the worker ends once a kept, unbroken build holds every identity check. The finish mark
+(below) is when the lead turns owners to it.
 
 The build block. A director's new loop worker (not a restart: `replaces=` or an id from before a
 pause) whose window holds `BUILD_BLOCK_MIN_WINDOW_MS` (two hours) opens with one long round on a
@@ -890,18 +888,21 @@ session engine in its own worktree (`loop/facet/build-block.ts`): its turns neve
 `BUILD_BLOCK_MAX_MS` (90 min), and a builder that ends its turn before `BUILD_BLOCK_MIN_MS` (60 min)
 is asked in the same session to keep going in a screenshot-and-fix loop on its bench page (at most
 `BUILD_BLOCK_TURNS` asks). The block is
-kept on the checks alone — broken, regressed, lost-registry and unchanged builds are still refused
-on the board — and the taste judge looks once for notes, never a verdict; blind A/B starts at round
-two. A finisher and the classic pipeline have no block. Its build time seeds neither the worker's
+kept on the checks alone, like every round after it: broken, regressed and lost-registry builds
+are refused on the board. A finisher and the classic pipeline have no block. Its build time seeds neither the worker's
 round estimate nor the run's median (`facet_iteration.buildBlock`).
 
-Kept rounds. A round's work is kept unless the taste judge vetoes it with a named regression or a
-check that passed on the accepted build now fails (`rules.ts acceptRound`). No check moving, a pick
-of the round before without a named regression, a missed move and a left mandatory THE FIX cost
-nothing: the move stays owed and its rung is not climbed, the fix stays owed and counts towards the
-planner taking it, and a round no camera saw change is kept without a judge call. Such a round is
-`verdictSource: no-regression` (rule `no-regression`); `no-move`, `unfixed` and `invisible` appear
-only in older runs. A judged round undone with flips leaves them, with its attempt ref, in
+Kept rounds. No judge looks at a round (Loop phase 4: no taste judge, no facet judge for a
+prose-only plan, no liveness critic): its work is kept unless a check that passed on the accepted
+build now fails (`facet/kept-round.ts` `keepOnBoard`, `rules.ts acceptRound`, where an older
+caller's veto keeps nothing out). A check the code reviewer calls gamed reads unmeasured, never
+failed (`markGamedChecks`). No check moving, a missed move and a left THE FIX cost nothing: a move
+or fix with a check of its own stays owed while it fails. A worker is done once its kept build holds
+its identity checks and its ladder has no rung left (`facetIsDone`; a part with no checks of its own
+is done on its kept build). A kept round with no strong flip is `verdictSource: no-regression`
+(rule `no-regression`); `taste`, `taste-veto`, `legacy`, `no-move`, `unfixed` and `invisible`
+appear only in older runs. A resumed spec drops the questions a judge grew for itself and holds the
+art director's as normal weight (`withoutJudgesHold`). A round undone with flips leaves them, with its attempt ref, in
 `carriedFixes` (`loop/facet/carried-fixes.ts`); every next brief's CARRY OVER section tells the
 builder to re-apply them until the accepted build passes them.
 
@@ -1257,24 +1258,19 @@ its last save point. Whether the time ran out, and whether a worker may start, a
 own clock (the wake loop's). The time's-up tells the lead to call finish, claiming the goal only if it
 is reached. A Resume past the cap gets the grace only; a clock
 a kept older setup made (`journal.ts` `loopRunClock`, its wrap-up inside the hours) hears no lines.
-A claim (`victory=yes`) is checked whenever it comes, and a yes ends the Loop; a `finish` that claims
+A claim (`victory=yes`) may come whenever the goal is reached and closes the Loop on the lead's
+word (Loop phase 4); with `review=yes` a reviewer reads it first (`director/finish-claim.ts`,
+`open/finish.ts`): a yes closes it as reviewed, while a no, no answer, no time or no reviewer to seat
+goes back to the lead and decides nothing (no row of no's closes a run). A `finish` that claims
 nothing is refused while working time remains unless the user asked: Finish, or `user_asked` quoting
 the user's own words from a message delivered into the run (`integrate.ts` `userQuoted`, checked
-against the run inbox's steers). However a run ends — the lead's `finish`, the
-clock, the user's Finish — the close judges the head it is about to make live
-(`director/tools.ts` `judgeTheLanding`, from `integrate.ts`): blind against the build the user had,
-or, for a new game or one whose start nobody could photograph, a yes-or-no on the goal
-(`close-prompts.ts`). A lead's own blind judge of that head against the start, whichever build it
-picked, stands in for it. The judge borrows the studio's window, and its model calls must be done
-four minutes after it starts (judge.ts's per-call deadline, for engines that honour a request's
-timeout), because the close runs inside the lead's ten-minute `finish` call; an answer it was not
-surer of than a coin flip counts as none. A head that never moved beyond the start is not judged,
-and a Stop before or during the close lands nothing. The verdict is reported, not a veto: the build
-lands when the close's look loaded it or a judge saw it load, the close's own included.
-`landingResult` says what the landing may claim (`judge-pick`; `judge-answered-yes` or
-`judge-answered-no` for a sure answer to the goal question; otherwise the health tokens), and
-`finish` tells the lead. A workspace that kept an agent-edited older `integrate.ts` keeps its older
-close; one that kept an older `tools.ts` lands as before and notes that it did not judge.
+against the run inbox's steers). No judge's word turns a claim back: not a goal's playtest, not the
+art director's blockers. However a run ends — the lead's `finish`, the clock, the user's Finish — the
+close asks no judge: it lands the head when that moved beyond the start and the close's look loaded
+it, or a judge the lead asked saw that very head load, and a Stop before or during the close lands
+nothing. `landingResult` says what the landing may claim (`judge-pick` or a goal answer only when
+the lead's own judge gave one on that head; otherwise the health tokens), and `finish` tells the
+lead. `judgeTheLanding` stays, asking nobody, for a kept older `integrate.ts`.
 
 The user asks to finish in the chat, and only the lead can tell such an ask from a question: its
 card says an ask to finish, wrap up or stop adding (asked again as a question too) is `wrap_up`
@@ -1282,7 +1278,7 @@ first. `wrap_up` (`director/wrap-up.ts`) records the ask quoting the user's word
 `user_asked`) as the same `run_control` finish the app's own door writes, once. From then
 `worker_start` is refused (a conflict worker excepted), each running loop worker ends the round it
 is in and stops at its next round's gate (`workers.ts` `workerStopAsk`: the user's ask, never the
-director's stop), no regular art-director look comes, the digest says the run is finishing, and the
+director's stop), the digest says the run is finishing, and the
 lead rests while those rounds land, woken as each ends (`afterTurn` `lastRoundsRunning`); once no
 loop worker runs the wrap-up starts (`WrapCause.Finish`), and its finish stops a single session. Its
 own ask is no news to it. A finish the user asked for claims nothing (no reviewer checks it, so the
@@ -1298,73 +1294,49 @@ chat's own turn always holds the Loop's start for one asked in words (`delegated
 `autoLaunchFor`), with the Loop switch on or off and after a run it led, finished or paused: the
 hours named win, else the switch's, else until done.
 
-The art director is the one absolute judge (`loop/ship-review.ts`, rubric `judge/ship-review.md`):
-one build, every frame the evidence pass took of a registered camera, the player's eyes and each
-demo's end, then the first, middle and last motion frames and the reference (at most 14), captured
-at 1600×900 on that lease only (`SHIP_VIEW`), asked "would you ship this as the user's demo
-today?" with the user's scope beside the goal, at no more than high effort, as every reviewer
-(deeper ones outlast its few minutes). Each defect names a plan part (kept only when it is
-one of the plan's ids), a camera (kept only when the review was shown it, else the default) and a
-severity (`blocker`, `visible`, `nit`); an unreadable answer is no verdict, never a "no". The lead
-asks for it with `judge ship=yes`, alone (no blind comparison; an `against` other than `none` is
-refused, since the other build was seen at 960×600), and its look never replaces a pick or answer
-already standing on that head (`state.lastJudge`). The studio runs it itself at the
-finish mark (`director/art-direction.ts`): a timed build's last 30% of working time
-(`budgets.ts` `finishMarkMs`, 30 to 120 minutes, none under 90), said once (`WakeCause.FinishMark`,
-journaled; a mark that finds nothing integrated leaves the lead to `judge ship=yes` itself; a mark
-still unsaid once the wrap-up is due, after a sleep or a Resume, gives way to the wrap-up); a goal
-build once, when its lead idles a second time or calls `finish` with no review on its head (a
-blocker turns that finish back once, never twice, and never the user's own finish). A claim
-(`victory=yes`) is refused while the review on its head names a blocker (`shipClaimRefusal`): a goal,
-∞ included, ends once its required outcomes are verified and the art director names no blocker. That finish gate runs
-inside the `finish` call: its one look also answers the close's own question, so the close does not
-judge again, and when the close still owes a blind judge against the start there is no time for
-both and the finish closes without the art director. The
-lead is woken with the defects by part and the rule from there: no new parts, `worker_steer
-stage=finish` on each owner, integrate, `judge ship=yes` again. Every later wake repeats it: the
-time line says the build is past the mark, the room for workers offers only finish workers, the
-idle question asks to finish what exists instead of a next feature, no worker line shows its
-reviewers' next big step (a finishing worker's never does, and its line says `stage finish`), and a
-timed build's card says its finish stage. A goal commission's card and brief say the art director's
-blockers are required finishing; its visible flaws and nits go in the report and never start a round.
-The rubric calls a defect a blocker only when the game does not do what the goal asks or reads as
-broken at once, and `ship` is true when none is. Each blocker on the integration
-branch becomes a director-origin vision check on its running owner's board (the part's worker, or
-the running worker that replaced it; its fix is a strong flip), and its owner is told in words that
-follow the verdict (it must be gone before the part is done, beside a building worker's move; from
-the finish look on every owner is told as a finisher), or a ledger line under its finished
-part or the lead; a visible flaw or a nit stays on the review alone. A loop worker started on that
-part later (its id, `replaces` chain or goal) takes the part's ledger lines onto its board the same
-way (a non-blocker shelved by an older run leaves the ledger), so a finish worker ends only once each
-blocker is gone. A review with a verdict replaces the earlier reviews' questions
-on running boards (one it repeats word for word keeps its id), so re-reviews never pile up. One
-look is one judge verdict record, asking the ship question. `state.lastShip` is journaled and
-restored on a Resume; `report.shipReview` and the `finish` answer say whether the art director
-would ship the head the close stood on, how many blockers it names and how many flaws and nits are
-for the report. It never vetoes a landing.
+The art director is the one absolute judge (`loop/ship-review.ts`, rubric `judge/ship-review.md`),
+asked only by the lead (`judge ship=yes`, alone: an `against` other than `none` is refused, since
+the other build was seen at 960×600): one build, every frame the evidence pass took of a registered
+camera, the player's eyes and each demo's end, then the first, middle and last motion frames and the
+reference (at most 14), captured at 1600×900 on that lease only (`SHIP_VIEW`), asked "would you ship
+this as the user's demo today?" with the user's scope beside the goal, at no more than high effort.
+Each defect names a plan part (kept only when it is one of the plan's ids), a camera (kept only when
+the review was shown it, else the default) and a severity (`blocker`, `visible`, `nit`); an
+unreadable answer is no verdict, never a "no". Its look never replaces a pick or answer already
+standing on that head (`state.lastJudge`). Since Loop phase 4 the studio never runs it on its own —
+not at the finish mark, not on a cadence while workers build, not at a goal build's idle turn or
+finish — and its verdict turns nothing back. Each blocker on the integration branch becomes a
+director-origin vision check of normal weight on its running owner's board (the part's worker, or the
+running worker that replaced it; its fix is a strong flip, but it never holds the part's own
+contract), its owner told in words that follow the verdict, or a ledger line under its finished part
+or the lead; a visible flaw or a nit stays on the review alone. A loop worker started on that part
+later (its id, `replaces` chain or goal) takes the part's ledger lines onto its board the same way. A
+review with a verdict replaces the earlier reviews' questions on running boards (one it repeats word
+for word keeps its id). One look is one judge verdict record. `state.lastShip` is journaled and
+restored on a Resume; `report.shipReview` and the `finish` answer say whether the art director would
+ship the head the close stood on, how many blockers it names and how many flaws and nits are for the
+report. It never vetoes a landing.
+
+The finish mark (`director/art-direction.ts` `finishMarkAt`, `budgets.ts` `finishMarkMs`): a timed
+build's last 30% of working time (30 to 120 minutes, none under 90), said once (`WakeCause.FinishMark`,
+journaled; a mark still unsaid once the wrap-up is due gives way to it). It tells the lead the rule
+from there — no new parts, `worker_steer stage=finish` on each owner, integrate — and every later
+wake repeats it: the time line says the build is past the mark, the room for workers offers only
+finish workers, the idle question asks to finish what exists, no worker line shows its reviewers'
+next big step, and a timed build's card says its finish stage. A goal commission's card and brief
+say the art director's blockers, when the lead asks for its look, are worth finishing and hold
+nothing back.
 When the lead names no cameras, a blind judge shows every view both builds have, cut alike.
 
-The art director also looks on the studio's own schedule while loop workers build, in every run
-(timed, goal, ∞), however busy the lead is (`art-direction.ts` `shipLookAt`, `WakeCause.ShipLook`,
-an uncapped wake the loop answers with `shipLookPass` before the lead's turn): once the first wave
-is in — every running loop worker has had kept work merged (`integrate.ts` marks `integrated`) — or
-after `SHIP_LOOK_EVERY_MS` (90 minutes) of working time, then every 90 working minutes on a head no
-review stands on. A review the lead asked for, the mark's or the finish gate's resets that clock; a
-look that gave no review is tried again 30 minutes later (`SHIP_LOOK_GAP_MS`), and no regular look
-comes within 30 minutes before an unsaid finish mark, whose own look takes its place. A wake that
-carries the user's words leaves the look for the next wake. The cadence is journaled in working
-time (`nextShipLookWorkedMs`). The regular look only routes defects: owners are told as building
-workers (beside their move), the wake says it is not the finish mark, and the finish stage still
-begins at the mark or a goal build's idle or finish look. Each review
+Each review
 also names up to eight short things that already work (`doNotRegress`, cut at a word; an older
 rubric's `strengths` stand in). A review with a verdict puts the list on every running loop
 worker's spec and a loop worker started later takes the latest; its brief shows it ("Do not
-regress") and its round's taste judge is told that the accepted build losing one is a regression
-to name. `state.lastShip` and `report.shipReview` keep the list; an unreadable review keeps the last.
+regress"), as information: no judge holds a round to it. `state.lastShip` and `report.shipReview` keep the list; an unreadable review keeps the last.
 
 A goal or ∞ build's wake digest names its required outcomes on every wake while some are
 unverified (`required outcomes: N/M verified on this revision`, `progress.ts` `outcomeTally`), and
-every 60 working minutes (`VERIFY_NUDGE_EVERY_MS`) and after each ship review adds VERIFY THE
+every 60 working minutes (`VERIFY_NUDGE_EVERY_MS`) and after each ship review the lead asked adds VERIFY THE
 OUTCOMES, asking for `playtest goal=<id>` on each one still unverified (journaled as
 `verifyNudgedWorkedMs`; never in the wrap-up).
 

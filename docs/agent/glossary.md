@@ -102,8 +102,8 @@ is product copy, not this glossary.
   keeps its whole record there (`loop/director/journal.ts`): the time it has worked, so a Resume
   goes on with what the budget has left, its workers, the defects nobody owns, the plan window,
   the log and the wake loop's state.
-- **Gauntlet**: the single-builder run with blind judging; also the one-facet case of Autopilot
-  (`loop/gauntlet.ts`).
+- **Gauntlet**: the single-builder run, kept when its build runs; classic Autopilot's one-facet
+  case, and a mode-less run no control sends (`loop/gauntlet.ts`).
 - **Scout**: the read-only session that looks at the running game before planning
   (`loop/scout.ts`).
 - **Facet**: a planned slice of a game with its own typed spec, checks, thread and, in parallel
@@ -113,9 +113,10 @@ is product copy, not this glossary.
 - **Spike**: a throwaway mini-scene built in isolation when an identity check keeps failing;
   a passing spike becomes a recipe in the technique library (`loop/spike.ts`, `library/`).
 - **Judge**: a fresh-context model that compares candidates blind and names defects, never a
-  score (`loop/judge.ts`, prompts in `judge/`). The app calls it a reviewer; the harness and its
-  prompts keep "judge" on purpose, and `words.ts` `reviewerWords` rewords the harness's sentences
-  only when they are shown. Do not rename it in the seed.
+  score (`loop/judge.ts`, prompts in `judge/`), asked by the lead (`judge`, `judge_play`); it gates
+  nothing. The app calls it a reviewer;
+  the harness and its prompts keep "judge" on purpose, and `words.ts` `reviewerWords` rewords the
+  harness's sentences only when they are shown. Do not rename it in the seed.
 - **Scoreboard**: per-iteration pass/fail of each check, compared mechanically between
   iterations (`loop/checks.ts`).
 - **Round phase**: one named step of a facet loop's round (`ROUND_PHASES` in
@@ -189,17 +190,16 @@ Every project's Loop is the director's wake loop, in one of two profiles (`LoopP
   `worker_start` answers at once; a worker's end reaches its lead as it comes.
 - **Reviewer**: the UI's word for a judge (the Reviewers role); a Loop's reviewer also answers its
   finish check, seated read-only by the host.
-- **Finish check**: the lead's `finish` claim checked by a reviewer. The seed asks `finish.review`
-  and settles with `finish.settle` (`loop/finish-check.ts`); only the host seats the reviewer and
-  writes the `finish_check` record (`src/main/core/finish-review.ts`); three no's in a row since
-  the run last opened stop it (`MAX_FINISH_REJECTIONS`, `src/shared/finish-check.ts`), except a
-  timed Loop with more than `FINISH_TIME_LEFT_MS` (20 min) left, which keeps working. Builds draws
-  it as Checking, Not yet, Done or Stopped (`FinishCheckState`, `FinishLook` in
-  `src/renderer/run-tree.ts`).
+- **Finish check**: a reviewer reading the lead's claim, when the lead asks (`finish review=yes`);
+  without it the claim closes on the lead's word. The seed asks `finish.review` and settles with
+  `finish.settle` (`loop/finish-check.ts`); only the host seats the reviewer and writes the
+  `finish_check` record (`src/main/core/finish-review.ts`). A yes closes the run as reviewed; a no
+  goes back to the lead and decides nothing. Builds draws it as Checking, Not yet, Done or Stopped
+  (`FinishCheckState`, `FinishLook` in `src/renderer/run-tree.ts`).
 - **Soft cap**: a timed Loop's hours (`loop/time-cap.ts`): a heads-up 15 minutes before, time's up
   at the cap (no new workers then), 15 minutes' grace (`GRACE_MS`), then Genex closes it with what
   is and isn't done ("not checked by a reviewer" when no claim reached one since it last opened);
-  an ∞ Loop's cap is 24 hours. A reviewer's yes ends it early.
+  an ∞ Loop's cap is 24 hours. The lead's finish ends it early.
 - **Unreal runner**: the Unreal lead from before the one Loop (`loop/unreal/lead.ts`: milestones,
   typed sub-agents, the critic, hero-camera captures), reached only through `STUDIO_UNREAL_RUNNER=lead`
   until a live Unreal Loop passes on the one Loop.

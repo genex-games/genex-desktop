@@ -590,7 +590,7 @@ The studio forwards each tool call to the harness (`HarnessHost.dispatch`, `dire
   (the user's words verbatim, what happened, where the run stands). The user, finish and a
   worker steer wake at once, worker news after 5 s; timers cover the plan window, wrap-up, the
   workers' limit and a 20-minute heartbeat; at most 30 wakes an hour. An idle run asks once,
-  then wraps up (a goal build after the art director's look); each wake appends `director_continued`.
+  then wraps up; each wake appends `director_continued`.
 - The full journal (`loop/director/journal.ts`): each save writes the run's record on
   `journal.director` (clock with `workedMs`, plan, ledger, health, workers' limit, recent log,
   workers, wake state). A Resume gets the working time left (`loopRunClock`, paused time excluded), a
@@ -608,29 +608,28 @@ The studio forwards each tool call to the harness (`HarnessHost.dispatch`, `dire
 - Each turn of the director's session ends with a host-written `session_activity` (`completed`,
   `interrupted` or `failed`), never a `turn_ended`, so the chat shows the build between turns.
 - A monitor (`loop/director/workers.ts`) reads each running worktree (`git status --porcelain`,
-  `git diff -U0`, the mechanical reviewer; no model, window or index lock) and notes only a
-  change; `waitDigest` gives each worker its reviewers' ideas and the room left.
-- Defects a judge names for another worker's seam route to that worker's live spec
-  (`makeRouteDefect`); a finished owner's defects go to `defectsNobodyOwns`; never to
-  itself.
+  `git diff -U0`, the mechanical reviewer; no model, window or lock) and notes only a change;
+  `waitDigest` gives each worker the room left.
+- Defects a judge names for another worker's seam route to its live spec (`makeRouteDefect`); a
+  finished owner's go to `defectsNobodyOwns`.
 - The director owns a worker's ladder when it gives one (`move`, `milestones`,
   `spec.moveOwner`); otherwise a named move is guidance until `polishStreakEscalate`
   polish-only rounds escalate it (`move.escalated`). Steered rungs first; a rung climbs on its
-  check or the judge's word, `RUNG_MISSES` set it aside (`facet/round-judgement.ts`); reviewers
-  fill the open last rung (`facet/growth.ts`), then `bigMove`. `integrate` takes a running worker's
-  `lastAccepted`.
-- `spec.stage = "finish"` (`facet/stage.ts`, per round, `stage=`): polish list
-  (`judge/taste-finish.md`) is the work, no move or streak; a preferred, unbroken build ends it.
+  check, or with none on a kept round; `RUNG_MISSES` set a checked one aside
+  (`facet/round-judgement.ts`). A worker ends when its kept build holds its checks and no rung is
+  left. `integrate` takes `lastAccepted`, or a stopped round as it is.
+- `spec.stage = "finish"` (`facet/stage.ts`, per round, `stage=`): polish is the work, no move
+  or streak; a kept, unbroken build ends it.
 - `run.scope` (`loop/scope.ts`) is the user's words; `scopeLines` sits beside every goal, and
   an `adds` proposal is a decision card (`facet/beyond.ts`), never a move.
-  `critic=screen` marks the screen's one owner (`loop/screen-owner.ts`).
+  `critic=screen` marks the part that leads the screen (`loop/screen-owner.ts`), binding no other.
 - Two or more looping parts need `plan contract=`/`vision=` (`director/contract-gate.ts`),
   committed as `docs/MODULE-CONTRACT.md`/`VISION.md` before loop workers fork; `integrate
   worker=a,b` is a wave (one health pass, `state.waveHead`); `loop/registry.ts` refuses lost
   registrations.
-- The finish mark (`budgets.ts` `finishMarkMs`), `shipLookAt` or `judge ship=yes` runs the art
-  director (`director/art-direction.ts`, `loop/ship-review.ts`): defects and `doNotRegress` reach
-  owners; it never vetoes ([harness runtime](../harness-runtime.md)).
+- Only `judge ship=yes` runs the art director (`director/art-direction.ts`, `loop/ship-review.ts`):
+  blockers reach owners as normal checks; it gates nothing. The finish mark (`finishMarkMs`) only
+  tells the lead to finish.
 - `worker_start` may override `FACET_POLICY`; `loopDigest` puts each worker's phase, streaks and
   checks in the digests.
 - The hours are a soft cap (`loop/time-cap.ts`); both closes are one function (`closeTheLoopRun`).
@@ -670,21 +669,20 @@ pass and close append `director_verdict`. The Builds result panel shows the stag
 record (`headVerdict`); step panels, gate tooltips, the chat and the judges' sheet print its
 sentence. `run-steps.ts` decides a step's state from merges first (`mergedRounds`: a
 loop's merge takes its kept rounds; a lead's merge, by log position, takes the last kept round or,
-with none, every unjudged round started before it) and judges second. Rounds stand unless a
-regression is named or measured (`acceptRound`); flips prove only as `strongFlips` (a
+with none, every unjudged round started before it) and judges second. A round stands
+unless a check that passed now fails (no judge: `facet/kept-round.ts`); flips prove only as `strongFlips` (a
 scene/pixel/metric/probe/demo/play check, or a vision check the plan wrote). A self-measuring regression counts only if a second
-look reproduces it; only a judge's own gap (`judgedGap`) grows a check or THE FIX. An unmeasured vision check needs a yes at
-`VISION_FLIP_CONFIDENCE` (0.7). Judge-grown questions are deduplicated (`sameDefectOpening`), a
-reading defect becomes a probe suggestion, and a question hedged twice under 0.5 retires. Counts
+look reproduces it; a reviewer's "gamed" check reads unmeasured. An unmeasured vision check needs a yes at
+`VISION_FLIP_CONFIDENCE` (0.7); a resumed spec drops a judge's own questions (`withoutJudgesHold`). Counts
 separate planned from grown checks (`checkCounts` in `words.ts`). Questions about one camera ride
 in one call (`askVisionBoard`, `visionBatch`, `MAX_BATCH_QUESTIONS`); an unanswered id is never a
 pass. Health, judge and gate passes are patient (`patientEvidence`: up to three looks on a load
 race). An engine limit is waited out when it resets well before the deadline; otherwise the run
 closes paused, naming the limit.
 
-**Landing.** At the close the harness stops workers, syncs the head, takes a fresh health pass,
-judges it unless stopped (`judgeTheLanding`), and lands when the head moved beyond the start and
-loaded or a judge passed that sha.
+**Landing.** At the close the harness stops workers, syncs the head, takes a fresh health pass
+and lands when the head moved beyond the start and loaded, or a lead's judge saw that sha
+load; it asks no judge. A claim is the lead's word (`review=yes` asks a reviewer first).
 `report.landingResult` records `verified`, a `how` token and the morning card's `line`. A landing
 blocked by commits (`could-not-land`) or uncommitted changes (`uncommitted-changes`) in the game
 folder waits for **Make it live** (`landBuild`); **Play this build** is `showBuild`
