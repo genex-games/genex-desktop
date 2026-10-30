@@ -64,15 +64,11 @@ describe("turn loop", () => {
     assert.ok(second.messages.some((m) => m.role === "assistant" && Array.isArray(m.tool_calls)));
     assert.ok(second.messages.some((m) => m.role === "tool" && m.tool_call_id === "c1"));
 
-    // The system prompt carries skill indexes, never bodies: Studio's own skills by name and
-    // description (read with read_skill), a plugin's file skills by summary (read with its
-    // `<plugin>__skill` tool).
+    // The system prompt carries skill indexes, never bodies: a plugin's file skills by summary (read
+    // with its `<plugin>__skill` tool). Flipped (Loop phase 5): the seed ships no skills of its own
+    // (no facet-decomposition, no director playbook), so there is no "Your skills" index.
     const system = String(second.messages.find((m) => m.role === "system")?.content ?? "");
-    assert.match(system, /## Your skills/);
-    // The slugs the seed actually ships. `game-contract` was named here until M4.8a retired it
-    // (it was a stale second copy of docs/CONTRACT.md that no run code read).
-    assert.match(system, /facet-decomposition/);
-    assert.match(system, /\(director\)/);
+    assert.doesNotMatch(system, /## Your skills/);
     for (const skill of await loadSkills(SEED)) {
       assert.ok(
         !system.includes(skill.body.slice(0, 200)),
@@ -126,7 +122,6 @@ describe("turn loop", () => {
       [
         {
           toolCalls: [
-            { id: "c1", name: "remember", arguments: { key: "favourite_genre", value: "racing games" } },
             {
               id: "c2",
               name: "install_tool",
@@ -144,13 +139,13 @@ describe("turn loop", () => {
               },
             },
           ],
-          text: "Noting that and adding a tool.",
+          text: "Adding a tool.",
         },
         { text: "Done." },
       ],
       { learning: true },
     );
-    await rig.core.sendUserMessage("remember I like racing games and add a lap timer");
+    await rig.core.sendUserMessage("add a lap timer");
     await waitForLog(rig.core, (log) => log.some((e) => e.data.type === "turn_ended"), 45_000, "turn_ended");
 
     const completions = rig.server.requests.filter((r) => r.path.startsWith("/v1/chat/completions"));
@@ -169,20 +164,8 @@ describe("turn loop", () => {
     );
     const described = (second.tools ?? []).find((tool) => tool.function.name === "list_games")?.function.description;
     assert.ok(described && !system(1).includes(described), "a tool's description is sent once, with its schema");
-
-    // The next turn reads them afresh.
-    rig.server.pushReply({ text: "Racing it is." });
-    await rig.core.sendUserMessage("what do I like?");
-    await waitForLog(
-      rig.core,
-      (log) => log.filter((e) => e.data.type === "turn_ended").length >= 2,
-      30_000,
-      "second turn_ended",
-    );
-    const next = rig.server.requests.filter((r) => r.path.startsWith("/v1/chat/completions")).at(-1)!.body as {
-      messages: Array<{ role: string; content?: unknown }>;
-    };
-    assert.match(String(next.messages.find((m) => m.role === "system")?.content ?? ""), /racing games/);
+    // Flipped (Loop phase 5): there is no `remember` tool and no memory in the system prompt (the
+    // user's taste is archived, never injected), so no remembered fact is read back next turn.
   });
 
   it("keeps the log as the only state: a restart resumes the same conversation", async () => {
@@ -434,36 +417,6 @@ describe("full self-modification (M4)", () => {
     );
     const skill = await readFile(path.join(rig.core.layout.harnessWs, "skills", "threejs-craft.md"), "utf8");
     assert.match(skill, /Use flatShading/);
-  });
-});
-
-describe("memory policy", () => {
-  it("keeps durable facts and refuses transient ones", async () => {
-    const rig = await turnRig([
-      {
-        toolCalls: [
-          { id: "m1", name: "remember", arguments: { key: "taste", value: "Simeon likes fast, punchy games" } },
-        ],
-      },
-      { toolCalls: [{ id: "m2", name: "remember", arguments: { key: "current_task", value: "adding rings" } }] },
-      { text: "Noted." },
-    ]);
-    await rig.core.sendUserMessage("remember some things");
-    const events = await waitForLog(
-      rig.core,
-      (log) => log.some((e) => e.data.type === "turn_ended"),
-      30_000,
-      "turn_ended",
-    );
-    const results = events
-      .filter((e) => e.data.type === "tool_result")
-      .map((e) => (e.data as { result: { ok: boolean; content: string } }).result);
-    assert.equal(results[0]!.ok, true);
-    assert.equal(results[1]!.ok, false, "a transient key is refused by the memory policy");
-    assert.match(results[1]!.content, /durable facts/);
-
-    const memory = (await rig.core.store.readArtifact(rig.core.mainThread, "memory")) as Record<string, string>;
-    assert.deepEqual(Object.keys(memory), ["taste"]);
   });
 });
 
@@ -1330,7 +1283,8 @@ describe("delegated build observation", () => {
 
     const observation = await lastObservation(rig);
     assert.equal(observation.ok, false, "the contractor's word must not outrank the pixels");
-    assert.match(String(observation.reason), /black canvas/);
+    // Flipped (Loop phase 5): the host's own check says the frame is blank (no "black canvas").
+    assert.match(String(observation.reason), /frame is blank/);
     const detail = observation.observation as { pixels: { litFraction: number } };
     assert.equal(detail.pixels.litFraction, 0);
 
@@ -1538,9 +1492,9 @@ describe("intake launch", () => {
         readiness?: { contract?: string };
       };
       assert.equal(registered.project, "pond-life", "the run builds in the chat's folder, not the interviewer's slug");
-      // What the folder needed the moment it was commissioned rides on the run (M2.6): the
-      // run's first step is installing the studio contract when the page never loads it.
-      assert.equal(registered.readiness?.contract, "loaded", "the studio's own template already loads it");
+      // Flipped (Loop phase 5): Genex asks nothing of a game's page, so no studio contract's
+      // readiness rides on the run.
+      assert.equal(registered.readiness?.contract, undefined, "no studio contract is looked for");
       const games = await rig.core.games.list();
       assert.deepEqual(
         games.map((g) => g.name),

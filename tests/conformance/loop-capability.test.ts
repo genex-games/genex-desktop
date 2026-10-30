@@ -51,9 +51,9 @@ describe("loop capability handshake", () => {
       HarnessCapability.Loop,
       HarnessCapability.RunStart,
       HarnessCapability.RunStop,
-      HarnessCapability.Skillopt,
       HarnessCapability.Compact,
     ];
+    // Flipped (Loop phase 5): the seed has no SkillOpt, so it claims no skillopt.
     for (const name of claimed) {
       assert.equal(rig.core.host.hasCapability(name), true, `the seed must claim ${name}`);
     }
@@ -137,11 +137,12 @@ describe("loop capability handshake", () => {
       "the shipped seed serves local roles",
     );
 
-    // The agent edited its scout before local roles existed: the upgrade kept its copy, which has no
-    // marker and would ask Ollama for a session.
-    const scout = path.join(rig.core.layout.harnessWs, "loop", "scout.ts");
-    const kept = (await readFile(scout, "utf8")).replace("export const SERVES_LOCAL_ROLES = true;", "");
-    await writeFile(scout, kept);
+    // The agent edited its model roles before local roles existed: the upgrade kept its copy, which
+    // has no marker and would ask Ollama for a session. Flipped (Loop phase 5): the scout is gone, so
+    // the part edited is model-roles.ts.
+    const roles = path.join(rig.core.layout.harnessWs, "loop", "model-roles.ts");
+    const kept = (await readFile(roles, "utf8")).replace("export const SERVES_LOCAL_ROLES = true;", "");
+    await writeFile(roles, kept);
     await rig.core.host.restart();
     assert.equal(rig.core.host.state, "ready");
     assert.equal(rig.core.host.hasCapability(HarnessCapability.LocalRoles), false);

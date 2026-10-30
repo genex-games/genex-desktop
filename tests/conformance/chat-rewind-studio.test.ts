@@ -450,7 +450,9 @@ it("rewound past a later build, the next message's run tools reach the build fro
   await waitForLog(rig.core, handled(thread, 2), 20000, "the answer after the rewind");
   assert.equal(answers.length, 1, "build A's coordinator answered");
   const [tried] = answers;
-  assert.doesNotMatch(JSON.stringify(tried), /refused/, JSON.stringify(tried));
+  // A refused call is the `refused: ` this test writes; run_status's own text may say "refused" (a
+  // plugin skill's summary does), so the whole answer is not searched for the word.
+  for (const [name, answer] of Object.entries(tried ?? {})) assert.doesNotMatch(answer, /^refused: /, name);
   assert.equal(JSON.parse(tried!.run_status!).run.runId, "run-a");
   assert.match(tried!.show_build!, /Live/);
   assert.match(tried!.resume_run!, /Resume requested for the same run/);
