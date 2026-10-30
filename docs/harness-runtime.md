@@ -486,7 +486,8 @@ head that fails is not landed: the lead hears why and goes on, or finishes with 
 `victory=yes` is the lead's word that the goal is reached, and nobody else has to agree; a Finish
 asked of the run (the person's, or the chat's agent's `finish_run`) closes it as it stands and claims
 nothing. One close and one finish run at a time (`director/close-latch.ts`): a second finish is
-refused at once, and a close asked while one is under way waits for it. The close stops the workers
+refused at once, and a close asked while one is under way waits for it; from the finish's close on,
+`worker_start` is refused and starts nothing (`RUN_OVER_NO_WORKERS`). The close stops the workers
 (their copies' work kept on the run's refs), lands the head only when it passed its health check and
 never forces: uncommitted changes or a merge under way in the game folder leave the build on its ref
 for Make it live, and the strays a landing leaves are named to the lead. An open Loop's `finish`
