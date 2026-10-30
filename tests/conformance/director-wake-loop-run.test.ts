@@ -381,16 +381,10 @@ describe("live chat during a build", () => {
     );
     const fromItsStart = buildRunGraph(log.slice(0, startIndex + 1), runId);
     assert.equal(fromItsStart?.tree, true, "a tree before any worker starts: the lead never moves");
+    // No finish check until the lead asks a reviewer (flipped: it was drawn from the start).
     assert.deepEqual(
       fromItsStart?.nodes.map((node) => node.kind),
-      [
-        GraphNodeKind.Run,
-        GraphNodeKind.Base,
-        GraphNodeKind.Lead,
-        GraphNodeKind.Integration,
-        GraphNodeKind.Final,
-        GraphNodeKind.FinishCheck,
-      ],
+      [GraphNodeKind.Run, GraphNodeKind.Base, GraphNodeKind.Lead, GraphNodeKind.Integration, GraphNodeKind.Final],
     );
     assert.equal(customEvents(log, "run_registered").length, 1, "no second run started");
     assert.equal(customEvents(log, "coordinator_message_processing").length, 0, "never a turn of its own");
