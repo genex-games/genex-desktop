@@ -119,7 +119,7 @@ export const POOL_WORDS = {
   status: (line: StatusLine) =>
     `${line.id} · ${line.title} · ${line.isolation} · ${line.state} · ${line.minutes} min${line.extra ? ` · ${line.extra}` : ""}`,
   waiting: (question: string) =>
-    `waiting for the person: ${question}. Stop it, or work around it; other workers keep going.`,
+    `waiting for the person: ${question}. Only that call waits; go on with the rest of the work, and the other workers keep going.`,
   ready: (id: string) => `its work is ready: ${WorkerTool.Mark} ${id} used to merge it, or rejected to drop it`,
   nothingChanged: "it changed nothing",
   marked: (verdict: string) => `marked ${verdict}`,
@@ -171,7 +171,7 @@ export const RUN_POOL_WORDS = {
   readers: "Workers from the shared pool:",
   /** One of the run's own workers waits on the person: the line that wakes the lead (`worker <id>` opens it). */
   waiting: (id: string, question: string) =>
-    `worker ${id} is waiting for the person: ${question}. Stop it (${WorkerTool.Stop}), or work around it; the other workers keep going.`,
+    `worker ${id} is waiting for the person: ${question}. Only that call waits, and nobody answering is not a no; go on with the rest of the work, and the other workers keep going.`,
 } as const;
 
 /** What `worker_mark` answers a director about one of its builders. */

@@ -300,7 +300,9 @@ describe("the worker pool", { timeout: TEST_TIMEOUT_MS }, () => {
     });
     log.push(row("pending"));
     const woke = await pool.call(WorkerTool.Wait, { seconds: "200" });
-    assert.match(woke, /waiting for the person: Claude wants to run npm install\. Stop it, or work around it/);
+    // Flipped (Loop phase 3): a card waiting is no reason to stop the worker; only its call waits.
+    assert.match(woke, /waiting for the person: Claude wants to run npm install\. Only that call waits; go on/);
+    assert.doesNotMatch(woke, /Stop it/);
     log.push(row("allowed"));
     assert.doesNotMatch(await pool.call(WorkerTool.Status, { id }), /waiting for the person/);
     assert.match(await pool.call(WorkerTool.Status, { id }), /running/);

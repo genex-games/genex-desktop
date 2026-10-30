@@ -176,7 +176,7 @@ export interface WorkInFlight {
    */
   readonly pluginCallAttribution: WeakMap<
     PluginBinding,
-    { runId?: string; facetId?: string; iteration?: number; lead?: boolean }
+    { runId?: string; facetId?: string; iteration?: number; lead?: boolean; outlivesTurn?: boolean }
   >;
   readonly pluginTurnLeases: Map<string, () => Promise<void>>;
   /**

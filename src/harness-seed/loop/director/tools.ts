@@ -90,6 +90,9 @@ export const SERVES_LEAD = true;
 
 /** What a stopped run answers every tool call with but the studio's own. */
 const STOPPED_BY_USER = "STOPPED BY THE USER: the run is over; end your session now without starting anything";
+/** What `goal_update blocker=approval_required` answers: the run goes on, and so does the rest of the work. */
+const APPROVAL_GOES_ON =
+  "the run goes on: a card waiting for the person blocks only the call that asked, and nobody answering is not a no — carry on with every other part, optional ones included, and ask again later";
 /** How much of a build's state a judge's answer quotes. */
 const JUDGE_STATE_CHARS = 1_200;
 /** How many GPU errors a judge's answer carries. */
@@ -1413,13 +1416,17 @@ async function noteTool(loopRun: LoopRun, args: AnyRecord): Promise<string> {
   return "noted";
 }
 
-/** Pause only when no independent required work remains; preserve the integrated checkpoint. */
+/**
+ * Pause only when no independent required work remains; preserve the integrated checkpoint. An
+ * approval is never why a run stops: a card waiting for the person blocks only the call that asked,
+ * and nobody answering it is not a no, so a goal blocked on one leaves the run going.
+ */
 async function finishBlockedGoals(loopRun: LoopRun): Promise<void> {
   const ledger = loopRun.state.goals;
   if (!ledger || goalDecision(ledger, loopRun.state.integrationHead) !== GoalStatus.Blocked) return;
-  const blockers = ledger.entries
-    .filter((goal) => goal.status === GoalStatus.Blocked)
-    .map((goal) => `${goal.id}: ${goal.blocker}`);
+  const blocked = ledger.entries.filter((goal) => goal.status === GoalStatus.Blocked);
+  if (blocked.some((goal) => goal.blocker === GoalBlocker.Approval)) return;
+  const blockers = blocked.map((goal) => `${goal.id}: ${goal.blocker}`);
   await loopRun.finish({
     summary: `Required work is blocked (${blockers.join("; ")}). The integration checkpoint is retained. Resolve the prerequisite or revise the approach, then Resume.`,
     land: "no",
@@ -1440,7 +1447,7 @@ async function updateGoal(loopRun: LoopRun, args: AnyRecord): Promise<string> {
 
   await loopRun.saveJournal();
   await finishBlockedGoals(loopRun);
-  return JSON.stringify(goal);
+  return JSON.stringify(blocker === GoalBlocker.Approval ? { ...goal, next: APPROVAL_GOES_ON } : goal);
 }
 
 /** A tool's answer to the director's session: a sentence, or a JSON string. */

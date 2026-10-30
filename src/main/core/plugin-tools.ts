@@ -242,6 +242,11 @@ export interface PluginCallContext {
    */
   lead?: boolean;
   /**
+   * A run's own call (its lead's or a worker's): its consent card outlives the chat's turns, as a
+   * run worker's tool permission cards do, so a lead's turn ending never withdraws it.
+   */
+  outlivesTurn?: boolean;
+  /**
    * Ends the call's wait for its locks, never its run, once the person writes in the chat its session
    * answers (`engine.steer`, `PersonWrote`): it is answered `person_wrote`, to read the message first.
    */
@@ -397,8 +402,8 @@ export class PluginToolService {
       project: binding.project,
       ...(binding.threadId ? { threadId: binding.threadId } : {}),
       ...(signal ? { signal } : {}),
-      // A build's lead is not the chat's turn: another turn ending leaves its question waiting.
-      ...(attribution?.lead ? { outlivesTurn: true } : {}),
+      // A build's lead or a run's worker is not the chat's turn: another turn ending leaves its question waiting.
+      ...(attribution?.lead || attribution?.outlivesTurn ? { outlivesTurn: true } : {}),
       ...(modeAnswers ? { modeAnswers } : {}),
     });
     try {
@@ -1285,8 +1290,12 @@ export class PluginToolService {
         ...(attributed ? { attribution: attributed } : {}),
       }),
     });
-    if (asked || ctx.lead)
-      this.#x.pluginCallAttribution.set(binding, { ...asked, ...(ctx.lead ? { lead: true } : {}) });
+    if (asked || ctx.lead || ctx.outlivesTurn)
+      this.#x.pluginCallAttribution.set(binding, {
+        ...asked,
+        ...(ctx.lead ? { lead: true } : {}),
+        ...(ctx.outlivesTurn ? { outlivesTurn: true } : {}),
+      });
     // Bookkeeping never fails a tool call: a log that cannot be written loses the record, not the work.
     await this.#core
       .append([customEventData(CustomEvent.PluginToolStarted, { ...payload })], binding.threadId)

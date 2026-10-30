@@ -16818,4 +16818,37 @@ describe("the lead and its workers are free agents (Loop phase 3)", () => {
     const lamps = loopRun.notesSince(0).at(-1);
     assert.equal(heardMidTurn(loopRun, lamps.seq), false);
   });
+
+  it("FL5. the director dropped work and ended the run while an approval card sat unanswered: an approval is never why a run stops, and nobody's answer is not a no", async () => {
+    const { fakeHost, fakeLoopRun } = await import("../helpers/director-run.ts");
+    const { handler } = await import("../../src/harness-seed/loop/director/tools.ts");
+    const { createGoals } = await import("../../src/harness-seed/loop/director/goals.ts");
+    const { POOL_WORDS, RUN_POOL_WORDS } = await import("../../src/harness-seed/loop/workers/prompts.ts");
+    const { openTools } = await import("../../src/harness-seed/loop/director/open/tool-specs.ts");
+    const finishes: Array<Record<string, unknown>> = [];
+    const runWith = () => {
+      const loopRun = fakeLoopRun(fakeHost());
+      loopRun.state.goals = createGoals([{ id: "sky", done: ["the sky is dusk"] }]);
+      loopRun.finish = async (args: Record<string, unknown>) => {
+        finishes.push(args);
+        return "finished";
+      };
+      return loopRun;
+    };
+    const answer = JSON.parse(
+      String(await handler(runWith(), "goal_update", { goal: "sky", blocker: "approval_required" })),
+    );
+    assert.deepEqual(finishes, [], "the run goes on");
+    assert.match(String(answer.next), /blocks only the call that asked, and nobody answering is not a no/);
+    // A prerequisite only the person can bring (no network) still pauses the run, as before.
+    await handler(runWith(), "goal_update", { goal: "sky", blocker: "network_unavailable" });
+    assert.equal(finishes.length, 1);
+    // What the lead hears of a worker waiting on a card never tells it to stop that worker.
+    assert.doesNotMatch(POOL_WORDS.waiting("Claude wants to run npm install"), /Stop it/);
+    assert.doesNotMatch(RUN_POOL_WORDS.waiting("w1", "Claude wants to run npm install"), /Stop it/);
+    // An open Loop's pause is never for a card waiting for the person.
+    const pause = openTools().find((tool) => tool.name === "pause");
+    assert.doesNotMatch(String(pause?.description), /a permission/);
+    assert.match(String(pause?.description), /Never for a card waiting for their answer/);
+  });
 });

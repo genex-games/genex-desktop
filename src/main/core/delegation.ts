@@ -2901,6 +2901,9 @@ export class DelegationService {
     const directory = session.leads ?? target.cwd;
     const binding = { project: p.project, directory, ...(p.threadId ? { threadId: p.threadId } : {}) };
     const lead = session.leads !== null;
+    // A run's own call, its lead's or a worker's: a card it asks with waits out the chat's other
+    // turns, so a lead's turn ending never withdraws a worker's question.
+    const outlivesTurn = lead || Boolean(session.worker?.runId);
     // A connector call waits on a service, not on the person: it ends with the lead's own session.
     const connectorSignal = lead ? AbortSignal.any([signal, session.ended.signal]) : signal;
     // A worker's calls pass the locks it holds for its life (an in-place writer's); the lead's hold their own.
@@ -2913,7 +2916,7 @@ export class DelegationService {
     if (this.#core.mcp.owns(name)) {
       if (!handed(session, tools, name)) throw new Error(MESSAGE.unknownTool(name));
       return this.#x.pluginTools.invokeConnectorTool(name, args, binding, connectorSignal, {
-        outlivesTurn: lead,
+        outlivesTurn,
         ...this.#runConsentFor(name, p, session),
         ...callRunField(session),
         ...locking,
@@ -2931,6 +2934,7 @@ export class DelegationService {
       attribution: session.attribution,
       credits: session.credits,
       lead,
+      outlivesTurn,
       ...locking,
     });
     return pluginAnswer(result);

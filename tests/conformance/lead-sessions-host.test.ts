@@ -1094,16 +1094,18 @@ describe("a build's lead and the run's coordinator ask the person they answer", 
     assert.deepEqual((await core.permissionSettings()).rules.find((r) => r.project === game)?.rules, ["Bash(ls *)"]);
   });
 
-  it("withdraws a card nobody answered in time, in its own words", async () => {
+  it("withdraws a card nobody answered in time, in its own words: not a no, and the work goes on", async () => {
     const { core, threadId, asking, personSays, handToLead } = await leadChat({ leadAskTimeoutMs: 50 });
     await core.setPermissionMode(threadId, "default");
     await handToLead(await personSays());
     const { answer, rows } = await (await asking({ tool: "Bash", input: { command: "ls ~/Downloads" } })).done();
+    // Flipped (Loop phase 3): "so this was not allowed. Do not retry it" read as a no, and a lead
+    // dropped work over a card nobody saw.
     assert.deepEqual(answer, {
       decision: "deny",
       withdrawn: true,
       message:
-        "Nobody answered within 5 minutes, so this was not allowed. Do not retry it; say in your reply what you needed.",
+        "Nobody answered within 5 minutes: the person may be away. This is not a no; it did not run. Carry on with the rest of the work, and ask again later if it is still needed.",
     });
     assert.deepEqual(
       rows.map((row) => [row.state, row.by]),
