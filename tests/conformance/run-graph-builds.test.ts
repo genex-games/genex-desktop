@@ -6,15 +6,25 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { buildRunGraph, type RunGraph } from "../../src/renderer/run-graph.ts";
+import { buildRunGraph, joinBuildsView, type RunGraph } from "../../src/renderer/run-graph.ts";
 import {
   BuildOutcome,
   buildOutcome,
   buildTimeline,
   foldId,
+  placedWord,
   WORKERS_SHOWN,
 } from "../../src/renderer/run-graph-builds.ts";
-import { partRows, type Step, StepEdgeKind } from "../../src/renderer/run-steps.ts";
+import {
+  PictureSource,
+  partRows,
+  resultStatus,
+  type Step,
+  StepEdgeKind,
+  StepState,
+  stepWord,
+} from "../../src/renderer/run-steps.ts";
+import type { RunSummary } from "../../src/shared/run-summary.ts";
 import { buildsLayout } from "../../src/renderer/run-tree.ts";
 import { CustomEvent } from "../../src/shared/custom-events.ts";
 import { type EventEnvelope, EventKind } from "../../src/shared/event-log.ts";
@@ -242,5 +252,52 @@ describe("a Loop's build history", () => {
       Object.keys(layout.rects).some((id) => id.startsWith("build:")),
       false,
     );
+  });
+
+  it("says the latest build did not start when its own health check failed, though no merge record names it", () => {
+    const graph = graphOf(loop());
+    const summary = { head: H(3), base: null } as unknown as RunSummary;
+    assert.equal(resultStatus(graph, summary).state, StepState.Undone, "Build 3's newest check found it throwing");
+    const passed = graphOf([...loop(), check(H(4), { picture: shot("merge_w9") })]);
+    assert.equal(resultStatus(passed, { head: H(4), base: null } as unknown as RunSummary).state, StepState.InBuild);
+  });
+
+  it("says a merged worker's work is in the build, not yet the game; other words stay", () => {
+    const graph = graphOf(loop());
+    const timeline = buildTimeline(graph, partRows(graph));
+    assert.ok(timeline);
+    const words = (id: string) => {
+      const step = stepOf(graph, id);
+      assert.ok(step);
+      return [placedWord(step, timeline.places.get(step.id), true), stepWord(step, true)];
+    };
+    assert.deepEqual(words("w1"), ["Added to your build", "Added to your game"]);
+    assert.deepEqual(words("w3"), ["Not used", "Not used"]);
+    assert.deepEqual(words("w10"), ["Working", "Working"]);
+  });
+
+  it("shows a sound-only worker its build's screenshot, not a sound it cannot draw", () => {
+    seq = 0;
+    const sound = "assets/genex/engine.wav";
+    const events = [
+      ...loop(),
+      inRun(CustomEvent.AssetDelivered, {
+        project: "game",
+        source: "genex",
+        jobId: "job-engine",
+        files: [{ file: sound, bytes: 9, kind: "audio" }],
+        at: "2026-01-01T09:00:30.000Z",
+        workspace: "build",
+        facetId: "w2",
+      }),
+    ];
+    const inventory = {
+      project: "game",
+      assets: [{ file: sound, kind: "audio" as const, bytes: 9, mtime: "", source: "genex", jobId: "job-engine" }],
+      truncated: false,
+      skipped: [],
+    };
+    const graph = joinBuildsView(graphOf(events), null, inventory);
+    assert.deepEqual(stepOf(graph, "w2")?.picture, { source: PictureSource.Build, path: shot("merge_w2") });
   });
 });

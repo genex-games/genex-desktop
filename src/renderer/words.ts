@@ -2471,6 +2471,8 @@ export const BUILD_LINE_WORDS = {
   /** The card's line under its outcome: what made the build. */
   merged: (worker: string) => t("After {worker}", { worker }),
   leadsOwn: t("The main agent's own changes"),
+  /** A merged worker's status on the build line: in that build, not yet the game. */
+  addedToBuild: t("Added to your build"),
   /** A worker's first line on the graph: the build it hangs off, and why. */
   mergedInto: (n: number) => t("Merged into Build {number}", { number: n }),
   startedFrom: (n: number) => t("Started from Build {number}", { number: n }),

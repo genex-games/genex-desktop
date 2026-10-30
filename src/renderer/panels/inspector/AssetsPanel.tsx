@@ -32,18 +32,18 @@ const PICTURE_FRAME = { width: 92, height: 58, boxShadow: IMAGE_OUTLINE };
 const BLENDER_ERROR_CHARS = 140;
 
 /**
- * A job's picture once delivered: its Assets-stage thumbnail, the modeller's render, the copy Genex
- * kept of its picture (there while its files are only in the running build), a still of it in the
- * game, or its kind in words.
+ * A job's picture once delivered: the copy Genex kept of the picture this delivery made (its own,
+ * when the same file was delivered again since), its Assets-stage thumbnail, the modeller's render,
+ * a still of it in the game, or its kind in words (a sound has no picture).
  */
 function DeliveredPicture({ job, project }: { job: AssetInfo; project: string | null }): JSX.Element {
+  const kept = useStill(job.picture ? { run: job.picture, maxPx: ASSET_THUMB_PX } : null);
+  const drawn = job.picture || job.preview?.kind === "audio" ? null : (job.preview ?? null);
   const picture = !job.preview && !job.picture ? firstImage(job) : null;
   const still = useStill(project && picture ? { project, asset: picture, maxPx: ASSET_THUMB_PX } : null);
   const render = useStill(blenderRender(job));
-  const kept = useStill(job.picture && !job.preview ? { run: job.picture, maxPx: ASSET_THUMB_PX } : null);
-  const src = render ?? kept ?? still;
-  if (project && job.preview)
-    return <AssetThumbnail project={project} asset={job.preview} companions={[]} fallback={null} quiet />;
+  const src = kept ?? render ?? still;
+  if (project && drawn) return <AssetThumbnail project={project} asset={drawn} companions={[]} fallback={null} quiet />;
   if (src) return <img src={src} alt="" className="h-full w-full object-cover" draggable={false} />;
   return <span className="absolute inset-0 grid place-items-center text-micro">{kindWord(job) ?? t("File")}</span>;
 }

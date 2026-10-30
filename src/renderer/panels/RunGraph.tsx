@@ -56,7 +56,6 @@ import {
   StepNode,
 } from "./run-graph/nodes.tsx";
 import { foldId } from "../run-graph-builds.ts";
-import { workerPlaceWords } from "../words.ts";
 import { useBuildsModel, useNow, useRunStills } from "./run-graph/use-builds-model.ts";
 import { GLIDE_MS, useGraphCamera } from "./run-graph/use-graph-camera.ts";
 import { Inspector, Lightbox, type LightItem, type Reply } from "./RunInspector.tsx";
@@ -700,7 +699,7 @@ const GraphNodes = memo(function GraphNodes({
             ghost={layout.ghosts.has(node.id)}
             selected={selected === node.id}
             onSelect={onSelect}
-            eyebrow={place ? workerPlaceWords(place) : null}
+            place={place ?? null}
           />
         );
       })}

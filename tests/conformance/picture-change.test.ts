@@ -131,6 +131,12 @@ describe("which pictures may pair", () => {
     });
     const jobs = [first, again, other];
     assert.equal(earlierVersion(jobs, again), first, "the same file delivered again");
+    const sameMoment = delivered({ jobId: "job-e", at: first.at, picture: "/runs/r/deliveries/job-e.png" });
+    assert.equal(
+      earlierVersion([first, sameMoment], sameMoment),
+      first,
+      "delivered in the same second: the log's order",
+    );
     assert.equal(earlierVersion(jobs, first), null, "the first version has none before it");
     assert.equal(earlierVersion(jobs, other), null, "another asset is no earlier version");
 
@@ -196,5 +202,44 @@ describe("a delivery only in the running build, on the run's Assets card", () =>
     assert.equal(job?.inGame, false, "listed under Not in your game yet");
     assert.equal(job?.preview?.assetRef, building.assetRef, "its thumbnail reads the build's file");
     assert.equal(job?.picture, "/runs/run-a/deliveries/job-sign.png");
+  });
+});
+
+describe("an asset delivered again into the same file", () => {
+  it("keeps each version's own picture, so the earlier one can be compared with the new one", () => {
+    const file = "assets/genex/shop-sign.png";
+    const at = (n: number) => new Date(Date.UTC(2026, 9, 31, 10, 0, n)).toISOString();
+    const record = (n: number, eventType: string, payload: Record<string, unknown>): EventEnvelope =>
+      ({
+        id: `e${n}`,
+        thread_id: "t1",
+        session_id: null,
+        turn_id: null,
+        created_at: at(n),
+        data: { type: EventKind.Custom, event_type: eventType, payload: { runId: "run-a", ...payload } },
+      }) as EventEnvelope;
+    const delivery = (n: number, jobId: string, worker: string) =>
+      record(n, CustomEvent.AssetDelivered, {
+        project: "game",
+        source: "genex",
+        jobId,
+        files: [{ file, bytes: 1, kind: "image" }],
+        at: at(n),
+        workspace: "build",
+        facetId: worker,
+        picture: `/runs/run-a/deliveries/${jobId}.png`,
+      });
+    const graph = buildRunGraph([
+      record(1, CustomEvent.RunStarted, { goal: "A shop", project: "game" }),
+      delivery(2, "job-sign-1", "w1"),
+      delivery(3, "job-sign-2", "w9"),
+    ]);
+    assert.ok(graph);
+    const jobs = graph.nodes.find((node): node is AssetsNode => node.kind === GraphNodeKind.Assets)?.jobs ?? [];
+    assert.deepEqual(
+      jobs.map((job) => job.picture),
+      ["/runs/run-a/deliveries/job-sign-1.png", "/runs/run-a/deliveries/job-sign-2.png"],
+    );
+    assert.equal(earlierVersion(jobs, jobs[1] as AssetInfo)?.picture, "/runs/run-a/deliveries/job-sign-1.png");
   });
 });

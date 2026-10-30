@@ -14,7 +14,8 @@
  */
 import { HealthFinding } from "../shared/preview-contract.ts";
 import type { HealthLook, RunGraph } from "./run-graph.ts";
-import { isLiveStep, type PartRow, type Step } from "./run-steps.ts";
+import { isLiveStep, type PartRow, type Step, StepState, stepWord } from "./run-steps.ts";
+import { BUILD_LINE_WORDS, workerPlaceWords } from "./words.ts";
 
 /** How many finished workers a build shows before the rest fold into one card. */
 export const WORKERS_SHOWN = 3;
@@ -167,6 +168,24 @@ export function workerPlace(builds: readonly BuildCard[], step: Step): WorkerPla
   const after = info?.merged && settled !== null ? builds.find((build) => build.seq > settled) : undefined;
   if (after) return { build: after.n, merged: true };
   return { build: builtBefore(builds, startedAt), merged: false };
+}
+
+/**
+ * A worker's status on the build line: one merged into a build is in that build (the game gets it
+ * when the run lands); any other reads as everywhere else (`stepWord`).
+ */
+export function placedWord(step: Step, place: WorkerPlace | undefined, active: boolean): string {
+  return place?.merged && step.state === StepState.InBuild ? BUILD_LINE_WORDS.addedToBuild : stepWord(step, active);
+}
+
+/** A worker node's words: its status, and over its name on the build line the build it hangs off. */
+export function placedFace(
+  step: Step,
+  place: WorkerPlace | null,
+  active: boolean,
+): { word: string; eyebrow: string | null } {
+  if (!place) return { word: stepWord(step, active), eyebrow: null };
+  return { word: placedWord(step, place, active), eyebrow: workerPlaceWords(place) };
 }
 
 /** Which finished workers of a build stay in sight: the merged one first, then the newest to settle. */

@@ -15,6 +15,7 @@ import { seedLargeBuildGraph } from "./fixture-large-graph.ts";
 import { seedLeadGraph } from "./fixture-lead-graph.ts";
 import { seedBuildGraph } from "./fixture-build-graph.ts";
 import { seedChatWorkers, seedChatWorkersLoop } from "./fixture-chat-workers.ts";
+import { seedBuildTimeline } from "./fixture-build-timeline.ts";
 import { seedFinishCheck, seedLoopEnds } from "./fixture-finish-check.ts";
 import { seedPausedBuild } from "./fixture-paused-build.ts";
 import { seedBuildingCard } from "./fixture-building-card.ts";
@@ -280,6 +281,10 @@ export async function activateChatFixture(
   }
   if (fixture.fixture === FixtureName.ChatWorkers) {
     await seedChatWorkersLoop(core);
+    return;
+  }
+  if (fixture.fixture === FixtureName.BuildTimeline) {
+    await seedBuildTimeline(core, fixture.project, fixture.threadId);
     return;
   }
   if (fixture.fixture === FixtureName.OpenProjects) {

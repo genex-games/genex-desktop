@@ -221,27 +221,20 @@ function oneAsset(a: AssetInfo, b: AssetInfo): boolean {
 }
 
 /**
- * The version of `job`'s asset delivered before it, for the compare: the newest earlier card of the
- * same asset whose kept picture shows the same view (the same picture file). Null for a first
- * version, another view, or a card without a kept picture: unrelated pictures are never paired.
+ * The version of `job`'s asset delivered before it, for the compare: the newest card before it in
+ * the log's order of the same asset whose kept picture shows the same view (the same picture file).
+ * Null for a first version, another view, or a card without a kept picture: unrelated pictures are
+ * never paired.
  */
 export function earlierVersion(jobs: readonly AssetInfo[], job: AssetInfo): AssetInfo | null {
   const view = viewOf(job);
   if (!job.picture || job.state !== AssetCardState.Delivered || !view) return null;
-  const sameView = (other: AssetInfo): boolean => {
+  const pairs = (other: AssetInfo): boolean => {
     const otherView = viewOf(other);
-    return otherView !== null && leafOf(otherView) === leafOf(view);
+    const pictured = other.state === AssetCardState.Delivered && Boolean(other.picture);
+    return pictured && otherView !== null && leafOf(otherView) === leafOf(view) && oneAsset(other, job);
   };
-  const earlier = jobs.filter(
-    (other) =>
-      other !== job &&
-      other.state === AssetCardState.Delivered &&
-      Boolean(other.picture) &&
-      other.at < job.at &&
-      oneAsset(other, job) &&
-      sameView(other),
-  );
-  return earlier.at(-1) ?? null;
+  return jobs.slice(0, Math.max(0, jobs.indexOf(job))).findLast(pairs) ?? null;
 }
 
 /** The copy the host kept of a picture this card's files delivered, when it kept one. */
@@ -501,6 +494,8 @@ export function assetDelivered(ledger: AssetLedger, payload: Payload, place: Ass
   job.bytes = bytes || job.bytes;
   job.render = strOrNull(payload.render) ?? job.render;
   job.renderFront = strOrNull(payload.renderFront) ?? job.renderFront;
+  // Its own picture: the files' map holds the newest delivery's, and a file delivered again is another version.
+  if (picture) job.picture = picture;
   if (job.name === jobId) job.name = job.files[0] ?? job.name;
 }
 

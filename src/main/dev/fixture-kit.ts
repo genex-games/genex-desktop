@@ -55,6 +55,11 @@ export const FixtureName = {
    * with their workers' records.
    */
   ChatWorkers: "chat-workers",
+  /**
+   * A Loop still going whose integration head grew through four builds (a sound-only merge, a
+   * repainted sign, a blank one), twelve workers off them, and deliveries only in its build.
+   */
+  BuildTimeline: "build-timeline",
   /** The finish check on the Builds graph and in the chat: four Loops, one in each of its looks. */
   FinishCheck: "finish-check",
   /** Live's run pictures for a folder no observer draws, and the sentence for one with none yet. */

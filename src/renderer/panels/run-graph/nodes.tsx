@@ -24,16 +24,7 @@ import type {
 import { runIdOf } from "../../run-graph.ts";
 import type { JobInfo } from "../../run-graph-workers.ts";
 import { AssetCardState, BLENDER_SOURCE } from "../../run-graph-assets.ts";
-import {
-  askedRest,
-  isLiveStep,
-  type ResultStatus,
-  STATE_TONE,
-  type Step,
-  StepState,
-  stepWord,
-  Tone,
-} from "../../run-steps.ts";
+import { askedRest, isLiveStep, type ResultStatus, STATE_TONE, type Step, StepState, Tone } from "../../run-steps.ts";
 import { FinishLook, finishCheckFace, finishCheckLook, jobsTileStatus, LeadFace } from "../../run-tree.ts";
 import { useStill } from "../../stills.ts";
 import { Icon, type IconName } from "../../ui/icons.tsx";
@@ -46,7 +37,7 @@ import { sameStepNode, type StepNodeProps } from "./step-props.ts";
 import { useRoundStill, useSavePointShot, useWorkerStill } from "../run-stills.ts";
 import { AssetThumbnail } from "../AssetThumbnail.tsx";
 import { BUILD_LINE_WORDS, FINISH_CHECK_WORDS, JOBS_EYEBROW, LEAD_WORDS } from "../../words.ts";
-import { type BuildCard, type BuildHangers, BuildOutcome } from "../../run-graph-builds.ts";
+import { type BuildCard, type BuildHangers, BuildOutcome, placedFace } from "../../run-graph-builds.ts";
 import { useNow } from "./use-builds-model.ts";
 import type { ReferenceFrame } from "../../../shared/protocol.ts";
 import type { ProjectAsset } from "../../../shared/game-assets.ts";
@@ -357,7 +348,7 @@ export const StepNode = memo(function StepNode({
   ghost,
   selected,
   onSelect,
-  eyebrow = null,
+  place = null,
 }: StepNodeProps): JSX.Element | null {
   const working = isLiveStep(step);
   const shown = step.shown;
@@ -366,7 +357,7 @@ export const StepNode = memo(function StepNode({
   const frame = usePartFrame(project, runIdOf({ runId }), step.facetId, working && active);
   const screen = useFrameSrc(frame);
   const worker = useWorkerStill(project, step.picture);
-  const word = stepWord(step, active);
+  const { word, eyebrow } = placedFace(step, place, active);
   const tries = step.tries.length;
   if (!rect) return null;
   const still = screen ?? src ?? worker.src;
