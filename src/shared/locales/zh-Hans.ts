@@ -379,8 +379,6 @@ export default {
   Applied: "已应用",
   "Applied automatically": "已自动应用",
   "Applied part {part}": "已应用部分 {part}",
-  "Applied {count, plural, one {# improvement} other {# improvements}}.": "已应用 {count, plural, other {# 项改进}}。",
-  "Apply suggestions automatically": "自动应用建议",
   "Applying part {part}": "正在应用部分 {part}",
   "Approval is no longer pending": "批准已不再待处理",
   Approve: "批准",
@@ -540,8 +538,6 @@ export default {
   "Cancel signing in": "取消登录",
   "Cancel the connector form": "取消连接器表单",
   "Cancel your request to {name}": "取消发给 {name} 的请求",
-  "Candidate kept.": "已保留候选版本。",
-  "Candidate not kept.": "未保留候选版本。",
   "Candidate {index}": "候选 {index}",
   Candidates: "候选",
   "Cannot read model installation status.": "无法读取模型安装状态。",
@@ -558,7 +554,6 @@ export default {
   "Change image…": "更换图片…",
   "Change it": "修改",
   "Change the plan: ": "修改计划：",
-  "Change {skill}": "修改：{skill}",
   Changed: "已更改",
   "Changed {skill}": "已修改：{skill}",
   "Changes apply immediately and save on this Mac.": "更改立即生效，并保存在这台 Mac 上。",
@@ -610,7 +605,6 @@ export default {
   "Checking on background work": "正在查看后台任务",
   "Checking plan usage…": "正在检查套餐用量…",
   "Checking play": "正在检查试玩",
-  "Checking preservation": "正在检查是否保持原样",
   "Checking that Epic signed the installer…": "正在确认安装程序由 Epic 签名…",
   "Checking that Microsoft signed Unreal's runtime installer…":
     "正在确认 Unreal 自带的运行库安装程序由 Microsoft 签名…",
@@ -796,7 +790,6 @@ export default {
   "Compacting…": "正在压缩…",
   "Compacts automatically": "自动压缩",
   "Comparative judgement": "对比评判",
-  "Comparing before and after": "正在对比前后",
   "Compiled {blueprint}": "已编译 {blueprint}",
   "Compiling {blueprint}": "正在编译 {blueprint}",
   Completed: "已完成",
@@ -888,7 +881,6 @@ export default {
   "Could not load local models. Reopen Settings to try again. {error}":
     "无法加载本地模型。请重新打开“设置”再试一次。{error}",
   "Could not load this chat.": "无法加载此对话。",
-  "Could not look for improvements. Try again.": "无法查找改进。请重试。",
   "Could not open the local sign-in callback": "无法打开本地登录回调",
   "Could not open the sign-in terminal. Close an unused session and try again.":
     "无法打开登录终端。请关闭一个不用的会话后重试。",
@@ -1072,7 +1064,6 @@ export default {
   Default: "默认",
   "Default game folder": "默认游戏文件夹",
   "Default model": "默认模型",
-  "Default view": "默认视图",
   Delete: "删除",
   "Delete every row shared from this computer?": "要删除从这台电脑分享的所有数据行吗？",
   "Delete game": "删除游戏",
@@ -1090,7 +1081,6 @@ export default {
   Delivered: "已交付",
   "Delivered revision: {revision} · from integration {source}": "已交付版本：{revision} · 来自集成 {source}",
   "Delivered, not used yet": "已交付，尚未使用",
-  "Demo: {demo}": "演示：{demo}",
   Demon: "恶魔",
   Denied: "已拒绝",
   "Denied · {reason}": "已拒绝 · {reason}",
@@ -1119,7 +1109,6 @@ export default {
   "Didn’t finish": "未完成",
   Disabled: "已停用",
   "Disabled in the provider configuration.": "已在提供方配置中停用。",
-  Discard: "丢弃",
   Disconnect: "断开连接",
   "Disconnect account": "断开账号连接",
   Dismiss: "关闭",
@@ -1261,7 +1250,6 @@ export default {
     "用最新的 3D、纹理、音效和视频工具扩展你的智能体。始终可选。",
   Extensions: "扩展",
   "External MCP tools reach every coding agent through Studio.": "外部 MCP 工具会通过 Studio 提供给每个编程智能体。",
-  FPS: "FPS",
   Failed: "失败",
   "Failed to connect": "连接失败",
   "Failed to start": "启动失败",
@@ -1282,7 +1270,6 @@ export default {
   "Filled in from your paste": "已根据粘贴内容填写",
   "Filter the picture": "给图片加滤镜",
   "Final look": "最终检查",
-  "Final verification": "最终验证",
   "Find people by name": "按名字查找用户",
   "Finding people by name isn’t on Genex yet. Send your link instead.":
     "Genex 还不支持按名字查找用户。请改为发送你的链接。",
@@ -1334,11 +1321,7 @@ export default {
   "For <plugin>Genex plugin</plugin> tools: 3D, animation, textures, music. Optional.":
     "用于 <plugin>Genex 插件</plugin>的工具：3D、动画、纹理、音乐。可选。",
   "Force Reload": "强制重新加载",
-  Found: "已找到",
   "Found locally. These plugins only run after you allow them.": "在本地找到。这些插件需要你允许后才会运行。",
-  "Found {count, plural, one {# new suggestion} other {# new suggestions}} at the top of Activity.":
-    "找到 {count, plural, other {# 条新建议}}，在“动态”顶部。",
-  "Frame interval (ms)": "帧间隔（ms）",
   Free: "免费",
   "Free and open source, about 170 MB. Genex installs it in Applications.":
     "免费开源，约 170 MB。Genex 会将它安装到“应用程序”中。",
@@ -1603,8 +1586,6 @@ export default {
     "可供智能体使用的指引。是否可用取决于来源和所选提供方。",
   Guide: "指南",
   "Harness added a tool for itself: {file}": "Harness 为自己添加了工具：{file}",
-  "Harness asks before changing how it builds. You can undo any change in Harness.":
-    "Harness 在改变制作方式前会先询问。你可以在 Harness 中撤销任何更改。",
   "Harness can run up to this many workers at the same time.": "Harness 最多可同时运行这么多助手。",
   "Harness changed one of its own files.": "Harness 修改了自己的一个文件。",
   "Harness could not read how this run ended.": "Harness 无法读取这次构建的结束方式。",
@@ -1713,7 +1694,6 @@ export default {
   "In your game": "已在游戏中",
   "In {folder}": "在 {folder} 中",
   "In-game economy": "游戏内经济",
-  "Include: {title}": "包含：{title}",
   Incomplete: "未完成",
   "Independent interaction coverage is incomplete.": "独立交互覆盖不完整。",
   "Independent interaction coverage is unavailable for this revision.": "此版本没有可用的独立交互覆盖。",
@@ -1789,7 +1769,6 @@ export default {
   "Integrity check failed for {file}: the file does not match the pinned commit":
     "{file} 完整性检查失败：文件与固定的提交不一致",
   "Interface font": "界面字体",
-  Interrupted: "已中断",
   Interviewing: "了解需求中",
   "Invalid GitHub link": "GitHub 链接无效",
   "Invalid approval": "无效的批准",
@@ -1893,7 +1872,6 @@ export default {
   "Keep this cover": "保留此封面",
   "Keep this folder": "保留此文件夹",
   "Keep working on a game you already have": "继续制作已有的游戏",
-  "Keeping verified change": "正在保留已验证的更改",
   Kept: "已保留",
   "Kept by reviewers": "审查员已保留",
   "Kept by reviewers, not added": "审查员已保留，未添加",
@@ -1998,8 +1976,6 @@ export default {
   "Long work the lead or a worker started, like a build. It runs on while the agents go on working.":
     "主智能体或助手启动的长时间工作，比如构建。智能体继续工作时，它也会一直运行。",
   "Look and move from the player's eyes.": "以玩家的视角观察和移动。",
-  "Look for improvements": "查找改进",
-  "Look for improvements in recent builds": "在最近的构建中查找改进",
   Looked: "已查看",
   "Looked at the level": "已查看关卡",
   "Looked through the assets": "已浏览素材",
@@ -2014,7 +1990,6 @@ export default {
   "Looking at this Mac…": "正在检查这台 Mac…",
   "Looking at your game": "正在查看你的游戏",
   "Looking at your game.": "正在查看你的游戏。",
-  "Looking for improvements": "正在查找改进",
   "Looking something up": "正在查找资料",
   "Looking through the assets": "正在浏览素材",
   "Looking up Blueprint nodes": "正在查找蓝图节点",
@@ -2102,9 +2077,6 @@ export default {
   "Measured in a plugin": "在插件中测量",
   "Measured in {plugin}": "在 {plugin} 中测量",
   "Measured the route": "已测量路线",
-  Measurement: "测量项",
-  "Measurement has not completed": "测量尚未完成",
-  "Measuring before": "正在测量优化前",
   "Measuring the route": "正在测量路线",
   "Measuring…": "正在计算…",
   "Meet your Genex avatar": "来看看你的 Genex 头像",
@@ -2267,7 +2239,6 @@ export default {
   "No time limit": "无时间限制",
   "No unlocked system keyring is available. Start GNOME Keyring or KWallet and unlock it, then restart Genex.":
     "没有可用的已解锁系统密钥环。请启动 GNOME Keyring 或 KWallet 并解锁，然后重启 Genex。",
-  "No verified improvement": "未确认有改进",
   "Nobody answered": "无人回应",
   "Nobody else has this one.": "这个头像独一无二。",
   "Nobody named “{query}”.": "没有名为“{query}”的人。",
@@ -2279,7 +2250,6 @@ export default {
   "Not added": "未添加",
   "Not approved": "未通过",
   "Not asked — the step did not land.": "未请求——步骤没有完成。",
-  "Not comparable": "无法比较",
   "Not confirmed": "未确认",
   "Not connected": "未连接",
   "Not decided yet.": "尚未决定。",
@@ -2302,7 +2272,6 @@ export default {
   "Not made yet": "尚未制作",
   "Not measured": "未测量",
   "Not measured yet": "尚未测量",
-  "Not measured — {reason}": "未测量——{reason}",
   "Not needed — the round was undone on the checks.": "不需要——这一轮因检查结果被撤销。",
   "Not now": "以后再说",
   "Not on this plan or model": "此套餐或模型不可用",
@@ -2329,7 +2298,6 @@ export default {
   "Nothing answers at {host}. Start the server, then check again.": "{host} 没有响应。请启动服务器，然后再检查一次。",
   "Nothing beyond its own tools": "仅限自身工具",
   "Nothing changed. Try again in a moment.": "没有任何变化。请稍后再试。",
-  "Nothing changes until you apply.": "应用之前不会有任何改变。",
   "Nothing is added to this folder.": "不会向此文件夹添加任何内容。",
   "Nothing is failing.": "没有失败的检查。",
   "Nothing is installing.": "当前没有正在安装的内容。",
@@ -2337,8 +2305,6 @@ export default {
   "Nothing kept yet": "暂未保留任何内容",
   "Nothing made": "没有产出",
   "Nothing made yet": "还没有做出任何东西",
-  "Nothing new": "暂无新内容",
-  "Nothing new to suggest.": "暂无新建议。",
   "Nothing spent yet": "尚无消费",
   "Nothing to free up": "没有可释放的空间",
   "Nothing was clicked. Install Unreal {version} yourself in the launcher: {clicks}.":
@@ -2554,10 +2520,6 @@ export default {
   "Opens the release page": "打开发布页面",
   "Opens your browser. You’ll come back here to pay.": "将打开你的浏览器。之后回到这里支付。",
   Optic: "光学",
-  Optimization: "优化",
-  "Optimization finished": "优化完成",
-  "Optimization stage details": "优化阶段详情",
-  Optimizing: "正在优化",
   "Or in Studio: {clicks}.": "或在 Studio 中：{clicks}。",
   "Otherwise every game can use it.": "否则所有游戏都能使用它。",
   "Outcome not recorded": "未记录结果",
@@ -3145,11 +3107,7 @@ export default {
   "Selected public path is missing or unreadable: {path}": "所选公开路径不存在或无法读取：{path}",
   "Selected step": "选中的步骤",
   "Self-improvement": "自我改进",
-  "Self-improvement is off in Harness, so there is nothing to apply.":
-    "Harness 的自我改进已关闭，因此没有可应用的内容。",
   "Self-improvement is off. Harness isn’t learning from new builds.": "自我改进已关闭。Harness 不会从新构建中学习。",
-  "Self-improvement is off. Turn it on at the top of Studio to look for improvements.":
-    "自我改进已关闭。在 Studio 顶部打开它即可寻找改进。",
   Send: "发送",
   "Send a report": "发送报告",
   "Send feedback": "发送反馈",
@@ -3310,7 +3268,6 @@ export default {
   "Skill details": "技能详情",
   Skills: "技能",
   "Skip for now": "暂时跳过",
-  Skipped: "已跳过",
   'Skipped "{name}": Studio connector ids are lowercase letters, digits and dashes.':
     "已跳过“{name}”：Studio 连接器 ID 只能包含小写字母、数字和短横线。",
   'Skipped "{name}": a stdio server needs a command.': "已跳过“{name}”：stdio 服务器需要命令。",
@@ -3456,13 +3413,8 @@ export default {
   "Studio's MCP server is on and answering Genex": "Studio 的 MCP 服务器已开启，正在响应 Genex",
   "Studio’s agents only run inside a protected workspace that keeps them away from your files and accounts.":
     "Studio 的智能体只在受保护的工作区内运行，让它们远离你的文件和账号。",
-  "Studio’s instructions changed after this suggestion was made, and it no longer fits. Discard it; Studio will suggest again after a later build.":
-    "此建议提出后 Studio 的指令已更改，它已不再适用。请丢弃；之后的构建完成后，Studio 会重新提出建议。",
   Success: "成功",
   "Suggest prompt": "推荐创意",
-  "Suggested after reviewing your recent builds.": "根据你最近的构建提出的建议。",
-  "Suggestions that pass testing apply without asking. You can undo any of them in Harness.":
-    "通过测试的建议会直接应用，无需询问。你可以在 Harness 中撤销其中任何一项。",
   "Suggestions wait until you apply them. Every applied change can be undone.":
     "建议会一直等你应用。每项已应用的更改都可以撤销。",
   "Summarise the older part of this chat into the log so it fits the model":
@@ -3600,8 +3552,6 @@ export default {
   "The approved plan is starting. Please wait.": "已批准的计划正在启动。请稍候。",
   "The apps are on Genex, but the game isn’t in the gallery yet. Publish again to list it.":
     "应用已在 Genex 上，但游戏还没进入画廊。再次发布即可上架。",
-  "The assembled game is being measured and checked for safe improvements.":
-    "正在测量组装好的游戏，并检查有哪些安全的改进。",
   "The best game dev tools, always up to date. No MCPs or API keys to install: they’re connected in one click.":
     "最好的游戏开发工具，始终保持最新。无需安装 MCP 或 API 密钥：一键即可连接。",
   "The best game dev tools, in one click": "一键用上最好的游戏开发工具",
@@ -3655,7 +3605,6 @@ export default {
     "安装程序不是由其发布者签名的，所以 Genex 没有运行它。",
   "The installer isn't signed, so Genex didn't run it.": "安装程序没有签名，所以 Genex 没有运行它。",
   "The installer stopped before it finished. Try again.": "安装程序没有完成就停止了。请再试一次。",
-  "The instructions this suggestion changes are gone. Discard it.": "这条建议要修改的指令已经不存在了。请丢弃它。",
   "The judge didn't play": "评审没有游玩",
   "The judge's moves were replayed on this build, and the goal held.": "评审的操作已在这个构建上重放，目标依然达成。",
   "The key is checked with OpenRouter, then kept on this Mac.": "密钥会先经 OpenRouter 验证，然后保存在这台 Mac 上。",
@@ -3974,12 +3923,6 @@ export default {
   "This sound could not be played": "无法播放此声音",
   "This step": "这一步",
   "This step's plugin isn't installed any more.": "此步骤所需的插件已被卸载。",
-  "This suggestion is damaged, so Studio did not apply it. Discard it.":
-    "此建议已损坏，因此 Studio 没有应用它。请丢弃。",
-  "This suggestion is no longer waiting. Harness may have applied or discarded it already.":
-    "这条建议已不在等待中。Harness 可能已经应用或丢弃了它。",
-  "This suggestion’s file is not a plain file in Harness’s instructions, so Studio did not apply it. Discard it.":
-    "这条建议的文件不是 Harness 指令中的普通文件，所以 Studio 没有应用它。请丢弃它。",
   "This system can’t run the protected workspace. Studio needs macOS, Windows, or Linux (not WSL 1).":
     "此系统无法运行受保护的工作区。Studio 需要 macOS、Windows 或 Linux（不支持 WSL 1）。",
   "This system is blocking the isolation the protected workspace uses to keep agents apart.":
@@ -3995,7 +3938,6 @@ export default {
     "无法播放这种视频编码。请尝试导出为 MP4（H.264）或 WebM。",
   "This {name} install needs Node.js, which isn't installed. Install the native version instead.":
     "此 {name} 安装需要 Node.js，但尚未安装。请改为安装原生版本。",
-  "Three version": "Three 版本",
   Threshold: "阈值",
   "To {folder}. Genex reopens when it’s done.": "目标：{folder}。完成后 Genex 会重新打开。",
   Today: "今天",
@@ -4249,7 +4191,6 @@ export default {
   "Variable names use capital letters, digits and _; header names letters, digits and -.":
     "变量名只能用大写字母、数字和 _；请求头名称只能用字母、数字和 -。",
   Verdict: "结论",
-  "Verifying game": "正在验证游戏",
   Version: "版本",
   "Version {version}": "版本 {version}",
   "Versions of your games saved for Rewind and builds.": "为回退和构建保存的游戏版本。",
@@ -4317,7 +4258,6 @@ export default {
     "Claude 无需询问就会执行的操作。在对话中选择“始终允许”，该操作就会添加到这里，仅对那个游戏生效。",
   "What Harness has learned": "Harness 学到了什么",
   "What changed": "改了什么",
-  "What changes": "更改内容",
   "What credits pay for": "积分可用于",
   "What do you want to make?": "你想做什么？",
   "What happened, and what did you expect?": "发生了什么？你原本期望怎样？",
@@ -4390,8 +4330,6 @@ export default {
   "Works on phones": "支持手机",
   "Workspace restored": "工作区已恢复",
   "Workspace unavailable until Studio loads.": "Studio 加载完成前，工作区不可用。",
-  "World draw calls": "世界绘制调用",
-  "World triangles": "世界三角面数",
   "Wrapping up the build": "正在为构建收尾",
   "Write a message…": "输入消息…",
   "Write your own answer…": "写下你自己的回答…",
@@ -4574,12 +4512,10 @@ export default {
   "asset group\u0004Delivered": "已交付",
   attempts: "尝试次数",
   back: "背面",
-  backend: "后端",
   "badge\u0004Set up": "待设置",
   "badge\u0004Update": "更新",
   "balance couldn’t be read": "无法读取余额",
   "base commit": "基础提交",
-  "baseline version": "基准版本",
   "before a Loop starts": "Loop 开始前",
   "before a project of its kind is made": "创建同类项目前",
   "before a restore": "恢复之前",
@@ -4604,11 +4540,9 @@ export default {
   "camera: {camera}": "摄像机：{camera}",
   cameras: "摄像机",
   "can't call tools, so it can't build": "无法调用工具，因此无法制作",
-  "candidate version": "候选版本",
   "captured the game": "捕捉了游戏画面",
   "change files in your games": "修改你游戏中的文件",
   changed: "已更改",
-  "changed files": "已更改的文件",
   chat: "对话",
   "checked for graphics errors": "检查了图形错误",
   "checked on a worker": "查看了助手",
@@ -4640,7 +4574,6 @@ export default {
   "count\u0004six": "六",
   "count\u0004three": "三",
   "count\u0004two": "两",
-  "counter scope": "计数范围",
   "development build": "开发版本",
   done: "完成",
   "down {percent}%": "下降 {percent}%",
@@ -4717,7 +4650,6 @@ export default {
   "in {game} and {count} more": "在 {game} 及另外 {count} 款游戏中",
   "install and run the apps it names, such as Blender": "安装并运行它指定的应用，例如 Blender",
   "installs Genex packages in the game": "在游戏中安装 Genex 依赖包",
-  "insufficient samples": "样本不足",
   integrations: "集成",
   "it finished": "已结束",
   "it landed": "已进入游戏",
@@ -4825,7 +4757,6 @@ export default {
   "planned its next steps": "规划了接下来的步骤",
   "played the game": "玩了游戏",
   "playing now": "人正在玩",
-  preservation: "保持检查",
   "pressed keys": "按下了按键",
   "programs on this Mac": "这台 Mac 上的程序",
   project: "项目",
@@ -4847,14 +4778,11 @@ export default {
   refunded: "已退还",
   "reloaded the game": "重新加载了游戏",
   "remembered something": "记住了一些内容",
-  renderer: "渲染器",
   "reopened the build": "重新打开了构建",
-  report: "报告",
   "requested an iterative build": "请求了多轮构建",
   "restarted itself": "重启了自己",
   "resume from chat": "在对话中继续",
   "resumed the saved build": "恢复了已保存的构建",
-  "retained version": "保留的版本",
   "reviewed a build": "审查了构建",
   "revision unknown ({state})": "版本未知（{state}）",
   right: "右侧",
@@ -5146,8 +5074,6 @@ export default {
   "{count, plural, one {# save point} other {# save points}}": "{count, plural, other {# 个存档点}}",
   "{count, plural, one {# self-edited file} other {# self-edited files}} kept":
     "{count, plural, other {保留了 # 个由智能体编辑的文件}}",
-  "{count, plural, one {# skill improvement to review} other {# skill improvements to review}}":
-    "{count, plural, other {# 项技能改进待审查}}",
   "{count, plural, one {# step} other {# steps}}": "{count, plural, other {# 个步骤}}",
   "{count, plural, one {# structural check} other {# structural checks}} passed.":
     "{count, plural, other {# 项结构检查}}已通过。",
@@ -5165,7 +5091,6 @@ export default {
     "{count, plural, other {# 个助手未交付}}",
   "{count, plural, one {# worker} other {# workers}} on it": "{count, plural, other {# 个助手在处理}}",
   "{count, plural, one {# year ago} other {# years ago}}": "{count, plural, other {# 年前}}",
-  "{count, plural, one {Apply # change} other {Apply # changes}}": "{count, plural, other {应用 # 项更改}}",
   "{count, plural, one {Genex adds # file.} other {Genex adds # files.}} Everything else stays as it is.":
     "{count, plural, other {Genex 会添加 # 个文件。}}其他内容保持不变。",
   "{count, plural, one {Genex left # file you changed in Plugins/{folder}.} other {Genex left # files you changed in Plugins/{folder}.}}":
@@ -5174,8 +5099,6 @@ export default {
     "{count, plural, other {Genex 已将 Genex 编辑器辅助程序更新到 {version}，并把你改过的 # 个文件以 .mine 保留在新文件旁边。}}",
   "{count, plural, one {Harness learned # thing from this build.} other {Harness learned # things from this build.}}":
     "{count, plural, other {Harness 从这次构建中学到了 # 项内容。}}",
-  "{count, plural, one {Harness suggests # change to how it builds} other {Harness suggests # changes to how it builds}}":
-    "{count, plural, other {Harness 建议对制作方式进行 # 项更改}}",
   "{count, plural, one {Ignored # invalid catalog entry.} other {Ignored # invalid catalog entries.}}":
     "{count, plural, other {已忽略 # 个无效的插件目录条目。}}",
   "{count, plural, one {Including # file changed outside this chat: {names}.} other {Including # files changed outside this chat: {names}.}}":
@@ -5314,7 +5237,6 @@ export default {
   "{hours}h {minutes}m": "{hours} 小时 {minutes} 分钟",
   "{hours}h{minutes}": "{hours} 小时 {minutes} 分",
   "{hours}h {minutes}m": "{hours} 小时 {minutes} 分",
-  "{included} of {total} selected · you can undo later": "已选择 {included}/{total} · 之后可以撤销",
   "{input} in / {output} out per M tokens": "每百万 token：输入 {input} / 输出 {output}",
   "{kept} · {count} finished.": "{kept} · {count} 个已完成。",
   "{kept}.": "{kept}。",

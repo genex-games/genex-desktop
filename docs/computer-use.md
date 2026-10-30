@@ -83,18 +83,8 @@ answers do. Every engine starts in the empty `scratch/blind-judge` folder and is
 build's path. Its interaction evidence carries `source: hands-on-judge` and
 `objective: studio-verified` only when the quest held; a model's "yes" without it is incomplete.
 
-**A judge for the chat (`judge_play`).** The chat's own session on a game the studio plays in a
-window is offered `judge_play` where the harness claims `chat-judge` (`judge-play-tool.ts`,
-`#offerJudge` in delegation). It takes one yes/no `ask`
-and an optional `goal_state`, and the host dispatches `chat_judge` to the harness, which runs the
-same `runHandsOnJudge` a build uses (`loop/chat-judge.ts`) on a leased hidden window, never Live or
-the desktop, so it needs no consent card. The judge plays the folder as it is: a blind, read-only
-judge takes its own folder lock (`judgeLockKey`), so it plays beside the session that holds the
-folder, while a playtester or any other session is still refused. The harness writes no evidence;
-the host keeps "verified by the studio" only when `takeVerified` vouches for the returned trace,
-and records one `chat_judge_result` row (host-only), drawn as one chat line in the checks list's
-words. Nothing changes unless the tool is called; an older kept seed without `SERVES_CHAT_JUDGE`
-claims no capability and the tool is not offered.
+A chat's earlier `chat_judge_result` rows (from before Genex dropped the chat's `judge_play`) still
+read as one chat line in the checks list's words.
 
 Codex's own computer use and browsers (`computer_use`, `in_app_browser`, `browser_use`,
 `browser_use_external`) are disabled on every launch: they would drive the person's real screen past

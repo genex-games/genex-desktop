@@ -423,9 +423,6 @@ export default {
   Applied: "Применено",
   "Applied automatically": "Применено автоматически",
   "Applied part {part}": "Применена часть {part}",
-  "Applied {count, plural, one {# improvement} other {# improvements}}.":
-    "Применено {count, plural, one {# улучшение} few {# улучшения} many {# улучшений} other {# улучшения}}.",
-  "Apply suggestions automatically": "Применять предложения автоматически",
   "Applying part {part}": "Применяет часть {part}",
   "Approval is no longer pending": "Одобрение уже не требуется",
   Approve: "Одобрить",
@@ -591,8 +588,6 @@ export default {
   "Cancel signing in": "Отменить вход",
   "Cancel the connector form": "Отменить форму коннектора",
   "Cancel your request to {name}": "Отменить заявку для {name}",
-  "Candidate kept.": "Кандидат оставлен.",
-  "Candidate not kept.": "Кандидат не оставлен.",
   "Candidate {index}": "Вариант {index}",
   Candidates: "Варианты",
   "Cannot read model installation status.": "Не удаётся прочитать статус установки модели.",
@@ -609,7 +604,6 @@ export default {
   "Change image…": "Сменить изображение…",
   "Change it": "Изменить",
   "Change the plan: ": "Измени план: ",
-  "Change {skill}": "Изменить: {skill}",
   Changed: "Изменено",
   "Changed {skill}": "Изменено: {skill}",
   "Changes apply immediately and save on this Mac.": "Изменения применяются сразу и сохраняются на этом Mac.",
@@ -662,7 +656,6 @@ export default {
   "Checking on background work": "Проверяет фоновую задачу",
   "Checking plan usage…": "Проверяем лимиты тарифа…",
   "Checking play": "Проверяет игру",
-  "Checking preservation": "Проверяет, что ничего не потерялось",
   "Checking that Epic signed the installer…": "Проверяем, что установщик подписан Epic…",
   "Checking that Microsoft signed Unreal's runtime installer…":
     "Проверяем, что установщик среды выполнения из Unreal подписан Microsoft…",
@@ -863,7 +856,6 @@ export default {
   "Compacting…": "Сжатие…",
   "Compacts automatically": "Сжимается автоматически",
   "Comparative judgement": "Сравнительная оценка",
-  "Comparing before and after": "Сравнивает до и после",
   "Compiled {blueprint}": "Скомпилирован {blueprint}",
   "Compiling {blueprint}": "Компилирует {blueprint}",
   Completed: "Выполнено",
@@ -958,7 +950,6 @@ export default {
   "Could not load local models. Reopen Settings to try again. {error}":
     "Не удалось загрузить локальные модели. Открой настройки заново и попробуй ещё раз. {error}",
   "Could not load this chat.": "Не удалось загрузить этот чат.",
-  "Could not look for improvements. Try again.": "Не удалось поискать улучшения. Попробуй снова.",
   "Could not open the local sign-in callback": "Не удалось открыть локальный обработчик входа",
   "Could not open the sign-in terminal. Close an unused session and try again.":
     "Не удалось открыть терминал для входа. Закрой ненужную сессию и попробуй снова.",
@@ -1158,7 +1149,6 @@ export default {
   Default: "По умолчанию",
   "Default game folder": "Папка для игр по умолчанию",
   "Default model": "Модель по умолчанию",
-  "Default view": "Обычный вид",
   Delete: "Удалить",
   "Delete every row shared from this computer?": "Удалить все строки, отправленные с этого компьютера?",
   "Delete game": "Удалить игру",
@@ -1178,7 +1168,6 @@ export default {
   "Delivered revision: {revision} · from integration {source}":
     "Доставленная версия: {revision} · из интеграции {source}",
   "Delivered, not used yet": "Доставлено, ещё не использовано",
-  "Demo: {demo}": "Демо: {demo}",
   Demon: "Демон",
   Denied: "Запрещено",
   "Denied · {reason}": "Запрещено · {reason}",
@@ -1207,7 +1196,6 @@ export default {
   "Didn’t finish": "Не завершилось",
   Disabled: "Выключен",
   "Disabled in the provider configuration.": "Выключен в настройках провайдера.",
-  Discard: "Отклонить",
   Disconnect: "Отключить",
   "Disconnect account": "Отключить аккаунт",
   Dismiss: "Закрыть",
@@ -1358,7 +1346,6 @@ export default {
   Extensions: "Расширения",
   "External MCP tools reach every coding agent through Studio.":
     "Внешние MCP-инструменты доходят через Studio до каждого агента, который пишет код.",
-  FPS: "FPS",
   Failed: "Сбой",
   "Failed to connect": "Не удалось подключиться",
   "Failed to start": "Не удалось запустить",
@@ -1379,7 +1366,6 @@ export default {
   "Filled in from your paste": "Заполнено из вставленного текста",
   "Filter the picture": "Фильтр для картинки",
   "Final look": "Финальная проверка",
-  "Final verification": "Финальная проверка",
   "Find people by name": "Найти людей по имени",
   "Finding people by name isn’t on Genex yet. Send your link instead.":
     "Поиск людей по имени в Genex пока недоступен. Лучше отправь свою ссылку.",
@@ -1431,12 +1417,8 @@ export default {
   "For <plugin>Genex plugin</plugin> tools: 3D, animation, textures, music. Optional.":
     "Для инструментов <plugin>плагина Genex</plugin>: 3D, анимация, текстуры, музыка. Необязательно.",
   "Force Reload": "Принудительно перезагрузить",
-  Found: "Найдено",
   "Found locally. These plugins only run after you allow them.":
     "Найдены на этом компьютере. Они заработают, только когда ты их разрешишь.",
-  "Found {count, plural, one {# new suggestion} other {# new suggestions}} at the top of Activity.":
-    "Найдено {count, plural, one {# новое предложение} few {# новых предложения} many {# новых предложений} other {# нового предложения}} — смотри вверху «Активности».",
-  "Frame interval (ms)": "Интервал кадра (мс)",
   Free: "Бесплатно",
   "Free and open source, about 170 MB. Genex installs it in Applications.":
     "Бесплатный, с открытым кодом, около 170 МБ. Genex установит его в «Программы».",
@@ -1719,8 +1701,6 @@ export default {
     "Подсказки для твоих агентов. Что доступно, зависит от источника и выбранного провайдера.",
   Guide: "Руководство",
   "Harness added a tool for itself: {file}": "Harness добавил себе инструмент: {file}",
-  "Harness asks before changing how it builds. You can undo any change in Harness.":
-    "Harness спрашивает, прежде чем менять то, как он собирает игры. Любое изменение можно отменить в Harness.",
   "Harness can run up to this many workers at the same time.":
     "Сколько помощников Harness может запускать одновременно.",
   "Harness changed one of its own files.": "Harness изменил один из своих файлов.",
@@ -1833,7 +1813,6 @@ export default {
   "In your game": "В игре",
   "In {folder}": "В папке {folder}",
   "In-game economy": "Внутриигровая экономика",
-  "Include: {title}": "Включить: {title}",
   Incomplete: "Не завершено",
   "Independent interaction coverage is incomplete.": "Независимые проверки взаимодействия охватили не всё.",
   "Independent interaction coverage is unavailable for this revision.":
@@ -1914,7 +1893,6 @@ export default {
   "Integrity check failed for {file}: the file does not match the pinned commit":
     "Проверка целостности {file} не пройдена: файл не совпадает с закреплённым коммитом",
   "Interface font": "Шрифт интерфейса",
-  Interrupted: "Прервано",
   Interviewing: "Уточняет",
   "Invalid GitHub link": "Неверная ссылка на GitHub",
   "Invalid approval": "Недопустимое одобрение",
@@ -2025,7 +2003,6 @@ export default {
   "Keep this cover": "Оставить эту обложку",
   "Keep this folder": "Оставить эту папку",
   "Keep working on a game you already have": "Продолжить работу над своей игрой",
-  "Keeping verified change": "Оставляет проверенное изменение",
   Kept: "Оставлено",
   "Kept by reviewers": "Оставлено проверяющими",
   "Kept by reviewers, not added": "Оставлено проверяющими, не добавлено",
@@ -2132,8 +2109,6 @@ export default {
   "Long work the lead or a worker started, like a build. It runs on while the agents go on working.":
     "Долгая работа, которую запустил главный агент или помощник, например сборка. Она идёт, пока агенты работают дальше.",
   "Look and move from the player's eyes.": "Смотри и двигайся от лица игрока.",
-  "Look for improvements": "Искать улучшения",
-  "Look for improvements in recent builds": "Искать улучшения в последних сборках",
   Looked: "Осмотр",
   "Looked at the level": "Уровень осмотрен",
   "Looked through the assets": "Ассеты просмотрены",
@@ -2148,7 +2123,6 @@ export default {
   "Looking at this Mac…": "Проверяем этот Mac…",
   "Looking at your game": "Смотрит твою игру",
   "Looking at your game.": "Смотрит твою игру.",
-  "Looking for improvements": "Ищет улучшения",
   "Looking something up": "Ищет информацию",
   "Looking through the assets": "Просматривает ассеты",
   "Looking up Blueprint nodes": "Ищет ноды Blueprint",
@@ -2239,9 +2213,6 @@ export default {
   "Measured in a plugin": "Измерено в плагине",
   "Measured in {plugin}": "Измерено в {plugin}",
   "Measured the route": "Маршрут измерен",
-  Measurement: "Показатель",
-  "Measurement has not completed": "Замер не завершён",
-  "Measuring before": "Замеряет до изменений",
   "Measuring the route": "Измеряет маршрут",
   "Measuring…": "Подсчёт…",
   "Meet your Genex avatar": "Знакомься: твой аватар Genex",
@@ -2406,7 +2377,6 @@ export default {
   "No time limit": "Без лимита времени",
   "No unlocked system keyring is available. Start GNOME Keyring or KWallet and unlock it, then restart Genex.":
     "Нет разблокированной системной связки ключей. Запусти GNOME Keyring или KWallet, разблокируй хранилище и перезапусти Genex.",
-  "No verified improvement": "Улучшение не подтверждено",
   "Nobody answered": "Никто не ответил",
   "Nobody else has this one.": "Такого больше ни у кого нет.",
   "Nobody named “{query}”.": "Никого с именем «{query}».",
@@ -2418,7 +2388,6 @@ export default {
   "Not added": "Не добавлено",
   "Not approved": "Не одобрено",
   "Not asked — the step did not land.": "Не спрашивали — шаг не получился.",
-  "Not comparable": "Нельзя сравнить",
   "Not confirmed": "Не подтверждено",
   "Not connected": "Не подключено",
   "Not decided yet.": "Пока не решено.",
@@ -2441,7 +2410,6 @@ export default {
   "Not made yet": "Ещё не сделано",
   "Not measured": "Не измерено",
   "Not measured yet": "Ещё не измерено",
-  "Not measured — {reason}": "Не измерено — {reason}",
   "Not needed — the round was undone on the checks.": "Не понадобилось — раунд отменён по итогам проверок.",
   "Not now": "Не сейчас",
   "Not on this plan or model": "Недоступно на этом тарифе или модели",
@@ -2471,7 +2439,6 @@ export default {
     "По адресу {host} ничего не отвечает. Запусти сервер и проверь снова.",
   "Nothing beyond its own tools": "Только свои инструменты",
   "Nothing changed. Try again in a moment.": "Ничего не изменилось. Попробуй чуть позже.",
-  "Nothing changes until you apply.": "Ничего не изменится, пока не применишь.",
   "Nothing is added to this folder.": "В эту папку ничего не добавится.",
   "Nothing is failing.": "Проваленных проверок нет.",
   "Nothing is installing.": "Сейчас ничего не устанавливается.",
@@ -2479,8 +2446,6 @@ export default {
   "Nothing kept yet": "Пока ничего не оставлено",
   "Nothing made": "Ничего не сделано",
   "Nothing made yet": "Пока ничего не создано",
-  "Nothing new": "Ничего нового",
-  "Nothing new to suggest.": "Новых предложений нет.",
   "Nothing spent yet": "Пока ничего не потрачено",
   "Nothing to free up": "Нечего освобождать",
   "Nothing was clicked. Install Unreal {version} yourself in the launcher: {clicks}.":
@@ -2708,10 +2673,6 @@ export default {
   "Opens the release page": "Открывает страницу релиза",
   "Opens your browser. You’ll come back here to pay.": "Откроется браузер. Потом вернёшься сюда, чтобы оплатить.",
   Optic: "Оптика",
-  Optimization: "Оптимизация",
-  "Optimization finished": "Оптимизация завершена",
-  "Optimization stage details": "Подробности этапа оптимизации",
-  Optimizing: "Оптимизирует",
   "Or in Studio: {clicks}.": "Или в Studio: {clicks}.",
   "Otherwise every game can use it.": "Иначе его смогут использовать все игры.",
   "Outcome not recorded": "Результат не записан",
@@ -3317,12 +3278,8 @@ export default {
   "Selected public path is missing or unreadable: {path}": "Выбранный публичный путь не найден или не читается: {path}",
   "Selected step": "Выбранный шаг",
   "Self-improvement": "Самоулучшение",
-  "Self-improvement is off in Harness, so there is nothing to apply.":
-    "Самоулучшение в Harness выключено, так что применять нечего.",
   "Self-improvement is off. Harness isn’t learning from new builds.":
     "Самоулучшение выключено. Harness не учится на новых сборках.",
-  "Self-improvement is off. Turn it on at the top of Studio to look for improvements.":
-    "Самоулучшение выключено. Включи его вверху Studio, чтобы искать улучшения.",
   Send: "Отправить",
   "Send a report": "Отправить отчёт",
   "Send feedback": "Отправить отзыв",
@@ -3491,7 +3448,6 @@ export default {
   "Skill details": "О навыке",
   Skills: "Навыки",
   "Skip for now": "Пока пропустить",
-  Skipped: "Пропущено",
   'Skipped "{name}": Studio connector ids are lowercase letters, digits and dashes.':
     "«{name}» пропущен: id коннектора в Studio состоит из строчных букв, цифр и дефисов.",
   'Skipped "{name}": a stdio server needs a command.': "«{name}» пропущен: серверу stdio нужна команда.",
@@ -3642,13 +3598,8 @@ export default {
   "Studio's MCP server is on and answering Genex": "MCP-сервер Studio включён и отвечает Genex",
   "Studio’s agents only run inside a protected workspace that keeps them away from your files and accounts.":
     "Агенты Studio работают только внутри защищённого рабочего пространства, которое не пускает их к твоим файлам и аккаунтам.",
-  "Studio’s instructions changed after this suggestion was made, and it no longer fits. Discard it; Studio will suggest again after a later build.":
-    "Инструкции Studio изменились после этого предложения, и оно больше не подходит. Отклони его — Studio предложит снова после одной из следующих сборок.",
   Success: "Успех",
   "Suggest prompt": "Предложить идею",
-  "Suggested after reviewing your recent builds.": "Предложено после разбора твоих последних сборок.",
-  "Suggestions that pass testing apply without asking. You can undo any of them in Harness.":
-    "Предложения, прошедшие проверку, применяются без вопросов. Любое из них можно отменить в Harness.",
   "Suggestions wait until you apply them. Every applied change can be undone.":
     "Предложения ждут, пока ты их не применишь. Любое применённое изменение можно отменить.",
   "Summarise the older part of this chat into the log so it fits the model":
@@ -3792,8 +3743,6 @@ export default {
   "The approved plan is starting. Please wait.": "Одобренный план запускается. Подожди немного.",
   "The apps are on Genex, but the game isn’t in the gallery yet. Publish again to list it.":
     "Приложения уже в Genex, но игры пока нет в галерее. Опубликуй ещё раз, чтобы она там появилась.",
-  "The assembled game is being measured and checked for safe improvements.":
-    "Собранную игру замеряют и ищут, что можно безопасно улучшить.",
   "The best game dev tools, always up to date. No MCPs or API keys to install: they’re connected in one click.":
     "Лучшие инструменты для разработки игр, всегда свежие. Не нужно ставить MCP или API-ключи: всё подключается в один клик.",
   "The best game dev tools, in one click": "Лучшие инструменты для разработки игр — в один клик",
@@ -3852,8 +3801,6 @@ export default {
     "Установщик подписан не его создателем, поэтому Genex его не запустил.",
   "The installer isn't signed, so Genex didn't run it.": "Установщик не подписан, поэтому Genex его не запустил.",
   "The installer stopped before it finished. Try again.": "Установщик остановился, не закончив. Попробуй ещё раз.",
-  "The instructions this suggestion changes are gone. Discard it.":
-    "Инструкций, которые меняет это предложение, больше нет. Отклони его.",
   "The judge didn't play": "Судья не играл",
   "The judge's moves were replayed on this build, and the goal held.":
     "Ходы судьи повторили на этой сборке, и цель по-прежнему достигается.",
@@ -4207,12 +4154,6 @@ export default {
   "This sound could not be played": "Не удалось воспроизвести этот звук",
   "This step": "Этот шаг",
   "This step's plugin isn't installed any more.": "Плагин этого шага больше не установлен.",
-  "This suggestion is damaged, so Studio did not apply it. Discard it.":
-    "Это предложение повреждено, поэтому Studio не стала его применять. Отклони его.",
-  "This suggestion is no longer waiting. Harness may have applied or discarded it already.":
-    "Это предложение больше не ждёт. Возможно, Harness уже применил его или отбросил.",
-  "This suggestion’s file is not a plain file in Harness’s instructions, so Studio did not apply it. Discard it.":
-    "Файл этого предложения — не обычный файл в инструкциях Harness, поэтому Studio его не применяет. Отклони предложение.",
   "This system can’t run the protected workspace. Studio needs macOS, Windows, or Linux (not WSL 1).":
     "Эта система не может запустить защищённое рабочее пространство. Studio нужна macOS, Windows или Linux (не WSL 1).",
   "This system is blocking the isolation the protected workspace uses to keep agents apart.":
@@ -4228,7 +4169,6 @@ export default {
     "Этот видеокодек не воспроизводится. Попробуй экспорт в MP4 (H.264) или WebM.",
   "This {name} install needs Node.js, which isn't installed. Install the native version instead.":
     "Этой установке {name} нужен Node.js, а он не установлен. Лучше установи нативную версию.",
-  "Three version": "версия Three",
   Threshold: "Порог",
   "To {folder}. Genex reopens when it’s done.": "В {folder}. Genex снова откроется, когда закончит.",
   Today: "Сегодня",
@@ -4493,7 +4433,6 @@ export default {
   "Variable names use capital letters, digits and _; header names letters, digits and -.":
     "В именах переменных — заглавные буквы, цифры и _; в именах заголовков — буквы, цифры и -.",
   Verdict: "Вердикт",
-  "Verifying game": "Проверяет игру",
   Version: "Версия",
   "Version {version}": "Версия {version}",
   "Versions of your games saved for Rewind and builds.": "Версии твоих игр, сохранённые для отката и сборок.",
@@ -4565,7 +4504,6 @@ export default {
     "Что Claude делает, не спрашивая. Если выбрать в чате «Всегда разрешать», действие появится здесь — для этой игры.",
   "What Harness has learned": "Чему научился Harness",
   "What changed": "Что изменилось",
-  "What changes": "Что изменится",
   "What credits pay for": "На что тратятся кредиты",
   "What do you want to make?": "Что хочешь создать?",
   "What happened, and what did you expect?": "Что случилось и что должно было произойти?",
@@ -4640,8 +4578,6 @@ export default {
   "Works on phones": "Работает на телефонах",
   "Workspace restored": "Рабочее пространство восстановлено",
   "Workspace unavailable until Studio loads.": "Рабочее пространство недоступно, пока не загрузится Studio.",
-  "World draw calls": "Вызовы отрисовки мира",
-  "World triangles": "Треугольники мира",
   "Wrapping up the build": "Заканчивает сборку",
   "Write a message…": "Напиши сообщение…",
   "Write your own answer…": "Напиши свой ответ…",
@@ -4832,12 +4768,10 @@ export default {
   "asset group\u0004Delivered": "Получено",
   attempts: "попытки",
   back: "сзади",
-  backend: "бэкенд",
   "badge\u0004Set up": "Нужна настройка",
   "badge\u0004Update": "Обновление",
   "balance couldn’t be read": "баланс не удалось получить",
   "base commit": "базовый коммит",
-  "baseline version": "исходная версия",
   "before a Loop starts": "перед запуском Loop",
   "before a project of its kind is made": "перед созданием проекта его типа",
   "before a restore": "перед восстановлением",
@@ -4864,11 +4798,9 @@ export default {
   "camera: {camera}": "камера: {camera}",
   cameras: "камеры",
   "can't call tools, so it can't build": "не вызывает инструменты, поэтому не может собирать",
-  "candidate version": "версия-кандидат",
   "captured the game": "снял игру",
   "change files in your games": "менять файлы в твоих играх",
   changed: "изменено",
-  "changed files": "изменённые файлы",
   chat: "чат",
   "checked for graphics errors": "проверил ошибки графики",
   "checked on a worker": "проверил помощника",
@@ -4900,7 +4832,6 @@ export default {
   "count\u0004six": "шесть",
   "count\u0004three": "три",
   "count\u0004two": "две",
-  "counter scope": "область счётчиков",
   "development build": "сборка для разработки",
   done: "готово",
   "down {percent}%": "падение на {percent}%",
@@ -4978,7 +4909,6 @@ export default {
   "install and run the apps it names, such as Blender":
     "устанавливать и запускать нужные ему приложения, например Blender",
   "installs Genex packages in the game": "устанавливает пакеты Genex в игру",
-  "insufficient samples": "мало замеров",
   integrations: "слияния",
   "it finished": "работа завершена",
   "it landed": "шаг попал в игру",
@@ -5088,7 +5018,6 @@ export default {
   "planned its next steps": "спланировал следующие шаги",
   "played the game": "сыграл в игру",
   "playing now": "сейчас играют",
-  preservation: "сохранность",
   "pressed keys": "нажал клавиши",
   "programs on this Mac": "программы на этом Mac",
   project: "проект",
@@ -5110,14 +5039,11 @@ export default {
   refunded: "возврат",
   "reloaded the game": "перезагрузил игру",
   "remembered something": "кое-что запомнил",
-  renderer: "рендерер",
   "reopened the build": "снова открыл сборку",
-  report: "отчёт",
   "requested an iterative build": "запросил сборку в несколько раундов",
   "restarted itself": "перезапустился",
   "resume from chat": "продолжи из чата",
   "resumed the saved build": "продолжил сохранённую сборку",
-  "retained version": "оставленная версия",
   "reviewed a build": "оценил сборку",
   "revision unknown ({state})": "версия неизвестна ({state})",
   right: "справа",
@@ -5450,8 +5376,6 @@ export default {
     "{count, plural, one {# точка сохранения} few {# точки сохранения} many {# точек сохранения} other {# точки сохранения}}",
   "{count, plural, one {# self-edited file} other {# self-edited files}} kept":
     "{count, plural, one {# файл с правками агента сохранён} few {# файла с правками агента сохранены} many {# файлов с правками агента сохранены} other {# файла с правками агента сохранены}}",
-  "{count, plural, one {# skill improvement to review} other {# skill improvements to review}}":
-    "{count, plural, one {# улучшение навыка ждёт проверки} few {# улучшения навыков ждут проверки} many {# улучшений навыков ждут проверки} other {# улучшения навыков ждут проверки}}",
   "{count, plural, one {# step} other {# steps}}":
     "{count, plural, one {# шаг} few {# шага} many {# шагов} other {# шага}}",
   "{count, plural, one {# structural check} other {# structural checks}} passed.":
@@ -5476,8 +5400,6 @@ export default {
     "{count, plural, one {работает # помощник} few {работают # помощника} many {работают # помощников} other {работают # помощника}}",
   "{count, plural, one {# year ago} other {# years ago}}":
     "{count, plural, one {# год назад} few {# года назад} many {# лет назад} other {# года назад}}",
-  "{count, plural, one {Apply # change} other {Apply # changes}}":
-    "{count, plural, one {Применить # изменение} few {Применить # изменения} many {Применить # изменений} other {Применить # изменения}}",
   "{count, plural, one {Genex adds # file.} other {Genex adds # files.}} Everything else stays as it is.":
     "{count, plural, one {Genex добавит # файл.} few {Genex добавит # файла.} many {Genex добавит # файлов.} other {Genex добавит # файла.}} Всё остальное останется как есть.",
   "{count, plural, one {Genex left # file you changed in Plugins/{folder}.} other {Genex left # files you changed in Plugins/{folder}.}}":
@@ -5486,8 +5408,6 @@ export default {
     "{count, plural, one {Genex обновил модуль Genex для редактора до {version} и сохранил # изменённый тобой файл рядом с новым как .mine.} few {Genex обновил модуль Genex для редактора до {version} и сохранил # изменённых тобой файла рядом с новыми как .mine.} many {Genex обновил модуль Genex для редактора до {version} и сохранил # изменённых тобой файлов рядом с новыми как .mine.} other {Genex обновил модуль Genex для редактора до {version} и сохранил # изменённого тобой файла рядом с новыми как .mine.}}",
   "{count, plural, one {Harness learned # thing from this build.} other {Harness learned # things from this build.}}":
     "{count, plural, one {Из этой сборки Harness вынес # урок.} few {Из этой сборки Harness вынес # урока.} many {Из этой сборки Harness вынес # уроков.} other {Из этой сборки Harness вынес # урока.}}",
-  "{count, plural, one {Harness suggests # change to how it builds} other {Harness suggests # changes to how it builds}}":
-    "{count, plural, one {Harness предлагает # изменение в своём подходе к сборке} few {Harness предлагает # изменения в своём подходе к сборке} many {Harness предлагает # изменений в своём подходе к сборке} other {Harness предлагает # изменения в своём подходе к сборке}}",
   "{count, plural, one {Ignored # invalid catalog entry.} other {Ignored # invalid catalog entries.}}":
     "{count, plural, one {Пропущена # неверная запись каталога.} few {Пропущены # неверные записи каталога.} many {Пропущено # неверных записей каталога.} other {Пропущено # неверной записи каталога.}}",
   "{count, plural, one {Including # file changed outside this chat: {names}.} other {Including # files changed outside this chat: {names}.}}":
@@ -5663,7 +5583,6 @@ export default {
   "{hours}h {minutes}m": "{hours} ч {minutes} мин",
   "{hours}h{minutes}": "{hours}ч{minutes}",
   "{hours}h {minutes}m": "{hours} ч {minutes} мин",
-  "{included} of {total} selected · you can undo later": "Выбрано {included} из {total} · потом можно отменить",
   "{input} in / {output} out per M tokens": "{input} ввод / {output} вывод за 1 млн токенов",
   "{kept} · {count} finished.": "{kept} · готово: {count}.",
   "{kept}.": "{kept}.",

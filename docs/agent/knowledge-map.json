@@ -200,7 +200,6 @@
         "src/shared/event-log.ts",
         "src/shared/custom-events.ts",
         "tests/conformance/custom-events.test.ts",
-        "src/substrate/improvement-journal.ts",
         "src/main/run-evidence.ts",
         "src/main/run-summary-reader.ts",
         "src/shared/protocol.ts",

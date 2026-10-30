@@ -452,9 +452,6 @@ export default {
   Applied: "Appliqué",
   "Applied automatically": "Appliqué automatiquement",
   "Applied part {part}": "Partie appliquée : {part}",
-  "Applied {count, plural, one {# improvement} other {# improvements}}.":
-    "{count, plural, one {# amélioration appliquée} other {# améliorations appliquées}}.",
-  "Apply suggestions automatically": "Appliquer les suggestions automatiquement",
   "Applying part {part}": "Applique la partie {part}",
   "Approval is no longer pending": "L’approbation n’est plus en attente",
   Approve: "Approuver",
@@ -622,8 +619,6 @@ export default {
   "Cancel signing in": "Annuler la connexion",
   "Cancel the connector form": "Annuler le formulaire du connecteur",
   "Cancel your request to {name}": "Annuler ta demande à {name}",
-  "Candidate kept.": "Version candidate gardée.",
-  "Candidate not kept.": "Version candidate non gardée.",
   "Candidate {index}": "Proposition {index}",
   Candidates: "Propositions",
   "Cannot read model installation status.": "Impossible de lire l’état d’installation du modèle.",
@@ -640,7 +635,6 @@ export default {
   "Change image…": "Changer l’image…",
   "Change it": "Modifier",
   "Change the plan: ": "Modifie le plan : ",
-  "Change {skill}": "Modifier {skill}",
   Changed: "Modifié",
   "Changed {skill}": "Modification : {skill}",
   "Changes apply immediately and save on this Mac.":
@@ -696,7 +690,6 @@ export default {
   "Checking on background work": "Vérifie une tâche en arrière-plan",
   "Checking plan usage…": "Vérification de l’utilisation du forfait…",
   "Checking play": "Vérifie le jeu",
-  "Checking preservation": "Vérification de la préservation",
   "Checking that Epic signed the installer…": "On vérifie qu’Epic a signé l’installeur…",
   "Checking that Microsoft signed Unreal's runtime installer…":
     "On vérifie que Microsoft a signé l’installeur du runtime fourni avec Unreal…",
@@ -903,7 +896,6 @@ export default {
   "Compacting…": "Compactage…",
   "Compacts automatically": "Compactage automatique",
   "Comparative judgement": "Jugement comparatif",
-  "Comparing before and after": "Comparaison avant/après",
   "Compiled {blueprint}": "Compilé : {blueprint}",
   "Compiling {blueprint}": "Compile {blueprint}",
   Completed: "Terminé",
@@ -998,7 +990,6 @@ export default {
   "Could not load local models. Reopen Settings to try again. {error}":
     "Impossible de charger les modèles locaux. Rouvre Réglages pour réessayer. {error}",
   "Could not load this chat.": "Impossible de charger ce chat.",
-  "Could not look for improvements. Try again.": "Impossible de chercher des améliorations. Réessaie.",
   "Could not open the local sign-in callback": "Impossible d’ouvrir le retour de connexion local",
   "Could not open the sign-in terminal. Close an unused session and try again.":
     "Impossible d’ouvrir le terminal de connexion. Ferme une session inutilisée et réessaie.",
@@ -1202,7 +1193,6 @@ export default {
   Default: "Par défaut",
   "Default game folder": "Dossier des jeux par défaut",
   "Default model": "Modèle par défaut",
-  "Default view": "Vue par défaut",
   Delete: "Supprimer",
   "Delete every row shared from this computer?": "Supprimer toutes les lignes partagées depuis cet ordinateur ?",
   "Delete game": "Supprimer le jeu",
@@ -1222,7 +1212,6 @@ export default {
   "Delivered revision: {revision} · from integration {source}":
     "Version livrée : {revision} · depuis l’intégration {source}",
   "Delivered, not used yet": "Livré, pas encore utilisé",
-  "Demo: {demo}": "Démo : {demo}",
   Demon: "Démon",
   Denied: "Refusé",
   "Denied · {reason}": "Refusé · {reason}",
@@ -1251,7 +1240,6 @@ export default {
   "Didn’t finish": "Pas terminé",
   Disabled: "Désactivé",
   "Disabled in the provider configuration.": "Désactivée dans la configuration du fournisseur.",
-  Discard: "Écarter",
   Disconnect: "Déconnecter",
   "Disconnect account": "Déconnecter le compte",
   Dismiss: "Ignorer",
@@ -1402,7 +1390,6 @@ export default {
   Extensions: "Extensions",
   "External MCP tools reach every coding agent through Studio.":
     "Les outils MCP externes sont accessibles à chaque agent de code via Studio.",
-  FPS: "FPS",
   Failed: "Échec",
   "Failed to connect": "Échec de la connexion",
   "Failed to start": "Échec du démarrage",
@@ -1423,7 +1410,6 @@ export default {
   "Filled in from your paste": "Rempli avec ce que tu as collé",
   "Filter the picture": "Filtrer l’image",
   "Final look": "Vérification finale",
-  "Final verification": "Vérification finale",
   "Find people by name": "Chercher des gens par nom",
   "Finding people by name isn’t on Genex yet. Send your link instead.":
     "La recherche de gens par nom n’existe pas encore sur Genex. Envoie plutôt ton lien.",
@@ -1475,12 +1461,8 @@ export default {
   "For <plugin>Genex plugin</plugin> tools: 3D, animation, textures, music. Optional.":
     "Pour les outils du <plugin>plugin Genex</plugin> : 3D, animation, textures, musique. Facultatif.",
   "Force Reload": "Forcer le rechargement",
-  Found: "Trouvé",
   "Found locally. These plugins only run after you allow them.":
     "Trouvés en local. Ces plugins ne tournent qu’une fois que tu les autorises.",
-  "Found {count, plural, one {# new suggestion} other {# new suggestions}} at the top of Activity.":
-    "{count, plural, one {# nouvelle suggestion trouvée} other {# nouvelles suggestions trouvées}} en haut d’Activité.",
-  "Frame interval (ms)": "Intervalle d’image (ms)",
   Free: "Gratuit",
   "Free and open source, about 170 MB. Genex installs it in Applications.":
     "Gratuit et open source, environ 170 Mo. Genex l’installe dans Applications.",
@@ -1770,8 +1752,6 @@ export default {
     "Des consignes pour tes agents. Leur disponibilité dépend de la source et du fournisseur choisi.",
   Guide: "Guide",
   "Harness added a tool for itself: {file}": "Harness s’est ajouté un outil : {file}",
-  "Harness asks before changing how it builds. You can undo any change in Harness.":
-    "Harness te demande avant de changer sa façon de créer. Tu peux annuler n’importe quel changement dans Harness.",
   "Harness can run up to this many workers at the same time.":
     "Harness peut faire tourner jusqu’à ce nombre d’assistants en même temps.",
   "Harness changed one of its own files.": "Harness a modifié un de ses propres fichiers.",
@@ -1887,7 +1867,6 @@ export default {
   "In your game": "Dans ton jeu",
   "In {folder}": "Dans {folder}",
   "In-game economy": "Économie du jeu",
-  "Include: {title}": "Inclure : {title}",
   Incomplete: "Incomplet",
   "Independent interaction coverage is incomplete.": "La couverture d’interaction indépendante est incomplète.",
   "Independent interaction coverage is unavailable for this revision.":
@@ -1968,7 +1947,6 @@ export default {
   "Integrity check failed for {file}: the file does not match the pinned commit":
     "Échec du contrôle d’intégrité pour {file} : le fichier ne correspond pas au commit épinglé",
   "Interface font": "Police de l’interface",
-  Interrupted: "Interrompu",
   Interviewing: "Pose des questions",
   "Invalid GitHub link": "Lien GitHub invalide",
   "Invalid approval": "Approbation non valide",
@@ -2080,7 +2058,6 @@ export default {
   "Keep this cover": "Garder cette couverture",
   "Keep this folder": "Garder ce dossier",
   "Keep working on a game you already have": "Continuer un jeu que tu as déjà",
-  "Keeping verified change": "Conservation du changement vérifié",
   Kept: "Gardé",
   "Kept by reviewers": "Gardé par les vérificateurs",
   "Kept by reviewers, not added": "Gardé par les vérificateurs, pas ajouté",
@@ -2186,8 +2163,6 @@ export default {
   "Long work the lead or a worker started, like a build. It runs on while the agents go on working.":
     "Un long travail lancé par l’agent principal ou un assistant, comme un build. Il continue pendant que les agents poursuivent leur travail.",
   "Look and move from the player's eyes.": "Regarde et bouge à travers les yeux du joueur.",
-  "Look for improvements": "Chercher des améliorations",
-  "Look for improvements in recent builds": "Chercher des améliorations dans les builds récents",
   Looked: "Regardé",
   "Looked at the level": "Niveau observé",
   "Looked through the assets": "Ressources parcourues",
@@ -2202,7 +2177,6 @@ export default {
   "Looking at this Mac…": "Analyse de ce Mac…",
   "Looking at your game": "Regarde ton jeu",
   "Looking at your game.": "Regarde ton jeu.",
-  "Looking for improvements": "Recherche d’améliorations",
   "Looking something up": "Cherche une info",
   "Looking through the assets": "Parcourt les ressources",
   "Looking up Blueprint nodes": "Consulte les nœuds Blueprint",
@@ -2293,9 +2267,6 @@ export default {
   "Measured in a plugin": "Mesuré dans un plugin",
   "Measured in {plugin}": "Mesuré dans {plugin}",
   "Measured the route": "Parcours mesuré",
-  Measurement: "Mesure",
-  "Measurement has not completed": "La mesure n’est pas terminée",
-  "Measuring before": "Mesure de départ",
   "Measuring the route": "Mesure le parcours",
   "Measuring…": "Calcul…",
   "Meet your Genex avatar": "Voici ton avatar Genex",
@@ -2465,7 +2436,6 @@ export default {
   "No time limit": "Sans limite de temps",
   "No unlocked system keyring is available. Start GNOME Keyring or KWallet and unlock it, then restart Genex.":
     "Aucun trousseau système déverrouillé n’est disponible. Lance GNOME Keyring ou KWallet, déverrouille-le, puis redémarre Genex.",
-  "No verified improvement": "Aucune amélioration vérifiée",
   "Nobody answered": "Personne n’a répondu",
   "Nobody else has this one.": "Personne d’autre n’a le même.",
   "Nobody named “{query}”.": "Personne ne s’appelle « {query} ».",
@@ -2477,7 +2447,6 @@ export default {
   "Not added": "Pas ajouté",
   "Not approved": "Non approuvée",
   "Not asked — the step did not land.": "Pas demandé — l’étape n’a pas abouti.",
-  "Not comparable": "Non comparable",
   "Not confirmed": "Non confirmé",
   "Not connected": "Non connecté",
   "Not decided yet.": "Pas encore décidé.",
@@ -2500,7 +2469,6 @@ export default {
   "Not made yet": "Pas encore créée",
   "Not measured": "Non mesuré",
   "Not measured yet": "Pas encore mesuré",
-  "Not measured — {reason}": "Non mesuré — {reason}",
   "Not needed — the round was undone on the checks.":
     "Pas nécessaire — le tour a été annulé à cause des vérifications.",
   "Not now": "Pas maintenant",
@@ -2532,7 +2500,6 @@ export default {
     "Rien ne répond à {host}. Lance le serveur, puis vérifie à nouveau.",
   "Nothing beyond its own tools": "Rien d’autre que ses propres outils",
   "Nothing changed. Try again in a moment.": "Rien n’a changé. Réessaie dans un instant.",
-  "Nothing changes until you apply.": "Rien ne change tant que tu n’appliques pas.",
   "Nothing is added to this folder.": "Rien n’est ajouté à ce dossier.",
   "Nothing is failing.": "Rien n’échoue.",
   "Nothing is installing.": "Rien n’est en cours d’installation.",
@@ -2540,8 +2507,6 @@ export default {
   "Nothing kept yet": "Rien de gardé pour l’instant",
   "Nothing made": "Rien de produit",
   "Nothing made yet": "Rien de créé pour l’instant",
-  "Nothing new": "Rien de nouveau",
-  "Nothing new to suggest.": "Rien de nouveau à suggérer.",
   "Nothing spent yet": "Rien dépensé pour l’instant",
   "Nothing to free up": "Rien à libérer",
   "Nothing was clicked. Install Unreal {version} yourself in the launcher: {clicks}.":
@@ -2776,10 +2741,6 @@ export default {
   "Opens the release page": "Ouvre la page de la version",
   "Opens your browser. You’ll come back here to pay.": "Ouvre ton navigateur. Tu reviendras ici pour payer.",
   Optic: "Optique",
-  Optimization: "Optimisation",
-  "Optimization finished": "Optimisation terminée",
-  "Optimization stage details": "Détails de l’étape d’optimisation",
-  Optimizing: "Optimisation en cours",
   "Or in Studio: {clicks}.": "Ou dans Studio : {clicks}.",
   "Otherwise every game can use it.": "Sinon, tous les jeux peuvent l’utiliser.",
   "Outcome not recorded": "Résultat non enregistré",
@@ -3390,12 +3351,8 @@ export default {
   "Selected public path is missing or unreadable: {path}": "Le chemin public choisi est manquant ou illisible : {path}",
   "Selected step": "Étape sélectionnée",
   "Self-improvement": "Auto-amélioration",
-  "Self-improvement is off in Harness, so there is nothing to apply.":
-    "L’auto-amélioration est désactivée dans Harness, il n’y a donc rien à appliquer.",
   "Self-improvement is off. Harness isn’t learning from new builds.":
     "L’auto-amélioration est désactivée. Harness n’apprend pas des nouveaux builds.",
-  "Self-improvement is off. Turn it on at the top of Studio to look for improvements.":
-    "L’auto-amélioration est désactivée. Active-la en haut de Studio pour chercher des améliorations.",
   Send: "Envoyer",
   "Send a report": "Envoyer un rapport",
   "Send feedback": "Envoyer un avis",
@@ -3567,7 +3524,6 @@ export default {
   "Skill details": "Détails de la compétence",
   Skills: "Compétences",
   "Skip for now": "Passer pour l’instant",
-  Skipped: "Ignoré",
   'Skipped "{name}": Studio connector ids are lowercase letters, digits and dashes.':
     "« {name} » ignoré : les identifiants de connecteur Studio ne contiennent que des minuscules, des chiffres et des tirets.",
   'Skipped "{name}": a stdio server needs a command.': "« {name} » ignoré : un serveur stdio a besoin d’une commande.",
@@ -3720,13 +3676,8 @@ export default {
   "Studio's MCP server is on and answering Genex": "Le serveur MCP de Studio est activé et répond à Genex",
   "Studio’s agents only run inside a protected workspace that keeps them away from your files and accounts.":
     "Les agents de Studio ne tournent que dans un espace de travail protégé qui les tient à l’écart de tes fichiers et de tes comptes.",
-  "Studio’s instructions changed after this suggestion was made, and it no longer fits. Discard it; Studio will suggest again after a later build.":
-    "Les instructions de Studio ont changé après cette suggestion, et elle ne convient plus. Écarte-la ; Studio en proposera une autre après un prochain build.",
   Success: "Succès",
   "Suggest prompt": "Suggérer une idée",
-  "Suggested after reviewing your recent builds.": "Suggéré après examen de tes builds récents.",
-  "Suggestions that pass testing apply without asking. You can undo any of them in Harness.":
-    "Les suggestions qui passent les tests s’appliquent sans te demander. Tu peux annuler n’importe laquelle dans Harness.",
   "Suggestions wait until you apply them. Every applied change can be undone.":
     "Les suggestions attendent que tu les appliques. Chaque changement appliqué peut être annulé.",
   "Summarise the older part of this chat into the log so it fits the model":
@@ -3873,8 +3824,6 @@ export default {
   "The approved plan is starting. Please wait.": "Le plan approuvé démarre. Patiente un instant.",
   "The apps are on Genex, but the game isn’t in the gallery yet. Publish again to list it.":
     "Les apps sont sur Genex, mais le jeu n’est pas encore dans la galerie. Publie à nouveau pour l’y ajouter.",
-  "The assembled game is being measured and checked for safe improvements.":
-    "Le jeu assemblé est mesuré et vérifié pour trouver des améliorations sûres.",
   "The best game dev tools, always up to date. No MCPs or API keys to install: they’re connected in one click.":
     "Les meilleurs outils de création de jeux, toujours à jour. Aucun MCP ni clé API à installer : tout se connecte en un clic.",
   "The best game dev tools, in one click": "Les meilleurs outils de création de jeux, en un clic",
@@ -3937,8 +3886,6 @@ export default {
     "L’installeur n’est pas signé par son éditeur, alors Genex ne l’a pas lancé.",
   "The installer isn't signed, so Genex didn't run it.": "L’installeur n’est pas signé, alors Genex ne l’a pas lancé.",
   "The installer stopped before it finished. Try again.": "L’installeur s’est arrêté avant la fin. Réessaie.",
-  "The instructions this suggestion changes are gone. Discard it.":
-    "Les instructions que modifie cette suggestion n’existent plus. Écarte-la.",
   "The judge didn't play": "Le juge n’a pas joué",
   "The judge's moves were replayed on this build, and the goal held.":
     "Les actions du juge ont été rejouées sur ce build, et l’objectif a tenu.",
@@ -4298,12 +4245,6 @@ export default {
   "This sound could not be played": "Impossible de lire ce son",
   "This step": "Cette étape",
   "This step's plugin isn't installed any more.": "Le plugin de cette étape n’est plus installé.",
-  "This suggestion is damaged, so Studio did not apply it. Discard it.":
-    "Cette suggestion est endommagée, Studio ne l’a donc pas appliquée. Écarte-la.",
-  "This suggestion is no longer waiting. Harness may have applied or discarded it already.":
-    "Cette suggestion n’est plus en attente. Harness l’a peut-être déjà appliquée ou écartée.",
-  "This suggestion’s file is not a plain file in Harness’s instructions, so Studio did not apply it. Discard it.":
-    "Le fichier de cette suggestion n’est pas un fichier normal des instructions de Harness, donc Studio ne l’a pas appliquée. Écarte-la.",
   "This system can’t run the protected workspace. Studio needs macOS, Windows, or Linux (not WSL 1).":
     "Ce système ne peut pas faire tourner l’espace de travail protégé. Studio a besoin de macOS, Windows ou Linux (pas WSL 1).",
   "This system is blocking the isolation the protected workspace uses to keep agents apart.":
@@ -4320,7 +4261,6 @@ export default {
     "Ce codec vidéo ne peut pas être lu. Essaie un export en MP4 (H.264) ou WebM.",
   "This {name} install needs Node.js, which isn't installed. Install the native version instead.":
     "Cette installation de {name} a besoin de Node.js, qui n’est pas installé. Installe plutôt la version native.",
-  "Three version": "version de Three",
   Threshold: "Seuil",
   "To {folder}. Genex reopens when it’s done.": "Vers {folder}. Genex se rouvre une fois terminé.",
   Today: "Aujourd’hui",
@@ -4587,7 +4527,6 @@ export default {
   "Variable names use capital letters, digits and _; header names letters, digits and -.":
     "Les noms de variables utilisent majuscules, chiffres et _ ; les noms d’en-têtes, lettres, chiffres et -.",
   Verdict: "Verdict",
-  "Verifying game": "Vérification du jeu",
   Version: "Version",
   "Version {version}": "Version {version}",
   "Versions of your games saved for Rewind and builds.":
@@ -4660,7 +4599,6 @@ export default {
     "Ce que Claude fait sans demander. Choisir « Toujours autoriser » dans un chat ajoute l’action ici, pour ce jeu.",
   "What Harness has learned": "Ce que Harness a appris",
   "What changed": "Ce qui a changé",
-  "What changes": "Ce qui change",
   "What credits pay for": "À quoi servent les crédits",
   "What do you want to make?": "Qu’est-ce que tu veux créer ?",
   "What happened, and what did you expect?": "Que s’est-il passé, et qu’attendais-tu ?",
@@ -4736,8 +4674,6 @@ export default {
   "Works on phones": "Marche sur mobile",
   "Workspace restored": "Espace de travail restauré",
   "Workspace unavailable until Studio loads.": "Espace de travail indisponible tant que Studio n’est pas chargé.",
-  "World draw calls": "Appels de dessin du monde",
-  "World triangles": "Triangles du monde",
   "Wrapping up the build": "Finalise le build",
   "Write a message…": "Écris un message…",
   "Write your own answer…": "Écris ta propre réponse…",
@@ -4930,12 +4866,10 @@ export default {
   "asset group\u0004Delivered": "Livrées",
   attempts: "essais",
   back: "dos",
-  backend: "backend",
   "badge\u0004Set up": "À configurer",
   "badge\u0004Update": "Mise à jour",
   "balance couldn’t be read": "impossible de lire le solde",
   "base commit": "commit de base",
-  "baseline version": "version de départ",
   "before a Loop starts": "avant le début d’un Loop",
   "before a project of its kind is made": "avant la création d’un projet de son type",
   "before a restore": "avant une restauration",
@@ -4961,11 +4895,9 @@ export default {
   "camera: {camera}": "caméra : {camera}",
   cameras: "caméras",
   "can't call tools, so it can't build": "ne peut pas appeler d’outils, donc ne peut pas créer",
-  "candidate version": "version candidate",
   "captured the game": "a capturé le jeu",
   "change files in your games": "modifier les fichiers de tes jeux",
   changed: "modifié",
-  "changed files": "fichiers modifiés",
   chat: "chat",
   "checked for graphics errors": "a cherché des erreurs graphiques",
   "checked on a worker": "a vérifié un assistant",
@@ -4997,7 +4929,6 @@ export default {
   "count\u0004six": "six",
   "count\u0004three": "trois",
   "count\u0004two": "deux",
-  "counter scope": "portée des compteurs",
   "development build": "build de développement",
   done: "terminé",
   "down {percent}%": "en baisse de {percent} %",
@@ -5075,7 +5006,6 @@ export default {
   "in {game} and {count} more": "dans {game} et {count, plural, one {# autre} other {# autres}}",
   "install and run the apps it names, such as Blender": "installer et lancer les apps qu’il indique, comme Blender",
   "installs Genex packages in the game": "installe des paquets Genex dans le jeu",
-  "insufficient samples": "échantillons insuffisants",
   integrations: "intégrations",
   "it finished": "c’est terminé",
   "it landed": "c’est dans le jeu",
@@ -5186,7 +5116,6 @@ export default {
   "planned its next steps": "a planifié ses prochaines étapes",
   "played the game": "a joué au jeu",
   "playing now": "en jeu",
-  preservation: "préservation",
   "pressed keys": "a appuyé sur des touches",
   "programs on this Mac": "des programmes sur ce Mac",
   project: "projet",
@@ -5208,14 +5137,11 @@ export default {
   refunded: "remboursé",
   "reloaded the game": "a rechargé le jeu",
   "remembered something": "a mémorisé quelque chose",
-  renderer: "moteur de rendu",
   "reopened the build": "a rouvert le build",
-  report: "rapport",
   "requested an iterative build": "a demandé un build en plusieurs tours",
   "restarted itself": "a redémarré",
   "resume from chat": "reprends depuis le chat",
   "resumed the saved build": "a repris le build enregistré",
-  "retained version": "version gardée",
   "reviewed a build": "a évalué un build",
   "revision unknown ({state})": "version inconnue ({state})",
   right: "droite",
@@ -5544,8 +5470,6 @@ export default {
     "{count, plural, one {# point de sauvegarde} other {# points de sauvegarde}}",
   "{count, plural, one {# self-edited file} other {# self-edited files}} kept":
     "{count, plural, one {# fichier modifié par l’agent gardé} other {# fichiers modifiés par l’agent gardés}}",
-  "{count, plural, one {# skill improvement to review} other {# skill improvements to review}}":
-    "{count, plural, one {# amélioration de compétence à vérifier} other {# améliorations de compétences à vérifier}}",
   "{count, plural, one {# step} other {# steps}}": "{count, plural, one {# étape} other {# étapes}}",
   "{count, plural, one {# structural check} other {# structural checks}} passed.":
     "{count, plural, one {# vérification structurelle réussie} other {# vérifications structurelles réussies}}.",
@@ -5567,8 +5491,6 @@ export default {
   "{count, plural, one {# worker} other {# workers}} on it":
     "{count, plural, one {# assistant au travail} other {# assistants au travail}}",
   "{count, plural, one {# year ago} other {# years ago}}": "{count, plural, one {il y a # an} other {il y a # ans}}",
-  "{count, plural, one {Apply # change} other {Apply # changes}}":
-    "{count, plural, one {Appliquer # changement} other {Appliquer # changements}}",
   "{count, plural, one {Genex adds # file.} other {Genex adds # files.}} Everything else stays as it is.":
     "{count, plural, one {Genex ajoute # fichier.} other {Genex ajoute # fichiers.}} Le reste ne change pas.",
   "{count, plural, one {Genex left # file you changed in Plugins/{folder}.} other {Genex left # files you changed in Plugins/{folder}.}}":
@@ -5577,8 +5499,6 @@ export default {
     "{count, plural, one {Genex a mis à jour le module d’éditeur Genex en {version} et a gardé # fichier que tu as modifié à côté du nouveau, en .mine.} other {Genex a mis à jour le module d’éditeur Genex en {version} et a gardé # fichiers que tu as modifiés à côté des nouveaux, en .mine.}}",
   "{count, plural, one {Harness learned # thing from this build.} other {Harness learned # things from this build.}}":
     "{count, plural, one {Harness a appris # chose de ce build.} other {Harness a appris # choses de ce build.}}",
-  "{count, plural, one {Harness suggests # change to how it builds} other {Harness suggests # changes to how it builds}}":
-    "{count, plural, one {Harness suggère # changement dans sa façon de créer} other {Harness suggère # changements dans sa façon de créer}}",
   "{count, plural, one {Ignored # invalid catalog entry.} other {Ignored # invalid catalog entries.}}":
     "{count, plural, one {# entrée de catalogue invalide ignorée.} other {# entrées de catalogue invalides ignorées.}}",
   "{count, plural, one {Including # file changed outside this chat: {names}.} other {Including # files changed outside this chat: {names}.}}":
@@ -5729,8 +5649,6 @@ export default {
   "{hours}h {minutes}m": "{hours} h {minutes} min",
   "{hours}h{minutes}": "{hours}h{minutes}",
   "{hours}h {minutes}m": "{hours} h {minutes} min",
-  "{included} of {total} selected · you can undo later":
-    "{included} sur {total} sélectionnés · tu pourras annuler plus tard",
   "{input} in / {output} out per M tokens": "{input} en entrée / {output} en sortie par M de tokens",
   "{kept} · {count} finished.": "{kept} · {count, plural, one {# terminé} other {# terminés}}.",
   "{kept}.": "{kept}.",

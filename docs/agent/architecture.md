@@ -213,7 +213,7 @@ code import none from the substrate.
 | Durable custom events | [`custom-events.ts`](../../src/shared/custom-events.ts) | `CustomEvent` names them (`CUSTOM_EVENT_TYPES` lists the values; `customEventData` builds a record); `CustomEventMap` types what the app reads, every field optional. Read through `customEvent`/`customPayload`, never by casting `data.payload`. |
 | Event log | [`event-log.ts`](../../src/shared/event-log.ts) | Events, conversations and snapshot records. |
 | Harness RPC | [`harness-api.ts`](../../src/shared/harness-api.ts) | `HarnessHostApi`, `HostMethod` (the method names), `HARNESS_PARAM_SCHEMAS`; the seed's `types/host-api.d.ts` and `loop/host-methods.ts` are generated from it (`node scripts/gen-harness-types.ts`). |
-| RPC data | [`preview-contract.ts`](../../src/shared/preview-contract.ts), [`engine-requests.ts`](../../src/shared/engine-requests.ts), [`optimization.ts`](../../src/shared/optimization.ts), [`mcp.ts`](../../src/shared/mcp.ts), [`game-project.ts`](../../src/shared/game-project.ts) | Capture, pixel, input, readiness and console shapes; the serializable halves of a completion and a delegation. |
+| RPC data | [`preview-contract.ts`](../../src/shared/preview-contract.ts), [`engine-requests.ts`](../../src/shared/engine-requests.ts), [`mcp.ts`](../../src/shared/mcp.ts), [`game-project.ts`](../../src/shared/game-project.ts) | Capture, pixel, input, readiness and console shapes; the serializable halves of a completion and a delegation. |
 | Engines and providers | [`engine-descriptor.ts`](../../src/shared/engine-descriptor.ts), [`providers.ts`](../../src/shared/providers.ts) | What the UI knows about an engine, and the one provider table (see [Engines and providers](#engines-and-providers)). |
 | Time units | [`duration.ts`](../../src/shared/duration.ts) | `SECOND_MS`, `MINUTE_MS`, `HOUR_MS` for every named wait; the seed's `loop/time.ts` is held to it. |
 
@@ -796,8 +796,8 @@ at 4 KiB. Connector tool results, call errors and stderr health messages are red
 values (materialized env and headers, launch `secrets`, OAuth tokens) and then token shapes, through
 [`src/shared/redact.ts`](../../src/shared/redact.ts), the one redactor for the event log, the dev
 control and MCP. Collisions shorten a tool name's base so the suffixed name stays within 48
-characters (`uniqueToolName`). Judges, critics, playtesters, read-only sessions, the coordinator
-and optimization candidates get no connectors; the Auto chat, a Loop chat and a build's lead get them.
+characters (`uniqueToolName`). Judges, critics, playtesters, read-only sessions and the
+coordinator get no connectors; the Auto chat, a Loop chat and a build's lead get them.
 
 **Connector trust.** A stdio connector is trusted native code: `studio:mcp.save` computes a launch
 digest over command, args, cwd and variable names, and a mismatch needs the native trust dialog

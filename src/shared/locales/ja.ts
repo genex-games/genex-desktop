@@ -400,9 +400,6 @@ export default {
   Applied: "適用済み",
   "Applied automatically": "自動で適用",
   "Applied part {part}": "パート{part}を適用しました",
-  "Applied {count, plural, one {# improvement} other {# improvements}}.":
-    "{count, plural, other {#件の改善}}を適用しました。",
-  "Apply suggestions automatically": "提案を自動で適用",
   "Applying part {part}": "パート{part}を適用しています",
   "Approval is no longer pending": "承認はもう保留中ではありません",
   Approve: "承認",
@@ -570,8 +567,6 @@ export default {
   "Cancel signing in": "サインインをキャンセル",
   "Cancel the connector form": "コネクタのフォームをキャンセル",
   "Cancel your request to {name}": "{name}へのリクエストを取り消す",
-  "Candidate kept.": "候補を採用しました。",
-  "Candidate not kept.": "候補は採用しませんでした。",
   "Candidate {index}": "候補{index}",
   Candidates: "候補",
   "Cannot read model installation status.": "モデルのインストール状況を読み取れません。",
@@ -588,7 +583,6 @@ export default {
   "Change image…": "画像を変更…",
   "Change it": "変更する",
   "Change the plan: ": "プランを変更：",
-  "Change {skill}": "{skill}を変更",
   Changed: "変更済み",
   "Changed {skill}": "{skill}を変更しました",
   "Changes apply immediately and save on this Mac.": "変更はすぐに反映され、このMacに保存されます。",
@@ -642,7 +636,6 @@ export default {
   "Checking on background work": "バックグラウンド作業を確認中",
   "Checking plan usage…": "プランの使用状況を確認しています…",
   "Checking play": "プレイを確認しています",
-  "Checking preservation": "何も失われていないか確認中",
   "Checking that Epic signed the installer…": "インストーラーにEpicの署名があるか確認しています…",
   "Checking that Microsoft signed Unreal's runtime installer…":
     "Unreal付属のランタイムのインストーラーにMicrosoftの署名があるか確認しています…",
@@ -845,7 +838,6 @@ export default {
   "Compacting…": "圧縮中…",
   "Compacts automatically": "自動で圧縮",
   "Comparative judgement": "比較評価",
-  "Comparing before and after": "変更前後を比較中",
   "Compiled {blueprint}": "{blueprint}をコンパイルしました",
   "Compiling {blueprint}": "{blueprint}をコンパイルしています",
   Completed: "完了",
@@ -938,7 +930,6 @@ export default {
   "Could not load local models. Reopen Settings to try again. {error}":
     "ローカルモデルを読み込めませんでした。設定を開き直して、もう一度試してください。{error}",
   "Could not load this chat.": "このチャットを読み込めませんでした。",
-  "Could not look for improvements. Try again.": "改善点を探せませんでした。もう一度試してください。",
   "Could not open the local sign-in callback": "ローカルのサインインコールバックを開けませんでした",
   "Could not open the sign-in terminal. Close an unused session and try again.":
     "サインイン用のターミナルを開けませんでした。使っていないセッションを閉じて、もう一度試してください。",
@@ -1147,7 +1138,6 @@ export default {
   Default: "デフォルト",
   "Default game folder": "デフォルトのゲームフォルダー",
   "Default model": "デフォルトモデル",
-  "Default view": "デフォルト表示",
   Delete: "削除",
   "Delete every row shared from this computer?": "このコンピューターから共有したすべての行を削除しますか？",
   "Delete game": "ゲームを削除",
@@ -1165,7 +1155,6 @@ export default {
   Delivered: "提出済み",
   "Delivered revision: {revision} · from integration {source}": "届けたバージョン：{revision} · 統合{source}から",
   "Delivered, not used yet": "提出済み、未使用",
-  "Demo: {demo}": "デモ：{demo}",
   Demon: "デーモン",
   Denied: "拒否",
   "Denied · {reason}": "拒否 · {reason}",
@@ -1194,7 +1183,6 @@ export default {
   "Didn’t finish": "完了しませんでした",
   Disabled: "無効",
   "Disabled in the provider configuration.": "プロバイダーの設定で無効になっています。",
-  Discard: "破棄",
   Disconnect: "接続を解除",
   "Disconnect account": "アカウントの接続を解除",
   Dismiss: "閉じる",
@@ -1345,7 +1333,6 @@ export default {
   Extensions: "拡張機能",
   "External MCP tools reach every coding agent through Studio.":
     "外部のMCPツールは、Studioを通じてすべてのコーディングエージェントに届きます。",
-  FPS: "FPS",
   Failed: "失敗",
   "Failed to connect": "接続に失敗しました",
   "Failed to start": "起動に失敗しました",
@@ -1366,7 +1353,6 @@ export default {
   "Filled in from your paste": "貼り付けた内容から入力しました",
   "Filter the picture": "画像にフィルター",
   "Final look": "最終チェック",
-  "Final verification": "最終確認",
   "Find people by name": "名前で人を探す",
   "Finding people by name isn’t on Genex yet. Send your link instead.":
     "名前で人を探す機能はまだGenexにありません。代わりにリンクを送ってください。",
@@ -1418,12 +1404,8 @@ export default {
   "For <plugin>Genex plugin</plugin> tools: 3D, animation, textures, music. Optional.":
     "<plugin>Genexプラグイン</plugin>のツール用：3D、アニメーション、テクスチャ、音楽。任意です。",
   "Force Reload": "強制的に再読み込み",
-  Found: "見つかりました",
   "Found locally. These plugins only run after you allow them.":
     "このコンピューターで見つかりました。これらのプラグインは、許可するまで動きません。",
-  "Found {count, plural, one {# new suggestion} other {# new suggestions}} at the top of Activity.":
-    "新しい提案が{count, plural, other {#件}}見つかりました。アクティビティの一番上にあります。",
-  "Frame interval (ms)": "フレーム間隔（ms）",
   Free: "無料",
   "Free and open source, about 170 MB. Genex installs it in Applications.":
     "無料のオープンソースで、約170 MB。Genexが「アプリケーション」にインストールします。",
@@ -1710,8 +1692,6 @@ export default {
     "エージェントが使えるガイドです。使えるかどうかは、ソースと選んだプロバイダーによって変わります。",
   Guide: "ガイド",
   "Harness added a tool for itself: {file}": "Harnessが自分用のツールを追加しました：{file}",
-  "Harness asks before changing how it builds. You can undo any change in Harness.":
-    "Harnessはつくり方を変える前に確認します。どの変更もHarnessで元に戻せます。",
   "Harness can run up to this many workers at the same time.": "Harnessが同時に動かせるワーカーの最大数です。",
   "Harness changed one of its own files.": "Harnessが自分のファイルの1つを変更しました。",
   "Harness could not read how this run ended.": "Harnessはこのビルドの終わり方を読み取れませんでした。",
@@ -1825,7 +1805,6 @@ export default {
   "In your game": "ゲームに追加済み",
   "In {folder}": "{folder}内",
   "In-game economy": "ゲーム内経済",
-  "Include: {title}": "含める：{title}",
   Incomplete: "未完了",
   "Independent interaction coverage is incomplete.": "独立したインタラクションの確認範囲が不完全です。",
   "Independent interaction coverage is unavailable for this revision.":
@@ -1909,7 +1888,6 @@ export default {
   "Integrity check failed for {file}: the file does not match the pinned commit":
     "{file}の整合性チェックに失敗しました：ファイルが固定されたコミットと一致しません",
   "Interface font": "インターフェースのフォント",
-  Interrupted: "中断",
   Interviewing: "ヒアリング中",
   "Invalid GitHub link": "無効なGitHubリンク",
   "Invalid approval": "無効な承認",
@@ -2022,7 +2000,6 @@ export default {
   "Keep this cover": "このカバーにする",
   "Keep this folder": "このフォルダーを使う",
   "Keep working on a game you already have": "今あるゲームの続きをつくる",
-  "Keeping verified change": "確認済みの変更を採用中",
   Kept: "採用",
   "Kept by reviewers": "レビュアーが採用",
   "Kept by reviewers, not added": "レビュアーが採用、未追加",
@@ -2127,8 +2104,6 @@ export default {
   "Long work the lead or a worker started, like a build. It runs on while the agents go on working.":
     "メインエージェントやワーカーが始めた、ビルドなどの時間のかかる作業です。エージェントが作業を続けている間も動き続けます。",
   "Look and move from the player's eyes.": "プレイヤーの目線で見て、動きます。",
-  "Look for improvements": "改善点を探す",
-  "Look for improvements in recent builds": "最近のビルドから改善点を探す",
   Looked: "見回しました",
   "Looked at the level": "レベルを確認しました",
   "Looked through the assets": "アセットに目を通しました",
@@ -2143,7 +2118,6 @@ export default {
   "Looking at this Mac…": "このMacを確認しています…",
   "Looking at your game": "ゲームを確認中",
   "Looking at your game.": "ゲームを確認しています。",
-  "Looking for improvements": "改善点を探しています",
   "Looking something up": "調べています",
   "Looking through the assets": "アセットに目を通しています",
   "Looking up Blueprint nodes": "ブループリントのノードを調べています",
@@ -2236,9 +2210,6 @@ export default {
   "Measured in a plugin": "プラグインで計測",
   "Measured in {plugin}": "{plugin}で計測",
   "Measured the route": "ルートを測定しました",
-  Measurement: "計測項目",
-  "Measurement has not completed": "計測が完了していません",
-  "Measuring before": "変更前を計測中",
   "Measuring the route": "ルートを測定しています",
   "Measuring…": "計測中…",
   "Meet your Genex avatar": "あなたのGenexアバターです",
@@ -2410,7 +2381,6 @@ export default {
   "No time limit": "時間制限なし",
   "No unlocked system keyring is available. Start GNOME Keyring or KWallet and unlock it, then restart Genex.":
     "ロック解除されたシステムキーリングがありません。GNOME KeyringかKWalletを起動してロックを解除し、Genexを再起動してください。",
-  "No verified improvement": "改善を確認できず",
   "Nobody answered": "誰も応答しませんでした",
   "Nobody else has this one.": "同じアバターはほかに誰も持っていません。",
   "Nobody named “{query}”.": "「{query}」という名前の人はいません。",
@@ -2422,7 +2392,6 @@ export default {
   "Not added": "未追加",
   "Not approved": "未承認",
   "Not asked — the step did not land.": "依頼なし — ステップが実現しませんでした。",
-  "Not comparable": "比較できません",
   "Not confirmed": "未確認",
   "Not connected": "未接続",
   "Not decided yet.": "まだ決まっていません。",
@@ -2445,7 +2414,6 @@ export default {
   "Not made yet": "まだつくっていません",
   "Not measured": "未計測",
   "Not measured yet": "まだ計測していません",
-  "Not measured — {reason}": "未計測 — {reason}",
   "Not needed — the round was undone on the checks.": "不要 — チェックの結果、ラウンドは取り消されました。",
   "Not now": "今はしない",
   "Not on this plan or model": "このプランやモデルでは使えません",
@@ -2475,7 +2443,6 @@ export default {
     "{host}から応答がありません。サーバーを起動してから、もう一度確認してください。",
   "Nothing beyond its own tools": "自分のツールだけ",
   "Nothing changed. Try again in a moment.": "何も変わりませんでした。少し待ってからもう一度試してください。",
-  "Nothing changes until you apply.": "適用するまで何も変わりません。",
   "Nothing is added to this folder.": "このフォルダーには何も追加されません。",
   "Nothing is failing.": "失敗しているものはありません。",
   "Nothing is installing.": "インストール中のものはありません。",
@@ -2483,8 +2450,6 @@ export default {
   "Nothing kept yet": "まだ採用なし",
   "Nothing made": "成果なし",
   "Nothing made yet": "まだ何も作られていません",
-  "Nothing new": "新着なし",
-  "Nothing new to suggest.": "新しい提案はありません。",
   "Nothing spent yet": "まだ利用はありません",
   "Nothing to free up": "空けられる容量はありません",
   "Nothing was clicked. Install Unreal {version} yourself in the launcher: {clicks}.":
@@ -2717,10 +2682,6 @@ export default {
   "Opens the release page": "リリースページを開きます",
   "Opens your browser. You’ll come back here to pay.": "ブラウザが開きます。支払いはここに戻ってから行います。",
   Optic: "オプティック",
-  Optimization: "最適化",
-  "Optimization finished": "最適化が完了",
-  "Optimization stage details": "最適化ステージの詳細",
-  Optimizing: "最適化中",
   "Or in Studio: {clicks}.": "またはStudioで：{clicks}。",
   "Otherwise every game can use it.": "オフのときは、どのゲームでも使えます。",
   "Outcome not recorded": "結果は記録されていません",
@@ -3329,12 +3290,8 @@ export default {
   "Selected public path is missing or unreadable: {path}": "選んだ公開パスが見つからないか、読み取れません：{path}",
   "Selected step": "選択中のステップ",
   "Self-improvement": "自己改善",
-  "Self-improvement is off in Harness, so there is nothing to apply.":
-    "Harnessの自己改善がオフなので、適用するものはありません。",
   "Self-improvement is off. Harness isn’t learning from new builds.":
     "自己改善はオフです。Harnessは新しいビルドから学習していません。",
-  "Self-improvement is off. Turn it on at the top of Studio to look for improvements.":
-    "自己改善はオフです。改善点を探すには、Studioの上部でオンにしてください。",
   Send: "送信",
   "Send a report": "レポートを送信",
   "Send feedback": "フィードバックを送信",
@@ -3504,7 +3461,6 @@ export default {
   "Skill details": "スキルの詳細",
   Skills: "スキル",
   "Skip for now": "今はスキップ",
-  Skipped: "スキップ",
   'Skipped "{name}": Studio connector ids are lowercase letters, digits and dashes.':
     "「{name}」をスキップしました：StudioのコネクタIDには英小文字、数字、ハイフンしか使えません。",
   'Skipped "{name}": a stdio server needs a command.':
@@ -3657,13 +3613,8 @@ export default {
   "Studio's MCP server is on and answering Genex": "StudioのMCPサーバーがオンで、Genexに応答しています",
   "Studio’s agents only run inside a protected workspace that keeps them away from your files and accounts.":
     "Studioのエージェントは保護されたワークスペースの中でだけ動き、あなたのファイルやアカウントには近づけません。",
-  "Studio’s instructions changed after this suggestion was made, and it no longer fits. Discard it; Studio will suggest again after a later build.":
-    "この提案のあとでStudioの指示が変わったため、もう合いません。破棄してください。次以降のビルドのあとで、Studioがまた提案します。",
   Success: "成功",
   "Suggest prompt": "アイデアを提案",
-  "Suggested after reviewing your recent builds.": "最近のビルドを振り返って提案されました。",
-  "Suggestions that pass testing apply without asking. You can undo any of them in Harness.":
-    "テストに合格した提案は確認なしで適用されます。どの提案もHarnessで元に戻せます。",
   "Suggestions wait until you apply them. Every applied change can be undone.":
     "提案は、適用するまで待機します。適用した変更はすべて元に戻せます。",
   "Summarise the older part of this chat into the log so it fits the model":
@@ -3812,8 +3763,6 @@ export default {
   "The approved plan is starting. Please wait.": "承認されたプランを開始しています。少しお待ちください。",
   "The apps are on Genex, but the game isn’t in the gallery yet. Publish again to list it.":
     "アプリはGenexにありますが、ゲームはまだギャラリーに載っていません。もう一度公開すると掲載されます。",
-  "The assembled game is being measured and checked for safe improvements.":
-    "組み立てたゲームを計測し、安全な改善点がないか確認しています。",
   "The best game dev tools, always up to date. No MCPs or API keys to install: they’re connected in one click.":
     "最高のゲーム開発ツールを、いつも最新で。MCPやAPIキーのインストールは不要です。ワンクリックで接続できます。",
   "The best game dev tools, in one click": "最高のゲーム開発ツールをワンクリックで",
@@ -3872,8 +3821,6 @@ export default {
   "The installer isn't signed, so Genex didn't run it.": "インストーラーに署名がないため、Genexは実行しませんでした。",
   "The installer stopped before it finished. Try again.":
     "インストーラーが途中で止まりました。もう一度試してください。",
-  "The instructions this suggestion changes are gone. Discard it.":
-    "この提案が変更する指示はもうありません。提案を破棄してください。",
   "The judge didn't play": "審査員はプレイしませんでした",
   "The judge's moves were replayed on this build, and the goal held.":
     "審査員の操作をこのビルドで再現し、目標は達成されたままでした。",
@@ -4237,12 +4184,6 @@ export default {
   "This sound could not be played": "このサウンドを再生できませんでした",
   "This step": "このステップ",
   "This step's plugin isn't installed any more.": "このステップのプラグインはもうインストールされていません。",
-  "This suggestion is damaged, so Studio did not apply it. Discard it.":
-    "この提案は壊れているため、Studioは適用しませんでした。破棄してください。",
-  "This suggestion is no longer waiting. Harness may have applied or discarded it already.":
-    "この提案はもう待機していません。Harnessがすでに適用したか、破棄した可能性があります。",
-  "This suggestion’s file is not a plain file in Harness’s instructions, so Studio did not apply it. Discard it.":
-    "この提案のファイルはHarnessの指示内の通常のファイルではないため、Studioは適用しませんでした。提案を破棄してください。",
   "This system can’t run the protected workspace. Studio needs macOS, Windows, or Linux (not WSL 1).":
     "このシステムでは保護されたワークスペースを動かせません。StudioにはmacOS、Windows、またはLinux（WSL 1以外）が必要です。",
   "This system is blocking the isolation the protected workspace uses to keep agents apart.":
@@ -4259,7 +4200,6 @@ export default {
     "このビデオコーデックは再生できません。MP4（H.264）かWebMで書き出してみてください。",
   "This {name} install needs Node.js, which isn't installed. Install the native version instead.":
     "この{name}にはNode.jsが必要ですが、インストールされていません。代わりにネイティブ版をインストールしてください。",
-  "Three version": "Threeのバージョン",
   Threshold: "しきい値",
   "To {folder}. Genex reopens when it’s done.": "移動先：{folder}。終わるとGenexがもう一度開きます。",
   Today: "今日",
@@ -4527,7 +4467,6 @@ export default {
   "Variable names use capital letters, digits and _; header names letters, digits and -.":
     "変数名には大文字・数字・_、ヘッダー名には英字・数字・-が使えます。",
   Verdict: "判定",
-  "Verifying game": "ゲームを確認中",
   Version: "バージョン",
   "Version {version}": "バージョン{version}",
   "Versions of your games saved for Rewind and builds.": "巻き戻しとビルドのために保存したゲームのバージョンです。",
@@ -4599,7 +4538,6 @@ export default {
     "Claudeが確認せずに行う操作です。チャットで「常に許可」を選ぶと、そのゲーム用にここへ追加されます。",
   "What Harness has learned": "Harnessが学んだこと",
   "What changed": "変わったところ",
-  "What changes": "変わる内容",
   "What credits pay for": "クレジットの使い道",
   "What do you want to make?": "何をつくりますか？",
   "What happened, and what did you expect?": "何が起きましたか？本当はどうなるはずでしたか？",
@@ -4673,8 +4611,6 @@ export default {
   "Works on phones": "スマホで動作",
   "Workspace restored": "ワークスペースを復元しました",
   "Workspace unavailable until Studio loads.": "Studioが読み込まれるまでワークスペースは使えません。",
-  "World draw calls": "ワールドのドローコール",
-  "World triangles": "ワールドの三角形数",
   "Wrapping up the build": "ビルドをまとめ中",
   "Write a message…": "メッセージを入力…",
   "Write your own answer…": "自分で答えを書く…",
@@ -4865,12 +4801,10 @@ export default {
   "asset group\u0004Delivered": "完成済み",
   attempts: "試行",
   back: "背面",
-  backend: "バックエンド",
   "badge\u0004Set up": "要セットアップ",
   "badge\u0004Update": "アップデート",
   "balance couldn’t be read": "残高を読み込めませんでした",
   "base commit": "ベースコミット",
-  "baseline version": "基準バージョン",
   "before a Loop starts": "Loopの開始前",
   "before a project of its kind is made": "その種類のプロジェクトが作られる前",
   "before a restore": "復元の前",
@@ -4895,11 +4829,9 @@ export default {
   "camera: {camera}": "カメラ：{camera}",
   cameras: "カメラ",
   "can't call tools, so it can't build": "ツールを呼び出せないため、つくれません",
-  "candidate version": "候補バージョン",
   "captured the game": "ゲームをキャプチャしました",
   "change files in your games": "ゲーム内のファイルを変更する",
   changed: "変更あり",
-  "changed files": "変更されたファイル",
   chat: "チャット",
   "checked for graphics errors": "グラフィックのエラーを確認しました",
   "checked on a worker": "ワーカーの様子を確認しました",
@@ -4931,7 +4863,6 @@ export default {
   "count\u0004six": "6",
   "count\u0004three": "3",
   "count\u0004two": "2",
-  "counter scope": "カウンター範囲",
   "development build": "開発ビルド",
   done: "完了",
   "down {percent}%": "{percent}%減",
@@ -5008,7 +4939,6 @@ export default {
   "in {game} and {count} more": "{game}ほか{count}本でプレイ中",
   "install and run the apps it names, such as Blender": "Blenderなど、指定したアプリをインストールして実行する",
   "installs Genex packages in the game": "ゲームにGenexパッケージをインストールする",
-  "insufficient samples": "サンプル不足",
   integrations: "統合",
   "it finished": "終了しました",
   "it landed": "反映されました",
@@ -5119,7 +5049,6 @@ export default {
   "planned its next steps": "次の手順を計画しました",
   "played the game": "ゲームをプレイしました",
   "playing now": "プレイ中",
-  preservation: "保持",
   "pressed keys": "キーを押しました",
   "programs on this Mac": "このMacのプログラム",
   project: "プロジェクト",
@@ -5141,14 +5070,11 @@ export default {
   refunded: "返金済み",
   "reloaded the game": "ゲームを再読み込みしました",
   "remembered something": "何かを覚えました",
-  renderer: "レンダラー",
   "reopened the build": "ビルドを再び開きました",
-  report: "レポート",
   "requested an iterative build": "複数ラウンドのビルドを依頼しました",
   "restarted itself": "自分を再起動しました",
   "resume from chat": "チャットから再開",
   "resumed the saved build": "保存したビルドを再開しました",
-  "retained version": "採用バージョン",
   "reviewed a build": "ビルドをレビューしました",
   "revision unknown ({state})": "バージョン不明（{state}）",
   right: "右",
@@ -5455,8 +5381,6 @@ export default {
   "{count, plural, one {# save point} other {# save points}}": "{count, plural, other {セーブポイント#個}}",
   "{count, plural, one {# self-edited file} other {# self-edited files}} kept":
     "{count, plural, other {エージェントが編集したファイル#個を保持}}",
-  "{count, plural, one {# skill improvement to review} other {# skill improvements to review}}":
-    "{count, plural, other {確認待ちのスキル改善が#件}}",
   "{count, plural, one {# step} other {# steps}}": "{count, plural, other {#ステップ}}",
   "{count, plural, one {# structural check} other {# structural checks}} passed.":
     "{count, plural, other {#件の構造チェック}}に合格しました。",
@@ -5474,7 +5398,6 @@ export default {
     "{count, plural, other {#人のワーカーが提出なし}}",
   "{count, plural, one {# worker} other {# workers}} on it": "{count, plural, other {ワーカー#人が作業中}}",
   "{count, plural, one {# year ago} other {# years ago}}": "{count, plural, other {#年前}}",
-  "{count, plural, one {Apply # change} other {Apply # changes}}": "{count, plural, other {#件の変更を適用}}",
   "{count, plural, one {Genex adds # file.} other {Genex adds # files.}} Everything else stays as it is.":
     "{count, plural, other {Genexはファイルを#個追加します。}}それ以外はそのままです。",
   "{count, plural, one {Genex left # file you changed in Plugins/{folder}.} other {Genex left # files you changed in Plugins/{folder}.}}":
@@ -5483,8 +5406,6 @@ export default {
     "{count, plural, other {GenexはGenexエディターヘルパーを{version}に更新し、あなたが変更したファイル#個を.mineとして新しいファイルの横に残しました。}}",
   "{count, plural, one {Harness learned # thing from this build.} other {Harness learned # things from this build.}}":
     "{count, plural, other {Harnessはこのビルドから#個のことを学びました。}}",
-  "{count, plural, one {Harness suggests # change to how it builds} other {Harness suggests # changes to how it builds}}":
-    "{count, plural, other {Harnessがつくり方について#件の変更を提案しています}}",
   "{count, plural, one {Ignored # invalid catalog entry.} other {Ignored # invalid catalog entries.}}":
     "{count, plural, other {無効なカタログ項目を#件スキップしました。}}",
   "{count, plural, one {Including # file changed outside this chat: {names}.} other {Including # files changed outside this chat: {names}.}}":
@@ -5626,7 +5547,6 @@ export default {
   "{hours}h {minutes}m": "{hours}時間{minutes}分",
   "{hours}h{minutes}": "{hours}時間{minutes}分",
   "{hours}h {minutes}m": "{hours}時間{minutes}分",
-  "{included} of {total} selected · you can undo later": "{total}件中{included}件を選択 · あとで元に戻せます",
   "{input} in / {output} out per M tokens": "100万トークンあたり入力{input}／出力{output}",
   "{kept} · {count} finished.": "{kept} · {count}件完了。",
   "{kept}.": "{kept}。",
