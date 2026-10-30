@@ -8,7 +8,7 @@ import { shortSha } from "../git.ts";
 import { appIdentity } from "../project-prompts.ts";
 import { minutes } from "../time.ts";
 import { folderLabelOf } from "../workers/identity.ts";
-import { WorkerTool } from "../workers/contract.ts";
+import { MAX_WORKERS_AT_ONCE, WorkerTool } from "../workers/contract.ts";
 import { DirectorTool } from "./tool-specs.ts";
 import { type FactRef, ProjectTool } from "../folder-facts.ts";
 import type { Run } from "../../types/harness.d.ts";
@@ -60,7 +60,7 @@ export function directorBrief(facts: DirectorBriefFacts): string {
     `YOU LEAD THIS LOOP. You are this chat's own session, leading a Loop on the game "${run.project}". Your cwd is the game folder the user sees (${gameFolder}). You build in the run's integration worktree (${integrationWorktree}), a git worktree of the game at ${shortSha(baseCommit ?? "")}, by its full path; commit there. Leave the game folder as the user left it: finish lands the integration branch there.`,
     `THE GOAL: ${run.goal}`,
     timeWords(facts),
-    `WORKERS (optional): ${WorkerTool.Start} hands one task to a worker in the background, with the tools you have. A writer works in its own copy of the integration branch (isolation copy); ${WorkerTool.Mark} used merges its work into the integration worktree, and Genex runs one health check of the merged build (the page loads, no uncaught errors, the screenshot is not blank). A reader (isolation read) looks and writes nothing. ${WorkerTool.Wait}, ${WorkerTool.Status}, ${WorkerTool.Steer} and ${WorkerTool.Stop} reach them.`,
+    `WORKERS (optional, up to ${MAX_WORKERS_AT_ONCE} at once): ${WorkerTool.Start} hands one task to a worker in the background, with the tools you have. A writer works in its own copy of the integration branch (isolation copy); ${WorkerTool.Mark} used merges its work into the integration worktree, and Genex runs one health check of the merged build (the page loads, no uncaught errors, the screenshot is not blank). A reader (isolation read) looks and writes nothing. ${WorkerTool.Wait}, ${WorkerTool.Status}, ${WorkerTool.Steer} and ${WorkerTool.Stop} reach them.`,
     `SECOND OPINION (optional): ${DirectorTool.Judge} hands pictures you name (or a screenshot of the integration build) and your question to a model that did none of the work. It decides nothing.`,
     PLUGIN_SEARCH_LINE,
     `FINISH: ${DirectorTool.Finish} with a summary. Genex runs the health check on the integration branch first and lands it in the game folder when it passes; when it fails you hear why and go on (or finish with land=no). ${DirectorTool.Show} offers a build to the user's Live view; ${DirectorTool.Note} leaves a card in the run's feed.`,
@@ -77,14 +77,14 @@ export function wrapUpPrompt({
   finalDeadline,
   integrationHead,
   integrationHealthy,
-  running,
+  running = [],
   userAsked = false,
 }: {
   run: Run;
   finalDeadline: number;
   integrationHead: string | null;
   integrationHealthy: boolean | null;
-  running: readonly string[];
+  running?: readonly string[];
   userAsked?: boolean;
 }): string {
   const head = integrationHead ? shortSha(integrationHead) : "none";
@@ -95,7 +95,9 @@ export function wrapUpPrompt({
       ? `Workers still running: ${running.join(", ")} — finish stops them; merge what you want to keep first.`
       : "",
     `Integration branch: ${head}${health}.`,
-    "Call finish now with a summary of what was built and what remains (land=no to keep it unlanded).",
+    userAsked
+      ? "Call finish now with a summary of what was built and what remains: the user asked to finish, so it closes the run as it stands and claims nothing (land=no to keep it unlanded)."
+      : "Call finish now with a summary of what was built and what remains, with victory=yes only if the goal is reached (land=no to keep it unlanded).",
   ]
     .filter(Boolean)
     .join("\n");

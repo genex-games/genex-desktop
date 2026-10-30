@@ -473,37 +473,13 @@ describe("the loop dies in the middle of the run (M3.9)", () => {
             }),
           );
           const call = (name: string, args: Record<string, unknown>) => request.onLiveTool!(name, args).catch(() => "");
-          await call("plan", {
-            summary: "This run: paint the plaza.",
-            workers: JSON.stringify([
-              {
-                id: "plaza",
-                title: "Plaza",
-                seam: "the plaza",
-                owns: "src/plaza.js",
-                done: ["the plaza is red"],
-                minutes: 20,
-              },
-            ]),
-            base: "the integration branch as it stands",
-            risks: "none",
-          });
-          await call("worker_start", {
-            id: "plaza",
-            title: "Plaza",
-            brief: "paint the plaza red",
-            mode: "single",
-            minutes: "20",
-            owns: "src/plaza.js",
-          });
+          await call("worker_start", { title: "Plaza", task: "paint the plaza red", isolation: "copy" });
           // A lead that lets go when it is told to — the session ends on the abort.
           await aborted;
           return { sessionId: "director-1", summary: "the lead was aborted" };
         }
-        // A builder — eyes on its own worktree — that shrugs off the first signal, which is the
-        // one Stop must still reach. Anything else the run briefs answers at once, so the
-        // scripted lead is what the run is waiting on when the loop dies.
-        if (!request.selfCapture) return null;
+        // The worker, in its copy of the game, that shrugs off the first signal, which is the
+        // one Stop must still reach: the scripted lead is what the run is waiting on when the loop dies.
         return new Promise<Record<string, unknown>>((resolve) => {
           request.signal!.addEventListener("abort", () => {
             aborts.builder++;
@@ -528,14 +504,7 @@ describe("the loop dies in the middle of the run (M3.9)", () => {
       .catch(() => {});
     const delegations = async () =>
       (await apiOf(rig)["engine.delegations"]!({})) as Array<{ project: string; cwd: string }>;
-    await until(
-      async () =>
-        customEvents(await rig.core.listAllEvents(), "director_worker").some(
-          (e) => e.runId === runId && e.state === "running",
-        ) && (await delegations()).length >= 2,
-      "the lead and one builder to be building",
-      180_000,
-    );
+    await until(async () => (await delegations()).length >= 2, "the lead and one builder to be building", 180_000);
 
     // 1 am.
     const pid = rig.core.host.pid;
@@ -675,143 +644,7 @@ describe("a run the loop died in, resumed (the full journal)", () => {
       await new Promise((resolve) => setTimeout(resolve, 150));
     }
   }
-  const utc = (ms: number) => `${new Date(ms).toISOString().slice(11, 16)} UTC`;
   const BUDGET_MS = 30 * 60_000;
-  const iso = (ms: number) => new Date(ms).toISOString();
-
-  it("crash mid-build, then Resume: the first digest names the workers and the defects nobody owns from before, and the run goes on with the working time it had left", async () => {
-    const rig = await startRig(
-      { replies: [] },
-      { previewPoolMax: 3, createHeadlessPreview: async () => makeFakePreview() },
-    );
-    rigs.push(rig);
-    // The user's own Resume is what this row reads: the host's automatic resume has a row of its own.
-    await rig.core.updateSettings({ autoResume: false });
-    const project = await rig.core.games.scaffold("resume-run", { title: "Resume run" });
-    const lead: DelegateRequest[] = [];
-    let resumed = false;
-    let resumedTurnAt = 0;
-    registerFakeEngine(rig, {
-      complete: () => null,
-      delegate: async (request: DelegateRequest) => {
-        if (request.director) {
-          lead.push(request);
-          if (resumed && !resumedTurnAt) resumedTurnAt = Date.now();
-          const call = (name: string, args: Record<string, unknown>) => request.onLiveTool!(name, args).catch(() => "");
-          if (resumed) {
-            // The resumed run: its first turn is all this row reads, so it closes the run.
-            await call("finish", { land: "no", summary: "picked up where it stood" });
-            return { sessionId: "lead-1", summary: "finished" };
-          }
-          await call("plan", {
-            summary: "This run: a dusk plaza.",
-            workers: JSON.stringify([
-              { id: "sky", title: "Dusk sky", seam: "the sky", owns: "src/sky.js", done: ["dusk"], minutes: 20 },
-              { id: "props", title: "Props", seam: "the props", owns: "src/props.js", done: ["crates"], minutes: 20 },
-            ]),
-            base: "the integration branch as it stands",
-            risks: "none",
-          });
-          await call("worker_start", {
-            id: "sky",
-            title: "Dusk sky",
-            brief: "Build a dusk sky over the plaza",
-            mode: "single",
-            minutes: "20",
-            owns: "src/sky.js",
-          });
-          // The lead ends its turn: the builder builds, and the lead rests.
-          return { sessionId: "lead-1", summary: "the sky is building" };
-        }
-        if (!request.selfCapture) return null;
-        // The builder builds until the loop under it dies.
-        return new Promise<Record<string, unknown>>((resolve) =>
-          request.signal!.addEventListener("abort", () => resolve({ ok: false, stopReason: "stopped", summary: "" })),
-        );
-      },
-    });
-
-    const runId = rig.core.newRunId();
-    void rig.core
-      .dispatchRun({
-        runId,
-        goal: "a dusk plaza",
-        project: project.name,
-        mode: "autopilot",
-        engine: "fake-delegate",
-        reference: { name: "Dusk", shots: [] },
-        budgets: { wallClockMs: BUDGET_MS },
-      } as never)
-      .catch(() => {});
-    const threadId = await rig.core.threadForGame(project.name);
-    const journal = async () =>
-      ((await rig.core.store.readArtifact(threadId, `autopilot_${runId}`).catch(() => null)) ?? null) as Record<
-        string,
-        any
-      > | null;
-    // The lead rests: its turn is over, the builder builds, and the journal holds where the run stands.
-    await until(
-      async () => lead.length === 1 && Boolean((await journal())?.director?.wake),
-      "the lead to rest with the sky building",
-      180_000,
-    );
-    const before = (await journal())!.director;
-
-    // 1 am: the loop dies mid-build. The app's repair pauses the run.
-    resumed = true;
-    const pid = rig.core.host.pid;
-    assert.ok(pid, "the harness child has a pid to kill");
-    killTree(pid);
-    await until(
-      async () =>
-        customEvents(await rig.core.store.listEvents(threadId), "autopilot_paused").some((e) => e.runId === runId),
-      "the paused card",
-      120_000,
-    );
-    // A judge had shelved one defect nobody owns before the loop died. A judged round is out of
-    // this rig's reach, so it goes on the journal as the run's save writes its ledger
-    // (director-journal.test.ts K2 holds that write).
-    const paused = (await journal())!;
-    paused.director.ledger = [
-      { text: "the crates float above the plaza", from: "sky", owner: "props", at: Date.now() },
-    ];
-    await rig.core.store.writeArtifact(threadId, `autopilot_${runId}`, paused);
-    const worked = paused.director.clock?.workedMs;
-    assert.equal(
-      typeof worked,
-      "number",
-      `the journal counts the time the run worked: ${JSON.stringify(paused.director.clock)}`,
-    );
-
-    const resumeAsked = Date.now();
-    void rig.core.resumeAutopilot(runId).catch(() => {});
-    await until(() => lead.length >= 2, "the resumed run's first turn", 180_000);
-    const first = String(lead[1]!.prompt);
-    const standsAt = first.indexOf("WHERE THE RUN STANDS:");
-    assert.ok(standsAt >= 0, `the resumed run's first message has no digest:\n${first.slice(-2_000)}`);
-    const stands = first.slice(standsAt).split("\n\n")[0]!;
-    assert.match(stands, /^- worker sky \(Dusk sky\): /m, stands);
-    assert.match(stands, /defects nobody owns: the crates float above the plaza/, stands);
-    assert.ok(before.clock?.softDeadline, `the first run's journal keeps its clock: ${JSON.stringify(before.clock)}`);
-
-    await until(
-      async () =>
-        customEvents(await rig.core.store.listEvents(threadId), "run_finished").filter((e) => e.runId === runId)
-          .length >= 2,
-      "the resumed run to close",
-      180_000,
-    );
-    const after = (await journal())!.director;
-    // The resumed run's clock was set between the Resume and its lead's first turn, to the
-    // working time the budget had left: never a fresh budget, and the pause did not count.
-    const soft = Date.parse(after.clock.softDeadline);
-    // Flipped: the hours are the working time, a grace after them (time-cap.ts), so no reserve comes off them.
-    const workingLeft = BUDGET_MS - worked;
-    assert.ok(soft >= resumeAsked + workingLeft, `${iso(soft)} is before ${iso(resumeAsked + workingLeft)}`);
-    assert.ok(soft <= resumedTurnAt + workingLeft, `${iso(soft)} is after ${iso(resumedTurnAt + workingLeft)}`);
-    assert.match(stands, new RegExp(`wrap-up at ${utc(soft)}`), "the wrap-up when the working time it had left ends");
-    assert.ok(after.clock.workedMs >= worked, "the time it worked is never given back");
-  });
 
   it("crash mid-build with Resume builds automatically on: the host resumes the paused run once, as soon as its loop is back", async () => {
     const rig = await startRig(
@@ -2953,12 +2786,9 @@ describe("the Loop's time limit", () => {
     const capped = await launch({ hours: 24, frames: [] });
     assert.equal("untilSatisfied" in capped, false, "a picked 24 h is a cap, not ∞");
 
-    assert.deepEqual(intakeBudgets(unbounded), {
-      wallClockMs: 86_400_000,
-      untilSatisfied: true,
-      completionPolicy: "goal",
-    });
-    assert.deepEqual(intakeBudgets({ hours: 0.5 }), { wallClockMs: 1_800_000, completionPolicy: "duration" });
+    // Flipped (phase 5): no completion policy rides the budgets; the lead's finish ends any Loop.
+    assert.deepEqual(intakeBudgets(unbounded), { wallClockMs: 86_400_000, untilSatisfied: true });
+    assert.deepEqual(intakeBudgets({ hours: 0.5 }), { wallClockMs: 1_800_000 });
   });
 });
 
@@ -3695,7 +3525,7 @@ describe("a Loop message after a finished build the run's coordinator answers fo
       ["start_autopilot", "ask_user"],
       "the chat's own session is handed the Loop's launch",
     );
-    assert.match(String(chat.asked.builders[0]?.prompt), /the lead builds the whole project itself in this folder/);
+    assert.match(String(chat.asked.builders[0]?.prompt), /you lead it in this folder, with optional workers/);
     const runs = await chat.registered();
     assert.equal(runs.length, 2, JSON.stringify(chat.log.map((entry) => entry.data.event_type ?? entry.data.type)));
     assert.notEqual(runs[1]?.runId, RUN, "a new run, never the finished one reopened");
@@ -3750,7 +3580,7 @@ describe("a quick fix after a finished Loop build (golden-boot-glory)", () => {
       assert.match(String(words), /contained change/i, `${label}: a contained change is named`);
     }
     assert.match(note, /contained change[^\n]*yourself/i, "the session makes a contained change itself");
-    assert.match(note, /estimate/i, "an unclear size is asked with an estimate");
+    // Flipped (phase 5): the size question with an estimate was an optional asking rule, removed.
     assert.match(
       coordinator,
       /contained change[^\n]*build: false/i,
@@ -4223,45 +4053,6 @@ describe("how a chat message's turn ended", () => {
   });
 });
 
-describe("a lead's plan and worker starts called together", () => {
-  it("are answered one at a time, never interleaved", async () => {
-    const { handler } = await import("../../src/harness-seed/loop/director/tools.ts");
-    let inside = 0;
-    let most = 0;
-    const order: string[] = [];
-    const step = (name: string) => async () => {
-      inside++;
-      most = Math.max(most, inside);
-      order.push(`${name}:start`);
-      await nextTurn();
-      await nextTurn();
-      order.push(`${name}:end`);
-      inside--;
-      return `${name} done`;
-    };
-    const loopRun = {
-      ctx: { cancelled: false },
-      toolCalls: 0,
-      toolsInFlight: 0,
-      run: { runId: "r1" },
-      state: { integrationHead: null, finished: false },
-      journal: null,
-      saveJournal: async () => {},
-      keepMemory: async () => {},
-      syncHead: async () => {},
-      setPlan: step("plan"),
-      startWorker: step("worker_start"),
-    };
-    const answers = await Promise.all([
-      handler(loopRun as never, "plan", {}),
-      handler(loopRun as never, "worker_start", { id: "sky" }),
-      handler(loopRun as never, "worker_start", { id: "water" }),
-    ]);
-    assert.deepEqual(answers, ["plan done", "worker_start done", "worker_start done"]);
-    assert.equal(most, 1, `one change to the run at a time: ${order.join(" ")}`);
-  });
-});
-
 describe("a tool called with arguments its schema refuses", () => {
   it("answers the model what is wrong and runs nothing", async () => {
     const { createToolRegistry } = await import("../../src/harness-seed/tools/index.ts");
@@ -4277,9 +4068,9 @@ describe("a tool called with arguments its schema refuses", () => {
     );
     assert.equal(clicked.ok, false);
     assert.match(clicked.content, /x/);
-    const remembered = await tools.execute({ name: "remember", arguments: { key: "taste" } }, recorder.ctx as never);
-    assert.equal(remembered.ok, false);
-    assert.match(remembered.content, /value/);
+    const read = await tools.execute({ name: "read_file", arguments: { project: "sky" } }, recorder.ctx as never);
+    assert.equal(read.ok, false);
+    assert.match(read.content, /file/);
     assert.deepEqual(
       recorder.sequence((m) => m === "preview.input" || m === "artifact.write"),
       [],
@@ -4414,7 +4205,8 @@ describe("what the lead is told about its workers", () => {
       integrationWorktree: "/runs/ggr/integration",
       baseCommit: "a".repeat(40),
     } as never);
-    assert.match(brief, /up to 6 workers at once/);
+    // Flipped (phase 5): the count is the pool's own cap, which refuses a start past it.
+    assert.match(brief, /up to 8 at once/);
     assert.doesNotMatch(brief, /8 of 8 worker windows free/);
   });
 });
@@ -5371,7 +5163,7 @@ describe("a Loop chat whose turn made the game's project (an Unreal game)", () =
     const unreal = [{ id: "unreal-project", path: "unreal" }];
     const loopOn = factsReadyPrompt(unreal, "mcp__studio__start_autopilot");
     assert.match(loopOn, /mcp__studio__start_autopilot/);
-    assert.match(loopOn, /do not build it yourself/);
+    assert.match(loopOn, /start it now with mcp__studio__start_autopilot/);
     assert.doesNotMatch(loopOn, /Go on with what you said you would build first/);
     assert.match(
       factsReadyPrompt(unreal),
@@ -5468,7 +5260,7 @@ describe("a lead hears what its workers found", () => {
     assert.match(brief, /call its wait again with the same id/);
   });
 
-  it("LH5. save points were kept on wide shots that never showed the change: a save point names the picture that shows it, and that picture leads its round on the graph", async () => {
+  it("LH5. a save point may name the picture that shows its change, and that picture leads its round on the graph", async () => {
     const { gameRepo, loopHost } = await import("../helpers/loop-host.ts");
     const dir = await tmpDir("save-shows-");
     await mkdir(path.join(dir, "shots"), { recursive: true });
@@ -5498,8 +5290,8 @@ describe("a lead hears what its workers found", () => {
     assert.match(String((hero?.shown as { path?: string } | undefined)?.path), /save-1\/shows/);
     assert.equal(dock?.shown, undefined);
     assert.equal(boat?.shown, undefined, "a path outside the folder is never read");
-    assert.doesNotMatch(String(answers[0]), /name the picture/);
-    assert.match(String(answers[1]), /name the picture that shows what changed/);
+    // Flipped (phase 5): a save point without a picture is fine; naming one is optional, never asked for.
+    for (const answer of answers.slice(0, 2)) assert.doesNotMatch(String(answer), /name the picture/);
     assert.match(String(answers[2]), /not a picture in the project's folder/);
   });
 
@@ -5537,7 +5329,7 @@ describe("a lead hears what its workers found", () => {
     assert.ok("image" in ok && ok.image.data === picture.toString("base64"));
   });
 
-  it("LH6. a worker's work was marked used seconds after it ended, before anyone looked: the merge hands back the pictures it made, to look at", async () => {
+  it("LH6. a worker's work merged: the merge hands back the pictures it made", async () => {
     const { chatPool, delegation, finish, gameRepo, poolHost, start } = await import("../helpers/worker-pool-host.ts");
     const { WorkerTool } = await import("../../src/shared/workers.ts");
     const repo = await gameRepo();
@@ -5551,7 +5343,7 @@ describe("a lead hears what its workers found", () => {
     await finish(host, pool, id, { ok: true, sessionId: "s1", summary: "Modelled the annex." });
     const merged = await pool.call(WorkerTool.Mark, { id, verdict: "used" });
     assert.match(merged, /Merged w1/);
-    assert.match(merged, /Look at[^.]*assets\/annex\/render\.png/);
+    assert.match(merged, /Pictures it made: assets\/annex\/render\.png/);
     assert.doesNotMatch(merged, /annex\.glb/, "only its pictures");
   });
 
@@ -5698,7 +5490,8 @@ describe("the user's ask to finish a running build (director/wrap-up.ts)", () =>
       openClosing({ wrapping: true, wrapCause, idleAsk: false, minutesLeft: 20 } as never);
     assert.doesNotMatch(open("finish"), /reviewer needs/, open("finish"));
     assert.match(open("finish"), /no reviewer/);
-    assert.match(open("deadline"), /a reviewer needs that long to check your claim/);
+    // Flipped (phase 5): a review is the lead's to ask for; the clock's wrap-up names none.
+    assert.match(open("deadline"), /Only if the goal is reached, call finish/);
   });
 
   it("FA6. an open Loop starts no worker once anybody asked it to finish — the app's own Finish too, not only the lead's wrap_up", async () => {
@@ -5765,7 +5558,7 @@ describe("a chat in a game linked to an engine other than Unreal", () => {
       "with no Loop named, another engine's is the one Loop",
     );
     // Flipped (Loop phase 4): a reviewer checked its finish; the lead finishes it.
-    assert.match(unnamedLoop, /finishes it when the goal is reached/);
+    assert.match(unnamedLoop, /finish it when the goal is reached/);
     assert.match(launchRules("claude-code", launch, "unreal").join("\n"), /the Unreal Loop/, "Unreal's stays Unreal's");
   });
 });
