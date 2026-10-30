@@ -172,9 +172,10 @@ export function previewGone(reason: string): PreviewGone {
 
 /**
  * Why Live's page did not load, as one typed code beside the words (`PreviewLiveStatus.loadFailure`):
- * Chromium's load error read by kind, or the game's own build, which failed with nothing to serve
- * (`BuildFailed`) or with the last build that worked served instead (`StaleBuild`). A load the
- * renderer asked for that Electron refused also crosses IPC with it (`shared/error-codes.ts`).
+ * Chromium's load error read by kind, a page still loading past the preview's deadline (`Stalled`),
+ * or the game's own build, which failed with nothing to serve (`BuildFailed`) or with the last build
+ * that worked served instead (`StaleBuild`). A load the renderer asked for that Electron refused
+ * also crosses IPC with it (`shared/error-codes.ts`).
  */
 export const LiveLoadFailure = {
   NotFound: "live_not_found",
@@ -182,6 +183,8 @@ export const LiveLoadFailure = {
   ServerDown: "live_server_down",
   /** Another navigation took the load's place (Chromium's `ERR_ABORTED`): that load reports itself. */
   Aborted: "live_load_aborted",
+  /** The page had not finished loading by the preview's deadline: a script that never yields, or a request never answered. */
+  Stalled: "live_load_stalled",
   BuildFailed: "live_build_failed",
   StaleBuild: "live_stale_build",
   Other: "live_load_other",

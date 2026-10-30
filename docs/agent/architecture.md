@@ -735,7 +735,9 @@ their rectangle intersects the Live slot; identical bounds do not repeat IPC. A 
 hidden (the loader, a dialog) stays in the rectangle it was last shown in, sized before it is hidden
 (`placedBounds`, `previewVisibility`): Chromium lays a zero-size view, or one wholly outside its
 window, out at 0x0, and a game that sizes its world from its canvas at start-up can then never
-finish loading.
+finish loading. A load, Play, Reload or Stop waits at most a minute for its page (`waitForLoad`); a
+page still loading then (a script that never yields) is noted as stalled
+(`LiveLoadFailure.Stalled`), and Live's load queue moves on to the next load.
 
 ## Plugins, MCP and Genex
 

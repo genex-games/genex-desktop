@@ -7,7 +7,7 @@ import {
   PreviewConsoleSource,
   previewGone,
 } from "../shared/preview-contract.ts";
-import { failedLoad } from "./preview-load-failure.ts";
+import { failedLoad, PageLoadWait, waitForLoad } from "./preview-load-failure.ts";
 import { PreviewProfiler, type ProfileRequest } from "../substrate/preview-profiler.ts";
 /**
  * Game preview.
@@ -86,7 +86,7 @@ import type {
   PreviewStillRequest,
   ShimOptions,
 } from "../substrate/preview-port.ts";
-import { SECOND_MS } from "../shared/duration.ts";
+import { MINUTE_MS, SECOND_MS } from "../shared/duration.ts";
 import type { PreviewPixelStats } from "./studio-core.ts";
 import { errorMessage } from "../shared/errors.ts";
 import { setTimeout as delay } from "node:timers/promises";
@@ -105,6 +105,8 @@ const MESSAGE = {
   consoleUnavailable: "Console observation unavailable; no console-clean claim is possible",
   closed: "this game window was closed",
   noPage: (why: string | null) => `this game window holds no page: ${why ?? "nothing was loaded into it"}`,
+  loadStalled: (url: string, seconds: number) =>
+    `${url} had not finished loading after ${seconds} s: a script that never ends (a loop at start-up) or a request that never answers holds it`,
 } as const;
 
 export type { PageCaptureInfo };
@@ -166,6 +168,11 @@ export interface GamePreviewOptions {
 const SCHEME = "game";
 /** What a stopped game's view holds: an empty page, allowed by the game partition (`data:`). */
 const STOPPED_PAGE = "data:text/html;charset=utf-8,";
+/**
+ * The longest a load, Play, Reload or Stop waits for its page: past it the page is noted as
+ * stalled (`waitForLoad`). Longer than Live's own loader (45 s), which gives up first.
+ */
+const PAGE_LOAD_MAX_MS = MINUTE_MS;
 /** The pause before the one compositor retry a failed capture gets. */
 const COMPOSITOR_RETRY_MS = 250;
 /** How long a dialog waits for the stage's cover frame before the game view leaves without one. */
@@ -737,11 +744,24 @@ export class GamePreview {
       const url = options.loopback
         ? `http://localhost:${loopbackPortFor(project)}/${entry}`
         : `${SCHEME}://${project}/${entry}`;
-      await view.webContents.loadURL(url);
+      await this.#arrive(view.webContents.loadURL(url), url);
       return url;
     } finally {
       this.#navigating = false;
     }
+  }
+
+  /**
+   * Wait for this page's navigation, at most `PAGE_LOAD_MAX_MS`: a page still loading then (a
+   * script that never yields) is noted as stalled, and its caller (Live's load queue, an agent,
+   * the person's Play or Reload) waits for it no longer.
+   */
+  async #arrive(loading: Promise<unknown>, url: string): Promise<void> {
+    if ((await waitForLoad(loading, PAGE_LOAD_MAX_MS)) === PageLoadWait.Finished) return;
+    this.note("error", MESSAGE.loadStalled(url, PAGE_LOAD_MAX_MS / SECOND_MS), {
+      loadError: true,
+      failure: LiveLoadFailure.Stalled,
+    });
   }
 
   /**
@@ -755,7 +775,7 @@ export class GamePreview {
     await this.#profiler.invalidate("preview stopped");
     this.#navigating = true;
     try {
-      await wc.loadURL(STOPPED_PAGE);
+      await waitForLoad(wc.loadURL(STOPPED_PAGE), PAGE_LOAD_MAX_MS);
     } finally {
       this.#navigating = false;
     }
@@ -776,7 +796,7 @@ export class GamePreview {
     this.#loadFailure = null;
     this.#navigating = true;
     try {
-      await wc.loadURL(url);
+      await this.#arrive(wc.loadURL(url), url);
     } finally {
       this.#navigating = false;
     }
@@ -797,17 +817,20 @@ export class GamePreview {
     // The user pressing Reload means "show me what is on disk NOW" — never a cached copy.
     this.#navigating = true;
     const wc = this.#view.webContents;
-    wc.reloadIgnoringCache();
-    await new Promise<void>((resolve) => {
-      const done = () => {
-        wc.off("did-finish-load", done);
-        wc.off("did-fail-load", done);
-        this.#navigating = false;
-        resolve();
-      };
+    let done = (): void => {};
+    const finished = new Promise<void>((resolve) => {
+      done = () => resolve();
       wc.once("did-finish-load", done);
       wc.once("did-fail-load", done);
     });
+    wc.reloadIgnoringCache();
+    try {
+      await this.#arrive(finished, wc.getURL());
+    } finally {
+      wc.off("did-finish-load", done);
+      wc.off("did-fail-load", done);
+      this.#navigating = false;
+    }
   }
 
   /**
