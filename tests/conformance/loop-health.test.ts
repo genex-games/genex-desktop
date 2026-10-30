@@ -1,36 +1,26 @@
 /**
- * The Loop's one health check (loop/health-check.ts): the page loads, it logs no uncaught error and
- * its screenshot is not blank. Genex looks from outside — its own window, the window's console, a
- * screenshot of the page — before a worker's work is merged in and before the build lands.
+ * The Loop's one health check (loop/health-check.ts): the page loads, it throws no uncaught error and
+ * its frame is not blank. Genex serves the build in a window of its own and asks the host's own check
+ * (`preview.observe`) — before a worker's work is merged in and before the build lands.
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import {
-  blankPicture,
-  checkHealth,
-  HEALTH_WORDS,
-  healthLine,
-  pageErrors,
-} from "../../src/harness-seed/loop/health-check.ts";
+import { checkHealth, HEALTH_WORDS, healthLine } from "../../src/harness-seed/loop/health-check.ts";
 import { HostMethod } from "../../src/harness-seed/loop/host-methods.ts";
-import { PreviewConsoleSource } from "../../src/harness-seed/loop/preview-gone.ts";
 import { RunEvent } from "../../src/harness-seed/loop/run-events.ts";
 import { appended, fakeHost, fakeLoopRun } from "../helpers/director-run.ts";
 
 /** The integration head the rows' git answers. */
 const HEAD = "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a";
-/** A screenshot with something on it. */
-const LIT = { stats: { contrast: 42, litFraction: 0.6 }, path: "/runs/run_j/health.png" };
-/** One flat colour. */
-const FLAT = { stats: { contrast: 0, litFraction: 1 }, path: "/runs/run_j/flat.png" };
-/** The page's own uncaught error, as the window's console keeps it. */
-const UNCAUGHT = { level: "error", message: "TypeError: player is undefined" };
+/** The screenshot the check keeps. */
+const SHOT = { stats: { contrast: 42 }, path: "/runs/run_j/health.png" };
+/** The host's reasons, in its own words: a page that threw, and one whose frame is blank. */
+const UNCAUGHT = "1 uncaught error: TypeError: player is undefined";
+const BLANK = "the page's frame is blank: one flat colour, nothing drawn";
 
-/** What one page answers: its console, its picture, its window's status, and whether a window comes. */
+/** What one page answers: the host's check, and whether a window comes or the load fails. */
 interface Page {
-  console?: unknown[];
-  shot?: unknown;
-  status?: Record<string, unknown>;
+  observed?: unknown;
   window?: boolean;
   loadFails?: boolean;
 }
@@ -44,9 +34,8 @@ function previewAnswers(page: Page = {}): Record<string, unknown> {
       return { ok: true };
     },
     [HostMethod.PreviewReady]: { ready: true },
-    [HostMethod.PreviewStatus]: page.status ?? { loadError: null, crashed: false },
-    [HostMethod.PreviewConsole]: page.console ?? [],
-    [HostMethod.PreviewScreenshot]: page.shot === undefined ? LIT : page.shot,
+    [HostMethod.PreviewObserve]: page.observed === undefined ? { ok: true, reasons: [] } : page.observed,
+    [HostMethod.PreviewScreenshot]: SHOT,
   };
 }
 
@@ -84,98 +73,43 @@ function gitAnswers(params: Record<string, any>) {
 }
 
 describe("the Loop's health check", () => {
-  it("a page that loads, logs no error and shows a picture is healthy, and its window is given back", async () => {
+  it("serves the build in a window of its own, asks the host's check, keeps a picture and gives the window back", async () => {
     const { ctx, calls, methods } = pageCtx(previewAnswers());
     const check = await checkHealth(ctx, { project: "plaza", root: "/runs/w", label: "merge" }, heldClock());
-    assert.equal(check.ok, true);
-    assert.deepEqual(check.problems, []);
-    assert.equal(check.picture, LIT.path);
-    assert.equal(healthLine(check), "Health check: the page loads, logs no errors and shows a picture.");
+    assert.deepEqual(check, { ok: true, problems: [], picture: SHOT.path, unchecked: null });
+    assert.equal(
+      healthLine(check),
+      "Health check: the page loads, throws no uncaught error and its frame is not blank.",
+    );
     const load = calls.find((call) => call.method === HostMethod.PreviewLoad);
     assert.equal(load?.params.root, "/runs/w", "the worktree's build is the one served");
+    const observe = calls.find((call) => call.method === HostMethod.PreviewObserve);
+    assert.equal(observe?.params.handle, "pool:1", "in the window it leased, never the person's Live");
     const shot = calls.find((call) => call.method === HostMethod.PreviewScreenshot);
     assert.equal(shot?.params.surface, "page", "the whole page, its HTML included");
     assert.equal(methods().at(-1), HostMethod.PreviewRelease);
     for (const asked of methods()) assert.ok(asked.startsWith("preview."), `${asked}: it looks from outside only`);
   });
 
-  it("an uncaught error, a load error, a crashed window or a blank picture each fail it, in words", async () => {
-    const cases: Array<[string, Page, (check: Awaited<ReturnType<typeof checkHealth>>) => void]> = [
-      [
-        "uncaught error",
-        { console: [UNCAUGHT, { level: "warning", message: "slow frame" }] },
-        (check) => {
-          assert.deepEqual(check.errors, [UNCAUGHT.message]);
-          assert.deepEqual(check.problems, [HEALTH_WORDS.errors([UNCAUGHT.message])]);
-        },
-      ],
-      [
-        "load error",
-        { status: { loadError: "net::ERR_FILE_NOT_FOUND" } },
-        (check) => {
-          assert.equal(check.loaded, false);
-          assert.deepEqual(check.problems, [HEALTH_WORDS.loadFailed("net::ERR_FILE_NOT_FOUND")]);
-        },
-      ],
-      [
-        "crashed window",
-        { status: { crashed: true } },
-        (check) => {
-          assert.equal(check.loaded, false);
-          assert.deepEqual(check.problems, [HEALTH_WORDS.crashed]);
-        },
-      ],
-      [
-        "blank picture",
-        { shot: FLAT },
-        (check) => {
-          assert.equal(check.blank, true);
-          assert.deepEqual(check.problems, [HEALTH_WORDS.blank]);
-        },
-      ],
-      [
-        "no picture",
-        { shot: null },
-        (check) => {
-          assert.equal(check.blank, true);
-          assert.deepEqual(check.problems, [HEALTH_WORDS.noPicture]);
-        },
-      ],
-    ];
-    for (const [name, page, expect] of cases) {
-      const { ctx, methods } = pageCtx(previewAnswers(page));
-      const check = await checkHealth(ctx, { project: "plaza", label: name }, heldClock());
-      assert.equal(check.ok, false, name);
-      assert.equal(check.unchecked, null, `${name}: the check was made`);
-      expect(check);
-      assert.equal(methods().at(-1), HostMethod.PreviewRelease, `${name}: the window is given back`);
+  it("fails on each reason the host gives, in the host's own words", async () => {
+    for (const reasons of [[UNCAUGHT], [BLANK], [UNCAUGHT, BLANK]]) {
+      const { ctx, methods } = pageCtx(previewAnswers({ observed: { ok: false, reasons } }));
+      const check = await checkHealth(ctx, { project: "plaza", label: "merge" }, heldClock());
+      assert.equal(check.ok, false);
+      assert.deepEqual(check.problems, reasons);
+      assert.equal(check.unchecked, null, "the check was made");
+      assert.equal(healthLine(check), `Health check failed: ${reasons.join("; ")}.`);
+      assert.equal(methods().at(-1), HostMethod.PreviewRelease);
     }
   });
 
-  it("reads the page's own errors, never the studio's notes about its window", () => {
-    const entries = [
-      UNCAUGHT,
-      { level: "error", message: "the window went away", source: PreviewConsoleSource.WindowGone },
-      { level: "error", message: "observation note", source: PreviewConsoleSource.Observation },
-      { level: "log", message: "ready" },
-      "not an entry",
-    ];
-    assert.deepEqual(pageErrors(entries), [UNCAUGHT.message]);
-    assert.deepEqual(pageErrors(null), []);
-  });
-
-  it("calls a picture blank by its spread of brightness, else by how little of it is lit", () => {
-    const rows: Array<[unknown, boolean]> = [
-      [{ contrast: 0 }, true],
-      [{ contrast: 0.5, litFraction: 1 }, true],
-      [{ contrast: 1 }, false],
-      [{ contrast: 30, litFraction: 0 }, false],
-      [{ litFraction: 0.001 }, true],
-      [{ litFraction: 0.2 }, false],
-      [{}, true],
-      [null, true],
-    ];
-    for (const [stats, blank] of rows) assert.equal(blankPicture(stats), blank, JSON.stringify(stats));
+  it("is no pass when the host's check answers nothing it can read", async () => {
+    for (const observed of [null, {}, { ok: "yes" }]) {
+      const { ctx } = pageCtx(previewAnswers({ observed }));
+      const check = await checkHealth(ctx, { project: "plaza", label: "merge" }, heldClock());
+      assert.equal(check.ok, false, JSON.stringify(observed));
+      assert.equal(check.unchecked, HEALTH_WORDS.noAnswer);
+    }
   });
 
   it("with no window free it says the check could not be made, after its retries on the run's clock", async () => {
@@ -199,13 +133,10 @@ describe("the Loop's health check", () => {
 describe("the health check in a web game's Loop", () => {
   it("a worker's merge is answered with the merged build's health check, on the run's record", async () => {
     const host = fakeHost();
-    const loopRun = fakeLoopRun(
-      host,
-      {},
-      { ...previewAnswers({ console: [UNCAUGHT] }), [HostMethod.RunExec]: gitAnswers },
-    );
+    const observed = { ok: false, reasons: [UNCAUGHT] };
+    const loopRun = fakeLoopRun(host, {}, { ...previewAnswers({ observed }), [HostMethod.RunExec]: gitAnswers });
     const line = await loopRun.afterMerge({ id: "w1" });
-    assert.equal(line, `Health check failed: ${HEALTH_WORDS.errors([UNCAUGHT.message])}.`);
+    assert.equal(line, `Health check failed: ${UNCAUGHT}.`);
     assert.equal(loopRun.state.integrationHealthy, false);
     assert.equal(loopRun.state.healthByHead.get(HEAD)?.ok, false);
     const [health] = appended(host).filter((event) => event.type === RunEvent.IntegrationHealth);
@@ -217,10 +148,11 @@ describe("the health check in a web game's Loop", () => {
 
   it("finish does not make live a build that fails its health check, and tells the lead why", async () => {
     const host = fakeHost();
-    const loopRun = fakeLoopRun(host, {}, { ...previewAnswers({ shot: FLAT }), [HostMethod.RunExec]: gitAnswers });
+    const observed = { ok: false, reasons: [BLANK] };
+    const loopRun = fakeLoopRun(host, {}, { ...previewAnswers({ observed }), [HostMethod.RunExec]: gitAnswers });
     const answer = await loopRun.finish({ summary: "The plaza is built." });
     assert.match(String(answer), /^Not finished: the build fails its health check/);
-    assert.ok(String(answer).includes(HEALTH_WORDS.blank));
+    assert.ok(String(answer).includes(BLANK));
     assert.equal(loopRun.state.finish, null, "the run is not closed");
     assert.ok(!appended(host).some((event) => event.type === RunEvent.RunFinished), "nothing landed");
   });

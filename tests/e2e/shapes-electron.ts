@@ -333,9 +333,8 @@ async function main(): Promise<void> {
         runId,
         label: `${id}/health`,
       });
-      sheet.ok("loaded", health.loaded, `problems: ${health.problems.join("; ") || "none"}`);
-      sheet.ok("not-blank", !health.blank, `problems: ${health.problems.join("; ") || "none"}`);
-      sheet.ok("no-console-errors", health.errors.length === 0, `console: ${health.errors.join(" | ")}`);
+      sheet.ok("health-checked", health.unchecked === null, `unchecked: ${health.unchecked ?? "no"}`);
+      sheet.ok("health-picture", typeof health.picture === "string", `picture: ${health.picture}`);
       sheet.ok("health-ok", health.ok, `problems: ${health.problems.join("; ") || "none"}`);
 
       const { handle } = (await api["preview.acquire"]!({ label: `shapes:${id}` } as never)) as { handle: string };

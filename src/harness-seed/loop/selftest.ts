@@ -5,7 +5,7 @@
  */
 import { afterTurn, nextWake, TurnEnd, WakeCause, WrapCause } from "./director/wake-schedule.ts";
 import { plainly } from "./director/rules.ts";
-import { blankPicture, pageErrors } from "./health-check.ts";
+import { healthLine } from "./health-check.ts";
 import { chooseRunner } from "./run-dispatch.ts";
 import { RunnerKind } from "./studio-state.ts";
 import { LoopProfile } from "./folder-facts.ts";
@@ -69,16 +69,14 @@ const SELFTEST_STEPS: readonly SelftestStep[] = [
     },
   ],
   [
-    "health: a flat picture is blank, the page's own errors count",
+    "health: a check's line says it passed, or what is wrong",
     () => {
-      check("flat is blank", blankPicture({ contrast: 0, litFraction: 1 }));
-      check("varied is not blank", !blankPicture({ contrast: 30, litFraction: 0.4 }));
-      const errors = pageErrors([
-        { at: 1, level: "error", message: "Uncaught TypeError: x is undefined" },
-        { at: 2, level: "error", message: "window gone", source: "studio:window-gone" },
-        { at: 3, level: "log", message: "hello" },
-      ]);
-      check("one page error", errors.length === 1 && errors[0].includes("TypeError"));
+      check(
+        "healthy",
+        healthLine({ ok: true, problems: [], picture: null, unchecked: null }).startsWith("Health check:"),
+      );
+      const failed = healthLine({ ok: false, problems: ["1 uncaught error: x"], picture: null, unchecked: null });
+      check("failed names it", failed.includes("1 uncaught error: x"));
     },
   ],
   [

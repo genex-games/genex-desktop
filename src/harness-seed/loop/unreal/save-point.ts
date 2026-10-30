@@ -16,7 +16,7 @@ import { isPlainRecord } from "../json.ts";
 import { minutes, SECOND_MS } from "../time.ts";
 import { MAX_HERO_SHOTS, type SavePoint, type SavePointShot, type ShotTone, WHOLE_FRAME } from "./lead-contract.ts";
 import { savePointRound } from "./lead-graph.ts";
-import { type Lead, milestoneNow, oneGitWrite, requiredNow, saveLead } from "./lead-journal.ts";
+import { type Lead, milestoneNow, oneGitWrite, saveLead } from "./lead-journal.ts";
 import { SAVE_POINT_WORDS } from "./lead-prompts.ts";
 
 /** How long a save point once took at most. Kept for an older copy of a module that imports it. */
@@ -162,7 +162,7 @@ export async function savePoint(lead: Lead, ask: SavePointAsk): Promise<string> 
   if ("refused" in made) return SAVE_POINT_WORDS.Refused(made.refused);
   if (!("point" in made)) return SAVE_POINT_WORDS.Refused(made.reason);
   const left = minutes(Math.max(0, lead.softDeadline - lead.clock.now()));
-  return SAVE_POINT_WORDS.Answer(made.point, left, requiredNow(lead.journal));
+  return SAVE_POINT_WORDS.Answer(made.point, left);
 }
 
 /**

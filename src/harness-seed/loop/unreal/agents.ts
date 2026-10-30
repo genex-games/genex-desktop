@@ -790,7 +790,6 @@ function newsOf(lead: Lead, agent: AgentRecord): string {
     landed: agent.landed,
     pending: agent.pending ?? [],
     refused: refusedOf(agent),
-    ...(agent.look ? { look: agent.look } : {}),
     engine: leadEngineId(lead),
   });
 }

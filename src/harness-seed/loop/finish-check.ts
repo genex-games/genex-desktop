@@ -94,7 +94,6 @@ const MESSAGE = {
   turnEnded: "the lead's turn ended before the reviewer answered",
   noTimeLeft: "the lead's call had no time left for the reviewer",
   stopped: "the Loop was stopped",
-  staleProof: "no new work since the reviewer's last no",
   refused: (why: string) => `Genex did not start the reviewer: ${why}`,
   unread: (why: string) => `whether the reviewer's answer still stands could not be read: ${why}`,
   noTime:
@@ -267,30 +266,24 @@ export interface FinishClaim {
 
 /** A reviewer's yes. */
 type Accepted = { step: typeof FinishCheckStep.Accepted; reasons: string[] };
-/**
- * A reviewer's no: its reasons, what isn't done, the no's in a row now, whether this one stops the
- * Loop, and whether the Loop had time left (then no row of no's stops it).
- */
+/** A reviewer's no: its reasons, what isn't done, the no's in a row now, and whether the Loop had time left. */
 type Rejected = {
   step: typeof FinishCheckStep.Rejected;
   reasons: string[];
   notDone: string[];
   done: string[];
   rejections: number;
-  stop: boolean;
   timeLeft: boolean;
 };
 /**
  * A check that got no answer, and why; `seatless` when no engine here can hold a reviewer at all,
- * `lapsed` for a yes that no longer speaks for the claim, `staleProof` for a claim turned back before
- * any check: after the row of no's a timed Loop went on past, it named no proof made since the last no.
+ * `lapsed` for a yes that no longer speaks for the claim.
  */
 type Unanswered = {
   step: typeof FinishCheckStep.Unanswered;
   why: string;
   seatless?: true;
   lapsed?: true;
-  staleProof?: true;
 };
 /** No time for a check (nothing recorded); `turnEnds` when the lead's turn, not its call, left none. */
 export type NoTime = { noTime: true; turnEnds?: true };
@@ -653,9 +646,8 @@ function outcomeOf(
     else delete tally.done;
     if (no.mark === null) delete tally.noMark;
     else tally.noMark = no.mark;
-    const { rejections, stopped: stop } = settled;
     const timeLeft = settled.timeLeft === true;
-    return { step: FinishCheckStep.Rejected, reasons, notDone, done, rejections, stop, timeLeft };
+    return { step: FinishCheckStep.Rejected, reasons, notDone, done, rejections: settled.rejections, timeLeft };
   }
   const answer = unanswered(settled.why ?? MESSAGE.ended);
   return lapsed ? { ...answer, lapsed: true } : answer;

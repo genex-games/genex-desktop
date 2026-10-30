@@ -57,29 +57,6 @@ export function criticAsk(options: CriticAskOptions): string {
     .join("\n\n");
 }
 
-/** The critic's rubric for a delivered model: its renders against the brief it was made from, before the lead imports it. */
-export const ASSET_CRITIC_SYSTEM = [
-  "You check a model a helper made for a game being built in Unreal Engine, from its renders, before it goes into the game.",
-  "Check it against its brief: everything the brief asks for is there. It is ready when it matches its brief; otherwise say what does not.",
-  `Answer with JSON only: {"ready": true|false, "defects": [{"defect": "what does not match and where", "fix": "the concrete change"}]}. At most ${MAX_CRITIC_DEFECTS} defects, the biggest first.`,
-].join("\n");
-
-/** What the critic is asked about a delivered model: its brief, the game's goal for its style, and the renders attached. */
-export function assetAsk(options: { title: string; brief: string; goal: string; renders: readonly string[] }): string {
-  const pictures = options.renders.map((render, i) => `IMAGE ${i + 1}: render ${render}`);
-  return [
-    `THE MODEL: ${options.title}\nITS BRIEF:\n${options.brief}`,
-    `IMAGES ATTACHED:\n${pictures.join("\n")}\nLook at every one before you answer.`,
-  ].join("\n\n");
-}
-
-/** Why the critic couldn't look at a delivered model's renders, as the lead's news says it. */
-export const ASSET_LOOK_WORDS = {
-  NoRenders: "none of its renders could be read",
-  NoAnswer: (why: string) => `the critic could not answer: ${why}`,
-  NoVerdict: "its answer said neither ready nor not ready",
-} as const;
-
 /** What `critic` answers the lead. */
 export const CRITIC_WORDS = {
   NoShots: "The critic needs the capture file names to look at (shots, comma-separated).",
@@ -95,7 +72,7 @@ export const CRITIC_WORDS = {
   TooMany: (max: number) => `only the first ${max} shots were shown`,
 } as const;
 
-/** The critic's advice as the lead reads it: what it looked at, its defects with fixes, its bold move and its art checks. */
+/** The critic's advice as the lead reads it: what it looked at, its defects with fixes, what it still sees from its last look, and the change it would make first. */
 export function adviceWords(advice: CriticAdvice, seen: { references: number; art: boolean; left: string[] }): string {
   const looked = [
     advice.shots.join(", "),
@@ -111,6 +88,8 @@ export function adviceWords(advice: CriticAdvice, seen: { references: number; ar
       lines.push(`${i + 1}. ${defectLine(item)}`);
     });
   }
+  if (advice.required?.length)
+    lines.push("Still there since its last look:", ...advice.required.map((item) => `- ${defectLine(item)}`));
   if (advice.boldMove) lines.push(`First change it would make: ${advice.boldMove}`);
   if (seen.left.length) lines.push(`Left out: ${seen.left.join("; ")}.`);
   return lines.join("\n");

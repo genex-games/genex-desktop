@@ -247,8 +247,6 @@ export type AgentRecord = AgentRequest & {
   mark: AgentMark | null;
   mergedInto: string | null;
   credits: number;
-  /** The critic's look at a delivered model's renders against its brief; absent when it had none to look at. */
-  look?: AssetLook;
 };
 
 // ── save points, captures and the critic ───────────────────────────────────────────────────
@@ -306,13 +304,6 @@ export const WHOLE_FRAME: [number, number, number, number] = [0, 0, 1, 1];
 
 /** One defect the critic saw, with its fix. */
 export type CriticDefect = { defect: string; fix: string };
-
-/** The critic's yes or no on a delivered model: ready to go into the game as it is, or not. Never rename a value. */
-export const AssetVerdict = { Ready: "ready", NotReady: "not-ready" } as const;
-export type AssetVerdict = (typeof AssetVerdict)[keyof typeof AssetVerdict];
-
-/** The critic's look at a delivered model's renders against the brief it was made from, or why it couldn't look. */
-export type AssetLook = { verdict: AssetVerdict; defects: CriticDefect[] } | { error: string };
 
 /**
  * The critic's advice: what it looked at, the round it reviewed (null before the first save

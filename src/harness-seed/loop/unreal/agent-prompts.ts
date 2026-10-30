@@ -16,8 +16,6 @@ import {
   type AgentManifestFile,
   AgentPluginTool,
   AgentVerdict,
-  type AssetLook,
-  AssetVerdict,
   LeadTool,
 } from "./lead-contract.ts";
 
@@ -246,20 +244,9 @@ export type DeliveryNews = {
   /** Files git couldn't check out into the game folder yet. */
   pending: string[];
   refused: string[];
-  /** The critic's look at its renders, when it had renders to look at. */
-  look?: AssetLook;
   /** The lead's engine, which spells `worker_mark`. */
   engine: string;
 };
-
-/** The critic's look at a delivery's renders, as the news says it ("" when it had none to look at). */
-function lookText(look: AssetLook | undefined): string {
-  if (!look) return "";
-  if ("error" in look) return DELIVERY_WORDS.LookFailed(look.error);
-  if (look.verdict === AssetVerdict.Ready) return DELIVERY_WORDS.LooksReady;
-  const defects = look.defects.map((item) => `- ${item.defect}${item.fix ? ` — fix: ${item.fix}` : ""}`);
-  return [DELIVERY_WORDS.NotReady, ...defects, DELIVERY_WORDS.DontImport].join("\n");
-}
 
 /** A delivered worker's news, repeated until the lead marks it: its files, hero render, import calls and notes. */
 export function deliveredNews(news: DeliveryNews): string {
@@ -276,8 +263,6 @@ export function deliveredNews(news: DeliveryNews): string {
   if (manifest?.importCalls.length) lines.push(`Import: ${manifest.importCalls.join("\n  ")}`);
   if (manifest?.notes) lines.push(`Notes: ${manifest.notes}`);
   if (news.refused.length) lines.push(`Left out: ${news.refused.join("; ")}.`);
-  const look = lookText(news.look);
-  if (look) lines.push(look);
   const mark = toolCall(news.engine, LeadTool.WorkerMark);
   lines.push(`When you have imported it or decided against it, call ${mark} with id=${news.id}.`);
   return lines.join("\n");
@@ -338,12 +323,6 @@ export const AGENT_WORDS = {
 
 /** Why a delivered file stayed out, or what the lead should know about it. */
 export const DELIVERY_WORDS = {
-  LooksReady: "The critic looked at its renders: ready, it matches its brief.",
-  NotReady: "The critic looked at its renders: not ready.",
-  DontImport:
-    "Don't put it in the game as it is: start a worker again with these fixes in its brief, or mark it rejected.",
-  LookFailed: (why: string) =>
-    `The critic couldn't look at its renders (${why}): look at them yourself before you import it.`,
   NotRegular: (path: string) => `${path} is not a regular file`,
   Outside: (path: string) => `${path} is outside the worker's folder`,
   TooLarge: (path: string) => `${path} is too large`,

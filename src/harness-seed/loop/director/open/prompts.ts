@@ -359,12 +359,15 @@ const WRAP_OPENING = {
 } as const satisfies Record<WrapCause, string>;
 
 /**
- * How the wrap-up's finish goes, and — once the person asked to finish — that it closes with no check.
+ * How the wrap-up's finish goes: `finish` says the goal is reached, so it is called only then (the
+ * Loop otherwise closes on its time, with the lead's last words) — and once the person asked to
+ * finish, it closes as it stands, with no check.
  */
 const WRAP_FINISH = {
-  claim: "Then call finish with your summary.",
+  claim:
+    "Only if the goal is reached, call finish with your summary; otherwise end this turn saying what you built and what remains, and the Loop closes on its time.",
   asked:
-    "Then call finish with your summary: the person asked to finish, so the Loop closes as it stands, with no reviewer's check.",
+    "Call finish with your summary: the person asked to finish, so the Loop closes as it stands, with no reviewer's check.",
 } as const;
 
 /** How an open wake message ends: the wrap-up (saying why), the question of what next, or carry on. */

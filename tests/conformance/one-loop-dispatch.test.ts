@@ -56,10 +56,9 @@ const DIRECT_WITH_SESSIONS = { id: "bonsai", label: "Bonsai", kind: "direct", su
 
 /** What Genex finds in a Godot project's folder that makes its Loop work in place, as the refusals name it. */
 const GODOT_FOUND = "godot-project at the folder's root";
-/** The words a refused Loop on a direct engine closes with (flipped: they name what Genex found). */
+/** The words a refused Loop on a direct engine closes with (flipped in phase 5: any Loop needs a session, and the chat goes on). */
 const NEEDS_SESSION =
-  "A Loop on this project (Genex finds godot-project at the folder's root) needs an engine that works as an agent in the project's folder (Claude Code, Codex, OpenCode or Grok Build); Ollama doesn't, so nothing was built.";
-const WEB_ONLY = "This kind of run works on web games only; a Loop on this project is led by the chat's own session.";
+  "A Loop on this project (Genex finds godot-project at the folder's root) needs an engine that keeps a session of its own (Claude Code, Codex, OpenCode, Grok Build or a local model's session); Ollama doesn't, so nothing was built. The chat still answers here.";
 const CANNOT_RESUME =
   "This Loop was paused by an earlier version and can't be picked up. Start a new Loop: it goes on from the project as it is now, with every save point kept.";
 const OTHER_LOOP =
@@ -187,15 +186,6 @@ describe("which Loop a run gets", () => {
       assert.notEqual(host.appended("run_finished")[0]?.stoppedBecause, words, "never refused for its engine");
     },
   );
-
-  it("the gauntlet works on web games only, and says so on any other project", TEST_TIMEOUT, async () => {
-    const host = await hostOn(Project.GodotGame, { facts: GODOT, run: { mode: undefined } });
-    await host.dispatch();
-    const [closed] = host.appended("run_finished");
-    assert.equal(closed?.stoppedBecause, WEB_ONLY);
-    assert.equal(host.rec.paramsOf("engine.delegate").length, 0);
-    assert.ok(!host.trail().includes("preview.load"), "nothing was looked at");
-  });
 
   it(
     "the Unreal runner runs only when the switch names it, and a run of the one Loop never goes to it",
@@ -357,7 +347,7 @@ describe("kept older parts, finished Loops and the chat's words", () => {
     assert.doesNotMatch(open, /Unreal/);
     // Flipped (Loop phase 4): it ran until a reviewer accepted the finish.
     assert.match(open, /until the lead finishes it, 24 h at most/);
-    assert.match(open, /the lead builds the whole project itself in this folder/);
+    assert.match(open, /you lead it in this folder, with optional workers in copies of it/);
     const timed = launchRules(
       "claude-code",
       { toolName: "start_autopilot", hours: 3 },
@@ -372,9 +362,9 @@ describe("kept older parts, finished Loops and the chat's words", () => {
       "web words unchanged",
     );
     const unreal = launchRules("claude-code", unlimited, GameEngine.Unreal, LoopProfile.Open).join("\n");
-    assert.match(unreal, /Write an Unreal build's goal with the look first/);
+    // Flipped (phase 5): no launch words tell the agent how to write a goal (the look first).
+    assert.doesNotMatch(unreal, /look first/);
     assert.doesNotMatch(unreal, /builder|judge/i);
-    assert.equal(web.join("\n").includes("Write an Unreal build's goal"), false);
   });
 });
 
@@ -403,7 +393,7 @@ describe("the chat's launch tool", () => {
     assert.doesNotMatch(String(launch.description), /critic|facet/i);
     const rows: Array<[string, Array<{ id: string; path: string }>, string]> = [
       ["a Godot project", GODOT, OPEN_LAUNCH_WORDS.building],
-      ["a web game", [{ id: "web-game", path: "." }], "Building until what was asked is verified"],
+      ["a web game", [{ id: "web-game", path: "." }], "Building until its lead calls finish"],
     ];
     const outcomes: Array<[string, boolean]> = [];
     for (const [label, facts, says] of rows) {

@@ -15,7 +15,6 @@ import {
   AgentKind,
   type AgentOffers,
   type CriticAdvice,
-  type CriticDefect,
   kindOffered,
   type LeadCredits,
   LeadTool,
@@ -324,7 +323,7 @@ export const SAVE_POINT_WORDS = {
   /** How long the run has left after a save. */
   GoOn: (minutesLeft: number) => `About ${minutesLeft} minutes are left.`,
   /** A save point's whole answer: what was saved, and the minutes left. */
-  Answer: (point: SavePoint, minutesLeft: number, _required: readonly CriticDefect[] = []): string =>
+  Answer: (point: SavePoint, minutesLeft: number): string =>
     [SAVE_POINT_WORDS.Saved(point), SAVE_POINT_WORDS.GoOn(minutesLeft)].join("\n"),
   Saved: (point: SavePoint) =>
     [
