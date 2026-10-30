@@ -49,7 +49,7 @@ const shortRun = (minutes: number) => ({ ...RUN, budgets: { ...RUN.budgets, wall
 /**
  * The run's engine as `engine.describe` lists it: a delegated engine that says it keeps sessions,
  * says it doesn't, or doesn't say (its kind decides), a direct engine that doesn't say, and a direct
- * engine that keeps sessions (Bonsai, OpenRouter): the host seats it nowhere in place.
+ * engine that keeps sessions (Bonsai, OpenRouter): Genex runs its session, and seats it in place.
  */
 const SESSIONS = {
   yes: { id: "claude-code", kind: "delegated", supportsSessions: true },
@@ -82,9 +82,10 @@ const RUNNER_MATRIX: Array<[RunMode, keyof typeof SESSIONS, boolean, LoopProfile
   ["autopilot", "unsaidDirect", true, "web", "autopilot"],
   ["autopilot", "unsaidDirect", true, "open", "needs_session"],
   ["autopilot", "directSessions", false, "web", "director"],
-  ["autopilot", "directSessions", false, "open", "needs_session"],
+  // Flipped (Loop phase 3): a direct engine that keeps sessions (Bonsai, OpenRouter) leads in place too.
+  ["autopilot", "directSessions", false, "open", "director"],
   ["autopilot", "directSessions", true, "web", "autopilot"],
-  ["autopilot", "directSessions", true, "open", "needs_session"],
+  ["autopilot", "directSessions", true, "open", "director"],
   ["director", "yes", false, "web", "gauntlet"],
   ["director", "yes", false, "open", "web_only"],
   ["director", "yes", true, "web", "gauntlet"],

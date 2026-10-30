@@ -2158,12 +2158,17 @@ export class DelegationService {
   }
 
   /**
-   * Whether an engine carries a worker's seat: a delegated engine (Claude Code, Codex) runs it in
-   * the seat's mode, box and never-touch list. A local session's tool loop ignores a seat, so its
-   * work stays unattended, with the sibling deny list.
+   * Whether an engine carries a worker's seat — and so its workers, jobs and looks: every engine that
+   * runs an agent session in a folder, a delegated CLI (Claude Code, Codex, …) or a local model's
+   * session Genex runs itself (Bonsai, OpenRouter, a local server: local-session.ts), each in the
+   * seat's mode, write roots and never-touch list. Any model orchestrates alike. Only an engine with
+   * no session of its own (Ollama's harness tool loop) runs its work unattended, with the sibling
+   * deny list.
    */
   #seatsWorkers(engineId: string): boolean {
-    return this.#core.engines.get(engineId).kind === EngineKind.Delegated;
+    const engine = this.#core.engines.get(engineId);
+    if (engine.kind === EngineKind.Delegated) return true;
+    return engine.supportsSessions === true && typeof engine.delegate === "function";
   }
 
   /** The chat a run worker answers to: its run's one chat, running, and its folder that run's. */

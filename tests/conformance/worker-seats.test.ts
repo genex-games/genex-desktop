@@ -243,6 +243,22 @@ describe("the host's worker seat", () => {
     assert.equal(JSON.stringify(heard).includes("delivered"), true, `the worker's call went on: ${JSON.stringify(heard)}`);
   });
 
+  it("a worker on a local model's session engine is seated as on any engine that keeps sessions, with the same tools", {
+    timeout: CASE_TIMEOUT_MS,
+  }, async () => {
+    const { seen, delegate, runWorker } = await workerChat();
+    await delegate(runWorker());
+    const delegated = seen.at(-1)!;
+    // Flipped (Loop phase 3): a local model's session carried no seat, and its work ran unattended.
+    await delegate(runWorker(), LOCAL);
+    const local = seen.at(-1)!;
+    assert.ok(local.worker, "seated");
+    assert.equal(local.worker?.mode, delegated.worker?.mode, "in the chat's mode");
+    assert.deepEqual(local.worker?.writeRoots, delegated.worker?.writeRoots, "writing what any worker writes");
+    const names = (request: DelegateRequest) => (request.liveTools ?? []).map((tool) => tool.name).sort();
+    assert.deepEqual(names(local), names(delegated), "offered the same tools");
+  });
+
   it("a building worker is offered every tool the lead is, whatever its type names: a type is the kind of work, never a fence", {
     timeout: CASE_TIMEOUT_MS,
   }, async () => {
@@ -285,8 +301,6 @@ describe("the host's worker seat", () => {
       { label: "a turn the chat is not answering", extra: turnGrant },
       { label: "a Studio thread", extra: turnGrant, thread: studioThread },
       { label: "a cwd outside the run's worktrees", extra: runWorker("w1", elsewhere) },
-      // A local model's session never carries a seat: its work stays fenced as unattended work.
-      { label: "a local model's engine", extra: runWorker(), engine: LOCAL },
     ];
     for (const { label, extra, thread, engine } of rows) {
       await delegate({ ...extra, ...(thread ? { threadId: thread } : {}) }, engine);

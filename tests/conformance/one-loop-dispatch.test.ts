@@ -155,24 +155,17 @@ describe("which Loop a run gets", () => {
   });
 
   it(
-    "on an engine Genex drives itself that keeps sessions it is refused too, at launch and at dispatch",
+    // Flipped (Loop phase 3): it was refused at launch and at dispatch; any model orchestrates now.
+    "on an engine Genex drives itself that keeps sessions (Bonsai's) the one Loop runs too, led in place",
     TEST_TIMEOUT,
     async () => {
-      const host = await hostOn(Project.GodotGame, { facts: GODOT, run: { engine: "bonsai" } });
+      const host = await hostOn(Project.GodotGame, { facts: GODOT, run: { engine: "bonsai" }, turns: [finishes] });
       host.rec.handle("engine.describe", () => [DIRECT_WITH_SESSIONS]);
       const words = OPEN_LOOP_REFUSAL.needsSession("Bonsai", GODOT_FOUND);
-      const studio = { host: host.rec.ctx, moodBoards: new Map(), activeRuns: new Map(), startingRuns: new Map() };
-      await assert.rejects(
-        launchFromIntake(studio as never, host.rec.ctx as never, { threadId: "t1", project: host.game.name } as never, {
-          goal: "A level the player walks through.",
-          engine: "bonsai",
-          mode: "autopilot",
-        }),
-        (err: Error) => err.message === words,
-      );
       await host.dispatch();
-      assert.equal(host.appended("run_finished")[0]?.stoppedBecause, words);
-      assert.equal(host.rec.paramsOf("engine.delegate").length, 0, "no session ran");
+      const [first] = inPlaceLeads(host);
+      assert.ok(first, "the lead worked in place");
+      assert.notEqual(host.appended("run_finished")[0]?.stoppedBecause, words, "never refused for its engine");
     },
   );
 

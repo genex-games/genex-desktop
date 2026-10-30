@@ -13,6 +13,7 @@ import { LOCAL_NOTE, LOCAL_TOOL_DESCRIPTION } from "./local-session-prompts.ts";
 import { StudioTool } from "./studio-tool-prompts.ts";
 import { captureArgs } from "./capture-args.ts";
 import { type CommandSandbox, runSessionCommand } from "./session-commands.ts";
+import { type NeverTouchList, pathVerdict } from "./never-touch.ts";
 import type { DelegateRequest, DelegateResult, LiveToolResult, ToolDefinition } from "./types.ts";
 
 /** The local session's own tools, by the name the model calls. */
@@ -133,8 +134,10 @@ function withRequestTools(request: DelegateRequest, definitions: ToolDefinition[
 export interface FileScope {
   cwd: string;
   readRoots: string[];
-  /** Real folders it writes besides its own: the build a lead leads (`DelegateRequest.leadBuilds`). */
+  /** Real folders it writes besides its own: the build a lead leads, a worker's write roots. */
   writeRoots?: string[];
+  /** A worker's never-touch list: no path inside it is read or written, outside its open folders. */
+  neverTouch?: NeverTouchList;
   forbidden: string[];
   deniedWrites: string[];
   readonly: boolean;
@@ -151,10 +154,18 @@ export function sessionFileResolver(scope: FileScope): FileResolver {
     const target = path.resolve(scope.cwd, raw);
     const actual = await realpathOfNearest(target);
     if (scope.forbidden.some((p) => isInside(p, target) || isInside(p, actual))) throw new Error(MESSAGE.NotReadable);
+    if (neverTouched(scope, [target, actual], write)) throw new Error(MESSAGE.NotReadable);
     if (write) assertWritable(scope, target, actual);
     else if (!scope.readRoots.some((p) => isInside(p, actual))) throw new Error(MESSAGE.ReadOutside);
     return actual;
   };
+}
+
+/** Whether a worker's never-touch list holds any spelling of the path (a read sees its read-open folders). */
+function neverTouched(scope: FileScope, paths: readonly string[], write: boolean): boolean {
+  const list = scope.neverTouch;
+  if (!list) return false;
+  return paths.some((spelled) => pathVerdict({ path: spelled, searches: false, reads: !write }, list) !== null);
 }
 
 /** Resolve even a not-yet-created file through its nearest existing parent. */

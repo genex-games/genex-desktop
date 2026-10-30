@@ -16851,4 +16851,21 @@ describe("the lead and its workers are free agents (Loop phase 3)", () => {
     assert.doesNotMatch(String(pause?.description), /a permission/);
     assert.match(String(pause?.description), /Never for a card waiting for their answer/);
   });
+
+  it("FL6. only Claude Code and Codex could lead in place or run workers: every engine that keeps a session (a local model's too) orchestrates alike; one with no session of its own does not", async () => {
+    const { leadsInPlace } = await import("../../src/harness-seed/loop/engine-seat.ts");
+    const { hasSessionRoles } = await import("../../src/harness-seed/loop/model-roles.ts");
+    const rows: Array<[string, Record<string, unknown>, boolean]> = [
+      ["a delegated agent", { kind: "delegated", supportsSessions: true }, true],
+      ["a delegated agent that says nothing", { kind: "delegated" }, true],
+      ["a local model's session (Bonsai, OpenRouter, a local server)", { kind: "direct", supportsSessions: true }, true],
+      ["a tool loop with no session (Ollama)", { kind: "direct" }, false],
+      ["an agent that keeps no session", { kind: "delegated", supportsSessions: false }, false],
+    ];
+    for (const [label, descriptor, leads] of rows) assert.equal(leadsInPlace(descriptor), leads, label);
+    // The chat's own session is handed the worker tools on each engine that keeps a session.
+    for (const engine of ["claude-code", "codex", "bonsai", "openrouter", "local-server", "opencode"])
+      assert.equal(hasSessionRoles(engine), true, engine);
+    assert.equal(hasSessionRoles("ollama"), false);
+  });
 });

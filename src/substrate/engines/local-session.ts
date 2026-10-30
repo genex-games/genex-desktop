@@ -25,7 +25,7 @@ import {
   noProgressNote,
   progressCheckNote,
 } from "./local-session-prompts.ts";
-import { changesSomething, localMode, permitCall, sessionMode } from "./local-session-permissions.ts";
+import { changesSomething, permitCall, seatAsks, sessionMode } from "./local-session-permissions.ts";
 import { type LocalInbox, localInbox, steerUserMessage, takesSteer } from "./local-session-steer.ts";
 import {
   executeLocalTool,
@@ -34,6 +34,8 @@ import {
   sessionFileResolver,
   type ToolContext,
 } from "./local-session-tools.ts";
+import { neverTouchFence } from "./claude-permissions.ts";
+import { neverTouchWhole } from "./never-touch.ts";
 import { lockUnowned, releaseLocks } from "./ownership-locks.ts";
 import { type CommandSandbox, commandSandbox, leadBuildWrites } from "./session-commands.ts";
 import { StudioTool } from "./studio-tool-prompts.ts";
@@ -322,6 +324,7 @@ export class LocalSessions {
       cwd,
       readRoots,
       writeRoots,
+      ...(request.worker ? { neverTouch: request.worker.neverTouch } : {}),
       forbidden,
       deniedWrites,
       readonly,
@@ -329,7 +332,15 @@ export class LocalSessions {
     });
     const definitions = localToolDefinitions(request, readonly);
     const studioToolCalls: NonNullable<DelegateResult["studioToolCalls"]> = [];
-    const sandbox = readonly ? null : await this.#sandbox(cwd, id, { forbidden, deniedWrites, writeRoots });
+    // A worker's commands are fenced around its own folders too, as its box is on every engine.
+    const fence = request.worker ? await neverTouchFence(request.worker.neverTouch) : { reads: [], writes: [] };
+    const sandbox = readonly
+      ? null
+      : await this.#sandbox(cwd, id, {
+          forbidden: [...forbidden, ...fence.reads],
+          deniedWrites: [...deniedWrites, ...fence.writes],
+          writeRoots,
+        });
     return {
       engine: this.engine,
       request,
@@ -365,7 +376,7 @@ export class LocalSessions {
       idleRounds: 0,
       outputRepairs: 0,
       workspaceStamp: "",
-      mode: localMode(this.engine, request.permissions),
+      mode: seatAsks(this.engine, request).mode,
       modeNote: "",
       inbox: localInbox(signal),
       steer,
@@ -374,16 +385,19 @@ export class LocalSessions {
 
   /**
    * The folders the session may read and write besides its own, the paths it may never touch, and
-   * the ones it may not write. A lead writes the build it leads (`leadBuilds`), by its real path.
+   * the ones it may not write. A lead writes the build it leads (`leadBuilds`), and a worker its
+   * seat's write roots, by their real paths; a worker never reaches its never-touch list's roots
+   * (whole ones here, the rest by `FileScope.neverTouch`), as on every engine.
    */
   async #fileBounds(request: DelegateRequest, cwd: string): Promise<FileBounds> {
     const real = (p: string) => realpath(p).catch(() => path.resolve(p));
-    const writeRoots = request.leadBuilds ? [await real(request.leadBuilds)] : [];
+    const seat = request.worker;
+    const writes = [...(request.leadBuilds ? [request.leadBuilds] : []), ...(seat ? seat.writeRoots : [])];
+    const writeRoots = [...new Set(await Promise.all(writes.map(real)))].filter((dir) => dir !== cwd);
     const readRoots = [cwd, ...writeRoots, ...(await Promise.all((request.extraReads ?? []).map(real)))];
     // The coding CLIs' sign-in homes, from the one shared list the sandbox and contractors use (SEC-3).
-    const forbidden = [...this.options.protectedPaths, ...credentialHomes(), ...(request.denyReads ?? [])].map((p) =>
-      path.resolve(p),
-    );
+    const fenced = [...this.options.protectedPaths, ...credentialHomes(), ...(request.denyReads ?? [])];
+    const forbidden = [...fenced, ...(seat ? neverTouchWhole(seat.neverTouch) : [])].map((p) => path.resolve(p));
     const deniedWrites = [
       ...this.options.protectedPaths,
       ...credentialHomes(),
@@ -756,7 +770,7 @@ async function callTool(run: LocalRun, call: ToolCall): Promise<{ answer: LiveTo
       mode,
       call,
       cwd,
-      permissions: request.permissions,
+      permissions: seatAsks(run.engine, request).asks,
       signal,
     });
     if (refused !== null) return { answer: refused, failed: true };

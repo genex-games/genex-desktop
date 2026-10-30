@@ -168,10 +168,12 @@ describe("job tools", () => {
       ["a reader worker", chat.runWorker("r1", chat.worktree, { readOnly: true })],
       ["an unseated builder", { cwd: chat.worktree }],
       ["the coordinator", { coordinator: { runId: RUN_ID }, readOnly: true }],
-      ["the chat's own session on a local model", await ownTurn(chat), LOCAL],
     ];
     for (const [label, brief, engine] of none)
       assert.deepEqual(jobToolsOf((await callsIn(chat, brief, [], engine)).request), [], label);
+    // Flipped (Loop phase 3): a local model's own session runs jobs as any engine with sessions does.
+    const local = await callsIn(chat, await ownTurn(chat), [], LOCAL);
+    assert.deepEqual(jobToolsOf(local.request), JOB_TOOLS, "the chat's own session on a local model");
   });
 
   it("in Bypass and Auto a job starts without a card, in its own folder, in the mode's box", {

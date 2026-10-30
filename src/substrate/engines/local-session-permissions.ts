@@ -8,9 +8,9 @@
  * of a session engine (Bonsai, OpenRouter) always run in the studio's sandbox, so it honours no Bypass
  * (`permissionModesFor`).
  *
- * A local session never carries a worker's seat: the host seats workers only on a delegated engine
- * and offers a local session no worker tools, so work started on one runs unattended, with the
- * sibling deny list and the session engine's commands in the studio's sandbox.
+ * A worker of the chat's lead runs on a local session as on any engine that keeps sessions: in the
+ * chat's mode its seat names (`DelegateRequest.worker`), asking through its seat (`seatAsks`), its
+ * files and commands held to its write roots and never-touch list (local-session.ts).
  */
 import path from "node:path";
 import { engineMode, PermissionDecision, PermissionMode } from "../../shared/permissions.ts";
@@ -19,7 +19,7 @@ import { t } from "../../shared/i18n.ts";
 import type { ToolCall } from "../types.ts";
 import { LocalTool } from "./local-session-tools.ts";
 import { deniedWithWords, LOCAL_NOTE } from "./local-session-prompts.ts";
-import type { DelegatePermissions, PermissionAsk, PermissionReply } from "./types.ts";
+import type { DelegatePermissions, DelegateRequest, PermissionAsk, PermissionReply } from "./types.ts";
 
 /** What a change tool does, as the modes tell them apart. */
 const ChangeKind = { Edit: "edit", Command: "command" } as const;
@@ -65,6 +65,24 @@ export function sessionMode(engine: string, mode: PermissionMode): PermissionMod
 /** The mode a chat session the person answers runs in, as its engine honours it; null for unattended work. */
 export function localMode(engine: string, permissions: DelegatePermissions | undefined): PermissionMode | null {
   return permissions ? sessionMode(engine, permissions.mode) : null;
+}
+
+/** How a session asks, and in which mode: the person's own session's permissions, or a worker's seat. */
+export interface SessionAsks {
+  mode: PermissionMode | null;
+  asks: Pick<DelegatePermissions, "ask"> | undefined;
+}
+
+/**
+ * The mode and the way to ask of a session: the chat's own session (or a lead) by its permissions; a
+ * worker by its seat — the chat's mode as this engine honours it, asking through the seat, or, with
+ * no way to ask, in its mode with nobody to ask (Plan still refuses each change). Unattended work
+ * has neither.
+ */
+export function seatAsks(engine: string, request: Pick<DelegateRequest, "permissions" | "worker">): SessionAsks {
+  const seat = request.worker;
+  if (!seat) return { mode: localMode(engine, request.permissions), asks: request.permissions };
+  return { mode: sessionMode(engine, seat.mode), asks: seat.asks };
 }
 
 /** Whether a tool changes something, so Plan withholds it from the model. */
@@ -122,21 +140,22 @@ function refusal(reply: PermissionReply): string | null {
 
 /**
  * Whether a call may run in the session's mode now: null to run it, else the words the model reads
- * instead of its result. A change in Plan is refused without asking; one the mode asks about waits
- * for the person's answer (or the work ending around it).
+ * instead of its result. A change in Plan is refused without asking, whoever could be asked; one the
+ * mode asks about waits for the person's answer (or the work ending around it), and runs where there
+ * is nobody to ask (a worker's seat that cannot ask).
  */
 export async function permitCall(input: {
   engine: string;
   mode: PermissionMode | null;
   call: ToolCall;
   cwd: string;
-  permissions: DelegatePermissions | undefined;
+  permissions: Pick<DelegatePermissions, "ask"> | undefined;
   signal: AbortSignal;
 }): Promise<string | null> {
   const { mode, call, permissions } = input;
-  if (!changesSomething(call.name) || !permissions || mode === null) return null;
+  if (!changesSomething(call.name) || mode === null) return null;
   if (mode === PermissionMode.Plan) return LOCAL_NOTE.planModeRefused;
-  if (!ASKS[mode].has(CHANGE_TOOLS[call.name])) return null;
+  if (!permissions || !ASKS[mode].has(CHANGE_TOOLS[call.name])) return null;
   const ask = localAsk(call, input.cwd, input.engine);
   if (!ask) return null;
   return refusal(await permissions.ask(ask, input.signal));
