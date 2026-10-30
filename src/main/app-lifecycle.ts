@@ -49,6 +49,31 @@ export function installProcessHandlers(
   target.on("unhandledRejection", record(MainDiagnostic.Rejection, "unhandled rejection"));
 }
 
+/** The signals that end the app, which a Node listener in main takes from Chromium's own quit. */
+const QUIT_SIGNALS = ["SIGTERM", "SIGINT"] as const;
+
+/** The part of `process` the quit signals are heard on. */
+export interface SignalEvents {
+  on(event: (typeof QUIT_SIGNALS)[number], listener: () => void): unknown;
+}
+
+/**
+ * Quit on SIGTERM and SIGINT: the first asks for the app's own quit (`before-quit` and its bounded
+ * steps), a second exits at once. Chromium quits on them by itself, but any Node listener takes a
+ * signal from it, and the process sandbox's runtime adds one for each, for its own clean-up
+ * (`@anthropic-ai/sandbox-runtime`, `sandbox-manager.js`): a SIGTERM then cleaned the sandbox up
+ * and left the app running.
+ */
+export function installQuitSignals(target: SignalEvents, app: { quit(): void; exit(): void }): void {
+  let asked = false;
+  const heard = (): void => {
+    if (asked) return app.exit();
+    asked = true;
+    app.quit();
+  };
+  for (const signal of QUIT_SIGNALS) target.on(signal, heard);
+}
+
 /** What to do after `render-process-gone`: reload, leave a clean exit alone, or stop retrying. */
 export const ReloadDecision = { Reload: "reload", CleanExit: "clean-exit", GiveUp: "give-up" } as const;
 export type ReloadDecision = (typeof ReloadDecision)[keyof typeof ReloadDecision];

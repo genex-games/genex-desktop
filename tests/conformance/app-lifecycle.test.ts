@@ -9,6 +9,7 @@ import { EventEmitter } from "node:events";
 import {
   createReloadPolicy,
   installProcessHandlers,
+  installQuitSignals,
   pageRecovery,
   QuitQuestion,
   quitQuestion,
@@ -222,6 +223,26 @@ describe("the quit sequence", () => {
     await runShutdown([{ name: "a", timeoutMs: 100, run: async () => {} }], { log: () => {}, timers });
     assert.equal(cleared, 1);
   });
+});
+
+// Chromium quits on SIGTERM and SIGINT by itself, but a Node listener takes a signal from it, and
+// the process sandbox's runtime adds one for each, for its own clean-up. A SIGTERM then only
+// cleaned the sandbox up: the app kept running, its main thread idle, Chromium's shutdown thread
+// still waiting for a signal that never came.
+describe("a quit signal", () => {
+  for (const signal of ["SIGTERM", "SIGINT"] as const) {
+    it(`${signal} asks for the app's own quit, and a second one exits at once`, () => {
+      const target = new EventEmitter();
+      // The sandbox runtime's own listener, as it registers it.
+      target.once(signal, () => {});
+      const heard: string[] = [];
+      installQuitSignals(target, { quit: () => heard.push("quit"), exit: () => heard.push("exit") });
+      target.emit(signal);
+      assert.deepEqual(heard, ["quit"]);
+      target.emit(signal);
+      assert.deepEqual(heard, ["quit", "exit"]);
+    });
+  }
 });
 
 // A developer launch's stop (the channel's `stop`, and every quit while the channel is open, a
