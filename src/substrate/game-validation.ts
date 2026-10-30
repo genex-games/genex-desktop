@@ -18,7 +18,6 @@ import {
   projectRelative,
   resolvedByMap,
   threeReach,
-  unreachableLoads,
 } from "./game-page.ts";
 import { isInside, toPosixRelative } from "./paths.ts";
 import { readProjectShape } from "./project-shape.ts";
@@ -42,8 +41,6 @@ export const NO_CONTRACT_PROBLEM =
 
 const MESSAGE = {
   MissingFile: (file: string) => `${file} is missing`,
-  UnreachableHosts: (hosts: string[]) =>
-    `index.html loads code or styles from ${hosts.join(", ")}, which the studio's preview cannot reach (it allows only public library and font CDNs) — the game will not run here until those files are copied into the game folder and loaded from there`,
   UnresolvedPackages: (main: string, names: string[]) =>
     `${main} imports ${names
       .slice(0, LISTED_UNRESOLVED_IMPORTS)
@@ -286,11 +283,6 @@ export async function validateGameDir(dir: string): Promise<GameValidation> {
   const { files: sources, unresolved } = await reachableSources(dir, shape);
   const html = (await readFile(path.join(dir, "index.html"), "utf8").catch(() => "")) ?? "";
   const mapped = importMapKeys(html);
-  // R6: the preview reaches only the public library/font CDNs (preview-network.ts). Said here,
-  // where both the Open Game sheet and a builder's validate call read it, rather than as a
-  // console warning on a page that already failed.
-  const remote = unreachableLoads(html);
-  if (remote.length > 0) problems.push(MESSAGE.UnreachableHosts(remote));
   // No page, nothing to compose: the serve layer rewrites the page it serves, and there is none.
   const reach: ContractReach = indexExists ? threeReach({ html, build: shape.build, mapped, unresolved }) : "none";
   const unresolvedProblem = unresolvedImportsProblem(shape, mapped, unresolved);

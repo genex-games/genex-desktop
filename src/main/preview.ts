@@ -39,7 +39,6 @@ import {
   HttpRouteKind,
   HttpStatus,
   MAX_REWRITE_BYTES,
-  confinePreviewContents,
   packedBuildFile,
   gameRequestAllowed,
   previewNavigationAllowed,
@@ -102,7 +101,7 @@ import { setTimeout as delay } from "node:timers/promises";
 const MESSAGE = {
   renderGone: (reason: string) => `render process gone: ${reason}`,
   unresponsive: "game loop is unresponsive",
-  blocked: (what: string) => `the studio blocked ${what}: games run offline in the preview`,
+  blocked: (what: string) => `the studio blocked ${what}`,
   pageSurfaceFallback: (reason: string | null) =>
     `the page surface could not be photographed${reason === null ? "" : ` (${reason})`}; the canvas was photographed instead`,
   noFrame: "the page produced no frame to photograph",
@@ -353,14 +352,14 @@ export class GamePreview {
       gameSession.protocol.handle(SCHEME, (request) => this.#serve(request));
     }
     // http://localhost:<port>/ is the same server under the origin a bundled game expects; any
-    // other http request is a 403.
+    // other http request goes to the network from this partition.
     if (!gameSession.protocol.isProtocolHandled("http")) {
       gameSession.protocol.handle("http", (request) => this.#serveLoopback(request));
     }
-    // A game runs offline (SECUI-3): the partition may reach the studio's own server and nothing
-    // else, so what an agent wrote into a game cannot leave the machine when the studio loads it.
+    // The network is open like a normal web page's (backends, WebSockets, any host); the filter
+    // refuses only what a page never reaches (the disk, the browser's own pages).
     gameSession.webRequest.onBeforeRequest((details, callback) => {
-      const allowed = gameRequestAllowed(details.url, loopbackPorts, details.method);
+      const allowed = gameRequestAllowed(details.url);
       if (!allowed) this.#noteBlocked("request", details.url);
       callback(allowed ? {} : { cancel: true });
     });
@@ -373,7 +372,6 @@ export class GamePreview {
     const wc = view.webContents;
     if (this.options.offscreen) wc.setFrameRate(60);
     if (this.#audioMuted) wc.setAudioMuted(true);
-    confinePreviewContents(wc);
     wc.on("did-start-navigation", () => {
       void this.#profiler.invalidate("navigation changed");
     });
@@ -551,8 +549,12 @@ export class GamePreview {
   async #serveLoopback(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const route = routeHttp(url, loopbackPorts);
-    // Never re-fetched from the main process: that sent a game's plain-http beacon off the machine.
-    if (route.route === HttpRouteKind.Deny) return textResponse(HttpStatus.Forbidden);
+    // Fetched from the game's own partition, past this handler, as the page itself would have.
+    if (route.route === HttpRouteKind.Pass) {
+      const session = this.#session;
+      if (!session) return textResponse(HttpStatus.Forbidden);
+      return session.fetch(request, { bypassCustomProtocolHandlers: true });
+    }
     return this.#serveFile(route.project, url.pathname, request);
   }
 

@@ -118,7 +118,7 @@ export type {
   ProjectRecent,
   ProjectShape,
 } from "../shared/game-project.ts";
-export { type ContractReach, networkLoads, unreachableLoads } from "./game-page.ts";
+export type { ContractReach } from "./game-page.ts";
 export {
   type GameValidation,
   hudContractGeneration,
