@@ -11,7 +11,7 @@ import type { ComputerTarget } from "../../substrate/computer-target.ts";
 import type { PreviewPort } from "../../substrate/preview-port.ts";
 import { captureSurface } from "./capture.ts";
 
-/** A browser target keeps its window in reach: the playtest shorthands and the director's look still drive the port. */
+/** A browser target keeps its window in reach: the director's look still drives the port. */
 export interface BrowserPreviewTarget extends ComputerTarget {
   readonly port: PreviewPort;
 }

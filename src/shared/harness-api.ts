@@ -21,7 +21,6 @@ import type {
   DelegateCaptureGrant,
   DelegateDirectorGrant,
   DelegateImage,
-  DelegatePlaytestGrant,
   DelegateResult,
   LiveToolResult,
   LiveToolSpec,
@@ -216,8 +215,6 @@ export interface HarnessDelegateParams {
   interviewTools?: StudioToolSpec[];
   /** Builder eyes: capture-tool grant for the workspace this delegation builds in. */
   selfCapture?: DelegateCaptureGrant;
-  /** Playtester hands: live preview tools over the build under test; implies read-only. */
-  playtest?: DelegatePlaytestGrant;
   readOnly?: boolean;
   /** Stills into the builder's prompt. */
   images?: DelegateImage[];
@@ -897,7 +894,6 @@ export const HARNESS_PARAM_SCHEMAS = {
     cwd: optionalText,
     extraReads: z.array(text).nullish(),
     selfCapture: z.object({ project, root: text, runId: optionalText, facetId: optionalText }).nullish(),
-    playtest: z.object({ project, root: text, runId: optionalText, facetId: optionalText }).nullish(),
     director: z.object({ project, root: text, runId: text, inPlace: z.boolean().nullish() }).nullish(),
     worker: z
       .object({ id: text, title: text, runId: optionalText, turn: optionalText, research: z.boolean().nullish() })

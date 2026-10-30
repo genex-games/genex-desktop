@@ -24,7 +24,6 @@ import {
 import {
   BROWSER_CAPABILITIES,
   DESKTOP_CAPABILITIES,
-  ClockLevel,
   PointerLevel,
   StateLevel,
   TargetRuntime,
@@ -240,9 +239,9 @@ describe("the requested state — setup and its probe", () => {
   });
 });
 
-describe("computer tool — a playtester's clock (golden-boot-glory)", () => {
+describe("computer tool — a builder's clock", () => {
   /** The computer on a fake window that records what reached the game, for one screen role. */
-  async function playOn(role: "playtester" | "builder") {
+  async function playOn(role: "builder") {
     const { computerTools } = await import("../../src/main/core/computer-tools.ts");
     const { tmpDir } = await import("../helpers/tmp.ts");
     const reached: string[] = [];
@@ -279,12 +278,6 @@ describe("computer tool — a playtester's clock (golden-boot-glory)", () => {
     await tools.onLiveTool("computer", { action: "wait", duration: 0.01 });
     return { reached, prompt: String(tools.liveTools[0]?.description) };
   }
-
-  it("one key press ran four match minutes while the playtester looked: its game stands still between moves and runs only during them", async () => {
-    const played = await playOn("playtester");
-    assert.deepEqual(played.reached, ["pause", "start", "input", "pause", "start", "pause"]);
-    assert.match(played.prompt, /stands still between your actions/);
-  });
 
   it("a builder's game keeps running between actions, as before", async () => {
     const built = await playOn("builder");
@@ -358,22 +351,13 @@ describe("computer tool — built from what the target can do", () => {
       assert.ok(!actions.includes(missing as never), `${missing} is not offered`);
     for (const kept of ["screenshot", "key", "hold_key", "type", "scroll", "wait", "state"])
       assert.ok(actions.includes(kept as never), `${kept} is offered`);
-    const schema = computerToolDefinition({ role: "playtester", capabilities: bridge });
+    const schema = computerToolDefinition({ role: "builder", capabilities: bridge });
     assert.ok(!("surface" in schema.parameters.properties), "no surface parameter on a target with one surface");
     assert.doesNotMatch(schema.description, /left_click \|/);
     assert.doesNotMatch(schema.description, /camera text=/);
     assert.match(schema.description, /its own game process/);
     assert.equal(unsupportedAction("zoom", bridge)?.includes("not available"), true);
     assert.equal(unsupportedAction("key", bridge), null);
-  });
-
-  it("tells a paced role the truth when the target cannot hold its clock", () => {
-    const unheld = computerToolDefinition({
-      role: "playtester",
-      capabilities: { ...bridge, clock: ClockLevel.None },
-    }).description;
-    assert.match(unheld, /cannot be held still/);
-    assert.doesNotMatch(unheld, /stands still between your actions/);
   });
 });
 
@@ -542,11 +526,11 @@ describe("computer tool — a play with several players", () => {
 
   it("offers player only where the play has more than one player, and says how many there are", () => {
     for (const one of [editor, { ...editor, players: 1 }]) {
-      const definition = computerToolDefinition({ role: "judge", capabilities: one });
+      const definition = computerToolDefinition({ role: "builder", capabilities: one });
       assert.equal(Object.hasOwn(definition.parameters.properties, "player"), false);
       assert.doesNotMatch(definition.description, /player=/);
     }
-    const three = computerToolDefinition({ role: "judge", capabilities: { ...editor, players: 3 } });
+    const three = computerToolDefinition({ role: "builder", capabilities: { ...editor, players: 3 } });
     assert.equal(three.parameters.properties.player?.type, "number");
     assert.match(three.description, /3 players/);
     assert.match(three.description, /player=<1–3>/);

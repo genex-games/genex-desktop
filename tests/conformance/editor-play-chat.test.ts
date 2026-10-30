@@ -1,5 +1,5 @@
 /**
- * The chat's own session, judges and playtesters get `computer` on an engine game's editor play
+ * The chat's own session and a worker get `computer` on an engine game's editor play
  * (`main/core/editor-play-session.ts`), through the real core and each plugin's backend. Unreal and
  * any other declared engine are selected by the game's engine link; Unity by the project's facts. With no editor open, the first look
  * answers the selected plugin's own words. Disabling the plugin removes the editor computer.
@@ -87,26 +87,26 @@ describe("the computer on an Unreal game's editor play, for the chat's own sessi
   });
 });
 
-describe("the computer of a judge or playtester on an Unreal game", () => {
+describe("the computer of a worker on an Unreal game", () => {
   it("plays its editor where the Unreal plugin holds the game's link, and a web game in its window", {
     timeout: CASE_TIMEOUT_MS,
   }, async () => {
     const { core, game, project } = await workerChat();
-    const outDir = await tmpDir("editor-play-judge-");
+    const outDir = await tmpDir("editor-play-worker-");
     const session = {
       loaded: null,
       handle: () => "pool:1",
       get: async () => assert.fail("no window"),
       release: async () => {},
     };
-    const computer = (role: "judge" | "playtester") =>
+    const computer = () =>
       core._computerToolsFor(
-        { project: game, root: project.dir, handle: "pool:1", role },
+        { project: game, root: project.dir, handle: "pool:1", role: "builder" },
         project.dir,
         outDir,
         session as never,
       );
-    assert.notEqual((await computer("judge")).runtime, TargetRuntime.Editor, "a web game plays in its window");
+    assert.notEqual((await computer()).runtime, TargetRuntime.Editor, "a web game plays in its window");
     await core.plugins.setEnabled(UNREAL_PLUGIN, true);
     await core.engineLinks.link(
       UNREAL_PLUGIN,
@@ -114,13 +114,11 @@ describe("the computer of a judge or playtester on an Unreal game", () => {
       { project: await uproject("Valley") },
     );
     try {
-      for (const role of ["judge", "playtester"] as const) {
-        const tools = await computer(role);
-        assert.equal(tools.runtime, TargetRuntime.Editor, role);
-        const looked = await tools.onLiveTool(COMPUTER_TOOL_NAME, { action: "screenshot" });
-        assert.match(text(looked), /Unreal Editor is not open/, `${role}: the plugin's own reason`);
-        await tools.release();
-      }
+      const tools = await computer();
+      assert.equal(tools.runtime, TargetRuntime.Editor);
+      const looked = await tools.onLiveTool(COMPUTER_TOOL_NAME, { action: "screenshot" });
+      assert.match(text(looked), /Unreal Editor is not open/, "the plugin's own reason");
+      await tools.release();
     } finally {
       // Turning the plugin off stops its backend's process.
       await core.plugins.setEnabled(UNREAL_PLUGIN, false);
@@ -137,7 +135,7 @@ async function toyProject(name: string): Promise<string> {
 }
 
 describe("the computer on a game another engine plays in its editor", () => {
-  it("is built from what the engine's plugin declares, and reaches each of the toy engine's three players", {
+  it("is built from what the engine's plugin declares", {
     timeout: CASE_TIMEOUT_MS,
   }, async () => {
     const { core, game, project } = await workerChat();
@@ -156,39 +154,17 @@ describe("the computer on a game another engine plays in its editor", () => {
       { project: await toyProject("Garden") },
     );
     try {
-      const judge = await core._computerToolsFor(
-        { project: game, root: project.dir, handle: "pool:1", role: "judge" },
+      const worker = await core._computerToolsFor(
+        { project: game, root: project.dir, handle: "pool:1", role: "builder" },
         project.dir,
         outDir,
         session as never,
       );
-      assert.equal(judge.runtime, TargetRuntime.Editor);
-      const judged = judge.liveTools.find((tool) => tool.name === COMPUTER_TOOL_NAME);
-      assert.match(String(judged?.description), /clock cannot be held still/, "the toy declares no clock to hold");
-      assert.equal(Object.hasOwn(judged?.parameters.properties ?? {}, "player"), false, "a judge asked for one player");
-      await judge.release();
-
-      const crowd = await core._computerToolsFor(
-        { project: game, root: project.dir, handle: "pool:1", role: "playtester", players: 3 },
-        project.dir,
-        outDir,
-        session as never,
-      );
-      const tool = crowd.liveTools.find((t) => t.name === COMPUTER_TOOL_NAME);
-      assert.match(String(tool?.description), /3 players/);
-      for (const player of [1, 2, 3]) {
-        const looked = await crowd.onLiveTool(COMPUTER_TOOL_NAME, { action: "screenshot", player });
-        assert.equal(typeof looked === "string" ? 0 : looked.images?.length, 1, `player ${player} is seen`);
-        assert.match(
-          text(await crowd.onLiveTool(COMPUTER_TOOL_NAME, { action: "state" })),
-          new RegExp(`"player":${player}`),
-        );
-      }
-      assert.match(
-        text(await crowd.onLiveTool(COMPUTER_TOOL_NAME, { action: "screenshot", player: 4 })),
-        /player 4 is not in this play/,
-      );
-      await crowd.release();
+      assert.equal(worker.runtime, TargetRuntime.Editor);
+      const offered = worker.liveTools.find((tool) => tool.name === COMPUTER_TOOL_NAME);
+      assert.match(String(offered?.description), /running in its engine's editor/);
+      assert.equal(Object.hasOwn(offered?.parameters.properties ?? {}, "player"), false, "one player is opened");
+      await worker.release();
     } finally {
       await core.plugins.setEnabled(TOY_PLUGIN_ID, false);
     }
@@ -253,13 +229,13 @@ describe("the computer on a Unity game's editor play", () => {
     await core.plugins.setEnabled(UNITY_PLUGIN, false);
   });
 
-  it("gives judges and playtesters the Unity editor target through the real backend", {
+  it("gives a worker the Unity editor target through the real backend", {
     timeout: CASE_TIMEOUT_MS,
   }, async () => {
     const { core, game, project } = await workerChat();
     await unityProject(project.dir);
     await core.plugins.setEnabled(UNITY_PLUGIN, true);
-    const outDir = await tmpDir("unity-editor-play-judge-");
+    const outDir = await tmpDir("unity-editor-play-worker-");
     const session: SessionPort = {
       loaded: null,
       handle: () => "pool:unity",
@@ -267,20 +243,18 @@ describe("the computer on a Unity game's editor play", () => {
       release: async () => {},
     };
     try {
-      for (const role of ["judge", "playtester"] as const) {
-        const tools = await core._computerToolsFor(
-          { project: game, root: project.dir, handle: "pool:unity", role },
-          project.dir,
-          outDir,
-          session,
-        );
-        try {
-          assert.equal(tools.runtime, TargetRuntime.Editor, role);
-          const looked = await tools.onLiveTool(COMPUTER_TOOL_NAME, { action: "screenshot" });
-          assert.match(text(looked), /Unity.*not open/i, `${role}: the real Unity backend's refusal`);
-        } finally {
-          await tools.release();
-        }
+      const tools = await core._computerToolsFor(
+        { project: game, root: project.dir, handle: "pool:unity", role: "builder" },
+        project.dir,
+        outDir,
+        session,
+      );
+      try {
+        assert.equal(tools.runtime, TargetRuntime.Editor);
+        const looked = await tools.onLiveTool(COMPUTER_TOOL_NAME, { action: "screenshot" });
+        assert.match(text(looked), /Unity.*not open/i, "the real Unity backend's refusal");
+      } finally {
+        await tools.release();
       }
     } finally {
       await core.plugins.setEnabled(UNITY_PLUGIN, false);

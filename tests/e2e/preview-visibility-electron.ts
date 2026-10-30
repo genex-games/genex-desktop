@@ -119,7 +119,7 @@ async function main() {
       port.destroy();
       win.destroy();
     }
-    // Parallel builders/playtesters have separate private windows and input state.
+    // Parallel workers have separate private windows and input state.
     await Promise.all(
       Array.from({ length: 4 }, async (_, index) => {
         const win = new BrowserWindow({

@@ -561,8 +561,6 @@ export interface PreviewReadyPayload extends RunScope {
  */
 export const CompletionRole = {
   Judge: "judge",
-  Playtester: "playtester",
-  SkilloptGate: "skillopt-gate",
 } as const;
 export type CompletionRole = (typeof CompletionRole)[keyof typeof CompletionRole];
 

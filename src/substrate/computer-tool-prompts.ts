@@ -6,7 +6,6 @@
  */
 import {
   BROWSER_CAPABILITIES,
-  canPause,
   canPoint,
   hasState,
   PointerLevel,
@@ -19,24 +18,18 @@ import {
  * Who holds the tool, which changes whose build the window shows and whether it can reload. An
  * `operator` drives the person's computer (or a VM) with their consent, never a build.
  */
-export type ComputerToolRole = "builder" | "playtester" | "scout" | "director" | "judge" | "operator";
+export type ComputerToolRole = "builder" | "director" | "operator";
 
 /** Whose build the window shows, by role. */
 const WHOSE_BUILD: Record<ComputerToolRole, string> = {
   builder: "YOUR build (this workspace, uncommitted edits included)",
   director:
     "the build your window is pointed at (your own integration worktree by default; `look` points it at a worker's build or the live folder)",
-  playtester: "the build under test",
-  scout: "the build under test",
-  judge: "the build you are judging (play it to answer, never read its code)",
   operator: "the person's computer, with their consent — only the apps they allowed",
 };
 
 /** The roles that edit files, and so may rebuild what they look at. */
 const RELOADING_ROLES: ReadonlySet<ComputerToolRole> = new Set(["builder", "director"]);
-
-/** The roles whose clock the studio holds still between moves, where the target can hold it. */
-const PACED_TOOL_ROLES: ReadonlySet<ComputerToolRole> = new Set(["playtester", "judge"]);
 
 /** The reload sentence, for the roles that edit files. */
 const RELOAD_LINE =
@@ -56,17 +49,8 @@ const WHERE_IT_RUNS: Record<TargetRuntime, (view: { width: number; height: numbe
 
 /** A computer's screen: nothing holds it still. */
 const LIVE_SCREEN_LINE = "The screen keeps changing between your actions: act, then look.";
-/** The game's clock for a builder, a scout and the lead: it runs between actions. */
+/** The game's clock for a builder and the lead: it runs between actions. */
 const RUNNING_CLOCK_LINE = "The game keeps running between actions.";
-/**
- * The game's clock for a playtester, who takes seconds to look and decide: it stands still between
- * moves, as a player's reflexes would have it (golden-boot-glory: one key press ran four match minutes).
- */
-const PACED_CLOCK_LINE =
-  "The game's clock stands still between your actions: it runs only while you press, hold, click or wait, so take your time to look.";
-/** A paced role on a target whose clock cannot be held: it is told the truth. */
-const UNHELD_CLOCK_LINE =
-  "This game's clock cannot be held still, so it keeps running between your actions: act, then look straight away.";
 
 /** The pointer sentences, for a target that can click at a point. */
 const POINTER_LINES =
@@ -105,11 +89,9 @@ function observeLine(byDefault: boolean): string {
   return `Input actions, wait and batch take observe=screenshot|canvas|none: the picture of the result comes back with the answer (${fallback}). `;
 }
 
-/** The clock sentence for a role on a target. */
-function clockLine(role: ComputerToolRole, caps: TargetCapabilities): string {
-  if (role === "operator") return LIVE_SCREEN_LINE;
-  if (!PACED_TOOL_ROLES.has(role)) return RUNNING_CLOCK_LINE;
-  return canPause(caps) ? PACED_CLOCK_LINE : UNHELD_CLOCK_LINE;
+/** The clock sentence for a role: a person's screen never holds still, a game runs between actions. */
+function clockLine(role: ComputerToolRole): string {
+  return role === "operator" ? LIVE_SCREEN_LINE : RUNNING_CLOCK_LINE;
 }
 
 /** What `state` reads, by what the target can tell. */
@@ -165,7 +147,7 @@ export function computerToolDescription(options: {
     studioVerbLines(caps, options.cameras) +
     reload +
     surface +
-    `Coordinates are pixels of the last screenshot, origin top-left. ${clockLine(options.role, caps)} ` +
+    `Coordinates are pixels of the last screenshot, origin top-left. ${clockLine(options.role)} ` +
     CLOSING_LINES[options.role === "operator" ? "operator" : "game"]
   );
 }

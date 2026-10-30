@@ -200,7 +200,6 @@
   "tests/conformance/plugin-engine-manifest.test.ts",
   "tests/conformance/plugin-file-picker.test.ts",
   "tests/conformance/plugin-identity.test.ts",
-  "tests/conformance/plugin-judge-manifest.test.ts",
   "tests/conformance/plugin-lifecycle.test.ts",
   "tests/conformance/plugin-local-install.test.ts",
   "tests/conformance/plugin-marketplace.test.ts",

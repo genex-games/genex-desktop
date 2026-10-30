@@ -3893,7 +3893,6 @@ describe("Stop on a one-facet Autopilot run", () => {
     registerFakeEngine(rig, {
       complete: (text) => (text.includes("ENGINE HINT: maxParallel") ? JSON.stringify(plan) : null),
       delegate: async (request) => {
-        if (request.playtest) return null;
         if (!stopped) {
           stopped = true;
           // The user presses Stop while the first build works.

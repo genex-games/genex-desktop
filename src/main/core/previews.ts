@@ -888,13 +888,12 @@ export class PreviewService {
    * The requested state, reached the way a player reaches it — before anyone looks: the knock a
    * page waiting for a gesture needs, then the setup's input actions. The game is never asked
    * anything. Returns a note when an input failed, never throws. `options.sleep` is the wall
-   * clock's wait, injectable for a test; `keepFrontEnd` is accepted for older callers and changes
-   * nothing now that no game is taken past its front-end.
+   * clock's wait, injectable for a test.
    */
   async applySetup(
     port: PreviewPort,
     setup: PreviewSetup | null | undefined,
-    options: { sleep?: (ms: number) => Promise<unknown>; keepFrontEnd?: boolean } = {},
+    options: { sleep?: (ms: number) => Promise<unknown> } = {},
   ): Promise<string | null> {
     const wait = options.sleep ?? ((ms: number) => sleep(ms));
     // The knock comes first, before the clock is even started: a trusted click is what grants

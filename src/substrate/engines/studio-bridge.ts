@@ -79,7 +79,7 @@ export interface BridgeOptions {
   /**
    * Where the bridge directory goes, and the folder the contractor is started in — so
    * `node .studio/tool.mjs` resolves for it. Usually the workspace it builds in; for a session
-   * that may not write to the build (the playtester) it is a scratch folder of its own, which is
+   * that may not write to the build (a reviewer, a reader) it is a scratch folder of its own, which is
    * then the only place its sandbox lets it write at all.
    */
   cwd: string;

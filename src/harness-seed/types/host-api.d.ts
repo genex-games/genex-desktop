@@ -163,7 +163,7 @@ export interface ModelPreferences {
 }
 // ↑ src/shared/model-preferences.ts
 
-export type CompletionRole = 'judge' | 'playtester' | 'skillopt-gate';
+export type CompletionRole = 'judge';
 // ↑ src/shared/custom-events.ts
 
 /**
@@ -309,39 +309,6 @@ export interface DelegateCaptureGrant {
 }
 // ↑ src/shared/engine-requests.ts
 
-/** Playtester hands: the serializable half of the live preview tools over the build under test. */
-export interface DelegatePlaytestGrant {
-  project: string;
-  root: string;
-  runId?: string;
-  facetId?: string;
-  iteration?: number;
-  handle?: string;
-  entry?: string;
-  setup?: PreviewSetup | null;
-  /** A `judge` plays blind (no files, no shell) on a stepped clock, with only the `computer` tool. */
-  role?: "playtester" | "scout" | "judge";
-  label?: string;
-  /** A goal the studio checks after every move; the first time it holds is studio-verified. */
-  quest?: { id: string; until: NonNullable<PreviewSetup["verify"]> };
-  /** The most moves (input actions, waits, batch steps) the session may make, counted by the host. */
-  maxActions?: number;
-  /** How the build's clock is held between moves: wall-time pacing, or seeded exact steps. */
-  pacing?: "paced" | "stepped";
-  /**
-   * How many players a game played in its engine's editor opens for this session (1 to
-   * `MAX_PLAY_PLAYERS`, never more than its engine declares); absent is one.
-   */
-  players?: number;
-  /**
-   * A judge the game's engine plugin declares (`PluginJudge.id`), for a `judge` role on a game played
-   * in its editor: the host appends its brief to the session's rubric, opens its players and runs
-   * its probe once the play opens. A judge the game does not have is refused.
-   */
-  judge?: string;
-}
-// ↑ src/shared/engine-requests.ts
-
 /** A still that goes into the builder's prompt as an image block. */
 export interface DelegateImage {
   label: string;
@@ -444,8 +411,6 @@ export interface HarnessDelegateParams {
   interviewTools?: StudioToolSpec[];
   /** Builder eyes: capture-tool grant for the workspace this delegation builds in. */
   selfCapture?: DelegateCaptureGrant;
-  /** Playtester hands: live preview tools over the build under test; implies read-only. */
-  playtest?: DelegatePlaytestGrant;
   readOnly?: boolean;
   /** Stills into the builder's prompt. */
   images?: DelegateImage[];
@@ -1094,23 +1059,6 @@ export interface CompleteResponse {
 }
 // ↑ src/shared/engine-requests.ts
 
-export type InputRoute = 'browser' | 'bridge' | 'os-background' | 'os-foreground' | 'page' | 'editor';
-// ↑ src/shared/computer-target.ts
-
-/** What a finished computer session's trace adds up to, as a delegation's result carries it. */
-export interface ComputerTraceSummary {
-  /** Where the trace was written; null before the first action. */
-  path: string | null;
-  steps: number;
-  /** True when every move ran on a stepped clock: the same seed and inputs replay the same run. */
-  deterministic: boolean;
-  /** The index of the action after which the studio verified the goal was reached, or null. */
-  reachedAt: number | null;
-  /** Every route the session's input took: evidence is as strong as the weakest of them. */
-  routes?: InputRoute[];
-}
-// ↑ src/shared/computer-target.ts
-
 export interface DelegateResult {
   requestedModel?: string;
   cliVersion?: string;
@@ -1142,8 +1090,6 @@ export interface DelegateResult {
   contextTokens?: number;
   /** A `compact` delegation compacted the session, which goes on under the same id. */
   compacted?: boolean;
-  /** A playtest's or judge's computer trace: where it was written, and whether its goal was verified. */
-  trace?: ComputerTraceSummary;
   /**
    * Genex tool calls the session made after its turn ended (a background task woke it), which no
    * answer could reach: by the name the agent called it by, without the server's prefix, and its
@@ -1398,34 +1344,6 @@ export interface LinkedEngine {
 }
 // ↑ src/shared/game-engine.ts
 
-/**
- * API 3: a blind judge an engine plugin declares (`judges`). It plays a game in the engine's editor
- * through the play tools, never sees code, and answers from playing. Data only: the host runs it.
- */
-export interface PluginJudge {
-  /** Unique in the manifest: what an agent names the judge by. */
-  id: string;
-  /** What the person and the agent read it as, 1-40 characters on one line. */
-  label: string;
-  /** The facts of the games it judges; every game the plugin plays in its editor when absent. */
-  facts?: string[];
-  /** The package's Markdown file holding its brief, appended to the judge's rubric (at most `MAX_JUDGE_BRIEF_CHARS`). */
-  brief: string;
-  /** How many players its play opens, 1 to the engine's `play.players`; one when absent. */
-  players?: number;
-  /**
-   * A quiet harness tool of the plugin, needing the play tools' locks, that the host runs once in
-   * the judge's play right after it opens: its `note` and `images` (measurements and pictures,
-   * never source) open the judge's first message.
-   */
-  probe?: string;
-}
-// ↑ src/shared/plugins.ts
-
-/** A judge as a game's descriptor and an agent name it. */
-export type JudgeRef = Pick<PluginJudge, "id" | "label">;
-// ↑ src/shared/plugins.ts
-
 export type FactSource = 'core' | 'link' | 'scaffold';
 // ↑ src/shared/project-facts.ts
 
@@ -1470,11 +1388,9 @@ export interface GameProject {
   linkedEngine?: LinkedEngine;
   /**
    * True when an engine plugin that is on plays this game in its editor (its play tools hold the
-   * game's link): judges and the computer play it there. Filled by the harness's `game.list`.
+   * game's link): the computer plays it there. Filled by the harness's `game.list`.
    */
   editorPlay?: boolean;
-  /** The judges that play this game in its editor, as its engine plugin declares them; only with `editorPlay`. */
-  judges?: JudgeRef[];
   /**
    * What the folder holds, by `shared/project-facts.ts`: the core table, the enabled plugins'
    * `detect` and the engine link. Empty while the first message has not picked a kind.
@@ -1573,7 +1489,7 @@ export interface ReferenceFrame {
 }
 // ↑ src/shared/protocol.ts
 
-export type CaptureSurface = 'page' | 'canvas' | 'auto';
+export type CaptureSurface = 'canvas' | 'page' | 'auto';
 // ↑ src/shared/preview-contract.ts
 
 export interface PixelStats {

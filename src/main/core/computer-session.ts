@@ -2,8 +2,8 @@
  * The computer session: the studio's referee between a model and a target. It parses the action,
  * loads the target, refuses what the target cannot do, keeps the action budget, holds or steps the
  * clock between a paced role's moves, answers every action — looking, waiting and the studio verbs
- * here, input through the target — checks a goal the studio was given, and writes the trace,
- * leaving a frame on the agent's screen each time.
+ * here, input through the target — and writes the trace, leaving a frame on the agent's screen
+ * each time.
  *
  * Generic over {@link ComputerTarget}: the browser window, a Play Protocol game and every target
  * added later share this one implementation. What is particular to a target (how it loads, how
@@ -22,7 +22,7 @@ import {
 } from "../../shared/computer-target.ts";
 import { SECOND_MS } from "../../shared/duration.ts";
 import { errorMessage } from "../../shared/errors.ts";
-import { CaptureSurface, type PreviewSetup, StillMimeType } from "../../shared/preview-contract.ts";
+import { CaptureSurface, StillMimeType } from "../../shared/preview-contract.ts";
 import {
   COMPUTER_TOOL_NAME,
   ComputerObserve,
@@ -33,7 +33,6 @@ import {
   computerToInput,
   describeComputerAction,
   parseComputerArgs,
-  setupReached,
   unsupportedAction,
   unsupportedPlayer,
   WebVerb,
@@ -90,12 +89,6 @@ export interface TargetSource<T extends ComputerTarget = ComputerTarget> {
   frame(target: T, jpeg: Buffer | null, caption: string, act: ScreenAct): Promise<void>;
 }
 
-/** A goal the studio checks after every move: the first time it holds is studio-verified. */
-export interface ComputerQuest {
-  id: string;
-  until: NonNullable<PreviewSetup["verify"]>;
-}
-
 /** How a session behaves: its pacing, where frames go, what it brings back, and its limits. */
 export interface ComputerSessionOptions {
   pacing: ComputerPacing;
@@ -107,20 +100,10 @@ export interface ComputerSessionOptions {
   observeByDefault?: boolean;
   /** The most moves (input actions, waits and batch steps) the session may make. */
   maxActions?: number;
-  quest?: ComputerQuest;
   /** The clock trace times are read from; injected in tests. */
   now?: () => number;
-  /**
-   * What the tool offers of what the target can do: a judge is offered neither the game's `state`
-   * nor its `console` (the builder wrote both), though the session still reads state for the goal.
-   */
-  offer?: (caps: TargetCapabilities) => TargetCapabilities;
-  /** Whether answers carry the game's own state after a move; a judge's never do. */
-  showState?: boolean;
   /** The tool's name the session answers to: `computer` unless it drives the desktop. */
   toolName?: string;
-  /** Told once, when the goal is reached: the trace that shows it and the goal (the host vouches for it). */
-  onReached?: (tracePath: string, questId: string) => void;
 }
 
 /** One session on one target: its tool call, its shared load, the build it shows and its trace. */
@@ -137,7 +120,6 @@ interface ActionRecord {
   route: InputRoute | null;
   frame: string | null;
   simMs: number | null;
-  reached: boolean;
   /** Input actions the target took, of those planned; null for an action that sent none. */
   applied: { taken: number; planned: number } | null;
   /** Why the action failed, when it did. */
@@ -174,7 +156,7 @@ interface SessionHelpers {
   readonly clearSetupNote: () => void;
   readonly cursor: (target: ComputerTarget, size: { width: number; height: number }) => { x: number; y: number };
   readonly stateText: (target: ComputerTarget, max?: number) => Promise<string>;
-  /** The state after a move, as the answer shows it, with the goal checked against it. */
+  /** The state after a move, as the answer shows it. */
   readonly afterMove: (ctx: ActionContext) => Promise<string>;
   /** Save a frame under the session's folder; a PNG keeps its own extension. */
   readonly saveFrame: (jpeg: Buffer, name: string, mime?: StillMimeType) => Promise<string>;
@@ -688,7 +670,6 @@ function traceKeeper(options: ComputerSessionOptions) {
   };
   let started: number | null = null;
   let steps = 0;
-  let reachedAt: number | null = null;
   const routes = new Set<InputRoute>();
   return {
     path: (): string | null => file,
@@ -701,7 +682,6 @@ function traceKeeper(options: ComputerSessionOptions) {
     ) => {
       started ??= now();
       steps += 1;
-      if (record.reached && reachedAt === null) reachedAt = steps;
       if (record.route) routes.add(record.route);
       const row: TraceRow = {
         i: steps,
@@ -716,7 +696,6 @@ function traceKeeper(options: ComputerSessionOptions) {
         ...(record.applied ? { applied: record.applied } : {}),
         ...(refused ? { refused: true as const } : {}),
         ...(record.failed ? { failed: record.failed } : {}),
-        ...(record.reached ? { reached: true as const } : {}),
       };
       claimed ??= claimFile();
       const into = await claimed;
@@ -727,26 +706,17 @@ function traceKeeper(options: ComputerSessionOptions) {
       path: steps ? file : null,
       steps,
       deterministic,
-      reachedAt,
       routes: [...routes],
     }),
   };
 }
 
-/** Where the session's goal stands: reached, or already holding before any move (which never counts). */
-interface GoalState {
-  reached: boolean;
-  /** The goal held before the first move; it counts only once it has stopped holding and holds again. */
-  heldBeforeMoving: boolean;
-}
-
-/** The session's helpers over its source, its options and the keepers of its clock and goal. */
+/** The session's helpers over its source, its options and the keeper of its clock. */
 function sessionHelpers<T extends ComputerTarget>(
   source: TargetSource<T>,
   options: ComputerSessionOptions,
   state: { root: () => string; loadedAt: () => number; note: { value: string | null } },
   clock: ReturnType<typeof clockKeeper>,
-  goal: GoalState,
 ): SessionHelpers {
   const numbering = folderNumbering(options.frameDir);
   const readState = async (target: ComputerTarget): Promise<unknown> =>
@@ -761,15 +731,7 @@ function sessionHelpers<T extends ComputerTarget>(
     cursor: (target, size) => target.pointer() ?? centre(size),
     stateText: async (target, max = STATE_CHARS.default) =>
       `state: ${JSON.stringify(await readState(target)).slice(0, max)}`,
-    afterMove: async (ctx) => {
-      const current = await readState(ctx.target);
-      const line =
-        options.showState === false ? "" : `state: ${JSON.stringify(current).slice(0, STATE_CHARS.afterAction)}`;
-      const reached = goalReached(options.quest, goal, current);
-      if (!reached || !options.quest) return line;
-      ctx.record.reached = true;
-      return `${line}\nGOAL REACHED (studio-verified): ${options.quest.id}`.trim();
-    },
+    afterMove: async (ctx) => `state: ${JSON.stringify(await readState(ctx.target)).slice(0, STATE_CHARS.afterAction)}`,
     saveFrame: async (jpeg, name, mime = StillMimeType.Jpeg) => {
       await ensureDir(options.frameDir);
       await numbering.ready;
@@ -811,22 +773,7 @@ function actionContext(
 
 /** A record with nothing in it yet. */
 function emptyRecord(): ActionRecord {
-  return { route: null, frame: null, simMs: null, reached: false, applied: null };
-}
-
-/**
- * Whether this move reached the goal: the first time the game's own state meets it, and never when
- * it already held before the first move — that state came with the build, not from playing it.
- */
-function goalReached(quest: ComputerQuest | undefined, goal: GoalState, current: unknown): boolean {
-  if (!quest || goal.reached) return false;
-  const holds = setupReached(quest.until, current) === true;
-  if (goal.heldBeforeMoving) {
-    if (!holds) goal.heldBeforeMoving = false;
-    return false;
-  }
-  if (holds) goal.reached = true;
-  return holds;
+  return { route: null, frame: null, simMs: null, applied: null };
 }
 
 /**
@@ -844,10 +791,8 @@ export function computerSession<T extends ComputerTarget>(
   let moves = 0;
   let caps = source.caps;
   const note = { value: null as string | null };
-  const goal: GoalState = { reached: false, heldBeforeMoving: false };
   const clock = clockKeeper(options);
   const trace = traceKeeper(options);
-  const offered = () => (options.offer ? options.offer(caps) : caps);
   const ensureLoaded = sharedLoad(async (force: boolean): Promise<TargetLoad<T>> => {
     const loaded = await source.load(root, force);
     if (!loaded.fresh || loaded.problem) return loaded;
@@ -855,10 +800,9 @@ export function computerSession<T extends ComputerTarget>(
     await clock.onLoad(loaded.target);
     loadedAt = Date.now();
     note.value = loaded.note;
-    goal.heldBeforeMoving = await goalHoldsNow(options.quest, loaded.target);
     return loaded;
   });
-  const helpers = sessionHelpers(source, options, { root: () => root, loadedAt: () => loadedAt, note }, clock, goal);
+  const helpers = sessionHelpers(source, options, { root: () => root, loadedAt: () => loadedAt, note }, clock);
   const refuse = async (request: ComputerRequest, sentence: string): Promise<LiveToolResult> => {
     await trace.write(request, describeComputerAction(request), emptyRecord(), null, true);
     return sentence;
@@ -874,8 +818,6 @@ export function computerSession<T extends ComputerTarget>(
       },
     );
     await trace.write(request, ctx.caption, ctx.record, loaded.target.pointer(), false);
-    const tracePath = trace.path();
-    if (ctx.record.reached && options.quest && tracePath) options.onReached?.(tracePath, options.quest.id);
     return answer;
   };
   const run = async (name: string, args: Record<string, unknown>): Promise<LiveToolResult> => {
@@ -885,11 +827,11 @@ export function computerSession<T extends ComputerTarget>(
     const request = parsed.request;
     // Refused before the load when even what the target may do rules it out (nothing starts),
     // and again after it, against what the loaded target says it can do.
-    const ruledOut = refusalOf(request, offered());
+    const ruledOut = refusalOf(request, caps);
     if (ruledOut) return refuse(request, ruledOut);
     const loaded = await ensureLoaded(request.action === ComputerVerb.Reload);
     if (loaded.problem) return loaded.problem;
-    const refused = refusalOf(request, offered());
+    const refused = refusalOf(request, caps);
     if (refused) return refuse(request, refused);
     const cost = movesOf(request);
     if (options.maxActions !== undefined && moves + cost > options.maxActions) {
@@ -907,13 +849,6 @@ export function computerSession<T extends ComputerTarget>(
     },
     trace: () => trace.summary(clock.deterministic()),
   };
-}
-
-/** Whether the goal already holds on a freshly loaded build, before any move. */
-async function goalHoldsNow(quest: ComputerQuest | undefined, target: ComputerTarget): Promise<boolean> {
-  if (!quest || !target.state) return false;
-  const state = await target.state().catch(() => null);
-  return setupReached(quest.until, state) === true;
 }
 
 /**

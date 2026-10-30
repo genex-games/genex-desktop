@@ -31,7 +31,7 @@ import { ModelCatalog } from "./model-catalog.ts";
 import { cliVersion, resolveCodingCli } from "./external-cli.ts";
 import { releaseStaleLocks } from "./ownership-locks.ts";
 import { StudioBridge, answerBridgeCall, bridgeTools } from "./studio-bridge.ts";
-import { BLIND_JUDGE_NOTE, JUDGE_RULES, offLimitsNote, planModeNote, readOnlyNote } from "./codex-prompts.ts";
+import { JUDGE_RULES, offLimitsNote, planModeNote, readOnlyNote } from "./codex-prompts.ts";
 import { leadBuildWrites } from "./session-commands.ts";
 import {
   GROK_HOSTS,
@@ -513,7 +513,6 @@ export class GrokEngine implements Engine {
         model: request.model,
         effort: request.model && request.effort ? this.#effort(request.model, request.effort) : null,
         resume: request.resume,
-        bridge: turn.bridge,
       });
       const invocation = await this.#invocation(argv, { ...turn, folder, run }, request.denyReads ?? [], {
         leadBuilds: request.leadBuilds,
@@ -673,7 +672,6 @@ export class GrokEngine implements Engine {
     return [
       request.prompt,
       ctx.bridge?.instructions() ?? "",
-      ctx.access === GrokAccess.Blind ? BLIND_JUDGE_NOTE : "",
       plan
         ? planModeNote(ctx.cwd, ctx.scratch ?? "")
         : readOnlyNote(
@@ -840,7 +838,6 @@ function cliIdentity(cli: ResolvedCli): string {
 
 /** What a session's tools may do: a build edits; a read-only session, a lead while its build runs and Plan only look. */
 function sessionAccess(request: DelegateRequest): GrokAccess {
-  if (request.blind) return GrokAccess.Blind;
   const readOnly = Boolean(request.readOnly) && !request.coordinator;
   return readOnly || chatMode(request) === PermissionMode.Plan ? GrokAccess.ReadOnly : GrokAccess.Build;
 }

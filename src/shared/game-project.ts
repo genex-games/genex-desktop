@@ -7,7 +7,6 @@ import type { GameRuntime } from "./computer-target.ts";
 import type { EngineBinding, LinkedEngine } from "./game-engine.ts";
 import type { GameLibraryEntry } from "./game-library.ts";
 import type { HookEvent } from "./plugin-hooks.ts";
-import type { JudgeRef } from "./plugins.ts";
 import type { FolderHolds, ProjectFact } from "./project-facts.ts";
 
 export interface GameProject {
@@ -33,11 +32,9 @@ export interface GameProject {
   linkedEngine?: LinkedEngine;
   /**
    * True when an engine plugin that is on plays this game in its editor (its play tools hold the
-   * game's link): judges and the computer play it there. Filled by the harness's `game.list`.
+   * game's link): the computer plays it there. Filled by the harness's `game.list`.
    */
   editorPlay?: boolean;
-  /** The judges that play this game in its editor, as its engine plugin declares them; only with `editorPlay`. */
-  judges?: JudgeRef[];
   /**
    * What the folder holds, by `shared/project-facts.ts`: the core table, the enabled plugins'
    * `detect` and the engine link. Empty while the first message has not picked a kind.

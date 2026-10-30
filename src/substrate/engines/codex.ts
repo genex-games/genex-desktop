@@ -115,14 +115,7 @@ import {
 } from "./common.ts";
 import { StudioTool, studioToolName } from "./studio-tool-prompts.ts";
 import { limitResetMs } from "./limit-reset.ts";
-import {
-  BLIND_JUDGE_NOTE,
-  JUDGE_RULES,
-  dynamicToolsNote,
-  offLimitsNote,
-  planModeNote,
-  readOnlyNote,
-} from "./codex-prompts.ts";
+import { JUDGE_RULES, dynamicToolsNote, offLimitsNote, planModeNote, readOnlyNote } from "./codex-prompts.ts";
 import { engineMode, PermissionMode } from "../../shared/permissions.ts";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 import { CodingCliState } from "../../shared/coding-cli.ts";
@@ -1122,7 +1115,6 @@ export class CodexEngine implements Engine {
       request.prompt,
       ctx.bridge?.instructions() ?? "",
       ctx.turn?.declaresTools ? dynamicToolsNote(bridgeTools(request).map((tool) => tool.name)) : "",
-      request.blind ? BLIND_JUDGE_NOTE : "",
       planScratch
         ? planModeNote(ctx.cwd, planScratch)
         : readOnlyNote(
@@ -2133,7 +2125,7 @@ function chatMode(request: DelegateRequest): PermissionMode | null {
 
 /**
  * A session started in a folder of its own, because Codex can always write where it is started:
- * a read-only one (the playtester, a reviewer, a reader), and a chat session in Plan, a lead's
+ * a read-only one (a reviewer, a reader), and a chat session in Plan, a lead's
  * included. The only place it can write is the studio's bridge there.
  */
 function startsElsewhere(request: DelegateRequest): boolean {
@@ -2267,7 +2259,7 @@ const APP_SERVER_ISOLATION_ARGS = ["-c", "mcp_servers={}"];
 /**
  * The contractor's confinement. `workspace-write` keeps every edit inside the folder it was
  * pointed at (plus the run's own capture output, which it must be able to read and the studio
- * writes); a read-only session — the playtester — may look and talk but never touch.
+ * writes); a read-only session — a reviewer, a reader — may look and talk but never touch.
  * `approval_policy=never` is what makes it non-interactive: there is nobody to ask, so a command
  * the sandbox refuses fails honestly instead of hanging on a prompt nobody will see. A session
  * checked in Auto (`asks`, only on the app server, which answers each ask) runs `on-request`
@@ -2284,7 +2276,7 @@ function sandboxArgs(
     "-c",
     asks ? 'approval_policy="on-request"' : 'approval_policy="never"',
     // One writable place (a worker's write roots: `workerRoots`). For a builder that is the workspace it was hired for; for a
-    // session that may look but never touch (the playtester) it is a scratch folder holding
+    // session that may look but never touch (a reviewer, a reader) it is a scratch folder holding
     // nothing but the studio's own bridge, which leaves the build under test read-only at the
     // OS boundary rather than by request. Read stays wide: stills the user named and the run's
     // own capture output have to be openable, and Codex grants disk reads either way.

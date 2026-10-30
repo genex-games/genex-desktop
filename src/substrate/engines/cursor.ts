@@ -28,7 +28,7 @@ import { runCommand } from "./claude-cli.ts";
 import { releaseStaleLocks } from "./ownership-locks.ts";
 import { StudioBridge, answerBridgeCall, bridgeTools } from "./studio-bridge.ts";
 import { writeDelegateStills } from "./codex.ts";
-import { BLIND_JUDGE_NOTE, JUDGE_RULES, offLimitsNote, planModeNote, readOnlyNote } from "./codex-prompts.ts";
+import { JUDGE_RULES, offLimitsNote, planModeNote, readOnlyNote } from "./codex-prompts.ts";
 import { leadBuildWrites } from "./session-commands.ts";
 import {
   CURSOR_FILE_STORE,
@@ -490,7 +490,6 @@ export class CursorEngine implements Engine {
       request.prompt,
       ctx.pictures.length ? MESSAGE.Pictures(ctx.pictures) : "",
       ctx.bridge?.instructions() ?? "",
-      ctx.access === CursorAccess.Blind ? BLIND_JUDGE_NOTE : "",
       plan
         ? planModeNote(ctx.cwd, ctx.scratch ?? "")
         : readOnlyNote(
@@ -543,8 +542,7 @@ export class CursorEngine implements Engine {
       leadBuilds: builds ? await leadBuildWrites(leadBuilds) : [],
       scratchDir: path.join(this.#scratchRoot, "tmp"),
       compileCache,
-      // A blind judge plays the build from an empty folder and may read none of it.
-      secretPaths: [...this.#protectedPaths, ...denyReads, ...(ctx.access === CursorAccess.Blind ? [ctx.cwd] : [])],
+      secretPaths: [...this.#protectedPaths, ...denyReads],
       ...(this.#toolPath ? { toolPath: this.#toolPath } : {}),
     });
   }
@@ -663,7 +661,6 @@ function absolute(value: string | undefined): string | undefined {
 
 /** What a session's tools may do: a build edits; a read-only session, a lead while its build runs and Plan only look. */
 function sessionAccess(request: DelegateRequest): CursorAccess {
-  if (request.blind) return CursorAccess.Blind;
   const readOnly = Boolean(request.readOnly) && !request.coordinator;
   return readOnly || chatMode(request) === PermissionMode.Plan ? CursorAccess.ReadOnly : CursorAccess.Build;
 }

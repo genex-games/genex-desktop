@@ -1366,7 +1366,7 @@ export class ClaudeCodeEngine implements Engine {
       strictMcpConfig: true,
       allowedTools: allowedToolsFor(request, interviewTools, Boolean(shell)),
       disallowedTools: disallowedToolsFor(request, Boolean(shell)),
-      ...builtInsFor(request, Boolean(shell)),
+      ...builtInsFor(Boolean(shell)),
       // No sandbox key at all for a session that asks: Claude Code's default, which a game's own
       // project settings may still turn on. Every command it runs was asked about first. A worker
       // is boxed in every mode, Bypass included (`workerSandbox`).
@@ -2236,7 +2236,7 @@ function sessionPrompt(
  * session's tools say it, a Mac's never changes, and a session with no shell has none to name.
  */
 function withShellLine(request: DelegateRequest, genexShell: boolean, platform: NodeJS.Platform): DelegateRequest {
-  if (platform !== "win32" || !request.resume || request.blind) return request;
+  if (platform !== "win32" || !request.resume) return request;
   const bash = !disallowedToolsFor(request, genexShell).includes(SHELL_TOOL);
   if (!genexShell && !bash) return request;
   const line = genexShell ? SHELL_THIS_TURN.Studio : SHELL_THIS_TURN.Bash;
@@ -2312,7 +2312,7 @@ function compactSummaryText(raw: string | null): string {
  * main.js` died even with the sandbox's auto-allow on. Safe only together with the sandbox shape — allowUnsandboxedCommands:
  * false makes the CLI ignore dangerouslyDisableSandbox entirely, so the blanket allow can never
  * step outside the sandbox. One authority: no parallel permissions.allow rules. A read-only
- * session (the playtester, a waking run's lead) is never allowed its shell by a blanket rule, and
+ * session (a reviewer, a reader) is never allowed its shell by a blanket rule, and
  * has none at all unless it asks in the chat's mode (`leadAsks`, `disallowedToolsFor`).
  */
 function allowedToolsFor(request: DelegateRequest, interviewTools: StudioToolSpec[], genexShell = false): string[] {
@@ -2359,7 +2359,7 @@ function researches(request: DelegateRequest): boolean {
  * The tools the session never gets. No session gets Claude Code's own sub-agents (Agent, Task):
  * Genex runs the workers, under the person's ceiling and the chat's mode. A chat that may launch a
  * build is still a full contractor: it answers, researches or edits itself and launches only when
- * the ask needs a build. A read-only session (the playtester) may not even run a command. A
+ * the ask needs a build. A read-only session (a reviewer, a reader) may not even run a command. A
  * read-only lead or coordinator the person may talk to (`leadAsks`), the chat's main agent, keeps
  * what the chat's own session keeps; the chat's mode decides each call.
  */
@@ -2371,15 +2371,12 @@ function disallowedToolsFor(request: DelegateRequest, genexShell = false): strin
 
 /** The tools a session never gets, whoever runs its commands (`disallowedToolsFor`). */
 function refusedTools(request: DelegateRequest): string[] {
-  if (request.blind) return [...new Set([...JUDGE_DISALLOWED_TOOLS, ...EDIT_TOOLS, ...ASKING_TOOLS])];
   if (request.worker) return workerDisallowedTools(request);
   if (request.readOnly && !request.leadAsks)
     return [...MESSAGING_TOOLS, ...EDIT_TOOLS, SHELL_TOOL, ...SUBAGENT_TOOLS, ...WEB_TOOLS];
   return [...MESSAGING_TOOLS, ...SUBAGENT_TOOLS, ...(asksOf(request) ? ASKING_TOOLS : [])];
 }
 
-/** The only built-in a blind judge may load: tool search, which brings in its deferred live tools. */
-const BLIND_BUILT_INS = ["ToolSearch"];
 /**
  * The built-ins of a session whose commands Genex's sandbox runs (`studioShell`): its files, its
  * task list, the web and its plan, and none that starts a process of its own (Bash, PowerShell,
@@ -2405,13 +2402,11 @@ const STUDIO_SHELL_BUILT_INS = [
 ];
 
 /**
- * A session's built-ins, as an allowlist on top of its block list, where one is kept: a blind
- * judge's, and a studio-shell session's. A built-in Claude Code adds later (Skill, Workflow's
- * sub-agents with their file tools, a shell of its own) would otherwise reach it unasked. Every
- * other session keeps Claude Code's own set.
+ * A session's built-ins, as an allowlist on top of its block list, where one is kept: a studio-shell
+ * session's. A built-in Claude Code adds later (Skill, Workflow's sub-agents with their file tools,
+ * a shell of its own) would otherwise reach it unasked. Every other session keeps Claude Code's own set.
  */
-function builtInsFor(request: DelegateRequest, genexShell: boolean): { tools?: string[] } {
-  if (request.blind) return { tools: [...BLIND_BUILT_INS] };
+function builtInsFor(genexShell: boolean): { tools?: string[] } {
   return genexShell ? { tools: [...STUDIO_SHELL_BUILT_INS] } : {};
 }
 
@@ -2617,7 +2612,7 @@ function workerClaudeFolders(cwd: string, roots: readonly string[]): string[] {
  * where the person would; a read-only one runs none.
  */
 export function studioShell(request: DelegateRequest, platform: NodeJS.Platform): boolean {
-  if (platform !== "win32" || request.blind) return false;
+  if (platform !== "win32") return false;
   if (request.worker) {
     const box = workerBox(request.worker, Boolean(request.readOnly));
     // A Bypass worker has no box: Claude Code's own shell runs its commands, as the person's.
@@ -2807,7 +2802,7 @@ function shellTimeout(asked: number | undefined): number {
 }
 
 /**
- * A live tool answers during the session: the playtester presses a key and sees the state come
+ * A live tool answers during the session: a worker presses a key and sees the state come
  * back. A thrown handler reports as text — a broken tool must not end the session.
  */
 function liveTool(kit: McpKit, spec: LiveToolSpec, onLiveTool: NonNullable<DelegateRequest["onLiveTool"]>) {

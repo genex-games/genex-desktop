@@ -3,7 +3,7 @@
  * delegation carries `computer` beside `capture`; both load the workspace through the served
  * entry (a game with its own build is built first, or every worker frame shows `src/main.ts`
  * served as text); the window stays loaded between actions; every
- * action updates the coalesced agent screen; the playtester gets the same tool.
+ * action updates the coalesced agent screen.
  */
 import assert from "node:assert/strict";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
@@ -518,103 +518,6 @@ describe("the computer tool's host", () => {
     assert.notEqual(handles[0], "live", "a window of its own, not the user's");
     assert.equal(rig.preview.loads.length, liveLoads, "nothing was loaded into the user's window");
     assert.deepEqual(customEvents(await rig.core.listAllEvents(), "director_window"), []);
-  });
-
-  it("hands the playtester the same tool beside its shorthands, and the scout a read-only one", async () => {
-    const rig = await startRig({ replies: [] });
-    rigs.push(rig);
-    const project = await rig.core.games.scaffold("play-smoke", { title: "play" });
-    const api = rig.core.api() as unknown as Record<string, (p: unknown) => Promise<unknown>>;
-    const names: string[][] = [];
-    const readOnly: boolean[] = [];
-    fakeEngine(rig, "codex", async (request) => {
-      names.push((request.liveTools ?? []).map((t) => t.name));
-      readOnly.push(request.readOnly === true);
-      const shot = await request.onLiveTool!("computer", { action: "screenshot" });
-      assert.ok(typeof shot !== "string" && shot.images?.length, "the playtester sees the picture");
-      const legacy = await request.onLiveTool!("game_state", {});
-      assert.match(text(legacy), /^state:/);
-      return { ok: true, engine: "codex", turns: 1, usage: {}, sessionId: "p", summary: "{}" };
-    });
-    await api["engine.delegate"]!({
-      engine: "codex",
-      prompt: "play",
-      project: project.name,
-      playtest: { project: project.name, root: project.dir, runId: "run_p", facetId: "integration", iteration: 1 },
-      readOnly: true,
-    });
-    await api["engine.delegate"]!({
-      engine: "codex",
-      prompt: "scout",
-      project: project.name,
-      playtest: {
-        project: project.name,
-        root: project.dir,
-        runId: "run_p",
-        facetId: "scout",
-        iteration: 0,
-        role: "scout",
-        label: "scout",
-      },
-      readOnly: true,
-    });
-    assert.deepEqual(readOnly, [true, true]);
-    assert.ok(names[0]!.includes("computer") && names[0]!.includes("press_keys") && names[0]!.includes("screenshot"));
-    const roles = rig.events
-      .filter((e) => e.type === "preview.frame")
-      .map((e) => (e.payload as { role: string; label: string }).role);
-    assert.ok(roles.includes("playtester") && roles.includes("scout"), roles.join(","));
-    const shots = path.join(rig.core.layout.runs, "run_p", "facet_scout", "playtest", "iter_000");
-    assert.ok(
-      (await readFile(path.join(shots, "s1_screen.jpg"))).length > 0,
-      "the scout's frames are filed with the run",
-    );
-  });
-});
-
-describe("a judge that plays", () => {
-  it("holds the computer alone, blind in an empty folder, steps its clock, and hands back a verified trace", async () => {
-    const rig = await startRig({ replies: [] });
-    rigs.push(rig);
-    const project = await rig.core.games.scaffold("judge-smoke", { title: "judge" });
-    const api = rig.core.api() as unknown as Record<string, (p: unknown) => Promise<unknown>>;
-    const seen: DelegateRequest[] = [];
-    fakeEngine(rig, "codex", async (request) => {
-      seen.push(request);
-      const moved = await request.onLiveTool!("computer", { action: "key", text: "Return" });
-      assert.ok(typeof moved !== "string" && moved.images?.length, "the judge sees the result of its move");
-      const shorthand = await request.onLiveTool!("press_keys", { keys: "w" });
-      assert.doesNotMatch(text(shorthand), /^OK/, "the playtester's shorthands are not a judge's");
-      return { ok: true, engine: "codex", turns: 1, usage: {}, sessionId: "j", summary: "{}" };
-    });
-    const result = (await api["engine.delegate"]!({
-      engine: "codex",
-      prompt: "play and judge",
-      project: project.name,
-      playtest: {
-        project: project.name,
-        root: project.dir,
-        runId: "run_j",
-        facetId: "integration",
-        iteration: 1,
-        role: "judge",
-        label: "judge",
-        maxActions: 4,
-        quest: { id: "booted", until: { path: "ready", truthy: true } },
-      },
-      readOnly: true,
-    })) as { trace?: { steps: number; path: string | null } };
-    const request = seen[0]!;
-    assert.deepEqual(
-      (request.liveTools ?? []).map((t) => t.name),
-      ["computer"],
-    );
-    assert.equal(request.blind, true);
-    assert.equal(request.readOnly, true);
-    assert.notEqual(path.resolve(request.cwd), path.resolve(project.dir), "the judge does not start in the build");
-    assert.ok(!(request.extraReads ?? []).some((dir) => path.resolve(dir) === path.resolve(project.dir)));
-    assert.equal(result.trace?.steps, 1, "the refused shorthand never reached the computer");
-    assert.ok(result.trace?.path && (await readFile(result.trace.path, "utf8")).includes('"action":"key"'));
   });
 });
 

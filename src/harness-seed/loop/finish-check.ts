@@ -308,9 +308,8 @@ const unanswered = (why: string): Unanswered => ({ step: FinishCheckStep.Unanswe
 
 /**
  * Where the reviewer runs: on the Reviewers role's engine and model when that engine holds sessions,
- * else on the run's own engine with the model picked for it (`modelOn`), else nowhere. A copy of the
- * playtester's seat rule (`playtester.ts` `playSeat`, a shipped module that exports none) narrowed to
- * session engines: a reviewer reads files, which only a session can.
+ * else on the run's own engine with the model picked for it (`modelOn`), else nowhere: only a
+ * session engine, since a reviewer reads files, which only a session can.
  */
 export async function reviewerSeat(ctx: HarnessCtx, run: Run): Promise<ReviewerSeat | null> {
   const described = await ctx.call(HostMethod.EngineDescribe, {}).catch(() => []);

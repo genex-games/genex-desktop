@@ -22,10 +22,8 @@ export const GIT_TIMEOUT_MS = Object.freeze({ ref: 30 * SECOND_MS, quick: MINUTE
 export const MIN_DELEGATE_TIMEOUT_MS = MINUTE_MS;
 
 /**
- * The effort a small, bounded ask runs at: a code review, a replan, the next move, a direct
- * playtester's move, a list of lessons. Always this, whatever effort the user set for a role or
- * the run: a playtest makes up to twenty of these asks, and a run at high judge effort must
- * not pay high effort for each of them.
+ * The effort a small, bounded ask runs at, whatever effort the user set for a role or the run: a
+ * run at high judge effort must not pay high effort for each of them.
  */
 export const LIGHT_EFFORT = "low";
 

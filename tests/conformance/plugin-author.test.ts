@@ -145,8 +145,8 @@ async function tree(dir: string, rel = ""): Promise<string[]> {
 
 /**
  * The example the skill teaches is nothing the person is warned about: no dangerous finding, and,
- * as the scan reads code and not Markdown, only the plugin's own Markdown (its skill file and its
- * judge's brief) disclosed as not read.
+ * as the scan reads code and not Markdown, only the plugin's own Markdown (its skill file) disclosed
+ * as not read.
  */
 function assertScanQuiet(scan: { verdict: string; findings: Array<{ rule: string; severity: string; file: string }> }) {
   assert.deepEqual(
@@ -156,7 +156,7 @@ function assertScanQuiet(scan: { verdict: string; findings: Array<{ rule: string
   assert.notEqual(scan.verdict, "dangerous");
   assert.deepEqual(
     scan.findings.map((f) => `${f.rule} ${f.file}`),
-    ["not-scanned judges/first-play.md", "not-scanned skills/sketch.md"],
+    ["not-scanned skills/sketch.md"],
   );
 }
 

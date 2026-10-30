@@ -261,26 +261,6 @@ export interface PluginEngineDeclaration {
   apps?: { mac?: string[]; windows?: string[] };
 }
 
-/**
- * API 3, beside an `engine`: a blind judge that plays your engine's games in its editor (`judges` in
- * the manifest, at most 8). It never sees code and answers from playing.
- * - `id` 2–40 lowercase letters, digits and dashes, unique in the manifest; `label` 1–40 characters.
- * - `facts` the facts of the games it judges (none: every game your plugin plays in its editor).
- * - `brief` a Markdown file in your package (at most 16 000 characters), added to the judge's rubric.
- * - `players` how many players its play opens, 1 to your `engine.play.players` (one when absent).
- * - `probe` one of your harness tools that asks nothing, runs no host program and needs every lock
- *   `play-open` needs; Genex runs it once right after the judge's play opens, and its `note` and
- *   `images` (measurements and pictures, never source) open the judge's first answer.
- */
-export interface PluginJudge {
-  id: string;
-  label: string;
-  facts?: string[];
-  brief: string;
-  players?: number;
-  probe?: string;
-}
-
 /** A skill whose text sits in the manifest (1–16 000 characters); agents get all of it in their brief. */
 export interface PluginInlineSkill {
   name: string;
@@ -465,8 +445,6 @@ export interface PluginManifest {
   mcpServers?: PluginMcpServer[];
   /** API 3, capability `game-engine`: the engine the plugin declares. */
   engine?: PluginEngineDeclaration;
-  /** API 3, beside `engine`: the blind judges that play your engine's games in its editor. */
-  judges?: PluginJudge[];
   /** Host-managed account flow. Status may finish a pending browser authorization. */
   account?: { connect: string; unlock: string; disconnect: string; status: string; cancel?: string };
   /**

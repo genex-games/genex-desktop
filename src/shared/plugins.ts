@@ -609,11 +609,6 @@ export interface PluginManifest {
    * Live view it shows (`shared/observers.ts`).
    */
   observers?: PluginObserver[];
-  /**
-   * API 3, capability `game-engine` with an `engine`: the blind judges that play the engine's games
-   * in its editor, each with its own brief, players and probe (`PluginJudge`).
-   */
-  judges?: PluginJudge[];
   /** Host-managed account flow. Status may finish a pending browser authorization. */
   account?: { connect: string; unlock: string; disconnect: string; status: string; cancel?: string };
   /**
@@ -623,42 +618,6 @@ export interface PluginManifest {
   icon?: string;
   /** What to do to start using it, for its page: plain one-line steps Genex draws ({@link isPluginSetup}). */
   setup?: string[];
-}
-
-/** The most judges one manifest declares. */
-export const MAX_PLUGIN_JUDGES = 8;
-/** The longest judge brief, in characters: a package file read and checked at install. */
-export const MAX_JUDGE_BRIEF_CHARS = 16_000;
-
-/**
- * API 3: a blind judge an engine plugin declares (`judges`). It plays a game in the engine's editor
- * through the play tools, never sees code, and answers from playing. Data only: the host runs it.
- */
-export interface PluginJudge {
-  /** Unique in the manifest: what an agent names the judge by. */
-  id: string;
-  /** What the person and the agent read it as, 1-40 characters on one line. */
-  label: string;
-  /** The facts of the games it judges; every game the plugin plays in its editor when absent. */
-  facts?: string[];
-  /** The package's Markdown file holding its brief, appended to the judge's rubric (at most `MAX_JUDGE_BRIEF_CHARS`). */
-  brief: string;
-  /** How many players its play opens, 1 to the engine's `play.players`; one when absent. */
-  players?: number;
-  /**
-   * A quiet harness tool of the plugin, needing the play tools' locks, that the host runs once in
-   * the judge's play right after it opens: its `note` and `images` (measurements and pictures,
-   * never source) open the judge's first message.
-   */
-  probe?: string;
-}
-
-/** A judge as a game's descriptor and an agent name it. */
-export type JudgeRef = Pick<PluginJudge, "id" | "label">;
-
-/** The judges that reach a game: those naming no facts, and those whose facts the game holds. */
-export function judgesFor(judges: readonly PluginJudge[] | undefined, game: GameKind): PluginJudge[] {
-  return (judges ?? []).filter((judge) => scopeReaches(judge.facts, game));
 }
 
 /** The engines `manifests` declare, by id: the first declaration of an id wins. */

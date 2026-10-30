@@ -709,24 +709,6 @@ setTimeout(() => { writeFileSync(${JSON.stringify(file)}, ${JSON.stringify(expir
     assert.deepEqual(invocation?.sandbox?.writableRoots, [invocation?.cwd], "it writes only its own folder");
   });
 
-  it("a blind judge has the shell alone, approved only for the studio bridge, and no web", async () => {
-    const { engine, seen, prompts } = await engineWith(() => replay([]));
-    await engine.delegate({
-      cwd: await game(),
-      prompt: "Play it",
-      blind: true,
-      readOnly: true,
-      liveTools: [{ name: "press", description: "press", parameters: { type: "object", properties: {} } }],
-      onLiveTool: async () => "ok",
-    });
-    const argv = seen[0]?.argv ?? [];
-    assert.equal(flag(argv, "--tools"), "run_terminal_command");
-    assert.ok(!argv.includes("--always-approve"), "a headless run refuses every call nobody approved");
-    assert.equal(flag(argv, "--allow"), "Bash(node .studio/bridge/tool.mjs *)");
-    assert.ok(argv.includes("--disable-web-search"));
-    assert.match((prompts[0] as Array<{ text: string }>)[0]?.text ?? "", /JUDGE BY PLAYING/);
-  });
-
   it("plans in Plan: read-only, from a folder of its own", async () => {
     const { engine, seen, prompts } = await engineWith(() => replay([]));
     const cwd = await game();
@@ -987,7 +969,6 @@ describe("Grok Build's command line", () => {
       access: "build",
       promptFile: path.join(root, "it's prompt.json"),
       cwd: root,
-      bridge: false,
     });
     let stderr = "";
     const seen: Array<Record<string, unknown>> = [];
@@ -1022,7 +1003,6 @@ describe("Grok Build's command line", () => {
       access: "build",
       promptFile: path.join(root, "it's prompt.json"),
       cwd: root,
-      bridge: false,
     });
     const parent = {
       PATH: process.env.PATH,

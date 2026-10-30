@@ -26,7 +26,7 @@ export function offLimitsNote(dirs: string[]): string {
 }
 
 /**
- * A read-only session's orientation (the playtester, a reviewer, a reader): the build it tests, and
+ * A read-only session's orientation (a reviewer, a reader): the build it tests, and
  * the only place it can write. No lead is read-only, so none reads this.
  */
 export function readOnlyNote(cwd: string, scratch: string | null): string {
@@ -55,14 +55,6 @@ export function mcpToolsNote(tools: readonly string[]): string {
   const named = tools.map((tool) => `${MCP_SERVER_NAME}_${tool}`).join(", ");
   return `STUDIO TOOLS — ${named} are your own tools in this session: call them directly with JSON arguments, and a tool that looks at the build answers with the picture itself. Only if one is refused, run \`node .studio/bridge/tool.mjs <tool> ...\` for the same tool instead.`;
 }
-
-/**
- * What a judge that plays is told on an engine that cannot take its file tools away at the
- * boundary (Codex reads the whole disk): it judges only from playing. The studio's own goal check
- * does not rest on this — it reads the game's state itself — but the judge's other answers do.
- */
-export const BLIND_JUDGE_NOTE =
-  "YOU JUDGE BY PLAYING — read, list or search no file of the build or anywhere else; the only files you may open are the pictures your studio tools save. Everything you say must come from what you did and saw in the game.";
 
 export function dynamicToolsNote(tools: readonly string[]): string {
   if (!tools.length) return "";

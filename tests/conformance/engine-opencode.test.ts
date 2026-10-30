@@ -487,30 +487,6 @@ describe("OpenCode sessions", () => {
     }
   });
 
-  it("a blind judge reads nothing: no file tool, nothing outside its folder, only its live tools", async () => {
-    const { engine, seen } = await engineWith(async function* () {
-      yield* replay([]);
-    });
-    const cwd = await game();
-    const computer = {
-      name: "computer",
-      description: "hands",
-      parameters: { type: "object" as const, properties: {} },
-    };
-    await engine.delegate({
-      cwd,
-      prompt: "Judge by playing",
-      readOnly: true,
-      blind: true,
-      liveTools: [computer],
-      onLiveTool: async () => "ok",
-    });
-    const config = JSON.parse(seen[0]?.env.OPENCODE_CONFIG_CONTENT ?? "{}");
-    for (const tool of ["read", "glob", "grep", "list", "edit", "external_directory"])
-      assert.equal(config.permission[tool], "deny", `${tool} is not a blind judge's`);
-    assert.equal(config.permission["studio_*"], "allow");
-  });
-
   it("tells a Loop's reviewer the build it tests is the folder it reads, never its own empty home", async () => {
     const { engine, seen, root } = await engineWith(async function* () {
       yield* replay([]);
@@ -876,13 +852,6 @@ describe("OpenCode 2.x and the studio's MCP tools", () => {
     const none = JSON.parse(openCodeConfigV2(OpenCodeAccess.ReadOnly, true));
     assert.equal(none.mcp, undefined);
     assert.equal(decideWild(none.permissions as Rule[], "studio_computer"), "deny");
-  });
-
-  it("a blind judge on 2.x reads no file either", () => {
-    const rules = JSON.parse(openCodeConfigV2(OpenCodeAccess.Blind, true, ["node", "x"])).permissions as Rule[];
-    for (const action of ["read", "glob", "grep", "external_directory", "edit"])
-      assert.equal(decideWild(rules, action), "deny", action);
-    assert.equal(decideWild(rules, "studio_computer"), "allow");
   });
 });
 

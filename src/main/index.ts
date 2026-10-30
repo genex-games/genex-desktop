@@ -1740,7 +1740,7 @@ function createFacetPreview(studio: StudioCore, index: number, released: () => v
     vendorDir: path.join(resources, "vendor"),
     partition: `game-preview-facet-${index}`,
     offscreen: true,
-    // Builders, playtesters, reviewers and the lead all play the game here; only Live is heard.
+    // Workers, reviewers and the lead all play the game here; only Live is heard.
     muted: true,
     resolveRoot: (name) => studio.games.dirFor(name),
   });

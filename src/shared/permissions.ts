@@ -11,8 +11,8 @@
  * ask, so it is always boxed. In every mode, Bypass included, a worker never reaches a sign-in,
  * Genex's own data or another game (the never-touch list). A web Loop snapshots the game before its
  * first turn; the Unreal Loop's lead takes its first snapshot at its first save point, so its
- * in-place workers before then have only the chat's checkpoints behind them. Other unattended work (playtesters, scouts, judges, candidates, a classic Autopilot's
- * builders) keeps the sandboxed contract of the engine that runs it. The host decides which is
+ * in-place workers before then have only the chat's checkpoints behind them. Other unattended work (a reviewer, a second opinion, an
+ * older run's builders) keeps the sandboxed contract of the engine that runs it. The host decides which is
  * which from what it recorded itself, and keeps the mode and every saved grant; the harness can
  * neither read nor set them, and no agent's message ever counts as the person's answer.
  */

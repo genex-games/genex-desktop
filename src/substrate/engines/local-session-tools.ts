@@ -81,8 +81,7 @@ const str = { type: "string" };
 
 /** The tools this session grants: reading always, writing unless read-only, then the studio's own. */
 export function localToolDefinitions(request: DelegateRequest, readonly: boolean): ToolDefinition[] {
-  // A blind judge sees the build only through its live tools: no file of the build is offered.
-  const definitions: ToolDefinition[] = request.blind ? [] : fileReadTools();
+  const definitions: ToolDefinition[] = fileReadTools();
   if (!readonly)
     definitions.push(
       tool(LocalTool.EditFile, LOCAL_TOOL_DESCRIPTION.editFile, { path: str, oldText: str, newText: str }, [

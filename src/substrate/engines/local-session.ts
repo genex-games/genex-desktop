@@ -626,7 +626,7 @@ function turnLimit(request: DelegateRequest): number {
 }
 
 /**
- * A session that may not edit: a read-only pass (playtest, scout) or a coordinator. A chat that
+ * A session that may not edit: a read-only pass (a reviewer, a reader) or a coordinator. A chat that
  * may launch a build is still a full contractor and keeps its write tools.
  */
 function isReadOnlySession(request: DelegateRequest): boolean {

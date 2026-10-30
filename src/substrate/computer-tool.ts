@@ -135,8 +135,7 @@ export type ScrollDirection = "up" | "down" | "left" | "right";
 
 /**
  * What an input action brings back with its answer: a picture of the whole screen, of only the
- * canvas, or nothing. Absent lets the session decide by role (a playtester and a judge look after
- * every move; a builder does not).
+ * canvas, or nothing. Absent lets the session decide (`observeByDefault`).
  */
 export const ComputerObserve = { Screenshot: "screenshot", Canvas: "canvas", None: "none" } as const;
 export type ComputerObserve = (typeof ComputerObserve)[keyof typeof ComputerObserve];
