@@ -1406,8 +1406,8 @@ export class ClaudeCodeEngine implements Engine {
     const outsideCwd = (dir: string): boolean => !isInside(cwd, dir);
     const additional = (request.extraReads ?? []).map((dir) => path.resolve(dir)).filter(outsideCwd);
     // The folders the person granted this chat ("Yes, and allow access to …") join the reads, and
-    // a worker's write roots its folders.
-    const granted = [...(rulesAsks(request)?.directories ?? []), ...workerWrites(request)]
+    // a worker's write roots and the build a lead leads its folders.
+    const granted = [...(rulesAsks(request)?.directories ?? []), ...workerWrites(request), ...leadBuilds(request)]
       .map((dir) => path.resolve(dir))
       .filter(outsideCwd);
     // The config home this session's CLI uses: the studio's, the one the environment names, or
@@ -2538,17 +2538,25 @@ export function toollessSandbox(platform: NodeJS.Platform = process.platform): {
   return { enabled: platform !== "win32" };
 }
 
+/** The build a lead leads outside its folder (`leadBuilds`), which it writes as its own; none for any other session. */
+function leadBuilds(request: DelegateRequest): string[] {
+  return request.leadBuilds ? [path.resolve(request.leadBuilds)] : [];
+}
+
 /**
  * An unattended session's shell: sandboxed, auto-allowed only because it cannot step outside
  * (allowUnsandboxedCommands: false makes the CLI ignore dangerouslyDisableSandbox entirely), and
- * never writing the studio's protected folders or an optimization candidate's fence.
+ * never writing the studio's protected folders or an optimization candidate's fence. It writes its
+ * folder, and a lead the build it leads.
  */
 function unattendedSandbox(request: DelegateRequest, protectedPaths: string[]): Record<string, unknown> {
+  const builds = leadBuilds(request);
   return {
     enabled: true,
     autoAllowBashIfSandboxed: true,
     allowUnsandboxedCommands: false,
     filesystem: {
+      ...(builds.length ? { allowWrite: builds } : {}),
       denyWrite: [...protectedPaths, ...(request.optimization?.denyWrites ?? [])],
       denyRead: [...baseDenyRead(), ...(request.denyReads ?? []), ...protectedPaths],
     },
@@ -2647,7 +2655,7 @@ async function shellBox(
 ): Promise<Pick<CommandBox, "cwd" | "writableRoots" | "secretPaths" | "denyWrite">> {
   const seat = request.worker;
   const fence = seat ? await neverTouchFence(seat.neverTouch) : { reads: [], writes: [] };
-  const roots = workerWrites(request);
+  const roots = [...workerWrites(request), ...leadBuilds(request)];
   const home = seat ? workerBox(seat, Boolean(request.readOnly)).home : false;
   const signIns = credentialHomes();
   return {

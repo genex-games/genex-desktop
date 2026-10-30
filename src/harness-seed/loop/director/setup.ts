@@ -56,7 +56,7 @@ import type { LedgerRecord } from "../ledger.ts";
 import type { LoopRun, LoopRunData, LoopRunShape, LoopRunState } from "./loop-run.ts";
 
 /**
- * This part serves a lead that is its chat's own session and writes nothing (one session): a run
+ * This part serves a lead that is its chat's own session (one session): a run
  * seats one only when every part it depends on says so (lead-session.ts `servesLead`).
  */
 export const SERVES_LEAD = true;

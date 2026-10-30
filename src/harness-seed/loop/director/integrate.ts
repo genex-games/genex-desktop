@@ -49,9 +49,9 @@ import { finishWaitsForCap, loopHoursOf } from "../time-cap.ts";
 import { workerDigest } from "./digests.ts";
 import { resolveByWorker, unresolvedOf } from "./conflict-worker.ts";
 import { contractAloneOnStart } from "./contract-gate.ts";
-import { setAsideStrays } from "./lead-session.ts";
-import { LEAD_DIRTY, LEAD_FIX_NEXT, LEAD_SET_ASIDE } from "./lead-session-prompts.ts";
-import type { SetAside } from "./lead-session.ts";
+import { commitLeadEdits } from "./lead-session.ts";
+import { LEAD_DIRTY, LEAD_EDITS_COMMITTED, LEAD_FIX_NEXT } from "./lead-session-prompts.ts";
+import type { LeadEdits } from "./lead-session.ts";
 import { BuildTarget, WindowLease } from "./loop-run.ts";
 import { LandingHow, landingWords } from "./rules.ts";
 import { closeReaders } from "../workers/director-pool.ts";
@@ -82,7 +82,7 @@ import type { AnyRecord, HarnessCtx } from "../../types/harness.d.ts";
 import type { EventData } from "../../types/host-api.d.ts";
 
 /**
- * This part serves a lead that is its chat's own session and writes nothing (one session): a run
+ * This part serves a lead that is its chat's own session (one session): a run
  * seats one only when every part it depends on says so (lead-session.ts `servesLead`).
  */
 export const SERVES_LEAD = true;
@@ -286,44 +286,44 @@ async function resolveWorkerCommit(
   return { commit };
 }
 
-/** The integration worktree made ready for a merge: why it may not go ahead, and what was set aside for a lead. */
+/** The integration worktree made ready for a merge: why it may not go ahead, and what was committed for a lead. */
 interface MergeReadiness {
   refusal: string | null;
-  setAside: SetAside | null;
+  committed: LeadEdits | null;
 }
 
 /**
  * The integration worktree, ready to take a merge: the host's delivered assets checkpointed, and
- * nothing else uncommitted in it. A director with its own hands clears what else is there itself;
- * for a lead, which writes nothing (one session), the studio sets it aside on a ref of the run
- * (lead-session.ts `setAsideStrays`) — so a game that builds in place never stops its merges.
+ * nothing else uncommitted in it. A director whose working folder it is clears what else is there
+ * itself; a lead's uncommitted changes there are its work, which the studio commits on the
+ * integration branch first (lead-session.ts `commitLeadEdits`), so a merge never waits on them.
  */
 async function checkpointAssets(loopRun: LoopRun, label: string): Promise<MergeReadiness> {
   const { ctx, integrationWorktree, run } = loopRun;
   try {
     await ctx.call(HostMethod.AssetsCheckpoint, { project: run.project, runId: run.runId });
   } catch (error: any) {
-    return { refusal: INTEGRATE_REFUSAL.checkpoint(error?.message ?? error), setAside: null };
+    return { refusal: INTEGRATE_REFUSAL.checkpoint(error?.message ?? error), committed: null };
   }
-  if (loopRun.lead) return setAsideForLead(loopRun, label);
+  if (loopRun.lead) return commitForLead(loopRun, label);
   const dirty = await gitAt(ctx, integrationWorktree, GIT.status, { label }).catch(() => "");
-  return { refusal: dirty ? INTEGRATE_REFUSAL.dirty : null, setAside: null };
+  return { refusal: dirty ? INTEGRATE_REFUSAL.dirty : null, committed: null };
 }
 
-/** What no worker made in a lead's integration worktree, set aside — or why it could not be. */
-async function setAsideForLead(loopRun: LoopRun, label: string): Promise<MergeReadiness> {
+/** A lead's uncommitted changes in its integration worktree, committed as its work — or why they could not be. */
+async function commitForLead(loopRun: LoopRun, label: string): Promise<MergeReadiness> {
   try {
-    return { refusal: null, setAside: await setAsideStrays(loopRun, label) };
+    return { refusal: null, committed: await commitLeadEdits(loopRun, label) };
   } catch (error: any) {
-    return { refusal: LEAD_DIRTY(error?.message ?? error), setAside: null };
+    return { refusal: LEAD_DIRTY(error?.message ?? error), committed: null };
   }
 }
 
 /**
  * Merge the worker's commit into the integration worktree. A conflict on the FACET WIRING block
  * alone is union-merged; anything else is aborted and the conflicted files are named — for a
- * director to resolve by hand, or, when the lead writes nothing (one session), for a worker the
- * studio starts from the integration branch to resolve (conflict-worker.ts). On a clean merge the
+ * director to resolve by hand, or, for a lead seated in its game folder (one session), for a worker
+ * the studio starts from the integration branch to resolve (conflict-worker.ts). On a clean merge the
  * new head is protected, journalled and put on the record.
  */
 async function mergeWorker(
@@ -544,22 +544,22 @@ function nextAfterMerge(loopRun: LoopRun, health: Evidence, lost: readonly LostR
 }
 
 /**
- * What `integrate` answers after a clean merge: the new head, its health, what was set aside, and
- * what to do next. `extra` (a wave's ids, what it lost) closes the answer; a single worker's merge
- * that lost nothing has none, and answers as it always did.
+ * What `integrate` answers after a clean merge: the new head, its health, the lead's edits it
+ * committed first, and what to do next. `extra` (a wave's ids, what it lost) closes the answer; a
+ * single worker's merge that lost nothing has none, and answers as it always did.
  */
 function integrationAnswer(
   loopRun: LoopRun,
   health: Evidence,
   union: boolean,
-  setAside: SetAside | null,
+  committed: LeadEdits | null,
   { lost = [], extra = {} }: { lost?: readonly LostRegistration[]; extra?: AnyRecord } = {},
 ): string {
   const { ledgerLines, shotsOf, state } = loopRun;
   return JSON.stringify({
     merged: true,
     union,
-    ...(setAside ? { setAside: LEAD_SET_ASIDE(setAside.ref, setAside.files) } : {}),
+    ...(committed ? { yourEdits: LEAD_EDITS_COMMITTED(committed.commit, committed.files) } : {}),
     head: shortSha(state.integrationHead),
     health: {
       ok: health.ok === true,
@@ -659,7 +659,7 @@ async function integrateWave(loopRun: LoopRun, ids: readonly string[]): Promise<
   closeWaveIfHealthy(loopRun, pass.health);
   await recordHealth(loopRun, merged, pass);
   const wave = { merged: merged.map((worker) => worker.id), ...(Object.keys(skipped).length ? { skipped } : {}) };
-  return integrationAnswer(loopRun, pass.health, union, ready.setAside, { lost: pass.lost, extra: { wave } });
+  return integrationAnswer(loopRun, pass.health, union, ready.committed, { lost: pass.lost, extra: { wave } });
 }
 
 /** One worker's merge and its health pass: the answer `integrate` has always given. */
@@ -686,7 +686,7 @@ async function integrateOne(loopRun: LoopRun, args: AnyRecord): Promise<string> 
   closeWaveIfHealthy(loopRun, pass.health);
   await recordHealth(loopRun, [worker], pass);
   const leftOut = keptLeftOut(worker);
-  return integrationAnswer(loopRun, pass.health, merged.union, ready.setAside, {
+  return integrationAnswer(loopRun, pass.health, merged.union, ready.committed, {
     lost: pass.lost,
     ...(leftOut ? { extra: { keptLeftOut: leftOut } } : {}),
   });

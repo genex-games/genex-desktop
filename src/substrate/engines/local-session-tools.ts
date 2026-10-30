@@ -133,6 +133,8 @@ function withRequestTools(request: DelegateRequest, definitions: ToolDefinition[
 export interface FileScope {
   cwd: string;
   readRoots: string[];
+  /** Real folders it writes besides its own: the build a lead leads (`DelegateRequest.leadBuilds`). */
+  writeRoots?: string[];
   forbidden: string[];
   deniedWrites: string[];
   readonly: boolean;
@@ -174,18 +176,27 @@ async function realpathOfNearest(target: string): Promise<string> {
   return path.join(parent, ...suffix);
 }
 
-/** A write must stay in the workspace, off the denied paths, out of `.git`, and inside the owned files. */
+/**
+ * The folder a write lands in: the workspace, or a build a lead leads, by both the name it was given
+ * and its real path; none when it is in neither or a denied path holds it.
+ */
+function writeRootOf(scope: FileScope, target: string, actual: string): string | null {
+  if (scope.readonly || scope.deniedWrites.some((p) => isInside(p, actual) || isInside(p, target))) return null;
+  const roots = [scope.cwd, ...(scope.writeRoots ?? [])];
+  return roots.find((root) => isInside(root, actual) && isInside(root, target)) ?? null;
+}
+
+/**
+ * A write must stay in the workspace (or the build a lead leads), off the denied paths, out of
+ * `.git`, and inside the owned files of the workspace.
+ */
 function assertWritable(scope: FileScope, target: string, actual: string): void {
-  const outside =
-    scope.readonly ||
-    !isInside(scope.cwd, actual) ||
-    !isInside(scope.cwd, target) ||
-    scope.deniedWrites.some((p) => isInside(p, actual) || isInside(p, target));
-  if (outside) throw new Error(MESSAGE.WriteOutside);
-  const rel = toPosixRelative(path.relative(scope.cwd, actual));
+  const root = writeRootOf(scope, target, actual);
+  if (root === null) throw new Error(MESSAGE.WriteOutside);
+  const rel = toPosixRelative(path.relative(root, actual));
   if (rel.split("/").includes(".git")) throw new Error(MESSAGE.GitMetadata);
-  if (scope.ownership && !allowedFile(rel, specOf(scope.ownership), scope.ownership.ownsMain))
-    throw new Error(ownershipReason(rel, scope.ownership));
+  const owned = root === scope.cwd && scope.ownership;
+  if (owned && !allowedFile(rel, specOf(owned), owned.ownsMain)) throw new Error(ownershipReason(rel, owned));
 }
 
 /** What a tool call runs with: the session's files, sandbox and studio handlers. */

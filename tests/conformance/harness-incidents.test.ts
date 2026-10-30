@@ -110,7 +110,7 @@ import { concurrencyProfile } from "../../src/harness-seed/loop/autopilot.ts";
 import { createRunInbox, type RunInbox } from "../../src/harness-seed/loop/run-inbox.ts";
 import { runWakeLoop, type DirectorTalk } from "../../src/harness-seed/loop/director/wake.ts";
 import { markersLeft, mergeFirst, unresolvedOf } from "../../src/harness-seed/loop/director/conflict-worker.ts";
-import { setAsideStrays } from "../../src/harness-seed/loop/director/lead-session.ts";
+import { commitLeadEdits } from "../../src/harness-seed/loop/director/lead-session.ts";
 import { landIntegration } from "../../src/harness-seed/loop/director/integrate.ts";
 import { MessageQueue, messageQueueState } from "../../src/harness-seed/loop/message-queue.ts";
 import { chatWaitsFor, leadDoor, passCtx, stopRunsOf } from "../../src/harness-seed/loop/live-chat.ts";
@@ -6157,30 +6157,39 @@ describe("one session, reviewed", () => {
     assert.equal(unresolvedOf(worker as never), null);
   });
 
-  it("OS2. changes no worker made in a lead's integration worktree are kept on a ref and the worktree reset — never a merge refused for good", async () => {
+  it("OS2. changes no worker made in a lead's integration worktree held every merge off: the lead builds there, so they are committed on the integration branch as its work — never a merge refused for good, never set aside out of the build", async () => {
     const { dir, git, left } = await twoSigns();
     const notes: string[] = [];
+    const protectedHeads: string[] = [];
     const loopRun = {
       ctx: localCtx(),
       run: { runId: "run_os" },
       integrationWorktree: dir,
+      state: { integrationHead: left },
+      journal: { director: { integrationHead: left } },
+      protectHead: async (head: string) => {
+        protectedHeads.push(head);
+      },
       note: (text: string) => notes.push(text),
     };
-    assert.equal(await setAsideStrays(loopRun as never, "label"), null, "a clean worktree has nothing to set aside");
-    // A game that builds in place: a file it generated, and one it rewrote.
+    assert.equal(await commitLeadEdits(loopRun as never, "label"), null, "a clean worktree has nothing to commit");
+    // The lead's own edit, and a file the game's build wrote in place.
     await writeFile(path.join(dir, "built.txt"), "made by a build\n");
     await writeFile(path.join(dir, "src", "sign.js"), "export const sign = 'rebuilt';\n");
-    const setAside = await setAsideStrays(loopRun as never, "label");
-    assert.ok(setAside, "set aside");
-    assert.match(setAside.ref, /^refs\/studio\/runs\/run_os\/set-aside\/\d+$/);
-    assert.deepEqual([...setAside.files].sort(), ["built.txt", "src/sign.js"]);
-    assert.equal(await git("show", `${setAside.ref}:built.txt`), "made by a build", "kept on the ref");
-    assert.equal(await git("show", `${setAside.ref}:src/sign.js`), "export const sign = 'rebuilt';");
-    assert.equal(await git("rev-parse", `${setAside.ref}^`), left, "a commit over the integration head");
-    assert.equal(await git("rev-parse", "HEAD"), left, "the branch never moved");
-    assert.equal(await git("status", "--porcelain"), "", "the worktree is back at the head");
-    assert.doesNotMatch(await git("branch", "--list"), /set-aside/, "a ref, never a branch of the user's");
-    assert.equal(notes.length, 1, "the run's log says what was set aside");
+    const committed = await commitLeadEdits(loopRun as never, "label");
+    assert.ok(committed, "committed");
+    assert.deepEqual([...committed.files].sort(), ["built.txt", "src/sign.js"]);
+    const head = await git("rev-parse", "HEAD");
+    assert.equal(committed.commit, head, "on the integration branch");
+    assert.equal(await git("rev-parse", "HEAD^"), left, "over the integration head it had");
+    assert.equal(await git("show", "HEAD:src/sign.js"), "export const sign = 'rebuilt';", "the lead's edit is in the build");
+    assert.equal(await git("show", "HEAD:built.txt"), "made by a build");
+    assert.equal(await git("status", "--porcelain"), "", "nothing is left to hold a merge off");
+    assert.equal(loopRun.state.integrationHead, head, "the run follows its new head");
+    assert.equal(loopRun.journal.director.integrationHead, head, "and journals it");
+    assert.deepEqual(protectedHeads, [head], "protected as every integration head is");
+    assert.doesNotMatch(await git("for-each-ref"), /set-aside/, "nothing is set aside on a side ref");
+    assert.equal(notes.length, 1, "the run's log says what was committed");
     assert.match(notes[0]!, /built\.txt/);
   });
 
@@ -16683,5 +16692,33 @@ describe("builders build the game, not the harness's checks (Loop phase 2)", () 
     assert.equal(round.verdictSource, "no-regression");
     assert.match(round.verdict.reason, /no visible change/);
     assert.deepEqual(asked, [], "no judge call spent");
+  });
+});
+
+describe("the lead and its workers are free agents (Loop phase 3)", () => {
+  it("FL1. a web Loop's lead was seated read-only in its game folder and could not run what its build needed: its turn asks for no read-only seat, only the build it leads", async () => {
+    const { fakeHost, fakeLoopRun } = await import("../helpers/director-run.ts");
+    const { directorTalk } = await import("../../src/harness-seed/loop/director.ts");
+    const host = fakeHost();
+    const seat = {
+      folder: "/games/plaza",
+      chatSession: true,
+      sessionId: "chat-1",
+      bookmarked: "chat-1",
+      engine: "codex",
+      model: null,
+    };
+    const loopRun = fakeLoopRun(
+      host,
+      { lead: seat, waking: true },
+      { [HostMethod.EngineDelegate]: () => ({ ok: true, sessionId: "chat-1", summary: "" }) },
+    );
+    await directorTalk(loopRun, [], []).session("go", "chat-1", 60_000);
+    const sent = host.calls.find((call) => call.method === HostMethod.EngineDelegate)?.params;
+    assert.ok(sent, "the lead's turn was delegated");
+    assert.equal(sent.readOnly, undefined, "never read-only");
+    assert.equal(sent.cwd, undefined, "in the game folder its chat's session lives in");
+    assert.equal(sent.director.root, "/runs/run_j/integration", "leading the integration worktree it builds in");
+    assert.equal(sent.director.inPlace, undefined);
   });
 });

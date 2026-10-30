@@ -32,6 +32,7 @@ import { cliVersion, resolveCodingCli } from "./external-cli.ts";
 import { lockUnowned, ownershipBriefing, releaseLocks, releaseStaleLocks, type LockRecord } from "./ownership-locks.ts";
 import { StudioBridge, answerBridgeCall, bridgeTools } from "./studio-bridge.ts";
 import { BLIND_JUDGE_NOTE, JUDGE_RULES, offLimitsNote, planModeNote, readOnlyNote } from "./codex-prompts.ts";
+import { leadBuildWrites } from "./session-commands.ts";
 import {
   GROK_HOSTS,
   GROK_OUTDATED_STATUS,
@@ -500,7 +501,7 @@ export class GrokEngine implements Engine {
 
   /** One turn: its prompt file, its command line, and its events read to the end. */
   async #runTurn(
-    request: Pick<DelegateRequest, "model" | "effort" | "resume" | "denyReads" | "onEvent">,
+    request: Pick<DelegateRequest, "model" | "effort" | "resume" | "denyReads" | "onEvent" | "leadBuilds">,
     run: GrokRun,
     turn: TurnSetup,
   ): Promise<void> {
@@ -517,7 +518,9 @@ export class GrokEngine implements Engine {
         resume: request.resume,
         bridge: turn.bridge,
       });
-      const invocation = await this.#invocation(argv, { ...turn, folder, run }, request.denyReads ?? []);
+      const invocation = await this.#invocation(argv, { ...turn, folder, run }, request.denyReads ?? [], {
+        leadBuilds: request.leadBuilds,
+      });
       await this.#readEvents(request, run, invocation);
     });
   }
@@ -546,18 +549,24 @@ export class GrokEngine implements Engine {
     return row?.efforts?.includes(effort) ? effort : null;
   }
 
-  /** The command, environment and sandbox of one run; no sandbox for the person's Bypass. */
+  /**
+   * The command, environment and sandbox of one run; no sandbox for the person's Bypass. A building
+   * lead's box also writes the build it leads (`leadBuilds`).
+   */
   async #invocation(
     argv: string[],
     ctx: Pick<TurnSetup, "access" | "asPerson" | "cwd" | "runDir" | "signal"> & { folder: string; run: GrokRun },
     denyReads: string[] = [],
+    { leadBuilds }: { leadBuilds?: string | undefined } = {},
   ): Promise<GrokInvocation> {
+    const builds = ctx.access === GrokAccess.Build;
     const sandbox = ctx.asPerson
       ? null
       : grokSandbox({
           runDir: ctx.runDir,
           gameDir: ctx.cwd,
-          gitDirs: ctx.access === GrokAccess.Build ? await gitMetadata(ctx.cwd) : [],
+          gitDirs: builds ? await gitMetadata(ctx.cwd) : [],
+          leadBuilds: builds ? await leadBuildWrites(leadBuilds) : [],
           scratchDir: path.join(this.#scratchRoot, TEMPORARY_DIR),
           secretPaths: [...this.#protectedPaths, ...denyReads],
           home: this.#home,
@@ -683,7 +692,6 @@ export class GrokEngine implements Engine {
             // A reviewer's cwd is its own empty home: the build it tests is the folder it reads.
             request.reviewer?.reads ?? ctx.cwd,
             ctx.scratch,
-            request.director ? path.resolve(request.director.root) : null,
           ),
       offLimitsNote([...this.#protectedPaths, ...credentialHomes(), ...(request.denyReads ?? [])]),
     ]

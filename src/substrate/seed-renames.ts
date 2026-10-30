@@ -16,6 +16,10 @@ export const RENAMED_SEED_FILES: Readonly<Record<string, string>> = {
 
 /** Names one seed module exports, or another reads off a shared object, by their old spelling. */
 export const RENAMED_SEED_NAMES: Readonly<Record<string, string>> = {
+  // A lead builds in its integration worktree: its uncommitted changes are committed as its work.
+  LEAD_SET_ASIDE: "LEAD_EDITS_COMMITTED",
+  SetAside: "LeadEdits",
+  setAsideStrays: "commitLeadEdits",
   AfterNight: "AfterLoopRun",
   Night: "LoopRun",
   NightClock: "LoopRunClock",

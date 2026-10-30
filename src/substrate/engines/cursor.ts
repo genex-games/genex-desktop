@@ -29,6 +29,7 @@ import { lockUnowned, ownershipBriefing, releaseLocks, releaseStaleLocks, type L
 import { StudioBridge, answerBridgeCall, bridgeTools } from "./studio-bridge.ts";
 import { writeDelegateStills } from "./codex.ts";
 import { BLIND_JUDGE_NOTE, JUDGE_RULES, offLimitsNote, planModeNote, readOnlyNote } from "./codex-prompts.ts";
+import { leadBuildWrites } from "./session-commands.ts";
 import {
   CURSOR_FILE_STORE,
   CURSOR_HOSTS,
@@ -508,7 +509,6 @@ export class CursorEngine implements Engine {
             // A reviewer's cwd is its own empty home: the build it tests is the folder it reads.
             request.reviewer?.reads ?? ctx.cwd,
             ctx.scratch,
-            request.director ? path.resolve(request.director.root) : null,
           ),
       offLimitsNote([...this.#protectedPaths, ...credentialHomes(), ...(request.denyReads ?? [])]),
     ]
@@ -518,7 +518,7 @@ export class CursorEngine implements Engine {
 
   /** The command, environment and sandbox of one turn. */
   async #invocation(
-    request: Pick<DelegateRequest, "model" | "resume" | "denyReads" | "cwd" | "prompt">,
+    request: Pick<DelegateRequest, "model" | "resume" | "denyReads" | "cwd" | "prompt" | "leadBuilds">,
     ctx: { access: CursorAccess; cwd: string; runDir: string; prompt: string; signal: AbortSignal },
   ): Promise<CursorInvocation> {
     const compileCache = path.join(this.#scratchRoot, "compile-cache");
@@ -535,20 +535,24 @@ export class CursorEngine implements Engine {
       prompt: ctx.prompt,
       env: cursorSessionEnv({ compileCache }),
       signal: ctx.signal,
-      sandbox: await this.#sandboxOptions(ctx, request.denyReads ?? [], compileCache),
+      sandbox: await this.#sandboxOptions(ctx, request.denyReads ?? [], compileCache, request.leadBuilds),
       domains: [...CURSOR_HOSTS],
     };
   }
 
+  /** The turn's box; a building lead's also writes the build it leads (`leadBuilds`). */
   async #sandboxOptions(
     ctx: { access: CursorAccess; cwd: string; runDir: string },
     denyReads: string[],
     compileCache: string,
+    leadBuilds?: string,
   ): Promise<SandboxOptions> {
+    const builds = ctx.access === CursorAccess.Build;
     return cursorSandbox({
       runDir: ctx.runDir,
       gameDir: ctx.cwd,
-      gitDirs: ctx.access === CursorAccess.Build ? await gitMetadata(ctx.cwd) : [],
+      gitDirs: builds ? await gitMetadata(ctx.cwd) : [],
+      leadBuilds: builds ? await leadBuildWrites(leadBuilds) : [],
       scratchDir: path.join(this.#scratchRoot, "tmp"),
       compileCache,
       // A blind judge plays the build from an empty folder and may read none of it.
@@ -616,13 +620,15 @@ export function cursorSandbox(input: {
   runDir: string;
   gameDir: string;
   gitDirs: string[];
+  /** The build a lead leads and its Git metadata (`leadBuildWrites`). */
+  leadBuilds?: string[];
   scratchDir: string;
   compileCache: string;
   secretPaths: string[];
   toolPath?: () => Promise<string>;
 }): SandboxOptions {
   return {
-    writableRoots: [input.runDir, ...input.gitDirs, input.compileCache],
+    writableRoots: [input.runDir, ...input.gitDirs, ...(input.leadBuilds ?? []), input.compileCache],
     scratchDir: input.scratchDir,
     secretPaths: input.secretPaths,
     // Cursor's settings, chats and sign-in file: its own to read and write in this sandbox alone.

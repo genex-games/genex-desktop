@@ -167,7 +167,7 @@ const LOOP_RUN_MODULES = [
   setupFunctions,
   artDirectionFunctions,
 ];
-/** Every part a lead that writes nothing depends on: its words and its hands for one (lead-session.ts `servesLead`). */
+/** Every part a lead seated in its game folder depends on: its words and its tools (lead-session.ts `servesLead`). */
 const LEAD_PARTS = [
   ...LOOP_RUN_MODULES,
   briefFunctions,
@@ -241,20 +241,21 @@ function runTools(loop: DirectorLoop, loopRun: LoopRun): LiveToolSpec[] {
 }
 
 /**
- * Where a lead's session sits: an open Loop's lead writes in the game folder itself (its grant says
- * `inPlace`), a web lead that is its chat's own session sits there read-only, and a long turn's
- * director works in the integration worktree.
+ * Where a lead's session sits: in the game folder its chat's session lives in (no `cwd`) — an open
+ * Loop's lead writing there (its grant says `inPlace`), a web lead building in the integration
+ * worktree its grant names — and a long turn's director in the integration worktree. No lead is
+ * read-only: the chat's permission mode alone limits it.
  */
-function leadPlace(loopRun: LoopRun): { readOnly?: true; cwd?: string } {
-  if (leadsOpenLoop(loopRun)) return {};
-  return loopRun.lead ? { readOnly: true } : { cwd: loopRun.integrationWorktree };
+function leadPlace(loopRun: LoopRun): { cwd?: string } {
+  if (leadsOpenLoop(loopRun) || loopRun.lead) return {};
+  return { cwd: loopRun.integrationWorktree };
 }
 
 /**
  * One turn of the director's own session, on its own engine and model. A lead that is its chat's
- * own session (one session, director/lead-session.ts) sits in the game folder — no `cwd` — seated
- * as a lead (`readOnly`, which the host reads as the lead's seat, not a lock); its grant names the
- * integration worktree it leads and builds in (`root`). A long turn's director works in that worktree.
+ * own session (one session, director/lead-session.ts) sits in the game folder — no `cwd` — and its
+ * grant names the integration worktree it leads and builds in (`root`), which the host seats it on
+ * as a full agent in the chat's mode. A long turn's director works in that worktree.
  * An open Loop's lead writes in the game folder (`inPlace`, its `root`), and every lead's paid jobs
  * are held to the credit cap its run record names.
  */

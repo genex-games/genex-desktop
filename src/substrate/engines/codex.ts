@@ -1009,7 +1009,9 @@ export class CodexEngine implements Engine {
   async #turnServerArgs(request: DelegateRequest, runDir: string, signal: AbortSignal): Promise<string[]> {
     const { env, installation } = await this.#cli(signal, Boolean(this.#appServerFn));
     return [
-      ...(chatMode(request) === PermissionMode.Bypass ? BYPASS_CONFIG_ARGS : sandboxArgs(runDir)),
+      ...(chatMode(request) === PermissionMode.Bypass
+        ? BYPASS_CONFIG_ARGS
+        : sandboxArgs(runDir, [runDir, ...leadBuildRoots(request)])),
       ...windowsSandboxArgs(this.#platform),
       ...effortArgs(request.effort),
       ...(await this.preferenceArgs(request.model, request.preferences)),
@@ -1076,7 +1078,6 @@ export class CodexEngine implements Engine {
             // A reviewer's cwd is its own empty home: the build it tests is the folder it reads.
             request.reviewer?.reads ?? ctx.cwd,
             ctx.scratch,
-            request.director ? path.resolve(request.director.root) : null,
           ),
       offLimitsNote(offLimits),
     ]
@@ -1131,7 +1132,8 @@ export class CodexEngine implements Engine {
   ): Promise<AsyncIterable<Record<string, unknown>>> {
     if (stream.turn) {
       const bypass = runsAsPerson(request);
-      const params = turnStartParams({ cwd: stream.runDir, bypass }, stream.prompt, stream.images);
+      const policy = { cwd: stream.runDir, writes: leadBuildRoots(request), bypass };
+      const params = turnStartParams(policy, stream.prompt, stream.images);
       return stream.turn.run(params, (name, args) => answerBridgeCall(name, args, request));
     }
     return this.#exec({
@@ -2112,12 +2114,20 @@ function chatMode(request: DelegateRequest): PermissionMode | null {
 
 /**
  * A session started in a folder of its own, because Codex can always write where it is started:
- * a read-only one (the playtester, a lead while its build runs), and a chat session in Plan. The
- * only place it can write is the studio's bridge there.
+ * a read-only one (the playtester, a reviewer, a reader), and a chat session in Plan, a lead's
+ * included. The only place it can write is the studio's bridge there.
  */
 function startsElsewhere(request: DelegateRequest): boolean {
   const readOnly = Boolean(request.readOnly) && !request.coordinator;
   return readOnly || chatMode(request) === PermissionMode.Plan || request.worker?.mode === PermissionMode.Plan;
+}
+
+/**
+ * The build a lead leads outside its folder (`leadBuilds`): written as its own folder is, so it
+ * edits, runs and commits there. None in Plan, which writes nothing, nor for any other session.
+ */
+function leadBuildRoots(request: DelegateRequest): string[] {
+  return request.leadBuilds && !startsElsewhere(request) ? [path.resolve(request.leadBuilds)] : [];
 }
 
 /**
@@ -2131,11 +2141,12 @@ function runsAsPerson(request: DelegateRequest): boolean {
 
 /**
  * The session's box: the bypass flag for a session that runs as the person (`runsAsPerson`); a
- * worker's own box; else its folder. `bridge` is the bridge's own roots (`bridgeRoots`).
+ * worker's own box; else its folder and the build a lead leads. `bridge` is the bridge's own roots
+ * (`bridgeRoots`).
  */
 function sessionBox(request: DelegateRequest, runDir: string, bridge: string[]): string[] {
   if (request.worker) return [...workerBox(request, runDir, bridge), ...workerWebSearch(request)];
-  return runsAsPerson(request) ? BYPASS_ARGS : sandboxArgs(runDir, [runDir, ...bridge]);
+  return runsAsPerson(request) ? BYPASS_ARGS : sandboxArgs(runDir, [runDir, ...bridge, ...leadBuildRoots(request)]);
 }
 
 /**

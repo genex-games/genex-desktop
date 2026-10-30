@@ -1195,3 +1195,18 @@ describe("only Genex's workers", () => {
     }
   });
 });
+
+/** No lead is read-only: one with nobody to ask still builds, in its box, in the build it leads. */
+describe("a lead's own hands", () => {
+  it("an unattended lead edits and runs commands, and its box writes the build it leads beside its folder", async () => {
+    const { fn, seen } = fakeQuery();
+    const build = "/tmp/scratch/autopilot/run_x/integration";
+    await (await engineFor(fn)).delegate({ prompt: "lead", cwd: "/tmp/game-workspace", leadBuilds: build } as never);
+    const options = seen[0]!;
+    const sandbox = options.sandbox as { filesystem: { allowWrite?: string[] } };
+    assert.deepEqual(sandbox.filesystem.allowWrite, [build], "its box writes the build it leads");
+    assert.ok((options.additionalDirectories as string[]).includes(build), "a folder of its session");
+    const banned = options.disallowedTools as string[];
+    for (const tool of ["Edit", "Write", "Bash"]) assert.ok(!banned.includes(tool), `${tool} is its own`);
+  });
+});

@@ -133,8 +133,10 @@ export interface CodexTurnSetup {
 
 /** What decides a turn's thread and sandbox: where it runs, on which model, how confined, with what tools. */
 export interface TurnPolicy {
-  /** The folder the session starts in, and the one folder a confined session may write. */
+  /** The folder the session starts in, which a confined session writes. */
   cwd: string;
+  /** Other folders a confined session writes beside `cwd`: the build a lead leads. */
+  writes?: readonly string[];
   model?: string | undefined;
   /** The person's Bypass for their chat: no sandbox, no approvals. */
   bypass: boolean;
@@ -165,7 +167,11 @@ export function turnStartParams(
 ): Record<string, unknown> {
   const sandboxPolicy = policy.bypass
     ? { type: SandboxPolicyType.DangerFullAccess }
-    : { type: SandboxPolicyType.WorkspaceWrite, writableRoots: [policy.cwd], networkAccess: false };
+    : {
+        type: SandboxPolicyType.WorkspaceWrite,
+        writableRoots: [policy.cwd, ...(policy.writes ?? [])],
+        networkAccess: false,
+      };
   return {
     input: [
       { type: UserInputType.Text, text: prompt },

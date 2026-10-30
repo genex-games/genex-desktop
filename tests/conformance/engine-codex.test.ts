@@ -308,37 +308,39 @@ describe("codex engine", () => {
   });
 
   /**
-   * One session: a waking run's lead is its chat's own session and writes nothing. Codex can
-   * always write where it is started, so the lead runs from a folder of its own and resumes the
-   * chat's session there by id (a session is found by its id wherever it is started; the chat
-   * resumes it from the game folder again after the run). The game folder and the build it leads
-   * are outside the only place its sandbox writes, and it is told where both are.
+   * One session: a waking run's lead is its chat's own session, and no lead is read-only. It
+   * resumes the chat's session from the game folder and builds in the integration worktree it leads
+   * (`leadBuilds`), which its box writes beside its own folder; in the chat's Bypass it runs
+   * unboxed, as the chat's own session there does.
    */
-  it("runs a read-only lead from a folder of its own, resumes the chat's session by id, and names what it only reads", async () => {
+  it("runs a lead from its game folder, resumes the chat's session, and writes the build it leads", async () => {
     const { fn, seen } = fakeExec(successRun);
     const { engine, root } = await signedInEngine(fn);
     const game = path.join(root, "game");
     const build = path.join(root, "scratch", "autopilot", "run_lead", "integration");
     await mkdir(game, { recursive: true });
     await mkdir(build, { recursive: true });
+    const director = { runId: "run_lead", threadId: "t", project: "game", root: build, chatSession: true };
+    await engine.delegate({ prompt: "lead the run", cwd: game, resume: "chat-thread", leadBuilds: build, director });
+    const call = seen[0]!;
+    assert.deepEqual(call.argv.slice(0, 3), ["exec", "resume", "chat-thread"]);
+    assert.equal(call.cwd, game, "started where its chat's session lives");
+    const roots = call.argv.find((arg) => arg.startsWith("sandbox_workspace_write.writable_roots="))!;
+    const writable = JSON.parse(roots.slice(roots.indexOf("=") + 1)) as string[];
+    assert.deepEqual(writable, [game, build], "it writes its folder and the build it leads");
+    assert.doesNotMatch(call.prompt, /you only read|you cannot change/);
+
+    const permissions = { mode: "bypassPermissions", allow: [], directories: [], protectWrites: [] };
+    const ask = async () => ({ decision: "allow" as const });
     await engine.delegate({
       prompt: "lead the run",
       cwd: game,
-      readOnly: true,
       resume: "chat-thread",
-      director: { runId: "run_lead", threadId: "t", project: "game", root: build, chatSession: true },
+      leadBuilds: build,
+      director,
+      permissions: { ...permissions, ask } as never,
     });
-    const call = seen[0]!;
-    assert.deepEqual(call.argv.slice(0, 3), ["exec", "resume", "chat-thread"]);
-    assert.notEqual(call.cwd, game, "started from a folder of its own");
-    const roots = call.argv.find((arg) => arg.startsWith("sandbox_workspace_write.writable_roots="))!;
-    const writable = JSON.parse(roots.slice(roots.indexOf("=") + 1)) as string[];
-    assert.deepEqual(writable, [call.cwd], "the only place it writes is its own folder");
-    assert.ok(!writable.some((dir) => game.startsWith(dir) || build.startsWith(dir)));
-    assert.match(call.prompt, /While this build runs you only read/);
-    assert.ok(call.prompt.includes(`the game folder is ${game}`), call.prompt);
-    assert.ok(call.prompt.includes(`the build you lead is at ${build}`), call.prompt);
-    assert.doesNotMatch(call.prompt, /The build you are testing/);
+    assert.ok(seen[1]!.argv.includes("--dangerously-bypass-approvals-and-sandbox"), "in the chat's Bypass, unboxed");
   });
 
   it("tells a Loop's reviewer the build it tests is the folder it reads, never its own empty home", async () => {

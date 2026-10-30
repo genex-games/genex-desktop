@@ -48,7 +48,7 @@ export const LEAD_BRIEF = {
   opening: (runId: string, project: string) =>
     `You are the DIRECTOR of run ${runId} on the game "${project}" — and still this chat's own session: the conversation the user has been having, now leading the build they asked for. You run it from start to finish: you look at the game, decide what it needs, do it yourself or hand it to workers, verify with your own eyes, integrate, show the user, and finish. Nothing happens unless you make it happen, and nobody is watching — every claim you make must be something you verified.`,
   whereYouAre: ({ gameFolder, integrationWorktree, baseCommit }: LeadWhere) =>
-    `WHERE YOU ARE: your cwd is the game folder the user sees (${gameFolder}). The build you lead is the run's integration worktree (${integrationWorktree}), a git worktree of the game at commit ${shortSha(baseCommit ?? "")} — the integration branch. You build there with your own hands, by its full path: edit files in it and commit them there (git -C) before you integrate, playtest it or start a worker from it; anything left uncommitted is set aside. Leave the game folder as the user left it: finish lands the branch there.`,
+    `WHERE YOU ARE: your cwd is the game folder the user sees (${gameFolder}). The build you lead is the run's integration worktree (${integrationWorktree}), a git worktree of the game at commit ${shortSha(baseCommit ?? "")} — the integration branch. You build there with your own hands, by its full path: edit files, run its build and tools, start and restart the apps it needs. Commit there (git -C) when you like; whatever you leave uncommitted is committed as your work before you integrate, playtest it or start a worker from it, so nothing you do is lost. Leave the game folder as the user left it: finish lands the branch there.`,
   // A fix in a running worker's files goes to that worker: the lead's own edit there reads as
   // somebody else's change to that worker's review, which reverts it.
   delegate:
@@ -89,31 +89,31 @@ export const LEAD_FIX_NEXT =
 export const LEAD_FORK_REFUSED = (commit: string | null, from: string) =>
   `the build at ${shortSha(commit ?? "")} (from=${from}) does not run — fix it (in the integration worktree yourself when from=integration, and commit; otherwise a single worker from=${from}, which starts on a build that does not run, then integrate it), then start this one again`;
 
-/** At most this many of the paths set aside are named. */
-const SET_ASIDE_NAMED = 8;
+/** At most this many of the paths committed are named. */
+const COMMITTED_NAMED = 8;
 
 /** The paths as a sentence names them: the first few, and how many more. */
 function someOf(files: readonly string[]): string {
-  const more = files.length > SET_ASIDE_NAMED ? ` and ${files.length - SET_ASIDE_NAMED} more` : "";
-  return `${files.slice(0, SET_ASIDE_NAMED).join(", ")}${more}`;
+  const more = files.length > COMMITTED_NAMED ? ` and ${files.length - COMMITTED_NAMED} more` : "";
+  return `${files.slice(0, COMMITTED_NAMED).join(", ")}${more}`;
 }
 
 /**
- * What the studio did with changes no worker made in a lead's integration worktree (lead-session.ts
- * `setAsideStrays`): kept on a ref of the run, the worktree reset to the integration head.
+ * What the studio did with the uncommitted changes in a lead's integration worktree (lead-session.ts
+ * `commitLeadEdits`): committed on the integration branch as the lead's work.
  */
-export const LEAD_SET_ASIDE = (ref: string, files: readonly string[]) =>
-  `the integration worktree had uncommitted changes no worker made (${someOf(files)}); the studio kept them on ${ref} and reset the worktree to the integration head — a worker can bring any of them back with \`git checkout ${ref} -- <path>\``;
+export const LEAD_EDITS_COMMITTED = (commit: string, files: readonly string[]) =>
+  `your uncommitted changes in the integration worktree (${someOf(files)}) were committed on the integration branch as your work (${shortSha(commit)})`;
 
-/** What `integrate` or a playtest answers a lead when those changes could not be set aside. */
+/** What `integrate` or a playtest answers a lead when its changes could not be committed. */
 export const LEAD_DIRTY = (error: unknown) =>
-  `The integration worktree has uncommitted changes that no worker made (host-delivered assets were checkpointed; these were not), and the studio could not set them aside (${error}), so nothing is merged over them. Say what they are in a note: the user can clear them. Never move or delete assets.`;
+  `The integration worktree has uncommitted changes (host-delivered assets were checkpointed; these were not), and the studio could not commit them as your work (${error}), so nothing is merged over them. Commit them yourself (git -C) or say what they are in a note. Never move or delete assets.`;
 
-/** What `worker_start` tells a lead whose integration worktree holds changes no worker made. */
+/** What `worker_start` tells a lead whose uncommitted changes could not be committed before the fork. */
 export const LEAD_START_DIRTY =
-  "the integration worktree has uncommitted changes no worker made; this worker forked from HEAD without them — the next integrate sets them aside on a ref of the run";
+  "the integration worktree has uncommitted changes the studio could not commit as your work; this worker forked from HEAD without them — commit them yourself (git -C) before the next worker or integrate";
 
-/** How a worker from before a pause is brought in by a lead that writes nothing (journal-prompts.ts). */
+/** How a worker from before a pause is brought in by a lead (journal-prompts.ts): it may merge it itself too. */
 export const LEAD_PRIOR_BRINGS_IN = "integrating a worker started from it brings it in";
 
 /** What `playtest target=live` answers when the game folder has changes of its own. */

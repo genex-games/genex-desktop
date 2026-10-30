@@ -589,13 +589,15 @@ export function grokSandbox(input: {
   runDir: string;
   gameDir: string;
   gitDirs: string[];
+  /** The build a lead leads and its Git metadata (`leadBuildWrites`). */
+  leadBuilds?: string[];
   scratchDir: string;
   secretPaths: string[];
   home: string;
   toolPath?: () => Promise<string>;
 }): SandboxOptions {
   return {
-    writableRoots: [input.runDir, ...input.gitDirs],
+    writableRoots: [input.runDir, ...input.gitDirs, ...(input.leadBuilds ?? [])],
     scratchDir: input.scratchDir,
     secretPaths: input.secretPaths,
     ownHome: [input.home],

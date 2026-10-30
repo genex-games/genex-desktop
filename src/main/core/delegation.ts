@@ -1724,10 +1724,11 @@ export class DelegationService {
   }
 
   /**
-   * How a Loop's lead in place asks on an engine that does not ask about every call, or null: only
-   * for the seat `#leadSession` checks (this game's lead of a run started in this chat, answering it,
-   * in the game folder itself). Without it such a lead would run unattended, writing in the game
-   * folder whatever the chat's mode, a Plan chat's included.
+   * How a Loop's lead asks on an engine that does not ask about every call, or null: only for the
+   * seat `#leadSession` checks (this game's lead of a run started in this chat, answering it), in the
+   * game folder itself or leading the run's integration worktree from it. It runs in the chat's mode
+   * as that engine honours it, as the chat's own session there does (Bypass unboxed, Plan read-only);
+   * without it such a lead would run unattended, whatever the chat's mode, a Plan chat's included.
    */
   async #placedLeadSession(
     p: DelegateParams,
@@ -1738,7 +1739,7 @@ export class DelegationService {
   ): Promise<PersonSession | null> {
     const threadId = p.threadId;
     const asks = this.#core.engines.get(target.engineId).permissionPrompts === true;
-    if (asks || !seat.leadsInPlace || typeof threadId !== "string") return null;
+    if (asks || seat.leads === null || typeof threadId !== "string") return null;
     const answers = await this.#answersPerson(p, grants, session, seat, threadId);
     if (!answers || !("runId" in answers)) return null;
     return this.#x.permissions.forPlacedLead({
@@ -1938,16 +1939,17 @@ export class DelegationService {
 
   /**
    * The folder a lead in its game's folder leads — or null, and the grant is dropped. In place
-   * (`#inPlaceRoot`), the game folder itself. Otherwise the worktree it leads, as its checked real
-   * path: honoured only for a lead that writes nothing (`readOnly`), of this game, for a worktree of
-   * this game's own repository inside its run's own folder under scratch, of a run the host's
-   * records say is this game's (`#runOfGame`).
+   * (`#inPlaceRoot`), the game folder itself. Otherwise the worktree it leads and builds in, as its
+   * checked real path: honoured only for a lead of this game, for a worktree of this game's own
+   * repository inside its run's own folder under scratch, of a run the host's records say is this
+   * game's (`#runOfGame`). Its brief's `readOnly` (a kept older seed still sends one) seats it no
+   * differently: no lead is read-only.
    */
   async #leadRoot(p: DelegateParams, live: string): Promise<string | null> {
     const d = p.director;
     if (!d) return null;
     if (d.inPlace === true) return this.#inPlaceRoot(p, d, live);
-    const asked = p.readOnly === true && d.project === p.project && path.resolve(d.root) !== live;
+    const asked = d.project === p.project && path.resolve(d.root) !== live;
     if (!asked) return null;
     const runFolder = await this.#runFolder(d.runId);
     const root = await realpath(d.root).catch(() => null);
@@ -2813,7 +2815,8 @@ export class DelegationService {
             ...(directorTools.onCapture ? { onCapture: directorTools.onCapture } : {}),
           }
         : {}),
-      ...playtestFields(p, grants, tools),
+      ...playtestFields(p, grants, tools, session),
+      ...leadBuildsField(session),
       ...(session.hostTools ? this.#hostToolFields(p, target, grants, session, tools) : this.#lookFields(tools)),
     };
   }
@@ -3360,8 +3363,16 @@ function steerField(session: DelegationSession): Partial<DelegateRequest> {
   return { steer: { ready: (send) => settleDoor(door, send) } };
 }
 
-/** The playtester's grant and hands, read-only; otherwise only a read-only session's flag. */
-function playtestFields(p: DelegateParams, grants: DelegationGrants, tools: SessionTools): Partial<DelegateRequest> {
+/**
+ * The playtester's grant and hands, read-only; otherwise only a read-only session's flag. A lead the
+ * host seated is never read-only, whatever its brief says (a kept older seed's still says so).
+ */
+function playtestFields(
+  p: DelegateParams,
+  grants: DelegationGrants,
+  tools: SessionTools,
+  session: Pick<DelegationSession, "leads">,
+): Partial<DelegateRequest> {
   const { playtest } = grants;
   if (tools.playtest && playtest) {
     return {
@@ -3371,6 +3382,15 @@ function playtestFields(p: DelegateParams, grants: DelegationGrants, tools: Sess
       readOnly: true,
     };
   }
-  if (p.readOnly) return { readOnly: true };
+  if (p.readOnly && session.leads === null) return { readOnly: true };
   return {};
+}
+
+/**
+ * The build a lead leads outside the folder it sits in (a web Loop's integration worktree, by the
+ * real path its seat checked): it edits, runs and commits there, so its engine's box writes it.
+ * None for a lead in place, whose folder is its own, nor for any other session.
+ */
+function leadBuildsField(session: Pick<DelegationSession, "leads" | "leadsInPlace">): Partial<DelegateRequest> {
+  return session.leads !== null && !session.leadsInPlace ? { leadBuilds: session.leads } : {};
 }

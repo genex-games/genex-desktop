@@ -26,14 +26,11 @@ export function offLimitsNote(dirs: string[]): string {
 }
 
 /**
- * A read-only session's orientation: the build it tests, and the only place it can write. A lead
- * (`leads`: the integration worktree it leads) is told where its game and that build are instead:
- * it runs from a folder of its own, because Codex can always write where it is started.
+ * A read-only session's orientation (the playtester, a reviewer, a reader): the build it tests, and
+ * the only place it can write. No lead is read-only, so none reads this.
  */
-export function readOnlyNote(cwd: string, scratch: string | null, leads: string | null = null): string {
+export function readOnlyNote(cwd: string, scratch: string | null): string {
   if (!scratch) return "";
-  if (leads)
-    return `\n\nWhile this build runs you only read: the game folder is ${cwd} and the build you lead is at ${leads}. Read both freely by their full paths; you cannot change either — your workers write, and the studio merges and commits. You are running from ${scratch}, which holds only the studio's tools.`;
   return `\n\nThe build you are testing is at ${cwd}. Read it freely; you cannot change it, and you are not here to. You are running from ${scratch}, which is the only place you can write.`;
 }
 

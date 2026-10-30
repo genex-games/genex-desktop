@@ -47,7 +47,7 @@ import { list, namedTitle, num, parseJson, slug, yes } from "./args.ts";
 import { MAX_WAIT_S, MAX_WORKERS, workerWindows } from "./budgets.ts";
 import { waitDigest, workerDigest } from "./digests.ts";
 import { priorWorkerStatus, priorWorkersStatus } from "./journal.ts";
-import { setAsideStrays } from "./lead-session.ts";
+import { commitLeadEdits } from "./lead-session.ts";
 import { LEAD_DIRTY, LEAD_LIVE_DIRTY } from "./lead-session-prompts.ts";
 import { BuildTarget, WindowLease } from "./loop-run.ts";
 import { finalJudgeQuestion } from "./close-prompts.ts";
@@ -83,7 +83,7 @@ import type { Check } from "../spec.ts";
 import type { AnyRecord } from "../../types/harness.d.ts";
 
 /**
- * This part serves a lead that is its chat's own session and writes nothing (one session): a run
+ * This part serves a lead that is its chat's own session (one session): a run
  * seats one only when every part it depends on says so (lead-session.ts `servesLead`).
  */
 export const SERVES_LEAD = true;
@@ -912,9 +912,9 @@ async function playFolder(
 
 /**
  * Why a folder with uncommitted changes cannot be played from a copy of its commit, or null once it
- * is clean: the game folder a lead sits in is the user's own; a director with its own hands commits
- * first; and for a lead that writes nothing the studio sets aside what no worker made in the
- * integration worktree (lead-session.ts `setAsideStrays`).
+ * is clean: the game folder a lead sits in is the user's own; a director whose working folder is the
+ * integration worktree commits first; and a lead's uncommitted changes in the integration worktree
+ * are its work, which the studio commits on the branch (lead-session.ts `commitLeadEdits`).
  */
 async function dirtyRefusal(loopRun: LoopRun, root: string, leadSits: boolean): Promise<string | null> {
   const { ctx, lead, run } = loopRun;
@@ -924,7 +924,7 @@ async function dirtyRefusal(loopRun: LoopRun, root: string, leadSits: boolean): 
   if (!lead)
     return "your integration worktree has uncommitted edits — commit them first so the playtester plays what you see";
   try {
-    await setAsideStrays(loopRun, `director:${run.runId}:playtest`);
+    await commitLeadEdits(loopRun, `director:${run.runId}:playtest`);
     return null;
   } catch (err: any) {
     return LEAD_DIRTY(err?.message ?? err);

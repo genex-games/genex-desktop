@@ -35,7 +35,7 @@ import {
   type ToolContext,
 } from "./local-session-tools.ts";
 import { lockUnowned, releaseLocks } from "./ownership-locks.ts";
-import { type CommandSandbox, commandSandbox } from "./session-commands.ts";
+import { type CommandSandbox, commandSandbox, leadBuildWrites } from "./session-commands.ts";
 import { StudioTool } from "./studio-tool-prompts.ts";
 import {
   type CompleteRequest,
@@ -155,6 +155,8 @@ interface LocalRun {
 interface FileBounds {
   /** The workspace and any extra read folders, resolved. */
   readRoots: string[];
+  /** Folders it writes besides the workspace: the build a lead leads and its Git metadata, real. */
+  writeRoots: string[];
   /** Paths its tools may never read or write. */
   forbidden: string[];
   /** Paths its tools may not write. */
@@ -314,11 +316,12 @@ export class LocalSessions {
     const budget = localBudgetNote({ maxTurns: turnLimit(request), timeoutMs: request.timeoutMs });
     const requirements = continueHistory(saved, messages, request, budget);
     const save = () => atomicWriteText(sessionFile, JSON.stringify(saved), { mode: 0o600 });
-    const { readRoots, forbidden, deniedWrites } = await this.#fileBounds(request, cwd);
+    const { readRoots, writeRoots, forbidden, deniedWrites } = await this.#fileBounds(request, cwd);
     const readonly = isReadOnlySession(request);
     const resolveFile = sessionFileResolver({
       cwd,
       readRoots,
+      writeRoots,
       forbidden,
       deniedWrites,
       readonly,
@@ -326,7 +329,7 @@ export class LocalSessions {
     });
     const definitions = localToolDefinitions(request, readonly);
     const studioToolCalls: NonNullable<DelegateResult["studioToolCalls"]> = [];
-    const sandbox = readonly ? null : await this.#sandbox(cwd, id, forbidden, deniedWrites);
+    const sandbox = readonly ? null : await this.#sandbox(cwd, id, { forbidden, deniedWrites, writeRoots });
     return {
       engine: this.engine,
       request,
@@ -369,12 +372,14 @@ export class LocalSessions {
     };
   }
 
-  /** The folders the session may read, the paths it may never touch, and the ones it may not write. */
+  /**
+   * The folders the session may read and write besides its own, the paths it may never touch, and
+   * the ones it may not write. A lead writes the build it leads (`leadBuilds`), by its real path.
+   */
   async #fileBounds(request: DelegateRequest, cwd: string): Promise<FileBounds> {
-    const readRoots = [
-      cwd,
-      ...(await Promise.all((request.extraReads ?? []).map((p) => realpath(p).catch(() => path.resolve(p))))),
-    ];
+    const real = (p: string) => realpath(p).catch(() => path.resolve(p));
+    const writeRoots = request.leadBuilds ? [await real(request.leadBuilds)] : [];
+    const readRoots = [cwd, ...writeRoots, ...(await Promise.all((request.extraReads ?? []).map(real)))];
     // The coding CLIs' sign-in homes, from the one shared list the sandbox and contractors use (SEC-3).
     const forbidden = [...this.options.protectedPaths, ...credentialHomes(), ...(request.denyReads ?? [])].map((p) =>
       path.resolve(p),
@@ -384,7 +389,7 @@ export class LocalSessions {
       ...credentialHomes(),
       ...(request.optimization?.denyWrites ?? []),
     ];
-    return { readRoots, forbidden, deniedWrites };
+    return { readRoots, writeRoots, forbidden, deniedWrites };
   }
 
   /** The saved session to continue, or a fresh one; a resumed session must match its workspace and model. */
@@ -405,14 +410,23 @@ export class LocalSessions {
     return saved;
   }
 
-  /** The command sandbox: the workspace and a linked worktree's Git metadata are its only writable places. */
-  #sandbox(cwd: string, id: string, forbidden: string[], deniedWrites: string[]): Promise<CommandSandbox> {
+  /**
+   * The command sandbox: the workspace, a linked worktree's Git metadata and the build a lead leads
+   * (with its own Git metadata) are its only writable places.
+   */
+  async #sandbox(
+    cwd: string,
+    id: string,
+    bounds: Pick<FileBounds, "forbidden" | "deniedWrites" | "writeRoots">,
+  ): Promise<CommandSandbox> {
     const scratchRoot = this.options.scratchRoot ?? path.join(os.tmpdir(), `studio-${this.engine}`);
+    const builds = (await Promise.all(bounds.writeRoots.map(leadBuildWrites))).flat();
     return commandSandbox({
       cwd,
+      ...(builds.length ? { writableRoots: builds } : {}),
       scratchDir: path.join(scratchRoot, id),
-      secretPaths: forbidden,
-      denyWrite: deniedWrites,
+      secretPaths: bounds.forbidden,
+      denyWrite: bounds.deniedWrites,
       ...(this.options.toolPath ? { toolPath: this.options.toolPath } : {}),
     });
   }

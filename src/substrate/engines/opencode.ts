@@ -28,6 +28,7 @@ import { lockUnowned, ownershipBriefing, releaseLocks, releaseStaleLocks, type L
 import { StudioBridge, answerBridgeCall, bridgeTools } from "./studio-bridge.ts";
 import { writeDelegateStills } from "./codex.ts";
 import { JUDGE_RULES, mcpToolsNote, offLimitsNote, planModeNote, readOnlyNote } from "./codex-prompts.ts";
+import { leadBuildWrites } from "./session-commands.ts";
 import {
   OPENCODE_AGENT,
   builtInHosts,
@@ -487,7 +488,6 @@ export class OpenCodeEngine implements Engine {
             // A reviewer's cwd is its own empty home: the build it tests is the folder it reads.
             request.reviewer?.reads ?? ctx.cwd,
             ctx.scratch,
-            request.director ? path.resolve(request.director.root) : null,
           ),
       offLimitsNote([...this.#protectedPaths, ...credentialHomes(), ...(request.denyReads ?? [])]),
     ]
@@ -497,7 +497,7 @@ export class OpenCodeEngine implements Engine {
 
   /** The command, environment and sandbox of one session. */
   async #invocation(
-    request: Pick<DelegateRequest, "model" | "effort" | "resume" | "denyReads" | "cwd" | "prompt">,
+    request: Pick<DelegateRequest, "model" | "effort" | "resume" | "denyReads" | "cwd" | "prompt" | "leadBuilds">,
     ctx: {
       access: OpenCodeAccess;
       cwd: string;
@@ -516,7 +516,7 @@ export class OpenCodeEngine implements Engine {
     const home = path.join(this.#scratchRoot, "home");
     await mkdir(home, { recursive: true });
     const env = sessionEnv(dialect, { ...ctx, home });
-    const sandbox = await this.#sandboxOptions(ctx, request.denyReads ?? []);
+    const sandbox = await this.#sandboxOptions(ctx, request.denyReads ?? [], request.leadBuilds);
     return {
       argv,
       cwd: ctx.runDir,
@@ -545,14 +545,18 @@ export class OpenCodeEngine implements Engine {
     return [...new Set([...hosts, ...CATALOG_HOSTS])];
   }
 
+  /** The session's box; a building lead's also writes the build it leads (`leadBuilds`). */
   async #sandboxOptions(
     ctx: { access: OpenCodeAccess; cwd: string; runDir: string },
     denyReads: string[],
+    leadBuilds?: string,
   ): Promise<SandboxOptions> {
+    const builds = ctx.access === OpenCodeAccess.Build;
     return openCodeSandbox({
       runDir: ctx.runDir,
       gameDir: ctx.cwd,
-      gitDirs: ctx.access === OpenCodeAccess.Build ? await gitMetadata(ctx.cwd) : [],
+      gitDirs: builds ? await gitMetadata(ctx.cwd) : [],
+      leadBuilds: builds ? await leadBuildWrites(leadBuilds) : [],
       scratchDir: path.join(this.#scratchRoot, "tmp"),
       secretPaths: [...this.#protectedPaths, ...denyReads],
       ...(this.#toolPath ? { toolPath: this.#toolPath } : {}),
@@ -640,6 +644,8 @@ export function openCodeSandbox(input: {
   runDir: string;
   gameDir: string;
   gitDirs: string[];
+  /** The build a lead leads and its Git metadata (`leadBuildWrites`). */
+  leadBuilds?: string[];
   scratchDir: string;
   secretPaths: string[];
   toolPath?: () => Promise<string>;
@@ -652,7 +658,7 @@ export function openCodeSandbox(input: {
   const state = path.join(folders.XDG_STATE_HOME, "opencode");
   const cache = path.join(folders.XDG_CACHE_HOME, "opencode");
   return {
-    writableRoots: [input.runDir, ...input.gitDirs, state, cache],
+    writableRoots: [input.runDir, ...input.gitDirs, ...(input.leadBuilds ?? []), state, cache],
     scratchDir: input.scratchDir,
     secretPaths: input.secretPaths,
     ownHome: [openCodeDataHome(env, home)],

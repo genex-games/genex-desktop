@@ -296,8 +296,9 @@ export interface DelegateRequest {
   liveTools?: LiveToolSpec[];
   onLiveTool?: (name: string, args: Record<string, unknown>) => Promise<LiveToolResult>;
   /**
-   * A session that may look and talk but never edit or run commands (the playtester), unless it
-   * asks in the chat's mode (`leadAsks`: a waking run's lead, the run's coordinator).
+   * A session that may look and talk but never edit or run commands (the playtester, a reviewer, a
+   * reader worker), unless it asks in the chat's mode (`leadAsks`: the run's coordinator). Never a
+   * run's lead: the host seats every lead as a full agent.
    */
   readOnly?: boolean;
   /**
@@ -353,6 +354,12 @@ export interface DelegateRequest {
    * `engine.delegate` has no such field), never together with `permissions`.
    */
   leadAsks?: LeadAsks;
+  /**
+   * A lead's build outside the folder it sits in (a web Loop's integration worktree, its seat's
+   * checked real path): the lead edits, runs and commits there, so whatever box its engine keeps
+   * writes it as it writes the session's own folder. Only the host sets it; never read-only.
+   */
+  leadBuilds?: string;
   /**
    * A worker of a chat's lead, in the chat's mode: its seat, as the host found and built it. Only
    * the host sets it (the harness asks with a grant the host honours on its own finding), never

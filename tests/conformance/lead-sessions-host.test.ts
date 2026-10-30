@@ -339,7 +339,8 @@ describe("a lead that is its chat's own session", () => {
     const honoured = seen.at(-1)!;
     assert.equal(honoured.director?.root, real, "the grant is honoured in the game folder, on the real path checked");
     assert.equal(path.resolve(honoured.cwd), path.resolve(project.dir), "where the session sits");
-    assert.equal(honoured.readOnly, true, "and writes nothing");
+    assert.notEqual(honoured.readOnly, true, "never read-only");
+    assert.equal(honoured.leadBuilds, real, "it builds in the worktree it leads");
     assert.ok(
       (honoured.liveTools ?? []).some((tool) => tool.name === "look"),
       "its window and its tools are on the build it leads",
@@ -371,6 +372,29 @@ describe("a lead that is its chat's own session", () => {
     assert.equal(request.director?.root, real, "the grant the engine gets names the real worktree");
     assert.ok((request.extraReads ?? []).includes(real), "which is what it may read");
     assert.ok(!(request.extraReads ?? []).includes(alias), "never the link");
+    assert.equal(request.leadBuilds, real, "and builds in, by its real path");
+  });
+
+  it("is never read-only, whatever its brief says: a full agent on the build it leads, in the chat's mode on an engine that does not ask about each call", async () => {
+    const { core, project, threadId, delegate, seen } = await gameChat();
+    const worktree = await runWorktree(core, project, "run_one");
+    const real = await realpath(worktree);
+    const briefs: Array<[string, Record<string, unknown>]> = [
+      ["a kept older seed's lead, read-only by its brief", leadGrant(threadId, project.name, "run_one", worktree)],
+      [
+        "a lead with no read-only seat",
+        { director: { runId: "run_one", threadId, project: project.name, root: worktree, setup: null, tools: [] } },
+      ],
+    ];
+    for (const [label, brief] of briefs) {
+      await delegate(`lead-${label.length}`, { chatTurn: { messageId: "run_one" }, ...brief });
+      const request = seen.at(-1)!;
+      assert.equal(request.director?.root, real, `${label}: seated on the build it leads`);
+      assert.notEqual(request.readOnly, true, `${label}: never read-only`);
+      assert.equal(request.leadBuilds, real, `${label}: its box writes that build`);
+      assert.ok(request.permissions?.mode, `${label}: in the chat's mode, as the chat's own session on its engine`);
+      assert.ok((request.liveTools ?? []).length > 0, `${label}: with the host's tools`);
+    }
   });
 
   it("drops the grant for a root that is not this game's worktree of that run, and records no bookmark", async () => {
@@ -414,7 +438,6 @@ describe("a lead that is its chat's own session", () => {
         root: path.join(autopilot, "run_one", "to-live"),
       },
       { label: "a run the record never started", runId: "run_ghost", root: unrecorded },
-      { label: "a lead that may write", runId: "run_one", root: ours.path, extra: { readOnly: false } },
     ];
     const seenGrants: Array<{ label: string; director: unknown; look: boolean; reads: string[]; bookmark: unknown }> =
       [];

@@ -5,9 +5,10 @@
  * of its own, opened in the run's integration worktree beside the chat's contractor session, which
  * knew nothing of the conversation the build came from and wrote a memory file to survive its own
  * compactions. Now the chat's own session leads: the run resumes the session the chat's bookmark
- * names (`contractor_session`), in the game folder where that session lives, read-only while the
- * build runs — workers write, and the lead reads the integration worktree it leads. After the close
- * the chat goes on in the same session, before, during and after the build one conversation.
+ * names (`contractor_session`), in the game folder where that session lives, and it builds with its
+ * own hands in the integration worktree it leads, beside its workers — never read-only, limited only
+ * by the chat's permission mode. After the close the chat goes on in the same session, before,
+ * during and after the build one conversation.
  *
  * When the chat has no session this lead can continue — its bookmark names another engine or
  * model, or it cannot be resumed — the lead starts a fresh one in the game folder with the brief,
@@ -18,14 +19,13 @@
  * keep the separate director in its integration worktree.
  */
 import { lastContractorSession } from "../chat-session.ts";
-import { GIT, gitAt, resetClean, updateRef } from "../git.ts";
+import { commitAll, GIT, gitAt, headOf } from "../git.ts";
 import { HostMethod } from "../host-methods.ts";
 import { plannerModel } from "../model-roles.ts";
-import { runRef } from "../repo.ts";
 import { EventKind, RunEvent } from "../run-events.ts";
 import { compactedSummary } from "../compaction-log.ts";
 import { handoverSection } from "../session-compact-prompts.ts";
-import { chatSoFar, LEAD_SET_ASIDE } from "./lead-session-prompts.ts";
+import { chatSoFar, LEAD_EDITS_COMMITTED } from "./lead-session-prompts.ts";
 import type { AnyRecord, HarnessCtx, HarnessEvent, Run } from "../../types/harness.d.ts";
 import type { LoopRun } from "./loop-run.ts";
 
@@ -48,10 +48,10 @@ export function folderBusy(err: unknown): boolean {
 }
 
 /**
- * Does every part of the run a lead depends on serve one (`SERVES_LEAD`): its words and its hands
- * for a lead that writes nothing are there? A seed upgrade keeps a part the agent edited before one
- * session, which never exported it — and would tell a lead in the game folder to edit and commit in
- * its worktree. Such a run seats no lead: a director with its own hands leads, as it did before.
+ * Does every part of the run a lead depends on serve one (`SERVES_LEAD`): its words and its tools for
+ * a lead seated in its game folder are there? A seed upgrade keeps a part the agent edited before one
+ * session, which never exported it. Such a run seats no lead: a director whose working folder is the
+ * integration worktree leads, as it did before.
  */
 export function servesLead(parts: readonly Readonly<Record<string, unknown>>[]): boolean {
   return parts.every((part) => part.SERVES_LEAD === true);
@@ -194,9 +194,9 @@ export async function bookmarkLead(
     .catch(() => {});
 }
 
-/** What the studio set aside of a lead's integration worktree: the ref that keeps it, and its paths. */
-export interface SetAside {
-  ref: string;
+/** What the studio committed in a lead's integration worktree in its name: the commit, and its paths. */
+export interface LeadEdits {
+  commit: string;
   files: string[];
 }
 
@@ -208,25 +208,23 @@ function statusPath(line: string): string {
 }
 
 /**
- * Changes in a lead's integration worktree that nobody committed — a game that builds in place, a
- * tool's cache, a lead's edit it did not commit — would hold every merge off for the rest of the run. The
- * studio keeps them instead: every change, staged, as a commit over the integration head on a ref
- * of the run (`refs/studio/runs/<run>/set-aside/<stamp>`, never the branch), and the worktree reset
- * to that head. Said on the run's log. Answers what it set aside, or null when nothing was
- * uncommitted; a git failure throws, and the worktree is left as it was found or reset.
+ * The lead builds in its integration worktree with its own hands, so what is uncommitted there is
+ * its work — its edits, a game that builds in place, a tool's cache — and would hold every merge
+ * off. Before a merge, a playtest or a worker's fork the studio commits every change on the
+ * integration branch in the lead's name: nothing of it is lost or left out of the build. The head
+ * moves to that commit, journalled and protected as any integration head, and the run's log says
+ * so. Answers what it committed, or null when nothing was uncommitted; a git failure throws.
  */
-export async function setAsideStrays(loopRun: LoopRun, label: string): Promise<SetAside | null> {
-  const { ctx, integrationWorktree: at, note, run } = loopRun;
+export async function commitLeadEdits(loopRun: LoopRun, label: string): Promise<LeadEdits | null> {
+  const { ctx, integrationWorktree: at, journal, note, protectHead, run, state } = loopRun;
   const status = await gitAt(ctx, at, GIT.status, { label }).catch(() => "");
   if (!status) return null;
   const files = status.split("\n").map(statusPath).filter(Boolean);
-  const ref = runRef(run.runId, "set-aside", Date.now());
-  const message = `studio: set aside what no worker made in ${run.runId}'s integration worktree`;
-  // Everything, staged in the worktree's own index (the reset below clears it), as a commit on the
-  // head. A kept older git.ts has no `snapshotCommit`, and then no lead is seated (`servesLead`).
-  const commit = await gitAt(ctx, at, GIT.snapshotCommit(message), { label });
-  await updateRef(ctx, at, ref, commit, { label });
-  await resetClean(ctx, at, "HEAD", { label });
-  note(LEAD_SET_ASIDE(ref, files));
-  return { ref, files };
+  await commitAll(ctx, at, `director ${run.runId}: the lead's edits`, { label });
+  const commit = await headOf(ctx, at, { label });
+  state.integrationHead = commit;
+  journal.director.integrationHead = commit;
+  await protectHead(commit);
+  note(LEAD_EDITS_COMMITTED(commit, files));
+  return { commit, files };
 }

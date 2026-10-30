@@ -12,7 +12,7 @@ import { LEAD_PRIOR_BRINGS_IN } from "./lead-session-prompts.ts";
 import { KEPT_WORDS } from "./kept-work-prompts.ts";
 
 /**
- * This part serves a lead that is its chat's own session and writes nothing (one session): a run
+ * This part serves a lead that is its chat's own session (one session): a run
  * seats one only when every part it depends on says so (lead-session.ts `servesLead`).
  */
 export const SERVES_LEAD = true;

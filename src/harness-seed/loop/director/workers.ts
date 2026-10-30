@@ -62,6 +62,7 @@ import {
 } from "./contract-gate.ts";
 import { defaultWorkerId, priorFork, priorIdRefusal, priorWorkerIds } from "./journal.ts";
 import { LEAD_FORK_REFUSED, LEAD_START_DIRTY } from "./lead-session-prompts.ts";
+import { commitLeadEdits } from "./lead-session.ts";
 import { BuildTarget } from "./loop-run.ts";
 import {
   compilePlan,
@@ -97,7 +98,7 @@ import type { AnyRecord } from "../../types/harness.d.ts";
 import type { DelegateOwnership } from "../../types/host-api.d.ts";
 
 /**
- * This part serves a lead that is its chat's own session and writes nothing (one session): a run
+ * This part serves a lead that is its chat's own session (one session): a run
  * seats one only when every part it depends on says so (lead-session.ts `servesLead`).
  */
 export const SERVES_LEAD = true;
@@ -1117,8 +1118,8 @@ async function forkGate(loopRun: LoopRun, worker: OpenedWorker, from: string): P
     rule: gate.ok === true ? VerdictRule.Starts : VerdictRule.DoesNotStart,
   });
   if (gate.ok === true) return null;
-  // A lead writes nothing (one session): a single session is its hands, and it starts on a build
-  // that does not run — repairing it is the job.
+  // A lead's single worker may be the hands it gives a repair: it starts on a build that does not
+  // run — repairing it is the job.
   if (loopRun.lead && worker.mode === WorkerMode.Single) {
     note(`worker ${worker.id} starts on ${shortSha(commit)}, which does not run — ${(gate.problems ?? []).join("; ")}`);
     return null;
@@ -1362,7 +1363,8 @@ function loopStartFields(worker: Worker): AnyRecord {
 
 /**
  * What `worker_start` answers once the worker is running; `waking` for a lead that ends its turn
- * instead of waiting, `lead` for one that writes nothing (one session) and so commits nothing first.
+ * instead of waiting, `lead` for one seated in its game folder (one session), whose uncommitted
+ * changes the studio committed before the fork (`dirty` only when it could not).
  */
 function startAnswer(
   worker: Worker,
@@ -1477,6 +1479,8 @@ export async function startWorker(loopRun: LoopRun, args: AnyRecord) {
   const ownsMain = yes(args.owns_main, runningWorkers().length === 0);
   const parsed = parseWorkerArgs(loopRun, args);
   if (typeof parsed === "string") return parsed;
+  // A lead builds in the integration worktree: what it left uncommitted goes into the fork as its work.
+  if (loopRun.lead) await commitLeadEdits(loopRun, `director:${run.runId}:fork`).catch(() => null);
   const fork = await contractedFork(loopRun, id, args, mode);
   if (fork.refusal !== undefined) return fork.refusal;
   const { from, commit, owns } = fork;
