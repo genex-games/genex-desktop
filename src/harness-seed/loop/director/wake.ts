@@ -65,7 +65,7 @@ import { folderBusy } from "./lead-session.ts";
 import { noteTurnEnds, noteTurnOver } from "./turn-ends.ts";
 import { closeUnderWay } from "./close-latch.ts";
 import { activeWork, leadsOpenLoop, workAtHand } from "./open/active-work.ts";
-import { OPEN_TURN_MS } from "./open/contract.ts";
+import { OPEN_TURN_MS, OPEN_WALL_CLOCK } from "./open/contract.ts";
 import { openClosingOf, openDigestOf } from "./open/digest.ts";
 import { healthWatch } from "./open/health.ts";
 import { heardMidTurn, noteWorkerQuestions, watchOpenTurn } from "./open/news.ts";
@@ -1646,9 +1646,9 @@ async function webWatchedSession(
   kit: TurnKit,
   turn: TurnAsk,
 ): Promise<Partial<DelegateResult>> {
-  // On the wall clock's timers, never the wake loop's: a test's loop clock that answers at once
-  // would spin this watch without ever yielding to the session it watches.
-  const news = watchTurnNews(loopRun, { clock: { sleep }, turn: wake.turns });
+  // On the wall clock's timers, never the wake loop's (a loop clock that answers at once would spin
+  // this watch without yielding to the session it watches), and never holding the process open.
+  const news = watchTurnNews(loopRun, { clock: OPEN_WALL_CLOCK, turn: wake.turns });
   let result: Partial<DelegateResult> | undefined;
   try {
     result = await withCapWatch(
