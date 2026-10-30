@@ -286,10 +286,8 @@ export type PreviewInputAction =
 
 /**
  * The state a run is about, reached the way a player reaches it, after every load and before
- * anyone looks: the scout writes it (a key that opens the map picker, the click on the map,
- * a demo that does the same), the harness applies it before judges, captures and the computer
- * tool's first frame. `verify` is a probe over `__studio.state()` that says the state landed —
- * without it a run can build and judge the wrong map for hours because nothing checked.
+ * anyone looks (a key that opens the map picker, the click on the map): the studio applies it
+ * before captures and the computer tool's first frame.
  */
 export interface PreviewSetup {
   /**
@@ -305,22 +303,9 @@ export interface PreviewSetup {
   demo?: string;
   /** Milliseconds to let the game settle after the script; default 400. */
   settleMs?: number;
-  /** A dotted state path and the value it must hold (`equals`), or merely be truthy. */
-  verify?: { path: string; equals?: unknown; truthy?: boolean };
   /** One sentence for the log and the briefs: what this reaches and why. */
   note?: string;
-  /**
-   * A game that reports a front-end (`state().flow.playing === false`) is put into play with
-   * `__studio.begin()` by default: by a studio window before the setup is replayed (the scout
-   * recorded it in play), by the evidence pass after its seed. `false` keeps its title, menu or
-   * countdown on screen for the worker that builds them; the playtester's window always does.
-   */
-  begin?: boolean;
 }
-
-/** The `__studio` verb that takes a game past its title, menu and countdown into play (`config.begin`). */
-export const GameFront = { Begin: "begin" } as const;
-export type GameFront = (typeof GameFront)[keyof typeof GameFront];
 
 /**
  * The `__studio` verbs that put a named view on screen (`src/game-template/src/studio.js`): the

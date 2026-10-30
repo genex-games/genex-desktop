@@ -40,7 +40,7 @@ interface FixtureManifest {
   needsNodeModules: boolean;
   backend: "webgl" | "webgpu";
   game: Record<string, unknown>;
-  setup: { gesture?: boolean; actions?: unknown[]; settleMs?: number; verify?: { path: string } } | null;
+  setup: { gesture?: boolean; actions?: unknown[]; settleMs?: number } | null;
   delta: Array<{ path: string; min: number }>;
   deterministic: boolean;
   readyBudgetMs: number;
@@ -223,7 +223,6 @@ describe("the five shapes", () => {
       const actions = manifest.setup.actions ?? [];
       assert.ok(actions.length > 0 && actions.length <= MAX_INPUT_ACTIONS, `${id}: ${actions.length} setup actions`);
       assert.equal(capActions(actions).length, actions.length, `${id}: an action the preview would drop`);
-      assert.ok(manifest.setup.verify?.path, `${id}: a setup with nothing to verify proves nothing landed`);
     }
   });
 

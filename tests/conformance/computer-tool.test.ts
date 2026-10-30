@@ -16,8 +16,6 @@ import {
   parsePoint,
   parseRegion,
   parseSurface,
-  setupReached,
-  setupVerifyExpr,
   unsupportedAction,
   unsupportedPlayer,
 } from "../../src/substrate/computer-tool.ts";
@@ -193,8 +191,8 @@ describe("computer tool — which surface a look photographs (M4.5)", () => {
   });
 });
 
-describe("the requested state — setup and its probe", () => {
-  it("keeps only a setup the studio can run, and drops a path it cannot read", () => {
+describe("the requested state — setup", () => {
+  it("keeps only a setup the studio can run, and drops what it no longer reads", () => {
     const setup = normalizeSetup({
       actions: [{ type: "tap", keys: ["i"] }, { type: "nonsense" }, { type: "click", x: 480, y: 300, px: true }],
       verify: { path: "maps.activeId", equals: "macba" },
@@ -204,8 +202,9 @@ describe("the requested state — setup and its probe", () => {
     assert.ok(setup);
     assert.equal(setup!.actions!.length, 2);
     assert.equal(setup!.settleMs, 10_000);
-    assert.deepEqual(setup!.verify, { path: "maps.activeId", equals: "macba" });
-    assert.equal(normalizeSetup({ verify: { path: "maps[0]" } }), null);
+    // Flipped (phase 5): no goal is checked against a game's own state any more.
+    assert.equal(Object.hasOwn(setup!, "verify"), false);
+    assert.equal(normalizeSetup({ verify: { path: "maps.activeId" } }), null);
     assert.equal(normalizeSetup({}), null);
   });
 
@@ -225,17 +224,6 @@ describe("the requested state — setup and its probe", () => {
     const both = normalizeSetup({ gesture: true, demo: "opening" });
     assert.equal(both!.gesture, true);
     assert.equal(both!.demo, "opening");
-  });
-
-  it("says whether the state landed, and what the board's probe reads", () => {
-    const verify = { path: "maps.activeId", equals: "macba" };
-    assert.equal(setupReached(verify, { maps: { activeId: "macba" } }), true);
-    assert.equal(setupReached(verify, { maps: { activeId: "street" } }), false);
-    assert.equal(setupReached(verify, { __missing: true }), null, "no contract is no measurement");
-    assert.equal(setupReached({ path: "mode.museum", truthy: true }, { mode: { museum: 1 } }), true);
-    assert.equal(setupVerifyExpr(verify), 'has("maps.activeId") && maps.activeId == "macba"');
-    assert.equal(setupVerifyExpr({ path: "ready", truthy: true }), 'has("ready") && ready');
-    assert.equal(setupVerifyExpr(undefined), null);
   });
 });
 
@@ -467,18 +455,6 @@ describe("computer tool v2 — tolerant names, observing, batching", () => {
       assert.equal(parsed.ok, false, `${JSON.stringify(actions)} is refused`);
       assert.match((parsed as { error: string }).error, error);
     }
-  });
-});
-
-describe("computer tool — a goal the host checks cannot be gamed by its own path", () => {
-  it("reads own fields only: nothing on the prototype, no missing value equal to the word undefined", () => {
-    const state = { flow: { phase: "menu" } };
-    assert.equal(setupReached({ path: "constructor", truthy: true }, state), false);
-    assert.equal(setupReached({ path: "__proto__", truthy: true }, state), false);
-    assert.equal(setupReached({ path: "flow.toString", truthy: true }, state), false);
-    assert.equal(setupReached({ path: "missing", equals: "undefined" }, state), false);
-    assert.equal(setupReached({ path: "flow.phase", equals: "menu" }, state), true);
-    assert.equal(normalizeSetup({ verify: { path: "__proto__.x", truthy: true } }), null);
   });
 });
 

@@ -3177,7 +3177,7 @@ const STUDIO_TOOLS: Record<string, ToolWords> = {
   set_game_cover: { icon: "write", label: t("painted the game's cover") },
   checkpoint: { icon: "see", label: t("marked a moment worth seeing") },
   capture: { icon: "see", label: t("captured the game"), active: t("Capturing the game") },
-  // The lead's run tools. `wait` stays neutral: a playtester waits too.
+  // The lead's run tools. `wait` stays neutral.
   plan: { icon: "think", label: t("set out the plan"), active: t("Writing the plan") },
   goal_update: {
     icon: "think",

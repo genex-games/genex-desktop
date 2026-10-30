@@ -260,10 +260,8 @@ export type PreviewInputAction =
 
 /**
  * The state a run is about, reached the way a player reaches it, after every load and before
- * anyone looks: the scout writes it (a key that opens the map picker, the click on the map,
- * a demo that does the same), the harness applies it before judges, captures and the computer
- * tool's first frame. `verify` is a probe over `__studio.state()` that says the state landed —
- * without it a run can build and judge the wrong map for hours because nothing checked.
+ * anyone looks (a key that opens the map picker, the click on the map): the studio applies it
+ * before captures and the computer tool's first frame.
  */
 export interface PreviewSetup {
   /**
@@ -279,17 +277,8 @@ export interface PreviewSetup {
   demo?: string;
   /** Milliseconds to let the game settle after the script; default 400. */
   settleMs?: number;
-  /** A dotted state path and the value it must hold (`equals`), or merely be truthy. */
-  verify?: { path: string; equals?: unknown; truthy?: boolean };
   /** One sentence for the log and the briefs: what this reaches and why. */
   note?: string;
-  /**
-   * A game that reports a front-end (`state().flow.playing === false`) is put into play with
-   * `__studio.begin()` by default: by a studio window before the setup is replayed (the scout
-   * recorded it in play), by the evidence pass after its seed. `false` keeps its title, menu or
-   * countdown on screen for the worker that builds them; the playtester's window always does.
-   */
-  begin?: boolean;
 }
 // ↑ src/shared/preview-contract.ts
 
@@ -2156,10 +2145,7 @@ export interface RunReference {
   /** Saved file paths (the morning-review timeline). */
   shots: string[];
   notes?: string;
-  /**
-   * "reference" is a real game to beat (the blind panel is the exit); "direction" is free text
-   * to push toward — no panel, the run spends its whole budget iterating.
-   */
+  /** "reference" is a real game's stills the lead aims at; "direction" is free text to push toward. */
   kind?: "reference" | "direction";
   /** Pixels the critic actually sees. Not written into the event log. */
   frames?: ReferenceFrame[];
@@ -2170,13 +2156,9 @@ export interface RunSpec {
   runId: string;
   goal: string;
   project: string;
-  /** "autopilot" decomposes into facet loops; absent = the plain gauntlet. */
+  /** "autopilot": the wire name of a Loop's run, kept for the records it is in. */
   mode?: "autopilot";
-  /**
-   * gauntlet reference bar — Named / Fetchable / Comparable. `kind` widens it:
-   * "reference" is a real game to beat (the blind panel is the exit condition); "direction" is
-   * free text to push toward — no reference panel. Completion is controlled by budgets.
-   */
+  /** What the run aims at: a named game's stills, or a direction in words. Completion is controlled by budgets. */
   reference: RunReference;
   /** observationDelays: backoff (ms) before re-trying a blind camera — a test/ops knob. */
   budgets: {

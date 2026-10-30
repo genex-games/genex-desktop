@@ -868,25 +868,12 @@ function normalizeGesture(raw: unknown): PreviewSetup["gesture"] | undefined {
   };
 }
 
-/** A setup's verify: a plain dotted state path, and what it should hold. */
-function normalizeVerify(raw: unknown): PreviewSetup["verify"] | undefined {
-  if (!raw || typeof raw !== "object") return undefined;
-  const v = raw as Record<string, unknown>;
-  if (typeof v.path !== "string" || !/^[a-zA-Z_$][\w$]*(\.[a-zA-Z_$][\w$]*)*$/.test(v.path)) return undefined;
-  if (v.path.split(".").some((key) => MACHINERY_KEYS.has(key))) return undefined;
-  return {
-    path: v.path,
-    ...("equals" in v ? { equals: v.equals } : {}),
-    ...(v.truthy === true ? { truthy: true } : {}),
-  };
-}
-
 /** A non-blank string, trimmed and cut to \`max\`; undefined for anything else. */
 function trimmedText(value: unknown, max: number): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim().slice(0, max) : undefined;
 }
 
-/** Untrusted JSON (a scout's answer, a journal) → a setup the studio will run, or null. */
+/** Untrusted JSON (a harness's setup, a journal) → a setup the studio will run, or null. */
 export function normalizeSetup(raw: unknown): PreviewSetup | null {
   if (!raw || typeof raw !== "object") return null;
   const o = raw as Record<string, unknown>;
@@ -902,47 +889,7 @@ export function normalizeSetup(raw: unknown): PreviewSetup | null {
   if (demo) setup.demo = demo;
   const settle = Number(o.settleMs);
   if (Number.isFinite(settle) && settle > 0) setup.settleMs = Math.min(MAX_SETTLE_MS, Math.round(settle));
-  const verify = normalizeVerify(o.verify);
-  if (verify) setup.verify = verify;
   const note = trimmedText(o.note, MAX_SETUP_NOTE_CHARS);
   if (note) setup.note = note;
-  return setup.actions || setup.demo || setup.verify || setup.gesture ? setup : null;
-}
-
-/** Path segments that would read the object machinery rather than the game's own state. */
-const MACHINERY_KEYS: ReadonlySet<string> = new Set(["__proto__", "prototype", "constructor"]);
-
-/** A dotted path read through own fields only: never the prototype chain, never its machinery. */
-function lookupPath(state: unknown, path: string): unknown {
-  let current: unknown = state;
-  for (const key of path.split(".")) {
-    if (typeof current !== "object" || current === null || MACHINERY_KEYS.has(key)) return undefined;
-    if (!Object.hasOwn(current, key)) return undefined;
-    current = (current as Record<string, unknown>)[key];
-  }
-  return current;
-}
-
-/** Did the state land? `null` when the state itself is unreadable (no contract, no answer). */
-export function setupReached(verify: PreviewSetup["verify"], state: unknown): boolean | null {
-  if (!verify) return null;
-  const readable = typeof state === "object" && state !== null && !(state as { __missing?: boolean }).__missing;
-  if (!readable) return null;
-  const value = lookupPath(state, verify.path);
-  if ("equals" in verify)
-    return value !== undefined && (value === verify.equals || String(value) === String(verify.equals));
-  if (verify.truthy) return Boolean(value);
-  return value !== undefined;
-}
-
-/** The same test as a harness probe expression, so the board can carry it as a check. */
-export function setupVerifyExpr(verify: PreviewSetup["verify"]): string | null {
-  if (!verify) return null;
-  if ("equals" in verify) {
-    const v = verify.equals;
-    const literal = typeof v === "number" || typeof v === "boolean" ? String(v) : JSON.stringify(String(v));
-    return `has(${JSON.stringify(verify.path)}) && ${verify.path} == ${literal}`;
-  }
-  if (verify.truthy) return `has(${JSON.stringify(verify.path)}) && ${verify.path}`;
-  return `has(${JSON.stringify(verify.path)})`;
+  return setup.actions || setup.demo || setup.gesture ? setup : null;
 }

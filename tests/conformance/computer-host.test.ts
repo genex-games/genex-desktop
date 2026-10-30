@@ -405,7 +405,6 @@ describe("the computer tool's host", () => {
         { type: "tap", keys: ["i"] },
         { type: "click", x: 480, y: 300, px: true },
       ],
-      verify: { path: "maps.activeId", equals: "macba" },
       note: "I opens the picker",
     };
     await api["engine.delegate"]!({
@@ -657,11 +656,7 @@ describe("a setup, as builders and the computer tool first see it", () => {
     assert.equal(await service.applySetup(port, null, { sleep }), null);
     assert.deepEqual(calls, ["start"], "only the studio's own clock is started");
     calls.length = 0;
-    const note = await service.applySetup(
-      port,
-      { actions: [{ type: "tap", keys: ["i"] }], verify: { path: "flow.playing", equals: true } },
-      { sleep },
-    );
+    const note = await service.applySetup(port, { actions: [{ type: "tap", keys: ["i"] }] }, { sleep });
     assert.equal(note, null);
     assert.deepEqual(calls, ["start", "input"]);
   });

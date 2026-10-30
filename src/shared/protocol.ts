@@ -287,10 +287,7 @@ export interface RunReference {
   /** Saved file paths (the morning-review timeline). */
   shots: string[];
   notes?: string;
-  /**
-   * "reference" is a real game to beat (the blind panel is the exit); "direction" is free text
-   * to push toward — no panel, the run spends its whole budget iterating.
-   */
+  /** "reference" is a real game's stills the lead aims at; "direction" is free text to push toward. */
   kind?: "reference" | "direction";
   /** Pixels the critic actually sees. Not written into the event log. */
   frames?: ReferenceFrame[];
@@ -328,13 +325,9 @@ export interface RunSpec {
   runId: string;
   goal: string;
   project: string;
-  /** "autopilot" decomposes into facet loops; absent = the plain gauntlet. */
+  /** "autopilot": the wire name of a Loop's run, kept for the records it is in. */
   mode?: "autopilot";
-  /**
-   * gauntlet reference bar — Named / Fetchable / Comparable. `kind` widens it:
-   * "reference" is a real game to beat (the blind panel is the exit condition); "direction" is
-   * free text to push toward — no reference panel. Completion is controlled by budgets.
-   */
+  /** What the run aims at: a named game's stills, or a direction in words. Completion is controlled by budgets. */
   reference: RunReference;
   /** observationDelays: backoff (ms) before re-trying a blind camera — a test/ops knob. */
   budgets: {
