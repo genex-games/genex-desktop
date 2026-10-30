@@ -352,7 +352,7 @@ describe("the worker pool", { timeout: TEST_TIMEOUT_MS }, () => {
     assert.match(await pool.call(WorkerTool.Status, { id: reader }), /stopped/);
   });
 
-  it("a type gives its tools and isolation; an unknown type lists the known ones", async () => {
+  it("a type gives its know-how and isolation, never a tool fence; an unknown type lists the known ones", async () => {
     const repo = await gameRepo();
     const types: WorkerType[] = [
       {
@@ -366,7 +366,8 @@ describe("the worker pool", { timeout: TEST_TIMEOUT_MS }, () => {
     const host = poolHost(repo, { types });
     const pool = await chatPool(host, repo);
     const id = await start(pool, { title: "Crate", task: "Model a crate.", type: "blender_model" });
-    assert.deepEqual(delegation(host, id).toolAllow, ["blender__"]);
+    // Flipped: a typed worker was held to its type's tools; it has every one its lead has.
+    assert.equal(delegation(host, id).toolAllow, undefined);
     assert.ok(delegation(host, id).cwd, "the type's isolation: its own copy");
     assert.match(String(delegation(host, id).prompt), /Models one prop in Blender\./);
     const unknown = await pool.call(WorkerTool.Start, { title: "x", task: "x", type: "texture" });

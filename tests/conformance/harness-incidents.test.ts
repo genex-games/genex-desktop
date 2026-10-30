@@ -16721,4 +16721,25 @@ describe("the lead and its workers are free agents (Loop phase 3)", () => {
     assert.equal(sent.director.root, "/runs/run_j/integration", "leading the integration worktree it builds in");
     assert.equal(sent.director.inPlace, undefined);
   });
+
+  it("FL2. Blender went to one worker only, and a worker on an engine's project was told the editor was the lead's alone: a worker has every tool its lead has, its type only the kind of work", async () => {
+    const { workerBrief } = await import("../../src/harness-seed/loop/workers/prompts.ts");
+    const { workerTools } = await import("../../src/harness-seed/loop/workers/specs.ts");
+    const { CoreFact } = await import("../../src/harness-seed/loop/folder-facts.ts");
+    const blender = { pluginId: "blender", id: "blender_model", description: "Models one prop.", tools: ["blender__"] };
+    const start = workerTools([{ ...blender, isolation: "copy" }] as never).find((tool) => tool.name === "worker_start");
+    assert.match(String(start?.description), /with every plugin tool and connector you have/);
+    const type = (start?.parameters as { properties: { type: { description: string } } }).properties.type;
+    assert.doesNotMatch(type.description, /brings that kind's tools/);
+    const onUnreal = workerBrief({
+      identity: { folderLabel: "AI Games/keep", facts: [{ id: CoreFact.UnrealProject, path: "." }] as never },
+      task: "restart the editor and play the gate",
+      isolation: "copy" as never,
+      research: false,
+      typeDescription: null,
+      inputs: [],
+    });
+    assert.doesNotMatch(onUnreal, /none of its tools|lead's alone/, "the editor's tools are a worker's too");
+    assert.match(onUnreal, /use the editor's tools for what only it can do \(start or restart it/);
+  });
 });

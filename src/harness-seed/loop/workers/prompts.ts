@@ -14,11 +14,11 @@ export const WORKERS_BRIEF_LINE =
 const WORKER_PLUGIN_SEARCH = `To look for a Genex plugin, call ${ProjectTool.PluginsFind} and say in your report what it found; only the lead shows the person a plugin's card.`;
 
 /**
- * What a worker of a project with a game engine's editor reads: the editor is the lead's, and
- * Genex hands a worker none of its tools.
+ * What a worker in a copy of a project with a game engine's editor reads: it has the editor's tools
+ * as its lead does, and they act on the game the editor has open, which is not its copy.
  */
-const WORKER_NO_EDITOR =
-  "The game engine's editor is the lead's alone: you have none of its tools. Change the project through its files.";
+const WORKER_EDITOR_ELSEWHERE =
+  "The game engine's editor works on the game folder the lead works in, not on your copy: change your copy through its files, and use the editor's tools for what only it can do (start or restart it, play, look, check) or for changes the lead asked you to make there.";
 
 /** The kinds of project a game engine's editor works on. */
 const ENGINE_PROJECTS: ReadonlySet<string> = new Set([
@@ -28,7 +28,7 @@ const ENGINE_PROJECTS: ReadonlySet<string> = new Set([
   CoreFact.RobloxProject,
 ]);
 
-/** Whether a project holds a game engine's project, whose editor its lead drives. */
+/** Whether a project holds a game engine's project, whose editor works on the game folder. */
 const holdsEngine = (facts: readonly FactRef[]): boolean => facts.some((fact) => ENGINE_PROJECTS.has(fact.id));
 
 /** What a worker's brief is made from. */
@@ -72,7 +72,7 @@ export function workerBrief(parts: WorkerBriefParts): string {
     `Your task:\n${parts.task}`,
     "",
     WHERE[parts.isolation],
-    ...(holdsEngine(parts.identity.facts) ? [WORKER_NO_EDITOR] : []),
+    ...(holdsEngine(parts.identity.facts) && parts.isolation === WorkerIsolation.Copy ? [WORKER_EDITOR_ELSEWHERE] : []),
     ...(parts.inputs.length ? [`Start from these files: ${parts.inputs.join(", ")}.`] : []),
     parts.research
       ? "You may search and read the web for this task."

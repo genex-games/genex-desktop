@@ -183,7 +183,7 @@ describe("the host's worker seat", () => {
     void core;
   });
 
-  it("a worker is never handed the connector its game's kind brings (an engine's live editor); the chat's own session is", {
+  it("a building worker is handed the connector its game's kind brings (an engine's live editor), as the chat's own session is", {
     timeout: CASE_TIMEOUT_MS,
   }, async () => {
     const { core, delegate, runWorker, personSays } = await workerChat();
@@ -197,9 +197,22 @@ describe("the host's worker seat", () => {
     await delegate({ chatTurn: { messageId: await personSays() } });
     assert.deepEqual(
       asked.map((options) => options.kindServers),
-      [false, undefined],
-      "the worker without, the chat's own session with",
+      [undefined, undefined],
+      "the worker with it, as the chat's own session",
     );
+  });
+
+  it("a building worker is offered every tool the lead is, whatever its type names: a type is the kind of work, never a fence", {
+    timeout: CASE_TIMEOUT_MS,
+  }, async () => {
+    const { seen, delegate, runWorker } = await workerChat();
+    const names = () => (seen.at(-1)?.liveTools ?? []).map((tool) => tool.name).sort();
+    await delegate(runWorker());
+    const untyped = names();
+    await delegate({ ...runWorker(), toolAllow: ["blender__"] });
+    const typed = names();
+    assert.ok(untyped.length > 0, "a worker has host tools");
+    assert.deepEqual(typed, untyped, "a typed worker has every one of them");
   });
 
   it("a worker grant the host cannot confirm runs unattended as before", { timeout: CASE_TIMEOUT_MS }, async () => {

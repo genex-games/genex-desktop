@@ -194,7 +194,7 @@ export async function startWorker(state: PoolState, args: AnyRecord): Promise<st
   });
   // Written before its session starts, so its start always comes before its end in the log.
   await recordStart(state, record);
-  const work = runWorker(state, record, ask, prompt)
+  const work = runWorker(state, record, prompt)
     .catch((err: unknown) => ended(state, record, WorkerState.Failed, failureWords(err), null, failureCode(err)))
     .finally(() => state.runs.delete(record.id));
   state.runs.set(record.id, work);
@@ -284,7 +284,6 @@ const failureCode = (err: unknown): WorkerStopCode =>
 function delegateLeg(
   state: PoolState,
   record: WorkerRecord,
-  ask: StartAsk,
   leg: { prompt: string; resume: string | null },
 ): Promise<DelegateResult> {
   const { ctx, engine, model, effort, project, threadId, runId, turn, creditCap } = state.scope;
@@ -300,19 +299,20 @@ function delegateLeg(
     ...(leg.resume ? { resume: leg.resume } : {}),
     ...(record.worktree ? { cwd: record.worktree } : {}),
     ...(record.isolation === WorkerIsolation.Read ? { readOnly: true } : {}),
-    ...(ask.type ? { toolAllow: [...ask.type.tools] } : {}),
+    // No tool allowlist: a worker has every plugin tool and connector its lead has; its type is
+    // the kind of work (its brief's know-how and default isolation), never a fence.
     worker: { id: record.id, title: record.title, ...belongs, research: record.research },
   });
 }
 
 /** A worker's sessions: its brief, then each steer the lead queued while it worked, in the same session. */
-async function runWorker(state: PoolState, record: WorkerRecord, ask: StartAsk, prompt: string): Promise<void> {
+async function runWorker(state: PoolState, record: WorkerRecord, prompt: string): Promise<void> {
   if (state.closing) return ended(state, record, WorkerState.Stopped, POOL_WORDS.turnEnded, null, scopeEnd(state));
   // Stopped while its copy was being made: no session starts.
   if (!isWorking(record)) return ended(state, record, record.state, record.error);
-  let result = await delegateLeg(state, record, ask, { prompt, resume: null });
+  let result = await delegateLeg(state, record, { prompt, resume: null });
   for (let steer = takeSteer(state, record); steer && result.sessionId; steer = takeSteer(state, record))
-    result = await delegateLeg(state, record, ask, { prompt: steer, resume: result.sessionId });
+    result = await delegateLeg(state, record, { prompt: steer, resume: result.sessionId });
   if (record.isolation === WorkerIsolation.Copy) {
     await commitCopy(state, record);
     record.changed = await changedFiles(state, record);

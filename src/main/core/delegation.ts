@@ -662,21 +662,25 @@ async function sameRepository(a: string, b: string): Promise<boolean> {
   return Boolean(ours) && ours === theirs;
 }
 
-/**
- * An honoured worker's brief, depth one: it never leads a run, keeps a run's controls, interviews,
- * coordinates, answers the chat's turn or runs workers of its own, so no grant that would let it
- * start workers survives.
- */
 /** Whether a brief names a worker by id, whether or not the host seats it. */
 const namesWorker = (p: DelegateParams): boolean => typeof p.worker?.id === "string" && p.worker.id.length > 0;
 
 /** A worker of a run the host does not seat, as `#unseatedRunWorker` confirmed it: its id and its run. */
 type UnseatedRunWorker = { id: string; runId: string };
 
+/**
+ * An honoured worker's brief, depth one: it never leads a run, keeps a run's controls, interviews,
+ * coordinates, answers the chat's turn or runs workers of its own, so no grant that would let it
+ * start workers survives. A building worker (one that writes) keeps no tool allowlist either: it is
+ * offered every enabled plugin's tools, its jobs, its look and the connectors its lead is — a
+ * worker type names the kind of work, never a fence. A reader keeps the one its type names.
+ */
 function workerBrief(p: DelegateParams): DelegateParams {
   const { director: _director, runControls: _controls, interviewTools: _interview, ...rest } = p;
   const { coordinator: _coordinator, chatTurn: _turn, workers: _workers, ...brief } = rest;
-  return brief;
+  if (brief.readOnly === true) return brief;
+  const { toolAllow: _allow, ...building } = brief;
+  return building;
 }
 
 /**
@@ -2486,17 +2490,15 @@ export class DelegationService {
 
   /**
    * The connectors' tools the session is handed: every in-scope connector is asked in parallel, each
-   * with its own timeout, and one that will not answer contributes nothing. A worker, seated or not,
-   * is never handed the server its game's kind brings (an engine's live editor): the run's lead
-   * drives that editor alone, and a copy worker's edits there would land in the game.
+   * with its own timeout, and one that will not answer contributes nothing. A building worker, seated
+   * or not, is handed the server its game's kind brings (an engine's live editor) as its lead is:
+   * its brief says the editor works on the game folder, not on a copy (workers/prompts.ts).
    */
   async #offerConnectors(p: DelegateParams, session: DelegationSession, tools: SessionTools): Promise<void> {
-    const asWorker = Boolean(session.worker) || typeof p.worker?.id === "string";
     const report = await this.#core.mcp.toolsReport(p.project, {
       signal: session.abort.signal,
       facts: session.facts,
       ...(session.holds ? { holds: session.holds } : {}),
-      ...(asWorker ? { kindServers: false } : {}),
     });
     tools.mcp = report.tools.filter((tool) => offers(session, tool.name));
     // A connector that gave nothing is said, in the log and to the session, never left to be looked for.
@@ -2973,16 +2975,17 @@ export class DelegationService {
   }
 
   /**
-   * The Unreal lead's connector call carries its run's consent, asked only once nothing else settled
+   * A Loop lead's connector call carries its run's consent, asked only once nothing else settled
    * the call, and only when the delegation names the chat the run was started in: that chat's Plan
-   * mode is what refuses the call first.
+   * mode is what refuses the call first. A worker the host seated for that run stands on the same
+   * consent: it has its lead's engine connector, and no card stops it for what its lead may do.
    */
   #runConsentFor(
     name: string,
     p: DelegateParams,
     session: DelegationSession,
   ): Pick<ConnectorCallOptions, "runConsent"> {
-    const runId = session.liveRun;
+    const runId = session.liveRun ?? session.worker?.runId ?? null;
     const threadId = p.threadId;
     return runId && threadId ? { runConsent: () => this.#runConsents(name, p.project, threadId, runId) } : {};
   }

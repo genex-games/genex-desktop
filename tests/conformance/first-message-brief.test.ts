@@ -476,7 +476,7 @@ describe("every worker's brief", () => {
       inputs: [],
     });
     assert.match(pooled, FOLDER, "the pool's");
-    assert.doesNotMatch(pooled, /editor is the lead's alone/, "a web game has no engine's editor");
+    assert.doesNotMatch(pooled, /game engine's editor/, "a web game has no engine's editor");
     const onUnreal = workerBrief({
       identity: { folderLabel: "AI Games/keep", facts: [fact(CoreFact.UnrealProject)] as never },
       task: "write the gate's logic",
@@ -485,7 +485,9 @@ describe("every worker's brief", () => {
       typeDescription: null,
       inputs: [],
     });
-    assert.match(onUnreal, /The game engine's editor is the lead's alone: you have none of its tools/);
+    // A worker has the editor's tools as its lead does; in a copy it is told where they act.
+    assert.doesNotMatch(onUnreal, /lead's alone|none of its tools/);
+    assert.match(onUnreal, /The game engine's editor works on the game folder the lead works in, not on your copy/);
     const onRoblox = workerBrief({
       identity: { folderLabel: "AI Games/obby", facts: [fact(CoreFact.RobloxProject)] as never },
       task: "write the checkpoint script",
@@ -494,7 +496,7 @@ describe("every worker's brief", () => {
       typeDescription: null,
       inputs: [],
     });
-    assert.match(onRoblox, /The game engine's editor is the lead's alone/, "Roblox Studio is the lead's too");
+    assert.match(onRoblox, /The game engine's editor works on the game folder/, "Roblox Studio as well");
 
     const single = singleWorkerBrief({
       run: RUN,

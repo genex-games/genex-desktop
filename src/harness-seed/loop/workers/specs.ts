@@ -14,7 +14,7 @@ function startDescription(types: readonly WorkerType[], allowed: number): string
   const kinds = types.length
     ? ` Kinds of worker the plugins on offer declare (type): ${types.map((type) => `${type.id} (${type.description})`).join("; ")}.`
     : "";
-  return `Start a worker for one task, in the background: a reader in place (isolation read), a writer in its own copy that you merge with ${WorkerTool.Mark} (copy), or the one writer in place (lock). It works in this chat's permission mode and sees nothing but its task. Up to ${allowed} at once (the person's Settings); answers its id.${kinds}`;
+  return `Start a worker for one task, in the background: a reader in place (isolation read), a writer in its own copy that you merge with ${WorkerTool.Mark} (copy), or the one writer in place (lock). It works in this chat's permission mode with every plugin tool and connector you have, and sees nothing but its task. Up to ${allowed} at once (the person's Settings); answers its id at once.${kinds}`;
 }
 
 /** The six worker tools, with `worker_start` naming the kinds of worker on offer and how many may run at once. */
@@ -29,7 +29,7 @@ export function workerTools(types: readonly WorkerType[] = [], allowed: number =
           title: text("A short title the chat and the graph show."),
           task: text("Everything the worker needs; it sees nothing else."),
           isolation: text("read | copy | lock. Required unless type gives one."),
-          type: text("A kind of worker a plugin declares (listed above); it brings that kind's tools."),
+          type: text("A kind of worker a plugin declares (listed above): its know-how and default isolation."),
           research: text('"yes" gives it web search.'),
           inputs: text("Comma-separated paths in the project a copy must start from."),
         },
