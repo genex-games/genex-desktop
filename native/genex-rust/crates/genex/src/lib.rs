@@ -70,6 +70,8 @@ mod mesh_ops;
 mod mesh_shapes;
 mod noise;
 mod scatter;
+/// Level reachability: a plan's zones walked over the nav, for `state().__level`.
+pub mod level;
 #[doc(hidden)]
 pub mod loading;
 pub mod manifest;

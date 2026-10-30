@@ -15,6 +15,7 @@
  * plane (glTF's Y-up world, through the rest pose of the node's parents). The output is a pure
  * function of the input; a file this cannot read has no facts.
  */
+import type { RestPose } from "../../shared/character-contract.ts";
 import {
   CHARACTER_CLIP_NAME_MAX_CHARS,
   CHARACTER_CLIPS_MAX,
@@ -167,7 +168,11 @@ function mapWith(names: readonly string[], aliases: Readonly<Record<string, read
 }
 
 /** The rig family that maps the most bones (ties to the earlier) and its map. */
-function humanoidMap(names: readonly string[]): { coverage: HumanoidCoverage; hips: number | null } {
+function humanoidMap(names: readonly string[]): {
+  coverage: HumanoidCoverage;
+  hips: number | null;
+  slots: (number | null)[];
+} {
   let best = { id: PROFILES[0]?.id ?? "", map: mapWith(names, PROFILES[0]?.aliases ?? {}) };
   for (const profile of PROFILES.slice(1)) {
     const map = mapWith(names, profile.aliases);
@@ -181,7 +186,7 @@ function humanoidMap(names: readonly string[]): { coverage: HumanoidCoverage; hi
     required: HUMANOID_REQUIRED_BONES,
     missing,
   };
-  return { coverage, hips: best.map[HUMANOID_BONES.indexOf(HIPS)] ?? null };
+  return { coverage, hips: best.map[HUMANOID_BONES.indexOf(HIPS)] ?? null, slots: best.map };
 }
 
 const numbers = (value: unknown, length: number): number[] | null =>
@@ -352,4 +357,46 @@ export function characterFacts(bytes: Uint8Array): CharacterFacts | null {
     humanoid: coverage,
     skinnedLevels: skinnedLevels(doc.json, skeleton.meshNode),
   };
+}
+
+/** A bone's world position at rest, from the matrix's translation column. */
+const positionOf = (m: Mat4): Vec3 => [m[12] ?? 0, m[13] ?? 0, m[14] ?? 0];
+
+/** The angle (degrees) between an arm, shoulder-joint to hand, and straight down; null for a zero-length arm. */
+function armDrop(from: Vec3, to: Vec3): number | null {
+  const [dx, dy, dz] = [to[0] - from[0], to[1] - from[1], to[2] - from[2]];
+  const length = Math.hypot(dx, dy, dz);
+  if (length === 0) return null;
+  return (Math.acos(Math.max(-1, Math.min(1, -dy / length))) * 180) / Math.PI;
+}
+
+/**
+ * The rest pose of the rigged GLB `bytes`: how far its arms sit from hanging (upper arm to hand,
+ * both sides averaged) and how high its hips stand above its lowest joint. Null for a file
+ * {@link characterFacts} cannot read or a rig missing an arm or the hips.
+ */
+export function restPoseOf(bytes: Uint8Array): RestPose | null {
+  let json: Json;
+  try {
+    json = readGlb(bytes).json;
+  } catch {
+    return null;
+  }
+  const skeleton = skeletonOf(json);
+  if (!skeleton) return null;
+  const { slots, hips } = humanoidMap(skeleton.names);
+  const nodes = nodeList(json);
+  const world = (bone: string): Vec3 | null => {
+    const slot = slots[HUMANOID_BONES.indexOf(bone)];
+    const node = slot === null || slot === undefined ? undefined : skeleton.order[slot];
+    return node === undefined ? null : positionOf(globalMatrix(nodes, skeleton.parents, node));
+  };
+  const drops = (["Left", "Right"] as const).flatMap((side) => {
+    const [shoulder, hand] = [world(`${side}UpperArm`), world(`${side}Hand`)];
+    const drop = shoulder && hand ? armDrop(shoulder, hand) : null;
+    return drop === null ? [] : [drop];
+  });
+  if (!drops.length || hips === null) return null;
+  const armDropDeg = drops.reduce((sum, each) => sum + each, 0) / drops.length;
+  return { armDropDeg, hipsHeightM: rigHeight(nodes, skeleton, hips) };
 }

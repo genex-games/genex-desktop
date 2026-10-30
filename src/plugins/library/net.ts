@@ -65,7 +65,11 @@ export function createLibraryNet(options: { fetch?: typeof fetch } = {}): Librar
         await response.body?.cancel();
         if (hop >= REDIRECTS_MAX)
           throw new LibraryError(LibraryRefusal.DownloadFailed, MESSAGE.Failed(at, "too many redirects"));
-        at = new URL(response.headers.get("location") ?? "", at);
+        const location = response.headers.get("location");
+        // Resolving "" against `at` would ask the same URL again until the hop limit.
+        if (!location)
+          throw new LibraryError(LibraryRefusal.DownloadFailed, MESSAGE.Failed(at, "a redirect with no Location"));
+        at = new URL(location, at);
         response = await request(at);
       }
       if (!response.ok) {

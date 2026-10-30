@@ -210,6 +210,8 @@ export const GenexOperation = {
   CharacterAnimate: "character.animate",
   CreatureAnimate: "creature.animate",
   CharacterMotions: "character.motions",
+  /** Local and free: reads the engine's character check and says what to do next (`shared/character-loop.ts`). */
+  CharacterVerify: "character.verify",
   AnimationsSearch: "animations.search",
   Wait: "wait",
   Status: "status",
@@ -305,6 +307,8 @@ export const GenexFailureCode = {
   GenerationFailed: "generation-failed",
   /** Genex canceled the generation. */
   GenerationCanceled: "generation-canceled",
+  /** The generation finished, but the body it made fails the character contract and was not delivered. */
+  CharacterRejected: "character-rejected",
 } as const;
 export type GenexFailureCode = (typeof GenexFailureCode)[keyof typeof GenexFailureCode];
 
@@ -348,6 +352,8 @@ export interface GenexJob {
   error?: string;
   /** Set when Genex's provider failed or canceled the generation (`generation-failed`, `generation-canceled`). */
   failure?: GenexJobFailure;
+  /** A delivered body's move roles no clip covers yet (`shared/character-contract.ts`): what to fill with `character.animate`. */
+  missingRoles?: string[];
   /** Set when the job went no further than asking the person for something first. */
   blocked?: GenexBlocked;
   creditsQuoted?: number;

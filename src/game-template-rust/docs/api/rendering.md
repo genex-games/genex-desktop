@@ -15,7 +15,7 @@ settings_panel(ui); lock_upscale(Some(UpscaleMode::Native));
 frame.id("hero"); frame.end_id(); frame.camera_cut();
 ```
 
-The renderer adapts to each desktop, phone and browser; a game states only what is its own. A **look** is the game's art direction, the same on every device. A **quality** belongs to the device: a preset (`auto`, `low`,
+A **look** is the game's art direction, the same on every device. A **quality** belongs to the device: a preset (`auto`, `low`,
 `medium`, `high`, `ultra`), one switch per feature, an upscaling mode, a render scale and a
 frame-rate target. The renderer probes the adapter at boot into a device class (`desktop-ultra`, `desktop-high`,
 `desktop-mid`, `desktop-low`, `mobile-high`, `mobile-mid`, `mobile-low`; a browser from its own
@@ -63,7 +63,8 @@ adds the compensation and adapts at `adaptation_speed_up` (default 4) and `adapt
 `local_exposure_highlights`, `local_exposure_shadows` (Lighting). The grade, white balance,
 exposure curve and lens are code only: see Grading and the lens.
 
-Each feature has a switch; off is its cheaper variant, never a refusal:
+Each feature has a switch; off is its cheaper variant, never a refusal. The presets own them: a
+game turns one off per class, never to pass a check:
 
 | switch | draws | off |
 | --- | --- | --- |

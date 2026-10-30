@@ -180,8 +180,12 @@ export const CROSS_TARGET_TOLERANCE = 1e-3;
 /** Tolerances are never tightened below this, nor closer than this headroom over what a passing run saw. */
 const CROSS_TARGET_TOLERANCE_FLOOR = 1e-5;
 const CROSS_TARGET_HEADROOM = 10;
-/** What never compares within a target: the real frame rate and anything the game marks volatile. */
-const REPLAY_VOLATILE = ["volatile", "fps"] as const;
+/**
+ * What never compares within a target: the real frame rate, anything the game marks volatile, and
+ * the engine's render telemetry (`__render`: GPU read-backs paced by the Live frames the window drew,
+ * a count no seed fixes). The replay holds rendering to the settled capture's pixels instead.
+ */
+const REPLAY_VOLATILE = ["volatile", "fps", "__render"] as const;
 /**
  * The contract envelope a contract v2 native run adds to `state()` (`contractVersion` 2, `lifecycle`,
  * `safeArea`) and a web build, which stays at protocol 1, never carries: the protocol, never gameplay.
@@ -194,7 +198,6 @@ const CONTRACT_ENVELOPE = ["contractVersion", "lifecycle", "safeArea"] as const;
 const CROSS_TARGET_VOLATILE = [
   ...REPLAY_VOLATILE,
   ...CONTRACT_ENVELOPE,
-  "__render",
   "drawCalls",
   "triangles",
   "checksum",

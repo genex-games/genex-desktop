@@ -2,8 +2,9 @@
 
 The look blockers — `[primitive]`, `[dark-viewmodel]`, `[crushed-shadow]`,
 `[placeholder-particles]`, `[sky-contradicts]`, `[visible-tiling]`, `[not-shipped]`,
-`[flat-material]`, `[stick-tree]`, `[slab-snow]`, `[art-source-mismatch]`, `[exposure-pump]` and
-`[uncomfortable-camera]` — hold the work open: while one is on screen no facet is satisfied, no finish is done and the build does not
+`[flat-material]`, `[stick-tree]`, `[slab-snow]`, `[art-source-mismatch]`, `[exposure-pump]`,
+`[uncomfortable-camera]`, `[feature-off]`, `[broken-pose]`, `[incoherent-place]`, `[unreachable-zone]`,
+`[no-exit]`, `[dead-end]` and `[unbounded]` — hold the work open: while one is on screen no facet is satisfied, no finish is done and the build does not
 ship, whichever list you put it in. Tag each one you see; never soften one into polish.
 
 Report a hit with its class name in square brackets, then what and where and which camera
@@ -49,6 +50,16 @@ a defect outside the list is described in full.
   overshoots as the player crosses from light into dark.
 - `[uncomfortable-camera]` the harness's own tag, measured on `demo:sprint-run`: the camera
   rolls, bobs or shakes past the comfort caps.
+- `[feature-off]` the harness's own tag: a look feature (fog, a lit volume, shadows, bloom) the
+  accepted build drew is switched off at the same preset.
+- `[broken-pose]` a character whose body does not hold together in a frame or a `closeup:` camera:
+  a torso sunk into the legs, arms folded into a knot, a limb stretched or bent backwards, feet
+  sliding or floating, a hand off the weapon it holds, a low-resolution face.
+- `[incoherent-place]` a place that does not make sense as a level, most visible on `map:top`:
+  rooms with no way in or out, zones that do not connect, a corridor to nowhere, no entrance, no
+  exit, nothing that keeps the player in the world.
+- `[unreachable-zone]`, `[no-exit]`, `[dead-end]`, `[unbounded]` the harness's own tags, from the
+  game's reachability report against its `docs/LEVEL.md`.
 - `[no-hands]` {when: fps, first-person, shooter} a first-person view with no arms or hands holding the weapon or tool.
 - `[noise-as-texture]` tiling noise standing in for a material.
 - `[z-fight]` flickering or striped coplanar surfaces.

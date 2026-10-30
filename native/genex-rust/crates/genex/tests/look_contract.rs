@@ -2,7 +2,8 @@
 //! `src/shared/render-look.ts`, held by the fixture `tests/fixtures/render-look-v1.json`. It lives here,
 //! not beside the code, because an ejected game's fork stages a crate's sources and never its `tests/`.
 
-use genex::look_facts::{exposure_value, ExposureTrace, LookFacts, TagFacts};
+use genex::look_facts::{exposure_value, DrawnLook, ExposureTrace, LookFacts, TagFacts};
+use genex_render::look_features::LookFeature;
 use genex_render::post::exposure::ExposureTelemetry;
 
 #[test]
@@ -16,6 +17,11 @@ fn the_value_is_the_contract_s_shape() {
             TagFacts { name: "bench".into(), coverage: 0.04, flat_coverage: 0.031, texels_per_metre: None, pixels_per_metre: Some(640.0), triangles_per_square_metre: Some(2.5), normal_map_share: 0.0, orm_share: 0.0, alpha_card_share: 0.0, draws: 12, models: Vec::new(), primitive_only: true },
             TagFacts { name: "walls".into(), coverage: 0.61, flat_coverage: 0.0, texels_per_metre: Some(1365.3), pixels_per_metre: Some(212.4), triangles_per_square_metre: Some(0.5), normal_map_share: 1.0, orm_share: 1.0, alpha_card_share: 0.0, draws: 40, models: vec!["models/wall_kit.glb".into()], primitive_only: false },
         ],
+        // An ultra frame with every look feature but the lens's two.
+        drawn: Some(DrawnLook {
+            preset: "ultra",
+            features: LookFeature::ALL.map(|feature| (feature.wire(), !matches!(feature, LookFeature::DepthOfField | LookFeature::MotionBlur))).to_vec(),
+        }),
     };
     let written: serde_json::Value = serde_json::from_slice(&facts.to_value().dump()).expect("JSON");
     assert_eq!(written, fixture["look"]);

@@ -281,4 +281,33 @@ describe("Genex Library plugin", () => {
     );
     assert.equal(fetched, 1, "the redirect off the list is never followed");
   });
+
+  it("fails a redirect with no Location at once, naming why", async () => {
+    let fetched = 0;
+    const net = createLibraryNet({
+      fetch: (async () => {
+        fetched++;
+        return new Response(null, { status: 302 });
+      }) as unknown as typeof fetch,
+    });
+    await assert.rejects(
+      net.download(new URL("https://github.com/a"), 10),
+      (error: unknown) => error instanceof LibraryError && /no Location/.test(error.message),
+    );
+    assert.equal(fetched, 1, "the same URL is never asked again");
+  });
+
+  it("leaves no .part file behind when installing a file fails", async () => {
+    const root = await tmpDir();
+    const host = await hostFor(root, await packFolder(root));
+    // A folder where the 2k albedo goes: its write succeeds, the rename onto it fails.
+    const installed = path.join(root, "storage", "pack", PACK, libraryFolder(ID));
+    await mkdir(path.join(installed, "albedo.2k.jpg", "blocked"), { recursive: true });
+    const plugin = await createLibraryPlugin({ net: noNet, catalog: catalogOf() });
+    await assert.rejects(
+      plugin.tool?.(LibraryTool.Add, { id: ID } as Record<string, PluginScalar>, host.ctx) as Promise<unknown>,
+    );
+    const left = (await readdir(installed)).filter((name) => name.endsWith(".part"));
+    assert.deepEqual(left, [], "the half-installed copy is removed");
+  });
 });

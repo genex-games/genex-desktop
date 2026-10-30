@@ -1,3 +1,4 @@
+import { captureRoles, JUDGE_CAPTURE_SIZE } from "../capture-set.ts";
 import { keepCheckpoint } from "./progress.ts";
 import { closeUps } from "../close-ups.ts";
 import { asksForLook } from "../look-bar.ts";
@@ -617,7 +618,13 @@ async function shipStep(loopRun: LoopRun, pass: JudgePass): Promise<void> {
   if (onIntegration) {
     routeShipDefects(loopRun, review);
     const doNotRegress = doNotRegressAfter(state.lastShip, review);
-    state.lastShip = { head, ship: review.ship, defects: review.defects, doNotRegress, at: Date.now() };
+    // The eval grader's roles for the capture set this look photographed (capture-set.ts).
+    const cameras = (evidence.shots ?? []).map((shot: AnyRecord) => String(shot.camera));
+    const roles = captureRoles(cameras, (run.cameraSettings ?? {}) as Record<string, unknown>);
+    const clean = (evidence.shots ?? [])
+      .filter((shot: AnyRecord) => shot.clean === true)
+      .map((shot: AnyRecord) => String(shot.camera));
+    state.lastShip = { head, ship: review.ship, defects: review.defects, doNotRegress, at: Date.now(), roles, clean };
   }
   out.ship = {
     ship: review.ship,
@@ -729,7 +736,8 @@ async function judgeOnWindow(loopRun: LoopRun, ask: JudgeAsk, handle: string | n
     camerasOwned: judgedOwnsCameras(target.worker),
     // The art director looks at a real screen's size; the window is 960×600 again once released.
     // Its whole-game look also races the throttle-only bot, so it is told how hard the race is.
-    ...(ask.ship ? { viewport: SHIP_VIEW, challenge: true } : {}),
+    // Its frames are drawn at the judging size with the clean lens: the eval grader's set (capture-set.ts).
+    ...(ask.ship ? { viewport: SHIP_VIEW, challenge: true, captureSize: JUDGE_CAPTURE_SIZE } : {}),
   });
   const onIntegration = target.root === integrationWorktree;
   rememberJudgedHead(loopRun, head, evidence);

@@ -4,7 +4,7 @@
 # GPU, `--ignored metal`) writes a capture of each.
 [package]
 name = "template-examples"
-description = "The Rust template's copyable examples: a lit interior room, an interior kit level, an FPS facet set, the first-person arms kit, the soldier kit, a third-person character, a crowd, an explosion, menus with save slots, the look recipes, a snowy yard a forest and set dressing."
+description = "The Rust template's copyable examples: a lit interior room, an interior kit level, an FPS facet set, the first-person arms kit, the soldier kit, a third-person character, a crowd, an explosion, menus with save slots, the look recipes, a level blockout from its plan, a snowy yard a forest and set dressing."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -66,6 +66,10 @@ path = "../../../../src/game-template-rust/docs/examples/library-yard/src/main.r
 [[bin]]
 name = "looks"
 path = "../../../../src/game-template-rust/docs/examples/looks/src/main.rs"
+
+[[bin]]
+name = "blockout"
+path = "../../../../src/game-template-rust/docs/examples/blockout/src/main.rs"
 
 [[bin]]
 name = "exterior-snow"

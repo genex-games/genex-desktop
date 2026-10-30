@@ -227,12 +227,14 @@ describe("the pages a builder is handed", () => {
     // rust-extension-ladder.md ships for the chat's skill index (`read_skill`), the guidance a
     // Rust game's lead reads before reaching past the facade. Flipped (AAA docs): look-dev.md,
     // asset-sourcing.md and comfort.md ship for the same index, the art, sourcing and camera
-    // guidance a lead reads before briefing a build.
+    // guidance a lead reads before briefing a build. Flipped (plan 2, places that make sense):
+    // level-plan.md ships for the same index, the zones, links and blockout a lead plans first.
     assert.deepEqual(readdirSync(pathMod.join(seedDir, "skills")).sort(), [
       "asset-sourcing.md",
       "comfort.md",
       "director.md",
       "facet-decomposition.md",
+      "level-plan.md",
       "look-dev.md",
       "rust-extension-ladder.md",
     ]);

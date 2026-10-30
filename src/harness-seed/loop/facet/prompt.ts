@@ -1,4 +1,5 @@
 /** What the facet loop says to its builder: the prompt, the steer, the wind-down ask, the images and the brief's moved sections. */
+import { FEATURE_RULE } from "../feature-off.ts";
 import { CheckKind, CheckWeight, HARNESS_CHECKS, renderChecks } from "../spec.ts";
 import { GAME_KINDS, describePlayScript, playScriptFor } from "../kinds.ts";
 import { roleEngine, RoleKey, toolCall } from "../model-roles.ts";
@@ -470,7 +471,7 @@ function resumedPrompt(p: PromptInput): string {
         )
       : "",
     "",
-    "Flip failing checks, identity first; do not break passing ones. Capture and LOOK before you finish. Update " +
+    `Flip failing checks, identity first; do not break passing ones. ${FEATURE_RULE} Capture and LOOK before you finish. Update ` +
       `${facetNotes(facet.id)}.`,
   ]
     .filter((line) => line !== undefined && line !== null)
@@ -838,6 +839,7 @@ function closingLines({ run, worktree, pointsAtBrief, compiled }: PromptInput): 
     "",
     `Before you finish:`,
     `- Re-read the checks and verify each one you can see in your frames. A check ignored every iteration becomes the run's final gap.`,
+    `- ${FEATURE_RULE}`,
     `- Compare your captured frames against the accepted build's shots: if you cannot see your change, neither can the verifier — an invisible diff is rejected without a judge.`,
     ...(pointsAtBrief ? [] : [finishLine(compiled)]),
   ];

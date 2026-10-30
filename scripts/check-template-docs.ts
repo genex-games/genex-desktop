@@ -33,7 +33,13 @@ const TEMPLATE = "src/game-template-rust";
 const CRATES = "native/genex-rust/crates";
 const SEED_SKILLS = "src/harness-seed/skills";
 /** The seed skills an in-app agent reads beside a Rust game folder: their paths are the folder's. */
-const GAME_FOLDER_SKILLS = ["rust-extension-ladder.md", "look-dev.md", "asset-sourcing.md", "comfort.md"] as const;
+const GAME_FOLDER_SKILLS = [
+  "rust-extension-ladder.md",
+  "look-dev.md",
+  "asset-sourcing.md",
+  "comfort.md",
+  "level-plan.md",
+] as const;
 /** Where compiled regions live: the examples the template-examples crate builds and its tests. */
 const REGION_ROOTS = [`${TEMPLATE}/docs/examples`, "native/genex-rust/examples/template-examples/tests"] as const;
 /** The game folder's own top-level folders a page may name before they exist there. */

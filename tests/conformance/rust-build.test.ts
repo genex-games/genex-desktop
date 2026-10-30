@@ -202,8 +202,9 @@ interface LintHit {
 /**
  * The stub clippy's run over a game that trips `hits`: each lint's level resolved from the lint
  * flags after `--` as rustc resolves them (in order, the last flag naming the lint, its group or,
- * for a clippy lint, `clippy::all` wins; a lint left at warn is an error while `warnings` is denied), and an error
- * message for each one that ends denied, failing the run when any does.
+ * for a clippy lint, `clippy::all` wins; a lint left at warn is an error while `warnings` is denied, and one
+ * `--force-warn` names stays a warning whatever else says), an error message for each one that ends denied,
+ * failing the run when any does, and a warning for each one forced to warn.
  */
 function clippyLevels(hits: readonly LintHit[]): string {
   const levelOf = [
@@ -212,14 +213,15 @@ function clippyLevels(hits: readonly LintHit[]): string {
     "level_of() {",
     "  level=$3; prefix=$4; flag=''",
     "  for a in $flags; do",
-    "    case $a in -D|-W|-A|-F) flag=$a; continue ;; esac",
-    '    case $a in "$prefix$1"|"$prefix$2") if [ -n "$flag" ]; then level=$(echo "$flag" | cut -c2); fi ;; esac',
+    "    case $a in -D|-W|-A|-F|--force-warn) flag=$a; continue ;; esac",
+    '    case $a in "$prefix$1"|"$prefix$2") if [ "$flag" = --force-warn ]; then forced=1; elif [ -n "$flag" ]; then level=$(echo "$flag" | cut -c2); fi ;; esac',
     '    if [ "$a" = clippy::all ] && [ -n "$prefix" ] && [ -n "$flag" ]; then level=$(echo "$flag" | cut -c2); fi',
     '    if [ "$a" = warnings ] && [ -n "$flag" ]; then warnings=$(echo "$flag" | cut -c2); fi',
     "    flag=''",
     "  done",
     '  if [ "$level" = W ] && { [ "$warnings" = D ] || [ "$warnings" = F ]; }; then level=D; fi',
     '  if [ "$level" = F ]; then level=D; fi',
+    '  if [ "$forced" = 1 ]; then level=w; fi',
     '  echo "$level"',
     "}",
     "failed=0",
@@ -237,8 +239,14 @@ function clippyLevels(hits: readonly LintHit[]): string {
         rendered: `error: lint ${hit.lint}`,
       },
     };
-    const denied = `warnings=''; if [ "$(level_of ${hit.lint} ${hit.group} ${hit.level} '${prefix}')" = D ]; then`;
-    return `${denied} printf '%s\\n' '${JSON.stringify(message)}'; failed=1; fi`;
+    const warning = {
+      ...message,
+      message: { ...message.message, level: "warning", rendered: `warning: lint ${hit.lint}` },
+    };
+    const resolved = `warnings=''; forced=''; resolved=$(level_of ${hit.lint} ${hit.group} ${hit.level} '${prefix}');`;
+    const denied = `if [ "$resolved" = D ]; then printf '%s\\n' '${JSON.stringify(message)}'; failed=1; fi;`;
+    const warned = `if [ "$resolved" = w ]; then printf '%s\\n' '${JSON.stringify(warning)}'; fi`;
+    return `${resolved} ${denied} ${warned}`;
   });
   return [...levelOf, ...each, 'if [ "$failed" = 1 ]; then exit 101; fi'].join("\n");
 }
@@ -717,6 +725,24 @@ describe("the Rust lane builds behind the seam", { skip: SKIP_ON_WINDOWS }, () =
       assert.equal(outcome.ok, failsOn === null, `${name}: ${JSON.stringify(codes)}`);
       if (failsOn) assert.deepEqual(codes, [failsOn]);
     }
+  });
+
+  it("tells the agent's check about code the game does not use yet, as warnings that never fail it (#539 review)", async () => {
+    const unusedHits: LintHit[] = [
+      { lint: "dead_code", group: "unused", level: "W", rustc: true },
+      { lint: "unused_imports", group: "unused", level: "W", rustc: true },
+      { lint: "unused_variables", group: "unused", level: "W", rustc: true },
+      { lint: "unused_mut", group: "unused", level: "W", rustc: true },
+    ];
+    const parent = await realpath(await tmpDir("rust-unused-warnings-"));
+    const { builds } = await lane(parent, openSandboxes().sandbox, { stub: { onClippy: clippyLevels(unusedHits) } });
+    const game = gameOf(await rustGame(parent));
+    const outcome = await builds.ensure(game, BuildTarget.Mac, CppBuildPurpose.Judging, { check: true });
+    assert.equal(outcome.ok, true, JSON.stringify(outcome.problem));
+    assert.deepEqual(
+      (outcome.rust?.warnings ?? []).map((w) => [w.code, w.file, w.line]),
+      unusedHits.map((hit) => [hit.lint, "src/main.rs", 1]),
+    );
   });
 
   it("compiles in the native-enhanced features genex.toml declares (GENEX_NATIVE_FEATURES), and none for a core game", async () => {

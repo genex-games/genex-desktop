@@ -2100,6 +2100,23 @@ export type FrameProfileAnswer = ProfileAnswers[FrameProfileAction] | ProfileUna
 export type CaptureSurface = 'page' | 'canvas' | 'auto';
 // ↑ src/shared/preview-contract.ts
 
+/** A size a capture is asked to draw at, in whole pixels. */
+export interface NativeCaptureSize {
+  width: number;
+  height: number;
+}
+// ↑ src/shared/native-contract.ts
+
+/**
+ * What a capture asks of the look's lens (a Rust · wgpu game): its depth of field and motion blur,
+ * neither by default, so a capture is a still of the held frame.
+ */
+export interface NativeCaptureLens {
+  depthOfField?: boolean;
+  motionBlur?: boolean;
+}
+// ↑ src/shared/native-contract.ts
+
 export interface PixelStats {
   width: number;
   height: number;
@@ -3250,6 +3267,13 @@ export interface HarnessHostApi {
       handle?: string;
       page?: boolean;
       surface?: CaptureSurface;
+      /**
+       * Draw at this size (a Rust · wgpu game's native capture, up to `NATIVE_CAPTURE_MAX_PX`): the
+       * saved frame is that size, the inline `base64` a judge-sized copy. A port that cannot draws its own.
+       */
+      size?: NativeCaptureSize;
+      /** The lens a sized capture draws with (depth of field, motion blur). */
+      lens?: NativeCaptureLens;
     };
     result: {
       base64: string;

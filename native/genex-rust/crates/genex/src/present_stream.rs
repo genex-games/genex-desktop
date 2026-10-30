@@ -33,8 +33,8 @@
 //!
 //! The game's own `frame.model` draws keep the presenter's synchronous load; only cell content
 //! streams. A model's resident bytes are its GLB's bytes (the index's file size when it lists the
-//! model); the textures a GLB embeds are not freed when it is evicted (no texture removal through
-//! the device-loss replay yet).
+//! model); an evicted model gives its textures back, and a texture's layer is free for the next
+//! once no resident model holds it (STR-3, replayed after a device loss).
 //! Ideas from Stride's `StreamingManager` (MIT; no code taken): a per-frame residency pass over
 //! what the camera wants, finished under a frame budget.
 
@@ -743,8 +743,10 @@ impl StreamView {
         Ok(())
     }
 
-    /// Evict what the pool cannot keep: each evicted model leaves the cache and its meshes the
-    /// renderer's arena (a refused removal is logged; the policy has let the model go either way).
+    /// Evict what the pool cannot keep: each evicted model leaves the cache, its meshes the
+    /// renderer's arena and its texture references the renderer's arrays (a texture's layer is free
+    /// once no resident model holds it; a refused removal is logged; the policy has let the model
+    /// go either way).
     fn evict(&mut self, assets: &mut AssetCache, uploads: &mut dyn Uploads, clock: &Clock, log: &mut dyn FnMut(&str)) {
         let mut residency_clock = FrameClock(clock);
         for key in self.residency.drain(&mut residency_clock) {
@@ -753,6 +755,11 @@ impl StreamView {
             for part in model.parts {
                 if let Err(error) = uploads.remove_mesh(part.mesh) {
                     log(&format!("model {path:?}: its mesh was not removed: {error}"));
+                }
+            }
+            for id in model.texture_ids {
+                if let Err(error) = assets.shared_textures.release(uploads, id) {
+                    log(&format!("model {path:?}: its texture was not released: {error}"));
                 }
             }
         }

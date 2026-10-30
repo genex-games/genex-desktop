@@ -1,7 +1,8 @@
 import { qualityRefusal } from "../quality-lint.ts";
 import { usageForecast } from "./usage-forecast.ts";
 import { sharedOwnershipNote } from "./ownership.ts";
-import { cameraSettings, SOURCING_PART, sourcingRefusal, spreadRefusal } from "./sourcing.ts";
+import { cameraSettings, SOURCING_PART, sourcingRefusal } from "./sourcing.ts";
+import { blockoutGoal, blockoutRefusal } from "./blockout.ts";
 import { requireMultiplayer } from "./prerequisites.ts";
 import { reviseGoals, createGoals, goalAttemptRefusal, goalDecision, GoalStatus, startGoalAttempt } from "./goals.ts";
 import { goalCommission } from "./commission.ts";
@@ -1557,22 +1558,25 @@ function markAssetsStage(loopRun: LoopRun, worker: Worker, sourcing: boolean): v
   else (loopRun.state as AnyRecord).lookDevSince ??= Date.now();
 }
 
-/** Why `worker_start` waits for assets first (sourcing.ts), or null. */
-async function assetsFirstRefusal(loopRun: LoopRun, id: string, sourcing: boolean) {
+/**
+ * Why `worker_start` waits: for the sourcing stage (sourcing.ts), then for the blockout of a game
+ * the player moves through (blockout.ts). No zone's finished look holds another part any more.
+ */
+async function assetsFirstRefusal(loopRun: LoopRun, id: string) {
   const now = Date.now();
   const held = await sourcingRefusal(loopRun, id, now);
-  return held ?? (sourcing ? null : spreadRefusal(loopRun, id, now));
+  return held ?? (await blockoutRefusal(loopRun, id, now));
 }
 
 export async function startWorker(loopRun: LoopRun, args: AnyRecord) {
   const { ctx, integrationWorktree, medianRoundMs, note, run, runningWorkers, startRefusal, state } = loopRun;
   const id = slug(args.id) || defaultWorkerId(loopRun);
-  const goal = String(args.goal ?? id);
+  const goal = blockoutGoal(run, id, String(args.goal ?? id));
   const precondition = await startPreconditions(loopRun, id, args);
   if (precondition) return precondition;
-  // Assets first on a look bar (sourcing.ts): the sourcing stage, then one area's look-dev hero shot.
+  // Assets first on a look bar (sourcing.ts), and the level's blockout first where there is a place (blockout.ts).
   const sourcing = id === SOURCING_PART;
-  const assetsFirst = await assetsFirstRefusal(loopRun, id, sourcing);
+  const assetsFirst = await assetsFirstRefusal(loopRun, id);
   if (assetsFirst) return assetsFirst;
   const missingPrerequisite = await requireMultiplayer(loopRun, goal);
   if (missingPrerequisite) return missingPrerequisite;

@@ -3831,3 +3831,32 @@ its deadline or its assertion.
 - The curated Quaternius and Kenney packs stay held: Kenney's zips are nested and exceed the CC0 zip
   entry rules, and Quaternius' bytes are not pinned (owner call AN-21); neither can be fetched
   without a recorded sha256, which needs a download this lane did not make.
+
+### Characters: the import contract and the gate
+
+- A one-shot `character` (direct text or an image) or `creature` is asked for `--pose a-pose` unless
+  the agent passed a `pose` (`request.ts`); Meshy rigs it and ships its own clips.
+- `shared/character-contract.ts` is the one contract: a clip's name says its role (`idle`, `walk`,
+  `run`, `crouch`, `aim`, `fire`, `reload`, `hit`, `death`), and `characterVerdict` fails a rig that is
+  not skinned (`not-rigged`), lacks core humanoid bones (`not-humanoid`), rests with arms hanging or
+  raised (`rest-pose`, 25-110° from hanging, measured by `restPoseOf` from the file's rest transforms)
+  or is not person-sized (`scale`, hips 0.2-2.5 m above the feet). Roles no clip covers come back as
+  `missingRoles` (also on the delivered job, counting animation-only GLBs beside the body), for
+  `character.animate`, `animations.search` or a retargeted library.
+- `plugins/genex/character-gate.ts` runs it on every drawn GLB a character, creature, finalize or
+  import job downloaded, before delivery. A rejected body is not delivered: the job is `failed` with
+  `failure.code` `character-rejected`, the reasons in `failure.providerError` and the call that
+  fixes them in `failure.next`. Regenerating spends credits, so the gate says how and the agent asks
+  for it through the usual quote.
+- Per-clip pose validation (limb length, collapse, feet grounded, hands on the weapon) is the
+  engine's `character_check` example (aaa-motion; its report is `shared/character-check.ts`).
+  `shared/character-repair.ts` turns a report into the plan: one regeneration for a rig or pose fault,
+  a swap of just the clips at fault, a made clip per missing role. There is no CC0 animation
+  fallback: clips come from Meshy (the catalog at creation, `character.animate`, `animations.search`)
+  and Uthana (`character.import`).
+- `character.verify` (local, free; `character-verify.ts`, `shared/character-loop.ts`) closes the loop:
+  the agent passes the engine's report, Studio keeps the ledger per character (`characters/<id>.json`
+  in the plugin's workspace: repair calls made, credits the repair jobs were quoted at, a rig already
+  re-imported) and answers `pass`, the one call to make next, or `stop` (3 calls or 100 credits, at
+  `DEFAULT_LOOP_CAPS`) with what still fails. The check itself is Rust, so it runs in the game lane,
+  not in the plugin.

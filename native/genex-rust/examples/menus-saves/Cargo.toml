@@ -34,7 +34,9 @@ default = ["studio"]
 studio = ["genex/studio"]
 
 [dependencies]
-genex = { workspace = true }
+# Audio: the settings menu's Audio tab (volumes) exists only when the game links the mixer, which
+# a game does only by naming the feature (AU-11).
+genex = { workspace = true, features = ["audio"] }
 genex-platform-web = { workspace = true }
 serde = { workspace = true }
 

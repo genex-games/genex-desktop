@@ -52,6 +52,8 @@ export interface AaaCapture {
   clean: boolean | null;
   /** Rendered at the capture's size with no upscale. Null when unknown. */
   native: boolean | null;
+  /** Share of the frame height the subject fills; a close-up needs one. Null when unknown. */
+  subjectFraction: number | null;
   meanLuma: number;
   /** Fraction of pixels in the darkest of 32 luma bins (luma below 8). */
   darkFraction: number;
@@ -116,6 +118,64 @@ export interface ExposureTrack {
   cite?: string;
 }
 
+/** One animation clip of one character, as a close-up capture and a pose validation name it. */
+export interface AaaClipRef {
+  character: string;
+  clip: string;
+}
+
+/** Every animated character clip the game plays; an empty list means the game has none. */
+export interface AaaCharacters {
+  clips: AaaClipRef[];
+  source: FactSource;
+  cite?: string;
+}
+
+/** The pose validation of one clip (Track A's per-clip check), measured against the rest pose. */
+export interface AaaClipPose extends AaaClipRef {
+  /** Worst bone-length change over the clip, as a fraction of the rest length. */
+  limbLengthDrift: number | null;
+  /** Shortest torso length over the clip, as a fraction of the rest length. */
+  torsoLengthRatio: number | null;
+  /** Worst share of the body's volume inside itself over the clip. */
+  selfIntersection: number | null;
+  feetGrounded: boolean | null;
+  source: FactSource;
+  cite?: string;
+}
+
+/** The level plan against the built level (the reachability check's numbers). */
+export interface AaaPlace {
+  zones: number;
+  /** Zones the level plan named; null when the run made no plan. */
+  plannedZones: number | null;
+  reachableZones: number;
+  exits: number;
+  plannedExits: number | null;
+  unplannedDeadEnds: number;
+  source: FactSource;
+  cite?: string;
+}
+
+/** The quality preset's look features against the ones the engine reports on. */
+export interface AaaLookFeatures {
+  preset: string;
+  /** Features the preset owns. */
+  expected: string[];
+  /** Features the engine reports on in the graded build. */
+  active: string[];
+  source: FactSource;
+  cite?: string;
+}
+
+/** The dev store the graded run used. */
+export interface AaaStore {
+  /** The integration head the store was built from. */
+  head: string;
+  source: FactSource;
+  cite?: string;
+}
+
 /** What was graded: the game, its head, the preset and where it ran. */
 export interface AaaSubject {
   game: string;
@@ -139,6 +199,11 @@ export interface AaaEvidence {
   flatCoverage: AaaMeasure | null;
   motion: MotionTrack[];
   exposure: ExposureTrack[];
+  characters: AaaCharacters | null;
+  poses: AaaClipPose[] | null;
+  place: AaaPlace | null;
+  lookFeatures: AaaLookFeatures | null;
+  store: AaaStore | null;
 }
 
 /** An evidence bundle that does not validate, naming the field. */
@@ -181,6 +246,7 @@ function checkCapture(raw: unknown, index: number): void {
   const sizeOk = [capture.width, capture.height].every((side) => Number.isInteger(side) && (side as number) > 0);
   need(sizeOk, `${field}.size`, "positive integer width and height");
   need(isNullableBool(capture.clean) && isNullableBool(capture.native), `${field}.flags`, "booleans or null");
+  need(isNullableNumber(capture.subjectFraction), `${field}.subjectFraction`, "a fraction or null");
   need(isFiniteNumber(capture.meanLuma), `${field}.meanLuma`, "a number");
   const dark = capture.darkFraction;
   need(isFiniteNumber(dark) && dark >= 0 && dark <= 1, `${field}.darkFraction`, "a fraction");
@@ -220,10 +286,59 @@ function checkTrack(raw: unknown, field: string, tickOk: (tick: Json) => boolean
 const poseTickOk = (tick: Json) => ["tMs", "y", "rollDeg", "pitchDeg"].every((key) => isFiniteNumber(tick[key]));
 const evTickOk = (tick: Json) => isFiniteNumber(tick.tMs) && isFiniteNumber(tick.ev);
 
+const isNames = (value: unknown) => Array.isArray(value) && value.every((name) => typeof name === "string");
+const isClipRef = (value: Json) => typeof value.character === "string" && typeof value.clip === "string";
+
+function checkHonest(bundle: Json): void {
+  const characters = bundle.characters;
+  need(
+    characters === null ||
+      (isObject(characters) &&
+        isSource(characters.source) &&
+        Array.isArray(characters.clips) &&
+        characters.clips.every((clip) => isObject(clip) && isClipRef(clip))),
+    "characters",
+    "clips with a fact source, or null",
+  );
+  const poses = bundle.poses;
+  const poseOk = (pose: unknown) =>
+    isObject(pose) &&
+    isClipRef(pose) &&
+    isSource(pose.source) &&
+    [pose.limbLengthDrift, pose.torsoLengthRatio, pose.selfIntersection].every(isNullableNumber) &&
+    isNullableBool(pose.feetGrounded);
+  need(poses === null || (Array.isArray(poses) && poses.every(poseOk)), "poses", "clip poses or null");
+  const place = bundle.place;
+  const countsOk = (p: Json) =>
+    ["zones", "reachableZones", "exits", "unplannedDeadEnds"].every((key) => isFiniteNumber(p[key])) &&
+    isNullableNumber(p.plannedZones) &&
+    isNullableNumber(p.plannedExits);
+  need(place === null || (isObject(place) && isSource(place.source) && countsOk(place)), "place", "counts or null");
+  const look = bundle.lookFeatures;
+  const lookOk = (l: Json) =>
+    typeof l.preset === "string" && isNames(l.expected) && isNames(l.active) && isSource(l.source);
+  need(look === null || (isObject(look) && lookOk(look)), "lookFeatures", "a preset and feature lists, or null");
+  const store = bundle.store;
+  need(
+    store === null || (isObject(store) && typeof store.head === "string" && isSource(store.source)),
+    "store",
+    "a head and a fact source, or null",
+  );
+}
+
+/** Fill the fields older bundles lack with null, so they read as unmeasured. */
+function withDefaults(raw: Json): Json {
+  const captures = Array.isArray(raw.captures)
+    ? raw.captures.map((c) => (isObject(c) ? { subjectFraction: null, ...c } : c))
+    : raw.captures;
+  const missing = { characters: null, poses: null, place: null, lookFeatures: null, store: null };
+  return { ...missing, ...raw, captures };
+}
+
 /** Validate an evidence bundle's JSON. Throws `AaaEvidenceError` naming the field. */
 export function parseEvidence(raw: unknown): AaaEvidence {
   need(isObject(raw) && raw.schema === AAA_EVIDENCE_SCHEMA, "schema", AAA_EVIDENCE_SCHEMA);
-  const bundle = raw as Json;
+  const bundle = withDefaults(raw as Json);
   need(typeof bundle.promptId === "string", "promptId", "a prompt id");
   need(bundle.promptVersion === null || typeof bundle.promptVersion === "string", "promptVersion", "text or null");
   need(isObject(bundle.subject) && typeof bundle.subject.game === "string", "subject", "a subject with a game");
@@ -242,7 +357,8 @@ export function parseEvidence(raw: unknown): AaaEvidence {
   need(Array.isArray(bundle.motion) && Array.isArray(bundle.exposure), "tracks", "motion and exposure lists");
   for (const [i, track] of (bundle.motion as unknown[]).entries()) checkTrack(track, `motion[${i}]`, poseTickOk);
   for (const [i, track] of (bundle.exposure as unknown[]).entries()) checkTrack(track, `exposure[${i}]`, evTickOk);
-  return raw as unknown as AaaEvidence;
+  checkHonest(bundle);
+  return bundle as unknown as AaaEvidence;
 }
 
 /** Read and validate `<dir>/evidence.json`. */

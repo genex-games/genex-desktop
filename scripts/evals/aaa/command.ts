@@ -26,10 +26,12 @@ import {
   renderComparisonMarkdown,
 } from "./compare.ts";
 import { AaaEvidenceError, readEvidence } from "./evidence.ts";
+import { CLOSEUP_ROLE_PREFIX, type GradeContext, MAP_ROLE } from "./honest.ts";
 import { type FetchBytes, fetchReferences, REFERENCE_RECORD, referenceStills } from "./references.ts";
 import { buildReport, gradePrompt, renderReportMarkdown } from "./report.ts";
 import { type AaaPrompt, readAaaSuite } from "./suite.ts";
 import { DEFAULT_TASTE_VOTES, judgeTaste, readTasteTemplate, type TasteDeps } from "./taste.ts";
+import { judgeVision } from "./vision.ts";
 
 /** Where references live inside `$GENEX_EVALS_HOME`. */
 export const REFERENCES_SUBDIR = path.join("aaa", "references");
@@ -93,11 +95,14 @@ export async function aaaSuiteCommand(args: readonly string[], out: Out, deps: A
     out(`  references: ${p.references.map((r) => `${r.source}:${r.asset}`).join(", ")}`);
     out(`  brief: ${p.brief}`);
   }
+  out(
+    `every run also needs: a ${MAP_ROLE} map and a ${CLOSEUP_ROLE_PREFIX}<character>/<clip> close-up per animation clip, clean and at least 1600×900`,
+  );
   return CliExit.Ok;
 }
 
 const COLLECT_USAGE =
-  "aaa collect --prompt <id> --run <runDir> --roles <roles.json> --out <dir> [--shots <dir>] [--facts <facts.json>] [--clean yes|no]";
+  "aaa collect --prompt <id> --run <runDir> [--roles <roles.json>] --out <dir> [--shots <dir>] [--facts <facts.json>] [--clean yes|no]";
 const CLEAN_VALUES: Readonly<Record<string, boolean>> = { yes: true, no: false };
 
 function readJsonFile(file: string | undefined): unknown {
@@ -114,7 +119,7 @@ export async function aaaCollectCommand(args: readonly string[], out: Out, deps:
   const value = (name: string) => parsed?.values.get(name);
   const clean = value("--clean");
   const prompt = promptById(readAaaSuite(deps.root), value("--prompt"));
-  const required = ["--run", "--roles", "--out"].every((name) => value(name) !== undefined);
+  const required = ["--run", "--out"].every((name) => value(name) !== undefined);
   if (!parsed || parsed.positional.length || !prompt || !required || (clean !== undefined && !(clean in CLEAN_VALUES)))
     return usage(out, COLLECT_USAGE);
   const outDir = path.resolve(value("--out") as string);
@@ -124,7 +129,7 @@ export async function aaaCollectCommand(args: readonly string[], out: Out, deps:
       prompt,
       runDir: path.resolve(value("--run") as string),
       shotsDir: value("--shots") === undefined ? null : path.resolve(value("--shots") as string),
-      roles: readJsonFile(value("--roles")) as Record<string, string>,
+      roles: value("--roles") === undefined ? null : (readJsonFile(value("--roles")) as Record<string, string>),
       facts: readJsonFile(value("--facts")),
       clean: clean === undefined ? null : (CLEAN_VALUES[clean] ?? null),
       outDir,
@@ -140,7 +145,7 @@ export async function aaaCollectCommand(args: readonly string[], out: Out, deps:
 }
 
 const GRADE_USAGE =
-  "aaa grade <bundleDir>... --out <dir> [--taste off|live --live] [--taste-family gpt|claude|gpt,claude] [--builder-family claude|gpt] [--votes n] [--references <dir>]";
+  "aaa grade <bundleDir>... --out <dir> [--taste off|live --live] [--taste-family gpt|claude|gpt,claude] [--builder-family claude|gpt] [--votes n] [--references <dir>] [--head <sha>]";
 const FAMILIES: ReadonlySet<string> = new Set(Object.values(GraderFamily));
 
 /** The taste pins for `--taste-family`: each family's default model at medium effort. */
@@ -158,6 +163,8 @@ interface GradeOptions {
   builderFamily: GraderFamily | null;
   votes: number;
   referencesDir: string | null;
+  /** The current integration head the run's dev store must come from. */
+  head: string | null;
 }
 
 function gradeOptions(parsed: CliArgs | null): GradeOptions | null {
@@ -182,6 +189,7 @@ function gradeOptions(parsed: CliArgs | null): GradeOptions | null {
     builderFamily: builder as GraderFamily,
     votes,
     referencesDir: value("--references") === undefined ? null : path.resolve(value("--references") as string),
+    head: value("--head") ?? null,
   };
 }
 
@@ -213,6 +221,7 @@ async function gradeBundle(
   dir: string,
   prompts: readonly AaaPrompt[],
   taste: { deps: TasteDeps; template: string } | null,
+  head: string | null = null,
 ): Promise<(ComparedRun & { prompt: AaaPrompt }) | string> {
   const evidence = readEvidence(dir);
   const prompt = promptById(prompts, evidence.promptId);
@@ -220,14 +229,16 @@ async function gradeBundle(
   const verdict = taste
     ? await judgeTaste(prompt, evidence, dir, taste.template, taste.deps)
     : { summary: null, missing: ["taste judge off"] };
-  return { dir, prompt, evidence, report: gradePrompt(prompt, evidence, verdict) };
+  const vision = taste ? (await judgeVision(prompt, evidence, dir, taste.deps)).summary : null;
+  const context: GradeContext = { expectedHead: head, vision };
+  return { dir, prompt, evidence, report: gradePrompt(prompt, evidence, verdict, context) };
 }
 
 /** `aaa grade`: score bundles, write the report and print the gate. Exit 0 when the gate passes, 1 when not. */
 export async function aaaGradeCommand(args: readonly string[], out: Out, deps: AaaDeps = systemAaaDeps()) {
   const options = gradeOptions(
     parseCliArgs(args, {
-      values: ["--out", "--taste", "--taste-family", "--builder-family", "--votes", "--references"],
+      values: ["--out", "--taste", "--taste-family", "--builder-family", "--votes", "--references", "--head"],
     }),
   );
   if (!options) return usage(out, GRADE_USAGE);
@@ -239,7 +250,7 @@ export async function aaaGradeCommand(args: readonly string[], out: Out, deps: A
   }
   const graded = [];
   for (const dir of options.bundles) {
-    const run = await gradeBundle(dir, prompts, taste);
+    const run = await gradeBundle(dir, prompts, taste, options.head);
     if (typeof run === "string") {
       out(run);
       return CliExit.Refused;
@@ -282,7 +293,16 @@ function copyPairImages(comparison: AaaComparison, base: ComparedRun, cand: Comp
  */
 export async function aaaCompareCommand(args: readonly string[], out: Out, deps: AaaDeps = systemAaaDeps()) {
   const parsed = parseCliArgs(args, {
-    values: ["--baseline", "--out", "--taste", "--taste-family", "--builder-family", "--votes", "--references"],
+    values: [
+      "--baseline",
+      "--out",
+      "--taste",
+      "--taste-family",
+      "--builder-family",
+      "--votes",
+      "--references",
+      "--head",
+    ],
   });
   const options = gradeOptions(parsed);
   const baselineDir = parsed?.values.get("--baseline");
@@ -295,8 +315,8 @@ export async function aaaCompareCommand(args: readonly string[], out: Out, deps:
     out("no reference stills: run `npm run eval -- aaa references --live` first");
     return CliExit.NotReady;
   }
-  const base = await gradeBundle(path.resolve(baselineDir), prompts, taste);
-  const cand = await gradeBundle(options.bundles[0] as string, prompts, taste);
+  const base = await gradeBundle(path.resolve(baselineDir), prompts, taste, options.head);
+  const cand = await gradeBundle(options.bundles[0] as string, prompts, taste, options.head);
   if (typeof base === "string" || typeof cand === "string") {
     out(typeof base === "string" ? base : String(cand));
     return CliExit.Refused;

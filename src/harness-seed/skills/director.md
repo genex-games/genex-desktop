@@ -63,13 +63,20 @@ itself and keeps the memory file its brief names current.)
    only (walls, floors, trims, building blocks wearing scans; never a prop, a tree or a character).
    Code-built geometry, a box-and-cone bpy script included, is the last resort and says why. Source
    the planned models first: until `docs/ASSETS.md` lists them (`- <tag>: <file>`) only a
-   `id=sourcing` worker starts, and a second part waits for one area's hero shot to pass your
-   `judge ship=yes`. Give each part a `hero` camera and its `setting` (`interior` or `exterior`): an interior's
+   `id=sourcing` worker starts. Give each part a `hero` camera and its `setting` (`interior` or `exterior`): an interior's
    frames are held to mean luma 90-130, an exterior's (snow, daylight) to 90-175. Never ask a builder for billboards, 1k textures
    or camera shake, and never cut maps to save boot: stream asset groups instead. A round that adds
-   a look blocker is not kept; a judge that still sees `[primitive]`, a black viewmodel, pure-black
+   a look blocker is not kept, and one that switches a look feature off (fog, a lit volume,
+   shadows) to pass a check is one: report the check, the quality presets own features; a judge that still sees `[primitive]`, a black viewmodel, pure-black
    shadows, cube particles, a sky against the weather or a visible texture repeat
    holds the part open.
+
+   A game the player moves through (first-person, third-person, top-down, side-on, racing,
+   flight) starts with `worker_start id=blockout owns_main=true`: it writes `docs/LEVEL.md` (zones,
+   connections, exits, spawns, play loop, boundary) and greyboxes the whole level playable from
+   spawn to exit. Every other part but `sourcing` waits for it, for at most a third of the run;
+   then give each zone its own part and art pass. The whole-game look photographs every `hero:`,
+   `map:top` and `closeup:` camera the game registers.
 
 ## Before anyone builds
 

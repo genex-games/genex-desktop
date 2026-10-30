@@ -1,0 +1,29 @@
+# The blockout's manifest (copy it over the game's own genex.toml, keeping your title).
+[game]
+title = "Blockout"
+fit = "expand"
+
+[render]
+form_factors = ["desktop", "mobile"]
+preset = "auto"
+
+[render.look]
+tonemapper = "agx-punchy"
+exposure = "auto"
+ev_compensation = 0.3
+
+# Walls and floors are colliders; the nav is baked from them to measure reachability.
+[physics]
+enabled = true
+
+[nav]
+enabled = true
+
+[audio]
+enabled = false
+
+[streaming]
+enabled = false
+
+[animation]
+enabled = false

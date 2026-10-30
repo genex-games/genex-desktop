@@ -124,6 +124,7 @@ import {
 import { liveMaxFps } from "../live-pace.ts";
 import { PlayStage } from "../../shared/play-timing.ts";
 import { cleanTreeOf } from "../rust-build-content.ts";
+import type { RustDiagnostic } from "../rust-build-diagnostics.ts";
 import { importRefusalNotes } from "../rust-import-notes.ts";
 import type { PlayClock } from "./play-timings.ts";
 
@@ -266,6 +267,8 @@ const MESSAGE = {
   checkedClean: (workspace: string) =>
     `${workspace} compiles clean: no compiler or lint error. Nothing was reloaded; reload to see it running.`,
   nothingToCheck: "this game has no compile step to check: reload to see your edits",
+  checkWarnings: (lines: readonly string[]) =>
+    `Warnings, which never fail a build (code the game does not use yet):\n${lines.join("\n")}`,
 } as const;
 
 /** A reference file that could not become a still, and why. */
@@ -536,6 +539,12 @@ async function isCleanCopyOf(dir: string, commit: string): Promise<boolean> {
 /** The SHA-256 of a Rust web build's module, as the lane admitted it; null for any other build. */
 function webModuleDigest(outcome: BuildOutcome): string | null {
   return outcome.rust?.receipt?.outputs.find((file) => file.path.endsWith(".wasm"))?.sha256 ?? null;
+}
+
+/** One warning of a clean check as the agent reads it: where, what, and the lint that said it. */
+function warningLine(warning: RustDiagnostic): string {
+  const at = warning.file ? `${warning.file}:${warning.line ?? 0}: ` : "";
+  return `- ${at}${warning.message}${warning.code ? ` (${warning.code})` : ""}`;
 }
 
 /** The game console's sentence for a build problem: the failed command's, or why nothing ran (a C++ refusal). */
@@ -1151,7 +1160,10 @@ export class PreviewService {
     const receipt = await this.#x.gameBuilds.ensure(game, BuildTarget.Web, CppBuildPurpose.Judging, { check: true });
     if (!receipt.outcome) return MESSAGE.laneMissing(receipt.stack);
     const { problem } = receipt.outcome;
-    return problem ? problemNote(problem) : MESSAGE.checkedClean(path.basename(root));
+    if (problem) return problemNote(problem);
+    const clean = MESSAGE.checkedClean(path.basename(root));
+    const warnings = (receipt.outcome.rust?.warnings ?? []).map(warningLine);
+    return warnings.length ? `${clean}\n${MESSAGE.checkWarnings(warnings)}` : clean;
   }
 
   /**

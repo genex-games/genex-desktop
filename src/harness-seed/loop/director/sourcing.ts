@@ -7,8 +7,9 @@
  * - sourcing: until `docs/ASSETS.md` in the integration names every model the art pass plans (by its
  *   draw tag, one `- <tag>: <file>` line each), only the sourcing worker (the part `id=sourcing`) starts — or
  *   the lead sources them itself with the asset tools;
- * - look-dev: once one part builds, a second waits for the art director's review of a hero shot
- *   (`judge ship=yes`) with no blocker on it, so one area reaches its finished look before breadth.
+ * - look-dev (no longer applied, kept for older callers): once one part builds, a second waited
+ *   for the art director's review of a hero shot. Body-cam-6 showed it holds breadth hostage to one
+ *   area's look; a game with a place now waits for its blockout instead (blockout.ts).
  *
  * A new module: a kept older sibling can never shadow these names.
  */
@@ -20,6 +21,7 @@ import { DefectSeverity } from "../ship-review.ts";
 import { MINUTE_MS } from "../time.ts";
 import type { AnyRecord } from "../../types/harness.d.ts";
 import type { LoopRun } from "./loop-run.ts";
+import { BLOCKOUT_PART } from "./blockout.ts";
 
 /** How long the sourcing hold stands after the art pass is planned. */
 export const SOURCING_MS = 30 * MINUTE_MS;
@@ -59,7 +61,8 @@ const minutesLeft = (since: number, ms: number, now: number): number =>
 export async function sourcingRefusal(loopRun: LoopRun, id: string, now: number): Promise<string | null> {
   const { integrationWorktree, run, state } = loopRun;
   const art = runArtPass(run);
-  if (!art || !asksForLook(run) || id === SOURCING_PART) return null;
+  // The blockout is greybox by design: it needs no sourced model (blockout.ts).
+  if (!art || !asksForLook(run) || id === SOURCING_PART || id === BLOCKOUT_PART) return null;
   const since = (state as AnyRecord).artPlannedAt;
   if (holdOver(since, SOURCING_MS, now)) return null;
   const planned = plannedModelTags(art.assets);

@@ -121,7 +121,7 @@ export function generationView(
 export function applyGenerationView(job: GenexJob, view: GenerationView): void {
   if (typeof view.status === "string") {
     job.remoteStatus = view.status;
-    const awaitingFiles = !job.files.length && job.status !== GenexJobStatus.ApprovalRequired;
+    const awaitingFiles = !job.files.length && job.status !== GenexJobStatus.ApprovalRequired && !job.failure;
     if (awaitingFiles) job.status = reconciledJobStatus(view.status);
   }
   if (Array.isArray(view.files)) job.manifest = manifestFromView(view.files);

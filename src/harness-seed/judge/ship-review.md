@@ -38,6 +38,10 @@ blocker is a `blocker` whatever else the game does well: the classes below say w
 When the user content asks SHIPPED LOOK, answer `shipped` for each scene camera: would that frame
 pass as a screenshot from a shipped game of its genre? A camera that would not is a blocker.
 
+Look at every `closeup:` camera for the character's anatomy and pose (`[broken-pose]`) and at
+`map:top` for whether the place makes sense as a level (`[incoherent-place]`): both are blockers
+however good the rest looks. A camera the game does not have is not a defect of its own.
+
 {{artefact-classes}}
 
 `ship` is true when no defect is a blocker.

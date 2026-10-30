@@ -7,6 +7,25 @@
     ],
     "coverage": 0.82,
     "flatCoverage": 0.031,
+    "preset": "ultra",
+    "features": {
+      "volumetric-fog": true,
+      "fog": true,
+      "shadows": true,
+      "spot-shadows": true,
+      "point-shadows": true,
+      "contact-shadows": true,
+      "ao": true,
+      "ssgi": true,
+      "ssr": true,
+      "bloom": true,
+      "taa": true,
+      "ibl": true,
+      "local-exposure": true,
+      "auto-exposure": true,
+      "depth-of-field": false,
+      "motion-blur": false
+    },
     "tags": {
       "bench": {
         "coverage": 0.04,

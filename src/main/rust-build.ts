@@ -287,6 +287,14 @@ const FACADE_CRATE = "genex";
 const VENDORED_SOURCE = "genex-vendored";
 /** How a vendored package appears in a lock: crates.io, replaced by the vendored directory. */
 const CRATES_IO_SOURCE = "registry+https://github.com/rust-lang/crates.io-index";
+/** The `unused` lints that mean code a game does not use yet: warned about in the agent's check, never failing a build. */
+const UNUSED_WARNED_LINTS: readonly string[] = [
+  "dead_code",
+  "unused_imports",
+  "unused_variables",
+  "unused_mut",
+  "unused_assignments",
+];
 /** The unsafe-code policy every game crate is compiled under (M7.2's trust flag is the only way off it). */
 const GAME_RUSTFLAGS = "-F unsafe_code";
 /**
@@ -296,15 +304,17 @@ const GAME_RUSTFLAGS = "-F unsafe_code";
  * the code reads: they never fail a build (B6, bodycam's `collapsible_if`). Nor does rustc's
  * `unused` group: a field, function, import or variable a game in progress does not use yet
  * (`dead_code`) cost bodycam's agents whole rounds, in every build alike, since an export that
- * failed on what judged builds allowed would surprise the person last. A dropped `Result`
- * (`unused_must_use`) is still an error. The store's `clippy.toml` determinism bans are in the
- * style group, so they are denied again after it.
+ * failed on what judged builds allowed would surprise the person last. Those lints are forced to
+ * warn (`--force-warn` stays a warning under `-D warnings`), so the agent's check still tells it
+ * ({@link UNUSED_WARNED_LINTS}). A dropped `Result` (`unused_must_use`) is still an error. The
+ * store's `clippy.toml` determinism bans are in the style group, so they are denied again after it.
  */
 const CLIPPY_LINT_LEVELS: readonly string[] = [
   "-D",
   "warnings",
   "-A",
   "unused",
+  ...UNUSED_WARNED_LINTS.flatMap((lint) => ["--force-warn", lint]),
   "-D",
   "unused_must_use",
   "-A",
@@ -1467,7 +1477,9 @@ export class RustBuilds implements GameBuildLane {
     const timeout = RUST_BUILD_TIMEOUT_MS[plan.target];
     const clippy = await this.#step(plan, RustBuildStep.Clippy, clippyCommand(plan, this.#jobs()), timeout, signal);
     if (!succeeded(clippy)) return this.#failed(plan, clippy, signal, lastGood);
-    const rust: RustLaneReport = { refusal: null, diagnostics: [], receipt: null };
+    const manifest = path.join(stageDir(plan.bin), MANIFEST_FILE);
+    const { warnings } = parseCargoMessages(clippy.stdout, stageDir(plan.bin), manifest);
+    const rust: RustLaneReport = { refusal: null, diagnostics: [], receipt: null, warnings };
     return { ok: true, output: null, lastGood, problem: null, ran: true, rust };
   }
 
