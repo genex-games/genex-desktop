@@ -348,12 +348,15 @@ describe("autopilot: a 2-facet run on the fake engine", () => {
     assert.equal(base.length, 1);
     assert.equal(base[0]!.ok, true, JSON.stringify(base[0]));
 
-    // Both facets iterated, each satisfied on its first win; sequential means terrain's build
+    // Both facets iterated, each kept on its first build; sequential means terrain's build
     // finished before lighting's began. The merged build then got its own integration facet.
     const iterations = customEvents(events, "facet_iteration");
     assert.deepEqual([...new Set(iterations.map((i) => i.facetId))].sort(), ["integration", "lighting", "terrain"]);
     const facetIterations = iterations.filter((i) => i.facetId !== "integration");
-    assert.ok(facetIterations.every((i) => i.winner === "challenger" && i.satisfied === true));
+    // Flipped (Loop phase 4): each round was a judge's "satisfied" win; it is kept on its board, and
+    // no judge is asked.
+    assert.ok(facetIterations.every((i) => i.winner === "challenger"));
+    assert.equal(counts.facetJudge, 0, "no facet judge was asked");
     assert.deepEqual(order, ["terrain", "lighting"], "facets built strictly one at a time");
     // Verified scoreboard: the planner's identity check passed and flipped on the first build —
     // all measured, all passing on the fake game. The harness forces no screen or input check.
@@ -374,12 +377,9 @@ describe("autopilot: a 2-facet run on the fake engine", () => {
         measuredByHarness.every((r) => r.pass === true),
         `every planner and harness check on ${record.facetId}'s board passed: ${JSON.stringify(board.results)}`,
       );
-      // The facet critic's gap ("more depth in the fog") became a vision check, seeded as
-      // failing on the build it was named on: an all-pass board never coexists with a defect.
-      assert.ok(
-        board.results.some((r) => r.id.startsWith("defect-more-depth") && r.pass === false),
-        "the judge's gap is a failing check on the board",
-      );
+      // Flipped (Loop phase 4): the facet critic's gap ("more depth in the fog") became a failing
+      // vision check on the board; no judge looks at a round, so none grows one.
+      assert.ok(!board.results.some((r) => r.id.startsWith("defect-")), "no judge's gap is on the board");
       assert.equal(board.unmeasured, 0);
       assert.equal(board.identityPassing, board.identityTotal);
       // Flipped (Loop phase 2): no screen or input check of the harness's rides on any facet.
@@ -401,7 +401,7 @@ describe("autopilot: a 2-facet run on the fake engine", () => {
     assert.match(await readFile(path.join(gameDir, "src", "terrain.js"), "utf8"), /terrain work/);
     assert.match(await readFile(path.join(gameDir, "src", "lighting.js"), "utf8"), /lighting work/);
 
-    // The run closed with the global blind verdict and a durable journal.
+    // The run closed with its global verdict and a durable journal.
     const finished = customEvents(events, "run_finished")[0]!;
     assert.equal(finished.mode, "autopilot");
     assert.ok(finished.optimization, "a durable optimization outcome accompanies final publication");
@@ -415,7 +415,8 @@ describe("autopilot: a 2-facet run on the fake engine", () => {
       ["done", "facets settled toward the direction"],
       "the close says why it stopped as a code, beside the sentence",
     );
-    assert.equal(counts.globalJudge >= 1, true);
+    // Flipped (Loop phase 4): a global blind judge decided the verdict; the integrated build that runs is kept.
+    assert.equal(counts.globalJudge, 0, "no global judge was asked");
     const threadId = (await rig.core.store.listThreads()).find(
       (t) => (t.metadata as { project?: string })?.project === "duskworld",
     )!.id;
@@ -608,15 +609,16 @@ describe("autopilot: a 2-facet run on the fake engine", () => {
     assert.ok((playtest!.liveTools ?? []).some((t) => t.name === "press_keys"));
     assert.equal(typeof playtest!.onLiveTool, "function");
 
-    // Every iteration record carries the verified scoreboard beside the judge's defects.
+    // Every iteration record carries the verified scoreboard.
     const iterationRecords = customEvents(events, "facet_iteration");
     assert.ok(iterationRecords.length > 0);
     for (const record of iterationRecords) {
       const board = record.scoreboard as { results: Array<{ id: string; pass: boolean }> } | null;
       assert.ok(board && board.results.length >= 1, "a scoreboard rides on every iteration");
+      // Flipped (Loop phase 4): the taste judge's defects reached the record; no taste judge is asked.
       assert.ok(
-        (record.defects as string[]).includes("water seam — camBridge"),
-        "the taste judge's defects still reach the record",
+        !((record.defects as string[] | undefined) ?? []).includes("water seam — camBridge"),
+        "no taste judge's defects reach the record",
       );
     }
     // Continuous integration: every accepted facet commit was merged into the integration branch.
@@ -946,10 +948,13 @@ describe("autopilot: a 2-facet run on the fake engine", () => {
   });
 
   it("kill mid-run ⇒ paused (not finished-dead); resume replays the journal", async () => {
-    // Terrain satisfies immediately; lighting never does before the kill, then needs one more
-    // judged iteration after the resume.
+    // Terrain is done on its first kept round; lighting's ladder keeps it building past the kill,
+    // and it finishes after the resume. Flipped (Loop phase 4): a judge that was not satisfied
+    // kept lighting going; its ladder does now.
+    const [terrain, lighting] = PLAN.facets;
+    const rungs = ["dusk falls", "the lamps come on", "stars rise"].map((what, i) => ({ id: `rung-${i + 1}`, what }));
     const { respond, counts, order } = makeAutopilotResponder({
-      satisfiedWhen: (facet, judged) => (facet === "terrain" ? judged >= 1 : judged >= 2),
+      plan: { ...PLAN, facets: [terrain, { ...lighting, milestones: rungs }] },
     });
     const rig = await startRig({ respond });
     rigs.push(rig);

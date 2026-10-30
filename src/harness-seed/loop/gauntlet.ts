@@ -43,6 +43,8 @@ const GAP_HISTORY_LENGTH = 4;
 const RATE_LIMIT_WAIT_MS = MINUTE_MS;
 /** The share of the wall clock left at which the run stops adding and starts integrating. */
 const INTEGRATION_SHARE = 0.15;
+/** Why a run the user asked to finish stopped, as the chat reads it. */
+const FINISHED_AT_REQUEST = "finished the current attempts at the user's request";
 
 /**
  * Everything the classic run shares with the other modes about LOOKING at a build — the evidence
@@ -307,7 +309,7 @@ async function playIteration(loop: GauntletLoop, round: GauntletRound): Promise<
 async function openIteration(loop: GauntletLoop, round: GauntletRound): Promise<RoundFlow> {
   const { ctx, deadline, gapHistory, report, run, started } = loop;
   if (await ctx.runInbox?.finishing()) {
-    stopWith(report, StopCode.FinishRequested, "finished the current attempts at the user's request");
+    stopWith(report, StopCode.FinishRequested, FINISHED_AT_REQUEST);
     return RoundFlow.Stop;
   }
   if (ctx.cancelled) {
@@ -614,7 +616,9 @@ async function recordIteration(loop: GauntletLoop, round: GauntletRound): Promis
  */
 async function endOnAKeptBuild(loop: GauntletLoop, round: GauntletRound): Promise<RoundFlow> {
   if (!round.challengerWon || round.challengerBroken) return;
-  stopWith(loop.report, StopCode.Done, "the build runs and is kept: nobody judges it");
+  // The user asked to finish while it built: the run ends at their request, and says so.
+  if (await loop.ctx.runInbox?.finishing()) stopWith(loop.report, StopCode.FinishRequested, FINISHED_AT_REQUEST);
+  else stopWith(loop.report, StopCode.Done, "the build runs and is kept: nobody judges it");
   return RoundFlow.Stop;
 }
 
