@@ -67,7 +67,10 @@ export interface SignalEvents {
 export function installQuitSignals(target: SignalEvents, app: { quit(): void; exit(): void }): void {
   let asked = false;
   const heard = (): void => {
-    if (asked) return app.exit();
+    if (asked) {
+      app.exit();
+      return;
+    }
     asked = true;
     app.quit();
   };
