@@ -6,7 +6,7 @@
  * never touched.** Upgrades flow through untouched files; edited files are never overwritten.
  */
 import assert from "node:assert/strict";
-import { appendFile, cp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
 import {
@@ -17,13 +17,8 @@ import {
   SEED_MOVES,
   type SeedUpgradeReport,
 } from "../../src/substrate/seed-upgrade.ts";
-import { RENAMED_SEED_FILES, RENAMED_SEED_NAMES, renameInSource } from "../../src/substrate/seed-renames.ts";
-import {
-  SEED_CALL_MEMORY_PREFIX,
-  SEED_MOVE_MEMORY_PREFIX,
-  seedCallMemory,
-  seedUpgradedPayload,
-} from "../../src/main/seed-upgrade-notice.ts";
+import { RENAMED_SEED_FILES, renameInSource } from "../../src/substrate/seed-renames.ts";
+import { SEED_CALL_MEMORY_PREFIX, seedCallMemory, seedUpgradedPayload } from "../../src/main/seed-upgrade-notice.ts";
 import { pathExists } from "../../src/substrate/fsx.ts";
 import { StudioCore } from "../../src/main/studio-core.ts";
 import { makeResources } from "../helpers/resources.ts";
@@ -31,7 +26,7 @@ import { coreLite } from "../helpers/core-lite.ts";
 import { git, STUDIO_COMMITTER } from "../../src/substrate/snapshots.ts";
 import { cloneSeededWorkspace } from "../helpers/seed-upgrade-fixture.ts";
 import { closeBeforeCleanup, removeTree, tmpDir } from "../helpers/tmp.ts";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { studioActivity } from "../../src/shared/studio-activity.ts";
 import { toEntries } from "../../src/renderer/chat-entries.ts";
@@ -44,9 +39,6 @@ import { callIsolated, linkIsolated } from "../helpers/isolated-import.ts";
 
 /** Where an upgrade keeps the agent's copy of `rel`: a renamed module's new path (seed-renames.ts). */
 const keptAt = (rel: string): string => RENAMED_SEED_FILES[rel] ?? rel;
-
-/** A name an older vintage exported, as an upgrade rewrites it in the agent's kept copy. */
-const renamedName = (name: string): string => RENAMED_SEED_NAMES[name] ?? name;
 
 /** A renamed module's path before the rename, by its path now. */
 const OLD_PATH: Readonly<Record<string, string>> = Object.fromEntries(
@@ -78,8 +70,6 @@ async function rig(): Promise<{ seed: string; ws: string; manifest: string; back
  * Decision 7 archives a kept part the seed removed or changed incompatibly and lays the seed's copy
  * down (WS2's `substrate/seed-archive.ts`); each case is rewritten against that archive there.
  */
-const PHASE5_ARCHIVE = "phase 5 integration: kept parts the seed removed or changed are archived (seed-archive.ts)";
-
 describe("seed upgrade", () => {
   it("first launch seeds the workspace and records what was laid down", async () => {
     const { seed, ws, manifest } = await rig();
@@ -607,111 +597,89 @@ describe("retiring a seed file the app no longer ships", () => {
 });
 
 /**
- * The harness structure change (2E-pre) moved code between files and added new ones. A seed
- * upgrade keeps every file the in-app agent edited, so a kept file of the older vintage still
- * imports its siblings by the names they had then — every one must still be exported, or the
- * harness fails to load and the watchdog rewinds the agent's work.
+ * Every vintage the seed shipped before the archive epoch (phase 5): an agent that edited any of its
+ * parts kept them across upgrades, which is why each later change had to keep the older names
+ * exported. Upgrading into the epoch (seed-archive.ts) archives every such kept part, of a file
+ * this seed changes or no longer ships, and lays the shipped copy down, so the harness that boots
+ * is the shipped one: no older copy is left beside it to fail at link time.
  */
-describe("seed upgrade across the harness structure change", () => {
-  const vintage = JSON.parse(
-    readFileSync(fileURLToPath(new URL("../fixtures/seed-exports-2e-pre.json", import.meta.url)), "utf8"),
-  ) as {
-    modules: Record<string, string[]>;
-    directorImports: Record<string, string[]>;
-  };
+describe("seed upgrade into the archive epoch, over every older vintage", () => {
   const shipped = path.resolve(fileURLToPath(new URL("../../src/harness-seed", import.meta.url)));
+  const fixtures = path.resolve(fileURLToPath(new URL("../fixtures", import.meta.url)));
+  /** A hash no seed file has: the copy an older seed laid down, which the agent then edited. */
+  const OLDER_SEED_HASH = "0".repeat(64);
 
-  it("every module still exports every name the older vintage imported it by", { todo: PHASE5_ARCHIVE }, async () => {
-    for (const [rel, names] of Object.entries(vintage.modules)) {
-      // The vintage was plain .mjs; the same module is TypeScript now.
-      const module = (await import(
-        new URL(`../../src/harness-seed/${rel.replace(/\.mjs$/, ".ts")}`, import.meta.url).href
-      )) as Record<string, unknown>;
-      // A kept file's old names are rewritten by the upgrade (seed-renames.ts), so it imports the new ones.
-      const missing = names.map(renamedName).filter((name) => !(name in module));
-      assert.deepEqual(missing, [], `${rel} stopped exporting what a kept file of the older vintage imports`);
+  /** Every part an older vintage exported, by its path as a TypeScript seed names it (a renamed module left out). */
+  function olderParts(): Map<string, string[]> {
+    const parts = new Map<string, string[]>();
+    for (const name of readdirSync(fixtures)
+      .filter((file) => /^seed-exports-.*\.json$/.test(file))
+      .sort()) {
+      const { modules } = JSON.parse(readFileSync(path.join(fixtures, name), "utf8")) as {
+        modules: Record<string, string[]>;
+      };
+      for (const [rel, names] of Object.entries(modules)) {
+        const at = rel.replace(/\.mjs$/, ".ts");
+        if (!Object.hasOwn(RENAMED_SEED_FILES, at)) parts.set(at, names);
+      }
     }
-  });
+    return parts;
+  }
 
-  it("an agent that edited director.ts before the split keeps its monolith, and the harness still loads", {
-    todo: PHASE5_ARCHIVE,
-  }, async () => {
-    const root = await tmpDir("seed-split-");
-    const older = path.join(root, "older-seed");
-    const ws = path.join(root, "workspace");
-    const manifest = path.join(root, "manifest.json");
-    // The older vintage: today's seed, but with the director as one file that imports its
-    // siblings the way the monolith did — and no director/ folder yet.
-    await cp(shipped, older, { recursive: true });
-    await rm(path.join(older, "loop", "director"), { recursive: true, force: true });
-    const imported = Object.values(vintage.directorImports).flat();
-    const monolith = [
-      ...Object.entries(vintage.directorImports).map(
-        ([from, names]) => `import { ${names.join(", ")} } from "${from.replace(/\.mjs$/, ".ts")}";`,
-      ),
-      `const used = [${imported.join(", ")}];`,
-      // What the monolith exported: its own functions, and the one name it passed on from a sibling.
-      ...vintage.modules["loop/director.mjs"]!.map((name) =>
-        imported.includes(name) ? `export { ${name} };` : `export const ${name} = () => used.length;`,
-      ),
-    ].join("\n");
-    await writeFile(path.join(older, "loop", "director.ts"), `${monolith}\n`);
-    assert.equal((await applySeed({ seedDir: older, workspaceDir: ws, manifestFile: manifest })).mode, "seeded");
+  it("archives each kept older part with the agent's edit, lays the shipped copy down, and the harness loads", async () => {
+    const parts = olderParts();
+    assert.ok(parts.size > 100, `the vintages name their parts (${parts.size})`);
+    const root = await tmpDir("seed-epoch-");
+    const { ws, manifest } = await cloneSeededWorkspace(shipped, root);
+    // An install from before the epoch whose agent edited every one of those parts of an older seed.
+    const body = JSON.parse(await readFile(manifest, "utf8")) as {
+      files: Record<string, string>;
+      archiveEpoch?: number;
+    };
+    delete body.archiveEpoch;
+    const edits = new Map<string, string>();
+    for (const [rel, names] of parts) {
+      body.files[rel] = OLDER_SEED_HASH;
+      const text = `${names.map((name) => `export const ${name} = () => ${JSON.stringify(name)};`).join("\n")}\n// the agent's own change\n`;
+      edits.set(rel, text);
+      await mkdir(path.dirname(path.join(ws, rel)), { recursive: true });
+      await writeFile(path.join(ws, rel), text);
+    }
+    await writeFile(manifest, JSON.stringify(body));
 
-    // The agent edits its director; then the app ships the split.
-    const edited = `${monolith}\n// the agent's own change to its director\n`;
-    await writeFile(path.join(ws, "loop", "director.ts"), edited);
     const report = await applySeed({
       seedDir: shipped,
       workspaceDir: ws,
       manifestFile: manifest,
       backupDir: path.join(root, "backup"),
+      now: () => new Date("2026-10-30T09:00:00Z"),
     });
 
-    assert.ok(report.kept.includes("loop/director.ts"), "the agent's director is kept");
-    // Flipped by the rename (seed-renames.ts): kept, with the names the seed renamed rewritten.
-    assert.equal(
-      await readFile(path.join(ws, "loop", "director.ts"), "utf8"),
-      renameInSource("loop/director.ts", edited),
+    assert.equal(report.archive?.dir, "archive/2026-10-30");
+    assert.deepEqual(
+      [...(report.archive?.edits ?? [])].sort(),
+      [...parts.keys()].sort(),
+      "every kept part is archived",
     );
-    const split = (await readdir(path.join(shipped, "loop", "director"))).filter((name) => name.endsWith(".ts"));
-    assert.ok(split.length > 0);
-    for (const name of split)
-      assert.ok(report.added.includes(`loop/director/${name}`), `loop/director/${name} arrives beside it`);
-    assert.deepEqual(report.retired, [], "nothing the split moved is taken away");
-
-    // What the bootstrap does: import the workspace's own main.ts. A kept monolith importing a
-    // name its new siblings no longer export would throw here, at link time.
+    for (const [rel, text] of edits) {
+      // The upgrade's renames (seed-renames.ts) reach the archived copy too.
+      assert.equal(
+        await readFile(path.join(ws, "archive", "2026-10-30", rel), "utf8"),
+        renameInSource(rel, text),
+        `${rel}: the agent's copy`,
+      );
+      const seedCopy = path.join(shipped, rel);
+      if (await pathExists(seedCopy))
+        assert.equal(await readFile(path.join(ws, rel), "utf8"), await readFile(seedCopy, "utf8"), `${rel}: shipped`);
+      else assert.equal(await pathExists(path.join(ws, rel)), false, `${rel}: the seed no longer ships it`);
+    }
+    assert.deepEqual(report.kept, [], "nothing older is kept beside the shipped harness");
+    // What the bootstrap does: import the workspace's own main.ts.
     const main = await linkIsolated(path.join(ws, "loop", "main.ts"));
     assert.equal(main.createStudio, "function");
   });
 
-  /**
-   * The gauntlet of the older vintage: one file that defines the evidence pass itself, as it did
-   * before the move to evidence.ts. Every name it exported then is a plain function here, and
-   * `edit` marks it as the agent's.
-   */
-  const olderGauntlet = (edit: string) =>
-    [
-      ...vintage.modules["loop/gauntlet.mjs"]!.map(
-        (name) => `export async function ${name}() { return ${JSON.stringify(name)}; }`,
-      ),
-      `// ${edit}`,
-    ].join("\n");
-
-  /** An install seeded from the shipped seed whose gauntlet the agent then rewrote as `body` (null: left as shipped). */
-  async function editedGauntletInstall(body: string | null) {
-    const root = await tmpDir("seed-moved-");
-    const ws = path.join(root, "workspace");
-    const manifest = path.join(root, "manifest.json");
-    await applySeed({ seedDir: shipped, workspaceDir: ws, manifestFile: manifest });
-    if (body !== null) await writeFile(path.join(ws, "loop", "gauntlet.ts"), body);
-    return { root, ws, manifest };
-  }
-
-  it("SEED_MOVES says where each moved name lives now, and the old file passes on that very binding", {
-    todo: PHASE5_ARCHIVE,
-  }, async () => {
+  it("SEED_MOVES says where each moved name lives now, and the old file passes on that very binding", async () => {
     const load = async (rel: string) =>
       (await import(new URL(`../../src/harness-seed/${rel}`, import.meta.url).href)) as Record<string, unknown>;
     for (const move of SEED_MOVES) {
@@ -723,56 +691,13 @@ describe("seed upgrade across the harness structure change", () => {
     }
   });
 
-  it("reports no move for an agent-edited gauntlet of the new vintage, or an untouched one", async () => {
-    const newer = await editedGauntletInstall(null);
-    await appendFile(path.join(newer.ws, "loop", "gauntlet.ts"), "\n// the agent's change to runGauntlet itself\n");
-    const newerReport = await applySeed({
-      seedDir: shipped,
-      workspaceDir: newer.ws,
-      manifestFile: newer.manifest,
-      backupDir: path.join(newer.root, "backup"),
-    });
-    assert.deepEqual(newerReport.moved, [], "a gauntlet that only re-exports the evidence pass keeps no copy of it");
-
-    const untouched = await editedGauntletInstall(null);
-    assert.deepEqual(
-      (await applySeed({ seedDir: shipped, workspaceDir: untouched.ws, manifestFile: untouched.manifest })).moved,
-      [],
-    );
-  });
-
-  it("the boot writes the move into the agent's memory, and takes it back once it no longer holds", {
-    todo: PHASE5_ARCHIVE,
-  }, async () => {
-    const resources = await makeResources();
-    const userData = path.join(await tmpDir("seed-moved-boot-"), "userData");
-    const boot = async () => {
-      // This characterizes seed memory, without agents or a process-wide network bridge.
-      const core = new StudioCore({
-        paths: { userData, resources },
-        engines: [],
-        sandbox: false,
-        execPath: process.execPath,
-        executionPolicy: { runBackgroundImprovement: false },
-      });
-      closeBeforeCleanup(() => core.stop());
-      await core.init();
-      return core;
-    };
-    const first = await boot();
-    const gauntlet = path.join(first.layout.harnessWs, "loop", "gauntlet.ts");
-    const shippedGauntlet = await readFile(gauntlet, "utf8");
-    await writeFile(gauntlet, olderGauntlet("the agent's own fix to the evidence pass"));
-
-    const second = await boot();
-    const memory = ((await second.store.readArtifact(second.mainThread, "memory")) ?? {}) as Record<string, unknown>;
-    assert.match(String(memory[`${SEED_MOVE_MEMORY_PREFIX}loop/gauntlet.ts`]), /loop\/evidence\.ts/);
-
-    // The agent re-applies its fix where the callers are and drops its copy.
-    await writeFile(gauntlet, `${shippedGauntlet}\n// fix moved to evidence.ts\n`);
-    const third = await boot();
-    const after = ((await third.store.readArtifact(third.mainThread, "memory")) ?? {}) as Record<string, unknown>;
-    assert.ok(!(`${SEED_MOVE_MEMORY_PREFIX}loop/gauntlet.ts` in after), "the note is gone");
+  it("every call change names a file the seed ships and a marker its copy has", async () => {
+    const stale: string[] = [];
+    for (const change of SEED_CALL_CHANGES) {
+      const text = await readFile(path.join(shipped, change.file), "utf8").catch(() => null);
+      if (text === null || !text.includes(change.marker)) stale.push(`${change.file}: ${change.marker}`);
+    }
+    assert.deepEqual(stale, [], "a kept copy is reported only for a call the shipped copy makes");
   });
 });
 
@@ -817,23 +742,6 @@ describe("seed upgrade across the harness step flag", () => {
     );
   });
 
-  it("a kept copy edited in a way that keeps every new call is never reported", { todo: PHASE5_ARCHIVE }, async () => {
-    const root = await tmpDir("seed-step-current-");
-    const ws = path.join(root, "workspace");
-    const manifest = path.join(root, "manifest.json");
-    await applySeed({ seedDir: shipped, workspaceDir: ws, manifestFile: manifest });
-    const files = [...new Set(SEED_CALL_CHANGES.map((change) => change.file))];
-    for (const file of files) await appendFile(path.join(ws, file), "\n<!-- the agent's own change -->\n");
-    const report = await applySeed({
-      seedDir: shipped,
-      workspaceDir: ws,
-      manifestFile: manifest,
-      backupDir: path.join(root, "backup"),
-    });
-    for (const file of files) assert.ok(report.kept.includes(file), `${file} is the agent's`);
-    assert.deepEqual(report.outdatedCalls ?? [], [], "a current copy calls the new way");
-  });
-
   it("a kept tool registry or chat turn whose plugins.tools call names no game is reported once, and noted for the agent", async () => {
     const REGISTRY = "tools/index.ts";
     const root = await tmpDir("seed-step-plugins-tools-");
@@ -867,43 +775,6 @@ describe("seed upgrade across the harness step flag", () => {
     }
   });
 
-  it("a kept part that makes a game with no kind where a web game is meant, or has no start for one, is reported once and noted for the agent", {
-    todo: PHASE5_ARCHIVE,
-  }, async () => {
-    const root = await tmpDir("seed-step-scaffold-kind-");
-    const ws = path.join(root, "workspace");
-    const manifest = path.join(root, "manifest.json");
-    await applySeed({ seedDir: shipped, workspaceDir: ws, manifestFile: manifest });
-    // The older shapes: a scaffold that names no kind, a run start that starts nothing, no start tool.
-    const older: ReadonlyArray<readonly [string, string, string]> = [
-      ["loop/chat-dispatch.ts", "kind: ProjectStarter.Web", ""],
-      ["loop/autopilot.ts", "kind: ProjectStarter.Web", ""],
-      ["loop/director/setup.ts", "kind: ProjectStarter.Web", ""],
-      ["loop/gauntlet.ts", "kind: ProjectStarter.Web,", ""],
-      ["loop/run-dispatch.ts", "await startWebIfPending(host, run.project, games);", ""],
-      ["tools/game-tools.ts", "HostMethod.GameStart", "HostMethod.GameValidate"],
-    ];
-    for (const [file, from, to] of older) {
-      const copy = await readFile(path.join(ws, file), "utf8");
-      assert.ok(copy.includes(from), `${file} calls the new way`);
-      await writeFile(path.join(ws, file), `${copy.replaceAll(from, to)}\n// the agent's own change\n`);
-    }
-    const report = await applySeed({
-      seedDir: shipped,
-      workspaceDir: ws,
-      manifestFile: manifest,
-      backupDir: path.join(root, "backup"),
-    });
-    const files = older.map(([file]) => file);
-    assert.deepEqual([...(report.outdatedCalls ?? [])].sort(), [...files].sort(), "each file once");
-    const memory = seedCallMemory({}, report.outdatedCalls ?? []);
-    for (const file of files) {
-      const note = String(memory[`${SEED_CALL_MEMORY_PREFIX}${file}`]);
-      assert.match(note, /calls the host the older way/, file);
-      assert.ok(note.length <= 300, `${file}: one memory value stays within the memory policy's limit`);
-    }
-  });
-
   it("a kept local prompt that reads no web rules file is reported once and noted for the agent", async () => {
     const root = await tmpDir("seed-step-web-rules-");
     const ws = path.join(root, "workspace");
@@ -927,39 +798,32 @@ describe("seed upgrade across the harness step flag", () => {
     assert.ok(note.length <= 300, "one memory value stays within the memory policy's limit");
   });
 
-  it("a kept chat brief from before new games started empty, and kept rules that still hold the web rules, are reported once and noted", async () => {
+  // Flipped (phase 5): kept rules are no longer checked for the web rules' sentence; rules from before
+  // the archive epoch were archived (seed-archive.ts), and the shipped rules no longer say it.
+  it("a kept chat brief from before new games started empty is reported once and noted", async () => {
     const root = await tmpDir("seed-step-first-brief-");
     const ws = path.join(root, "workspace");
     const manifest = path.join(root, "manifest.json");
     await applySeed({ seedDir: shipped, workspaceDir: ws, manifestFile: manifest });
     const brief = "loop/chat-session.ts";
-    const rules = "prompts/operating-rules.md";
-    // The older shapes: a brief that never tells a game with no kind to call start_web_game, and
-    // rules that still tell every turn about the web page's preview and window.__studio.
+    // The older shape: a brief that never tells a game with no kind to call start_web_game.
     const copy = await readFile(path.join(ws, brief), "utf8");
     assert.ok(copy.includes("pendingKindRule("), "the shipped brief names the first step");
     await writeFile(
       path.join(ws, brief),
       `${copy.replaceAll("pendingKindRule(", "olderRule(")}\n// the agent's own change\n`,
     );
-    const older =
-      "1. **Look before you claim.** After changing a game, reload the preview and read `game_state()`.\n2. **Keep the game judgeable.** `window.__studio` must survive every edit.\n";
-    await writeFile(path.join(ws, rules), older);
     const report = await applySeed({
       seedDir: shipped,
       workspaceDir: ws,
       manifestFile: manifest,
       backupDir: path.join(root, "backup"),
     });
-    assert.ok(report.kept.includes(rules), "the agent's rules are kept");
-    assert.deepEqual([...(report.outdatedCalls ?? [])].sort(), [brief, rules].sort(), "each file once");
+    assert.deepEqual(report.outdatedCalls ?? [], [brief], "the file once");
     const memory = seedCallMemory({}, report.outdatedCalls ?? []);
     const briefNote = String(memory[`${SEED_CALL_MEMORY_PREFIX}${brief}`]);
     assert.match(briefNote, /calls the host the older way/);
-    assert.match(briefNote, /calls the host the older way/);
-    const rulesNote = String(memory[`${SEED_CALL_MEMORY_PREFIX}${rules}`]);
-    assert.match(rulesNote, /calls the host the older way/);
-    for (const note of [briefNote, rulesNote]) assert.ok(note.length <= 300, "within the memory policy's limit");
+    assert.ok(briefNote.length <= 300, "within the memory policy's limit");
     // The chat turn's note names what the brief now takes.
     const turnNote = String(seedCallMemory({}, [TURN])[`${SEED_CALL_MEMORY_PREFIX}${TURN}`]);
     assert.match(turnNote, /calls the host the older way/);
@@ -976,48 +840,6 @@ describe("seed upgrade across the harness step flag", () => {
       ["loop/main.ts", ['"workers"']],
       [TURN, ["withChatWorkers(", "chatWorkersGrant("]],
       ["loop/chat-session.ts", ["WORKERS_BRIEF_LINE"]],
-    ];
-    for (const [file, markers] of older) {
-      let copy = await readFile(path.join(ws, file), "utf8");
-      for (const marker of markers) {
-        assert.ok(copy.includes(marker), `${file} has ${marker}`);
-        copy = copy.replaceAll(marker, "olderShape");
-      }
-      await writeFile(path.join(ws, file), `${copy}\n// the agent's own change\n`);
-    }
-    const report = await applySeed({
-      seedDir: shipped,
-      workspaceDir: ws,
-      manifestFile: manifest,
-      backupDir: path.join(root, "backup"),
-    });
-    const files = older.map(([file]) => file);
-    assert.deepEqual([...(report.outdatedCalls ?? [])].sort(), [...files].sort(), "each file once");
-    const memory = seedCallMemory({}, report.outdatedCalls ?? []);
-    for (const file of files) {
-      const note = String(memory[`${SEED_CALL_MEMORY_PREFIX}${file}`]);
-      assert.match(note, /calls the host the older way/, file);
-      assert.ok(note.length <= 300, `${file}: one memory value stays within the memory policy's limit`);
-    }
-  });
-
-  it("a kept director part from before its worker tools is reported once and noted for the agent", {
-    todo: PHASE5_ARCHIVE,
-  }, async () => {
-    const root = await tmpDir("seed-step-director-workers-");
-    const ws = path.join(root, "workspace");
-    const manifest = path.join(root, "manifest.json");
-    await applySeed({ seedDir: shipped, workspaceDir: ws, manifestFile: manifest });
-    // The older shapes: no worker tools, the old wait, builders with no worker grant, no rejected filter, no reader close.
-    const older: ReadonlyArray<readonly [string, readonly string[]]> = [
-      ["loop/director/tool-specs.ts", ["WorkerTool."]],
-      ["loop/director/tools.ts", ["WorkerTool."]],
-      ["loop/director/wake-prompts.ts", ["worker_wait"]],
-      ["loop/director/briefs.ts", ["worker_wait"]],
-      ["loop/director/workers.ts", ["workerGrant(", "withWorkerRoom("]],
-      ["loop/facet/phases/build.ts", ["worker: loop.options.worker"]],
-      ["loop/director/wake.ts", ["rejectedNews("]],
-      ["loop/director/integrate.ts", ["closeReaders("]],
     ];
     for (const [file, markers] of older) {
       let copy = await readFile(path.join(ws, file), "utf8");
@@ -1076,145 +898,6 @@ describe("seed upgrade across the harness step flag", () => {
     }
   });
 
-  it("a kept director part, run start, director tool list or chat turn from before worker records is reported once and noted", {
-    todo: PHASE5_ARCHIVE,
-  }, async () => {
-    const root = await tmpDir("seed-step-worker-records-");
-    const ws = path.join(root, "workspace");
-    const manifest = path.join(root, "manifest.json");
-    await applySeed({ seedDir: shipped, workspaceDir: ws, manifestFile: manifest });
-    // The older shapes: no builder records, no tree from the run's start, no word that the person
-    // reads the lead's note, and a chat turn's workers without the person's request.
-    const older: ReadonlyArray<readonly [string, string, RegExp]> = [
-      ["loop/director/workers.ts", "recordBuilderStarted(", /recordBuilderStarted/],
-      ["loop/director/setup.ts", "workerRecords: true", /workerRecords: true/],
-      ["loop/director/tool-specs.ts", "Why, for the person", /person reads/],
-      ["loop/delegated-turn.ts", "ask: options.text", /ask: options\.text/],
-    ];
-    for (const [file, marker] of older) {
-      const copy = await readFile(path.join(ws, file), "utf8");
-      assert.ok(copy.includes(marker), `${file} has ${marker}`);
-      await writeFile(path.join(ws, file), `${copy.replaceAll(marker, "olderShape")}\n// the agent's own change\n`);
-    }
-    const report = await applySeed({
-      seedDir: shipped,
-      workspaceDir: ws,
-      manifestFile: manifest,
-      backupDir: path.join(root, "backup"),
-    });
-    const files = older.map(([file]) => file);
-    assert.deepEqual([...(report.outdatedCalls ?? [])].sort(), [...files].sort(), "each file once");
-    const memory = seedCallMemory({}, report.outdatedCalls ?? []);
-    for (const [file] of older) {
-      const note = String(memory[`${SEED_CALL_MEMORY_PREFIX}${file}`]);
-      assert.match(note, /calls the host the older way/, file);
-      assert.ok(note.length <= 300, `${file}: one memory value stays within the memory policy's limit`);
-    }
-  });
-
-  it("a kept director part or run start from before Genex's moments is reported once and noted", {
-    todo: PHASE5_ARCHIVE,
-  }, async () => {
-    const root = await tmpDir("seed-step-moments-");
-    const ws = path.join(root, "workspace");
-    const manifest = path.join(root, "manifest.json");
-    await applySeed({ seedDir: shipped, workspaceDir: ws, manifestFile: manifest });
-    // The older shapes: a run that announces none of the game's moments, and a start that never reads them.
-    const older: ReadonlyArray<readonly [string, string, RegExp]> = [
-      ["loop/director.ts", "HookEvent.RunPrepare", /HookEvent\.RunPrepare/],
-      ["loop/director/setup.ts", "hookEvents: game?.hookEvents", /hookEvents/],
-      ["loop/director/wake.ts", "HookEvent.TurnStart", /HookEvent\.TurnStart/],
-      ["loop/director/tools.ts", "HookEvent.Finish", /HookEvent\.Finish/],
-      ["loop/director/workers.ts", "workerStartHooks(", /workerStartHooks/],
-    ];
-    for (const [file, marker] of older) {
-      const copy = await readFile(path.join(ws, file), "utf8");
-      assert.ok(copy.includes(marker), `${file} has ${marker}`);
-      await writeFile(path.join(ws, file), `${copy.replaceAll(marker, "olderShape")}\n// the agent's own change\n`);
-    }
-    const report = await applySeed({
-      seedDir: shipped,
-      workspaceDir: ws,
-      manifestFile: manifest,
-      backupDir: path.join(root, "backup"),
-    });
-    const files = older.map(([file]) => file);
-    assert.deepEqual([...(report.outdatedCalls ?? [])].sort(), [...files].sort(), "each file once");
-    const memory = seedCallMemory({}, report.outdatedCalls ?? []);
-    for (const [file] of older) {
-      const note = String(memory[`${SEED_CALL_MEMORY_PREFIX}${file}`]);
-      assert.match(note, /calls the host the older way/, file);
-      assert.ok(note.length <= 300, `${file}: one memory value stays within the memory policy's limit`);
-    }
-  });
-
-  it("a kept director part from before the finish check is reported once and noted", {
-    todo: PHASE5_ARCHIVE,
-  }, async () => {
-    const root = await tmpDir("seed-step-finish-check-");
-    const ws = path.join(root, "workspace");
-    const manifest = path.join(root, "manifest.json");
-    await applySeed({ seedDir: shipped, workspaceDir: ws, manifestFile: manifest });
-    // The older shapes: a finish that closes on the lead's word, a call that carries no clock or
-    // moment, no proof to name, no count in the journal, and a close that names nothing not done.
-    const older: ReadonlyArray<readonly [string, string, RegExp]> = [
-      ["loop/director/integrate.ts", "checkClaim(", /checkClaim/],
-      ["loop/director/tools.ts", "finishCallOf(", /finishCallOf/],
-      ["loop/director/tool-specs.ts", "that prove it", /proof/],
-      ["loop/director/loop-run.ts", "finishTally", /finishTally/],
-      ["loop/director/journal.ts", "finishTally", /finishTally/],
-      ["loop/director.ts", "notDoneOf(", /notDoneOf/],
-      ["loop/director/reopen.ts", "freshTally(", /freshTally/],
-    ];
-    for (const [file, marker] of older) {
-      const copy = await readFile(path.join(ws, file), "utf8");
-      assert.ok(copy.includes(marker), `${file} has ${marker}`);
-      await writeFile(path.join(ws, file), `${copy.replaceAll(marker, "olderShape")}\n// the agent's own change\n`);
-    }
-    const report = await applySeed({
-      seedDir: shipped,
-      workspaceDir: ws,
-      manifestFile: manifest,
-      backupDir: path.join(root, "backup"),
-    });
-    const files = older.map(([file]) => file);
-    assert.deepEqual([...(report.outdatedCalls ?? [])].sort(), [...files].sort(), "each file once");
-    const memory = seedCallMemory({}, report.outdatedCalls ?? []);
-    for (const [file] of older) {
-      const note = String(memory[`${SEED_CALL_MEMORY_PREFIX}${file}`]);
-      assert.match(note, /calls the host the older way/, file);
-      assert.ok(note.length <= 300, `${file}: one memory value stays within the memory policy's limit`);
-    }
-  });
-
-  it("a kept director part without a claim's turn bound, its close's latch or its proof kept out is reported and noted", {
-    todo: PHASE5_ARCHIVE,
-  }, async () => {
-    // Each older shape alone: a review the turn does not bound, a lead woken during a claim's close,
-    // a close the clock's or a crash's can land beside, and proof files committed into the build.
-    const older: ReadonlyArray<readonly [string, string, RegExp]> = [
-      ["loop/director/wake.ts", "noteTurnEnds(", /noteTurnEnds/],
-      ["loop/director/wake.ts", "closeUnderWay(", /closeUnderWay/],
-      ["loop/director/integrate.ts", "latchClose(", /latchClose/],
-      ["loop/director/integrate.ts", "keepProofOut(", /keepProofOut/],
-      ["loop/director.ts", "latchClose(", /latchClose/],
-    ];
-    for (const [file, marker] of older) {
-      const root = await tmpDir("seed-step-claim-bounds-");
-      const ws = path.join(root, "workspace");
-      const manifest = path.join(root, "manifest.json");
-      await applySeed({ seedDir: shipped, workspaceDir: ws, manifestFile: manifest });
-      const copy = await readFile(path.join(ws, file), "utf8");
-      assert.ok(copy.includes(marker), `${file} has ${marker}`);
-      await writeFile(path.join(ws, file), `${copy.replaceAll(marker, "olderShape(")}\n// the agent's own change\n`);
-      const report = await applySeed({ seedDir: shipped, workspaceDir: ws, manifestFile: manifest });
-      assert.deepEqual(report.outdatedCalls, [file], `${file} without ${marker}`);
-      const note = String(seedCallMemory({}, report.outdatedCalls ?? [])[`${SEED_CALL_MEMORY_PREFIX}${file}`]);
-      assert.match(note, /calls the host the older way/, file);
-      assert.ok(note.length <= 300, `${file}: one memory value stays within the memory policy's limit`);
-    }
-  });
-
   it("a kept director part from before a Loop led in place is reported once and noted", async () => {
     const older: ReadonlyArray<readonly [string, string, RegExp]> = [
       ["loop/director/setup.ts", "prepareOpenLoopRun(", /prepareOpenLoopRun/],
@@ -1259,31 +942,6 @@ describe("seed upgrade across the harness step flag", () => {
     }
   });
 
-  it("a kept part from before Genex's own web gate and the web method's facts is reported once and noted", {
-    todo: PHASE5_ARCHIVE,
-  }, async () => {
-    const older: ReadonlyArray<readonly [string, string, RegExp]> = [
-      ["loop/chat-dispatch.ts", "readiness?.missing", /missing/],
-      ["loop/run-dispatch.ts", "fireGates(", /fireGates/],
-      ["loop/skillopt.ts", "loopProfileOf(", /loopProfileOf/],
-    ];
-    for (const [file, marker] of older) {
-      const root = await tmpDir("seed-step-web-gate-");
-      const ws = path.join(root, "workspace");
-      const manifest = path.join(root, "manifest.json");
-      await applySeed({ seedDir: shipped, workspaceDir: ws, manifestFile: manifest });
-      const copy = await readFile(path.join(ws, file), "utf8");
-      assert.ok(copy.includes(marker), `${file} has ${marker}`);
-      await writeFile(path.join(ws, file), `${copy.replaceAll(marker, "olderShape")}\n// the agent's own change\n`);
-      const report = await applySeed({ seedDir: shipped, workspaceDir: ws, manifestFile: manifest });
-      assert.deepEqual(report.outdatedCalls, [file], `${file} without ${marker}`);
-      const note = String(seedCallMemory({}, report.outdatedCalls ?? [])[`${SEED_CALL_MEMORY_PREFIX}${file}`]);
-      assert.match(note, /calls the host the older way/, file);
-      assert.match(note, /calls the host the older way/, `${file}: the note still says what a web game needs`);
-      assert.ok(note.length <= 300, `${file}: one memory value stays within the memory policy's limit`);
-    }
-  });
-
   it("a kept part from before one Loop led every project is reported once and noted", async () => {
     const older: ReadonlyArray<readonly [string, string, RegExp]> = [
       ["loop/run-dispatch.ts", "loopProfileOf(", /loopProfileOf/],
@@ -1306,92 +964,6 @@ describe("seed upgrade across the harness step flag", () => {
       const report = await applySeed({ seedDir: shipped, workspaceDir: ws, manifestFile: manifest });
       assert.deepEqual(report.outdatedCalls, [file], `${file} without ${marker}`);
       const note = String(seedCallMemory({}, report.outdatedCalls ?? [])[`${SEED_CALL_MEMORY_PREFIX}${file}`]);
-      assert.match(note, /calls the host the older way/, file);
-      assert.ok(note.length <= 300, `${file}: one memory value stays within the memory policy's limit`);
-    }
-  });
-
-  it("a kept director part from before a Loop's hours were a soft cap is reported once and noted", {
-    todo: PHASE5_ARCHIVE,
-  }, async () => {
-    const older: ReadonlyArray<readonly [string, string, RegExp]> = [
-      ["loop/director/setup.ts", "capClock(", /capClock/],
-      ["loop/director/integrate.ts", "finishWaitsForCap(", /finishWaitsForCap/],
-      ["loop/director/wake.ts", "withCapWatch(", /withCapWatch/],
-      ["loop/director/wake.ts", "withCapWords(", /withCapWords/],
-      ["loop/director/wake.ts", "turnEndAtCap(", /turnEndAtCap/],
-      ["loop/director/tools.ts", "capRefusesWorker(", /capRefusesWorker/],
-      ["loop/director.ts", "ranOutUnchecked(", /ranOutUnchecked/],
-    ];
-    for (const [file, marker] of older) {
-      const root = await tmpDir("seed-step-time-cap-");
-      const ws = path.join(root, "workspace");
-      const manifest = path.join(root, "manifest.json");
-      await applySeed({ seedDir: shipped, workspaceDir: ws, manifestFile: manifest });
-      const copy = await readFile(path.join(ws, file), "utf8");
-      assert.ok(copy.includes(marker), `${file} has ${marker}`);
-      await writeFile(path.join(ws, file), `${copy.replaceAll(marker, "olderShape")}\n// the agent's own change\n`);
-      const report = await applySeed({ seedDir: shipped, workspaceDir: ws, manifestFile: manifest });
-      assert.deepEqual(report.outdatedCalls, [file], `${file} without ${marker}`);
-      const note = String(seedCallMemory({}, report.outdatedCalls ?? [])[`${SEED_CALL_MEMORY_PREFIX}${file}`]);
-      assert.match(note, /calls the host the older way/, file);
-      assert.ok(note.length <= 300, `${file}: one memory value stays within the memory policy's limit`);
-    }
-  });
-
-  it("a kept director tools.ts whose close's judge ignores the claim's time is reported and noted", {
-    todo: PHASE5_ARCHIVE,
-  }, async () => {
-    const root = await tmpDir("seed-step-claim-judge-");
-    const ws = path.join(root, "workspace");
-    const manifest = path.join(root, "manifest.json");
-    await applySeed({ seedDir: shipped, workspaceDir: ws, manifestFile: manifest });
-    const file = "loop/director/tools.ts";
-    const marker = "judgeBy ?? Number.POSITIVE_INFINITY";
-    const copy = await readFile(path.join(ws, file), "utf8");
-    assert.ok(copy.includes(marker), `${file} has ${marker}`);
-    await writeFile(
-      path.join(ws, file),
-      `${copy.replaceAll(marker, "Number.POSITIVE_INFINITY")}\n// the agent's own change\n`,
-    );
-    const report = await applySeed({ seedDir: shipped, workspaceDir: ws, manifestFile: manifest });
-    assert.deepEqual(report.outdatedCalls, [file]);
-    const note = String(seedCallMemory({}, report.outdatedCalls ?? [])[`${SEED_CALL_MEMORY_PREFIX}${file}`]);
-    assert.match(note, /calls the host the older way/);
-    assert.ok(note.length <= 300, "one memory value stays within the memory policy's limit");
-  });
-
-  it("a kept start_web_game that names no chat, and kept director parts that brief workers without Genex's identity, are reported once and noted", {
-    todo: PHASE5_ARCHIVE,
-  }, async () => {
-    const root = await tmpDir("seed-step-identity-plan-");
-    const ws = path.join(root, "workspace");
-    const manifest = path.join(root, "manifest.json");
-    await applySeed({ seedDir: shipped, workspaceDir: ws, manifestFile: manifest });
-    // The older shapes: a start that names no chat, and briefs that open with no identity.
-    const older: ReadonlyArray<readonly [string, string, RegExp]> = [
-      ["tools/game-tools.ts", "threadId: ctx.threadId", /Plan/],
-      ["loop/director/briefs.ts", "builderIdentity(", /identity/],
-      ["loop/director/workers.ts", "runIdentity(", /identity/],
-      ["loop/director/setup.ts", "runIdentity(", /identity/],
-      ["loop/facet/phases/brief.ts", "withIdentity(", /identity/],
-    ];
-    for (const [file, marker] of older) {
-      const copy = await readFile(path.join(ws, file), "utf8");
-      assert.ok(copy.includes(marker), `${file} has ${marker}`);
-      await writeFile(path.join(ws, file), `${copy.replaceAll(marker, "olderShape(")}\n// the agent's own change\n`);
-    }
-    const report = await applySeed({
-      seedDir: shipped,
-      workspaceDir: ws,
-      manifestFile: manifest,
-      backupDir: path.join(root, "backup"),
-    });
-    const files = older.map(([file]) => file);
-    assert.deepEqual([...(report.outdatedCalls ?? [])].sort(), [...files].sort(), "each file once");
-    const memory = seedCallMemory({}, report.outdatedCalls ?? []);
-    for (const [file] of older) {
-      const note = String(memory[`${SEED_CALL_MEMORY_PREFIX}${file}`]);
       assert.match(note, /calls the host the older way/, file);
       assert.ok(note.length <= 300, `${file}: one memory value stays within the memory policy's limit`);
     }
@@ -1572,82 +1144,6 @@ describe("seed upgrade across messages without a queue", () => {
   });
 });
 
-describe("seed upgrade across the wake loop", () => {
-  const vintage = JSON.parse(
-    readFileSync(fileURLToPath(new URL("../fixtures/seed-exports-pre-wake.json", import.meta.url)), "utf8"),
-  ) as { modules: Record<string, string[]> };
-  const shipped = path.resolve(fileURLToPath(new URL("../../src/harness-seed", import.meta.url)));
-
-  it("an agent that edited the director's parts before the wake loop keeps them, and the harness still loads", {
-    todo: PHASE5_ARCHIVE,
-  }, async () => {
-    const root = await tmpDir("seed-wake-");
-    const ws = path.join(root, "workspace");
-    const manifest = path.join(root, "manifest.json");
-    await applySeed({ seedDir: shipped, workspaceDir: ws, manifestFile: manifest });
-    // The agent's copies of the older vintage: every name each exported then, and nothing newer.
-    for (const [rel, names] of Object.entries(vintage.modules)) {
-      const older = names.map((name) => `export const ${name} = () => ${JSON.stringify(name)};`);
-      await writeFile(path.join(ws, rel), `${older.join("\n")}\n// the agent's own change\n`);
-    }
-
-    const report = await applySeed({
-      seedDir: shipped,
-      workspaceDir: ws,
-      manifestFile: manifest,
-      backupDir: path.join(root, "backup"),
-    });
-    for (const rel of Object.keys(vintage.modules))
-      assert.ok(report.kept.includes(keptAt(rel)), `${rel} is the agent's`);
-
-    // What the bootstrap does: import the workspace's own main.ts. The wake loop importing a name
-    // the kept copies never exported would throw here, at link time.
-    const main = await linkIsolated(path.join(ws, "loop", "main.ts"));
-    assert.equal(main.createStudio, "function");
-  });
-});
-
-/**
- * The full journal gave the run's parts names they had not exported: the clocks a Resume keeps,
- * the record every save writes and the reading of it back. A seed upgrade keeps any of those parts
- * once the agent edited it, so each name the journal needs comes from a module of its own; imported
- * from a kept older copy it would fail to link, and the harness would not load.
- */
-describe("seed upgrade across the full journal", () => {
-  const vintage = JSON.parse(
-    readFileSync(fileURLToPath(new URL("../fixtures/seed-exports-pre-journal.json", import.meta.url)), "utf8"),
-  ) as { modules: Record<string, string[]> };
-  const shipped = path.resolve(fileURLToPath(new URL("../../src/harness-seed", import.meta.url)));
-
-  it("an agent that edited the director's parts before the full journal keeps them, and the harness still loads", {
-    todo: PHASE5_ARCHIVE,
-  }, async () => {
-    const root = await tmpDir("seed-journal-");
-    const ws = path.join(root, "workspace");
-    const manifest = path.join(root, "manifest.json");
-    await applySeed({ seedDir: shipped, workspaceDir: ws, manifestFile: manifest });
-    // The agent's copies of the older vintage: every name each exported then, and nothing newer.
-    for (const [rel, names] of Object.entries(vintage.modules)) {
-      const older = names.map((name) => `export const ${name} = () => ${JSON.stringify(name)};`);
-      await writeFile(path.join(ws, rel), `${older.join("\n")}\n// the agent's own change\n`);
-    }
-
-    const report = await applySeed({
-      seedDir: shipped,
-      workspaceDir: ws,
-      manifestFile: manifest,
-      backupDir: path.join(root, "backup"),
-    });
-    for (const rel of Object.keys(vintage.modules))
-      assert.ok(report.kept.includes(keptAt(rel)), `${rel} is the agent's`);
-
-    // What the bootstrap does: import the workspace's own main.ts. The journal importing a name
-    // the kept copies never exported would throw here, at link time.
-    const main = await linkIsolated(path.join(ws, "loop", "main.ts"));
-    assert.equal(main.createStudio, "function");
-  });
-});
-
 /**
  * Live chat during a build gave the queue, the run's start and the wake loop names they had not
  * exported: the lead's door, the run's close before its self-improvement pass, the line a run's
@@ -1757,150 +1253,6 @@ describe("seed upgrade across live chat", () => {
 });
 
 /**
- * One session made the run's lead its chat's own session: the seat it takes, the words a lead
- * that writes nothing reads, and the worker a merge conflict goes to. A seed upgrade keeps any of
- * the modules it touches once the agent edited it, so each name one session needs comes from a
- * module of its own (loop/director/lead-session.ts, loop/director/lead-session-prompts.ts,
- * loop/director/conflict-worker.ts); imported from a kept older copy it would fail to link, and the
- * harness would not load.
- */
-/**
- * Loop phase 4 made judges a second opinion: a round kept on its board, a claim on the lead's word,
- * a close with no judge. A seed upgrade keeps any module it touched once the agent edited it, so each
- * name phase 4 needs comes from a module of its own (loop/facet/kept-round.ts,
- * loop/director/second-opinion-prompts.ts); imported from a kept older copy it would fail to link.
- */
-describe("seed upgrade across Loop phase 4", () => {
-  const vintage = JSON.parse(
-    readFileSync(fileURLToPath(new URL("../fixtures/seed-exports-pre-free-loop.json", import.meta.url)), "utf8"),
-  ) as { modules: Record<string, string[]> };
-  const shipped = path.resolve(fileURLToPath(new URL("../../src/harness-seed", import.meta.url)));
-
-  it("an agent that edited a round, a finish or a close before phase 4 keeps it, and the harness still loads", {
-    todo: PHASE5_ARCHIVE,
-  }, async () => {
-    const root = await tmpDir("seed-free-loop-");
-    const ws = path.join(root, "workspace");
-    const manifest = path.join(root, "manifest.json");
-    await applySeed({ seedDir: shipped, workspaceDir: ws, manifestFile: manifest });
-    for (const rel of ["loop/facet/kept-round.ts", "loop/director/second-opinion-prompts.ts"])
-      assert.ok(await pathExists(path.join(ws, rel)), `${rel} is seeded`);
-    // The agent's copies of the older vintage: every name each exported then, and nothing newer.
-    for (const [rel, names] of Object.entries(vintage.modules)) {
-      const older = names.map((name) => `export const ${name} = () => ${JSON.stringify(name)};`);
-      await writeFile(path.join(ws, rel), `${older.join("\n")}\n// the agent's own change\n`);
-    }
-    const report = await applySeed({
-      seedDir: shipped,
-      workspaceDir: ws,
-      manifestFile: manifest,
-      backupDir: path.join(root, "backup"),
-    });
-    for (const rel of Object.keys(vintage.modules))
-      assert.ok(report.kept.includes(keptAt(rel)), `${rel} is the agent's`);
-    // A kept copy that still asks its judges is reported, so the agent can carry the change over.
-    for (const rel of ["loop/facet/phases/verify.ts", "loop/director/integrate.ts", "loop/review.ts"])
-      assert.ok(report.outdatedCalls?.includes(rel), `${rel} is reported`);
-    // What the bootstrap does: import the workspace's own main.ts. Phase 4 importing a name the kept
-    // copies never exported would throw here, at link time.
-    const main = await linkIsolated(path.join(ws, "loop", "main.ts"));
-    assert.equal(main.createStudio, "function");
-  });
-});
-
-describe("seed upgrade across one session", () => {
-  const vintage = JSON.parse(
-    readFileSync(fileURLToPath(new URL("../fixtures/seed-exports-pre-one-session.json", import.meta.url)), "utf8"),
-  ) as { modules: Record<string, string[]> };
-  const shipped = path.resolve(fileURLToPath(new URL("../../src/harness-seed", import.meta.url)));
-
-  it("an agent that edited its director, its chat turn or the run's parts before one session keeps them, and the harness still loads", {
-    todo: PHASE5_ARCHIVE,
-  }, async () => {
-    const root = await tmpDir("seed-one-session-");
-    const ws = path.join(root, "workspace");
-    const manifest = path.join(root, "manifest.json");
-    await applySeed({ seedDir: shipped, workspaceDir: ws, manifestFile: manifest });
-    // The new modules one session added are laid down beside the agent's older copies.
-    for (const rel of [
-      "loop/director/lead-session.ts",
-      "loop/director/lead-session-prompts.ts",
-      "loop/director/conflict-worker.ts",
-    ])
-      assert.ok(await pathExists(path.join(ws, rel)), `${rel} is seeded`);
-    // The agent's copies of the older vintage: every name each exported then, and nothing newer.
-    for (const [rel, names] of Object.entries(vintage.modules)) {
-      const older = names.map((name) => `export const ${name} = () => ${JSON.stringify(name)};`);
-      await writeFile(path.join(ws, rel), `${older.join("\n")}\n// the agent's own change\n`);
-    }
-
-    const report = await applySeed({
-      seedDir: shipped,
-      workspaceDir: ws,
-      manifestFile: manifest,
-      backupDir: path.join(root, "backup"),
-    });
-    for (const rel of Object.keys(vintage.modules))
-      assert.ok(report.kept.includes(keptAt(rel)), `${rel} is the agent's`);
-
-    // What the bootstrap does: import the workspace's own main.ts. One session importing a name the
-    // kept copies never exported would throw here, at link time.
-    const main = await linkIsolated(path.join(ws, "loop", "main.ts"));
-    assert.equal(main.createStudio, "function");
-  });
-
-  /** The parts of the run a lead that writes nothing depends on: its words and its hands for one. */
-  const LEAD_PARTS = [
-    // The lead's strays are set aside with `GIT.snapshotCommit`, which an older git.ts lacks.
-    "loop/git.ts",
-    "loop/director/briefs.ts",
-    "loop/director/integrate.ts",
-    "loop/director/journal.ts",
-    "loop/director/journal-prompts.ts",
-    "loop/director/loop-run.ts",
-    "loop/director/setup.ts",
-    "loop/director/tools.ts",
-    "loop/director/wake.ts",
-    "loop/director/wake-prompts.ts",
-    "loop/director/workers.ts",
-  ];
-
-  it("a part kept from before one session under the new director.ts: the run seats no lead, and a director with its own hands leads", {
-    todo: PHASE5_ARCHIVE,
-  }, async () => {
-    /** Whether a workspace whose `kept` part is the agent's older copy seats a lead on the wake loop. */
-    const seats = async (kept: string | null): Promise<unknown> => {
-      const root = await tmpDir("seed-one-session-part-");
-      const ws = path.join(root, "workspace");
-      await applySeed({ seedDir: shipped, workspaceDir: ws, manifestFile: path.join(root, "manifest.json") });
-      if (kept) {
-        const older = vintageExports(vintage.modules, kept).map(
-          (name) => `export const ${name} = () => ${JSON.stringify(name)};`,
-        );
-        // As a seed upgrade leaves the agent's copy: its old names rewritten (seed-renames.ts).
-        await writeFile(path.join(ws, kept), renameInSource(kept, `${older.join("\n")}\n// the agent's own change\n`));
-      }
-      const director = (await import(pathToFileURL(path.join(ws, "loop", "director.ts")).href)) as {
-        seatsLead?: (loop: string) => boolean;
-      };
-      return director.seatsLead ? { wake: director.seatsLead("wake"), turn: director.seatsLead("turn") } : null;
-    };
-    assert.deepEqual(
-      await seats(null),
-      { wake: true, turn: false },
-      "every part serves a lead: a waking run seats one",
-    );
-    const seen: Array<{ kept: string; seats: unknown }> = [];
-    for (const kept of LEAD_PARTS) seen.push({ kept, seats: await seats(kept) });
-    assert.deepEqual(
-      seen,
-      LEAD_PARTS.map((kept) => ({ kept, seats: { wake: false, turn: false } })),
-      "an older copy of any part the lead depends on would tell a lead in the game folder to edit and commit in its worktree",
-    );
-  });
-});
-
-/**
  * The same agent after the build: once a lead's run is over, the chat's next message goes to the
  * chat's own session with the run's controls, not to a coordinator. A seed upgrade keeps any module
  * that path touches once the agent edited it, so each name it needs comes from a module of its own
@@ -1999,38 +1351,6 @@ describe("seed upgrade across a finished build reopened", () => {
     return renameInSource(rel, `${older.join("\n")}\n// the agent's own change\n`);
   };
 
-  it("an agent that edited its chat turn, its run's start or the run's parts before it keeps them, and the harness still loads", {
-    todo: PHASE5_ARCHIVE,
-  }, async () => {
-    const root = await tmpDir("seed-reopen-");
-    const ws = path.join(root, "workspace");
-    const manifest = path.join(root, "manifest.json");
-    await applySeed({ seedDir: shipped, workspaceDir: ws, manifestFile: manifest });
-    // The new modules the reopen added are laid down beside the agent's older copies.
-    for (const rel of [
-      "loop/reopen-run.ts",
-      "loop/reopen-run-prompts.ts",
-      "loop/director/reopen.ts",
-      "loop/director/reopen-prompts.ts",
-    ])
-      assert.ok(await pathExists(path.join(ws, rel)), `${rel} is seeded`);
-    for (const rel of Object.keys(vintage.modules)) await writeFile(path.join(ws, rel), olderCopy(rel));
-
-    const report = await applySeed({
-      seedDir: shipped,
-      workspaceDir: ws,
-      manifestFile: manifest,
-      backupDir: path.join(root, "backup"),
-    });
-    for (const rel of Object.keys(vintage.modules))
-      assert.ok(report.kept.includes(keptAt(rel)), `${rel} is the agent's`);
-
-    // What the bootstrap does: import the workspace's own main.ts. The reopen importing a name the
-    // kept copies never exported would throw here, at link time.
-    const main = await linkIsolated(path.join(ws, "loop", "main.ts"));
-    assert.equal(main.createStudio, "function");
-  });
-
   it("a chat turn, its runner, the after-run words, the coordinator or the run's start kept from before: no finished build reopens through what it serves, and the chat's own session still answers after it", async () => {
     /** What a workspace whose `kept` module is the agent's older copy does after a lead's finished run. */
     const serves = async (kept: string | null): Promise<unknown> => {
@@ -2076,172 +1396,6 @@ describe("seed upgrade across a finished build reopened", () => {
 });
 
 /**
- * Goal-directed generation split a run's completion policy from its reference kind, and every part
- * of the run that decides whether a run spends its hours or ends on verified outcomes asks it.
- * A seed upgrade keeps any of the director's parts once the agent edited it, so each name goal
- * generation needs comes from a module of its own (loop/completion-policy.ts, loop/director/
- * commission.ts, goals.ts, prerequisites.ts, progress.ts, timing.ts, trace.ts); imported from a kept
- * older copy it would fail to link, and the harness would not load.
- */
-describe("seed upgrade across goal-directed generation", () => {
-  const vintage = JSON.parse(
-    readFileSync(fileURLToPath(new URL("../fixtures/seed-exports-pre-goals.json", import.meta.url)), "utf8"),
-  ) as { modules: Record<string, string[]> };
-  const shipped = path.resolve(fileURLToPath(new URL("../../src/harness-seed", import.meta.url)));
-
-  it("any one of the parts it changed, kept from before by an agent that edited it, still loads the harness", {
-    todo: PHASE5_ARCHIVE,
-  }, async () => {
-    // One at a time: goal-directed generation changed the parts that import the new names as well
-    // as the parts they import them from, and a kept importer of the older vintage imports nothing
-    // new. What breaks is a current part beside one older copy.
-    const unlinked: string[] = [];
-    for (const [rel, names] of Object.entries(vintage.modules)) {
-      const root = await tmpDir("seed-goals-");
-      const { ws, manifest } = await cloneSeededWorkspace(shipped, root);
-      // The agent's copy of the older vintage: every name it exported then, and nothing newer.
-      const older = names.map((name) => `export const ${name} = () => ${JSON.stringify(name)};`);
-      await writeFile(path.join(ws, rel), `${older.join("\n")}\n// the agent's own change\n`);
-      const report = await applySeed({
-        seedDir: shipped,
-        workspaceDir: ws,
-        manifestFile: manifest,
-        backupDir: path.join(root, "backup"),
-      });
-      assert.ok(report.kept.includes(keptAt(rel)), `${rel} is the agent's`);
-
-      // What the bootstrap does: import the workspace's own main.ts. A part importing a name the
-      // kept copy never exported would throw here, at link time.
-      try {
-        const main = await linkIsolated(path.join(ws, "loop", "main.ts"));
-        if (main.createStudio !== "function") unlinked.push(`${rel}: main.ts has no createStudio`);
-      } catch (err) {
-        unlinked.push(`${rel}: ${(err as Error).message}`);
-      }
-    }
-    assert.deepEqual(unlinked, []);
-  });
-});
-
-/**
- * The judges' evidence (the corner frame, the racing line, the throttle-only bot) added names: the frames a pass takes itself and the bot's probe scope come from modules of their
- * own (loop/pass-frames.ts, loop/throttle-bot.ts), and the new words of kinds.ts and
- * judge-facts.ts are read by namespace, so a current part beside one older copy still links.
- * kinds.ts is not in the vintage: its tables are read as the harness loads, which a stand-in made
- * of functions cannot answer whatever this change did.
- */
-describe("seed upgrade across the drive's evidence", () => {
-  const vintage = JSON.parse(
-    readFileSync(fileURLToPath(new URL("../fixtures/seed-exports-pre-drive-evidence.json", import.meta.url)), "utf8"),
-  ) as { modules: Record<string, string[]> };
-  const shipped = path.resolve(fileURLToPath(new URL("../../src/harness-seed", import.meta.url)));
-
-  it("any one of the parts it changed, kept from before by an agent that edited it, still loads the harness", {
-    todo: PHASE5_ARCHIVE,
-  }, async () => {
-    const unlinked: string[] = [];
-    for (const [rel, names] of Object.entries(vintage.modules)) {
-      const root = await tmpDir("seed-drive-");
-      const { ws, manifest } = await cloneSeededWorkspace(shipped, root);
-      const older = names.map((name) => `export const ${name} = () => ${JSON.stringify(name)};`);
-      await writeFile(path.join(ws, rel), `${older.join("\n")}\n// the agent's own change\n`);
-      await applySeed({
-        seedDir: shipped,
-        workspaceDir: ws,
-        manifestFile: manifest,
-        backupDir: path.join(root, "backup"),
-      });
-      try {
-        const main = await linkIsolated(path.join(ws, "loop", "main.ts"));
-        if (main.createStudio !== "function") unlinked.push(`${rel}: main.ts has no createStudio`);
-      } catch (err) {
-        unlinked.push(`${rel}: ${(err as Error).message}`);
-      }
-    }
-    assert.deepEqual(unlinked, []);
-  });
-});
-
-/**
- * The review fixes after b07810e added names some parts import from others. Any part they changed
- * may be one the agent edited and a seed upgrade keeps: each new name comes from a module of its
- * own, or is read by namespace, so a current part beside one older copy still links.
- */
-describe("seed upgrade across the review fixes", () => {
-  const vintage = JSON.parse(
-    readFileSync(fileURLToPath(new URL("../fixtures/seed-exports-pre-review-fixes.json", import.meta.url)), "utf8"),
-  ) as { modules: Record<string, string[]> };
-  const shipped = path.resolve(fileURLToPath(new URL("../../src/harness-seed", import.meta.url)));
-
-  it("any one of the parts they changed, kept from before by an agent that edited it, still loads the harness", {
-    todo: PHASE5_ARCHIVE,
-  }, async () => {
-    const unlinked: string[] = [];
-    for (const [rel, names] of Object.entries(vintage.modules)) {
-      const root = await tmpDir("seed-review-");
-      const { ws, manifest } = await cloneSeededWorkspace(shipped, root);
-      const older = names.map((name) => `export const ${name} = () => ${JSON.stringify(name)};`);
-      await writeFile(path.join(ws, rel), `${older.join("\n")}\n// the agent's own change\n`);
-      await applySeed({
-        seedDir: shipped,
-        workspaceDir: ws,
-        manifestFile: manifest,
-        backupDir: path.join(root, "backup"),
-      });
-      try {
-        const main = await linkIsolated(path.join(ws, "loop", "main.ts"));
-        if (main.createStudio !== "function") unlinked.push(`${rel}: main.ts has no createStudio`);
-      } catch (err) {
-        unlinked.push(`${rel}: ${(err as Error).message}`);
-      }
-    }
-    assert.deepEqual(unlinked, []);
-  });
-});
-
-/**
- * Opening the harness to other projects added names that parts which already shipped import: the
- * web check and the runner's checkpoint steps. Any part it changed may be one the agent edited and
- * a seed upgrade keeps at the older vintage, so each new name comes from a module of its own and a
- * current part beside one older copy still links, through the loop and through every local turn's
- * prompt.
- */
-describe("seed upgrade across the open harness", () => {
-  const vintage = JSON.parse(
-    readFileSync(fileURLToPath(new URL("../fixtures/seed-exports-pre-open-harness.json", import.meta.url)), "utf8"),
-  ) as { modules: Record<string, string[]> };
-  const shipped = path.resolve(fileURLToPath(new URL("../../src/harness-seed", import.meta.url)));
-
-  it("any one of the parts it changed, kept from before by an agent that edited it, still loads the harness", {
-    todo: PHASE5_ARCHIVE,
-  }, async () => {
-    const unlinked: string[] = [];
-    for (const [rel, names] of Object.entries(vintage.modules)) {
-      const root = await tmpDir("seed-open-");
-      const { ws, manifest } = await cloneSeededWorkspace(shipped, root);
-      const older = names.map((name) => `export const ${name} = () => ${JSON.stringify(name)};`);
-      await writeFile(path.join(ws, rel), `${older.join("\n")}\n// the agent's own change\n`);
-      const report = await applySeed({
-        seedDir: shipped,
-        workspaceDir: ws,
-        manifestFile: manifest,
-        backupDir: path.join(root, "backup"),
-      });
-      assert.ok(report.kept.includes(rel), `${rel} is the agent's`);
-      for (const entry of ["loop/main.ts", "loop/prompt.ts", "loop/unreal/lead.ts"]) {
-        if (entry === rel) continue;
-        try {
-          await linkIsolated(path.join(ws, entry));
-        } catch (err) {
-          unlinked.push(`${rel} kept, ${entry}: ${(err as Error).message}`);
-        }
-      }
-    }
-    assert.deepEqual(unlinked, []);
-  });
-});
-
-/**
  * One Loop for every project changed shipped parts (the run's dispatch and its runner vocabulary,
  * the chat's dispatch, brief and launch words, the reopen, the director's setup, session, wake and
  * run record, SkillOpt) and gave them new modules to import (`loop/director/open/`,
@@ -2251,39 +1405,7 @@ describe("seed upgrade across the open harness", () => {
  * through the loop, every local turn's prompt and the Unreal runner.
  */
 describe("seed upgrade across one Loop for every project", () => {
-  const vintage = JSON.parse(
-    readFileSync(fileURLToPath(new URL("../fixtures/seed-exports-pre-one-loop.json", import.meta.url)), "utf8"),
-  ) as { modules: Record<string, string[]> };
   const shipped = path.resolve(fileURLToPath(new URL("../../src/harness-seed", import.meta.url)));
-
-  it("any one of the parts it changed, kept from before by an agent that edited it, still loads the harness", {
-    todo: PHASE5_ARCHIVE,
-  }, async () => {
-    const unlinked: string[] = [];
-    for (const [rel, names] of Object.entries(vintage.modules)) {
-      const root = await tmpDir("seed-one-loop-");
-      const { ws, manifest } = await cloneSeededWorkspace(shipped, root);
-      const older = names.map((name) => `export const ${name} = () => ${JSON.stringify(name)};`);
-      await writeFile(path.join(ws, rel), `${older.join("\n")}\n// the agent's own change\n`);
-      const report = await applySeed({
-        seedDir: shipped,
-        workspaceDir: ws,
-        manifestFile: manifest,
-        backupDir: path.join(root, "backup"),
-      });
-      assert.ok(report.kept.includes(rel), `${rel} is the agent's`);
-      for (const entry of ["loop/main.ts", "loop/prompt.ts", "loop/unreal/lead.ts"]) {
-        if (entry === rel) continue;
-        try {
-          await linkIsolated(path.join(ws, entry));
-        } catch (err) {
-          unlinked.push(`${rel} kept, ${entry}: ${(err as Error).message}`);
-        }
-      }
-      await removeTree(root);
-    }
-    assert.deepEqual(unlinked, []);
-  });
 
   it("a kept part that doesn't serve a Loop in place refuses such a Loop at its start, with words, and is noticed", {
     timeout: 120_000,
@@ -2385,49 +1507,6 @@ describe("seed upgrade across one Loop for every project", () => {
 });
 
 /**
- * Genex's one worker model changed shipped parts (the chat turn and its brief, the director's
- * tools, builders and wake, the facet's build turn, the local game tools) and gave them new
- * modules to import (`loop/workers/`). Any of those parts may be one the agent edited and a seed
- * upgrade keeps at the older vintage: each new name comes from a module of its own, so a current
- * part beside one older copy still links, through the loop, every local turn's prompt and the
- * Unreal lead.
- */
-describe("seed upgrade across the worker model", () => {
-  const vintage = JSON.parse(
-    readFileSync(fileURLToPath(new URL("../fixtures/seed-exports-pre-workers.json", import.meta.url)), "utf8"),
-  ) as { modules: Record<string, string[]> };
-  const shipped = path.resolve(fileURLToPath(new URL("../../src/harness-seed", import.meta.url)));
-
-  it("any one of the parts it changed, kept from before by an agent that edited it, still loads the harness", {
-    todo: PHASE5_ARCHIVE,
-  }, async () => {
-    const unlinked: string[] = [];
-    for (const [rel, names] of Object.entries(vintage.modules)) {
-      const root = await tmpDir("seed-workers-");
-      const { ws, manifest } = await cloneSeededWorkspace(shipped, root);
-      const older = names.map((name) => `export const ${name} = () => ${JSON.stringify(name)};`);
-      await writeFile(path.join(ws, rel), `${older.join("\n")}\n// the agent's own change\n`);
-      const report = await applySeed({
-        seedDir: shipped,
-        workspaceDir: ws,
-        manifestFile: manifest,
-        backupDir: path.join(root, "backup"),
-      });
-      assert.ok(report.kept.includes(rel), `${rel} is the agent's`);
-      for (const entry of ["loop/main.ts", "loop/prompt.ts", "loop/unreal/lead.ts"]) {
-        if (entry === rel) continue;
-        try {
-          await linkIsolated(path.join(ws, entry));
-        } catch (err) {
-          unlinked.push(`${rel} kept, ${entry}: ${(err as Error).message}`);
-        }
-      }
-    }
-    assert.deepEqual(unlinked, []);
-  });
-});
-
-/**
  * Genex's moments changed parts of the harness (the chat turn, its brief and offer, the director's
  * start, wake, tools and builders, the worker pool, the Unreal lead's modules) and gave them a module
  * to import (`loop/hooks.ts`). Any of those parts may be one the agent edited and a seed upgrade keeps
@@ -2435,54 +1514,7 @@ describe("seed upgrade across the worker model", () => {
  * older copy still links, through the loop, every local turn's prompt and the Unreal lead.
  */
 describe("seed upgrade across Genex's moments", () => {
-  const vintage = JSON.parse(
-    readFileSync(fileURLToPath(new URL("../fixtures/seed-exports-pre-hooks.json", import.meta.url)), "utf8"),
-  ) as { modules: Record<string, string[]>; imports: Record<string, Record<string, string[]>> };
   const shipped = path.resolve(fileURLToPath(new URL("../../src/harness-seed", import.meta.url)));
-
-  /** A kept module of that vintage: its imports as they were (an alias kept), and every name it exported then. */
-  function keptModule(rel: string): string {
-    const imports = vintage.imports[rel] ?? {};
-    const locals = Object.values(imports)
-      .flat()
-      .map((spec) => spec.split(" as ").at(-1) ?? spec);
-    return [
-      ...Object.entries(imports).map(([from, specs]) => `import { ${specs.join(", ")} } from "${from}";`),
-      `const used = [${locals.join(", ")}];`,
-      ...(vintage.modules[rel] ?? []).map((name) =>
-        locals.includes(name) ? `export { ${name} };` : `export const ${name} = () => used.length;`,
-      ),
-      "// the agent's own change",
-    ].join("\n");
-  }
-
-  it("any one of the parts it changed, kept from before with its imports as they were, still loads the harness", {
-    todo: PHASE5_ARCHIVE,
-  }, async () => {
-    const unlinked: string[] = [];
-    for (const rel of Object.keys(vintage.modules)) {
-      const root = await tmpDir("seed-moments-");
-      const { ws, manifest } = await cloneSeededWorkspace(shipped, root);
-      await writeFile(path.join(ws, rel), `${keptModule(rel)}\n`);
-      const report = await applySeed({
-        seedDir: shipped,
-        workspaceDir: ws,
-        manifestFile: manifest,
-        backupDir: path.join(root, "backup"),
-      });
-      assert.ok(report.kept.includes(rel), `${rel} is the agent's`);
-      for (const entry of ["loop/main.ts", "loop/prompt.ts", "loop/unreal/lead.ts"]) {
-        if (entry === rel) continue;
-        try {
-          await linkIsolated(path.join(ws, entry));
-        } catch (err) {
-          unlinked.push(`${rel} kept, ${entry}: ${(err as Error).message}`);
-        }
-      }
-      await removeTree(root);
-    }
-    assert.deepEqual(unlinked, []);
-  });
 
   it("a kept host-method table without the moments', locks' and finish check's methods is reported once and noted for the agent", async () => {
     const root = await tmpDir("seed-moments-methods-");
@@ -2518,115 +1550,5 @@ describe("seed upgrade across Genex's moments", () => {
     assert.match(note, /calls the host the older way/);
     assert.ok(note.length <= 300, "one memory value stays within the memory policy's limit");
     await removeTree(root);
-  });
-});
-
-/**
- * One lead took over the Unreal Loop: the step machine's modules were retired, and the modules
- * around it changed. A seed upgrade keeps any of those the agent edited at the older vintage, with
- * its imports as they were then (a kept `run-dispatch.ts` still imports the runner from
- * `unreal/live.ts`, a kept `restore.ts` its tool call from `live-journal.ts`), and the new lead
- * imports its siblings by the names they have now. Either way the harness must still load.
- */
-describe("seed upgrade across the Unreal lead", () => {
-  const vintage = JSON.parse(
-    readFileSync(fileURLToPath(new URL("../fixtures/seed-exports-pre-lead.json", import.meta.url)), "utf8"),
-  ) as {
-    modules: Record<string, string[]>;
-    imports: Record<string, Record<string, string[]>>;
-    retired: Record<string, string[]>;
-  };
-  const shipped = path.resolve(fileURLToPath(new URL("../../src/harness-seed", import.meta.url)));
-
-  /** A module of the older vintage: its imports as they were, and every name it exported then. */
-  function olderModule(rel: string): string {
-    const imports = vintage.imports[rel] ?? {};
-    const imported = Object.values(imports).flat();
-    return [
-      ...Object.entries(imports).map(([from, names]) => `import { ${names.join(", ")} } from "${from}";`),
-      `const used = [${imported.join(", ")}];`,
-      ...(vintage.modules[rel] ?? []).map((name) =>
-        imported.includes(name) ? `export { ${name} };` : `export const ${name} = () => used.length;`,
-      ),
-      "// the agent's own change",
-    ].join("\n");
-  }
-
-  /** The older seed: today's, with the step machine's modules it shipped then (untouched by the agent). */
-  async function olderSeed(): Promise<string> {
-    const older = path.join(await tmpDir("seed-lead-older-"), "seed");
-    await cp(shipped, older, { recursive: true });
-    for (const [rel, names] of Object.entries(vintage.retired)) {
-      const stubs = names.map((name) => `export const ${name} = () => ${JSON.stringify(name)};`);
-      await writeFile(path.join(older, rel), `${stubs.join("\n")}\n`);
-    }
-    return older;
-  }
-
-  it("any one of the modules it changed, kept from before with its imports as they were, still loads the harness", {
-    todo: PHASE5_ARCHIVE,
-  }, async () => {
-    const older = await olderSeed();
-    const unlinked: string[] = [];
-    for (const rel of Object.keys(vintage.modules)) {
-      const root = await tmpDir("seed-lead-");
-      const { ws, manifest } = await cloneSeededWorkspace(older, root);
-      await writeFile(path.join(ws, rel), `${olderModule(rel)}\n`);
-      const report = await applySeed({
-        seedDir: shipped,
-        workspaceDir: ws,
-        manifestFile: manifest,
-        backupDir: path.join(root, "backup"),
-      });
-      assert.ok(report.kept.includes(rel), `${rel} is kept`);
-      try {
-        const main = await linkIsolated(path.join(ws, "loop", "main.ts"));
-        if (main.createStudio !== "function") unlinked.push(`${rel}: main.ts has no createStudio`);
-      } catch (err) {
-        unlinked.push(`${rel}: ${(err as Error).message}`);
-      }
-    }
-    assert.deepEqual(unlinked, []);
-  });
-});
-
-/**
- * Computer use (the judge that plays, vision escalation, routes) changed parts the agent may have
- * edited: the director's tools and tool specs, the evidence pass, facet scoring, the playtester,
- * the host method table, the check grammar, and the journal saves of autopilot and the director.
- * Every new name comes from a module of its own (hands-on-judge.ts, routes.ts, quest.ts,
- * probe-count.ts, …) or is read by namespace, so one of them kept at its `origin/dev` version
- * beside the current rest still links.
- */
-describe("seed upgrade across computer use", () => {
-  const vintage = JSON.parse(
-    readFileSync(fileURLToPath(new URL("../fixtures/seed-exports-pre-computer-use.json", import.meta.url)), "utf8"),
-  ) as { modules: Record<string, string[]> };
-  const shipped = path.resolve(fileURLToPath(new URL("../../src/harness-seed", import.meta.url)));
-
-  it("any one of the parts it changed, kept from before by an agent that edited it, still loads the harness", {
-    todo: PHASE5_ARCHIVE,
-  }, async () => {
-    const unlinked: string[] = [];
-    for (const [rel, names] of Object.entries(vintage.modules)) {
-      const root = await tmpDir("seed-computer-use-");
-      const { ws, manifest } = await cloneSeededWorkspace(shipped, root);
-      const older = names.map((name) => `export const ${name} = () => ${JSON.stringify(name)};`);
-      await writeFile(path.join(ws, rel), `${older.join("\n")}\n// the agent's own change\n`);
-      const report = await applySeed({
-        seedDir: shipped,
-        workspaceDir: ws,
-        manifestFile: manifest,
-        backupDir: path.join(root, "backup"),
-      });
-      assert.ok(report.kept.includes(keptAt(rel)), `${rel} is the agent's`);
-      try {
-        const main = await linkIsolated(path.join(ws, "loop", "main.ts"));
-        if (main.createStudio !== "function") unlinked.push(`${rel}: main.ts has no createStudio`);
-      } catch (err) {
-        unlinked.push(`${rel}: ${(err as Error).message}`);
-      }
-    }
-    assert.deepEqual(unlinked, []);
   });
 });
