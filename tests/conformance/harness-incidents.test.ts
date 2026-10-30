@@ -5478,6 +5478,35 @@ describe("the user's ask to finish a running build (director/wrap-up.ts)", () =>
   });
 });
 
+describe("a worker asked for after the lead's finish (director/tools.ts)", () => {
+  it("FW1. worker_start after the lead's finish answered 'Started w2' though no session ran: it refuses with the run's own reason and starts nothing", async () => {
+    const { fakeHost, fakeLoopRun } = await import("../helpers/director-run.ts");
+    const { RUN_OVER_NO_WORKERS } = await import("../../src/harness-seed/loop/director/wrap-up-prompts.ts");
+    const { latchClose } = await import("../../src/harness-seed/loop/director/close-latch.ts");
+    const asked: string[] = [];
+    const pool = {
+      state: { records: [], types: [] },
+      call: async (name: string) => {
+        asked.push(name);
+        return "Started w2 (copy).";
+      },
+    };
+    const start = { title: "Lights", task: "Add street lights", isolation: "copy" };
+    const open = fakeLoopRun(fakeHost(), { pool });
+    assert.equal(await open.handler("worker_start", start), "Started w2 (copy).", "a running run still starts workers");
+
+    const closing = fakeLoopRun(fakeHost(), { pool });
+    closing.state.finish = { summary: "The plaza is lit.", land: true, victory: false, at: 0 };
+    void latchClose(closing.state, () => new Promise(() => {}));
+    assert.equal(await closing.handler("worker_start", start), RUN_OVER_NO_WORKERS, "its close under way");
+
+    const closed = fakeLoopRun(fakeHost(), { pool });
+    closed.state.finished = true;
+    assert.equal(await closed.handler("worker_start", start), RUN_OVER_NO_WORKERS, "the run closed");
+    assert.deepEqual(asked, ["worker_start"], "the pool was asked for the running run's worker alone");
+  });
+});
+
 describe("a run whose every role was set to think at max effort", () => {
   it("EF1. its workers and reviewers think at most hard, its lead as set; a lower setting is every role's, fixed efforts too", async () => {
     const { roleEffort } = await import("../../src/harness-seed/loop/model-roles.ts");

@@ -17,7 +17,8 @@ import { retainSpan, timedOperation } from "./timing.ts";
 import { plainly } from "./rules.ts";
 import { DirectorTool, headSynced } from "./tool-specs.ts";
 import { finishAsked, wrapUp } from "./wrap-up.ts";
-import { FINISH_ASKED_NO_WORKERS } from "./wrap-up-prompts.ts";
+import { FINISH_ASKED_NO_WORKERS, RUN_OVER_NO_WORKERS } from "./wrap-up-prompts.ts";
+import { closeUnderWay } from "./close-latch.ts";
 import { BuildTarget, type LoopRun } from "./loop-run.ts";
 import type { AnyRecord } from "../../types/harness.d.ts";
 import type { MessageImage } from "../../types/host-api.d.ts";
@@ -143,11 +144,18 @@ async function judgeTool(loopRun: LoopRun, args: AnyRecord): Promise<string> {
   return [pictures.said, answer].filter(Boolean).join(" ");
 }
 
-/** A worker tool, answered by the run's pool; a new worker is refused once the user asked to finish, or past the Loop's cap. */
+/** Whether the lead's finish closes the run (or it closed): no worker would run after it. */
+const runOver = (state: LoopRun["state"]): boolean => state.finished || Boolean(state.finish) || closeUnderWay(state);
+
+/**
+ * A worker tool, answered by the run's pool; a new worker is refused once the run is finishing, once
+ * the user asked to finish, or past the Loop's cap.
+ */
 async function poolTool(loopRun: LoopRun, name: string, args: AnyRecord): Promise<string> {
   const { pool } = loopRun;
   if (!pool) return "this run has no workers";
   if (name === WorkerTool.Start) {
+    if (runOver(loopRun.state)) return RUN_OVER_NO_WORKERS;
     const capped = capRefusesWorker(loopRun, runNow(loopRun));
     if (capped) return capped;
     if (await finishAsked(loopRun)) return FINISH_ASKED_NO_WORKERS;

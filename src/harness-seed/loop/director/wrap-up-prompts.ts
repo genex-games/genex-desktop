@@ -23,3 +23,6 @@ export const WRAP_UP_WORDS = {
 /** Why `worker_start` refuses once the user asked to finish. */
 export const FINISH_ASKED_NO_WORKERS =
   "the user asked to finish: no new workers. The wrap-up starts when this turn ends.";
+
+/** Why `worker_start` refuses once the lead's finish closes the run: nothing would run the worker. */
+export const RUN_OVER_NO_WORKERS = "the run is finishing: no new workers. End your turn.";
