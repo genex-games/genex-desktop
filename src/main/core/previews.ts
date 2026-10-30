@@ -1191,14 +1191,25 @@ export class PreviewService {
       const where = { root: this.#core.layout.itemPictures, game: this.#core.games.dirFor(p.project) };
       return readItemPicture(where, p.project, p.file, resize);
     }
-    if (isGenexRef(p.file)) return this.#readGenexOutput(p.project, p.file, resize);
-    // A running Loop's delivery that is only in its build: read from the workspace the host listed.
-    if (isBuildRef(p.file)) {
-      const found = await this.#x.assets.buildFile(p.project, p.file).catch(() => null);
+    return this.#readGameImage(p.project, p.file, resize);
+  }
+
+  /**
+   * One image of the game's own: a Genex job's output by its reference, a running Loop's delivery
+   * that is only in its build (from the workspace the host listed), else a file in its asset folders.
+   */
+  async #readGameImage(
+    project: string,
+    file: string,
+    resize: { resize?: (data: Buffer) => Promise<Buffer> },
+  ): Promise<{ mimeType: string; data: string } | null> {
+    if (isGenexRef(file)) return this.#readGenexOutput(project, file, resize);
+    if (isBuildRef(file)) {
+      const found = await this.#x.assets.buildFile(project, file).catch(() => null);
       return found ? readContainedImage(found.root, found.file, { prefixes: [], ...resize }) : null;
     }
-    if (!isAssetPath(p.file, await this.#x.assets.assetFolders(p.project))) return null;
-    return readContainedImage(this.#core.games.dirFor(p.project), p.file, { prefixes: [], ...resize });
+    if (!isAssetPath(file, await this.#x.assets.assetFolders(project))) return null;
+    return readContainedImage(this.#core.games.dirFor(project), file, { prefixes: [], ...resize });
   }
 
   /** A downscale to `maxPx` for an image read, when one is asked for and the preview can. */
