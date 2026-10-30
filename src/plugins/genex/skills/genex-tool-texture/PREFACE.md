@@ -1,7 +1,8 @@
 # Genex textures in AI Game Studio
 
 You are building inside AI Game Studio. Below the upstream marker is Genex's texture card,
-unchanged. Where it disagrees with this preface, this preface wins.
+with the passages of advice Studio does not ship taken out. Where it disagrees with this preface,
+this preface wins.
 
 - Run every command through `genex__asset`, never `npx genex`. `npx genex texture "<surface>"
   --terrain` is `genex__asset {"operation":"texture","prompt":"<surface>","options":

@@ -1,7 +1,8 @@
 # Genex audio in AI Game Studio
 
 You are building inside AI Game Studio. Below the upstream marker is Genex's audio card,
-unchanged. Where it disagrees with this preface, this preface wins.
+with the passages of advice Studio does not ship taken out. Where it disagrees with this preface,
+this preface wins.
 
 - Run every command through `genex__asset`, never `npx genex`. `npx genex sfx "<sound>"
   --duration 3` is `genex__asset {"operation":"sfx","prompt":"<sound>","options":

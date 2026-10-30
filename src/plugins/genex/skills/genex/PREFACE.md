@@ -65,4 +65,3 @@ Building the game never uses Genex credits: it runs on the user's own plan. A ge
 refuses for too few credits keeps its card in Studio, which says so and offers Get credits, then
 Make it. So never relay the balance, price or refill date, and never retry: add at most one short
 sentence saying what waits for credits, and carry on.
-This holds for every lane card's "Out of credits" line too.

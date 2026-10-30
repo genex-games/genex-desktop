@@ -1,7 +1,8 @@
 # Genex characters and creatures in AI Game Studio
 
 You are building inside AI Game Studio. Below the upstream marker is Genex's character card,
-unchanged. Where it disagrees with this preface, this preface wins.
+with the passages of advice Studio does not ship taken out. Where it disagrees with this preface,
+this preface wins.
 
 - Run every command through `genex__asset`, never `npx genex`. `npx genex creature "<desc>"
   --polycount 20000 --height 2.4` is `genex__asset {"operation":"creature","prompt":"<desc>",
@@ -23,7 +24,7 @@ unchanged. Where it disagrees with this preface, this preface wins.
 - These lanes are Meshy; Studio has no provider option. A prop, vehicle or building is the model
   card's lane (Tripo), or Local Blender's.
 
-<!-- upstream @genex-ai/cli-demo/templates/skills/genex-tool-character/SKILL.md v1.36.17 sha256 c972dbde0e270ac753cae921bd081ca39b800699b90ccf649ab34ed416d6a397 -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-tool-character/SKILL.md v1.36.17 sha256 084f8ca22bd644e52bec195326ddf46ee8dc54df5051708fd900dd0d4fa6789f -->
 ---
 name: genex-tool-character
 description: Generate a rigged, animated 3D character or creature with `npx genex character` and `npx genex creature`, then give it any move in plain words with `npx genex character animate`. Covers the guided concept-to-final flow, the one-shot direct path, the 8-way locomotion set, and searching the ready-made animation library. Files download to ./assets.
@@ -193,5 +194,5 @@ pick one up. **Re-running a character command bills a NEW character.**
 - **"Rigged by Uthana instead" on a `character` / `creature` result** — Meshy's rig failed pose QA in both rest poses (armored and heavily clothed bodies do), so the platform auto-rigged the mesh. Nothing to redo: give it moves with `npx genex character animate <id> --locomotion` and plain-word verbs; the Meshy catalog does not apply.
 - **`character animate` says the character is still generating** — wait for it first (`npx genex wait <id>`); the animate door only opens on a finished rig.
 - **Rigs rest facing +Z.** Set yaw explicitly when you place one, and never mirror a skinned mesh with a negative scale — it inverts the whole thing silently.
-- **Out of credits** — the error prints balance, price and refill date. Relay it; don't retry.
+- **Out of credits** — Studio keeps the generation's card, which says so and offers Get credits. Never relay the balance, price or refill date, and don't retry.
 - **Anything else** — `npx genex doctor`.

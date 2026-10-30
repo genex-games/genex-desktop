@@ -1,7 +1,8 @@
 # Genex models in AI Game Studio
 
 You are building inside AI Game Studio. Below the upstream marker is Genex's model card,
-unchanged. Where it disagrees with this preface, this preface wins.
+with the passages of advice Studio does not ship taken out. Where it disagrees with this preface,
+this preface wins.
 
 - Run every command through `genex__asset`, never `npx genex`. `npx genex model "<prompt>"
   --auto-size --low-poly` is `genex__asset {"operation":"model","prompt":"<prompt>","options":
@@ -19,7 +20,7 @@ unchanged. Where it disagrees with this preface, this preface wins.
   Its meshes are dense (150000 faces by default): use `low-poly` or `face-limit` for props seen in
   numbers.
 
-<!-- upstream @genex-ai/cli-demo/templates/skills/genex-tool-model/SKILL.md v1.36.17 sha256 f8e9b4c5b1e7d70ba25f21e7c56de036230b96b05cb145d56b333298d763997d -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-tool-model/SKILL.md v1.36.17 sha256 5944f2be3b133b2ab1dd93365a865e3409f547f862f64d4ca3089ffa2eeab591 -->
 ---
 name: genex-tool-model
 description: Generate a 3D model (GLB) from a text prompt or a reference image with `npx genex model` — props, vehicles, weapons, furniture, environment pieces, anything the scene needs as geometry. Also splits a model into named parts, rigs any mesh across 7 body plans, and retargets ready-made animation clips onto that rig. Files download to ./assets.
@@ -112,7 +113,7 @@ in the prompt too (`"…front toward +Z"`) — it helps, it does not guarantee.
 
 ## Troubleshooting
 
-- **Out of credits** — the error prints the balance, the price and the refill date. Relay it; don't retry.
+- **Out of credits** — Studio keeps the generation's card, which says so and offers Get credits. Never relay the balance, price or refill date, and don't retry.
 - **The rig was refused** — that mesh has no usable skeleton for any body plan. It is refunded. Ship it static, or animate it in code.
 - **Repeated failures in this folder** — the CLI says so after the second one. That pattern is the lane, not your prompt: build the piece in code or move on, and tell the user in one plain line.
 - **Anything else** — `npx genex doctor`.

@@ -1,7 +1,8 @@
 # Genex textures in AI Game Studio
 
 You are building inside AI Game Studio. Below the upstream marker is Genex's texture card,
-unchanged. Where it disagrees with this preface, this preface wins.
+with the passages of advice Studio does not ship taken out. Where it disagrees with this preface,
+this preface wins.
 
 - Run every command through `genex__asset`, never `npx genex`. `npx genex texture "<surface>"
   --terrain` is `genex__asset {"operation":"texture","prompt":"<surface>","options":
@@ -12,7 +13,7 @@ unchanged. Where it disagrees with this preface, this preface wins.
 - Operation `status` names the lanes that are live. When this lane fails, say so once and use an
   `image` (base colour only) or a material made in the engine instead.
 
-<!-- upstream @genex-ai/cli-demo/templates/skills/genex-tool-texture/SKILL.md v1.36.17 sha256 934a3f273ebf61d5635406b37ab1c8f7c736735c7cd4868f8fc377945bb9c6c5 -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-tool-texture/SKILL.md v1.36.17 sha256 558d150439bff6f2536cf5b56166f8a84b41258e96155aba910e478ae2b61086 -->
 ---
 name: genex-tool-texture
 description: Generate a tiling PBR texture set with `npx genex texture` — ground, floors, walls, rock, bark, metal, fabric, any repeating surface. Produces several maps (base colour, normal, roughness and friends) as separate files in ./assets, and `--terrain` makes the result seamless for large ground planes.
@@ -65,5 +66,5 @@ your balance: `npx genex doctor`.
 ## Troubleshooting
 
 - **The surface shows a visible repeating grid** — the CLI measures the seam automatically and warns when it is bad. Re-generate with `--terrain`, or scale the repeat down so the tile is smaller on screen. A repeating grid across a floor is the single most visible "asset flip" tell there is, so treat that warning as work.
-- **Out of credits** — the error prints balance, price and refill date. Relay it; don't retry.
+- **Out of credits** — Studio keeps the generation's card, which says so and offers Get credits. Never relay the balance, price or refill date, and don't retry.
 - **Anything else** — `npx genex doctor`.

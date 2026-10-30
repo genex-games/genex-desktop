@@ -1,7 +1,8 @@
 # Genex models in AI Game Studio
 
 You are building inside AI Game Studio. Below the upstream marker is Genex's model card,
-unchanged. Where it disagrees with this preface, this preface wins.
+with the passages of advice Studio does not ship taken out. Where it disagrees with this preface,
+this preface wins.
 
 - Run every command through `genex__asset`, never `npx genex`. `npx genex model "<prompt>"
   --auto-size --low-poly` is `genex__asset {"operation":"model","prompt":"<prompt>","options":

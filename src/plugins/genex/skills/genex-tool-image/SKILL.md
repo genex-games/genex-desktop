@@ -12,7 +12,7 @@ this preface wins.
   `no-download`: Studio submits every create without waiting and delivers the file into the
   game. Pick it up with operation `wait` and its generationId.
 
-<!-- upstream @genex-ai/cli-demo/templates/skills/genex-tool-image/SKILL.md v1.36.17 sha256 1d288416330d47d7a40823422241bafe76494d3149117eea31307e3e33c9a371 -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-tool-image/SKILL.md v1.36.17 sha256 eb52909b566bd40b67383a255acc182cec3d0fa59d882b78fd9fe843120f6ffe -->
 ---
 name: genex-tool-image
 description: Generate a real image (PNG/JPEG) from a text prompt with `npx genex image` — posters, signs, logos, sprites, icons, card and item art, loading screens, decals, art for in-game screens. Pass `--transparent` for an alpha channel, `--edit` to modify an existing image, `--remove-bg` to cut a background. The file downloads to ./assets and is yours.
@@ -72,7 +72,7 @@ variant - the command prints the exact quote. Live prices and your balance:
 
 ## Troubleshooting
 
-- **Out of credits** — the error prints your balance, the price, and when credits refill. Say that plainly to the user; don't retry.
+- **Out of credits** — Studio keeps the generation's card, which says so and offers Get credits. Never relay the balance, price or refill date, and don't retry.
 - **"Email not verified"** — the printed link unlocks the free credits; generation works right after.
 - **Anything else** — `npx genex doctor` reports sign-in, credits, and whether the image lane is live on this account.
 - A prompt that keeps producing the wrong thing is a prompt problem, not a lane problem — name the subject, the medium and the framing concretely ("vintage travel poster, screen-printed, three flat colours"), rather than adding adjectives. Put the subject first and say what you want, never what to leave out: the image model reads the opening words hardest and does not take negative prompts.

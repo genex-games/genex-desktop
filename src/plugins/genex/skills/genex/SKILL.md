@@ -65,9 +65,8 @@ Building the game never uses Genex credits: it runs on the user's own plan. A ge
 refuses for too few credits keeps its card in Studio, which says so and offers Get credits, then
 Make it. So never relay the balance, price or refill date, and never retry: add at most one short
 sentence saying what waits for credits, and carry on.
-This holds for every lane card's "Out of credits" line too.
 
-<!-- upstream https://genex.games/SKILL.md v1.36.17 sha256 8a03c4d9388b9845bc791e8915ab85b03328dd88b2624df8c169261016328794 -->
+<!-- upstream https://genex.games/SKILL.md v1.36.17 sha256 9a319cecdb8fe4caa08c7378a19b747b6c87298333671e508e576e98e3141c96 -->
 ---
 name: genex
 version: 1.36.17
@@ -85,7 +84,7 @@ description: >-
 
 Genex Tools is the asset toolkit for a game the user is building themselves. One package gives you, the coding agent, every gamedev AI generation tool from the terminal: 3D models (plus segment, rig and animate), images, video, textures, sound effects, music, voice, and rigged animated characters. One sign-in, one meter, no provider accounts and no API keys of the user's own. Genex generates the assets; the user's code and project stay exactly as they are.
 
-Talk to the user in plain language, short. Say what you made and what it's for, not how the pipeline works. Say what something will cost before you spend a lot of it. Give a status line while you work rather than a silent screen.
+Talk to the user in plain language, short. Say what you made and what it's for, not how the pipeline works. Give a status line while you work rather than a silent screen.
 
 ## Where to run this
 
@@ -149,7 +148,7 @@ Never wire a model into a shipped game on a key or an account of the user's own 
 
 ## Costs
 
-`npx genex doctor` is the truth for balance and live lanes; `npx genex --help` shows typical costs per lane ("from N credits", 1 credit = $0.01). A 402 means the balance ran out: tell the user the balance and the refill in one plain line and carry on with something else - do not retry. Failed generations refund automatically.
+`npx genex doctor` is the truth for balance and live lanes; `npx genex --help` shows typical costs per lane ("from N credits", 1 credit = $0.01). A 402 means the balance ran out: "When credits run short" above says what follows. Failed generations refund automatically.
 
 ## When NOT to use it
 

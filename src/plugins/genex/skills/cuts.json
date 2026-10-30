@@ -157,6 +157,14 @@
     {
       "replace": " Offer it at most once, in one line, after the game is built and running. A no is final.",
       "with": ""
+    },
+    {
+      "replace": " A 402 means the balance ran out: tell the user the balance and the refill in one plain line and carry on with something else - do not retry.",
+      "with": " A 402 means the balance ran out: \"When credits run short\" above says what follows."
+    },
+    {
+      "replace": " Say what something will cost before you spend a lot of it.",
+      "with": ""
     }
   ],
   "genex-threejs-embed-auth/SKILL.md": [
@@ -323,12 +331,20 @@
     {
       "replace": " Voice lines are content: keep them short, subtitle them,\nand let the player skip.",
       "with": ""
+    },
+    {
+      "replace": "- **Out of credits** — the error prints balance, price and refill date. Relay it; don't retry.",
+      "with": "- **Out of credits** — Studio keeps the generation's card, which says so and offers Get credits. Never relay the balance, price or refill date, and don't retry."
     }
   ],
   "genex-tool-image/SKILL.md": [
     {
       "replace": "npx genex image \"hand-painted wooden tavern sign, weathered iron brackets\"",
       "with": "npx genex image \"wooden sign with iron brackets\""
+    },
+    {
+      "replace": "- **Out of credits** — the error prints your balance, the price, and when credits refill. Say that plainly to the user; don't retry.",
+      "with": "- **Out of credits** — Studio keeps the generation's card, which says so and offers Get credits. Never relay the balance, price or refill date, and don't retry."
     }
   ],
   "genex-tool-model/SKILL.md": [
@@ -343,6 +359,10 @@
     {
       "replace": "then record a per-model `front` (a yaw in\nyour manifest) beside its path",
       "with": "then record a per-model `front` (a yaw)\nbeside its path"
+    },
+    {
+      "replace": "- **Out of credits** — the error prints the balance, the price and the refill date. Relay it; don't retry.",
+      "with": "- **Out of credits** — Studio keeps the generation's card, which says so and offers Get credits. Never relay the balance, price or refill date, and don't retry."
     }
   ],
   "genex-tool-character/SKILL.md": [
@@ -357,6 +377,10 @@
     {
       "replace": "Derive the list from the game's states first — idle, the moves it actually\nwalks, each attack, hurt, defeat — and request those. A full set nobody's\ncontroller plays is generation time and load time spent on nothing.",
       "with": "A full set nobody's controller plays is generation time and load time spent\non nothing."
+    },
+    {
+      "replace": "- **Out of credits** — the error prints balance, price and refill date. Relay it; don't retry.",
+      "with": "- **Out of credits** — Studio keeps the generation's card, which says so and offers Get credits. Never relay the balance, price or refill date, and don't retry."
     }
   ],
   "genex-tool-publish/SKILL.md": [
@@ -381,6 +405,47 @@
     {
       "replace": "\nAsk once per round of work, in one line, and keep working while you wait.",
       "with": ""
+    }
+  ],
+  "genex-tool-texture/SKILL.md": [
+    {
+      "replace": "- **Out of credits** — the error prints balance, price and refill date. Relay it; don't retry.",
+      "with": "- **Out of credits** — Studio keeps the generation's card, which says so and offers Get credits. Never relay the balance, price or refill date, and don't retry."
+    }
+  ],
+  "genex-updates/SKILL.md": [
+    {
+      "replace": "description: Apply Genex platform updates safely. Use when",
+      "with": "description: What Genex's update lines and refusals mean. Use when"
+    },
+    {
+      "replace": "# Genex Updates — apply platform updates at safe moments",
+      "with": "# Genex Updates"
+    },
+    {
+      "replace": "Genex ships improvements continuously. The `genex` CLI tells you when something\nis stale; you (the agent) apply the update at the right moment and tell the\nuser what happened. The user never manages versions themselves.",
+      "with": "Genex ships improvements continuously, and the `genex` CLI says when something\nis stale."
+    },
+    {
+      "from": "| `🔄 Genex skills updated to X.Y.Z` | Skills were auto-refreshed to match the installed CLI. | Nothing — informational. Skills stay in sync on their own. |",
+      "to": "| `⬆ Genex <package> X.Y.Z available (installed A.B.C) — run: <command>` | A newer npm package exists. | Run the printed command at a **safe moment** (below), then tell the user. |"
+    },
+    {
+      "replace": "Run the printed command **now**, then re-run the refused genex command.",
+      "with": "Nothing runs until Studio is updated: tell the user Studio needs an update."
+    },
+    {
+      "replace": "Relay the printed facts (balance, cost, refill date, link) to the user; offer a procedural placeholder so the build continues — see the generation skill's Troubleshooting.",
+      "with": "Studio keeps the generation's card, which says so and offers Get credits. Never relay the balance, cost or refill date, and don't retry."
+    },
+    {
+      "section": "## Safe moments — when to apply a nudge"
+    },
+    {
+      "section": "## How to apply"
+    },
+    {
+      "section": "## Hard rules"
     }
   ]
 }
