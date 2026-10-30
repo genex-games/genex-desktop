@@ -35,7 +35,7 @@ this preface wins.
 - Other commands map onto Studio tools as the `genex` skill describes
   (`genex__skill {"name":"genex"}`).
 
-<!-- upstream @genex-ai/cli-demo/templates/skills/genex-monetization/SKILL.md v1.36.17 sha256 fd5ba66ffd1918069f239f46dcf0defe5d2a417f4539341c440472a5db8f9cb0 -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-monetization/SKILL.md v1.36.17 sha256 3e89008e7300adfc479b4fc43af0d20cab618ee0a30fe915392e93c821b6df99 -->
 ---
 name: genex-monetization
 description: Sell things in a Genex game for Nex, the currency players buy with real money — fixed-price Genex store items (`genex shop add`) by default, dynamic payment requests only for amounts decided while playing. Use when the player asks to sell things, add a shop, monetize, or make the game earn. Carries the hard rules: no paid randomness, no gambling, no donation mechanics, and a real-money price beside every Nex price.
@@ -158,12 +158,7 @@ sets, a top-up of a size the player picks. A fixed price is a store item
 (above).
 
 Requires `@genex-ai/embed-sdk` **>= 0.33.0**. Earlier versions, including
-`^0.32.0`, do not export these payment helpers. Update the game's dependency
-before wiring them, then rebuild and publish the game:
-
-```bash
-npm install @genex-ai/embed-sdk@latest
-```
+`^0.32.0`, do not export these payment helpers.
 
 After `initEmbed()` and player identity are ready:
 

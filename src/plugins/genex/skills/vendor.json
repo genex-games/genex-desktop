@@ -45,8 +45,8 @@
     },
     "genex-monetization/SKILL.md": {
       "source": "@genex-ai/cli-demo/templates/skills/genex-monetization/SKILL.md",
-      "sha256": "fd5ba66ffd1918069f239f46dcf0defe5d2a417f4539341c440472a5db8f9cb0",
-      "bytes": 14665
+      "sha256": "3e89008e7300adfc479b4fc43af0d20cab618ee0a30fe915392e93c821b6df99",
+      "bytes": 14529
     },
     "genex-items/SKILL.md": {
       "source": "@genex-ai/cli-demo/templates/skills/genex-items/SKILL.md",

@@ -567,6 +567,10 @@
     {
       "replace": "Nex commerce is off on this stand. Build\nthe rest and report the unavailable lane.",
       "with": "Nex commerce is off on this stand."
+    },
+    {
+      "replace": " Update the game's dependency\nbefore wiring them, then rebuild and publish the game:\n\n```bash\nnpm install @genex-ai/embed-sdk@latest\n```\n",
+      "with": "\n"
     }
   ],
   "genex-items/SKILL.md": [
