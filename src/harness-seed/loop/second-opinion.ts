@@ -105,7 +105,9 @@ async function pictureAt(top: string, rel: string): Promise<{ image: MessageImag
 
 /** A picture Genex itself took (a health check's screenshot), by its absolute path; null when it cannot be read. */
 export async function pictureFile(file: string): Promise<MessageImage | null> {
-  const read = await pictureAt(path.dirname(file), path.basename(file));
+  // The folder by its real path, as `pictureAt` reads the file by its own (macOS's /tmp is /private/tmp).
+  const dir = await realpath(path.dirname(file)).catch(() => path.dirname(file));
+  const read = await pictureAt(dir, path.basename(file));
   return "image" in read ? read.image : null;
 }
 

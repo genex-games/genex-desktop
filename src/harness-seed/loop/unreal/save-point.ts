@@ -1,8 +1,8 @@
 /**
  * The lead's save points: Genex's checkpoint of the game (`checkpoint.take`) under the lead's label.
  * The plugins that are on run their steps around Genex's snapshot (the Unreal plugin saves the
- * editor's work and reads its log's new errors before, and captures the hero cameras after), and
- * the save point keeps the snapshot, the steps' notes and their pictures as thumbnails; the graph
+ * editor's work and reads its log's new errors before, and may take pictures after), and the save
+ * point keeps the snapshot, the steps' notes and their pictures as thumbnails; the graph
  * gets a round. Never two at once. A step that blocks (a play session the agent started, an editor
  * that can't say whether one runs, a save that failed), the person using the editor, or the chat's
  * Plan mode stops it: no snapshot, no save point, and the lead hears why. Between turns, a turn that
@@ -12,17 +12,14 @@
 import type { CheckpointAnswer, HookImage } from "../../types/host-api.d.ts";
 import { CheckpointSkip, type HookHeldBy, notesText, runScope, takeCheckpoint } from "../hooks.ts";
 import { HostMethod } from "../host-methods.ts";
-import { isPlainRecord } from "../json.ts";
 import { minutes, SECOND_MS } from "../time.ts";
-import { MAX_HERO_SHOTS, type SavePoint, type SavePointShot, type ShotTone, WHOLE_FRAME } from "./lead-contract.ts";
+import { MAX_HERO_SHOTS, type SavePoint, type SavePointShot, WHOLE_FRAME } from "./lead-contract.ts";
 import { savePointRound } from "./lead-graph.ts";
 import { type Lead, milestoneNow, oneGitWrite, saveLead } from "./lead-journal.ts";
 import { SAVE_POINT_WORDS } from "./lead-prompts.ts";
 
 /** How long a save point once took at most. Kept for an older copy of a module that imports it. */
 export const SAVE_POINT_MS = 90 * SECOND_MS;
-/** The tone numbers a capture carries, by their names in the plugin's answer. */
-const TONE_FIELDS = ["p2", "p98", "mean", "std", "nearStd", "farStd", "saturation", "clipped"] as const;
 
 /**
  * The Unreal plugin's harness tools a save point once asked for by name. Kept for an older copy of
@@ -69,14 +66,6 @@ export async function editorActivity(_lead: Lead): Promise<EditorActivity | null
 /** Kept for an older copy of a module that imports it: the plugin marks its log at Genex's run start now. */
 export async function markLog(_lead: Lead): Promise<void> {}
 
-/** A picture's numbers as a shot's tone when it carries all of them, else null. */
-function toneOf(value: unknown): ShotTone | null {
-  if (!isPlainRecord(value)) return null;
-  const numbers = TONE_FIELDS.map((field) => value[field]);
-  if (!numbers.every((n) => typeof n === "number" && Number.isFinite(n))) return null;
-  return Object.fromEntries(TONE_FIELDS.map((field) => [field, value[field]])) as ShotTone;
-}
-
 /** One picture as a JPEG run artefact: the PNG saved in the run's folder, then re-encoded whole; its path. */
 async function jpegOf(lead: Lead, image: HookImage, label: string): Promise<string | null> {
   const { ctx, run } = lead;
@@ -90,13 +79,13 @@ async function jpegOf(lead: Lead, image: HookImage, label: string): Promise<stri
   return crop?.path ? crop.path : null;
 }
 
-/** The save point's thumbnails: the checkpoint's pictures, as JPEG run artefacts with their tone numbers. */
+/** The save point's thumbnails: the checkpoint's pictures, as JPEG run artefacts. */
 async function thumbnailsOf(lead: Lead, round: number, images: readonly HookImage[]): Promise<SavePointShot[]> {
   const made: SavePointShot[] = [];
   for (const image of images.slice(0, MAX_HERO_SHOTS)) {
     const label = `unreal/save-${round}/${image.name.replace(/[^a-z0-9-]+/gi, "-")}`;
     const path = await jpegOf(lead, image, label);
-    if (path) made.push({ camera: image.name, path, tone: toneOf(image.measures) });
+    if (path) made.push({ camera: image.name, path });
   }
   return made;
 }
@@ -155,7 +144,7 @@ async function savingOnce(lead: Lead, ask: SavePointAsk, onlyIfUnsaved = false):
 
 /**
  * One save point, as `save_point` answers it: its snapshot id, the plugins' notes (the log's new
- * errors among them) and the thumbnails' tone numbers, or why none was made.
+ * errors among them) and its pictures, or why none was made.
  */
 export async function savePoint(lead: Lead, ask: SavePointAsk): Promise<string> {
   const made = await savingOnce(lead, ask);

@@ -251,9 +251,7 @@ export type AgentRecord = AgentRequest & {
 
 // ── save points, captures and the critic ───────────────────────────────────────────────────
 
-/** Hero cameras are the level's CameraActors named with this prefix; a save point captures up to {@link MAX_HERO_SHOTS}. */
-export const HERO_CAMERA_PREFIX = "GX_Shot_";
-/** The most hero cameras a save point captures. */
+/** The most of a checkpoint's pictures a save point keeps as thumbnails. */
 export const MAX_HERO_SHOTS = 6;
 
 /** A capture's tone numbers, each 0 to 1, as the Unreal plugin's bridge measures them (its `Tone`). */
@@ -275,7 +273,12 @@ export type ShotTone = {
 };
 
 /** One thumbnail of a save point: its camera, its capture file and its tone numbers when measured. */
-export type SavePointShot = { camera: string; path: string; tone: ShotTone | null };
+export type SavePointShot = {
+  camera: string;
+  path: string;
+  /** Tone numbers, kept by a save point from before they stopped being read. */
+  tone?: ShotTone | null;
+};
 
 /**
  * One save point: its label, its snapshot, when, what it holds, its thumbnails, the milestone it is

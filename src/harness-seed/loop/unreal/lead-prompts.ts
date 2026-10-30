@@ -299,14 +299,9 @@ export const LEAD_TOOL_WORDS = {
 /** How many of a save point's new log errors its answer names before it counts the rest. */
 const NAMED_LOG_LINES = 3;
 
-/** A number of a capture's tone as an answer quotes it. */
-const toneNumber = (n: number) => n.toFixed(2);
-
-/** One thumbnail's line: its camera and its tone numbers. */
+/** One thumbnail's line: its camera and its file, for the lead to look at. */
 function thumbnailLine(shot: SavePointShot): string {
-  const { tone } = shot;
-  if (!tone) return `- ${shot.camera}: no tone numbers.`;
-  return `- ${shot.camera}: black point p2 ${toneNumber(tone.p2)}, white p98 ${toneNumber(tone.p98)}, contrast std ${toneNumber(tone.std)}, saturation ${toneNumber(tone.saturation)}.`;
+  return `- ${shot.camera}: ${shot.path}`;
 }
 
 /** The new log errors' line. */
