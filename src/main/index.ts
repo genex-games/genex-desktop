@@ -1161,7 +1161,7 @@ function attachPreviews(studio: StudioCore, win: BrowserWindow): void {
   preview = view;
   studio.options.preview = view;
   // Pooled observation ports for parallel Autopilot facets. Captures are page-side
-  // (__studio.capture() renders straight from the canvas), so the window needs no compositor
+  // (the shim's __studioCapture reads straight from the canvas), so the window needs no compositor
   // surface and stays genuinely hidden. The previous shown-but-parked windows (x=-4400)
   // resurfaced whenever macOS reshuffled displays or Mission Control ran — four ghost windows
   // on the user's desktop mid-run. Rendering is offscreen: a hidden window with a

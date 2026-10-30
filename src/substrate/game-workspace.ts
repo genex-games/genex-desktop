@@ -1543,9 +1543,8 @@ export class GameWorkspaces {
   }
 
   /**
-   * Static check run before every judged build. It catches the two failures that would otherwise
-   * waste a whole gauntlet iteration: a missing entry point, and a game that abandoned the
-   * contract (no `window.__studio`).
+   * Static check of a game folder: a missing entry point, packages nothing resolves, TypeScript
+   * nothing builds, and nothing more (a game owes the studio no contract).
    */
   async validate(name: string): Promise<Pick<GameValidation, "ok" | "problems" | "missing" | "warnings" | "contract">> {
     return this.validateAt(this.dirFor(name));

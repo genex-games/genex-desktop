@@ -74,7 +74,7 @@ export interface ViewStillOptions {
 export type ViewPreviews = Pick<PreviewService, "pool" | "sessionPortFor" | "loadServed" | "applySetup">;
 /** A port that can take a still. */
 type StillPort = PreviewPort & { still: NonNullable<PreviewPort["still"]> };
-/** What the page answered a `__studio` call, or why the call itself failed. */
+/** What the page answered a studio call, or why the call itself failed. */
 type PageAnswer = { answer: unknown } | { threw: string };
 
 /** A promise that never settles: the losing side of the budget's race, made per still so nothing piles onto one. */

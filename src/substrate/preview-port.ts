@@ -92,7 +92,7 @@ export interface ShimOptions {
  * How this game is connected to the studio, and what the studio can see of it (M4.2a) — the page
  * half of `game.attached`. Read off the renderer hook (what it wrapped, what it has seen
  * rendered, which scene and camera the last judged frame used), never off the game's own claim
- * about itself. `installed` is a game that assigned `window.__studio`; `attached` is a game the
+ * about itself. `installed` is an older page's word for a game that assigned its own contract; `attached` is a game the
  * studio recognised in the frames it drew, with nothing added to it.
  *
  * Every field but `contract` is optional: the caller (studio-core's `game.attached`) fills the
@@ -154,7 +154,7 @@ export interface PreviewPort {
   setMaxFps?(fps: number): void;
   /** Keep simulation alive while an agent observes the hidden stage. */
   setObserved?(observed: boolean): void;
-  /** Silence the page's speakers; its own audio graph keeps running, so `__studio.audio()` still measures. */
+  /** Silence the page's speakers; its own audio graph keeps running. */
   setAudioMuted?(muted: boolean): void;
   /**
    * Optional: FakePreview and headless builds compile without it; callers fall back to `screenshot`.
@@ -179,9 +179,8 @@ export interface PreviewPort {
   /** `keep`: state paths a board reads, cut last when the state is over the studio's budget. */
   studioState(options?: { keep?: readonly string[] }): Promise<unknown>;
   /**
-   * Call a `window.__studio` method by name. The classic set is typed; the v2 contract adds
-   * `eye`, `inspect` and `audio`, and a game may expose more — the page answers `{__missing}`
-   * for anything it does not have.
+   * Call a verb of the page shim's own clock (`__studioClock`) by name: step, pause, start, state,
+   * ready, errors. The game is never called; the page answers `{__missing}` for any other name.
    */
   studioCall(method: string, arg?: unknown): Promise<unknown>;
   input(actions: PreviewInputAction[]): Promise<{ ok: boolean; applied: number; width: number; height: number }>;
