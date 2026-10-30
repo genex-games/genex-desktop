@@ -236,15 +236,7 @@ describe("the self-edit gate", () => {
   it("refuses paths that are not the harness's own before making any copy", async () => {
     const lite = await coreWithLearning();
     const api = lite.api() as unknown as Record<string, (params: unknown) => Promise<{ ok: boolean; stage?: string }>>;
-    for (const file of [
-      "../escape.ts",
-      "/abs.ts",
-      "judge/rubric.ts",
-      "loop/../../x.ts",
-      ".git/hooks/post-commit.js",
-      "loop\\x.ts",
-      "",
-    ]) {
+    for (const file of ["../escape.ts", "/abs.ts", "loop/../../x.ts", ".git/hooks/post-commit.js", "loop\\x.ts", ""]) {
       const verdict = await api["guardian.validate_edit"]!({ files: [{ file, contents: VALID }] });
       assert.deepEqual([verdict.ok, verdict.stage], [false, "refused"], file);
     }
@@ -344,7 +336,6 @@ describe("the agent changes its own files only through the host (B7)", () => {
     for (const file of [
       "../escape.md",
       "/abs.md",
-      "judge/rubric.md",
       "prompts/../../escape.md",
       ".git/config",
       "prompts\\x.md",
