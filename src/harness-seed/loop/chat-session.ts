@@ -488,7 +488,6 @@ export const SERVES_AFTER_LOOP_RUN = true;
  *   scaffolded?: boolean,
  *   shape?: { entry?: string, main?: string, build?: string | null } | null,
  *   ownShape?: boolean,
- *   contractMissing?: boolean,
  *   engine?: string,
  *   gameEngine?: EngineId,
  *   engineProject?: string | null,
@@ -553,8 +552,6 @@ export function buildContractorBrief({
   scaffolded?: boolean;
   shape?: BriefShape | null;
   ownShape?: boolean;
-  /** Read no more, kept for a caller kept from before: the studio attaches to every page it serves. */
-  contractMissing?: boolean;
   engine?: string;
   gameEngine?: EngineId;
   engineProject?: string | null;

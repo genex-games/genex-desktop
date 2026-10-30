@@ -14,7 +14,7 @@ function openBudgetWords(hours: number | null | undefined): string {
 
 /** What a build is on a project that isn't a web game, as a Loop chat is told. */
 export function openBuildWords(hours: number | null | undefined): string {
-  return `the Loop: the lead builds the whole project itself in this folder, with workers in copies of it, and finishes it when the goal is reached (${openBudgetWords(hours)})`;
+  return `the Loop: you lead it in this folder, with optional workers in copies of it, and finish it when the goal is reached (${openBudgetWords(hours)})`;
 }
 
 /** A hurry changes how long an open Loop runs, never whether a new project is one. */

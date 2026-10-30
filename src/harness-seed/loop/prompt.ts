@@ -3,7 +3,7 @@
  *
  * The prompt is a *projection of the event log*, rebuilt from scratch every round. Nothing about
  * the conversation lives in memory, so the studio can be killed at any instant and resume with
- * exactly the same mind. What the system prompt stands on — identity, rules, skills, memory, the
+ * exactly the same mind. What the system prompt stands on — identity, rules, skills, the
  * game's notes and file list — is read once per turn (`readStanding`): a local model re-reads
  * everything after the first changed token, so a fact remembered or a file written mid-turn made
  * the next round re-read the whole turn. The next turn reads them afresh.
@@ -37,7 +37,6 @@ export interface StandingContext {
   skills: Skill[];
   identity: string;
   rules: string;
-  memory: AnyRecord;
   notes: string | null;
   inventory: string | null;
 }
@@ -95,7 +94,7 @@ export function estimateMessagesTokens(messages: readonly Pick<Message, "content
   return total;
 }
 
-/** Identity, rules, skills, memory and the game's notes and files, as this turn starts. */
+/** Identity, rules, skills and the game's notes and files, as this turn starts. */
 export async function readStanding(
   ctx: HarnessCtx,
   options: Pick<PromptOptions, "project" | "projectDir" | "extraReads">,
@@ -104,10 +103,9 @@ export async function readStanding(
   const game = await turnGame(ctx, options.project);
   const identity = await readIdentity(ctx, options.project, game);
   const rules = await readRules(ctx, options.project, game);
-  const memory = (await ctx.call(HostMethod.ArtifactRead, { artifactId: "memory" }).catch(() => null)) ?? {};
   const notes = options.project ? await readGameNotes(ctx, options.project) : null;
   const inventory = options.project ? await readProjectInventory(ctx, options.project, options) : null;
-  return { skills, identity, rules, memory, notes, inventory };
+  return { skills, identity, rules, notes, inventory };
 }
 
 export async function materializePrompt(ctx: HarnessCtx, options: PromptOptions): Promise<MaterializedPrompt> {
@@ -115,15 +113,14 @@ export async function materializePrompt(ctx: HarnessCtx, options: PromptOptions)
   const events = await ctx.call(HostMethod.EventsList, { threadId });
   const messages = eventsToMessages(events);
   const standing = options.standing ?? (await readStanding(ctx, options));
-  const { skills, identity, rules, memory, notes, inventory } = standing;
+  const { skills, identity, rules, notes, inventory } = standing;
   const toolNotes = tools?.summary() ?? "";
 
   const systemPrompt = [
     identity,
     rules,
     formatSkillIndex(skills),
-    formatMemory(memory),
-    notes ? `## Notes for the game "${options.project}" (NOTES.md — keep it current)\n${notes}` : "",
+    notes ? `## Notes for the game "${options.project}" (NOTES.md)\n${notes}` : "",
     inventory ?? "",
     toolNotes ? `## About your tools\n${toolNotes}` : "",
     options.extraSystem ?? "",
@@ -160,7 +157,7 @@ export async function materializePrompt(ctx: HarnessCtx, options: PromptOptions)
   };
 }
 
-/** The studio's living memory of a game, written by whoever built it last. */
+/** The game's NOTES.md, when it has one. */
 async function readGameNotes(ctx: HarnessCtx, project: string): Promise<string | null> {
   try {
     const text = await ctx.call(HostMethod.GameRead, { project, file: "NOTES.md" });
@@ -417,15 +414,6 @@ function clampMessage(message: Message, maxTokens = CLAMP_MESSAGE_TOKENS): Messa
     ...message,
     content: `${headText}\n…[${cut} characters clamped from this message to fit the context — full text in the log]…\n${tailText}`,
   };
-}
-
-function formatMemory(memory: unknown): string {
-  const entries = Object.entries((memory ?? {}) as Record<string, unknown>);
-  if (entries.length === 0) return "";
-  const lines = entries.map(
-    ([key, value]) => `- **${key}**: ${typeof value === "string" ? value : JSON.stringify(value)}`,
-  );
-  return `## What you remember\n${lines.join("\n")}`;
 }
 
 /** The turn's game as the host lists it; undefined with no game, or when the host cannot list them. */

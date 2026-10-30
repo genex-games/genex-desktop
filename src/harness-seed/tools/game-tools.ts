@@ -16,7 +16,6 @@ import { isRecord } from "../loop/json.ts";
 import { LoopProfile, loopProfileOf, ProjectStarter, ProjectTool } from "../loop/folder-facts.ts";
 import { OPEN_LAUNCH_WORDS } from "../loop/open-loop-prompts.ts";
 import { UNTIL_DONE_WORDS } from "../loop/until-done-prompts.ts";
-import { scopeItems } from "../loop/scope.ts";
 import { storeItemsOf } from "../loop/store-items.ts";
 
 /** How long `run_command` lets a command run when the call names no timeout. */
@@ -43,37 +42,19 @@ const SLUG_STOP = new Set([
   "kind",
   "just",
   "like",
-  "aaa",
-  "photoreal",
-  "photorealistic",
   "really",
   "very",
 ]);
 
 const str = (description: string) => ({ type: "string", description });
-/**
- * A list parameter. Engines that declare intake fields as strings (claude-code.ts `intakeTool`) send
- * it as a JSON array in a string or one item per line: the registry lets that text through
- * (`acceptJsonString`) and `scopeItems` reads every shape.
- */
-const list = (description: string) => ({
-  type: "array",
-  items: { type: "string" },
-  acceptJsonString: true,
-  description,
-});
-
-/** What a launch's goal is: the user's ask, nothing they did not ask for. */
-const GOAL_WORDS = "one paragraph in the user's words; add nothing they did not ask for — put it in cut, or ask";
-/** What a launch delivers. */
-const IN_SCOPE_WORDS = "what this build delivers, each item in the user's words";
-/** What a launch leaves out: a named reference is a look bar, not a feature list. */
-const CUT_WORDS =
-  "what a game like this often has that this build will not (a reference is a look bar, not a feature list)";
+/** What a launch's goal is: the user's ask. */
+const GOAL_WORDS = "one paragraph in the user's words";
+/** What a launch's reference is: whatever the user named, if anything. */
+const DIRECTION_WORDS = "optional: a game, film or picture the user named as a reference, in their words";
 
 /** What a launch sells in the game's Genex store: never cut, listed by the build with its picture (loop/store-items.ts). */
 const STORE_ITEMS_WORDS =
-  'each thing the user sells for Nex, Genex\'s currency (a class, a character, a skin, an item), as {"name","price","type","description"}: price in whole Nex as they named it (Genex takes the nearest step on the store grid), 100 when they named none; type "durable" for what is kept once bought (a class, a character, a skin), "consumable" only for what is used up. The build lists each in the game\'s store with its picture, so never put these in cut; an item can also be added or changed at any time with genex__cli, no launch needed. Leave it out when nothing is sold for Nex: coins, gold or gems are a currency the game keeps itself';
+  'each thing the user sells for Nex, Genex\'s currency (a class, a character, a skin, an item), as {"name","price","type","description"}: price in whole Nex as they named it (Genex takes the nearest step on the store grid), 100 when they named none; type "durable" for what is kept once bought (a class, a character, a skin), "consumable" only for what is used up. The build lists each in the game\'s store with its picture; an item can also be added or changed at any time with genex__cli, no launch needed. Leave it out when nothing is sold for Nex: coins, gold or gems are a currency the game keeps itself';
 
 /** A store item list parameter: objects, or their JSON array as text from an engine that sends every field as a string. */
 const storeList = () => ({
@@ -99,19 +80,10 @@ const storeList = () => ({
 const LOOP_HOURS_WORDS =
   "The hours the user named, digits only (3, 1.5); 0 when they said until done; leave it out when they named none (the Loop switch's hours, if on, else until done).";
 
-/**
- * A launch's in-scope and cut lists and its store items as the run carries them to its scope
- * (chat-dispatch.ts `intakeRun`); none when unnamed.
- */
-function scopeArgs(args: AnyRecord): { inScope?: string[]; cut?: string[]; storeItems?: AnyRecord[] } {
-  const inScope = scopeItems(args.in_scope);
-  const cut = scopeItems(args.cut);
+/** A launch's store items as the run carries them (chat-dispatch.ts `intakeRun`); none when unnamed. */
+function storeArgs(args: AnyRecord): { storeItems?: AnyRecord[] } {
   const storeItems = storeItemsOf(args.store_items);
-  return {
-    ...(inScope.length ? { inScope } : {}),
-    ...(cut.length ? { cut } : {}),
-    ...(storeItems.length ? { storeItems } : {}),
-  };
+  return storeItems.length ? { storeItems } : {};
 }
 
 /** Does the call name a folder other than the one this chat is pinned to? */
@@ -388,19 +360,16 @@ export const tools: HarnessTool[] = [
   {
     name: "start_unattended_run",
     description:
-      "Start a timed build — only when Loop is on and the ask is to build the game or change it substantially, never for research, a plan or a small change. Know first what the game is and how it should look; when nobody said, ask_user instead. It starts from this folder as you leave it when your reply ends: call it once, last, then recap.",
+      "Start a timed Loop — when Loop is on and the ask is a build of the game or work that needs hours, never for research, a plan or a small change. It starts from this folder as you leave it when your reply ends: call it once, last, then recap.",
     parameters: {
       type: "object",
       properties: {
         goal: str(GOAL_WORDS),
-        direction: str("the feeling bar — AAA photoreal rainy city, etc. Titles optional"),
+        direction: str(DIRECTION_WORDS),
         project: str("folder slug for a chat that has no folder yet, lowercase; a chat already bound to one keeps it"),
-        notes: str("optional extra for the critic"),
-        in_scope: list(IN_SCOPE_WORDS),
-        cut: list(CUT_WORDS),
         store_items: storeList(),
       },
-      required: ["goal", "direction"],
+      required: ["goal"],
     },
     async execute(args, ctx) {
       const loop = ctx.loop;
@@ -425,20 +394,19 @@ export const tools: HarnessTool[] = [
         goal: String(args.goal).trim(),
         project,
         reference: {
-          name: String(args.direction).trim() || String(args.goal).trim(),
+          name: String(args.direction ?? "").trim() || String(args.goal).trim(),
           shots: [],
           kind,
-          ...(args.notes ? { notes: String(args.notes).trim() } : {}),
           ...(frames.length ? { frames } : {}),
         },
         hours,
         engine: builderEngine,
         ...(builderModel ? { model: builderModel } : {}),
-        ...scopeArgs(args),
+        ...storeArgs(args),
       };
       return {
         ok: true,
-        content: `Starting ${hours}h${towardTheBar(kind, run.reference.name, frames.length)}`,
+        content: `Starting ${hours}h.`,
         stopTurn: TurnStop.LaunchRun,
         details: { run },
       };
@@ -448,21 +416,17 @@ export const tools: HarnessTool[] = [
   {
     name: "start_autopilot",
     description:
-      "Launch a build (a Loop) — when Loop is on and the ask is to build the game or change it substantially, or, Loop on or off, when the user asks for a Loop in words; never for research, a plan or a small change. Know first what the game is and how it should look; when nobody said, ask_user instead. The build runs as the launch rules say for this project; it starts from this folder as you leave it when your reply ends. Call it once, last, then recap.",
+      "Start a Loop — when Loop is on and the ask is a build of the game or work that needs hours, or, Loop on or off, when the user asks for a Loop in words; never for research, a plan or a small change. It starts from this folder as you leave it when your reply ends. Call it once, last, then recap.",
     parameters: {
       type: "object",
       properties: {
         goal: str(GOAL_WORDS),
-        direction: str("the visual/feeling bar — a named game or film, or a described feeling"),
+        direction: str(DIRECTION_WORDS),
         project: str("folder slug for a chat that has no folder yet, lowercase; a chat already bound to one keeps it"),
-        notes: str("optional extra for the critics — what makes the reference good"),
-        textual_reference: str("if the user had no images: the game/film they named as the vibe"),
-        in_scope: list(IN_SCOPE_WORDS),
-        cut: list(CUT_WORDS),
         store_items: storeList(),
         hours: { type: "number", description: LOOP_HOURS_WORDS },
       },
-      required: ["goal", "direction"],
+      required: ["goal"],
     },
     async execute(args, ctx) {
       const autopilot = autopilotOf(args, ctx);
@@ -479,11 +443,9 @@ export const tools: HarnessTool[] = [
       // outrank the binding, and the run then built in a second, empty folder while the user
       // typed into the chat attached to the first.
       const project = slugProject(args.project || args.direction || args.goal);
-      // No cap set means run until what was asked is verified and nothing blocks it — with a 24h
-      // safety ceiling so a wedged run can never hold the machine forever.
+      // No cap set means run until the lead finishes it — with a 24h safety ceiling.
       const capped = typeof autopilot.hours === "number" && autopilot.hours > 0;
       const hours = capped ? clampRunHours(autopilot.hours) : MAX_RUN_HOURS;
-      const notes = criticNotes(args);
       // Same leak guard as start_unattended_run: the interview's borrowed local model must not
       // become the contractor's model.
       const { engine: builderEngine, model: builderModel } = commissionedBuilder(autopilot, ctx);
@@ -492,10 +454,9 @@ export const tools: HarnessTool[] = [
         project,
         mode: RunMode.Autopilot,
         reference: {
-          name: String(args.textual_reference || args.direction).trim() || String(args.goal).trim(),
+          name: String(args.direction ?? "").trim() || String(args.goal).trim(),
           shots: [],
           kind,
-          ...(notes ? { notes } : {}),
           ...(frames.length ? { frames } : {}),
         },
         hours,
@@ -506,13 +467,12 @@ export const tools: HarnessTool[] = [
         // The composer's roles panel: orchestrator / workers / judges, applied at launch
         // (model-roles.ts) — the interview's own model is never inferred as the builders'.
         ...(autopilot.roles && typeof autopilot.roles === "object" ? { roles: autopilot.roles } : {}),
-        ...(autopilot.reviewPlan === true ? { reviewPlan: true } : {}),
-        ...scopeArgs(args),
+        ...storeArgs(args),
       };
       const clock = capped ? `Building for up to ${hours} h` : await untilDoneWords(ctx, ctx.project ?? project);
       return {
         ok: true,
-        content: `${clock}${towardTheBar(kind, run.reference.name, frames.length)}`,
+        content: `${clock}.`,
         stopTurn: TurnStop.LaunchRun,
         details: { run },
       };
@@ -520,7 +480,7 @@ export const tools: HarnessTool[] = [
   },
 ];
 
-/** How an ∞ build runs, as the launch tool answers: a web game's until what was asked is verified, any other project's until a reviewer's yes. */
+/** How an ∞ build runs, as the launch tool answers: until its lead finishes it. */
 async function untilDoneWords(ctx: ToolCtx, project: string): Promise<string> {
   // A game list Genex can't read leaves the web words, as before.
   const listed = await Promise.resolve()
@@ -540,15 +500,6 @@ function referenceKind(frames: readonly AnyRecord[]): ReferenceKind {
   return frames.length >= REFERENCE_MIN_STILLS ? ReferenceKind.Reference : ReferenceKind.Direction;
 }
 
-/** What the critics are told beyond the direction: the user's notes and the vibe they named. */
-function criticNotes(args: AnyRecord): string {
-  const vibe = args.textual_reference ? `the user names "${args.textual_reference}" as the vibe` : "";
-  return [args.notes, vibe]
-    .map((s) => String(s ?? "").trim())
-    .filter(Boolean)
-    .join("; ");
-}
-
 /**
  * Who builds the commissioned run. ctx.model is whatever this interview chat ran on. When a
  * contractor is the builder the chat borrowed a local model — that model belongs to the chat,
@@ -558,12 +509,6 @@ function commissionedBuilder(commission: AnyRecord, ctx: ToolCtx): { engine: str
   const engine = commission.builderEngine ?? ctx.engine ?? EngineId.Ollama;
   const model = commission.builderModel ?? (engine === ctx.engine ? ctx.model : undefined);
   return { engine, model };
-}
-
-/** The launch line's second half: the bar the run builds toward. */
-function towardTheBar(kind: string, name: string, stills: number): string {
-  if (kind === ReferenceKind.Reference) return ` toward "${name}" with ${stills} stills as the bar.`;
-  return ` toward "${name}" — the feeling is the bar.`;
 }
 
 /** A new folder's name from the words of the ask: its first few telling words, joined by dashes. */

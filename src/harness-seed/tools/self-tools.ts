@@ -1,8 +1,7 @@
 /**
  * Self-modification — hard constraint #1 (full recursion), PLAN.md §5.3.
  *
- * These tools let the studio rewrite its own loop, tools, skills, prompts and memory policy while
- * it runs. That is the root of the experiment, and it is only survivable because of what the
+ * These tools let the studio read and change its own loop, tools, skills and prompts while it runs. That is the root of the experiment, and it is only survivable because of what the
  * substrate guarantees underneath: every edit is preceded by a snapshot, a restart is the only
  * way to load new code, and a version that cannot boot is rewound by the watchdog without a human.
  *
@@ -11,7 +10,6 @@
  */
 import { readFile, readdir, stat } from "node:fs/promises";
 import path from "node:path";
-import { MAX_VALUE_CHARS, normalise, shouldRemember } from "../memory/policy.ts";
 import type { AnyRecord, HarnessTool, ToolCtx } from "../types/harness.d.ts";
 import { HostMethod } from "../loop/host-methods.ts";
 import { EventKind, RunEvent } from "../loop/run-events.ts";
@@ -85,23 +83,10 @@ function notApplied(file: string, reason: string): { ok: false; content: string 
   };
 }
 
-/**
- * What `remember` says it kept: the fact, and what fitting memory (`normalise`) cut or let go — a
- * fact cut or dropped without a word was lost silently.
- */
-function rememberedWords(key: string, { clipped, dropped }: { clipped: boolean; dropped: string[] }): string {
-  return [
-    `Remembered ${key}${clipped ? ` (only its first ${MAX_VALUE_CHARS} characters — memory keeps facts short)` : ""}.`,
-    dropped.length ? `Memory is full, so the oldest facts were dropped: ${dropped.join(", ")}.` : "",
-  ]
-    .filter(Boolean)
-    .join(" ");
-}
-
 export const tools: HarnessTool[] = [
   {
     name: "list_own_files",
-    description: "List your own source: loop, tools, skills, prompts, judge, memory.",
+    description: "List your own source: loop, tools, skills, prompts.",
     parameters: { type: "object", properties: { dir: str("subdirectory, default '.'") } },
     async execute(args, ctx) {
       const base = selfPath(ctx, args.dir ?? ".");
@@ -266,48 +251,6 @@ export const tools: HarnessTool[] = [
         .slice(-(args.limit ?? 20))
         .map((e) => `- ${e.created_at} ${e.data.event_type}: ${JSON.stringify(e.data.payload)}`);
       return rows.length ? rows.join("\n") : "You have not changed yourself yet.";
-    },
-  },
-
-  {
-    name: "remember",
-    description:
-      "Store a durable fact about this studio, this machine, or the user's taste. Memory is injected into every prompt, so keep it short and specific.",
-    parameters: {
-      type: "object",
-      properties: { key: str("short key"), value: str("the fact") },
-      required: ["key", "value"],
-    },
-    async execute(args, ctx) {
-      // The policy is harness code, so the studio can change what it considers worth keeping.
-      if (!shouldRemember(args.key, args.value)) {
-        return {
-          ok: false,
-          content: `Not remembered: "${args.key}" looks transient. Memory is for durable facts — put anything about the current task in the log instead.`,
-        };
-      }
-      const memory = ((await ctx.call(HostMethod.ArtifactRead, { artifactId: "memory" })) ?? {}) as AnyRecord;
-      // Re-set, not overwritten in place: a fact just updated is the newest, never the next to go.
-      delete memory[args.key];
-      memory[args.key] = args.value;
-      const fitted = normalise(memory);
-      await ctx.call(HostMethod.ArtifactWrite, { artifactId: "memory", value: fitted });
-      return rememberedWords(args.key, {
-        clipped: fitted[args.key] !== args.value,
-        dropped: Object.keys(memory).filter((key) => !(key in fitted)),
-      });
-    },
-  },
-
-  {
-    name: "forget",
-    description: "Remove a memory that turned out to be wrong or stale.",
-    parameters: { type: "object", properties: { key: str("key to remove") }, required: ["key"] },
-    async execute(args, ctx) {
-      const memory = ((await ctx.call(HostMethod.ArtifactRead, { artifactId: "memory" })) ?? {}) as AnyRecord;
-      delete memory[args.key];
-      await ctx.call(HostMethod.ArtifactWrite, { artifactId: "memory", value: normalise(memory) });
-      return `Forgot ${args.key}.`;
     },
   },
 

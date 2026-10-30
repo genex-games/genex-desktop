@@ -29,7 +29,7 @@
 import { setTimeout as delay } from "node:timers/promises";
 import type { HarnessCtx, Run } from "../types/harness.d.ts";
 import type { DelegateImage, EngineDescriptor, FinishRoundAnswer, HookImage } from "../types/host-api.d.ts";
-import type { Evidence } from "./evidence.ts";
+import type { HealthCheck } from "./health-check.ts";
 import { type CaptureLine, FINISH_ANSWER, reviewerBrief } from "./finish-check-prompts.ts";
 import {
   FINISH_REASON_CHARS,
@@ -44,7 +44,6 @@ import {
 import {
   freshProofIn,
   jobLines,
-  judgeLines,
   type Proof,
   pictureType,
   proofNamesOf,
@@ -63,7 +62,6 @@ import {
   REVIEW_PICTURE_MAX_BYTES,
   recordCaptures,
 } from "./observers.ts";
-import { scopeLines } from "./scope-prompts.ts";
 import { CLIP_REASON, clipMarked } from "./text.ts";
 import { MINUTE_MS, SECOND_MS } from "./time.ts";
 
@@ -246,7 +244,7 @@ export interface FinishScope {
   /** The other messages to the Loop (relayed by the chat's agent, in its words), oldest first. */
   relayed?: readonly string[];
   /** The caller's own preview pass (a lease-aware one), if any. */
-  previewPass?: (path: string) => Promise<Evidence | null>;
+  previewPass?: (path: string) => Promise<HealthCheck | null>;
   /** A wait on `now`'s clock that a test may drive (the observers' deadline, the reviewer's watch); a real timer without. */
   sleep?: (ms: number) => Promise<void>;
   /** Whether the run has ended (or is closing): no round opens then, and one under way records nothing more. */
@@ -391,8 +389,6 @@ interface Gathered {
   proofAt: Set<number>;
   proof: Proof;
   jobs: string[];
-  /** The blind judges' latest answer to each question of the run. */
-  judges: string[];
 }
 
 /** A finish hook's picture as a reviewer may be handed it: a PNG or a JPEG by its bytes, within the cap; else nothing. */
@@ -420,7 +416,7 @@ function hookCapture(images: readonly HookImage[]): Capture[] {
 
 /**
  * Capture the game (bounded by `FINISH_OBSERVE_MS`), read the lead's proof, the run's job results
- * and its blind judges' answers, and record the captures the harness made (the preview's, and the
+ *, and record the captures the harness made (the preview's, and the
  * lead's pictures).
  */
 async function gather(scope: FinishScope, claim: FinishClaim): Promise<Gathered> {
@@ -429,7 +425,7 @@ async function gather(scope: FinishScope, claim: FinishClaim): Promise<Gathered>
   const observeScope = { run, threadId, game: scope.game, previewPass: scope.previewPass, clock };
   const observed = await observeGame(ctx, observeScope, scope.now() + observeMs(scope));
   const proof = await readProof(ctx, run, scope.leadFolder, claim.proof, MESSAGE.proofArtifacts(scope.tally.round));
-  const [jobs, judges] = await Promise.all([jobLines(ctx, run), judgeLines(ctx, run, threadId)]);
+  const jobs = await jobLines(ctx, run);
   const leads: Capture[] = proof.images.length
     ? [
         {
@@ -443,7 +439,7 @@ async function gather(scope: FinishScope, claim: FinishClaim): Promise<Gathered>
     : [];
   await recordCaptures(ctx, threadId, run.runId, [...observed, ...leads]);
   const proofAt = new Set(leads.map((_, n) => observed.length + n));
-  return { captures: [...observed, ...leads, ...hookCapture(claim.hookImages)], proofAt, proof, jobs, judges };
+  return { captures: [...observed, ...leads, ...hookCapture(claim.hookImages)], proofAt, proof, jobs };
 }
 
 /** A capture as the brief tells of it: what was taken, and how much of it the reviewer was handed. */
@@ -469,7 +465,6 @@ function briefFor(
   const hookNotes = claim.hookNotes.slice(0, HOOK_NOTES_MAX).map((note) => clipMarked(note, CLIP_REASON));
   return reviewerBrief({
     goal: String(scope.run.goal ?? ""),
-    scope: scopeLines(scope.run),
     said: quoted(scope.said),
     relayed: quoted(scope.relayed ?? []),
     claim: clipMarked(claim.summary, CLAIM_CHARS),
@@ -477,7 +472,6 @@ function briefFor(
     proof: gathered.proof,
     hookNotes,
     jobs: gathered.jobs,
-    judges: gathered.judges,
     captures: gathered.captures.map((capture, n) => captureLine(capture, told.attached[n])),
     facts: factsOfGame(scope.game),
     folder: scope.leadFolder,

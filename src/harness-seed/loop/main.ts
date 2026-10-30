@@ -19,7 +19,6 @@ import { compactThread } from "./compact.ts";
 import { compactSession } from "./session-compact.ts";
 import { directorTool } from "./director.ts";
 import { chatWorkerTool } from "./workers/chat-workers.ts";
-import { CHAT_JUDGE_CAPABILITY, judgeFromChat, servesChatJudge } from "./chat-judge.ts";
 import { loadSkills } from "./skills.ts";
 import { runSelftest } from "./selftest.ts";
 import { MessageQueue } from "./message-queue.ts";
@@ -35,7 +34,6 @@ import { heldRuns, StatusLane, type Studio } from "./studio-state.ts";
 import type { AnyRecord, ForwardedCall, HarnessCtx, Host, HostCall } from "../types/harness.d.ts";
 import type { DispatchAction } from "../types/host-api.d.ts";
 
-export { judgeableFirst } from "./chat-dispatch.ts";
 export { loopRunRefusal } from "./run-dispatch.ts";
 
 /** The status a thread has when nothing is working on it; the host reads it as the empty line. */
@@ -136,7 +134,6 @@ export async function createStudio(host: Host) {
     capabilities: [
       ...CAPABILITIES,
       ...(servesLocalRoles() ? [LOCAL_ROLES_CAPABILITY] : []),
-      ...(servesChatJudge() ? [CHAT_JUDGE_CAPABILITY] : []),
     ],
 
     async healthcheck() {
@@ -191,10 +188,6 @@ async function dispatch({ studio, messages, compactions, busyThreads }: Loop, ac
       // The chat's own session called a worker tool; the pool of its turn answers on the dispatch
       // result. Never throws: a refusal is a sentence to the lead.
       return chatWorkerTool(action);
-    case "chat_judge":
-      // The chat's own session asked a blind judge to play its game; the outcome travels back on
-      // the dispatch result for the host to record. Never throws: a refusal is an answer.
-      return judgeFromChat(studio.scoped(action.threadId, StatusLane.Chat), action);
     case "run_stop": {
       const active = studio.activeRuns.get(action.runId);
       if (active) {

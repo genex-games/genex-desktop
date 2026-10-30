@@ -1,25 +1,13 @@
 /**
- * A finished build reopened, as the run reads it. After a build whose run seated a lead has
- * finished, a message with Loop on that asks for more reopens the SAME run (the chat's side is
- * loop/reopen-run.ts): the chat rewrites the run's journal (`reopenedJournal`) and starts the run
- * again as a resume. The rewrite drops what a new run starts afresh — its clock, so it works the
- * Loop's new budget; its wake state, so it is not wrapped up for having been asked what next; the
- * last health pass, taken on a head it may no longer stand on; its verified checkpoints and progress
- * review — records its required outcomes as waiting for the lead's plan for the ask (`goals: null`),
- * and marks the journal (`director.reopened`). A kept older setup.ts, journal.ts or wake.ts from
- * before outcomes were kept reads those fields as a new run's.
- *
- * The run reads the mark for where it forks (`reopenCommits`, setup.ts) and for its words: the
- * first digest's heading, the resume note, and the workers "of the finished build" rather than
- * "from before the pause" (reopen-prompts.ts). Its functions take plain facts or the run; they
- * are not bound onto it. It imports only names every older seed exported
- * (tests/fixtures/seed-exports-pre-reopen.json).
+ * A finished build reopened, as the run reads it. After a build has finished, a message with Loop on
+ * that asks for more reopens the SAME run (the chat's side is loop/reopen-run.ts): the chat rewrites
+ * the run's journal (`reopenedJournal`) and starts the run again as a resume, with a fresh clock, no
+ * wake state and no last health check. The run reads the mark for where it forks (`reopenCommits`,
+ * setup.ts) and for its resume note. Its functions take plain facts or the run; they are not bound.
  */
 import { isAncestor } from "../git.ts";
 import { isCommit } from "../shell.ts";
-import { REOPEN_ERA } from "./reopen-prompts.ts";
 import type { AnyRecord, HarnessCtx } from "../../types/harness.d.ts";
-import type { PriorEra } from "./journal-prompts.ts";
 import type { LoopRun } from "./loop-run.ts";
 
 /** A reopen as the journal keeps it: when, and the head the finished build stood on (the log's close). */
@@ -29,34 +17,21 @@ export interface ReopenMark {
 }
 
 /**
- * A finished run's journal reopened: `run` in place of the saved one (the Loop's new budgets), no
- * clock (a fresh budget), no wake state, no last health pass; the head the log's close names (a
- * rewound reopen left a withdrawn one on the journal), and the mark. Its required outcomes are the
- * new commission's to set (`goals: null`, which journal.ts reads as waiting for the lead's plan for
- * the ask, never as the old plan's parts), and its checkpoints and progress review are earned anew:
- * the finished run's verified outcomes would tell the lead to finish, or refuse every worker for
- * the ask. So is the art director's word: its review judged the finished build for the old ask, and
- * the finish it turned back once (`shipFinishRefused`) was the old commission's, not the new one's.
- * So are the reviewer's no's (`finishTally`): their count and reasons were the old ask's; only its
- * round number goes on, so no new round shares a number with an old one.
- * Everything else — the plan, the workers, the defects nobody owns, the log — goes on.
+ * A finished run's journal reopened: `run` in place of the saved one (the Loop's new budgets), no clock
+ * (a fresh budget), no wake state, no last health check, no reviewer's no's; the head the log's close
+ * names, and the mark. Everything else — the log, the notes — goes on.
  */
 export function reopenedJournal(journal: AnyRecord, run: AnyRecord, mark: ReopenMark): AnyRecord {
   const {
     clock: _spent,
     wake: _asked,
-    integrationHealthy: _lastPass,
-    firstVerifiedCheckpoint: _first,
-    latestVerifiedCheckpoint: _latest,
-    softReviewAt: _reviewed,
-    shipFinishRefused: _turnedBack,
-    lastShip: _shipReview,
+    integrationHealthy: _lastCheck,
     ...director
   } = journal.director ?? {};
   const integrationHead = mark.finishedHead ?? director.integrationHead ?? null;
   const finishTally = freshTally(director.finishTally);
   const counted = finishTally ? { finishTally } : {};
-  return { ...journal, run, director: { ...director, ...counted, goals: null, integrationHead, reopened: mark } };
+  return { ...journal, run, director: { ...director, ...counted, integrationHead, reopened: mark } };
 }
 
 /** A finished run's finish checks for a new ask: no no's, no reasons, the round number kept; none when there was none. */
@@ -99,16 +74,3 @@ export async function reopenCommits(
   return { baseCommit: liveHead, forkCommit: inFolder ? liveHead : finishedHead };
 }
 
-/** How the workers of the run before are spoken of: of the finished build when reopened, else (the default) before a pause. */
-export function priorEra(loopRun: Pick<LoopRun, "resume" | "priorJournal">): PriorEra | undefined {
-  return isReopened(loopRun) ? REOPEN_ERA : undefined;
-}
-
-/**
- * A reopened run's required outcomes are its lead's plan for the ask (`goals: null`): outcomes a
- * kept journal.ts from before that rule rebuilt from the finished plan's parts are set aside. A run
- * that is not a reopen, or a Resume of one that planned, keeps what it restored.
- */
-export function outcomesAwaitPlan(loopRun: Pick<LoopRun, "resume" | "priorJournal" | "state">): void {
-  if (isReopened(loopRun) && loopRun.priorJournal?.director?.goals === null) loopRun.state.goals = undefined;
-}

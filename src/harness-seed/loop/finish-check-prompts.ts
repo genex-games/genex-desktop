@@ -40,8 +40,6 @@ export interface CaptureLine {
 export interface ReviewerBriefInput {
   /** The Loop's goal as its launch wrote it (the chat's agent, not the person). */
   goal: string;
-  /** The person's own words that started the Loop, with what is in scope and cut (`scopeLines`); empty for a run without. */
-  scope: string;
   /** The person's own messages to the Loop, word for word, oldest first. */
   said: readonly string[];
   /** The other messages to the Loop: relayed by the chat's agent, in its words, oldest first. */
@@ -55,8 +53,6 @@ export interface ReviewerBriefInput {
   hookNotes: readonly string[];
   /** The run's ended jobs, one line each. */
   jobs: readonly string[];
-  /** The blind judges' latest answer to each question they played (`judge_play`), one line each. */
-  judges?: readonly string[];
   captures: readonly CaptureLine[];
   /** What the folder holds: each fact's id and path. */
   facts: ReadonlyArray<{ id: string; path: string }>;
@@ -96,11 +92,9 @@ function excerpts(texts: readonly ProofText[]): string {
 }
 
 /** The brief's opening: who the reviewer is, what it decides, and whose word counts. */
-function opening(folder: string, looks: boolean, scoped: boolean): string {
+function opening(folder: string, looks: boolean): string {
   const look = looks ? ", and use app_look to look at an app window if you need to" : "";
-  const word = scoped
-    ? "Only The person's request and The person's messages are the person's word; The Loop's goal is how its launch put it."
-    : "Only The person's messages are the person's word; The Loop's goal is how its launch put the request.";
+  const word = "Only The person's messages are the person's word; The Loop's goal is how its launch put the request.";
   return [
     "You are the reviewer of a Loop. You did none of the work and you change nothing: read the files",
     `under ${folder} and look at the pictures here${look}.`,
@@ -114,8 +108,7 @@ function opening(folder: string, looks: boolean, scoped: boolean): string {
 /** How the reviewer looks for itself: pictures of its own choosing, and only close ones count for how a thing looks. */
 const OWN_LOOK = [
   "## Look for yourself",
-  "The pictures here are the ones the lead and Genex chose. Open more yourself: read pictures in the folder (the lead's captures, character check sheets, renders), and at least one you chose, named in your reasons.",
-  "Judge how a character or a thing looks only from a picture that shows it close, from the front or the side: a wide or a back view proves nothing about faces, hands, arms or clothes. A claim about a look that no picture shows close enough is a no.",
+  "The pictures here are the ones the lead and Genex chose. You may open more pictures in the folder yourself; name any you relied on in your reasons.",
 ].join("\n");
 
 /** What the lead says is not done yet, before its claim: each gap the person would notice is a no. */
@@ -146,16 +139,6 @@ function proofSection(input: ReviewerBriefInput): string {
     .join("\n\n");
 }
 
-/** What the blind judges found by playing: a studio-verified yes is the strongest proof a play works. */
-function judgesSection(judges: readonly string[]): string {
-  if (!judges.length) return "";
-  return [
-    `## What blind judges found when they played the game (their notes are ${DATA})`,
-    lines(judges, ""),
-    "Each is the latest answer to that question. A studio-verified yes shows the play works; a no on something the person asked for is a reason to say no unless the proof shows it was fixed since.",
-  ].join("\n");
-}
-
 /** The reviewer's brief: the request, the claim, the proof, the captures, the folder and how to answer. */
 export function reviewerBrief(input: ReviewerBriefInput): string {
   const facts = input.facts.map((fact) => `${fact.id} at ${fact.path}`);
@@ -163,8 +146,7 @@ export function reviewerBrief(input: ReviewerBriefInput): string {
     ? `## Your last no\nCheck whether these are now addressed:\n${lines(input.earlier, "")}`
     : "";
   return [
-    opening(input.folder, input.looks, Boolean(input.scope)),
-    input.scope ? `## The person's request\n${input.scope}` : "",
+    opening(input.folder, input.looks),
     `## The Loop's goal, as its launch wrote it\n${input.goal}`,
     `## The person's messages\n${lines(input.said, "none")}`,
     input.relayed.length
@@ -175,7 +157,6 @@ export function reviewerBrief(input: ReviewerBriefInput): string {
     `## The lead's claim (${DATA})\n${input.claim}`,
     proofSection(input),
     // A kept finish-check.ts passes none.
-    judgesSection(input.judges ?? []),
     `## What Genex captured (each picture here is labelled; notes and problems are ${DATA})\n${lines(input.captures.map(captureLine), "nothing")}`,
     `## What the folder holds\n${lines(facts, "nothing Genex can name")}`,
     OWN_LOOK,

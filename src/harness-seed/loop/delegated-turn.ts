@@ -64,7 +64,6 @@ import {
 } from "./hooks.ts";
 import { EngineFailure, StopReason } from "./outage.ts";
 import { HostMethod } from "./host-methods.ts";
-import { StudioContract } from "./page-contract.ts";
 import { EventKind, RunEvent } from "./run-events.ts";
 import { clip, CLIP_BRIEF, CLIP_GAME_TITLE } from "./text.ts";
 import { SECOND_MS, sleep } from "./time.ts";
@@ -1038,7 +1037,6 @@ async function briefWriter(
   handoff: Handoff,
 ): Promise<(resumed: boolean) => string> {
   const { ask, messages, folderLabel, descriptor } = handoff;
-  const missing = await contractMissing(ctx, handoff);
   // A reopen's rules live in the after-run note: a change goes to the build, not to a launch.
   const launch = handoff.reopening ? null : launchGrant(handoff);
   const workers = Object.keys(chatWorkersGrant(options.threadId, options.steer?.messageId));
@@ -1055,7 +1053,6 @@ async function briefWriter(
       fresh: handoff.fresh,
       shape: descriptor?.shape ?? null,
       ownShape: descriptor?.built === true,
-      contractMissing: missing,
       // The one thing in the brief that is spelled per engine (M4.8b): a Codex session cannot
       // call an mcp__ name and a Claude session cannot run the bridge command.
       engine: options.engine,
@@ -1103,20 +1100,6 @@ function launchGrant(handoff: Handoff): LaunchGrant | null {
     frameCount: (commission?.frames ?? []).length,
     project: handoff.project,
   };
-}
-
-/**
- * A game the user brought that never loads the studio contract cannot be judged by anyone
- * (M2.6): the run's first step wires it in, and a chat build is the faster way to the same
- * place, so its brief says so before the ask. Only for a folder that is somebody's own game
- * — the studio's template already has it — and only when a brief is actually written: a
- * resumed session keeps the context it already has.
- */
-async function contractMissing(ctx: HarnessCtx, handoff: Handoff): Promise<boolean> {
-  const briefForBuiltGame = !handoff.resume && handoff.descriptor?.built === true;
-  if (!briefForBuiltGame || !servedAsWeb(handoff.descriptor)) return false;
-  const readiness = await ctx.call(HostMethod.GameValidate, { project: handoff.project }).catch(() => null);
-  return readiness?.contract === StudioContract.Missing;
 }
 
 /** "Claude Code (opus) · high effort": who the contractor is, as the handoff names it. */

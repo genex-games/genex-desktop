@@ -183,8 +183,7 @@ function agentsText(engine: string | undefined, options: Pick<LeadBriefOptions, 
   const tool = (name: LeadTool) => runTool(engine, name);
   return `WORKERS: ${tool(LeadTool.WorkerStart)} with a type below starts one in a copy of the game while you keep building (at most ${MAX_RUNNING_AGENTS} at once). Its task is all it sees: what to make, its size in metres, style, pivot and where it goes. Genex lands its files in assets/agents/<id>/ with a manifest and the exact import call, and tells you; import and place it yourself, then ${tool(LeadTool.WorkerMark)} it used or rejected so the news stops. No type: a generic worker (isolation read, copy or lock). ${tool(LeadTool.WorkerStatus)} and ${tool(LeadTool.WorkerWait)} follow them.
 ${lines.join("\n")}
-- ${runTool(engine, LeadTool.Critic)}: fresh eyes beside the references and ART.md, at each milestone and every 45–60 minutes; show it the player's view and character. It advises, but its REQUIRED items (a defect seen in two looks in a row) come before any new mechanic, space or feature.
-- ${runTool(engine, LeadTool.JudgePlay)}: a blind judge plays it and answers one yes/no.`;
+- ${runTool(engine, LeadTool.Critic)}: fresh eyes beside the references and ART.md, at each milestone and every 45–60 minutes; show it the player's view and character. It advises, but its REQUIRED items (a defect seen in two looks in a row) come before any new mechanic, space or feature.`;
 }
 
 function savingText(engine: string | undefined, untilFinish: boolean | null): string {

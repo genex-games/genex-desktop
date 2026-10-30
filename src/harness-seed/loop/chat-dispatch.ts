@@ -1,4 +1,3 @@
-import { CompletionPolicy } from "./completion-policy.ts";
 /**
  * One user message, from the queue to its answer: which run (if any) it belongs to, the turn that
  * answers it — the chat's own, after a run its lead led too (after-loop-run.ts), else the run's
@@ -49,7 +48,6 @@ import { servesOpenLoop } from "./director/open/contract.ts";
 import { OLDER_LEAD_JOURNAL_KIND } from "./director/open/older-journal.ts";
 import { withSteers } from "./chat-steer-prompts.ts";
 import { HostMethod } from "./host-methods.ts";
-import { StudioContract } from "./page-contract.ts";
 import { EventKind, RunEvent, RunMode, RunState } from "./run-events.ts";
 import { HOUR_MS } from "./time.ts";
 import { endClock } from "./wall-clock.ts";
@@ -60,12 +58,11 @@ import { followupAsk } from "./studio-prompts.ts";
 import { type ActiveRun, type RunReopen, StatusLane, type Studio } from "./studio-state.ts";
 import { clampRunHours, MAX_RUN_HOURS } from "./config.ts";
 import { CLIP_GAME_TITLE } from "./text.ts";
-import { createScope, userWordsInLog } from "./scope.ts";
 import { type StoreItem, storeItemsOf, storeLaunchWords, storeScopeItems } from "./store-items.ts";
 import { closeCarriedPool } from "./workers/carry.ts";
 import type { AnyRecord, ForwardedCall, HarnessCtx, HarnessEvent, Host, HostCall } from "../types/harness.d.ts";
 import type { MessageOrigin, ModelPreferences, RunSpec } from "../types/host-api.d.ts";
-import { messageQueueState, type QueueAction, type SteerHandle } from "./message-queue.ts";
+import { type QueueAction, type SteerHandle } from "./message-queue.ts";
 
 /** The run an interview commissions when it names no length, in hours. */
 const DEFAULT_RUN_HOURS = 8;
@@ -95,11 +92,9 @@ const MESSAGE = {
   buildPromised: (end: string) => `Building until about ${end} — keep the app open and the computer awake. `,
   // ∞ has no end to promise; its 24 h ceiling is a date, since as a bare clock it is "now".
   untilSatisfiedPromised: (ceiling: string) =>
-    `It finishes when the required outcomes are verified, with a safety stop by about ${ceiling} — keep the app open and the computer awake. `,
+    `It finishes when the lead calls finish, with a safety stop by about ${ceiling} — keep the app open and the computer awake. `,
   planWindow:
     "Your plan's usage window can pause it partway; it waits out the reset and resumes itself, or one tap on Resume.",
-  connectionFirst:
-    " Your game doesn't have the studio's connection yet, so the first thing this build does is add it — without it nothing can tell whether a change made the game better.",
 } as const;
 
 /** The run a message belongs to, when it names one (the queued action carries the same fields). */
@@ -950,11 +945,8 @@ export async function launchFromIntake(
   // What the user sells for Nex rides the run's scope, so no plan can cut it; the build lists each
   // item once it has drawn its picture, since the store takes none without one.
   const store = storeItemsOf(spec.storeItems);
-  const run = intakeRun(spec, action, project, readiness, await userWordsSoFar(host, action), store);
-  // Such a Loop adds no connection and ends on a reviewer's yes: its own promise.
-  const launched = openLoop
-    ? openLaunchPromise(run.budgets, Date.now())
-    : launchPromise(run.budgets, run.readiness, Date.now());
+  const run = intakeRun(spec, action, project, store);
+  const launched = openLoop ? openLaunchPromise(run.budgets, Date.now()) : launchPromise(run.budgets, Date.now());
   const promise = [launched, storeLaunchWords(store)].filter(Boolean).join("\n\n");
   // The board did its job — the run spec carries the frames now; the next interview on this
   // thread starts with a clean slate.
@@ -988,19 +980,17 @@ function openLoopLaunches(): boolean {
 }
 
 /**
- * Why a Loop on this game can't start on the run's engine, or null: a Loop on a project that isn't a
- * web game needs an engine the host seats in place (`leadsInPlace`: its lead is the chat's own, with
- * its jobs and looks); a web game keeps classic Autopilot on any engine.
+ * Why a Loop can't start on the run's engine, or null: every Loop is led by the chat's own session,
+ * so it needs an engine that keeps one (`leadsInPlace`). An engine that keeps none (Ollama's tool loop)
+ * stays plain chat.
  */
 async function needsSessionRefusal(host: Host, game: AnyRecord | null, spec: AnyRecord): Promise<string | null> {
-  const openLoop = spec.mode === RunMode.Autopilot && game !== null && loopProfileOf(game) === LoopProfile.Open;
-  if (!openLoop) return null;
   const engine = typeof spec.engine === "string" ? spec.engine : EngineId.Ollama;
   const listed = await host.call(HostMethod.EngineDescribe, {}).catch(() => []);
   const described = (Array.isArray(listed) ? listed : []).find((e) => e.id === engine);
   return leadsInPlace(described)
     ? null
-    : OPEN_LOOP_REFUSAL.needsSession(described?.label ?? engine, openLoopBecause(game));
+    : OPEN_LOOP_REFUSAL.needsSession(described?.label ?? engine, game && loopProfileOf(game) === LoopProfile.Open ? openLoopBecause(game) : undefined);
 }
 
 /**
@@ -1028,118 +1018,40 @@ function intakeProject(action: QueueAction, spec: AnyRecord, games: readonly { n
 
 /**
  * The time a commissioned run is given: its hours (held to the run limits), and whether the
- * composer asked for ∞, which runs until what was asked is verified, with those hours as the ceiling.
+ * composer asked for ∞, which runs until the lead finishes it, with those hours as the ceiling.
  * The app reads these back (`src/shared/run-state.ts` `recordedRunLoop`).
  */
 export function intakeBudgets(spec: AnyRecord): RunSpec["budgets"] {
   const hours = clampRunHours(Number(spec.hours) || DEFAULT_RUN_HOURS);
   return {
     wallClockMs: Math.round(hours * HOUR_MS),
-    completionPolicy: spec.untilSatisfied === true ? CompletionPolicy.Goal : CompletionPolicy.Duration,
     ...(spec.untilSatisfied === true ? { untilSatisfied: true } : {}),
   };
 }
 
-/**
- * The user's own messages for this build, as the log has them (scope.ts `userWordsInLog`): since the
- * thread's previous run, up to the one that launched, never the chat's own reports nor a model's
- * words. With none in the log, the launching message's own text.
- */
-async function userWordsSoFar(host: Host, action: QueueAction): Promise<string[]> {
-  const events: HarnessEvent[] = await host
-    .call(HostMethod.EventsList, { threadId: action.threadId })
-    .then((listed) => (Array.isArray(listed) ? listed : []))
-    .catch(() => []);
-  const said = launchWords(events, action.messageId);
-  return said.length ? said : [String(action.text ?? "")];
-}
 
-/**
- * The user's words a launched build is for: since the thread's previous run, through the launching
- * message, then each message its session read mid-turn (delivered into it, and not handed back since).
- * Those read after the launch was recorded reach the build no other way: the session can't launch
- * twice. A message sent meanwhile that never joined keeps its own turn, so it isn't counted here.
- */
-export function launchWords(events: readonly HarnessEvent[], messageId: string | undefined): string[] {
-  const asked = userWordsInLog(events, { through: messageId, sinceLastRun: true });
-  return messageId ? [...asked, ...joinedWords(events, messageId)] : asked;
-}
-
-/** The words of the messages read into `messageId`'s turn and still part of it, in the order sent. */
-function joinedWords(events: readonly HarnessEvent[], messageId: string): string[] {
-  const read = readInto(events, messageId);
-  const words: string[] = [];
-  for (const message of messageQueueState(events).messages.values()) {
-    const text = message.action?.text;
-    // A message the chat queued itself (a command's result) is never the person's words.
-    const fromThePerson = message.action?.origin === undefined || message.action?.origin === null;
-    if (read.has(message.messageId) && fromThePerson && typeof text === "string" && text.trim()) words.push(text);
-  }
-  return words;
-}
-
-/** The messages whose latest steer record says `messageId`'s turn read them: a later hand-back or re-steer undoes it. */
-function readInto(events: readonly HarnessEvent[], messageId: string): Set<string> {
-  const read = new Set<string>();
-  for (const event of events) {
-    if (event.data?.type !== EventKind.Custom) continue;
-    const payload = event.data.payload ?? {};
-    const id = payload.messageId;
-    if (typeof id !== "string") continue;
-    const type = event.data.event_type;
-    if (type === RunEvent.CoordinatorMessageDelivered && payload.into === messageId) read.add(id);
-    else if (type === RunEvent.CoordinatorMessageRequeued || type === RunEvent.CoordinatorMessageSteering)
-      read.delete(id);
-  }
-  return read;
-}
-
-/**
- * What the run is for (loop/scope.ts): the user's words as the log has them, the in-scope and cut
- * lists the launch named, and what it sells in the Genex store. None when there are no
- * words to keep.
- */
-function intakeScope(spec: AnyRecord, asked: readonly string[], store: readonly StoreItem[]): AnyRecord {
-  const scope = createScope({
-    asked,
-    inScope: Array.isArray(spec.inScope) ? spec.inScope : [],
-    cut: Array.isArray(spec.cut) ? spec.cut : [],
-    store: storeScopeItems(store),
-  });
-  return scope.asked.length ? { scope } : {};
+/** The goal a launch runs: the chat's goal, and what it sells in the Genex store when it sells anything. */
+function intakeGoal(spec: AnyRecord, store: readonly StoreItem[]): string {
+  const goal = String(spec.goal ?? "").trim();
+  const items = storeScopeItems(store);
+  return items.length ? `${goal}\n\nSell in the Genex store: ${items.join("; ")}.` : goal;
 }
 
 /** The run an interview commissioned, as `run_start` takes it. */
-function intakeRun(
-  spec: AnyRecord,
-  action: QueueAction,
-  project: string,
-  readiness: { contract?: string; problems?: string[] } | null,
-  asked: readonly string[] = [],
-  store: readonly StoreItem[] = [],
-): RunSpec & AnyRecord {
+function intakeRun(spec: AnyRecord, action: QueueAction, project: string, store: readonly StoreItem[] = []): RunSpec & AnyRecord {
   return {
     runId: `run_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
-    goal: spec.goal,
+    goal: intakeGoal(spec, store),
     project,
     reference: spec.reference,
     budgets: intakeBudgets(spec),
-    // What the folder still needs, as `game.validate` found it a moment ago. Not a refusal —
-    // `loopRunRefusal` above decides those — but the run's own first job: a page that never
-    // loads the studio contract cannot be judged at all, so the run carries the fact and the
-    // director installs it before anyone builds (M2.6, loop/director.ts `installContract`).
-    ...(readiness
-      ? { readiness: { contract: readiness.contract ?? "loaded", problems: readiness.problems ?? [] } }
-      : {}),
-    ...(spec.reviewPlan ? { reviewPlan: true } : {}),
     ...(spec.mode ? { mode: spec.mode } : {}),
     ...(typeof spec.keepBuildingFrom === "string" ? { keepBuildingFrom: spec.keepBuildingFrom } : {}),
     ...(spec.engine ? { engine: spec.engine } : {}),
     ...(spec.model ? { model: spec.model } : {}),
     ...(spec.roles ? { roles: spec.roles } : {}),
-    ...intakeScope(spec, asked, store),
-    // The run inherits the interview's effort: builders work at exactly the model and effort
-    // the user generates with, never a quieter tier than the chat that commissioned them.
+    // The run inherits the interview's effort: workers work at exactly the model and effort the user
+    // generates with, never a quieter tier than the chat that commissioned them.
     ...commissionedWith(action),
   };
 }
@@ -1152,28 +1064,12 @@ function commissionedWith(action: QueueAction): { effort?: string; preferences?:
   };
 }
 
-/**
- * The one sentence a run owes the user before they walk away when their game cannot yet be
- * judged: the studio has to wire its own connection into the game before it can tell whether
- * anything it changes is an improvement, and that is the first thing this run does (M2.6). Said
- * here, in the chat, rather than discovered in the morning as "the other build could not be
- * observed" — the words no one outside the harness could read.
- */
-export function judgeableFirst(readiness: { contract?: string } | null | undefined): string {
-  if (readiness?.contract !== StudioContract.Missing) return "";
-  return MESSAGE.connectionFirst;
-}
-
-/** What the chat promises the moment a commissioned run launches at `now`: when it ends, and what it needs. */
-export function launchPromise(
-  budgets: RunSpec["budgets"],
-  readiness: { contract?: string } | null | undefined,
-  now: number,
-): string {
+/** What the chat promises the moment a commissioned run launches at `now`: when it ends. */
+export function launchPromise(budgets: RunSpec["budgets"], now: number): string {
   const when = budgets.untilSatisfied
     ? MESSAGE.untilSatisfiedPromised(dayAndClockAfter(budgets.wallClockMs, now))
     : MESSAGE.buildPromised(clockAfter(budgets.wallClockMs, now));
-  return when + MESSAGE.planWindow + judgeableFirst(readiness);
+  return when + MESSAGE.planWindow;
 }
 
 /**

@@ -29,14 +29,10 @@ export type OpenTool = (typeof OpenTool)[keyof typeof OpenTool];
 
 /** A turn of the open lead's lasts at most this long; it goes on at once after. */
 export const OPEN_TURN_MS = 45 * MINUTE_MS;
-/** The lead hears a reminder to save this long after its last save point, while a turn works. */
-export const SAVE_REMINDER_MS = 15 * MINUTE_MS;
 /** How often Genex asks the project's app whether it is well, when a plugin hooks `health`. */
 export const HEALTH_POLL_MS = 15 * SECOND_MS;
 /** Genex reopens a stopped app at most this many times before it goes back to the last save point. */
 export const MAX_REOPENS = 2;
-/** The lead is reminded of a read-only worker's fresh look after this long without one. */
-export const FRESH_EYES_MS = 45 * MINUTE_MS;
 /** What a yes still needs of the lead's `finish` call: the workers settled and the last checkpoint. */
 export const OPEN_CLOSE_MS = 2 * MINUTE_MS;
 /** The longest save point label Genex keeps. */
@@ -72,8 +68,6 @@ export interface OpenJournal {
   /** Lines the lead's next message carries (what the plugins said, what Genex did between turns). */
   carried: string[];
   crashes: number;
-  /** When the lead last started a read-only worker (the fresh look), or null. */
-  lastReaderAt: number | null;
 }
 
 /** Whether the lead asked for a rewind or a restart that its turn's end has not run yet. */
@@ -89,7 +83,6 @@ export function newOpenJournal(): OpenJournal {
     between: { rewind: null, restart: false },
     carried: [],
     crashes: 0,
-    lastReaderAt: null,
   };
 }
 
@@ -133,7 +126,6 @@ export function openJournalOf(saved: AnyRecord | null | undefined): OpenJournal 
     between: { rewind: rewindOf(between.rewind), restart: between.restart === true },
     carried: Array.isArray(open.carried) ? open.carried.filter((line): line is string => typeof line === "string") : [],
     crashes: countOf(open.crashes),
-    lastReaderAt: typeof open.lastReaderAt === "number" ? open.lastReaderAt : null,
   };
 }
 
@@ -282,10 +274,6 @@ export interface OpenLoop {
   wentBackSeq: number | null;
   /** A look at the project's app under way (`health.ts`): one at a time, never awaited by the wake loop's reads. */
   healthLook: Promise<void> | null;
-  /** The turn the save reminder was last said in, or null. */
-  remindedTurn: number | null;
-  /** When the fresh-eyes line was last said, or null. */
-  freshEyesAt: number | null;
 }
 
 /** Whether a plugin of the project restarts its app (`restore.before` or `restore.after`): its lead is offered `restart`. */

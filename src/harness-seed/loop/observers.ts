@@ -9,7 +9,8 @@
  */
 import type { CapturedImage, DelegateImage, GameProject, ObserverCaptureResult } from "../types/host-api.d.ts";
 import type { HarnessCtx, Run } from "../types/harness.d.ts";
-import { type Evidence, gatherEvidence, type Shot } from "./evidence.ts";
+import { checkHealth, type HealthCheck } from "./health-check.ts";
+import { pictureFile } from "./second-opinion.ts";
 import { OBSERVER_CAPTURE_EVENT, ObserverSource, PREVIEW_OBSERVER } from "./finish-contract.ts";
 import { CoreFact, FACT_ROOT, type FactsOfDescriptor, servedFactsOf } from "./folder-facts.ts";
 import { olderHost } from "./hooks.ts";
@@ -28,8 +29,6 @@ export const REVIEW_PICTURE_MAX_BYTES = 3_750_000;
 /** All the pictures of one review together at most, in bytes. */
 export const REVIEW_IMAGES_MAX_BYTES = 20 * 1024 * 1024;
 
-/** The preview pass's pictures are JPEGs. */
-const PREVIEW_MIME = "image/jpeg";
 /** Where the preview pass's pictures at a finish land among the run's shots. */
 const PREVIEW_LABEL_PREFIX = "finish/preview";
 /** The captures the harness records itself; the host records a plugin's and a checkpoint's. */
@@ -86,7 +85,7 @@ export interface ObserveScope {
   run: Run;
   threadId: string;
   game: ObservedGame;
-  previewPass?: (path: string) => Promise<Evidence | null>;
+  previewPass?: (path: string) => Promise<HealthCheck | null>;
   clock?: ObserveClock;
 }
 
@@ -101,42 +100,22 @@ function problemCapture(observer: string, label: string, source: ObserverSource,
   return { observer, label, source, images: [], recording: [], problem };
 }
 
-/** A shot's or a frame's pixels, when it has any. */
-const pixelsOf = (shot: Shot): string | null => (typeof shot.base64 === "string" && shot.base64 ? shot.base64 : null);
-
-/** A pass's picture as a capture's. */
-function pictureOf(shot: Shot, name: string, data: string): CaptureImage {
-  return { name, ...(typeof shot.path === "string" ? { file: shot.path } : {}), mimeType: PREVIEW_MIME, data };
-}
-
 /**
- * An evidence pass as a capture: its camera shots with pixels as stills (at most `PREVIEW_STILLS`),
- * the motion frames the pass took as its recording, in order (at most `RECORDING_FRAMES`), and its
+ * A health check as a capture: its screenshot of the page as the one still (no recording), and its
  * problems as the capture's problem.
  */
-export function captureOfEvidence(evidence: Evidence, label: string): Capture {
-  const shots: Shot[] = Array.isArray(evidence.shots) ? evidence.shots : [];
-  const frames: Shot[] = Array.isArray(evidence.motion) ? evidence.motion : [];
-  const images = shots
-    .flatMap((shot) => {
-      const data = pixelsOf(shot);
-      return data ? [pictureOf(shot, String(shot.camera), data)] : [];
-    })
-    .slice(0, PREVIEW_STILLS);
-  const recording = frames
-    .flatMap((frame, index) => {
-      const data = pixelsOf(frame);
-      return data ? [pictureOf(frame, `m${String(index + 1).padStart(2, "0")}`, data)] : [];
-    })
-    .slice(0, RECORDING_FRAMES);
-  const problems = Array.isArray(evidence.problems) ? evidence.problems.map(String) : [];
+export async function captureOfCheck(check: HealthCheck, label: string): Promise<Capture> {
+  const shot = check.picture ? await pictureFile(check.picture) : null;
+  const images: CaptureImage[] = shot
+    ? [{ name: "page", ...(check.picture ? { file: check.picture } : {}), mimeType: shot.mimeType, data: shot.data }]
+    : [];
   return {
     observer: PREVIEW_OBSERVER,
     label,
     source: ObserverSource.Preview,
     images,
-    recording,
-    ...(problems.length ? { problem: problems.join("; ") } : {}),
+    recording: [],
+    ...(check.problems.length ? { problem: check.problems.join("; ") } : {}),
   };
 }
 
@@ -218,17 +197,17 @@ async function previewCapture(ctx: HarnessCtx, scope: ObserveScope, path: string
   if (clock.now() >= until) return unanswered(MESSAGE.noTime);
   const pass = scope.previewPass
     ? scope.previewPass(path)
-    : gatherEvidence(ctx, {
-        run: scope.run,
+    : checkHealth(ctx, {
+        project: scope.run.project,
         root: scope.game.dir,
         ...(path === FACT_ROOT ? {} : { entry: `${path}/index.html` }),
-        motion: RECORDING_FRAMES,
-        labelPrefix: PREVIEW_LABEL_PREFIX,
+        runId: scope.run.runId,
+        label: `${PREVIEW_LABEL_PREFIX}/${path === FACT_ROOT ? "root" : path}`,
       });
   try {
     const evidence = await beforeDeadline(pass, until, clock);
     if (evidence === LATE) return unanswered(MESSAGE.noTime);
-    return evidence ? captureOfEvidence(evidence, label) : unanswered(MESSAGE.noLook);
+    return evidence ? await captureOfCheck(evidence, label) : unanswered(MESSAGE.noLook);
   } catch (err) {
     return unanswered(MESSAGE.couldNotLook(String((err as Error)?.message ?? err)));
   }

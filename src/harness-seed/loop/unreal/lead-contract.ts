@@ -11,13 +11,12 @@
  * runner (`lead.ts` and its siblings) imports it; `seed-contracts.test.ts` holds its plugin tool
  * names to the bundled plugins'.
  */
-import { JUDGE_PLAY_TOOL } from "../judge-play-prompts.ts";
 import type { Run } from "../../types/harness.d.ts";
 import type { LeadSeat } from "../director/lead-session.ts";
-import { MAX_WAIT_S } from "../director/budgets.ts";
+import { MAX_WORKER_WAIT_S } from "../workers/contract.ts";
 import { DirectorTool } from "../director/tool-specs.ts";
 import type { FinishTally } from "../finish-check.ts";
-import type { Side } from "../judge.ts";
+import type { Side } from "../verdict.ts";
 import type { WorkerMode, WorkerState } from "../outcomes.ts";
 import type { JournalPhase } from "../run-events.ts";
 import { MINUTE_MS } from "../time.ts";
@@ -42,8 +41,6 @@ export const LeadTool = {
   WorkerStop: WorkerTool.Stop,
   WorkerMark: WorkerTool.Mark,
   Critic: "critic",
-  /** A blind judge plays the game and answers one yes/no question (`judge-play.ts`): the chat's own name for it. */
-  JudgePlay: JUDGE_PLAY_TOOL,
   RebuildUnreal: "rebuild_unreal",
   Note: DirectorTool.Note,
   /** The lead's claim that the game meets the request, which a reviewer checks: the director's own name. */
@@ -52,7 +49,7 @@ export const LeadTool = {
 export type LeadTool = (typeof LeadTool)[keyof typeof LeadTool];
 
 /** The longest `worker_wait`, in seconds: the director's own cap. */
-export const MAX_AGENT_WAIT_S = MAX_WAIT_S;
+export const MAX_AGENT_WAIT_S = MAX_WORKER_WAIT_S;
 
 // ── sub-agents ──────────────────────────────────────────────────────────────────────────────
 

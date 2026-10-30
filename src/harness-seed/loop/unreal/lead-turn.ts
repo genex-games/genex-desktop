@@ -11,7 +11,7 @@
  * pauses the run.
  */
 import type { DelegateResult, HookReport } from "../../types/host-api.d.ts";
-import { durationCommission } from "../director/commission.ts";
+import { timedLoop } from "../time-cap.ts";
 import { isResumeFailure } from "../chat-session.ts";
 import { MIN_DELEGATE_TIMEOUT_MS } from "../config.ts";
 import type { LeadLine } from "../director/lead-line.ts";
@@ -452,7 +452,7 @@ async function briefFor(lead: LeadRun): Promise<string> {
     template: lead.template,
     templateKind: lead.templateKind,
     minutes: minutes(Math.max(0, totalMs)),
-    untilFinish: !durationCommission(run),
+    untilFinish: !timedLoop(run),
     cpp: lead.cpp.available,
     offers: lead.offers,
     references: lead.references,
