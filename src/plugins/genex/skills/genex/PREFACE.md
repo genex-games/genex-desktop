@@ -1,7 +1,7 @@
 # Genex in AI Game Studio
 
-You are building inside AI Game Studio. Below the upstream marker is Genex's own guide, unchanged.
-Where it disagrees with this preface, this preface wins.
+You are building inside AI Game Studio. Below the upstream marker is Genex's own guide, with the
+passages of advice Studio does not ship taken out. Where it disagrees with this preface, this preface wins.
 
 ## What does not apply in Studio
 
@@ -13,13 +13,13 @@ Where it disagrees with this preface, this preface wins.
   is written. The Genex cards Studio carries are this plugin's skills, listed in your brief; read
   one with `genex__skill {"name":"<skill>"}`. The lane cards the "Use it" section points to are
   `genex-tool-model`, `genex-tool-character`, `genex-tool-texture`, `genex-tool-audio` and
-  `genex-tool-image`: read the one for a lane before its first call.
+  `genex-tool-image`, one per lane.
 
 ## Commands, as Studio tools
 
 - Generation (`image`, `model`, `model segment|rig|animate`, `texture`, `sfx`, `music`, `voice`,
-  `character`, `animations search`) and `wait`: `genex__asset`. Call it with operation `status`
-  first; it reports the account, credits and live lanes that `doctor` would. Its description lists
+  `character`, `animations search`) and `wait`: `genex__asset`. Its operation `status` reports
+  the account, credits and live lanes that `doctor` would. Its description lists
   the operations and which provider each lane is; its `options` parameter lists each lane's
   options. Studio passes `--out-dir` and `--no-wait` itself, and delivered files land in the game,
   so wire in those local paths. In a Godot game they land in its project (`godot/assets/...`),
@@ -36,18 +36,17 @@ Where it disagrees with this preface, this preface wins.
   approves each call, because it spends Nex (Genex's currency, which the cards call coin) or changes
   what the game sells. A store item's `image`, `model` and `package` name paths inside this game,
   and `items add` writes `genex-items/<id>/` into it; `shop publish` is not available, because Studio puts
-  a game's items on sale when it is published. Read the `genex-items` skill first. A thing priced in Nex is a store item, listed this
-  way by default; coins, gold or gems are the game's own currency unless the person says they are
+  a game's items on sale when it is published. Read the `genex-items` skill first. A thing priced in Nex is a store item; coins, gold or gems are the game's own currency unless the person says they are
   for real money.
 - `publish` and `promote`: `genex__publish {"operation":"gallery"}`, which also updates the draft;
   use it when the user wants the game published. `preview` alone: `genex__publish
   {"operation":"draft"}`, a test build that leaves the public version as it is. Follow a publish
   with `genex__publish-status` for the job and the links.
-- `cover`, and the frame `preview` picks up from `.genex/scratch/cover.png`: the game's demo named
-  `genex-cover`, checked with `genex__cover {"operation":"shoot"}`. Publish (`genex__publish`)
-  shoots it again and sends it, and `genex__cover-set` sends it now; `genex__cover
-  {"operation":"status"}` is `npx genex cover` with no file. Read `genex__skill
-  {"name":"genex-cover"}` first, and never save a frame in `.genex/scratch`.
+- `cover`, and the frame `preview` picks up from `.genex/scratch/cover.png`: `genex__cover
+  {"image":"<path in the game folder>"}` keeps the picture (and an optional clip) of the game as
+  its cover, and its answer says who chose the cover on Genex, as `npx genex cover` with no file
+  does. Publish (`genex__publish`) sends the kept picture and `genex__cover-set` sends it now; the
+  `cover` skill has the requirement. Never save a frame in `.genex/scratch`.
 - `npm i @genex-ai/multiplayer`: `genex__package {"package":"@genex-ai/multiplayer"}`, and
   `npm i @genex-ai/embed-sdk`: `genex__package {"package":"@genex-ai/embed-sdk"}`. Studio picks
   the version and installs it without asking anyone. In a game made from Studio's template it maps
@@ -65,5 +64,5 @@ Where it disagrees with this preface, this preface wins.
 Building the game never uses Genex credits: it runs on the user's own plan. A generation Genex
 refuses for too few credits keeps its card in Studio, which says so and offers Get credits, then
 Make it. So never relay the balance, price or refill date, and never retry: add at most one short
-sentence ("The dragon needs credits; a simple box stands in for now.") and carry on with a stand-in.
+sentence saying what waits for credits, and carry on.
 This holds for every lane card's "Out of credits" line too.

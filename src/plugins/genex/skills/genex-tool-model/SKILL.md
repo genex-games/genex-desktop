@@ -19,7 +19,7 @@ unchanged. Where it disagrees with this preface, this preface wins.
   Its meshes are dense (150000 faces by default): use `low-poly` or `face-limit` for props seen in
   numbers.
 
-<!-- upstream @genex-ai/cli-demo/templates/skills/genex-tool-model/SKILL.md v1.36.17 sha256 f3b1f01dad1bc7bb44aa550bbb8ee4d589963a0574be7e341541d1c1e692b4b3 -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-tool-model/SKILL.md v1.36.17 sha256 f8e9b4c5b1e7d70ba25f21e7c56de036230b96b05cb145d56b333298d763997d -->
 ---
 name: genex-tool-model
 description: Generate a 3D model (GLB) from a text prompt or a reference image with `npx genex model` — props, vehicles, weapons, furniture, environment pieces, anything the scene needs as geometry. Also splits a model into named parts, rigs any mesh across 7 body plans, and retargets ready-made animation clips onto that rig. Files download to ./assets.
@@ -36,7 +36,7 @@ For a character or creature with a skeleton and animations, use
 ## Run
 
 ```bash
-npx genex model "weathered wooden barrel with rusted iron bands"
+npx genex model "wooden barrel with iron bands"
 npx genex model --image ./reference-photo.jpg       # build it FROM an image; prompt optional
 ```
 
@@ -64,7 +64,7 @@ npx genex model rig <model-id> --type quadruped
 npx genex model animate <rig-id> --preset walk,run
 ```
 
-- **`segment`** — one GLB split into addressable parts: doors, turrets, magazines, destructibles. `--granularity simple|balanced|detailed`. The parts are named by index (`tripo_part_0`, `tripo_part_1`, …), not by what they are — find the one you want by its bounds (the sails are the part with the widest extent, the door the lowest thin one), then keep that index in your manifest.
+- **`segment`** — one GLB split into addressable parts: doors, turrets, magazines, destructibles. `--granularity simple|balanced|detailed`. The parts are named by index (`tripo_part_0`, `tripo_part_1`, …), not by what they are — find the one you want by its bounds (the sails are the part with the widest extent, the door the lowest thin one), then keep that index.
 - **`rig`** — a skeleton for any mesh, across 7 body plans: `biped`, `quadruped`, `hexapod`, `octopod`, `avian`, `serpentine`, `aquatic`. The plan is auto-detected; `--type` picks it. A mesh that cannot be rigged is refused and refunded before the paid step.
 - **`animate`** — retarget ready-made clips onto a rig, billed per clip. biped: `idle|walk|run|dive|climb|jump|slash|shoot|hurt|fall|turn`; quadruped/hexapod/octopod: `walk`; serpentine/aquatic: `march`.
 
@@ -106,8 +106,8 @@ built in code.
 A generated GLB has no shared "front": one building's door faces −x, the next
 one's +z. Do not guess and do not spend a render per side — read the mesh once
 on load (bounding box, and where the detail is: the door, the counter, the
-opening) or check it in a viewer, then record a per-model `front` (a yaw in
-your manifest) beside its path and apply it when you place it. Ask for a facing
+opening) or check it in a viewer, then record a per-model `front` (a yaw)
+beside its path and apply it when you place it. Ask for a facing
 in the prompt too (`"…front toward +Z"`) — it helps, it does not guarantee.
 
 ## Troubleshooting

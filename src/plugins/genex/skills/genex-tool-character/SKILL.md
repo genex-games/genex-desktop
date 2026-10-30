@@ -23,7 +23,7 @@ unchanged. Where it disagrees with this preface, this preface wins.
 - These lanes are Meshy; Studio has no provider option. A prop, vehicle or building is the model
   card's lane (Tripo), or Local Blender's.
 
-<!-- upstream @genex-ai/cli-demo/templates/skills/genex-tool-character/SKILL.md v1.36.17 sha256 c3ec9044ef2b3e88edccaf601221876f1276253c2533e92e2e0ba6c280cbadd4 -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-tool-character/SKILL.md v1.36.17 sha256 c972dbde0e270ac753cae921bd081ca39b800699b90ccf649ab34ed416d6a397 -->
 ---
 name: genex-tool-character
 description: Generate a rigged, animated 3D character or creature with `npx genex character` and `npx genex creature`, then give it any move in plain words with `npx genex character animate`. Covers the guided concept-to-final flow, the one-shot direct path, the 8-way locomotion set, and searching the ready-made animation library. Files download to ./assets.
@@ -60,7 +60,7 @@ same route without the player controller pack.
 Use this when creating a new look from text and a person is choosing it:
 
 ```bash
-npx genex character "stylized sci-fi courier, practical layered clothing"
+npx genex character "courier in layered clothing"
 # → three concept candidates. SHOW them and wait for an explicit pick.
 
 npx genex character preview <concept-id> --candidate 2 --user-approved
@@ -94,7 +94,7 @@ Pick per role and say so in one line:
 When nobody is choosing — a background NPC, a quick test:
 
 ```bash
-npx genex character "stylized sci-fi courier" --direct-text
+npx genex character "courier" --direct-text
 npx genex creature "hulking bone seraph, upright stance"
 ```
 
@@ -148,9 +148,8 @@ one line per request naming its route and clip count. READ IT: a phrase that
 reads as movement expands to a set, and a stance or an attack is one clip.
 Show that plan to the user when the cost matters.
 
-Derive the list from the game's states first — idle, the moves it actually
-walks, each attack, hurt, defeat — and request those. A full set nobody's
-controller plays is generation time and load time spent on nothing.
+A full set nobody's controller plays is generation time and load time spent
+on nothing.
 
 ## When a batch does not fully land
 

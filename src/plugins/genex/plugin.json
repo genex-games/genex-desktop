@@ -160,13 +160,8 @@
   "skills": [
     {
       "name": "creator-mcp",
-      "summary": "Genex's creator MCP (genex-creator__ tools) for searching games and animations and checking generation status, and which Studio tools replace its generate, credits and publish calls. Read before using any genex-creator__ tool.",
+      "summary": "Genex's creator MCP (genex-creator__ tools): searching games and animations, checking generation status, and which Studio tools replace its generate, credits and publish calls.",
       "file": "skills/creator-mcp/SKILL.md"
-    },
-    {
-      "name": "asset-preference",
-      "summary": "Which tool makes which asset while Genex is on: Local Blender for hard-surface pieces, Genex for characters, creatures, sound, music, textures and images, and what to say when a lane lacks a provider. Read before making or generating a game's assets.",
-      "file": "skills/asset-preference/SKILL.md"
     },
     {
       "name": "publishing",
@@ -176,99 +171,87 @@
     },
     {
       "name": "publishing-apps",
-      "summary": "Publishing a Unity, Godot or Unreal game on Genex as Mac, Windows and Linux apps (and a web version): where each build goes and the Publish button. Read when such a game is to be published.",
+      "summary": "Publishing a Unity, Godot or Unreal game on Genex as Mac, Windows and Linux apps (and a web version): where each build goes and the Publish button.",
       "file": "skills/publishing-apps/SKILL.md"
     },
     {
       "name": "cover",
-      "engines": ["web"],
       "summary": "The game's Genex cover: what genex.games needs (a picture, an optional clip), how genex__cover keeps them and when Studio sends them.",
       "file": "skills/cover/SKILL.md"
     },
     {
       "name": "genex",
-      "summary": "Genex's own guide to its asset toolkit, with Studio's map from each Genex CLI command to the Studio tool that runs it (genex__asset, genex__publish, genex__cover, genex__cli, genex__cli-paid, genex__package). Read it before using Genex beyond asset generation.",
+      "summary": "Genex's own guide to its asset toolkit, with Studio's map from each Genex CLI command to the Studio tool that runs it (genex__asset, genex__publish, genex__cover, genex__cli, genex__cli-paid, genex__package).",
       "file": "skills/genex/SKILL.md"
     },
     {
       "name": "genex-threejs-multiplayer",
       "engines": ["web"],
-      "summary": "Realtime multiplayer for Three.js games with @genex-ai/multiplayer: movement sync, shared objects, host authority, matchmaking. MANDATORY before networking code. Test it on the Genex draft link with two different players; Studio's preview stays single-player.",
+      "summary": "The @genex-ai/multiplayer API for a web game: rooms, matchmaking, shared state, host and ownership, rate limits, and the draft link that runs it (Studio's preview is single-player).",
       "file": "skills/genex-threejs-multiplayer/SKILL.md",
-      "references": [
-        "skills/genex-threejs-multiplayer/references/realtime-patterns.md",
-        "skills/genex-threejs-multiplayer/references/genre-recipes.md",
-        "skills/genex-threejs-multiplayer/references/host-physics.md",
-        "skills/genex-threejs-multiplayer/references/genex-netcode-feel-checklist.md"
-      ]
+      "references": ["skills/genex-threejs-multiplayer/references/realtime-patterns.md"]
     },
     {
       "name": "genex-threejs-embed-auth",
       "engines": ["web"],
-      "summary": "Player identity, saves and leaderboards with @genex-ai/embed-sdk, whose token multiplayer needs. Read before writing boot code for a game that will be published on Genex. The owner can try sign-in on the published draft; server saves persist only once the game is in the gallery.",
+      "summary": "The @genex-ai/embed-sdk API: player identity, saves and leaderboards, the token multiplayer needs, and what works on the published draft and in the gallery.",
       "file": "skills/genex-threejs-embed-auth/SKILL.md",
       "references": ["skills/genex-threejs-embed-auth/references/shells.md"]
     },
     {
       "name": "genex-llm-in-games",
       "engines": ["web"],
-      "summary": "Call a language model from a running game (NPC dialogue, quests, judging what the player typed) that the player pays for and approves on Genex: the call modes, benchmarking the price with genex__cli-paid, and handling every refusal.",
+      "summary": "Calling a language model from a running game that the player pays for and approves on Genex: the call modes, benchmarking the price with genex__cli-paid, and its refusals.",
       "file": "skills/genex-llm-in-games/SKILL.md",
       "references": ["skills/genex-llm-in-games/references/pricing.md"]
     },
     {
       "name": "genex-tool-llm",
       "engines": ["web"],
-      "summary": "Read first when a request implies a language model running while someone plays the finished game: on Genex that is a platform feature the player pays for and approves, never a key on the author's account.",
+      "summary": "A language model running while someone plays the finished game: on Genex a platform feature the player pays for and approves, never a key on the author's account.",
       "file": "skills/genex-tool-llm/SKILL.md"
     },
     {
       "name": "genex-monetization",
       "engines": ["web"],
-      "summary": "Selling for Nex, Genex's currency: purchase flow, delivery and the hard rules (no paid randomness, no gambling). Fixed Nex prices are store items listed with shop add, as genex-items says; dynamic payments only for amounts decided while playing.",
+      "summary": "Selling for Nex, Genex's currency: the purchase flow, delivery and the hard rules (no paid randomness, no gambling); fixed Nex prices are store items (genex-items), dynamic payments are for amounts decided while playing.",
       "file": "skills/genex-monetization/SKILL.md"
     },
     {
       "name": "genex-items",
       "engines": ["web"],
-      "summary": "Read first when anything is priced in Nex, Genex's currency, or is to be sold for real money: list each such thing with genex__cli shop add first, without asking and before the SDK or publish, so its card shows. Coins or gold are the game's own. Also: getEntitlements(), items add.",
+      "summary": "Genex store items: anything priced in Nex is a store item listed with genex__cli shop add (its picture required), getEntitlements(), and other creators' items with items add. Coins or gold are the game's own.",
       "file": "skills/genex-items/SKILL.md"
     },
     {
       "name": "genex-tool-publish",
       "engines": ["web"],
-      "summary": "Put the game on the web with Genex: the glue a published game needs, the draft link to hand the user, size limits and the preflight report. Publishing itself runs through genex__publish.",
+      "summary": "Putting the game on the web with Genex: the glue a published game needs, the draft link, size limits and the preflight report; publishing itself runs through genex__publish.",
       "file": "skills/genex-tool-publish/SKILL.md"
     },
     {
-      "name": "genex-cover",
-      "summary": "Read before making or refreshing this game's Genex cover: once it looks like itself, after a big visual change, or before publishing while it has none. How to stage the genex-cover demo from the game's own world, light and effects (no HUD, no text, 16:9), judge it with genex__cover and send it.",
-      "file": "skills/genex-cover/SKILL.md",
-      "engines": ["web"]
-    },
-    {
       "name": "genex-tool-model",
-      "summary": "Genex's card for the model lane (Tripo): text or image to GLB, the quality knobs (auto-size, low-poly, face-limit), segment, rig and animate. Read it before your first genex__asset model call.",
+      "summary": "Genex's card for the model lane (Tripo): text or image to GLB, the quality knobs (auto-size, low-poly, face-limit), segment, rig and animate.",
       "file": "skills/genex-tool-model/SKILL.md"
     },
     {
       "name": "genex-tool-character",
-      "summary": "Genex's card for rigged characters and creatures (Meshy): the one-shot and guided routes, polycount, height and pose, Uthana import, plain-word animation and the free clip catalog. Read it before your first character or creature call.",
+      "summary": "Genex's card for rigged characters and creatures (Meshy): the one-shot and guided routes, polycount, height and pose, Uthana import, plain-word animation and the free clip catalog.",
       "file": "skills/genex-tool-character/SKILL.md"
     },
     {
       "name": "genex-tool-texture",
-      "summary": "Genex's card for tiling PBR texture sets (base colour, normal, roughness) and terrain-seamless surfaces. Read it before your first genex__asset texture call.",
+      "summary": "Genex's card for tiling PBR texture sets (base colour, normal, roughness) and terrain-seamless surfaces.",
       "file": "skills/genex-tool-texture/SKILL.md"
     },
     {
       "name": "genex-tool-audio",
-      "summary": "Genex's card for sound effects (duration, loop for ambient beds), looping music and short voice lines, all MP3. Read it before your first sfx, music or voice call.",
+      "summary": "Genex's card for sound effects (duration, loop for ambient beds), looping music and short voice lines, all MP3.",
       "file": "skills/genex-tool-audio/SKILL.md"
     },
     {
       "name": "genex-tool-image",
-      "summary": "Genex's card for images: decals, signage, UI art and icons, transparent cut-outs, edits and upscales. Read it before your first genex__asset image call.",
+      "summary": "Genex's card for images: decals, signage, UI art and icons, transparent cut-outs, edits and upscales.",
       "file": "skills/genex-tool-image/SKILL.md"
     },
     {
@@ -278,7 +261,7 @@
     },
     {
       "name": "plugin-author",
-      "summary": "How to write a Genex plugin for an engine or tool Genex has no plugin for, with a complete example: where it goes in this project, checking it with plugin_check, and how the person loads it. Read it before writing one.",
+      "summary": "How to write a Genex plugin for an engine or tool Genex has no plugin for, with a complete example: where it goes in this project, checking it with plugin_check, and how the person loads it.",
       "file": "skills/plugin-author/SKILL.md",
       "references": [
         "skills/plugin-author/references/manifest.md",

@@ -1,0 +1,386 @@
+{
+  "genex-threejs-multiplayer/SKILL.md": [
+    {
+      "replace": " MANDATORY for any multiplayer game — load before writing networking code.",
+      "with": ""
+    },
+    {
+      "from": "**This skill is mandatory for any multiplayer game. Load it before you write a single line of",
+      "to": "whole reason this skill exists."
+    },
+    {
+      "from": "Read [references/realtime-patterns.md](references/realtime-patterns.md) for the complete movement",
+      "to": "[netcode feel gate](references/genex-netcode-feel-checklist.md)."
+    },
+    {
+      "section": "## Testing multiplayer: on the preview link, with two different players"
+    },
+    {
+      "replace": "## Trust model (say it plainly in your game's copy)",
+      "with": "## Trust model"
+    },
+    {
+      "replace": "This is **casual, favor-the-player multiplayer** (Haxball, not Rocket League): you are\nauthoritative over yourself",
+      "with": "Each client is authoritative over itself"
+    },
+    {
+      "replace": " Great for friends and casual lobbies; don't promise\nranked-grade fairness.",
+      "with": ""
+    },
+    {
+      "section": "## Choose one net model from the player experience"
+    },
+    {
+      "replace": "returns a handle whose **`session` is `null` while searching** — render your OWN \"finding a match…\"\nHUD from `mm.matchmaking` (its",
+      "with": "returns a handle whose **`session` is `null` while searching**; `mm.matchmaking` reports the search (its"
+    },
+    {
+      "replace": "(they never fire); your teams live in `shared` (mandatory section below), never in\n`mm.matchmaking.teams` — reading that empty map is how every player ends up \"on one team\".",
+      "with": "(they never fire). `mm.matchmaking.teams` is empty on `open`: a team game keeps its own team map\n(in `shared`, say)."
+    },
+    {
+      "from": "| Team assignment | The MANDATORY team section right below this table — the **host** reconciles a balanced `id → team` map into `shared`; every client only reads it. Never computed per-client, never read from `mm.matchmaking.teams` (empty on `open`). |",
+      "to": "| Team assignment | The MANDATORY team section right below this table — the **host** reconciles a balanced `id → team` map into `shared`; every client only reads it. Never computed per-client, never read from `mm.matchmaking.teams` (empty on `open`). |"
+    },
+    {
+      "section": "#### Team games — the HOST assigns teams into `shared` (MANDATORY, balanced from the first frame)"
+    },
+    {
+      "section": "#### Waiting room / lobby — two patterns"
+    },
+    {
+      "from": "### WHEN to call `matchmake()` — it IS the \"Play Online\" button, never a boot call (MANDATORY)",
+      "to": "[references/genre-recipes.md](references/genre-recipes.md)."
+    },
+    {
+      "replace": "\nfor your own team game use `open` + the team section below)",
+      "with": "\nfor your own team game use `open`)"
+    },
+    {
+      "from": "#### Quorum loss after start is game-owned — enforce it independently",
+      "to": "match rule."
+    },
+    {
+      "from": "### WHEN to call `connect()` — make the screen tell the truth (MANDATORY)",
+      "to": "always-online `connect()` world — it has no match formation to report."
+    },
+    {
+      "replace": " — render each remote with\n  `loadRemotePlayerCharacter({ avatarUrl: p.avatarUrl })` (the vendored controller kit's\n  loader) and `remote.dispose()` on leave; never publish avatar URLs through `me.set`.",
+      "with": "; never publish avatar URLs through `me.set`."
+    },
+    {
+      "from": "  That one call carries the whole rule: **in a game with its own generated character,",
+      "to": "  is a real phone memory kill on its own."
+    },
+    {
+      "replace": "UI:\n  `npx genex controller chat`, and you MUST pass its `onTypingChange` (or check\n  `chat.isTyping`) so the game stops reading the keyboard while someone types — otherwise\n  typing \"was that a wall?\" walks and jumps the player.",
+      "with": "`chat.isTyping`\n  says whether this player is typing a line."
+    },
+    {
+      "replace": "  For a 3D game use `npx genex controller voice` (proximity audio + push-to-talk); it joins\n  with `{ spatial: true }` and drives a `THREE.PositionalAudio` per speaker. **TURN is automatic",
+      "with": "  `join({ spatial: true })` gives positional audio per speaker. **TURN is automatic"
+    },
+    {
+      "replace": "## The loop you must build (input → local → tick → render)",
+      "with": "## The loop (input → local → tick → render)"
+    },
+    {
+      "from": "> **Physics character?** If your player is the `genex controller character` capsule, do NOT",
+      "to": "> doesn't bob. See `$genex-threejs-character-controller` → \"Multiplayer rule\"."
+    },
+    {
+      "replace": " Keep object state flat. For Rapier pushables, install the shipped state machine\nwith `genex controller networked-physics`; see\n[references/host-physics.md](references/host-physics.md).",
+      "with": " Keep object state flat."
+    },
+    {
+      "replace": "\ndegenerate. The netcode-park reference does exactly this.",
+      "with": "\ndegenerate."
+    },
+    {
+      "section": "### Pushable / contested physics — pick the tier"
+    },
+    {
+      "section": "## Production supportability floor"
+    },
+    {
+      "section": "## Smoothness is felt, not seen — hand the feel to a human"
+    },
+    {
+      "section": "## Config wiring (already done — do NOT hand-write URLs)"
+    },
+    {
+      "section": "## Checklist"
+    },
+    {
+      "from": "  See [references/host-physics.md](references/host-physics.md).",
+      "to": "  See [references/host-physics.md](references/host-physics.md)."
+    },
+    {
+      "replace": "simulating. See the co-op recipe in [references/genre-recipes.md](references/genre-recipes.md).\nFor PvP combat (hitscan, melee, projectiles, defeat/respawn) follow the shooter recipe there —\nits damage/defeat dedupe rules are what keep kills exactly-once under lag.",
+      "with": "simulating."
+    }
+  ],
+  "genex-threejs-multiplayer/references/genre-recipes.md": "drop",
+  "genex-threejs-multiplayer/references/host-physics.md": "drop",
+  "genex-threejs-multiplayer/references/genex-netcode-feel-checklist.md": "drop",
+  "genex-threejs-multiplayer/references/realtime-patterns.md": [
+    {
+      "replace": "\n  (2–3, netcode-park ships 2) and remove",
+      "with": "\n  and remove"
+    },
+    {
+      "from": "Install the overlay with `npx genex controller chat` (writes `src/controllers/chat/chat-overlay.ts`),",
+      "to": "`onTypingChange` (above) or check `chat.isTyping` in your input code. There is no third option."
+    },
+    {
+      "replace": "Rolling your own UI instead? Three rules:",
+      "with": "The API's three behaviours:"
+    }
+  ],
+  "genex/SKILL.md": [
+    {
+      "replace": "Game-dev asset generation for your agent. Proactively check Genex before\n  shipping placeholder assets, hand-rolling programmer art, or telling the user\n  an asset can't be made: 3D models",
+      "with": "Game-dev asset generation for your agent: 3D models"
+    },
+    {
+      "replace": "Use generated art to enrich the requested result. When making a game, that includes how it plays and how its world behaves. Models built in code can be finished assets when they fit the style or need moving parts.\n\n",
+      "with": ""
+    },
+    {
+      "replace": "- **Before you call a piece of work done**, run `npx genex wait --all` and wire in everything that landed. A generation the user paid for that nobody used is the main way credits get wasted.",
+      "with": "- `npx genex wait --all` lists every generation and its state; a generation nobody wires in still cost its credits."
+    },
+    {
+      "replace": "Say it in one line - \"A model running while people play is built into the Genex platform - the player pays, with Genex coins or their own Claude/ChatGPT subscription, and approves it on a Genex sheet; your game just calls `generate()`. Want it that way?\" - and then ask; on their yes load the `genex-tool-llm` card, which owns the rest:",
+      "with": "The `genex-tool-llm` card owns the rest:"
+    },
+    {
+      "replace": " Offer it at most once, in one line, after the game is built and running. A no is final.",
+      "with": ""
+    }
+  ],
+  "genex-threejs-embed-auth/SKILL.md": [
+    {
+      "replace": "Load this UNCONDITIONALLY for every game, multiplayer or not, BEFORE writing any boot code — every player gets",
+      "with": "Every player gets"
+    },
+    {
+      "replace": "how it **saves**. Every game needs it. Published games",
+      "with": "how it **saves**. Published games"
+    },
+    {
+      "replace": "## Bootstrap (required, every game)",
+      "with": "## Bootstrap"
+    },
+    {
+      "from": "Also give `<body>` a dark background in `index.html` (e.g.",
+      "to": "white, and every Genex surface assumes a dark canvas anyway."
+    },
+    {
+      "from": "- **Label the evidence** in your handoff: \"validated in local test mode —",
+      "to": "  capture as full validation is an over-claim."
+    },
+    {
+      "replace": "to aim\" cue and the wiring, not the lock itself (see\n  `$genex-threejs-visual-validation` step 6).",
+      "with": "to aim\" cue and the wiring, not the lock itself."
+    },
+    {
+      "replace": "- The owner's draft run-through stays a required beat, not a fallback: push\n  `genex preview` at each playable milestone and hand it off plainly (\"check\n  the draft — you can now X; ping me if something feels off\"), then keep\n  building while they look. Hosted QA catches what local test mode can't:\n  real identity, saves, multiplayer, feel. Once",
+      "with": "- A hosted draft exercises what local test mode can't: real identity,\n  saves, multiplayer. Once"
+    },
+    {
+      "from": "- [ ] Self-test evidence captured in local test mode is labeled as such in the",
+      "to": "      handoff (\"local test mode — auth, saves, and multiplayer not exercised\")."
+    }
+  ],
+  "genex-threejs-embed-auth/references/shells.md": [
+    {
+      "replace": "`canvas.requestPointerLock()` in the click handler, or the bundled `FollowCamera`, which owns the lock. Pause when the lock is lost (`pointerlockchange`): Escape ends it,",
+      "with": "`canvas.requestPointerLock()` in the click handler; `pointerlockchange` says when the lock is lost: Escape ends it,"
+    },
+    {
+      "replace": "Ask from the Start tap, treat a refusal or silence as \"no sensor\", keep the on-screen controls: the tilt recipe in `$genex-threejs-touch-controls`.",
+      "with": "Ask from a tap; a refusal or silence means no sensor events."
+    },
+    {
+      "replace": "Never depend on a lock. Design for one orientation and show the rotate overlay (`$genex-threejs-touch-controls`).",
+      "with": "A lock may not take."
+    },
+    {
+      "replace": "Start on a click or tap as well as a key: listen for `pointerdown` and `keydown`, and write \"Click or press any key\".",
+      "with": "A click or tap in the game gives its frame focus (`pointerdown`) when a key cannot."
+    },
+    {
+      "replace": "Draw the dialog in the game's own interface (`$genex-threejs-game-ui`).",
+      "with": "A dialog is drawn by the game itself."
+    },
+    {
+      "replace": "Pause when pointer lock is lost. The lock is an extra for the game's own link (`$genex-threejs-game-ui`).",
+      "with": "Escape also releases pointer lock. The lock works only on the game's own link."
+    }
+  ],
+  "genex-tool-llm/SKILL.md": [
+    {
+      "section": "## Offer it in one line, then ASK"
+    },
+    {
+      "replace": "## On a yes",
+      "with": "## Building it"
+    }
+  ],
+  "genex-llm-in-games/SKILL.md": [
+    {
+      "replace": "is ten calls a minute — write that\narithmetic into `DESIGN.md` beside the feature.",
+      "with": "is ten calls a minute."
+    },
+    {
+      "replace": "Grant endings are ordinary game states with in-fiction copy, never an error toast:",
+      "with": "What each grant-ending code means:"
+    },
+    {
+      "replace": "- **Map every code through `generationErrorMessage(code)`** into in-fiction\n  copy. A player should never read a raw error code inside your game.",
+      "with": "- **`generationErrorMessage(code)`** turns every code into words a player can\n  read."
+    },
+    {
+      "replace": "- [ ] Disclosure numbers derive from the real loop and are written in `DESIGN.md`",
+      "with": "- [ ] Disclosure numbers derive from the real loop"
+    },
+    {
+      "replace": "- [ ] Every grant-ending code has in-fiction copy and a playable fallback",
+      "with": "- [ ] Every grant-ending code is handled"
+    },
+    {
+      "replace": "right for the guest and wrong on a draft, so write the in-fiction line per\ncause rather than showing it for both.",
+      "with": "right for the guest and wrong on a draft."
+    }
+  ],
+  "genex-llm-in-games/references/pricing.md": [
+    {
+      "replace": "Write the benchmark date and the model id beside it in `DESIGN.md`, so the next\nperson knows what the number describes. Do not add",
+      "with": "Do not add"
+    }
+  ],
+  "genex-monetization/SKILL.md": [
+    {
+      "replace": "Load this when the user asks to sell something or add payments. Build the game\nloop before adding commerce.",
+      "with": "Load this when the user asks to sell something or add payments."
+    },
+    {
+      "from": "**What to build instead:**",
+      "to": "| Pay-to-win stat boost in a competitive game | **Cosmetics**, or a boost that only applies in single-player content. |"
+    },
+    {
+      "section": "## Designing a shop worth buying from"
+    },
+    {
+      "from": "- [ ] The game has a worthwhile loop before commerce",
+      "to": "- [ ] The game has a worthwhile loop before commerce"
+    },
+    {
+      "replace": "- **A price in Nex means a Genex store item.** Build the thing into the game,\n  then list it with `npx genex shop add … --json` without asking, before or",
+      "with": "- **A price in Nex means a Genex store item.** It is listed with\n  `npx genex shop add … --json`, before or"
+    },
+    {
+      "replace": "List the item once it works in the game, without asking. When the Genex",
+      "with": "When the Genex"
+    }
+  ],
+  "genex-items/SKILL.md": [
+    {
+      "replace": "- **A price in Nex means a Genex store item.** Build the thing into the game,\n  then list it with `npx genex shop add … --json` without asking, before or",
+      "with": "- **A price in Nex means a Genex store item.** It is listed with\n  `npx genex shop add … --json`, before or"
+    },
+    {
+      "replace": "1. **Build it into the game first.** The Frost Axe really freezes an enemy\n   for a second on hit before it is listed. An item that does nothing is a\n   refund request.\n2. **Render its picture.**",
+      "with": "1. **Its picture.**"
+    },
+    {
+      "replace": "3. **Ask once, only if the person did not say:** \"Can other games use it too?\"\n   Only a durable item can be shared.\n4. **List it as a draft, without asking:**",
+      "with": "2. **Shared or not:** only a durable item can be shared with other games.\n3. **List it as a draft:**"
+    },
+    {
+      "replace": " toggle and **Put on sale**. Tell the person\nit is ready and that they can ask for changes. If it says",
+      "with": " toggle and **Put on sale**. If it says"
+    },
+    {
+      "replace": "with `state: \"draft\"`. Badge it \"New\" there (`ItemState.Draft` from\n`@genex-ai/embed-sdk`).",
+      "with": "with `state: \"draft\"` (`ItemState.Draft` from `@genex-ai/embed-sdk`)."
+    },
+    {
+      "from": "- [ ] The item works in the game before it is listed",
+      "to": "- [ ] The item works in the game before it is listed"
+    }
+  ],
+  "genex-tool-audio/SKILL.md": [
+    {
+      "replace": "npx genex music \"brooding orchestral battle loop, seamless, no intro or outro\"",
+      "with": "npx genex music \"battle loop, seamless, no intro or outro\""
+    },
+    {
+      "from": "Reuse the same track quieter for a menu rather than generating a second one, and",
+      "to": "the first thing a person turns off by closing the tab."
+    },
+    {
+      "replace": " Voice lines are content: keep them short, subtitle them,\nand let the player skip.",
+      "with": ""
+    }
+  ],
+  "genex-tool-image/SKILL.md": [
+    {
+      "replace": "npx genex image \"hand-painted wooden tavern sign, weathered iron brackets\"",
+      "with": "npx genex image \"wooden sign with iron brackets\""
+    }
+  ],
+  "genex-tool-model/SKILL.md": [
+    {
+      "replace": "npx genex model \"weathered wooden barrel with rusted iron bands\"",
+      "with": "npx genex model \"wooden barrel with iron bands\""
+    },
+    {
+      "replace": "then keep that index in your manifest.",
+      "with": "then keep that index."
+    },
+    {
+      "replace": "then record a per-model `front` (a yaw in\nyour manifest) beside its path",
+      "with": "then record a per-model `front` (a yaw)\nbeside its path"
+    }
+  ],
+  "genex-tool-character/SKILL.md": [
+    {
+      "replace": "npx genex character \"stylized sci-fi courier, practical layered clothing\"",
+      "with": "npx genex character \"courier in layered clothing\""
+    },
+    {
+      "replace": "npx genex character \"stylized sci-fi courier\" --direct-text",
+      "with": "npx genex character \"courier\" --direct-text"
+    },
+    {
+      "replace": "Derive the list from the game's states first — idle, the moves it actually\nwalks, each attack, hurt, defeat — and request those. A full set nobody's\ncontroller plays is generation time and load time spent on nothing.",
+      "with": "A full set nobody's controller plays is generation time and load time spent\non nothing."
+    }
+  ],
+  "genex-tool-publish/SKILL.md": [
+    {
+      "from": "Commit the glue as its own small commit when the folder is a git repo, so the",
+      "to": "line between the user's game and what publishing added stays visible."
+    },
+    {
+      "replace": "When it reports live, open the hosted build once\nyourself and confirm it loads with no missing files (the dev server forgives\npaths the hosted build will not), then hand over the link.",
+      "with": "The dev server forgives paths the hosted build will\nnot."
+    },
+    {
+      "section": "## The preflight is a report, not a to-do list"
+    },
+    {
+      "section": "## The cover"
+    },
+    {
+      "replace": " Ask before the first publish — \"This\nis a private draft only you can open. Say the word and I'll publish it for\nanyone to play.\" — and celebrate the public page link when it lands.",
+      "with": ""
+    },
+    {
+      "replace": "\nAsk once per round of work, in one line, and keep working while you wait.",
+      "with": ""
+    }
+  ]
+}
