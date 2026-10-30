@@ -19,7 +19,7 @@ import assert from "node:assert/strict";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, it } from "node:test";
-import { customEvents, startRig, waitForLog, type Rig } from "../helpers/studio-rig.ts";
+import { customEvents, startLearningRig, waitForLog, type Rig } from "../helpers/studio-rig.ts";
 import type { CompleteRequest, DelegateRequest } from "../../src/substrate/engines/types.ts";
 import {
   MAX_PROMPT_LIST,
@@ -91,7 +91,8 @@ const PLAN = {
 
 describe("facet loop v2: scoreboard, veto, memory, spikes, review", () => {
   it("runs two facets to satisfaction through the verified-scoreboard rules", async () => {
-    const rig = await startRig();
+    // Self-improvement on: a spike keeps its recipe in the harness library only while it is.
+    const rig = await startLearningRig();
     rigs.push(rig);
 
     const tasteCalls: Record<string, number> = { Water: 0, Sky: 0, Integration: 0 };

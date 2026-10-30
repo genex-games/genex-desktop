@@ -12,6 +12,8 @@ import { chmod, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promise
 import path from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
+import { GENEX_PLUGIN_ID } from "../../src/shared/genex.ts";
+import { MessageOrigin } from "../../src/shared/protocol.ts";
 import type { DelegateRequest, DelegateResult, LiveToolResult } from "../../src/substrate/engines/types.ts";
 import { customEvents, makeFakePreview, startRig, waitForLog, type Rig } from "../helpers/studio-rig.ts";
 import { gitFile } from "../helpers/git.ts";
@@ -130,13 +132,18 @@ function sessionEngine(
   return { histories, requests };
 }
 
-/** A game with its chat, on a rig with windows to lend: two are the lead's, the rest its workers'. */
-async function gameChat(name: string, windows = 3) {
+/**
+ * A game with its chat, on a rig with windows to lend: two are the lead's, the rest its workers'.
+ * The Genex plugin is off unless `cover` asks for it: with it on, every landed run is followed by
+ * the cover step's turn (core/cover-step.ts), which only the cover's own row is about.
+ */
+async function gameChat(name: string, windows = 3, { cover = false } = {}) {
   const rig = await startRig(
     { replies: [] },
     { previewPoolMax: windows, createHeadlessPreview: async () => makeFakePreview() },
   );
   rigs.push(rig);
+  await rig.core.plugins.setEnabled(GENEX_PLUGIN_ID, cover);
   const project = await rig.core.games.scaffold(name, { title: name });
   const threadId = await rig.core.threadForGame(project.name);
   return { rig, project, threadId };
@@ -325,6 +332,56 @@ for (const engine of ["claude-code", "codex"]) {
       );
       assert.equal(histories.size, 1, `no other session of the chat: ${JSON.stringify([...histories.keys()])}`);
       assert.equal(await chatBookmark(rig, threadId), chatSession, "and the chat's bookmark stays on it");
+    });
+
+    it("S1c. with Genex on, the landed build's cover is asked of the same session right after the close, before the person's next message", {
+      timeout: RIG_TIMEOUT_MS,
+    }, async () => {
+      const { rig, threadId } = await gameChat(`one-session-cover-${engine}`, 3, { cover: true });
+      let leadTurns = 0;
+      const { histories, requests } = sessionEngine(rig, engine, async (request, kind) => {
+        const call = (name: string, args: Record<string, unknown>) => request.onLiveTool!(name, args);
+        if (kind === Kind.Lead) {
+          leadTurns += 1;
+          if (leadTurns === 1) {
+            await call("plan", plan(["sky"]));
+            await call("worker_start", single("sky", "src/sky.js"));
+            return;
+          }
+          const status = json(await call("run_status", {}));
+          if (status.workers.some((worker: { id: string; state: string }) => worker.state === "running")) return;
+          await call("integrate", { worker: "sky" });
+          await call("finish", { summary: "a dusk sky", land: "yes" });
+          return;
+        }
+        if (kind === Kind.Worker) {
+          await mkdir(path.join(request.cwd, "src"), { recursive: true });
+          await writeFile(path.join(request.cwd, "src", "sky.js"), "export const sky = 'dusk';\n");
+        }
+      });
+
+      await rig.core.sendUserMessage("make a dusk plaza", { thread: threadId, engine, autopilot: { frames: FRAMES } });
+      const finished = await loopRunClosed(rig, "the launched run's close");
+      assert.equal(finished.landed, true, String(finished.stoppedBecause));
+      const log = await handledUpTo(rig, threadId, 2, "the cover step");
+      const asks = customEvents(
+        log.filter((e) => e.thread_id === threadId),
+        "coordinator_message_queued",
+      )
+        .map((payload) => payload.action as { origin?: string; autopilot?: unknown } | undefined)
+        .filter((action) => action?.origin === MessageOrigin.CoverStep);
+      assert.equal(asks.length, 1, "one cover ask for the landed run");
+      assert.equal(asks[0]?.autopilot, undefined, "sent without the person's Loop: it starts no build");
+
+      await answered(rig, threadId, "why dusk?", engine, 3);
+      const chatSession = requests.find((r) => r.kind === Kind.Chat)!.sessionId!;
+      const afterClose = requests.filter((r) => r.kind === Kind.After);
+      assert.equal(afterClose.length, 2, afterClose.map((r) => r.request.prompt.slice(0, 60)).join(" | "));
+      assert.match(afterClose[0]!.request.prompt, /genex__skill \{"name":"cover"\}/, "the cover comes first");
+      assert.match(afterClose[1]!.request.prompt, /why dusk\?/, "then the person's message");
+      for (const turn of afterClose) assert.equal(turn.request.resume, chatSession, "both in the chat's own session");
+      assert.equal(customEvents(log, "run_started").length, 1, "the cover step started no build");
+      assert.equal(histories.size, 1, `no other session of the chat: ${JSON.stringify([...histories.keys()])}`);
     });
 
     it("S1b. the lead builds with its own hands: it commits a split in the integration worktree, a worker builds on that commit, and both land", {

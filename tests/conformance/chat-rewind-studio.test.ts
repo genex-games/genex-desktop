@@ -9,6 +9,7 @@ import { messageQueueState } from "../../src/shared/message-queue.ts";
 import { CHECKPOINT_FILE_MAX_BYTES, CheckpointPhase, chatCheckpointRef } from "../../src/main/chat-checkpoints.ts";
 import { SkippedBy } from "../../src/shared/chat-rewind.ts";
 import { CustomEvent, customRecord } from "../../src/shared/custom-events.ts";
+import { GENEX_PLUGIN_ID } from "../../src/shared/genex.ts";
 import { latestRun } from "../../src/shared/coordinator.ts";
 import { git } from "../../src/substrate/snapshots.ts";
 import type { JobSpawn } from "../../src/substrate/jobs.ts";
@@ -458,6 +459,9 @@ it("rewound past a later build, the next message's run tools reach the build fro
 it("after a landed build, or with no saved copy, only the conversation rewinds and the files stay", async () => {
   const rig = await startRig();
   rigs.push(rig);
+  // With Genex on, the landed run below would be followed by the cover step's own turn
+  // (core/cover-step.ts), and a chat at work is not rewound: this row is about the files.
+  await rig.core.plugins.setEnabled(GENEX_PLUGIN_ID, false);
   const project = "rewind-landed";
   await rig.core.games.scaffold(project);
   const thread = await rig.core.createGameThread(project);

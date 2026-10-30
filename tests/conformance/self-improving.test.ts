@@ -12,7 +12,7 @@ import path from "node:path";
 import { after, describe, it } from "node:test";
 import { ImprovementJournal } from "../../src/substrate/improvement-journal.ts";
 import { mineValidationTasks } from "../../src/harness-seed/loop/skillopt.ts";
-import { customEvents, startRig, waitForLog, type Rig } from "../helpers/studio-rig.ts";
+import { customEvents, startLearningRig, startRig, waitForLog, type Rig } from "../helpers/studio-rig.ts";
 import type { FakeReply } from "../helpers/fake-ollama.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
@@ -103,7 +103,8 @@ describe("settings: the one self-improving switch", () => {
   it("Self-improvement off: nothing is learned, nothing is applied, and the choice persists", async () => {
     const rig = await startRig();
     rigs.push(rig);
-    assert.equal(rig.core.settings.learning, true, "on by default");
+    assert.equal(rig.core.settings.learning, false, "off by default: self-improvement is stopped");
+    await rig.core.updateSettings({ learning: true });
     await rig.core.updateSettings({ learning: false });
     assert.equal(
       await rig.core.api()["learning.enabled"]!({} as never),
@@ -223,7 +224,7 @@ function architectResponder() {
 describe("idle-time architect", () => {
   it("refuses while user work is in flight, then proposes, fork-validates, and applies with snapshots", async () => {
     const { respond, counts } = architectResponder();
-    const rig = await startRig({ respond });
+    const rig = await startLearningRig({ respond });
     rigs.push(rig);
     // The architect is off by default since the v2 loop; the user switches it on here.
     await rig.core.updateSettings({ architect: true, selfImproving: true });
@@ -277,7 +278,7 @@ describe("idle-time architect", () => {
       }
       return { text: "ok" };
     };
-    const rig = await startRig({ respond });
+    const rig = await startLearningRig({ respond });
     rigs.push(rig);
     await rig.core.updateSettings({ architect: true, selfImproving: true });
     rig.core.options.improvementIdle = { idleMs: 0, checkMs: 3_600_000, minGapMs: 0 };
@@ -321,7 +322,7 @@ describe("idle-time architect", () => {
       }
       return { text: "ok" };
     };
-    const rig = await startRig({ respond });
+    const rig = await startLearningRig({ respond });
     rigs.push(rig);
     await rig.core.updateSettings({ architect: true, selfImproving: true });
     rig.core.options.improvementIdle = { idleMs: 0, checkMs: 3_600_000, minGapMs: 0 };
@@ -350,7 +351,7 @@ describe("idle-time architect", () => {
       }
       return { text: "ok" };
     };
-    const rig = await startRig({ respond });
+    const rig = await startLearningRig({ respond });
     rigs.push(rig);
     await rig.core.updateSettings({ architect: true, selfImproving: true });
     rig.core.options.improvementIdle = { idleMs: 0, checkMs: 3_600_000, minGapMs: 0 };
@@ -393,7 +394,7 @@ describe("idle-time architect", () => {
       }
       return { text: "ok" };
     };
-    const rig = await startRig({ respond });
+    const rig = await startLearningRig({ respond });
     rigs.push(rig);
     await rig.core.updateSettings({ architect: true, selfImproving: true });
     rig.core.options.improvementIdle = { idleMs: 0, checkMs: 3_600_000, minGapMs: 0 };

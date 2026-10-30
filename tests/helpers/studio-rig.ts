@@ -348,6 +348,13 @@ export async function startRig(
   return { core: studio, preview, server, userData, events, logs, stop };
 }
 
+/** A rig with self-improvement switched on, as a person turns it on: it starts off (studio-core.ts). */
+export async function startLearningRig(...args: Parameters<typeof startRig>): Promise<Rig> {
+  const rig = await startRig(...args);
+  await rig.core.updateSettings({ learning: true });
+  return rig;
+}
+
 /**
  * Wait until a predicate over the studio's whole log holds, or fail loudly. The whole log,
  * because work lands in the thread it belongs to — runs and builds in their game's thread,

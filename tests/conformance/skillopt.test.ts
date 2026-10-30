@@ -20,7 +20,7 @@ import { lessonEdits, renderContractLessons } from "../../src/harness-seed/loop/
 import { loadContractLessons, renderBrief, saveContractLessons } from "../../src/harness-seed/loop/library.ts";
 import { LESSONS_WORDS } from "../../src/harness-seed/loop/skillopt-prompts.ts";
 import { parseVerdict } from "../../src/harness-seed/loop/judge.ts";
-import { customEvents, startRig, waitForLog, type Rig } from "../helpers/studio-rig.ts";
+import { customEvents, startLearningRig, waitForLog, type Rig } from "../helpers/studio-rig.ts";
 import { studioActivity } from "../../src/shared/studio-activity.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 import type { FakeReply } from "../helpers/fake-ollama.ts";
@@ -266,7 +266,7 @@ async function runSkillOptRig(
   prepare?: (rig: Rig) => Promise<void>,
 ): Promise<{ rig: Rig; counts: { analyst: number; gate: number } }> {
   const { respond, counts } = makeResponder(script);
-  const rig = await startRig({ respond });
+  const rig = await startLearningRig({ respond });
   rigs.push(rig);
   await prepare?.(rig);
 
@@ -487,7 +487,7 @@ describe("skillopt: the gate", () => {
 
   it("does nothing when there is no run history to learn from — but says so", async () => {
     const { respond } = makeResponder({ edits: [], gate: "reject" });
-    const rig = await startRig({ respond });
+    const rig = await startLearningRig({ respond });
     rigs.push(rig);
     await rig.core.host.dispatch({ type: "skillopt_start", threadId: rig.core.mainThread }, 60_000);
     const events = await rig.core.store.listEvents(rig.core.mainThread);
@@ -501,7 +501,7 @@ describe("skillopt: the gate", () => {
 
   it("mines chat-build evidence out of the per-game threads", async () => {
     const { respond, counts } = makeResponder({ edits: [], gate: "reject" });
-    const rig = await startRig({ respond });
+    const rig = await startLearningRig({ respond });
     rigs.push(rig);
     const skillsDir = path.join(rig.core.layout.harnessWs, "skills");
     for (const name of ["game-contract", "threejs-craft", "unattended-runs", "self-improvement"]) {
@@ -541,7 +541,7 @@ describe("skillopt: the gate", () => {
     const { writeEngineBinding } = await import("../../src/substrate/game-engine-binding.ts");
     const { ENGINES, UNREAL_ENGINE } = await import("../helpers/engines.ts");
     const { respond } = makeResponder({ edits: [], gate: "reject" });
-    const rig = await startRig({ respond });
+    const rig = await startLearningRig({ respond });
     rigs.push(rig);
     const unreal = await rig.core.games.scaffold("fog-valley", { title: "Fog Valley" });
     const uproject = path.join(await tmpDir("unreal-project-"), "Valley.uproject");
@@ -987,7 +987,7 @@ function lessonsResponder(add: string[]) {
 /** A rig whose log holds one facet's lessons (and, unless `tasks` is false, two judged rounds). */
 async function lessonsRig(selfImproving: boolean): Promise<{ rig: Rig; counts: { lessons: number } }> {
   const { respond, counts } = lessonsResponder([LESSON]);
-  const rig = await startRig({ respond });
+  const rig = await startLearningRig({ respond });
   rigs.push(rig);
   await rig.core.updateSettings({ selfImproving });
   await rig.core.append([
@@ -1232,7 +1232,7 @@ describe("skillopt: applying and undoing a learned change", () => {
     };
   };
   const start = async () => {
-    const rig = await startRig({ respond: () => ({ text: "ok" }) });
+    const rig = await startLearningRig({ respond: () => ({ text: "ok" }) });
     rigs.push(rig);
     await rig.core.updateSettings({ selfImproving: false });
     const file = path.join(rig.core.layout.harnessWs, FILE);

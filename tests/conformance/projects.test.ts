@@ -46,7 +46,7 @@ describe("project folders", () => {
     await rig.core.games.start(project.name, ProjectStarter.Web);
     assert.ok(await readFile(path.join(dir, "index.html"), "utf8"));
     // The assets door (AG-930): a scaffolded or adopted game gets the folder, the loader and the git attributes.
-    assert.match(await readFile(path.join(dir, "assets", "README.md"), "utf8"), /studio's own tools/);
+    assert.match(await readFile(path.join(dir, "assets", "README.md"), "utf8"), /Files the game loads/);
     assert.match(await readFile(path.join(dir, ".gitattributes"), "utf8"), /\*\.glb binary/);
     assert.match(await readFile(path.join(dir, "src", "assets.js"), "utf8"), /export async function loadAsset/);
     assert.match(await readFile(path.join(dir, "docs", "CONTRACT.md"), "utf8"), /## Assets/);

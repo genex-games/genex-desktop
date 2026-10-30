@@ -12,7 +12,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, it } from "node:test";
-import { customEvents, startRig, waitForLog, type Rig } from "../helpers/studio-rig.ts";
+import { customEvents, startLearningRig, startRig, waitForLog, type Rig } from "../helpers/studio-rig.ts";
 import { countImages, flattenMessageContent, newestFixtureBuild, type FakeReply } from "../helpers/fake-ollama.ts";
 import { EngineError, type Engine } from "../../src/substrate/engines/types.ts";
 import { combineFacetVerdict, normalizeDefects } from "../../src/harness-seed/loop/judge.ts";
@@ -175,7 +175,7 @@ async function runOnce(
   } = {},
 ) {
   const { respond, counts } = makeResponder(script);
-  const rig = await startRig({ respond });
+  const rig = await startLearningRig({ respond });
   rigs.push(rig);
   options.preview?.(rig);
 

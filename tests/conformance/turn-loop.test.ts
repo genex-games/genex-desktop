@@ -15,7 +15,7 @@ import { EngineError, type Engine } from "../../src/substrate/engines/types.ts";
 import { nameFromAsk, runTurn } from "../../src/harness-seed/loop/turn-loop.ts";
 import { loadSkills } from "../../src/harness-seed/loop/skills.ts";
 import { SecretStore, plaintextBackend } from "../../src/substrate/secrets.ts";
-import { customEvents, startRig, waitForLog, type Rig } from "../helpers/studio-rig.ts";
+import { customEvents, startLearningRig, startRig, waitForLog, type Rig } from "../helpers/studio-rig.ts";
 import type { FakeReply } from "../helpers/fake-ollama.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 import { CustomEvent, customPayload } from "../../src/shared/custom-events.ts";
@@ -32,8 +32,9 @@ afterEach(async () => {
   await Promise.all(rigs.splice(0).map((rig) => rig.stop().catch(() => {})));
 });
 
-async function turnRig(replies: FakeReply[]): Promise<Rig> {
-  const rig = await startRig({
+/** A local turn loop; `learning` switches self-improvement on, which a self-edit (install_tool, write_own_file) needs. */
+async function turnRig(replies: FakeReply[], { learning = false } = {}): Promise<Rig> {
+  const rig = await (learning ? startLearningRig : startRig)({
     replies: [...replies, ...Array.from({ length: 6 }, () => ({ text: "ok" }) as FakeReply)],
   });
   rigs.push(rig);
@@ -121,31 +122,34 @@ describe("turn loop", () => {
     // A local model re-reads everything after the first changed token. The system prompt used to
     // be re-read every round (memory, notes, the file list, every tool's description), so one
     // fact remembered or one tool installed mid-turn made the next round re-read the whole turn.
-    const rig = await turnRig([
-      {
-        toolCalls: [
-          { id: "c1", name: "remember", arguments: { key: "favourite_genre", value: "racing games" } },
-          {
-            id: "c2",
-            name: "install_tool",
-            arguments: {
-              filename: "lap-tools.mjs",
-              reason: "I keep timing laps by hand",
-              title: "Time laps for you",
-              summary: ["I can now time the current lap myself."],
-              contents: `export const tools = [{
+    const rig = await turnRig(
+      [
+        {
+          toolCalls: [
+            { id: "c1", name: "remember", arguments: { key: "favourite_genre", value: "racing games" } },
+            {
+              id: "c2",
+              name: "install_tool",
+              arguments: {
+                filename: "lap-tools.mjs",
+                reason: "I keep timing laps by hand",
+                title: "Time laps for you",
+                summary: ["I can now time the current lap myself."],
+                contents: `export const tools = [{
                  name: "time_lap",
                  description: "time the current lap",
                  parameters: { type: "object", properties: {} },
                  async execute() { return "41.2 s"; },
                }];`,
+              },
             },
-          },
-        ],
-        text: "Noting that and adding a tool.",
-      },
-      { text: "Done." },
-    ]);
+          ],
+          text: "Noting that and adding a tool.",
+        },
+        { text: "Done." },
+      ],
+      { learning: true },
+    );
     await rig.core.sendUserMessage("remember I like racing games and add a lap timer");
     await waitForLog(rig.core, (log) => log.some((e) => e.data.type === "turn_ended"), 45_000, "turn_ended");
 
@@ -282,31 +286,34 @@ describe("run deadline inside a turn", () => {
 
 describe("full self-modification (M4)", () => {
   it("installs a tool mid-turn and calls it on the next round", async () => {
-    const rig = await turnRig([
-      {
-        toolCalls: [
-          {
-            id: "c1",
-            name: "install_tool",
-            arguments: {
-              filename: "ring-tools.mjs",
-              reason: "I keep counting rings by hand",
-              title: "Count rings for you",
-              summary: ["I can now count the rings in a build myself."],
-              contents: `export const tools = [{
+    const rig = await turnRig(
+      [
+        {
+          toolCalls: [
+            {
+              id: "c1",
+              name: "install_tool",
+              arguments: {
+                filename: "ring-tools.mjs",
+                reason: "I keep counting rings by hand",
+                title: "Count rings for you",
+                summary: ["I can now count the rings in a build myself."],
+                contents: `export const tools = [{
                  name: "count_rings",
                  description: "count rings in the current build",
                  parameters: { type: "object", properties: {} },
                  async execute() { return "7 rings"; },
                }];`,
+              },
             },
-          },
-        ],
-        text: "Installing a tool for this.",
-      },
-      { toolCalls: [{ id: "c2", name: "count_rings", arguments: {} }] },
-      { text: "There are 7 rings." },
-    ]);
+          ],
+          text: "Installing a tool for this.",
+        },
+        { toolCalls: [{ id: "c2", name: "count_rings", arguments: {} }] },
+        { text: "There are 7 rings." },
+      ],
+      { learning: true },
+    );
 
     await rig.core.sendUserMessage("count the rings");
     const events = await waitForLog(
@@ -351,25 +358,28 @@ describe("full self-modification (M4)", () => {
   });
 
   it("survives a broken tool module by reporting it, not by dying", async () => {
-    const rig = await turnRig([
-      {
-        toolCalls: [
-          {
-            id: "c1",
-            name: "install_tool",
-            arguments: {
-              filename: "broken-tools.mjs",
-              reason: "oops",
-              title: "Try a new helper",
-              summary: ["I tried adding a helper."],
-              contents: "this is not valid javascript !!!",
+    const rig = await turnRig(
+      [
+        {
+          toolCalls: [
+            {
+              id: "c1",
+              name: "install_tool",
+              arguments: {
+                filename: "broken-tools.mjs",
+                reason: "oops",
+                title: "Try a new helper",
+                summary: ["I tried adding a helper."],
+                contents: "this is not valid javascript !!!",
+              },
             },
-          },
-        ],
-      },
-      { toolCalls: [{ id: "c2", name: "list_games", arguments: {} }] },
-      { text: "I broke a tool; the rest still works." },
-    ]);
+          ],
+        },
+        { toolCalls: [{ id: "c2", name: "list_games", arguments: {} }] },
+        { text: "I broke a tool; the rest still works." },
+      ],
+      { learning: true },
+    );
     await rig.core.sendUserMessage("install something broken");
     const events = await waitForLog(
       rig.core,
@@ -387,24 +397,27 @@ describe("full self-modification (M4)", () => {
   });
 
   it("records a self-edit with its reason for the diff UI", async () => {
-    const rig = await turnRig([
-      {
-        toolCalls: [
-          {
-            id: "c1",
-            name: "write_skill",
-            arguments: {
-              slug: "threejs-craft",
-              reason: "learned that flat shading reads better in screenshots",
-              title: "Use flat shading in scenes",
-              summary: ["Flat shading reads better in screenshots."],
-              contents: "---\nname: three.js craft\ndescription: updated\n---\n\n- Use flatShading.\n",
+    const rig = await turnRig(
+      [
+        {
+          toolCalls: [
+            {
+              id: "c1",
+              name: "write_skill",
+              arguments: {
+                slug: "threejs-craft",
+                reason: "learned that flat shading reads better in screenshots",
+                title: "Use flat shading in scenes",
+                summary: ["Flat shading reads better in screenshots."],
+                contents: "---\nname: three.js craft\ndescription: updated\n---\n\n- Use flatShading.\n",
+              },
             },
-          },
-        ],
-      },
-      { text: "Skill updated." },
-    ]);
+          ],
+        },
+        { text: "Skill updated." },
+      ],
+      { learning: true },
+    );
     await rig.core.sendUserMessage("write down what you learned");
     const events = await waitForLog(
       rig.core,
