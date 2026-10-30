@@ -82,10 +82,6 @@ export interface ShimOptions {
   readyMs: number;
   /** No fetch, no XHR and no resource entry for this long counts as quiet. */
   quietMs: number;
-  /** Installed as `Math.random` at document start; null leaves the page's own generator alone. */
-  seed: number | null;
-  /** Report pointer lock as held even where Chromium refuses to grant it (a hidden window). */
-  pointerLock: boolean;
   /** Count draw calls at the graphics API. */
   counters: boolean;
   /** Beyond this many outstanding timers the wrapper passes through to the natives. */

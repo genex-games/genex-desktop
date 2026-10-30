@@ -106,15 +106,6 @@ function probePaths(game: unknown): Set<string> {
   return paths;
 }
 
-/** What each fixture says about the two-line install — the input the count guard reduces. */
-async function claimedEdits(): Promise<Array<{ id: string; edits: FixtureManifest["edits"] }>> {
-  return Promise.all(FIXTURE_IDS.map(async (id) => ({ id, edits: (await manifestOf(id)).edits })));
-}
-
-/** The guard's own predicate, so the falsification case can run it on a forged tree. */
-const editedFixtures = (rows: Array<{ id: string; edits: FixtureManifest["edits"] }>): string[] =>
-  rows.filter((row) => row.edits === "two-line-install").map((row) => row.id);
-
 async function seedText(): Promise<string> {
   const parts: string[] = [];
   const walk = async (dir: string): Promise<void> => {
@@ -152,7 +143,7 @@ describe("the five shapes", () => {
       assert.equal(manifest.id, id, `${id}: manifest id is the folder name`);
       assert.ok(manifest.title.length > 0, `${id}: a title`);
       assert.ok(manifest.proves.length >= 3, `${id}: what it proves, in sentences`);
-      assert.ok(["none", "two-line-install"].includes(manifest.edits), `${id}: edits`);
+      assert.equal(manifest.edits, "none", `${id}: a game owes the studio no edit`);
       assert.ok(["webgl", "webgpu"].includes(manifest.backend), `${id}: backend`);
       assert.ok(manifest.readyBudgetMs >= 1000 && manifest.readyBudgetMs <= 60_000, `${id}: ready budget`);
     }
@@ -375,14 +366,6 @@ describe("the five shapes", () => {
     );
   });
 
-  it("keeps the two-line install to one fixture — the milestone's own claim", async () => {
-    assert.deepEqual(
-      editedFixtures(await claimedEdits()),
-      ["bundled-ts"],
-      "exactly one fixture is edited for the studio, and it is the bundled one",
-    );
-  });
-
   it("is the kind of guard that fails: a contractVersion, a CDN tag and a drifted shape are each caught", async () => {
     const base = await tmpDir("studio-shapes-bad-");
 
@@ -422,24 +405,11 @@ describe("the five shapes", () => {
     const drifted = await detectProjectShape(built);
     assert.notDeepEqual(drifted, (await manifestOf("inline-raf")).shape, "a drifted shape is not the recorded one");
     assert.equal(drifted!.kind, "three-vite");
-
-    // (4) a second two-line install: the claim is a count, so a second one has to break it. The
-    // predicate is the one the guard above runs, fed the fixture tree with one manifest forged.
-    const claimed = await claimedEdits();
-    assert.deepEqual(editedFixtures(claimed), ["bundled-ts"], "the tree as it stands");
-    const forged = claimed.map((row) =>
-      row.id === "menu-levels" ? { ...row, edits: "two-line-install" as const } : row,
-    );
-    assert.notDeepEqual(
-      editedFixtures(forged),
-      ["bundled-ts"],
-      "two fixtures claiming the edit is not one fixture claiming it",
-    );
   });
 });
 
 describe("the fixture tree stays out of the studio's way", () => {
-  it("is excluded from the repository's typecheck, because bundled-ts imports a module adoption writes", async () => {
+  it("is excluded from the repository's typecheck: these are games of their own, not the studio's code", async () => {
     const config = JSON.parse(await readFile(path.join(repo, "tsconfig.json"), "utf8")) as { exclude?: string[] };
     assert.ok(config.exclude?.includes("tests/fixtures/games"), "tsconfig excludes the fixture games");
     assert.ok(

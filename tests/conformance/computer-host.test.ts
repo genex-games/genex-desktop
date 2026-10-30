@@ -155,7 +155,7 @@ function scriptedPort(answers: Array<unknown>, options: { loadError?: string | n
 }
 
 describe("booted means booted", () => {
-  it("reads the shim's snapshot, and never mistakes the shim's own facade for a game's contract", () => {
+  it("reads the shim's snapshot, and never asks the game", () => {
     // The shim answers first, and it is the only signal that measures the PAGE's own boot.
     const shim = probe({
       __studioClock: {
@@ -175,31 +175,16 @@ describe("booted means booted", () => {
     assert.equal(shim.ready, true);
     assert.equal(shim.pageMs, 1_200);
     assert.equal(shim.attached, true);
-    // `window.__studioReady` stays a PROMISE and nothing reads fields off it; a page that has
-    // one but no boot() takes the CONTRACT fallback, never the shim branch.
-    const promised = probe({
-      __studioReady: Promise.resolve({ ready: true }),
-      __studio: { state: () => ({ frame: 3 }) },
-    });
-    assert.equal(promised.via, "contract");
-    assert.equal(promised.ready, true);
-    assert.equal(promised.pageMs, null, "a contract says nothing about when the page came up");
-    // A boot() that hands back a thenable is rejected as a snapshot source: a version skew
-    // degrades to the fallback instead of polling a promise object for ever.
-    const thenable = probe({
-      __studioClock: { boot: () => Promise.resolve({ ready: true }) },
-      __studio: { state: () => ({ frame: 1 }) },
-    });
-    assert.equal(thenable.via, "contract");
-    // The shim installs a facade on every page it reaches. If that counted as a contract every
-    // page would report itself attached and the whole premise would collapse.
-    const facade = probe({ __studio: { __shim: true, state: () => ({ frame: 0 }) } });
-    assert.equal(facade.via, "none");
-    assert.equal(facade.ready, false);
-    // A game whose state() is not there yet is booting, not attached.
-    const missing = probe({ __studio: { state: () => ({ __missing: true }) } });
-    assert.equal(missing.via, "contract");
-    assert.equal(missing.ready, false);
+    // `window.__studioReady` stays a PROMISE and nothing reads fields off it, and a boot() that
+    // hands back a thenable is rejected as a snapshot source.
+    const promised = probe({ __studioReady: Promise.resolve({ ready: true }) });
+    assert.equal(promised.via, "none");
+    const thenable = probe({ __studioClock: { boot: () => Promise.resolve({ ready: true }) } });
+    assert.equal(thenable.via, "none");
+    // Flipped from a "contract" fallback: the game's own window.__studio is never read.
+    const game = probe({ __studio: { state: () => ({ frame: 3 }) } });
+    assert.equal(game.via, "none");
+    assert.equal(game.ready, false);
     assert.equal(probe({}).via, "none");
   });
 

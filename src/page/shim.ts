@@ -5,15 +5,14 @@ import { animationGate } from "./animation-gate.ts";
  * The studio serves every game page itself, so it can put its own code on the page before a
  * single line of game code runs. That is what this file is. It takes over `performance.now`,
  * `Date.now`, `requestAnimationFrame` and — while the clock is frozen — the timers, so the
- * studio can say `step(960)` to a game that never heard of the studio contract and get exactly
- * the frames it asked for. It seeds `Math.random` at install time, so a bundle that captured
- * the generator at module scope is still reproducible. It reports pointer lock as held whether
- * or not Chromium granted it, because an unattended run has no window to grant it in. And it
- * installs `window.__studio` as a merging facade, so a page with no contract still answers.
+ * studio can pace a page between a player's moves and get exactly the frames it asked for.
+ * It asks nothing of the game and changes nothing the game sees beyond time: no
+ * `window.__studio`, no seeded `Math.random`, no faked pointer lock. The studio's own controls
+ * live on `__studioClock`, `__studioCapture` and `__studioGl`.
  *
  * Everything here is a plain browser ES module with named exports: the pure logic (the stepper,
- * the timer queue, the generator, the facade's merge rules, the pointer-lock arithmetic) is
- * built from injected dependencies and tested under `node --test` with no Electron and no DOM.
+ * the timer queue, readiness) is built from injected dependencies and tested under `node --test`
+ * with no Electron and no DOM.
  */
 import { createFrameCapture } from "./capture.ts";
 import { installStudioDrawCounters } from "./counters.ts";
@@ -46,17 +45,9 @@ export const DEFAULT_SHIM_OPTIONS = Object.freeze({
   frameMs: 1000 / 60,
   readyMs: 15_000,
   quietMs: 250,
-  seed: 1,
-  pointerLock: true,
   counters: true,
   maxTimers: 4096,
 });
-
-/** The seed the page is keyed with: none (`null`), the one sent, or the default. */
-function seedOption(seed: unknown): number | null {
-  if (seed === null) return null;
-  return Number.isFinite(Number(seed)) ? Number(seed) >>> 0 : DEFAULT_SHIM_OPTIONS.seed;
-}
 
 /** Whatever the serve layer sent, made safe. An older studio that sends nothing gets the defaults. */
 export function normalizeShimOptions(raw: Foreign) {
@@ -65,59 +56,13 @@ export function normalizeShimOptions(raw: Foreign) {
     const n = Number(value);
     return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback;
   };
-  const seed = seedOption(input.seed);
   return {
     clock: input.clock === "studio" ? "studio" : "wall",
     frameMs: num(input.frameMs, DEFAULT_SHIM_OPTIONS.frameMs, 1, 1000),
     readyMs: num(input.readyMs, DEFAULT_SHIM_OPTIONS.readyMs, 1000, 600_000),
     quietMs: num(input.quietMs, DEFAULT_SHIM_OPTIONS.quietMs, 0, 10_000),
-    seed,
-    pointerLock: input.pointerLock !== false,
     counters: input.counters !== false,
     maxTimers: Math.round(num(input.maxTimers, DEFAULT_SHIM_OPTIONS.maxTimers, 16, 65_536)),
-  };
-}
-
-/**
- * Deterministic RNG (mulberry32) — the same generator `src/game-template/src/studio.js` ships,
- * so a template game and a game the user brought draw the same numbers from the same seed.
- */
-export function mulberry32(seed: number) {
-  let a = seed >>> 0;
-  return function rng() {
-    a += 0x6d2b79f5;
-    let t = a;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-/**
- * Install the seeded generator as `Math.random` NOW, not on the first `seed(n)` call. A bundle
- * that captured `Math.random` at module scope (a const, a bind, a minifier hoist) would keep
- * the native generator for ever otherwise — and a bundled game is exactly what this is for.
- * Re-keying replaces the numbers behind the same installed function, so the capture stays valid.
- */
-export function installSeededRandom(host: Foreign, seed: unknown) {
-  let rng = mulberry32(Number(seed) >>> 0);
-  let current = Number(seed) >>> 0;
-  const random = () => rng();
-  const native = host.Math.random;
-  try {
-    host.Math.random = random;
-  } catch {
-    return { installed: false, reseed: () => current, value: () => current, native };
-  }
-  return {
-    installed: true,
-    native,
-    value: () => current,
-    reseed(next: Foreign) {
-      current = Number(next) >>> 0;
-      rng = mulberry32(current);
-      return current;
-    },
   };
 }
 
@@ -478,11 +423,6 @@ function pumpFrame(k: Clock, dtMs: Foreign) {
   return true;
 }
 
-function seed(k: Clock, value: Foreign) {
-  k.lastFreezeTouch = nativeNow(k);
-  return k.host.reseed ? k.host.reseed(value) : Number(value) >>> 0;
-}
-
 function fps(k: Clock) {
   if (!k.fpsSamples.length) return 0;
   return Math.round(k.fpsSamples.reduce((a, b) => a + b, 0) / k.fpsSamples.length);
@@ -521,7 +461,7 @@ function clockWrappers(k: Clock) {
 /**
  * The virtual clock. `host` supplies the natives (`now`, `dateNow`, `raf`, `cancelRaf`,
  * `setTimeout`, `clearTimeout`) and, optionally, the page-world bits the clock reports on
- * (`drawTotals`, `onFrame`, `reseed`, `report`). Nothing in here touches a global.
+ * (`drawTotals`, `onFrame`, `report`). Nothing in here touches a global.
  */
 export function createClock(host: Foreign, rawOptions = {}) {
   const options = normalizeShimOptions(rawOptions);
@@ -566,7 +506,6 @@ export function createClock(host: Foreign, rawOptions = {}) {
     pause: () => pause(k),
     start: () => start(k),
     step: (ms: number) => step(k, ms),
-    seed: (value: Foreign) => seed(k, value),
     pumpFrame: (dtMs: Foreign) => pumpFrame(k, dtMs),
     openFrame: () => openFrame(k),
     closeFrame: (stepped: Foreign) => closeFrame(k, stepped),
@@ -593,8 +532,7 @@ export function createClock(host: Foreign, rawOptions = {}) {
  * is merely SLOW is `timedOut`, never failed. `phase: "failed"` is the studio's word for a page
  * that reported a boot failure of its own and every consumer treats it as a refusal to load — so
  * a 40 MB level or an 18 s shader compile used to blind the scout for the whole run instead of
- * costing it one note. A timed-out page keeps booting: a late quiet, or the game's own
- * `__studio.ready()`, still settles it ready.
+ * costing it one note. A timed-out page keeps booting: a late quiet still settles it ready.
  */
 export function readinessVerdict(
   input: {
@@ -619,191 +557,10 @@ export function readinessVerdict(
 }
 
 /**
- * Pointer lock, additively. The native descriptor is kept and consulted first; the fake only
- * answers when Chromium granted nothing — which is every hidden window in an unattended run.
- * `deps.nativeElement()` reads the real one, `deps.dispatch(type)` fires the change event.
- */
-export function createPointerLock(deps: Foreign) {
-  let faked: Foreign = null;
-  let realSeen = false;
-  const element = () => deps.nativeElement() ?? faked;
-  return {
-    element,
-    locked: () => Boolean(element()),
-    request(target: Foreign) {
-      faked = target ?? null;
-      deps.dispatch?.("pointerlockchange");
-      return faked;
-    },
-    exit() {
-      faked = null;
-      deps.dispatch?.("pointerlockchange");
-      return null;
-    },
-    /** A real change: a granted lock makes the fake irrelevant; losing one (Esc) clears it. */
-    onNativeChange() {
-      const real = deps.nativeElement();
-      if (real) {
-        realSeen = true;
-        faked = null;
-      } else if (realSeen) {
-        faked = null;
-        realSeen = false;
-      }
-      return element();
-    },
-    faked: () => faked,
-  };
-}
-
-/** The members the facade knows how to answer, and how it answers them. */
-const FACADE_VALUES = ["version", "hud"];
-const FACADE_OWN_ALWAYS = ["state", "step", "pause", "start", "seed", "ready"];
-const FACADE_DELEGATED = [
-  "inspect",
-  "capture",
-  "captureInfo",
-  "cameras",
-  "debugCamera",
-  "eyes",
-  "eye",
-  "sceneSummary",
-  "demos",
-  "demo",
-  "begin",
-  "audio",
-  "probes",
-  "player",
-  "injectInput",
-];
-
-/**
- * `window.__studio` as a merging facade — never an object a game can overwrite or freeze away.
- *
- * A game that assigns `window.__studio` keeps every method it defined; the shim fills in the
- * ones it did not. The facade NEVER writes to the assigned value: it may be frozen, a class
- * instance with non-writable prototype methods, or a Proxy, and a throw inside a game's own
- * boot line would be the studio breaking the game it came to watch.
- */
-export function createFacade({ own, getAssigned }: Foreign) {
-  const facade: Foreign = {};
-  const assigned = () => {
-    try {
-      return getAssigned();
-    } catch {
-      return null;
-    }
-  };
-  const supplied = (name: Foreign) => {
-    const target = assigned();
-    if (!target || target === facade) return null;
-    try {
-      return typeof target[name] === "function" ? target : null;
-    } catch {
-      return null;
-    }
-  };
-
-  for (const name of FACADE_DELEGATED) {
-    Object.defineProperty(facade, name, {
-      enumerable: true,
-      configurable: true,
-      get() {
-        const target = supplied(name);
-        if (target) return (...args: Foreign) => target[name](...args);
-        return own[name];
-      },
-    });
-  }
-  for (const name of FACADE_OWN_ALWAYS) {
-    Object.defineProperty(facade, name, { enumerable: true, configurable: true, value: own[name], writable: false });
-  }
-  for (const name of FACADE_VALUES) {
-    Object.defineProperty(facade, name, {
-      enumerable: true,
-      configurable: true,
-      get() {
-        const target = assigned();
-        try {
-          if (target && target !== facade && target[name] !== undefined) return target[name];
-        } catch {
-          /* a hostile getter is not the studio's problem */
-        }
-        return own[name];
-      },
-    });
-  }
-  Object.defineProperty(facade, "__shim", { enumerable: false, configurable: true, value: true });
-  Object.defineProperty(facade, "__attached", {
-    enumerable: false,
-    configurable: true,
-    get: () => Boolean(own.attached?.()),
-  });
-  Object.defineProperty(facade, "__game", { enumerable: false, configurable: true, get: () => assigned() });
-  /**
-   * A game may expose more than the contract names — a demo hook, a probe of its own — and the
-   * harness reaches those by name. Every key the assigned object carries that the facade has
-   * not already claimed becomes a pass-through, so nothing a game defined disappears behind us.
-   */
-  facade.__absorb = function absorb(value: Foreign) {
-    if (!value || typeof value !== "object") return facade;
-    const keys = new Set<string>();
-    try {
-      for (const key in value) keys.add(key);
-      for (const key of Object.getOwnPropertyNames(value)) keys.add(key);
-    } catch {
-      /* a Proxy that refuses to be enumerated keeps the named members and nothing more */
-    }
-    for (const key of keys) {
-      if (key === "constructor" || key.startsWith("__") || key in facade) continue;
-      Object.defineProperty(facade, key, {
-        enumerable: true,
-        configurable: true,
-        get() {
-          const target = assigned();
-          if (!target || target === facade) return undefined;
-          try {
-            const member = target[key];
-            return typeof member === "function" ? (...args: Foreign) => target[key](...args) : member;
-          } catch {
-            return undefined;
-          }
-        },
-      });
-    }
-    return facade;
-  };
-  Object.defineProperty(facade, "__absorb", { enumerable: false });
-  return facade;
-}
-
-/**
- * Install the facade on `target` (the page's window). The setter stores what a game assigns
- * and never reads through to it again; the getter always returns the same facade object.
- */
-export function installFacade(target: Foreign, own: Foreign) {
-  let assigned: Foreign = null;
-  const facade = createFacade({ own, getAssigned: () => assigned });
-  Object.defineProperty(target, "__studio", {
-    configurable: true,
-    get: () => facade,
-    set: (value: Foreign) => {
-      assigned = value && typeof value === "object" ? value : null;
-      if (assigned) facade.__absorb(assigned);
-    },
-  });
-  return facade;
-}
-
-/** The list of members the facade answers — exported so a test can assert the merge rules. */
-export const FACADE_MEMBERS = Object.freeze([...FACADE_VALUES, ...FACADE_OWN_ALWAYS, ...FACADE_DELEGATED]);
-
-/**
  * Install one of the studio's own globals so a page cannot replace it wholesale.
  *
- * `window.__studio` is a merging facade behind an accessor for exactly this reason; the clock,
- * the capture, the GL record, the counters and the hook are read back BY NAME from the page
- * world by every probe the studio trusts (readiness, the step witness, the attach report), so a
+ * The clock, the capture, the GL record, the counters and the hook are read back BY NAME from
+ * the page world by every probe the studio trusts (readiness, the step witness, the attach report), so a
  * plain writable property let game code hand the studio a stub that reports whatever it liked.
  * The value is answered by a getter, an assignment is a silent no-op, and the property stays
  * configurable so an uninstall (and a second install of a newer version) can still take it back.
@@ -1109,7 +866,7 @@ const reportError = (err: Foreign) => {
 };
 
 // ── the clock, and the patched globals ──
-function installClock(win: Foreign, natives: Natives, options: ShimOptions, random: Foreign, drawCounters: Foreign) {
+function installClock(win: Foreign, natives: Natives, options: ShimOptions, drawCounters: Foreign) {
   const clock = createClock(
     {
       now: natives.performanceNow,
@@ -1120,7 +877,6 @@ function installClock(win: Foreign, natives: Natives, options: ShimOptions, rand
       clearTimeout: natives.clearTimeout,
       setInterval: natives.setInterval,
       clearInterval: natives.clearInterval,
-      reseed: (value: Foreign) => (random ? random.reseed(value) : Number(value) >>> 0),
       drawTotals: pageDrawTotals,
       // The frame boundary the counters divide their tally on. It runs after the hook's
       // `afterFrame`, so the frame the hook just judged is the frame these numbers describe.
@@ -1147,51 +903,24 @@ function installClock(win: Foreign, natives: Natives, options: ShimOptions, rand
 
 type ShimOptions = ReturnType<typeof normalizeShimOptions>;
 type ShimClock = ReturnType<typeof createClock>;
-type PointerLock = ReturnType<typeof createPointerLock>;
-
-/** The pointer lock the shim answers with, and whether the browser refused the real one. */
-interface LockState {
-  pointerLock: PointerLock;
+/** Whether the browser refused a pointer lock the page asked for: watched, never answered for the page. */
+interface LockWatch {
   denied: boolean;
 }
 
-/** `requestPointerLock` answered by the fake lock, and still asked of the browser. */
-function patchRequestPointerLock(win: Foreign, lock: LockState) {
-  const elementProto = win.Element?.prototype;
-  if (!elementProto) return;
-  const nativeRequest = elementProto.requestPointerLock;
-  elementProto.requestPointerLock = function requestPointerLock(this: Foreign, ...args: Foreign[]) {
-    lock.pointerLock.request(this);
-    try {
-      const result = nativeRequest?.apply(this, args);
-      if (result && typeof result.catch === "function") {
-        result.catch(() => {
-          lock.denied = true;
-        });
-        return result;
-      }
-    } catch {
-      lock.denied = true;
-    }
-    return undefined;
-  };
-}
-
-function patchExitPointerLock(docProto: Foreign, lock: LockState) {
-  const nativeExit = docProto.exitPointerLock;
-  docProto.exitPointerLock = function exitPointerLock(this: Foreign, ...args: Foreign[]) {
-    lock.pointerLock.exit();
-    try {
-      return nativeExit?.apply(this, args);
-    } catch {
-      return undefined;
-    }
-  };
-}
-
-function listenForNativeLock(lock: LockState) {
+/** The element the browser has locked the pointer to, if any. */
+function lockedElement(): Foreign {
   try {
-    document.addEventListener("pointerlockchange", () => lock.pointerLock.onNativeChange(), true);
+    return document.pointerLockElement ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// ── pointer lock, watched ──
+function watchPointerLock(): LockWatch {
+  const lock: LockWatch = { denied: false };
+  try {
     document.addEventListener(
       "pointerlockerror",
       () => {
@@ -1200,44 +929,8 @@ function listenForNativeLock(lock: LockState) {
       true,
     );
   } catch {
-    /* no document yet — the fake still answers */
+    /* no document yet */
   }
-}
-
-// ── pointer lock ──
-function installPointerLock(win: Foreign, options: ShimOptions): LockState {
-  const docProto = typeof win.Document === "function" ? win.Document.prototype : null;
-  const nativeLockDescriptor = docProto ? Object.getOwnPropertyDescriptor(docProto, "pointerLockElement") : null;
-  const pointerLock = createPointerLock({
-    nativeElement: () => {
-      try {
-        return nativeLockDescriptor?.get ? nativeLockDescriptor.get.call(document) : null;
-      } catch {
-        return null;
-      }
-    },
-    dispatch: (type: Foreign) => {
-      queueMicrotask(() => {
-        try {
-          document.dispatchEvent(new Event(type, { bubbles: true }));
-        } catch {
-          /* a document that is going away */
-        }
-      });
-    },
-  });
-  const lock: LockState = { pointerLock, denied: false };
-  if (!options.pointerLock || !docProto || !nativeLockDescriptor) return lock;
-  Object.defineProperty(docProto, "pointerLockElement", {
-    configurable: true,
-    enumerable: nativeLockDescriptor.enumerable ?? true,
-    get() {
-      return pointerLock.element();
-    },
-  });
-  patchRequestPointerLock(win, lock);
-  patchExitPointerLock(docProto, lock);
-  listenForNativeLock(lock);
   return lock;
 }
 
@@ -1258,9 +951,9 @@ function pickCanvas(watch: CanvasWatch) {
 }
 
 /** Moves the mouse over the locked element, or the largest drawn canvas, or the document. */
-function mouseMover(win: Foreign, lock: LockState, watch: CanvasWatch) {
+function mouseMover(win: Foreign, watch: CanvasWatch) {
   return function mouseMove(dx: Foreign, dy: Foreign, x: Foreign, y: Foreign) {
-    const target = lock.pointerLock.element() ?? pickCanvas(watch) ?? document;
+    const target = lockedElement() ?? pickCanvas(watch) ?? document;
     const init = {
       clientX: Number(x) || 0,
       clientY: Number(y) || 0,
@@ -1342,7 +1035,7 @@ function evaluateReady(r: Readiness, page: ReadyInputs) {
   if (verdict.timedOut) r.timedOut = true;
 }
 
-function bootReport(r: Readiness, natives: Natives, clock: ShimClock, lock: LockState) {
+function bootReport(r: Readiness, natives: Natives, clock: ShimClock, lock: LockWatch) {
   const reasons = lock.denied ? ["pointer lock was refused without a gesture"] : [];
   return {
     ready: r.state.ready,
@@ -1429,27 +1122,6 @@ function startPump(page: ReadyInputs, watch: CanvasWatch, r: Readiness) {
   }, READINESS_POLL_MS);
 }
 
-/** Calls the game's own verb of that name, if it has one, reporting (never throwing) its errors. */
-function callGame(win: Foreign, verb: string, ...args: Foreign[]) {
-  const game = win.__studio?.__game;
-  if (!game || typeof game[verb] !== "function") return;
-  try {
-    game[verb](...args);
-  } catch (err) {
-    console.error(err);
-  }
-}
-
-function readGameState(win: Foreign) {
-  const game = win.__studio?.__game;
-  if (!game || typeof game.state !== "function") return null;
-  try {
-    return game.state();
-  } catch {
-    return null;
-  }
-}
-
 /** The graphics API the page's world is drawn with: WebGPU first, then WebGL. */
 function backendOf(watch: CanvasWatch) {
   const { descriptors } = canvasesOf(watch);
@@ -1458,7 +1130,7 @@ function backendOf(watch: CanvasWatch) {
   return three ? three.kind : null;
 }
 
-// The LAST COMPLETED FRAME, not the lifetime total: `__render.drawCalls` is the whole
+// The LAST COMPLETED FRAME, not the lifetime total: `render.drawCalls` is the whole
 // frame's honest figure, and a board check reads it against a per-frame budget.
 function renderReport(watch: CanvasWatch, clock: ShimClock) {
   const drawn = (globalThis as PageGlobal).__studioDraw?.frame?.() ?? null;
@@ -1473,14 +1145,6 @@ function renderReport(watch: CanvasWatch, clock: ShimClock) {
   };
 }
 
-/** The game's own state with the render report merged in, filling the draw counts it left out. */
-function withRender(game: Foreign, render: ReturnType<typeof renderReport>) {
-  const merged = { ...game, __render: render };
-  if (merged.drawCalls === undefined && render.drawCalls !== null) merged.drawCalls = render.drawCalls;
-  if (merged.triangles === undefined && render.triangles !== null) merged.triangles = render.triangles;
-  return merged;
-}
-
 const hookAttached = () => {
   try {
     return Boolean((globalThis as PageGlobal).__studioHook?.current?.());
@@ -1489,108 +1153,17 @@ const hookAttached = () => {
   }
 };
 
-/** What the page is doing: the game's own state when it has one, else the shim's view of it. */
-function pageState(win: Foreign, watch: CanvasWatch, clock: ShimClock, lock: LockState) {
-  const game = readGameState(win);
+/** What the page is doing, from the studio's own clock and counters: the game is never asked. */
+function pageState(watch: CanvasWatch, clock: ShimClock) {
   const render = renderReport(watch, clock);
-  if (game && typeof game === "object") return withRender(game, render);
   return {
     frame: clock.frames(),
     simulatedMs: Math.round(clock.elapsed()),
     running: !clock.frozen(),
     fps: clock.fps(),
-    pointerLock: lock.pointerLock.locked(),
+    pointerLock: lockedElement() !== null,
     render,
-    __render: render,
     __attached: hookAttached(),
-  };
-}
-
-/**
- * The facade's answers for what only the hook or the capture can see, with their fallbacks — what
- * a page that never heard of the contract answers. Exported so a test can read them.
- */
-export function hookedAnswers() {
-  const page = globalThis as PageGlobal;
-  return {
-    inspect: () =>
-      page.__studioHook?.inspect?.() ?? {
-        available: false,
-        reason: "no renderer has been seen on this page",
-      },
-    capture: () => page.__studioCapture?.capture?.() ?? null,
-    captureInfo: () =>
-      page.__studioCapture?.captureInfo?.() ?? {
-        source: "page",
-        reason: "the page-side capture is not installed",
-        picked: null,
-      },
-    cameras: () => page.__studioHook?.cameras?.() ?? [],
-    debugCamera: (name: Foreign) => page.__studioHook?.debugCamera?.(name) ?? { ok: false, available: [] },
-    eyes: () => [],
-    eye: () => ({ ok: false, reason: "this page declares no player, so it has no eye cameras" }),
-    sceneSummary: () => page.__studioHook?.sceneSummary?.() ?? { available: false },
-    demos: () => [],
-    demo: () => ({ ok: false, available: [] }),
-    // A page with no front-end of its own is already in play: the harness reads `ok: false` as
-    // nothing to skip, never as a missing contract.
-    begin: () => ({ ok: false, reason: "this page declares no begin()" }),
-    audio: () => ({ available: false, rms: 0, centroid: 0 }),
-    probes: () => ({}),
-    player: () => null,
-  };
-}
-
-/** What the shim's facade needs from the rest of the install. */
-interface FacadeParts {
-  win: Foreign;
-  watch: CanvasWatch;
-  clock: ShimClock;
-  lock: LockState;
-  ready: (why: Foreign) => Foreign;
-}
-
-// ── the merging facade ──
-function studioFacade({ win, watch, clock, lock, ready }: FacadeParts) {
-  const injected = { keys: new Set(), look: { x: 0, y: 0 } };
-  return {
-    version: CLOCK_VERSION,
-    hud: undefined,
-    attached: hookAttached,
-    state: () => pageState(win, watch, clock, lock),
-    ready,
-    async step(ms: number) {
-      // The stepper yields a microtask between frames, so this is a promise: every caller of
-      // `__studio.step` reaches the page through `executeJavaScript(..., true)`, which resolves it.
-      const result = await clock.step(ms);
-      callGame(win, "step", ms);
-      return result;
-    },
-    pause() {
-      clock.pause();
-      callGame(win, "pause");
-      return true;
-    },
-    start() {
-      callGame(win, "start");
-      clock.start();
-      return true;
-    },
-    seed(value: Foreign) {
-      const seeded = clock.seed(value);
-      callGame(win, "seed", value);
-      return seeded;
-    },
-    ...hookedAnswers(),
-    // Recorded, never dispatched: preview.ts sends the DOM events itself, and a second copy
-    // from here delivered every look twice on a page with no contract of its own.
-    injectInput: (input: Foreign) => {
-      for (const key of input?.down ?? []) injected.keys.add(key);
-      for (const key of input?.up ?? []) injected.keys.delete(key);
-      injected.look.x += Number(input?.look?.dx) || 0;
-      injected.look.y += Number(input?.look?.dy) || 0;
-      return { keys: [...injected.keys], look: { ...injected.look } };
-    },
   };
 }
 
@@ -1614,16 +1187,13 @@ function installCaptureGlobal(win: Foreign, watch: CanvasWatch, clock: ShimClock
         frozen: clock.frozen,
         start: () => clock.start(),
         pause: () => clock.pause(),
-        // The game's own picture, when it has one — never the facade's, which is this function.
-        gameCapture: () => {
-          const game = win.__studio?.__game;
-          return typeof game?.capture === "function" ? game.capture() : null;
-        },
-        // Through the facade, so the template re-renders on its own named rig and an attached game
-        // gets the hook's answer; the ladder only reaches here when nothing drew by itself.
-        debugCamera: (name: Foreign) => win.__studio?.debugCamera?.(name) ?? null,
+        // The game is never asked for a picture: what it drew is read off its canvases.
+        gameCapture: () => null,
+        // The hook's view of the camera the game rendered with; the ladder only reaches here
+        // when nothing drew by itself.
+        debugCamera: (name: Foreign) => (globalThis as PageGlobal).__studioHook?.debugCamera?.(name) ?? null,
         currentCamera: () => {
-          const named = win.__studio?.cameras?.();
+          const named = (globalThis as PageGlobal).__studioHook?.cameras?.();
           return Array.isArray(named) && named.length ? named[0] : "default";
         },
         computedStyle: (element: Foreign) => win.getComputedStyle?.(element) ?? null,
@@ -1652,13 +1222,12 @@ interface ClockParts {
   clock: ShimClock;
   watch: CanvasWatch;
   loaders: Loaders;
-  lock: LockState;
+  lock: LockWatch;
   readiness: Readiness;
-  random: Foreign;
   ready: (why: Foreign) => Foreign;
 }
 
-function clockStats({ win, options, clock, watch, lock, readiness, random }: ClockParts) {
+function clockStats({ options, clock, watch, readiness }: ClockParts) {
   const totals = pageDrawTotals();
   return {
     mode: options.clock,
@@ -1672,11 +1241,9 @@ function clockStats({ win, options, clock, watch, lock, readiness, random }: Clo
     triangles: totals ? (totals.triangles ?? null) : null,
     lastFrame: Math.round(clock.now()),
     ready: readiness.state.ready,
-    contract: Boolean(win.__studio?.__game),
-    pointerLock: lock.pointerLock.locked(),
+    pointerLock: lockedElement() !== null,
     backend: backendOf(watch),
     autoResumes: clock.autoResumes(),
-    seed: random ? random.value() : null,
   };
 }
 
@@ -1693,7 +1260,7 @@ function installClockGlobal(parts: ClockParts) {
       pause: clock.pause,
       start: clock.start,
       step: clock.step,
-      seed: clock.seed,
+      state: () => pageState(watch, clock),
       boot: () => bootReport(readiness, natives, clock, lock),
       ready: parts.ready,
       rafReal: (cb: Foreign) => realFrame(natives, cb),
@@ -1712,8 +1279,8 @@ function installClockGlobal(parts: ClockParts) {
         quietFor: Math.round(natives.performanceNow() - loaders.lastResourceAt),
         quietMs: options.quietMs,
       }),
-      pointerLock: () => lock.pointerLock.locked(),
-      mouseMove: mouseMover(win, lock, watch),
+      pointerLock: () => lockedElement() !== null,
+      mouseMove: mouseMover(win, watch),
       stats: () => clockStats(parts),
     }),
   );
@@ -1739,7 +1306,6 @@ export function installStudioShim(rawOptions: Foreign) {
       Object.freeze({ setVisible: gate.setVisible, setMaxFps: gate.setMaxFps }),
     );
   }
-  const random = options.seed === null ? null : installSeededRandom(win, options.seed);
   const watch = watchCanvases(win);
   installGlGlobal(win, watch, options.counters);
   // ── the draw counters, at the graphics API, installed before any game code runs ──
@@ -1750,8 +1316,8 @@ export function installStudioShim(rawOptions: Foreign) {
     ? installStudioDrawCounters({ scope: win, note: (message) => noteGl(watch, message) })
     : null;
   const loaders = watchLoaders(win, natives);
-  const clock = installClock(win, natives, options, random, drawCounters);
-  const lock = installPointerLock(win, options);
+  const clock = installClock(win, natives, options, drawCounters);
+  const lock = watchPointerLock();
   // ── readiness ──
   const readiness: Readiness = {
     bootAt: natives.performanceNow(),
@@ -1767,8 +1333,7 @@ export function installStudioShim(rawOptions: Foreign) {
     settleReady(readiness, natives, clock, typeof why === "string" && why ? why : "declared", true);
   watchTrustedInput(win, readiness);
   startPump({ natives, clock, loaders, options }, watch, readiness);
-  installFacade(win, studioFacade({ win, watch, clock, lock, ready }));
   installCaptureGlobal(win, watch, clock, natives);
-  installClockGlobal({ win, natives, options, clock, watch, loaders, lock, readiness, random, ready });
+  installClockGlobal({ win, natives, options, clock, watch, loaders, lock, readiness, ready });
   return win.__studioClock;
 }

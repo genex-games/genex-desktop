@@ -138,14 +138,16 @@ describe("the served page", () => {
   it("bakes this load's shim options into the tag, and nothing when there are none", () => {
     assert.equal(shimTag(null), SHIM_TAG);
     assert.equal(shimTag({}), SHIM_TAG);
-    const tag = shimTag({ readyMs: 30_000, seed: null });
+    const tag = shimTag({ readyMs: 30_000, clock: "studio" });
     assert.match(tag, /data-studio-shim data-studio-options="/);
     const encoded = /data-studio-options="([^"]*)"/.exec(tag)?.[1] ?? "";
     assert.deepEqual(JSON.parse(encoded.replace(/&quot;/g, '"').replace(/&amp;/g, "&")), {
       readyMs: 30_000,
-      seed: null,
+      clock: "studio",
     });
-    assert.ok(rewriteGameHtml(read("template.html"), { shim: { readyMs: 30_000, seed: null } }).html.includes(tag));
+    assert.ok(
+      rewriteGameHtml(read("template.html"), { shim: { readyMs: 30_000, clock: "studio" } }).html.includes(tag),
+    );
   });
 });
 

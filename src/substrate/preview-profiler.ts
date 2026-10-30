@@ -126,7 +126,7 @@ function hasFiniteMetrics(sample: ProfileSample): boolean {
  * is the studio's own copy, so it establishes the revision and nothing more.
  */
 const RENDERER_REVISION_PROBE = `(async () => {
-        const r = globalThis.__studio?.inspect?.()?.renderer;
+        const r = globalThis.__studioHook?.current?.()?.renderer;
         if (!r) return null;
         try {
           const m = await import(r.isWebGLRenderer ? "three" : "three/webgpu");
@@ -182,7 +182,7 @@ export class PreviewProfiler {
     if (p.action === "start") {
       if (s.started) throw new Error(MESSAGE.AlreadyStarted);
       s.started = true;
-      return this.evaluate("globalThis.__studio.start()");
+      return this.evaluate("globalThis.__studioClock.start()");
     }
     return this.#read(s);
   }

@@ -18,10 +18,10 @@
     "kind": "three-vite",
     "serve": "dist"
   },
-  "addsAtLeast": ["src/studio.js", "src/studio.d.ts", "CLAUDE.md", "NOTES.md", "studio.json", ".gitignore", ".git"],
-  "neverAdded": ["index.html", "src/main.js", "src/main.ts", "docs/CONTRACT.md"],
-  "edits": "two-line-install",
-  "contract": "loaded",
+  "addsAtLeast": ["CLAUDE.md", "studio.json", ".gitignore", ".git"],
+  "neverAdded": ["index.html", "src/main.js", "src/main.ts", "docs/CONTRACT.md", "src/studio.js", "src/studio.d.ts", "NOTES.md"],
+  "edits": "none",
+  "contract": "missing",
   "needsNodeModules": true,
   "backend": "webgl",
   "game": {

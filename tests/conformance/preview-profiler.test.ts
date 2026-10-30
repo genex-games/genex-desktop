@@ -2,14 +2,7 @@ import assert from "node:assert/strict";
 import { it } from "node:test";
 import { runInNewContext } from "node:vm";
 import { installProfileObserver } from "../../src/preview-profiler/observer.ts";
-import {
-  chooseCapture,
-  probePageUi,
-  resolveSurface,
-  PAGE_UI_PRIMARY_COVERAGE,
-  type PageUi,
-} from "../../src/substrate/page-ui.ts";
-import type { PixelStats } from "../../src/substrate/pixel-stats.ts";
+import { chooseCapture, resolveSurface } from "../../src/substrate/page-ui.ts";
 import { PreviewProfiler } from "../../src/substrate/preview-profiler.ts";
 function fixture(common: boolean | "fallback" = false, bundle = false, extras: Record<string, unknown> = {}) {
   let time = 0,
@@ -63,9 +56,8 @@ function fixture(common: boolean | "fallback" = false, bundle = false, extras: R
       return next;
     },
     cancelAnimationFrame: (id: number) => callbacks.delete(id),
-    __studio: {
-      inspect: () => ({ scene, renderer, camera }),
-      seed() {},
+    __studioHook: { current: () => ({ scene, renderer, camera }) },
+    __studioClock: {
       start() {},
       pause() {},
       step() {},
@@ -104,7 +96,7 @@ it("observes actual world frames, preserves return/reset behavior, excludes the 
     assert.equal(r.sample.backend, common && common !== "fallback" ? "webgpu" : "webgl");
     assert.equal(f.renderer.render, f.original);
     assert.equal(f.info.autoReset, true);
-    assert.equal(f.context.__studio.state().fps, 123);
+    assert.equal(f.context.__studioClock.state().fps, 123);
   }
 });
 it("observer-only RAFs are not FPS, bundles are not free rendering, resize invalidates", () => {
@@ -266,8 +258,8 @@ it("a bundled game with no bare specifier is identified by the canvas stamp, and
         // The page really evaluates the identity probe: there is no module loader in here, so the
         // dynamic import rejects exactly as it does for a game whose three is inside its bundle.
         return await runInNewContext(expression, {
-          __studio: {
-            inspect: () => ({
+          __studioHook: {
+            current: () => ({
               renderer: {
                 isWebGLRenderer: true,
                 domElement: { getAttribute: (name: string) => (name === "data-engine" ? engine : null) },
@@ -303,30 +295,13 @@ it("a bundled game with no bare specifier is identified by the canvas stamp, and
 // ── M4.5a: which surface a capture photographs ──────────────────────────────
 
 /**
- * The surface ladder, without a window. `chooseCapture` is the whole of `#capture`'s decision:
- * `canvas` and `page` go straight through, and `auto` asks the page what it looks like — but
- * every rung falls toward a picture, because a capture that works today must not begin to fail
- * because a probe rejected or a compositor was asleep.
+ * The surface ladder, without a window. `chooseCapture` is the whole of `#capture`'s decision: the
+ * studio photographs the page as the player sees it (the compositor frame, DOM included) unless a
+ * caller names the canvas, and a page frame that cannot be had falls back to the canvas — a
+ * picture beats none.
  */
-function litStats(litFraction: number): PixelStats {
-  return { width: 8, height: 8, sampled: 64, meanLuma: litFraction * 255, litFraction };
-}
-
-const uiOver = (coverage: number, canvases = 1): PageUi => ({
-  entries: coverage > 0 ? ["div.menu"] : [],
-  coverage,
-  canvas: canvases > 0 ? { count: canvases, x: 0, y: 0, width: 800, height: 600 } : null,
-  viewport: { width: 800, height: 600 },
-  uiPrimary: coverage >= PAGE_UI_PRIMARY_COVERAGE,
-});
-
-/** A ladder whose four callbacks are declared per case and whose calls are recorded. */
-function ladder(spec: {
-  ui?: PageUi | null | (() => Promise<PageUi | null>);
-  canvas?: string | Error;
-  page?: string | Error;
-  lit?: number;
-}) {
+/** A ladder whose callbacks are declared per case and whose calls are recorded. */
+function ladder(spec: { canvas?: string | Error; page?: string | Error }) {
   const calls: string[] = [];
   const give = (what: string | Error | undefined, name: string) => async () => {
     calls.push(name);
@@ -335,96 +310,34 @@ function ladder(spec: {
   };
   return {
     calls,
-    deps: {
-      pageUi: async () => {
-        calls.push("pageUi");
-        return typeof spec.ui === "function" ? spec.ui() : (spec.ui ?? null);
-      },
-      canvas: give(spec.canvas, "canvas-frame"),
-      page: give(spec.page, "page-frame"),
-      measure: () => {
-        calls.push("measure");
-        return spec.lit === undefined ? null : litStats(spec.lit);
-      },
-    },
+    deps: { canvas: give(spec.canvas, "canvas-frame"), page: give(spec.page, "page-frame") },
   };
 }
 
-it("an explicit surface is photographed without asking the page anything", async () => {
-  const canvasOnly = ladder({ ui: uiOver(1) });
-  assert.deepEqual(await chooseCapture("canvas", canvasOnly.deps), {
-    shot: "canvas-frame",
-    surface: "canvas",
-    ui: null,
-    stats: null,
-  });
-  assert.deepEqual(canvasOnly.calls, ["canvas-frame"]);
-  const pageOnly = ladder({ ui: uiOver(0) });
-  assert.deepEqual(await chooseCapture("page", pageOnly.deps), {
-    shot: "page-frame",
-    surface: "page",
-    ui: null,
-    stats: null,
-  });
-  assert.deepEqual(pageOnly.calls, ["page-frame"]);
-  // The legacy flag is the permanent alias of the surface an older seed knew how to ask for.
+it("photographs the page, DOM included, unless the canvas is named", async () => {
+  // Flipped from "neither means the canvas" and an `auto` that probed the page first: every
+  // capture the app takes is the page as the player sees it.
+  assert.equal(resolveSurface({}), "page");
   assert.equal(resolveSurface({ page: true }), "page");
   assert.equal(resolveSurface({ page: true, surface: "canvas" }), "canvas");
-  assert.equal(resolveSurface({}), "canvas");
+  for (const asked of ["page", "auto"] as const) {
+    const rig = ladder({});
+    assert.deepEqual(await chooseCapture(asked, rig.deps), { shot: "page-frame", surface: "page" });
+    assert.deepEqual(rig.calls, ["page-frame"], `${asked} asks the page nothing first`);
+  }
+  const canvasOnly = ladder({});
+  assert.deepEqual(await chooseCapture("canvas", canvasOnly.deps), { shot: "canvas-frame", surface: "canvas" });
+  assert.deepEqual(canvasOnly.calls, ["canvas-frame"]);
 });
 
-it("an auto capture whose page probe rejects still returns a canvas frame", async () => {
-  const rig = ladder({
-    ui: () => probePageUi(() => Promise.reject(new Error("frame is navigating"))),
-    canvas: "canvas-frame",
-    lit: 0.4,
-  });
-  const chosen = await chooseCapture("auto", rig.deps);
-  assert.equal(chosen.shot, "canvas-frame");
-  assert.equal(chosen.surface, "canvas");
-  assert.equal(chosen.ui, null);
-  // The frame it measured comes back with it: nobody counts those pixels twice.
-  assert.equal(chosen.stats?.litFraction, 0.4);
-  assert.deepEqual(rig.calls, ["pageUi", "canvas-frame", "measure"]);
-});
-
-it("a DOM primary page is photographed whole, and falls back to the canvas rather than failing", async () => {
-  const dom = ladder({ ui: uiOver(0.6) });
-  const chosen = await chooseCapture("auto", dom.deps);
-  assert.equal(chosen.shot, "page-frame");
-  assert.equal(chosen.surface, "page");
-  assert.deepEqual(dom.calls, ["pageUi", "page-frame"]);
-
-  const noCompositor = ladder({ ui: uiOver(0.6), page: new Error("display surface not available") });
-  const fell = await chooseCapture("auto", noCompositor.deps);
+it("falls back to the canvas when the page frame cannot be had, and fails only when neither can", async () => {
+  const noCompositor = ladder({ page: new Error("display surface not available") });
+  const fell = await chooseCapture("page", noCompositor.deps);
   assert.equal(fell.shot, "canvas-frame");
   assert.equal(fell.surface, "canvas");
-});
-
-it("an auto capture whose canvas frame comes back blank on a page with a canvas flips to the page", async () => {
-  const blind = ladder({ ui: uiOver(0), lit: 0 });
-  const chosen = await chooseCapture("auto", blind.deps);
-  assert.equal(chosen.shot, "page-frame");
-  assert.equal(chosen.surface, "page");
-  assert.deepEqual(blind.calls, ["pageUi", "canvas-frame", "measure", "page-frame"]);
-
-  // Nothing to gain when the page has no canvas at all, or when the frame is lit.
-  const noCanvas = ladder({ ui: uiOver(0, 0), lit: 0 });
-  assert.equal((await chooseCapture("auto", noCanvas.deps)).surface, "canvas");
-  const lit = ladder({ ui: uiOver(0), lit: 0.3 });
-  assert.equal((await chooseCapture("auto", lit.deps)).surface, "canvas");
-});
-
-it("no frame at all asks the compositor, and a compositor that also fails returns the canvas frame it had", async () => {
   const both = ladder({
-    ui: uiOver(0),
-    canvas: new Error("the page never answered"),
     page: new Error("display surface not available"),
+    canvas: new Error("the page never answered"),
   });
-  await assert.rejects(chooseCapture("auto", both.deps), /the page never answered/);
-
-  const blankThenNothing = ladder({ ui: uiOver(0), lit: 0, page: new Error("display surface not available") });
-  const chosen = await chooseCapture("auto", blankThenNothing.deps);
-  assert.equal(chosen.shot, "canvas-frame");
-  assert.equal(chosen.stats?.litFraction, 0);
+  await assert.rejects(chooseCapture("auto", both.deps), /display surface not available/);
 });

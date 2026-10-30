@@ -23,12 +23,14 @@ export interface ProfileObserverOptions {
 export function installProfileObserver(options: ProfileObserverOptions) {
   const key = options.key;
   (globalThis as Foreign)[key]?.end?.();
-  const studio = (globalThis as Foreign).__studio;
-  const capable = ["inspect", "seed", "start", "pause", "step", "state"].every(
-    (k) => typeof studio?.[k] === "function",
-  );
-  if (!studio || !capable) return { error: "missing inspect/seed/start/pause/step/state capability" };
-  const inspected = studio.inspect();
+  // The studio's own hook (what the game rendered with) and clock: the game is never asked.
+  const hook = (globalThis as Foreign).__studioHook;
+  const clock = (globalThis as Foreign).__studioClock;
+  const capable =
+    typeof hook?.current === "function" &&
+    ["start", "pause", "step", "state"].every((k) => typeof clock?.[k] === "function");
+  if (!capable) return { error: "missing the studio's hook or clock on this page" };
+  const inspected = hook.current();
   const renderer = inspected?.renderer;
   const scene = inspected?.scene;
   const camera = inspected?.camera;
@@ -398,7 +400,7 @@ export function installProfileObserver(options: ProfileObserverOptions) {
   function checkStillHolds() {
     if (rendererReplaced()) reason = "renderer/backend replaced";
     if (JSON.stringify(config()) !== JSON.stringify(initial)) reason = "viewport/render configuration changed";
-    const current = studio.inspect();
+    const current = hook.current();
     // The renderer and its canvas must hold; the scene and the camera may not, and a game that
     // switches them says so in `configuration.sceneSwitches` instead of losing the sample.
     if (current?.renderer !== renderer) reason = "inspected renderer replaced";

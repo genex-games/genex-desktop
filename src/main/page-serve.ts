@@ -172,7 +172,7 @@ export function rewriteGameHtml(html: string, options: RewriteOptions = {}): Rew
   // The injected TAG, not the string. A bare substring test over the whole document meant that
   // one mention of `data-studio-shim` anywhere — an HTML comment, a debug line asking whether
   // the studio is attached, a CSS content value — served the page byte-identical: no shim, no
-  // hook, no import-map rewrite, no seeded RNG, no draw counters and no virtual clock, with
+  // hook, no import-map rewrite, no draw counters and no virtual clock, with
   // nothing in the run to say why.
   if (matchOutsideComments(source, /<script\b[^>]*\bdata-studio-shim\b/i)) return untouched();
 

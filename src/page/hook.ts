@@ -925,13 +925,8 @@ export function inspect(options: InspectOptions = {}): Foreign {
   };
 }
 
+/** The hook never asks the game about itself: a page reports no state of its own here. */
 function pageState() {
-  try {
-    const game = (globalThis as PageGlobal).__studio?.__game;
-    if (game && typeof game.state === "function") return game.state();
-  } catch {
-    /* a game whose state() throws is not the hook's problem */
-  }
   return null;
 }
 

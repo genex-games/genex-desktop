@@ -41,8 +41,6 @@ import {
 } from "../../src/harness-seed/loop/kinds.ts";
 import { applyPlayScript, CONTROL_EXERCISE } from "../../src/harness-seed/loop/play-script.ts";
 import { applySetup, EvidenceFailure, patientEvidence } from "../../src/harness-seed/loop/evidence.ts";
-import { FlowPhase as HarnessFlowPhase } from "../../src/harness-seed/loop/page-contract.ts";
-import { FlowPhase as TemplateFlowPhase } from "../../src/game-template/src/studio.js";
 import { PreviewConsoleSource } from "../../src/harness-seed/loop/preview-gone.ts";
 import { blindCompare } from "../../src/harness-seed/loop/judge.ts";
 import { facetPrompt } from "../../src/harness-seed/loop/facet/prompt.ts";
@@ -1732,10 +1730,6 @@ function sequence(calls: Array<{ method: string; payload: Record<string, unknown
 }
 
 describe("a game with a front-end: the drive starts in play", () => {
-  it("speaks the template's phase words", () => {
-    assert.deepEqual({ ...HarnessFlowPhase }, { ...TemplateFlowPhase });
-  });
-
   it("begins after the seed, waits out the countdown, and samples the early state in play before any control", async () => {
     const game = frontEnd({ countdownSteps: 2 });
     const { ctx, calls } = stubCtx({ frames: ["a", "b", "c"], ...game });

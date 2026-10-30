@@ -18,7 +18,7 @@ import { PreviewProfiler, type ProfileRequest } from "../substrate/preview-profi
  * `webContents` APIs.
  *
  * These are also the studio's senses. Screenshots, console output, crash signals and
- * `window.__studio.state()` are what turn "it renders" into something a critic can judge.
+ * the page's own console are what turn "it renders" into something the agents can read.
  */
 import {
   type BaseWindow,
@@ -75,13 +75,7 @@ import {
   studioStateExpression,
 } from "./preview-page-scripts.ts";
 import { StateShape } from "../shared/studio-state-shape.ts";
-import {
-  computePixelStats,
-  exposureStats,
-  isEffectivelyBlack,
-  type PixelDiff,
-  type PixelStats,
-} from "../substrate/pixel-stats.ts";
+import { computePixelStats, exposureStats, isEffectivelyBlack, type PixelDiff } from "../substrate/pixel-stats.ts";
 import { chooseCapture, probePageUi, resolveSurface, type PageUi } from "../substrate/page-ui.ts";
 import type {
   CropRect,
@@ -854,11 +848,11 @@ export class GamePreview {
   /** A card-sized photograph using bounded statistics and a single JPEG encode. */
   async screenshotCard(quality: number, maxPx: number): Promise<Buffer | null> {
     await this.#profiler.invalidate("screenshot during sample");
-    const shot = await this.#capture({ surface: CaptureSurface.Auto }, CARD_STATS_SAMPLES);
+    const shot = await this.#capture();
     const size = shot.image.getSize();
-    const stats =
-      shot.stats ??
-      computePixelStats(shot.image.toBitmap(), size.width, size.height, { maxSamples: CARD_STATS_SAMPLES });
+    const stats = computePixelStats(shot.image.toBitmap(), size.width, size.height, {
+      maxSamples: CARD_STATS_SAMPLES,
+    });
     if (isEffectivelyBlack(stats)) return null;
     const scale = Math.min(1, maxPx / Math.max(size.width, size.height));
     const image =
@@ -882,11 +876,9 @@ export class GamePreview {
     opts: { page?: boolean; surface?: CaptureSurface } = {},
   ): Promise<{ jpeg: Buffer; stats: PreviewPixelStats; surface: CaptureSurface }> {
     await this.#profiler.invalidate("screenshot during sample");
-    const { image, source, info, stats: measured } = await this.#capture(opts);
+    const { image, source, info } = await this.#capture(opts);
     const size = image.getSize();
-    // `auto` already measured this exact frame to decide whether the canvas eye was the broken
-    // one; measuring it twice would be the same arithmetic over the same bitmap.
-    const stats = measured ?? computePixelStats(image.toBitmap(), size.width, size.height);
+    const stats = computePixelStats(image.toBitmap(), size.width, size.height);
     let canvas = true;
     try {
       canvas = Boolean(await this.evaluate("!!document.querySelector('canvas')"));
@@ -1041,32 +1033,19 @@ export class GamePreview {
   }
 
   /**
-   * The whole surface question in one place (M4.5a). `canvas` is what the game draws, `page` is
-   * the compositor frame with every DOM element on it — the menu, the loader, the HTML HUD —
-   * and `auto` asks the page what it looks like before it decides. Only `auto` costs a probe,
-   * and the probe can never fail a capture: every rung of the ladder falls toward a picture.
+   * The whole surface question in one place (M4.5a): the page as the player sees it (the
+   * compositor frame, DOM included), unless a caller names the canvas — and a page frame that
+   * cannot be had falls back to the canvas, toward a picture.
    */
   async #capture(
     opts: { page?: boolean; surface?: CaptureSurface } = {},
-    maxSamples?: number,
-  ): Promise<{ image: NativeImage; source: CaptureSource; info: PageCaptureInfo | null; stats?: PixelStats }> {
+  ): Promise<{ image: NativeImage; source: CaptureSource; info: PageCaptureInfo | null }> {
     this.#page();
-    const asked = resolveSurface(opts);
-    const chosen = await chooseCapture(asked, {
-      pageUi: () => this.pageUi(),
+    const chosen = await chooseCapture(resolveSurface(opts), {
       canvas: () => this.#captureCanvas(),
       page: () => this.#capturePageSurface(),
-      measure: (shot) => {
-        const size = shot.image.getSize();
-        return computePixelStats(
-          shot.image.toBitmap(),
-          size.width,
-          size.height,
-          maxSamples ? { maxSamples } : undefined,
-        );
-      },
     });
-    return chosen.stats ? { ...chosen.shot, stats: chosen.stats } : chosen.shot;
+    return chosen.shot;
   }
 
   /**
@@ -1142,7 +1121,7 @@ export class GamePreview {
     pageTimeoutMs = PAGE_CAPTURE_TIMEOUT_MS,
   ): Promise<{ image: NativeImage; source: CaptureSource; info: PageCaptureInfo | null }> {
     const page = this.#page();
-    // First choice: ask the page itself. `__studio.capture()` re-renders and reads the WebGL
+    // First choice: ask the page itself. The shim's `__studioCapture.capture()` reads the WebGL
     // canvas in one JS turn, so the pixels never touch the compositor — a window that is
     // covered, on another Space, or on a sleeping display photographs exactly the same. One
     // occluded run lost every first-iteration build to "display surface not available".
@@ -1294,7 +1273,7 @@ export class GamePreview {
     };
     if (!wc || wc.isDestroyed()) return { ...base, navigating: false, page: null };
     if (this.#navigating || wc.isLoading()) return { ...base, navigating: true, page: null };
-    const probe = `(() => { let state = null; try { const full = window.__studio ? window.__studio.state() : null; state = full ? { phase: full.phase, drawCalls: full.drawCalls } : null; } catch {} return { complete: document.readyState === "complete", resources: performance.getEntriesByType("resource").length, state }; })()`;
+    const probe = `(() => { let state = null; try { const clock = window.__studioClock; const full = clock && clock.state ? clock.state() : null; state = full ? { drawCalls: full.render ? full.render.drawCalls : null } : null; } catch {} return { complete: document.readyState === "complete", resources: performance.getEntriesByType("resource").length, state }; })()`;
     const page = (await Promise.race([
       this.evaluate(probe).catch(() => null),
       delay(LIVE_PROBE_MS, null),
@@ -1304,9 +1283,8 @@ export class GamePreview {
   }
 
   /**
-   * `window.__studio.state()` — the structural probe that complements screenshots. Bounded by
-   * structure in the page (`boundStudioState`): a state past {@link STATE_MAX_CHARS} loses its
-   * largest lists to stubs, never the tail of its text, and the `keep` paths are cut last.
+   * What the page is doing by the shim's own clock and counters (`__studioClock.state()`); the
+   * game is never asked. Bounded by structure in the page (`boundStudioState`).
    */
   async studioState(options?: { keep?: readonly string[] }): Promise<unknown> {
     return this.evaluate(studioStateExpression(STATE_MAX_CHARS, options?.keep));
@@ -1358,8 +1336,10 @@ export class GamePreview {
     // The method name is interpolated into page JS: only a plain identifier may travel.
     if (!/^[A-Za-z_$][\w$]*$/.test(method)) throw new Error(MESSAGE.notMethodName(method));
     const argument = arg === undefined ? "" : JSON.stringify(arg);
+    // The studio's own clock answers its verbs (step, pause, start, state, ready); the game is
+    // never called, so anything else is missing on every page.
     return this.evaluate(
-      `(window.__studio && typeof window.__studio.${method} === "function") ? window.__studio.${method}(${argument}) : { __missing: true }`,
+      `(window.__studioClock && typeof window.__studioClock.${method} === "function") ? window.__studioClock.${method}(${argument}) : { __missing: true }`,
     );
   }
 
@@ -1404,7 +1384,7 @@ export class GamePreview {
 
   /**
    * Drive the game the way a player does: keys, clicks, look. Chromium `sendInputEvent` plus
-   * DOM events plus `__studio.injectInput`, so a paused `step()` playthrough still sees WASD.
+   * DOM events, so a paused `step()` playthrough still sees the keys held.
    */
   async input(actions: PreviewInputAction[]): Promise<{ ok: boolean; applied: number; width: number; height: number }> {
     await this.#profiler.invalidate("input during sample");
