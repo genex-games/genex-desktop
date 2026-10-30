@@ -33,6 +33,8 @@ to build tends to land well. Compliant versions that keep most of the feel:
 - Prices that relate to play (minutes of play per unit earned in the game's own currency) make the
   Nex price easy to judge.
 - A few clear tiers beat a long list; every price on the store's grid.
-- The item's picture is the item itself, filling its square.
+- Building the item into the game before listing it means what is sold already works.
+- The item's picture is the item itself, filling its square; a capture of its own in-game model
+  matches what the player gets.
 - A new item can be marked as new where the game shows its store.
 - Purchases delivered at boot from `getEntitlements()` survive restarts and other devices.

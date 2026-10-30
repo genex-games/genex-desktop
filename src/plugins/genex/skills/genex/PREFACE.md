@@ -5,8 +5,8 @@ passages of advice Studio does not ship taken out. Where it disagrees with this 
 
 ## What does not apply in Studio
 
-- "Where to run this", "Setup" and the CLI version paragraph. The game's folder is already the
-  workspace, Studio ships and pins the Genex CLI, and the user signs in to Genex once in Studio.
+- Setup. The game's folder is already the workspace, Studio ships and pins the Genex CLI, and the
+  user signs in to Genex once in Studio.
   Never check or install Node, never run `npx genex`, `npm i -g` or `npm i -D @genex-ai/cli-demo`,
   and never run `auth`, `tools` or `init`.
 - Skill cards are never copied into the game: no `.claude/skills`, `.agents/skills` or `AGENTS.md`
@@ -65,4 +65,3 @@ Building the game never uses Genex credits: it runs on the user's own plan. A ge
 refuses for too few credits keeps its card in Studio, which says so and offers Get credits, then
 Make it. So never relay the balance, price or refill date, and never retry: add at most one short
 sentence saying what waits for credits, and carry on.
-This holds for every lane card's "Out of credits" line too.

@@ -23,7 +23,7 @@ preface wins.
   `genex__cli {"command":"shop add","args":"<name>","options":{…}}` with the flags by name:
   `price` (0 is Free), `type`, `description`, `tag` (a list), `shared` (true or false), and
   `image`, `model` and `package`, each a path inside this game, such as
-  `".genex/scratch/frost-axe.png"`. Studio copies those files in itself and adds `--json`. It asks
+  `".genex/scratch/axe.png"`. Studio copies those files in itself and adds `--json`. It asks
   the person nothing, because a draft spends nothing and sells nothing until the game is
   published. `genex shop set <id>` takes the same options plus `rename`: on a local draft (`local_…`)
   through `genex__cli`, asking nobody, and on an item in the store through `genex__cli-paid`,

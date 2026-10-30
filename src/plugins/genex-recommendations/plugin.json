@@ -1,10 +1,10 @@
 {
   "apiVersion": 3,
   "id": "genex-recommendations",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "name": "Genex recommendations",
   "publisher": "Genex",
-  "description": "Genex's own optional advice for making games: multiplayer patterns, cover craft, where assets can come from and shop design. Skills an agent reads on demand; none of it is required.",
+  "description": "Genex's own optional advice for making games: multiplayer patterns, cover craft, where assets can come from, shop design, the player's experience on Genex and models at play time. Skills an agent reads on demand; none of it is required.",
   "icon": "icon.png",
   "backend": "backend.mjs",
   "capabilities": [],
@@ -13,7 +13,7 @@
     {
       "name": "multiplayer-patterns",
       "engines": ["web"],
-      "summary": "Optional patterns for a multiplayer web game on @genex-ai/multiplayer: choosing connect or matchmake, menus and lobbies, teams, quorum, reconnects, testing with two players, and per-genre setups.",
+      "summary": "Optional patterns for a multiplayer web game on @genex-ai/multiplayer: choosing connect or matchmake and a preset, menus and lobbies, teams, host authority, quorum, reconnects, testing with two players, and per-genre setups.",
       "file": "skills/multiplayer-patterns/SKILL.md"
     },
     {
@@ -31,6 +31,18 @@
       "engines": ["web"],
       "summary": "Optional advice on a shop players want to buy from on Genex, and on compliant alternatives when a request crosses Genex's hard rules.",
       "file": "skills/shop-design/SKILL.md"
+    },
+    {
+      "name": "player-experience",
+      "engines": ["web"],
+      "summary": "Optional advice on how a Genex web game meets its players: booting before identity, preview builds and saves, capabilities a player can refuse, and pointer lock and fullscreen around Genex sheets.",
+      "file": "skills/player-experience/SKILL.md"
+    },
+    {
+      "name": "play-time-models",
+      "engines": ["web"],
+      "summary": "Optional advice on games that call a language model while somebody plays: authored alternatives, JSON then render, keeping the feature playable when the lane says no, and keeping the player's spend low.",
+      "file": "skills/play-time-models/SKILL.md"
     }
   ],
   "panels": [],

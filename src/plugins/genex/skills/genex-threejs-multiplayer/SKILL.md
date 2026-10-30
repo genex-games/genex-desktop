@@ -90,7 +90,7 @@ listed: `skills/genex-threejs-multiplayer/references/realtime-patterns.md`, for 
 built from the SDK calls the card shows. Commands map onto Studio tools as the `genex` skill
 describes (`genex__skill {"name":"genex"}`).
 
-<!-- upstream @genex-ai/cli-demo/templates/skills/genex-threejs-multiplayer/SKILL.md v1.36.17 sha256 f74f2cb0788bed506e9db280c47fcbf35da3d530a5ec022537741363b4082e0c -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-threejs-multiplayer/SKILL.md v1.36.17 sha256 9e1be9fb9b87c75c58488776d2e49ac0a757a8f81e21966ed890f5e8915f0a3f -->
 ---
 name: genex-threejs-multiplayer
 description: Realtime multiplayer for Genex Three.js games with `@genex-ai/multiplayer` — a relay whose SDK auto-smooths remote players AND shared objects (you do NOT write interpolation). Use whenever 2+ players share a world: movement sync, a shared ball/NPC via objects + ownership, host-authoritative scores/waves, shots/emotes, presence.
@@ -150,8 +150,8 @@ lie about its own position or score.
 
 ## Matchmaking (competitive presets — server-owned)
 
-When players should be **matched into separate capped rooms** rather than share one big room (a 1v1
-duel, an FFA arena, N-v-N teams, an invite lobby), use `matchmake()` instead of `connect()`. It
+`matchmake()` seats players in **separate capped rooms** (a 1v1
+duel, an FFA arena, N-v-N teams, an invite lobby) rather than the one shared `connect()` room. It
 returns a handle whose **`session` is `null` while searching**; `mm.matchmaking` reports the search (its `status`, `queue.position`, `players`/`opponents`, `teams`, `scores`,
 `winCondition`), and switch to the game once `session` goes live:
 
@@ -187,7 +187,7 @@ mm.on("matchStart", () => syncSession()); // duel/arena/teams only
 mm.on("matchEnded", (result) => showResult(result)); // duel/arena/teams only
 mm.on("error", (e) => showQueueError(e)); // after SDK retries; fix, then mm.retry()
 // 4409 = opened in another tab/device, 4401 = signed out: the handle stops, never requeues.
-mm.on("disconnect", () => showMenu("This game is open somewhere else.")); // mm.retry() only on a click
+mm.on("disconnect", () => onQueueStopped()); // mm.retry() only on a click
 
 // Every frame AND a low-rate timer: the handle swaps in a new Session after
 // seating, terminal drop/requeue, and the next match.
@@ -226,18 +226,16 @@ game does not use this block.
 }
 ```
 
-**Choosing a preset — your own rules → `open`; a ready-made match loop → `duel`/`arena`/`teams`.**
 Presets: **open** (a room of N players — the server owns only seating/capacity/refill, you write
 everything else), **duel** (1v1 winner-stays), **arena** (N-player FFA, join-anytime), **teams**
-(N-v-N with a server-owned match loop + eviction — only when you want that whole loop ready-made;
-for your own team game use `open`), **private** (invite-code lobby). Win conditions (batteries-included presets only):
+(N-v-N with a server-owned match loop + eviction), **private** (invite-code lobby). Win conditions (batteries-included presets only):
 **lastStanding** (last one alive), **firstToScore** (first to the score target), **highScoreInTime**
 (top score at the time cap), **firstToFinish** (first to finish). A round that hits the time cap
 undecided is a draw. (`open` has no win condition — it never ends a round for you.)
 
-### `open` — the default building block (bring your own rules)
+### `open` (bring your own rules)
 
-Reach for **`open`** first: a room of up to `maxPlayers` that the queue seats and (optionally)
+**`open`** is a room of up to `maxPlayers` that the queue seats and (optionally)
 refills, and NOTHING else — no rounds, no scores, no win condition, no winner-stays eviction. You
 build teams/rounds/scoring/win-logic in game code on the primitives you already have (host election,
 `shared`, per-player state, the `players` list). Config knobs (all numbers):
@@ -310,7 +308,7 @@ catch it and show the menu, and keep the typed code as the second way in.
 ## Connect
 
 Pick your own per-player state shape (any JSON). `room` is the **project slug**
-(printed by `genex init`) — same id = same room, different ids are fully isolated.
+— same id = same room, different ids are fully isolated.
 
 
 **Joining requires the SDK's player identity — the relay rejects tokenless
@@ -336,8 +334,7 @@ let room = await connect<State>({
 
 **Capacity:** 64 players is the relay's **mechanical seat cap**, not a proven high-motion physics
 envelope. Object-heavy rooms amplify fanout; measure the exact game at 8/16/32/64 before promising a
-supported count. Above the cap the relay opens another room for the same game. If the game needs one
-seated competitive world, use matchmaking rather than one large `connect()` room.
+supported count. Above the cap the relay opens another room for the same game.
 
 ## Disconnects: transient reconnect is built in; terminal rejoin is yours
 
@@ -345,56 +342,24 @@ The SDK auto-reconnects after a network blip or brief signal loss: the relay hol
 grace window (~30 s). A short blip keeps the same session id, ownership, and host. If a disconnected
 host exceeds the shorter simulation lease, an active peer takes authority once; the old host can
 return to its seat but is demoted. Long reconnects rebase remote smoothing rather than replaying a
-whole-map catch-up streak. Your UI still reflects connection state:
+whole-map catch-up streak. The session reports each step:
 
 ```ts
 let intentionalLeave = false;
-let rejoining = false;
 
 function wireRoom(live: Session<State>) {
-  live.on("reconnecting", ({ attempt }) => showOverlay(`Reconnecting… (${attempt})`));
-  live.on("reconnected", () => hideOverlay());
+  live.on("reconnecting", ({ attempt }) => onConnection("reconnecting", attempt)); // inside the grace window
+  live.on("reconnected", () => onConnection("live")); // same session id, ownership and host
   live.on("disconnect", (code) => {
     // 4409 means this player deliberately opened the game elsewhere. Rejoining
     // here would evict the new tab, which would rejoin and evict this one forever.
-    if (code === 4409) {
-      flushSaves();
-      showMenu("This game is open in another tab or device.");
-      return;
-    }
-    if (!intentionalLeave) void rejoinShared();
+    if (code === 4409) return flushSaves();
+    // Any other code: the seat is gone, and only a new connect() rejoins.
+    if (!intentionalLeave) onConnection("lost");
   });
   live.on("server:restart", () => flushSaves());
 }
 wireRoom(room);
-
-async function rejoinShared() {
-  if (rejoining) return;
-  rejoining = true;
-  showOverlay("Connection lost — rejoining…");
-  try {
-    let delay = 1_000;
-    while (!intentionalLeave) {
-      try {
-        const { user } = await waitForPlayer();
-        room = await connect<State>({
-          urls: getColyseusUrls(),
-          room: GENEX.slug,
-          name: user.name,
-          auth: () => getColyseusAuth(), // fresh on EVERY attempt
-        });
-        wireRoom(room); // installs this same connection/disconnect wiring again
-        hideOverlay();
-        return;
-      } catch {
-        await new Promise((resolve) => setTimeout(resolve, delay));
-        delay = Math.min(delay * 2, 10_000);
-      }
-    }
-  } finally {
-    rejoining = false;
-  }
-}
 
 function leaveShared() {
   intentionalLeave = true;
@@ -402,8 +367,7 @@ function leaveShared() {
 }
 ```
 
-Keep your render loop running during `reconnecting` — remote players freeze briefly and then
-glide on; don't tear the scene down. A deliberate `room.leave()` never auto-reconnects.
+During `reconnecting`, remote players freeze briefly and then glide on. A deliberate `room.leave()` never auto-reconnects.
 
 **One seat per player (enforced server-side):** joining the same game again — a second tab,
 another device, or a page reload — instantly evicts the previous session (it gets
@@ -579,11 +543,8 @@ than silently disappearing. The budget math that matters:
   owns several parked vehicles/props must NOT `objects.set` each of them at full tick rate —
   publish an object **when it changed**, plus a low-rate keepalive (~1–2 Hz) so late joiners
   converge. Unchanged pose ⇒ no message.
-- **Per-projectile objects need a hard cap + confirmed removal.** Each live projectile at 30 Hz
-  is 30/s of bulk budget, and every spawned id counts against the room's 128-object cap forever
-  unless removed. Cap live projectiles per player (2–3), remove the OLDEST via
-  `objects.removeConfirmed` before spawning past the cap, and `removeConfirmed` on impact/expiry
-  — uncapped spawns are how a shooter silently kills its own object budget.
+- **Per-projectile objects:** each live projectile at 30 Hz is 30/s of bulk budget, and every
+  spawned id counts against the room's 128-object cap until `objects.removeConfirmed` removes it.
 - If you see the drop warning, count each lane separately and also leave headroom under the global
   ceiling. Reserved capacity protects presence and control, but it is not permission to spam bulk.
 
@@ -613,27 +574,16 @@ is the newest value with no smoothing. **Draw** from `state`; **test** against `
 detection, "am I close enough to kick", pickups, and any discrete number (hp, ammo, animation id,
 a 0/1 flag) that must not arrive fractional. This holds for both players and objects.
 
-**HARD RULE — `state` is for RENDER ONLY.** Every GAMEPLAY read — hit tests, deflection/catch/
-return windows, physics seeding after adoption, distance and reach checks — uses `stateRaw`.
-The smoothed view is ~100–150 ms in the past; at projectile or ball speeds the REAL object has
-already passed where the ghost still is. Two field-verified failures caused by breaking this rule:
-- A pong-style game read the incoming ball via `state` for its deflection window — at top speed
-  the real ball crossed the paddle plane before the smoothed one arrived; returns were literally
-  impossible online while feeling fine in solo testing.
-- A dodgeball game aimed at opponents drawn from `state` — a strafing target's real position was
-  already elsewhere, so "direct hits" never registered damage.
-Corollary: **cap top speeds against the network, not just the physics** — an object's arena/table
-crossing time should stay above ~2× the smoothing delay (~0.25 s), or receivers are reacting to
-history no matter how correct the code is.
+The smoothed view is ~100–150 ms in the past: at projectile or ball speeds the real object has
+already passed where the smoothed one still is.
 
-**Packed animation-flag bitfields are the sneakiest violation.** Smoothing lerps EVERY numeric
+**Packed animation-flag bitfields.** Smoothing lerps EVERY numeric
 field — there is no integer exemption — and a lerped bitfield decodes to garbage: with
 `moving=1, running=2, grounded=8`, walking is `f=9` and running is `f=11`, and the interpolation
 passes through `10`, where `10 & moving === 0` — the sprinting opponent renders as *standing
 still*. Worse, the exponential ease approaches an increasing target from below, so truncation
 reads `target - 1` for the whole approach (~1.5 s median before RUN appears; at a vsync-locked
-frame rate it can stick one ULP below the target *forever*). A field-verified failure: a
-playtester swore he was running while his opponent's screen showed him walking — both were right.
+frame rate it can stick one ULP below the target *forever*).
 Always drive remote animation from `stateRaw`:
 
 ```js
@@ -667,97 +617,26 @@ if (ball) drawBall(ball.state);                       // smoothed for everyone, 
 Never claim every frame: maintain one pending request, then retry after the relay delay only while the
 contact remains valid. Keep object state flat.
 
-**OWNERSHIP INVARIANT — a host-simulated object MUST be claimed before it publishes.**
 `objects.set()` / `objects.snap()` on an object you do not own are ignored; SDK ≥0.10.2 warns once
-per object/operation instead of failing silently.
-The field-verified symptom is unmistakable — *the object moves on the host's screen and sits
-frozen at spawn for everyone else* (each client falls back to whatever local body it has; only
-the host's is simulated). If the host simulates an object (a crate, an NPC, a puck), it must:
+per object/operation instead of failing silently. Host *election* and object *ownership* are
+separate systems: `onHostTick` firing does not mean the host owns anything, and
+`claimConfirmed(id, { authority: "host" })` answers `accepted` once it does.
 
-```ts
-let hostReady: Promise<boolean> | null = null;
-function ensureHostObjects(room: Session<S>) {
-  if (!room.isHost) return Promise.resolve(false);
-  if (hostReady) return hostReady;                    // one adoption flight, never per tick
-  hostReady = (async () => {
-    for (const id of HOST_OBJECT_IDS) {
-      const before = room.objects.get(id)?.stateRaw;  // last published truth, before claiming
-      const res = await room.objects.claimConfirmed(id, { authority: "host" });
-      if (!res.accepted) return false;
-      seedPhysicsFromRaw(id, before);                 // pose + velocity/cooldowns, never zero
-    }
-    return true;
-  })();
-  return hostReady;
-}
-
-room.on("host", () => { hostReady = null; void ensureHostObjects(room); });
-room.onHostTick(30, async () => {
-  if (!(await ensureHostObjects(room))) return;       // no step/publish before adoption
-  stepAndPublishHostPhysics();
-});
-```
-
-Do not assume `onHostTick` firing means you own anything — host *election* and object
-*ownership* are separate systems. Claim explicitly, check `accepted`, re-claim on migration, and
-do not step or publish until the whole host-owned set is ready.
-
-**RENDER SPLIT — the host draws its own authority, only NON-hosts read the wire.** Once the
-host owns the object and publishes, `objects.get(id).state` becomes defined on EVERY client
-including the host — and if the host now renders from that networked `state` instead of its
-own sim body, a subtle trap bites: a freshly-claimed object's smoothed `state` can briefly be
-a DEGENERATE transform (a zero/NaN quaternion, or a position mid-interpolation from origin),
-which renders the mesh to NaN and it vanishes ON EVERY SCREEN. Field-verified: enabling the
-claim above without this split made a crate invisible for everyone. The fix:
-
-```ts
-// Host renders its own authoritative sim; non-hosts render the published truth, GUARDED.
-const cs = room.isHost ? null : room.objects.get(id)?.state;
-const ok = cs && Number.isFinite(cs.x) && Number.isFinite(cs.y) && Number.isFinite(cs.z);
-if (ok) {
-  mesh.position.set(cs.x, cs.y, cs.z);
-  if (Array.isArray(cs.q) && cs.q.length === 4) {         // normalize — a bad sample must not vanish the mesh
-    const n = Math.hypot(cs.q[0], cs.q[1], cs.q[2], cs.q[3]);
-    if (n > 1e-3) mesh.quaternion.set(cs.q[0]/n, cs.q[1]/n, cs.q[2]/n, cs.q[3]/n);
-  }
-} else {
-  mesh.position.copy(localBodyPos); // host, offline, or non-host awaiting first valid sample
-}
-```
-Prefer syncing the MINIMAL transform a slide/roll needs (a puck on a plane is `{x,z}` + a
-constant y — no quaternion at all); every field you don't send is a field that can't arrive
-degenerate.
+Right after a claim, an object's smoothed `state` can briefly be a degenerate transform (a zero or
+NaN quaternion, or a position mid-interpolation from the origin) on every client, the host
+included.
 
 ## Host authority (scores, rounds, enemies)
 
-One client is the `host`. Let *only* the host write agreed state and simulate shared enemies, so
-there's a single source of truth. **But: a host is only the authority for objects it OWNS.**
+One client is the `host` (`room.isHost`). Being host gives no authority over objects: only an
+object's owner writes it.
 If another player owns/drives an object (their claim landed), the host renders it from the
 stream like everyone else — a host branch that pins "its" objects to a local pose without
 checking `owner`/`isMine` shows every other player's driving as a frozen object:
 
 ```ts
-if (room.isHost) room.shared.set("round", nextRound);   // only the host advances the round
+if (room.isHost) room.shared.set("round", nextRound);   // isHost: true on one client at a time
 room.on("host", (id) => {});                             // host migrated (someone left)
-```
-
-**Award points exactly once — even across a host migration.** A newly-elected host re-observes
-whatever condition the old host may already have scored (the goal state, the defeat event — they
-are still on the wire). Never bump a score from a re-observable condition alone: carry a
-**monotonic marker in the same `shared` write**, so the score and its dedupe commit atomically:
-
-```ts
-// One shared "scores" map holds both the tallies and reserved "__" marker rows.
-function awardOnce(scorerUid: string, name: string, marker: `__${string}`, seq: number) {
-  if (!room.isHost || !Number.isSafeInteger(seq)) return false;
-  const scores = { ...((room.shared.get("scores") ?? {}) as Record<string, { name: string; points: number }>) };
-  if ((scores[marker]?.points ?? -1) >= seq) return false;      // already awarded by SOME host
-  scores[scorerUid] = { name, points: (scores[scorerUid]?.points ?? 0) + 1 };
-  scores[marker] = { name: "", points: seq };                    // the marker rides the same write
-  room.shared.set("scores", scores);
-  return true;
-}
-// goals: seq = a goalEpoch you bump on each reset · kills: seq = the victim's `life` counter
 ```
 
 **Key scores by a STABLE identity, never the session id.** A session id dies on every reload —
@@ -767,9 +646,8 @@ id — so key `scores`/colors/`isMe` by it. When an event only carries a session
 `room.players.get(sid)?.uid`. Never publish the account id (`user.id`) in player state yourself:
 every peer reads it.
 
-For host-simulated NPCs, the host claims and drives each enemy as an `object`; when the host
-leaves, its enemies are reassigned to the new host, which reads their `stateRaw` and keeps
-simulating.
+When the host leaves, the objects it owned are reassigned to the new host; their `stateRaw` holds
+the last published values.
 
 ## Persistent worlds (optional — survives restarts)
 

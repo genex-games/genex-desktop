@@ -118,6 +118,86 @@
     {
       "replace": "simulating. See the co-op recipe in [references/genre-recipes.md](references/genre-recipes.md).\nFor PvP combat (hitscan, melee, projectiles, defeat/respawn) follow the shooter recipe there —\nits damage/defeat dedupe rules are what keep kills exactly-once under lag.",
       "with": "simulating."
+    },
+    {
+      "replace": "When players should be **matched into separate capped rooms** rather than share one big room (a 1v1\nduel, an FFA arena, N-v-N teams, an invite lobby), use `matchmake()` instead of `connect()`.",
+      "with": "`matchmake()` seats players in **separate capped rooms** (a 1v1\nduel, an FFA arena, N-v-N teams, an invite lobby) rather than the one shared `connect()` room."
+    },
+    {
+      "replace": "mm.on(\"disconnect\", () => showMenu(\"This game is open somewhere else.\")); // mm.retry() only on a click",
+      "with": "mm.on(\"disconnect\", () => onQueueStopped()); // mm.retry() only on a click"
+    },
+    {
+      "replace": "**Choosing a preset — your own rules → `open`; a ready-made match loop → `duel`/`arena`/`teams`.**\n",
+      "with": ""
+    },
+    {
+      "replace": " — only when you want that whole loop ready-made;\nfor your own team game use `open`)",
+      "with": ")"
+    },
+    {
+      "replace": "### `open` — the default building block (bring your own rules)",
+      "with": "### `open` (bring your own rules)"
+    },
+    {
+      "replace": "Reach for **`open`** first: a room of up to `maxPlayers`",
+      "with": "**`open`** is a room of up to `maxPlayers`"
+    },
+    {
+      "replace": "`room` is the **project slug**\n(printed by `genex init`) — same id",
+      "with": "`room` is the **project slug**\n— same id"
+    },
+    {
+      "replace": " If the game needs one\nseated competitive world, use matchmaking rather than one large `connect()` room.",
+      "with": ""
+    },
+    {
+      "replace": "whole-map catch-up streak. Your UI still reflects connection state:",
+      "with": "whole-map catch-up streak. The session reports each step:"
+    },
+    {
+      "replace": "let intentionalLeave = false;\nlet rejoining = false;\n\nfunction wireRoom(live: Session<State>) {\n  live.on(\"reconnecting\", ({ attempt }) => showOverlay(`Reconnecting… (${attempt})`));\n  live.on(\"reconnected\", () => hideOverlay());\n  live.on(\"disconnect\", (code) => {\n    // 4409 means this player deliberately opened the game elsewhere. Rejoining\n    // here would evict the new tab, which would rejoin and evict this one forever.\n    if (code === 4409) {\n      flushSaves();\n      showMenu(\"This game is open in another tab or device.\");\n      return;\n    }\n    if (!intentionalLeave) void rejoinShared();\n  });\n  live.on(\"server:restart\", () => flushSaves());\n}\nwireRoom(room);\n\nasync function rejoinShared() {\n  if (rejoining) return;\n  rejoining = true;\n  showOverlay(\"Connection lost — rejoining…\");\n  try {\n    let delay = 1_000;\n    while (!intentionalLeave) {\n      try {\n        const { user } = await waitForPlayer();\n        room = await connect<State>({\n          urls: getColyseusUrls(),\n          room: GENEX.slug,\n          name: user.name,\n          auth: () => getColyseusAuth(), // fresh on EVERY attempt\n        });\n        wireRoom(room); // installs this same connection/disconnect wiring again\n        hideOverlay();\n        return;\n      } catch {\n        await new Promise((resolve) => setTimeout(resolve, delay));\n        delay = Math.min(delay * 2, 10_000);\n      }\n    }\n  } finally {\n    rejoining = false;\n  }\n}\n\nfunction leaveShared() {\n  intentionalLeave = true;\n  room.leave();\n}",
+      "with": "let intentionalLeave = false;\n\nfunction wireRoom(live: Session<State>) {\n  live.on(\"reconnecting\", ({ attempt }) => onConnection(\"reconnecting\", attempt)); // inside the grace window\n  live.on(\"reconnected\", () => onConnection(\"live\")); // same session id, ownership and host\n  live.on(\"disconnect\", (code) => {\n    // 4409 means this player deliberately opened the game elsewhere. Rejoining\n    // here would evict the new tab, which would rejoin and evict this one forever.\n    if (code === 4409) return flushSaves();\n    // Any other code: the seat is gone, and only a new connect() rejoins.\n    if (!intentionalLeave) onConnection(\"lost\");\n  });\n  live.on(\"server:restart\", () => flushSaves());\n}\nwireRoom(room);\n\nfunction leaveShared() {\n  intentionalLeave = true;\n  room.leave();\n}"
+    },
+    {
+      "replace": "Keep your render loop running during `reconnecting` — remote players freeze briefly and then\nglide on; don't tear the scene down. A deliberate",
+      "with": "During `reconnecting`, remote players freeze briefly and then glide on. A deliberate"
+    },
+    {
+      "replace": "- **Per-projectile objects need a hard cap + confirmed removal.** Each live projectile at 30 Hz\n  is 30/s of bulk budget, and every spawned id counts against the room's 128-object cap forever\n  unless removed. Cap live projectiles per player (2–3), remove the OLDEST via\n  `objects.removeConfirmed` before spawning past the cap, and `removeConfirmed` on impact/expiry\n  — uncapped spawns are how a shooter silently kills its own object budget.",
+      "with": "- **Per-projectile objects:** each live projectile at 30 Hz is 30/s of bulk budget, and every\n  spawned id counts against the room's 128-object cap until `objects.removeConfirmed` removes it."
+    },
+    {
+      "replace": "**HARD RULE — `state` is for RENDER ONLY.** Every GAMEPLAY read — hit tests, deflection/catch/\nreturn windows, physics seeding after adoption, distance and reach checks — uses `stateRaw`.\nThe smoothed view is ~100–150 ms in the past; at projectile or ball speeds the REAL object has\nalready passed where the ghost still is. Two field-verified failures caused by breaking this rule:\n- A pong-style game read the incoming ball via `state` for its deflection window — at top speed\n  the real ball crossed the paddle plane before the smoothed one arrived; returns were literally\n  impossible online while feeling fine in solo testing.\n- A dodgeball game aimed at opponents drawn from `state` — a strafing target's real position was\n  already elsewhere, so \"direct hits\" never registered damage.\nCorollary: **cap top speeds against the network, not just the physics** — an object's arena/table\ncrossing time should stay above ~2× the smoothing delay (~0.25 s), or receivers are reacting to\nhistory no matter how correct the code is.",
+      "with": "The smoothed view is ~100–150 ms in the past: at projectile or ball speeds the real object has\nalready passed where the smoothed one still is."
+    },
+    {
+      "replace": "**Packed animation-flag bitfields are the sneakiest violation.** Smoothing lerps",
+      "with": "**Packed animation-flag bitfields.** Smoothing lerps"
+    },
+    {
+      "replace": " A field-verified failure: a\nplaytester swore he was running while his opponent's screen showed him walking — both were right.",
+      "with": ""
+    },
+    {
+      "replace": "**OWNERSHIP INVARIANT — a host-simulated object MUST be claimed before it publishes.**\n`objects.set()` / `objects.snap()` on an object you do not own are ignored; SDK ≥0.10.2 warns once\nper object/operation instead of failing silently.\nThe field-verified symptom is unmistakable — *the object moves on the host's screen and sits\nfrozen at spawn for everyone else* (each client falls back to whatever local body it has; only\nthe host's is simulated). If the host simulates an object (a crate, an NPC, a puck), it must:\n\n```ts\nlet hostReady: Promise<boolean> | null = null;\nfunction ensureHostObjects(room: Session<S>) {\n  if (!room.isHost) return Promise.resolve(false);\n  if (hostReady) return hostReady;                    // one adoption flight, never per tick\n  hostReady = (async () => {\n    for (const id of HOST_OBJECT_IDS) {\n      const before = room.objects.get(id)?.stateRaw;  // last published truth, before claiming\n      const res = await room.objects.claimConfirmed(id, { authority: \"host\" });\n      if (!res.accepted) return false;\n      seedPhysicsFromRaw(id, before);                 // pose + velocity/cooldowns, never zero\n    }\n    return true;\n  })();\n  return hostReady;\n}\n\nroom.on(\"host\", () => { hostReady = null; void ensureHostObjects(room); });\nroom.onHostTick(30, async () => {\n  if (!(await ensureHostObjects(room))) return;       // no step/publish before adoption\n  stepAndPublishHostPhysics();\n});\n```\n\nDo not assume `onHostTick` firing means you own anything — host *election* and object\n*ownership* are separate systems. Claim explicitly, check `accepted`, re-claim on migration, and\ndo not step or publish until the whole host-owned set is ready.\n\n**RENDER SPLIT — the host draws its own authority, only NON-hosts read the wire.** Once the\nhost owns the object and publishes, `objects.get(id).state` becomes defined on EVERY client\nincluding the host — and if the host now renders from that networked `state` instead of its\nown sim body, a subtle trap bites: a freshly-claimed object's smoothed `state` can briefly be\na DEGENERATE transform (a zero/NaN quaternion, or a position mid-interpolation from origin),\nwhich renders the mesh to NaN and it vanishes ON EVERY SCREEN. Field-verified: enabling the\nclaim above without this split made a crate invisible for everyone. The fix:\n\n```ts\n// Host renders its own authoritative sim; non-hosts render the published truth, GUARDED.\nconst cs = room.isHost ? null : room.objects.get(id)?.state;\nconst ok = cs && Number.isFinite(cs.x) && Number.isFinite(cs.y) && Number.isFinite(cs.z);\nif (ok) {\n  mesh.position.set(cs.x, cs.y, cs.z);\n  if (Array.isArray(cs.q) && cs.q.length === 4) {         // normalize — a bad sample must not vanish the mesh\n    const n = Math.hypot(cs.q[0], cs.q[1], cs.q[2], cs.q[3]);\n    if (n > 1e-3) mesh.quaternion.set(cs.q[0]/n, cs.q[1]/n, cs.q[2]/n, cs.q[3]/n);\n  }\n} else {\n  mesh.position.copy(localBodyPos); // host, offline, or non-host awaiting first valid sample\n}\n```\nPrefer syncing the MINIMAL transform a slide/roll needs (a puck on a plane is `{x,z}` + a\nconstant y — no quaternion at all); every field you don't send is a field that can't arrive\ndegenerate.",
+      "with": "`objects.set()` / `objects.snap()` on an object you do not own are ignored; SDK ≥0.10.2 warns once\nper object/operation instead of failing silently. Host *election* and object *ownership* are\nseparate systems: `onHostTick` firing does not mean the host owns anything, and\n`claimConfirmed(id, { authority: \"host\" })` answers `accepted` once it does.\n\nRight after a claim, an object's smoothed `state` can briefly be a degenerate transform (a zero or\nNaN quaternion, or a position mid-interpolation from the origin) on every client, the host\nincluded."
+    },
+    {
+      "replace": "One client is the `host`. Let *only* the host write agreed state and simulate shared enemies, so\nthere's a single source of truth. **But: a host is only the authority for objects it OWNS.**",
+      "with": "One client is the `host` (`room.isHost`). Being host gives no authority over objects: only an\nobject's owner writes it."
+    },
+    {
+      "replace": "// only the host advances the round",
+      "with": "// isHost: true on one client at a time"
+    },
+    {
+      "replace": "\n\n**Award points exactly once — even across a host migration.** A newly-elected host re-observes\nwhatever condition the old host may already have scored (the goal state, the defeat event — they\nare still on the wire). Never bump a score from a re-observable condition alone: carry a\n**monotonic marker in the same `shared` write**, so the score and its dedupe commit atomically:\n\n```ts\n// One shared \"scores\" map holds both the tallies and reserved \"__\" marker rows.\nfunction awardOnce(scorerUid: string, name: string, marker: `__${string}`, seq: number) {\n  if (!room.isHost || !Number.isSafeInteger(seq)) return false;\n  const scores = { ...((room.shared.get(\"scores\") ?? {}) as Record<string, { name: string; points: number }>) };\n  if ((scores[marker]?.points ?? -1) >= seq) return false;      // already awarded by SOME host\n  scores[scorerUid] = { name, points: (scores[scorerUid]?.points ?? 0) + 1 };\n  scores[marker] = { name: \"\", points: seq };                    // the marker rides the same write\n  room.shared.set(\"scores\", scores);\n  return true;\n}\n// goals: seq = a goalEpoch you bump on each reset · kills: seq = the victim's `life` counter\n```",
+      "with": ""
+    },
+    {
+      "replace": "For host-simulated NPCs, the host claims and drives each enemy as an `object`; when the host\nleaves, its enemies are reassigned to the new host, which reads their `stateRaw` and keeps\nsimulating.",
+      "with": "When the host leaves, the objects it owned are reassigned to the new host; their `stateRaw` holds\nthe last published values."
     }
   ],
   "genex-threejs-multiplayer/references/genre-recipes.md": "drop",
@@ -135,6 +215,30 @@
     {
       "replace": "Rolling your own UI instead? Three rules:",
       "with": "The API's three behaviours:"
+    },
+    {
+      "replace": "- **Transient objects** (bullets, pickups): the owner awaits `room.objects.removeConfirmed(id)`\n  when they expire, so destruction is acknowledged and idempotent across reconnects. **Always cap\n  them**: every spawned id counts against the room's 128-object limit until removed, and each live\n  projectile publishing at 30 Hz spends 30/s of your bulk budget. Keep a small per-player cap\n  and remove the OLDEST before spawning past it:\n\n  ```ts\n  const live = new Map<string, Projectile>(); // insertion order = age\n  function spawnProjectile(id: string, state: Record<string, unknown>) {\n    while (live.size >= MAX_LIVE_PROJECTILES) {\n      const oldest = live.keys().next().value!;\n      live.delete(oldest);\n      void room.objects.removeConfirmed(oldest); // acknowledged — no ghost debris for late joiners\n    }\n    room.objects.claim(id);\n    room.objects.set(id, state);\n    live.set(id, makeProjectile(id));\n  }\n  ```",
+      "with": "- **Transient objects** (bullets, pickups): the owner awaits `room.objects.removeConfirmed(id)`\n  when they expire, so destruction is acknowledged and idempotent across reconnects. Every\n  spawned id counts against the room's 128-object limit until removed, and each live\n  projectile publishing at 30 Hz spends 30/s of your bulk budget."
+    },
+    {
+      "replace": " Let only the host write agreed state, so there's a single source of truth — no\n\"who increments the score\" races:",
+      "with": ""
+    },
+    {
+      "replace": "\n\n```ts\nfunction updateHud() {\n  scoreEl.textContent = String(room.shared.get(\"score\") ?? 0);   // everyone reads\n}\nfunction goal(team: \"a\" | \"b\") {\n  if (!room.isHost) return;                                       // only the host writes\n  const key = `score_${team}`;\n  room.shared.set(key, (Number(room.shared.get(key)) || 0) + 1);\n}\nroom.on(\"host\", () => {/* host migrated — the new host takes over writing */});\n```",
+      "with": ""
+    },
+    {
+      "replace": " (as\n`updateHud` does)",
+      "with": ""
+    },
+    {
+      "replace": " The shooter judges the hit **locally**\nagainst what it sees (favor-the-shooter) and announces it; the victim applies its own damage.",
+      "with": ""
+    },
+    {
+      "replace": "function fire() {\n  const hit = raycastAgainstWhatISee();       // favor-the-shooter: judge locally\n  spawnTracer(me.x, me.z, myQuat());          // MY tracer — right here, not via on(\"shot\")\n  room.send(\"shot\", { from: room.id, x: me.x, z: me.z, q: myQuat(), hit: hit ?? null });\n}\n\nroom.on(\"shot\", (m: any) => {\n  spawnTracer(m.x, m.z, m.q);                 // OTHER players' tracers\n  if (m.hit === room.id) me.hp -= 10;         // I was hit → my next me.set publishes the new hp",
+      "with": "function fire() {\n  spawnTracer(me.x, me.z, myQuat());          // MY tracer — right here, not via on(\"shot\")\n  room.send(\"shot\", { from: room.id, x: me.x, z: me.z, q: myQuat() });\n}\n\nroom.on(\"shot\", (m: any) => {\n  spawnTracer(m.x, m.z, m.q);                 // OTHER players' tracers"
     }
   ],
   "genex/SKILL.md": [
@@ -157,6 +261,32 @@
     {
       "replace": " Offer it at most once, in one line, after the game is built and running. A no is final.",
       "with": ""
+    },
+    {
+      "replace": " A 402 means the balance ran out: tell the user the balance and the refill in one plain line and carry on with something else - do not retry.",
+      "with": " A 402 means the balance ran out: \"When credits run short\" above says what follows."
+    },
+    {
+      "replace": " Say what something will cost before you spend a lot of it.",
+      "with": ""
+    },
+    {
+      "replace": "\n\nTalk to the user in plain language, short. Say what you made and what it's for, not how the pipeline works. Give a status line while you work rather than a silent screen.",
+      "with": ""
+    },
+    {
+      "section": "## Where to run this"
+    },
+    {
+      "section": "## Setup"
+    },
+    {
+      "replace": "# sign-in, credit balance, which lanes are live - run it first, and after any failure",
+      "with": "# sign-in, credit balance, which lanes are live"
+    },
+    {
+      "replace": "- Each lane has a skill card (`genex-tool-...`) in your workspace - load the one for the lane you are using before you run it.",
+      "with": "- Each lane has a skill card (`genex-tool-...`)."
     }
   ],
   "genex-threejs-embed-auth/SKILL.md": [
@@ -191,6 +321,36 @@
     {
       "from": "- [ ] Self-test evidence captured in local test mode is labeled as such in the",
       "to": "      handoff (\"local test mode — auth, saves, and multiplayer not exercised\")."
+    },
+    {
+      "section": "## Install"
+    },
+    {
+      "replace": "**Create the renderer and draw a frame BEFORE you await identity; `await\nwaitForPlayer()` only where you need the name or the token.** On a hosted page\nidentity takes seconds (the dashboard handshake, or the standalone bounce), so\na `main.ts` whose first statement is `const { user } = await waitForPlayer()`\nshows black for all of them — and forever when `initEmbed()` was never called,\nbecause nothing else resolves that promise. Renderer, scene, camera, first\nframe, then the await, down where the name or the avatar is actually used.",
+      "with": "On a hosted page identity takes seconds (the dashboard handshake, or the standalone bounce), and\n`waitForPlayer()` never resolves when `initEmbed()` was never called, because nothing else\nresolves that promise."
+    },
+    {
+      "replace": " Keep a local copy of progress\n(`localStorage`) so a preview stays playable — a cache for this device and\nthis shell, never the save — and if the game says anything about it, say\n\"Preview build — progress isn't saved to your account\". Never \"offline\" or\n\"unavailable\": the owner is testing their own game, and Genex is up.",
+      "with": ""
+    },
+    {
+      "section": "## Config wiring (already done — do NOT hand-write URLs)"
+    },
+    {
+      "replace": "throws in headless Chromium): for aim games validate the unlocked \"click\n  to aim\" cue and the wiring, not the lock itself.",
+      "with": "throws in headless Chromium)."
+    },
+    {
+      "from": "- [ ] `initEmbed(...)` is the very first call in `main.ts`, with all three",
+      "to": "- [ ] `genex.config.ts` includes `dashboardOrigins` (from `.genex/project.json`)."
+    },
+    {
+      "replace": "credential exists there. Validate multiplayer on the preview link (it plays in\n  rooms of its own; a normal and a private window are two players), and say\n  plainly when it wasn't.",
+      "with": "credential exists there. The preview link has one, and rooms of its own."
+    },
+    {
+      "replace": "Not an outage: keep the local copy (a cache for this device and\n  this shell, never the save) and tell the player \"Preview build — progress\n  isn't saved to your account\", never \"offline\".",
+      "with": "Not an outage."
     }
   ],
   "genex-threejs-embed-auth/references/shells.md": [
@@ -217,6 +377,26 @@
     {
       "replace": "Pause when pointer lock is lost. The lock is an extra for the game's own link (`$genex-threejs-game-ui`).",
       "with": "Escape also releases pointer lock. The lock works only on the game's own link."
+    },
+    {
+      "replace": "**0.32.0+**\n(`npm i @genex-ai/embed-sdk@latest` if an import is missing). Three rules hold",
+      "with": "**0.32.0+**. Three rules hold"
+    },
+    {
+      "replace": "| Declare it. The game must play without it. |",
+      "with": "| Declare it. |"
+    },
+    {
+      "replace": "| Declare it. Offer a way to play without it, such as picking a place. |",
+      "with": "| Declare it. |"
+    },
+    {
+      "replace": "for the microphone (the voice pack from `npx genex controller voice` declares\nit by itself); `facingMode`",
+      "with": "for the microphone; `facingMode`"
+    },
+    {
+      "replace": " **So every one of these needs a path that works\nwithout it.**",
+      "with": ""
     }
   ],
   "genex-tool-llm/SKILL.md": [
@@ -226,6 +406,34 @@
     {
       "replace": "## On a yes",
       "with": "## Building it"
+    },
+    {
+      "replace": " Read this the moment a request implies a model at play time, before building anything.",
+      "with": ""
+    },
+    {
+      "replace": " — tell the user so plainly, build the graceful fallback, and\n   do not convert a folder for a feature the stand does not serve.",
+      "with": "."
+    },
+    {
+      "replace": "`--all` lists the whole catalog, and you run that only\n   when the user asks for more. Whatever they pick,",
+      "with": "`--all` lists the whole catalog. Whatever model is picked,"
+    },
+    {
+      "replace": "## On a no\n\nThen build nothing that calls a model at play time. Not a key in `.env`, not a\nlocal proxy, not the author's own account behind a fetch.",
+      "with": "## No author key\n\nA shipped game never calls a model on its author's credential: not a key in `.env`, not a\nlocal proxy, not the author's own account behind a fetch."
+    },
+    {
+      "replace": " Say that in one plain sentence, then build the authored\nversion instead: a written dialogue tree, a table of lines, a rule-based\ndirector. Those are not consolation prizes; they are what most good games use.",
+      "with": ""
+    },
+    {
+      "replace": "  thing on this platform. Say so plainly instead of half-building it.",
+      "with": "  thing on this platform."
+    },
+    {
+      "from": "- The shape that does work is **JSON parameters, then render**: the model",
+      "to": "  impossible version."
     }
   ],
   "genex-llm-in-games/SKILL.md": [
@@ -252,6 +460,58 @@
     {
       "replace": "right for the guest and wrong on a draft, so write the in-fiction line per\ncause rather than showing it for both.",
       "with": "right for the guest and wrong on a draft."
+    },
+    {
+      "replace": "\n  there are. Build the feature.",
+      "with": "\n  there are."
+    },
+    {
+      "replace": "- **off on this stand** — the routes answer 404. Build the feature behind a\n  graceful `unavailable` state (the NPC uses its authored lines, the quest falls\n  back to the written one) and **say so plainly in the handoff**. Never promise\n  the player something that 404s.",
+      "with": "- **off on this stand** — the routes answer 404."
+    },
+    {
+      "replace": "- **misconfigured** — say that too; it is an operator fix, not a game bug.",
+      "with": "- **misconfigured** — an operator fix, not a game bug."
+    },
+    {
+      "replace": "**Offer the featured set. Run `npx genex llm models --all`\nonly when the user asks for more**, and put the full list in front of them\nrather than picking an obscure row for them.",
+      "with": "`npx genex llm models --all` lists every\nrow."
+    },
+    {
+      "replace": " When\n`getShell()` from `@genex-ai/embed-sdk` is `\"app\"`, leave the feature's entry\npoint out and play the authored fallback; never show it as an error.",
+      "with": " `getShell()`\nfrom `@genex-ai/embed-sdk` names the shell."
+    },
+    {
+      "replace": "\n\n**Then keep the burn low, because you wrote the loop:** batch those five NPCs\ninto ONE call returning five decisions, cache a decision until the situation\nthat caused it changes, pick the cheapest model that passes your own check, and\nnever fire on a timer the player cannot see.",
+      "with": ""
+    },
+    {
+      "replace": "| code | what happened | what the game does |\n| --- | --- | --- |\n| `grant_limit_reached` | the approved limit is spent | authored behaviour returns; a button offers to re-request |\n| `grant_stopped` | the player pressed Stop | accept silently, keep playing |\n| `grant_expired` | 24h passed, or the session ended | as stopped; re-request on the next deliberate click |\n| `waiting_for_plan` | their own plan is rate-limited | wait out the stated time — not a failure, and there is no paid fallback |\n| `grant_insufficient_funds` | the wallet cannot fund the next call | pause the thinking NPCs, say it once, stay playable |",
+      "with": "| code | what happened |\n| --- | --- |\n| `grant_limit_reached` | the approved limit is spent |\n| `grant_stopped` | the player pressed Stop |\n| `grant_expired` | 24h passed, or the session ended |\n| `waiting_for_plan` | their own plan is rate-limited for the stated time: not a failure, and there is no paid fallback |\n| `grant_insufficient_funds` | the wallet cannot fund the next call |"
+    },
+    {
+      "replace": "`guest: true` — guests play but hold no wallet, so show the feature\nas sign-in-to-use rather than hiding it (`$genex-threejs-embed-auth`). Signed\nin and still refused — this is a `genex preview` draft, which never spends:\ncheck the layout there, and the call itself only after `genex promote`.",
+      "with": "`guest: true` — guests play but hold no wallet. Signed\nin and still refused — this is a `genex preview` draft, which never spends."
+    },
+    {
+      "replace": "- [ ] `npx genex llm models` was run and its verdict is in the handoff",
+      "with": "- [ ] `npx genex llm models` says the lane is live"
+    },
+    {
+      "from": "- [ ] Calls are batched and cached; nothing fires on an invisible timer",
+      "to": "- [ ] Calls are batched and cached; nothing fires on an invisible timer"
+    },
+    {
+      "from": "- [ ] In the Genex app (`getShell() === \"app\"`) the feature's entry point is left out and the authored fallback plays",
+      "to": "- [ ] In the Genex app (`getShell() === \"app\"`) the feature's entry point is left out and the authored fallback plays"
+    },
+    {
+      "replace": "Nothing to fix in the game: ship the fallback and say so.",
+      "with": "Nothing to fix in the game."
+    },
+    {
+      "replace": " Batch and cache; do not raise the limits to hide it.",
+      "with": ""
     }
   ],
   "genex-llm-in-games/references/pricing.md": [
@@ -283,6 +543,34 @@
     {
       "replace": "List the item once it works in the game, without asking. When the Genex",
       "with": "When the Genex"
+    },
+    {
+      "replace": "Answer in exactly three parts, then build:\n\n1. **Name it.** \"A loot crate is paid randomness — the player pays before\n   knowing what they get.\"\n2. **Why.** One sentence. \"Genex doesn't sell chance; it's a purchase the player\n   can't price, and it's what regulators fine studios over.\"\n3. **Offer the alternative,** concretely enough to start on, and build that.\n\nNever build the banned version \"as an option\", never build a partial one, and\nnever ask the user to confirm they want it. If they insist, restate the rule\nonce and build the compliant version. There is no escalation path.",
+      "with": "Name the rule it crosses and build a compliant version. Never build the banned\nversion \"as an option\" or a partial one. There is no escalation path."
+    },
+    {
+      "replace": "; use an image of the actual item for its\nicon.",
+      "with": "."
+    },
+    {
+      "replace": "**Your game cannot read the player's Nex balance, and no HUD should show one.**\nThe wallet spans the platform; let Genex show the balance and handle consent.",
+      "with": "**Your game cannot read the player's Nex balance.**\nThe wallet spans the platform; Genex shows the balance and handles consent."
+    },
+    {
+      "replace": " Treat payment like a pause; re-enter fullscreen\n  and pointer lock from the player's next Resume click.",
+      "with": " Fullscreen and pointer lock come back only from\n  a later click or key press."
+    },
+    {
+      "replace": "- [ ] Every fixed Nex price is a store item: built first, listed with",
+      "with": "- [ ] Every fixed Nex price is a store item, listed with"
+    },
+    {
+      "replace": "Nex commerce is off on this stand. Build\nthe rest and report the unavailable lane.",
+      "with": "Nex commerce is off on this stand."
+    },
+    {
+      "replace": " Update the game's dependency\nbefore wiring them, then rebuild and publish the game:\n\n```bash\nnpm install @genex-ai/embed-sdk@latest\n```\n",
+      "with": "\n"
     }
   ],
   "genex-items/SKILL.md": [
@@ -309,6 +597,22 @@
     {
       "from": "- [ ] The item works in the game before it is listed",
       "to": "- [ ] The item works in the game before it is listed"
+    },
+    {
+      "replace": "Build the item into the game first, list it as a draft with",
+      "with": "List an item as a draft with"
+    },
+    {
+      "replace": " Capture the item's own in-game model on a\n   transparent background to a PNG under `.genex/scratch/` (never elsewhere in\n   the game folder: a deploy ships everything else). Square, at least 512 px,\n   the item alone.",
+      "with": " A square PNG under `.genex/scratch/` (never\n   elsewhere in the game folder: a deploy ships everything else), at the size\n   the preface gives."
+    },
+    {
+      "replace": "npx genex shop add \"Frost Axe\" --price 1200 --type durable \\\n  --description \"Ice-blue head. Freezes an enemy for a second on hit.\" \\\n  --tag axe --tag ice \\\n  --image .genex/scratch/frost-axe.png --model assets/frost-axe.glb \\",
+      "with": "npx genex shop add \"Axe\" --price 1200 --type durable \\\n  --description \"A two-handed axe.\" \\\n  --tag axe --tag weapon \\\n  --image .genex/scratch/axe.png --model assets/axe.glb \\"
+    },
+    {
+      "replace": "- [ ] Its picture is the item itself, on a transparent background",
+      "with": "- [ ] Its picture is a square PNG under `.genex/scratch/`"
     }
   ],
   "genex-tool-audio/SKILL.md": [
@@ -323,12 +627,28 @@
     {
       "replace": " Voice lines are content: keep them short, subtitle them,\nand let the player skip.",
       "with": ""
+    },
+    {
+      "replace": "- **Out of credits** — the error prints balance, price and refill date. Relay it; don't retry.",
+      "with": "- **Out of credits** — Studio keeps the generation's card, which says so and offers Get credits. Never relay the balance, price or refill date, and don't retry."
     }
   ],
   "genex-tool-image/SKILL.md": [
     {
       "replace": "npx genex image \"hand-painted wooden tavern sign, weathered iron brackets\"",
       "with": "npx genex image \"wooden sign with iron brackets\""
+    },
+    {
+      "replace": "- **Out of credits** — the error prints your balance, the price, and when credits refill. Say that plainly to the user; don't retry.",
+      "with": "- **Out of credits** — Studio keeps the generation's card, which says so and offers Get credits. Never relay the balance, price or refill date, and don't retry."
+    },
+    {
+      "replace": "assets/hand-painted-wooden-tavern-sign-a1b2c3d4.png",
+      "with": "assets/wooden-sign-with-iron-brackets-a1b2c3d4.png"
+    },
+    {
+      "replace": "(\"vintage travel poster, screen-printed, three flat colours\")",
+      "with": "(\"a wooden crate, studio photo, three-quarter view\")"
     }
   ],
   "genex-tool-model/SKILL.md": [
@@ -343,6 +663,26 @@
     {
       "replace": "then record a per-model `front` (a yaw in\nyour manifest) beside its path",
       "with": "then record a per-model `front` (a yaw)\nbeside its path"
+    },
+    {
+      "replace": "- **Out of credits** — the error prints the balance, the price and the refill date. Relay it; don't retry.",
+      "with": "- **Out of credits** — Studio keeps the generation's card, which says so and offers Get credits. Never relay the balance, price or refill date, and don't retry."
+    },
+    {
+      "replace": "(Tripo H3.1, each priced in the quote — pick per asset, say it in one line)",
+      "with": "(Tripo H3.1, each priced in the quote)"
+    },
+    {
+      "replace": "`--geometry detailed` (+20, hero pieces only)",
+      "with": "`--geometry detailed` (+20)"
+    },
+    {
+      "replace": " It is refunded. Ship it static, or animate it in code.",
+      "with": " It is refunded."
+    },
+    {
+      "replace": " That pattern is the lane, not your prompt: build the piece in code or move on, and tell the user in one plain line.",
+      "with": " That pattern is the lane, not your prompt."
     }
   ],
   "genex-tool-character/SKILL.md": [
@@ -357,6 +697,46 @@
     {
       "replace": "Derive the list from the game's states first — idle, the moves it actually\nwalks, each attack, hurt, defeat — and request those. A full set nobody's\ncontroller plays is generation time and load time spent on nothing.",
       "with": "A full set nobody's controller plays is generation time and load time spent\non nothing."
+    },
+    {
+      "replace": "- **Out of credits** — the error prints balance, price and refill date. Relay it; don't retry.",
+      "with": "- **Out of credits** — Studio keeps the generation's card, which says so and offers Get credits. Never relay the balance, price or refill date, and don't retry."
+    },
+    {
+      "replace": "npx genex creature \"hulking bone seraph, upright stance\"",
+      "with": "npx genex creature \"guard, upright stance\""
+    },
+    {
+      "replace": "every knob is priced in the quote.\nPick per role and say so in one line:",
+      "with": "every knob is priced in the quote:"
+    },
+    {
+      "replace": "the rigging copy's face budget, 10000-100000 — 10000 for crowds and\n  distance, 20000-30000 for a third-person player body, 50000+ only for a\n  close-up hero. Moves no cost.",
+      "with": "the rigging copy's face budget, 10000-100000. Moves no cost."
+    },
+    {
+      "replace": "8k is +5 credits, for close-ups.",
+      "with": "8k is +5 credits."
+    },
+    {
+      "replace": "less surface detail — stand-ins\n  and crowd enemies.",
+      "with": "less surface detail."
+    },
+    {
+      "replace": "When nobody is choosing — a background NPC, a quick test:",
+      "with": "When nobody is choosing:"
+    },
+    {
+      "replace": " The knobs\nabove apply: a crowd enemy is `--polycount 10000 --no-ultra --texture 2k`.",
+      "with": " The knobs\nabove apply."
+    },
+    {
+      "replace": "`--action <id>`. Always\nlook here first — a library clip costs nothing to generate.",
+      "with": "`--action <id>`. A\nlibrary clip costs nothing to generate."
+    },
+    {
+      "replace": " (see `$genex-tool-model`), or ship it static and animate in code.",
+      "with": " (see `$genex-tool-model`)."
     }
   ],
   "genex-tool-publish/SKILL.md": [
@@ -381,6 +761,67 @@
     {
       "replace": "\nAsk once per round of work, in one line, and keep working while you wait.",
       "with": ""
+    },
+    {
+      "replace": " Create the\n   renderer and draw a frame BEFORE any `await waitForPlayer()` — on a hosted\n   page identity takes seconds, and a game that awaits it first ships black.",
+      "with": " On a hosted\n   page `waitForPlayer()` takes seconds to resolve."
+    }
+  ],
+  "genex-tool-texture/SKILL.md": [
+    {
+      "replace": "- **Out of credits** — the error prints balance, price and refill date. Relay it; don't retry.",
+      "with": "- **Out of credits** — Studio keeps the generation's card, which says so and offers Get credits. Never relay the balance, price or refill date, and don't retry."
+    },
+    {
+      "replace": "npx genex texture \"mossy cracked cobblestone\"",
+      "with": "npx genex texture \"stone floor tiles\""
+    },
+    {
+      "replace": "npx genex texture \"dry cracked riverbed clay\" --terrain",
+      "with": "npx genex texture \"dirt ground\" --terrain"
+    },
+    {
+      "replace": "  assets/mossy-cracked-cobblestone-a1b2c3d4-basecolor.png  (2.1 MB)\n  assets/mossy-cracked-cobblestone-a1b2c3d4-normal.png     (1.8 MB)\n  assets/mossy-cracked-cobblestone-a1b2c3d4-roughness.png  (900 KB)",
+      "with": "  assets/stone-floor-tiles-a1b2c3d4-basecolor.png  (2.1 MB)\n  assets/stone-floor-tiles-a1b2c3d4-normal.png     (1.8 MB)\n  assets/stone-floor-tiles-a1b2c3d4-roughness.png  (900 KB)"
+    },
+    {
+      "replace": " A repeating grid across a floor is the single most visible \"asset flip\" tell there is, so treat that warning as work.",
+      "with": ""
+    }
+  ],
+  "genex-updates/SKILL.md": [
+    {
+      "replace": "description: Apply Genex platform updates safely. Use when",
+      "with": "description: What Genex's update lines and refusals mean. Use when"
+    },
+    {
+      "replace": "# Genex Updates — apply platform updates at safe moments",
+      "with": "# Genex Updates"
+    },
+    {
+      "replace": "Genex ships improvements continuously. The `genex` CLI tells you when something\nis stale; you (the agent) apply the update at the right moment and tell the\nuser what happened. The user never manages versions themselves.",
+      "with": "Genex ships improvements continuously, and the `genex` CLI says when something\nis stale."
+    },
+    {
+      "from": "| `🔄 Genex skills updated to X.Y.Z` | Skills were auto-refreshed to match the installed CLI. | Nothing — informational. Skills stay in sync on their own. |",
+      "to": "| `⬆ Genex <package> X.Y.Z available (installed A.B.C) — run: <command>` | A newer npm package exists. | Run the printed command at a **safe moment** (below), then tell the user. |"
+    },
+    {
+      "replace": "Run the printed command **now**, then re-run the refused genex command.",
+      "with": "Nothing runs until Studio is updated: tell the user Studio needs an update."
+    },
+    {
+      "replace": "Relay the printed facts (balance, cost, refill date, link) to the user; offer a procedural placeholder so the build continues — see the generation skill's Troubleshooting.",
+      "with": "Studio keeps the generation's card, which says so and offers Get credits. Never relay the balance, cost or refill date, and don't retry."
+    },
+    {
+      "section": "## Safe moments — when to apply a nudge"
+    },
+    {
+      "section": "## How to apply"
+    },
+    {
+      "section": "## Hard rules"
     }
   ]
 }

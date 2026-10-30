@@ -12,7 +12,7 @@ this preface wins.
   `no-download`: Studio submits every create without waiting and delivers the file into the
   game. Pick it up with operation `wait` and its generationId.
 
-<!-- upstream @genex-ai/cli-demo/templates/skills/genex-tool-image/SKILL.md v1.36.17 sha256 1d288416330d47d7a40823422241bafe76494d3149117eea31307e3e33c9a371 -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-tool-image/SKILL.md v1.36.17 sha256 6c759be788c22aee35b9327a92efe1da5c41f4401e5f2aa7dbf4e71f29fb2995 -->
 ---
 name: genex-tool-image
 description: Generate a real image (PNG/JPEG) from a text prompt with `npx genex image` — posters, signs, logos, sprites, icons, card and item art, loading screens, decals, art for in-game screens. Pass `--transparent` for an alpha channel, `--edit` to modify an existing image, `--remove-bg` to cut a background. The file downloads to ./assets and is yours.
@@ -34,7 +34,7 @@ Blocks until ready, saves the file, and prints where it went:
 
 ```
 ✓ Done — 1 file saved to your project:
-  assets/hand-painted-wooden-tavern-sign-a1b2c3d4.png  (1.2 MB)
+  assets/wooden-sign-with-iron-brackets-a1b2c3d4.png  (1.2 MB)
   source of record (provenance, not hosting): https://assets.genex.technology/...
 ```
 
@@ -72,7 +72,7 @@ variant - the command prints the exact quote. Live prices and your balance:
 
 ## Troubleshooting
 
-- **Out of credits** — the error prints your balance, the price, and when credits refill. Say that plainly to the user; don't retry.
+- **Out of credits** — Studio keeps the generation's card, which says so and offers Get credits. Never relay the balance, price or refill date, and don't retry.
 - **"Email not verified"** — the printed link unlocks the free credits; generation works right after.
 - **Anything else** — `npx genex doctor` reports sign-in, credits, and whether the image lane is live on this account.
-- A prompt that keeps producing the wrong thing is a prompt problem, not a lane problem — name the subject, the medium and the framing concretely ("vintage travel poster, screen-printed, three flat colours"), rather than adding adjectives. Put the subject first and say what you want, never what to leave out: the image model reads the opening words hardest and does not take negative prompts.
+- A prompt that keeps producing the wrong thing is a prompt problem, not a lane problem — name the subject, the medium and the framing concretely ("a wooden crate, studio photo, three-quarter view"), rather than adding adjectives. Put the subject first and say what you want, never what to leave out: the image model reads the opening words hardest and does not take negative prompts.

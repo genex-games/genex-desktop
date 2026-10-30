@@ -17,6 +17,28 @@ whenever they suit the game.
 - **Flat things** (decals, signage, UI art, icons): Genex's image lane. A picture standing in for
   something the game shows in 3D (a crowd, a building, scenery) usually reads as flat in play.
 
+## Settings by role
+
+- **Character face budget** (`polycount`, or `approve-remesh` when finalizing): around 10000 for
+  crowds and distant figures, 20000-30000 for a third-person player body, 50000 or more only for a
+  close-up hero. A crowd enemy is often `polycount` 10000 with `no-ultra` and a 2k texture.
+- **Character textures:** 8k pays off in close-ups; `no-ultra` suits stand-ins and crowds.
+- **Models:** `geometry` detailed suits hero pieces; `low-poly` or a lower `face-limit` suits props
+  the scene shows many of.
+- Naming the settings chosen for each asset in one line helps the person follow the cost.
+- The free animation library (`animations.search`) is worth searching before generating a clip:
+  a library clip costs nothing.
+
+## When a lane does not deliver
+
+- A mesh no rig accepts can ship static, or move in code.
+- When the texture lane fails, an `image` (base colour only) or a material made in the engine can
+  stand in.
+- When the same lane fails repeatedly, building the piece in code, or moving on and saying so in
+  one line, keeps the game moving.
+- A visible repeating grid on a large surface is one of the most noticeable signs of a generated
+  texture; `terrain`, or a smaller repeat on screen, usually hides it.
+
 ## Planning a set
 
 - When planning a game or an asset-related change, a small, concrete asset set, with where each

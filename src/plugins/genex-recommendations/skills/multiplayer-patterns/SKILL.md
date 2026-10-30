@@ -15,6 +15,15 @@ its own. Use what fits, ignore what does not.
   fresh fair match that starts together?").
 - Writing the choice down before coding helps: the model, how a match starts, whether late joiners
   fill in, and what happens when players drop below quorum.
+- One seated competitive world tends to work better through matchmaking than as one large
+  `connect()` room.
+
+## Choosing a preset
+
+- `open` is the usual building block when the game has its own rules: the server only seats and
+  refills, and teams, rounds, scores and the win condition live in game code.
+- `duel`, `arena` and `teams` suit a game that wants their whole match loop ready-made; a team game
+  with its own rules usually sits better on `open` with its own team map.
 
 ## Menus, lobbies and the moment a player goes online
 
@@ -48,9 +57,26 @@ score sit on top of that map.
   a low-rate timer lets it pause or end a match when players drop.
 - The SDK reconnects through short blips by itself; a small "Reconnecting…" overlay while it does,
   and a menu with a rejoin button after a terminal disconnect (4409: opened elsewhere; 4401: signed
-  out), keep the player informed.
+  out), keep the player informed. Keeping the render loop running during `reconnecting` lets remote
+  players glide on instead of the scene going blank.
+- After any other terminal disconnect, a rejoin loop with a growing delay (one second, doubling up to
+  ten) and a fresh `getColyseusAuth()` on every attempt brings the player back without a click.
+  4409 is the exception: rejoining there makes the two tabs evict each other forever.
 - Awarding points exactly once across a host change is easiest with a monotonic marker written in
   the same `shared` update as the score.
+
+## Host authority
+
+- Letting only the host write agreed state (scores, rounds, the world) and simulate shared enemies
+  gives one source of truth and no "who increments the score" races.
+- A host-simulated object works best claimed before the host steps or publishes it: claim the whole
+  set with `claimConfirmed(id, { authority: "host" })` once (not per tick), check `accepted`, seed
+  the physics from the last `stateRaw`, and claim again when the host changes. Without the claim
+  the object moves on the host's screen and stays frozen for everyone else.
+- Right after a claim the smoothed `state` can be degenerate on every client. The host drawing its
+  own simulation, and other clients drawing the published `state` only when its numbers are finite
+  (with a normalized quaternion), keeps the object from vanishing. Syncing the smallest transform
+  the motion needs (a puck on a plane is `x`, `z`) leaves fewer fields to arrive degenerate.
 
 ## Physics and contested objects
 
@@ -63,10 +89,13 @@ score sit on top of that map.
 ## Per-genre setups
 
 - **Sports / ball:** the ball is one `object`; cap its top speed so a full-speed shot stays
-  returnable over the network.
-- **Shooter:** hitscan judged by the shooter, damage and defeat de-duplicated by a shot id, a small
-  per-player cap on live projectiles, respawn written by the host. Pointer lock for aim, acquired
-  from a click.
+  returnable over the network: a crossing of the arena that takes at least twice the smoothing delay
+  (about 0.25 s) keeps receivers reacting to the present. Deflection windows and catches read
+  `stateRaw`.
+- **Shooter:** hitscan judged by the shooter against what it sees (favor the shooter), announced with
+  `send`, the victim applying its own damage; damage and defeat de-duplicated by a shot id; two or
+  three live projectiles per player, the oldest removed with `removeConfirmed` before spawning past
+  that; respawn written by the host. Pointer lock for aim, acquired from a click.
 - **Co-op:** the host simulates enemies as `objects`; a modest count (around 8–16 active) keeps a
   phone host comfortable.
 - **Teams:** the team map above, team-coloured players, spawns on each team's side.

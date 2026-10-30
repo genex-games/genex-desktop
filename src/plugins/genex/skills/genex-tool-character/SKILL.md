@@ -1,7 +1,8 @@
 # Genex characters and creatures in AI Game Studio
 
 You are building inside AI Game Studio. Below the upstream marker is Genex's character card,
-unchanged. Where it disagrees with this preface, this preface wins.
+with the passages of advice Studio does not ship taken out. Where it disagrees with this preface,
+this preface wins.
 
 - Run every command through `genex__asset`, never `npx genex`. `npx genex creature "<desc>"
   --polycount 20000 --height 2.4` is `genex__asset {"operation":"creature","prompt":"<desc>",
@@ -23,7 +24,7 @@ unchanged. Where it disagrees with this preface, this preface wins.
 - These lanes are Meshy; Studio has no provider option. A prop, vehicle or building is the model
   card's lane (Tripo), or Local Blender's.
 
-<!-- upstream @genex-ai/cli-demo/templates/skills/genex-tool-character/SKILL.md v1.36.17 sha256 c972dbde0e270ac753cae921bd081ca39b800699b90ccf649ab34ed416d6a397 -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-tool-character/SKILL.md v1.36.17 sha256 524f750abfb0ae62d4053fe453a3a364648e1d87c761c7e5c13e35c32a091baf -->
 ---
 name: genex-tool-character
 description: Generate a rigged, animated 3D character or creature with `npx genex character` and `npx genex creature`, then give it any move in plain words with `npx genex character animate`. Covers the guided concept-to-final flow, the one-shot direct path, the 8-way locomotion set, and searching the ready-made animation library. Files download to ./assets.
@@ -76,31 +77,27 @@ costs credits.
 
 ## The knobs (Meshy 7 on every lane)
 
-Ultra and 4k textures are the defaults; every knob is priced in the quote.
-Pick per role and say so in one line:
+Ultra and 4k textures are the defaults; every knob is priced in the quote:
 
 - `--approve-remesh <faces>` (finalize) / `--polycount <faces>` (one shot):
-  the rigging copy's face budget, 10000-100000 — 10000 for crowds and
-  distance, 20000-30000 for a third-person player body, 50000+ only for a
-  close-up hero. Moves no cost.
-- `--texture 2k|4k|8k` (preview / one shot): 8k is +5 credits, for close-ups.
-- `--no-ultra` (preview / one shot): −6 credits, less surface detail — stand-ins
-  and crowd enemies.
+  the rigging copy's face budget, 10000-100000. Moves no cost.
+- `--texture 2k|4k|8k` (preview / one shot): 8k is +5 credits.
+- `--no-ultra` (preview / one shot): −6 credits, less surface detail.
 - `--pose a-pose|t-pose` (one shot): the preferred rest pose.
 - `--height <metres>`: 0.5-3, default 1.7.
 
 ## One shot
 
-When nobody is choosing — a background NPC, a quick test:
+When nobody is choosing:
 
 ```bash
 npx genex character "courier" --direct-text
-npx genex creature "hulking bone seraph, upright stance"
+npx genex creature "guard, upright stance"
 ```
 
 `creature` is the same lane with enemy defaults: no approval steps, no player
 controller pack (and priced without one). Biped-shaped bodies only. The knobs
-above apply: a crowd enemy is `--polycount 10000 --no-ultra --texture 2k`.
+above apply.
 
 ## Import a character the user already has
 
@@ -167,8 +164,8 @@ calling it done.
 npx genex animations search "rifle reload" --limit 10
 ```
 
-Free. Search by gameplay intent, then bind a result with `--action <id>`. Always
-look here first — a library clip costs nothing to generate.
+Free. Search by gameplay intent, then bind a result with `--action <id>`. A
+library clip costs nothing to generate.
 
 ## Cost
 
@@ -189,9 +186,9 @@ pick one up. **Re-running a character command bills a NEW character.**
 
 ## Troubleshooting
 
-- **A four-legged prompt came back upright** — the rig here is biped-shaped only. Generate the body with `npx genex model` and rig it with `npx genex model rig --type quadruped` (see `$genex-tool-model`), or ship it static and animate in code.
+- **A four-legged prompt came back upright** — the rig here is biped-shaped only. Generate the body with `npx genex model` and rig it with `npx genex model rig --type quadruped` (see `$genex-tool-model`).
 - **"Rigged by Uthana instead" on a `character` / `creature` result** — Meshy's rig failed pose QA in both rest poses (armored and heavily clothed bodies do), so the platform auto-rigged the mesh. Nothing to redo: give it moves with `npx genex character animate <id> --locomotion` and plain-word verbs; the Meshy catalog does not apply.
 - **`character animate` says the character is still generating** — wait for it first (`npx genex wait <id>`); the animate door only opens on a finished rig.
 - **Rigs rest facing +Z.** Set yaw explicitly when you place one, and never mirror a skinned mesh with a negative scale — it inverts the whole thing silently.
-- **Out of credits** — the error prints balance, price and refill date. Relay it; don't retry.
+- **Out of credits** — Studio keeps the generation's card, which says so and offers Get credits. Never relay the balance, price or refill date, and don't retry.
 - **Anything else** — `npx genex doctor`.
