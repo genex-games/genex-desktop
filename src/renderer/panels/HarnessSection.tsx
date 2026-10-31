@@ -24,6 +24,35 @@ function trackHarnessChange(patch: HarnessPatch, failed: boolean): void {
   if (patch.autoResume !== undefined) trackSettingChanged(SettingKey.AutoResume, patch.autoResume, failed);
 }
 
+/** Maximum concurrent workers' stepper: one fewer down to one, one more up to the most Settings offers. */
+export function WorkersStepper({
+  value,
+  busy,
+  onChange,
+}: {
+  value: number;
+  busy: boolean;
+  onChange: (next: number) => void;
+}): JSX.Element {
+  return (
+    <div role="group" aria-labelledby="harness-builders" className="appearance-value">
+      <Button aria-label={t("Fewer workers")} disabled={busy || value <= 1} onClick={() => onChange(value - 1)}>
+        −
+      </Button>
+      <output aria-live="polite" className="w-6 text-center">
+        {value}
+      </output>
+      <Button
+        aria-label={t("More workers")}
+        disabled={busy || value >= MAX_BUILDERS}
+        onClick={() => onChange(value + 1)}
+      >
+        +
+      </Button>
+    </div>
+  );
+}
+
 export function HarnessSection(): JSX.Element {
   const [settings, setSettings] = useState<StudioSettingsView | null>(null);
   const [busy, setBusy] = useState(false);
@@ -74,25 +103,7 @@ export function HarnessSection(): JSX.Element {
             </span>
             <span className="text-ink-3">{t("Harness can run up to this many workers at the same time.")}</span>
           </span>
-          <div role="group" aria-labelledby="harness-builders" className="appearance-value">
-            <Button
-              aria-label={t("Fewer workers")}
-              disabled={busy || builders <= 1}
-              onClick={() => void change({ buildersMax: builders - 1 })}
-            >
-              −
-            </Button>
-            <output aria-live="polite" className="w-6 text-center">
-              {builders}
-            </output>
-            <Button
-              aria-label={t("More workers")}
-              disabled={busy || builders >= MAX_BUILDERS}
-              onClick={() => void change({ buildersMax: builders + 1 })}
-            >
-              +
-            </Button>
-          </div>
+          <WorkersStepper value={builders} busy={busy} onChange={(buildersMax) => void change({ buildersMax })} />
         </div>
         <div className="appearance-row">
           <label htmlFor="harness-auto-resume" className="flex min-w-0 flex-col">
