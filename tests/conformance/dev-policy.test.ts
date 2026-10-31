@@ -39,8 +39,6 @@ test("pre-init injection avoids every real engine status/models/auth probe and k
   const core = new StudioCore({
     paths: { userData: root, resources: await makeResources() },
     engines: fixtureEngines(),
-    improvementIdle: { idleMs: 0, minGapMs: 0 },
-    executionPolicy: { runBackgroundImprovement: false },
   });
   await core.init();
   // The harness stops before its folder goes: Windows refuses to remove a running process's
@@ -54,16 +52,6 @@ test("pre-init injection avoids every real engine status/models/auth probe and k
   // Flipped (OpenCode, OpenRouter, a local server, Grok Build, Cursor): eight scripted engines, never a real one.
   assert.equal((await core.engines.describe()).length, 8);
   assert.equal(core.sandbox.enabled, true);
-  await core.updateSettings({ architect: true });
-  let calls = 0;
-  for (const engine of core.engines.all())
-    if (engine.complete)
-      t.mock.method(engine as Required<typeof engine>, "complete", async () => {
-        calls++;
-        throw new Error("fixture background must stay parked");
-      });
-  await core.runIdleCheckNow();
-  assert.equal(calls, 0);
 });
 test("a fixture's Cursor is not installed unless the usage file makes it ready", async (t) => {
   const cursorOf = () => fixtureEngines().find((engine) => engine.id === EngineId.Cursor);

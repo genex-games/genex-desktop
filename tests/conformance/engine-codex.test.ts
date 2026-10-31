@@ -9,7 +9,8 @@ import { fixtureCodingCli } from "../helpers/external-cli.ts";
  * edit-time hook, and how a subscription limit turns into a decision the run can act on.
  */
 import assert from "node:assert/strict";
-import { chmod, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { chmod, mkdir, readFile, readdir, realpath, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
 import {
@@ -19,20 +20,12 @@ import {
   normaliseEffort,
   readCodexCatalogue,
   translateEvent,
-  chmodTarget,
   unwrapShell,
   type CodexExec,
 } from "../../src/substrate/engines/codex.ts";
 import type { CodexAppServer } from "../../src/substrate/engines/codex-app-server.ts";
 import { parseCodexAuthStatus } from "../../src/substrate/engines/codex-cli.ts";
-import {
-  lockUnowned,
-  ownershipBriefing,
-  reapplyLocks,
-  releaseLocks,
-  releaseStaleLocks,
-  LOCK_MARKER,
-} from "../../src/substrate/engines/ownership-locks.ts";
+import { releaseStaleLocks } from "../../src/substrate/engines/ownership-locks.ts";
 import { StudioBridge } from "../../src/substrate/engines/studio-bridge.ts";
 import { type DelegatePermissions, EngineError, type WorkerSeat } from "../../src/substrate/engines/types.ts";
 import { NeverTouchKind } from "../../src/substrate/engines/never-touch.ts";
@@ -308,37 +301,39 @@ describe("codex engine", () => {
   });
 
   /**
-   * One session: a waking run's lead is its chat's own session and writes nothing. Codex can
-   * always write where it is started, so the lead runs from a folder of its own and resumes the
-   * chat's session there by id (a session is found by its id wherever it is started; the chat
-   * resumes it from the game folder again after the run). The game folder and the build it leads
-   * are outside the only place its sandbox writes, and it is told where both are.
+   * One session: a waking run's lead is its chat's own session, and no lead is read-only. It
+   * resumes the chat's session from the game folder and builds in the integration worktree it leads
+   * (`leadBuilds`), which its box writes beside its own folder; in the chat's Bypass it runs
+   * unboxed, as the chat's own session there does.
    */
-  it("runs a read-only lead from a folder of its own, resumes the chat's session by id, and names what it only reads", async () => {
+  it("runs a lead from its game folder, resumes the chat's session, and writes the build it leads", async () => {
     const { fn, seen } = fakeExec(successRun);
     const { engine, root } = await signedInEngine(fn);
     const game = path.join(root, "game");
     const build = path.join(root, "scratch", "autopilot", "run_lead", "integration");
     await mkdir(game, { recursive: true });
     await mkdir(build, { recursive: true });
+    const director = { runId: "run_lead", threadId: "t", project: "game", root: build, chatSession: true };
+    await engine.delegate({ prompt: "lead the run", cwd: game, resume: "chat-thread", leadBuilds: build, director });
+    const call = seen[0]!;
+    assert.deepEqual(call.argv.slice(0, 3), ["exec", "resume", "chat-thread"]);
+    assert.equal(call.cwd, game, "started where its chat's session lives");
+    const roots = call.argv.find((arg) => arg.startsWith("sandbox_workspace_write.writable_roots="))!;
+    const writable = JSON.parse(roots.slice(roots.indexOf("=") + 1)) as string[];
+    assert.deepEqual(writable, [game, build], "it writes its folder and the build it leads");
+    assert.doesNotMatch(call.prompt, /you only read|you cannot change/);
+
+    const permissions = { mode: "bypassPermissions", allow: [], directories: [], protectWrites: [] };
+    const ask = async () => ({ decision: "allow" as const });
     await engine.delegate({
       prompt: "lead the run",
       cwd: game,
-      readOnly: true,
       resume: "chat-thread",
-      director: { runId: "run_lead", threadId: "t", project: "game", root: build, chatSession: true },
+      leadBuilds: build,
+      director,
+      permissions: { ...permissions, ask } as never,
     });
-    const call = seen[0]!;
-    assert.deepEqual(call.argv.slice(0, 3), ["exec", "resume", "chat-thread"]);
-    assert.notEqual(call.cwd, game, "started from a folder of its own");
-    const roots = call.argv.find((arg) => arg.startsWith("sandbox_workspace_write.writable_roots="))!;
-    const writable = JSON.parse(roots.slice(roots.indexOf("=") + 1)) as string[];
-    assert.deepEqual(writable, [call.cwd], "the only place it writes is its own folder");
-    assert.ok(!writable.some((dir) => game.startsWith(dir) || build.startsWith(dir)));
-    assert.match(call.prompt, /While this build runs you only read/);
-    assert.ok(call.prompt.includes(`the game folder is ${game}`), call.prompt);
-    assert.ok(call.prompt.includes(`the build you lead is at ${build}`), call.prompt);
-    assert.doesNotMatch(call.prompt, /The build you are testing/);
+    assert.ok(seen[1]!.argv.includes("--dangerously-bypass-approvals-and-sandbox"), "in the chat's Bypass, unboxed");
   });
 
   it("tells a Loop's reviewer the build it tests is the folder it reads, never its own empty home", async () => {
@@ -451,9 +446,10 @@ describe("codex engine", () => {
     }
   });
 
-  it("a Codex worker is always boxed: its roots writable, the network on only in a Bypass chat, never the bypass flag", async () => {
-    // Codex has no hook Genex sets and its bypass flag drops every fence, so a worker is boxed in
-    // every mode: the never-touch list holds for its writes at the OS boundary.
+  it("a Codex worker runs as the person in a Bypass chat, and boxed with no network in every other mode", async () => {
+    // Bypass is the person's choice for their chat: its workers run as Codex's own Bypass does, as
+    // the chat's own session already did. Every other mode keeps the box, the never-touch list
+    // holding for its writes at the OS boundary.
     const { fn, seen } = fakeExec(successRun);
     const { engine, root } = await signedInEngine(fn);
     const game = path.join(root, "game");
@@ -475,15 +471,20 @@ describe("codex engine", () => {
       argv.includes('sandbox_mode="workspace-write"') && argv.includes('approval_policy="never"');
     const network = (argv: string[]) => argv.find((arg) => arg.startsWith("sandbox_workspace_write.network_access="));
 
-    for (const mode of ["bypassPermissions", "auto", "acceptEdits", "default"] as const) {
+    await engine.delegate({ prompt: "build the scene", cwd: game, worker: seat("bypassPermissions") });
+    const bypass = seen.at(-1)!;
+    assert.equal(bypass.cwd, game, "Bypass: in its folder");
+    assert.ok(bypass.argv.includes("--dangerously-bypass-approvals-and-sandbox"), "Bypass: the bypass flag");
+    assert.equal(boxed(bypass.argv), false, "Bypass: no box");
+    assert.ok(bypass.prompt.includes(path.join(root, "other-game")), "Bypass: the brief names what it never reaches");
+    for (const mode of ["auto", "acceptEdits", "default"] as const) {
       await engine.delegate({ prompt: "build the scene", cwd: game, worker: seat(mode) });
       const call = seen.at(-1)!;
       assert.equal(call.cwd, game, mode);
       assert.ok(boxed(call.argv), `${mode}: boxed`);
       assert.ok(!call.argv.includes("--dangerously-bypass-approvals-and-sandbox"), `${mode}: never the bypass flag`);
       assert.deepEqual(writable(call.argv), [game, ...bridgeRoot(game), refs], `${mode}: its write roots`);
-      const open = mode === "bypassPermissions";
-      assert.equal(network(call.argv), `sandbox_workspace_write.network_access=${open}`, mode);
+      assert.equal(network(call.argv), "sandbox_workspace_write.network_access=false", mode);
       assert.ok(call.prompt.includes(path.join(root, "other-game")), `${mode}: the brief names what it never reaches`);
     }
     await engine.delegate({ prompt: "plan the scene", cwd: game, worker: seat("plan") });
@@ -925,9 +926,8 @@ describe("codex engine", () => {
     await mkdir(path.join(cwd, "src"), { recursive: true });
     await writeFile(path.join(cwd, "src", "enemies.js"), "export {};");
     await writeFile(path.join(cwd, "index.html"), "<!doctype html>");
-    const ownership = { facetId: "enemies", owns: ["src/enemies.js"], ownsMain: false };
-    await engine.delegate({ prompt: "build the enemies", cwd, ownership });
-    await engine.delegate({ prompt: "and again", cwd, ownership });
+    await engine.delegate({ prompt: "build the enemies", cwd });
+    await engine.delegate({ prompt: "and again", cwd });
     assert.deepEqual(await engine.resolveLogin(), { source: "system", home: systemHome });
     assert.deepEqual(
       seen.map((call) => call.env.CODEX_HOME),
@@ -1251,158 +1251,6 @@ describe("studio bridge", () => {
   });
 });
 
-describe("ownership locks", () => {
-  it("makes a facet's non-owned files unwritable, and gives them back afterwards", async () => {
-    const cwd = await tmpDir("studio-locks-");
-    await mkdir(path.join(cwd, "src"), { recursive: true });
-    await writeFile(path.join(cwd, "src", "enemies.js"), "// mine");
-    await writeFile(path.join(cwd, "src", "studio.js"), "// the studio's contract");
-    await writeFile(path.join(cwd, "index.html"), "<!doctype html>");
-
-    const record = await lockUnowned(cwd, { facetId: "enemies", owns: ["src/enemies.js"], ownsMain: false });
-    assert.ok(!(await readdir(cwd)).includes(LOCK_MARKER), "host recovery metadata must not appear as a game edit");
-    const locked = record.files.map((entry) => entry.file).sort();
-    assert.ok(locked.includes("index.html"));
-    assert.ok(locked.includes("src/studio.js"), "the frozen contract is not this facet's to edit");
-    assert.ok(!locked.includes("src/enemies.js"), "its own module stays writable");
-    assert.equal(((await stat(path.join(cwd, "index.html"))).mode & 0o200) === 0, true);
-
-    await releaseLocks(cwd, record);
-    assert.equal(((await stat(path.join(cwd, "index.html"))).mode & 0o200) !== 0, true);
-    assert.ok(!(await readdir(cwd)).includes(LOCK_MARKER));
-  });
-
-  it("puts a lock the contractor unlocked straight back, and says so in words", async () => {
-    const cwd = await tmpDir("studio-locks-chmod-");
-    await writeFile(path.join(cwd, "index.html"), "<!doctype html>");
-    const record = await lockUnowned(cwd, { facetId: "enemies", owns: ["src/enemies.js"], ownsMain: false });
-
-    // What a contractor did on the first live build that met these locks.
-    await chmod(path.join(cwd, "index.html"), 0o644);
-    await reapplyLocks(cwd, record);
-    assert.equal(((await stat(path.join(cwd, "index.html"))).mode & 0o200) === 0, true);
-
-    assert.equal(
-      chmodTarget({
-        type: "item.completed",
-        item: { type: "command_execution", command: "/bin/zsh -lc 'chmod u+w index.html'" },
-      }),
-      "chmod u+w index.html",
-    );
-    assert.equal(chmodTarget({ type: "item.completed", item: { type: "command_execution", command: "ls -l" } }), null);
-
-    // The brief says the lock is the rule, so the contractor has no puzzle to solve.
-    const briefing = ownershipBriefing({ facetId: "enemies", owns: ["src/enemies.js"], ownsMain: false });
-    assert.match(briefing, /read-only on purpose/);
-    assert.match(briefing, /do not `chmod` it away/);
-    await releaseLocks(cwd, record);
-  });
-
-  it("M4.6: in a game the user brought the locks leave the lockfiles, the build output and the caches writable", async () => {
-    const cwd = await tmpDir("studio-locks-own-");
-    await mkdir(path.join(cwd, "src"), { recursive: true });
-    await mkdir(path.join(cwd, "out"), { recursive: true });
-    await mkdir(path.join(cwd, ".vite"), { recursive: true });
-    await mkdir(path.join(cwd, "packages", "game", "out"), { recursive: true });
-    await writeFile(path.join(cwd, "src", "hud.ts"), "// mine");
-    await writeFile(path.join(cwd, "src", "other.ts"), "// somebody else's, and it already worked");
-    await writeFile(path.join(cwd, "package-lock.json"), "{}");
-    await writeFile(path.join(cwd, "tsconfig.tsbuildinfo"), "{}");
-    await writeFile(path.join(cwd, "out", "index.html"), "<!doctype html>");
-    await writeFile(path.join(cwd, ".vite", "deps.js"), "export {};");
-    await writeFile(path.join(cwd, "packages", "game", "out", "bundle.js"), "export {};");
-
-    const record = await lockUnowned(cwd, {
-      facetId: "hud",
-      owns: ["src/hud.ts"],
-      ownsMain: false,
-      template: false,
-      main: "src/main.ts",
-      // A shape may serve from a nested folder, so the prefix is matched against the whole
-      // relative path — matching the last segment would never see `packages/game/out`.
-      neverLock: ["out", "packages/game/out"],
-    });
-    assert.deepEqual(record.files.map((entry) => entry.file).sort(), ["src/other.ts"], JSON.stringify(record.files));
-    for (const file of [
-      "package-lock.json",
-      "tsconfig.tsbuildinfo",
-      "out/index.html",
-      ".vite/deps.js",
-      "packages/game/out/bundle.js",
-    ]) {
-      assert.equal(
-        ((await stat(path.join(cwd, file))).mode & 0o200) !== 0,
-        true,
-        `${file} stays writable — npm install and the game's own build still run`,
-      );
-    }
-    await releaseLocks(cwd, record);
-
-    // The wording the contractor reads is the own-shape one: a seam, and no wiring block.
-    const briefing = ownershipBriefing({
-      facetId: "hud",
-      owns: ["app/hud.tsx"],
-      ownsMain: false,
-      template: false,
-      main: "src/main.ts",
-    });
-    assert.match(briefing, /this game is the user's own/);
-    assert.match(briefing, /Lockfiles, build output and bundler caches are left writable/);
-    assert.ok(!/FACET WIRING/.test(briefing), briefing);
-  });
-
-  it("M4.6: the seam is said out loud whenever there is one, even when nothing needed locking", async () => {
-    const { fn, seen } = fakeExec(successRun);
-    const { engine, root } = await signedInEngine(fn);
-    const cwd = path.join(root, "own-game");
-    await mkdir(path.join(cwd, "app"), { recursive: true });
-    // Every file in this workspace is the worker's own, so `lockUnowned` records nothing —
-    // and the rule used to go unsaid entirely on the engine that has no hook to say it with.
-    await writeFile(path.join(cwd, "app", "hud.tsx"), "// mine");
-    await engine.delegate({
-      prompt: "build the hud",
-      cwd,
-      ownership: { facetId: "hud", owns: ["app/hud.tsx"], ownsMain: false, template: false, main: "src/main.ts" },
-    });
-    assert.match(seen[0]!.prompt, /FILE OWNERSHIP/);
-    assert.match(seen[0]!.prompt, /this game is the user's own/);
-  });
-
-  it("a delegation whose bridge cannot open leaves no file locked", async () => {
-    const { fn, seen } = fakeExec(successRun);
-    const { engine, root } = await signedInEngine(fn);
-    const cwd = path.join(root, "planted");
-    await mkdir(path.join(cwd, "src"), { recursive: true });
-    await writeFile(path.join(cwd, "src", "other.js"), "// not the worker's");
-    // A `.studio` that is not a plain folder: the bridge refuses to open through it.
-    await writeFile(path.join(cwd, ".studio"), "planted");
-    await assert.rejects(
-      engine.delegate({
-        prompt: "build the hud",
-        cwd,
-        ownership: { facetId: "hud", owns: ["app/hud.tsx"], ownsMain: false, template: false, main: "src/main.ts" },
-      }),
-    );
-    assert.equal(seen.length, 0, "the CLI never started");
-    assert.equal(((await stat(path.join(cwd, "src", "other.js"))).mode & 0o200) !== 0, true, "still writable");
-    await assert.rejects(stat(path.join(cwd, LOCK_MARKER)), { code: "ENOENT" }, "no lock record left behind");
-  });
-
-  it("undoes locks a crashed build left behind, so a workspace is never stuck read-only", async () => {
-    const cwd = await tmpDir("studio-locks-stale-");
-    await writeFile(path.join(cwd, "index.html"), "<!doctype html>");
-    await writeFile(
-      path.join(cwd, LOCK_MARKER),
-      JSON.stringify({ facetId: "gone", at: new Date().toISOString(), files: [{ file: "index.html", mode: 0o644 }] }),
-    );
-    await chmod(path.join(cwd, "index.html"), 0o444);
-
-    assert.equal(await releaseStaleLocks(cwd), true);
-    assert.equal(((await stat(path.join(cwd, "index.html"))).mode & 0o200) !== 0, true);
-    assert.equal(await releaseStaleLocks(cwd), false, "nothing left to undo the second time");
-  });
-});
-
 async function waitForFile(file: string, timeoutMs = 5_000): Promise<string> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -1689,38 +1537,17 @@ it("host recovery restores original group write bits after a crash", {
   const recovery = await tmpDir("studio-host-record-");
   const file = path.join(cwd, "index.html");
   await writeFile(file, "game");
-  await chmod(file, 0o664);
-  await lockUnowned(cwd, { facetId: "rules", owns: ["rules.js"], ownsMain: false }, recovery);
-  assert.equal((await stat(file)).mode & 0o222, 0);
+  // What an older build's lock left after a crash: the file read-only, and the host's record of it.
+  await chmod(file, 0o444);
+  const key = createHash("sha256")
+    .update(await realpath(cwd))
+    .digest("hex");
+  await writeFile(
+    path.join(recovery, `${key}.json`),
+    JSON.stringify({ facetId: "rules", at: "", files: [{ file: "index.html", mode: 0o664 }] }),
+  );
   assert.equal(await releaseStaleLocks(cwd, recovery), true);
   assert.equal((await stat(file)).mode & 0o777, 0o664);
-});
-
-it("host locks produce no monitor violation but real out-of-seam edits still do", async () => {
-  const { gitFile } = await import("../helpers/git.ts");
-  const { monitorFindings } = await import("../../src/harness-seed/loop/director/rules.ts");
-  const cwd = await tmpDir("lock-monitor-");
-  await mkdir(path.join(cwd, "src"));
-  await writeFile(path.join(cwd, "src", "own.js"), "export const owned = true;");
-  await writeFile(path.join(cwd, "src", "other.js"), "export const other = true;");
-  await gitFile(["init"], { cwd });
-  await gitFile(["add", "."], { cwd });
-  await gitFile(["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "seed"], {
-    cwd,
-  });
-  const spec = { id: "own", owns: ["src/own.js"] };
-  const record = await lockUnowned(cwd, { facetId: "own", owns: spec.owns, ownsMain: false });
-  try {
-    const before = await gitFile(["status", "--porcelain"], { cwd });
-    assert.deepEqual(monitorFindings({ status: String(before.stdout), spec, ownsMain: false }).violations, []);
-    await writeFile(path.join(cwd, "src", "foreign.js"), "unauthorized");
-    const after = await gitFile(["status", "--porcelain"], { cwd });
-    assert.deepEqual(monitorFindings({ status: String(after.stdout), spec, ownsMain: false }).violations, [
-      "edited a file outside this facet's ownership (src/foreign.js)",
-    ]);
-  } finally {
-    await releaseLocks(cwd, record);
-  }
 });
 
 it("refreshes a fresh selected home's catalog once without borrowing another account", async () => {

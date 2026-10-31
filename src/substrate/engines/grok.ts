@@ -29,9 +29,10 @@ import { createInterface } from "node:readline";
 import { promisify } from "node:util";
 import { ModelCatalog } from "./model-catalog.ts";
 import { cliVersion, resolveCodingCli } from "./external-cli.ts";
-import { lockUnowned, ownershipBriefing, releaseLocks, releaseStaleLocks, type LockRecord } from "./ownership-locks.ts";
+import { releaseStaleLocks } from "./ownership-locks.ts";
 import { StudioBridge, answerBridgeCall, bridgeTools } from "./studio-bridge.ts";
-import { BLIND_JUDGE_NOTE, JUDGE_RULES, offLimitsNote, planModeNote, readOnlyNote } from "./codex-prompts.ts";
+import { JUDGE_RULES, offLimitsNote, planModeNote, readOnlyNote } from "./codex-prompts.ts";
+import { leadBuildWrites } from "./session-commands.ts";
 import {
   GROK_HOSTS,
   GROK_OUTDATED_STATUS,
@@ -362,14 +363,11 @@ export class GrokEngine implements Engine {
     const run = newRun(this.id, request.resume);
     const controller = abortControllerFor(request.signal);
     await releaseStaleLocks(cwd, this.#lockRecovery).catch(() => {});
-    const locks = request.ownership
-      ? await lockUnowned(cwd, request.ownership, this.#lockRecovery).catch(() => null)
-      : null;
     const access = sessionAccess(request);
     const scratch = access === GrokAccess.Build ? null : await this.#scratch("run-");
     const runDir = scratch ?? cwd;
     const bridge = await this.#openBridge(request, runDir).catch(async (err) => {
-      await this.#cleanUp(cwd, locks, scratch, null);
+      await this.#cleanUp(cwd, scratch, null);
       throw err;
     });
     const deadline = request.timeoutMs
@@ -380,7 +378,7 @@ export class GrokEngine implements Engine {
       : null;
     const partial = (): PartialDelegateState => partialState(run, startedAt, request.model, bridge, request);
     try {
-      const prompt = this.#brief(request, { access, cwd, scratch, locks, bridge });
+      const prompt = this.#brief(request, { access, cwd, scratch, bridge });
       const asPerson = runsAsPerson(request, access);
       const turn = { access, asPerson, cwd, runDir, bridge: Boolean(bridge), prompt, images: request.images ?? [] };
       await this.#runTurn(request, run, { ...turn, signal: controller.signal });
@@ -388,7 +386,7 @@ export class GrokEngine implements Engine {
       return this.#endingAfterThrow(err, run, request, partial);
     } finally {
       if (deadline) clearTimeout(deadline);
-      await this.#cleanUp(cwd, locks, scratch, bridge);
+      await this.#cleanUp(cwd, scratch, bridge);
     }
     if (request.signal?.aborted || run.deadlineHit)
       return this.#billed(partialDelegateResult(this.id, interruption(request.signal?.aborted), partial()));
@@ -500,7 +498,7 @@ export class GrokEngine implements Engine {
 
   /** One turn: its prompt file, its command line, and its events read to the end. */
   async #runTurn(
-    request: Pick<DelegateRequest, "model" | "effort" | "resume" | "denyReads" | "onEvent">,
+    request: Pick<DelegateRequest, "model" | "effort" | "resume" | "denyReads" | "onEvent" | "leadBuilds">,
     run: GrokRun,
     turn: TurnSetup,
   ): Promise<void> {
@@ -515,9 +513,10 @@ export class GrokEngine implements Engine {
         model: request.model,
         effort: request.model && request.effort ? this.#effort(request.model, request.effort) : null,
         resume: request.resume,
-        bridge: turn.bridge,
       });
-      const invocation = await this.#invocation(argv, { ...turn, folder, run }, request.denyReads ?? []);
+      const invocation = await this.#invocation(argv, { ...turn, folder, run }, request.denyReads ?? [], {
+        leadBuilds: request.leadBuilds,
+      });
       await this.#readEvents(request, run, invocation);
     });
   }
@@ -546,18 +545,24 @@ export class GrokEngine implements Engine {
     return row?.efforts?.includes(effort) ? effort : null;
   }
 
-  /** The command, environment and sandbox of one run; no sandbox for the person's Bypass. */
+  /**
+   * The command, environment and sandbox of one run; no sandbox for the person's Bypass. A building
+   * lead's box also writes the build it leads (`leadBuilds`).
+   */
   async #invocation(
     argv: string[],
     ctx: Pick<TurnSetup, "access" | "asPerson" | "cwd" | "runDir" | "signal"> & { folder: string; run: GrokRun },
     denyReads: string[] = [],
+    { leadBuilds }: { leadBuilds?: string | undefined } = {},
   ): Promise<GrokInvocation> {
+    const builds = ctx.access === GrokAccess.Build;
     const sandbox = ctx.asPerson
       ? null
       : grokSandbox({
           runDir: ctx.runDir,
           gameDir: ctx.cwd,
-          gitDirs: ctx.access === GrokAccess.Build ? await gitMetadata(ctx.cwd) : [],
+          gitDirs: builds ? await gitMetadata(ctx.cwd) : [],
+          leadBuilds: builds ? await leadBuildWrites(leadBuilds) : [],
           scratchDir: path.join(this.#scratchRoot, TEMPORARY_DIR),
           secretPaths: [...this.#protectedPaths, ...denyReads],
           home: this.#home,
@@ -648,42 +653,31 @@ export class GrokEngine implements Engine {
     });
   }
 
-  async #cleanUp(
-    cwd: string,
-    locks: LockRecord | null,
-    scratch: string | null,
-    bridge: StudioBridge | null,
-  ): Promise<void> {
+  async #cleanUp(cwd: string, scratch: string | null, bridge: StudioBridge | null): Promise<void> {
     await bridge?.close().catch(() => {});
-    await releaseLocks(cwd, locks, this.#lockRecovery).catch(() => {});
     if (scratch) await rm(scratch, { recursive: true, force: true }).catch(() => {});
   }
 
-  /** The brief, plus what Grok can only be told: its tools, its seam, its folder, what is off limits. */
+  /** The brief, plus what Grok can only be told: its tools, its folder, what is off limits. */
   #brief(
     request: DelegateRequest,
     ctx: {
       access: GrokAccess;
       cwd: string;
       scratch: string | null;
-      locks: LockRecord | null;
       bridge: StudioBridge | null;
     },
   ): string {
-    const hasSeam = request.ownership && (request.ownership.owns.length || ctx.locks?.files.length);
     const plan = chatMode(request) === PermissionMode.Plan && ctx.scratch;
     return [
       request.prompt,
       ctx.bridge?.instructions() ?? "",
-      hasSeam && request.ownership ? ownershipBriefing(request.ownership) : "",
-      ctx.access === GrokAccess.Blind ? BLIND_JUDGE_NOTE : "",
       plan
         ? planModeNote(ctx.cwd, ctx.scratch ?? "")
         : readOnlyNote(
             // A reviewer's cwd is its own empty home: the build it tests is the folder it reads.
             request.reviewer?.reads ?? ctx.cwd,
             ctx.scratch,
-            request.director ? path.resolve(request.director.root) : null,
           ),
       offLimitsNote([...this.#protectedPaths, ...credentialHomes(), ...(request.denyReads ?? [])]),
     ]
@@ -844,7 +838,6 @@ function cliIdentity(cli: ResolvedCli): string {
 
 /** What a session's tools may do: a build edits; a read-only session, a lead while its build runs and Plan only look. */
 function sessionAccess(request: DelegateRequest): GrokAccess {
-  if (request.blind) return GrokAccess.Blind;
   const readOnly = Boolean(request.readOnly) && !request.coordinator;
   return readOnly || chatMode(request) === PermissionMode.Plan ? GrokAccess.ReadOnly : GrokAccess.Build;
 }

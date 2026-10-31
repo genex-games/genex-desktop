@@ -1,5 +1,5 @@
 /**
- * The shape of a `__studio.state()` answer as the studio hands it on: the markers it writes into
+ * The shape of a page-state answer (the shim's `__studioClock.state()`) as the studio hands it on: the markers it writes into
  * a state it could not read whole, and the `keep` paths a reader may ask it to spare.
  *
  * A state over the studio's budget is bounded by structure, never cut as a string: the largest
@@ -10,7 +10,7 @@
 
 /** The marker keys a state answer may carry. */
 export const StateShape = {
-  /** The page has no `window.__studio`: the build exposes no state(). */
+  /** The page has no shim clock: nothing reports its state. */
   Missing: "__missing",
   /** An older host's answer: the state's JSON was over its cap and only a string head came back. */
   Truncated: "__truncated",

@@ -51,6 +51,8 @@ const EQUALITY = new Set([
 ]);
 
 /** The shared readers of `shared/custom-events.ts`; their second argument names the events read. */
+/** A collection looked up by an event name: `NAMES.includes(name)`, `KNOWN.has(name)`, `READERS.get(name)`. */
+const LOOKUPS = new Set(["includes", "has", "get"]);
 const READERS = new Set(["customPayload", "customEvent"]);
 /** The shared writer of `shared/custom-events.ts`; its first argument names the event written. */
 const WRITERS = new Set(["customEventData"]);
@@ -225,9 +227,12 @@ async function eventNamesInSource(): Promise<Map<string, string[]>> {
     const collection = (node: ts.Expression): ts.Expression[] => {
       // `[...STARTS, ...PAUSES, "run_finished"]`: a spread brings its own collection's names.
       if (ts.isArrayLiteralExpression(node))
-        return node.elements.flatMap((element) =>
-          ts.isSpreadElement(element) ? collection(element.expression) : [element],
-        );
+        return node.elements.flatMap((element) => {
+          if (ts.isSpreadElement(element)) return collection(element.expression);
+          // A Map's `[name, value]` entry (`new Map([[name, reader]])`): its key is the name.
+          if (ts.isArrayLiteralExpression(element) && element.elements[0]) return [element.elements[0]];
+          return [element];
+        });
       if (ts.isNewExpression(node) && node.arguments?.[0]) return collection(node.arguments[0]);
       if (ts.isAsExpression(node) || ts.isParenthesizedExpression(node) || ts.isSatisfiesExpression(node))
         return collection(node.expression);
@@ -270,7 +275,7 @@ async function eventNamesInSource(): Promise<Map<string, string[]>> {
         const [first] = node.arguments;
         if (
           ts.isPropertyAccessExpression(node.expression) &&
-          (node.expression.name.text === "includes" || node.expression.name.text === "has") &&
+          LOOKUPS.has(node.expression.name.text) &&
           first &&
           isName(first)
         ) {
@@ -304,7 +309,7 @@ test("contract: every custom event name the studio writes or reads is in CUSTOM_
   // a switch in the Builds graph, a Set lookup in the activity feed, and the shared readers
   // named alone and in an array.
   const expected: Array<[string, string]> = [
-    ["facet_lessons", "harness-seed/loop/facet-loop.ts"],
+    ["worker_started", "harness-seed/loop/workers/events.ts"],
     ["game_archived", "main/studio-core.ts"],
     ["fixture_noise", "main/dev/fixtures.ts"],
     ["integration_ledger", "renderer/run-graph.ts"],

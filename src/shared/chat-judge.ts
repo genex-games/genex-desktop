@@ -28,7 +28,7 @@ export type ChatJudgeResultPayload = {
   objective: InteractionObjective;
   /** Why nothing was played, when nothing was. */
   refusal?: string;
-  /** The engine plugin's judge it played as, by its label (`PluginJudge.label`). */
+  /** The engine plugin's judge it played as, by its label (older records). */
   judge?: string;
   /** The pictures its probe took once the play opened, kept in the game's captures folder (game-relative). */
   pictures?: string[];

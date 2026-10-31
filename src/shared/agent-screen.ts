@@ -7,9 +7,6 @@
 /** Who holds a window: the agent behind an agent screen, in its wire spelling. */
 export const ScreenRole = {
   Builder: "builder",
-  Playtester: "playtester",
-  Scout: "scout",
-  Judge: "judge",
   Director: "director",
   /** An agent at the person's desktop or a VM, with their consent (`desktop-target.ts`). */
   Operator: "operator",
@@ -43,7 +40,7 @@ export interface ScreenAct {
 export interface AgentScreen {
   /** The preview-pool handle — the card's identity for the life of the session. */
   handle: string;
-  /** Who is at the keyboard: the facet's title or id, "playtester", "scout", "director". */
+  /** Who is at the keyboard: the worker's title or id, or "director". */
   label: string;
   project: string;
   runId: string | null;

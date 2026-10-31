@@ -79,6 +79,16 @@ export interface WorkerScope {
    * it serves closing, stopped or paused), or null: no merge lands after that run kept its folder.
    */
   mergeRefused?: () => string | null;
+  /**
+   * The commit a copy forks from, when the lead works somewhere other than the game folder (a web
+   * game's Loop, in its integration worktree): it commits the lead's work there and answers its head.
+   * With none, a copy forks from a snapshot of the game folder.
+   */
+  forkFrom?: () => Promise<string | null>;
+  /** What the scope checks once a copy's work is merged into the lead's folder, in words for the lead (a web game's health check). */
+  afterMerge?: (record: WorkerRecord) => Promise<string | null>;
+  /** Why a worker of this isolation may not start in this scope, or null when it may. */
+  refusesIsolation?: (isolation: WorkerIsolation) => string | null;
 }
 
 /** A git write to the game folder, chained after the lead's own when its scope chains them (`gitWrite`). */

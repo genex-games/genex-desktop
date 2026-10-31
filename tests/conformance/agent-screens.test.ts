@@ -131,7 +131,7 @@ describe("a window's trail", () => {
 describe("which screen a node shows", () => {
   const frames = [
     frame({ handle: "old", at: 1 }),
-    frame({ handle: "new", role: "playtester", at: 5 }),
+    frame({ handle: "new", role: "builder", at: 5 }),
     frame({ handle: "lead", role: "director", facetId: "director", at: 9 }),
     frame({ handle: "other-part", facetId: "coins", at: 7 }),
     frame({ handle: "other-run", runId: "run_b", at: 8 }),

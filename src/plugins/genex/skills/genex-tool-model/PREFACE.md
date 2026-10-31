@@ -1,7 +1,8 @@
 # Genex models in AI Game Studio
 
 You are building inside AI Game Studio. Below the upstream marker is Genex's model card,
-unchanged. Where it disagrees with this preface, this preface wins.
+with the passages of advice Studio does not ship taken out. Where it disagrees with this preface,
+this preface wins.
 
 - Run every command through `genex__asset`, never `npx genex`. `npx genex model "<prompt>"
   --auto-size --low-poly` is `genex__asset {"operation":"model","prompt":"<prompt>","options":
@@ -16,5 +17,4 @@ unchanged. Where it disagrees with this preface, this preface wins.
 - This lane is Tripo, and Studio has no provider option. A rigged character or creature is the
   character card's lane (Meshy).
 - Pass `auto-size` whenever the model's real size matters: without it the model is not to scale.
-  Its meshes are dense (150000 faces by default): use `low-poly` or `face-limit` for props seen in
-  numbers.
+  Its meshes are dense (150000 faces by default); `low-poly` and `face-limit` lower the count.

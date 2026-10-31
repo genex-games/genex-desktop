@@ -1,11 +1,10 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { GenexTools, type RemixChoice } from "./adapter.ts";
-import { COVER_CLIP } from "./clip.ts";
 import { nativeUploads } from "./native-publish.ts";
 import { MESSAGE as PUBLISH_MESSAGE } from "./publish.ts";
 import { isEmptyStarter } from "./starter.ts";
-import { type CoverCamera, CoverOperation, COVER_STILL, MESSAGE as COVER_MESSAGE } from "./cover.ts";
+import { type CoverCamera, COVER_FRAME } from "./cover.ts";
 import { SessionCredentials } from "../../substrate/session-credentials.ts";
 import { PLUGIN_API_ENV, PLUGIN_CA_ENV, PLUGIN_GAMES_ENV } from "../../substrate/plugins/process.ts";
 import {
@@ -103,10 +102,6 @@ function publishStatusFor(genex: GenexTools, project: string, args: Args) {
 }
 
 /**
- * The host's camera on the bound game for this invocation, begun at `invokedAt`: a still of its
- * genex-cover demo through `observe`, which answers only while the invocation lasts. None unbound.
- */
-/**
  * A publish's remixing: the dialog's choice when it sent one (an agent's publish sends none and keeps
  * the person's last choice), and the game's folder its project is staged from.
  */
@@ -117,28 +112,16 @@ function remixChoice(args: Args, ctx: Invocation): RemixChoice {
   };
 }
 
-function coverCamera(ctx: Invocation, service: Service, invokedAt: number): CoverCamera | undefined {
+/**
+ * The host's camera on the bound game for this invocation: Studio's own plain frame of it through
+ * `observe`, which answers only while the invocation lasts. None unbound.
+ */
+function coverCamera(ctx: Invocation, service: Service): CoverCamera | undefined {
   const { project, directory } = ctx;
   if (!project || !directory) return undefined;
   return {
-    invokedAt,
-    shoot: (view) => {
-      const still = view ? { ...stillSize(COVER_STILL), camera: view.camera } : { ...COVER_STILL };
-      return service(PluginService.Observe, { project, root: directory, files: [], still });
-    },
-    record: () => service(PluginService.Observe, { project, root: directory, files: [], clip: { ...COVER_CLIP } }),
+    shoot: () => service(PluginService.Observe, { project, root: directory, files: [], still: { ...COVER_FRAME } }),
   };
-}
-
-/** A still's size and byte limit without its view, for another view at the same size. */
-const stillSize = ({ width, height, maxBytes }: typeof COVER_STILL) => ({ width, height, maxBytes });
-
-/** The agent's cover tool: shoot the genex-cover demo, or report the cover. Asks nothing, uploads nothing. */
-function coverTool(genex: GenexTools, project: string, args: Args, camera: CoverCamera | undefined) {
-  if (args.operation === CoverOperation.Shoot && camera) return genex.coverShoot(project, camera);
-  if (args.operation === CoverOperation.Clip && camera) return genex.coverClip(project, camera);
-  if (args.operation === CoverOperation.Status) return genex.coverStatus(project);
-  throw new Error(COVER_MESSAGE.BadOperation);
 }
 
 /** Publish's refusal of a game that is still Studio's empty starter: nothing is exported or sent. */
@@ -148,15 +131,8 @@ async function refuseEmptyStarter(ctx: Invocation): Promise<void> {
 
 const isPublishKind = (value: unknown) => value === GenexPublishKind.Draft || value === GenexPublishKind.Gallery;
 
-/** The agent's publish tool: announce, run the export, the cover shot and the upload start, then report the phase. */
-async function publishTool(
-  genex: GenexTools,
-  project: string,
-  args: Args,
-  ctx: Invocation,
-  service: Service,
-  camera: CoverCamera | undefined,
-) {
+/** The agent's publish tool: announce, run the export and the upload start, then report the phase. */
+async function publishTool(genex: GenexTools, project: string, args: Args, ctx: Invocation, service: Service) {
   if (!isPublishKind(args.operation)) throw new Error(MESSAGE.BadPublishOperation);
   if (ctx.directory && (await isEmptyStarter(ctx.directory))) throw new Error(PUBLISH_MESSAGE.EmptyStarter);
   await ctx.host(PluginService.EventsEmit, {
@@ -169,8 +145,8 @@ async function publishTool(
   const exportStage = () => service(PluginService.ExportStage, {});
   const state =
     args.operation === GenexPublishKind.Draft
-      ? await genex.publishDraft(project, exportStage, camera)
-      : await genex.publishGallery(project, exportStage, undefined, camera, [], remixChoice(args, ctx));
+      ? await genex.publishDraft(project, exportStage)
+      : await genex.publishGallery(project, exportStage, undefined, [], remixChoice(args, ctx));
   await ctx
     .host(PluginService.EventsEmit, {
       kind: "publish",
@@ -233,12 +209,11 @@ function runTool(
   args: Args,
   ctx: Invocation & { project: string; directory: string },
   service: Service,
-  invokedAt: number,
 ) {
-  const camera = coverCamera(ctx, service, invokedAt);
   if (name === GenexToolName.PublishStatus) return publishStatusFor(genex, ctx.project, args);
-  if (name === GenexToolName.Publish) return publishTool(genex, ctx.project, args, ctx, service, camera);
-  if (name === GenexToolName.Cover) return coverTool(genex, ctx.project, args, camera);
+  if (name === GenexToolName.Publish) return publishTool(genex, ctx.project, args, ctx, service);
+  // The agent's own cover: the picture and clip it made, read from the game folder. Asks nothing, uploads nothing.
+  if (name === GenexToolName.Cover) return genex.coverSave(ctx.project, ctx.directory, args);
   if (name === GenexToolName.CoverSet) return genex.coverSet(ctx.project);
   return assetTool(genex, ctx.project, ctx.directory, args, ctx);
 }
@@ -273,23 +248,17 @@ async function approvalReview(genex: GenexTools, args: Args, ctx: Invocation) {
   return previewReview(job.approval.images, args.candidate);
 }
 
-/** One user action; `invokedAt` is when its invocation began, which a publish's cover shot is measured from. */
-type Action = (
-  genex: GenexTools,
-  args: Args,
-  ctx: Invocation,
-  service: Service,
-  invokedAt: number,
-) => Promise<unknown> | unknown;
+/** One user action. */
+type Action = (genex: GenexTools, args: Args, ctx: Invocation, service: Service) => Promise<unknown> | unknown;
 
-/** Wrap an action that needs a bound game; `camera` photographs it while the invocation lasts. */
+/** Wrap an action that needs a bound game; `camera` takes Studio's plain frame of it while the invocation lasts. */
 const withProject =
   (
     run: (genex: GenexTools, project: string, args: Args, service: Service, camera?: CoverCamera) => Promise<unknown>,
   ): Action =>
-  (genex, args, ctx, service, invokedAt) => {
+  (genex, args, ctx, service) => {
     if (!ctx.project) throw new Error(MESSAGE.OpenProject());
-    return run(genex, ctx.project, args, service, coverCamera(ctx, service, invokedAt));
+    return run(genex, ctx.project, args, service, coverCamera(ctx, service));
   };
 
 /** The user actions the panels, the Plugins dialog and the toolbar may invoke. */
@@ -314,26 +283,23 @@ const ACTIONS: Record<string, Action> = {
   },
   [GenexAction.Approve]: withProject((genex, project, args) => genex.approve(project, args.id, args.candidate)),
   [GenexAction.PublishStatus]: withProject((genex, project, args) => publishStatusFor(genex, project, args)),
-  [GenexAction.PublishDraft]: async (genex, _args, ctx, service, invokedAt) => {
+  [GenexAction.PublishDraft]: async (genex, _args, ctx, service) => {
     if (!ctx.project) throw new Error(MESSAGE.OpenProject());
     await refuseEmptyStarter(ctx);
-    const camera = coverCamera(ctx, service, invokedAt);
-    return genex.publishDraft(ctx.project, () => service(PluginService.ExportStage, {}), camera);
+    return genex.publishDraft(ctx.project, () => service(PluginService.ExportStage, {}));
   },
-  [GenexAction.PublishGallery]: async (genex, args, ctx, service, invokedAt) => {
+  [GenexAction.PublishGallery]: async (genex, args, ctx, service) => {
     if (!ctx.project) throw new Error(MESSAGE.OpenProject());
     await refuseEmptyStarter(ctx);
     // The dialog names the game's apps by their place in its folder; only real builds inside it go.
     const apps = ctx.directory ? await nativeUploads(ctx.directory, args.native) : [];
     const exportStage = () => service(PluginService.ExportStage, {});
-    const camera = coverCamera(ctx, service, invokedAt);
-    return genex.publishGallery(ctx.project, exportStage, args.title, camera, apps, remixChoice(args, ctx));
+    return genex.publishGallery(ctx.project, exportStage, args.title, apps, remixChoice(args, ctx));
   },
-  [GenexAction.PublishApps]: async (genex, args, ctx, service, invokedAt) => {
+  [GenexAction.PublishApps]: async (genex, args, ctx) => {
     if (!ctx.project) throw new Error(MESSAGE.OpenProject());
     const apps = ctx.directory ? await nativeUploads(ctx.directory, args.native) : [];
-    const camera = coverCamera(ctx, service, invokedAt);
-    return genex.publishAppsOnly(ctx.project, apps, args.title, camera, remixChoice(args, ctx));
+    return genex.publishAppsOnly(ctx.project, apps, args.title, remixChoice(args, ctx));
   },
   [GenexAction.PublishAllowUpload]: withProject((genex, project, args) =>
     genex.publishAllowNewUpload(project, String(args.jobId ?? "")),
@@ -480,20 +446,17 @@ export async function createGenexPlugin(
       }),
     tool: (name: string, args: Args, ctx: Invocation) =>
       scoped(ctx, async () => {
-        // The host's ceiling for this call runs from here; a publish's cover shot must fit inside it.
-        const invokedAt = Date.now();
         const g = await ready(initial);
         const { project, directory } = ctx;
         if (!project || !directory) throw new Error(MESSAGE.ProjectRequired);
-        return runTool(g, name, args, { ...ctx, project, directory }, service, invokedAt);
+        return runTool(g, name, args, { ...ctx, project, directory }, service);
       }),
     action: (name: string, args: Args, ctx: Invocation) =>
       scoped(ctx, async () => {
-        const invokedAt = Date.now();
         const g = await ready(initial);
         const run = Object.hasOwn(ACTIONS, name) ? ACTIONS[name] : undefined;
         if (!run) throw new Error(MESSAGE.UnknownAction());
-        return run(g, args, ctx, service, invokedAt);
+        return run(g, args, ctx, service);
       }),
   };
 }

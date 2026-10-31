@@ -250,12 +250,11 @@ test("a reading with no role and a planner's are the main session's: the newer r
 test("delegated background work never becomes the main reply, while a direct chat build does", () => {
   assert.equal(delegationActivityScope({ selfCapture: {} }).role, "planner");
   assert.equal(delegationActivityScope({ selfCapture: { runId: "run", facetId: "bridge" } }).role, "builder");
-  assert.deepEqual(delegationActivityScope({ playtest: { runId: "run", facetId: "bridge" }, readOnly: true }), {
+  assert.deepEqual(delegationActivityScope({ readOnly: true }), {
     role: "reviewer",
-    runId: "run",
-    facetId: "bridge",
+    runId: undefined,
+    facetId: undefined,
   });
-  assert.equal(delegationActivityScope({ candidateId: "experiment" }).role, "builder");
   assert.deepEqual(delegationActivityScope({ coordinator: { runId: "run" }, readOnly: true }), {
     role: "planner",
     runId: "run",

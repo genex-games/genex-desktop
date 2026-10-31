@@ -36,6 +36,8 @@ export const SendSource = {
   PluginTurnedOn: "plugin_turned_on",
   /** Genex telling the agent why the Loop it started didn't start (never sent from the renderer). */
   LoopHeld: "loop_held",
+  /** Genex asking the agent for the game's cover once a build landed (never sent from the renderer). */
+  CoverStep: "cover_step",
   /** Words another surface left for this chat and asked it to send. */
   Handoff: "handoff",
 } as const;

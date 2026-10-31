@@ -19,7 +19,8 @@ test("planning receives fresh public capabilities, not credentials or execution 
   const first = planningCapabilities(1, [plugin], connections, [], true);
   assert.match(first, /genex__asset/);
   assert.match(first, /locked/);
-  assert.match(first, /\/vendor\//);
+  // Flipped (phase 5): no template or CDN advice rides the capability facts.
+  assert.doesNotMatch(first, /\/vendor\/|CDN/);
   assert.doesNotMatch(first, /must-not-leak/);
   connections.sources[0]!.account = "unlocked";
   const next = planningCapabilities(
@@ -35,7 +36,11 @@ test("planning receives fresh public capabilities, not credentials or execution 
   assert.match(next, /planning is tool-free/);
   plugin.enabled = false;
   assert.doesNotMatch(planningCapabilities(3, [plugin], connections, [], false), /genex__asset/);
-  assert.match(planningCapabilities(3, [], connections, [], false), /Preserve the existing project dependency setup/);
+  // Flipped (phase 5): a game of its own is told nothing about dependencies either, only the inspection rule.
+  assert.match(
+    planningCapabilities(3, [], connections, [], false),
+    /Do not claim to have inspected the project's files/,
+  );
 });
 
 test("a file skill reaches the facts as an index entry naming the tool that reads it, never its body", async () => {

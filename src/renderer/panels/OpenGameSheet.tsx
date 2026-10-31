@@ -55,7 +55,6 @@ const WHAT_FOR: Record<string, string> = {
     "a few lines, keeping Genex's scratch, installed packages, build output and secrets out of your commits",
   ),
   "studio.json": t("how Genex runs this game"),
-  "src/studio.js": t("the contract reviewers read"),
 };
 
 /** A phrase as a line of its own: "a 3D game" → "A 3D game". */

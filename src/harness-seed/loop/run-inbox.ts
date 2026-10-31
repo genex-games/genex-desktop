@@ -17,7 +17,7 @@ export type RunControlAction = (typeof RunControlAction)[keyof typeof RunControl
 const RUN_OPENED: readonly string[] = [RunEvent.RunRegistered, RunEvent.RunStarted];
 /** The run's latest events a snapshot shows as its progress. */
 const RECENT_PROGRESS_EVENTS = 24;
-/** The run's events that are progress: its facets, phases, integration, director, stage, controls and steers. */
+/** The run's events that are progress: its workers' phases, integration, director, stage, controls and steers (older runs' facet and autopilot events too). */
 const PROGRESS_EVENT = /facet_|autopilot_|integration_|director_|optimization_updated|run_control|run_steering/;
 /**
  * Its events that are not, though they look it: a wake of the lead is the lead being told, not
@@ -35,18 +35,18 @@ const BUILD_ADDRESS = "build";
 export const coordinatorTools = [
   {
     name: "run_status",
-    description: "Read the current run, worker progress and recent checks. This does not start or stop work.",
+    description: "Read the current run and its workers' progress. This does not start or stop work.",
     parameters: { type: "object", properties: {} },
   },
   {
     name: "steer_run",
     description:
-      "Send a concrete instruction to the existing workers at their next iteration boundary. Use only for requested changes, not questions or status requests.",
+      "Send a concrete instruction to the existing workers. Use only for requested changes, not questions or status requests.",
     parameters: {
       type: "object",
       properties: {
         text: { type: "string", description: "The user's requested change, with enough context for a worker." },
-        facetId: { type: "string", description: "Optional facet id; omit to address every worker." },
+        facetId: { type: "string", description: "Optional worker id; omit to address every worker." },
       },
       required: ["text"],
     },
@@ -54,7 +54,7 @@ export const coordinatorTools = [
   {
     name: "finish_run",
     description:
-      "Finish the current attempts, then integrate and check the accepted work and show it live. No new facet rounds, no reset, no cancellation. Use when the user asks to wrap up or wait for the remaining workers and show what is ready.",
+      "Let the workers at work end, then integrate what they made and show it live. No new work starts, no reset, no cancellation. Use when the user asks to wrap up or wait for the remaining workers and show what is ready.",
     parameters: { type: "object", properties: {} },
   },
   {
@@ -72,7 +72,7 @@ export const coordinatorTools = [
   {
     name: "resume_run",
     description:
-      "Continue a paused run with its saved plan and completed work when the user asks to go on with that build — resume, continue, keep going, run it again — including new guidance for it after Stop. Supply that instruction as text before builders resume. Questions alone do not resume work, and other work asked for after a stop is continue_build with build false.",
+      "Continue a paused run with its completed work when the user asks to go on with that build — resume, continue, keep going, run it again — including new guidance for it after Stop. Supply that instruction as text before builders resume. Questions alone do not resume work, and other work asked for after a stop is continue_build with build false.",
     parameters: {
       type: "object",
       properties: {
@@ -90,7 +90,7 @@ export const coordinatorTools = [
   {
     name: "continue_build",
     description:
-      "Continue implementation in this game's existing conversation after the run has finished, or make a contained change (build false) after a paused run, which stays paused. Use for a requested change or unfinished work, never a question. The saved plan and results are retained; this does not repeat intake or create a new timed run.",
+      "Continue implementation in this game's existing conversation after the run has finished, or make a contained change (build false) after a paused run, which stays paused. Use for a requested change or unfinished work, never a question. The conversation and results are retained; this does not create a new timed run.",
     parameters: {
       type: "object",
       properties: {

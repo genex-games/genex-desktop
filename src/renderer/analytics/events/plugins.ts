@@ -12,13 +12,7 @@ import type { PlayState } from "../../state/play.ts";
 import type { Studio } from "../../state/studio.ts";
 import { guarded, track } from "../client.ts";
 import type { AreaObservers } from "../observers.ts";
-import type {
-  ActivityLoadedProperties,
-  ChangeUndoneProperties,
-  HarnessOpenedProperties,
-  ImprovementCheckProperties,
-  SuggestionsDecidedProperties,
-} from "../plugins-harness.ts";
+import type { ActivityLoadedProperties, ChangeUndoneProperties, HarnessOpenedProperties } from "../plugins-harness.ts";
 import type {
   ActionOutcome,
   AccountStateChangedProperties,
@@ -91,10 +85,7 @@ export const PluginsEvent = {
   HarnessOpened: "harness_opened",
   ActivityLoaded: "activity_loaded",
   HarnessRecoveryProblemShown: "harness_recovery_problem_shown",
-  SuggestionsDecided: "suggestions_decided",
   ChangeUndone: "change_undone",
-  ImprovementCheckFinished: "improvement_check_finished",
-  SuggestionAutoApplyFailed: "suggestion_auto_apply_failed",
   PlayFeedFailed: "play_feed_failed",
   PlaySearched: "play_searched",
   PlayGameOpened: "play_game_opened",
@@ -132,10 +123,7 @@ export type PluginsEventProperties = {
   [PluginsEvent.HarnessOpened]: HarnessOpenedProperties;
   [PluginsEvent.ActivityLoaded]: ActivityLoadedProperties;
   [PluginsEvent.HarnessRecoveryProblemShown]: { has_detail: boolean };
-  [PluginsEvent.SuggestionsDecided]: SuggestionsDecidedProperties;
   [PluginsEvent.ChangeUndone]: ChangeUndoneProperties;
-  [PluginsEvent.ImprovementCheckFinished]: ImprovementCheckProperties;
-  [PluginsEvent.SuggestionAutoApplyFailed]: Record<never, never>;
   [PluginsEvent.PlayFeedFailed]: FeedFailedProperties;
   [PluginsEvent.PlaySearched]: PlaySearchedProperties;
   [PluginsEvent.PlayGameOpened]: { opens: PlayOpens };
@@ -159,9 +147,8 @@ function logRecord(app: Studio | null, record: EventEnvelope): void {
   if (card) track(PluginsEvent.ConsentCardShown, card);
 }
 
-/** Main's events this area reads: a plugin failing, and Harness's background apply failing. */
+/** Main's events this area reads: a plugin failing. */
 function uiEvent(app: Studio | null, event: UiEvent): void {
-  if (event.type === UiEvent.SkilloptAutoApplyFailed) track(PluginsEvent.SuggestionAutoApplyFailed, {});
   if (event.type !== UiEvent.PluginsChanged) return;
   const failed = pluginFailedProperties(event.payload, app?.plugins.getState().list ?? []);
   if (failed) track(PluginsEvent.PluginFailed, failed);

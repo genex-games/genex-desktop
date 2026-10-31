@@ -46,14 +46,16 @@ import { BuildStatus, type BuildTabs, PlayButton, ZoomPill } from "./run-graph/c
 import { GateButton, GateTip, gateWords } from "./run-graph/gates.tsx";
 import {
   AssetsTile,
+  BuildNode,
   FinishCheckNode,
+  FoldCard,
   JobsTile,
   LeadNode,
-  OptimizationTile,
   ResultNode,
   StartNode,
   StepNode,
 } from "./run-graph/nodes.tsx";
+import { foldId } from "../run-graph-builds.ts";
 import { useBuildsModel, useNow, useRunStills } from "./run-graph/use-builds-model.ts";
 import { GLIDE_MS, useGraphCamera } from "./run-graph/use-graph-camera.ts";
 import { Inspector, Lightbox, type LightItem, type Reply } from "./RunInspector.tsx";
@@ -439,13 +441,14 @@ function SelectedPanel({
       base={model.base}
       blender={model.blender}
       assets={model.assets}
-      optimization={model.optimization}
       project={project}
       references={references}
       baseSrc={stills.baseSrc}
       resultSrc={stills.resultSrc}
       resultPath={stills.resultPath}
       resultBorrowed={stills.borrowed}
+      resultPairsWithBase={stills.pairsWithBase}
+      timeline={model.timeline}
       leadFrame={leadFrame}
       onClose={() => overlays.setSelectedId(null)}
       onSelect={(id) => overlays.setSelectedId(id)}
@@ -657,7 +660,7 @@ const GraphNodes = memo(function GraphNodes({
   selected: string | null;
   onSelect: (id: string) => void;
 }): JSX.Element {
-  const { graph, layout, optimization, leadNode, finishCheck } = model;
+  const { graph, layout, leadNode, finishCheck } = model;
   const lastSave = useMemo(() => lastSavePoint(model.rows), [model.rows]);
   const jobsRect = layout.rects[GraphSelection.Jobs];
   const finishRect = layout.rects[GraphSelection.FinishCheck];
@@ -683,27 +686,24 @@ const GraphNodes = memo(function GraphNodes({
           onSelect={() => onSelect(GraphSelection.Assets)}
         />
       ) : null}
-      {model.steps.map((node) => (
-        <StepNode
-          key={node.id}
-          project={project}
-          runId={graph.runId}
-          active={graph.active}
-          step={node}
-          rect={layout.rects[node.id]}
-          ghost={layout.ghosts.has(node.id)}
-          selected={selected === node.id}
-          onSelect={onSelect}
-        />
-      ))}
-      {optimization && layout.rects.optimization ? (
-        <OptimizationTile
-          node={optimization}
-          rect={layout.rects.optimization}
-          selected={selected === GraphSelection.Optimization}
-          onSelect={() => onSelect(GraphSelection.Optimization)}
-        />
-      ) : null}
+      {model.steps.map((node) => {
+        const place = model.timeline?.places.get(node.id);
+        return (
+          <StepNode
+            key={node.id}
+            project={project}
+            runId={graph.runId}
+            active={graph.active}
+            step={node}
+            rect={layout.rects[node.id]}
+            ghost={layout.ghosts.has(node.id)}
+            selected={selected === node.id}
+            onSelect={onSelect}
+            place={place ?? null}
+          />
+        );
+      })}
+      <BuildLine model={model} selected={selected} onSelect={onSelect} />
       <ResultNode
         active={graph.active}
         status={stills.result}
@@ -742,6 +742,43 @@ const GraphNodes = memo(function GraphNodes({
     </>
   );
 });
+
+/** A Loop's builds on their line, and the cards that fold a build's finished workers. */
+function BuildLine({
+  model,
+  selected,
+  onSelect,
+}: {
+  model: BuildsModel;
+  selected: string | null;
+  onSelect: (id: string) => void;
+}): JSX.Element | null {
+  const { timeline, layout, toggleFold } = model;
+  if (!timeline) return null;
+  return (
+    <>
+      {timeline.builds.map((build) => (
+        <BuildNode
+          key={build.id}
+          build={build}
+          rect={layout.rects[build.id]}
+          selected={selected === build.id}
+          onSelect={onSelect}
+        />
+      ))}
+      {timeline.hangers.map((hangers) =>
+        hangers.folded ? (
+          <FoldCard
+            key={hangers.build}
+            hangers={hangers}
+            rect={layout.rects[foldId(hangers.build)]}
+            onToggle={toggleFold}
+          />
+        ) : null,
+      )}
+    </>
+  );
+}
 
 /** Opening the only build there is does nothing. */
 const STAY = (): void => {};

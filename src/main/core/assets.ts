@@ -4,11 +4,14 @@
  * Composed by `StudioCore`; its state stays in the core.
  */
 import { assetWorkspaces } from "../asset-workspaces.ts";
+import { buildDeliveries, resolveBuildRef } from "../build-assets.ts";
+import { isBuildRef } from "../../shared/build-ref.ts";
 import { assertAssetPath, readAssetPreview } from "../asset-preview.ts";
 import { readModelRig } from "../model-rigs.ts";
 import type { ModelRig } from "../../shared/model-rig.ts";
 import { assertRelativePath, isBelow } from "../../substrate/paths.ts";
 import {
+  type AssetWorkspace,
   genexJobDir,
   reconcileGeneratedAssets,
   joinProjectAssets,
@@ -138,7 +141,7 @@ export class AssetService {
       if (!sniffed) {
         const why = describeUnknownImage(data);
         this.#core.options.onLog?.(
-          `[core] reference skipped: ${frame.label ?? "board"} is ${why} — the judges cannot read it`,
+          `[core] reference skipped: ${frame.label ?? "board"} is ${why} — the preview cannot read it`,
           "stderr",
         );
         skipped.push(`${frame.label ?? "board"} (${why})`);
@@ -254,17 +257,14 @@ export class AssetService {
    */
   async projectAssets(project: string, ledger: readonly EventEnvelope[] = []): Promise<ProjectAssets> {
     const dir = this.#core.games.dirFor(project);
-    const autopilot = path.join(this.#core.layout.scratch, "autopilot");
     // Independent reads, side by side: the Assets stage polls this every ten seconds.
     const folders = await this.#readFolders(project);
-    const [walk, jobs, scratchRoot, listing, checkpoints] = await Promise.all([
+    const [walk, jobs, workspaces, checkpoints] = await Promise.all([
       walkGameAssets(dir, { folders }),
       readGenexJobs(this.#core.layout.engineHomes, project).catch(() => []),
-      realpath(autopilot).catch(() => autopilot),
-      this.#git(dir, ["worktree", "list", "--porcelain", "-z"]).catch(() => ""),
+      this.#buildWorkspaces(project),
       this.#core.assetCheckpoints.records(),
     ]);
-    const workspaces = assetWorkspaces(listing, this.#core.layout.scratch, scratchRoot);
     const inventory = await reconcileGeneratedAssets(
       this.#core.games.dirFor(project),
       this.#core.layout.engineHomes,
@@ -281,7 +281,31 @@ export class AssetService {
       checkpoints,
     );
     inventory.jobs = [...(inventory.jobs ?? []), ...assetCallJobs(this.#calls, project)];
+    // What a run still going delivered into its build: listed from there until the run lands.
+    const listed = new Set(inventory.assets.map((asset) => asset.file));
+    inventory.assets.push(...(await buildDeliveries({ project, ledger, listed, workspaces, folders })));
     return inventory;
+  }
+
+  /** The game's worktrees under the scratch folder: a Loop's integration worktree and its workers' copies. */
+  async #buildWorkspaces(project: string): Promise<AssetWorkspace[]> {
+    const autopilot = path.join(this.#core.layout.scratch, "autopilot");
+    const [scratchRoot, listing] = await Promise.all([
+      realpath(autopilot).catch(() => autopilot),
+      this.#git(this.#core.games.dirFor(project), ["worktree", "list", "--porcelain", "-z"]).catch(() => ""),
+    ]);
+    return assetWorkspaces(listing, this.#core.layout.scratch, scratchRoot);
+  }
+
+  /**
+   * Where a build reference (`@build/…`, issued by `projectAssets`) points: one of this game's own
+   * workspaces and a file in its asset folders, or null. The readers that take it read contained.
+   */
+  async buildFile(project: string, ref: string): Promise<{ root: string; file: string } | null> {
+    await this.#core.assertProjectAllowed(this.#core.games.dirFor(project));
+    const [workspaces, folders] = await Promise.all([this.#buildWorkspaces(project), this.assetFolders(project)]);
+    const found = resolveBuildRef(ref, workspaces, folders);
+    return found ? { root: found.root, file: found.file } : null;
   }
 
   /**
@@ -331,6 +355,11 @@ export class AssetService {
   }): Promise<{ mimeType: string; data: Uint8Array<ArrayBuffer> }> {
     const malformed = !p || typeof p.project !== "string" || typeof p.file !== "string";
     if (malformed) throw new Error(MESSAGE.assetRequired);
+    if (isBuildRef(p.file)) {
+      const found = await this.buildFile(p.project, p.file);
+      if (!found) throw new Error(MESSAGE.recordedAssetUnavailable());
+      return readAssetPreview(found.root, found.file, [], p.maxBytes);
+    }
     if (isGenexRef(p.file)) {
       const ref = parseGenexRef(p.file);
       const dir = ref && genexJobDir(this.#core.layout.engineHomes, p.project, ref.jobId);

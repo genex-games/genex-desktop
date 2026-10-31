@@ -125,7 +125,7 @@ function finishedLoop(project: string, loop: EarlierLoop): EventData[] {
     run(CustomEvent.AutopilotPlanReview, {
       summary: loop.summary,
       waitMinutes: 0,
-      facets: loop.parts.map(([id, title]) => ({ id, title, identity: [], cameras: [], checks: [] })),
+      facets: loop.parts.map(([id, title]) => ({ id, title, identity: [], checks: [] })),
     }),
     ...loop.parts.flatMap(([id, title, head]) => added(run, id, title, head)),
     run(CustomEvent.RunFinished, { stoppedBecause: "every part was added and checked" }),
@@ -154,7 +154,7 @@ function buildingLoop(project: string, now: number): EventData[] {
     run(CustomEvent.AutopilotPlanReview, {
       summary: "A night street race: a lit circuit, cars with a wet finish, and their sound.",
       waitMinutes: 0,
-      facets: PLAN.map(([id, title]) => ({ id, title, identity: [], cameras: [], checks: [] })),
+      facets: PLAN.map(([id, title]) => ({ id, title, identity: [], checks: [] })),
     }),
     ...added(run, "hud", "Speed and lap HUD", "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d"),
     ...added(run, "track", "Track and night city", "2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e"),

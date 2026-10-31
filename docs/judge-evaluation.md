@@ -24,7 +24,7 @@ comparison. Start with these authored tasks; use the same inputs for every candi
 | Scope | The requested change versus an unrelated attractive addition | Frozen task brief and evidence of the requested behavior |
 | Finish | The same build polished versus with an unfinished new system added | Finish-stage taste rubric; the polished build wins and a regression still loses |
 | Corners | A racer that warns of each corner versus one that does not | The drive's `drive:corner` frame on both sides and its `CORNER:` fact line; a drive that reached no corner says so |
-| Challenge | A field that beats a throttle-only bot versus one that loses to it | The bot's race under one seed (`throttle-bot-loses`, the `CHALLENGE:` line); a game reporting no race is not asked |
+| Challenge | A field that beats a throttle-only bot versus one that loses to it | The bot's race under one seed (the `CHALLENGE:` line, and a plan's own check on the race when it wrote one); a game reporting no race is not asked |
 
 The art director's ship review (`judge/ship-review.md`, `loop/ship-review.ts`) is the one
 absolute judge: one build and no pair, at 1600×900. Evaluate it on single builds that reviewers
@@ -57,29 +57,6 @@ the round waits, so a lapsed account leaves no verdicts, never ties or "no" answ
 
 Captures, judge verdicts and human labels stay in ignored evidence directories; only metrics-only
 baselines and per-release ledger exports under `evals/` are committed ([evals](evals.md)).
-
-## Engine plugins' judges
-
-An engine plugin may declare its own judges ([plugins](plugins.md#judges)): a brief, a number of
-players and a probe. They follow the blind rule of every judge: the brief states what to check in
-the player's words and never mentions code, and the probe answers measurements and pictures of the
-running play, never source. The host adds the brief to the rubric, so evaluate a plugin judge as a
-judge plus its brief: hold the brief file and the probe tool's version fixed in each comparison,
-record the judge id with the model and prompt version, and compare against the same game judged
-with no plugin judge. A probe's pictures are evidence the judge saw, not a verdict; keep them with
-the captures.
-
-Roblox Studio's plugin declares three, each with a brief in `src/plugins/roblox/judges/` and a probe
-in `src/plugins/roblox/probes.ts`:
-
-- **Multiplayer** (3 test players, `players-state`): a picture per player, and each client's view of
-  every player against the server's.
-- **Cheater** (1 player, `cheat-remotes`): hostile values sent to every remote from the client, the
-  server's leaderstats and attributes read before and after each; skipped when live saved data is
-  reachable.
-- **Phone** (1 player, `phone-check`): a phone and a tablet, upright and sideways, through Studio's
-  Device Simulator, a picture of each, interface overlap, off-screen and safe-area findings, and the
-  place's memory against `PHONE_MEMORY_BUDGET_MB`.
 
 ## Human review and metrics
 

@@ -79,7 +79,7 @@ async function inPlaceWorld() {
   const announced: string[] = [];
   const lite = await coreLite({
     gamesRoot: path.join(root, "games"),
-    executionPolicy: { allowedProjectRoot: root, runBackgroundImprovement: false },
+    executionPolicy: { allowedProjectRoot: root },
     consentTimeoutMs: CONSENT_WAIT_MS,
     onUiEvent: (event) => {
       announced.push(event.type);
@@ -101,7 +101,9 @@ async function inPlaceWorld() {
       id,
       label: "fixture",
       kind,
-      supportsSessions: true,
+      // Flipped (Loop phase 3): every engine that keeps a session carries a worker's seat now, so
+      // the engine Genex does not seat is one that keeps none of its own.
+      supportsSessions: kind === "delegated",
       permissionPrompts,
       status: async () => ({ code: "ready", detail: "fixture" }),
       models: async () => [],

@@ -35,6 +35,8 @@ import {
 } from "./run-steps.ts";
 import { backgroundCount, FINISH_CHECK_WORDS, jobStatusWords, LEAD_WORDS } from "./words.ts";
 import { isInPlaceTree, layoutComb } from "./run-graph-comb.ts";
+import { buildTimeline } from "./run-graph-builds.ts";
+import { layoutTimeline } from "./panels/run-graph/timeline-layout.ts";
 
 /** What the lead's node says it is doing: working itself, waiting for its workers, paused, done or stopped. */
 export const LeadFace = {
@@ -68,10 +70,17 @@ const asksWithPictures = (graph: RunGraph): boolean =>
  * The Builds tab's layout of a graph: today's options (the assets under the start, the
  * optimisation card, the result's gate, the lead while it has the run), plus the tree's when the
  * graph is one: the lead's background work when it has any, the finish check when it waits. A
- * lead's tree in place (workers and its own save points) hangs its workers off the save points
- * (`run-graph-comb.ts`); every other graph lays out a row per part.
+ * Loop with a build history draws its builds on one line, its workers beside them
+ * (`run-graph-builds.ts`; `open` names the builds whose folded workers show); a lead's tree in place
+ * (workers and its own save points) hangs its workers off the save points (`run-graph-comb.ts`);
+ * every other graph lays out a row per part.
  */
-export function buildsLayout(graph: RunGraph, rows: PartRow[], summary: RunSummary | null): StepsLayout {
+export function buildsLayout(
+  graph: RunGraph,
+  rows: PartRow[],
+  summary: RunSummary | null,
+  open: ReadonlySet<number> = new Set(),
+): StepsLayout {
   const lead = leadNodeOf(graph);
   const tree = graph.tree
     ? { tree: { jobs: (lead?.jobs.length ?? 0) > 0, finishCheck: hasNode(graph, GraphNodeKind.FinishCheck) } }
@@ -79,11 +88,12 @@ export function buildsLayout(graph: RunGraph, rows: PartRow[], summary: RunSumma
   const options = {
     assets: hasNode(graph, GraphNodeKind.Blender) || hasNode(graph, GraphNodeKind.Assets),
     startWords: asksWithPictures(graph),
-    optimization: hasNode(graph, GraphNodeKind.Optimization),
     resultGate: resultGate(graph),
     lead: leadWorking(graph, summary, rows),
     ...tree,
   };
+  const timeline = buildTimeline(graph, rows, open);
+  if (timeline) return layoutTimeline(timeline, options);
   return graph.tree && isInPlaceTree(rows) ? layoutComb(rows, options) : layoutSteps(rows, options);
 }
 
@@ -154,7 +164,6 @@ export interface ReadingNodes {
   assets: boolean;
   tree: boolean;
   jobs: boolean;
-  optimization: boolean;
   finishCheck: boolean;
   /** the lead has the run to itself: in a graph that is no tree, drawn after the result */
   lead: boolean;
@@ -166,7 +175,6 @@ export function readingNodes(graph: RunGraph, rows: PartRow[], summary: RunSumma
     assets: hasNode(graph, GraphNodeKind.Blender) || hasNode(graph, GraphNodeKind.Assets),
     tree: graph.tree,
     jobs: (leadNodeOf(graph)?.jobs.length ?? 0) > 0,
-    optimization: hasNode(graph, GraphNodeKind.Optimization),
     finishCheck: hasNode(graph, GraphNodeKind.FinishCheck),
     lead: leadWorking(graph, summary, rows),
   };
@@ -175,7 +183,7 @@ export function readingNodes(graph: RunGraph, rows: PartRow[], summary: RunSumma
 /**
  * The graph's reading order, left to right: what you asked and its assets, the lead and its
  * background work (in a tree), every step (row by row, or in the layout's own `steps` order), the
- * optimisation card, the result, then the finish check (in a tree) or the lead while it has the run.
+ * result, then the finish check (in a tree) or the lead while it has the run.
  */
 export function readingOrder(
   rows: PartRow[],
@@ -190,7 +198,6 @@ export function readingOrder(
     ...(nodes.assets ? [GraphSelection.Assets] : []),
     ...head,
     ...steps,
-    ...(nodes.optimization ? [GraphSelection.Optimization] : []),
     GraphSelection.Final,
     ...tail,
   ];
@@ -215,13 +222,13 @@ export const leftOf = (round: FinishRound): string[] => (round.notDone.length ? 
 
 /**
  * The line under the final look's state: looking, how many things a no left, no answer, all done.
- * It reads the run's current ask only (`node.round`, null before its first claim).
+ * It reads the run's current ask only (`node.round`); a node drawn before its first claim says nothing.
  */
 function finishCheckLine(node: FinishCheckNode): string {
   if (node.state === FinishCheckState.Checking) return FINISH_CHECK_WORDS.checking;
   if (node.state === FinishCheckState.Done) return FINISH_CHECK_WORDS.doneWord;
   const newest = currentRound(node);
-  if (!newest) return FINISH_CHECK_WORDS.placeholder;
+  if (!newest) return "";
   if (newest.step === FinishCheckStep.Unanswered) return FINISH_CHECK_WORDS.unanswered;
   return FINISH_CHECK_WORDS.leftWord(leftOf(newest).length);
 }
@@ -232,12 +239,8 @@ export const finishCheckFace = (node: FinishCheckNode): FinishCheckFace => ({
   word: finishCheckLine(node),
 });
 
-/**
- * The finish check's five looks: a ghost until the current ask's first claim, then the owner's
- * four states (not yet after a no or no answer, checking, done, stopped).
- */
+/** The finish check's four looks, the owner's states: not yet after a no or no answer, checking, done, stopped. */
 export const FinishLook = {
-  Placeholder: "placeholder",
   NotYet: "not_yet",
   Checking: "checking",
   Done: "done",
@@ -255,7 +258,6 @@ export interface FinishCheckLook {
 
 /** Each look's ink, edge and fill, in the design's tokens: only the finish check wears these. */
 const FINISH_LOOKS: Record<FinishLook, FinishCheckLook> = {
-  [FinishLook.Placeholder]: { look: FinishLook.Placeholder, tone: Tone.Muted, edge: null, fill: null },
   [FinishLook.NotYet]: { look: FinishLook.NotYet, tone: Tone.Orange, edge: "var(--orange)", fill: null },
   [FinishLook.Checking]: {
     look: FinishLook.Checking,
@@ -267,12 +269,12 @@ const FINISH_LOOKS: Record<FinishLook, FinishCheckLook> = {
   [FinishLook.Stopped]: { look: FinishLook.Stopped, tone: Tone.Red, edge: "var(--red)", fill: "var(--red-tint)" },
 };
 
-/** Which look a finish check wears: not yet is a ghost until the current ask has a round, as its line says. */
+/** Which look a finish check wears, by its state. */
 function lookOf(node: FinishCheckNode): FinishLook {
   if (node.state === FinishCheckState.Checking) return FinishLook.Checking;
   if (node.state === FinishCheckState.Done) return FinishLook.Done;
   if (node.state === FinishCheckState.Stopped) return FinishLook.Stopped;
-  return currentRound(node) ? FinishLook.NotYet : FinishLook.Placeholder;
+  return FinishLook.NotYet;
 }
 
 /** The finish check node's colours (`FINISH_LOOKS`). */

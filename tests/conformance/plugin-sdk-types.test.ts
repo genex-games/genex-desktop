@@ -95,25 +95,24 @@ test("a backend written against the SDK declaration compiles clean", (t) => {
         const stopped: { stopped: boolean } = await ctx.host('sandbox.stop', { id: started.id });
         const shot = await ctx.host('observe', {
           project: 'g', root: '/games/g', files: [],
-          still: { demo: 'hero-shot', width: 1920, height: 1080, maxBytes: 8388608 },
+          still: { camera: 'default', width: 1920, height: 1080, maxBytes: 8388608 },
         });
         let still: { bytes: Uint8Array; mime: 'image/png' | 'image/jpeg'; mean: number; spread: number; dark: number; lit: number; preview: Uint8Array } | null = null;
         let problem: { code: PluginStillProblemCode; names: string[] | undefined; reason: string | undefined } | null = null;
         let olderHost = false;
         if ('still' in shot && shot.still) {
-          const { image, mimeType, width, height, source, view, stats, preview } = shot.still;
+          const { image, mimeType, width, height, source, stats, preview } = shot.still;
           const side: number = width + height;
           const read: 'page' | 'compositor' = source;
-          const named: string | undefined = view.demo ?? view.camera;
           still = { bytes: image, mime: mimeType, mean: stats.lumaMean + side * 0, spread: stats.lumaStdDev, dark: stats.nearBlackFraction, lit: stats.litFraction, preview };
-          void read; void named;
+          void read;
         } else if ('stillProblem' in shot && shot.stillProblem) {
           problem = { code: shot.stillProblem.code, names: shot.stillProblem.available, reason: shot.stillProblem.reason };
         } else {
           // A host older than stills ignored the option and answered an ordinary observation.
           olderHost = true;
         }
-        await ctx.host('observe', { project: 'g', root: '/games/g', files: [], still: { camera: 'eye:down', width: 1280, height: 720 } });
+        await ctx.host('observe', { project: 'g', root: '/games/g', files: [], still: { width: 1280, height: 720 } });
         return { root, text, written, delivered, dir: exported.dir, files: exported.files, token, job, snapshot, still, problem, olderHost, ended, stopped };
       }
       import type { PluginStillProblemCode } from ${quote(sdk)};
@@ -202,13 +201,6 @@ test("the SDK manifest mirror, its skills and tool hosts, and src/shared/plugins
       export const argsToShared: SharedArgs = sdkArgs;
       export const argsToSdk: SdkArgs = sharedArgs;
     `,
-    "judge.ts": `
-      import type { PluginJudge as SdkJudge } from ${quote(sdk)};
-      import type { PluginJudge as SharedJudge } from ${quote(shared)};
-      declare const sdkJudge: SdkJudge; declare const sharedJudge: SharedJudge;
-      export const judgeToShared: SharedJudge = sdkJudge;
-      export const judgeToSdk: SdkJudge = sharedJudge;
-    `,
   });
   assert.equal(diagnostics.length, 0, report(diagnostics));
 });
@@ -287,9 +279,9 @@ test("an undeclared host method and a non-scalar tool argument are compile error
   );
 
   const wrongStills: Record<string, string> = {
-    "both.ts": `{ demo: 'hero', camera: 'close', width: 1920, height: 1080 }`,
-    "neither.ts": `{ width: 1920, height: 1080 }`,
-    "unsized.ts": `{ demo: 'hero' }`,
+    "demo.ts": `{ demo: 'hero', width: 1920, height: 1080 }`,
+    "other-camera.ts": `{ camera: 'eye:down', width: 1920, height: 1080 }`,
+    "unsized.ts": `{ camera: 'default' }`,
   };
   for (const [file, still] of Object.entries(wrongStills)) {
     const diagnostics = compile(t, {
@@ -300,7 +292,7 @@ test("an undeclared host method and a non-scalar tool argument are compile error
     });
     assert.ok(
       diagnostics.some((d) => d.file?.fileName.endsWith(file)),
-      `a still must name exactly one view and its size (${file})`,
+      `a still names no demo, only the default camera, and its size (${file})`,
     );
   }
   // An API-3 host older than stills answers a plain observation: neither field is a given.
@@ -308,7 +300,7 @@ test("an undeclared host method and a non-scalar tool argument are compile error
     "assumed.ts": `
       import type { PluginContext } from ${quote(sdk)};
       export async function run(ctx: PluginContext) {
-        const shot = await ctx.host('observe', { project: 'g', root: '/g', files: [], still: { demo: 'hero', width: 1920, height: 1080 } });
+        const shot = await ctx.host('observe', { project: 'g', root: '/g', files: [], still: { width: 1920, height: 1080 } });
         if (!('still' in shot)) return shot.stillProblem.code;
         return null;
       }
@@ -322,7 +314,7 @@ test("an undeclared host method and a non-scalar tool argument are compile error
     "files.ts": `
       import type { PluginContext } from ${quote(sdk)};
       export const run = (ctx: PluginContext) =>
-        ctx.host('observe', { project: 'g', root: '/g', files: ['index.html'], still: { demo: 'hero', width: 1920, height: 1080 } });
+        ctx.host('observe', { project: 'g', root: '/g', files: ['index.html'], still: { width: 1920, height: 1080 } });
     `,
   });
   assert.ok(

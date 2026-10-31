@@ -7,7 +7,6 @@ import type { GameRuntime } from "./computer-target.ts";
 import type { EngineBinding, LinkedEngine } from "./game-engine.ts";
 import type { GameLibraryEntry } from "./game-library.ts";
 import type { HookEvent } from "./plugin-hooks.ts";
-import type { JudgeRef } from "./plugins.ts";
 import type { FolderHolds, ProjectFact } from "./project-facts.ts";
 
 export interface GameProject {
@@ -33,11 +32,9 @@ export interface GameProject {
   linkedEngine?: LinkedEngine;
   /**
    * True when an engine plugin that is on plays this game in its editor (its play tools hold the
-   * game's link): judges and the computer play it there. Filled by the harness's `game.list`.
+   * game's link): the computer plays it there. Filled by the harness's `game.list`.
    */
   editorPlay?: boolean;
-  /** The judges that play this game in its editor, as its engine plugin declares them; only with `editorPlay`. */
-  judges?: JudgeRef[];
   /**
    * What the folder holds, by `shared/project-facts.ts`: the core table, the enabled plugins'
    * `detect` and the engine link. Empty while the first message has not picked a kind.
@@ -164,7 +161,7 @@ export interface PlayEngine {
   args: string[];
 }
 
-/** What the served page does with the contract the judge reads — a word, not a sentence. Wire values: never rename one. */
+/** What the served page does with the studio's page layer — a word, not a sentence. Wire values: never rename one. */
 export const ContractWord = {
   Loaded: "loaded",
   Attached: "attached",
@@ -192,7 +189,7 @@ export interface FolderPreflight {
   install: string | null;
   /** Dependencies are declared and `node_modules` is not there: the build cannot run yet. */
   needsInstall: boolean;
-  /** Whether the page the studio serves actually loads the contract the judge reads. */
+  /** Whether the page the studio serves actually loads the studio's page layer. */
   contract: ContractWord;
   /** The candidate's own repository, and any repository one folder under it. */
   git: "none" | "repo";
@@ -285,8 +282,8 @@ export interface ExportResult {
  *
  * `game.validate` answers the same question from the folder's sources — a static judgement
  * about a page nobody loaded. This is the live one: the page is served, waited for and asked
- * what the hook attached to. `installed` is a game that calls `installStudio` itself,
- * `attached` is a game the hook found by watching it render, `none` is neither.
+ * what the hook attached to. `installed` is a renderer handed to the hook directly (nothing in
+ * the app does today), `attached` is a game the hook found by watching it render, `none` is neither.
  */
 export interface AttachReport {
   ok: boolean;

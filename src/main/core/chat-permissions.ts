@@ -114,7 +114,8 @@ const MESSAGE = {
   /** What Claude reads when the work ended around its request: a deny, never an error. */
   withdrawnStop: "The user stopped this work before answering.",
   withdrawnTurn: "The turn ended before the user answered.",
-  withdrawnTimeout: `Nobody answered within ${LEAD_ASK_TIMEOUT_MS / MINUTE_MS} minutes, so this was not allowed. Do not retry it; say in your reply what you needed.`,
+  /** A card nobody answered in its wait: not a no — the asking call alone ends, and the work goes on. */
+  withdrawnTimeout: `Nobody answered within ${LEAD_ASK_TIMEOUT_MS / MINUTE_MS} minutes: the person may be away. This is not a no; it did not run. Carry on with the rest of the work, and ask again later if it is still needed.`,
   /** What a build's lead or the run's coordinator reads when its chat was closed (archived, moved). */
   chatClosed:
     "This chat was closed, so nobody can approve this and it was not allowed. Do not retry it; say in your reply what you needed.",
@@ -926,8 +927,9 @@ export class ChatPermissionService {
    * `tool_permission` card, the UI is nudged, and the session waits (as Claude Code does, with no
    * timeout of its own) for the person's answer, a Stop or the end of the turn. A lead's card waits
    * at most its `timeoutMs`, and no turn of the chat's ending withdraws it (`outlivesTurn`): the lead
-   * is not that turn. A worker's card names it and has no timeout. The answer is logged the same
-   * way, and "always" is kept where its grants say.
+   * is not that turn. A worker's card names it; a run worker's waits as a lead's does (`#workerCard`).
+   * Only the call that asked waits: nobody answering in time is not a no (`withdrawnTimeout`), and
+   * the run goes on. The answer is logged the same way, and "always" is kept where its grants say.
    */
   async #ask(
     project: string,

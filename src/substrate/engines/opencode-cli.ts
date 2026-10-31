@@ -376,8 +376,6 @@ export const OpenCodeAccess = {
   Build: "build",
   /** A read-only session (a judge, a lead while its build runs, Plan): looks, and runs only the studio bridge. */
   ReadOnly: "read-only",
-  /** A judge that plays: reads no file at all, and reaches the build only through the studio's tools. */
-  Blind: "blind",
   /** A one-shot answer (`complete`): no tool at all. */
   Answer: "answer",
 } as const;
@@ -394,15 +392,14 @@ const BRIDGE_PATTERN = "node .studio/bridge/tool.mjs *";
 /** The bash rules for each access: always allow or deny, never ask — `opencode run` has nobody to ask. */
 function bashRules(access: OpenCodeAccess, bridge: boolean): string | Record<string, string> {
   if (access === OpenCodeAccess.Build) return "allow";
-  const looksOnly = access === OpenCodeAccess.ReadOnly || access === OpenCodeAccess.Blind;
-  if (looksOnly && bridge) return { "*": "deny", [BRIDGE_PATTERN]: "allow" };
+  if (access === OpenCodeAccess.ReadOnly && bridge) return { "*": "deny", [BRIDGE_PATTERN]: "allow" };
   return "deny";
 }
 
 /** OpenCode's permission key for every tool of the studio's MCP server (`<server>_<tool>`). */
 const STUDIO_MCP_PERMISSION = `${MCP_SERVER_NAME}_*`;
 
-/** The accesses whose session may read files: a build and a read-only one, never an answer or a blind judge. */
+/** The accesses whose session may read files: a build and a read-only one, never an answer. */
 const READING_ACCESS: ReadonlySet<OpenCodeAccess> = new Set([OpenCodeAccess.Build, OpenCodeAccess.ReadOnly]);
 
 /**
@@ -482,7 +479,6 @@ function shellRulesV2(access: OpenCodeAccess, bridge: boolean): PermissionRule[]
  * no web fetch, skill or subagent runs, nothing is shared and nothing updates itself.
  */
 export function openCodeConfigV2(access: OpenCodeAccess, bridge: boolean, mcpCommand: string[] | null = null): string {
-  // A blind judge reads no file either, as on 1.18 (`READING_ACCESS`).
   const look = READING_ACCESS.has(access) ? "allow" : "deny";
   const permissions: PermissionRule[] = [
     rule("*", "deny"),

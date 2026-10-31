@@ -1,7 +1,7 @@
 /**
  * How a message sent while the chat's turn works joins that turn (steer). Most join as words: read
  * at the session's next step. One that changes how the turn runs — another engine, model or effort,
- * the Loop switched on or off or its hours, roles or plan review changed, a new mood board, or a
+ * the Loop switched on or off or its hours or roles changed, newly attached pictures, or a
  * slash command — joins as a switch: the session is cut at its next step and the turn goes on with
  * that message's settings (chat-steer.ts), which only a runner that says it can take switches does.
  * A fresh build asked for, Studio's own chat and a Keep building tap never join.
@@ -55,15 +55,15 @@ const answeredOn = (message: AnyRecord): string =>
 
 /**
  * Does `item` change what a turn answering `asked` runs on: its engine, model or effort, its Loop
- * (on or off, hours, roles, plan review), or a new mood board? Slash text is not a setting.
+ * (on or off, hours, roles), or newly attached pictures? Slash text is not a setting.
  */
 export function changesSettings(item: AnyRecord, asked: AnyRecord): boolean {
   return answeredOn(item) !== answeredOn(asked) || Boolean(item.autopilot?.frames?.length);
 }
 
 /**
- * Does `item` change the Loop itself from what `asked` runs: on or off, its hours, roles or plan
- * review, or a new mood board? Another engine, model or effort is not the Loop.
+ * Does `item` change the Loop itself from what `asked` runs: on or off, its hours or roles, or
+ * newly attached pictures? Another engine, model or effort is not the Loop.
  */
 export function changesLoop(item: AnyRecord, asked: AnyRecord): boolean {
   return commissionKey(item) !== commissionKey(asked) || Boolean(item.autopilot?.frames?.length);

@@ -459,12 +459,6 @@ function counterApi(t: Tally, scope: Foreign) {
     totals: shape,
     /** A point-in-time copy — subtract two of these rather than dividing a lifetime total. */
     snapshot: () => ({ ...shape(), at: Date.now() }),
-    /** The optimization observer quiets the counters around a sample; the patches stay. */
-    enable(on: Foreign) {
-      t.enabled = on !== false;
-      return t.enabled;
-    },
-    enabled: () => t.enabled,
     /** Put every prototype method back with its original identity. */
     end() {
       for (const restore of t.restores.splice(0)) {

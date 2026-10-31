@@ -1,7 +1,8 @@
 /**
  * The scripts the preview runs inside a game's page: probes that report what the page can do
  * and saw (trusted input, the attach report, WebGL errors), the page-side capture and the bounded
- * read of `__studio.state()`. Each is an expression string for `webContents.executeJavaScript`.
+ * read of the shim's own `__studioClock.state()`. Each is an expression string for
+ * `webContents.executeJavaScript`. None of them asks the game anything.
  */
 import { ElidedKind, StateShape, keepPathsOf } from "../shared/studio-state-shape.ts";
 
@@ -23,29 +24,26 @@ export const TRUSTED_PROBE = `(() => {
 
 /**
  * Is the game attached, and to what? Read off the hook, which knows what it wrapped and what it
- * has seen rendered — never off the game's own claim about itself. `contract` is `installed` when
- * a game assigned `window.__studio` (the facade keeps the object as `__game`), `attached` when
- * the studio recognised a world in the frames the page drew, and `none` when neither is true.
+ * has seen rendered — never off the game's own claim about itself. `contract` is `attached` when
+ * the studio recognised a world in the frames the page drew, and `none` otherwise.
  */
 export const ATTACH_PROBE = `(() => {
   const hook = window.__studioHook || null;
-  const facade = window.__studio || null;
-  const game = facade && facade.__game ? facade.__game : null;
   const call = (fn) => { try { const v = fn(); return v === undefined ? null : v; } catch { return null; } };
   const world = hook && typeof hook.current === "function" ? call(() => hook.current()) : null;
   const s = hook && typeof hook.state === "function" ? call(() => hook.state()) : null;
   const name = (v) => { try { return v && v.constructor && v.constructor.name ? v.constructor.name : (v ? typeof v : null); } catch { return null; } };
   return {
-    contract: game ? "installed" : world ? "attached" : "none",
+    contract: world ? "attached" : "none",
     shim: Boolean(window.__studioClock),
     hook: Boolean(hook),
     renderer: name(world && world.renderer),
     scene: name(world && world.scene),
     camera: name(world && world.camera),
     cameraKind: s ? s.cameraKind : null,
-    cameras: call(() => facade.cameras()) || [],
-    eyes: call(() => facade.eyes()) || [],
-    player: Boolean(call(() => facade.player())),
+    cameras: (hook && typeof hook.cameras === "function" ? call(() => hook.cameras()) : null) || [],
+    eyes: [],
+    player: false,
     renders: s ? s.renders : 0,
     frames: s ? s.frames : 0,
     scenes: s ? s.scenes : 0,
@@ -72,43 +70,26 @@ export interface PageCaptureInfo {
   kind?: string | null;
   /** How many pictures the shim's own capture has recorded — how a stale record is spotted. */
   count?: number;
-  /** Who took this picture: `shim` read the canvas itself, `game` answered with its own. */
-  provenance?: "shim" | "game";
-  /** The record describes some earlier picture: the game answered without going through the shim. */
-  stale?: boolean;
+  /** Who took this picture: always the shim's own read of the canvas. */
+  provenance?: "shim";
 }
 
 /** The page-side capture never runs longer than this before the compositor takes the frame. */
 export const PAGE_CAPTURE_TIMEOUT_MS = 1500;
 
 /**
- * Ask the page for the end of its own frame. `capture()` may be async (a WebGPU game awaits
- * its render), so this awaits it; `captureInfo()` is plain data and comes back beside it, which
- * is how a shot's provenance reaches the stats a check reads.
+ * Ask the shim for the end of the page's frame. `capture()` may be async (a WebGPU page awaits
+ * its render), so this awaits it; `captureInfo()` is plain data and comes back beside it. The
+ * game is never asked for a picture of itself.
  */
 export const PAGE_CAPTURE = `(async () => {
-  var readInfo = function (holder) {
-    try { return holder && typeof holder.captureInfo === "function" ? JSON.parse(JSON.stringify(holder.captureInfo())) : null; } catch (err) { return null; }
-  };
   try {
-    const s = window.__studio;
-    if (!s || typeof s.capture !== "function") return null;
-    /* Provenance, not the page's word for it. \`capture()\` and \`captureInfo()\` are both members
-       the facade delegates to the game, so a build could answer with a pre-baked picture and the
-       draw count to go with it, and the record would be indistinguishable from a frame the shim
-       read off the canvas. The shim's own capture counts the pictures IT took: if that count did
-       not move, this one came from the game and is labelled so. */
     const own = window.__studioCapture;
-    const before = readInfo(own);
-    const image = await s.capture();
-    const after = readInfo(own);
-    const info = after || readInfo(s);
-    if (info) {
-      const fresh = Boolean(after && before && after.count !== before.count);
-      const supplied = !fresh || info.source === "game" || (Array.isArray(info.ladder) && info.ladder.indexOf("game") >= 0);
-      info.provenance = supplied ? "game" : "shim";
-      if (!fresh) info.stale = true;
-    }
+    if (!own || typeof own.capture !== "function") return null;
+    const image = await own.capture();
+    let info = null;
+    try { info = typeof own.captureInfo === "function" ? JSON.parse(JSON.stringify(own.captureInfo())) : null; } catch (err) { info = null; }
+    if (info) info.provenance = "shim";
     return { image: typeof image === "string" ? image : null, info: info };
   } catch (err) {
     return null;
@@ -218,13 +199,13 @@ export function stateBoundOptions(maxChars: number, keep: unknown = []): StateBo
 }
 
 /**
- * The page expression that reads `window.__studio.state()` bounded to `maxChars`: a page without
- * the contract answers `{__missing}` and a throwing `state()` answers `{__error}`, exactly as the
- * unbounded read did.
+ * The page expression that reads the shim's `window.__studioClock.state()` bounded to `maxChars`:
+ * a page the shim never reached answers `{__missing}` and a throwing `state()` answers `{__error}`.
  */
 export function studioStateExpression(maxChars = STATE_MAX_CHARS, keep: unknown = []): string {
   const options = JSON.stringify(stateBoundOptions(maxChars, keep));
-  const read = `window.__studio ? window.__studio.state() : { ${StateShape.Missing}: true }`;
+  const clock = "window.__studioClock";
+  const read = `${clock} && typeof ${clock}.state === "function" ? ${clock}.state() : { ${StateShape.Missing}: true }`;
   return `Promise.resolve(${read}).then((state) => (${boundStudioState.toString()})(state, ${options}))`;
 }
 

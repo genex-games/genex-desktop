@@ -5,7 +5,6 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { wait } from "../../src/harness-seed/loop/director/tools.ts";
 import { HostMethod } from "../../src/harness-seed/loop/host-methods.ts";
 import { createRunInbox } from "../../src/harness-seed/loop/run-inbox.ts";
 import type { AnyRecord, HarnessEvent } from "../../src/harness-seed/types/harness.d.ts";
@@ -114,46 +113,4 @@ describe("a run's inbox, read from the log", () => {
     const resumed = createRunInbox(log.ctx as never, { threadId: THREAD, runId: RUN });
     assert.deepEqual(await resumed.steering(undefined, true, { onlyNew: true }), ["add a boss, from the chat"]);
   });
-
-  it("the lead's wait says USER SAYS once per steer", async () => {
-    const log = fakeLog([custom("run_registered", { runId: RUN }), steer("make the sky red")]);
-    const lead = waitingLead(log);
-    await wait(lead.loopRun as never, { seconds: 5 });
-    await wait(lead.loopRun as never, { seconds: 5 });
-    assert.deepEqual(lead.userSays(), ["USER SAYS: make the sky red"]);
-  });
-
-  it("a lead that restarts in a fresh session after a Resume still hears the user's earlier instruction", async () => {
-    const log = fakeLog([custom("run_registered", { runId: RUN }), steer("make the sky red")]);
-    await wait(waitingLead(log).loopRun as never, { seconds: 5 });
-
-    log.append(custom("autopilot_paused", { runId: RUN }), custom("run_registered", { runId: RUN, resumed: true }));
-    // The resumed run could not resume the old session: its brief names no instruction.
-    const resumed = waitingLead(log);
-    await wait(resumed.loopRun as never, { seconds: 5 });
-    await wait(resumed.loopRun as never, { seconds: 5 });
-    assert.deepEqual(resumed.userSays(), ["USER SAYS: make the sky red"]);
-  });
 });
-
-/** A run whose lead only waits, on its own inbox; every wait wakes on its first pass. */
-function waitingLead(log: ReturnType<typeof fakeLog>) {
-  const notes: Array<{ at: number; seq: number; text: string }> = [];
-  const note = (text: string) => notes.push({ at: Date.now(), seq: notes.length + 1, text });
-  const hour = Date.now() + 60 * 60 * 1000;
-  const loopRun = {
-    ctx: log.ctx,
-    inbox: createRunInbox(log.ctx as never, { threadId: THREAD, runId: RUN }),
-    note,
-    notesSince: (seq: number) => notes.filter((entry) => entry.seq > seq),
-    // Something always happened, so a wait never sleeps.
-    routeUserSteers: async () => note("tick"),
-    ledgerLines: () => [],
-    softDeadline: hour,
-    finalDeadline: hour,
-    waitSeq: 0,
-    state: { integrationHead: null, integrationHealthy: null, ledger: [], workers: new Map() },
-  };
-  const userSays = () => notes.filter((entry) => entry.text.startsWith("USER SAYS:")).map((entry) => entry.text);
-  return { loopRun, userSays };
-}

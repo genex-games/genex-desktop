@@ -44,12 +44,8 @@ export const SWITCH_NOTES = {
     `The Loop's time changed: a build you start now runs ${hours === null ? "until the ask is done" : `for ${hours} h`}.`,
   loopOff: "The Loop is off: do what they ask yourself, and do not start a build.",
   loopRoles: "The Loop's roles changed: a build you start now uses the models they picked.",
-  planReview: (on: boolean) =>
-    on
-      ? "A build you start now waits for them to read its plan first."
-      : "A build you start now goes ahead without waiting for them to read its plan.",
   reopenOn: "The Loop is on: more work on the finished build goes to it with reopen_run, as your notes say.",
-  moodBoard: (count: number) => `They sent a new mood board (${count} picture${count === 1 ? "" : "s"}) for the build.`,
+  pictures: (count: number) => `They attached ${count} picture${count === 1 ? "" : "s"} for the build.`,
   workersCarry: (count: number) =>
     `${count} worker${count === 1 ? " you started is" : "s you started are"} still working: a build you start takes ${count === 1 ? "it" : "them"} over and they keep going.`,
   dropped: (tools: readonly string[]) =>
@@ -61,8 +57,6 @@ export const SWITCH_NOTES = {
 /** What a tool that only waits answers when the person's words ended its wait (person-wrote.ts). */
 export const WAIT_ENDED = {
   workers: `The user just wrote in the chat, so this wait ended early: read their message and answer it, then wait again (${WorkerTool.Wait}) if you still need to.`,
-  judge:
-    "The user just wrote in the chat, so the wait for the busy reviewer ended early: read their message and answer it, then ask again if you still need the verdict.",
 } as const;
 
 /** What a build's lead reads beside the person's words once its wrap-up began (live-chat.ts). */

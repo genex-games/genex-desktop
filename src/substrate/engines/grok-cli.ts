@@ -101,15 +101,11 @@ export const GrokAccess = {
   Build: "build",
   /** A read-only session (a judge, a lead while its build runs, Plan): reads, and runs only the studio bridge. */
   ReadOnly: "read-only",
-  /** A judge that plays: reads no file at all, and reaches the build only through the studio's tools. */
-  Blind: "blind",
   /** A one-shot answer (`complete`): no tool at all. */
   Answer: "answer",
 } as const;
 export type GrokAccess = (typeof GrokAccess)[keyof typeof GrokAccess];
 
-/** The studio bridge's command, as Grok's `Bash(…)` permission rule matches it. */
-const BRIDGE_RULE = "Bash(node .studio/bridge/tool.mjs *)";
 /**
  * Tools no studio session runs: a question nobody is there to answer, Grok's own plan mode (the
  * studio's Plan is a read-only session) and goal (no turn sets one, so marking it done only fails),
@@ -137,14 +133,11 @@ const ANSWER_TOOLS = [
   "image_to_video",
   "reference_to_video",
 ] as const;
-/** A blind judge's only tool: the shell, which runs nothing but the studio bridge. */
-const BLIND_TOOLS = "run_terminal_command";
 
 /** The tools each kind of session goes without, beyond those none runs. */
 const REMOVED_TOOLS: Record<GrokAccess, readonly string[]> = {
   build: [],
   "read-only": EDIT_TOOLS,
-  blind: EDIT_TOOLS,
   answer: [...EDIT_TOOLS, ...ANSWER_TOOLS],
 };
 
@@ -347,22 +340,18 @@ export interface GrokTurn {
   /** An effort the model lists; none is passed for a model without a dial. */
   effort?: string | null | undefined;
   resume?: string | undefined;
-  /** The session reaches the studio's tools through the file bridge. */
-  bridge: boolean;
 }
 
 /**
  * `grok`'s arguments for one turn. Grok's own sandbox stays off: the studio's holds every session
  * but a Bypass chat's, which the person chose to run unboxed.
  * A build approves every call; so does a read-only session, whose sandbox lets it write only its
- * own folder (as a Codex reviewer's does), with the file-editing tools gone. A blind judge and a
- * one-shot answer run in Grok's ask mode, where a headless run refuses every call nobody approved
- * and ends the turn there: a blind judge has the shell alone, approved for the studio bridge only.
- * Background work never outlives the turn.
+ * own folder (as a Codex reviewer's does), with the file-editing tools gone. A one-shot answer
+ * runs in Grok's ask mode, where a headless run refuses every call nobody approved and ends the
+ * turn there. Background work never outlives the turn.
  */
 export function grokTurnArgv(turn: GrokTurn): string[] {
-  const asks = turn.access === GrokAccess.Blind || turn.access === GrokAccess.Answer;
-  const blind = turn.access === GrokAccess.Blind;
+  const asks = turn.access === GrokAccess.Answer;
   const removed = [...NEVER_TOOLS, ...REMOVED_TOOLS[turn.access]];
   return [
     "--prompt-file",
@@ -374,8 +363,7 @@ export function grokTurnArgv(turn: GrokTurn): string[] {
     "--sandbox",
     "off",
     "--no-wait-for-background",
-    ...(asks ? bridgeRule(blind && turn.bridge) : ["--always-approve"]),
-    ...(blind ? ["--tools", BLIND_TOOLS] : []),
+    ...(asks ? [] : ["--always-approve"]),
     "--disallowed-tools",
     removed.join(","),
     ...(asks ? ["--disable-web-search"] : []),
@@ -383,11 +371,6 @@ export function grokTurnArgv(turn: GrokTurn): string[] {
     ...(turn.effort ? ["--reasoning-effort", turn.effort] : []),
     ...(turn.resume ? ["--resume", turn.resume] : []),
   ];
-}
-
-/** A blind judge approves the studio bridge alone, when it has one. */
-function bridgeRule(bridge: boolean): string[] {
-  return bridge ? ["--allow", BRIDGE_RULE] : [];
 }
 
 /** `grok`'s arguments for Compact Now: its own `/compact` on the resumed session, and no turn. */
@@ -589,13 +572,15 @@ export function grokSandbox(input: {
   runDir: string;
   gameDir: string;
   gitDirs: string[];
+  /** The build a lead leads and its Git metadata (`leadBuildWrites`). */
+  leadBuilds?: string[];
   scratchDir: string;
   secretPaths: string[];
   home: string;
   toolPath?: () => Promise<string>;
 }): SandboxOptions {
   return {
-    writableRoots: [input.runDir, ...input.gitDirs],
+    writableRoots: [input.runDir, ...input.gitDirs, ...(input.leadBuilds ?? [])],
     scratchDir: input.scratchDir,
     secretPaths: input.secretPaths,
     ownHome: [input.home],

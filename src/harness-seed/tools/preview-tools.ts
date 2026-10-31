@@ -1,35 +1,25 @@
 /**
- * The senses — PLAN.md §7.
- *
- * "It renders" is not "it's fun", and a screenshot alone is a weak signal in 3D. So the studio
- * always has two channels: pixels (screenshots at named camera angles) and structure
- * (`__studio.state()` probes, console errors, fps). Hands (keys, look, click) are how it
- * *plays* the game instead of watching the clock.
+ * The preview, from outside: load and reload the page, take a screenshot of the whole page (its HTML
+ * included), read its console, and drive it with real input (keys, clicks, mouse movement). Genex
+ * asks nothing of the game's own code.
  */
-import { applyPlayScript, CONTROL_EXERCISE, shotToImage } from "../loop/play-script.ts";
 import type { AnyRecord, HarnessTool, ToolCtx } from "../types/harness.d.ts";
+import type { MessageImage } from "../types/host-api.d.ts";
 import { HostMethod } from "../loop/host-methods.ts";
-import { PageMethod } from "../loop/page-contract.ts";
 import { SECOND_MS } from "../loop/time.ts";
 
 const str = (description: string) => ({ type: "string", description });
-/** The most pictures one play call hands back to the turn. */
-const MAX_TURN_IMAGES = 4;
 /** Bytes in the kilobyte a capture's size is said in. */
 const KB = 1024;
 /** How long press_keys holds its keys when the call names no time. */
 const HOLD_DEFAULT_MS = 400;
-/** One stepped frame of the paused clock. */
-const STEP_MS = 16;
-/** Frames play_script steps after its script when the call names none (about five seconds), and how many one step call takes. */
-const DEFAULT_STEPS = 300;
-const STEPS_PER_CALL = 60;
 /** The most recent console lines console_log reads back. */
 const CONSOLE_LINES = 80;
 
-/** The racing-line assist on or off around a held press; a page without one answers so, never throws here. */
-async function steerWhileHeld(ctx: ToolCtx, on: boolean): Promise<void> {
-  await ctx.call(HostMethod.PreviewCall, { method: PageMethod.Assist, arg: { steer: on } }).catch(() => null);
+/** A screenshot as a picture the next round sees, or null when the capture held no pixels. */
+function shotToImage(shot: { base64?: string } | null | undefined, label: unknown): MessageImage | null {
+  if (!shot?.base64) return null;
+  return { mimeType: "image/jpeg", data: shot.base64, label: String(label || "screenshot") };
 }
 
 /** The keys a press_keys call names: its `keys` list, or its single `key`. */
@@ -37,6 +27,13 @@ function keysToPress(args: AnyRecord): string[] {
   if (Array.isArray(args.keys)) return args.keys;
   if (args.key !== undefined && args.key !== null) return [args.key];
   return [];
+}
+
+/** A screenshot of the page right after an input, so the model sees what the input did. */
+async function shotAfter(ctx: ToolCtx, label: string, done: string) {
+  const shot = await ctx.call(HostMethod.PreviewScreenshot, { surface: "page" }).catch(() => null);
+  const image = shotToImage(shot, label);
+  return { ok: true, content: `${done} Look at the attached picture.`, ...(image ? { images: [image] } : {}) };
 }
 
 export const tools: HarnessTool[] = [
@@ -56,18 +53,12 @@ export const tools: HarnessTool[] = [
     parameters: { type: "object", properties: {} },
     async execute(_args, ctx) {
       await ctx.call(HostMethod.PreviewReload, {});
-      // A reload answers the moment the navigation starts, not when the game is on screen: a
-      // screenshot taken straight after it photographs a page that has drawn nothing. Wait for
-      // the page to say it is ready, and say how long it took — or that it never did.
+      // A reload answers the moment the navigation starts, not when the page is on screen.
       const ready = await ctx.call(HostMethod.PreviewReady, {}).catch(() => null);
       const status = await ctx.call(HostMethod.PreviewStatus, {});
       if (status.loadError) return `Reloaded, but the page failed: ${status.loadError}`;
       if (ready?.ready === true)
         return `Reloaded (ready after ${(Math.max(0, Number(ready.ms) || 0) / SECOND_MS).toFixed(1)}s).`;
-      if (ready?.timedOut === true) {
-        const budget = (Math.max(0, Number(ready.budgetMs) || 0) / SECOND_MS).toFixed(1);
-        return `Reloaded, but the page was not ready after ${budget}s${ready.reason ? `: ${ready.reason}` : ""}.`;
-      }
       return "Reloaded.";
     },
   },
@@ -75,22 +66,21 @@ export const tools: HarnessTool[] = [
   {
     name: "screenshot",
     description:
-      "Capture what the game looks like right now. You will see the picture on the next round — a path is not a picture. Pass a camera name to compare like with like across builds.",
+      "Capture the whole page as it looks right now (its HTML included). You will see the picture on the next round — a path is not a picture.",
     parameters: {
       type: "object",
       properties: {
-        camera: str("named debug camera, e.g. default/top/close/wide"),
         label: str("file label when saving into a run"),
-        runId: str("run id, when this shot belongs to a gauntlet iteration"),
+        runId: str("run id, when this shot belongs to a run"),
       },
     },
     async execute(args, ctx) {
-      if (args.camera) await ctx.call(HostMethod.PreviewCall, { method: PageMethod.DebugCamera, arg: args.camera });
       const shot = await ctx.call(HostMethod.PreviewScreenshot, {
+        surface: "page",
         ...(args.runId ? { runId: args.runId } : {}),
         ...(args.label ? { label: args.label } : {}),
       });
-      const image = shotToImage(shot, args.camera || args.label || "screenshot");
+      const image = shotToImage(shot, args.label || "screenshot");
       return {
         ok: true,
         content: `Captured ${Math.round(shot.bytes / KB)} KB${shot.path ? ` → ${shot.path}` : ""}. Look at the attached picture.`,
@@ -102,8 +92,7 @@ export const tools: HarnessTool[] = [
 
   {
     name: "press_keys",
-    description:
-      "Press keys in the game preview the way a player would (WASD, Space, arrows). Hold with holdMs. Then look at a screenshot — 'I added WASD' is not a fact until the player moved.",
+    description: "Press keys in the game preview the way a player does. Hold with holdMs.",
     parameters: {
       type: "object",
       properties: {
@@ -114,29 +103,15 @@ export const tools: HarnessTool[] = [
         },
         key: str("single key, if not using keys[]"),
         holdMs: { type: "number", description: "how long to hold, default 400" },
-        autosteer: {
-          type: "boolean",
-          description:
-            "racing games with a racing line (config.steer): the game's line steers while you hold the keys — hold the throttle with it to drive the course; steer yourself to judge the handling",
-        },
       },
     },
     async execute(args, ctx) {
       const keys = keysToPress(args);
       if (!keys.length) return { ok: false, content: 'press_keys needs keys: ["w"] (or key: "w").' };
-      await ctx.call(HostMethod.PreviewCall, { method: PageMethod.Start });
-      // The game's own racing line steers the hold when asked (a game without one answers so).
-      const autosteer = args.autosteer === true;
-      if (autosteer) await steerWhileHeld(ctx, true);
-      try {
-        await ctx.call(HostMethod.PreviewInput, {
-          actions: [{ type: "hold", keys, ms: args.holdMs ?? HOLD_DEFAULT_MS }],
-        });
-      } finally {
-        if (autosteer) await steerWhileHeld(ctx, false);
-      }
-      const state = await ctx.call(HostMethod.PreviewState, {});
-      return JSON.stringify(state, null, 2);
+      await ctx.call(HostMethod.PreviewInput, {
+        actions: [{ type: "hold", keys, ms: args.holdMs ?? HOLD_DEFAULT_MS }],
+      });
+      return shotAfter(ctx, "after keys", `Pressed ${keys.join("+")}.`);
     },
   },
 
@@ -153,18 +128,16 @@ export const tools: HarnessTool[] = [
       },
     },
     async execute(args, ctx) {
-      await ctx.call(HostMethod.PreviewCall, { method: PageMethod.Start });
       await ctx.call(HostMethod.PreviewInput, {
         actions: [{ type: "click", x: args.x, y: args.y, button: args.button }],
       });
-      const state = await ctx.call(HostMethod.PreviewState, {});
-      return JSON.stringify(state, null, 2);
+      return shotAfter(ctx, "after click", "Clicked.");
     },
   },
 
   {
     name: "look",
-    description: "Mouse-look in the game preview (dx/dy in pixels). Positive dx looks right, negative dy looks up.",
+    description: "Move the mouse in the game preview (dx/dy in pixels). Positive dx is right, positive dy is down.",
     parameters: {
       type: "object",
       properties: {
@@ -174,64 +147,8 @@ export const tools: HarnessTool[] = [
       required: ["dx"],
     },
     async execute(args, ctx) {
-      await ctx.call(HostMethod.PreviewCall, { method: PageMethod.Start });
-      await ctx.call(HostMethod.PreviewInput, {
-        actions: [{ type: "look", dx: args.dx ?? 0, dy: args.dy ?? 0 }],
-      });
-      const state = await ctx.call(HostMethod.PreviewState, {});
-      return JSON.stringify(state, null, 2);
-    },
-  },
-
-  {
-    name: "game_state",
-    description:
-      "Read window.__studio.state() — score, phase, entity counts, fps, and any probes the game exposes. The structural half of judging.",
-    parameters: { type: "object", properties: {} },
-    async execute(_args, ctx) {
-      const state = await ctx.call(HostMethod.PreviewState, {});
-      return JSON.stringify(state, null, 2);
-    },
-  },
-
-  {
-    name: "play_deterministic",
-    description:
-      "Run a scripted, reproducible playthrough: seed, pause, drive controls, then advance by fixed steps. Two builds with the same seed and script are directly comparable. Omit script to use a short WASD/look/jump exercise.",
-    parameters: {
-      type: "object",
-      properties: {
-        seed: { type: "number", description: "RNG seed" },
-        steps: { type: "number", description: "extra 16ms-based steps after the script (default 300 ≈ 5 seconds)" },
-        camera: str("camera to end on"),
-        script: {
-          type: "array",
-          description:
-            "optional controls after seed. e.g. [{type:'hold', keys:['w'], ms:2000}, {type:'look', dx:40}, {type:'tap', keys:['space']}, {type:'screenshot', camera:'close'}]",
-        },
-      },
-      required: ["seed"],
-    },
-    async execute(args, ctx) {
-      await ctx.call(HostMethod.PreviewCall, { method: PageMethod.Seed, arg: args.seed });
-      await ctx.call(HostMethod.PreviewCall, { method: PageMethod.Pause });
-      const script = Array.isArray(args.script) && args.script.length ? args.script : CONTROL_EXERCISE;
-      const played = await applyPlayScript(ctx, script, { clock: "step", runId: args.runId });
-      const steps = args.steps ?? DEFAULT_STEPS;
-      for (let done = 0; done < steps; done += STEPS_PER_CALL) {
-        await ctx.call(HostMethod.PreviewCall, {
-          method: PageMethod.Step,
-          arg: Math.min(STEPS_PER_CALL, steps - done) * STEP_MS,
-        });
-      }
-      if (args.camera) await ctx.call(HostMethod.PreviewCall, { method: PageMethod.DebugCamera, arg: args.camera });
-      const state = await ctx.call(HostMethod.PreviewState, {});
-      const images = (played.images ?? []).slice(-MAX_TURN_IMAGES);
-      return {
-        ok: true,
-        content: JSON.stringify(state, null, 2),
-        ...(images.length ? { images } : {}),
-      };
+      await ctx.call(HostMethod.PreviewInput, { actions: [{ type: "look", dx: args.dx ?? 0, dy: args.dy ?? 0 }] });
+      return shotAfter(ctx, "after mouse", "Moved the mouse.");
     },
   },
 
@@ -251,11 +168,11 @@ export const tools: HarnessTool[] = [
 
   {
     name: "gpu_errors",
-    description: "WebGL errors from the GPU process — the page console never sees these.",
+    description: "Errors from the GPU process — the page console never sees these.",
     parameters: { type: "object", properties: {} },
     async execute(_args, ctx) {
       const errors = await ctx.call(HostMethod.PreviewGpuErrors, {});
-      if (!errors?.length) return "(no WebGL errors)";
+      if (!errors?.length) return "(no GPU errors)";
       return errors.map((entry) => `- ${entry}`).join("\n");
     },
   },

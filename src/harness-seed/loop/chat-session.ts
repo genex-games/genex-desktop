@@ -6,11 +6,10 @@
  */
 import { launchRules, type LaunchGrant } from "./launch-prompts.ts";
 import { autoLoopRule } from "./auto-loop-prompts.ts";
-import { UNTIL_DONE_WORDS } from "./until-done-prompts.ts";
 import { type EngineId, GameEngine } from "./game-engine.ts";
 import { handoverSection } from "./session-compact-prompts.ts";
 import { toolCall } from "./model-roles.ts";
-import { EventKind, InterviewMode, RunEvent } from "./run-events.ts";
+import { EventKind, RunEvent } from "./run-events.ts";
 import { engineChoiceRule, unrealRules, unrealWorkHere, unrealWorkspaceRule } from "./unreal-prompts.ts";
 import { TRANSCRIPT_CHARS, TRANSCRIPT_MESSAGES } from "./brief-window.ts";
 import {
@@ -449,7 +448,7 @@ function contractorRules(engine: string | undefined, game: GameBuild, app: AppLa
     // The Reload a checkpoint lights is the web preview's: any other kind is seen in its own app.
     ...(servedAsWeb(game)
       ? [
-          `When the game first runs end-to-end, and after each substantial feature lands, call ${toolCall(engine, "checkpoint")} with a one-line note: it lights the user's Reload, so they see your progress.`,
+          `${toolCall(engine, "checkpoint")} with a one-line note lights the user's Reload, so they can see the game as it is now.`,
         ]
       : []),
   ];
@@ -488,7 +487,6 @@ export const SERVES_AFTER_LOOP_RUN = true;
  *   scaffolded?: boolean,
  *   shape?: { entry?: string, main?: string, build?: string | null } | null,
  *   ownShape?: boolean,
- *   contractMissing?: boolean,
  *   engine?: string,
  *   gameEngine?: EngineId,
  *   engineProject?: string | null,
@@ -553,8 +551,6 @@ export function buildContractorBrief({
   scaffolded?: boolean;
   shape?: BriefShape | null;
   ownShape?: boolean;
-  /** Read no more, kept for a caller kept from before: the studio attaches to every page it serves. */
-  contractMissing?: boolean;
   engine?: string;
   gameEngine?: EngineId;
   engineProject?: string | null;
@@ -605,7 +601,7 @@ export function buildContractorBrief({
       .join("\n");
 
   // The rules a build follows depend on whose game this is — every run brief already carries
-  // the shape (autopilot.ts, director.ts, facet-loop.ts); a chat build used to carry none.
+  // the shape (director/briefs.ts); a chat build used to carry none.
   // A folder with no kind yet hears of the kinds on offer on every message; the card only when bridged.
   const choice = { offered: kinds, asked: engineChoice };
   const rules = [
@@ -715,81 +711,4 @@ function firstOrigin({ fresh, pending, notes }: { fresh: boolean; pending: boole
 /** What a resumed session hears besides the message: after a run it led, that run's note; else nothing. */
 function resumePickup(afterLoopRun: string | null): string {
   return afterLoopRun ?? "";
-}
-
-/** What the interview tells the model about the run's clock. */
-function budgetLine(mode: string | undefined, hours: number | null | undefined): string {
-  if (mode === InterviewMode.Loop) return `The user committed ${hours ?? "?"} hours of unattended building.`;
-  if (hours) return `The run is capped at ${hours} hours.`;
-  return `The run goes ${UNTIL_DONE_WORDS} (24h safety ceiling).`;
-}
-
-/**
- * The write-less commission interview of harnesses before Loop chats became contractors. The
- * current turn briefs a Loop chat with `buildContractorBrief({ launch })`; this stays exported
- * because a seed upgrade keeps a `delegated-turn.ts` the in-app agent edited, and that copy
- * still imports it (`tests/fixtures/seed-exports-2e-pre.json`).
- *
- * @param {{
- *   ask?: string,
- *   messages?: Array<{ role?: string, content?: string }>,
- *   resume?: boolean,
- *   folderLabel?: string,
- *   project?: string,
- *   mode?: InterviewMode,
- *   toolName?: string,
- *   hours?: number | null,
- *   frameCount?: number,
- * }} [opts]
- */
-export function buildInterviewBrief({
-  ask,
-  messages = [],
-  resume = false,
-  folderLabel = "",
-  project = "",
-  mode = InterviewMode.Autopilot,
-  toolName = "start_autopilot",
-  hours = null,
-  frameCount = 0,
-}: {
-  ask?: string;
-  messages?: readonly BriefMessage[];
-  resume?: boolean;
-  folderLabel?: string;
-  project?: string;
-  mode?: string;
-  toolName?: string;
-  hours?: number | null;
-  frameCount?: number;
-} = {}): string {
-  const modeLabel = mode === InterviewMode.Autopilot ? "Autopilot" : "Loop";
-  const rules = [
-    `You are the studio's intake interviewer for an ${modeLabel} run — NOT the builder. Do not write or edit any game code in this session; the run you commission does the building with its own contractors.`,
-    "Everything you write goes straight to the user in the studio chat — write to them, briefly and warmly.",
-    "Ask AT MOST one short question per reply, and only what genuinely changes how the run is set up (what you actually do in the game, the feeling to hit). Offer a recommended answer they can just accept. Never ask more than two questions across the whole interview.",
-    "Use the ask_user tool for that question so it appears in the answer panel. Supply concise choices, recommended first; the user can type another answer in the composer. Do not repeat the question or choices in prose. After ask_user, end the reply and wait for the next user message. Never call the launch tool in the same reply as ask_user. Progress updates are not questions.",
-    `Reference stills, if any, are in references/ inside this folder — Read them before asking about visuals. ${frameCount > 0 ? `The user attached ${frameCount} still(s) to this commission; they reach the run's critics automatically.` : "If references/ is empty and the ask is visual, ask once for a game/film to use as the bar."}`,
-    budgetLine(mode, hours),
-    `When you know enough (usually after one answered question), recap the plan in one short paragraph and call the ${toolName} tool exactly once. The run launches the moment your reply ends.`,
-    project
-      ? `This chat is bound to the project folder "${project}" — pass exactly that as the tool's "project" argument.`
-      : "",
-    folderLabel ? `Stay inside this workspace (folder \`${folderLabel}\`). Do not list or read sibling folders.` : "",
-  ].filter(Boolean);
-
-  if (resume) {
-    return [
-      `The user replied:\n${ask}`,
-      "",
-      "You are resuming your own interview session — your context is restored. If this answers what you needed, recap and call the tool now; otherwise ask your one remaining question.",
-      ...rules,
-    ].join("\n");
-  }
-  const original = originalAsk(messages);
-  return [
-    `The user's ask:\n${(original && original !== ask ? `${original}\n\nLatest message:\n` : "") + ask}`,
-    "",
-    ...rules,
-  ].join("\n");
 }

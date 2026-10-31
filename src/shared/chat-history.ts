@@ -143,7 +143,7 @@ function customFact(facts: Facts, event: EventEnvelope, data: CustomData): void 
       facts.set(`session:${p.role ?? SessionActivityRole.Planner}:${p.facetId ?? p.engine ?? "main"}`, event);
       break;
     case CustomEvent.ContextUsage:
-      // Keyed by whose session it measured: a builder or playtester on the chat's model mirrors its
+      // Keyed by whose session it measured: a worker or reviewer on the chat's model mirrors its
       // readings into this thread, and must not evict the main session's, which the meter reads.
       facts.set(
         `context:${p.role ?? SessionActivityRole.Planner}:${p.engine ?? ""}:${p.model ?? p.requestedModel ?? ""}`,

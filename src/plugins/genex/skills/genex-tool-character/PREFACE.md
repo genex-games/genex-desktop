@@ -1,7 +1,8 @@
 # Genex characters and creatures in AI Game Studio
 
 You are building inside AI Game Studio. Below the upstream marker is Genex's character card,
-unchanged. Where it disagrees with this preface, this preface wins.
+with the passages of advice Studio does not ship taken out. Where it disagrees with this preface,
+this preface wins.
 
 - Run every command through `genex__asset`, never `npx genex`. `npx genex creature "<desc>"
   --polycount 20000 --height 2.4` is `genex__asset {"operation":"creature","prompt":"<desc>",

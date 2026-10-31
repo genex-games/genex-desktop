@@ -73,14 +73,7 @@ import {
 import { createLayoutStore, stageViewChosen, type LayoutStore } from "./layout.ts";
 import { createModelPickerStore, type ModelPickerStore } from "./model-picker.ts";
 import { createProviderUsageStore, type ProviderUsageStore, usageReported } from "./provider-usage.ts";
-import {
-  createLibraryStore,
-  delegationChanged,
-  gameAdded,
-  libraryBootstrapped,
-  stagedCounted,
-  type LibraryStore,
-} from "./library.ts";
+import { createLibraryStore, delegationChanged, gameAdded, libraryBootstrapped, type LibraryStore } from "./library.ts";
 import { createPluginsStore, PLUGIN_INDEX_POLL_MS, type PluginsStore } from "./plugins.ts";
 import {
   createPlayStore,
@@ -427,9 +420,6 @@ function bootstrapper(
       update.setState((state) => updateDownloaded(state, ready), true);
       // Agents that would not start before this window opened, or before a reload, still say so.
       void agentsStart.refresh();
-      const staged = await api.staged().catch(() => []);
-      if (superseded()) return;
-      library.setState((state) => stagedCounted(state, staged.length), true);
       const screens = await api.agentScreens().catch(() => []);
       if (superseded()) return;
       agentScreens.setState((state) => screensLoaded(state, screens), true);
@@ -536,7 +526,6 @@ function refreshAfter(stores: Stores, event: UiEvent): void {
   if (reads.threads) void stores.threads.refresh();
   if (reads.events) void stores.eventLog.refresh();
   if (reads.games) void stores.library.refreshGames();
-  if (reads.staged) void stores.library.refreshStaged();
   if (reads.engines) void stores.engines.refresh();
   if (reads.plugins) {
     void stores.plugins.refresh();

@@ -69,6 +69,17 @@ export async function gitMetadataDirs(cwd: string, platform: NodeJS.Platform = p
   return [...new Set(dirs)];
 }
 
+/**
+ * The build a lead leads outside its folder (`DelegateRequest.leadBuilds`) and that worktree's Git
+ * metadata: a box writes them as it writes the session's own folder, so the lead edits, runs and
+ * commits there. None when no build is named.
+ */
+export async function leadBuildWrites(leadBuilds: string | undefined): Promise<string[]> {
+  if (!leadBuilds) return [];
+  const build = path.resolve(leadBuilds);
+  return [...new Set([build, ...(await gitMetadataDirs(build).catch(() => []))])];
+}
+
 /** The session's command sandbox: its folder, its write roots and its Git metadata are its only writable places. */
 export async function commandSandbox(
   box: CommandBox,

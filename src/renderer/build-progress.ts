@@ -449,16 +449,6 @@ function landmarks(graph: RunGraph): Landmarks {
 function classicProgress(graph: RunGraph): Progress {
   const marks = landmarks(graph);
   if (!graph.active) return endedProgress(graph, marks);
-  const optimization = graph.nodes.find((n) => n.kind === GraphNodeKind.Optimization);
-  if (optimization?.kind === GraphNodeKind.Optimization && optimization.result.phase !== "pending") {
-    const { outcome, summary } = optimization.result;
-    return {
-      nodeId: optimization.id,
-      title: outcome ? PROGRESS_WORDS.optimizationFinished : PROGRESS_WORDS.optimization,
-      health: outcome ? summary : PROGRESS_WORDS.optimizing,
-      failedBase: marks.failedBase,
-    };
-  }
   if (marks.run?.director) return directorProgress(graph, marks);
   return loopProgress(graph, marks);
 }

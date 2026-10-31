@@ -45,11 +45,12 @@ describe("project folders", () => {
     assert.equal(await readFile(path.join(dir, "index.html"), "utf8").catch(() => null), null);
     await rig.core.games.start(project.name, ProjectStarter.Web);
     assert.ok(await readFile(path.join(dir, "index.html"), "utf8"));
-    // The assets door (AG-930): a scaffolded or adopted game gets the folder, the loader and the git attributes.
-    assert.match(await readFile(path.join(dir, "assets", "README.md"), "utf8"), /studio's own tools/);
     assert.match(await readFile(path.join(dir, ".gitattributes"), "utf8"), /\*\.glb binary/);
-    assert.match(await readFile(path.join(dir, "src", "assets.js"), "utf8"), /export async function loadAsset/);
-    assert.match(await readFile(path.join(dir, "docs", "CONTRACT.md"), "utf8"), /## Assets/);
+    // Flipped (Loop phase 5): the web starter is minimal — an index.html and a src/main.js with no
+    // code; no assets folder, loader or contract is written into the game.
+    assert.doesNotMatch(await readFile(path.join(dir, "src", "main.js"), "utf8"), /import|function/);
+    for (const gone of ["assets/README.md", "src/assets.js", "docs/CONTRACT.md"])
+      assert.equal(await readFile(path.join(dir, gone), "utf8").catch(() => null), null, `${gone} is not written`);
     assert.equal(await readFile(path.join(dir, "notes-from-me.txt"), "utf8"), "rainy neon streets");
     assert.ok((await rig.core.games.list()).some((g) => g.name === project.name));
     assert.ok((await rig.core.games.recents()).some((g) => g.name === project.name));
@@ -59,13 +60,7 @@ describe("project folders", () => {
     const rig = await startRig({ replies: [{ text: "On it." }] });
     rigs.push(rig);
     await rig.core.games.scaffold("arena", { title: "arena" });
-    // Static tripwire: the scaffold must ship a game that runs on load. `running = false` means
-    // a frozen screen until someone calls start() — and nobody in the pipeline does.
-    assert.match(
-      await readFile(path.join(rig.core.games.dirFor("arena"), "src", "studio.js"), "utf8"),
-      // Anchored to the declaration — start() always contains a bare `running = true`.
-      /let\s+running\s*=\s*true/,
-    );
+    // Flipped (Loop phase 5): the scaffold ships no studio.js game loop to check; the game's code is the agent's.
     const first = await rig.core.threadForGame("arena");
     await rig.core.sendUserMessage("add a dash", { thread: first });
     await waitForLog(rig.core, (log) => log.some((e) => e.data.type === "turn_ended"), 30_000, "first chat");

@@ -22,7 +22,7 @@ import { unrealTool, unrealWrite } from "./lead-steps.ts";
 import { CARRIED, STEER } from "./lead-prompts.ts";
 import type { LeadRun } from "./lead-turn.ts";
 import { UnrealLoopTool } from "./live-contract.ts";
-import { coldRestore, editorAnswers, editorGone, RestoreFailure, type RestoreOutcome, sourceStamp } from "./restore.ts";
+import { coldRestore, editorGone, RestoreFailure, type RestoreOutcome, sourceStamp } from "./restore.ts";
 import { autosave } from "./save-point.ts";
 
 /** Reopening a crashed Unreal in place is tried this many times before the game goes back to its last save point. */
@@ -282,14 +282,4 @@ export async function betweenTurns(lead: LeadRun, savedInTurn: boolean): Promise
   if (between.rebuild && goesOn()) await rebuild(lead);
   if (goesOn()) await addModuleIfAsked(lead);
   await saveLead(lead);
-}
-
-/**
- * Kept for an older copy of a module that imports it (the plugin opens Unreal at Genex's run start
- * now): Unreal answers, or is restarted; a run whose Unreal can't be reopened halts.
- */
-export async function ensureEditor(lead: LeadRun): Promise<void> {
-  if (await editorAnswers(lead)) return;
-  const opened = await coldRestore(lead, { snapshot: null });
-  if (!opened.ok) lead.halted = haltedBy(opened);
 }

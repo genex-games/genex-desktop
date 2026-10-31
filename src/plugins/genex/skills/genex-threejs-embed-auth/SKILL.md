@@ -1,20 +1,20 @@
 # Genex player identity in AI Game Studio
 
 You are building inside AI Game Studio. Below the upstream marker is Genex's embed-auth card,
-unchanged. Where it disagrees with this preface, this preface wins.
+with the passages of advice Studio does not ship taken out. Where it disagrees with this preface, this preface wins.
 
 ## Where each part can be tested
 
 - Studio's preview opens a game that uses `@genex-ai/embed-sdk` in local test mode
-  (`?genex_local_test=1`) for you. Rendering, controls, HUD and feel can be checked there.
+  (`?genex_local_test=1`) for you. Rendering and controls run there.
   Sign-in, saves, leaderboards and multiplayer cannot: that is expected, not a bug to chase.
 - The owner can try sign-in and multiplayer on the published Genex draft: build the game, add the
   package with `genex__package {"package":"@genex-ai/embed-sdk"}`, publish a draft with
   `genex__publish {"operation":"draft"}`, wait with `genex__publish-status`, then hand the draft
-  link to the user. Label your evidence as the card asks.
+  link to the user.
 - Server saves never persist on the draft: loads and saves resolve `{ staging: true }` there by
   design, as the card says. They persist only once the game is published to the gallery, which
-  happens only when the user wants it public. Keep the card's localStorage fallback.
+  happens only when the user wants it public.
 - Studio installs the version it pins. Never run `npm i` for this package yourself.
 - A game made from Studio's template has no `package.json`: there
   `genex__package {"package":"@genex-ai/embed-sdk"}` maps Studio's copy in the import map, as
@@ -29,9 +29,9 @@ Studio connects a template game to Genex itself: its connect module calls `initE
 game's own code runs, in local test mode in Studio's preview and with the game's project once it is
 published. Skip the card's Bootstrap step and `genex.config.ts`: never call `initEmbed()` and never
 write a slug. Import everything else from `"@genex-ai/embed-sdk"` as the card shows
-(`waitForPlayer`, `loadPlayerState`, `savePlayerState`, `submitScore`, `getLeaderboard`), with the
-renderer first and the awaits where a name or a save is needed. Keep the import-map entry and the
-connect module's `<script>` that `genex__package` added.
+(`waitForPlayer`, `loadPlayerState`, `savePlayerState`, `submitScore`, `getLeaderboard`). On a
+hosted page `waitForPlayer()` takes seconds to resolve. Keep the import-map entry and the connect
+module's `<script>` that `genex__package` added.
 
 ## Config without `genex init`
 
@@ -55,16 +55,16 @@ export const GENEX = {
 does not apply: Studio pins its Genex packages. Other commands map onto Studio tools as the
 `genex` skill describes (`genex__skill {"name":"genex"}`).
 
-<!-- upstream @genex-ai/cli-demo/templates/skills/genex-threejs-embed-auth/SKILL.md v1.36.17 sha256 fecb950fd6dfcb576ea6e80410d644d189fb965701a4091b28c825ad0e27f810 -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-threejs-embed-auth/SKILL.md v1.36.17 sha256 758cc401b706e6620f33ed38db81a895a1839f5059d571b012fe83a85445331b -->
 ---
 name: genex-threejs-embed-auth
-description: Wire up player identity AND durable game state for a Genex game via @genex-ai/embed-sdk. Load this UNCONDITIONALLY for every game, multiplayer or not, BEFORE writing any boot code — every player gets an identity (signed-in account or guest); per-player saves, shared world state, and leaderboards are one-line SDK calls; multiplayer requires the SDK's token either way. Also holds the shells table: what a game may do on its Genex page, in the app and on its own link.
+description: Wire up player identity AND durable game state for a Genex game via @genex-ai/embed-sdk. Every player gets an identity (signed-in account or guest); per-player saves, shared world state, and leaderboards are one-line SDK calls; multiplayer requires the SDK's token either way. Also holds the shells table: what a game may do on its Genex page, in the app and on its own link.
 ---
 
 # Genex Three.js Embed Auth
 
 `@genex-ai/embed-sdk` is how a Genex game learns **who is playing it** — and
-how it **saves**. Every game needs it. Published games are playable by
+how it **saves**. Published games are playable by
 **guests** (no account — the SDK mints a temporary identity like `Guest-1234`
 automatically), while **signing in** unlocks saving/loading progress (each
 player gets their own save slot) and leaderboard entries; multiplayer works
@@ -117,16 +117,7 @@ that reads the URL.** The digest:
 - **Local test mode is a plain browser tab, not the frame.** A call that works
   there can still be dead on the game's Genex page.
 
-## Install
-
-```bash
-npm i @genex-ai/embed-sdk
-```
-
-(Already installed if you followed Step 3 of the scaffold; repeated here so
-this skill is self-contained.)
-
-## Bootstrap (required, every game)
+## Bootstrap
 
 ```ts
 // main.ts — the FIRST thing in the boot sequence, before any other game code
@@ -140,18 +131,10 @@ initEmbed({
 });
 ```
 
-**Create the renderer and draw a frame BEFORE you await identity; `await
-waitForPlayer()` only where you need the name or the token.** On a hosted page
-identity takes seconds (the dashboard handshake, or the standalone bounce), so
-a `main.ts` whose first statement is `const { user } = await waitForPlayer()`
-shows black for all of them — and forever when `initEmbed()` was never called,
-because nothing else resolves that promise. Renderer, scene, camera, first
-frame, then the await, down where the name or the avatar is actually used.
+On a hosted page identity takes seconds (the dashboard handshake, or the standalone bounce), and
+`waitForPlayer()` never resolves when `initEmbed()` was never called, because nothing else
+resolves that promise.
 
-Also give `<body>` a dark background in `index.html` (e.g.
-`<body style="margin:0;background:#080a14">`) — it makes the pre-boot frame
-(before any JS runs) match the SDK's own loading overlay instead of flashing
-white, and every Genex surface assumes a dark canvas anyway.
 
 Scene setup and asset loading may continue immediately after this call — auth
 never blocks rendering. There are **two gates**, and picking the right one
@@ -288,11 +271,7 @@ and saves there by design (a staging build with a changed save schema must
 never overwrite the save of the game people are playing). The helpers resolve
 `{ staging: true }` — `loadPlayerState()` → `{ data: null, version: 0,
 staging: true }`, `savePlayerState()` → `{ saved: false, staging: true }` —
-and never throw or fire `"error"` for it. Keep a local copy of progress
-(`localStorage`) so a preview stays playable — a cache for this device and
-this shell, never the save — and if the game says anything about it, say
-"Preview build — progress isn't saved to your account". Never "offline" or
-"unavailable": the owner is testing their own game, and Genex is up.
+and never throw or fire `"error"` for it.
 
 
 ## Saving progress (per-player — every player has their own slot)
@@ -376,23 +355,6 @@ to `console.log`, not to a crash-reporter or analytics breadcrumb.** The token
 is bounded (15 minutes, one game, one scope), but third-party logging-service
 retention can outlive that. Nothing in normal game code ever needs to print it.
 
-## Config wiring (already done — do NOT hand-write URLs)
-
-**`genex init` already wrote the config files** — do not create or edit them,
-and NEVER hardcode an environment URL anywhere in game code:
-
-- `src/genex.config.ts` — a static env-reader (production URL defaults,
-  overridable via `VITE_GENEX_*` env vars). Import `GENEX` from it as shown
-  above; treat the file as read-only.
-- `.env` — `VITE_GENEX_SLUG` (the game's identity; committed).
-- `.env.development.local` — present only when init ran against a local/dev
-  stack: URL overrides that apply in `npm run dev` ONLY. A production build
-  (`vite build`) always uses the production defaults, so localhost values can
-  never ship. Gitignored via `*.local` — never commit it.
-
-If `src/genex.config.ts` is somehow missing (e.g. it was deleted), re-run
-`genex init` in the project folder rather than writing one by hand.
-
 ## Standalone behavior (what to expect, not something to code)
 
 Opening a published game's link directly (not from the dashboard) shows a
@@ -454,13 +416,8 @@ download link and a browser dialog all work here and are dead there
 
 Rules:
 
-- **Label the evidence** in your handoff: "validated in local test mode —
-  auth, saves, and multiplayer not exercised." Presenting a local-test
-  capture as full validation is an over-claim.
 - Pointer lock still can't be acquired headlessly (`requestPointerLock`
-  throws in headless Chromium): for aim games validate the unlocked "click
-  to aim" cue and the wiring, not the lock itself (see
-  `$genex-threejs-visual-validation` step 6).
+  throws in headless Chromium).
 - The marker is inert on any hosted URL, on https, and inside any iframe —
   local test mode cannot open the hosted draft; hosted draft access stays
   owner-only. Do NOT work around that gate: no undocumented URL fragments,
@@ -471,19 +428,13 @@ Rules:
   works on every SDK since 0.5.0. `?genex_auth=1` opts that dev-server tab
   back into the real identity flow — that's for debugging real sign-in, not
   for self-testing.
-- The owner's draft run-through stays a required beat, not a fallback: push
-  `genex preview` at each playable milestone and hand it off plainly ("check
-  the draft — you can now X; ping me if something feels off"), then keep
-  building while they look. Hosted QA catches what local test mode can't:
-  real identity, saves, multiplayer, feel. Once the game is **published**,
+- A hosted draft exercises what local test mode can't: real identity,
+  saves, multiplayer. Once the game is **published**,
   any fresh browser gets in as a guest, so full visual validation also works
   without the marker.
 
 ## Checklist
 
-- [ ] `initEmbed(...)` is the very first call in `main.ts`, with all three
-      config fields.
-- [ ] `genex.config.ts` includes `dashboardOrigins` (from `.genex/project.json`).
 - [ ] Multiplayer and player-name UI await `waitForPlayer()` — NEVER
       `waitForAuth()` (guests would hang forever). Both `connect()` and
       `matchmake()` receive `auth: () => getColyseusAuth()`.
@@ -497,8 +448,6 @@ Rules:
 - [ ] No token value is ever logged or sent to analytics.
 - [ ] No custom sign-in prompt, guest badge, or auth overlay — the SDK popover/
       overlay and the dashboard own all of that UX.
-- [ ] Self-test evidence captured in local test mode is labeled as such in the
-      handoff ("local test mode — auth, saves, and multiplayer not exercised").
 - [ ] Every browser or device API the game calls has its row in
       [references/shells.md](references/shells.md): sharing, copying, links
       out, file saves and fullscreen go through the SDK calls, from a click
@@ -527,9 +476,7 @@ Rules:
   `[::1]` — not https, not a LAN IP), the page is not inside an iframe, and
   `@genex-ai/embed-sdk` is 0.5.0+ (older: apply the pending platform update).
 - **Multiplayer `connect()` fails in local test mode** — by design: no relay
-  credential exists there. Validate multiplayer on the preview link (it plays in
-  rooms of its own; a normal and a private window are two players), and say
-  plainly when it wasn't.
+  credential exists there. The preview link has one, and rooms of its own.
 - **Multiplayer join rejected with 401** — the join ran before
   `waitForPlayer()` resolved, without `auth: () => getColyseusAuth()`, or with a
   stale cached token on reconnect (read it fresh each call).
@@ -542,9 +489,7 @@ Rules:
   switch to `savePlayerState`/`saveWorldState`, which handle every case.
 - **Saves/loads resolve `{ staging: true }`** — the build is on the preview
   channel (the draft workspace, `preview--<slug>`), where server saves are off
-  by design. Not an outage: keep the local copy (a cache for this device and
-  this shell, never the save) and tell the player "Preview build — progress
-  isn't saved to your account", never "offline".
+  by design. Not an outage.
 - **Saves or score submits return 429** — writing too often (per-player limits:
   60 player-saves/min, 120 world-saves/min, 30 score submits/min). Debounce to
   ~1 write/sec at checkpoints and never save in the render loop; back off a

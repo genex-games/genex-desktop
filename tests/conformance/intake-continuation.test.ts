@@ -52,7 +52,8 @@ for (const mode of ["autopilot", "loop"] as const)
         );
       assert.equal(calls[1]!.resume, "intake-session");
       // Flipped (step 1): the resumed Loop chat is a contractor that may launch, not an interviewer.
-      assert.match(calls[1]!.prompt, /Loop is on: you may start a build/);
+      // Flipped (Loop phase 5): it may start the Loop, which it leads itself.
+      assert.match(calls[1]!.prompt, /Loop is on: you may start the Loop/);
     } finally {
       await rig.stop();
     }

@@ -6,8 +6,8 @@
  * while a worker writes in the folder in place); then the rewind the lead asked for (Genex's restore
  * of the save point, the plugins' steps around it, then a wait until the app answers) and the restart
  * (the project's restore moments with no file changed, then the wait), both waiting while a worker
- * writes in place; then, when the turn kept a save point the folder still holds, the game's judges
- * play it in turn (`judge-rounds.ts`). Each outcome is one line the lead's next message carries.
+ * writes in place. No judge plays between turns: one is the lead's to ask for (`judge_play`). Each
+ * outcome is one line the lead's next message carries.
  * Never under a running turn, never after the Loop closed, and no recovery starts while this runs.
  *
  * Whether the turn did something is read from what the lead did (`didWork`), never from how the folder
@@ -59,7 +59,6 @@ import {
 import { FOLDER_GIT } from "./folder-git.ts";
 import { heldForLead, OPEN_NEWS } from "./prompts.ts";
 import { checkpointNow, queued, recordSavePoint } from "./save-point.ts";
-import { judgeRound } from "./judge-rounds.ts";
 import { activeWork } from "./active-work.ts";
 import {
   markedSince,
@@ -393,8 +392,6 @@ async function betweenTurns(loopRun: LoopRun, open: OpenLoop): Promise<void> {
   let next = autosaved ? await keptByApp(loopRun, open, ended, read) : ended;
   const rewound = await asksAtTurnEnd(loopRun, open, writers);
   if (rewound) next = await folderMark(loopRun, open);
-  // The game's judges play the save point the turn kept; a folder taken back to an older one has none to play.
-  else if (savedInTurn || autosaved) await judgeRound(loopRun, open);
   await nextTurnFrom(loopRun, open, next, nextStart);
 }
 

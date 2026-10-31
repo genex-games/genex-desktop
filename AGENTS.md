@@ -25,8 +25,10 @@ historical task records at startup.
 
 - The renderer is a browser: no Node, Electron, main, preload or substrate imports. It talks
   only through the fixed named calls in `src/shared/studio-api.ts`.
-- Every spawned agent or game process goes through ProcessSandbox.
-- Seed upgrades keep the in-app agent's harness edits.
+- Every spawned agent or game process goes through ProcessSandbox; Bypass agents run unboxed.
+- Seed upgrades keep the in-app agent's harness edits, except the one upgrade into an archive
+  epoch (`substrate/seed-archive.ts`): edits of files that seed removes or changes, and what the
+  runs learned, move to `<harness workspace>/archive/<date>/` and the seed's copies replace them.
 - Every new IPC channel is classified fixture-safe or native in `src/main/dev/native-policy.ts`.
 - Preserve the normal profile and `~/AI Games`; use owned `studio:dev` profiles. Automated
   checks use disposable fixtures. A request to run the real app for manual testing authorizes
@@ -73,9 +75,11 @@ when relevant.
 - Biome must pass (`npm run lint`; `check:static` lints changed files) and the types must check
   under TypeScript 7 (`npm run typecheck`, which runs `scripts/tsc.ts`). Code that needs the
   TypeScript JS API imports `@typescript/typescript6`, never `typescript`.
-- Harness (`src/harness-seed/`): the modes (director, autopilot, facet loop, gauntlet, spike)
-  keep their own control flow and share primitives from `loop/git.ts`, `evidence.ts`,
-  `build-turn.ts`, `config.ts` and `outcomes.ts`; no classes, DI or FSM libraries. It is
+- Harness (`src/harness-seed/`): the modes (director, the one Loop; the classic pipeline's
+  autopilot, facet loop, gauntlet and spike) keep their own control flow and share primitives from
+  `loop/git.ts`, `evidence.ts`, `build-turn.ts`, `config.ts` and `outcomes.ts`; no classes, DI or
+  FSM libraries. A judge is a second opinion the lead asks for: it gates no round, merge, finish
+  or close. It is
   TypeScript, type-checked in CI (`tsconfig.harness.json`) and, for the agent's own code edits,
   by the in-app TS 7 gate (`guardian.validate_edit` with the compiler vendored in
   `dist/resources/tsc`).

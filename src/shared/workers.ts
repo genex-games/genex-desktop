@@ -66,12 +66,6 @@ export interface WorkerGrant {
 /** The key an in-place worker's delegation runs under, so it never shares the game folder's lock. */
 export const workerLockKey = (cwd: string, id: string): string => `${cwd}#worker:${id}`;
 
-/**
- * A blind judge's lock: its own key beside the folder's, by the window it plays in (one judge per
- * window). It writes nothing and reads no file, so it never needs the folder's writer lock.
- */
-export const judgeLockKey = (cwd: string, window: string): string => `${cwd}#judge:${window}`;
-
 const WORKER_TOOLS: ReadonlySet<string> = new Set(Object.values(WorkerTool));
 const WORKER_ISOLATIONS: ReadonlySet<string> = new Set(Object.values(WorkerIsolation));
 

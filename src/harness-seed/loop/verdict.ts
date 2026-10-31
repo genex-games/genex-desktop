@@ -42,6 +42,14 @@ export type VerdictPass = (typeof VerdictPass)[keyof typeof VerdictPass];
 /** The five passes, in order, for code that checks one at run time. */
 export const VERDICT_PASSES: string[] = Object.values(VerdictPass);
 
+/** Which build a kept round is (`winner` on a `facet_iteration` record the run graph draws): persisted, never rename a value. */
+export const Side = {
+  Challenger: "challenger",
+  Incumbent: "incumbent",
+  Tie: "tie",
+} as const;
+export type Side = (typeof Side)[keyof typeof Side];
+
 /**
  * What a build was judged against, besides another worker's build: the run's start, the live
  * folder, nothing, or the round before. Verdict records keep it: never rename a value.
@@ -69,6 +77,8 @@ const AGAINST: Record<string, string | null> = {
 export const VerdictRule = {
   ChecksFlipped: "checks-flipped",
   JudgePreferred: "judge-preferred",
+  /** Kept: nothing regressed and no regression was named. */
+  NoRegression: "no-regression",
   Satisfied: "satisfied",
   ChecksRegressed: "checks-regressed",
   Vetoed: "vetoed",
@@ -115,17 +125,19 @@ export type NotLandedReason = (typeof NotLandedReason)[keyof typeof NotLandedRea
 export const VerdictSource = {
   /** The scoreboard decided: a strong flip, or a regression. */
   Checks: "checks",
-  /** No check moved; the blind side-by-side pick decided. */
+  /** No strong flip, and the taste judge preferred the round (an older run: the blind pick decided either way). */
   Taste: "taste",
   /** The taste judge vetoed with a named regression. */
   TasteVeto: "taste-veto",
   /** A prose-only plan: the v1 blind A/B rule. */
   Legacy: "legacy",
-  /** Every camera reads identical to the accepted build: no judge call spent. */
+  /** Kept: nothing regressed and the taste judge named no regression, or no camera saw a change. */
+  NoRegression: "no-regression",
+  /** An older run's round no camera saw change, undone with no judge call spent; now kept (`NoRegression`). */
   Invisible: "invisible",
-  /** The move somebody asked for was not delivered, and nothing flipped. */
+  /** An older run's round undone because a move somebody asked for was not delivered; a move now stays owed. */
   NoMove: "no-move",
-  /** THE FIX was mandatory and the build leaves it. */
+  /** An older run's round undone because it left a mandatory THE FIX; the fix now stays owed. */
   Unfixed: "unfixed",
   /** The challenger did not produce a judgeable build. */
   Broken: "broken",
@@ -149,6 +161,8 @@ const LOST_BY_SOURCE: Record<string, string> = {
   [VerdictSource.Taste]: VerdictRule.Vetoed,
   [VerdictSource.Legacy]: VerdictRule.Vetoed,
   [VerdictSource.TasteVeto]: VerdictRule.Vetoed,
+  // Never undone: nothing regressed is the one thing it says.
+  [VerdictSource.NoRegression]: VerdictRule.Vetoed,
   [VerdictSource.Invisible]: VerdictRule.NoChange,
   [VerdictSource.NoMove]: VerdictRule.NoMove,
   [VerdictSource.Unfixed]: VerdictRule.Unfixed,
@@ -163,6 +177,7 @@ const LOST_BY_SOURCE: Record<string, string> = {
 const BECAUSE: Record<string, string> = {
   "checks-flipped": "Kept: what it was asked to make work now works, and the judge did not object.",
   "judge-preferred": "Kept: no check moved, but the judge preferred it to the round before.",
+  "no-regression": "Kept: nothing that worked before stopped working, and no regression was named.",
   satisfied: "Kept: everything this part was asked for now passes.",
   "checks-regressed": "Undone: something that used to work stopped working.",
   vetoed: "Undone: the judge preferred the round before.",
@@ -486,6 +501,12 @@ function checkLines(entries: unknown): CheckLine[] {
     .slice(0, MAX_CHECK_LINES);
 }
 
+/** The rule a kept round was decided by, from how the loop decided it. */
+const KEPT_BY_SOURCE: Partial<Record<VerdictSource, VerdictRule>> = {
+  [VerdictSource.Checks]: VerdictRule.ChecksFlipped,
+  [VerdictSource.NoRegression]: VerdictRule.NoRegression,
+};
+
 /**
  * The rule a worker's round was decided by. The loop already knows *how* it decided
  * (`verdictSource`); this turns that into the token every pass shares, and catches the two cases
@@ -503,7 +524,7 @@ export function roundRule({
 } = {}): string {
   if (source === VerdictSource.Stopped) return VerdictRule.Stopped;
   if (won && satisfied) return VerdictRule.Satisfied;
-  if (won) return source === VerdictSource.Checks ? VerdictRule.ChecksFlipped : VerdictRule.JudgePreferred;
+  if (won) return KEPT_BY_SOURCE[source as VerdictSource] ?? VerdictRule.JudgePreferred;
   return LOST_BY_SOURCE[source as string] ?? VerdictRule.Vetoed;
 }
 

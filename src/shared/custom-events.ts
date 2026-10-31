@@ -23,7 +23,7 @@ import type { ToolPermissionEvent } from "./permissions.ts";
 import type { SteerDelivery } from "./message-queue.ts";
 import type { Usage } from "./event-log.ts";
 import type { LoopProfile } from "./project-facts.ts";
-import type { BuildObservation, ReadyResult, ReadyVia } from "./preview-contract.ts";
+import type { BuildObservation, HealthFinding, ReadyResult, ReadyVia } from "./preview-contract.ts";
 import type { EngineLinkedPayload, EngineLinkUndonePayload, EngineStepsPayload } from "./game-engine.ts";
 import type { RunSpec } from "./protocol.ts";
 import type { PluginSuggestedPayload } from "./project-tools.ts";
@@ -94,13 +94,9 @@ export const CustomEvent = {
   IntegrationHealth: "integration_health",
   IntegrationLedger: "integration_ledger",
   IntegrationMerge: "integration_merge",
-  ObservationOutage: "observation_outage",
-  OptimizationUpdated: "optimization_updated",
   /** The studio resumed a paused run on its own (`main/core/auto-resume.ts`); written by the host only. */
   RunAutoResumed: "run_auto_resumed",
-  RunBackoff: "run_backoff",
   RunControl: "run_control",
-  RunControlApplied: "run_control_applied",
   RunFinished: "run_finished",
   RunFollowupRequested: "run_followup_requested",
   RunInteractionEvidence: "run_interaction_evidence",
@@ -127,29 +123,17 @@ export const CustomEvent = {
   FacetBuildStarted: "facet_build_started",
   FacetCheckAdded: "facet_check_added",
   FacetCheckReplanned: "facet_check_replanned",
-  FacetCheckRetired: "facet_check_retired",
   FacetCircuitBreak: "facet_circuit_break",
   FacetDefectRouted: "facet_defect_routed",
   FacetFix: "facet_fix",
   FacetFlag: "facet_flag",
-  FacetFollowup: "facet_followup",
   FacetIteration: "facet_iteration",
-  FacetLessons: "facet_lessons",
   FacetLiveness: "facet_liveness",
   FacetMachinePressure: "facet_machine_pressure",
   FacetMove: "facet_move",
-  FacetObservationOutage: "facet_observation_outage",
-  FacetPartialEvaluated: "facet_partial_evaluated",
   FacetProviderOutage: "facet_provider_outage",
-  FacetRebaselined: "facet_rebaselined",
-  FacetReview: "facet_review",
-  FacetReviewEnforced: "facet_review_enforced",
-  FacetSessionReset: "facet_session_reset",
-  FacetSpike: "facet_spike",
-  FacetSteered: "facet_steered",
   FacetStopped: "facet_stopped",
   FacetWindDown: "facet_wind_down",
-  RecipeOutcome: "recipe_outcome",
   // the conversation, its queue and its sessions
   /** Files too large to save that a chat checkpoint left out, or a rewind left as they were; written by the host only. */
   CheckpointSkipped: "checkpoint_skipped",
@@ -215,7 +199,6 @@ export const CustomEvent = {
   SkilloptStaged: "skillopt_staged",
   SnapshotHealthy: "snapshot_healthy",
   ThreadAdopted: "thread_adopted",
-  ToolFailure: "tool_failure",
   ToolInstalled: "tool_installed",
 } as const;
 export type CustomEvent = (typeof CustomEvent)[keyof typeof CustomEvent];
@@ -332,8 +315,29 @@ export interface RunLimit {
   at?: number;
 }
 
+/**
+ * Why a Loop did not run at all (`refusal` on its `run_finished`), beside the words its close
+ * carries. The seed's copy is `LoopRefusal` in `loop/run-dispatch.ts`
+ * (tests/conformance/seed-contracts.test.ts holds the two together); an older seed writes none.
+ * Persisted: never rename a value.
+ */
+export const LoopRefusal = {
+  /** The engine keeps no session of its own (Ollama's tool loop): its chat is plain chat, and a Loop needs a lead's session. */
+  NeedsSession: "needs_session",
+} as const;
+export type LoopRefusal = (typeof LoopRefusal)[keyof typeof LoopRefusal];
+
+const LOOP_REFUSALS: ReadonlySet<unknown> = new Set<LoopRefusal>(Object.values(LoopRefusal));
+
+/** A recorded close's Loop refusal, or null for none or a code this app does not know. */
+export function loopRefusalOf(value: unknown): LoopRefusal | null {
+  return LOOP_REFUSALS.has(value) ? (value as LoopRefusal) : null;
+}
+
 export interface RunFinishedPayload extends RunScope {
   victory?: boolean;
+  /** Why the Loop did not run at all, when it didn't (`LoopRefusal`). */
+  refusal?: LoopRefusal;
   /** Why the run stopped, as a code (autopilot closes carry one; older closes and other modes may not). */
   stopCode?: StopCode;
   reference?: string;
@@ -483,23 +487,6 @@ export interface SessionActivityPayload extends RunScope {
   delegationId?: string;
 }
 
-/**
- * What a round's code review enforced, by file. Logs written before the split carry every enforced
- * file under `reverted`, kept and quarantined ones included, and nothing under the other lists.
- */
-export interface FacetReviewEnforcedPayload extends RunScope {
-  /** Files outside the part's ownership, checked out from the diff base. */
-  reverted?: string[];
-  /** Files outside the part's ownership whose content arrived by merge, left as they are. */
-  kept?: string[];
-  /** New files outside the part's ownership, moved to `.studio/quarantine/`. */
-  quarantined?: string[];
-  /** Another part's changes a merge into this part dropped, checked out from the merged head. */
-  restored?: string[];
-  /** Checks the model reviewer marked as made to pass without the work. */
-  gamed?: string[];
-}
-
 /** A part-level notice: a circuit break, a replanned check, a raised flag, or the lead's plan. */
 export interface FacetNoticePayload extends RunScope {
   reason?: string;
@@ -574,8 +561,6 @@ export interface PreviewReadyPayload extends RunScope {
  */
 export const CompletionRole = {
   Judge: "judge",
-  Playtester: "playtester",
-  SkilloptGate: "skillopt-gate",
 } as const;
 export type CompletionRole = (typeof CompletionRole)[keyof typeof CompletionRole];
 
@@ -744,8 +729,22 @@ export interface CustomEventMap {
   };
   /** `lost`: the provider was lost (an engine failure kind), and the round waits for it rather than retry on a ladder. */
   facet_provider_outage: RunScope & { phase?: string; wait?: number; attempt?: number; error?: string; lost?: string };
-  facet_review_enforced: FacetReviewEnforcedPayload;
   improvement_applied: { file?: string; reason?: string; snapshot_id?: string };
+  /**
+   * The Loop's health check of its integration head (seed `loop/director/integrate.ts`): the page
+   * loads, throws no uncaught error and its frame is not blank. `picture`: the screenshot the check
+   * kept, under the run's folder (`readRunStill`); `worker`: the worker whose merge it checked, as
+   * its own records name it (`pool.w2`); `findings`: the host's code for each of its own problems
+   * (`HealthFinding`). Records written before each existed lack it.
+   */
+  integration_health: RunScope & {
+    head?: string | null;
+    ok?: boolean;
+    problems?: string[];
+    findings?: HealthFinding[];
+    picture?: string;
+    worker?: string;
+  };
   /** `recap`: one line the agent wrote on what it found or did, shown above the question. */
   interview_question: { question?: string; recap?: string; choices?: InterviewChoice[] };
   /** A provider signed out mid-turn (harness `turn-loop.ts`); `message` is the provider's own error. */

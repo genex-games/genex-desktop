@@ -60,7 +60,7 @@ async function javascriptSeed(root: string, without: readonly string[] = []): Pr
 
 const EDIT = "\n// the agent's own change to its turn loop\n";
 const TOOL =
-  'import { shouldRemember } from "../memory/policy.mjs";\nexport const tools = [{ name: "keep", description: "d", parameters: { type: "object", properties: {} }, async execute() { return String(shouldRemember("k", "a durable fact")); } }];\n';
+  'import { clip } from "../loop/text.mjs";\nexport const tools = [{ name: "keep", description: "d", parameters: { type: "object", properties: {} }, async execute() { return clip("a durable fact", 40); } }];\n';
 
 /** An install seeded from the JavaScript vintage, then edited by its agent: one edit, one deletion, one tool of its own. */
 async function javascriptInstall(
@@ -183,7 +183,7 @@ describe("seed upgrade across the move to TypeScript", () => {
     assert.equal(await pathExists(path.join(ws, "tools", "cover-tools.ts")), false, "deleted stays deleted");
     assert.match(
       await readFile(path.join(ws, "tools", "keep-tools.mjs"), "utf8"),
-      /from "\.\.\/memory\/policy\.ts"/,
+      /from "\.\.\/loop\/text\.ts"/,
       "the agent's own tool follows the move",
     );
     assert.equal((await readdir(path.join(ws, "loop"))).filter((name) => name.endsWith(".mjs")).length, 0);
@@ -230,7 +230,7 @@ describe("seed upgrade across the move to TypeScript", () => {
 
   it("migrates again after a rewind to a snapshot from before the upgrade, bringing back the files that tree never had", async () => {
     // Modules the TypeScript seed split out of the JavaScript ones, which that vintage never had.
-    const newModules = ["loop/git.ts", "loop/evidence.ts", "loop/config.ts"];
+    const newModules = ["loop/git.ts", "loop/health-check.ts", "loop/config.ts"];
     const { root, ws, manifest, updates, seed } = await setup(newModules);
     const options = { seedDir: seed, workspaceDir: ws, manifestFile: manifest, updatesDir: updates };
     // The JavaScript self exactly as it ran before the app update: no git.ts, no types/, no tsconfig.

@@ -2,7 +2,7 @@
 import path from "node:path";
 import { app } from "electron";
 import { createHash } from "node:crypto";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { mkdir, writeFile, readFile } from "node:fs/promises";
 import { BonsaiEngine } from "../../substrate/engines/bonsai.ts";
 import { BonsaiRuntime } from "../../substrate/bonsai/runtime.ts";
@@ -14,12 +14,7 @@ import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 import { EngineId } from "../../shared/providers.ts";
 import { HostMethod } from "../../shared/harness-api.ts";
 import { waitFor } from "./wait.ts";
-import {
-  BONSAI_ACCEPTANCE_GOAL,
-  BONSAI_ACCEPTANCE_REQUIREMENTS,
-  BONSAI_RECOVERY_PROMPT,
-  BONSAI_VISION_PROMPT,
-} from "./bonsai-acceptance-prompts.ts";
+import { BONSAI_RECOVERY_PROMPT, BONSAI_VISION_PROMPT, bonsaiAcceptanceBrief } from "./bonsai-acceptance-prompts.ts";
 import { ReasoningEffort } from "../../shared/model-preferences.ts";
 
 /** Why the Bonsai acceptance cannot run. */
@@ -39,12 +34,6 @@ const EXIT_TIMEOUT_MS = 5 * SECOND_MS;
 /** A frame at least this lit shows content. */
 const MIN_LIT_FRACTION = 0.02;
 
-type BaseBrief = (input: {
-  run: { engine: string; goal: string };
-  plan: { facets: unknown[] };
-  projectLabel: string;
-}) => string;
-
 /** One acceptance: the engine under test, where its evidence goes, and the checks it records. */
 interface Acceptance {
   core: StudioCore;
@@ -62,7 +51,6 @@ export async function runBonsaiAcceptance(
   root: string,
   model: string,
 ): Promise<number> {
-  const baseBrief = await loadBaseBrief(core);
   const createPreview = core.options.createHeadlessPreview;
   if (!createPreview) throw new Error(MESSAGE.needsPreview);
   const preview = (await createPreview()) as GamePreview;
@@ -89,7 +77,7 @@ export async function runBonsaiAcceptance(
     },
   };
   try {
-    const project = await buildTheGame(acceptance, baseBrief);
+    const project = await buildTheGame(acceptance);
     await playTheGame(acceptance, project);
     await crashAndRecover(acceptance);
   } catch (err) {
@@ -100,16 +88,6 @@ export async function runBonsaiAcceptance(
     await writeFile(path.join(out, "report.json"), JSON.stringify(acceptance.report, null, 2));
   }
   return checks.some((c) => !c.ok) ? 1 : 0;
-}
-
-/**
- * The brief comes from the harness this build ships (as the run smoke loads its evidence
- * helpers), never bundled into main: the seed is the in-app agent's editable code.
- */
-async function loadBaseBrief(core: StudioCore): Promise<BaseBrief> {
-  const autopilot = path.join(core.options.paths.resources, "harness-seed/loop/autopilot.ts");
-  const { baseBrief } = (await import(pathToFileURL(autopilot).href)) as { baseBrief: BaseBrief };
-  return baseBrief;
 }
 
 async function startReport(core: StudioCore, model: string, checks: unknown[]): Promise<Record<string, unknown>> {
@@ -131,8 +109,8 @@ async function startReport(core: StudioCore, model: string, checks: unknown[]): 
   };
 }
 
-/** The local builder writes the game through the same host call a run's builder uses. */
-async function buildTheGame(acceptance: Acceptance, baseBrief: BaseBrief) {
+/** The local builder writes the game through the same host call a Loop's worker uses. */
+async function buildTheGame(acceptance: Acceptance) {
   const { core, preview, model, check, report } = acceptance;
   const project = await core.games.scaffold("bonsai-live-game", { title: "Bonsai local acceptance" });
   const threadId = await core.threadForGame(project.name);
@@ -141,11 +119,6 @@ async function buildTheGame(acceptance: Acceptance, baseBrief: BaseBrief) {
   const api = core.api() as unknown as Record<string, (p: unknown) => Promise<unknown>>;
   const delegate = api[HostMethod.EngineDelegate];
   if (!delegate) throw new Error(MESSAGE.noDelegate);
-  const brief = baseBrief({
-    run: { engine: EngineId.Bonsai, goal: BONSAI_ACCEPTANCE_GOAL },
-    plan: { facets: [] },
-    projectLabel: project.name,
-  });
   const result = (await delegate({
     engine: EngineId.Bonsai,
     model,
@@ -154,7 +127,7 @@ async function buildTheGame(acceptance: Acceptance, baseBrief: BaseBrief) {
     timeoutMs: BUILD_TIMEOUT_MS,
     maxTurns: BUILD_MAX_TURNS,
     selfCapture: { project: project.name, root: project.dir },
-    prompt: brief + BONSAI_ACCEPTANCE_REQUIREMENTS,
+    prompt: bonsaiAcceptanceBrief(project.name),
   })) as DelegateResult;
   report.result = result;
   check("local builder completed", result.ok, result.summary);

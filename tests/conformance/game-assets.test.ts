@@ -638,7 +638,7 @@ describe("a project's assets, by its facts and plugins", () => {
     await mkdir(cases);
     lite = await coreLite({
       gamesRoot: path.join(root, "games"),
-      executionPolicy: { allowedProjectRoot: root, runBackgroundImprovement: false },
+      executionPolicy: { allowedProjectRoot: root },
     });
   });
   after(async () => {
@@ -662,7 +662,7 @@ describe("a game's asset folders as its facts change", () => {
     root = await realpath(await tmpDir("studio-asset-clock-"));
     timed = await coreLite({
       gamesRoot: path.join(root, "games"),
-      executionPolicy: { allowedProjectRoot: root, runBackgroundImprovement: false },
+      executionPolicy: { allowedProjectRoot: root },
       assetFolders: { now: () => clock },
     });
   });

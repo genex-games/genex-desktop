@@ -16,7 +16,7 @@ import { buildHistory, historyLabel, isNewestBuild, projectBuildGraph } from "..
 import { EntryAction, EntryKind, toEntries } from "../../src/renderer/chat-entries.ts";
 import { buildChecklist, PartMark, runPlanParts } from "../../src/renderer/chat/build-checklist.ts";
 import { BUILD_CHECKLIST_WORDS } from "../../src/renderer/words.ts";
-import { buildRunGraph, FinishCheckState, GraphNodeKind, type RunGraph } from "../../src/renderer/run-graph.ts";
+import { buildRunGraph, GraphNodeKind, type RunGraph } from "../../src/renderer/run-graph.ts";
 import { partRows, statusLine, stepWord } from "../../src/renderer/run-steps.ts";
 import { LeadFace, leadFace, leadNodeOf } from "../../src/renderer/run-tree.ts";
 import { summarizeRun } from "../../src/shared/run-summary.ts";
@@ -122,7 +122,7 @@ describe("the chat-workers dev fixture", () => {
     assert.deepEqual([line.strong, line.rest], ["Live in your game", "from this chat turn"]);
   });
 
-  it("draws the Loop's workers under the lead with its background work and the finish check waiting", async () => {
+  it("draws the Loop's workers under the lead with its background work, and no final look its lead never asked for", async () => {
     const { logs, loopThread, loopGame } = await seeded();
     const events = logs.get(loopThread) ?? [];
     const graph = buildRunGraph(events);
@@ -141,9 +141,12 @@ describe("the chat-workers dev fixture", () => {
       leadNodeOf(graph)?.jobs.map((job) => job.state),
       [JobState.Succeeded, JobState.Succeeded, JobState.Running],
     );
-    const check = graph.nodes.find((node) => node.kind === GraphNodeKind.FinishCheck);
-    assert.ok(check?.kind === GraphNodeKind.FinishCheck);
-    assert.equal(check.state, FinishCheckState.NotYet);
+    // Flipped: a Loop asks a reviewer only when its lead does, so no check waits at its end.
+    assert.equal(
+      graph.nodes.some((node) => node.kind === GraphNodeKind.FinishCheck),
+      false,
+      "nothing waits to run at the end",
+    );
   });
 
   it("a third game holds the build-graph fixture's web Loops with their builders' worker records: trees of the same rows", async () => {
@@ -152,10 +155,7 @@ describe("the chat-workers dev fixture", () => {
     const plain = await fakeCore();
     await seedBuildGraph(plain.core as never, "fixture-web-loop", "plain");
     const before = plain.logs.get("plain") ?? [];
-    for (const [runId, finishCheck] of [
-      ["fixture-graph-run", false],
-      ["fixture-graph-live", true],
-    ] as const) {
+    for (const runId of ["fixture-graph-run", "fixture-graph-live"]) {
       const graph = projectBuildGraph(events, webLoopThread, [], core.layout.runs, runId);
       const old = projectBuildGraph(before, "plain", [], core.layout.runs, runId);
       assert.ok(graph && old);
@@ -163,10 +163,11 @@ describe("the chat-workers dev fixture", () => {
       assert.equal(old.tree, false, `${runId}: the build-graph fixture itself is unchanged`);
       const steps = (g: RunGraph) => partRows(g, null).map((row) => [row.facet.facetId, row.steps.length]);
       assert.deepEqual(steps(graph), steps(old), `${runId}: the same rows and steps`);
+      // Flipped: the running Loop drew a finish check waiting at its end; its lead asked for none.
       assert.equal(
         graph.nodes.some((node) => node.kind === GraphNodeKind.FinishCheck),
-        finishCheck,
-        `${runId}: the finish check waits only while the Loop goes`,
+        false,
+        `${runId}: no final look its lead never asked for`,
       );
     }
     const done = projectBuildGraph(events, webLoopThread, [], core.layout.runs, "fixture-graph-run");

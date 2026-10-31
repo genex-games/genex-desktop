@@ -1,6 +1,6 @@
 /**
- * The card of the Loop's final look, the last node of a run's tree: before the Loop calls it done,
- * a second AI looks at the game. The card shows where that stands now and nothing of the rounds
+ * The card of the Loop's final look, the last node of a run's tree once the lead asked for it: a
+ * second AI looks at the game before the Loop calls it done. The card shows where that stands now and nothing of the rounds
  * before it: looking, what is still to fix (and that the Loop keeps working on it, or Keep building
  * once it ended, as the chat's result card offers it), all done, or that it couldn't look.
  */
@@ -51,7 +51,7 @@ export function FinishCheckPanel(props: InspectorProps): JSX.Element {
   const node = props.graph.nodes.find((item): item is FinishCheckNode => item.kind === GraphNodeKind.FinishCheck);
   const state = node?.state ?? FinishCheckState.NotYet;
   const tone = node ? finishPanelTone(node) : Tone.Muted;
-  const meta = node ? finishCheckFace(node).word : FINISH_CHECK_WORDS.placeholder;
+  const meta = node ? finishCheckFace(node).word : null;
   return (
     <Panel
       id={GraphSelection.FinishCheck}

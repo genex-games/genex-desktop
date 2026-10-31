@@ -10,6 +10,5 @@ export const HANDBACK_WORDS = {
   report: (id: string, text: string) => `${id}'s report:\n${text}`,
   noReport: (id: string) => `${id} wrote no report when it ended.`,
   changes: (id: string, files: readonly string[]) => `${id}'s work changes: ${files.join(", ")}`,
-  lookAt: (pictures: readonly string[]) =>
-    `Look at the pictures it made before you build on it: ${pictures.join(", ")}.`,
+  lookAt: (pictures: readonly string[]) => `Pictures it made: ${pictures.join(", ")}.`,
 } as const;

@@ -1,37 +1,6 @@
 <!doctype html>
 <meta charset="utf-8" />
 <title>__GAME_TITLE__</title>
-<style>
-  html,
-  body {
-    margin: 0;
-    height: 100%;
-    background: #05070d;
-    color: #cfd6e4;
-    font: 13px/1.5 ui-sans-serif, system-ui, -apple-system, sans-serif;
-    overflow: hidden;
-  }
-  canvas {
-    display: block;
-    width: 100%;
-    height: 100%;
-  }
-  #fatal {
-    position: fixed;
-    inset: 0;
-    display: none;
-    place-items: center;
-    padding: 24px;
-    background: #10060a;
-    color: #ffb4b4;
-    font-family: ui-monospace, SFMono-Regular, monospace;
-    white-space: pre-wrap;
-  }
-</style>
-<!-- The fatal-error panel, hidden until a throw. -->
-<pre id="fatal"></pre>
-
-<!-- three.js is vendored with the studio: games build and run with no network at all. -->
 <script type="importmap">
   {
     "imports": {
@@ -42,16 +11,5 @@
       "three/": "/vendor/three/"
     }
   }
-</script>
-<script type="module">
-  // A game that throws on load must still be *diagnosable* by the critic, so failures are
-  // rendered into the page and pushed into the studio contract instead of vanishing into a
-  // console nobody reads.
-  window.addEventListener("error", (event) => {
-    const box = document.getElementById("fatal");
-    box.style.display = "grid";
-    box.textContent = `${event.message}\n\n${event.error?.stack ?? ""}`;
-    window.__studio_error = { message: event.message, stack: event.error?.stack ?? "" };
-  });
 </script>
 <script type="module" src="/src/main.js"></script>

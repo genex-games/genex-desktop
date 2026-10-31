@@ -32,7 +32,7 @@ import { DataFolderProblem } from "../shared/data-folder.ts";
 import { SkippedBy, type SkippedFile } from "../shared/chat-rewind.ts";
 import { LiveBehindReason } from "../shared/live-behind.ts";
 import { PlayCardAction, PlayCoverRefusal, PlayMobileSupport } from "../shared/play-manage.ts";
-import { AutoResumeCause, type CustomEvent, type CustomPayload } from "../shared/custom-events.ts";
+import { AutoResumeCause, type CustomEvent, type CustomPayload, LoopRefusal } from "../shared/custom-events.ts";
 import { EngineFailureKind } from "../shared/engine-requests.ts";
 import { LocalServerProblem } from "../shared/local-server.ts";
 import { computerSettingQuestion, type GithubLookupProblem } from "../shared/plugins.ts";
@@ -74,6 +74,8 @@ import { RunSharingDeleteOutcome, type RunSharingDeleteResult } from "../shared/
 import type { ProviderBuilderUse } from "../shared/provider-skills.ts";
 import type { FinishCheckState, IterationStatus } from "./run-graph.ts";
 import type { LeadFace } from "./run-tree.ts";
+import type { BuildOutcome } from "./run-graph-builds.ts";
+import type { HealthFinding } from "../shared/preview-contract.ts";
 import type { CommandState } from "./state/command-runs.ts";
 import type { JobState } from "./panels/plugins/genex/genex-view.ts";
 import { formatList, intlLocale, t, tc } from "../shared/i18n.ts";
@@ -170,8 +172,6 @@ const PHRASES: Array<[RegExp, (match: RegExpMatchArray) => StatusWords]> = [
     /^building the (?:shared base|starting point)$/i,
     () => ({ line: t("Building the starting point"), short: t("Starting point") }),
   ],
-  // The run's other first step: a game the user brought that the studio cannot see into yet.
-  [/^making the game judgeable$/i, () => ({ line: t("Connecting your game to the studio"), short: t("Connecting") })],
   [
     /^plan ready — waiting for steering$/i,
     () => ({ line: t("The plan is ready — waiting for your go-ahead"), short: t("Plan ready") }),
@@ -269,13 +269,6 @@ const PART_PHRASES: Array<[RegExp, (part: string, match: RegExpMatchArray) => St
     }),
   ],
   [
-    /^judge overloaded, retrying verification in (\d+)s$/i,
-    (part, m) => ({
-      line: t("{part} · the reviewer is busy — trying again in {seconds}s", { part, seconds: m[1] }),
-      short: t("{part} · waiting", { part }),
-    }),
-  ],
-  [
     /^waiting for its model provider \((.+)\)$/i,
     (part, m) => ({
       line: t("{part} · waiting for the model provider ({provider})", { part, provider: m[1] }),
@@ -286,7 +279,7 @@ const PART_PHRASES: Array<[RegExp, (part: string, match: RegExpMatchArray) => St
 
 /** The phases the harness hangs off a title with " — ": stripped when the title itself has a dash. */
 const PHASE_SUFFIX =
-  /\s+—\s+(iteration \d+|verifying|spike on .+|fixing review findings|reverting a regression|(?:provider|judge) overloaded.*|waiting for its model provider.*)$/i;
+  /\s+—\s+(iteration \d+|verifying|spike on .+|fixing review findings|reverting a regression|provider overloaded.*|waiting for its model provider.*)$/i;
 
 /**
  * Turn a harness status line into what the user reads. The harness prefixes almost every status
@@ -397,7 +390,6 @@ export function isKept(winner: string | null | undefined): boolean {
 
 const UNDONE_BECAUSE: Record<string, string> = {
   invisible: t("nothing visible changed"),
-  "taste-veto": t("the reviewer preferred the round before"),
   "no-move": t("the step it was asked for was not delivered"),
   unfixed: t("the must-fix was not fixed"),
   broken: t("the build was broken"),
@@ -427,6 +419,9 @@ export function judgeUnreachable(source: string | null | undefined): boolean {
 export function wasStopped(source: string | null | undefined): boolean {
   return stoppedSource(source);
 }
+
+/** The harness's verdict source for a round kept because nothing regressed (its `VerdictSource.NoRegression`). */
+const KEPT_UNHARMED = "no-regression";
 
 /** The harness's verdict source for a save point the Unreal lead made itself (its `VerdictSource.Lead`). */
 const LEAD_SAVE = "lead";
@@ -564,12 +559,11 @@ export function sideBySideWords(node: { status: IterationStatus; satisfied: bool
   if (savedByLead(node.source)) return t("Not reviewed — the lead saved it after looking at its own captures.");
   if (node.status === "unjudged") return t("Not reviewed — no verdict was recorded for this round.");
   if (node.status === "rolled") {
-    if (node.source === "taste-veto") return t("The reviewer preferred the round before.");
     if (node.source === "no-move") return t("Not asked — the step did not land.");
     return t("Not needed — the round was undone on the checks.");
   }
   if (node.satisfied) return t("The reviewer is satisfied with this part.");
-  return node.source === "checks"
+  return node.source === "checks" || node.source === KEPT_UNHARMED
     ? t("No objection to the new build.")
     : t("The reviewer preferred the new build to the round before.");
 }
@@ -811,7 +805,10 @@ export function loopRunWords(loopRun: {
   landing?: string | null;
   /** How the Loop worked on its project (`run_finished.profile`): `open` kept its work in the project's own folder. */
   profile?: string | null;
+  /** Why the Loop did not run at all (`run_finished.refusal`), when it didn't. */
+  refusal?: LoopRefusal | null;
 }): LoopRunWords {
+  if (loopRun.refusal === LoopRefusal.NeedsSession) return NEEDS_SESSION_WORDS;
   const rounds = Math.max(0, Math.trunc(loopRun.rounds || 0));
   const hasBuild = loopRun.hasBuild ?? true;
   const landing = reviewerWords(withoutIds((loopRun.landing ?? "").trim()));
@@ -859,6 +856,14 @@ export function loopRunWords(loopRun: {
     because: fullStop(capitalise(why)),
   };
 }
+
+/** A Loop refused on an engine that keeps no session (`LoopRefusal.NeedsSession`): its chat stays plain chat. */
+const NEEDS_SESSION_WORDS: LoopRunWords = {
+  headline: t("Loop not started"),
+  because: t(
+    "A Loop needs an engine that keeps a session of its own, and this chat's engine doesn't, so nothing was built. The chat still answers here.",
+  ),
+};
 
 /** Text that ends a sentence: a full stop added only when it has no end of its own (a close's reason may). */
 function fullStop(text: string): string {
@@ -1045,30 +1050,14 @@ export function partRoundWords(part: PartRound): string {
 }
 
 /**
- * What the run is: the reference it was given, if it was given one, and which model judges it.
- *
- * The judge is named because it is the one role a saved preference can quietly get wrong — a
- * run was judged by the orchestrator's model and nothing said so. `judge` is the model's own
- * short name (model-roles' `roleName`); "default" is not a name a person can act on, so a run
- * whose critic is whatever the engine happens to use says nothing about it.
+ * What the run is, for the records that name a reference it was given ("direction" or a bar):
+ * nothing for a run that has none, which the chat already shows as the person's own message.
  */
-export function runStartWords(
-  reference: { name?: string | null; kind?: string | null } | null | undefined,
-  judge: string | null = null,
-): string {
+export function runStartWords(reference: { name?: string | null; kind?: string | null } | null | undefined): string {
   const name = withoutIds((reference?.name ?? "").trim());
-  const named = name && name.toLowerCase() !== "unnamed" ? name : "";
-  const who = withoutIds((judge ?? "").trim());
-  const rule =
-    who && !/^(default|same)$/i.test(who)
-      ? t(
-          "each round has to beat the one before, and {reviewer}, reviewing without being told which build is which, picks the winner",
-          { reviewer: who },
-        )
-      : t("each round has to beat the one before, and a reviewer that cannot see which is which picks the winner");
-  if (reference?.kind === "direction")
-    return named ? t('heading in the direction of "{name}" — {rule}', { name: named, rule }) : rule;
-  return named ? t('the bar for this build is "{name}" — {rule}', { name: named, rule }) : rule;
+  if (!name || name.toLowerCase() === "unnamed") return "";
+  if (reference?.kind === "direction") return t('heading in the direction of "{name}"', { name });
+  return t('the bar for this build is "{name}"', { name });
 }
 
 /** How the run is organised — the first thing the user reads after pressing send. */
@@ -2451,7 +2440,6 @@ export const FINISH_CHECK_WORDS = {
     done: t("Done"),
     stopped: t("Not finished"),
   } satisfies Record<FinishCheckState, string>,
-  placeholder: t("Runs at the end"),
   about: t("Before the Loop calls it done, a second AI looks at your game."),
   /** The node's line and the card while the second AI looks. */
   checking: t("Looking at your game"),
@@ -2467,6 +2455,60 @@ export const FINISH_CHECK_WORDS = {
   /** After a no, once the Loop has ended some other way. */
   endedAfterNo: t("The Loop ended before another look."),
 } as const;
+
+/**
+ * A Loop's builds on the Builds graph (`run-graph-builds.ts`): each one's name and health check
+ * outcome, where a worker hangs, the card that folds a build's finished workers, and the compare.
+ */
+export const BUILD_LINE_WORDS = {
+  name: (n: number) => t("Build {number}", { number: n }),
+  outcome: {
+    passed: t("Passed"),
+    blank: t("Blank screen"),
+    errors: t("Errors"),
+    failed: t("Did not pass"),
+  } satisfies Record<BuildOutcome, string>,
+  /** The card's line under its outcome: what made the build. */
+  merged: (worker: string) => t("After {worker}", { worker }),
+  leadsOwn: t("The main agent's own changes"),
+  /** A merged worker's status on the build line: in that build, not yet the game. */
+  addedToBuild: t("Added to your build"),
+  /** A worker's first line on the graph: the build it hangs off, and why. */
+  mergedInto: (n: number) => t("Merged into Build {number}", { number: n }),
+  startedFrom: (n: number) => t("Started from Build {number}", { number: n }),
+  startedFirst: t("Started before the first build"),
+  /** The card that folds a build's finished workers, and what pressing it does. */
+  folded: (count: number) => t("{count, plural, one {+# worker} other {+# workers}}", { count }),
+  showAll: t("Show all"),
+  showFewer: t("Show fewer"),
+  foldLabel: (count: number) => t("{count, plural, one {Show # more worker} other {Show # more workers}}", { count }),
+  /** The compare, when the picture is the one before it, measured. */
+  unchanged: (n: number) => t("The picture did not visibly change from Build {number}.", { number: n }),
+  before: (n: number) => t("Build {number}", { number: n }),
+  problems: t("What the check found"),
+  finding: {
+    not_loaded: t("The page did not load."),
+    crashed: t("The page crashed."),
+    uncaught: t("The page threw an error it did not catch."),
+    blank: t("The screen was blank: one flat colour, nothing drawn."),
+  } satisfies Record<HealthFinding, string>,
+  /** The technical details' key for the check's own words. */
+  found: t("found"),
+} as const;
+
+/** An asset delivered again, beside the version before it on the run's Assets card. */
+export const ASSET_VERSION_WORDS = {
+  compare: t("Compare with the earlier version"),
+  earlier: t("Earlier"),
+  now: t("Now"),
+  unchanged: t("The picture did not visibly change from the earlier version."),
+} as const;
+
+/** A worker's first line on a Loop's build line: the build its work went into, or the one it started from. */
+export function workerPlaceWords(place: { build: number; merged: boolean }): string {
+  if (place.merged) return BUILD_LINE_WORDS.mergedInto(place.build);
+  return place.build ? BUILD_LINE_WORDS.startedFrom(place.build) : BUILD_LINE_WORDS.startedFirst;
+}
 
 /** A build in the stage's history, by what it was and the day it started; never a number or a count. */
 /** The Builds bar's tabs, one for each of the chat's builds. */
@@ -2857,22 +2899,9 @@ export function permissionWords(plugin: string, prompt: string | undefined): str
 
 // ── Harness activity ──────────────────────────────────────────────────────────────────────
 
-/** The suggestions card in Activity and its exact-edit view (`ui/ProposalsTable.tsx`). */
+/** The exact-edit view of a change in Activity (`ui/ProposalsTable.tsx`). */
 export const SUGGESTION_WORDS = {
-  title: (count: number) =>
-    t(
-      "{count, plural, one {Harness suggests # change to how it builds} other {Harness suggests # changes to how it builds}}",
-      { count },
-    ),
-  subtitle: t("Nothing changes until you apply."),
-  include: (title: string) => t("Include: {title}", { title }),
-  fallbackSummary: t("Suggested after reviewing your recent builds."),
-  whatChanges: t("What changes"),
   seeExactEdit: t("See the exact edit"),
-  selected: (included: number, total: number) =>
-    t("{included} of {total} selected · you can undo later", { included, total }),
-  discard: t("Discard"),
-  apply: (count: number) => t("{count, plural, one {Apply # change} other {Apply # changes}}", { count }),
 } as const;
 
 /** Activity's header and its Self-improvement switch (`panels/ReviewPanel.tsx`). */
@@ -2880,7 +2909,7 @@ export const ACTIVITY_WORDS = {
   title: t("Activity"),
   learning: t("Self-improvement"),
   learningHint: t(
-    "When off, Harness stops learning from your builds. What it already learned stays until you undo it.",
+    "When off, Harness doesn’t change its own instructions. Changes it already made stay until you undo them.",
   ),
 } as const;
 
@@ -3079,9 +3108,6 @@ export const SETUP_SCRIPTS_WORDS = {
 
 /** The fixed titles and sentences of the Builds tab's progress line (`build-progress.ts`). */
 export const PROGRESS_WORDS = {
-  optimizationFinished: t("Optimization finished"),
-  optimization: t("Optimization"),
-  optimizing: t("The assembled game is being measured and checked for safe improvements."),
   buildingStart: t("Building the starting point"),
   startBeforeParts: t("The starting point is built and checked before the lead delegates the parts."),
   startReady: t("The starting point is ready"),
@@ -3179,7 +3205,7 @@ const STUDIO_TOOLS: Record<string, ToolWords> = {
   set_game_cover: { icon: "write", label: t("painted the game's cover") },
   checkpoint: { icon: "see", label: t("marked a moment worth seeing") },
   capture: { icon: "see", label: t("captured the game"), active: t("Capturing the game") },
-  // The lead's run tools. `wait` stays neutral: a playtester waits too.
+  // The lead's run tools. `wait` stays neutral.
   plan: { icon: "think", label: t("set out the plan"), active: t("Writing the plan") },
   goal_update: {
     icon: "think",
@@ -3961,6 +3987,9 @@ export const ASSET_LIBRARY_WORDS = {
   /** The tags on a card. */
   saved: t("Saved"),
   shared: t("Shared"),
+  /** A file only in the build of a run still going: it reaches the game when the run lands. */
+  building: t("In the running build"),
+  buildingTip: t("Not in your game yet. It arrives when the build lands."),
   save: t("Save"),
   saveTip: t("Save to your library"),
   unsaveTip: t("Remove from Saved"),

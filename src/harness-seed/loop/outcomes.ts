@@ -59,16 +59,6 @@ export const StopCode = {
 /** A stop code: one of `StopCode`. */
 export type StopCode = (typeof StopCode)[keyof typeof StopCode];
 
-/** How the optimization stage ended (`result.outcome`). Persisted: never rename a value. */
-export const OptimizationOutcome = {
-  Improved: "improved",
-  NoImprovement: "no_improvement",
-  Skipped: "skipped",
-  Failed: "failed",
-  Interrupted: "interrupted",
-} as const;
-export type OptimizationOutcome = (typeof OptimizationOutcome)[keyof typeof OptimizationOutcome];
-
 /** How much of an unknown code or state the error that refuses it quotes. */
 const UNKNOWN_VALUE_CHARS = 40;
 

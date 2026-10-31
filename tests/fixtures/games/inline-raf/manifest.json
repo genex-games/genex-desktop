@@ -18,8 +18,8 @@
     "kind": "three-modules",
     "serve": "."
   },
-  "addsAtLeast": ["src/studio.js", "src/studio.d.ts", "CLAUDE.md", "NOTES.md", "studio.json", ".gitignore", ".git"],
-  "neverAdded": ["index.html", "src/main.js", "docs/CONTRACT.md"],
+  "addsAtLeast": ["CLAUDE.md", "studio.json", ".gitignore", ".git"],
+  "neverAdded": ["index.html", "src/main.js", "docs/CONTRACT.md", "src/studio.js", "src/studio.d.ts", "NOTES.md"],
   "edits": "none",
   "contract": "attached",
   "needsNodeModules": false,
@@ -31,9 +31,6 @@
     "keyboardMove": true
   },
   "setup": null,
-  "cameras": ["default"],
-  "expectWarnings": [],
-  "allowWarnings": [],
   "delta": [],
   "deterministic": true,
   "readyBudgetMs": 5000

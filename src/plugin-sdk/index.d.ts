@@ -269,26 +269,6 @@ export interface PluginEngineDeclaration {
   apps?: { mac?: string[]; windows?: string[] };
 }
 
-/**
- * API 3, beside an `engine`: a blind judge that plays your engine's games in its editor (`judges` in
- * the manifest, at most 8). It never sees code and answers from playing.
- * - `id` 2–40 lowercase letters, digits and dashes, unique in the manifest; `label` 1–40 characters.
- * - `facts` the facts of the games it judges (none: every game your plugin plays in its editor).
- * - `brief` a Markdown file in your package (at most 16 000 characters), added to the judge's rubric.
- * - `players` how many players its play opens, 1 to your `engine.play.players` (one when absent).
- * - `probe` one of your harness tools that asks nothing, runs no host program and needs every lock
- *   `play-open` needs; Genex runs it once right after the judge's play opens, and its `note` and
- *   `images` (measurements and pictures, never source) open the judge's first answer.
- */
-export interface PluginJudge {
-  id: string;
-  label: string;
-  facts?: string[];
-  brief: string;
-  players?: number;
-  probe?: string;
-}
-
 /** A skill whose text sits in the manifest (1–16 000 characters); agents get all of it in their brief. */
 export interface PluginInlineSkill {
   name: string;
@@ -473,8 +453,6 @@ export interface PluginManifest {
   mcpServers?: PluginMcpServer[];
   /** API 3, capability `game-engine`: the engine the plugin declares. */
   engine?: PluginEngineDeclaration;
-  /** API 3, beside `engine`: the blind judges that play your engine's games in its editor. */
-  judges?: PluginJudge[];
   /** Host-managed account flow. Status may finish a pending browser authorization. */
   account?: { connect: string; unlock: string; disconnect: string; status: string; cancel?: string };
   /**
@@ -502,29 +480,30 @@ export interface PluginExportResult {
 }
 
 /**
- * API 3: which view a still photographs, exactly one of a demo (a `config.demos` key, run to its
- * end state) or a camera (a `config.cameras` key or a built-in `eye:*`). A name is 1 to 64 letters,
- * digits, `:`, `_` or `-`, starting with a letter or digit.
+ * API 3: `observe` with a `still` takes a plain frame of the bound game's page on a hidden window of
+ * its own at `width`×`height` (whole pixels, 320–1920 by 240–1200), after the game has loaded and
+ * played a moment, encoded as PNG, or as the best JPEG (quality 95, 90, then 85) that fits
+ * `maxBytes` (64 KiB to 16 MiB, default 8 MiB). The image is never larger than asked; a game that
+ * draws smaller is not scaled up. Studio asks nothing of the page, so there are no demos or
+ * cameras to name: `camera` may only be `"default"`, and a request with a `demo` is refused.
+ * A host older than this option ignores `still` and answers an ordinary observation
+ * ({@link PluginStillIgnored}), so check the answer for `still`, then `stillProblem`, and handle neither.
  */
-export type PluginStillView = { demo: string; camera?: undefined } | { camera: string; demo?: undefined };
-/**
- * API 3: `observe` with a `still` photographs one view of the bound game on a hidden window of its
- * own at `width`×`height` (whole pixels, 320–1920 by 240–1200), encoded as PNG, or as the
- * best JPEG (quality 95, 90, then 85) that fits `maxBytes` (64 KiB to 16 MiB, default 8 MiB).
- * The image is never larger than asked; a game that draws smaller is not scaled up. A host older
- * than this option ignores `still` and answers an ordinary observation ({@link PluginStillIgnored}),
- * so check the answer for `still`, then `stillProblem`, and handle neither.
- */
-export type PluginStillRequest = PluginStillView & { width: number; height: number; maxBytes?: number };
+export interface PluginStillRequest {
+  camera?: "default";
+  width: number;
+  height: number;
+  maxBytes?: number;
+}
 /**
  * Why no still was taken. `unavailable`: the host has no hidden window (a still never borrows the
- * person's own) or could not open or size one; `view_unknown` comes with `available`.
+ * person's own) or could not open or size one; `view_unknown` (a `camera` other than `"default"`)
+ * comes with `available`.
  */
 export type PluginStillProblemCode =
   | "unavailable"
   | "load_failed"
   | "view_unknown"
-  | "view_failed"
   | "capture_failed"
   | "too_large"
   | "timeout";
@@ -544,7 +523,6 @@ export interface PluginStill {
   height: number;
   /** `page` is the page's own read of its canvas; `compositor` is the window's frame. */
   source: "page" | "compositor";
-  view: PluginStillView;
   stats: PluginStillExposure;
   /** JPEG, at most 1280 px on its long side: for showing, never for sending on. */
   preview: Uint8Array;
@@ -552,7 +530,7 @@ export interface PluginStill {
 export interface PluginStillProblem {
   code: PluginStillProblemCode;
   reason?: string;
-  /** With `view_unknown`: the demo or camera names the game has, at most 32. */
+  /** With `view_unknown`: the views there are, which is `["default"]`. */
   available?: string[];
 }
 export type PluginStillAnswer = { still: PluginStill } | { stillProblem: PluginStillProblem };
@@ -561,42 +539,6 @@ export type PluginStillAnswer = { still: PluginStill } | { stillProblem: PluginS
  * observation, with neither `still` nor `stillProblem`. Check for each before reading it.
  */
 export type PluginStillIgnored = { still?: undefined; stillProblem?: undefined; [key: string]: unknown };
-
-/**
- * API 3: `observe` with a `clip` records `seconds` (2–10, default 5) of the bound game running, from
- * the start of a moment its demo `demo` stages (a `config.demos` key: it sets up the moment and its
- * own scripted input, and returns; the host then starts the game's clock and sends no input), on a
- * hidden window of its own at `width`×`height` (whole pixels, 320–1920 by 240–1200), at `fps`
- * (15–30, default 30), in at most `maxBytes` (256 KiB to 8 MiB, default 8 MiB). Send `files: []`
- * and no `still`. A host older than this option ignores `clip` and answers an ordinary observation
- * ({@link PluginClipIgnored}), so check the answer for `clip`, then `clipProblem`, and handle neither.
- */
-export interface PluginClipRequest {
-  demo: string;
-  width: number;
-  height: number;
-  seconds?: number;
-  fps?: number;
-  maxBytes?: number;
-}
-export interface PluginClip {
-  video: Uint8Array;
-  /** MP4 (H.264) where the host's recorder can, else WebM (VP9 or VP8). */
-  mimeType: "video/webm" | "video/mp4";
-  /** The recorded canvas's size; a game that draws smaller is not scaled up. */
-  width: number;
-  height: number;
-  durationMs: number;
-  view: { demo: string };
-  /** JPEG of the first recorded frame, at most 1280 px on its long side. */
-  poster: Uint8Array;
-  /** 0–1: the share of sampled frame pairs that differ visibly; a frozen recording is about 0. */
-  motion: number;
-}
-/** A clip's problem codes are a still's: `too_large` when even the lowest bitrate is over `maxBytes`. */
-export type PluginClipAnswer = { clip: PluginClip } | { clipProblem: PluginStillProblem };
-/** What an API-3 host older than clips answers instead: an ordinary observation, with neither `clip` nor `clipProblem`. */
-export type PluginClipIgnored = { clip?: undefined; clipProblem?: undefined; [key: string]: unknown };
 
 /** Sanitized progress for Studio. `kind: 'toolbar'` updates a toolbar item's badge. */
 export interface PluginEvent {
@@ -673,22 +615,13 @@ export interface PluginHostCall {
   (method: "jobs.write", args: { id: string; value: unknown }): Promise<true>;
   (method: "events.emit", args: PluginEvent): Promise<true>;
   /**
-   * API 3: one named view of the bound game as a still; see {@link PluginStillRequest}. A host
+   * API 3: a plain frame of the bound game as a still; see {@link PluginStillRequest}. A host
    * older than the option answers an ordinary observation ({@link PluginStillIgnored}).
    */
   (
     method: "observe",
     args: { project: string; root: string; files: []; still: PluginStillRequest },
   ): Promise<PluginStillAnswer | PluginStillIgnored>;
-  /**
-   * API 3: a few seconds of the bound game running from a moment its demo stages; see
-   * {@link PluginClipRequest}. A host older than the option answers an ordinary observation
-   * ({@link PluginClipIgnored}).
-   */
-  (
-    method: "observe",
-    args: { project: string; root: string; files: []; clip: PluginClipRequest },
-  ): Promise<PluginClipAnswer | PluginClipIgnored>;
   (method: "observe", args: { project: string; root: string; files: string[] }): Promise<unknown>;
   /** Current plugin's explicitly unlocked memory lease; null never triggers OS access. */
   (method: "credentials.session"): Promise<string | null>;

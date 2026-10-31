@@ -1,9 +1,8 @@
 /**
- * A job's gate and box, by the chat's mode: Bypass runs it in the Bypass worker's wider box, Auto in
- * the box of its write roots, Accept edits and Manual ask the person first, Plan holds it. Every box
+ * A job's gate and box, by the chat's mode: Bypass runs it in a wider box writing the home folder, Auto
+ * in the box of its write roots, Accept edits and Manual ask the person first, Plan holds it. Every box
  * denies the never-touch list for reads and writes, Claude Code's own folder in each write root for
- * writes, and the network. Pure: the box is compared with the one Claude Code's engine builds for a
- * Bypass worker of the same seat, through the engine's own interface (an injected `query()`).
+ * writes, and the network. Pure.
  */
 import assert from "node:assert/strict";
 import { mkdir, realpath } from "node:fs/promises";
@@ -12,13 +11,9 @@ import path from "node:path";
 import { describe, it } from "node:test";
 import { JobGate, jobGate, jobPolicy } from "../../src/main/core/job-gate.ts";
 import { PermissionMode } from "../../src/shared/permissions.ts";
-import { ClaudeCodeEngine } from "../../src/substrate/engines/claude-code.ts";
 import { neverTouchFence } from "../../src/substrate/engines/claude-permissions.ts";
 import { NeverTouchKind, type NeverTouchList } from "../../src/substrate/engines/never-touch.ts";
-import type { WorkerSeat } from "../../src/substrate/engines/types.ts";
 import { isInside } from "../../src/substrate/paths.ts";
-import { baseDenyRead } from "../../src/substrate/spawn.ts";
-import { fixtureCodingCli } from "../helpers/external-cli.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 delete process.env.CLAUDE_CONFIG_DIR;
@@ -52,47 +47,6 @@ const reachOf = (f: Fixture) => ({ writeRoots: [f.copy, f.granted], neverTouch: 
 /** Whether a deny list holds `target`: a folder it is in, or a glob that matches it. */
 const denies = (list: readonly string[], target: string) =>
   list.some((entry) => isInside(entry, target) || path.matchesGlob(target, entry));
-
-/** The box Claude Code's engine builds for a Bypass worker of the same seat. */
-async function bypassWorkerBox(f: Fixture) {
-  const seen: Array<Record<string, unknown>> = [];
-  const queryFn = ((params: { options?: Record<string, unknown> }) => {
-    seen.push(params.options ?? {});
-    return {
-      async *[Symbol.asyncIterator]() {
-        yield { type: "result", subtype: "success", is_error: false, result: "", num_turns: 1, usage: {} };
-      },
-    };
-  }) as never;
-  const engine = new ClaudeCodeEngine({
-    resolveCli: fixtureCodingCli,
-    engineHome: path.join(f.root, "engine-home"),
-    systemHome: path.join(f.root, "no-system-login"),
-    queryFn,
-    protectedPaths: [],
-  });
-  const seat: WorkerSeat = {
-    id: "w1",
-    title: "Scene builder",
-    mode: PermissionMode.Bypass,
-    writeRoots: [f.copy, f.granted],
-    neverTouch: f.list,
-    research: false,
-    asks: {
-      mode: PermissionMode.Bypass,
-      allow: [],
-      directories: [],
-      protectWrites: [],
-      ask: async () => ({ decision: "allow" }),
-      screen: async () => null,
-      worker: { id: "w1", title: "Scene builder" },
-    },
-  };
-  await engine.delegate({ prompt: "build", cwd: f.copy, worker: seat } as never);
-  const sandbox = seen[0]?.sandbox as { filesystem: { allowWrite: string[]; denyWrite: string[]; denyRead: string[] } };
-  assert.ok(sandbox, "the worker ran in a box");
-  return sandbox.filesystem;
-}
 
 describe("a job's gate and box", () => {
   it("each chat mode runs, boxes, asks or holds a job", () => {
@@ -147,16 +101,14 @@ describe("a job's gate and box", () => {
     assert.equal(wide.denyWrite?.includes(game), false, "Bypass's box writes the home folder, as the Bypass worker's");
   });
 
-  it("a Bypass job's box is the Bypass worker's box, less what every sandboxed process is denied already", async () => {
+  it("a Bypass job's box writes the home folder and its roots and denies the never-touch list", async () => {
+    // A Bypass worker itself has no box (it runs as the person); its jobs still start in this one.
     const f = await fixture();
-    const policy = jobPolicy(JobGate.Wide, reachOf(f), await neverTouchFence(f.list));
-    const worker = await bypassWorkerBox(f);
-    // The engine's own protected list (the sign-in stores and its login homes) is the base sandbox's
-    // for every job; the never-touch list the host builds names the sign-in stores as well.
-    const engineOwn = new Set([...baseDenyRead(), path.join(f.root, "no-system-login")]);
-    const own = (list: string[]) => list.filter((dir) => !engineOwn.has(dir));
-    assert.deepEqual(policy.allowWrite, worker.allowWrite, "the same writable folders");
-    assert.deepEqual(policy.denyWrite, own(worker.denyWrite), "the same write denies");
-    assert.deepEqual(policy.denyRead, own(worker.denyRead), "the same read denies");
+    const fence = await neverTouchFence(f.list);
+    const reach = reachOf(f);
+    const policy = jobPolicy(JobGate.Wide, reach, fence);
+    assert.deepEqual(policy.allowWrite, [reach.home, ...reach.writeRoots], "the home folder and its roots");
+    for (const denied of fence.writes) assert.ok(policy.denyWrite?.includes(denied), `never writes ${denied}`);
+    for (const denied of fence.reads) assert.ok(policy.denyRead?.includes(denied), `never reads ${denied}`);
   });
 });

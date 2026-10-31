@@ -23,10 +23,8 @@
  * is answered as with Loop off. This module imports only names every older seed exported
  * (tests/fixtures/seed-exports-pre-reopen.json).
  */
-import { CompletionPolicy } from "./completion-policy.ts";
 import { clampRunHours, MAX_RUN_HOURS } from "./config.ts";
 import { reopenedJournal } from "./director/reopen.ts";
-import { runAsks } from "./goal-prompts.ts";
 import { HostMethod } from "./host-methods.ts";
 import { runUnderWay } from "./live-chat.ts";
 import { RoleKey, roleEngine, withRoles } from "./model-roles.ts";
@@ -36,7 +34,6 @@ import { kindUnknown, LoopProfile, loopProfileOf } from "./folder-facts.ts";
 import { EventKind, RunEvent, RunState } from "./run-events.ts";
 import { latestRun } from "./run-inbox.ts";
 import { readJournal, writeJournal } from "./run-journal.ts";
-import { addToScope, runScope, userWordsInLog } from "./scope.ts";
 import { isCommit } from "./shell.ts";
 import { HOUR_MS } from "./time.ts";
 import type { AfterLoopRun } from "./after-loop-run.ts";
@@ -48,8 +45,6 @@ type RunBudgets = RunSpec["budgets"];
 
 /** The model an engine picks for itself: a lead that names no model runs on it. */
 const ENGINE_DEFAULT = "default";
-/** The asks a reopened build keeps ahead of its commission (goal-prompts.ts `workingGoal`), the latest first. */
-const MAX_REOPEN_ASKS = 4;
 
 /** Does every part a reopen depends on serve it (`SERVES_REOPEN`)? */
 export function servesReopen(parts: readonly Readonly<Record<string, unknown>>[]): boolean {
@@ -177,27 +172,23 @@ export function reopenAsked(
 /**
  * The working time a Loop gives a build, exactly as a launch gives it (tools/game-tools.ts
  * `start_autopilot`, then chat-dispatch.ts `intakeBudgets`): its hours held to the run limits, or for
- * ∞ the day's ceiling, recorded as until satisfied — a goal to verify rather than a time to spend.
+ * ∞ the day's ceiling, recorded as until satisfied (it runs until its lead finishes it).
  */
 export function loopBudgets(hours: number | null): RunBudgets {
   const capped = typeof hours === "number" && hours > 0;
   const held = capped ? clampRunHours(hours) : MAX_RUN_HOURS;
   return {
     wallClockMs: Math.round(held * HOUR_MS),
-    completionPolicy: capped ? CompletionPolicy.Duration : CompletionPolicy.Goal,
     ...(capped ? {} : { untilSatisfied: true }),
   };
 }
 
 /**
- * The run's budgets with the Loop's new time: its other knobs kept, its time, its ∞ and its policy
- * replaced. A reopened build has an ask to finish, not hours to spend, so it is always a goal
- * commission: the Loop's hours are its ceiling, and the lead finishes once the ask is checked
- * (golden-boot-glory: a seventy-second fix was refused `finish` for 159 working minutes).
+ * The run's budgets with the Loop's new time: its other knobs kept, its time and its ∞ replaced.
  */
 export function reopenBudgets(saved: Partial<RunBudgets> | undefined, hours: number | null): RunBudgets {
   const { wallClockMs: _spent, untilSatisfied: _before, completionPolicy: _old, ...knobs } = saved ?? {};
-  return { ...knobs, ...loopBudgets(hours), completionPolicy: CompletionPolicy.Goal };
+  return { ...knobs, ...loopBudgets(hours) };
 }
 
 /**
@@ -241,24 +232,9 @@ export function reopenedRun(
   return { ...resolved, budgets, roles: { ...resolved.roles, planner } };
 }
 
-/**
- * The asks a reopened build is judged by, the latest first, ahead of its commission (goal-prompts.ts
- * `workingGoal`); a replayed message's ask is not kept twice.
- */
-export function withAsk(saved: AnyRecord, text: string): string[] {
-  const earlier = runAsks(saved).filter((ask) => ask !== text);
-  return (text ? [text, ...earlier] : earlier).slice(0, MAX_REOPEN_ASKS);
-}
-
-/**
- * The build's scope with the reopening message among the user's words (scope.ts `addToScope`): only
- * the message's own words as the log has them (edits applied, never the chat's own report), once.
- * Nothing for a build from before scope.
- */
-function reopenedScope(saved: AnyRecord, words: string, events: readonly HarnessEvent[]): AnyRecord {
-  const scope = runScope(saved);
-  if (!scope) return {};
-  return { scope: addToScope(scope, [], words.trim(), userWordsInLog(events)) ?? scope };
+/** The goal a reopened build goes on with: the reopening ask, else the goal it had. */
+export function reopenedGoal(saved: AnyRecord, text: string): string {
+  return text || String(saved.goal ?? "").trim();
 }
 
 /** How the chat starts a reopened run (chat-dispatch.ts: `handleRunStart`, resumed, keeping a Stop). */
@@ -301,14 +277,14 @@ export async function reopenAfterReply(
     const { close, closeAt } = finishedClose(events, loopRun.runId);
     const text = (ask.text ?? ask.words).trim();
     const reopened = reopenedRun(journal.run, reopenBudgets(journal.run.budgets, ask.hours), ask.models);
-    const run = { ...reopened, asks: withAsk(journal.run, text), ...reopenedScope(journal.run, ask.words, events) };
+    const run = { ...reopened, goal: reopenedGoal(journal.run, text) };
     const finishedHead = isCommit(close.integrationHead) ? close.integrationHead : null;
     const at = new Date(now()).toISOString();
     await writeJournal(host, threadId, loopRun.runId, reopenedJournal(journal, run, { at, finishedHead }));
     // The reopened run hears from its ask on — the one recorded now, or the one a turn replayed after
     // a restart finds recorded since the close — and nothing before it, an ask a Stop left behind included.
     const after = await askTheBuild(host, threadId, { events, closeAt }, loopRun, { text, at });
-    studio.moodBoards.delete(threadId);
+    studio.attachedPictures.delete(threadId);
     await tell(host, threadId, {
       type: EventKind.Messages,
       messages: [{ role: "assistant", content: reopenPromise(run.budgets, now()) }],

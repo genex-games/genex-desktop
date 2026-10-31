@@ -1,44 +1,47 @@
 # Genex multiplayer in AI Game Studio
 
-You are building inside AI Game Studio. Below the upstream marker is Genex's multiplayer card,
-unchanged. Where it disagrees with this preface, this preface wins.
+You are building inside AI Game Studio. Below the upstream marker is Genex's multiplayer API card,
+with the passages of design advice Studio does not ship taken out. Where it disagrees with this
+preface, this preface wins. How to shape a multiplayer game (menus, lobbies, teams, testing
+routines) is the game's own call; the optional `genex-recommendations` plugin holds Genex's advice
+on it when it is on.
 
 ## A Godot or Unity game has its own
 
 This card is for web games written with npm and three.js. A Godot game gets Genex multiplayer from
 `godot__multiplayer`, then `godot__skill {"name":"godot-multiplayer"}`; a Unity game from
-`unity__multiplayer`, then `unity__skill {"name":"unity-multiplayer"}`. Stop reading here for those,
-and never write a relay server of your own: Genex's relays already serve web, Godot and Unity players.
+`unity__multiplayer`, then `unity__skill {"name":"unity-multiplayer"}`. Genex's relays already
+serve web, Godot and Unity players.
 
-## The player is in their own lobby from the first click
+## Facts the card's removed passages carried
 
-While `mm.matchmaking.status` is `'searching'` the player is in no room yet, so `players`,
-`connectedPlayers` and `opponents` are all empty, and with `minPlayers === maxPlayers` the room
-skips `'waiting'` altogether. A lobby drawn from `players` alone shows the person's own slot empty
-until a match forms, then everyone at once. From the moment they press Play, draw their own slot
-from what this client already knows (their name from `waitForPlayer()`, their colour or avatar),
-count `Math.max(queue.size, 1)` while searching, and fill the other slots from the roster once
-seated. Never wait for the network to show the person to themselves.
+- `connect()` joins the one shared room of the game's slug at once; `matchmake()` puts the player
+  in the queue and the server seats them in capped rooms by the preset in `genex.matchmaking`.
+- A queued or seated player counts toward `minPlayers` until `mm.cancel()` (or `room.leave()` for
+  `connect()`); `matchmake()` and `connect()` are the only calls that reach the relay.
+- While `mm.matchmaking.status` is `'searching'` the player is in no room: `players`,
+  `connectedPlayers` and `opponents` are empty, `queue.size` counts this player, and with
+  `minPlayers === maxPlayers` the room skips `'waiting'`.
+- For `open`, `status` goes `searching` → `waiting` → `playing` once and never back; `matchStart`
+  and `matchEnded` never fire, and `teams`, `myTeam`, `scores` and `winnerId` stay empty.
+  `connectedPlayers` / `session.activePlayers` leave out seats in their reconnect grace.
+- The relay runs no game simulation and no anti-cheat: it enforces identity, ownership, seating
+  and rate and size caps; a client reports its own state.
 
-## Multiplayer runs on the Genex draft link, with two different players
+## Multiplayer runs on the Genex draft link
 
 - Studio's preview is single-player. It opens a game that uses `@genex-ai/embed-sdk` in local
   test mode (`?genex_local_test=1`): the relay gets no credential there, so `connect()` and
-  `matchmake()` fail by design. Rendering, controls and feel can still be checked in the preview.
+  `matchmake()` fail by design. Rendering and controls still run in the preview.
 - The draft link is multiplayer. A draft plays in rooms of its own, apart from the live game, so
   testers on the draft link meet each other and never real players. Anyone with the link can join,
-  as a guest or signed in, before the game is published to the gallery.
-- Check prerequisites before building online features: the pinned SDKs and an authorized hosted
-  test route. Add both SDKs in one call with
-  `genex__package {"package":"@genex-ai/multiplayer"}` (it includes embed-sdk; nobody is asked).
-  Then build the game; publish a draft with
-  `genex__publish {"operation":"draft"}`; wait with `genex__publish-status`; then test on the draft
-  link as TWO DIFFERENT players. Hand the user the link and tell them exactly how: open it in a
-  normal window and an incognito window (the incognito one plays as a guest), or send it to a
-  friend. Two tabs on one account are one player: the newer tab takes the seat. Until two players
-  have played the draft, say plainly that multiplayer was not exercised.
-- Nobody can save or buy on the draft link, the owner included. Test saves and purchases after
-  publishing.
+  as a guest or signed in, before the game is published to the gallery. Two tabs on one account
+  are one player: the newer tab takes the seat (close code 4409).
+- `genex__package {"package":"@genex-ai/multiplayer"}` adds both SDKs in one call (it includes
+  embed-sdk; nobody is asked). `genex__publish {"operation":"draft"}` puts a draft online and
+  `genex__publish-status` gives its link.
+- Nobody can save or buy on the draft link, the owner included: saves and purchases work once the
+  game is published.
 - Studio installs the version it pins, which satisfies the card's `^0.17.0`. Never run
   `npm i` for these packages yourself.
 - A game made from Studio's template has no `package.json`: it loads three.js through an import
@@ -50,13 +53,9 @@ seated. Never wait for the network to show the person to themselves.
   template has no TypeScript build, so leave out the card's type annotations. Its settings go in
   `genex.json` at the game's root (`{"matchmaking": {...}}`) wherever the card says package.json's
   `genex` field. Never copy the SDK into the game by hand.
-- A game with its own build but no `package.json` needs one first: give it one, then call
-  `genex__package`. A game's shape is never a reason to refuse multiplayer: restructure what you
-  must, and keep its single-player play working.
-
-- If approval is declined or times out, or the hosted test route is unavailable, report the
-  specific blocker. Preserve local play; do not retry without changed authorization or claim
-  multiplayer works. Finish independent required work before optional visual polish.
+- A game with its own build but no `package.json` needs one before `genex__package`.
+- When approval is declined or times out, or the hosted test route is unavailable, the answer
+  names the blocker; a declined request is not repeated without the user asking again.
 
 ## Config without `genex init`
 
@@ -79,28 +78,22 @@ export const GENEX = {
 } as const;
 ```
 
-## Reading the references
+## Reading the reference
 
-The card links its references by relative path. Read one with `genex__skill` and the file exactly
-as listed:
-
-- `skills/genex-threejs-multiplayer/references/realtime-patterns.md`
-- `skills/genex-threejs-multiplayer/references/genre-recipes.md`
-- `skills/genex-threejs-multiplayer/references/host-physics.md`
-- `skills/genex-threejs-multiplayer/references/genex-netcode-feel-checklist.md`
-
-For example: `genex__skill {"name":"genex-threejs-multiplayer","file":"skills/genex-threejs-multiplayer/references/genre-recipes.md"}`.
+The card links its reference by relative path. Read it with `genex__skill` and the file exactly as
+listed: `skills/genex-threejs-multiplayer/references/realtime-patterns.md`, for example
+`genex__skill {"name":"genex-threejs-multiplayer","file":"skills/genex-threejs-multiplayer/references/realtime-patterns.md"}`.
 
 ## Commands
 
-`npx genex controller chat`, `npx genex controller voice` and `genex controller character` are not
-available in Studio: build chat, voice and the character from the SDK calls the card shows.
-Commands map onto Studio tools as the `genex` skill describes (`genex__skill {"name":"genex"}`).
+`npx genex controller …` commands are not available in Studio: chat, voice and the character are
+built from the SDK calls the card shows. Commands map onto Studio tools as the `genex` skill
+describes (`genex__skill {"name":"genex"}`).
 
-<!-- upstream @genex-ai/cli-demo/templates/skills/genex-threejs-multiplayer/SKILL.md v1.36.17 sha256 64fc5498203e6d99244781f39237ddc22b83d5fb70932c23cec2d07eb553b7a7 -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-threejs-multiplayer/SKILL.md v1.36.17 sha256 9e1be9fb9b87c75c58488776d2e49ac0a757a8f81e21966ed890f5e8915f0a3f -->
 ---
 name: genex-threejs-multiplayer
-description: Realtime multiplayer for Genex Three.js games with `@genex-ai/multiplayer` — a relay whose SDK auto-smooths remote players AND shared objects (you do NOT write interpolation). Use whenever 2+ players share a world: movement sync, a shared ball/NPC via objects + ownership, host-authoritative scores/waves, shots/emotes, presence. MANDATORY for any multiplayer game — load before writing networking code.
+description: Realtime multiplayer for Genex Three.js games with `@genex-ai/multiplayer` — a relay whose SDK auto-smooths remote players AND shared objects (you do NOT write interpolation). Use whenever 2+ players share a world: movement sync, a shared ball/NPC via objects + ownership, host-authoritative scores/waves, shots/emotes, presence.
 ---
 
 # Genex Three.js Multiplayer
@@ -112,9 +105,6 @@ path is the correct one: **exactly one smoother** (the SDK interpolates remote p
 objects for you) and **exactly one owner/host** (server-arbitrated). You read a remote player
 or a shared object and it is already smooth; you never fight over who simulates the ball.
 
-**This skill is mandatory for any multiplayer game. Load it before you write a single line of
-networking code.** The mistakes below are what make a multiplayer game stutter — they are the
-whole reason this skill exists.
 
 ## Two rules that decide whether it feels good
 
@@ -126,31 +116,6 @@ whole reason this skill exists.
    mutates a local object; you draw yourself from it every frame (zero latency). Never draw
    yourself from `players.get(room.id).state` — that's the network echo, round-trip-delayed.
 
-Read [references/realtime-patterns.md](references/realtime-patterns.md) for the complete movement
-example, the shared-object/ball code, rotation, and host usage. Read
-[references/genre-recipes.md](references/genre-recipes.md) for ready-made per-genre setups
-(sports/ball, shooter, co-op with host-simulated enemies) — pick the one matching the game. Before
-calling multiplayer done, run the mandatory
-[netcode feel gate](references/genex-netcode-feel-checklist.md).
-
-## Testing multiplayer: on the preview link, with two different players
-
-**A preview build is multiplayer in rooms of its own.** `npx genex preview` (the
-`preview--<slug>` address) plays in rooms the relay keeps apart from the live game: testers on the
-preview link meet each other and never meet real players, and a published game's players never see
-an untested build. Anyone with the preview link can join, as a guest or signed in, even before the
-game is published. You do nothing for this: the game always passes its plain slug; the relay picks
-the room.
-
-- **Test it on the preview, as two DIFFERENT players:** the preview link is the `preview--<slug>`
-  address `npx genex preview` prints on its "Live" line (the dashboard's draft page is the owner's
-  only). Open it in a normal window and an incognito window (the incognito one plays as a guest),
-  or send it to a friend.
-  Two tabs on one account are ONE seat: the newer tab takes it (close code 4409).
-- Until two players have played it, tell the user multiplayer is built but not yet verified, give
-  them the preview link and say exactly that: open it in a normal and an incognito window.
-- Nobody can save or buy on a preview, the owner included. Test progression saves and purchases
-  after publishing.
 
 ## Install
 
@@ -176,48 +141,18 @@ since 0.8; soft ownership handoff since 0.8.4; confirmed controls, snap epochs, 
 lifecycle guarantees since 0.9; regional relay selection via `getColyseusUrls()` since 0.10; host-only `setRoomOpen()` since 0.13;
 exact-relay `url` overrides for cross-region invites since 0.11).
 
-## Trust model (say it plainly in your game's copy)
+## Trust model
 
-This is **casual, favor-the-player multiplayer** (Haxball, not Rocket League): you are
-authoritative over yourself, match outcomes are self-reported, and there is no server-side
+Each client is authoritative over itself, match outcomes are self-reported, and there is no server-side
 simulation or anti-cheat. The server DOES enforce identity (verified tokens), object
 ownership, match seating/adjudication, and rate/size caps — but a modified client can still
-lie about its own position or score. Great for friends and casual lobbies; don't promise
-ranked-grade fairness.
-
-## Choose one net model from the player experience
-
-Infer this yourself when the experience is clear. Do **not** make the player choose an SDK API,
-preset, or config. Ask one plain-language question only when the design genuinely supports both
-models and the answer changes the experience — for example: *"Should this be one ongoing arena
-people drop into, or a fresh fair match that waits for everyone and then starts together?"*
-(Use your question tool when you have one; if you have none, a short numbered
-list in chat.)
-
-| Player experience | Model | Why |
-| --- | --- | --- |
-| One ongoing drop-in world; late joiners enter what is already happening; solo play remains valid | `connect()` | One shared room, no queue or round formation |
-| Fresh bounded match/mission; quorum, fair start, capacity, teams, or parallel sessions matter | `matchmake()` | Server forms capped rooms and exposes queue/waiting state |
-
-Genre names do not decide this. A sumo game may be an always-online drop-in ring (`connect()`) or a
-fair-start bout (`matchmake()`). A co-op game may be an ongoing shared space (`connect()`) or a
-bounded dungeon run (`matchmake()`). Write one plan line before coding:
-
-> Net model: `<connect|matchmake>` — `<player-experience reason>`; start/quorum: `<rule>`;
-> late join/backfill: `<rule>`; below-quorum/end tail: `<rule>`.
-
-Use `connect()` when the game is honestly one always-online world. Use `matchmake()` when it promises
-a match, run, race, mission, teams, a waiting count, or a synchronized start. If the brief says
-"100 players in the same world," or mixes a shared hub with instanced matches, do not guess: surface
-the platform/capacity mismatch or ask which experience matters. Do not combine the requirements or
-silently convert one model into the other.
+lie about its own position or score.
 
 ## Matchmaking (competitive presets — server-owned)
 
-When players should be **matched into separate capped rooms** rather than share one big room (a 1v1
-duel, an FFA arena, N-v-N teams, an invite lobby), use `matchmake()` instead of `connect()`. It
-returns a handle whose **`session` is `null` while searching** — render your OWN "finding a match…"
-HUD from `mm.matchmaking` (its `status`, `queue.position`, `players`/`opponents`, `teams`, `scores`,
+`matchmake()` seats players in **separate capped rooms** (a 1v1
+duel, an FFA arena, N-v-N teams, an invite lobby) rather than the one shared `connect()` room. It
+returns a handle whose **`session` is `null` while searching**; `mm.matchmaking` reports the search (its `status`, `queue.position`, `players`/`opponents`, `teams`, `scores`,
 `winCondition`), and switch to the game once `session` goes live:
 
 ```ts
@@ -252,7 +187,7 @@ mm.on("matchStart", () => syncSession()); // duel/arena/teams only
 mm.on("matchEnded", (result) => showResult(result)); // duel/arena/teams only
 mm.on("error", (e) => showQueueError(e)); // after SDK retries; fix, then mm.retry()
 // 4409 = opened in another tab/device, 4401 = signed out: the handle stops, never requeues.
-mm.on("disconnect", () => showMenu("This game is open somewhere else.")); // mm.retry() only on a click
+mm.on("disconnect", () => onQueueStopped()); // mm.retry() only on a click
 
 // Every frame AND a low-rate timer: the handle swaps in a new Session after
 // seating, terminal drop/requeue, and the next match.
@@ -280,45 +215,6 @@ That is silently wrong for most 3–64 player `open` games. A `matchmake()` game
 must declare and preview/publish the intended block; a `connect()` shared-world
 game does not use this block.
 
-### WHEN to call `matchmake()` — it IS the "Play Online" button, never a boot call (MANDATORY)
-
-`matchmake()` is the ONE action that puts a player on the server: calling it enters the queue and
-the server seats them into a room. So call it **only when the player commits to online play** —
-the click on "Play Online" / "Find Match" — and NEVER on page load, in your boot code, or next to
-`waitForPlayer()`. Getting this wrong is the seat-contamination bug: a player who loaded the page,
-saw the menu, and started a **bots/local** game is STILL sitting in an online room counting toward
-`minPlayers` — three real players wait forever for a fourth who is off fighting bots.
-
-**The menu is pre-multiplayer — the player is in NO room and the server does not know they exist.**
-Concretely, for the near-universal "Play Online / Local / Bots" title menu:
-
-- **On page load:** boot the menu over an **offline world** generated locally. Do NOT `connect()`,
-  do NOT `matchmake()`. `await waitForPlayer()` MAY run here — that only mints an identity token, it
-  seats nobody — but nothing touches the relay yet. No room, no queue, no roster entry, no network.
-- **"Bots" / "Local" / "Single-player":** run entirely offline. Never call `matchmake()` or
-  `connect()`. The player is a party of one against local AI; the server is never involved.
-- **"Play Online":** NOW call `matchmake()`. This is the first and only relay contact. The player
-  enters the queue (`status: 'searching'`), the server seats them into a room, and only from this
-  moment are they a counted participant.
-
-**The waiting screen belongs to online play, not to the menu.** Show it only AFTER the player
-pressed "Play Online" (so `matchmake()` was called and they hold a seat) AND the room hasn't reached
-`minPlayers` yet (`mm.matchmaking.status === 'waiting'`). A player still on the menu sees no waiting
-screen and no player count — they are in no room, so there is genuinely nothing to show, and there
-is no way for them to know how many others are waiting. The count becomes visible the instant they
-commit and get seated, never before.
-
-**Symmetric rule — leaving online play calls `mm.cancel()`.** Entering online is `matchmake()`;
-LEAVING it (back to menu, quit, switching to a bots/local game after being seated) MUST call
-`mm.cancel()`. Otherwise the player keeps their seat and keeps counting toward `minPlayers` for
-everyone else — the same contamination from the other side. One rule, both directions: **commit to
-online → `matchmake()`; leave online → `cancel()`.**
-
-This costs the server nothing and adds NO cheat surface: the client only ever decided *whether/when*
-to search (a player can always just not play). Seating, the roster, capacity, and adjudication stay
-server-authoritative — a modified client still cannot fake participation, inflate the roster, or
-force `minPlayers`. Full menu wiring is Recipe 5 in
-[references/genre-recipes.md](references/genre-recipes.md).
 
 ```jsonc
 "genex": {
@@ -330,18 +226,16 @@ force `minPlayers`. Full menu wiring is Recipe 5 in
 }
 ```
 
-**Choosing a preset — your own rules → `open`; a ready-made match loop → `duel`/`arena`/`teams`.**
 Presets: **open** (a room of N players — the server owns only seating/capacity/refill, you write
 everything else), **duel** (1v1 winner-stays), **arena** (N-player FFA, join-anytime), **teams**
-(N-v-N with a server-owned match loop + eviction — only when you want that whole loop ready-made;
-for your own team game use `open` + the team section below), **private** (invite-code lobby). Win conditions (batteries-included presets only):
+(N-v-N with a server-owned match loop + eviction), **private** (invite-code lobby). Win conditions (batteries-included presets only):
 **lastStanding** (last one alive), **firstToScore** (first to the score target), **highScoreInTime**
 (top score at the time cap), **firstToFinish** (first to finish). A round that hits the time cap
 undecided is a draw. (`open` has no win condition — it never ends a round for you.)
 
-### `open` — the default building block (bring your own rules)
+### `open` (bring your own rules)
 
-Reach for **`open`** first: a room of up to `maxPlayers` that the queue seats and (optionally)
+**`open`** is a room of up to `maxPlayers` that the queue seats and (optionally)
 refills, and NOTHING else — no rounds, no scores, no win condition, no winner-stays eviction. You
 build teams/rounds/scoring/win-logic in game code on the primitives you already have (host election,
 `shared`, per-player state, the `players` list). Config knobs (all numbers):
@@ -357,15 +251,14 @@ build teams/rounds/scoring/win-logic in game code on the primitives you already 
 With `open`, `mm.matchmaking.status` only goes `searching`→`waiting`→`playing` (never `countdown`/
 `ended`), `players` is the live roster, and `teams`/`myTeam`/`scores`/`winnerId` stay EMPTY forever
 — only the server presets fill them. Watch `players` and `status`, not `matchStart`/`matchEnded`
-(they never fire); your teams live in `shared` (mandatory section below), never in
-`mm.matchmaking.teams` — reading that empty map is how every player ends up "on one team".
+(they never fire). `mm.matchmaking.teams` is empty on `open`: a team game keeps its own team map
+(in `shared`, say).
 Nobody is ever evicted. Build the rest:
 
 | Want… | Do it in game code on top of `open` |
 | --- | --- |
 | Room formation & refill | Nothing — the server owns it via `minPlayers`/`maxPlayers`/`fill`. |
 | Duel (1v1) | `maxPlayers: 2, minPlayers: 2`, then start when `mm.matchmaking.players.length === 2`. |
-| Team assignment | The MANDATORY team section right below this table — the **host** reconciles a balanced `id → team` map into `shared`; every client only reads it. Never computed per-client, never read from `mm.matchmaking.teams` (empty on `open`). |
 | Rounds / countdown | Host writes `{ phase, deadline }` into `shared`; clients render the countdown from the timestamp (no server clock — approximate fairness is fine at this trust tier). |
 | Scores | A host-owned entry in `shared` (or per-player state); you define what a point means. |
 | Win condition | Your code checks its own condition (you already compute the signals) and the host writes the result to `shared`. |
@@ -373,150 +266,6 @@ Nobody is ever evicted. Build the rest:
 | Forfeit on disconnect | React to the `players` list shrinking (the SDK surfaces leaves after the reconnect grace). |
 | Spectators | A game-level role: keep a "dead"/observing player seated and just render them as a watcher. There is no server spectator concept — everyone in a room is a player. |
 
-#### Team games — the HOST assigns teams into `shared` (MANDATORY, balanced from the first frame)
-
-Any team game on `open` (1v1 on opposite sides, 2v2, N-v-N, red-vs-blue) assigns teams in GAME
-CODE — the server never will. Get this wrong and every player lands on one team and the match is
-unplayable. The non-negotiable shape: exactly ONE writer — the current host — keeps an
-`id → teamId` map in `shared`, and every client (host included) READS its own team from that map.
-The assignment is one reconciler that keeps sides balanced at all times: drop leavers, then seat
-every unassigned player on the SMALLEST team, walking the roster in sorted order. From an empty
-map that IS a round-robin split (1v1 → opposite teams, four players → 2+2), and a late joiner
-(`fill: 1`) always lands on the short-handed side. Run it in the host's fixed tick:
-
-```ts
-const TEAM_IDS = ["red", "blue"];  // your team set — three or more sides work unchanged
-
-function reconcileTeams() {        // HOST-only, every tick — cheap; writes only on change
-  if (!room.isHost) return;
-  const teams = { ...((room.shared.get("teams") ?? {}) as Record<string, string>) };
-  const roster = [...room.players.keys()].sort();           // deterministic order
-  let changed = false;
-  for (const id of Object.keys(teams))                      // 1. drop leavers
-    if (!roster.includes(id)) { delete teams[id]; changed = true; }
-  const size = (t: string) => Object.values(teams).filter((x) => x === t).length;
-  for (const id of roster) {                                // 2. newcomers → the smallest team
-    if (teams[id]) continue;
-    teams[id] = TEAM_IDS.reduce((a, b) => (size(b) < size(a) ? b : a));
-    changed = true;
-  }
-  if (changed) room.shared.set("teams", teams);             // no diff, no write (message budget)
-}
-
-// EVERY client, in the render loop — read your team, never compute it:
-const myTeam = (room.shared.get("teams") as Record<string, string> | undefined)?.[room.id] ?? null;
-if (myTeam === null) renderNeutral();                       // unassigned ≠ team red
-```
-
-The failure modes this shape exists to prevent — do NOT do any of these:
-
-- **Per-client assignment** (each client picks its own team from `players` order, join time, or
-  `Math.random()`): clients see different rosters at different moments, so they all self-assign
-  the same side. Team choice has exactly one writer — the host.
-- **Reading `mm.matchmaking.teams` / `myTeam`** — empty/`null` on `open` forever (server presets
-  only). A `myTeam ?? "red"` fallback puts EVERYONE on red.
-- **Defaulting the unassigned** (`teams[id] ?? "red"`): between joining and the host's next write
-  a player has NO team — render them neutral (or keep the lobby up), never fold them into a side.
-- **Assigning once at match start**: with `fill: 1` the queue keeps seating players mid-game; the
-  reconciler runs every tick precisely so joiner #5 lands on the 2-player side, not the 3-player one.
-- **Keeping the map anywhere but `shared`**: host-local state dies with the host's tab. In `shared`
-  the map survives host migration — the NEW host's reconciler continues from what's already there
-  (nobody's team changes; it only fills gaps).
-
-Balance beyond headcount (roles, kits, skill) stays a game decision — headcount balance via this
-reconciler is the floor every team game ships with. **Verify it like the lobby rule:** two browser
-windows on a two-team game MUST land on OPPOSITE teams (different colors, different spawn sides).
-Both on one team = broken — fix it before shipping. Full genre wiring (team spawns, friendly fire,
-team score) is Recipe 4 in [references/genre-recipes.md](references/genre-recipes.md).
-
-#### Waiting room / lobby — two patterns
-
-The waiting room exists only AFTER the player pressed "Play Online" and got seated (see "WHEN to call
-`matchmake()`" above — the menu is pre-multiplayer and shows no waiting screen). Once seated, `open`
-puts you in a LIVE shared room the moment you're matched (`session` goes live, players sync) but
-doesn't "start" anything — so the pre-game lobby is simply **your room before it's grown to the size
-you want**. Set `minPlayers` to your target: the SERVER flips `mm.matchmaking.status` from
-`'waiting'` to `'playing'` the instant the roster reaches it. The lobby and the game are ONE `open`
-room — never spin up a second room for it.
-
-**MANDATORY — the waiting screen closes on `status === 'playing'`, and you verify it.** The single
-most common lobby bug is a waiting screen that never goes away even with two players seated. Both
-halves of this rule are non-negotiable:
-
-1. Drive the overlay's visibility from `mm.matchmaking.status` **re-read every frame in your render
-   loop** (it's a view you poll, not an event): `status === 'waiting'` → overlay visible with the
-   `players.length / minPlayers` count; `status === 'playing'` → overlay GONE, game visible. Do NOT
-   gate dismissal on `matchStart`/`matchEnded` (they NEVER fire for `open`), on a one-time status
-   read at connect, or on a host-written `shared` "go" signal as the *only* path — if that signal
-   is never written (host bug, host left), every player is stuck on the waiting screen forever.
-   A ready-check or countdown is fine as an ADDITION layered on top of `status === 'playing'`
-   (host writes it to `shared` so it survives host migration), never as a replacement for it.
-2. **Verify it for real before calling multiplayer done**: on the preview link (see "Testing
-   multiplayer"), open it in two browser windows (one regular + one incognito, so they're two
-   players), join with both, and watch the waiting
-   screen disappear on BOTH the moment the count reaches `minPlayers` (with
-   `minPlayers: 2, maxPlayers: 2`: the instant the second player joins). If it doesn't close on
-   both, the lobby is broken — fix it; do not ship a waiting room you haven't watched close.
-
-**While `status === 'searching'` the roster is EMPTY — count the queue, not `players`.** The
-matchmaker never parks a searcher in a room as a non-player: until it can seat you, you are in the
-search line and in no room at all, so `players`/`connectedPlayers` are `[]`. A pre-match screen that
-counts `players.length` there shows `0 / 2` to a player who is sitting in it, forever. Use the queue
-count — it includes YOU, so it reads `1 / 2` when you are alone — and switch to the roster the moment
-you are seated:
-
-```ts
-const v = mm.matchmaking;
-const lobbyCount = v.status === "searching" ? Math.max(v.queue.size, 1) : v.connectedPlayers.length;
-```
-
-This bites hardest in the commonest co-op shape: with `minPlayers === maxPlayers` (e.g. `2` and `2`)
-the room can only be formed once BOTH searchers exist, so you go `searching → playing` and **never
-pass through `waiting`** — the screen the player stares at is the SEARCHING screen, and driving it
-off `players.length` pins it at `0 / target` for its entire life.
-
-Two ways to present the lobby:
-
-- **A) UI lobby (Dota-style).** While `status === 'waiting'`, render an OVERLAY from `mm.matchmaking`
-  instead of the game: the roster + count (`players.length` / target), each player's name, and
-  optionally a per-player "ready" toggle (store it in per-player state or a `shared` map). When
-  `status` flips to `'playing'`, swap the overlay for the game — the host may additionally write
-  e.g. `session.shared.set('phase', { started: true, at: <ts> })` to sequence a countdown or
-  ready-gate on top, but the overlay's dismissal must not depend on it alone.
-- **B) Physical lobby (Roblox-style).** The waiting area IS a 3D scene in the SAME room: render a lobby
-  and let players walk their avatars around, syncing position with `me.set` on the tick exactly like
-  in-game. Show a "N / target — starting soon" sign driven by `players.length`. A "ready pad" is a nice
-  affordance: players stand on it, the host counts how many are on it (from their synced positions) and
-  writes a `shared` countdown; when it elapses everyone moves their camera/scene into the match — no
-  re-matchmaking, they're already together. The transition into the match still keys off
-  `status === 'playing'` first; the pad only sequences what happens after quorum.
-
-#### Quorum loss after start is game-owned — enforce it independently
-
-For `open`, `status` reaches `playing` once and NEVER regresses to `waiting`.
-If live connectivity later falls below `minPlayers`, the relay preserves the
-dropped player's seat during reconnection grace but deliberately leaves the
-gameplay decision to you. `players` is the seated roster;
-`connectedPlayers` / `session.activePlayers` excludes grace-window ghosts:
-
-```ts
-const MIN_PLAYERS = 2;
-function enforceQuorum() {
-  syncSession();
-  const connected = mm.session?.activePlayers.size ?? 0;
-  if (phase === "playing" && connected < MIN_PLAYERS) {
-    setPhase("lobby");
-    showNotice("Opponent disconnected — waiting for them or a replacement…");
-  }
-}
-setInterval(enforceQuorum, 250); // independent of a throttled/failed render loop
-```
-
-Run the same check in the render/network pump for immediate response. The
-250 ms watchdog is the backstop: no code path may leave a quorum-required game
-in `playing` below its connected minimum. A shared-world `connect()` game may
-intentionally continue solo; choose that explicitly rather than inheriting this
-match rule.
 
 **Private lobbies** (for `preset: 'private'`) don't use `matchmake()` — a host makes an invite code
 and friends join it; the lobby is persistent (rounds replay, nobody is evicted):
@@ -559,26 +308,8 @@ catch it and show the menu, and keep the typed code as the second way in.
 ## Connect
 
 Pick your own per-player state shape (any JSON). `room` is the **project slug**
-(printed by `genex init`) — same id = same room, different ids are fully isolated.
+— same id = same room, different ids are fully isolated.
 
-### WHEN to call `connect()` — make the screen tell the truth (MANDATORY)
-
-`connect()` immediately joins the shared world and makes the player present. Two lifecycles are
-valid; pick exactly one:
-
-- **Always-online world:** there is no Play/Online commitment screen. After identity is ready,
-  connect and spawn immediately. This is correct for a drop-in social space or an ongoing sumo ring
-  where loading the game already means joining it. A lightweight loading/reconnecting overlay is
-  honest; a Play button that appears to delay entry is not.
-- **Menu before online:** if the game shows **Play**, **Play Online**, **Join Arena**, or offers
-  Local/Bots, that click is the commitment point. Boot the menu/offline world with no relay contact,
-  call `connect()` only inside the online handler, and spawn the network player only after it
-  resolves. Local/Bots never connect. Leaving online calls `room.leave()`, disables terminal rejoin,
-  removes the online avatar, and returns to the pre-online state.
-
-Never auto-connect/spawn behind a title menu and then ask the player to press Play. The API is not
-the bug in that case; the lifecycle is. Likewise, do not add a fake queue/finding screen to an
-always-online `connect()` world — it has no match formation to report.
 
 **Joining requires the SDK's player identity — the relay rejects tokenless
 joins, but accepts guests** (accountless players named like `Guest-1234`).
@@ -603,8 +334,7 @@ let room = await connect<State>({
 
 **Capacity:** 64 players is the relay's **mechanical seat cap**, not a proven high-motion physics
 envelope. Object-heavy rooms amplify fanout; measure the exact game at 8/16/32/64 before promising a
-supported count. Above the cap the relay opens another room for the same game. If the game needs one
-seated competitive world, use matchmaking rather than one large `connect()` room.
+supported count. Above the cap the relay opens another room for the same game.
 
 ## Disconnects: transient reconnect is built in; terminal rejoin is yours
 
@@ -612,56 +342,24 @@ The SDK auto-reconnects after a network blip or brief signal loss: the relay hol
 grace window (~30 s). A short blip keeps the same session id, ownership, and host. If a disconnected
 host exceeds the shorter simulation lease, an active peer takes authority once; the old host can
 return to its seat but is demoted. Long reconnects rebase remote smoothing rather than replaying a
-whole-map catch-up streak. Your UI still reflects connection state:
+whole-map catch-up streak. The session reports each step:
 
 ```ts
 let intentionalLeave = false;
-let rejoining = false;
 
 function wireRoom(live: Session<State>) {
-  live.on("reconnecting", ({ attempt }) => showOverlay(`Reconnecting… (${attempt})`));
-  live.on("reconnected", () => hideOverlay());
+  live.on("reconnecting", ({ attempt }) => onConnection("reconnecting", attempt)); // inside the grace window
+  live.on("reconnected", () => onConnection("live")); // same session id, ownership and host
   live.on("disconnect", (code) => {
     // 4409 means this player deliberately opened the game elsewhere. Rejoining
     // here would evict the new tab, which would rejoin and evict this one forever.
-    if (code === 4409) {
-      flushSaves();
-      showMenu("This game is open in another tab or device.");
-      return;
-    }
-    if (!intentionalLeave) void rejoinShared();
+    if (code === 4409) return flushSaves();
+    // Any other code: the seat is gone, and only a new connect() rejoins.
+    if (!intentionalLeave) onConnection("lost");
   });
   live.on("server:restart", () => flushSaves());
 }
 wireRoom(room);
-
-async function rejoinShared() {
-  if (rejoining) return;
-  rejoining = true;
-  showOverlay("Connection lost — rejoining…");
-  try {
-    let delay = 1_000;
-    while (!intentionalLeave) {
-      try {
-        const { user } = await waitForPlayer();
-        room = await connect<State>({
-          urls: getColyseusUrls(),
-          room: GENEX.slug,
-          name: user.name,
-          auth: () => getColyseusAuth(), // fresh on EVERY attempt
-        });
-        wireRoom(room); // installs this same connection/disconnect wiring again
-        hideOverlay();
-        return;
-      } catch {
-        await new Promise((resolve) => setTimeout(resolve, delay));
-        delay = Math.min(delay * 2, 10_000);
-      }
-    }
-  } finally {
-    rejoining = false;
-  }
-}
 
 function leaveShared() {
   intentionalLeave = true;
@@ -669,8 +367,7 @@ function leaveShared() {
 }
 ```
 
-Keep your render loop running during `reconnecting` — remote players freeze briefly and then
-glide on; don't tear the scene down. A deliberate `room.leave()` never auto-reconnects.
+During `reconnecting`, remote players freeze briefly and then glide on. A deliberate `room.leave()` never auto-reconnects.
 
 **One seat per player (enforced server-side):** joining the same game again — a second tab,
 another device, or a page reload — instantly evicts the previous session (it gets
@@ -709,21 +406,7 @@ fights (many writers). A ball on `objects` glides and has one owner. That's the 
   `{ id, name, avatarUrl, connected, state, stateRaw }`: `state` is auto-smoothed (remotes) / live (you);
   `stateRaw` is the raw latest (hit-tests, discrete values). A reconnect-grace seat remains in this
   map with `connected: false`. `avatarUrl` is that player's verified VRM pick (server-set, `''`
-  when unknown) — render each remote with
-  `loadRemotePlayerCharacter({ avatarUrl: p.avatarUrl })` (the vendored controller kit's
-  loader) and `remote.dispose()` on leave; never publish avatar URLs through `me.set`.
-  That one call carries the whole rule: **in a game with its own generated character,
-  every remote wears it** — `p.avatarUrl` is used only when this game has no generated
-  character, which is exactly when per-player looks are the right answer. It shares one
-  parsed base across remotes (N remotes ≈ 1 body of geometry/textures instead of a parse
-  per player) and clips are retargeted once on that base. **A remote player's body is
-  NEVER hand-built primitives** (no capsule + cone "person" — the single most common
-  shipped co-op defect). This applies with full force to
-  first-person games — the local player may be invisible to themselves, but every
-  remote hunter/partner is a full character on screen. On phone tiers, animate and fully draw only the
-  nearest `tier.remoteAvatarCap` remotes (`$genex-threejs-adaptive-quality`) — freeze the
-  mixer and billboard or hide the rest; a room allows up to 64 players and 64 live avatars
-  is a real phone memory kill on its own.
+  when unknown); never publish avatar URLs through `me.set`.
 - **Build each remote's body exactly ONCE — reserve the id BEFORE the first `await`.** You read
   `room.players` every frame, but loading a body is async and slow (seconds). If the only guard is
   the map you fill *after* the await, every frame in that window passes it: you spawn one body per
@@ -812,10 +495,8 @@ fights (many writers). A ball on `objects` glides and has one owner. That's the 
   The relay stamps `m.from`/`m.name` from the verified session (nobody can post under
   another player's name), sanitizes `m.text`, caps it at 500 chars, and replays the last
   ~50 lines so a late joiner sees the conversation. **Your own lines echo back to you** —
-  render only what arrives in `on`, or every message appears twice. UI:
-  `npx genex controller chat`, and you MUST pass its `onTypingChange` (or check
-  `chat.isTyping`) so the game stops reading the keyboard while someone types — otherwise
-  typing "was that a wall?" walks and jumps the player. Render `m.text` with `textContent`,
+  render only what arrives in `on`, or every message appears twice. `chat.isTyping`
+  says whether this player is typing a line. Render `m.text` with `textContent`,
   never `innerHTML`. See [references/realtime-patterns.md](references/realtime-patterns.md).
 - `room.voice` — mesh voice chat: `voice.join(opts)` / `leave()` / `setMicEnabled(on)` /
   `mute(id)` / `participants` / `active` / `speaking`, plus `room.on('voice', …)` and
@@ -837,8 +518,7 @@ fights (many writers). A ball on `objects` glides and has one owner. That's the 
   `getShell()` from `@genex-ai/embed-sdk` is `"app"`. The declaration rule, and the
   `package.json` line for a call the CLI cannot see, are in `$genex-threejs-embed-auth`
   (`references/shells.md`).
-  For a 3D game use `npx genex controller voice` (proximity audio + push-to-talk); it joins
-  with `{ spatial: true }` and drives a `THREE.PositionalAudio` per speaker. **TURN is automatic
+  `join({ spatial: true })` gives positional audio per speaker. **TURN is automatic
   — do not pass `iceServers`**: `join()` fetches short-lived relay credentials from the
   platform before opening any peer connection, which is what lets the ~15% of players behind
   symmetric NAT or carrier CGNAT be heard at all (in a mesh they fail every leg, so they
@@ -846,7 +526,6 @@ fights (many writers). A ball on `objects` glides and has one owner. That's the 
   Passing `iceServers` overrides this and is only for running your own TURN.
 - `room.inputs.send(payload)` / `room.inputs.on((fromId, payload) => …)` — the host-routed
   input channel for host-authoritative physics: anyone sends, ONLY the current host receives.
-  See [references/host-physics.md](references/host-physics.md).
 - `room.onHostTick(hz, cb)` — fixed simulation only while connected and host. It pauses during
   reconnect, resumes only if still host, and stops on demotion, deliberate leave, or terminal
   disconnect. Returns a disposer for removing the subsystem earlier.
@@ -864,15 +543,12 @@ than silently disappearing. The budget math that matters:
   owns several parked vehicles/props must NOT `objects.set` each of them at full tick rate —
   publish an object **when it changed**, plus a low-rate keepalive (~1–2 Hz) so late joiners
   converge. Unchanged pose ⇒ no message.
-- **Per-projectile objects need a hard cap + confirmed removal.** Each live projectile at 30 Hz
-  is 30/s of bulk budget, and every spawned id counts against the room's 128-object cap forever
-  unless removed. Cap live projectiles per player (2–3), remove the OLDEST via
-  `objects.removeConfirmed` before spawning past the cap, and `removeConfirmed` on impact/expiry
-  — uncapped spawns are how a shooter silently kills its own object budget.
+- **Per-projectile objects:** each live projectile at 30 Hz is 30/s of bulk budget, and every
+  spawned id counts against the room's 128-object cap until `objects.removeConfirmed` removes it.
 - If you see the drop warning, count each lane separately and also leave headroom under the global
   ceiling. Reserved capacity protects presence and control, but it is not permission to spam bulk.
 
-## The loop you must build (input → local → tick → render)
+## The loop (input → local → tick → render)
 
 1. **Input mutates a local object only** (`me.x += …`). Never network on keypress.
 2. **A fixed tick publishes it:** `setInterval(() => room.me.set(me), 66)` (~15 Hz). If you own an
@@ -883,11 +559,6 @@ than silently disappearing. The budget math that matters:
    `players.get(id).state` directly (already smoothed); every object from `objects.get(id).state`.
 4. **Create-or-reuse one mesh per id**; remove a player's mesh on `'leave'`.
 
-> **Physics character?** If your player is the `genex controller character` capsule, do NOT
-> hand-build the state from the body position — publish `room.me.set(character.netState())` and
-> apply remotes with `applyNetState(mesh, players.get(id).state)`. The controller's raw `currPos.y`
-> bobs on its float-suspension spring; `netState()` publishes a settled ground Y so a standing remote
-> doesn't bob. See `$genex-threejs-character-controller` → "Multiplayer rule".
 
 ## Rotation: sync a quaternion, not an angle
 
@@ -903,27 +574,16 @@ is the newest value with no smoothing. **Draw** from `state`; **test** against `
 detection, "am I close enough to kick", pickups, and any discrete number (hp, ammo, animation id,
 a 0/1 flag) that must not arrive fractional. This holds for both players and objects.
 
-**HARD RULE — `state` is for RENDER ONLY.** Every GAMEPLAY read — hit tests, deflection/catch/
-return windows, physics seeding after adoption, distance and reach checks — uses `stateRaw`.
-The smoothed view is ~100–150 ms in the past; at projectile or ball speeds the REAL object has
-already passed where the ghost still is. Two field-verified failures caused by breaking this rule:
-- A pong-style game read the incoming ball via `state` for its deflection window — at top speed
-  the real ball crossed the paddle plane before the smoothed one arrived; returns were literally
-  impossible online while feeling fine in solo testing.
-- A dodgeball game aimed at opponents drawn from `state` — a strafing target's real position was
-  already elsewhere, so "direct hits" never registered damage.
-Corollary: **cap top speeds against the network, not just the physics** — an object's arena/table
-crossing time should stay above ~2× the smoothing delay (~0.25 s), or receivers are reacting to
-history no matter how correct the code is.
+The smoothed view is ~100–150 ms in the past: at projectile or ball speeds the real object has
+already passed where the smoothed one still is.
 
-**Packed animation-flag bitfields are the sneakiest violation.** Smoothing lerps EVERY numeric
+**Packed animation-flag bitfields.** Smoothing lerps EVERY numeric
 field — there is no integer exemption — and a lerped bitfield decodes to garbage: with
 `moving=1, running=2, grounded=8`, walking is `f=9` and running is `f=11`, and the interpolation
 passes through `10`, where `10 & moving === 0` — the sprinting opponent renders as *standing
 still*. Worse, the exponential ease approaches an increasing target from below, so truncation
 reads `target - 1` for the whole approach (~1.5 s median before RUN appears; at a vsync-locked
-frame rate it can stick one ULP below the target *forever*). A field-verified failure: a
-playtester swore he was running while his opponent's screen showed him walking — both were right.
+frame rate it can stick one ULP below the target *forever*).
 Always drive remote animation from `stateRaw`:
 
 ```js
@@ -955,101 +615,28 @@ if (ball) drawBall(ball.state);                       // smoothed for everyone, 
 
 **Keep contact validity alive until acceptance; do not consume one rejected rising edge forever.**
 Never claim every frame: maintain one pending request, then retry after the relay delay only while the
-contact remains valid. Keep object state flat. For Rapier pushables, install the shipped state machine
-with `genex controller networked-physics`; see
-[references/host-physics.md](references/host-physics.md).
+contact remains valid. Keep object state flat.
 
-**OWNERSHIP INVARIANT — a host-simulated object MUST be claimed before it publishes.**
 `objects.set()` / `objects.snap()` on an object you do not own are ignored; SDK ≥0.10.2 warns once
-per object/operation instead of failing silently.
-The field-verified symptom is unmistakable — *the object moves on the host's screen and sits
-frozen at spawn for everyone else* (each client falls back to whatever local body it has; only
-the host's is simulated). If the host simulates an object (a crate, an NPC, a puck), it must:
+per object/operation instead of failing silently. Host *election* and object *ownership* are
+separate systems: `onHostTick` firing does not mean the host owns anything, and
+`claimConfirmed(id, { authority: "host" })` answers `accepted` once it does.
 
-```ts
-let hostReady: Promise<boolean> | null = null;
-function ensureHostObjects(room: Session<S>) {
-  if (!room.isHost) return Promise.resolve(false);
-  if (hostReady) return hostReady;                    // one adoption flight, never per tick
-  hostReady = (async () => {
-    for (const id of HOST_OBJECT_IDS) {
-      const before = room.objects.get(id)?.stateRaw;  // last published truth, before claiming
-      const res = await room.objects.claimConfirmed(id, { authority: "host" });
-      if (!res.accepted) return false;
-      seedPhysicsFromRaw(id, before);                 // pose + velocity/cooldowns, never zero
-    }
-    return true;
-  })();
-  return hostReady;
-}
-
-room.on("host", () => { hostReady = null; void ensureHostObjects(room); });
-room.onHostTick(30, async () => {
-  if (!(await ensureHostObjects(room))) return;       // no step/publish before adoption
-  stepAndPublishHostPhysics();
-});
-```
-
-Do not assume `onHostTick` firing means you own anything — host *election* and object
-*ownership* are separate systems. Claim explicitly, check `accepted`, re-claim on migration, and
-do not step or publish until the whole host-owned set is ready.
-
-**RENDER SPLIT — the host draws its own authority, only NON-hosts read the wire.** Once the
-host owns the object and publishes, `objects.get(id).state` becomes defined on EVERY client
-including the host — and if the host now renders from that networked `state` instead of its
-own sim body, a subtle trap bites: a freshly-claimed object's smoothed `state` can briefly be
-a DEGENERATE transform (a zero/NaN quaternion, or a position mid-interpolation from origin),
-which renders the mesh to NaN and it vanishes ON EVERY SCREEN. Field-verified: enabling the
-claim above without this split made a crate invisible for everyone. The fix:
-
-```ts
-// Host renders its own authoritative sim; non-hosts render the published truth, GUARDED.
-const cs = room.isHost ? null : room.objects.get(id)?.state;
-const ok = cs && Number.isFinite(cs.x) && Number.isFinite(cs.y) && Number.isFinite(cs.z);
-if (ok) {
-  mesh.position.set(cs.x, cs.y, cs.z);
-  if (Array.isArray(cs.q) && cs.q.length === 4) {         // normalize — a bad sample must not vanish the mesh
-    const n = Math.hypot(cs.q[0], cs.q[1], cs.q[2], cs.q[3]);
-    if (n > 1e-3) mesh.quaternion.set(cs.q[0]/n, cs.q[1]/n, cs.q[2]/n, cs.q[3]/n);
-  }
-} else {
-  mesh.position.copy(localBodyPos); // host, offline, or non-host awaiting first valid sample
-}
-```
-Prefer syncing the MINIMAL transform a slide/roll needs (a puck on a plane is `{x,z}` + a
-constant y — no quaternion at all); every field you don't send is a field that can't arrive
-degenerate. The netcode-park reference does exactly this.
+Right after a claim, an object's smoothed `state` can briefly be a degenerate transform (a zero or
+NaN quaternion, or a position mid-interpolation from the origin) on every client, the host
+included.
 
 ## Host authority (scores, rounds, enemies)
 
-One client is the `host`. Let *only* the host write agreed state and simulate shared enemies, so
-there's a single source of truth. **But: a host is only the authority for objects it OWNS.**
+One client is the `host` (`room.isHost`). Being host gives no authority over objects: only an
+object's owner writes it.
 If another player owns/drives an object (their claim landed), the host renders it from the
 stream like everyone else — a host branch that pins "its" objects to a local pose without
 checking `owner`/`isMine` shows every other player's driving as a frozen object:
 
 ```ts
-if (room.isHost) room.shared.set("round", nextRound);   // only the host advances the round
+if (room.isHost) room.shared.set("round", nextRound);   // isHost: true on one client at a time
 room.on("host", (id) => {});                             // host migrated (someone left)
-```
-
-**Award points exactly once — even across a host migration.** A newly-elected host re-observes
-whatever condition the old host may already have scored (the goal state, the defeat event — they
-are still on the wire). Never bump a score from a re-observable condition alone: carry a
-**monotonic marker in the same `shared` write**, so the score and its dedupe commit atomically:
-
-```ts
-// One shared "scores" map holds both the tallies and reserved "__" marker rows.
-function awardOnce(scorerUid: string, name: string, marker: `__${string}`, seq: number) {
-  if (!room.isHost || !Number.isSafeInteger(seq)) return false;
-  const scores = { ...((room.shared.get("scores") ?? {}) as Record<string, { name: string; points: number }>) };
-  if ((scores[marker]?.points ?? -1) >= seq) return false;      // already awarded by SOME host
-  scores[scorerUid] = { name, points: (scores[scorerUid]?.points ?? 0) + 1 };
-  scores[marker] = { name: "", points: seq };                    // the marker rides the same write
-  room.shared.set("scores", scores);
-  return true;
-}
-// goals: seq = a goalEpoch you bump on each reset · kills: seq = the victim's `life` counter
 ```
 
 **Key scores by a STABLE identity, never the session id.** A session id dies on every reload —
@@ -1059,90 +646,8 @@ id — so key `scores`/colors/`isMe` by it. When an event only carries a session
 `room.players.get(sid)?.uid`. Never publish the account id (`user.id`) in player state yourself:
 every peer reads it.
 
-For host-simulated NPCs, the host claims and drives each enemy as an `object`; when the host
-leaves, its enemies are reassigned to the new host, which reads their `stateRaw` and keeps
-simulating. See the co-op recipe in [references/genre-recipes.md](references/genre-recipes.md).
-For PvP combat (hitscan, melee, projectiles, defeat/respawn) follow the shooter recipe there —
-its damage/defeat dedupe rules are what keep kills exactly-once under lag.
-
-### Pushable / contested physics — pick the tier
-
-Claim-on-touch is the default for any **ownable** body — a ball, a box, a prop, a pickup — even when
-players take turns bumping it: whoever touches it owns + simulates it with real Rapier physics, and
-since `@genex-ai/multiplayer` 0.8.4 the ownership handoff **glides** (a soft handoff) instead of
-teleporting. Give it a Rapier proxy that is `dynamic` while you own it (your character shoves it through
-the solver) and a `kinematicPosition` follower of the smoothed `state` when you don't.
-
-Reserve **host-authoritative** for a genuine *simultaneous* contest — two players pushing ONE crate
-*against each other*, sumo, tug-of-war — where "whoever touched last owns it" is the wrong model. There
-one neutral simulation (the host) runs the physics; everyone else sends **inputs**
-(`room.inputs.send({ push })`), which the relay routes to the host only; the host applies them on
-`room.onHostTick(...)` and publishes results via `objects` (smooth for everyone).
-
-Both patterns — the claim-on-touch Rapier proxy and the host-authoritative contest, plus surviving host
-migration and wiring the vendored controllers — are in [references/host-physics.md](references/host-physics.md).
-
-## Production supportability floor
-
-Every multiplayer build ships three small, token-free diagnostics:
-
-1. A `BUILD` string, bumped for every preview/publish, shown in a quiet
-   menu/lobby corner, printed once to the console, and exposed on a read-only
-   game debug object.
-2. A 250 ms status line containing only:
-   `build · seated/connected players · phase · host · matchmaking status · last transition/cause · last network error`.
-   Keep it unobtrusive and never include embed auth, URLs containing credentials,
-   player tokens, or arbitrary server payloads.
-3. The independent connected-quorum watchdog above for games that cannot play solo.
-
-These are production supportability, not a hidden test mode: a screenshot must
-identify the build and network state without changing game behavior.
-
-## Smoothness is felt, not seen — hand the feel to a human
-
-Lag and stutter are *motion over time*. A screenshot is one frozen instant, so **you cannot tell
-from any still capture whether movement feels smooth.** Don't try — it leads to blind tuning.
-
-1. **Trust the SDK's smoothing.** Draw `state` directly; don't add your own.
-2. **Verify it *runs*:** two clients, distinct meshes, both move, no console errors, each sees the
-   other (and the ball, if any). That's all a capture can prove. Local test mode (what the dev
-   server boots into — the embed-auth skill) can NOT do this: it mints no relay credential, so `connect()`
-   fails there by design and two local-test tabs never see each other — run the two-client check
-   on the preview link (see "Testing multiplayer"), and if multiplayer wasn't exercised, say
-   exactly that in your handoff instead of implying it was.
-3. **Then say plainly:** *"Multiplayer smoothness depends on your network and can only be felt by a
-   person — open the preview link in a normal and a private window, or send it to a friend, and
-   tell me how it feels."* Stop there.
-
-### When the human reports a problem, match the symptom (don't guess)
-
-- **"Everyone (including me) feels laggy / stuttery."** You're re-smoothing: you buffered `state`
-  and lerped it yourself. **Delete that** — draw `state` directly. Most common mistake.
-- **"My own avatar feels laggy."** You're rendering yourself from the network echo. Render yourself
-  from your local object instead.
-- **"Other players spin the wrong way when turning."** You synced a scalar `yaw`. Use a quaternion.
-- **"The ball stutters / jumps / two of it / fights."** It's on `shared`, or you re-smoothed it.
-  Put it on `objects` (claim on contact, owner simulates, everyone draws `state`).
-- **"The ball freezes when someone else takes it."** You're re-smoothing an object, or reading the
-  wrong owner — just draw `objects.get(id).state`; handoff continuity is handled for you.
-- **"The score/enemies desync or double up."** More than one writer. Gate writes on `room.isHost`.
-- **"Everything lags equally, even idle objects."** You're calling `me.set`/`objects.set` per
-  frame — move publishing to the fixed 10–20 Hz tick.
-
-## Config wiring (already done — do NOT hand-write URLs)
-
-`genex init` already wrote `src/genex.config.ts` — a static env-reader with
-production URL defaults (local-stack overrides live in `.env.development.local`,
-which applies in dev mode only and is never committed or shipped). Just import
-it; never hardcode a URL or edit the file:
-
-```ts
-import { GENEX } from "./genex.config";
-// GENEX.slug / GENEX.apiUrl / GENEX.dashboardOrigins
-```
-
-See the `genex-threejs-embed-auth` skill's "Config wiring" section for the full
-file layout.
+When the host leaves, the objects it owned are reassigned to the new host; their `stateRaw` holds
+the last published values.
 
 ## Persistent worlds (optional — survives restarts)
 
@@ -1183,70 +688,6 @@ see the embed-auth skill). Don't save every frame: debounce (~1/sec), and also f
 `document.visibilitychange === "hidden"` so the last edits survive the host closing the tab.
 Guests can't write it, but the relay elects a signed-in host whenever one is present, so
 host-driven saving works as long as ANY account is in the room.
-
-## Checklist
-
-- [ ] `npm i @genex-ai/multiplayer@^0.17.0` (the only range the relay accepts; per-game `p.uid`, automatic TURN, mesh voice, room text chat, connected presence, supplier auth, confirmed controls, snap epochs, reconnect-safe host ticks, unowned-write warnings, cross-region exact-relay overrides); config wired into the build.
-- [ ] The plan names one net model, the player-experience reason, start/quorum, late-join/backfill,
-      and below-quorum/end behavior. The agent inferred it unless the experience was genuinely ambiguous.
-- [ ] `reconnecting`/`reconnected`/`disconnect` render an overlay (don't tear the scene down).
-- [ ] `connect()` terminal `disconnect` starts a guarded backoff rejoin that reruns
-      `waitForPlayer()` and reads fresh auth on every attempt; deliberate leave stops it;
-      replacement code `4409` NEVER auto-rejoins.
-- [ ] `connect()` lifecycle is honest: an always-online world has no fake Play screen and may
-      connect/spawn after identity; if a Play/Online/Local/Bots menu exists, connect and spawn happen
-      only after the online click, Local/Bots stay offline, and leaving calls `room.leave()`.
-- [ ] Numbers rounded (~2 decimals) before `me.set`/`objects.set`.
-- [ ] Pushable/ownable objects (ball, box, prop) use claim-on-touch + a Rapier proxy (the soft handoff glides the handoff); only a genuine simultaneous tug-of-war (sumo) uses the host-authoritative pattern. See host-physics.md.
-- [ ] Irreversible actions wait for `claimConfirmed`; held contact retries after `retryAfterMs` while still valid.
-- [ ] Respawn/reset/vehicle-mode discontinuities use `me.snap`/`objects.snap`; ordinary motion uses `set`.
-- [ ] Idle/unchanged objects republish at ≤2 Hz keepalive, never every tick (message budget).
-- [ ] PvP combat follows the shooter recipe: attacks/defeats are `send` events with `seq`/`life`
-      dedupe keys, the victim applies its own damage, respawn publishes via `me.snap`, and
-      projectiles are hard-capped objects removed with `removeConfirmed`.
-- [ ] Host score writes are exactly-once (marker in the same `shared` write) and keyed by the
-      relay-stamped `p.uid`, never the session id.
-- [ ] Host renders objects OWNED BY OTHERS from the stream (authority follows ownership).
-- [ ] `connect()` runs AFTER `await waitForPlayer()` (never `waitForAuth()` — guests would
-      hang) and passes `auth: () => getColyseusAuth()` (the relay rejects tokenless joins —
-      see `genex-threejs-embed-auth`).
-- [ ] `room` is the **project slug**.
-- [ ] `me.set` on a fixed **10–20 Hz** tick; full object each time.
-- [ ] Skip yourself in `room.players` (`id === room.id`).
-- [ ] Remote players & objects drawn from `state` **directly** — no hand-rolled interpolation.
-- [ ] **You** (and objects you own) render from your local object, not the network echo.
-- [ ] Rotation synced as a quaternion `q`, not a scalar angle.
-- [ ] Hit-tests and discrete values read from `stateRaw`, not `state`.
-- [ ] A ball / shared NPC is on `objects` (claim on contact), never on `shared`.
-- [ ] `shared` scores/rounds and host-simulated enemies are written only by `room.isHost`.
-- [ ] Host-owned work waits for `room.host !== undefined`; no client-invented acting host.
-- [ ] `matchmake()` fires ONLY on the "Play Online" commit, never on page load / in boot code — the
-      menu runs an offline world with NO relay contact; "Bots"/"Local" never call it; leaving online
-      calls `mm.cancel()`.
-- [ ] `matchmake()` polls `mm.session` and rebinds when it changes after seating or re-seat;
-      function-form auth is used.
-- [ ] Waiting room (if any): shown only AFTER "Play Online" (seated) and while under `minPlayers`;
-      overlay driven by `mm.matchmaking.status` read every frame, gone the moment it flips to
-      `'playing'` — and you WATCHED it close in two browser windows at `minPlayers` (never gated on
-      `matchStart` or a host `shared` signal alone).
-- [ ] Every menu/lobby action button blurs before acting, and menu Enter/arrow handling runs only
-      in menu/lobby phases.
-- [ ] Multiplayer was exercised by two DISTINCT identities using real clicks and real key presses.
-      After clicking Play/Find Match, Space/Enter gameplay input does not repeat that menu action;
-      scripted `element.click()` is not evidence for this focus path.
-- [ ] For a quorum-required matchmade game: close one client mid-match, watch connected quorum
-      (`activePlayers` / `connectedPlayers`) leave `playing`, then join a new distinct client and
-      watch it re-seat. For a shared-world `connect()` game, verify leave/host migration according
-      to that game's design instead of imposing a lobby.
-- [ ] Build id is visible in menu/lobby, logged once, and exposed with token-free 250 ms network
-      telemetry; quorum-required games have the independent connected-quorum watchdog.
-- [ ] Team game: the HOST reconciles the balanced `id → team` map into `shared` (leavers dropped,
-      newcomers to the smallest team); every client READS its team from `shared` — never computed
-      per-client, never `mm.matchmaking.teams`, never a default for the unassigned — and you
-      WATCHED two browsers land on OPPOSITE teams.
-- [ ] Picked the matching recipe from [references/genre-recipes.md](references/genre-recipes.md).
-- [ ] Passed the [netcode feel gate](references/genex-netcode-feel-checklist.md), including the two-
-      identity real-input proof for the chosen model.
 
 ## Troubleshooting auth
 

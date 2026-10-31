@@ -15,20 +15,11 @@ import { Pending } from "../ui/Pending.tsx";
 import { t } from "../../shared/i18n.ts";
 import { SkeletonRows } from "../ui/Skeleton.tsx";
 
-/** What the auto-apply switch means, given whether the harness learns at all. */
-function applyWords(learning: boolean, selfImproving: boolean): string {
-  if (!learning) return t("Self-improvement is off in Harness, so there is nothing to apply.");
-  return selfImproving
-    ? t("Suggestions that pass testing apply without asking. You can undo any of them in Harness.")
-    : t("Harness asks before changing how it builds. You can undo any change in Harness.");
-}
-
 /** One of the section's settings, as its patch names it. */
-type HarnessPatch = { selfImproving?: boolean; buildersMax?: number; autoResume?: boolean };
+type HarnessPatch = { buildersMax?: number; autoResume?: boolean };
 
 /** Count a change of the section's settings (usage analytics): each key it changed, with its new value. */
 function trackHarnessChange(patch: HarnessPatch, failed: boolean): void {
-  if (patch.selfImproving !== undefined) trackSettingChanged(SettingKey.SelfImproving, patch.selfImproving, failed);
   if (patch.buildersMax !== undefined) trackSettingChanged(SettingKey.BuildersMax, patch.buildersMax, failed);
   if (patch.autoResume !== undefined) trackSettingChanged(SettingKey.AutoResume, patch.autoResume, failed);
 }
@@ -72,23 +63,10 @@ export function HarnessSection(): JSX.Element {
       </div>
     );
   const builders = settings.buildersMax ?? DEFAULT_BUILDERS;
-  const { learning, selfImproving } = settings;
   const autoResume = settings.autoResume !== false;
   return (
     <div data-harness-settings className="appearance-section">
       <section className="appearance-theme settings-rows">
-        <div className="appearance-row">
-          <label htmlFor="harness-self-improving" className="flex min-w-0 flex-col">
-            <span className="text-ink">{t("Apply suggestions automatically")}</span>
-            <span className="text-ink-3">{applyWords(learning, selfImproving)}</span>
-          </label>
-          <Switch
-            id="harness-self-improving"
-            checked={selfImproving}
-            disabled={busy || !learning}
-            onCheckedChange={(next) => void change({ selfImproving: next })}
-          />
-        </div>
         <div className="appearance-row">
           <span className="flex min-w-0 flex-col">
             <span id="harness-builders" className="text-ink">

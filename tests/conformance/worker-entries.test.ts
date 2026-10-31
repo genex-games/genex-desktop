@@ -230,10 +230,12 @@ it("a worker record's fields are read only from their own words: a hostile one r
 });
 
 it("the line is never folded into the activity row", () => {
+  // A run narrates its start only when it names a reference, so these two do (a run that names none says nothing).
+  const reference = { name: "Dirt 5", kind: "direction" };
   const entries = toEntries([
-    custom(1, CustomEvent.RunStarted, { runId: RUN }),
+    custom(1, CustomEvent.RunStarted, { runId: RUN, reference }),
     started(2, "pool.w1", "Study the web game", inTurn, { isolation: "read" }),
-    custom(3, CustomEvent.RunStarted, { runId: "r-next" }),
+    custom(3, CustomEvent.RunStarted, { runId: "r-next", reference }),
     finished(4, "pool.w1", "Study the web game", inTurn, { state: "done" }),
   ]);
   const folded = entries.flatMap((entry) => (entry.kind === EntryKind.Activity ? entry.rows.map((r) => r.text) : []));

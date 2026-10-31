@@ -48,7 +48,7 @@ export interface PreviewLease {
 export interface PreviewPoolOptions {
   live: PreviewPort;
   /** Absent = this build has no headless capability; `acquire` then refuses loudly. */
-  createHeadless?: (options?: { purpose?: "optimization" }) => Promise<PreviewPort>;
+  createHeadless?: () => Promise<PreviewPort>;
   /** Max concurrent headless leases (the live view is not counted). */
   max?: number;
 }
@@ -68,7 +68,7 @@ export const DEFAULT_POOL_MAX = DEFAULT_BUILDERS + LEAD_WINDOWS;
 
 export class PreviewPool {
   readonly #live: PreviewPort;
-  readonly #createHeadless: ((options?: { purpose?: "optimization" }) => Promise<PreviewPort>) | undefined;
+  readonly #createHeadless: (() => Promise<PreviewPort>) | undefined;
   #max: number;
   /** Hidden windows held, opening or still closing: what the ceiling (and the overflow past it) counts. */
   #reserved = 0;
@@ -123,7 +123,6 @@ export class PreviewPool {
    */
   async acquire(options: {
     label: string;
-    purpose?: "optimization";
     owner?: string;
     overflow?: boolean;
     signal?: AbortSignal;
@@ -138,7 +137,7 @@ export class PreviewPool {
     if (options.overflow) await this.#overflowRoom(options.signal);
     else this.#reserved++;
     let port: PreviewPort;
-    const creation = Promise.resolve().then(() => create({ purpose: options.purpose }));
+    const creation = Promise.resolve().then(() => create());
     this.#creating.add(creation);
     try {
       port = await creation;

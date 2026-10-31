@@ -30,7 +30,7 @@ export function gameViewPreferences<S>(gameSession: S, offscreen: boolean) {
     // Unattended runs must keep simulating while the window is occluded or in the background.
     backgroundThrottling: false,
     // Nobody clicks a hidden preview: an AudioContext must start without a gesture, or the
-    // audio probes (`__studio.audio()`) measure silence forever.
+    // audio probes (the studio's own audio reads) measure silence forever.
     autoplayPolicy: "no-user-gesture-required" as const,
     disableBlinkFeatures: GAME_DISABLED_BLINK_FEATURES.join(","),
   };
