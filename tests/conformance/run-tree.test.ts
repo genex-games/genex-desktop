@@ -4,6 +4,7 @@
  * each worker reads in plain words, and a graph with no worker and no job keeps today's layout.
  */
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import { seedBuildGraph } from "../../src/main/dev/fixture-build-graph.ts";
 import { seedLeadGraph } from "../../src/main/dev/fixture-lead-graph.ts";
@@ -26,6 +27,7 @@ import {
   jobsTileStatus,
   LeadFace,
   leadFace,
+  leadRest,
   readingNodes,
   readingOrder,
 } from "../../src/renderer/run-tree.ts";
@@ -126,6 +128,10 @@ function fold(events: EventEnvelope[], key?: string) {
   if (summary) graph.summary = summary;
   return { graph, summary, rows: partRows(graph, summary) };
 }
+
+/** A trimmed run's log in `fixtures/`. */
+const readLog = (name: string): EventEnvelope[] =>
+  JSON.parse(readFileSync(new URL(`../fixtures/${name}`, import.meta.url), "utf8")) as EventEnvelope[];
 
 /** Every drawn box but the row labels. */
 const boxes = (rects: Record<string, { x: number; y: number; w: number; h: number }>) =>
@@ -430,6 +436,18 @@ describe("the lead says what it is doing", () => {
       ["finished", LeadFace.Done],
       ["failed", LeadFace.Stopped],
       ["cancelled", LeadFace.Stopped],
+    ]);
+  });
+
+  it("done or paused, the lead wears the run's last save point; at work, waiting or stopped, nothing of its own", () => {
+    const { rows } = fold(readLog("lead-in-place-run.json"));
+    const rests = Object.values(LeadFace).map((face) => [face, leadRest(rows, face)?.save.id ?? null]);
+    assert.deepEqual(rests, [
+      [LeadFace.Working, null],
+      [LeadFace.Waiting, null],
+      [LeadFace.Paused, "step:lead:11"],
+      [LeadFace.Done, "step:lead:11"],
+      [LeadFace.Stopped, null],
     ]);
   });
 

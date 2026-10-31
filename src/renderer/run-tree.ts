@@ -25,11 +25,13 @@ import {
 import type { JobInfo } from "./run-graph-workers.ts";
 import {
   isWorkerAtWork,
+  lastSavePoint,
   layoutSteps,
   leadWorking,
   type PartRow,
   resultGate,
   runExecution,
+  type Step,
   type StepsLayout,
   Tone,
 } from "./run-steps.ts";
@@ -125,6 +127,22 @@ export function leadFace(graph: RunGraph, summary: RunSummary | null, rows: Part
   if (execution !== ExecutionStatus.Running) return CLOSED_FACE[execution] ?? LeadFace.Done;
   const waits = rows.some(isWorkerAtWork) && !rows.some(isLeadAtWork);
   return waits ? LeadFace.Waiting : LeadFace.Working;
+}
+
+/** The lead's faces whose work stands where they left it: done, or paused with the Loop. */
+const AT_REST: ReadonlySet<LeadFace> = new Set([LeadFace.Done, LeadFace.Paused]);
+
+/** What a lead at rest wears: the run's last save point, whose card picks its picture. */
+export type LeadRest = { save: Step };
+
+/**
+ * What the lead wears once it is done or paused: its work is where the run's last save point left
+ * it. Null while it works, waits or after a stop, and in a run without one.
+ */
+export function leadRest(rows: PartRow[], face: LeadFace): LeadRest | null {
+  if (!AT_REST.has(face)) return null;
+  const save = lastSavePoint(rows);
+  return save ? { save } : null;
 }
 
 /** Whole minutes a job has run by `now`, 0 when its start is unknown or ahead of the clock. */
