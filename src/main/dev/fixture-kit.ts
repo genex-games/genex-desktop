@@ -57,7 +57,8 @@ export const FixtureName = {
   ChatWorkers: "chat-workers",
   /**
    * A Loop still going whose integration head grew through four builds (a sound-only merge, a
-   * repainted sign, a blank one), twelve workers off them, and deliveries only in its build.
+   * repainted sign, a blank one), twelve workers off them, and deliveries only in its build; before
+   * it, a finished Loop of two pictured builds and no save points.
    */
   BuildTimeline: "build-timeline",
   /** The finish check on the Builds graph and in the chat: four Loops, one in each of its looks. */

@@ -25,7 +25,14 @@ import { runIdOf } from "../../run-graph.ts";
 import type { JobInfo } from "../../run-graph-workers.ts";
 import { AssetCardState, BLENDER_SOURCE } from "../../run-graph-assets.ts";
 import { askedRest, isLiveStep, type ResultStatus, STATE_TONE, type Step, StepState, Tone } from "../../run-steps.ts";
-import { FinishLook, finishCheckFace, finishCheckLook, jobsTileStatus, LeadFace } from "../../run-tree.ts";
+import {
+  FinishLook,
+  finishCheckFace,
+  finishCheckLook,
+  jobsTileStatus,
+  LeadFace,
+  type LeadRest,
+} from "../../run-tree.ts";
 import { useStill } from "../../stills.ts";
 import { Icon, type IconName } from "../../ui/icons.tsx";
 import { ASSET_THUMB_PX, assetsStatus, blenderRender, firstImage, isMaking } from "../inspector/asset-jobs.ts";
@@ -751,9 +758,6 @@ const LEAD_LOOK: Record<LeadFace, { variant: Variant; fill: Fill; glyph: StepSta
   [LeadFace.Done]: { variant: Variant.Normal, fill: Fill.Flat, glyph: StepState.InBuild },
 };
 
-/** The lead's faces that wear the run's last save point: its work is where that save point left it. */
-const SHOWS_LAST_SAVE: ReadonlySet<LeadFace> = new Set([LeadFace.Done, LeadFace.Paused]);
-
 /**
  * The lead: while it works itself, its own screen when it has shown one. In a tree it stands for
  * the whole run and says what it is doing: waiting for a worker, paused, done or stopped.
@@ -762,22 +766,24 @@ export function LeadNode({
   rect,
   frame,
   face = LeadFace.Working,
-  lastSave = null,
+  rest = null,
   selected,
   onSelect,
 }: {
   rect: Rect;
   frame: AgentScreenFrame | null;
   face?: LeadFace;
-  /** The run's last save point: its picture is the lead's once the lead is done or paused. */
-  lastSave?: Step | null;
+  /** What the lead wears once it is done or paused (`leadRest`). */
+  rest?: LeadRest | null;
   selected: boolean;
   onSelect: () => void;
 }): JSX.Element {
   // Only the lead at work shows its screen; waiting, it is the workers' screens that move.
   const shown = face === LeadFace.Working ? frame : null;
-  const saved = useSavePointShot(lastSave?.shown ?? null, lastSave?.earlier);
-  const settled = SHOWS_LAST_SAVE.has(face) && saved ? { run: saved.path, maxPx: LEAD_PICTURE_PX } : null;
+  const save = rest && "save" in rest ? rest.save : null;
+  const saved = useSavePointShot(save?.shown ?? null, save?.earlier);
+  const restPath = rest && "build" in rest ? rest.build : (saved?.path ?? null);
+  const settled = restPath ? { run: restPath, maxPx: LEAD_PICTURE_PX } : null;
   const screen = useFrameSrc(shown);
   const savedSrc = useStill(settled);
   const src = screen ?? savedSrc;

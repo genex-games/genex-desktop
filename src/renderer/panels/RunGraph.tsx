@@ -25,7 +25,6 @@ import {
   Gate,
   type GatePoint,
   isJudgedTry,
-  lastSavePoint,
   resultStatus,
   rowMeta,
   START_WORDS,
@@ -56,6 +55,7 @@ import {
   StepNode,
 } from "./run-graph/nodes.tsx";
 import { foldId } from "../run-graph-builds.ts";
+import { leadRest } from "../run-tree.ts";
 import { useBuildsModel, useNow, useRunStills } from "./run-graph/use-builds-model.ts";
 import { GLIDE_MS, useGraphCamera } from "./run-graph/use-graph-camera.ts";
 import { Inspector, Lightbox, type LightItem, type Reply } from "./RunInspector.tsx";
@@ -661,7 +661,10 @@ const GraphNodes = memo(function GraphNodes({
   onSelect: (id: string) => void;
 }): JSX.Element {
   const { graph, layout, leadNode, finishCheck } = model;
-  const lastSave = useMemo(() => lastSavePoint(model.rows), [model.rows]);
+  const rest = useMemo(
+    () => (model.face ? leadRest(model.graph, model.rows, model.face) : null),
+    [model.graph, model.rows, model.face],
+  );
   const jobsRect = layout.rects[GraphSelection.Jobs];
   const finishRect = layout.rects[GraphSelection.FinishCheck];
   return (
@@ -718,7 +721,7 @@ const GraphNodes = memo(function GraphNodes({
           rect={layout.rects.lead}
           frame={leadFrame}
           face={model.face ?? undefined}
-          lastSave={lastSave}
+          rest={rest}
           selected={selected === GraphSelection.Lead}
           onSelect={() => onSelect(GraphSelection.Lead)}
         />

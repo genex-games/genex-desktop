@@ -4,6 +4,7 @@
  * each worker reads in plain words, and a graph with no worker and no job keeps today's layout.
  */
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import { seedBuildGraph } from "../../src/main/dev/fixture-build-graph.ts";
 import { seedLeadGraph } from "../../src/main/dev/fixture-lead-graph.ts";
@@ -12,6 +13,7 @@ import type { JobInfo } from "../../src/renderer/run-graph-workers.ts";
 import {
   layoutSteps,
   leadWorking,
+  PictureSource,
   partRows,
   resultGate,
   STEPS,
@@ -26,6 +28,8 @@ import {
   jobsTileStatus,
   LeadFace,
   leadFace,
+  type LeadRest,
+  leadRest,
   readingNodes,
   readingOrder,
 } from "../../src/renderer/run-tree.ts";
@@ -126,6 +130,13 @@ function fold(events: EventEnvelope[], key?: string) {
   if (summary) graph.summary = summary;
   return { graph, summary, rows: partRows(graph, summary) };
 }
+
+/** The save point a resting lead wears, by its id. */
+const savedAt = (rest: LeadRest | null): string | null => (rest && "save" in rest ? rest.save.id : null);
+
+/** A trimmed run's log in `fixtures/`. */
+const readLog = (name: string): EventEnvelope[] =>
+  JSON.parse(readFileSync(new URL(`../fixtures/${name}`, import.meta.url), "utf8")) as EventEnvelope[];
 
 /** Every drawn box but the row labels. */
 const boxes = (rects: Record<string, { x: number; y: number; w: number; h: number }>) =>
@@ -431,6 +442,39 @@ describe("the lead says what it is doing", () => {
       ["failed", LeadFace.Stopped],
       ["cancelled", LeadFace.Stopped],
     ]);
+  });
+
+  it("done or paused, the lead wears the run's last save point; at work, waiting or stopped, nothing of its own", () => {
+    const { graph, rows } = fold(readLog("lead-in-place-run.json"));
+    const rests = Object.values(LeadFace).map((face) => [face, savedAt(leadRest(graph, rows, face))]);
+    assert.deepEqual(rests, [
+      [LeadFace.Working, null],
+      [LeadFace.Waiting, null],
+      [LeadFace.Paused, "step:lead:11"],
+      [LeadFace.Done, "step:lead:11"],
+      [LeadFace.Stopped, null],
+    ]);
+  });
+
+  it("done in a Loop without save points, the lead wears its newest build's screenshot", () => {
+    // Two turns of one Loop: the first's checks were recorded before checks named their pictures.
+    const { graph, summary, rows } = fold(readLog("loop-two-turns-run.json"));
+    const face = leadFace(graph, summary, rows);
+    assert.equal(face, LeadFace.Done);
+    assert.deepEqual(leadRest(graph, rows, face), { build: "/runs/run_mvv2cixs406k/director/finish_d3f19a7f4e.jpg" });
+    assert.equal(leadRest(graph, rows, LeadFace.Stopped), null, "a stopped lead's work is not where its build is");
+    const pictures = rows.map((row) => [row.facet.title, row.steps[0]?.picture ?? null]);
+    assert.deepEqual(
+      pictures,
+      [
+        ["Boat sound effects", null],
+        [
+          "Rock explosion sound",
+          { source: PictureSource.Build, path: "/runs/run_mvv2cixs406k/director/merge_w2_d3f19a7f4e.jpg" },
+        ],
+      ],
+      "a worker whose merge check named no picture (an older record) wears none",
+    );
   });
 
   it("says how many workers are on it while they work", () => {

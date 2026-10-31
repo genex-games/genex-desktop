@@ -6,7 +6,8 @@ import { useEffect, useState, type JSX } from "react";
 import { trackSettingChanged } from "../analytics/workspace-track.ts";
 import { SettingKey } from "../analytics/workspace-vocabulary.ts";
 import type { StudioSettingsView } from "../../shared/studio-api.ts";
-import { DEFAULT_BUILDERS, MAX_BUILDERS } from "../../shared/builders.ts";
+import { DEFAULT_BUILDERS } from "../../shared/builders.ts";
+import { MAX_WORKERS_AT_ONCE } from "../../shared/workers.ts";
 import { Button } from "../ui/Button.tsx";
 import { Switch } from "../ui/switch.tsx";
 import { DiagnosticsRow } from "./DiagnosticsRow.tsx";
@@ -22,6 +23,35 @@ type HarnessPatch = { buildersMax?: number; autoResume?: boolean };
 function trackHarnessChange(patch: HarnessPatch, failed: boolean): void {
   if (patch.buildersMax !== undefined) trackSettingChanged(SettingKey.BuildersMax, patch.buildersMax, failed);
   if (patch.autoResume !== undefined) trackSettingChanged(SettingKey.AutoResume, patch.autoResume, failed);
+}
+
+/** Maximum concurrent workers' stepper: one fewer down to one, one more up to the most a lead's pool runs at once. */
+export function WorkersStepper({
+  value,
+  busy,
+  onChange,
+}: {
+  value: number;
+  busy: boolean;
+  onChange: (next: number) => void;
+}): JSX.Element {
+  return (
+    <div role="group" aria-labelledby="harness-builders" className="appearance-value">
+      <Button aria-label={t("Fewer workers")} disabled={busy || value <= 1} onClick={() => onChange(value - 1)}>
+        −
+      </Button>
+      <output aria-live="polite" className="w-6 text-center">
+        {value}
+      </output>
+      <Button
+        aria-label={t("More workers")}
+        disabled={busy || value >= MAX_WORKERS_AT_ONCE}
+        onClick={() => onChange(value + 1)}
+      >
+        +
+      </Button>
+    </div>
+  );
 }
 
 export function HarnessSection(): JSX.Element {
@@ -74,25 +104,7 @@ export function HarnessSection(): JSX.Element {
             </span>
             <span className="text-ink-3">{t("Harness can run up to this many workers at the same time.")}</span>
           </span>
-          <div role="group" aria-labelledby="harness-builders" className="appearance-value">
-            <Button
-              aria-label={t("Fewer workers")}
-              disabled={busy || builders <= 1}
-              onClick={() => void change({ buildersMax: builders - 1 })}
-            >
-              −
-            </Button>
-            <output aria-live="polite" className="w-6 text-center">
-              {builders}
-            </output>
-            <Button
-              aria-label={t("More workers")}
-              disabled={busy || builders >= MAX_BUILDERS}
-              onClick={() => void change({ buildersMax: builders + 1 })}
-            >
-              +
-            </Button>
-          </div>
+          <WorkersStepper value={builders} busy={busy} onChange={(buildersMax) => void change({ buildersMax })} />
         </div>
         <div className="appearance-row">
           <label htmlFor="harness-auto-resume" className="flex min-w-0 flex-col">

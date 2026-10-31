@@ -12,7 +12,8 @@
  * has only the live view.
  */
 import { shortId } from "./ids.ts";
-import { DEFAULT_BUILDERS, LEAD_WINDOWS, MAX_BUILDERS } from "../shared/builders.ts";
+import { DEFAULT_BUILDERS, LEAD_WINDOWS } from "../shared/builders.ts";
+import { MAX_WORKERS_AT_ONCE } from "../shared/workers.ts";
 import type { PreviewPort } from "./preview-port.ts";
 
 export const LIVE_HANDLE = "live";
@@ -62,7 +63,7 @@ export interface PreviewPoolOptions {
 export const OVERFLOW_WINDOWS_MAX = 2;
 
 /** The most leases at once: past this the provider's rate limit, not the machine, decides. */
-export const MAX_POOL_MAX = MAX_BUILDERS + LEAD_WINDOWS;
+export const MAX_POOL_MAX = MAX_WORKERS_AT_ONCE + LEAD_WINDOWS;
 /** Headless leases at once by default: every builder the setting allows, plus the lead's windows. */
 export const DEFAULT_POOL_MAX = DEFAULT_BUILDERS + LEAD_WINDOWS;
 

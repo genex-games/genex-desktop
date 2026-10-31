@@ -79,6 +79,7 @@ import {
   WEB_LOOP_FACTS,
 } from "../../src/shared/project-facts.ts";
 import { ProjectTool } from "../../src/shared/project-tools.ts";
+import { MAX_WORKERS_AT_ONCE } from "../../src/shared/workers.ts";
 import * as jobs from "../../src/shared/jobs.ts";
 import { DelegationRefusal, EngineFailureKind, StopReason } from "../../src/shared/engine-requests.ts";
 import * as queue from "../../src/shared/message-queue.ts";
@@ -544,6 +545,11 @@ describe("vocabularies (src/shared ↔ the seed's copies)", () => {
       { ...seedDelegationRefusal, TooManyWorkers: seedWorkers.WorkerRefusal.TooManyWorkers },
       DelegationRefusal,
     );
+  });
+
+  it("runs at most as many workers at once as Settings offers", () => {
+    // Settings' ceiling is the app's copy; the pool stops at the seed's.
+    assert.equal(seedWorkers.MAX_WORKERS_AT_ONCE, MAX_WORKERS_AT_ONCE);
   });
 
   it("finds Claude Code's own folder in a path as the host does, however it is spelled", () => {
