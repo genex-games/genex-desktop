@@ -24,7 +24,7 @@ export type ChatActivityPhase = (typeof ChatActivityPhase)[keyof typeof ChatActi
 export const SessionActivityRole = {
   /** The conversation's own session: the director or the coordinator. */
   Planner: "planner",
-  /** A playtester or another read-only checker. */
+  /** A read-only checker: a reviewer, a reader. */
   Reviewer: "reviewer",
   /** A builder working on the game. */
   Builder: "builder",
@@ -49,9 +49,7 @@ interface DelegatedSession {
   director?: { runId?: string } | null;
   coordinator?: { runId?: string } | null;
   selfCapture?: { runId?: string; facetId?: string } | null;
-  playtest?: { runId?: string; facetId?: string } | null;
   ownership?: unknown;
-  candidateId?: string;
   readOnly?: boolean;
   /** A worker of a chat's lead: its words are a worker's in the chat, never the chat's own reply. */
   worker?: unknown;
@@ -64,8 +62,8 @@ interface DelegatedSession {
 function sessionRole(input: DelegatedSession): SessionActivityRole {
   if (input.director || input.coordinator) return SessionActivityRole.Planner;
   if (input.worker) return SessionActivityRole.Builder;
-  if (input.playtest || input.readOnly) return SessionActivityRole.Reviewer;
-  const ownsWork = Boolean(input.selfCapture?.runId || input.ownership || input.candidateId);
+  if (input.readOnly) return SessionActivityRole.Reviewer;
+  const ownsWork = Boolean(input.selfCapture?.runId || input.ownership);
   return ownsWork ? SessionActivityRole.Builder : SessionActivityRole.Planner;
 }
 
@@ -73,8 +71,8 @@ function sessionRole(input: DelegatedSession): SessionActivityRole {
 export function delegationActivityScope(input: DelegatedSession) {
   return {
     role: sessionRole(input),
-    runId: input.director?.runId ?? input.coordinator?.runId ?? input.selfCapture?.runId ?? input.playtest?.runId,
-    facetId: input.selfCapture?.facetId ?? input.playtest?.facetId,
+    runId: input.director?.runId ?? input.coordinator?.runId ?? input.selfCapture?.runId,
+    facetId: input.selfCapture?.facetId,
   };
 }
 /** Each phase's words; functions, as main loads this module before it sets its language. */

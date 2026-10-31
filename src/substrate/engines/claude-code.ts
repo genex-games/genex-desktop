@@ -22,7 +22,6 @@ import { cliVersion, requireCodingCli, resolveCodingCli, invalidateCodingCli } f
  * instruction files the contractor reads (`CLAUDE.md`, skills), not the contractor itself. The
  * contractor is environment; the briefing layer is self.
  */
-import { allowedFile, ownershipReason, relativeGamePath, specOf } from "../ownership.ts";
 import { mkdir, readdir, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -45,7 +44,6 @@ import {
   neverTouchHook,
   sessionHomeOpen,
   permissionRules,
-  preToolDeny,
   quietly,
   reportedMode,
   type RunningSession,
@@ -310,8 +308,6 @@ const WEB_TOOLS = ["WebSearch", "WebFetch"];
  * that is how a plan comes back for approval.
  */
 const ASKING_TOOLS = ["AskUserQuestion", "EnterPlanMode"];
-/** The PreToolUse matcher for every tool that writes a file. */
-const EDIT_TOOLS_MATCHER = "Edit|Write|MultiEdit|NotebookEdit";
 /** A judge looks at what it was given: no shell, no files, no helpers, nothing looked up. */
 const JUDGE_DISALLOWED_TOOLS = [
   ...MESSAGING_TOOLS,
@@ -1040,11 +1036,10 @@ export class ClaudeCodeEngine implements Engine {
   }
 
   /**
-   * The studio's own MCP server for the contractor. `checkpoint` lets the contractor decide which
-   * moments are worth seeing — the studio lights Live's Reload and posts the note in chat the
-   * moment it is called (Live itself changes only when the user reloads). (Designed with Simeon: not a file-watcher pushing half-broken states;
-   * the builder chooses when there is something to show.) Capture, live and interview tools join
-   * it when the delegation grants them.
+   * The studio's own MCP server for the contractor. `checkpoint` saves the game and posts its note
+   * in chat when it is called (the studio lights Live's Reload; Live itself changes only when the
+   * user reloads). It is not a file-watcher pushing half-broken states: the builder chooses when to
+   * call it. Capture, live and interview tools join it when the delegation grants them.
    */
   async #studioServer(
     request: DelegateRequest,
@@ -1344,10 +1339,7 @@ export class ClaudeCodeEngine implements Engine {
       includePartialMessages: true,
       systemPrompt: claudeCodeSystemPrompt(request.system),
       ...permissionOptions(request, ctx.running),
-      // Edit-time ownership: a Write outside the facet's files is refused before it
-      // lands, with the reason in the contractor's face — the after-the-fact reviewer once
-      // "reverted" such files by deleting eleven merged modules. A lead's calls are screened by
-      // the host there too, ahead of every allow rule.
+      // A worker's never-touch list, and a lead's calls screened by the host ahead of every allow rule.
       ...sessionHooks(request, cwd, ctx.run),
       ...(maxTurns ? { maxTurns } : {}),
       ...(request.resume ? { resume: request.resume } : {}),
@@ -1373,7 +1365,7 @@ export class ClaudeCodeEngine implements Engine {
       strictMcpConfig: true,
       allowedTools: allowedToolsFor(request, interviewTools, Boolean(shell)),
       disallowedTools: disallowedToolsFor(request, Boolean(shell)),
-      ...builtInsFor(request, Boolean(shell)),
+      ...builtInsFor(Boolean(shell)),
       // No sandbox key at all for a session that asks: Claude Code's default, which a game's own
       // project settings may still turn on. Every command it runs was asked about first. A worker
       // is boxed in every mode, Bypass included (`workerSandbox`).
@@ -2243,7 +2235,7 @@ function sessionPrompt(
  * session's tools say it, a Mac's never changes, and a session with no shell has none to name.
  */
 function withShellLine(request: DelegateRequest, genexShell: boolean, platform: NodeJS.Platform): DelegateRequest {
-  if (platform !== "win32" || !request.resume || request.blind) return request;
+  if (platform !== "win32" || !request.resume) return request;
   const bash = !disallowedToolsFor(request, genexShell).includes(SHELL_TOOL);
   if (!genexShell && !bash) return request;
   const line = genexShell ? SHELL_THIS_TURN.Studio : SHELL_THIS_TURN.Bash;
@@ -2269,15 +2261,13 @@ function delegatePrompt(request: DelegateRequest): unknown {
 
 /**
  * The session's PreToolUse hooks: a worker's never-touch screen first (`neverTouchHook`, every
- * call, reads included, in every mode), the one that refuses an edit outside the facet's files,
- * when the delegation has an owner map, and a lead's, coordinator's or asking worker's screen
+ * call, reads included, in every mode), and a lead's, coordinator's or asking worker's screen
  * (`leadScreenHook`), which sees every tool call before Claude Code's own rules do.
  */
 function sessionHooks(request: DelegateRequest, cwd: string, run: RunState): { hooks?: unknown } {
   const screen = request.leadAsks ?? askingWorker(request);
   const preToolUse = [
     ...(request.worker ? [{ hooks: [neverTouchHook(request.worker.neverTouch, cwd)] }] : []),
-    ...(request.ownership ? [{ matcher: EDIT_TOOLS_MATCHER, hooks: [ownershipHook(request.ownership, cwd)] }] : []),
     ...(screen ? [{ hooks: [leadScreenHook(screen)] }] : []),
   ];
   const hooks = {
@@ -2321,7 +2311,7 @@ function compactSummaryText(raw: string | null): string {
  * main.js` died even with the sandbox's auto-allow on. Safe only together with the sandbox shape — allowUnsandboxedCommands:
  * false makes the CLI ignore dangerouslyDisableSandbox entirely, so the blanket allow can never
  * step outside the sandbox. One authority: no parallel permissions.allow rules. A read-only
- * session (the playtester, a waking run's lead) is never allowed its shell by a blanket rule, and
+ * session (a reviewer, a reader) is never allowed its shell by a blanket rule, and
  * has none at all unless it asks in the chat's mode (`leadAsks`, `disallowedToolsFor`).
  */
 function allowedToolsFor(request: DelegateRequest, interviewTools: StudioToolSpec[], genexShell = false): string[] {
@@ -2356,13 +2346,10 @@ function shellAllows(request: DelegateRequest, genexShell: boolean): string[] {
 /**
  * Research is part of the work: the chat, a director and its builders may search and read the
  * web, and so may a read-only lead or coordinator the person may talk to (`leadAsks`), the chat's
- * main agent. Another read-only session answers from what it was handed, and a
- * performance-optimization candidate (an isolated copy of the game) is measured against its
- * baseline alone. A worker researches when it writes, or when its lead asked for research
+ * main agent. Another read-only session answers from what it was handed. A worker researches when it writes, or when its lead asked for research
  * (`WorkerSeat.research`); a reader or a worker in Plan otherwise does not.
  */
 function researches(request: DelegateRequest): boolean {
-  if (request.optimization) return false;
   if (request.worker) return request.worker.research || !workerReadOnly(request.worker, Boolean(request.readOnly));
   return !request.readOnly || Boolean(request.leadAsks);
 }
@@ -2371,7 +2358,7 @@ function researches(request: DelegateRequest): boolean {
  * The tools the session never gets. No session gets Claude Code's own sub-agents (Agent, Task):
  * Genex runs the workers, under the person's ceiling and the chat's mode. A chat that may launch a
  * build is still a full contractor: it answers, researches or edits itself and launches only when
- * the ask needs a build. A read-only session (the playtester) may not even run a command. A
+ * the ask needs a build. A read-only session (a reviewer, a reader) may not even run a command. A
  * read-only lead or coordinator the person may talk to (`leadAsks`), the chat's main agent, keeps
  * what the chat's own session keeps; the chat's mode decides each call.
  */
@@ -2383,20 +2370,12 @@ function disallowedToolsFor(request: DelegateRequest, genexShell = false): strin
 
 /** The tools a session never gets, whoever runs its commands (`disallowedToolsFor`). */
 function refusedTools(request: DelegateRequest): string[] {
-  if (request.blind) return [...new Set([...JUDGE_DISALLOWED_TOOLS, ...EDIT_TOOLS, ...ASKING_TOOLS])];
   if (request.worker) return workerDisallowedTools(request);
   if (request.readOnly && !request.leadAsks)
     return [...MESSAGING_TOOLS, ...EDIT_TOOLS, SHELL_TOOL, ...SUBAGENT_TOOLS, ...WEB_TOOLS];
-  return [
-    ...MESSAGING_TOOLS,
-    ...SUBAGENT_TOOLS,
-    ...(request.optimization ? WEB_TOOLS : []),
-    ...(asksOf(request) ? ASKING_TOOLS : []),
-  ];
+  return [...MESSAGING_TOOLS, ...SUBAGENT_TOOLS, ...(asksOf(request) ? ASKING_TOOLS : [])];
 }
 
-/** The only built-in a blind judge may load: tool search, which brings in its deferred live tools. */
-const BLIND_BUILT_INS = ["ToolSearch"];
 /**
  * The built-ins of a session whose commands Genex's sandbox runs (`studioShell`): its files, its
  * task list, the web and its plan, and none that starts a process of its own (Bash, PowerShell,
@@ -2422,13 +2401,11 @@ const STUDIO_SHELL_BUILT_INS = [
 ];
 
 /**
- * A session's built-ins, as an allowlist on top of its block list, where one is kept: a blind
- * judge's, and a studio-shell session's. A built-in Claude Code adds later (Skill, Workflow's
- * sub-agents with their file tools, a shell of its own) would otherwise reach it unasked. Every
- * other session keeps Claude Code's own set.
+ * A session's built-ins, as an allowlist on top of its block list, where one is kept: a studio-shell
+ * session's. A built-in Claude Code adds later (Skill, Workflow's sub-agents with their file tools,
+ * a shell of its own) would otherwise reach it unasked. Every other session keeps Claude Code's own set.
  */
-function builtInsFor(request: DelegateRequest, genexShell: boolean): { tools?: string[] } {
-  if (request.blind) return { tools: [...BLIND_BUILT_INS] };
+function builtInsFor(genexShell: boolean): { tools?: string[] } {
   return genexShell ? { tools: [...STUDIO_SHELL_BUILT_INS] } : {};
 }
 
@@ -2546,7 +2523,7 @@ function leadBuilds(request: DelegateRequest): string[] {
 /**
  * An unattended session's shell: sandboxed, auto-allowed only because it cannot step outside
  * (allowUnsandboxedCommands: false makes the CLI ignore dangerouslyDisableSandbox entirely), and
- * never writing the studio's protected folders or an optimization candidate's fence. It writes its
+ * never writing the studio's protected folders. It writes its
  * folder, and a lead the build it leads.
  */
 function unattendedSandbox(request: DelegateRequest, protectedPaths: string[]): Record<string, unknown> {
@@ -2557,7 +2534,7 @@ function unattendedSandbox(request: DelegateRequest, protectedPaths: string[]): 
     allowUnsandboxedCommands: false,
     filesystem: {
       ...(builds.length ? { allowWrite: builds } : {}),
-      denyWrite: [...protectedPaths, ...(request.optimization?.denyWrites ?? [])],
+      denyWrite: [...protectedPaths],
       denyRead: [...baseDenyRead(), ...(request.denyReads ?? []), ...protectedPaths],
     },
   };
@@ -2634,7 +2611,7 @@ function workerClaudeFolders(cwd: string, roots: readonly string[]): string[] {
  * where the person would; a read-only one runs none.
  */
 export function studioShell(request: DelegateRequest, platform: NodeJS.Platform): boolean {
-  if (platform !== "win32" || request.blind) return false;
+  if (platform !== "win32") return false;
   if (request.worker) {
     const box = workerBox(request.worker, Boolean(request.readOnly));
     // A Bypass worker has no box: Claude Code's own shell runs its commands, as the person's.
@@ -2666,7 +2643,6 @@ async function shellBox(
       ...protectedPaths,
       ...signIns,
       ...fence.writes,
-      ...(request.optimization?.denyWrites ?? []),
       ...(seat ? workerClaudeFolders(request.cwd, roots) : []),
     ],
   };
@@ -2729,9 +2705,9 @@ interface McpKit {
 /**
  * Loads a tool with the prompt. Claude Code (2.1.304 on) defers MCP tools behind its tool search,
  * offering their names but not their schemas, and a session that cannot see a tool its prompt
- * relies on does not reliably look for it: the checkpoint, capture, a chat's interview tools and
- * the studio's shell load from the first turn. Live and connector tools, a large and varied set,
- * stay deferred.
+ * relies on does not reliably look for it: the checkpoint where the game has checkpoint hooks,
+ * capture, a chat's interview tools and the studio's shell load from the first turn. Live and
+ * connector tools, a large and varied set, stay deferred, and so does a checkpoint with no hooks.
  */
 const LOAD_WITH_PROMPT = { alwaysLoad: true } as const;
 
@@ -2742,8 +2718,9 @@ type ToolAnswer = {
 };
 
 /**
- * `checkpoint`: the contractor says the game just became worth seeing; the chat shows the note, and
- * the studio's own checkpoint, when the delegation has one, answers what it did. A checkpoint that
+ * `checkpoint`: the session saves the game with a note; the chat shows the note, and the studio's
+ * own checkpoint, when the delegation has one (a game with checkpoint hooks), answers what it did
+ * and loads the tool with the prompt; with none the tool waits for tool search. A checkpoint that
  * failed reports as failed, never ending the build.
  */
 function checkpointTool(kit: McpKit, request: Pick<DelegateRequest, "onEvent" | "onCheckpoint">) {
@@ -2762,7 +2739,7 @@ function checkpointTool(kit: McpKit, request: Pick<DelegateRequest, "onEvent" | 
         return { content: [{ type: "text", text: CHECKPOINT_TOOL.failed(errorMessage(err)) }], isError: true };
       }
     },
-    LOAD_WITH_PROMPT,
+    request.onCheckpoint ? LOAD_WITH_PROMPT : undefined,
   );
 }
 
@@ -2773,10 +2750,9 @@ function captureTool(kit: McpKit, onCapture: NonNullable<DelegateRequest["onCapt
     StudioTool.Capture,
     CLAUDE_CAPTURE_TOOL.description,
     {
-      cameras: z.string().optional().describe(CLAUDE_CAPTURE_TOOL.cameras),
       page: z.string().optional().describe(CLAUDE_CAPTURE_TOOL.page),
     },
-    async (args: { cameras?: string; page?: string }) => {
+    async (args: { page?: string }) => {
       try {
         const text = await onCapture(captureArgs(args));
         return { content: [{ type: "text" as const, text }] };
@@ -2826,7 +2802,7 @@ function shellTimeout(asked: number | undefined): number {
 }
 
 /**
- * A live tool answers during the session: the playtester presses a key and sees the state come
+ * A live tool answers during the session: a worker presses a key and sees the state come
  * back. A thrown handler reports as text — a broken tool must not end the session.
  */
 function liveTool(kit: McpKit, spec: LiveToolSpec, onLiveTool: NonNullable<DelegateRequest["onLiveTool"]>) {
@@ -2939,29 +2915,6 @@ export function claudeLaunchOptions(
       stdio: ["pipe", "pipe", "pipe"],
     }) as ClaudeSpawnedProcess;
   return options;
-}
-
-/**
- * The PreToolUse hook that enforces file ownership. Pure over its inputs; exported so
- * the conformance suite can prove what it blocks and what it lets through.
- */
-export function ownershipHook(ownership: NonNullable<DelegateRequest["ownership"]>, cwd: string) {
-  return async (input: unknown): Promise<Record<string, unknown>> => {
-    const hook = input as { hook_event_name?: string; tool_name?: string; tool_input?: Record<string, unknown> };
-    if (hook?.hook_event_name !== "PreToolUse") return {};
-    const toolInput = hook.tool_input ?? {};
-    const targets = [toolInput.file_path, toolInput.notebook_path, toolInput.path].filter(
-      (v): v is string => typeof v === "string" && v.length > 0,
-    );
-    for (const target of targets) {
-      const rel = relativeGamePath(target, cwd);
-      if (rel === null) continue;
-      if (rel === ".." || rel.startsWith("../"))
-        return preToolDeny(`${target} is outside the workspace — this facet edits only its own files under ${cwd}.`);
-      if (!allowedFile(rel, specOf(ownership), ownership.ownsMain)) return preToolDeny(ownershipReason(rel, ownership));
-    }
-    return {};
-  };
 }
 
 /** Flatten a complete() request into Claude content blocks — text plus stills, never file paths. */

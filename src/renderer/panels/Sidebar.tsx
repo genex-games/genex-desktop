@@ -82,7 +82,6 @@ interface Props {
   onPlayMode: (play: boolean, via?: PlayModeVia) => void;
   /** A row or button of the sidebar was pressed, before it does what it does (usage analytics). */
   onNav: (item: NavItem) => void;
-  stagedCount: number;
   onNewGame: () => void;
   onSelectThread: (threadId: string) => void;
   onSelectGame: (project: string) => void;
@@ -474,7 +473,6 @@ function SidebarTop(props: Props & { studio: ConversationRecord | undefined; har
     onPlugins,
     itemsOpen,
     onItems,
-    stagedCount,
     onNewGame: newGame,
     onSelectThread,
     atHome,
@@ -546,17 +544,6 @@ function SidebarTop(props: Props & { studio: ConversationRecord | undefined; har
                 })}
               >
                 <span className="min-w-0 flex-1 truncate">Harness</span>
-                {stagedCount > 0 && (
-                  <span
-                    className="sidebar-badge"
-                    aria-label={t(
-                      "{count, plural, one {# skill improvement to review} other {# skill improvements to review}}",
-                      { count: stagedCount },
-                    )}
-                  >
-                    {stagedCount}
-                  </span>
-                )}
                 {studioBusy && studioStatus && <span className="sr-only">{statusWords(studioStatus).short}</span>}
               </NavRow>
             </Hint>

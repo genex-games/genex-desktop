@@ -15,20 +15,11 @@ export const FinishCheckStep = {
 } as const;
 export type FinishCheckStep = (typeof FinishCheckStep)[keyof typeof FinishCheckStep];
 
-/** The reviewer's no's in a row that stop a Loop; an unanswered check neither counts nor breaks the row. */
-export const MAX_FINISH_REJECTIONS = 3;
-
 /** The reasons a reviewer's answer keeps at most. */
 export const MAX_FINISH_REASONS = 6;
 
 /** How long one reason (or why a check got no answer) reads, in characters. */
 export const FINISH_REASON_CHARS = 300;
-
-/**
- * With more of a timed Loop's working time left than this, no row of the reviewer's no's stops it:
- * its lead keeps working on what isn't done. An ∞ Loop names no time left, and its no's stop it.
- */
-export const FINISH_TIME_LEFT_MS = 20 * MINUTE_MS;
 
 /**
  * Why a Loop that closed with something still to fix stopped (`run_finished.stillToFix.why`), as its
@@ -37,7 +28,7 @@ export const FINISH_TIME_LEFT_MS = 20 * MINUTE_MS;
 export const StopWhy = {
   /** Its hours ran out. */
   Time: "time",
-  /** The reviewer's no's in a row stopped it. */
+  /** Older runs only: a reviewer's no's in a row stopped them. Nothing stops a Loop that way now. */
   Stuck: "stuck",
   /** The person stopped it. */
   Person: "person",

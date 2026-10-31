@@ -16,8 +16,6 @@ import {
   storeLaunchWords,
   storeScopeItems,
 } from "../../src/harness-seed/loop/store-items.ts";
-import { createScope, restoreScope } from "../../src/harness-seed/loop/scope.ts";
-import { scopeLines } from "../../src/harness-seed/loop/scope-prompts.ts";
 import { launchFromIntake } from "../../src/harness-seed/loop/chat-dispatch.ts";
 import { HostMethod } from "../../src/harness-seed/loop/host-methods.ts";
 import { argumentProblems } from "../../src/harness-seed/tools/index.ts";
@@ -116,37 +114,14 @@ describe("the store items a run keeps", () => {
   });
 });
 
-describe("the store items as every agent reads the goal", () => {
-  it("are sold in this build whatever the cut list says, each listed with its picture", () => {
-    const scope = createScope({
-      asked: [ASK],
-      inScope: ["cast, hook, reel and catch"],
-      cut: ["Nex payments"],
-      store: [ROD_LINE],
-    });
-    const lines = scopeLines({ scope });
-    assert.match(lines, new RegExp(`GENEX STORE.*${ROD_LINE}`));
-    assert.match(lines, /buy\(\).*getEntitlements\(\)|getEntitlements\(\).*buy\(\)/);
-    assert.match(lines, /picture.*shop add.*image/, "each item is listed with the picture drawn first");
-    assert.match(lines, /shop list/, "an item listed already is not listed twice");
-    assert.deepEqual(restoreScope(JSON.parse(JSON.stringify(scope)))?.store, scope.store, "a journal keeps them");
-  });
-
-  it("leave a scope without store items as it was", () => {
-    const scope = createScope({ asked: [ASK], inScope: ["fishing"], cut: [] });
-    assert.equal("store" in scope, false);
-    assert.doesNotMatch(scopeLines({ scope }), /GENEX STORE/);
-  });
-});
-
 describe("a Loop launch with store items", () => {
-  it("lists nothing itself, tells the user where each goes, and its run's scope carries them", async () => {
+  it("lists nothing itself, tells the user where each goes, and its run's goal carries them", async () => {
     const order: string[] = [];
     const said: string[] = [];
     // The run handleRunStart reserves, as the chat launched it.
-    const reserved: Array<{ scope?: { store?: string[] } }> = [];
-    class Reservations extends Map<string, { run: { scope?: { store?: string[] } } }> {
-      override set(key: string, value: { run: { scope?: { store?: string[] } } }) {
+    const reserved: Array<{ goal?: string }> = [];
+    class Reservations extends Map<string, { run: { goal?: string } }> {
+      override set(key: string, value: { run: { goal?: string } }) {
         reserved.push(value.run);
         return super.set(key, value);
       }
@@ -157,6 +132,7 @@ describe("a Loop launch with store items", () => {
       heartbeat: () => {},
       call: async (method: string, params: Record<string, unknown>) => {
         if (method === HostMethod.GameList) return [{ name: "fishing-rod" }];
+        if (method === HostMethod.EngineDescribe) return [{ id: "codex", label: "Codex", supportsSessions: true }];
         if (method === HostMethod.GameValidate) return { contract: "loaded", problems: [] };
         if (method === HostMethod.PluginsInvoke) order.push("plugin");
         if (method === HostMethod.EventsAppend) {
@@ -170,13 +146,13 @@ describe("a Loop launch with store items", () => {
     const studio = {
       host,
       cancels: new Set<string>(),
-      moodBoards: new Map(),
+      attachedPictures: new Map(),
       activeRuns: new Map(),
       startingRuns: new Reservations(),
       orphanRuns: new Map(),
       scoped: () => ctx,
     };
-    const spec = { goal: ASK, storeItems: [ROD], reference: { name: "cozy lake", shots: [] } };
+    const spec = { goal: ASK, engine: "codex", storeItems: [ROD], reference: { name: "cozy lake", shots: [] } };
     await launchFromIntake(
       studio as never,
       ctx as never,
@@ -186,6 +162,7 @@ describe("a Loop launch with store items", () => {
     assert.equal(order.includes("plugin"), false, "no item is listed before its picture exists");
     assert.match(said[0] ?? "", /Fishing Rod will be on the Shop tab/);
     await setImmediate();
-    assert.deepEqual(reserved[0]?.scope?.store, [ROD_LINE]);
+    // Flipped (phase 5): the run has no scope; its goal carries what it sells.
+    assert.ok(reserved[0]?.goal?.includes(ROD_LINE), reserved[0]?.goal);
   });
 });

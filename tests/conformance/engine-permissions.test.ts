@@ -287,18 +287,6 @@ describe("a chat's own Claude session asks the person", () => {
       assert.ok((options.disallowedTools as string[]).includes(tool), `${tool} stays off`);
   });
 
-  it("a blind judge plays with its live tools alone: no file, shell, edit or question tool", async () => {
-    const { fn, seen } = fakeQuery();
-    await (await engineFor(fn)).delegate({ prompt: "play it", cwd: "/tmp/blind", readOnly: true, blind: true });
-    const options = seen[0]!;
-    for (const tool of ["Read", "Grep", "Glob", "Bash", "Edit", "Write", "WebFetch", "AskUserQuestion"])
-      assert.ok((options.disallowedTools as string[]).includes(tool), `${tool} is not a blind judge's`);
-    // Its built-ins are an allowlist, not only a block list: a live judge was offered Skill,
-    // Workflow (sub-agents with file tools), ScheduleWakeup and ReportFindings, which Claude Code
-    // added after the block list was written. Tool search stays: it loads the deferred live tools.
-    assert.deepEqual(options.tools, ["ToolSearch"], "no built-in but tool search");
-  });
-
   /**
    * Auto's classifier reads the studio's rules on top of Claude Code's own ("$defaults" first, its
    * soft and hard blocks untouched), in every mode: the picker can move a running session to Auto.
@@ -1140,18 +1128,16 @@ describe("a build's lead asks from the chat's mode, and the host answers", () =>
     );
   });
 
-  it("keeps a facet's ownership hook beside nothing else", async () => {
+  // Flipped (phase 5): a part owns no files, so no ownership hook is laid on an edit; the field is ignored.
+  it("lays no edit hook for an ownership a request still names", async () => {
     const { fn, seen } = fakeQuery();
     await (await engineFor(fn)).delegate({
       prompt: "build the sky",
       cwd: "/tmp/game-workspace",
       ownership: { facetId: "sky", owns: ["src/sky"], ownsMain: false },
     } as never);
-    const matchers = (seen[0]!.hooks as { PreToolUse: Array<{ matcher?: string }> }).PreToolUse;
-    assert.deepEqual(
-      matchers.map((m) => m.matcher),
-      ["Edit|Write|MultiEdit|NotebookEdit"],
-    );
+    const hooks = seen[0]!.hooks as { PreToolUse?: Array<{ matcher?: string }> } | undefined;
+    assert.deepEqual(hooks?.PreToolUse ?? [], []);
   });
 
   it("reads the host's deny as it is written", async () => {

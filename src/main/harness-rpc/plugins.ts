@@ -1,4 +1,3 @@
-import { preflightMultiplayer } from "../core/generation-prerequisites.ts";
 /** Harness RPC: plugin and MCP connector tools, and the capabilities a builder is told about. */
 import { MCP_QUALIFIED_TOOL } from "../../shared/mcp.ts";
 import { PluginToolAudience } from "../../shared/plugins.ts";
@@ -114,7 +113,6 @@ async function holdInPlace(
 
 export function pluginsRpc(core: StudioCore, x: CoreInternals) {
   return {
-    [HostMethod.PluginsPreflightMultiplayer]: (p) => preflightMultiplayer(core, p.project, p.threadId),
     // One snapshot, so the local harness's tools and their guidance describe the same plugins,
     // those that reach the game it serves.
     [HostMethod.PluginsTools]: async (p = {}) => {

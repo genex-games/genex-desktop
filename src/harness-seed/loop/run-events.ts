@@ -1,8 +1,7 @@
 /**
  * A run's record: the custom events on its thread and the journal a resume replays.
  *
- * Every mode wrote these for itself — the director, the classic pipeline, a facet, the gauntlet —
- * and every copy ended in `.catch(() => {})`. A feed card or a journal write is never worth a
+ * Every part wrote these for itself and every copy ended in `.catch(() => {})`. A feed card or a journal write is never worth a
  * run, so a failure still must not throw; but one that nobody hears about is how a run ends
  * with no journal to resume from and nothing in any log to say why. A failure is now written to
  * the harness's stderr (the host keeps it in its log), at most once a minute per kind, with how
@@ -37,11 +36,7 @@ export const RunEvent = {
   IntegrationHealth: "integration_health",
   IntegrationLedger: "integration_ledger",
   IntegrationMerge: "integration_merge",
-  ObservationOutage: "observation_outage",
-  OptimizationUpdated: "optimization_updated",
-  RunBackoff: "run_backoff",
   RunControl: "run_control",
-  RunControlApplied: "run_control_applied",
   RunFinished: "run_finished",
   RunFollowupRequested: "run_followup_requested",
   RunInteractionEvidence: "run_interaction_evidence",
@@ -58,29 +53,17 @@ export const RunEvent = {
   FacetBuildStarted: "facet_build_started",
   FacetCheckAdded: "facet_check_added",
   FacetCheckReplanned: "facet_check_replanned",
-  FacetCheckRetired: "facet_check_retired",
   FacetCircuitBreak: "facet_circuit_break",
   FacetDefectRouted: "facet_defect_routed",
   FacetFix: "facet_fix",
   FacetFlag: "facet_flag",
-  FacetFollowup: "facet_followup",
   FacetIteration: "facet_iteration",
-  FacetLessons: "facet_lessons",
   FacetLiveness: "facet_liveness",
   FacetMachinePressure: "facet_machine_pressure",
   FacetMove: "facet_move",
-  FacetObservationOutage: "facet_observation_outage",
-  FacetPartialEvaluated: "facet_partial_evaluated",
   FacetProviderOutage: "facet_provider_outage",
-  FacetRebaselined: "facet_rebaselined",
-  FacetReview: "facet_review",
-  FacetReviewEnforced: "facet_review_enforced",
-  FacetSessionReset: "facet_session_reset",
-  FacetSpike: "facet_spike",
-  FacetSteered: "facet_steered",
   FacetStopped: "facet_stopped",
   FacetWindDown: "facet_wind_down",
-  RecipeOutcome: "recipe_outcome",
   // the conversation, its queue and its sessions
   Compacted: "compacted",
   CompactionFailed: "compaction_failed",
@@ -116,7 +99,6 @@ export const RunEvent = {
   SkilloptPass: "skillopt_pass",
   SkilloptRejected: "skillopt_rejected",
   SkilloptStaged: "skillopt_staged",
-  ToolFailure: "tool_failure",
   ToolInstalled: "tool_installed",
 } as const;
 export type RunEvent = (typeof RunEvent)[keyof typeof RunEvent];
@@ -191,22 +173,12 @@ export type SteeringSource = (typeof SteeringSource)[keyof typeof SteeringSource
 
 /** How a run is run (`mode` on its report, its journal and its ledger records): never rename a value. */
 export const RunMode = {
-  /** The classic pipeline: planned parts, run by rule. */
+  /** The wire value the app and older runs name a Loop run by (`mode` on the run start); the one Loop is the lead's. */
   Autopilot: "autopilot",
   /** One agent's decisions: the director and its workers. */
   Director: "director",
 } as const;
 export type RunMode = (typeof RunMode)[keyof typeof RunMode];
-
-/** What a run's bar is (`reference.kind`): stills of a real game, or a described feeling. Never rename a value. */
-export const ReferenceKind = {
-  Reference: "reference",
-  Direction: "direction",
-} as const;
-export type ReferenceKind = (typeof ReferenceKind)[keyof typeof ReferenceKind];
-
-/** Stills that make the bar a picture (`ReferenceKind.Reference`) rather than a described direction. */
-export const REFERENCE_MIN_STILLS = 2;
 
 /**
  * How a run's close describes it (`report.executionStatus` on `run_finished`). The app reads it

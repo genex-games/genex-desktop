@@ -290,7 +290,7 @@ test("the bundled plugins' web guidance is what it was before skills named engin
     for (const skill of WEB_ONLY) assert.ok(!unreal.applied.skills.includes(skill), `${skill} is the web's only`);
     for (const skill of WEB_ONLY) assert.ok(web.applied.skills.includes(skill), skill);
     assert.ok(unreal.applied.skills.includes(UNREAL_SKILL), "the Unreal plugin's own skill stays");
-    assert.ok(unreal.applied.skills.includes("genex/asset-preference"), "assets are any engine's");
+    assert.ok(unreal.applied.skills.includes("genex/genex-tool-model"), "assets are any engine's");
     assert.deepEqual(
       unreal.tools.map((tool) => tool.name).filter((name) => !web.tools.some((tool) => tool.name === name)),
       UNREAL_EDITOR_TOOLS,

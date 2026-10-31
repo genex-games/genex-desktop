@@ -22,7 +22,7 @@ import { finishedPayload, startedPayload } from "../plugin-activity.ts";
 import type { GamePreview } from "../preview.ts";
 import type { StudioCore } from "../studio-core.ts";
 import type { DelegateRequest, DelegateResult, Engine } from "../../substrate/engines/types.ts";
-import { COMPUTER_SMOKE_GAME, COMPUTER_SMOKE_WEBGPU_GAME } from "./fixture-games.ts";
+import { type GameReports, computerSmokeGame, computerSmokeWebGpuGame, startGameReports } from "./fixture-games.ts";
 import type { SmokeReadGates } from "./read-gates.ts";
 import { pressStageView, stageCurrent, stageOffers } from "./stage-views.ts";
 import { sleep, waitFor as waitUntil } from "./wait.ts";
@@ -155,7 +155,7 @@ function required<T>(value: T | null | undefined, what: string): T {
   return value;
 }
 
-/** A host API call by method name, as the smoke and the seed's evidence pass make it. */
+/** A host API call by method name, as the smoke and the seed's health check make it. */
 type HostCall = (method: string, params: unknown) => Promise<unknown>;
 
 /** The harness host API as the smoke calls it; a method the host lacks is a named smoke failure. */
@@ -486,7 +486,7 @@ async function runBuildSmoke(smoke: Smoke): Promise<void> {
   await checkModelRoles(buildSmoke);
   await checkChatModelRoles(buildSmoke);
   if (process.env.STUDIO_DISABLE_OS_CREDENTIALS === "1") await checkCredentialedPlugins(buildSmoke);
-  await checkEmptyScaffoldEvidence(buildSmoke);
+  await checkScaffoldHealth(buildSmoke);
   const asset = await deliverFixtureAsset(buildSmoke);
   await checkAssetsView(buildSmoke, asset.delivered);
   const captureDir = await checkStartNodes(buildSmoke);
@@ -989,7 +989,7 @@ async function checkPluginSearchAndZoom(buildSmoke: BuildSmoke): Promise<void> {
   check(
     "Skills lists actual installed plugin contributions",
     await waitFor(
-      `document.querySelector('[data-plugins-page] h1')?.textContent==='Skills'&&document.querySelector('[data-plugins-page]')?.textContent.includes('asset-preference')`,
+      `document.querySelector('[data-plugins-page] h1')?.textContent==='Skills'&&document.querySelector('[data-plugins-page]')?.textContent.includes('creator-mcp')`,
     ),
   );
   await capturePlugins("skills");
@@ -1259,37 +1259,49 @@ async function checkPublishGate(buildSmoke: BuildSmoke): Promise<void> {
   );
 }
 
-/** A fresh project's real evidence, and a started build opening its Builds panel. */
-async function checkEmptyScaffoldEvidence(buildSmoke: BuildSmoke): Promise<void> {
+/** The seed's one health check, as a Loop's lead and its finish call it (`harness-seed/loop/health-check.ts`). */
+type CheckHealth = (
+  ctx: { call: HostCall; cancelled: boolean },
+  target: { project: string; runId?: string; label: string },
+) => Promise<{ ok: boolean; problems: string[]; picture: string | null; unchecked: string | null }>;
+
+/** A page that loads, throws nothing and draws two colours: what a health check passes. */
+const DRAWN_PAGE = `const canvas = document.createElement("canvas");
+canvas.width = innerWidth;
+canvas.height = innerHeight;
+document.body.style.margin = "0";
+document.body.appendChild(canvas);
+const g = canvas.getContext("2d");
+g.fillStyle = "#14233b";
+g.fillRect(0, 0, canvas.width, canvas.height);
+g.fillStyle = "#43ddaa";
+g.fillRect(canvas.width / 4, canvas.height / 4, canvas.width / 2, canvas.height / 2);
+`;
+
+/**
+ * The Loop's health check on real windows (the page loads, no uncaught error, a frame that is not
+ * blank), run from the harness this build ships, and a started build opening its Builds panel.
+ */
+async function checkScaffoldHealth(buildSmoke: BuildSmoke): Promise<void> {
   const { wc, check, project, runId, append, waitFor } = buildSmoke;
   const { core, resources, pushUiEvent } = buildSmoke.ctx;
-  const callHost = hostCaller(core);
-  const observed = (await callHost(HostMethod.PreviewEvaluate, {
-    expression: `(() => { const s = window.__studio; const i = s.inspect(); const state = s.state(); return { children: i.scene.children.length, player: state.player, hudItems: state.hud.items.length, phase: state.phase }; })()`,
-  })) as { children: number; player: unknown; hudItems: number; phase: string };
-  check(
-    "fresh project has no stock geometry, player or HUD",
-    observed.children === 0 && observed.player === null && observed.hudItems === 0 && observed.phase === "empty",
-    JSON.stringify(observed),
-  );
   const { pathToFileURL } = await import("node:url");
-  const { gatherEvidence } = await import(pathToFileURL(path.join(resources, "harness-seed/loop/gauntlet.ts")).href);
-  const context = { call: callHost };
-  const request = {
-    run: { runId, project: project.name },
-    iterationId: "base",
-    seed: 1,
-    scaffold: true,
-    eyes: false,
-    audio: false,
-  };
-  const base = await gatherEvidence(context, request);
-  check("real empty base passes infrastructure checks", base.ok && base.emptyScene, JSON.stringify(base.problems));
-  const generated = await gatherEvidence(context, { ...request, iterationId: "001", scaffold: false });
+  const healthModule = pathToFileURL(path.join(resources, "harness-seed/loop/health-check.ts")).href;
+  const { checkHealth } = (await import(healthModule)) as { checkHealth: CheckHealth };
+  const ctx = { call: hostCaller(core), cancelled: false };
+  const empty = await checkHealth(ctx, { project: project.name, runId, label: "health-empty" });
   check(
-    "real empty canvas fails generated-game checks",
-    !generated.ok && !generated.emptyScene,
-    JSON.stringify(generated.problems),
+    "a fresh starter fails the health check: its page draws nothing yet",
+    !empty.ok && empty.unchecked === null && empty.problems.some((problem) => /blank/.test(problem)),
+    JSON.stringify(empty.problems),
+  );
+  const drawn = await core.games.scaffold("build-health-smoke", { title: "Health smoke" });
+  await fs.writeFile(path.join(drawn.dir, "src", "main.js"), DRAWN_PAGE);
+  const healthy = await checkHealth(ctx, { project: drawn.name, runId, label: "health-drawn" });
+  check(
+    "a page that loads, throws nothing and draws passes the health check, with its picture kept",
+    healthy.ok && healthy.picture !== null,
+    JSON.stringify({ problems: healthy.problems, picture: healthy.picture }),
   );
   await append(CustomEvent.RunStarted, {
     project: project.name,
@@ -2537,12 +2549,13 @@ async function checkOverlayFixture(buildSmoke: BuildSmoke): Promise<void> {
   const { preview, previewBoundsSeen } = buildSmoke.ctx;
   // Earlier checks intentionally use an empty scaffold, whose DOM empty state
   // hides native bounds. Give overlay acceptance a genuinely rendered game.
-  await fs.writeFile(path.join(project.dir, "src", "main.js"), COMPUTER_SMOKE_GAME);
+  await fs.writeFile(path.join(project.dir, "src", "main.js"), computerSmokeGame(null, project.name));
   await wc.executeJavaScript(`window.studio.loadPreview(${JSON.stringify(project.name)})`);
   await pressStageView(wc, "live");
+  // The studio's own clock says the page runs: its frames advance. The game is never asked.
   check(
     "overlay fixture has loaded its scene",
-    await waitFor(`window.studio.previewState().then(s=>s.phase==='playing')`),
+    await waitFor(`window.studio.previewState().then(s=>Number(s?.frame)>0)`),
     JSON.stringify(await preview.studioState()),
   );
   await preview.studioCall("step", 16.67);
@@ -2680,12 +2693,16 @@ async function runComputerSmoke(smoke: Smoke): Promise<void> {
   };
   app.on("browser-window-created", watchPrivateWindow);
   const computerSmoke = await openComputerSmoke(smoke);
-  const results = await runComputerSession(computerSmoke);
-  checkComputerTool(computerSmoke, results);
-  checkAgentScreen(computerSmoke, results);
-  await checkSetupReplay(computerSmoke, results);
-  checkWebGpuWorker(computerSmoke, await runWebGpuSession(computerSmoke));
-  await checkScriptedDirector(computerSmoke);
+  try {
+    const results = await runComputerSession(computerSmoke);
+    checkComputerTool(computerSmoke, results);
+    checkAgentScreen(computerSmoke, results);
+    await checkSetupReplay(computerSmoke, results);
+    checkWebGpuWorker(computerSmoke, await runWebGpuSession(computerSmoke));
+    await checkScriptedDirector(computerSmoke);
+  } finally {
+    await computerSmoke.reports.close();
+  }
   app.removeListener("browser-window-created", watchPrivateWindow);
   check(
     "private capture and worker windows never show or take focus",
@@ -2700,24 +2717,30 @@ interface ComputerSmoke extends Smoke {
   runId: string;
   waitFor(expression: string, ms?: number): Promise<boolean>;
   callHost: HostCall;
+  /** What the fixture games posted about themselves: the smoke's only view into a game. */
+  reports: GameReports;
 }
 
 /** What a scripted session saw, by name, for the checks to read afterwards. */
 type Seen = Record<string, unknown>;
 
-/** What the scripted director saw, read loosely: its tool results are JSON of several shapes. */
+/** What the scripted lead saw, read loosely: its tool results are text and pictures of several shapes. */
 type DirectorSeen = Record<string, any>;
+
+/** How long a game's report of what an action did is given to arrive. */
+const REPORT_SETTLE_MS = 400;
 
 /**
  * The computer tool over a real hidden window: a fixture game with a map picker
  * on I, a click that chooses the map, W that moves the player — driven end to end
- * through engine.delegate with a scripted contractor, exactly as a run's builder is.
+ * through engine.delegate with a scripted session, exactly as a chat's build is.
  */
 async function openComputerSmoke(smoke: Smoke): Promise<ComputerSmoke> {
   const { wc } = smoke;
   const { core } = smoke.ctx;
+  const reports = await startGameReports();
   const project = await core.games.scaffold("computer-smoke", { title: "Computer smoke" });
-  await fs.writeFile(path.join(project.dir, "src", "main.js"), COMPUTER_SMOKE_GAME);
+  await fs.writeFile(path.join(project.dir, "src", "main.js"), computerSmokeGame(reports.url, project.name));
   const runId = "run_computer_smoke";
   // The builder's screen shows on its part's node in Builds: open this game on a run whose part
   // "build" is at work, with the stage on Builds.
@@ -2735,7 +2758,7 @@ async function openComputerSmoke(smoke: Smoke): Promise<ComputerSmoke> {
     waitUntil(() => wc.executeJavaScript(expression).catch(() => false), { timeoutMs: ms, intervalMs: WINDOW_POLL_MS });
   // Every launch starts at home: open the game from the sidebar, as a person does, then Builds.
   await openOnBuilds(wc, waitFor, smokeThread);
-  return { ...smoke, project, runId, waitFor, callHost: hostCaller(core) };
+  return { ...smoke, project, runId, waitFor, callHost: hostCaller(core), reports };
 }
 
 /**
@@ -2769,7 +2792,7 @@ async function agentScreenReport(wc: Smoke["wc"]): Promise<string> {
   return wc.executeJavaScript(AGENT_SCREEN_REPORT).catch((error: Error) => `unreadable: ${error.message}`);
 }
 
-/** The game state a `computer state` call printed, parsed; the raw text when it would not parse. */
+/** The studio's own record of a page a `computer state` call printed, parsed; the raw text when it would not parse. */
 function stateOf(result: unknown): Record<string, unknown> {
   const text = typeof result === "string" ? result : String((result as { text?: string })?.text ?? "");
   const start = text.indexOf("{");
@@ -2790,6 +2813,17 @@ function asText(r: unknown): string {
 /** How many images a tool result carries. */
 function images(r: unknown): number {
   return ((r as { images?: unknown[] })?.images ?? []).length;
+}
+
+/** What the game last said of itself once an action has had time to reach it; `{}` before it said anything. */
+async function reportedState({ reports }: ComputerSmoke, game: string): Promise<Record<string, unknown>> {
+  await sleep(REPORT_SETTLE_MS);
+  return reports.latest(game) ?? {};
+}
+
+/** The boot reports of a game: one per window that loaded it, saying what that window could reach. */
+function bootsOf({ reports }: ComputerSmoke, game: string): Array<Record<string, unknown>> {
+  return reports.of(game).filter((report) => report.kind === "boot");
 }
 
 /** A scripted Codex stand-in whose delegate is `delegate`; never a paid model. */
@@ -2816,7 +2850,7 @@ function scriptedCodex(
 
 /** The builder's first session: every computer action once, then a second session that replays a setup. */
 async function runComputerSession(computerSmoke: ComputerSmoke): Promise<Seen> {
-  const { project, runId, callHost } = computerSmoke;
+  const { project, runId, callHost, reports } = computerSmoke;
   const { core } = computerSmoke.ctx;
   const results: Seen = {};
   core.engines.register(
@@ -2827,9 +2861,12 @@ async function runComputerSession(computerSmoke: ComputerSmoke): Promise<Seen> {
         const iteration = request.selfCapture?.iteration ?? 0;
         if (iteration === 1) await driveComputer(computerSmoke, request, results);
         else {
-          // The requested state, replayed by the studio before the agent's first action.
-          results.setupState = stateOf(await computer({ action: "state" }));
+          // The requested state, replayed by the studio before the agent's first action: what the
+          // game said once this session's window loaded it.
+          const before = reports.of(project.name).length;
           results.setupShot = await computer({ action: "screenshot" });
+          await sleep(REPORT_SETTLE_MS);
+          results.setupReports = reports.of(project.name).slice(before);
         }
         return {
           ok: true,
@@ -2858,9 +2895,6 @@ async function runComputerSession(computerSmoke: ComputerSmoke): Promise<Seen> {
   );
   await callHost(HostMethod.PreviewLoad, { project: project.name });
   await sleep(1000);
-  results.liveGpu = await callHost(HostMethod.PreviewEvaluate, {
-    expression: `(async () => { const secure = isSecureContext; if (!navigator.gpu) return { secure, gpu: false }; const adapter = await navigator.gpu.requestAdapter().catch(() => null); return { secure, gpu: true, adapter: !!adapter, device: adapter ? !!(await adapter.requestDevice().catch(() => null)) : false }; })()`,
-  }).catch((err: Error) => ({ error: err.message }));
   await callHost(HostMethod.EngineDelegate, {
     engine: EngineId.Codex,
     prompt: "smoke",
@@ -2874,40 +2908,34 @@ async function runComputerSession(computerSmoke: ComputerSmoke): Promise<Seen> {
       label: "Smoke builder",
     },
   });
+  // One boot report per window that loaded the game: the harness's view first, the builder's after.
+  results.boots = bootsOf(computerSmoke, project.name);
   return results;
 }
 
 /** Every computer action once, in the order a player's session would use them. */
 async function driveComputer(computerSmoke: ComputerSmoke, request: DelegateRequest, results: Seen): Promise<void> {
-  const { waitFor, callHost } = computerSmoke;
+  const { waitFor, project } = computerSmoke;
   const { core } = computerSmoke.ctx;
   const computer = (args: Record<string, unknown>) =>
     required(request.onLiveTool, "a live tool bridge")("computer", args);
+  const reported = () => reportedState(computerSmoke, project.name);
   results.tools = (request.liveTools ?? []).map((t) => t.name);
   results.shot = await computer({ action: "screenshot" });
   results.uiNode = await waitFor(`!!document.querySelector('[data-graph-node][data-agent-screen] img')`);
   if (results.uiNode !== true) results.uiNodeReport = await agentScreenReport(computerSmoke.wc);
-  results.state0 = stateOf(await computer({ action: "state" }));
+  results.state0 = await reported();
   results.key = await computer({ action: "key", text: "i" });
-  results.state1 = stateOf(await computer({ action: "state" }));
+  results.state1 = await reported();
   results.click = await computer({ action: "left_click", coordinate: "800,300" });
-  results.state2 = stateOf(await computer({ action: "state" }));
+  results.state2 = await reported();
   results.hold = await computer({ action: "hold_key", text: "w", duration: 0.6 });
-  results.state3 = stateOf(await computer({ action: "state" }));
+  results.state3 = await reported();
   results.type = await computer({ action: "type", text: "abc" });
-  results.state4 = stateOf(await computer({ action: "state" }));
+  results.state4 = await reported();
   results.zoom = await computer({ action: "zoom", region: "380,200,580,400" });
-  results.camera = await computer({ action: "camera", text: "top" });
   results.screens = core.agentScreens();
-  // WebGPU inside an offscreen worker window, versus the live view — games may be WebGPU.
-  const gpuProbe = `(async () => { const secure = isSecureContext; if (!navigator.gpu) return { secure, gpu: false }; const adapter = await navigator.gpu.requestAdapter().catch(() => null); if (!adapter) return { secure, gpu: true, adapter: false }; const device = await adapter.requestDevice().catch(() => null); const canvas = document.createElement("canvas"); const ctx = canvas.getContext("webgpu"); return { secure, gpu: true, adapter: true, device: !!device, canvasContext: !!ctx, features: [...adapter.features].length }; })()`;
-  const handle = results.screens && (results.screens as Array<{ handle: string }>)[0]?.handle;
-  results.workerGpu = handle
-    ? await callHost(HostMethod.PreviewEvaluate, { expression: gpuProbe, handle }).catch((err: Error) => ({
-        error: err.message,
-      }))
-    : { error: "no handle" };
-  results.capture = await required(request.onCapture, "a capture hook")({ cameras: "default,top" });
+  results.capture = await required(request.onCapture, "a capture hook")({});
   results.cursor = await computer({ action: "cursor_position" });
   await captureComputerShot(computerSmoke);
 }
@@ -2925,19 +2953,20 @@ async function captureComputerShot({ wc, ctx }: ComputerSmoke): Promise<void> {
   await wc.executeJavaScript(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))`).catch(() => {});
 }
 
-/** What the builder's computer session saw: the tool, both WebGPU probes, and each action's effect. */
+/** What the builder's computer session saw: the tool, what each window could reach, and each action's effect. */
 function checkComputerTool({ check }: ComputerSmoke, results: Seen): void {
   check(
     "the builder holds the computer tool",
     Array.isArray(results.tools) && (results.tools as string[]).includes("computer"),
     JSON.stringify(results.tools),
   );
-  check("WebGPU in the live view (informational)", true, JSON.stringify(results.liveGpu));
-  check("WebGPU in an offscreen worker window (informational)", true, JSON.stringify(results.workerGpu));
+  const boots = (results.boots ?? []) as Array<{ secure?: boolean; gpu?: unknown }>;
+  check("WebGPU in the harness's view (informational)", true, JSON.stringify(boots[0]?.gpu ?? null));
+  check("WebGPU in an offscreen worker window (informational)", true, JSON.stringify(boots.at(-1)?.gpu ?? null));
   check(
-    "game pages retain a secure origin in Live and worker views",
-    (results.liveGpu as { secure?: boolean })?.secure === true &&
-      (results.workerGpu as { secure?: boolean })?.secure === true,
+    "game pages retain a secure origin in every window that served them",
+    boots.length >= 2 && boots.every((boot) => boot.secure === true),
+    JSON.stringify(boots.map((boot) => boot.secure)),
   );
   check(
     "screenshot returns the picture and saves it",
@@ -2949,6 +2978,16 @@ function checkComputerTool({ check }: ComputerSmoke, results: Seen): void {
     results.uiNode === true,
     String(results.uiNodeReport ?? ""),
   );
+  checkInputReached(check, results);
+  check(
+    "zoom returns a magnified crop",
+    images(results.zoom) === 1 && /region 380,200,580,400/.test(asText(results.zoom)),
+    asText(results.zoom).slice(0, 160),
+  );
+}
+
+/** Each real input reached the game, as the game itself reported it. */
+function checkInputReached(check: ComputerSmoke["check"], results: Seen): void {
   const s0 = results.state0 as Record<string, unknown>;
   check(
     "the fixture boots on the street map",
@@ -2975,26 +3014,16 @@ function checkComputerTool({ check }: ComputerSmoke, results: Seen): void {
   );
   const s3 = results.state3 as Record<string, unknown>;
   check(
-    "holding W moves the player (the game's own update loop saw the key)",
+    "holding W moves the player (the game's own loop saw the key)",
     Number((s3.player as { x?: number })?.x) > 0.3,
     JSON.stringify(s3.player),
   );
   const s4 = results.state4 as Record<string, unknown>;
   // "w" first: the held W above was a keystroke too, as it should be.
   check("type delivers each character exactly once", s4.typed === "wabc", JSON.stringify(s4.typed));
-  check(
-    "zoom returns a magnified crop",
-    images(results.zoom) === 1 && /region 380,200,580,400/.test(asText(results.zoom)),
-    asText(results.zoom).slice(0, 160),
-  );
-  check(
-    "camera jumps to a registered studio camera",
-    images(results.camera) === 1 && !/WARNING/.test(asText(results.camera)),
-    asText(results.camera).slice(0, 160),
-  );
 }
 
-/** The agent's screen in the strip, the cameras capture took, and the window gone with the session. */
+/** The agent's screen in the strip, the page capture took, and the window gone with the session. */
 function checkAgentScreen({ check, ctx }: ComputerSmoke, results: Seen): void {
   const screens = results.screens as Array<{
     label: string;
@@ -3017,9 +3046,9 @@ function checkAgentScreen({ check, ctx }: ComputerSmoke, results: Seen): void {
   );
   const captured = asText(results.capture);
   check(
-    "capture still takes every named camera through the same window",
-    /c1_default\.jpg/.test(captured) && /c1_top\.jpg/.test(captured) && /camera verified/.test(captured),
-    asText(results.capture).slice(0, 300),
+    "capture takes the page through the same window, with its console errors",
+    /c\d+_default\.jpg/.test(captured) && /console errors since load: none/.test(captured),
+    captured.slice(0, 300),
   );
   check(
     "cursor_position reports where the click left the mouse",
@@ -3037,7 +3066,6 @@ async function checkSetupReplay({ project, runId, callHost, check }: ComputerSmo
       { type: "wait", ms: 100 },
       { type: "click", x: 800, y: 300, px: true },
     ],
-    verify: { path: "maps.activeId", equals: "macba" },
     note: "I opens the picker, the right card is MACBA",
   };
   await callHost(HostMethod.EngineDelegate, {
@@ -3054,37 +3082,41 @@ async function checkSetupReplay({ project, runId, callHost, check }: ComputerSmo
       setup,
     },
   });
-  const ss = results.setupState as Record<string, unknown>;
+  const states = ((results.setupReports ?? []) as Array<Record<string, unknown>>).filter(
+    (report) => report.kind === "state",
+  );
+  const last = states.at(-1) ?? {};
   check(
     "the requested-state setup lands before the agent's first look",
-    (ss.maps as { activeId?: string })?.activeId === "macba" && !/NOT REACHED/.test(asText(results.setupShot)),
-    JSON.stringify(ss).slice(0, 200),
+    (last.maps as { activeId?: string })?.activeId === "macba" &&
+      last.clicks === 1 &&
+      !/NOT REACHED/.test(asText(results.setupShot)),
+    JSON.stringify(last).slice(0, 200),
   );
 }
 
 /** A WebGPU game in an offscreen worker window: it renders, it captures, it plays. */
-async function runWebGpuSession({ callHost, ctx }: ComputerSmoke): Promise<Seen> {
+async function runWebGpuSession(computerSmoke: ComputerSmoke): Promise<Seen> {
+  const { callHost, ctx, reports } = computerSmoke;
   const { core } = ctx;
   const gpuProject = await core.games.scaffold("webgpu-smoke", { title: "WebGPU smoke" });
-  await fs.writeFile(path.join(gpuProject.dir, "src", "main.js"), COMPUTER_SMOKE_WEBGPU_GAME);
+  await fs.writeFile(
+    path.join(gpuProject.dir, "src", "main.js"),
+    computerSmokeWebGpuGame(reports.url, gpuProject.name),
+  );
   const gpu: Seen = {};
   core.engines.register(
     scriptedCodex(async (request) => {
       const computer = (args: Record<string, unknown>) =>
         required(request.onLiveTool, "a live tool bridge")("computer", args);
       gpu.shot = await computer({ action: "screenshot" });
+      // The studio's own record of the page: its clock's frames and the canvas the page drew on.
       gpu.state0 = stateOf(await computer({ action: "state" }));
       gpu.hold = await computer({ action: "hold_key", text: "w", duration: 0.5 });
-      gpu.state1 = stateOf(await computer({ action: "state" }));
-      gpu.capture = await required(request.onCapture, "a capture hook")({ cameras: "default" });
+      gpu.state1 = await reportedState(computerSmoke, gpuProject.name);
+      gpu.capture = await required(request.onCapture, "a capture hook")({});
       gpu.console = await computer({ action: "console" });
-      const gpuHandle = core.agentScreens()[0]?.handle;
-      gpu.firstStack = gpuHandle
-        ? await callHost(HostMethod.PreviewEvaluate, {
-            expression: "window.__firstStack || null",
-            handle: gpuHandle,
-          }).catch((err: Error) => err.message)
-        : null;
+      gpu.firstStack = reports.of(gpuProject.name).find((report) => report.kind === "rejection")?.stack ?? null;
       return { ok: true, engine: EngineId.Codex, turns: 1, usage: {}, sessionId: "gpu", summary: "done" };
     }),
   );
@@ -3105,10 +3137,10 @@ async function runWebGpuSession({ callHost, ctx }: ComputerSmoke): Promise<Seen>
 }
 
 function checkWebGpuWorker({ check }: ComputerSmoke, gpu: Seen): void {
-  const g0 = gpu.state0 as Record<string, unknown>;
+  const g0 = gpu.state0 as { frame?: unknown; render?: { backend?: unknown } };
   check(
-    "a WebGPU game runs in the offscreen window (backend webgpu, frames advancing)",
-    g0.backend === "webgpu" && Number(g0.frame) > 0 && !(g0 as { error?: unknown }).error,
+    "a WebGPU game runs in the offscreen window (a webgpu canvas, frames advancing)",
+    g0.render?.backend === "webgpu" && Number(g0.frame) > 0,
     JSON.stringify(g0).slice(0, 220),
   );
   const lit = /litFraction ([0-9.]+)/.exec(asText(gpu.shot));
@@ -3118,10 +3150,14 @@ function checkWebGpuWorker({ check }: ComputerSmoke, gpu: Seen): void {
     asText(gpu.shot).slice(0, 200),
   );
   const g1 = gpu.state1 as Record<string, unknown>;
-  check("holding W moves the WebGPU player", Number((g1.player as { x?: number })?.x) > 0.3, JSON.stringify(g1.player));
   check(
-    "capture photographs the WebGPU camera and verifies it",
-    /camera verified/.test(asText(gpu.capture)) && !/failed/.test(asText(gpu.capture)),
+    "holding W moves the WebGPU player",
+    g1.backend === "webgpu" && Number((g1.player as { x?: number })?.x) > 0.3,
+    JSON.stringify(g1),
+  );
+  check(
+    "capture photographs the WebGPU page",
+    /c\d+_default\.jpg/.test(asText(gpu.capture)) && !/capture failed/.test(asText(gpu.capture)),
     asText(gpu.capture).slice(0, 220),
   );
   check(
@@ -3132,15 +3168,16 @@ function checkWebGpuWorker({ check }: ComputerSmoke, gpu: Seen): void {
 }
 
 /**
- * The director: a run on this Electron — the real harness child, real offscreen
- * windows, the dispatch that answers — with a scripted director that looks, starts a
- * single worker, integrates, shows and finishes; its screen is the lead's node in Builds meanwhile.
+ * The Loop: a run on this Electron — the real harness child, real offscreen windows, the dispatch
+ * that answers — with a scripted lead that looks, starts one worker in a copy of its own, merges its
+ * work (one health check of the merged build), shows it and finishes (the health check again before
+ * the landing); its screen is the lead's node in Builds meanwhile.
  */
 async function checkScriptedDirector(computerSmoke: ComputerSmoke): Promise<void> {
-  const { wc, waitFor } = computerSmoke;
+  const { wc, waitFor, reports } = computerSmoke;
   const { core } = computerSmoke.ctx;
   const dirProject = await core.games.scaffold("director-smoke", { title: "Director smoke" });
-  await fs.writeFile(path.join(dirProject.dir, "src", "main.js"), COMPUTER_SMOKE_GAME);
+  await fs.writeFile(path.join(dirProject.dir, "src", "main.js"), computerSmokeGame(reports.url, dirProject.name));
   const dirThread = await core.threadForGame(dirProject.name);
   wc.reload();
   await openOnBuilds(wc, waitFor, dirThread);
@@ -3149,8 +3186,11 @@ async function checkScriptedDirector(computerSmoke: ComputerSmoke): Promise<void
     scriptedCodex(
       async (request) => {
         if (request.director) return directLoopRun(computerSmoke, request, dir);
+        // A worker of the run's pool, in its own copy of the game: Genex commits what it leaves.
+        dir.workerCwd = request.cwd;
+        dir.workerTools = (request.liveTools ?? []).map((tool) => tool.name);
+        await fs.mkdir(path.join(request.cwd, "src"), { recursive: true });
         await fs.writeFile(path.join(request.cwd, "src", "sign.js"), "export const sign = 1;\n");
-        dir.workerShot = await required(request.onLiveTool, "a live tool bridge")("computer", { action: "screenshot" });
         return { ok: true, engine: EngineId.Codex, turns: 2, usage: {}, sessionId: "sign", summary: "sign added" };
       },
       { content: "{}" },
@@ -3170,96 +3210,76 @@ async function checkScriptedDirector(computerSmoke: ComputerSmoke): Promise<void
     .filter((e) => e.data.type === EventKind.Custom && e.data.event_type === CustomEvent.RunFinished)
     .map((e) => (e.data as { payload: Record<string, unknown> }).payload)
     .find((p) => p.runId === dirRunId);
-  checkDirectorLoopRun(computerSmoke, dir);
+  checkDirectorLoopRun(computerSmoke, dir, dirProject.dir);
   checkDirectorLanding(computerSmoke, dir, dirFinished, dirProject.dir);
 }
 
-/** The scripted director's run: look, plan, one worker, integrate, show, finish. */
+/** The scripted lead's run: look, one worker in a copy, its work merged, show, finish. */
 async function directLoopRun(
   { wc, waitFor }: ComputerSmoke,
   request: DelegateRequest,
   dir: DirectorSeen,
 ): Promise<DelegateResult> {
+  // A lead woken after its finish has nothing left to do.
+  if (dir.finished !== undefined)
+    return { ok: true, engine: EngineId.Codex, turns: 1, usage: {}, sessionId: "director", summary: "run done" };
   const call = (name: string, args: Record<string, unknown>) =>
     required(request.onLiveTool, "a live tool bridge")(name, args);
   dir.look = await call("look", { target: "integration" });
-  dir.state = stateOf(await call("computer", { action: "state" }));
   dir.chatFrame = await waitFor(`!!document.querySelector('[data-build-status] img')?.naturalWidth`);
   if (dir.chatFrame !== true) dir.chatFrameReport = await agentScreenReport(wc);
-  // No part works yet, so the lead has the run: its node in Builds is its own screen.
+  // No worker works yet, so the lead has the run: its node in Builds is its own screen.
   await pressStageView(wc, "builds");
   dir.uiCard = await waitFor(`!!document.querySelector('[data-graph-node="lead"][data-agent-screen] img')`);
   if (dir.uiCard !== true) dir.uiCardReport = await agentScreenReport(wc);
-  // The run says what it is for before a builder starts (M3.8): worker_start refuses until plan has been called.
-  await call("plan", {
-    summary: "This run: a sign on the street.",
-    workers: JSON.stringify([
-      {
-        id: "sign",
-        title: "Sign",
-        seam: "the street sign",
-        owns: "src/sign.js",
-        done: ["a sign stands on the street"],
-        minutes: 3,
-      },
-    ]),
-  });
-  dir.started = JSON.parse(
-    asText(
-      await call("worker_start", {
-        id: "sign",
-        title: "Sign",
-        brief: "add a sign to the street",
-        mode: "single",
-        minutes: "3",
-      }),
-    ),
+  dir.started = asText(
+    await call("worker_start", { title: "Sign", task: "add a sign to the street", isolation: "copy" }),
   );
+  const id = /Started (\S+) \(copy\)/.exec(dir.started)?.[1] ?? "";
+  dir.workerId = id;
   for (let i = 0; i < 30; i++) {
-    dir.waited = JSON.parse(asText(await call("worker_wait", { seconds: "3", worker: "sign" })));
-    if (dir.waited.status?.workers?.[0]?.state !== "running") break;
+    dir.waited = asText(await call("worker_wait", { id, seconds: "3" }));
+    if (!/ · running · /.test(dir.waited)) break;
   }
-  dir.lookWorker = await call("look", { target: "sign" });
-  dir.integrated = JSON.parse(asText(await call("integrate", { worker: "sign" })));
+  dir.lookWorker = await call("look", { target: id });
+  dir.marked = asText(await call("worker_mark", { id, verdict: "used", note: "the sign is in" }));
   dir.shown = asText(await call("show", { target: "integration" }));
-  dir.finished = asText(await call("finish", { summary: "a sign on the street", land: "yes" }));
-  return { ok: true, engine: EngineId.Codex, turns: 9, usage: {}, sessionId: "director", summary: "run done" };
+  dir.finished = asText(await call("finish", { summary: "a sign on the street", land: "yes", victory: "yes" }));
+  return { ok: true, engine: EngineId.Codex, turns: 8, usage: {}, sessionId: "director", summary: "run done" };
 }
 
-/** What the director saw and did during the run. */
-function checkDirectorLoopRun({ check }: ComputerSmoke, dir: DirectorSeen): void {
+/** What the lead saw and did during the run. */
+function checkDirectorLoopRun({ check }: ComputerSmoke, dir: DirectorSeen, dirProjectDir: string): void {
   check(
-    "the director's window shows the integration worktree with the game running in it",
-    /the window now shows integration/.test(asText(dir.look)) &&
-      (dir.state?.maps as { activeId?: string })?.activeId === "street",
-    `${asText(dir.look).slice(0, 120)} | ${JSON.stringify(dir.state).slice(0, 160)}`,
+    "the lead's window shows the integration worktree with the game running in it",
+    /the window now shows integration/.test(asText(dir.look)) && images(dir.look) === 1,
+    asText(dir.look).slice(0, 160),
   );
+  check("the lead's screen is its node in Builds while it works", dir.uiCard === true, dir.uiCardReport ?? "");
   check(
-    "the director's screen is the lead's node in Builds while it works",
-    dir.uiCard === true,
-    dir.uiCardReport ?? "",
-  );
-  check(
-    "the director's current view is the build row's picture in chat",
+    "the lead's current view is the build row's picture in chat",
     dir.chatFrame === true,
     dir.chatFrameReport ?? "",
   );
   check(
-    "the worker built in a worktree of its own, with hands",
-    dir.started?.mode === "single" &&
-      images(dir.workerShot) === 1 &&
-      dir.waited?.status?.workers?.[0]?.state === "done",
-    JSON.stringify({ started: dir.started, worker: dir.waited?.status?.workers?.[0] }).slice(0, 300),
+    "the worker built in a copy of its own and finished",
+    typeof dir.workerCwd === "string" &&
+      path.resolve(dir.workerCwd) !== path.resolve(dirProjectDir) &&
+      / · done · /.test(dir.waited ?? ""),
+    JSON.stringify({ started: dir.started, waited: dir.waited, cwd: dir.workerCwd, tools: dir.workerTools }).slice(
+      0,
+      400,
+    ),
   );
   check(
-    "look points the director's window at the worker's build",
-    /the window now shows sign/.test(asText(dir.lookWorker)),
+    "look points the lead's window at the worker's copy",
+    new RegExp(`the window now shows ${dir.workerId}\\b`).test(asText(dir.lookWorker)),
     asText(dir.lookWorker).slice(0, 120),
   );
   check(
-    "integrate merged the worker and the health pass loaded the integrated build",
-    dir.integrated?.merged === true && dir.integrated?.health?.ok === true,
-    JSON.stringify(dir.integrated).slice(0, 300),
+    "worker_mark used merged the worker, and the merged build passed its health check",
+    /Merged \S+ work into your folder/.test(dir.marked ?? "") && /Health check: the page loads/.test(dir.marked ?? ""),
+    String(dir.marked).slice(0, 300),
   );
   check(
     "show offered the integrated build on Live's Reload",
@@ -3268,7 +3288,7 @@ function checkDirectorLoopRun({ check }: ComputerSmoke, dir: DirectorSeen): void
   );
 }
 
-/** How the run ended: landed in the live folder, closed as the director's, every window gone. */
+/** How the run ended: landed in the live folder, closed on the lead's word, every window gone. */
 function checkDirectorLanding(
   { check, ctx }: ComputerSmoke,
   dir: DirectorSeen,
@@ -3276,15 +3296,15 @@ function checkDirectorLanding(
   dirProjectDir: string,
 ): void {
   check(
-    "finish landed the integration branch in the live folder",
+    "finish checked the integration branch's health and landed it in the live folder",
     dirFinished?.landed === true &&
       existsSync(path.join(dirProjectDir, "src", "sign.js")) &&
       /is live in the game folder/.test(dir.finished ?? ""),
     `${JSON.stringify({ landed: dirFinished?.landed, stoppedBecause: dirFinished?.stoppedBecause })} | ${String(dir.finished).slice(0, 160)}`,
   );
   check(
-    "the run closed as the director's, mode director",
-    dirFinished?.mode === "director" && dirFinished?.stoppedBecause === "the director finished the run",
+    "the run closed on the lead's word, mode director",
+    dirFinished?.mode === "director" && dirFinished?.stoppedBecause === "the lead finished the run",
     JSON.stringify(dirFinished ?? null)?.slice(0, 200),
   );
   check("every window closed with the run", ctx.core.agentScreens().length === 0);

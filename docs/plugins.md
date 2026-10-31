@@ -32,13 +32,8 @@ exports work with no enabled plugins.
   its own). A host older than the option ignores it and answers an ordinary observation, so a
   caller checks the answer for `still`, then `stillProblem`, and handles neither (the SDK types the
   answer as `PluginStillAnswer | PluginStillIgnored`).
-- API 3's `observe` takes an optional `clip` the same way (additive, no field or capability of its
-  own; never beside `still` or files): `{ demo, width, height, seconds?, fps?, maxBytes? }` records
-  `seconds` of the game running from the moment the demo stages, after the host starts its clock
-  (`__studio.start()`), on a hidden window (`core/view-clip.ts`, budget: its seconds and a minute).
-  The page records the canvas a still reads with `MediaRecorder` (MP4/H.264, else WebM VP9/VP8) at
-  two bitrates and the host keeps the best that fits (`main/preview-clip.ts`). The answer is
-  `clip` (video, poster, `motion`) or `clipProblem` with a still's codes.
+- API 3's `observe` records no clip: a call with a `clip` is refused (`observe records no clip`).
+  A cover clip is a file the game's agent hands `genex__cover`.
 - Plugin tool parameters are scalar (`string` / `number` / `boolean` properties); API 3 also accepts `type: "object"`, optionally with `acceptJsonString` for a migrated scalar (`toolParameter` in `src/substrate/plugins/manifest.ts`; see the plugin guide's structured arguments). External MCP tools retain their full nested schemas.
 
 ## Package and distribution
@@ -183,7 +178,6 @@ and the Plugins page — no polling is needed for a change to show.
 | `tools[].needs`, `mcpServers[].needs` | 3 | 1–4 of the manifest's lock ids a call of the tool, or of the connector's tools, holds while it runs; see [Locks](#locks-the-person-comes-first) |
 | `hooks[]` | 3 | Up to 32 `{on, tool, facts?, messages?}`: the plugin's harness tools Genex runs at its moments; see [Hooks](#hooks-genexs-moments) |
 | `observers[]` | 3 | Up to 8 `{id, facts, tool, live?, label?}`: what Genex can capture of a project with these facts, and the Live view it shows; see [Observers](#observers) |
-| `judges[]` | 3 | Beside `engine` only: up to 8 `{id, label, facts?, brief, players?, probe?}`, blind judges that play the engine's games in its editor; see [Judges](#judges) |
 | `tools[].ready` | 3 | Agent tools with `makes` only: the harness tool that answers whether the kind can be made now (`{ready, note}`) |
 | `tools[].asset` | 3 | Agent tools only: `{kind, prompt?, tool?}`, the kind of asset a call makes; see [Assets being made](#assets-being-made) |
 | `icon` | any | The plugin's picture: a `.png`, `.jpg`, `.webp` or `.svg` file in the package, at most 512 KiB, square and full-bleed (Studio rounds the corners); see [Icons](#icons) |
@@ -1648,8 +1642,8 @@ reads, Choose your place asking each Studio for its place); a mark older than 30
 The `viewport` [observer](#observers) runs `hero-shots` and shows Live's `stills`.
 
 Its skills reach a game that holds a Roblox place only (`facts: ["roblox-project"]`, never
-`engines`): the inline `roblox-studio` (scripts are files, play goes through `computer` and
-`judge_play`, the desktop tool never builds or play-tests in Studio, Roblox's AI tools, uploads and
+`engines`): the inline `roblox-studio` (scripts are files, play goes through `computer`, a Loop's lead
+may ask a judge for a second opinion on its pictures with `judge`, the desktop tool never builds or play-tests in Studio, Roblox's AI tools, uploads and
 inserts ask) and the file skills `luau`, `remotes` (server-authoritative), `player-data`
 (session-locked, `UpdateAsync`, `BindToClose`), `purchases` (idempotent `ProcessReceipt`),
 `ui-scale` (`UIScale`, `ScreenInsets`, touch targets), `assets` (Roblox's mesh and texture rules)
@@ -1836,16 +1830,18 @@ Available services are capability checked and scoped to the calling plugin:
   payload of kind `toolbar` is a toolbar status update (see above).
 - `observe`: current game loading/capture/audio evidence for authorized local files. With
   `still` (API 3, additive) it photographs one named view instead: `{ project, root, files: [],
-  still: { demo | camera, width, height, maxBytes? } }` loads the bound game on a hidden window of
-  its own at `width`×`height` (whole pixels, 320–1920 × 240–1200), puts it in play, runs the
-  `config.demos` entry to its end state or places the camera (one the page lists in `cameras()` or
-  `eyes()`, or `default`; any other name is never called), and reads the canvas. The answer is `{ still: { image, mimeType, width, height, source,
-  view, stats, preview } }`: a PNG, or the first JPEG at quality 95, 90 or 85 that fits `maxBytes`
-  (64 KiB–16 MiB, default 8 MiB), never larger than asked; `stats` holds `lumaMean`, `lumaStdDev`,
-  `nearBlackFraction` (luma below 0.10) and `litFraction`, each 0–1 on a small downscale; `preview`
-  is a JPEG at most 1280 px. Otherwise it is `{ stillProblem: { code, reason?, available? } }` with
-  `unavailable`, `load_failed`, `view_unknown` (with the names the game has, at most 32),
-  `view_failed`, `capture_failed`, `too_large` or `timeout` (one minute for the whole still). A
+  still: { camera?, width, height, maxBytes? } }` loads the bound game on a hidden window of
+  its own at `width`×`height` (whole pixels, 320–1920 × 240–1200), puts it in play and photographs
+  the page as a player sees it. It asks the game for nothing: there are no demos or cameras, so
+  `camera` may only be `default` (a request with a `demo` is refused, and any other camera name is
+  answered `view_unknown` with `available: ["default"]`, before a window is leased). The answer is
+  `{ still: { image, mimeType, width, height, source, stats, preview } }`: a PNG, or the first JPEG
+  at quality 95, 90 or 85 that fits `maxBytes` (64 KiB–16 MiB, default 8 MiB), never larger than
+  asked; `stats` holds `lumaMean`, `lumaStdDev`, `nearBlackFraction` (luma below 0.10) and
+  `litFraction`, each 0–1 on a small downscale; `preview` is a JPEG at most 1280 px. Otherwise it is
+  `{ stillProblem: { code, reason?, available? } }` with `unavailable`, `load_failed`,
+  `view_unknown`, `capture_failed`, `too_large` or `timeout` (one minute for the whole still). A
+  blank or loading frame is taken again up to three times, two seconds apart. A
   still never borrows Live: a build with no hidden window answers `unavailable`. Every field is
   checked before anything runs, and the window is given back however the still ends; once its
   budget gives a still up, nothing reaches that window again, and a closed preview refuses every
@@ -2377,7 +2373,7 @@ The chat's own session is handed Genex's plugin tools on every game, beside `sta
 session gets is its seat's (`ProjectToolSeat`): a run's lead (a web run's director, an open Loop's lead in place)
 gets both, and its card shows in the one chat its run was started in, as the host's records say,
 never a thread the harness names; a worker the host seated gets `plugins_find` only and reports
-what it found to its lead; any other session (a classic run's builder, a judge, a scout) gets
+what it found to its lead; any other session (a reviewer, a judge) gets
 neither. Only the chat's own session gets `start_web_game`. `plugins_find {fact?, text?}` is read-only, so it runs in Plan mode: it lists
 the installed plugins that match (on, then off or removed), then the entries of Genex's curated
 catalog not installed, and never anything from another source (`main/core/plugin-finder.ts`). A
@@ -2665,44 +2661,16 @@ Unreal's card, editor and words ask for Unreal by name. Its descriptor carries `
 game folder, Mode offers no Loop and Rewind says what it can't undo, both in the engine's label
 (`renderer/engine-game.ts`); with it false the Loop runs wherever the project is.
 
-### Judges
+### Editor play in the harness
 
-An engine plugin may declare blind judges in `judges` (API 3, beside its `engine`;
-`substrate/plugins/judge-manifest.ts`, `PluginJudge` in `shared/plugins.ts`). A judge is data: it
-plays a game in the engine's editor through the play tools, never sees code, and answers from
-playing. The manifest is refused unless there are at most 8 and each has:
-
-- `id`, 2–40 lowercase letters, digits and dashes with a letter first, unique in the manifest, and
-  `label`, 1–40 characters on one line;
-- `facts`, when present, 1–8 fact ids: the games it judges (none: every game the plugin plays);
-- `brief`, a Markdown file in the package outside every dot folder. Installing reads it and refuses
-  a missing file, a folder, or more than `MAX_JUDGE_BRIEF_CHARS` (16 000) characters;
-- `players`, when present, a whole number from 1 to the engine's `play.players` (one when it
-  declares none);
-- `probe`, when present, one of the plugin's harness tools that asks nothing, runs no host program
-  and needs every lock `play-open` needs (`quietHarnessTool`).
-
-Unknown keys are dropped and the rest kept in a fixed order. The harness's `game.list` marks a game
-an engine plugin that is on plays in its editor `editorPlay`, with `judges` (`{id, label}`) that
-reach it by its facts (`withEditorPlay` in `main/core/editor-play-session.ts`); a web game, or one no
-plugin that is on plays, has neither. The chat's `judge_play` then takes `judge`, an id the host
-checks against the game's own (an unknown one is refused in plain words and nothing plays), and a
-judge's playtest grant names it. The host appends the judge's brief to the session's rubric (to its
-first answer in the harness's own loop), opens its players, and right after the play opens runs its
-probe once through the plugin's tool call, which holds the play's locks. The probe answers `{note,
-images}`: measurements and pictures, never source. They open the judge's first answer, and the
-pictures are kept in the game's captures folder and shown on the chat's judge line, only for the
-trace the host wrote (`judge-probe-pictures.ts`). A `play-open` that answers `liveData: true` adds
-the note that saved data there is the live game's and only the play's test players may be used.
-In an open Loop the lead's `judge_play` names the game's judges too, and after each turn that keeps
-a save point every one of them plays it in turn, each answer a run check carried to the lead
-([harness runtime](harness-runtime.md)). Whether a chat's session calls a judge is its own choice: a
-change that touches what a judge tests is a hint, not a rule.
-
-The Roblox Studio plugin declares `multiplayer` (3 players, probe `players-state`), `cheater`
-(1, `cheat-remotes`) and `phone` (1, `phone-check`), for `roblox-project` games. Their briefs are in
-`judges/`; the cheater and phone probes send Luau the build copies beside `backend.mjs`
-(`cheat-remotes.luau`, `phone-check.luau`), read from the package at run time
+The harness's `game.list` marks a game an engine plugin that is on plays in its editor `editorPlay`
+(`withEditorPlay` in `main/core/editor-play-session.ts`); a web game, or one no plugin that is on
+plays, is not. A `play-open` that answers `liveData: true` adds the note that saved data there is
+the live game's and only the play's test players may be used. A manifest's `judges` key is not part
+of API 3 and is dropped like any unknown key: Roblox Studio's still names three, which Genex never
+runs. Its probe tools (`players-state`, `cheat-remotes`, `phone-check`) are harness tools of its own;
+the cheater and phone probes send Luau the build copies beside `backend.mjs` (`cheat-remotes.luau`,
+`phone-check.luau`), read from the package at run time
 ([computer use](computer-use.md#game-engines-and-other-targets) says what each measures).
 
 ### The bundled Unity plugin
@@ -2798,7 +2766,7 @@ The plugin makes, sets up and opens that project itself (`backend.ts`), with no 
 
 The six harness-only `play-*` tools implement the shared editor computer contract
 ([computer use](computer-use.md#game-engines-and-other-targets)). Each requires the `editor` lock
-and the `unity-project` fact, so chat agents and judges can play this folder's Unity game without
+and the `unity-project` fact, so chat agents and workers can play this folder's Unity game without
 an engine link. Pipeline carries Play mode, Game-view captures, pause and input; keyboard and
 mouse control require an installed, active Input System package. Genex never adds that dependency
 or changes the project's input settings implicitly. Unsupported input answers with the reason.
@@ -3368,36 +3336,32 @@ Genex:
   kept shot and no send running, the owner chose no cover on genex.games (`kept_owner`, which the
   plugin records whenever Genex reports the owner's pick, at a send or a status check, a shot kept
   or not; `outranked`) and no publish runs, the dialog asks the plugin to take one (`needsCover` in
-  `genex-publish-view.ts`, action `cover-auto`): the `genex-cover` demo, or a plain frame of the game
-  as it loads (`origin: "studio"`), never over a demo's frame; the strip asks the same once a game's
-  turns settle (`use-cover-after-turns.ts`), and it records the `genex-clip` demo's clip when there is
-  one. The banner flips between the record's `candidates` (the last four frames; `cover-pick` makes
-  one the kept shot, pinned, which a publish sends without shooting again), shows a kept clip behind
+  `genex-publish-view.ts`, action `cover-auto`): a plain frame of the game as it loads
+  (`origin: "studio"`, the host's `observe` still of its `default` view), never over the picture the
+  agent kept; the strip asks the same once a game's turns settle (`use-cover-after-turns.ts`). The
+  agent's own picture and clip come from `genex__cover {image, clip?}`: files in the game folder,
+  read by their bytes (`cover-image.ts`, `clip-file.ts`), refused through a link out or at the wrong
+  size or type, and copied into `covers/<project>/`. The banner flips between the record's
+  `candidates` (the last four pictures; `cover-pick` makes one the kept shot, pinned, which a publish
+  sends as it is; a publish never takes a picture), shows a kept clip behind
   a Picture / Clip switch, and Another cover (`[data-genex-another-cover]`) opens a field whose Ask
   agent sends "Make another Genex cover for this game: …" through the chat's own send
   (`renderer/compose-in-chat.ts`) and closes the dialog there. Once the chat really sent it, the ask
   is kept per game on this Mac (`genex/cover-asks.ts`), so the banner opened again says one is being
   made until the agent's own frame arrives: the record's `agentTook` (`covers/<project>/agent.json`,
-  set only by `genex__cover` shoot and clip, never by Studio's takes or a publish's shot). Roughly how
+  set only by `genex__cover`, never by Studio's own frames). Roughly how
   long is left shows once that game's last ask was timed (ask to `agentTook`; no number before one,
   none once it runs over). A
   Genex plugin older than covers answers no record, and none of this shows. Genex-specific core UI, accepted
   by the owner; a second plugin with a cover would need a declared host surface instead.
-- A game that runs as its own program (a Unity, Godot or Unreal fact, or nothing served as a web
-  page: `takenFromReel` in `main/core/cover-reel.ts`) cannot be photographed, so its builder renders
-  the cover inside the engine: the session that owns its build is told to (`appCoverGuidance`,
-  `cover-reel-prompts.ts`, added to the brief in `core/delegation.ts`), with no Genex tool needed:
-  `.studio/cover/cover.png` (1920x1080) and `.studio/cover/clip/0001.png` onward (five seconds at
-  30 fps, 960x540), or one `clip.mp4`/`clip.webm`. A plugin's `observe` with a `still` or a `clip`
-  of such a game takes it of its cover reel (`throughCoverReel`, through `ViewStillOptions.open`):
-  the media copied, by `lstat` and never through a link, sniffed and capped, into a folder of the
-  host's scratch (`cover-reels/`) beside a page whose `__studio` answers the `genex-cover` demo with
-  the picture and `genex-clip` with the frames played from `start()`, removed when the take ends.
-  So `cover-auto`, the banner and a publish work on it as on a web game. With no media, or for a
-  web game, the game is served as before.
+- A game that runs as its own program (a Unity, Godot or Unreal fact) cannot be photographed by
+  Studio: its page shows nothing of it. Its agent renders the cover inside the engine and hands
+  `genex__cover` the file paths like a web game's; the landed-run cover step asks for it the same
+  way (`core/cover-step.ts`), and there is no cover reel or per-turn cover note for an engine.
 - The chat shows the game's kept Genex cover as one card (`chat/GenexCoverCard.tsx`) for the
   thread's latest `genex__cover` call from plugin `genex` whose operation is `shoot` and whose
-  answer carried a picture (`chat-entries.ts`, the tool read with or without `genex__` and
+  answer carried a picture (a call of the newer `{image, clip?}` shape names no operation and is
+  not read there yet) (`chat-entries.ts`, the tool read with or without `genex__` and
   `mcp__studio__`). Like a build's result card it goes up once that work has ended, after the turn's
   reply (or a build's result card when the build's builder shot it), never mid-turn, and a newer
   kept shot takes it down at once; earlier shots stay rows of the work. Its picture is the kept shot
@@ -3408,11 +3372,9 @@ Genex:
   dialog; that dialog's press is the consent, and for a live game it offers Publish update. Publish
   is left out while Genex puts no Publish on the strip (off or removed), while publish-status
   reports an attempt running, and once Genex has answered for the kept frame itself (`applied`,
-  `unchanged`, `outranked` or `kept_owner` for its hash: a publish re-shoots and sends it, so the
-  cover's next step is done; `failed` and `not_hosted` keep it) (`coverCardPublish`, read on mount,
-  on Genex's plugin events and on the dialog's cadence by `use-genex-publishing.ts`). The cover
-  guidance (inline `cover` skill, `genex-cover` preface) tells the builder to shoot the winner last
-  and then say one line, never how to publish. Genex-specific on purpose and with no manifest field:
+  `unchanged`, `outranked` or `kept_owner` for its hash: a publish sends it, so the cover's next
+  step is done; `failed` and `not_hosted` keep it) (`coverCardPublish`, read on mount, on Genex's
+  plugin events and on the dialog's cadence by `use-genex-publishing.ts`). Genex-specific on purpose and with no manifest field:
   when plugin pictures get a general home in the chat, the card moves onto it and keeps only
   Publish.
 - `~/.genex` is on the protected and secret path lists every sandboxed engine and native job is
@@ -3478,16 +3440,21 @@ Genex:
 - `genex__asset` accepts only each lane's own options (`LANE_OPTIONS`, `plugins/genex/request.ts`),
   and a refusal names them (`Unsupported Genex option for <op>`). Each lane's provider is fixed and
   its description says which (the `model` lanes are Tripo; `character` and `creature` are Meshy;
-  `character.import` is Uthana), with Local Blender first for hard-surface models when it is on; a
-  chat's coordinator promises no provider a lane lacks (`coordinator-prompts.ts`).
-- Genex's guide, nine platform cards and five lane cards (model, character, texture, audio,
+  `character.import` is Uthana); it names no order between Genex and Local Blender, and a chat's
+  coordinator promises no provider a lane lacks (`coordinator-prompts.ts`).
+- Genex's guide, eight platform cards and five lane cards (model, character, texture, audio,
   image) are vendored behind Studio-written prefaces in
   `src/plugins/genex/skills` (`vendor.json` pins each source and hash; `npm run genex:skills`
-  refreshes them; `genex-skills-vendor.test.ts` catches drift) and served as file skills. Genex's
-  currency is Nex (the cards call it coin), and the prefaces make store items the default for it:
-  a thing priced in Nex, or sold for real money with no currency named, is a store item the agent
-  lists with `shop add` and its picture without asking, at any time, so its card shows; coins, gold or gems are the game's own
-  currency unless the person says they are for real money, when it asks once. Dynamic payments
+  refreshes them; `genex-skills-vendor.test.ts` catches drift) and served as file skills. The
+  `genex` plugin keeps Genex's product requirements and API facts: Studio's cuts (`cuts.json`, a
+  section, a run of lines, a replaced sentence or a dropped reference, each matching the pinned text
+  exactly once) take Genex's design and process advice out of the vendored text, and the prefaces
+  carry the API facts those passages held. That advice, reworded as optional, is the bundled
+  `genex-recommendations` plugin (skills only: multiplayer patterns, cover craft, asset sources, shop
+  design, player experience, play-time models), which every new profile installs off (`seedEnabled`). Genex's currency is Nex (the cards
+  call it coin): a thing priced in Nex, or sold for real money with no currency named, is a store
+  item listed with `shop add` and its picture; coins, gold or gems are the game's own currency
+  unless the person says they are for real money. Dynamic payments
   stay for amounts decided while playing. A card a
   CLI release not yet on npm changed is vendored ahead of the pin (`--ahead-from <apps/cli> --ahead
   <cards> --ahead-source <label>`): its files record that `version` and a `pending` note, plain
@@ -3832,14 +3799,16 @@ assets remain ordinary files. A fixture `assets.deliver` must leave an `asset_de
 the project's log and a card on the Assets tab; no paid generation is needed for either. Use
 fixture accounts and existing assets, with no additional paid generation.
 
-`genex-cover.test.ts` pins the Genex cover the same way, with a fake `observe` and the cover routes
-on the fixture API: `genex__cover` shoots only the `genex-cover` demo into the plugin's storage
-(the game folder locked, never read) and answers its preview; a publish sends the frame only after
-its upload is recorded (a draft's page check may still be running), sends nothing for unchanged
-bytes or over the owner's own cover (recorded as such with no shot kept, by a publish and by a
-status check), stays done with a warning when the commit is refused, limited,
-failed or silent or the shot cannot be kept, skips the shot without enough of its invocation left,
-never sends from a listed game's draft (listed from the dashboard too), sends the bytes it records
+`genex-cover-files.test.ts` pins what `genex__cover` keeps: the agent's PNG or JPEG (its light
+read from the pixels, a JPEG's from its blocks) and WebM or MP4 copied into the plugin's storage with
+no frame asked of the host, and a hostile table (outside the folder, through a link out, a folder,
+a missing file, the wrong type, too small, too large, damaged, a clip too short) that keeps nothing
+and touches nothing. `genex-cover.test.ts` pins the Genex cover's sends, with the cover routes on
+the fixture API: a publish sends the kept picture only after its upload is recorded (a draft's page
+check may still be running) and takes none of its own, sends nothing for unchanged bytes or over the
+owner's own cover (recorded as such with no picture kept, by a publish and by a status check), stays
+done with a warning when the commit is refused, limited, failed or silent, never sends from a listed
+game's draft (listed from the dashboard too), sends the bytes it records
 however shots interleave, and is stopped by the next publish; `genex__cover-set` waits for consent,
 sends nothing without a hosted project and never sends the clip; a bad project name reaches no host and writes nothing.
 The chat's cover card: `chat-transcript.test.ts` pins which shoot gets it (the latest that kept a

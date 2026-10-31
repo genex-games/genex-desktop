@@ -16,7 +16,6 @@
  * photograph. Both live in the studio so they cannot drift apart per game.
  */
 import { isJsonObject } from "./fsx.ts";
-import { isEffectivelyBlack, type PixelStats } from "./pixel-stats.ts";
 import { CaptureSurface } from "../shared/preview-contract.ts";
 
 /** Every surface a caller may ask for. */
@@ -239,99 +238,42 @@ export async function probePageUi(
   }
 }
 
-/** `surface` wins; the legacy `page: true` is its permanent alias; neither means the canvas. */
+/** `surface` wins; the legacy `page: true` is its permanent alias; neither means the page. */
 export function resolveSurface(opts: { page?: boolean; surface?: CaptureSurface } = {}): CaptureSurface {
   if (opts.surface && SURFACES.has(opts.surface)) return opts.surface;
-  return opts.page === true ? CaptureSurface.Page : CaptureSurface.Canvas;
+  return CaptureSurface.Page;
 }
 
-/** With the DOM over the game, the picture the player sees is the compositor's, not the canvas's. */
-export function autoWantsPage(ui: PageUi | null): boolean {
-  return ui?.uiPrimary === true;
-}
-
-/**
- * The other half of `auto`: the case where the CANVAS eye is the broken one. No frame at all, or
- * a frame that is effectively black on a page that does have a canvas, means the canvas read
- * gave the studio nothing — a WebGPU or multi-canvas game that would otherwise be judged black
- * for the whole run. The compositor sees those frames, so `auto` asks it.
- */
-export function blankCanvasWantsPage(stats: PixelStats | null, ui: PageUi | null): boolean {
-  if (!stats) return true;
-  if (!isEffectivelyBlack(stats)) return false;
-  return (ui?.canvas?.count ?? 0) > 0;
-}
-
-/** The four things the ladder needs from the preview; `T` is whatever a capture returns. */
+/** The two surfaces the ladder can photograph; `T` is whatever a capture returns. */
 export interface CaptureLadder<T> {
-  /** The guarded probe. Called at most once per capture. */
-  pageUi(): Promise<PageUi | null>;
   /** The canvas surface: the page's own end-of-frame read, else the compositor. */
   canvas(): Promise<T>;
   /** The page surface: the compositor frame, with every DOM element on it. */
   page(): Promise<T>;
-  /** Pixel stats of a canvas frame — only ever asked for on the `auto` path. */
-  measure(shot: T): PixelStats | null;
 }
 
-/** What the ladder settled on, and everything it learned on the way there. */
+/** What the ladder settled on: the frame, and which surface it shows. */
 export interface ChosenCapture<T> {
   shot: T;
   surface: typeof CaptureSurface.Canvas | typeof CaptureSurface.Page;
-  ui: PageUi | null;
-  /** The stats already computed for a returned canvas frame, so no caller measures it twice. */
-  stats: PixelStats | null;
 }
 
 /**
- * The surface ladder, pure over its four callbacks so the whole of it is testable without a
- * window. `canvas` and `page` are the two real surfaces and go straight through. `auto` asks the
- * page what it looks like, and then, if the canvas frame it took is missing or black on a page
- * that has a canvas, asks the compositor instead.
- *
- * Every fallback runs one way only: toward a picture. An `auto` capture that works today cannot
- * begin to fail because a probe rejected, because a page capture threw, or because a window is
- * offscreen — the frame it already has is returned instead.
+ * The surface ladder, pure over its callbacks so it is testable without a window. The studio
+ * photographs the page as the player sees it — the compositor frame, DOM included — for `page`
+ * and `auto` alike, and the canvas only when a caller names it. A page frame that cannot be had
+ * falls back to the canvas: every fallback runs toward a picture.
  */
 export async function chooseCapture<T>(asked: CaptureSurface, ladder: CaptureLadder<T>): Promise<ChosenCapture<T>> {
-  if (asked === CaptureSurface.Page)
-    return { shot: await ladder.page(), surface: CaptureSurface.Page, ui: null, stats: null };
-  if (asked !== CaptureSurface.Auto) {
-    return { shot: await ladder.canvas(), surface: CaptureSurface.Canvas, ui: null, stats: null };
+  if (asked === CaptureSurface.Canvas) {
+    return { shot: await ladder.canvas(), surface: CaptureSurface.Canvas };
   }
-
-  const ui = await ladder.pageUi();
-  if (autoWantsPage(ui)) {
-    try {
-      return { shot: await ladder.page(), surface: CaptureSurface.Page, ui, stats: null };
-    } catch {
-      /* the DOM is the better picture, but a canvas frame beats no frame at all */
-    }
-    return { shot: await ladder.canvas(), surface: CaptureSurface.Canvas, ui, stats: null };
-  }
-
-  let shot: { value: T } | null = null;
-  let failure: unknown = null;
   try {
-    shot = { value: await ladder.canvas() };
-  } catch (err) {
-    failure = err;
-  }
-  let stats: PixelStats | null = null;
-  if (shot) {
-    try {
-      stats = ladder.measure(shot.value);
-    } catch {
-      stats = null;
-    }
-  }
-  // No shot means no stats, and no stats always wants the page: `shot` is set whenever this returns.
-  if (shot && !blankCanvasWantsPage(stats, ui)) return { shot: shot.value, surface: CaptureSurface.Canvas, ui, stats };
-  try {
-    return { shot: await ladder.page(), surface: CaptureSurface.Page, ui, stats: null };
-  } catch (err) {
-    if (shot) return { shot: shot.value, surface: CaptureSurface.Canvas, ui, stats };
-    throw failure ?? err;
+    return { shot: await ladder.page(), surface: CaptureSurface.Page };
+  } catch (failure) {
+    const canvas = await ladder.canvas().catch(() => null);
+    if (canvas === null) throw failure;
+    return { shot: canvas, surface: CaptureSurface.Canvas };
   }
 }
 

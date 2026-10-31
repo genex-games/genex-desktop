@@ -11,13 +11,12 @@
  * runner (`lead.ts` and its siblings) imports it; `seed-contracts.test.ts` holds its plugin tool
  * names to the bundled plugins'.
  */
-import { JUDGE_PLAY_TOOL } from "../judge-play-prompts.ts";
 import type { Run } from "../../types/harness.d.ts";
 import type { LeadSeat } from "../director/lead-session.ts";
-import { MAX_WAIT_S } from "../director/budgets.ts";
+import { MAX_WORKER_WAIT_S } from "../workers/contract.ts";
 import { DirectorTool } from "../director/tool-specs.ts";
 import type { FinishTally } from "../finish-check.ts";
-import type { Side } from "../judge.ts";
+import type { Side } from "../verdict.ts";
 import type { WorkerMode, WorkerState } from "../outcomes.ts";
 import type { JournalPhase } from "../run-events.ts";
 import { MINUTE_MS } from "../time.ts";
@@ -42,8 +41,6 @@ export const LeadTool = {
   WorkerStop: WorkerTool.Stop,
   WorkerMark: WorkerTool.Mark,
   Critic: "critic",
-  /** A blind judge plays the game and answers one yes/no question (`judge-play.ts`): the chat's own name for it. */
-  JudgePlay: JUDGE_PLAY_TOOL,
   RebuildUnreal: "rebuild_unreal",
   Note: DirectorTool.Note,
   /** The lead's claim that the game meets the request, which a reviewer checks: the director's own name. */
@@ -52,7 +49,7 @@ export const LeadTool = {
 export type LeadTool = (typeof LeadTool)[keyof typeof LeadTool];
 
 /** The longest `worker_wait`, in seconds: the director's own cap. */
-export const MAX_AGENT_WAIT_S = MAX_WAIT_S;
+export const MAX_AGENT_WAIT_S = MAX_WORKER_WAIT_S;
 
 // ── sub-agents ──────────────────────────────────────────────────────────────────────────────
 
@@ -201,9 +198,8 @@ export type AgentManifestFile = {
   /** Where its pivot sits, in words ("base centre", "grip"). */
   pivot?: string;
   materials?: string[];
-  /** How many mesh objects the file holds: one, unless its brief asked for several (`meshesAsked`). */
+  /** How many mesh objects the file holds. */
   meshes?: number;
-  meshesAsked?: boolean;
 };
 
 /**
@@ -250,37 +246,18 @@ export type AgentRecord = AgentRequest & {
   mark: AgentMark | null;
   mergedInto: string | null;
   credits: number;
-  /** The critic's look at a delivered model's renders against its brief; absent when it had none to look at. */
-  look?: AssetLook;
 };
 
 // ── save points, captures and the critic ───────────────────────────────────────────────────
 
-/** Hero cameras are the level's CameraActors named with this prefix; a save point captures up to {@link MAX_HERO_SHOTS}. */
-export const HERO_CAMERA_PREFIX = "GX_Shot_";
-/** The most hero cameras a save point captures. */
-export const MAX_HERO_SHOTS = 6;
+/** The most of a checkpoint's pictures a save point keeps as thumbnails. */
+export const MAX_THUMBNAILS = 6;
 
-/** A capture's tone numbers, each 0 to 1, as the Unreal plugin's bridge measures them (its `Tone`). */
-export type ShotTone = {
-  /** The 2nd luminance percentile: the black point. */
-  p2: number;
-  /** The 98th luminance percentile: the white point. */
-  p98: number;
-  mean: number;
-  /** The luminance standard deviation: the contrast. */
-  std: number;
-  /** The lower third's luminance std (the near ground) and the upper middle band's (the distance): aerial perspective. */
-  nearStd: number;
-  farStd: number;
-  /** The mean saturation. */
-  saturation: number;
-  /** The share of pixels at full white. */
-  clipped: number;
+/** One thumbnail of a save point: its camera and its capture file. */
+export type SavePointShot = {
+  camera: string;
+  path: string;
 };
-
-/** One thumbnail of a save point: its camera, its capture file and its tone numbers when measured. */
-export type SavePointShot = { camera: string; path: string; tone: ShotTone | null };
 
 /**
  * One save point: its label, its snapshot, when, what it holds, its thumbnails, the milestone it is
@@ -310,17 +287,9 @@ export const WHOLE_FRAME: [number, number, number, number] = [0, 0, 1, 1];
 /** One defect the critic saw, with its fix. */
 export type CriticDefect = { defect: string; fix: string };
 
-/** The critic's yes or no on a delivered model: ready to go into the game as it is, or not. Never rename a value. */
-export const AssetVerdict = { Ready: "ready", NotReady: "not-ready" } as const;
-export type AssetVerdict = (typeof AssetVerdict)[keyof typeof AssetVerdict];
-
-/** The critic's look at a delivered model's renders against the brief it was made from, or why it couldn't look. */
-export type AssetLook = { verdict: AssetVerdict; defects: CriticDefect[] } | { error: string };
-
 /**
  * The critic's advice: what it looked at, the round it reviewed (null before the first save
- * point), at most {@link MAX_CRITIC_DEFECTS} defects with fixes, one bold move, and (`gates`) its
- * yes or no to its own art checks, one line each, which are not the brief's Gate 0–2. `required`
+ * point) and at most {@link MAX_CRITIC_DEFECTS} defects with fixes. `required`
  * holds the open items of its last look it still saw in this one: a defect seen in two looks in a
  * row, which the lead fixes before anything new (absent in an older journal). It changes nothing.
  */
@@ -331,8 +300,6 @@ export type CriticAdvice = {
   milestoneId: string;
   round: number | null;
   defects: CriticDefect[];
-  boldMove: string;
-  gates: string[];
   required?: CriticDefect[];
 };
 
@@ -386,14 +353,10 @@ export const LeadEndReason = {
   /** Unreal could not be reopened. */
   Halted: "halted",
   Failed: "failed",
-  /** The lead ended several turns in a row within minutes: it had nothing more to build. */
+  /** The lead ended several turns in a row within minutes, saving nothing. */
   Idle: "idle",
-  /** A reviewer accepted the lead's claim that the game meets the request. */
+  /** The lead's claim that the game meets the request closed the run. */
   GoalReached: "goal-reached",
-  /** The reviewer turned the lead's claim down too many times in a row: the run stopped with what isn't done. */
-  NotDone: "not-done",
-  /** The lead claimed, and no engine here can hold a reviewer to check it: the run ended without a yes. */
-  NoReviewer: "no-reviewer",
 } as const;
 export type LeadEndReason = (typeof LeadEndReason)[keyof typeof LeadEndReason];
 
@@ -512,7 +475,5 @@ export type CriticAdvicePayload = {
   iteration: number | null;
   at: string;
   defects: CriticDefect[];
-  boldMove: string;
-  gates: string[];
   shots: string[];
 };

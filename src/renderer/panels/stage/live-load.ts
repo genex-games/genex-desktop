@@ -172,13 +172,14 @@ export function useWebGamePage(
 }
 
 /** How one page load is settling, tracked across probes. */
-interface Settle {
+export interface Settle {
   since: number;
   currentAt: number;
   lastResources: number;
   quietAt: number;
 }
-const freshSettle = (): Settle => ({ since: -1, currentAt: 0, lastResources: -1, quietAt: 0 });
+/** A settle with nothing seen yet. */
+export const freshSettle = (): Settle => ({ since: -1, currentAt: 0, lastResources: -1, quietAt: 0 });
 
 /**
  * Why waiting for the page any longer is pointless, if it is: no time left, a broken build, a failed
@@ -231,14 +232,19 @@ function noteGame(live: LivePage, set: Pick<ReturnType<typeof useLiveLoad>, "set
   );
 }
 
-/** The load this game's probe settled, and how; null while there is none to wait on or the wait goes on. */
-function settledLoad(
+/**
+ * The load this game's probe settled, and how; null while there is none to wait on or the wait
+ * goes on. A load main has not answered yet (`pending`) times out on the same clock: a page whose
+ * start-up never ends never lets main answer, and the game must not stay hidden for good.
+ */
+export function settledLoad(
   load: LiveLoad | null,
   project: string,
   settle: Settle,
   probe: { live: LivePage | null; current: boolean; broken: boolean; now: number },
 ): { load: LiveLoad; outcome: LiveOutcome } | null {
-  if (!load || load.pending || load.project !== project) return null;
+  if (!load || load.project !== project) return null;
+  if (load.pending) return probe.now - load.since > LIVE_LOAD_MAX_MS ? { load, outcome: LiveOutcome.TimedOut } : null;
   const outcome = settled(settle, load, probe);
   return outcome ? { load, outcome } : null;
 }

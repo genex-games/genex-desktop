@@ -27,6 +27,8 @@ import {
 import { DesktopControl } from "./control.ts";
 import { type ControlEndpoint, controlEndpoint, listenControl, removeControlEndpoint } from "./control-endpoint.ts";
 import { listRuns } from "./runs.ts";
+import { type OperationSlot, operationSlot } from "./operation-slot.ts";
+import { stopThenExit } from "../app-lifecycle.ts";
 import { Diagnostics } from "./diagnostics.ts";
 import {
   DEV_PROTOCOL_VERSION,
@@ -58,9 +60,13 @@ import { HarnessState } from "../../shared/protocol.ts";
 const RECORD_VERSION = 1;
 /** `stop` tears down after this, so its own reply leaves first. */
 const STOP_REPLY_GRACE_MS = 100;
+/** How long a stop waits to save diagnostics still recording: a page that never yields never answers. */
+const DIAGNOSTICS_STOP_MS = 5 * SECOND_MS;
+/** How long a stop waits for its records and its channel to close before it exits anyway. */
+const CLOSE_MS = 2 * SECOND_MS;
 /** An idle client connection is dropped after this. */
 const CLIENT_IDLE_MS = 35 * SECOND_MS;
-/** An operation answers `timeout` after this; it may still finish. */
+/** An operation answers `timeout` after this and gives back the slot (`operation-slot.ts`); it may still finish. */
 const OPERATION_TIMEOUT_MS = 30 * SECOND_MS;
 /** Let pushed fixture events reach the renderer before the second counter snapshot. */
 const FIXTURE_PUBLISH_SETTLE_MS = SECOND_MS;
@@ -112,7 +118,8 @@ interface Runtime extends RuntimeParts {
   diagnostics: Diagnostics;
   sockets: Set<net.Socket>;
   server: net.Server | null;
-  busy: boolean;
+  /** The one slot an operation on the app runs in. */
+  slot: OperationSlot;
   lastFailure: unknown;
   stopping: boolean;
 }
@@ -154,7 +161,7 @@ async function openRuntime(parts: RuntimeParts): Promise<Runtime> {
     diagnostics: new Diagnostics(root, control),
     sockets: new Set(),
     server: null,
-    busy: false,
+    slot: operationSlot(OPERATION_TIMEOUT_MS),
     lastFailure: null,
     stopping: false,
   };
@@ -418,8 +425,11 @@ function resizeWindow(rt: Runtime, params: WindowResizeParams) {
 
 /** Is the game view on screen with an area to capture? */
 function gameViewShown(preview: GamePreview): boolean {
-  const bounds = preview.view?.getBounds();
-  return Boolean(bounds && bounds.width > 0 && bounds.height > 0);
+  const view = preview.view;
+  // A view the stage hides keeps its size where it was last shown (`placedBounds`); it is not drawn.
+  if (!view?.getVisible()) return false;
+  const bounds = view.getBounds();
+  return bounds.width > 0 && bounds.height > 0;
 }
 
 function surfaceWidth(rt: Runtime, surface: DevSurface): number {
@@ -519,19 +529,15 @@ async function answer(rt: Runtime, client: net.Socket, line: string): Promise<vo
   const reply = (r: DevResponse) => {
     if (!client.destroyed) client.end(`${JSON.stringify(r)}\n`);
   };
-  let timer: NodeJS.Timeout | undefined;
-  let ownedBusy = false;
+  const timedOut = (): void => {
+    exchange.replied = true;
+    const error = { code: DevErrorCode.Timeout, message: "operation timed out; inspect status before retrying" };
+    reply({ version: DEV_PROTOCOL_VERSION, requestId: exchange.requestId, ok: false, error });
+  };
   try {
     const op = admit(rt, line, exchange);
-    if (rt.busy) throw new DevError(DevErrorCode.Busy, "an operation is still executing");
-    rt.busy = true;
-    ownedBusy = true;
-    timer = setTimeout(() => {
-      exchange.replied = true;
-      const error = { code: DevErrorCode.Timeout, message: "operation timed out; inspect status before retrying" };
-      reply({ version: DEV_PROTOCOL_VERSION, requestId: exchange.requestId, ok: false, error });
-    }, OPERATION_TIMEOUT_MS);
-    const value = await perform(rt, op);
+    // Status, runs and stop never wait for the slot; a timed-out operation gives it back (`operation-slot.ts`).
+    const value = await rt.slot.run(op.method, () => perform(rt, op), timedOut);
     if (!exchange.replied)
       reply({ version: DEV_PROTOCOL_VERSION, requestId: exchange.requestId, ok: true, value: rt.sanitize(value) });
   } catch (e) {
@@ -543,9 +549,6 @@ async function answer(rt: Runtime, client: net.Socket, line: string): Promise<vo
     rt.lastFailure = failure;
     if (!exchange.replied)
       reply({ version: DEV_PROTOCOL_VERSION, requestId: exchange.requestId, ok: false, error: failure });
-  } finally {
-    if (timer) clearTimeout(timer);
-    if (ownedBusy) rt.busy = false;
   }
 }
 
@@ -565,10 +568,30 @@ function sameCapability(offered: string, held: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
+/**
+ * Stop the launch and exit, whatever a step does (`stopThenExit`): a quit step that did not finish
+ * is recorded in `failure.json`, never left to keep the app up past the CLI's wait or a SIGTERM.
+ */
 async function stop(rt: Runtime): Promise<void> {
   rt.stopping = true;
-  await rt.diagnostics.stop();
-  await rt.shutdown();
+  await stopThenExit(
+    {
+      diagnostics: () => rt.diagnostics.stop(),
+      shutdown: () => rt.shutdown(),
+      close: (failure) => closeRuntime(rt, failure),
+      // The CLI removes the lease only after observing actual process exit.
+      exit: () => app.exit(0),
+    },
+    { diagnosticsMs: DIAGNOSTICS_STOP_MS, closeMs: CLOSE_MS },
+  );
+}
+
+/** The stopped launch's records, then its channel closed. */
+async function closeRuntime(rt: Runtime, failure: string | null): Promise<void> {
+  if (failure) {
+    rt.lastFailure = failure;
+    writeJson(path.join(rt.ctx.root, "failure.json"), { version: RECORD_VERSION, error: failure });
+  }
   writeJson(path.join(rt.root, "stopped.json"), {
     version: RECORD_VERSION,
     instanceId: rt.ctx.instanceId,
@@ -578,8 +601,6 @@ async function stop(rt: Runtime): Promise<void> {
   const server = rt.server;
   if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
   await removeControlEndpoint(rt.endpoint);
-  // The CLI removes the lease only after observing actual process exit.
-  app.exit(0);
 }
 
 /** Fixed graph stimuli are fixture-only; snapshots are the existing DOM inspector's counters. */

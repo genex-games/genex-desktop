@@ -39,6 +39,7 @@ import { CodedError, errorMessage } from "../shared/errors.ts";
 import { t } from "../shared/i18n.ts";
 import { EventKind, ThreadKind, SnapshotScope } from "../shared/event-log.ts";
 import { assetKind, isAudioFile, type AssetDeliveredPayload } from "../shared/game-assets.ts";
+import { keepDeliveredPicture } from "./delivery-picture.ts";
 import {
   coverFromBrief,
   ExportRefusal,
@@ -52,17 +53,13 @@ import {
   type ExportReview,
   type PluginBinding,
   PluginCapability,
-  type PluginClipAnswer,
-  type PluginClipOrder,
   type PluginStillAnswer,
   type PluginStillOrder,
   PluginToolAudience,
   NativeRuntimeState,
 } from "../shared/plugins.ts";
 import { EngineHostAction, type EngineLinkUndo, type EngineUndoSetUpArgs } from "../shared/game-engine.ts";
-import { type ViewOpener, viewStill, type ViewStillOptions } from "./core/view-still.ts";
-import { type ReelView, throughCoverReel } from "./core/cover-reel.ts";
-import { viewClip, type ViewClipOptions } from "./core/view-clip.ts";
+import { viewStill, type ViewStillOptions } from "./core/view-still.ts";
 import { ToolPermissionBy } from "../shared/permissions.ts";
 import { type JobRecord, JobScopeKind, JobStopper } from "../shared/jobs.ts";
 import { recordJobEnded, recordJobStarted } from "./core/job-records.ts";
@@ -110,7 +107,6 @@ import type { Engine, LiveToolResult } from "../substrate/engines/types.ts";
 import { EventStore } from "../substrate/event-store.ts";
 import { atomicWriteJson, ensureDir, readJsonIfExists } from "../substrate/fsx.ts";
 import type { ExportResult } from "../substrate/game-export.ts";
-import { GameCandidates } from "../substrate/game-candidate.ts";
 import {
   GameWorkspaces,
   readProjectShape,
@@ -122,7 +118,6 @@ import {
 import { HarnessHost, UpdateJournal, type UpdateRecord } from "../substrate/harness-host.ts";
 import { shortId } from "../substrate/ids.ts";
 import { ExportApprovals, sortedReview } from "./core/export-approvals.ts";
-import { ImprovementJournal } from "../substrate/improvement-journal.ts";
 import { McpRegistry } from "../substrate/mcp/registry.ts";
 import { ensureFactIgnoreRules } from "../substrate/nested-repos.ts";
 import { mcpSecretPort, type SecretPort } from "../substrate/mcp/store.ts";
@@ -174,6 +169,7 @@ import { GenexPackageService } from "./core/genex-package.ts";
 import { boundGameFolder } from "./core/genex-bound-game.ts";
 import { assertPublishable } from "./core/genex-publish.ts";
 import { GENEX_ACCOUNT_ACTIONS } from "../shared/genex.ts";
+import { GENEX_RECOMMENDATIONS_PLUGIN_ID } from "../shared/plugin-id.ts";
 import { GameThreadService } from "./core/game-threads.ts";
 import {
   type CoreInternals,
@@ -193,7 +189,6 @@ import { PreviewService } from "./core/previews.ts";
 import { AutoResumeService, type AutoResumeDeps } from "./core/auto-resume.ts";
 import { heldStartAsk, heldStartRuns } from "./core/held-start.ts";
 import { coverStepAsk, coverStepRuns } from "./core/cover-step.ts";
-import { CoreFact, hasFact } from "../shared/project-facts.ts";
 import { availableMemory } from "../substrate/hardware.ts";
 import { RecoveryService } from "./core/recovery.ts";
 import { ChatRewindService } from "./core/rewind.ts";
@@ -217,11 +212,9 @@ import { engineRpc } from "./harness-rpc/engine.ts";
 import { eventsRpc } from "./harness-rpc/events.ts";
 import { gameRpc } from "./harness-rpc/game.ts";
 import { jobsRpc } from "./harness-rpc/jobs.ts";
-import { optimizationRpc } from "./harness-rpc/optimization.ts";
 import { pluginsRpc } from "./harness-rpc/plugins.ts";
 import { previewRpc } from "./harness-rpc/preview.ts";
 import { desktopRpc } from "./harness-rpc/desktop.ts";
-import { judgeRpc } from "./harness-rpc/judge.ts";
 import { runsRpc } from "./harness-rpc/runs.ts";
 import { snapshotRpc } from "./harness-rpc/snapshot.ts";
 import { hooksRpc } from "./harness-rpc/hooks.ts";
@@ -249,8 +242,6 @@ const HARNESS_CRASH_LOOP = { count: 3, windowMs: 5 * MINUTE_MS } as const;
 const GAMES_ROOT_FILE = "games-root.json";
 /** The folder in the sandbox's scratch where each engine plugin's sandbox job keeps its own. */
 const PLUGIN_JOBS_FOLDER = "plugin-jobs";
-/** The folder in the sandbox's scratch where an engine game's cover reel is staged for a still or clip. */
-const COVER_REEL_FOLDER = "cover-reels";
 /** The folder in the sandbox's scratch where Node keeps the harness's compiled modules between boots. */
 const HARNESS_COMPILE_CACHE_FOLDER = "harness-compile-cache";
 /** The prefix of the scratch folder an engine's game runs with (its private home and temp files). */
@@ -302,7 +293,6 @@ const COVER_RENDERER = "renderer";
 
 /** settings.json as this build or an older one may have written it. */
 type SavedSettings = Partial<StudioSettings> & {
-  autoApplyImprovements?: boolean;
   /** The `DEFAULT_BUILDERS` in force when the file was written; older builds wrote none. */
   buildersDefault?: number;
   /** Written since self-improvement was stopped; a file without it was saved while learning started on. */
@@ -312,13 +302,6 @@ type SavedSettings = Partial<StudioSettings> & {
 /** Migration: self-improvement is stopped, so a file saved before the stop turns learning off once. */
 function savedLearning(saved: SavedSettings): boolean {
   return saved.learningStopped === true && saved.learning === true;
-}
-
-/** Migration: installs that had the old auto-apply switch off chose caution — keep it. */
-function savedSelfImproving(saved: SavedSettings): boolean {
-  if (saved.selfImproving !== undefined) return Boolean(saved.selfImproving);
-  if (saved.autoApplyImprovements !== undefined) return Boolean(saved.autoApplyImprovements);
-  return false;
 }
 
 /** The worker default in force when `saved` was written: the file's own record, else the older builds' default. */
@@ -390,18 +373,16 @@ export interface StudioCoreOptions {
   /** Notes each boot step as it finishes (`main/performance.ts`); a launch without diagnostics passes nothing. */
   markBoot?: (step: string) => void;
   engines?: Engine[];
-  executionPolicy?: { allowedProjectRoot?: string; runBackgroundImprovement?: boolean };
+  executionPolicy?: { allowedProjectRoot?: string };
   paths: StudioPaths;
   preview?: PreviewPort;
   /**
    * Factory for headless observation ports (a hidden window on the same `game://` protocol).
    * Absent = the pool serves only the live view and `preview.acquire` refuses loudly.
    */
-  createHeadlessPreview?: (options?: { purpose?: "optimization" }) => Promise<PreviewPort>;
+  createHeadlessPreview?: () => Promise<PreviewPort>;
   /** Max concurrent headless preview leases (default 4). */
   previewPoolMax?: number;
-  /** Idle-architect pacing — overridable so tests need not wait ten real minutes. */
-  improvementIdle?: { idleMs?: number; checkMs?: number; minGapMs?: number };
   /** `process.execPath`; in Electron this needs `runAsNode`. */
   execPath?: string;
   runAsNode?: boolean;
@@ -471,8 +452,6 @@ export interface StudioCoreOptions {
   autoResume?: Partial<Pick<AutoResumeDeps, "now" | "setTimer" | "clearTimer" | "freeMb">>;
   /** A plugin still's budget (default one minute) and the clock it runs on (`core/view-still.ts`); a test seam. */
   pluginStill?: ViewStillOptions;
-  /** A plugin clip's budget (default its seconds and a minute) and the clock it runs on (`core/view-clip.ts`); a test seam. */
-  pluginClip?: ViewClipOptions;
   /** A planned automatic resume started (true) or stopped (false) waiting; main holds the Mac awake meanwhile. */
   onAutoResumePending?: (pending: boolean) => void;
   onUiEvent?: (event: UiEvent) => void;
@@ -505,7 +484,6 @@ export class StudioCore {
   readonly layout: StudioLayout;
   readonly snapshots: SnapshotEngine;
   readonly snapshotIndex = new SnapshotIndex();
-  readonly candidates: GameCandidates;
   readonly engines = new EngineRegistry();
   readonly contextPreferences: ContextPreferences;
   readonly games: GameWorkspaces;
@@ -513,8 +491,6 @@ export class StudioCore {
   readonly ollamaSidecar: OllamaSidecar;
   /** Token bookkeeping + improvement-class caps, enforced at the engine seam (A9). */
   readonly budget: BudgetLedger;
-  /** Durable queued architect jobs, executed only when idle (A6, §6.5). */
-  readonly improvements: ImprovementJournal;
 
   // Set by init().
   store!: EventStore;
@@ -583,8 +559,6 @@ export class StudioCore {
   #started = false;
   #settings: StudioSettings = {
     learning: false,
-    selfImproving: false,
-    architect: false,
     buildersMax: DEFAULT_BUILDERS,
     agentsMax: DEFAULT_POOL_MAX,
     blender: true,
@@ -623,7 +597,6 @@ export class StudioCore {
     this.screenAccess = options.screenAccess ?? null;
     if (options.gamesRoot) this.layout.gamesRoot = options.gamesRoot;
     this.snapshots = new SnapshotEngine([{ name: HARNESS_WORKSPACE, dir: this.layout.harnessWs }]);
-    this.candidates = new GameCandidates(this.snapshots, path.join(this.layout.scratch, "optimization"));
     this.games = new GameWorkspaces({
       root: this.layout.gamesRoot,
       templateDir: path.join(options.paths.resources, "game-template"),
@@ -660,7 +633,6 @@ export class StudioCore {
     this.journal = new UpdateJournal(this.layout.updates);
     this.ollamaSidecar = new OllamaSidecar({ ...(options.ollamaHost ? { host: options.ollamaHost } : {}) });
     this.budget = new BudgetLedger({ file: path.join(options.paths.userData, "budget-ledger.json") });
-    this.improvements = new ImprovementJournal(path.join(options.paths.userData, "improvements"));
     this.#connections = new ConnectionService(this, (threadId) => this.#threadBusy(threadId));
     this.#x = this.#createInternals();
     this.hooks = new HookService(this, this.#x, options.hooks ?? {});
@@ -1124,10 +1096,7 @@ export class StudioCore {
     this.pluginServices = new PluginServices(
       path.join(this.layout.engineHomes, "plugins", "data"),
       { genex: path.join(this.layout.engineHomes, "genex") },
-      (binding, files, still, clip) => {
-        if (clip) return this.#observeClip(binding, clip);
-        return still ? this.#observeStill(binding, still) : this.#observeAssets(binding, files);
-      },
+      (binding, files, still) => (still ? this.#observeStill(binding, still) : this.#observeAssets(binding, files)),
     );
     this.pluginServices.onEvent = (id, event, binding) =>
       this.emit(UiEvent.PluginEvent, { id, event, project: binding?.project, threadId: binding?.threadId });
@@ -1189,13 +1158,15 @@ export class StudioCore {
       return shape.build ? path.join(binding.directory, "public") : binding.directory;
     };
     // The Unreal, Unity, Godot and Roblox Studio plugins are bundled and off until the user turns
-    // them on: each needs its editor, and Roblox an account for people 18 and over.
+    // them on: each needs its editor, and Roblox an account for people 18 and over. Genex's own
+    // advice is off too: none of it is required, and the person opts in to it.
     this.plugins.seedEnabled = {
       blender: this.#settings.blender,
       unreal: false,
       unity: false,
       godot: false,
       roblox: false,
+      [GENEX_RECOMMENDATIONS_PLUGIN_ID]: false,
     };
     // The Genex account is the app's: Genex off takes the agent's tools, never the sign-in or Publish.
     this.plugins.appAccount = { id: GENEX_PLUGIN_ID, actions: GENEX_ACCOUNT_ACTIONS };
@@ -1360,38 +1331,11 @@ export class StudioCore {
   }
 
   /**
-   * A plugin's still of one named view (`observe` with `still`): on a hidden window of its own at
-   * the asked size, never Live, given back however it ends (`core/view-still.ts`).
+   * A plugin's still (`observe` with `still`): a plain frame of the game's page on a hidden window
+   * of its own at the asked size, never Live, given back however it ends (`core/view-still.ts`).
    */
   #observeStill(binding: PluginBinding, still: PluginStillOrder): Promise<PluginStillAnswer> {
-    const view = still.demo === undefined ? {} : { stillDemo: still.demo };
-    return this.#throughReel(binding, view, (open) =>
-      viewStill(this.#previews, binding, still, { ...this.options.pluginStill, ...(open ? { open } : {}) }),
-    );
-  }
-
-  /**
-   * A plugin's clip of a moment a demo stages (`observe` with `clip`): recorded on a hidden window
-   * of its own at the asked size, never Live, given back however it ends (`core/view-clip.ts`).
-   */
-  #observeClip(binding: PluginBinding, clip: PluginClipOrder): Promise<PluginClipAnswer> {
-    return this.#throughReel(binding, { clipDemo: clip.demo }, (open) =>
-      viewClip(this.#previews, binding, clip, { ...this.options.pluginClip, ...(open ? { open } : {}) }),
-    );
-  }
-
-  /**
-   * A still or clip of an engine game is taken of the cover its agent rendered in the engine
-   * (`core/cover-reel.ts`): a web page of a game that runs as an app shows nothing of it.
-   */
-  async #throughReel<A>(
-    binding: PluginBinding,
-    view: ReelView,
-    take: (open: ViewOpener | undefined) => Promise<A>,
-  ): Promise<A> {
-    const game = await this.games.kindOf(binding.project).catch(() => null);
-    const scratch = path.join(this.layout.scratch, COVER_REEL_FOLDER);
-    return throughCoverReel({ game, gameDir: binding.directory, scratch }, view, take);
+    return viewStill(this.#previews, binding, still, this.options.pluginStill);
   }
 
   /**
@@ -1416,6 +1360,17 @@ export class StudioCore {
     const game = await realpath(this.games.dirFor(binding.project)).catch(() => null);
     const workspace: AssetDeliveredPayload["workspace"] =
       game && (await realpath(root).catch(() => root)) === game ? "game" : "build";
+    // A Loop's files reach the game folder only when its build lands: Builds reads this copy until then.
+    const picture =
+      workspace === "build" && asked?.runId
+        ? await keepDeliveredPicture(
+            { root, files: landed.map((row) => row.file), runId: asked.runId, jobId },
+            {
+              save: (runId, name, data) => this.saveRunArtifact(runId, name, data),
+              resize: (data, maxPx) => this.#previews.resizeStill(data, maxPx),
+            },
+          )
+        : null;
     const payload: AssetDeliveredPayload = {
       project: binding.project,
       source: id,
@@ -1428,6 +1383,7 @@ export class StudioCore {
       ...(asked?.runId ? { runId: asked.runId } : {}),
       ...(asked?.facetId ? { facetId: asked.facetId } : {}),
       ...(asked?.iteration !== undefined ? { iteration: asked.iteration } : {}),
+      ...(picture ? { picture } : {}),
     };
     await this.append(
       [customEventData(CustomEvent.AssetDelivered, { ...payload })],
@@ -1640,11 +1596,6 @@ export class StudioCore {
     this.#activityWarmup = setTimeout(() => void this.activityItems().catch(() => {}), ACTIVITY_WARMUP_DELAY_MS);
     this.#activityWarmup.unref?.();
     void this.#probeSubscriptions();
-
-    // Self-improving background (A6): requeue any job the last shutdown interrupted, then
-    // watch for idle windows. No clock scheduling — "nightly" is dead.
-    await this.improvements.sweep().catch(() => {});
-    if (this.options.executionPolicy?.runBackgroundImprovement !== false) this.#selfImprovement.startIdleWatch();
     await this.#settlePendingUpdates(pending, rewound);
   }
 
@@ -1738,8 +1689,6 @@ export class StudioCore {
     await this.plugins?.sandboxJobs?.stopAll().catch(() => {});
     this.#consent.cancel({}, "stop");
     this.#permissions.cancel({}, ToolPermissionBy.Stop);
-    if (this.#x.idleTimer) clearInterval(this.#x.idleTimer);
-    this.#x.idleTimer = null;
     if (this.#activityWarmup) clearTimeout(this.#activityWarmup);
     // No orphan contractors: a delegation must not outlive the studio that briefed it. (The
     // first live build's contractor survived an app restart and collided with its successor.)
@@ -1858,16 +1807,16 @@ export class StudioCore {
   }
 
   /**
-   * A run that landed its build in a web game while the Genex plugin is on: the chat's agent makes
-   * the game's Genex cover now, as a step of its own (`core/cover-step.ts`).
+   * A run that landed its build in a game while the Genex plugin is on: the chat's agent makes the
+   * game's Genex cover now, as a step of its own (`core/cover-step.ts`). A game made as an app
+   * (Unity, Godot, Unreal) gets the same step: its agent renders the picture its own way.
    */
   async #askForCover(threadId: string, runId: string): Promise<void> {
     try {
       if (!this.plugins?.enabled(GENEX_PLUGIN_ID)) return;
       const project = gameOfThread((await this.store.getRecord(threadId).catch(() => null))?.metadata);
       if (!project) return;
-      const kind = await this.games.kindOf(project).catch(() => null);
-      if (!kind || !hasFact(kind.facts, CoreFact.WebGame, ".")) return;
+      if (!(await this.games.kindOf(project).catch(() => null))) return;
       const ask = coverStepAsk(threadId, await this.store.listEvents(threadId), runId);
       if (ask) await this.sendUserMessage(ask.text, ask.options);
     } catch (err) {
@@ -2037,13 +1986,6 @@ export class StudioCore {
       if (runId) this.#stopRunJobs(runId);
       this.#previews.refreshVisibility();
     }
-    // Auto-mode: an improvement that won its blind gate lands the moment it is staged. The same
-    // path as the Apply button — snapshot first, logged, reversible — just without the wait.
-    if (event.type === UiEvent.SkilloptStaged && this.#autoApplies()) {
-      void this.#selfImprovement.autoApplyStaged().catch((err) => {
-        this.emit(UiEvent.SkilloptAutoApplyFailed, { error: errorMessage(err) });
-      });
-    }
   }
 
   // ── settings ─────────────────────────────────────────────────────────────────────────────
@@ -2076,14 +2018,7 @@ export class StudioCore {
     if (this.#x.previewPool && this.options.previewPoolMax === undefined)
       this.#x.previewPool.max = this.#settings.agentsMax;
     this.emit(UiEvent.SettingsChanged, this.settings);
-    // Turning automatic apply (or learning itself) on sweeps anything already waiting.
-    if (this.#autoApplies()) void this.#selfImprovement.autoApplyStaged().catch(() => {});
     return this.settings;
-  }
-
-  /** Learning and self-improving both on: a staged improvement applies itself. */
-  #autoApplies(): boolean {
-    return this.#settings.learning && this.#settings.selfImproving;
   }
 
   #settingsFile(): string {
@@ -2096,8 +2031,6 @@ export class StudioCore {
       const buildersMax = savedBuildersMax(parsed);
       this.#settings = {
         learning: savedLearning(parsed),
-        selfImproving: savedSelfImproving(parsed),
-        architect: parsed.architect === true,
         buildersMax,
         agentsMax: buildersMax + LEAD_WINDOWS,
         blender: parsed.blender !== false,
@@ -2479,7 +2412,6 @@ export class StudioCore {
     const table: HarnessHostHandlers = {
       ...gameRpc(this, this.#x),
       ...eventsRpc(this, this.#x),
-      ...optimizationRpc(this, this.#x),
       ...snapshotRpc(this, this.#x),
       ...hooksRpc(this, this.#x),
       ...observersRpc(this, this.#x),
@@ -2488,10 +2420,9 @@ export class StudioCore {
       ...runsRpc(this, this.#x),
       ...jobsRpc(this, this.#x),
       ...engineRpc(this, this.#x),
-      ...studioRpc(this, this.#x),
+      ...studioRpc(this),
       ...previewRpc(this, this.#x),
       ...desktopRpc(this, this.#x),
-      ...judgeRpc(this),
     };
     return table;
   }
@@ -2874,12 +2805,6 @@ export class StudioCore {
     return this.#delegation._directorToolsFor(...args);
   }
 
-  _playtestToolsFor(
-    ...args: Parameters<DelegationService["_playtestToolsFor"]>
-  ): ReturnType<DelegationService["_playtestToolsFor"]> {
-    return this.#delegation._playtestToolsFor(...args);
-  }
-
   // ── recovery ─────────────────────────────────────────────────────────────────────────────
   recover(...args: Parameters<RecoveryService["recover"]>): ReturnType<RecoveryService["recover"]> {
     // A loop the watchdog has to rewind crashed in a loop: its runs are the user's to resume.
@@ -2968,7 +2893,6 @@ export class StudioCore {
   }
 
   async dispatchRun(run: Extract<DispatchAction, { type: typeof DispatchActionType.RunStart }>["run"]): Promise<void> {
-    this.#selfImprovement.touchActivity();
     // A run is that game's story: its briefs, iterations and verdict belong in its own chat.
     const threadId = await this.threadForGame(run.project);
     this.#rewind.assertNotRewinding(threadId);
@@ -3012,7 +2936,6 @@ export class StudioCore {
   }
 
   async #resumeAutopilot(runId: string): Promise<void> {
-    this.#selfImprovement.touchActivity();
     const loopPredatesResume =
       this.host.state === HarnessState.Ready && !this.host.hasCapability(HarnessCapability.Autopilot);
     if (loopPredatesResume) throw new CodedError(ResumeRefusal.Unsupported, MESSAGE.resumeUnsupported());
@@ -3046,38 +2969,7 @@ export class StudioCore {
     return this.planReviews.answer(thread, id, approved);
   }
 
-  // ── self-improvement ─────────────────────────────────────────────────────────────────────
-  runIdleCheckNow(
-    ...args: Parameters<SelfImprovementService["runIdleCheckNow"]>
-  ): ReturnType<SelfImprovementService["runIdleCheckNow"]> {
-    return this.#selfImprovement.runIdleCheckNow(...args);
-  }
-
-  /**
-   * Apply a staged SkillOpt proposal. By default this is the human-review path;
-   * with the auto-apply setting on it is also called with `approvedBy: "auto"` the moment a
-   * proposal is staged. Snapshot before and after, keep a `best_skill` copy, and record the
-   * approval in the log so the accepted-edit history is inspectable either way. `key` names
-   * the suggestion the person saw; the index is only a fallback for callers without one.
-   */
-  async acceptStagedProposal(
-    index: number,
-    approvedBy: "human" | "auto" = "human",
-    key?: { at?: string; skill?: string },
-  ): Promise<{ skill: string }> {
-    // One change at a time: with self-improving ON, the auto-sweep and a human Apply click can
-    // land together, and two concurrent snapshots fight over the same git index.lock.
-    return this.#selfImprovement.selfChangeTurn(() =>
-      this.#selfImprovement.acceptStagedProposal(index, approvedBy, key),
-    );
-  }
-
-  discardStagedProposal(
-    ...args: Parameters<SelfImprovementService["discardStagedProposal"]>
-  ): ReturnType<SelfImprovementService["discardStagedProposal"]> {
-    return this.#selfImprovement.discardStagedProposal(...args);
-  }
-
+  // ── the harness's own changes ────────────────────────────────────────────────────────────
   /**
    * Undo one learned change and nothing else. Its own diff is reversed on the file it wrote,
    * so later changes, the per-game lessons and the app's own updates stay where they are —

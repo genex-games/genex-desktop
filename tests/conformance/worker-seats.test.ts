@@ -277,8 +277,7 @@ describe("the host's worker seat", () => {
   });
 
   it("a worker grant the host cannot confirm runs unattended as before", { timeout: CASE_TIMEOUT_MS }, async () => {
-    const { core, api, game, other, threadId, project, seen, delegate, startRun, copyOf, runWorker } =
-      await workerChat();
+    const { core, game, other, threadId, project, seen, delegate, startRun, copyOf, runWorker } = await workerChat();
     const otherChat = await core.threadForGame(other.name);
     await startRun("run_other_game", otherChat, other.name);
     const secondChat = await core.store.createThread({
@@ -291,7 +290,7 @@ describe("the host's worker seat", () => {
       [{ type: "custom", event_type: "run_finished", payload: { runId: "run_finished", project: game } }] as never,
       threadId,
     );
-    const studioThread = String(await api["thread.create"]!({ title: "x" }));
+    const studioThread = await core.store.createThread({ title: "x" });
     const elsewhere = await copyOf("run_elsewhere", "w1");
     const grant = (runId: string, cwd: string) => ({ cwd, worker: { id: "w1", title: "Worker", runId } });
     const turnGrant = { cwd: project.dir, worker: { id: "w1", title: "Worker", turn: "msg-x" } };

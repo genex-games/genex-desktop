@@ -251,12 +251,8 @@ const FIXTURE_SAFE = [
   "studio:run.finish",
   "studio:review.play",
   "studio:autopilot.resume",
-  "studio:skillopt.start",
-  "studio:skillopt.accept",
-  "studio:skillopt.discard",
   "studio:selfchanges",
   "studio:selfchange.undo",
-  "studio:staged",
   "studio:settings",
   "studio:settings.set",
   // Reads the profile's own log and engine statuses; the renderer does the copying.

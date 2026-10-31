@@ -27,7 +27,6 @@ import { CustomEvent, type SelfChangePayload, customEventData } from "../../shar
 import { type EventData, SnapshotScope } from "../../shared/event-log.ts";
 import { SKILL_SLUG } from "../../shared/self-change-files.ts";
 import { MINUTE_MS } from "../../shared/duration.ts";
-import { DispatchActionType } from "../../shared/protocol.ts";
 import { errorMessage } from "../../shared/errors.ts";
 import { atomicWriteText, ensureDir, pathExists } from "../../substrate/fsx.ts";
 import { HarnessHost } from "../../substrate/harness-host.ts";
@@ -43,8 +42,8 @@ export interface ProposedFile {
   contents: string;
 }
 
-/** What a fork boot answered: up and healthy (and self-tested when asked), or where it stopped. */
-export type ForkBoot = { ok: true } | { ok: false; stage: "boot" | "selftest"; message: string };
+/** What a fork boot answered: up and healthy, or why it stopped. */
+export type ForkBoot = { ok: true } | { ok: false; stage: "boot"; message: string };
 
 /** How many passed fingerprints are remembered: a pass is claimed by the snapshot right after it. */
 const REMEMBERED_PASSES = 8;
@@ -56,13 +55,9 @@ const MAX_FILE_BYTES = 1024 * 1024;
 const FORK_HEARTBEAT_TIMEOUT_MS = 10 * MINUTE_MS;
 /** A fork crashes once and stays down: one exit in this window is a crash loop. */
 const FORK_CRASH_LOOP = { count: 1, windowMs: MINUTE_MS } as const;
-/** How long the loop's self-test may run in a fork. */
-const FORK_SELFTEST_TIMEOUT_MS = MINUTE_MS;
 /** A proposed file's path may hold no control character and no backslash. */
 // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are what this refuses
 const UNSAFE_PATH_CHARS = /[\x00-\x1f\\]/;
-/** The top-level folder a proposed change may never write: the frozen judge's. */
-const FROZEN_TOP = "judge";
 /** Folders a proposed change may never write into at any depth: git's own and installed packages. */
 const NEVER_WRITTEN = [".git", "node_modules"] as const;
 
@@ -178,9 +173,9 @@ export class SelfEditGateService {
 
   /**
    * Boot the fork as a second harness (it never restarts itself: one failure and it stays down),
-   * ask its healthcheck, and with `selftest` run the loop's self-test in it too.
+   * and ask its healthcheck.
    */
-  async boot(dir: string, { selftest = false }: { selftest?: boolean } = {}): Promise<ForkBoot> {
+  async boot(dir: string): Promise<ForkBoot> {
     const fork = new HarnessHost({
       workspace: dir,
       bootstrap: path.join(this.#core.options.paths.resources, "harness-boot", "bootstrap.mjs"),
@@ -202,13 +197,6 @@ export class SelfEditGateService {
       await fork.start();
       if (!(await fork.healthcheck()))
         return { ok: false, stage: "boot", message: "it did not answer its healthcheck" };
-      if (selftest) {
-        try {
-          await fork.dispatch({ type: DispatchActionType.Selftest }, FORK_SELFTEST_TIMEOUT_MS);
-        } catch (err) {
-          return { ok: false, stage: "selftest", message: errorMessage(err) };
-        }
-      }
       return { ok: true };
     } catch (err) {
       return { ok: false, stage: "boot", message: errorMessage(err) };
@@ -433,12 +421,12 @@ function diagnosticKey(line: string): string {
   return line.replace(/^(.+?)\(\d+,\d+\): error (TS\d+): /, "$1 $2 ");
 }
 
-/** A workspace-relative path the agent may propose: no escape, not the frozen judge/, not git's. */
+/** A workspace-relative path the agent may propose: no escape, not git's, not an installed package's. */
 function checkedRel(file: unknown): string | null {
   if (typeof file !== "string" || !isPlainRelative(file)) return null;
   const parts = file.split("/");
   if (parts.some(isEmptyOrDots)) return null;
-  const offLimits = parts[0] === FROZEN_TOP || NEVER_WRITTEN.some((folder) => parts.includes(folder));
+  const offLimits = NEVER_WRITTEN.some((folder) => parts.includes(folder));
   return offLimits ? null : file;
 }
 

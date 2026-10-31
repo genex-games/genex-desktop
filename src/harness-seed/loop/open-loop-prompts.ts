@@ -14,11 +14,8 @@ function openBudgetWords(hours: number | null | undefined): string {
 
 /** What a build is on a project that isn't a web game, as a Loop chat is told. */
 export function openBuildWords(hours: number | null | undefined): string {
-  return `the Loop: the lead builds the whole project itself in this folder, with workers in copies of it, and finishes it when the goal is reached (${openBudgetWords(hours)})`;
+  return `the Loop: you lead it in this folder, with optional workers in copies of it, and finish it when the goal is reached (${openBudgetWords(hours)})`;
 }
-
-/** A hurry changes how long an open Loop runs, never whether a new project is one. */
-export const OPEN_QUICK_IS_A_BUILD = "also when they want it fast: a quick build is still a build";
 
 /** The stills a commission carries, as an open Loop's chat is told: its lead reads them. */
 export function openStillsWords(frames: number): string {
@@ -40,8 +37,7 @@ export const OPEN_LAUNCH_WORDS = {
 export const OPEN_LOOP_REFUSAL = {
   /** `found`: what Genex found that makes the project's Loop work in place (`openLoopBecause`). */
   needsSession: (engine: string, found?: string) =>
-    `A Loop on this project${found ? ` (Genex finds ${found})` : ""} needs an engine that works as an agent in the project's folder (Claude Code, Codex, OpenCode or Grok Build); ${engine} doesn't, so nothing was built.`,
-  webOnly: "This kind of run works on web games only; a Loop on this project is led by the chat's own session.",
+    `A Loop${found ? ` on this project (Genex finds ${found})` : ""} needs an engine that keeps a session of its own (Claude Code, Codex, OpenCode, Grok Build or a local model's session); ${engine} doesn't, so nothing was built. The chat still answers here.`,
   openLoopNeedsUpdate:
     "This harness's edited Loop files predate Loops on any project; update them, then start the Loop again.",
   /** A paused web Loop, resumed on a folder that reads as no web game now; `found`: what Genex finds there. */

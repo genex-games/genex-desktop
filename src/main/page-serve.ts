@@ -21,7 +21,6 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import { createBrotliDecompress, createGunzip } from "node:zlib";
 import type { ShimOptions } from "../substrate/preview-port.ts";
-import { isPreviewCdnRead } from "../substrate/preview-network.ts";
 import { isInside } from "../substrate/paths.ts";
 import type { ContractReach } from "../substrate/game-page.ts";
 
@@ -39,7 +38,14 @@ export const HOOK_MODULE_PATH = "vendor/studio/hook.js";
  */
 export const HOOKED_KEYS = ["three", "three/webgpu"] as const;
 
-/** The map the studio inserts into a page that has none — the template's five keys. */
+/**
+ * The map the studio inserts into a page that has none — the template's five keys. It stays
+ * because it changes nothing the page did without it: it only answers a bare `three` specifier
+ * that a map-less page could not otherwise resolve (a black screen otherwise), a page that names
+ * no `three` only carries an inert map, and the wrapper re-exports the page's own module record,
+ * so there is still exactly one `three`. The hook behind it is how a capture reads the canvas of a
+ * covered window. Nothing here asks the game for anything.
+ */
 export const STUDIO_MAP: Record<string, string> = {
   three: "/vendor/three.module.js",
   "three/webgpu": "/vendor/three.webgpu.js",
@@ -173,7 +179,7 @@ export function rewriteGameHtml(html: string, options: RewriteOptions = {}): Rew
   // The injected TAG, not the string. A bare substring test over the whole document meant that
   // one mention of `data-studio-shim` anywhere — an HTML comment, a debug line asking whether
   // the studio is attached, a CSS content value — served the page byte-identical: no shim, no
-  // hook, no import-map rewrite, no seeded RNG, no draw counters and no virtual clock, with
+  // hook, no import-map rewrite, no draw counters and no virtual clock, with
   // nothing in the run to say why.
   if (matchOutsideComments(source, /<script\b[^>]*\bdata-studio-shim\b/i)) return untouched();
 
@@ -343,8 +349,8 @@ export function studioMapTag(documentUrl: string): { tag: string; hooked: Record
 /**
  * A single-file page whose inline module imports three by URL has no map to rewrite, so the
  * specifier is rewritten where it is written. Only inline modules: an external `.js` or `.ts`
- * file is never edited — served bytes would differ from the bytes on disk, and the brief names
- * the two-line install for that page instead.
+ * file is never edited — served bytes would differ from the bytes on disk, so such a page is
+ * reported as not attached instead.
  */
 export function rewriteInlineModules(
   html: string,
@@ -669,16 +675,16 @@ async function resolveLinkedModules(base: string, liveRoot: string, rel: string)
   return resolveServed(own, parts.slice(at + 1).join(path.sep) || ".");
 }
 
-/** What {@link routeHttp} decides for one request: serve it from a game's folder, or refuse it. */
-export const HttpRouteKind = { Serve: "serve", Deny: "deny" } as const;
+/** What {@link routeHttp} decides for one request: serve it from a game's folder, or send it to the network. */
+export const HttpRouteKind = { Serve: "serve", Pass: "pass" } as const;
 export type HttpRouteKind = (typeof HttpRouteKind)[keyof typeof HttpRouteKind];
 
 /**
  * What the game partition's http handler does with a request. A loopback origin on a port handed
- * out by `loopbackPortFor` is that game's file server; everything else is a 403 (SECUI-3). It used
- * to be re-fetched from the main process, which sent a game's plain-http beacon out of the machine.
+ * out by `loopbackPortFor` is that game's file server; every other request goes to the network as
+ * a normal web page's would (the preview's network is open), and is never served from a folder.
  */
-export type HttpRoute = { route: typeof HttpRouteKind.Serve; project: string } | { route: typeof HttpRouteKind.Deny };
+export type HttpRoute = { route: typeof HttpRouteKind.Serve; project: string } | { route: typeof HttpRouteKind.Pass };
 
 /** The host names that reach this Mac's own loopback interface. */
 const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(["localhost", "127.0.0.1"]);
@@ -691,7 +697,7 @@ function isLoopbackHttp(url: URL): boolean {
 export function routeHttp(url: string | URL, loopbackPorts: ReadonlyMap<number, string>): HttpRoute {
   const parsed = typeof url === "string" ? new URL(url) : url;
   const project = isLoopbackHttp(parsed) ? loopbackPorts.get(Number(parsed.port)) : undefined;
-  return project ? { route: HttpRouteKind.Serve, project } : { route: HttpRouteKind.Deny };
+  return project ? { route: HttpRouteKind.Serve, project } : { route: HttpRouteKind.Pass };
 }
 
 function parseUrl(url: string | URL): URL | null {
@@ -703,55 +709,32 @@ function parseUrl(url: string | URL): URL | null {
   }
 }
 
-/**
- * What the preview's contents are told beyond the request filter (M7). WebRTC's ICE and STUN
- * traffic is UDP that `webRequest` never sees; with non-proxied UDP disabled a page cannot open a
- * peer connection that carries data off the machine. (Electron offers no per-session switch for
- * DNS prefetch; a redirect from an allowed CDN to another host is a new request, and
- * `onBeforeRequest` filters it again.)
- */
-export function confinePreviewContents(contents: {
-  setWebRTCIPHandlingPolicy(policy: "disable_non_proxied_udp"): void;
-}): void {
-  contents.setWebRTCIPHandlingPolicy("disable_non_proxied_udp");
-}
+/** The schemes a web page reaches over the network: any host, any port, reads, writes and sockets. */
+const WEB_SCHEMES: ReadonlySet<string> = new Set(["http:", "https:", "ws:", "wss:"]);
+
+/** The studio's own schemes and content the page already holds. */
+const LOCAL_SCHEMES: ReadonlySet<string> = new Set(["game:", "data:", "blob:", "devtools:"]);
+
+/** What an embedded frame may hold besides `about:blank`/`about:srcdoc`: a web page or the page's own content. */
+const FRAME_SCHEMES: ReadonlySet<string> = new Set(["http:", "https:", "data:", "blob:"]);
 
 /**
- * The game partition's network allowlist (SECUI-3), for `webRequest.onBeforeRequest`. A game may
- * reach the studio's own `game:` server, inline `data:`/`blob:` content, DevTools, the loopback
- * port the studio handed this game, and https reads of the public library/font CDNs in
- * substrate/preview-network.ts. Everything else — other hosts, writes to a CDN, websockets, other
- * loopback ports, `file:` — is cancelled, so what an agent wrote into a game cannot leave the
- * machine when the studio loads the page to look at it. `method` defaults to a read.
+ * What the game partition may request, for `webRequest.onBeforeRequest`. The network is open like
+ * a normal web page's (localhost backends, WebSockets, any host); what a web page never reaches —
+ * `file:`, `filesystem:`, the browser's own pages, other schemes — is cancelled.
  */
-export function gameRequestAllowed(
-  url: string | URL,
-  loopbackPorts: ReadonlyMap<number, string>,
-  method = "GET",
-): boolean {
+export function gameRequestAllowed(url: string | URL): boolean {
   const parsed = parseUrl(url);
   if (!parsed) return false;
-  switch (parsed.protocol) {
-    case "game:":
-    case "data:":
-    case "blob:":
-    case "devtools:":
-      return true;
-    case "http:":
-      return routeHttp(parsed, loopbackPorts).route === HttpRouteKind.Serve;
-    case "https:":
-      return isPreviewCdnRead(parsed, method);
-    default:
-      return false;
-  }
+  return LOCAL_SCHEMES.has(parsed.protocol) || WEB_SCHEMES.has(parsed.protocol);
 }
 
 /**
  * Where a page in the preview may navigate (SECUI-3), for `will-navigate`/`will-frame-navigate`.
  * The top level stays on `game:` or the game's registered loopback origin, so a game cannot put a
  * remote page — a fake sign-in form — inside the studio's chrome, which has no URL bar. An
- * embedded frame may also hold content the page already has (`about:blank`, `about:srcdoc`,
- * `data:`, `blob:`); nothing remote either way.
+ * embedded frame may hold a web page, as on any site, or content the page already has
+ * (`about:blank`, `about:srcdoc`, `data:`, `blob:`).
  */
 export function previewNavigationAllowed(
   url: string | URL,
@@ -761,8 +744,9 @@ export function previewNavigationAllowed(
   const parsed = parseUrl(url);
   if (!parsed) return false;
   if (parsed.protocol === "game:") return true;
-  if (parsed.protocol === "http:") return routeHttp(parsed, loopbackPorts).route === HttpRouteKind.Serve;
-  if (frame.mainFrame) return false;
+  if (frame.mainFrame) {
+    return parsed.protocol === "http:" && routeHttp(parsed, loopbackPorts).route === HttpRouteKind.Serve;
+  }
   if (parsed.protocol === "about:") return parsed.pathname === "blank" || parsed.pathname === "srcdoc";
-  return parsed.protocol === "data:" || parsed.protocol === "blob:";
+  return FRAME_SCHEMES.has(parsed.protocol);
 }

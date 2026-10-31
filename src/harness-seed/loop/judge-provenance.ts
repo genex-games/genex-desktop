@@ -22,8 +22,6 @@ import type { AnyRecord } from "../types/harness.d.ts";
  */
 export const CompletionRole = {
   Judge: "judge",
-  Playtester: "playtester",
-  SkilloptGate: "skillopt-gate",
 } as const;
 export type CompletionRole = (typeof CompletionRole)[keyof typeof CompletionRole];
 

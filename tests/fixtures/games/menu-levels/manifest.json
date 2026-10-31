@@ -18,10 +18,10 @@
     "kind": "three-modules",
     "serve": "."
   },
-  "addsAtLeast": ["src/studio.js", "src/studio.d.ts", "CLAUDE.md", "NOTES.md", "studio.json", ".gitignore", ".git"],
-  "neverAdded": ["index.html", "src/main.js", "docs/CONTRACT.md"],
+  "addsAtLeast": ["CLAUDE.md", "studio.json", ".gitignore", ".git"],
+  "neverAdded": ["index.html", "src/main.js", "docs/CONTRACT.md", "src/studio.js", "src/studio.d.ts", "NOTES.md"],
   "edits": "none",
-  "contract": "loaded",
+  "contract": "attached",
   "needsNodeModules": false,
   "backend": "webgl",
   "game": {
@@ -42,9 +42,6 @@
     "verify": { "path": "phase", "equals": "level" },
     "note": "Start, then the Blue Room card"
   },
-  "cameras": ["default"],
-  "expectWarnings": ["this game paints UI outside the canvas"],
-  "allowWarnings": [],
   "delta": [
     { "path": "player.x", "min": 0.5 },
     { "path": "player.z", "min": 0.5 }

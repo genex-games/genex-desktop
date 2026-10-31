@@ -1,10 +1,12 @@
 # Game workspace
 
-This folder is a game made in Genex. `index.html` at its root is the game: Genex serves it in its
-Live view beside the chat, so never start a server for the person to open. The page's import map
-serves three.js r185 (`three`, `three/addons/`) from Genex's own copy at `/vendor/`, not from this
-folder: import it, a 2D canvas, the DOM or anything else the game calls for, and build its menus
-and HUD however it looks best.
+This folder is a game made in Genex. `index.html` at its root is the game: Genex serves it in the
+Live view beside the chat, so no server is needed. The page loads `src/main.js`.
 
-In a Loop build, read `.studio/BRIEF.md` first when it exists: it is that build's contract, and
-`docs/CONTRACT.md` holds the reference tables it points at.
+Genex checks a build by loading the page once with `?genex-shot=1` on its address and keeping a
+screenshot of it as the build's picture. A page may read that parameter; one that ignores it loses
+nothing.
+
+Genex serves three.js r185 from its own copy at `/vendor/`; the page's import map names it
+(`three`, `three/addons/`, `three/webgpu`, `three/tsl`) for a game that wants it. Every file here
+is the game's to change.

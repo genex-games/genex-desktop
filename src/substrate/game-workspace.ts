@@ -77,7 +77,7 @@ import {
 import { readEngineBinding } from "./game-engine-binding.ts";
 import { usesGenexMultiplayer } from "./genex-game-manifest.ts";
 import { exportPublicGame, type ExportOptions, type ExportResult } from "./game-export.ts";
-import { ownNotes, ownRules, REFERENCES_README } from "./game-workspace-prompts.ts";
+import { ownRules, REFERENCES_README } from "./game-workspace-prompts.ts";
 import { type GameValidation, validateGameDir } from "./game-validation.ts";
 import {
   atomicWriteJson,
@@ -118,15 +118,8 @@ export type {
   ProjectRecent,
   ProjectShape,
 } from "../shared/game-project.ts";
-export { type ContractReach, networkLoads, unreachableLoads } from "./game-page.ts";
-export {
-  type GameValidation,
-  hudContractGeneration,
-  NO_CONTRACT_PROBLEM,
-  shippedHudGeneration,
-  shippedStudioGeneration,
-  studioContractGeneration,
-} from "./game-validation.ts";
+export type { ContractReach } from "./game-page.ts";
+export type { GameValidation } from "./game-validation.ts";
 export {
   NESTED_BACKUP,
   nestedForLanding,
@@ -147,30 +140,20 @@ export {
 const OWN_ENTRY_KEEP = ["index.html", "src/main.js"] as const;
 
 /**
- * …and the three pages that describe the *template's* project: "This project starts empty",
- * "Empty project", a contract page whose first section is "No build step, no package manager,
- * no network". In a game the user brought, every one of those sentences is false — and the
- * contractor obeyed them, keeping DOM UI out of a game whose UI is DOM and refusing the
- * downloads its own boot needs. Own-shape CLAUDE.md and NOTES.md
- * are written from `CLAUDE.own.md` / `NOTES.own.md` instead; the contract's reference tables
- * live in `src/studio.js` and `src/studio.d.ts`, which are still merged in.
- *
- * `src/hud.js` is not on this list and must not join it: the contract imports it, and a game
- * with its own build fails to bundle on a dynamic import of a file that is not there.
+ * …and the page that describes the *template's* project ("index.html at its root is the game").
+ * In a game the user brought that sentence is false; its CLAUDE.md is written from
+ * `CLAUDE.own.md` instead, with the entry, build and served page the folder really has.
  */
-const OWN_GAME_KEEP = [...OWN_ENTRY_KEEP, "CLAUDE.md", "NOTES.md", "docs/CONTRACT.md"] as const;
+const OWN_GAME_KEEP = [...OWN_ENTRY_KEEP, "CLAUDE.md"] as const;
 
-/** The own-shape sources: the studio writes *from* them, never *into* a project. */
-const TEMPLATE_SOURCES = ["CLAUDE.own.md", "NOTES.own.md"] as const;
+/** The own-shape source: the studio writes *from* it, never *into* a project. */
+const TEMPLATE_SOURCES = ["CLAUDE.own.md"] as const;
 
-/** The pages a game of its own gets from the own-shape sources instead of the template's. */
-const OWN_PAGES = ["CLAUDE.md", "NOTES.md"] as const;
-
-/** Where a folder's own description of itself may be found, in the order it is looked for. */
-const README_FILES = ["README.md", "readme.md", "DESIGN.md", "docs/DESIGN.md"];
+/** The page a game of its own gets from the own-shape source instead of the template's. */
+const OWN_PAGES = ["CLAUDE.md"] as const;
 
 /** The template files whose `__GAME_TITLE__` placeholder is filled in after a copy. */
-const TITLED_TEMPLATE_FILES = ["index.html", "NOTES.md"];
+const TITLED_TEMPLATE_FILES = ["index.html"];
 
 /** What a new folder's `.gitignore` starts with, before the studio's own rules. */
 const GITIGNORE_HEADER = "export/\n.DS_Store\n";
@@ -184,10 +167,9 @@ const DEFAULT_EXPORT_DIRS = ["src", "assets"];
  * ("I am bringing my own files"), never widen it, because there is no consent that puts a
  * second index.html beside a real one.
  *
- * `template: false` withholds the same five. It is what "Keep this folder" passes when the game
- * is one folder down, and the folder it keeps is a real project: dropping "This project starts
- * empty", "Empty project" and a contract page headed "No build step, no package manager, no
- * network" into somebody's repository is the same false briefing from the other side.
+ * `template: false` withholds the same three. It is what "Keep this folder" passes when the game
+ * is one folder down, and the folder it keeps is a real project: the starter's page and its
+ * CLAUDE.md in somebody's repository would describe a game that is not there.
  */
 function templateKeep(shape: ProjectShape, options: { template?: boolean }): Set<string> {
   const keep = new Set<string>(TEMPLATE_SOURCES);
@@ -211,9 +193,8 @@ export interface AdoptOptions {
   subdir?: string;
   /**
    * May the studio write its starter game (`index.html`, `src/main.js`) into this folder?
-   * Default: only into a web game. `false` is "I am bringing my own files" — into a web folder the
-   * contract module and the notes are still added. Any folder with no web page (an empty one
-   * included) gets only Genex's bookkeeping unless this is `true`.
+   * Default: only into a web game. `false` is "I am bringing my own files". Any folder with no web
+   * page (an empty one included) gets only Genex's bookkeeping unless this is `true`.
    */
   template?: boolean;
   /**
@@ -1389,47 +1370,30 @@ export class GameWorkspaces {
       return;
     }
     // A folder that already has a game of its own shape keeps its entry: the template's
-    // index.html and src/main.js would only sit beside the real ones as dead scaffold. The
-    // studio's contract module and helpers are still added — the game imports what it needs —
-    // and its rules are written for the game that is actually here, not for an empty project.
+    // index.html and src/main.js would only sit beside the real ones as dead scaffold. Its
+    // CLAUDE.md is written for the game that is actually here, not for an empty project.
     const shape = await readProjectShape(dir);
     const own = isBuiltShape(shape);
     // Adoption updates studio.json below; one it cannot parse stops it here, before any write.
     if (own || options.versionNested) await readJsonForUpdate(path.join(dir, "studio.json"));
     await this.#writeTemplate(dir, { title, name, overwrite: false, keep: [...templateKeep(shape, options)] });
     if (own) {
-      await this.#writeOwnPages(dir, title, shape);
+      await this.#writeOwnPages(dir, shape);
       await this.#recordShape(dir, shape);
     }
     if (options.versionNested) await this.#recordConsent(dir);
   }
 
   /**
-   * The two pages a game of its own gets instead of the template's: rules that describe *this*
-   * game (its entry, its build, its screen and input kept as they are) and a notes file seeded
-   * from whatever the folder already says about itself. Neither is ever overwritten — a
-   * project that came with a CLAUDE.md or a NOTES.md keeps the one its author wrote.
+   * The page a game of its own gets instead of the template's: what Genex knows about *this*
+   * game (its entry, its build, the page it serves). Never overwritten — a project that came
+   * with a CLAUDE.md keeps the one its author wrote.
    */
-  async #writeOwnPages(dir: string, title: string, shape: ProjectShape): Promise<void> {
+  async #writeOwnPages(dir: string, shape: ProjectShape): Promise<void> {
     const claude = path.join(dir, "CLAUDE.md");
-    if (!(await pathExists(claude))) {
-      const template = await readFile(path.join(this.templateDir, "CLAUDE.own.md"), "utf8").catch(() => null);
-      if (template !== null) await writeFile(claude, ownRules(template, shape));
-    }
-    const notes = path.join(dir, "NOTES.md");
-    if (!(await pathExists(notes))) {
-      const template = await readFile(path.join(this.templateDir, "NOTES.own.md"), "utf8").catch(() => null);
-      if (template !== null) await writeFile(notes, ownNotes(template, title, shape, await this.#folderReadme(dir)));
-    }
-  }
-
-  /** What the folder already says about itself — the pitch nobody should have to write twice. */
-  async #folderReadme(dir: string): Promise<{ file: string; text: string } | null> {
-    for (const file of README_FILES) {
-      const text = await readFile(path.join(dir, file), "utf8").catch(() => null);
-      if (text?.trim()) return { file, text };
-    }
-    return null;
+    if (await pathExists(claude)) return;
+    const template = await readFile(path.join(this.templateDir, "CLAUDE.own.md"), "utf8").catch(() => null);
+    if (template !== null) await writeFile(claude, ownRules(template, shape));
   }
 
   /**
@@ -1443,7 +1407,7 @@ export class GameWorkspaces {
     const shape = await readProjectShape(dir);
     const starter = await this.#writesStarter(dir, options);
     const writes = starter ? await this.#missingTemplateFiles(dir, templateKeep(shape, options)) : [];
-    // A game of its own is held out of the template's pages above and given its own two.
+    // A game of its own is held out of the template's page above and given its own.
     const own = starter && isBuiltShape(shape);
     if (own) {
       for (const file of OWN_PAGES) {
@@ -1525,8 +1489,8 @@ export class GameWorkspaces {
   ): Promise<void> {
     await ensureDir(dir);
     if (options.overwrite) {
-      // The own-shape pages are sources, not project files: a fresh template game gets the
-      // template's CLAUDE.md and NOTES.md, never the pair they would be rewritten from.
+      // The own-shape page is a source, not a project file: a fresh template game gets the
+      // template's CLAUDE.md, never the page it would be rewritten from.
       await cp(this.templateDir, dir, {
         recursive: true,
         filter: (source) => !(TEMPLATE_SOURCES as readonly string[]).includes(path.relative(this.templateDir, source)),
@@ -1579,9 +1543,8 @@ export class GameWorkspaces {
   }
 
   /**
-   * Static check run before every judged build. It catches the two failures that would otherwise
-   * waste a whole gauntlet iteration: a missing entry point, and a game that abandoned the
-   * contract (no `window.__studio`).
+   * Static check of a game folder: a missing entry point, packages nothing resolves, TypeScript
+   * nothing builds, and nothing more (a game owes the studio no contract).
    */
   async validate(name: string): Promise<Pick<GameValidation, "ok" | "problems" | "missing" | "warnings" | "contract">> {
     return this.validateAt(this.dirFor(name));

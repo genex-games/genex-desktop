@@ -64,7 +64,6 @@ import {
 } from "./hooks.ts";
 import { EngineFailure, StopReason } from "./outage.ts";
 import { HostMethod } from "./host-methods.ts";
-import { StudioContract } from "./page-contract.ts";
 import { EventKind, RunEvent } from "./run-events.ts";
 import { clip, CLIP_BRIEF, CLIP_GAME_TITLE } from "./text.ts";
 import { SECOND_MS, sleep } from "./time.ts";
@@ -914,7 +913,7 @@ async function placeHandoff(ctx: HarnessCtx, options: DelegatedOptions, chat: Ch
   const extraReads = Array.isArray(options.extraReads) ? options.extraReads : [];
   if (chat.project) {
     // The folder's own descriptor, not just its path: a chat build is briefed about the shape it
-    // is working in, the way every run brief already is (autopilot.ts, director.ts).
+    // is working in, the way every run brief already is (director/briefs.ts).
     const descriptor = games.find((g) => g.name === chat.project) ?? null;
     const projectDir = descriptor?.dir ?? null;
     const offer = await pluginOffer(ctx, chat.project, descriptor);
@@ -1038,7 +1037,6 @@ async function briefWriter(
   handoff: Handoff,
 ): Promise<(resumed: boolean) => string> {
   const { ask, messages, folderLabel, descriptor } = handoff;
-  const missing = await contractMissing(ctx, handoff);
   // A reopen's rules live in the after-run note: a change goes to the build, not to a launch.
   const launch = handoff.reopening ? null : launchGrant(handoff);
   const workers = Object.keys(chatWorkersGrant(options.threadId, options.steer?.messageId));
@@ -1055,7 +1053,6 @@ async function briefWriter(
       fresh: handoff.fresh,
       shape: descriptor?.shape ?? null,
       ownShape: descriptor?.built === true,
-      contractMissing: missing,
       // The one thing in the brief that is spelled per engine (M4.8b): a Codex session cannot
       // call an mcp__ name and a Claude session cannot run the bridge command.
       engine: options.engine,
@@ -1103,20 +1100,6 @@ function launchGrant(handoff: Handoff): LaunchGrant | null {
     frameCount: (commission?.frames ?? []).length,
     project: handoff.project,
   };
-}
-
-/**
- * A game the user brought that never loads the studio contract cannot be judged by anyone
- * (M2.6): the run's first step wires it in, and a chat build is the faster way to the same
- * place, so its brief says so before the ask. Only for a folder that is somebody's own game
- * — the studio's template already has it — and only when a brief is actually written: a
- * resumed session keeps the context it already has.
- */
-async function contractMissing(ctx: HarnessCtx, handoff: Handoff): Promise<boolean> {
-  const briefForBuiltGame = !handoff.resume && handoff.descriptor?.built === true;
-  if (!briefForBuiltGame || !servedAsWeb(handoff.descriptor)) return false;
-  const readiness = await ctx.call(HostMethod.GameValidate, { project: handoff.project }).catch(() => null);
-  return readiness?.contract === StudioContract.Missing;
 }
 
 /** "Claude Code (opus) · high effort": who the contractor is, as the handoff names it. */
@@ -1223,7 +1206,6 @@ function senses(options: DelegatedOptions, handoff: Handoff): AnyRecord {
       project,
       root: projectDir,
       ...(options.runId ? { runId: options.runId, facetId: "build", iteration: options.iteration ?? 0 } : {}),
-      ...(options.setup ? { setup: options.setup } : {}),
       label: options.runId ? "builder" : project,
     },
   };
@@ -1276,10 +1258,14 @@ function messageStills(options: DelegatedOptions): DelegateImage[] {
 }
 
 /**
- * The Loop mood board reaches a new session once; a resumed one already has it, and a Loop chat
+ * The pictures a Loop was commissioned with reach a new session once; a resumed one already has it, and a Loop chat
  * may run many turns before (or without) a build. The message's own stills replace it.
  */
-function moodBoard(options: DelegatedOptions, handoff: Handoff, resumeId: string | null | undefined): DelegateImage[] {
+function commissionPictures(
+  options: DelegatedOptions,
+  handoff: Handoff,
+  resumeId: string | null | undefined,
+): DelegateImage[] {
   if (options.stills || resumeId) return [];
   return handoff.commission?.frames ?? [];
 }
@@ -1295,7 +1281,7 @@ function delegate(
 ): Promise<DelegateResult> {
   const { engine, threadId, model, effort } = options;
   const { extraReads } = handoff;
-  const pictures = [...images, ...moodBoard(options, handoff, resumeId)];
+  const pictures = [...images, ...commissionPictures(options, handoff, resumeId)];
   return ctx.call(HostMethod.EngineDelegate, {
     engine,
     project: handoff.project,
@@ -1374,9 +1360,9 @@ async function handleDelegateFailure(
   // Auth is a sign-in problem, not a failover: swapping in the local model hides the
   // button the user needs. Rate limits still fall back so an unattended run survives a throttle.
   if (kind === EngineFailure.Auth) return askToSignIn(ctx, turnId, engine, engineLabel, err?.message ?? "");
-  // A run's build turn answers to the gauntlet's own engine-health policies (strikes,
-  // throttle waits, usage_limit preservation) — rethrow anything it must count, and let
-  // only the fallback case through so a run survives a throttle.
+  // A run's build turn answers to the run's own engine-health policies (throttle waits,
+  // usage_limit preservation) — rethrow anything it must count, and let only the fallback case
+  // through so a run survives a throttle.
   if (options.runId && !canFallBack(kind, fallbacks)) throw err;
   if (kind === EngineFailure.UsageLimit) {
     await sayInTurn(ctx, turnId, MESSAGE.outOfUsage(engine, err?.message));
@@ -1672,7 +1658,7 @@ const NOTHING_SEEN: PreviewCheck = Object.freeze({
  * What the preview showed of a finished turn: it is looked at when it changed the game's sources
  * and the game is a web page as the turn ends. A game that is no web page (linked to Unreal, or a
  * folder with no web game in it) has nothing for the preview to show: a black canvas would tell
- * the user to fix a screen that was never there and teach SkillOpt failed builds, so it gets no
+ * the user to fix a screen that was never there and record a failed build, so it gets no
  * health pass and no `build_observation`.
  */
 async function previewOfTurn(
@@ -1821,9 +1807,8 @@ function healthLine(
 }
 
 /**
- * The build becomes food for self-improvement: SkillOpt mines these observations the same
- * way it mines run iterations, so chat builds teach the studio too. `ok` is the whole truth —
- * the contractor's word AND what the screen showed — so a black build is a lesson, not a win.
+ * The turn's build is recorded as an observation. `ok` is the whole truth — the contractor's word
+ * AND what the screen showed — so a black build is not counted as a win.
  */
 async function recordBuildObservation(
   ctx: HarnessCtx,

@@ -4,17 +4,10 @@
  * shipped claims need no new name from a `finish-check.ts` an agent may have kept.
  */
 import { clipMarked } from "./text.ts";
-import { MINUTE_MS } from "./time.ts";
 
 /** At most this many items of what remains are read, each at most this long. */
 const REMAINING_MAX = 24;
 const REMAINING_ITEM_CHARS = 600;
-/**
- * A claim of a Loop in place that names what remains reaches its reviewer only once less than this
- * working time is left: with more, the lead works on what remains first.
- */
-export const GAPS_FIRST_MIN_MS = 20 * MINUTE_MS;
-
 /** A list mark a line may open with: a dash, a star, a bullet or a number. */
 const LIST_MARK = /^\s*(?:[-*•]|\d+[.)])\s*/;
 

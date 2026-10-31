@@ -4,7 +4,8 @@
  * Each step of a finish check is one `finish_check` record of the run (checking, then the
  * reviewer's yes, no or no answer). The graph's last node follows the newest round in the owner's
  * four looks (Checking, Not yet, Done, Stopped), its panel lists every round, and a run with a
- * record draws the node whether or not its other records made it a tree. Old logs draw as before.
+ * record draws the node whether or not its other records made it a tree. A run whose lead asked
+ * for no check draws none: nothing waits to run at the end. Old logs draw as before.
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
@@ -182,12 +183,8 @@ describe("the finish check on the Builds graph", () => {
     });
     assert.equal(stopped.rounds.length, 4);
 
-    const placeholder = finishCheckOf(buildRunGraph(opened));
-    assert.ok(placeholder);
-    assert.deepEqual(finishCheckFace(placeholder), {
-      name: FINISH_CHECK_WORDS.state.not_yet,
-      word: FINISH_CHECK_WORDS.placeholder,
-    });
+    // Flipped: a Loop asks a reviewer only when its lead does, so nothing waits to run at the end.
+    assert.equal(finishCheckOf(buildRunGraph(opened)), undefined, "no claim, no final look");
   });
 
   it("a run that ended while the reviewer was checking reads as not yet, with no answer", () => {
@@ -228,33 +225,27 @@ describe("the finish check on the Builds graph", () => {
       ...stoppedLog,
       inRun(CustomEvent.RunStarted, { goal: "and add a second track", project: "game" }),
     ];
-    const fresh = finishCheckOf(buildRunGraph(reopened));
-    assert.ok(fresh);
-    assert.equal(fresh.state, FinishCheckState.NotYet, "the earlier ask's stop is not the new one's");
-    assert.equal(fresh.rejections, 0);
-    assert.equal(fresh.rounds.length, 3, "the earlier rounds stay listed");
-    assert.deepEqual(
-      finishCheckFace(fresh),
-      { name: FINISH_CHECK_WORDS.state.not_yet, word: FINISH_CHECK_WORDS.placeholder },
-      "the new ask's check runs at its end",
-    );
-    assert.deepEqual(
-      fresh.rounds.map((round) => roundNoteOf(round, fresh)),
-      [null, null, null],
-      "no earlier no says the Loop keeps working on the new ask",
-    );
+    // Flipped: the new ask has no check waiting at its end; its lead's first claim draws it again.
+    assert.equal(finishCheckOf(buildRunGraph(reopened)), undefined, "the earlier ask's stop is not the new one's");
     const oneNo = [
       ...reopened,
       check(4, FinishCheckStep.Checking, { claim: CLAIM }),
       check(4, FinishCheckStep.Rejected, { reasons: [NO_FINISH_LINE], rejections: 1 }),
     ];
     const after = finishCheckOf(buildRunGraph(oneNo));
-    assert.equal(after?.rejections, 1, "one no for the new ask");
-    assert.equal(after?.state, FinishCheckState.NotYet);
-    assert.equal(after && finishCheckFace(after).word, FINISH_CHECK_WORDS.leftWord(1));
+    assert.ok(after);
+    assert.equal(after.rejections, 1, "one no for the new ask");
+    assert.equal(after.state, FinishCheckState.NotYet);
+    assert.equal(after.rounds.length, 4, "the earlier rounds stay listed");
+    assert.equal(finishCheckFace(after).word, FINISH_CHECK_WORDS.leftWord(1));
+    assert.deepEqual(
+      after.rounds.map((round) => roundNoteOf(round, after)),
+      [null, null, null, { text: FINISH_CHECK_WORDS.keepsWorking, quiet: true }],
+      "no earlier no says the Loop keeps working on the new ask",
+    );
   });
 
-  it("a finished run reopened after an earlier ask's yes or unanswered round waits for the new ask's claim", () => {
+  it("a finished run reopened after an earlier ask's yes or unanswered round draws no check until the new ask's claim", () => {
     for (const [name, ending] of [
       ["a yes", check(1, FinishCheckStep.Accepted, { reasons: ["A lap runs."], rejections: 0 })],
       ["no answer", check(1, FinishCheckStep.Unanswered, { why: "the reviewer's session ended", rejections: 0 })],
@@ -267,14 +258,8 @@ describe("the finish check on the Builds graph", () => {
         inRun(CustomEvent.RunFinished, { victory: true }),
         inRun(CustomEvent.RunStarted, { goal: "and add a second track", project: "game" }),
       ];
-      const node = finishCheckOf(buildRunGraph(reopened));
-      assert.ok(node, name);
-      assert.equal(node.round, null, `${name}: no round of the new ask yet`);
-      assert.deepEqual(
-        finishCheckFace(node),
-        { name: FINISH_CHECK_WORDS.state.not_yet, word: FINISH_CHECK_WORDS.placeholder },
-        `${name}: the card and the node say the check runs at the end`,
-      );
+      // Flipped: nothing says a check runs at the end; the new ask draws one at its first claim.
+      assert.equal(finishCheckOf(buildRunGraph(reopened)), undefined, `${name}: no round of the new ask yet`);
     }
   });
 
@@ -539,7 +524,6 @@ describe("the finish check's look", () => {
     return node;
   };
   const claimed = () => check(1, FinishCheckStep.Checking, { claim: CLAIM });
-  const placeholder = () => nodeAfter();
   const rejected = () =>
     nodeAfter(claimed(), check(1, FinishCheckStep.Rejected, { reasons: [NO_FINISH_LINE, NO_TIMER], rejections: 1 }));
   const unanswered = () =>
@@ -552,13 +536,7 @@ describe("the finish check's look", () => {
       check(1, FinishCheckStep.Rejected, { reasons: [NO_TIMER], rejections: MAX_FINISH_REJECTIONS, stopped: true }),
     );
 
-  it("each state has the design's edge and fill; the placeholder stays a ghost", () => {
-    assert.deepEqual(finishCheckLook(placeholder()), {
-      look: FinishLook.Placeholder,
-      tone: Tone.Muted,
-      edge: null,
-      fill: null,
-    });
+  it("each state has the design's edge and fill", () => {
     const notYet = { look: FinishLook.NotYet, tone: Tone.Orange, edge: "var(--orange)", fill: null };
     assert.deepEqual(finishCheckLook(rejected()), notYet, "a no: amber edge on the plain surface");
     assert.deepEqual(finishCheckLook(unanswered()), notYet, "no answer reads as not yet too");
@@ -582,24 +560,7 @@ describe("the finish check's look", () => {
     });
   });
 
-  it("a reopened run's earlier rounds leave the new ask's check a ghost until it claims", () => {
-    seq = 0;
-    const reopened = [
-      ...loopOpened(),
-      claimed(),
-      check(1, FinishCheckStep.Rejected, { reasons: [NO_TIMER], rejections: 1 }),
-      inRun(CustomEvent.RunFinished, { victory: false }),
-      inRun(CustomEvent.RunStarted, { goal: "and add a second track", project: "game" }),
-    ];
-    const node = finishCheckOf(buildRunGraph(reopened));
-    assert.ok(node);
-    assert.equal(node.rounds.length, 1, "the earlier round stays listed");
-    assert.equal(finishCheckLook(node).look, FinishLook.Placeholder);
-    assert.equal(finishPanelTone(node), Tone.Muted);
-  });
-
   it("the card's status takes the state's colour", () => {
-    assert.equal(finishPanelTone(placeholder()), Tone.Muted);
     assert.equal(finishPanelTone(rejected()), Tone.Orange);
     assert.equal(finishPanelTone(unanswered()), Tone.Orange);
     assert.equal(finishPanelTone(checking()), Tone.Accent);

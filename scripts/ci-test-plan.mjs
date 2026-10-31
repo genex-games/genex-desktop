@@ -44,7 +44,6 @@ export const CI_BASELINE = [
   "tests/conformance/seed-upgrade.test.ts",
   "tests/conformance/child-env.test.ts",
   "tests/conformance/words.test.ts",
-  "tests/conformance/check-grammar.test.ts",
 ];
 // These inputs can change which tests execute or their runtime on every file, including deletions.
 const GLOBAL_INPUTS = new Set([

@@ -1,11 +1,11 @@
 import { fixtureCodingCli } from "../helpers/external-cli.ts";
 /**
  * The proof of Milestone 4: five games nobody wrote the studio's contract for, opened as the
- * user's own games, driven, photographed and judged — then driven again through the real Codex
+ * user's own games, health-checked and photographed — then driven through the real Codex
  * bridge and the real Claude MCP surface, with only the CLI and the model scripted.
  *
  * Everything below the two scripted seams is the studio itself: a real `StudioCore` with the
- * real `GamePreview`, the real serve layer, the real shadow build, the real evidence pass out of
+ * real `GamePreview`, the real serve layer, the real shadow build, the Loop's health check out of
  * the harness seed, the real file bridge and the real in-process MCP server. `ctx` is
  * `core.api()` with the substrate pipe removed, which is exactly what the harness host
  * dispatches against — so what passes here is what a run would get.
@@ -28,11 +28,9 @@ import { CodexEngine } from "../../src/substrate/engines/codex.ts";
 import { ClaudeCodeEngine } from "../../src/substrate/engines/claude-code.ts";
 import { BRIDGE_DIR } from "../../src/substrate/engines/studio-bridge.ts";
 import { COMPUTER_TOOL_NAME } from "../../src/substrate/computer-tool.ts";
-import { gatherEvidence } from "../../src/harness-seed/loop/gauntlet.ts";
-import { GAME_KINDS, inputProbesFor, gameLine, normalizeGameTraits } from "../../src/harness-seed/loop/kinds.ts";
+import { checkHealth } from "../../src/harness-seed/loop/health-check.ts";
 import { scriptedCodex, type ScriptedCodex } from "../helpers/scripted-codex.ts";
 import { scriptedClaude, type ScriptedClaude } from "../helpers/scripted-claude.ts";
-import { undeclaredWarnings } from "./warning-policy.ts";
 
 const repo = process.env.STUDIO_SHAPES_REPO!;
 const output = process.env.STUDIO_SHAPES_OUT!;
@@ -41,8 +39,6 @@ const transports = (process.env.STUDIO_SHAPES_ENGINES ?? "fixture,codex,claude")
 const keep = process.env.STUDIO_SHAPES_KEEP === "1";
 
 const VIEW = { width: 960, height: 600 };
-/** Two frames of one picture, the threshold the optimization pixel critic already uses. */
-const SAME_APPEARANCE = 0.01;
 const fixturesDir = path.join(repo, "tests/fixtures/games");
 const resources = path.join(repo, "dist/resources");
 
@@ -60,11 +56,6 @@ interface Manifest {
   backend: "webgl" | "webgpu";
   game: Record<string, unknown>;
   setup: Record<string, unknown> | null;
-  cameras: string[];
-  /** Warnings this game must produce. Anything else it produces has to be in `allowWarnings`. */
-  expectWarnings: string[];
-  /** Warnings this game may produce and need not. */
-  allowWarnings: string[];
   delta: Array<{ path: string; min: number }>;
   deterministic: boolean;
   readyBudgetMs: number;
@@ -115,49 +106,6 @@ function treeDiff(before: Map<string, string>, after: Map<string, string>): stri
   for (const [rel, hash] of after) if (before.get(rel) !== hash) changed.add(rel);
   for (const rel of before.keys()) if (!after.has(rel)) changed.add(rel);
   return [...changed].sort();
-}
-
-/** The shim's own telemetry, which is a fact about the window and never about the game. */
-const SHIM_STATE_KEYS = new Set([
-  "frame",
-  "simulatedMs",
-  "running",
-  "fps",
-  "pointerLock",
-  "render",
-  "__render",
-  "__attached",
-  "drawCalls",
-  "triangles",
-]);
-
-function gameOwnState(state: unknown): Record<string, unknown> {
-  if (!state || typeof state !== "object") return {};
-  const out: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(state as Record<string, unknown>))
-    if (!SHIM_STATE_KEYS.has(key)) out[key] = value;
-  return out;
-}
-
-/**
- * The same state twice — to the precision the path supports. Two runs of one simulation
- * accumulate their floats in the same order but not through the same GPU frame timings, so a
- * position agrees to a millionth and never to the last bit.
- */
-function sameState(a: unknown, b: unknown): boolean {
-  if (typeof a === "number" && typeof b === "number")
-    return Math.abs(a - b) <= 1e-6 * Math.max(1, Math.abs(a), Math.abs(b));
-  if (Array.isArray(a) || Array.isArray(b)) {
-    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
-    return a.every((item, index) => sameState(item, b[index]));
-  }
-  if (a && b && typeof a === "object" && typeof b === "object") {
-    const left = Object.keys(a as Record<string, unknown>).sort();
-    const right = Object.keys(b as Record<string, unknown>).sort();
-    if (JSON.stringify(left) !== JSON.stringify(right)) return false;
-    return left.every((key) => sameState((a as Record<string, unknown>)[key], (b as Record<string, unknown>)[key]));
-  }
-  return a === b;
 }
 
 function at(state: unknown, dotted: string): unknown {
@@ -290,7 +238,7 @@ async function main(): Promise<void> {
   await core.plugins.setEnabled("blender", false);
   const api: Record<string, (params: never) => Promise<unknown>> = core.api();
   // The harness host resolves any api() key by name and hands the loop exactly this; the
-  // evidence pass below is given the same thing, minus the pipe.
+  // health check below is given the same thing, minus the pipe.
   const ctx = { call: async (method: string, params: Record<string, unknown> = {}) => api[method]!(params as never) };
 
   const ids = (
@@ -372,325 +320,57 @@ async function main(): Promise<void> {
       `validate problems: ${contract.problems.join("; ")}`,
     );
 
-    const traits = normalizeGameTraits(manifest.game);
-    const probes = inputProbesFor(traits);
-    const line = gameLine(traits);
-
-    // ── the fixture pass: load, drive, photograph, judge ──
+    // ── the fixture pass: the Loop's health check, then the served page looked at from outside ──
     if (transports.includes("fixture")) {
       const sheet = new Sheet(`${id}/fixture`);
       for (const row of prepared.rows) sheet.rows.push(row);
       const runId = `shapes_${id}`;
-      const { handle } = (await api["preview.acquire"]!({ label: `shapes:${id}` } as never)) as { handle: string };
-      const evidence = await gatherEvidence(
-        ctx as never,
-        {
-          run: { runId, project: project.name, setup: manifest.setup, game: manifest.game, ownShape: true },
-          iterationId: "shapes",
-          seed: 7,
-          handle,
-          // Load-bearing: without a root, gatherEvidence takes the reload branch, and a port just
-          // returned by preview.acquire has nothing in #servedRoots — nothing is served, no shadow
-          // build runs and no page is ever navigated.
-          root: project.dir,
-          labelPrefix: `${id}/first`,
-          entry: undefined,
-          motion: 2,
-          userView: true,
-          cameras: null,
-        } as never,
-      );
-      const status = (await api["preview.status"]!({ handle } as never)) as { url?: string };
+      // The check a Loop runs before it merges or lands: the page loads, logs no error, is not blank.
+      const health = await checkHealth(ctx as never, {
+        project: project.name,
+        root: project.dir,
+        runId,
+        label: `${id}/health`,
+      });
+      sheet.ok("health-checked", health.unchecked === null, `unchecked: ${health.unchecked ?? "no"}`);
+      sheet.ok("health-picture", typeof health.picture === "string", `picture: ${health.picture}`);
+      sheet.ok("health-ok", health.ok, `problems: ${health.problems.join("; ") || "none"}`);
 
+      const { handle } = (await api["preview.acquire"]!({ label: `shapes:${id}` } as never)) as { handle: string };
+      await api["preview.load"]!({ project: project.name, root: project.dir, handle } as never);
+      const ready = (await api["preview.ready"]!({ handle, timeoutMs: manifest.readyBudgetMs } as never)) as {
+        ready?: boolean;
+        pageMs?: number | null;
+        timedOut?: boolean;
+        via?: string;
+      };
       sheet.ok(
         "ready",
-        typeof evidence.readyAfterMs === "number" &&
-          evidence.readyAfterMs <= manifest.readyBudgetMs &&
-          evidence.ready?.timedOut === false &&
-          evidence.ready?.via === "shim",
-        `readyAfterMs ${evidence.readyAfterMs} (budget ${manifest.readyBudgetMs}), via ${evidence.ready?.via}, timedOut ${evidence.ready?.timedOut}`,
+        ready.ready === true && ready.timedOut === false && ready.via === "shim",
+        `ready ${ready.ready} after ${ready.pageMs} ms (budget ${manifest.readyBudgetMs}), via ${ready.via}, timedOut ${ready.timedOut}`,
       );
-      sheet.ok(
-        "clock",
-        evidence.clock?.ok === true && evidence.clock.frames > 0 && evidence.clock.drawCalls > 0,
-        `two proving steps moved ${evidence.clock?.frames} stepped frames and ${evidence.clock?.drawCalls} draws in ${evidence.clock?.ms} ms`,
-      );
-
-      const measured = manifest.delta.map((entry) => {
-        const moved = Math.abs(
-          Number(at(evidence.state, entry.path) ?? NaN) - Number(at(evidence.stateEarly, entry.path) ?? NaN),
-        );
-        return { ...entry, moved };
-      });
-      for (const entry of measured)
-        sheet.ok(
-          `delta:${entry.path}`,
-          entry.moved >= entry.min,
-          `${entry.path} moved ${entry.moved} (min ${entry.min})`,
-        );
-
-      const judged = (evidence.shots ?? []).find((shot: { camera: string }) => shot.camera === "default");
+      const judged = (await api["preview.screenshot"]!({
+        runId,
+        label: `${id}/default`,
+        surface: "page",
+        handle,
+      } as never)) as { stats?: { litFraction?: number; meanLuma?: number; hueHistogram?: number[] } };
       sheet.ok(
         "lit",
-        judged?.stats?.canvas === true && judged.stats.litFraction > 0.005,
-        `default frame litFraction ${judged?.stats?.litFraction}`,
-      );
-      sheet.ok(
-        "not-black",
-        !(evidence.problems ?? []).some((problem: string) => /renders effectively black|drew nothing/.test(problem)),
-        `problems: ${(evidence.problems ?? []).join("; ")}`,
+        (judged.stats?.litFraction ?? 0) > 0.005,
+        `default frame litFraction ${judged.stats?.litFraction}`,
       );
 
-      const declared = (await api["preview.call"]!({ method: "cameras", handle } as never)) as unknown;
-      sheet.ok(
-        "cameras",
-        JSON.stringify(declared) === JSON.stringify(manifest.cameras),
-        `cameras() answered ${JSON.stringify(declared)}`,
-      );
-      const wanted = ["default", ...manifest.cameras.filter((name) => name !== "default")].slice(0, 6);
-      const photographed = (evidence.shots ?? [])
-        .filter(
-          (shot: { camera: string }) =>
-            !shot.camera.startsWith("demo:") && shot.camera !== "user:view" && !shot.camera.startsWith("eye:"),
-        )
-        .map((shot: { camera: string }) => shot.camera);
-      sheet.ok(
-        "photographed",
-        JSON.stringify(photographed) === JSON.stringify(wanted),
-        `photographed ${photographed.join(", ")}, wanted ${wanted.join(", ")}`,
-      );
-      for (const eye of evidence.eyes ?? []) {
-        if (!["eye:spawn", "eye:here", "eye:down"].includes(eye)) continue;
-        sheet.ok(
-          `eye:${eye}`,
-          (evidence.shots ?? []).some((shot: { camera: string }) => shot.camera === eye),
-          `${eye} was photographed`,
-        );
-      }
-      // Photographed is not the promise. A harness camera placed on a game that renders its own
-      // frame used to be clobbered by that render, and every `eye:*` picture came back as the
-      // game's own view — byte-identical to `default`, and named after a viewpoint nobody saw.
-      // At least one placed eye must therefore differ from the default frame.
-      const eyeShots = (evidence.shots ?? []).filter((shot: { camera: string }) => shot.camera.startsWith("eye:")) as {
-        camera: string;
-        base64?: string;
-      }[];
-      if (eyeShots.length > 0) {
-        const defaultFrame = judged?.base64 ?? null;
-        const distinct = eyeShots.filter((shot) => typeof shot.base64 === "string" && shot.base64 !== defaultFrame);
-        sheet.ok(
-          "eye-placed",
-          distinct.length > 0,
-          `${distinct.length} of ${eyeShots.length} eye frame(s) differ from the default frame (${eyeShots.map((shot) => shot.camera).join(", ")})`,
-        );
-      }
-
-      sheet.ok("evidence-ok", evidence.ok === true, `problems: ${(evidence.problems ?? []).join("; ") || "none"}`);
-      sheet.ok(
-        "no-console-errors",
-        (evidence.consoleErrors ?? []).length === 0,
-        `console: ${(evidence.consoleErrors ?? []).join(" | ")}`,
-      );
-      sheet.ok(
-        "no-gpu-errors",
-        (evidence.gpuErrors ?? []).length === 0,
-        `gpu: ${JSON.stringify(evidence.gpuErrors ?? [])}`,
-      );
-
-      // The GAME line: a kind with no measurable player carries the retraction; a kind with one
-      // names probes that either moved or the game never reports at all.
-      // A kind that names no axis is retracted by name, not by the template fallback the probe
-      // table hands back for it.
-      const declaredKind = (GAME_KINDS as Record<string, { look: string[]; move: string[] } | undefined>)[
-        String(traits.kind)
-      ];
-      if ((declaredKind?.look.length ?? 0) === 0 && (declaredKind?.move.length ?? 0) === 0) {
-        sheet.ok("game-line", line.includes("[dead-input] does not apply"), `GAME line: ${line}`);
-      } else {
-        sheet.ok("game-line", line.includes("__studio.state()"), `GAME line: ${line}`);
-        for (const [name, probe] of [
-          ["look", probes.look],
-          ["move", probes.move],
-        ] as const) {
-          if (name === "look" && traits.mouseLook !== true) continue;
-          if (name === "move" && traits.keyboardMove !== true) continue;
-          const unmeasurable = probe.paths.every((dotted: string) => at(evidence.state, dotted) === undefined);
-          const moved = probe.paths.some((dotted: string) =>
-            measured.some((entry) => entry.path === dotted && entry.moved >= entry.min),
-          );
-          sheet.ok(
-            `probe:${name}`,
-            unmeasurable || moved,
-            `${probe.paths.join(", ")} — ${unmeasurable ? "the game reports none of them" : `moved: ${moved}`}`,
-          );
-        }
-      }
-
-      const warnings = (evidence.warnings ?? []) as string[];
-      for (const expected of manifest.expectWarnings)
-        sheet.ok(
-          `warn:${expected.slice(0, 32)}`,
-          warnings.some((warning) => warning.includes(expected)),
-          `warnings: ${warnings.join(" | ")}`,
-        );
-      // The other half of the promise: a manifest that names no warning is claiming this game
-      // warns about nothing, so anything the run collected and no list names fails the sheet.
-      const undeclared = undeclaredWarnings(warnings, manifest);
-      sheet.ok("no-undeclared-warning", undeclared.length === 0, `undeclared: ${undeclared.join(" | ") || "none"}`);
-      sheet.ok(
-        "no-contract-warning",
-        ![...warnings, ...(evidence.problems ?? [])].some((sentence: string) =>
-          /contract|cannot be judged/.test(sentence),
-        ),
-        `nothing said the contract is missing: ${[...warnings, ...(evidence.problems ?? [])].join(" | ")}`,
-      );
-
-      sheet.ok(
-        "backend",
-        evidence.canvas?.kind === (manifest.backend === "webgpu" ? "webgpu" : "webgl2") ||
-          evidence.canvas?.kind === manifest.backend,
-        `the photographed canvas hands out ${evidence.canvas?.kind}`,
-      );
-
-      if (manifest.edits === "two-line-install") {
-        // The bundled shape: what the browser was actually given is the BUILT page, not the
-        // TypeScript entry it refuses. (The served URL is the port's, and the studio serves a
-        // build out of its own shadow — so the proof is the page, not the path.)
-        const entryScript = (await api["preview.evaluate"]!({
-          handle,
-          // The game's own module tags, not the two the serve layer inserted.
-          expression: `[...document.querySelectorAll('script[type=module][src]')].map((s) => s.getAttribute('src')).filter((src) => !src.startsWith('/vendor/'))`,
-        } as never)) as string[];
-        sheet.ok(
-          "built-entry",
-          entryScript.length === 1 &&
-            /main\.js$/.test(entryScript[0]!) &&
-            !entryScript.some((src) => /\.tsx?$/.test(src)),
-          `the served page loads ${entryScript.join(", ")}`,
-        );
-        sheet.ok(
-          "built-url",
-          typeof status.url === "string" && /\/index\.html$/.test(status.url),
-          `the port is showing ${status.url}`,
-        );
-      }
-
-      // Determinism: the same seed twice gives the same state and the same default frame.
-      let repeat: Record<string, unknown> | null = null;
-      if (manifest.deterministic) {
-        repeat = (await gatherEvidence(
-          ctx as never,
-          {
-            run: { runId, project: project.name, setup: manifest.setup, game: manifest.game, ownShape: true },
-            iterationId: "shapes",
-            seed: 7,
-            handle,
-            root: project.dir,
-            labelPrefix: `${id}/second`,
-            entry: undefined,
-            // The same pass twice, motion strip and user:view included: a second pass that looked
-            // at the page differently would be measuring the difference between two passes.
-            motion: 2,
-            userView: true,
-            cameras: null,
-          } as never,
-        )) as Record<string, unknown>;
-        const a = judged?.path;
-        const b = ((repeat.shots as Array<{ camera: string; path: string }>) ?? []).find(
-          (shot) => shot.camera === "default",
-        )?.path;
-        const diff =
-          a && b
-            ? ((await api["preview.diff"]!({ runId, a, b, label: `${id}/determinism`, handle } as never)) as {
-                diffFraction?: number;
-              } | null)
-            : null;
-        // The GAME's own state, not the shim's telemetry: `frame`, `fps` and the draw counters
-        // are facts about the window, and two loads of the same page never share them.
-        const own = gameOwnState(evidence.state);
-        const again = gameOwnState(repeat.state);
-        if (Object.keys(own).length === 0) {
-          sheet.rows.push({
-            id: "deterministic-state",
-            ok: true,
-            note: "this page reports no state of its own — the frame below is the whole claim",
-          });
-        } else {
-          sheet.ok(
-            "deterministic-state",
-            sameState(own, again),
-            `first ${JSON.stringify(own)} / second ${JSON.stringify(again)}`,
-          );
-        }
-        // "The same appearance" — the number the optimization pixel critic already calls a
-        // visible change. A literal 0 is not a claim this path supports: a game walked to its
-        // state by a setup script is walked in WALL time, before the studio owns the clock, and
-        // a WebGPU frame lands one asynchronous turn after the callback that asked for it, so
-        // two passes agree on the picture and never on every pixel of it.
-        sheet.ok(
-          "deterministic-frame",
-          diff !== null && (diff.diffFraction ?? 1) < SAME_APPEARANCE,
-          `default frame diffFraction ${diff?.diffFraction} (bar ${SAME_APPEARANCE})`,
-        );
-      }
-
-      // The two extra assertions this runner carries for the lanes that own those paths.
+      // The one extra assertion this runner carries for the lane that owns that path.
       if (id === "esm-addons") {
-        const info = (await api["preview.call"]!({ method: "captureInfo", handle } as never)) as {
-          source?: string;
-          composited?: boolean;
-        } | null;
-        const hues = (judged?.stats?.hueHistogram ?? []) as number[];
+        const hues = judged.stats?.hueHistogram ?? [];
         const dominant = hues.length ? hues.indexOf(Math.max(...hues)) : -1;
-        // Bins are 30° each, red first: the lamps and their bloom are cyan/blue (bin 6 or 7).
+        // Bins are 30° each, red first: the lamps and their bloom are cyan/blue (bin 6 or 7). The
+        // page's own picture (the compositor's), so the composer's last pass is in it.
         sheet.ok(
           "composer-frame",
-          info?.source === "page" && (dominant === 6 || dominant === 7),
-          `capture ${info?.source}, dominant hue bin ${dominant} of ${JSON.stringify(hues)}`,
-        );
-        // …and the frame really is the END of the frame. With the clock held, the compositor is
-        // asked twice: once for the picture as the page left it (the composer's last pass), and
-        // once after a plain `renderer.render(scene, camera)` — the frame a capture that
-        // re-rendered would have taken. The bloom is the difference, and the judged frame's own
-        // brightness has to sit on the composed side of it.
-        await api["preview.call"]!({ method: "pause", handle } as never);
-        const composed = (await api["preview.screenshot"]!({
-          runId,
-          label: `${id}/composed`,
-          surface: "page",
-          handle,
-        } as never)) as { stats: { meanLuma: number } };
-        await api["preview.evaluate"]!({
-          handle,
-          expression: `(() => { const i = window.__studio.inspect(); i.renderer.render(i.scene, i.camera); return true; })()`,
-        } as never);
-        const plain = (await api["preview.screenshot"]!({
-          runId,
-          label: `${id}/plain`,
-          surface: "page",
-          handle,
-        } as never)) as { stats: { meanLuma: number } };
-        await api["preview.call"]!({ method: "start", handle } as never);
-        const lift = composed.stats.meanLuma - plain.stats.meanLuma;
-        sheet.ok(
-          "post-pass-visible",
-          lift > 1,
-          `the composed frame is ${composed.stats.meanLuma.toFixed(2)} against ${plain.stats.meanLuma.toFixed(2)} for a plain re-render`,
-        );
-        const judgedLuma = judged?.stats?.meanLuma ?? 0;
-        sheet.ok(
-          "capture-reads-the-end",
-          Math.abs(judgedLuma - composed.stats.meanLuma) < Math.abs(judgedLuma - plain.stats.meanLuma),
-          `the judged frame reads ${judgedLuma.toFixed(2)}: composed ${composed.stats.meanLuma.toFixed(2)}, plain ${plain.stats.meanLuma.toFixed(2)}`,
-        );
-      }
-      if (manifest.backend === "webgpu") {
-        sheet.ok(
-          "webgpu-draws",
-          Number.isFinite(evidence.canvas?.drawCalls) &&
-            (evidence.canvas?.drawCalls ?? 0) > 0 &&
-            evidence.canvas?.kind === "webgpu",
-          `${evidence.canvas?.drawCalls} draw calls off a ${evidence.canvas?.kind} canvas`,
+          dominant === 6 || dominant === 7,
+          `page capture, dominant hue bin ${dominant} of ${JSON.stringify(hues)}`,
         );
       }
 
@@ -699,15 +379,11 @@ async function main(): Promise<void> {
         id,
         transport: "fixture",
         shape: detected,
-        cameras: declared,
-        readyAfterMs: evidence.readyAfterMs,
-        delta: measured,
-        surface: evidence.surface,
-        pageUi: evidence.pageUi,
-        warnings: (evidence.warnings ?? []).length,
+        readyAfterMs: ready.pageMs,
+        health: health.problems,
         checks: sheet.rows,
       });
-      console.log(`${id}/fixture: ready in ${evidence.readyAfterMs} ms, ${sheet.rows.length} checks`);
+      console.log(`${id}/fixture: ready in ${ready.pageMs} ms, ${sheet.rows.length} checks`);
     }
 
     // ── the same game through the real Codex bridge ──
@@ -1068,7 +744,7 @@ function driveSteps(
   manifest: Manifest,
   transport: "codex" | "claude",
 ): Array<{ tool: string; args: Record<string, string> }> {
-  const traits = normalizeGameTraits(manifest.game);
+  const traits = { mouseLook: manifest.game.mouseLook === true, keyboardMove: manifest.game.keyboardMove === true };
   const steps: Array<{ tool: string; args: Record<string, string> }> = [];
   const declares = (dotted: string) => manifest.delta.some((entry) => entry.path === dotted);
   if (traits.mouseLook === true && declares("player.yaw")) {

@@ -86,7 +86,6 @@ export const STUDIO_INVOKE_CHANNELS = {
   "studio:activity": "studioActivity",
   "studio:run.summary": "runSummary",
   "studio:run.review": "runReview",
-  "studio:staged": "staged",
   "studio:settings": "settings",
   "studio:settings.set": "setSettings",
   "studio:diagnostics": "diagnostics",
@@ -292,9 +291,6 @@ export const STUDIO_INVOKE_CHANNELS = {
   "studio:run.stop": "stopRun",
   "studio:run.finish": "finishRun",
   "studio:autopilot.resume": "resumeAutopilot",
-  "studio:skillopt.start": "startSkillOpt",
-  "studio:skillopt.accept": "acceptProposal",
-  "studio:skillopt.discard": "discardProposal",
   "studio:export": "exportGame",
   "studio:cancel-model-download": "cancelModelDownload",
   "studio:model-install.status": "modelInstallStatus",
@@ -378,7 +374,6 @@ export interface StudioInvokePayloads {
   "studio:activity": undefined;
   "studio:run.summary": { project: string; runId: string; graphFrom?: NonNullable<Arg<"runSummary", 2>> };
   "studio:run.review": { project: string; runId?: string };
-  "studio:staged": undefined;
   "studio:settings": undefined;
   "studio:settings.set": Arg<"setSettings", 0>;
   "studio:diagnostics": undefined;
@@ -585,9 +580,6 @@ export interface StudioInvokePayloads {
   "studio:run.stop": { runId: string };
   "studio:run.finish": { runId: string; threadId: string };
   "studio:autopilot.resume": { runId: string };
-  "studio:skillopt.start": undefined;
-  "studio:skillopt.accept": { index: number } & NonNullable<Arg<"acceptProposal", 1>>;
-  "studio:skillopt.discard": { index: number; reason?: string } & NonNullable<Arg<"discardProposal", 2>>;
   "studio:export": { project: string };
   "studio:cancel-model-download": Record<string, never>;
   "studio:model-install.status": undefined;

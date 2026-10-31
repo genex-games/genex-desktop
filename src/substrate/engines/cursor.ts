@@ -25,10 +25,10 @@ import { promisify } from "node:util";
 import { CATALOG_DEADLINE_MS, ModelCatalog } from "./model-catalog.ts";
 import { cliVersion, resolveCodingCli } from "./external-cli.ts";
 import { runCommand } from "./claude-cli.ts";
-import { lockUnowned, ownershipBriefing, releaseLocks, releaseStaleLocks, type LockRecord } from "./ownership-locks.ts";
+import { releaseStaleLocks } from "./ownership-locks.ts";
 import { StudioBridge, answerBridgeCall, bridgeTools } from "./studio-bridge.ts";
 import { writeDelegateStills } from "./codex.ts";
-import { BLIND_JUDGE_NOTE, JUDGE_RULES, offLimitsNote, planModeNote, readOnlyNote } from "./codex-prompts.ts";
+import { JUDGE_RULES, offLimitsNote, planModeNote, readOnlyNote } from "./codex-prompts.ts";
 import { leadBuildWrites } from "./session-commands.ts";
 import {
   CURSOR_FILE_STORE,
@@ -353,14 +353,11 @@ export class CursorEngine implements Engine {
     const run = newRun(this.id, request.resume);
     const controller = abortControllerFor(request.signal);
     await releaseStaleLocks(cwd, this.#lockRecovery).catch(() => {});
-    const locks = request.ownership
-      ? await lockUnowned(cwd, request.ownership, this.#lockRecovery).catch(() => null)
-      : null;
     const access = sessionAccess(request);
     const scratch = access === CursorAccess.Build ? null : await this.#scratch("run-");
     const runDir = scratch ?? cwd;
     const bridge = await this.#openBridge(request, runDir).catch(async (err) => {
-      await this.#cleanUp(cwd, locks, scratch, null);
+      await this.#cleanUp(cwd, scratch, null);
       throw err;
     });
     const stills = await writeDelegateStills(request.images ?? []);
@@ -376,7 +373,7 @@ export class CursorEngine implements Engine {
         access,
         cwd,
         runDir,
-        prompt: this.#brief(request, { access, cwd, scratch, locks, bridge, pictures: stills.paths }),
+        prompt: this.#brief(request, { access, cwd, scratch, bridge, pictures: stills.paths }),
         signal: controller.signal,
       });
       await this.#readEvents(request, run, invocation);
@@ -385,7 +382,7 @@ export class CursorEngine implements Engine {
     } finally {
       if (deadline) clearTimeout(deadline);
       if (stills.dir) await rm(stills.dir, { recursive: true, force: true }).catch(() => {});
-      await this.#cleanUp(cwd, locks, scratch, bridge);
+      await this.#cleanUp(cwd, scratch, bridge);
     }
     if (request.signal?.aborted || run.deadlineHit)
       return partialDelegateResult(this.id, interruption(request.signal?.aborted), partial());
@@ -472,37 +469,27 @@ export class CursorEngine implements Engine {
     });
   }
 
-  async #cleanUp(
-    cwd: string,
-    locks: LockRecord | null,
-    scratch: string | null,
-    bridge: StudioBridge | null,
-  ): Promise<void> {
+  async #cleanUp(cwd: string, scratch: string | null, bridge: StudioBridge | null): Promise<void> {
     await bridge?.close().catch(() => {});
-    await releaseLocks(cwd, locks, this.#lockRecovery).catch(() => {});
     if (scratch) await rm(scratch, { recursive: true, force: true }).catch(() => {});
   }
 
-  /** The brief, plus what Cursor can only be told: its tools, its seam, its folder, its pictures, what is off limits. */
+  /** The brief, plus what Cursor can only be told: its tools, its folder, its pictures, what is off limits. */
   #brief(
     request: DelegateRequest,
     ctx: {
       access: CursorAccess;
       cwd: string;
       scratch: string | null;
-      locks: LockRecord | null;
       bridge: StudioBridge | null;
       pictures: string[];
     },
   ): string {
-    const hasSeam = request.ownership && (request.ownership.owns.length || ctx.locks?.files.length);
     const plan = chatMode(request) === PermissionMode.Plan && ctx.scratch;
     return [
       request.prompt,
       ctx.pictures.length ? MESSAGE.Pictures(ctx.pictures) : "",
       ctx.bridge?.instructions() ?? "",
-      hasSeam && request.ownership ? ownershipBriefing(request.ownership) : "",
-      ctx.access === CursorAccess.Blind ? BLIND_JUDGE_NOTE : "",
       plan
         ? planModeNote(ctx.cwd, ctx.scratch ?? "")
         : readOnlyNote(
@@ -555,8 +542,7 @@ export class CursorEngine implements Engine {
       leadBuilds: builds ? await leadBuildWrites(leadBuilds) : [],
       scratchDir: path.join(this.#scratchRoot, "tmp"),
       compileCache,
-      // A blind judge plays the build from an empty folder and may read none of it.
-      secretPaths: [...this.#protectedPaths, ...denyReads, ...(ctx.access === CursorAccess.Blind ? [ctx.cwd] : [])],
+      secretPaths: [...this.#protectedPaths, ...denyReads],
       ...(this.#toolPath ? { toolPath: this.#toolPath } : {}),
     });
   }
@@ -675,7 +661,6 @@ function absolute(value: string | undefined): string | undefined {
 
 /** What a session's tools may do: a build edits; a read-only session, a lead while its build runs and Plan only look. */
 function sessionAccess(request: DelegateRequest): CursorAccess {
-  if (request.blind) return CursorAccess.Blind;
   const readOnly = Boolean(request.readOnly) && !request.coordinator;
   return readOnly || chatMode(request) === PermissionMode.Plan ? CursorAccess.ReadOnly : CursorAccess.Build;
 }

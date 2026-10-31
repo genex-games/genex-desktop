@@ -149,9 +149,9 @@ export function modelsFor(engine: string | null | undefined): ModelRow[] {
 
 /** The three jobs, in the order the roles page shows them. */
 export const ROLES: Array<{ key: RoleKey; label: string; detail: string }> = [
-  { key: RoleKey.Planner, label: "Orchestrator", detail: "interviews you, plans the facets, re-points checks" },
-  { key: RoleKey.Builder, label: "Workers", detail: "build the base, every facet, the spikes and the merge" },
-  { key: RoleKey.Judge, label: "Judges", detail: "vision checks, taste, code review, the playtester, the panel" },
+  { key: RoleKey.Planner, label: "Orchestrator", detail: "leads the Loop" },
+  { key: RoleKey.Builder, label: "Workers", detail: "the workers the lead starts" },
+  { key: RoleKey.Judge, label: "Judges", detail: "second opinions the lead asks for" },
 ];
 
 /**

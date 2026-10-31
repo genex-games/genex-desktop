@@ -10,7 +10,6 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
-import { buildChallenger } from "../../src/harness-seed/loop/facet/phases/build.ts";
 import { withWorkerRoom } from "../../src/harness-seed/loop/workers/room.ts";
 import { GIT_TIMEOUT_MS } from "../../src/harness-seed/loop/config.ts";
 import { HostMethod } from "../../src/shared/harness-api.ts";
@@ -25,7 +24,6 @@ import {
 } from "../../src/shared/workers.ts";
 import { gitFile } from "../helpers/git.ts";
 import {
-  CLAUDE,
   chatPool,
   delegation,
   finish,
@@ -522,73 +520,6 @@ describe("the worker pool", { timeout: TEST_TIMEOUT_MS }, () => {
         code: "too_many_workers",
       },
     );
-  });
-
-  it("a director's facet builder waits for room on the loop's own clock; a stop meanwhile ends the wait", async () => {
-    /** A facet loop's builder whose host refuses its first `refusals` turns for room. */
-    const facetBuilder = (refusals: number, stopAfterWaits = Infinity) => {
-      const delegations: Array<Record<string, unknown>> = [];
-      const waits: number[] = [];
-      let refused = refusals;
-      const ctx = {
-        cancelled: false,
-        setStatus: () => {},
-        call: async (method: string, params: Record<string, unknown>) => {
-          if (method !== HostMethod.EngineDelegate) return null;
-          delegations.push(params);
-          if (refused-- > 0)
-            throw Object.assign(new Error("This chat already runs 2 workers"), { code: "too_many_workers" });
-          return { ok: true, sessionId: "s1", summary: "built" };
-        },
-      };
-      const loop = {
-        ctx,
-        deadline: Date.now() + 60 * 60_000,
-        delegated: true,
-        extraReadRoots: [],
-        spikeRoots: [],
-        facet: { id: "plaza", title: "Plaza" },
-        run: { runId: "run_room", project: PROJECT, model: null },
-        engineId: CLAUDE,
-        facetThreadId: THREAD,
-        worktree: "/runs/run_room/plaza",
-        spec: { owns: [] },
-        result: {},
-        windDownMs: 0,
-        emaAfterMs: 0,
-        sessionId: null,
-        outageRetries: 0,
-        iterationsThisRound: 1,
-        options: { worker: { id: "plaza", title: "Plaza", runId: "run_room" } },
-        stoppedHere: async () => true,
-        steering: async () => [],
-        appendRun: async () => {},
-        // A stop the director asks for while the builder waits: the loop's finish check says so.
-        finishRequested: async () => (waits.length >= stopAfterWaits ? { by: "director", reason: "stopped" } : false),
-        sleepFor: async (ms: number) => {
-          waits.push(ms);
-        },
-      };
-      const round: Record<string, unknown> = {
-        acceptedShots: [],
-        prompt: "Build the plaza.",
-        promptImages: null,
-        iteration: 2,
-        userSteering: [],
-      };
-      return { loop, round, delegations, waits };
-    };
-    const waited = facetBuilder(1);
-    await buildChallenger(waited.loop as never, waited.round as never);
-    assert.equal(waited.round.buildFailed, null, String(waited.round.buildFailed));
-    assert.equal(waited.delegations.length, 2, "asked again once there was room");
-    assert.equal(waited.waits.length, 1, "it waited on the loop's own clock");
-    assert.deepEqual(waited.delegations[1]?.worker, { id: "plaza", title: "Plaza", runId: "run_room" });
-
-    const stopped = facetBuilder(1_000, 1);
-    await buildChallenger(stopped.loop as never, stopped.round as never);
-    assert.equal(stopped.delegations.length, 1, "no turn after the stop");
-    assert.match(String(stopped.round.buildFailed), /already runs 2 workers/);
   });
 
   it("a copy too large to make is answered by its code, pointing at in-place work", async () => {

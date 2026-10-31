@@ -193,22 +193,6 @@ describe("a run's sessions never take the chat's bookmark", () => {
         extra: { selfCapture: { project: game, root, runId: "run_x", facetId: "prep", iteration: 0, label: "prep" } },
       },
       {
-        label: "the scout",
-        sessionId: "scout-1",
-        extra: {
-          playtest: {
-            project: game,
-            root,
-            runId: "run_x",
-            facetId: "scout",
-            iteration: 0,
-            role: "scout",
-            label: "scout",
-          },
-          readOnly: true,
-        },
-      },
-      {
         label: "the run's coordinator",
         sessionId: "coordinator-1",
         extra: { coordinator: { runId: "run_x" }, readOnly: true },
@@ -834,7 +818,7 @@ async function leadChat({ leadAskTimeoutMs }: { leadAskTimeoutMs?: number } = {}
  */
 describe("a build's lead and the run's coordinator ask the person they answer", () => {
   it("hands a way to ask only to the lead answering its chat and the coordinator of its run", async () => {
-    const { core, api, game, threadId, worktree, runId, seen, delegate, leadBrief, personSays } = await leadChat();
+    const { core, game, threadId, worktree, runId, seen, delegate, leadBrief, personSays } = await leadChat();
     const said = await personSays();
     const other = await core.games.scaffold("lead-asks-other");
     const otherChat = await core.threadForGame(other.name);
@@ -842,7 +826,7 @@ describe("a build's lead and the run's coordinator ask the person they answer", 
       title: "Second chat",
       metadata: { kind: "game", project: game },
     });
-    const forged = String(await api["thread.create"]!({ title: "x" }));
+    const forged = await core.store.createThread({ title: "x" });
     const cases: Array<{ label: string; extra: Record<string, unknown>; thread?: string; asks: boolean }> = [
       { label: "the lead answering its chat", extra: leadBrief(), asks: true },
       {
@@ -876,7 +860,7 @@ describe("a build's lead and the run's coordinator ask the person they answer", 
         asks: false,
       },
       {
-        label: "a playtester",
+        label: "a read-only session an older harness sent with a playtest grant",
         extra: {
           playtest: {
             project: game,
@@ -1606,14 +1590,14 @@ describe("a lead has the chat's own session's plugins and connectors, on the bui
     assert.equal(phases.includes("connecting"), false, "and none says it is connecting tools");
   });
 
-  it("still gives none to a read-only session that leads nothing, the playtester or the coordinator", async () => {
+  it("still gives none to a read-only session that leads nothing, an older harness's playtest grant or the coordinator", async () => {
     const { core, threadId, game, runId, worktree, delegate, personSays, seen } = await leadChat();
     standInHostTools(core);
     const said = await personSays();
     const cases: Array<[string, Record<string, unknown>]> = [
       ["a read-only session in the game folder", { readOnly: true }],
       [
-        "a playtester",
+        "a read-only session an older harness sent with a playtest grant",
         {
           playtest: {
             project: game,

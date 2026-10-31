@@ -5,7 +5,6 @@
  */
 import { mkdir, readdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { allowedFile, ownershipReason, specOf } from "../ownership.ts";
 import { isInside, toPosixRelative } from "../paths.ts";
 import type { ToolCall } from "../types.ts";
 import { MINUTE_MS } from "../../shared/duration.ts";
@@ -82,8 +81,7 @@ const str = { type: "string" };
 
 /** The tools this session grants: reading always, writing unless read-only, then the studio's own. */
 export function localToolDefinitions(request: DelegateRequest, readonly: boolean): ToolDefinition[] {
-  // A blind judge sees the build only through its live tools: no file of the build is offered.
-  const definitions: ToolDefinition[] = request.blind ? [] : fileReadTools();
+  const definitions: ToolDefinition[] = fileReadTools();
   if (!readonly)
     definitions.push(
       tool(LocalTool.EditFile, LOCAL_TOOL_DESCRIPTION.editFile, { path: str, oldText: str, newText: str }, [
@@ -119,7 +117,6 @@ function withRequestTools(request: DelegateRequest, definitions: ToolDefinition[
   if (request.onCapture)
     definitions.push(
       tool(LocalTool.Capture, LOCAL_TOOL_DESCRIPTION.capture, {
-        cameras: str,
         page: { ...str, description: LOCAL_TOOL_DESCRIPTION.capturePage },
       }),
     );
@@ -141,7 +138,6 @@ export interface FileScope {
   forbidden: string[];
   deniedWrites: string[];
   readonly: boolean;
-  ownership: DelegateRequest["ownership"];
 }
 
 /** Resolves a model-supplied path to the real file it names, or throws why the session may not touch it. */
@@ -198,16 +194,14 @@ function writeRootOf(scope: FileScope, target: string, actual: string): string |
 }
 
 /**
- * A write must stay in the workspace (or the build a lead leads), off the denied paths, out of
- * `.git`, and inside the owned files of the workspace.
+ * A write must stay in the workspace (or the build a lead leads), off the denied paths, and out
+ * of `.git`.
  */
 function assertWritable(scope: FileScope, target: string, actual: string): void {
   const root = writeRootOf(scope, target, actual);
   if (root === null) throw new Error(MESSAGE.WriteOutside);
   const rel = toPosixRelative(path.relative(root, actual));
   if (rel.split("/").includes(".git")) throw new Error(MESSAGE.GitMetadata);
-  const owned = root === scope.cwd && scope.ownership;
-  if (owned && !allowedFile(rel, specOf(owned), owned.ownsMain)) throw new Error(ownershipReason(rel, owned));
 }
 
 /** What a tool call runs with: the session's files, sandbox and studio handlers. */

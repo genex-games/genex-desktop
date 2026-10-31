@@ -12,7 +12,7 @@
  * sandbox lets it write) and blocks until the studio — a different process, outside the sandbox
  * — drops the answer beside it. From the model's side it reads exactly like a tool call:
  *
- *     node .studio/bridge/tool.mjs capture --cameras=hero
+ *     node .studio/bridge/tool.mjs capture
  *     → saved 2 frames: run/.../hero.png, run/.../wide.png
  *
  * The whole directory is created for one delegation and deleted after it, so a workspace never
@@ -79,7 +79,7 @@ export interface BridgeOptions {
   /**
    * Where the bridge directory goes, and the folder the contractor is started in — so
    * `node .studio/tool.mjs` resolves for it. Usually the workspace it builds in; for a session
-   * that may not write to the build (the playtester) it is a scratch folder of its own, which is
+   * that may not write to the build (a reviewer, a reader) it is a scratch folder of its own, which is
    * then the only place its sandbox lets it write at all.
    */
   cwd: string;
@@ -115,9 +115,8 @@ interface Answer {
 
 /**
  * Where the bridge lives, relative to the folder the contractor runs in. Under `.studio/`,
- * which the workspace scaffolder already gitignores and file-ownership already permits — but in
- * a room of its own: `.studio/BRIEF.md` is the harness's per-iteration contract and the first
- * thing a builder is told to read, so clearing the bridge must never take the brief with it.
+ * which the workspace scaffolder already gitignores — but in a room of its own, so clearing the
+ * bridge never takes anything else under `.studio/` with it.
  */
 export const BRIDGE_DIR = ".studio/bridge";
 
@@ -562,7 +561,6 @@ export function bridgeTools(request: DelegateRequest): BridgeTool[] {
       parameters: {
         type: "object",
         properties: {
-          cameras: { type: "string", description: CODEX_CAPTURE_TOOL.cameras },
           page: { type: "string", description: CODEX_CAPTURE_TOOL.page },
         },
       },

@@ -29,6 +29,8 @@ export default {
   "A ChatGPT connection change is already in progress.": "Подключение ChatGPT уже меняется.",
   "A GLB for the game plus reference renders to check it.": "GLB для игры и референсные рендеры, чтобы его проверить.",
   "A Loop in {game} is using Unreal.": "Loop в игре «{game}» использует Unreal.",
+  "A Loop needs an engine that keeps a session of its own, and this chat's engine doesn't, so nothing was built. The chat still answers here.":
+    "Для Loop нужен движок, который держит собственную сессию, а движок этого чата её не держит, поэтому ничего не построено. Чат по-прежнему отвечает здесь.",
   "A bakery rush where orders pile up on a conveyor belt": "Запарка в пекарне: заказы копятся на конвейере",
   "A balloon pop game with a hedgehog that rolls through the sky":
     "Игра с шариками, где ёжик катится по небу и лопает их",
@@ -63,14 +65,13 @@ export default {
   "A connector needs a name": "Коннектору нужно имя",
   "A connector url must be https, or http on localhost": "url коннектора должен быть https или http на localhost",
   "A connector working directory must be an absolute path": "Рабочая папка коннектора должна быть абсолютным путём",
-  "A cooking game in a food truck that serves ghosts at midnight":
-    "Готовка в фудтраке, который в полночь кормит призраков",
-  "A cozy café where you make latte art for forest animals": "Уютное кафе, где ты рисуешь латте-арт для лесных зверей",
-  "A cozy fishing game on a tiny island where you sell your catch at the dock":
-    "Уютная рыбалка на крошечном острове, где улов продаёшь на причале",
-  "A cozy library where you match lost books to their readers":
-    "Уютная библиотека, где ты возвращаешь потерянные книги читателям",
-  "A cozy puzzle about packing a suitcase for a trip": "Уютная головоломка про то, как собрать чемодан в поездку",
+  "A cooking game in a food truck that serves ghosts": "Готовка в фудтраке, который кормит призраков",
+  "A café where you make latte art for forest animals": "Кафе, где ты рисуешь латте-арт для лесных зверей",
+  "A fishing game on a tiny island where you sell your catch at the dock":
+    "Рыбалка на крошечном острове, где улов продаёшь на причале",
+  "A library where you match lost books to their readers":
+    "Библиотека, где ты возвращаешь потерянные книги их читателям",
+  "A puzzle about packing a suitcase for a trip": "Головоломка о том, как собрать чемодан в поездку",
   "A dead terminal's cursor leaving trails": "Курсор мёртвого терминала оставляет следы",
   "A desert caravan trading spices across shifting dunes": "Караван в пустыне торгует специями среди движущихся дюн",
   "A detective game where you question houseplants about a missing cookie":
@@ -85,9 +86,10 @@ export default {
     "Загрузка оказалась больше релиза, который ждёт Genex, поэтому Genex остановился. Ничего не сохранено.",
   "A download wasn't over a secure link, so Genex stopped. Nothing was kept.":
     "Загрузка шла не по защищённой ссылке, поэтому Genex остановился. Ничего не сохранено.",
-  "A dragon who hoards cozy blankets instead of gold": "Дракон, который копит уютные пледы вместо золота",
+  "A dragon who hoards blankets instead of gold": "Дракон, который копит одеяла вместо золота",
   "A dream world where doors lead to memories": "Мир снов, где двери ведут в воспоминания",
-  "A drift racer on frozen mountain roads at night": "Дрифт-гонки ночью по обледенелым горным дорогам",
+  "A sandbox where you build working machines from blocks and wheels":
+    "Песочница, где ты собираешь работающие машины из блоков и колёс",
   "A dungeon where you play the monster defending its treasure from heroes":
     "Подземелье, где ты монстр и защищаешь сокровища от героев",
   "A farming sim on a floating island that drifts between seasons":
@@ -96,34 +98,35 @@ export default {
   "A file was in use, or the drive refused it. Close other apps, then try again.":
     "Файл был занят, или диск его не принял. Закрой другие приложения и попробуй снова.",
   "A file was in use. Close other programs and try again.": "Файл был занят. Закрой другие программы и попробуй снова.",
-  "A firefly-catching game in a summer meadow at dusk": "Ловля светлячков на летнем лугу в сумерках",
+  "A turn-based strategy game on a hex map with three rival factions":
+    "Пошаговая стратегия на гексагональной карте с тремя соперничающими фракциями",
   "A frog hopping across lily pads that sink when you stay too long":
     "Лягушка прыгает по кувшинкам, которые тонут, если задержаться",
   "A full path, such as /Users/you/server.": "Полный путь, например /Users/you/server.",
   "A garden defense game where vegetables guard against snails": "Оборона огорода: овощи защищаются от улиток",
-  "A garden gnome sneaking through backyards at night": "Садовый гном ночью крадётся по задним дворам",
+  "A visual novel where your choices decide who wins the school election":
+    "Визуальная новелла, где твой выбор решает, кто выиграет школьные выборы",
   "A gardening game where plants grow into puzzles you have to solve":
     "Садоводство, где растения вырастают в головоломки, которые надо решить",
   "A ghost ship sailing through a sea of clouds": "Корабль-призрак плывёт по морю облаков",
   "A gravity golf game between tiny planets": "Гравитационный гольф между крошечными планетами",
   "A greenhouse where every plant has a strange personality": "Оранжерея, где у каждого растения странный характер",
-  "A haunted house you redecorate to scare away noisy guests":
-    "Дом с привидениями, который ты обставляешь, чтобы распугать шумных гостей",
+  "A house you redecorate to scare away noisy guests": "Дом, который ты переделываешь, чтобы распугать шумных гостей",
   "A hot air balloon game where you ride the winds between islands":
     "Воздушный шар: лови ветра и перелетай между островами",
   "A judge is playing the game": "Судья играет в игру",
   "A juggling game where the balls are on fire": "Жонглирование горящими мячами",
   "A jungle temple escape with rolling boulders and traps":
     "Побег из храма в джунглях с катящимися валунами и ловушками",
-  "A kite flying game through a festival of lanterns": "Полёт воздушного змея сквозь фестиваль фонариков",
+  "A kite flying game through a festival": "Запускай воздушного змея над праздником",
   "A lane-switching runner through a candy factory": "Раннер по конфетной фабрике с переключением дорожек",
-  "A lantern-lit night market where you run a noodle stand": "Ночной рынок при фонарях, где ты держишь лапшичную",
+  "A market where you run a noodle stand": "Рынок, где ты держишь лапшичную",
   "A later change edited the same part of Harness’s instructions. Undo that change first.":
     "Более позднее изменение правит ту же часть инструкций Harness. Сначала отмени его.",
   "A later restore took this change back. Harness works the way it did before.":
     "Более позднее восстановление откатило это изменение. Harness работает как раньше.",
-  "A lighthouse keeper guiding ships through a storm by turning the beam":
-    "Смотритель маяка проводит корабли сквозь шторм, поворачивая луч",
+  "A lighthouse keeper guiding ships past rocks by turning the beam":
+    "Смотритель маяка проводит корабли мимо скал, поворачивая луч",
   "A mail sorting game in a busy post office before closing time": "Сортировка писем на шумной почте перед закрытием",
   "A match-three puzzle where matches grow a forest": "«Три в ряд», где из каждого совпадения вырастает лес",
   "A maze that rearranges itself every ten seconds": "Лабиринт, который перестраивается каждые десять секунд",
@@ -131,14 +134,12 @@ export default {
     "После отката уже отправлено сообщение, поэтому новую версию теперь не вернуть.",
   "A meteor shower dodge game with a small dinosaur": "Маленький динозавр уворачивается от метеоритного дождя",
   "A mini golf course on the surface of the moon with low gravity": "Мини-гольф на Луне с низкой гравитацией",
-  "A minimalist tower stacking game where the wind gets stronger":
-    "Минималистичная башня из блоков, а ветер всё сильнее",
+  "A tower stacking game where the wind gets stronger": "Строй башню, пока ветер становится всё сильнее",
   "A model is downloading. Delete this one when the download finishes.":
     "Сейчас скачивается модель. Удали эту, когда загрузка закончится.",
   "A mountain rescue game with a dog and a sled": "Спасение в горах с собакой и санями",
-  "A museum night guard game where the exhibits come alive": "Ночной охранник в музее, где экспонаты оживают",
-  "A neon arcade shooter where your bullets bounce off the walls":
-    "Неоновый аркадный шутер, где пули отскакивают от стен",
+  "A museum guard game where the exhibits come alive": "Игра про охранника музея, где оживают экспонаты",
+  "An arcade shooter where your bullets bounce off the walls": "Аркадный шутер, где пули отскакивают от стен",
   "A new build is ready to play.": "Новая сборка готова — можно играть.",
   "A new build is ready — reload to play it": "Новая сборка готова — перезагрузи, чтобы поиграть",
   "A new version is downloading. Genex offers the relaunch when it's ready.":
@@ -162,7 +163,7 @@ export default {
   "A pinball table where the ball is a tiny knight fighting monsters":
     "Пинбол, где шарик — крошечный рыцарь, сражающийся с монстрами",
   "A pirate ship battle with cannons that shoot fruit": "Морской бой пиратов, где пушки стреляют фруктами",
-  "A pixel-art fishing game under a frozen lake": "Пиксельная рыбалка подо льдом замёрзшего озера",
+  "An ice fishing game where you drill holes across a lake": "Подлёдная рыбалка, где ты сверлишь лунки по всему озеру",
   "A plan is ready for your review.": "План готов к проверке.",
   "A platformer where gravity flips every time you jump":
     "Платформер, где гравитация переворачивается при каждом прыжке",
@@ -187,7 +188,7 @@ export default {
   "A self-improving harness": "Harness, который улучшает себя сам",
   "A shop keeping game in a fantasy town that sells only potions":
     "Лавка в фэнтезийном городе, где продают только зелья",
-  "A side-scrolling skateboarding game through a neon city": "Сайд-скроллер на скейте по неоновому городу",
+  "A side-scrolling skateboarding game through a city": "Сайд-скроллер про скейтборд по городу",
   "A sky courier delivering letters between floating towns on a glider":
     "Небесный курьер на планере развозит письма между летающими городами",
   "A slow train journey where you trade goods between stations":
@@ -201,12 +202,11 @@ export default {
   "A space shooter where every enemy you destroy becomes part of your ship":
     "Космический шутер, где каждый сбитый враг становится частью твоего корабля",
   "A space station repair game with a robot and a timer": "Ремонт космической станции с роботом и таймером",
-  "A spooky graveyard where you help lost ghosts find home":
-    "Жуткое кладбище, где ты помогаешь потерянным призракам найти дом",
+  "A graveyard where you help lost ghosts find home": "Кладбище, где ты помогаешь заблудшим призракам найти дом",
   "A sports car and an off-road buggy with gears and a speedometer.":
     "Спорткар и багги-внедорожник с коробкой передач и спидометром.",
-  "A starlit camping trip where you build the perfect campfire":
-    "Поход под звёздами, где ты разводишь идеальный костёр",
+  "A two-player online card game with a deck you build between matches":
+    "Онлайн-карточная игра на двоих, где колоду собираешь между матчами",
   "A starship captain choosing which planet to visit next":
     "Капитан звездолёта выбирает, какую планету посетить дальше",
   "A stdio connector has no url": "У коннектора stdio не бывает url",
@@ -224,7 +224,7 @@ export default {
     "Крошечная планета: ходи по ней и сажай деревья, пока она не позеленеет",
   "A tiny racing game on a kitchen table with toy cars": "Мини-гонки на игрушечных машинках по кухонному столу",
   "A tiny space shooter in a field of asteroids": "Маленький космический шутер среди астероидов",
-  "A tiny submarine exploring a glowing deep-sea cave": "Крошечная подлодка исследует светящуюся глубоководную пещеру",
+  "A tiny submarine exploring a deep-sea cave": "Крошечная подлодка исследует глубоководную пещеру",
   "A tiny wizard school where you mix colors into spells":
     "Крошечная школа волшебников, где из цветов смешивают заклинания",
   "A top-down racer with drifting and a boost that charges in corners":
@@ -249,8 +249,7 @@ export default {
   "A worker is busy in your game folder right now — try again once it has finished.":
     "Сейчас в папке игры работает помощник — попробуй снова, когда он закончит.",
   "A worker wants to run {job} in the background": "Помощник хочет запустить {job} в фоне",
-  "A zen sand garden where you rake patterns around stones":
-    "Дзен-сад, где ты граблями рисуешь узоры на песке вокруг камней",
+  "A sand garden where you rake patterns around stones": "Сад камней, где ты граблями рисуешь узоры на песке",
   "API key": "API-ключ",
   "API key (optional)": "API-ключ (необязательно)",
   About: "О программе",
@@ -424,9 +423,6 @@ export default {
   Applied: "Применено",
   "Applied automatically": "Применено автоматически",
   "Applied part {part}": "Применена часть {part}",
-  "Applied {count, plural, one {# improvement} other {# improvements}}.":
-    "Применено {count, plural, one {# улучшение} few {# улучшения} many {# улучшений} other {# улучшения}}.",
-  "Apply suggestions automatically": "Применять предложения автоматически",
   "Applying part {part}": "Применяет часть {part}",
   "Approval is no longer pending": "Одобрение уже не требуется",
   Approve: "Одобрить",
@@ -560,7 +556,13 @@ export default {
   "Build updated": "Сборка обновлена",
   "Build with the Cursor plan you already have.": "Собирай на тарифе Cursor, который у тебя уже есть.",
   "Build with the Grok account you already have.": "Собирай на аккаунте Grok, который у тебя уже есть.",
-  "Build with workers": "Собирай с помощниками",
+  "Changes Harness made to its own instructions. Undo any of them.":
+    "Изменения, которые Harness внёс в свои инструкции. Любое можно отменить.",
+  "Self-improvement is off. Harness keeps its own instructions as they are.":
+    "Самоулучшение выключено. Harness не меняет свои инструкции.",
+  "When off, Harness doesn’t change its own instructions. Changes it already made stay until you undo them.":
+    "Когда выключено, Harness не меняет свои инструкции. Уже сделанные изменения остаются, пока ты их не отменишь.",
+  "Workers pitch in": "Помощники подключаются",
   Building: "Собирает",
   "Building the game": "Собираем игру",
   "Building the starting point": "Собирает основу",
@@ -592,8 +594,6 @@ export default {
   "Cancel signing in": "Отменить вход",
   "Cancel the connector form": "Отменить форму коннектора",
   "Cancel your request to {name}": "Отменить заявку для {name}",
-  "Candidate kept.": "Кандидат оставлен.",
-  "Candidate not kept.": "Кандидат не оставлен.",
   "Candidate {index}": "Вариант {index}",
   Candidates: "Варианты",
   "Cannot read model installation status.": "Не удаётся прочитать статус установки модели.",
@@ -610,7 +610,6 @@ export default {
   "Change image…": "Сменить изображение…",
   "Change it": "Изменить",
   "Change the plan: ": "Измени план: ",
-  "Change {skill}": "Изменить: {skill}",
   Changed: "Изменено",
   "Changed {skill}": "Изменено: {skill}",
   "Changes apply immediately and save on this Mac.": "Изменения применяются сразу и сохраняются на этом Mac.",
@@ -663,7 +662,6 @@ export default {
   "Checking on background work": "Проверяет фоновую задачу",
   "Checking plan usage…": "Проверяем лимиты тарифа…",
   "Checking play": "Проверяет игру",
-  "Checking preservation": "Проверяет, что ничего не потерялось",
   "Checking that Epic signed the installer…": "Проверяем, что установщик подписан Epic…",
   "Checking that Microsoft signed Unreal's runtime installer…":
     "Проверяем, что установщик среды выполнения из Unreal подписан Microsoft…",
@@ -864,7 +862,6 @@ export default {
   "Compacting…": "Сжатие…",
   "Compacts automatically": "Сжимается автоматически",
   "Comparative judgement": "Сравнительная оценка",
-  "Comparing before and after": "Сравнивает до и после",
   "Compiled {blueprint}": "Скомпилирован {blueprint}",
   "Compiling {blueprint}": "Компилирует {blueprint}",
   Completed: "Выполнено",
@@ -906,9 +903,7 @@ export default {
   "Connect {name}": "Подключить {name}",
   Connected: "Подключено",
   "Connected to {name}.": "Подключено к проекту {name}.",
-  Connecting: "Подключает",
   "Connecting tools": "Подключает инструменты",
-  "Connecting your game to the studio": "Подключает твою игру к Studio",
   "Connecting…": "Подключение…",
   "Connection cancelled": "Подключение отменено",
   Connections: "Подключения",
@@ -959,7 +954,6 @@ export default {
   "Could not load local models. Reopen Settings to try again. {error}":
     "Не удалось загрузить локальные модели. Открой настройки заново и попробуй ещё раз. {error}",
   "Could not load this chat.": "Не удалось загрузить этот чат.",
-  "Could not look for improvements. Try again.": "Не удалось поискать улучшения. Попробуй снова.",
   "Could not open the local sign-in callback": "Не удалось открыть локальный обработчик входа",
   "Could not open the sign-in terminal. Close an unused session and try again.":
     "Не удалось открыть терминал для входа. Закрой ненужную сессию и попробуй снова.",
@@ -1159,7 +1153,6 @@ export default {
   Default: "По умолчанию",
   "Default game folder": "Папка для игр по умолчанию",
   "Default model": "Модель по умолчанию",
-  "Default view": "Обычный вид",
   Delete: "Удалить",
   "Delete every row shared from this computer?": "Удалить все строки, отправленные с этого компьютера?",
   "Delete game": "Удалить игру",
@@ -1179,7 +1172,6 @@ export default {
   "Delivered revision: {revision} · from integration {source}":
     "Доставленная версия: {revision} · из интеграции {source}",
   "Delivered, not used yet": "Доставлено, ещё не использовано",
-  "Demo: {demo}": "Демо: {demo}",
   Demon: "Демон",
   Denied: "Запрещено",
   "Denied · {reason}": "Запрещено · {reason}",
@@ -1208,7 +1200,6 @@ export default {
   "Didn’t finish": "Не завершилось",
   Disabled: "Выключен",
   "Disabled in the provider configuration.": "Выключен в настройках провайдера.",
-  Discard: "Отклонить",
   Disconnect: "Отключить",
   "Disconnect account": "Отключить аккаунт",
   Dismiss: "Закрыть",
@@ -1359,7 +1350,6 @@ export default {
   Extensions: "Расширения",
   "External MCP tools reach every coding agent through Studio.":
     "Внешние MCP-инструменты доходят через Studio до каждого агента, который пишет код.",
-  FPS: "FPS",
   Failed: "Сбой",
   "Failed to connect": "Не удалось подключиться",
   "Failed to start": "Не удалось запустить",
@@ -1380,7 +1370,6 @@ export default {
   "Filled in from your paste": "Заполнено из вставленного текста",
   "Filter the picture": "Фильтр для картинки",
   "Final look": "Финальная проверка",
-  "Final verification": "Финальная проверка",
   "Find people by name": "Найти людей по имени",
   "Finding people by name isn’t on Genex yet. Send your link instead.":
     "Поиск людей по имени в Genex пока недоступен. Лучше отправь свою ссылку.",
@@ -1432,12 +1421,8 @@ export default {
   "For <plugin>Genex plugin</plugin> tools: 3D, animation, textures, music. Optional.":
     "Для инструментов <plugin>плагина Genex</plugin>: 3D, анимация, текстуры, музыка. Необязательно.",
   "Force Reload": "Принудительно перезагрузить",
-  Found: "Найдено",
   "Found locally. These plugins only run after you allow them.":
     "Найдены на этом компьютере. Они заработают, только когда ты их разрешишь.",
-  "Found {count, plural, one {# new suggestion} other {# new suggestions}} at the top of Activity.":
-    "Найдено {count, plural, one {# новое предложение} few {# новых предложения} many {# новых предложений} other {# нового предложения}} — смотри вверху «Активности».",
-  "Frame interval (ms)": "Интервал кадра (мс)",
   Free: "Бесплатно",
   "Free and open source, about 170 MB. Genex installs it in Applications.":
     "Бесплатный, с открытым кодом, около 170 МБ. Genex установит его в «Программы».",
@@ -1720,8 +1705,6 @@ export default {
     "Подсказки для твоих агентов. Что доступно, зависит от источника и выбранного провайдера.",
   Guide: "Руководство",
   "Harness added a tool for itself: {file}": "Harness добавил себе инструмент: {file}",
-  "Harness asks before changing how it builds. You can undo any change in Harness.":
-    "Harness спрашивает, прежде чем менять то, как он собирает игры. Любое изменение можно отменить в Harness.",
   "Harness can run up to this many workers at the same time.":
     "Сколько помощников Harness может запускать одновременно.",
   "Harness changed one of its own files.": "Harness изменил один из своих файлов.",
@@ -1736,8 +1719,6 @@ export default {
   "Harness is the set of instructions the agents follow when they build your games. It learns from every build and suggests better ways to work. You decide what changes.":
     "Harness — это набор инструкций, по которым агенты собирают твои игры. Он учится на каждой сборке и предлагает, как работать лучше. Что менять — решаешь ты.",
   "Harness learned to {skill}.": "Harness научился новому: {skill}.",
-  "Harness looks at your finished builds for better ways to build.":
-    "Harness изучает твои готовые сборки и ищет, как собирать лучше.",
   "Harness looks back.": "Harness разбирает итоги.",
   "Harness no longer has the version from before this change, so it can’t undo it.":
     "У Harness больше нет версии до этого изменения, поэтому его не отменить.",
@@ -1834,7 +1815,6 @@ export default {
   "In your game": "В игре",
   "In {folder}": "В папке {folder}",
   "In-game economy": "Внутриигровая экономика",
-  "Include: {title}": "Включить: {title}",
   Incomplete: "Не завершено",
   "Independent interaction coverage is incomplete.": "Независимые проверки взаимодействия охватили не всё.",
   "Independent interaction coverage is unavailable for this revision.":
@@ -1915,7 +1895,6 @@ export default {
   "Integrity check failed for {file}: the file does not match the pinned commit":
     "Проверка целостности {file} не пройдена: файл не совпадает с закреплённым коммитом",
   "Interface font": "Шрифт интерфейса",
-  Interrupted: "Прервано",
   Interviewing: "Уточняет",
   "Invalid GitHub link": "Неверная ссылка на GitHub",
   "Invalid approval": "Недопустимое одобрение",
@@ -2026,7 +2005,6 @@ export default {
   "Keep this cover": "Оставить эту обложку",
   "Keep this folder": "Оставить эту папку",
   "Keep working on a game you already have": "Продолжить работу над своей игрой",
-  "Keeping verified change": "Оставляет проверенное изменение",
   Kept: "Оставлено",
   "Kept by reviewers": "Оставлено проверяющими",
   "Kept by reviewers, not added": "Оставлено проверяющими, не добавлено",
@@ -2133,8 +2111,6 @@ export default {
   "Long work the lead or a worker started, like a build. It runs on while the agents go on working.":
     "Долгая работа, которую запустил главный агент или помощник, например сборка. Она идёт, пока агенты работают дальше.",
   "Look and move from the player's eyes.": "Смотри и двигайся от лица игрока.",
-  "Look for improvements": "Искать улучшения",
-  "Look for improvements in recent builds": "Искать улучшения в последних сборках",
   Looked: "Осмотр",
   "Looked at the level": "Уровень осмотрен",
   "Looked through the assets": "Ассеты просмотрены",
@@ -2149,7 +2125,6 @@ export default {
   "Looking at this Mac…": "Проверяем этот Mac…",
   "Looking at your game": "Смотрит твою игру",
   "Looking at your game.": "Смотрит твою игру.",
-  "Looking for improvements": "Ищет улучшения",
   "Looking something up": "Ищет информацию",
   "Looking through the assets": "Просматривает ассеты",
   "Looking up Blueprint nodes": "Ищет ноды Blueprint",
@@ -2161,6 +2136,7 @@ export default {
   "Loop finished · Changes kept in your project": "Loop завершён · изменения сохранены в проекте",
   "Loop from {day}": "Loop, {day}",
   "Loop mode": "Режим Loop",
+  "Loop not started": "Loop не запущен",
   "Loop time limit": "Лимит времени Loop",
   "Loops need the {engine} project inside this game’s folder, so Rewind can undo each step; {project} is in {place}. Make a new one from the {engine} button, or move {project} into this game’s folder and choose it there. Until then, it does what you ask, then stops.":
     "Для Loop проект {engine} должен лежать в папке этой игры, чтобы откат мог отменить каждый шаг; {project} лежит в {place}. Создай новый кнопкой {engine} или перенеси {project} в папку этой игры и выбери его там. А пока — делает, что просишь, и останавливается.",
@@ -2239,9 +2215,6 @@ export default {
   "Measured in a plugin": "Измерено в плагине",
   "Measured in {plugin}": "Измерено в {plugin}",
   "Measured the route": "Маршрут измерен",
-  Measurement: "Показатель",
-  "Measurement has not completed": "Замер не завершён",
-  "Measuring before": "Замеряет до изменений",
   "Measuring the route": "Измеряет маршрут",
   "Measuring…": "Подсчёт…",
   "Meet your Genex avatar": "Знакомься: твой аватар Genex",
@@ -2406,7 +2379,6 @@ export default {
   "No time limit": "Без лимита времени",
   "No unlocked system keyring is available. Start GNOME Keyring or KWallet and unlock it, then restart Genex.":
     "Нет разблокированной системной связки ключей. Запусти GNOME Keyring или KWallet, разблокируй хранилище и перезапусти Genex.",
-  "No verified improvement": "Улучшение не подтверждено",
   "Nobody answered": "Никто не ответил",
   "Nobody else has this one.": "Такого больше ни у кого нет.",
   "Nobody named “{query}”.": "Никого с именем «{query}».",
@@ -2418,7 +2390,6 @@ export default {
   "Not added": "Не добавлено",
   "Not approved": "Не одобрено",
   "Not asked — the step did not land.": "Не спрашивали — шаг не получился.",
-  "Not comparable": "Нельзя сравнить",
   "Not confirmed": "Не подтверждено",
   "Not connected": "Не подключено",
   "Not decided yet.": "Пока не решено.",
@@ -2441,7 +2412,6 @@ export default {
   "Not made yet": "Ещё не сделано",
   "Not measured": "Не измерено",
   "Not measured yet": "Ещё не измерено",
-  "Not measured — {reason}": "Не измерено — {reason}",
   "Not needed — the round was undone on the checks.": "Не понадобилось — раунд отменён по итогам проверок.",
   "Not now": "Не сейчас",
   "Not on this plan or model": "Недоступно на этом тарифе или модели",
@@ -2471,7 +2441,6 @@ export default {
     "По адресу {host} ничего не отвечает. Запусти сервер и проверь снова.",
   "Nothing beyond its own tools": "Только свои инструменты",
   "Nothing changed. Try again in a moment.": "Ничего не изменилось. Попробуй чуть позже.",
-  "Nothing changes until you apply.": "Ничего не изменится, пока не применишь.",
   "Nothing is added to this folder.": "В эту папку ничего не добавится.",
   "Nothing is failing.": "Проваленных проверок нет.",
   "Nothing is installing.": "Сейчас ничего не устанавливается.",
@@ -2479,8 +2448,6 @@ export default {
   "Nothing kept yet": "Пока ничего не оставлено",
   "Nothing made": "Ничего не сделано",
   "Nothing made yet": "Пока ничего не создано",
-  "Nothing new": "Ничего нового",
-  "Nothing new to suggest.": "Новых предложений нет.",
   "Nothing spent yet": "Пока ничего не потрачено",
   "Nothing to free up": "Нечего освобождать",
   "Nothing was clicked. Install Unreal {version} yourself in the launcher: {clicks}.":
@@ -2708,10 +2675,6 @@ export default {
   "Opens the release page": "Открывает страницу релиза",
   "Opens your browser. You’ll come back here to pay.": "Откроется браузер. Потом вернёшься сюда, чтобы оплатить.",
   Optic: "Оптика",
-  Optimization: "Оптимизация",
-  "Optimization finished": "Оптимизация завершена",
-  "Optimization stage details": "Подробности этапа оптимизации",
-  Optimizing: "Оптимизирует",
   "Or in Studio: {clicks}.": "Или в Studio: {clicks}.",
   "Otherwise every game can use it.": "Иначе его смогут использовать все игры.",
   "Outcome not recorded": "Результат не записан",
@@ -2789,7 +2752,7 @@ export default {
   "Plan ready": "План готов",
   "Plan ready for review": "План готов к проверке",
   "Plan usage isn’t available right now.": "Лимиты тарифа сейчас недоступны.",
-  "Plan your game": "Спланируй игру",
+  "Your agent leads": "Ведёт твой агент",
   Planning: "Планирует",
   "Planning the build": "Планирует сборку",
   "Planning the next step": "Планирует следующий шаг",
@@ -3127,9 +3090,7 @@ export default {
   "Reviewers model": "Модель проверяющих",
   "Reviewers preferred it": "Проверяющие предпочли новую версию",
   "Reviewers preferred the game you had": "Проверяющие предпочли прежнюю игру",
-  "Reviewers test every result and decide when the game is done.":
-    "Проверяющие тестируют каждый результат и решают, когда игра готова.",
-  "Reviewers test it": "Проверяющие тестируют",
+  "A second opinion": "Второе мнение",
   "Reviewers undid it": "Проверяющие отменили",
   "Reviewers undid {count, plural, other {# tries}}":
     "Проверяющие отменили {count, plural, one {# попытку} few {# попытки} many {# попыток} other {# попытки}}",
@@ -3231,7 +3192,6 @@ export default {
   "Running {script}": "Запускает {script}",
   "Running…": "Выполняется…",
   "Runs and improvements will show up here.": "Здесь появятся сборки и улучшения.",
-  "Runs at the end": "Запустится в конце",
   "Runs outside its sandbox": "Работает вне своей песочницы",
   "Runs without asking: {tools}.": "Разрешено без спроса: {tools}.",
   "Runtime context is unknown; 8K is an estimated planning budget. Load the model to measure it.":
@@ -3317,12 +3277,6 @@ export default {
   "Selected public path is missing or unreadable: {path}": "Выбранный публичный путь не найден или не читается: {path}",
   "Selected step": "Выбранный шаг",
   "Self-improvement": "Самоулучшение",
-  "Self-improvement is off in Harness, so there is nothing to apply.":
-    "Самоулучшение в Harness выключено, так что применять нечего.",
-  "Self-improvement is off. Harness isn’t learning from new builds.":
-    "Самоулучшение выключено. Harness не учится на новых сборках.",
-  "Self-improvement is off. Turn it on at the top of Studio to look for improvements.":
-    "Самоулучшение выключено. Включи его вверху Studio, чтобы искать улучшения.",
   Send: "Отправить",
   "Send a report": "Отправить отчёт",
   "Send feedback": "Отправить отзыв",
@@ -3491,7 +3445,6 @@ export default {
   "Skill details": "О навыке",
   Skills: "Навыки",
   "Skip for now": "Пока пропустить",
-  Skipped: "Пропущено",
   'Skipped "{name}": Studio connector ids are lowercase letters, digits and dashes.':
     "«{name}» пропущен: id коннектора в Studio состоит из строчных букв, цифр и дефисов.",
   'Skipped "{name}": a stdio server needs a command.': "«{name}» пропущен: серверу stdio нужна команда.",
@@ -3642,13 +3595,8 @@ export default {
   "Studio's MCP server is on and answering Genex": "MCP-сервер Studio включён и отвечает Genex",
   "Studio’s agents only run inside a protected workspace that keeps them away from your files and accounts.":
     "Агенты Studio работают только внутри защищённого рабочего пространства, которое не пускает их к твоим файлам и аккаунтам.",
-  "Studio’s instructions changed after this suggestion was made, and it no longer fits. Discard it; Studio will suggest again after a later build.":
-    "Инструкции Studio изменились после этого предложения, и оно больше не подходит. Отклони его — Studio предложит снова после одной из следующих сборок.",
   Success: "Успех",
   "Suggest prompt": "Предложить идею",
-  "Suggested after reviewing your recent builds.": "Предложено после разбора твоих последних сборок.",
-  "Suggestions that pass testing apply without asking. You can undo any of them in Harness.":
-    "Предложения, прошедшие проверку, применяются без вопросов. Любое из них можно отменить в Harness.",
   "Suggestions wait until you apply them. Every applied change can be undone.":
     "Предложения ждут, пока ты их не применишь. Любое применённое изменение можно отменить.",
   "Summarise the older part of this chat into the log so it fits the model":
@@ -3792,8 +3740,6 @@ export default {
   "The approved plan is starting. Please wait.": "Одобренный план запускается. Подожди немного.",
   "The apps are on Genex, but the game isn’t in the gallery yet. Publish again to list it.":
     "Приложения уже в Genex, но игры пока нет в галерее. Опубликуй ещё раз, чтобы она там появилась.",
-  "The assembled game is being measured and checked for safe improvements.":
-    "Собранную игру замеряют и ищут, что можно безопасно улучшить.",
   "The best game dev tools, always up to date. No MCPs or API keys to install: they’re connected in one click.":
     "Лучшие инструменты для разработки игр, всегда свежие. Не нужно ставить MCP или API-ключи: всё подключается в один клик.",
   "The best game dev tools, in one click": "Лучшие инструменты для разработки игр — в один клик",
@@ -3852,8 +3798,6 @@ export default {
     "Установщик подписан не его создателем, поэтому Genex его не запустил.",
   "The installer isn't signed, so Genex didn't run it.": "Установщик не подписан, поэтому Genex его не запустил.",
   "The installer stopped before it finished. Try again.": "Установщик остановился, не закончив. Попробуй ещё раз.",
-  "The instructions this suggestion changes are gone. Discard it.":
-    "Инструкций, которые меняет это предложение, больше нет. Отклони его.",
   "The judge didn't play": "Судья не играл",
   "The judge's moves were replayed on this build, and the goal held.":
     "Ходы судьи повторили на этой сборке, и цель по-прежнему достигается.",
@@ -3932,7 +3876,6 @@ export default {
   "The reviewer is satisfied with this part.": "Проверяющий доволен этой частью.",
   "The reviewer preferred the new build to the round before.":
     "Проверяющему новая сборка понравилась больше предыдущего раунда.",
-  "The reviewer preferred the round before.": "Проверяющему больше понравился предыдущий раунд.",
   "The reviewers are looking at try {tryNumber}.": "Проверяющие смотрят попытку {tryNumber}.",
   "The reviewers kept it on the first try.": "Проверяющие оставили результат с первой попытки.",
   "The reviewers kept try {tryNumber} after undoing the one before it.":
@@ -4207,12 +4150,6 @@ export default {
   "This sound could not be played": "Не удалось воспроизвести этот звук",
   "This step": "Этот шаг",
   "This step's plugin isn't installed any more.": "Плагин этого шага больше не установлен.",
-  "This suggestion is damaged, so Studio did not apply it. Discard it.":
-    "Это предложение повреждено, поэтому Studio не стала его применять. Отклони его.",
-  "This suggestion is no longer waiting. Harness may have applied or discarded it already.":
-    "Это предложение больше не ждёт. Возможно, Harness уже применил его или отбросил.",
-  "This suggestion’s file is not a plain file in Harness’s instructions, so Studio did not apply it. Discard it.":
-    "Файл этого предложения — не обычный файл в инструкциях Harness, поэтому Studio его не применяет. Отклони предложение.",
   "This system can’t run the protected workspace. Studio needs macOS, Windows, or Linux (not WSL 1).":
     "Эта система не может запустить защищённое рабочее пространство. Studio нужна macOS, Windows или Linux (не WSL 1).",
   "This system is blocking the isolation the protected workspace uses to keep agents apart.":
@@ -4228,7 +4165,6 @@ export default {
     "Этот видеокодек не воспроизводится. Попробуй экспорт в MP4 (H.264) или WebM.",
   "This {name} install needs Node.js, which isn't installed. Install the native version instead.":
     "Этой установке {name} нужен Node.js, а он не установлен. Лучше установи нативную версию.",
-  "Three version": "версия Three",
   Threshold: "Порог",
   "To {folder}. Genex reopens when it’s done.": "В {folder}. Genex снова откроется, когда закончит.",
   Today: "Сегодня",
@@ -4493,7 +4429,6 @@ export default {
   "Variable names use capital letters, digits and _; header names letters, digits and -.":
     "В именах переменных — заглавные буквы, цифры и _; в именах заголовков — буквы, цифры и -.",
   Verdict: "Вердикт",
-  "Verifying game": "Проверяет игру",
   Version: "Версия",
   "Version {version}": "Версия {version}",
   "Versions of your games saved for Rewind and builds.": "Версии твоих игр, сохранённые для отката и сборок.",
@@ -4565,7 +4500,6 @@ export default {
     "Что Claude делает, не спрашивая. Если выбрать в чате «Всегда разрешать», действие появится здесь — для этой игры.",
   "What Harness has learned": "Чему научился Harness",
   "What changed": "Что изменилось",
-  "What changes": "Что изменится",
   "What credits pay for": "На что тратятся кредиты",
   "What do you want to make?": "Что хочешь создать?",
   "What happened, and what did you expect?": "Что случилось и что должно было произойти?",
@@ -4587,8 +4521,6 @@ export default {
   "What's missing: {task}": "Чего не хватает: {task}",
   "When a session limit resets, a while after a model provider’s outage, or when Studio’s loop restarts, a paused build picks up where it left off, up to twice per build. A build you stop stays stopped, and one paused on a sign-in waits for you.":
     "Когда сбрасывается лимит сессии, через какое-то время после сбоя провайдера моделей или когда перезапускается цикл Studio, приостановленная сборка продолжается с того же места — до двух раз за сборку. Остановленная тобой сборка так и останется остановленной, а сборка, которой нужен вход, дождётся тебя.",
-  "When off, Harness stops learning from your builds. What it already learned stays until you undo it.":
-    "Когда выключено, Harness перестаёт учиться на твоих сборках. Уже выученное остаётся, пока ты его не отменишь.",
   "Where Genex keeps its files": "Где Genex хранит свои файлы",
   "Where the server runs": "Где работает сервер",
   "Where this game is saved": "Где хранится эта игра",
@@ -4626,7 +4558,6 @@ export default {
     "{count, plural, one {Сделан # шаг} few {Сделано # шага} many {Сделано # шагов} other {Сделано # шага}}",
   Worker: "Помощник",
   Workers: "Помощники",
-  "Workers build the parts of the plan, several at once.": "Помощники собирают части плана, по несколько сразу.",
   "Workers model": "Модель помощников",
   "Workers: {model}": "Помощники: {model}",
   Working: "Работает",
@@ -4640,8 +4571,6 @@ export default {
   "Works on phones": "Работает на телефонах",
   "Workspace restored": "Рабочее пространство восстановлено",
   "Workspace unavailable until Studio loads.": "Рабочее пространство недоступно, пока не загрузится Studio.",
-  "World draw calls": "Вызовы отрисовки мира",
-  "World triangles": "Треугольники мира",
   "Wrapping up the build": "Заканчивает сборку",
   "Write a message…": "Напиши сообщение…",
   "Write your own answer…": "Напиши свой ответ…",
@@ -4812,7 +4741,7 @@ export default {
   "an earlier build is ready to play · resume from chat": "можно играть в прежнюю сборку · продолжи из чата",
   "an empty folder": "пустая папка",
   "an input": "элемент управления",
-  "and approve each build": "и одобряют каждую сборку",
+  "when the lead asks for one": "когда главный агент попросит",
   "and {count} more": "и ещё {count}",
   "another project or no recorded preview": "другой проект или превью не записано",
   "app update left every harness file as it was": "обновление приложения не тронуло файлы Harness",
@@ -4832,12 +4761,10 @@ export default {
   "asset group\u0004Delivered": "Получено",
   attempts: "попытки",
   back: "сзади",
-  backend: "бэкенд",
   "badge\u0004Set up": "Нужна настройка",
   "badge\u0004Update": "Обновление",
   "balance couldn’t be read": "баланс не удалось получить",
   "base commit": "базовый коммит",
-  "baseline version": "исходная версия",
   "before a Loop starts": "перед запуском Loop",
   "before a project of its kind is made": "перед созданием проекта его типа",
   "before a restore": "перед восстановлением",
@@ -4864,11 +4791,9 @@ export default {
   "camera: {camera}": "камера: {camera}",
   cameras: "камеры",
   "can't call tools, so it can't build": "не вызывает инструменты, поэтому не может собирать",
-  "candidate version": "версия-кандидат",
   "captured the game": "снял игру",
   "change files in your games": "менять файлы в твоих играх",
   changed: "изменено",
-  "changed files": "изменённые файлы",
   chat: "чат",
   "checked for graphics errors": "проверил ошибки графики",
   "checked on a worker": "проверил помощника",
@@ -4900,14 +4825,9 @@ export default {
   "count\u0004six": "шесть",
   "count\u0004three": "три",
   "count\u0004two": "две",
-  "counter scope": "область счётчиков",
   "development build": "сборка для разработки",
   done: "готово",
   "down {percent}%": "падение на {percent}%",
-  "each round has to beat the one before, and a reviewer that cannot see which is which picks the winner":
-    "каждый раунд должен превзойти предыдущий, а победителя выбирает проверяющий, который не знает, где какая сборка",
-  "each round has to beat the one before, and {reviewer}, reviewing without being told which build is which, picks the winner":
-    "каждый раунд должен превзойти предыдущий, а победителя выбирает {reviewer}, не зная, какая сборка какая",
   "edited itself": "изменил свой код",
   "edited the code": "изменил код",
   "editor\u0004Waiting for you": "Ждёт тебя",
@@ -4923,7 +4843,7 @@ export default {
   eighth: "восьмую",
   ended: "завершено",
   "every object has a reason to be there": "у каждого предмета есть причина быть здесь",
-  "every piece at once": "все части сразу",
+  "on parts at the same time": "над частями одновременно",
   "every step landed": "все шаги попали в игру",
   "exit {code}": "код {code}",
   "export games": "экспортировать игры",
@@ -4961,7 +4881,7 @@ export default {
   "had a judge play the game": "дал судье сыграть в игру",
   "handed the work to a worker": "передал работу помощнику",
   "heading\u0004Installed": "Установленные",
-  'heading in the direction of "{name}" — {rule}': "движемся в сторону «{name}» — {rule}",
+  'heading in the direction of "{name}"': "движемся в сторону «{name}»",
   "how Genex runs this game": "как Genex запускает эту игру",
   "how Harness leads a build": "как Harness ведёт сборку",
   "how Harness plans a build": "как Harness планирует сборку",
@@ -4978,7 +4898,6 @@ export default {
   "install and run the apps it names, such as Blender":
     "устанавливать и запускать нужные ему приложения, например Blender",
   "installs Genex packages in the game": "устанавливает пакеты Genex в игру",
-  "insufficient samples": "мало замеров",
   integrations: "слияния",
   "it finished": "работа завершена",
   "it landed": "шаг попал в игру",
@@ -5088,7 +5007,6 @@ export default {
   "planned its next steps": "спланировал следующие шаги",
   "played the game": "сыграл в игру",
   "playing now": "сейчас играют",
-  preservation: "сохранность",
   "pressed keys": "нажал клавиши",
   "programs on this Mac": "программы на этом Mac",
   project: "проект",
@@ -5110,14 +5028,11 @@ export default {
   refunded: "возврат",
   "reloaded the game": "перезагрузил игру",
   "remembered something": "кое-что запомнил",
-  renderer: "рендерер",
   "reopened the build": "снова открыл сборку",
-  report: "отчёт",
   "requested an iterative build": "запросил сборку в несколько раундов",
   "restarted itself": "перезапустился",
   "resume from chat": "продолжи из чата",
   "resumed the saved build": "продолжил сохранённую сборку",
-  "retained version": "оставленная версия",
   "reviewed a build": "оценил сборку",
   "revision unknown ({state})": "версия неизвестна ({state})",
   right: "справа",
@@ -5187,7 +5102,7 @@ export default {
   "that snapshot has no game to play": "в этом снимке нет игры",
   "the Claude Agent SDK is not installed": "Claude Agent SDK не установлен",
   "the Genex CLI": "Genex CLI",
-  'the bar for this build is "{name}" — {rule}': "планка этой сборки: «{name}» — {rule}",
+  'the bar for this build is "{name}"': "планка этой сборки: «{name}»",
   "the build finished": "сборка завершена",
   "the build finished but its output could not be kept": "сборка завершилась, но её результат не удалось сохранить",
   "the build finished but wrote nothing to {folder}/": "сборка завершилась, но ничего не записала в {folder}/",
@@ -5196,7 +5111,6 @@ export default {
   "the checks it was given now pass, and no reviewer objected":
     "заданные проверки теперь проходят, и ни один проверяющий не возразил",
   "the checks it was given pass and the reviewer agrees": "заданные проверки проходят, и проверяющий согласен",
-  "the contract reviewers read": "контракт, который читают проверяющие",
   "the engine hit its limit — the build can pick up again when it resets":
     "движок упёрся в лимит — сборку можно будет продолжить, когда лимит сбросится",
   "the engine's session ended early": "сессия движка закончилась раньше времени",
@@ -5204,7 +5118,7 @@ export default {
   "the game had not finished loading when it was looked at": "игра ещё не загрузилась, когда её проверяли",
   "the game inside it stays exactly where it is": "игра внутри остаётся на своём месте",
   "the game's app": "приложение игры",
-  "the idea becomes tasks": "идея превращается в задачи",
+  "and plans when it helps": "и планирует, когда это помогает",
   "the kept {file} still has its own {names}, but {callers} now use {target}":
     "в сохранённом файле {file} остались свои {names}, но вызовы из {callers} теперь идут в {target}",
   "the lead ended it before it was finished, so nobody reviewed it and the work it had done is kept":
@@ -5247,7 +5161,6 @@ export default {
   "the player's word": "со слов игрока",
   "the preview shows the current build": "превью показывает текущую сборку",
   "the reviewer preferred it to the round before": "проверяющему этот раунд понравился больше предыдущего",
-  "the reviewer preferred the round before": "проверяющему больше понравился предыдущий раунд",
   "the reviewers are looking at try {tryNumber} of {step}": "проверяющие смотрят попытку {tryNumber} шага «{step}»",
   "the run's record is incomplete": "запись сборки неполная",
   "the server": "сервер",
@@ -5451,8 +5364,6 @@ export default {
     "{count, plural, one {# точка сохранения} few {# точки сохранения} many {# точек сохранения} other {# точки сохранения}}",
   "{count, plural, one {# self-edited file} other {# self-edited files}} kept":
     "{count, plural, one {# файл с правками агента сохранён} few {# файла с правками агента сохранены} many {# файлов с правками агента сохранены} other {# файла с правками агента сохранены}}",
-  "{count, plural, one {# skill improvement to review} other {# skill improvements to review}}":
-    "{count, plural, one {# улучшение навыка ждёт проверки} few {# улучшения навыков ждут проверки} many {# улучшений навыков ждут проверки} other {# улучшения навыков ждут проверки}}",
   "{count, plural, one {# step} other {# steps}}":
     "{count, plural, one {# шаг} few {# шага} many {# шагов} other {# шага}}",
   "{count, plural, one {# structural check} other {# structural checks}} passed.":
@@ -5477,8 +5388,6 @@ export default {
     "{count, plural, one {работает # помощник} few {работают # помощника} many {работают # помощников} other {работают # помощника}}",
   "{count, plural, one {# year ago} other {# years ago}}":
     "{count, plural, one {# год назад} few {# года назад} many {# лет назад} other {# года назад}}",
-  "{count, plural, one {Apply # change} other {Apply # changes}}":
-    "{count, plural, one {Применить # изменение} few {Применить # изменения} many {Применить # изменений} other {Применить # изменения}}",
   "{count, plural, one {Genex adds # file.} other {Genex adds # files.}} Everything else stays as it is.":
     "{count, plural, one {Genex добавит # файл.} few {Genex добавит # файла.} many {Genex добавит # файлов.} other {Genex добавит # файла.}} Всё остальное останется как есть.",
   "{count, plural, one {Genex left # file you changed in Plugins/{folder}.} other {Genex left # files you changed in Plugins/{folder}.}}":
@@ -5487,8 +5396,6 @@ export default {
     "{count, plural, one {Genex обновил модуль Genex для редактора до {version} и сохранил # изменённый тобой файл рядом с новым как .mine.} few {Genex обновил модуль Genex для редактора до {version} и сохранил # изменённых тобой файла рядом с новыми как .mine.} many {Genex обновил модуль Genex для редактора до {version} и сохранил # изменённых тобой файлов рядом с новыми как .mine.} other {Genex обновил модуль Genex для редактора до {version} и сохранил # изменённого тобой файла рядом с новыми как .mine.}}",
   "{count, plural, one {Harness learned # thing from this build.} other {Harness learned # things from this build.}}":
     "{count, plural, one {Из этой сборки Harness вынес # урок.} few {Из этой сборки Harness вынес # урока.} many {Из этой сборки Harness вынес # уроков.} other {Из этой сборки Harness вынес # урока.}}",
-  "{count, plural, one {Harness suggests # change to how it builds} other {Harness suggests # changes to how it builds}}":
-    "{count, plural, one {Harness предлагает # изменение в своём подходе к сборке} few {Harness предлагает # изменения в своём подходе к сборке} many {Harness предлагает # изменений в своём подходе к сборке} other {Harness предлагает # изменения в своём подходе к сборке}}",
   "{count, plural, one {Ignored # invalid catalog entry.} other {Ignored # invalid catalog entries.}}":
     "{count, plural, one {Пропущена # неверная запись каталога.} few {Пропущены # неверные записи каталога.} many {Пропущено # неверных записей каталога.} other {Пропущено # неверной записи каталога.}}",
   "{count, plural, one {Including # file changed outside this chat: {names}.} other {Including # files changed outside this chat: {names}.}}":
@@ -5664,7 +5571,6 @@ export default {
   "{hours}h {minutes}m": "{hours} ч {minutes} мин",
   "{hours}h{minutes}": "{hours}ч{minutes}",
   "{hours}h {minutes}m": "{hours} ч {minutes} мин",
-  "{included} of {total} selected · you can undo later": "Выбрано {included} из {total} · потом можно отменить",
   "{input} in / {output} out per M tokens": "{input} ввод / {output} вывод за 1 млн токенов",
   "{kept} · {count} finished.": "{kept} · готово: {count}.",
   "{kept}.": "{kept}.",
@@ -5704,7 +5610,6 @@ export default {
   "{model} (selected)": "{model} (выбрана)",
   "{model} animations": "Анимации {model}",
   "{model} is not installed in Ollama.": "Модель {model} не установлена в Ollama.",
-  "{model} on {provider}": "{model} через {provider}",
   "{model} ready": "{model}: готово",
   "{name} account": "Аккаунт {name}",
   "{name} already builds in {title}.": "Плейс {name} уже занят игрой «{title}».",
@@ -5774,8 +5679,6 @@ export default {
   "{part} · fixing what the review found": "{part} · исправляет замечания проверки",
   "{part} · round {round}": "{part} · раунд {round}",
   "{part} · the model is busy — trying again in {seconds}s": "{part} · модель занята — пробуем снова через {seconds} с",
-  "{part} · the reviewer is busy — trying again in {seconds}s":
-    "{part} · проверяющий занят — пробуем снова через {seconds} с",
   "{part} · undoing": "{part} · откатывает",
   "{part} · undoing something that broke": "{part} · откатывает то, что сломалось",
   "{part} · waiting": "{part} · ждёт",
@@ -6218,4 +6121,33 @@ export default {
   "Show us where Genex gets in your way.": "Покажи, где Genex тебе мешает.",
   "Where you go, what fails and how long it takes": "Куда ты заходишь, что ломается и сколько всё длится",
   "usage data\u0004Share": "Делиться",
+  "Reviewers give a second opinion when the lead asks for one.":
+    "Проверяющие дают второе мнение, когда главный агент просит.",
+  "Workers take parts of the build, several at once.": "Помощники берут части сборки, по несколько сразу.",
+  "After {worker}": "После: {worker}",
+  "Blank screen": "Пустой экран",
+  "Build {number}": "Сборка {number}",
+  "Compare with the earlier version": "Сравнить с прошлой версией",
+  "Did not pass": "Не прошла",
+  Errors: "Ошибки",
+  "Merged into Build {number}": "Влито в сборку {number}",
+  "Started before the first build": "Начат до первой сборки",
+  "Started from Build {number}": "Начат со сборки {number}",
+  "The main agent's own changes": "Изменения самого главного агента",
+  "The page crashed.": "Страница упала.",
+  "The page did not load.": "Страница не загрузилась.",
+  "The page threw an error it did not catch.": "Страница выбросила ошибку, которую не поймала.",
+  "The picture did not visibly change from Build {number}.": "Картинка заметно не изменилась со сборки {number}.",
+  "The picture did not visibly change from the earlier version.": "Картинка заметно не изменилась с прошлой версии.",
+  "The screen was blank: one flat colour, nothing drawn.":
+    "Экран был пустым: один сплошной цвет, ничего не нарисовано.",
+  "What the check found": "Что нашла проверка",
+  commit: "коммит",
+  found: "найдено",
+  "{count, plural, one {+# worker} other {+# workers}}":
+    "{count, plural, one {+# помощник} few {+# помощника} many {+# помощников} other {+# помощника}}",
+  "{count, plural, one {Show # more worker} other {Show # more workers}}":
+    "{count, plural, one {Показать ещё # помощника} few {Показать ещё # помощников} many {Показать ещё # помощников} other {Показать ещё # помощника}}",
+  "In the running build": "В текущей сборке",
+  "Not in your game yet. It arrives when the build lands.": "Пока не в игре. Попадёт туда, когда сборка зальётся.",
 } satisfies LocaleCatalog;

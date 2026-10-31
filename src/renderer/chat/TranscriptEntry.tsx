@@ -147,6 +147,7 @@ export const TranscriptEntry = memo(function TranscriptEntry({
           undone={entry.undone}
           landed={entry.landed}
           profile={entry.profile}
+          refusal={entry.refusal}
           // A run the plan limit cut off is paused, not finished: the card says so and
           // offers Resume itself, instead of leaving it to a grey line underneath.
           paused={!entry.superseded && resumable(entry.runId, context)}

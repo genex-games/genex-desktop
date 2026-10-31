@@ -105,8 +105,8 @@ const ROLE_LIST_LABEL: Record<RoleKey, string> = {
   judge: t("Reviewers model"),
 };
 const ROLE_INFO: Partial<Record<RoleKey, string>> = {
-  builder: t("Workers build the parts of the plan, several at once."),
-  judge: t("Reviewers test every result and decide when the game is done."),
+  builder: t("Workers take parts of the build, several at once."),
+  judge: t("Reviewers give a second opinion when the lead asks for one."),
 };
 const CHOOSE_MODEL = t("Choose model");
 

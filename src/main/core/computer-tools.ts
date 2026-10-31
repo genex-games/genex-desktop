@@ -1,24 +1,23 @@
 /**
  * The computer on a delegation's pooled window: who holds it (the role), which build it shows, and
  * how the studio's own browser window loads that build. Everything an action does — parsing,
- * refusing what the target cannot do, pacing the clock, looking, input — is the generic
+ * refusing what the target cannot do, looking, input — is the generic
  * {@link computerSession}; this module is its browser source (`browser-preview-target.ts`), or,
  * for a game whose studio.json declares the `bridge` runtime, the Play Protocol source
  * (`game-bridge-target.ts`), or, for a game played in its engine's editor, the engine plugin's
  * play tools (`editor-play-target.ts`).
  */
-import { type AgentScreen, type AgentScreenRole, ScreenDeed, ScreenRole } from "../../shared/agent-screen.ts";
+import { type AgentScreen, type AgentScreenRole, ScreenDeed } from "../../shared/agent-screen.ts";
 import {
   BROWSER_CAPABILITIES,
   ComputerPacing,
   type ComputerTraceSummary,
   type GameRuntime,
-  StateLevel,
   type TargetCapabilities,
   TargetRuntime,
 } from "../../shared/computer-target.ts";
-import { computerToolDefinition, normalizeSetup } from "../../substrate/computer-tool.ts";
-import type { DelegateRequest } from "../../substrate/engines/types.ts";
+import { computerToolDefinition } from "../../substrate/computer-tool.ts";
+import type { DelegateCaptureGrant, DelegateRequest } from "../../substrate/engines/types.ts";
 import type { PreviewPort } from "../../substrate/preview-port.ts";
 import type { ComputerToolRole } from "../../substrate/computer-tool-prompts.ts";
 import { LIVE_HANDLE } from "../../substrate/preview-pool.ts";
@@ -36,37 +35,21 @@ import { type EngineLauncher, gameBridgeSource } from "./game-bridge-target.ts";
 import { type EnginePlayCall, editorPlaySource } from "./editor-play-target.ts";
 import type { FramePort, PreviewService } from "./previews.ts";
 import { iterationDir } from "./run-shots.ts";
-import { markVerified } from "./verified-traces.ts";
 import type { SessionPort } from "./session-port.ts";
 
-/** The tool's own wording for each screen role; a judge (or anything else) is told it plays. */
+/** The tool's own wording for each screen role. */
 const TOOL_ROLE: Record<AgentScreenRole, ComputerToolRole> = {
   builder: "builder",
-  scout: "scout",
   director: "director",
-  playtester: "playtester",
-  judge: "judge",
   operator: "operator",
 };
 
-/**
- * The roles that play a build to judge it: they take seconds to look and decide, so the game's clock
- * stands still between their moves (golden-boot-glory: one key press ran four match minutes).
- */
-const PACED_ROLES: ReadonlySet<AgentScreenRole> = new Set([ScreenRole.Playtester, ScreenRole.Judge]);
+/** Who holds the computer, and on which build: a capture grant with its screen role. */
+export type ComputerGrant = DelegateCaptureGrant & { role?: AgentScreen["role"] };
 
 /**
- * The roles that meet the game's own title and menu as a player does: the studio never begins
- * play for them, whatever setup an older seed sends (`PreviewService.applySetup` `keepFrontEnd`).
- */
-const FRONT_END_ROLES: ReadonlySet<AgentScreenRole> = new Set(["playtester"]);
-
-/** Who holds the computer, and on which build: a playtest grant with any screen role. */
-export type ComputerGrant = Omit<NonNullable<DelegateRequest["playtest"]>, "role"> & { role?: AgentScreen["role"] };
-
-/**
- * A load of the build: the browser window's port (null for a Play Protocol game, which has no
- * window the playtest shorthands could drive), and what went wrong or is worth saying.
+ * A load of the build: the browser window's port (null for a game with no browser window), and
+ * what went wrong or is worth saying.
  */
 export interface ComputerLoad {
   port: PreviewPort | null;
@@ -90,42 +73,8 @@ export interface ComputerTools {
   release: () => Promise<void>;
 }
 
-/**
- * How a role's session runs: a judge on a seeded, stepped clock (its run can be replayed), a
- * playtester paced on wall time, everyone else on a running game. The roles that play to judge
- * see the result of every move without asking; the grant's goal and budget ride along.
- */
-function sessionOptionsFor(role: AgentScreenRole, grant: ComputerGrant, frameDir: string): ComputerSessionOptions {
-  const judging = role === ScreenRole.Judge;
-  const pacing = PACED_ROLES.has(role)
-    ? (grant.pacing ?? (judging ? ComputerPacing.Stepped : ComputerPacing.Paced))
-    : ComputerPacing.Running;
-  const quest = questOf(grant);
-  return {
-    pacing,
-    frameDir,
-    observeByDefault: PACED_ROLES.has(role),
-    onReached: markVerified,
-    ...(judging ? JUDGE_VIEW : {}),
-    ...(grant.maxActions !== undefined ? { maxActions: grant.maxActions } : {}),
-    ...(quest ? { quest } : {}),
-  };
-}
-
-/**
- * What a judge sees of the game: never its `state` or `console`, which the builder under judgement
- * wrote — the session still reads the state to check the goal, and the judge answers from playing.
- */
-const JUDGE_VIEW: Pick<ComputerSessionOptions, "offer" | "showState"> = {
-  offer: (caps) => ({ ...caps, state: StateLevel.None, console: false }),
-  showState: false,
-};
-
-/** The grant's goal, as the host reads it: a plain dotted path and a plain value, or no goal at all. */
-function questOf(grant: ComputerGrant): ComputerSessionOptions["quest"] {
-  const until = grant.quest ? normalizeSetup({ verify: grant.quest.until })?.verify : undefined;
-  return grant.quest && until ? { id: String(grant.quest.id), until } : undefined;
-}
+/** How a delegation's session runs: on a running game, its frames in `frameDir`. */
+const sessionOptionsFor = (frameDir: string): ComputerSessionOptions => ({ pacing: ComputerPacing.Running, frameDir });
 
 /** The quality of a frame a target that is no preview window takes for the agent's screen. */
 const TARGET_FRAME_QUALITY = 60;
@@ -157,14 +106,11 @@ export interface ComputerToolsOptions {
   /**
    * Set when the game is played in its engine's editor: the engine plugin's play tools, what its
    * declaration says the play can do (known before play opens, so the tool is described from it),
-   * how many players to open, and a step run once right after the play opens (a judge's probe).
+   * and a step run once right after the play opens.
    */
   editor?: {
     call: EnginePlayCall;
     caps?: TargetCapabilities;
-    players?: number;
-    /** Whether its play-open can start the play over; only then is a paced role's play asked to. */
-    restarts?: boolean;
     afterOpen?: (opened: unknown) => Promise<void>;
   };
 }
@@ -178,19 +124,13 @@ function toolsOver<T extends ComputerTarget>(
   parts: {
     caps: TargetCapabilities;
     toolRole: ComputerToolRole;
-    observeByDefault: boolean;
     screen: () => AgentScreen;
     portOf: (target: T) => PreviewPort | null;
     release: () => Promise<void>;
-    offer?: (caps: TargetCapabilities) => TargetCapabilities;
   },
 ): ComputerTools {
   // A Play Protocol game says what it can do only once it runs, so its tool offers what such a game may do.
-  const definition = computerToolDefinition({
-    role: parts.toolRole,
-    capabilities: parts.offer ? parts.offer(parts.caps) : parts.caps,
-    observeByDefault: parts.observeByDefault,
-  });
+  const definition = computerToolDefinition({ role: parts.toolRole, capabilities: parts.caps });
   return {
     liveTools: [definition],
     onLiveTool: (name, args) => session.run(name, args),
@@ -214,7 +154,6 @@ function toolsOver<T extends ComputerTarget>(
 function browserSource(
   previews: PreviewService,
   grant: ComputerGrant,
-  role: AgentScreenRole,
   sessionPort: SessionPort,
   screen: () => AgentScreen,
 ): TargetSource<BrowserPreviewTarget> {
@@ -230,7 +169,7 @@ function browserSource(
         sessionPort.loaded = null;
         return { target, problem: `the build failed to load: ${loaded.problem}`, note: null, fresh: true };
       }
-      const applied = await previews.applySetup(window, grant.setup, { keepFrontEnd: FRONT_END_ROLES.has(role) });
+      const applied = await previews.applySetup(window, grant.setup);
       const note = [loaded.note, applied].filter(Boolean).join("; ") || null;
       sessionPort.loaded = { root, at: Date.now() };
       previews.openScreen(screen());
@@ -248,10 +187,9 @@ function toolsRuntime(options: ComputerToolsOptions): ToolsRuntime {
 }
 
 /**
- * The computer on one session's window — the builder's worktree, the playtester's build under
- * test, the scout's live folder. Loaded once through the served entry, the setup script applied,
- * then kept running between actions so a map the worker switched to stays switched — except for a
- * playtester's or judge's, whose clock runs only during its moves (`PACED_ROLES`).
+ * The computer on one session's window — the builder's worktree, the lead's build. Loaded once
+ * through the served entry, the setup script applied, then kept running between actions so a map
+ * the worker switched to stays switched.
  */
 export function computerTools(
   previews: PreviewService,
@@ -271,16 +209,11 @@ export function computerTools(
     facetId: grant.facetId ?? null,
     role,
   });
-  const sessionOptions = sessionOptionsFor(role, grant, iterationDir(outDir, grant.iteration));
-  const toolRole = Object.hasOwn(TOOL_ROLE, role) ? TOOL_ROLE[role] : ScreenRole.Playtester;
-  const shared = {
-    toolRole,
-    observeByDefault: PACED_ROLES.has(role),
-    screen,
-    ...(sessionOptions.offer ? { offer: sessionOptions.offer } : {}),
-  };
+  const sessionOptions = sessionOptionsFor(iterationDir(outDir, grant.iteration));
+  const toolRole = Object.hasOwn(TOOL_ROLE, role) ? TOOL_ROLE[role] : TOOL_ROLE.builder;
+  const shared = { toolRole, screen };
   const runtime = toolsRuntime(options);
-  const deps: SourceDeps = { previews, grant, role, sessionPort, screen, options };
+  const deps: SourceDeps = { previews, grant, sessionPort, screen, options };
   return TARGET_SOURCES[runtime](deps, (source, parts) =>
     toolsOver(computerSession(source, initialRoot, sessionOptions), { ...shared, ...parts }),
   );
@@ -290,7 +223,6 @@ export function computerTools(
 interface SourceDeps {
   previews: PreviewService;
   grant: ComputerGrant;
-  role: AgentScreenRole;
   sessionPort: SessionPort;
   screen: () => AgentScreen;
   options: ComputerToolsOptions;
@@ -309,7 +241,7 @@ type ToolsBuilder = <T extends ComputerTarget>(
  */
 const TARGET_SOURCES: Record<ToolsRuntime, (deps: SourceDeps, build: ToolsBuilder) => ComputerTools> = {
   [TargetRuntime.Browser]: (deps, build) => {
-    const source = browserSource(deps.previews, deps.grant, deps.role, deps.sessionPort, deps.screen);
+    const source = browserSource(deps.previews, deps.grant, deps.sessionPort, deps.screen);
     return build(source, { caps: source.caps, portOf: (target) => target.port, release: async () => {} });
   },
   [TargetRuntime.Bridge]: (deps, build) => {
@@ -331,9 +263,6 @@ const TARGET_SOURCES: Record<ToolsRuntime, (deps: SourceDeps, build: ToolsBuilde
     if (!editor) return TARGET_SOURCES[TargetRuntime.Browser](deps, build);
     const source = editorPlaySource({
       ...editor,
-      // A judge or a playtester judges the game from its start, never from where another play left it,
-      // where the engine's play-open can start it over (one that cannot is joined as it runs).
-      fresh: Boolean(editor.restarts) && PACED_ROLES.has(deps.role),
       frame: (target, jpeg, caption, act) => {
         deps.previews.openScreen(deps.screen());
         return deps.previews.frame(targetFramePort(target), deps.screen(), jpeg, caption, act);

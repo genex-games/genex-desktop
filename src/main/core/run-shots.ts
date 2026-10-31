@@ -4,10 +4,9 @@
  */
 import path from "node:path";
 
-/** Which session took the pictures: a builder looking at its own build, or a playtester. */
+/** Which session took the pictures: a builder looking at its own build. */
 export const ShotKind = {
   Self: "self",
-  Playtest: "playtest",
 } as const;
 export type ShotKind = (typeof ShotKind)[keyof typeof ShotKind];
 

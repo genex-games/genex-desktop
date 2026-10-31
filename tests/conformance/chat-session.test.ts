@@ -216,21 +216,6 @@ describe("the brief of a game that builds in Unreal", () => {
     assert.doesNotMatch(brief, WEB_PAGE);
   });
 
-  it("a folder the user brought is still an Unreal game, never a page to install the contract in", () => {
-    const brief = buildContractorBrief({
-      ask: "Add a lighthouse",
-      shape: SHAPE,
-      ownShape: true,
-      contractMissing: true,
-      engine: "codex",
-      gameEngine: GameEngine.Unreal,
-      engineProject: PROJECT,
-    });
-    assert.match(brief, /the Unreal editor connector's tools/);
-    assert.doesNotMatch(brief, WEB_PAGE);
-    assert.doesNotMatch(brief, /npm run build|src\/main\.ts/, "the web shape's entry and build are not its");
-  });
-
   it("a resumed Unreal session is reminded where its work lands", () => {
     const brief = buildContractorBrief({
       ask: "Keep going",
@@ -254,10 +239,10 @@ describe("the brief of a game that builds in Unreal", () => {
       launch,
     });
     assert.match(unreal, /mcp__studio__start_autopilot/);
-    assert.match(unreal, /the lead builds the whole project itself in this folder, with workers in copies of it/);
-    // Flipped (Loop phase 4): a reviewer checked its finish; the lead finishes it now.
-    assert.match(unreal, /finishes it when the goal is reached/);
-    assert.match(unreal, /Write an Unreal build's goal with the look first/);
+    assert.match(unreal, /you lead it in this folder, with optional workers in copies of it/);
+    assert.match(unreal, /finish it when the goal is reached/);
+    // Flipped (phase 5): the brief no longer tells the agent how to write a goal (the look first).
+    assert.doesNotMatch(unreal, /look first/);
     assert.doesNotMatch(unreal, /builders|judges/);
     const web = buildContractorBrief({
       ask: "a pong game",

@@ -609,11 +609,6 @@ export interface PluginManifest {
    * Live view it shows (`shared/observers.ts`).
    */
   observers?: PluginObserver[];
-  /**
-   * API 3, capability `game-engine` with an `engine`: the blind judges that play the engine's games
-   * in its editor, each with its own brief, players and probe (`PluginJudge`).
-   */
-  judges?: PluginJudge[];
   /** Host-managed account flow. Status may finish a pending browser authorization. */
   account?: { connect: string; unlock: string; disconnect: string; status: string; cancel?: string };
   /**
@@ -623,42 +618,6 @@ export interface PluginManifest {
   icon?: string;
   /** What to do to start using it, for its page: plain one-line steps Genex draws ({@link isPluginSetup}). */
   setup?: string[];
-}
-
-/** The most judges one manifest declares. */
-export const MAX_PLUGIN_JUDGES = 8;
-/** The longest judge brief, in characters: a package file read and checked at install. */
-export const MAX_JUDGE_BRIEF_CHARS = 16_000;
-
-/**
- * API 3: a blind judge an engine plugin declares (`judges`). It plays a game in the engine's editor
- * through the play tools, never sees code, and answers from playing. Data only: the host runs it.
- */
-export interface PluginJudge {
-  /** Unique in the manifest: what an agent names the judge by. */
-  id: string;
-  /** What the person and the agent read it as, 1-40 characters on one line. */
-  label: string;
-  /** The facts of the games it judges; every game the plugin plays in its editor when absent. */
-  facts?: string[];
-  /** The package's Markdown file holding its brief, appended to the judge's rubric (at most `MAX_JUDGE_BRIEF_CHARS`). */
-  brief: string;
-  /** How many players its play opens, 1 to the engine's `play.players`; one when absent. */
-  players?: number;
-  /**
-   * A quiet harness tool of the plugin, needing the play tools' locks, that the host runs once in
-   * the judge's play right after it opens: its `note` and `images` (measurements and pictures,
-   * never source) open the judge's first message.
-   */
-  probe?: string;
-}
-
-/** A judge as a game's descriptor and an agent name it. */
-export type JudgeRef = Pick<PluginJudge, "id" | "label">;
-
-/** The judges that reach a game: those naming no facts, and those whose facts the game holds. */
-export function judgesFor(judges: readonly PluginJudge[] | undefined, game: GameKind): PluginJudge[] {
-  return (judges ?? []).filter((judge) => scopeReaches(judge.facts, game));
 }
 
 /** The engines `manifests` declare, by id: the first declaration of an id wins. */
@@ -1285,25 +1244,34 @@ export interface EngineAssistAnswer {
 /** The folder in a `game-engine` plugin's storage where the host keeps each game's link, `<game>.json`. */
 export const ENGINE_LINKS_FOLDER = "links";
 
-/** A still's view name: a `config.demos` or `config.cameras` key, or a built-in `eye:*` camera. */
+/** A still's view name, as a request may spell it (only {@link PLUGIN_STILL_DEFAULT_VIEW} exists). */
 export const PLUGIN_STILL_VIEW_NAME = /^[A-Za-z0-9][A-Za-z0-9:_-]{0,63}$/;
+/** The one view a still takes: the bound game's own page as it stands, loaded and played a moment. */
+export const PLUGIN_STILL_DEFAULT_VIEW = "default";
 /** The least, the most and the default size of a still's encoded image. */
 export const PLUGIN_STILL_MIN_BYTES = 64 * 1024;
 export const PLUGIN_STILL_MAX_BYTES = 16 * 1024 * 1024;
 export const PLUGIN_STILL_DEFAULT_BYTES = 8 * 1024 * 1024;
-/** The most view names a `view_unknown` answer lists. */
-export const PLUGIN_STILL_AVAILABLE_MAX = 32;
 
-/** Which view a still photographs: a demo run to its end state, or a camera placed. Exactly one. */
-export type PluginStillView = { demo: string; camera?: undefined } | { camera: string; demo?: undefined };
 /**
- * `observe` with a `still` (API 3, additive): one named view of the bound game on a hidden window
- * of its own at `width`×`height` (each within a pooled window's least and most size), encoded in at
- * most `maxBytes`. Mirrors `PluginStillRequest` in `src/plugin-sdk/index.d.ts`.
+ * `observe` with a `still` (API 3, additive): a plain frame of the bound game's page on a hidden
+ * window of its own at `width`×`height` (each within a pooled window's least and most size),
+ * encoded in at most `maxBytes`. `camera` may only name {@link PLUGIN_STILL_DEFAULT_VIEW}, the
+ * one view there is. Mirrors `PluginStillRequest` in `src/plugin-sdk/index.d.ts`.
  */
-export type PluginStillRequest = PluginStillView & { width: number; height: number; maxBytes?: number };
-/** A still request as the host checked it: one view, whole-pixel sides, the byte limit filled in. */
-export type PluginStillOrder = PluginStillView & { width: number; height: number; maxBytes: number };
+export interface PluginStillRequest {
+  camera?: typeof PLUGIN_STILL_DEFAULT_VIEW;
+  width: number;
+  height: number;
+  maxBytes?: number;
+}
+/** A still request as the host checked it: whole-pixel sides, the byte limit filled in, the view named as asked. */
+export interface PluginStillOrder {
+  camera: string;
+  width: number;
+  height: number;
+  maxBytes: number;
+}
 
 /** Why `observe` took no still. Published to plugins: never rename a value. */
 export const PluginStillProblemCode = {
@@ -1313,17 +1281,16 @@ export const PluginStillProblemCode = {
    */
   Unavailable: "unavailable",
   LoadFailed: "load_failed",
-  /** The game has no demo or camera by that name; `available` lists the ones it has. */
+  /** The request named a view other than the default; `available` lists the only one there is. */
   ViewUnknown: "view_unknown",
-  ViewFailed: "view_failed",
   CaptureFailed: "capture_failed",
-  /** Not even the lowest-quality JPEG (or, for a clip, the lowest bitrate) fits `maxBytes`. */
+  /** Not even the lowest-quality JPEG fits `maxBytes`. */
   TooLarge: "too_large",
   Timeout: "timeout",
 } as const;
 export type PluginStillProblemCode = (typeof PluginStillProblemCode)[keyof typeof PluginStillProblemCode];
 
-/** A still: the encoded image, its size, which path read it, the view, its exposure and a small JPEG preview. */
+/** A still: the encoded image, its size, which path read it, its exposure and a small JPEG preview. */
 export interface PluginStill {
   image: Uint8Array;
   mimeType: StillMimeType;
@@ -1331,7 +1298,6 @@ export interface PluginStill {
   height: number;
   /** `page` is the page's own read of its canvas; `compositor` is the window's frame. */
   source: CaptureSource;
-  view: PluginStillView;
   stats: StillExposure;
   /** JPEG, at most 1280 px on its long side. */
   preview: Uint8Array;
@@ -1344,60 +1310,12 @@ export interface PluginStillProblem {
 /** What `observe` with a `still` answers. A host older than the option answers an ordinary observation instead. */
 export type PluginStillAnswer = { still: PluginStill } | { stillProblem: PluginStillProblem };
 
-/** The least, the most and the default length of a clip, in seconds of the game running. */
-export const PLUGIN_CLIP_MIN_SECONDS = 2;
-export const PLUGIN_CLIP_MAX_SECONDS = 10;
-export const PLUGIN_CLIP_DEFAULT_SECONDS = 5;
-/** The least, the most and the default frames per second a clip records. */
-export const PLUGIN_CLIP_MIN_FPS = 15;
-export const PLUGIN_CLIP_MAX_FPS = 30;
-export const PLUGIN_CLIP_DEFAULT_FPS = 30;
-/** The least, the most and the default size of a clip's encoded video. */
-export const PLUGIN_CLIP_MIN_BYTES = 256 * 1024;
+/** The largest kept cover clip the host reads back, in bytes. */
 export const PLUGIN_CLIP_MAX_BYTES = 8 * 1024 * 1024;
-export const PLUGIN_CLIP_DEFAULT_BYTES = 8 * 1024 * 1024;
 
-/** How a clip's video is contained: MP4 (H.264) where the recorder can, else WebM. Published to plugins: never rename a value. */
+/** How a kept cover clip's video is contained: MP4 (H.264) or WebM. Published to plugins: never rename a value. */
 export const PluginClipMimeType = { Webm: "video/webm", Mp4: "video/mp4" } as const;
 export type PluginClipMimeType = (typeof PluginClipMimeType)[keyof typeof PluginClipMimeType];
-
-/**
- * `observe` with a `clip` (API 3, additive): `seconds` of the bound game running from the start
- * of a moment a demo stages, recorded on a hidden window of its own at `width`×`height`, at `fps`,
- * in at most `maxBytes`. Mirrors `PluginClipRequest` in `src/plugin-sdk/index.d.ts`.
- */
-export interface PluginClipRequest {
-  demo: string;
-  width: number;
-  height: number;
-  seconds?: number;
-  fps?: number;
-  maxBytes?: number;
-}
-/** A clip request as the host checked it: whole-pixel sides and every default filled in. */
-export interface PluginClipOrder {
-  demo: string;
-  width: number;
-  height: number;
-  seconds: number;
-  fps: number;
-  maxBytes: number;
-}
-/** A clip: the video, its size and length, the demo that staged it, a poster and how much moved. */
-export interface PluginClip {
-  video: Uint8Array;
-  mimeType: PluginClipMimeType;
-  width: number;
-  height: number;
-  durationMs: number;
-  view: { demo: string };
-  /** JPEG of the first recorded frame, at most 1280 px on its long side. */
-  poster: Uint8Array;
-  /** 0–1: the share of sampled frame pairs that differ visibly; a frozen recording is about 0. */
-  motion: number;
-}
-/** What `observe` with a `clip` answers; the problem codes are a still's. A host older than the option answers an ordinary observation. */
-export type PluginClipAnswer = { clip: PluginClip } | { clipProblem: PluginStillProblem };
 
 /** Whether a plugin's own saved account is usable right now (`PluginRegistry.accountState`). */
 export const PluginAccountState = {

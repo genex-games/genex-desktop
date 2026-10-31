@@ -22,7 +22,6 @@ import {
   localBudgetNote,
   localSystemPrompt,
   modeChangedNote,
-  noProgressNote,
   progressCheckNote,
 } from "./local-session-prompts.ts";
 import { type AutoCheck, changesSomething, permitCall, seatAsks, sessionMode } from "./local-session-permissions.ts";
@@ -37,7 +36,6 @@ import {
 } from "./local-session-tools.ts";
 import { neverTouchFence } from "./claude-permissions.ts";
 import { neverTouchWhole } from "./never-touch.ts";
-import { lockUnowned, releaseLocks } from "./ownership-locks.ts";
 import { type CommandSandbox, commandSandbox, leadBuildWrites } from "./session-commands.ts";
 import { StudioTool } from "./studio-tool-prompts.ts";
 import {
@@ -67,8 +65,7 @@ const LOCAL_SESSION_LIMITS = {
   /** A tool's answer as the model reads it, and as the chat previews it. */
   toolReplyChars: 40_000,
   toolPreviewChars: 2_000,
-  /** Tool rounds without a workspace change before the session stops, and the rounds that get a nudge. */
-  idleRoundLimit: 16,
+  /** The tool rounds without a workspace change that get a nudge; reading never stops a session. */
   idleNudgeRounds: [6, 10] as readonly number[],
 } as const;
 
@@ -256,7 +253,6 @@ export class LocalSessions {
     steer: SteerSession | null,
   ): Promise<DelegateResult> {
     const run = await this.#open(request, model, cwd, id, steer);
-    const locks = request.ownership && !run.readonly ? await lockUnowned(cwd, request.ownership) : null;
     run.workspaceStamp = await stampWorkspace(cwd);
     const instructions = await run.tools
       .resolveFile("CLAUDE.md")
@@ -264,7 +260,6 @@ export class LocalSessions {
       .catch(() => "");
     run.system = localSystemPrompt({
       readonly: run.readonly,
-      ownership: request.ownership,
       instructions,
       mode: run.mode,
     });
@@ -296,7 +291,6 @@ export class LocalSessions {
       // Whatever still waits was never read: not reported, so the host queues it again.
       run.inbox.close();
       request.permissions?.onControl?.(null);
-      if (locks) await releaseLocks(cwd, locks);
       await run.tools.sandbox?.dispose();
     }
   }
@@ -331,7 +325,6 @@ export class LocalSessions {
       forbidden,
       deniedWrites,
       readonly,
-      ownership: request.ownership,
     });
     const definitions = localToolDefinitions(request, readonly);
     const studioToolCalls: NonNullable<DelegateResult["studioToolCalls"]> = [];
@@ -409,11 +402,7 @@ export class LocalSessions {
     // The coding CLIs' sign-in homes, from the one shared list the sandbox and contractors use (SEC-3).
     const fenced = [...this.options.protectedPaths, ...credentialHomes(), ...(request.denyReads ?? [])];
     const forbidden = [...fenced, ...(seat ? neverTouchWhole(seat.neverTouch) : [])].map((p) => path.resolve(p));
-    const deniedWrites = [
-      ...this.options.protectedPaths,
-      ...credentialHomes(),
-      ...(request.optimization?.denyWrites ?? []),
-    ];
+    const deniedWrites = [...this.options.protectedPaths, ...credentialHomes()];
     return { readRoots, writeRoots, forbidden, deniedWrites };
   }
 
@@ -637,7 +626,7 @@ function turnLimit(request: DelegateRequest): number {
 }
 
 /**
- * A session that may not edit: a read-only pass (playtest, scout) or a coordinator. A chat that
+ * A session that may not edit: a read-only pass (a reviewer, a reader) or a coordinator. A chat that
  * may launch a build is still a full contractor and keeps its write tools.
  */
 function isReadOnlySession(request: DelegateRequest): boolean {
@@ -793,16 +782,15 @@ async function callTool(run: LocalRun, call: ToolCall): Promise<{ answer: LiveTo
 }
 
 /**
- * Stop a builder that keeps inspecting without changing anything, after nudging it twice. Real
- * edits count, including shell and host-tool edits — not the model's claims of progress.
+ * Nudge a session that keeps reading without changing anything; reading is the model's call, so
+ * it is never stopped for it (its turns and time end it). Real edits count, including shell and
+ * host-tool edits — not the model's claims of progress.
  */
 async function checkProgress(run: LocalRun, calls: ToolCall[]): Promise<DelegateResult | null> {
   const nextStamp = await stampWorkspace(run.cwd);
   const inspecting = calls.every((c) => INSPECTION_TOOLS.has(c.name));
   run.idleRounds = inspecting && nextStamp === run.workspaceStamp ? run.idleRounds + 1 : 0;
   run.workspaceStamp = nextStamp;
-  if (run.idleRounds >= LOCAL_SESSION_LIMITS.idleRoundLimit)
-    return localResult(run, false, StopReason.NoProgress, noProgressNote(LOCAL_SESSION_LIMITS.idleRoundLimit));
   if (LOCAL_SESSION_LIMITS.idleNudgeRounds.includes(run.idleRounds)) {
     run.progressNote = progressCheckNote(run.idleRounds, launchToolNames(run.request));
     run.messages.push({ role: "user", content: run.progressNote });

@@ -2,18 +2,8 @@
  * Harness Activity: what needs a decision, what each run delivered and what Harness has learned.
  * Every row expands in place. The header holds the one switch for self-improvement.
  */
-import {
-  useCallback,
-  useEffect,
-  useId,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  type JSX,
-  type ReactNode,
-} from "react";
-import type { EventEnvelope, GameProject, SelfChange, StagedProposal } from "../types.ts";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type JSX, type ReactNode } from "react";
+import type { EventEnvelope, GameProject, SelfChange } from "../types.ts";
 import type { RunOutcomeKind, StudioActivityItem } from "../../shared/studio-activity.ts";
 import { useRunSummary } from "../use-run-summary.ts";
 import { Button } from "../ui/Button.tsx";
@@ -21,9 +11,8 @@ import { GameAvatar } from "../ui/GameAvatar.tsx";
 import { Icon } from "../ui/icons.tsx";
 import { Switch } from "../ui/switch.tsx";
 import { EmptyState } from "../ui/EmptyState.tsx";
-import { DisclosureBody, ExactEdit, SuggestionReview, TurningChevron } from "../ui/ProposalsTable.tsx";
+import { DisclosureBody, ExactEdit, TurningChevron } from "../ui/ProposalsTable.tsx";
 import { patchDiff } from "../edit-diff.ts";
-import { SECOND_MS } from "../../shared/duration.ts";
 import { intlLocale, t } from "../../shared/i18n.ts";
 import { UiEvent } from "../../shared/ui-events.ts";
 import { ACTIVITY_WORDS, problemWords } from "../words.ts";
@@ -33,13 +22,8 @@ import {
   type ActivityTally,
   activityLoadedProperties,
   changeUndoneProperties,
-  improvementCheckProperties,
-  SuggestionDecision,
-  suggestionsDecidedProperties,
   takeHarnessOpening,
 } from "../analytics/plugins-harness.ts";
-import { countBucket } from "../analytics/properties.ts";
-import { studio } from "../state/studio.ts";
 import { Pending } from "../ui/Pending.tsx";
 import { SkeletonControl, SkeletonRows } from "../ui/Skeleton.tsx";
 
@@ -47,17 +31,12 @@ import { SkeletonControl, SkeletonRows } from "../ui/Skeleton.tsx";
 const RUNS_PAGE = 20;
 /** A burst of new events reloads the feed once, this long after the last of them. */
 const RELOAD_AFTER_EVENT_MS = 300;
-/** How long the Look button shows what it found before offering the check again. */
-const CHECK_RESULT_MS = 4 * SECOND_MS;
 /** The most lines of a learned change's diff the exact-edit view shows. */
 const DIFF_LINES_SHOWN = 300;
-/** Every event of the improvement search starts with this. */
-const SKILLOPT_EVENTS = "skillopt.";
 
 interface Props {
   events: EventEnvelope[];
   games: GameProject[];
-  onStagedCount: (count: number) => void;
   onPlayCommit: (project: string, commit: string) => void;
   onOpenGame: (project: string) => void;
   onNewGame: () => void;
@@ -157,75 +136,6 @@ function ListCard({ children }: { children: ReactNode }) {
   return <div className="overflow-hidden rounded-card bg-surface shadow-card">{children}</div>;
 }
 
-/** Where the Look for improvements button stands; the value is its `data-look-state`. */
-const LookState = {
-  Idle: "idle",
-  Looking: "looking",
-  Found: "found",
-  Added: "added",
-  None: "none",
-} as const;
-type LookState = (typeof LookState)[keyof typeof LookState];
-const LOOK: Array<{ state: LookState; label: string; icon?: "spinner" | "check" }> = [
-  { state: LookState.Idle, label: t("Look for improvements") },
-  { state: LookState.Looking, label: t("Looking…"), icon: "spinner" },
-  { state: LookState.Found, label: t("Found"), icon: "check" },
-  { state: LookState.Added, label: t("Added"), icon: "check" },
-  { state: LookState.None, label: t("Nothing new") },
-];
-
-/** One button that shows its own progress and result. Labels cross-fade in one cell while the
- * button's width follows the visible label, so it always hugs its text. */
-function LookButton({ state, onClick }: { state: LookState; onClick: () => void }) {
-  const labels = useRef<Partial<Record<LookState, HTMLSpanElement | null>>>({});
-  const [width, setWidth] = useState<number>();
-  useLayoutEffect(() => {
-    const measure = () => {
-      const next = labels.current[state]?.offsetWidth;
-      if (next) setWidth(next);
-    };
-    measure();
-    // Fonts and zoom change the text's width after the first measurement.
-    const observer = new ResizeObserver(measure);
-    for (const label of Object.values(labels.current)) if (label) observer.observe(label);
-    return () => observer.disconnect();
-  }, [state]);
-  return (
-    <Button
-      variant="secondary"
-      data-look-state={state}
-      disabled={state === LookState.Looking}
-      aria-label={t("Look for improvements in recent builds")}
-      onClick={onClick}
-      className="shrink-0"
-    >
-      {/* Every label is centred on the same point; the box clips to the visible one as it resizes. */}
-      <span
-        className="relative block h-5 overflow-hidden transition-[width] duration-(--duration-fast) ease-(--ease-smooth-out) motion-reduce:transition-none"
-        style={{ width }}
-      >
-        {LOOK.map((item) => (
-          <span
-            key={item.state}
-            data-look-label={item.state}
-            ref={(element) => {
-              labels.current[item.state] = element;
-            }}
-            aria-hidden
-            className={`absolute top-0 left-1/2 flex h-5 -translate-x-1/2 items-center gap-2 whitespace-nowrap transition-opacity duration-(--duration-fast) ease-(--ease-smooth-out) motion-reduce:transition-none ${item.state === state ? "opacity-100" : "pointer-events-none opacity-0"}`}
-          >
-            {item.icon === "spinner" && (
-              <span className="size-3 animate-spin rounded-full border-[1.5px] border-current border-t-transparent motion-reduce:animate-none" />
-            )}
-            {item.icon === "check" && <Icon name="check" size={14} />}
-            {item.label}
-          </span>
-        ))}
-      </span>
-    </Button>
-  );
-}
-
 /** Self-improvement, shared with Settings through the host's settings.changed event. */
 function useLearningSwitch(setError: (error: string | null) => void) {
   const [learning, setLearning] = useState<boolean | null>(null);
@@ -256,9 +166,6 @@ function useLearningSwitch(setError: (error: string | null) => void) {
   return { learning, switchLearning };
 }
 
-/** What a load counted: the suggestions waiting and the improvements applied. */
-type Tally = { staged: number; learned: number };
-
 /**
  * Activity's loads as usage analytics hears them: the visit's first, and the first that works after
  * one failed (a Retry, or the reload after an event). Every other reload is quiet.
@@ -281,38 +188,33 @@ const countLearned = (items: StudioActivityItem[]): number =>
   items.filter((item) => item.kind === "improvement").length;
 
 /** The activity feed and Harness's own changes: loaded now, again shortly after each new event; the latest load wins. */
-function useActivity(onStagedCount: (count: number) => void, latestEvent: string | undefined) {
+function useActivity(latestEvent: string | undefined) {
   const [items, setItems] = useState<StudioActivityItem[]>([]);
   const [changes, setChanges] = useState<SelfChange[]>([]);
-  const [staged, setStaged] = useState<StagedProposal[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const generation = useRef(0);
   const reportLoad = useLoadReport();
-  const load = useCallback(async (): Promise<Tally | null> => {
+  const load = useCallback(async (): Promise<void> => {
     const current = ++generation.current;
     const startedAt = Date.now();
     try {
       const [activity, self] = await Promise.all([window.studio.studioActivity(), window.studio.selfChanges()]);
-      if (current !== generation.current) return null;
+      if (current !== generation.current) return;
       setItems(activity);
       setChanges(self.changes);
-      setStaged(self.staged);
-      onStagedCount(self.staged.length);
       setError(null);
-      const tally = { staged: self.staged.length, learned: countLearned(activity) };
-      reportLoad({ ...tally, runs: activity.filter((item) => item.kind === "run").length }, startedAt);
-      return tally;
+      const runs = activity.filter((item) => item.kind === "run").length;
+      reportLoad({ runs, learned: countLearned(activity) }, startedAt);
     } catch (cause) {
       if (current === generation.current) {
         setError(problemWords(cause));
         reportLoad(null, startedAt);
       }
-      return null;
     } finally {
       if (current === generation.current) setLoading(false);
     }
-  }, [onStagedCount, reportLoad]);
+  }, [reportLoad]);
   useEffect(() => {
     void load();
     return () => {
@@ -324,103 +226,7 @@ function useActivity(onStagedCount: (count: number) => void, latestEvent: string
     const timer = setTimeout(() => void load(), RELOAD_AFTER_EVENT_MS);
     return () => clearTimeout(timer);
   }, [latestEvent, load]);
-  return { items, changes, staged, loading, error, setError, load };
-}
-
-/** What a finished check found, by comparing the counts before and after it. */
-function checkResult(before: Tally, after: Tally): { state: LookState; note: string } {
-  const found = after.staged - before.staged;
-  const applied = after.learned - before.learned;
-  if (found > 0)
-    return {
-      state: LookState.Found,
-      note: t("Found {count, plural, one {# new suggestion} other {# new suggestions}} at the top of Activity.", {
-        count: found,
-      }),
-    };
-  if (applied > 0)
-    return {
-      state: LookState.Added,
-      note: t("Applied {count, plural, one {# improvement} other {# improvements}}.", { count: applied }),
-    };
-  return { state: LookState.None, note: t("Nothing new to suggest.") };
-}
-
-/** Looking for improvements on demand: the button's state, and what it found once the look finishes. */
-function useImprovementCheck(activity: ReturnType<typeof useActivity>) {
-  const { load, setError } = activity;
-  const [check, setCheck] = useState<LookState>(LookState.Idle);
-  const [checkNote, setCheckNote] = useState("");
-  const settle = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const beforeCheck = useRef<Tally | null>(null);
-  const checkStarted = useRef(0);
-  /** A look this room started ended: with what it found, or (null) failed. */
-  const reportCheck = useCallback((before: Tally | null, after: Tally | null): void => {
-    if (!before) return;
-    const check = { before, after, startedAt: checkStarted.current, now: Date.now() };
-    track(AnalyticsEvent.ImprovementCheckFinished, improvementCheckProperties(check));
-  }, []);
-  const report = useCallback(
-    (before: Tally | null, after: Tally | null): void => {
-      reportCheck(before, after);
-      if (!before || !after) {
-        setCheck(LookState.Idle);
-        return;
-      }
-      // The button itself reports the result for a moment, then offers the check again.
-      const result = checkResult(before, after);
-      setCheck(result.state);
-      setCheckNote(result.note);
-      if (settle.current) clearTimeout(settle.current);
-      settle.current = setTimeout(() => {
-        setCheck(LookState.Idle);
-        setCheckNote("");
-      }, CHECK_RESULT_MS);
-    },
-    [reportCheck],
-  );
-  useEffect(
-    () =>
-      window.studio.onEvent((event) => {
-        if (!event.type.startsWith(SKILLOPT_EVENTS)) return;
-        if (event.type === UiEvent.SkilloptFailed) {
-          setCheck(LookState.Idle);
-          reportCheck(beforeCheck.current, null);
-          beforeCheck.current = null;
-          setError(problemWords(event.payload?.error ?? t("Could not look for improvements. Try again.")));
-          return;
-        }
-        const done = event.type === UiEvent.SkilloptFinished;
-        void load().then((after) => {
-          if (!done) return;
-          const before = beforeCheck.current;
-          beforeCheck.current = null;
-          report(before, after);
-        });
-      }),
-    [load, report, reportCheck, setError],
-  );
-  useEffect(
-    () => () => {
-      if (settle.current) clearTimeout(settle.current);
-    },
-    [],
-  );
-  const findImprovements = () => {
-    if (settle.current) clearTimeout(settle.current);
-    setCheck(LookState.Looking);
-    setError(null);
-    setCheckNote("");
-    beforeCheck.current = { staged: activity.staged.length, learned: countLearned(activity.items) };
-    checkStarted.current = Date.now();
-    void window.studio.startSkillOpt().catch((cause) => {
-      setCheck(LookState.Idle);
-      reportCheck(beforeCheck.current, null);
-      beforeCheck.current = null;
-      setError(problemWords(cause));
-    });
-  };
-  return { check, checkNote, findImprovements };
+  return { items, changes, loading, error, setError, load };
 }
 
 /** A self-update that failed and was not followed by a restore: the one recovery the user must act on. */
@@ -613,20 +419,15 @@ function LearnedSection({
   learned,
   changes,
   learning,
-  hasRuns,
-  improvement,
   busy,
   onUndo,
 }: {
   learned: StudioActivityItem[];
   changes: SelfChange[];
   learning: boolean | null;
-  hasRuns: boolean;
-  improvement: ReturnType<typeof useImprovementCheck>;
   busy: boolean;
   onUndo: (from: string, at: string) => void;
 }): JSX.Element {
-  const { check, checkNote, findImprovements } = improvement;
   return (
     <section aria-labelledby="activity-learned" data-studio-learned className="flex flex-col gap-3">
       <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
@@ -636,15 +437,10 @@ function LearnedSection({
           </h2>
           <p className="text-chat-sub text-ink-3">
             {learning === false
-              ? t("Self-improvement is off. Harness isn’t learning from new builds.")
-              : t("Harness looks at your finished builds for better ways to build.")}
+              ? t("Self-improvement is off. Harness keeps its own instructions as they are.")
+              : t("Changes Harness made to its own instructions. Undo any of them.")}
           </p>
-          <span role="status" className="sr-only">
-            {check === LookState.Looking ? t("Looking for improvements") : checkNote}
-          </span>
         </div>
-        {/* Improvements are mined from runs, so there is nothing to look at before one. */}
-        {learning !== false && hasRuns && <LookButton state={check} onClick={findImprovements} />}
       </div>
       {learned.length > 0 && (
         <ListCard>
@@ -684,19 +480,13 @@ function useReviewAction(activity: ReturnType<typeof useActivity>) {
       setBusy(false);
     }
   };
-  // Descending, so earlier indices stay valid while the staged list shrinks.
-  const each = (indices: number[], act: (index: number) => Promise<unknown>) =>
-    perform(async () => {
-      for (const index of [...indices].sort((a, b) => b - a)) await act(index);
-    });
-  return { busy, perform, each };
+  return { busy, perform };
 }
 
-/** The room coming up (how it was reached, how many suggestions wait), and a failure only Quit can mend, once a visit. */
+/** The room coming up (how it was reached), and a failure only Quit can mend, once a visit. */
 function useRoomReports(problem: StudioActivityItem | null): void {
   useEffect(() => {
-    const staged = studio().library.getState().stagedCount;
-    track(AnalyticsEvent.HarnessOpened, { via: takeHarnessOpening(), staged_count: countBucket(staged) });
+    track(AnalyticsEvent.HarnessOpened, { via: takeHarnessOpening() });
   }, []);
   const told = useRef(false);
   useEffect(() => {
@@ -704,17 +494,6 @@ function useRoomReports(problem: StudioActivityItem | null): void {
     told.current = true;
     track(AnalyticsEvent.HarnessRecoveryProblemShown, { has_detail: Boolean(problem.detail) });
   }, [problem]);
-}
-
-/** Apply or Discard on the suggestions ticked, reported with how it went. */
-function useDecide(staged: StagedProposal[], each: ReturnType<typeof useReviewAction>["each"]) {
-  return (decision: SuggestionDecision, indices: number[], opened: boolean, act: (index: number) => Promise<unknown>) =>
-    void each(indices, act).then((ok) => {
-      if (ok === null) return;
-      const chosen = indices.map((index) => ({ at: staged[index]?.at }));
-      const decided = { decision, chosen, waiting: staged.length, openedDetails: opened, ok, now: Date.now() };
-      track(AnalyticsEvent.SuggestionsDecided, suggestionsDecidedProperties(decided));
-    });
 }
 
 function ActivityNotices({
@@ -788,17 +567,15 @@ function ActivityEmpty({
 export function ReviewPanel({
   events,
   games,
-  onStagedCount,
   onPlayCommit,
   onOpenGame,
   onNewGame,
   onStartBuilding,
 }: Props): JSX.Element {
-  const activity = useActivity(onStagedCount, events.at(-1)?.id);
-  const { items, staged } = activity;
+  const activity = useActivity(events.at(-1)?.id);
+  const { items } = activity;
   const { learning, switchLearning } = useLearningSwitch(activity.setError);
-  const improvement = useImprovementCheck(activity);
-  const { busy, perform, each } = useReviewAction(activity);
+  const { busy, perform } = useReviewAction(activity);
   const [limit, setLimit] = useState(RUNS_PAGE);
   const runs = useMemo(() => items.filter((item) => item.kind === "run"), [items]);
   const learned = useMemo(() => items.filter((item) => item.kind === "improvement"), [items]);
@@ -806,10 +583,8 @@ export function ReviewPanel({
   // normally followed by an automatic restore; only one that was not needs the user.
   const problem = useMemo(() => unrecoveredFailure(items), [items]);
   useRoomReports(problem);
-  const decide = useDecide(staged, each);
-  const nothingYet = !runs.length && !learned.length && !staged.length;
+  const nothingYet = !runs.length && !learned.length;
   const empty = !activity.loading && !activity.error && !problem && nothingYet;
-  const target = (index: number) => ({ at: staged[index]?.at, skill: staged[index]?.skill });
 
   return (
     <div
@@ -822,23 +597,6 @@ export function ReviewPanel({
       ) : (
         <div className="mx-auto flex w-full max-w-3xl flex-col gap-9 px-5 py-6 @min-[700px]:px-8">
           <ActivityNotices activity={activity} problem={problem} />
-          {staged.length > 0 && (
-            <SuggestionReview
-              key={staged.map((p) => p.at).join()}
-              proposals={staged}
-              busy={busy}
-              onApply={(indices, opened) =>
-                decide(SuggestionDecision.Apply, indices, opened, (index) =>
-                  window.studio.acceptProposal(index, target(index)),
-                )
-              }
-              onDiscard={(indices, opened) =>
-                decide(SuggestionDecision.Discard, indices, opened, (index) =>
-                  window.studio.discardProposal(index, undefined, target(index)),
-                )
-              }
-            />
-          )}
           <RecentRuns
             runs={runs}
             games={games}
@@ -851,8 +609,6 @@ export function ReviewPanel({
             learned={learned}
             changes={activity.changes}
             learning={learning}
-            hasRuns={runs.length > 0}
-            improvement={improvement}
             busy={busy}
             onUndo={(from, at) =>
               void perform(() => window.studio.undoChange(from)).then((ok) => {

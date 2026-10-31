@@ -5,7 +5,7 @@
  * (`MessageOrigin.CoverStep`), sent with the person's last message's engine, model and effort but
  * never their Loop, so the step starts no build. The cover's rules stay in the Genex plugin's
  * `cover` skill, read only then. Once per landed run, and never ahead of a message the person wrote
- * after the close. The host asks only for a web game while the Genex plugin is on (studio-core.ts).
+ * after the close. The host asks for any game while the Genex plugin is on (studio-core.ts).
  *
  * It lives on the host, not in the harness seed, so a kept older seed cannot shadow it, and it
  * decides from typed fields only: the close's `landed` and execution status, and the queue's `origin`.

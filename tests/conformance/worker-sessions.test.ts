@@ -235,9 +235,8 @@ describe("a worker's session follows the chat's mode", () => {
 
   it("puts the never-touch hook first, in Bypass too, and screens reads", async () => {
     const f = await fixture();
-    const ownership = { facetId: "scene", owns: ["src/scene.js"], ownsMain: false };
     for (const mode of MODES) {
-      const matchers = preToolUse(await session(f, seat(f, mode), { ownership }));
+      const matchers = preToolUse(await session(f, seat(f, mode)));
       const [first] = matchers;
       const [hook] = first?.hooks ?? [];
       assert.ok(first && hook, `${mode}: a PreToolUse hook`);
@@ -252,7 +251,8 @@ describe("a worker's session follows the chat's mode", () => {
       assert.equal(output.permissionDecision, "deny", mode);
       assert.match(output.permissionDecisionReason, /never lets a worker reach a sign-in/);
       // The lead's screen follows for a worker that asks (the chat moving to a stricter mode).
-      assert.equal(matchers.length, mode === PermissionMode.Plan ? 2 : 3, `${mode}: ${matchers.length} matchers`);
+      // Flipped (phase 5) from 2 and 3: no ownership hook sits between them any more.
+      assert.equal(matchers.length, mode === PermissionMode.Plan ? 1 : 2, `${mode}: ${matchers.length} matchers`);
     }
   });
 

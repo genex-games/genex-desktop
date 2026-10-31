@@ -1,7 +1,8 @@
 # Genex models at play time in AI Game Studio
 
 You are building inside AI Game Studio. Below the upstream marker is Genex's card on calling a
-model from a running game, unchanged. Where it disagrees with this preface, this preface wins.
+model from a running game, with the passages of advice Studio does not ship taken out. Where it
+disagrees with this preface, this preface wins.
 
 ## Commands, as Studio tools
 

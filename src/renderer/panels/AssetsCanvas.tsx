@@ -34,7 +34,7 @@ import { Pending } from "../ui/Pending.tsx";
 import { MakingCard, usePluginSources } from "./MakingCard.tsx";
 import { MakingReviewsProvider } from "./MakingReviews.tsx";
 import { AssetSearchField, AssetSearchResults } from "./assets/AssetSearch.tsx";
-import { CardTagMark, PickCircle, ShareLineMark } from "./assets/CardMarks.tsx";
+import { BuildingMark, CardTagMark, PickCircle, ShareLineMark } from "./assets/CardMarks.tsx";
 import { SelectionBar } from "./assets/SelectionBar.tsx";
 import { ShareDialog } from "./assets/ShareDialog.tsx";
 import { ViewerActions } from "./assets/ViewerActions.tsx";
@@ -187,7 +187,7 @@ function AssetCard({
       onClick={(event) => event.stopPropagation()}
     >
       {children}
-      {tag && <CardTagMark tag={tag} />}
+      {asset.building ? <BuildingMark /> : tag && <CardTagMark tag={tag} />}
       {marks.picked.size > 0 && (
         <PickCircle picked={picked} name={assetName(asset)} onToggle={() => marks.onToggle(asset.file)} />
       )}
@@ -693,7 +693,8 @@ function OpenedAsset({
         />
       }
       onClose={() => model.setPreviewAsset(null)}
-      onReveal={reveal}
+      // A file only in a running build has no place in the game folder to show yet.
+      onReveal={asset.building ? null : reveal}
     />
   );
 }

@@ -15,10 +15,8 @@ async function checkpointFixture(options: { headless?: boolean } = {}) {
   const worktree = path.join(root, "worktree");
   await mkdir(worktree);
   const visible: boolean[] = [];
-  const observed: boolean[] = [];
   const preview = {
     setVisible: (value: boolean) => visible.push(value),
-    setObserved: (value: boolean) => observed.push(value),
   } as unknown as PreviewPort;
   const createHeadlessPreview = options.headless ? async () => preview : undefined;
   const core = {
@@ -38,7 +36,7 @@ async function checkpointFixture(options: { headless?: boolean } = {}) {
   };
   const serve = (served: string | null) =>
     state.servedRoots.set("live", { project: "p", root: served, entry: undefined, loaded: null });
-  return { root, worktree, visible, observed, state, service, loads, offers, serve };
+  return { root, worktree, visible, state, service, loads, offers, serve };
 }
 
 test("a checkpoint never loads Live: it offers the build folder Live serves when it is in it, else the game folder", async () => {
@@ -61,25 +59,25 @@ test("a checkpoint never loads Live: it offers the build folder Live serves when
 });
 
 test("a hidden stage rests Live unless something looks through it", async () => {
-  const { visible, observed, state, service } = await checkpointFixture();
+  const { visible, state, service } = await checkpointFixture();
   await service.setStageVisible(false);
   assert.equal(visible.at(-1), false);
   // With no hidden windows, a session and a run's harness look through Live itself.
   const session = service.sessionPortFor({ label: "look" });
   await session.get();
-  assert.deepEqual([visible.at(-1), observed.at(-1)], [true, true]);
+  assert.equal(visible.at(-1), true);
   await session.release();
-  assert.deepEqual([visible.at(-1), observed.at(-1)], [false, false]);
+  assert.equal(visible.at(-1), false);
   state.activeRunIds.add("run-1");
   service.refreshVisibility();
-  assert.deepEqual([visible.at(-1), observed.at(-1)], [true, true]);
+  assert.equal(visible.at(-1), true);
   await service.setStageVisible(true);
   assert.equal(visible.at(-1), true);
 });
 
 test("where the harness has the stand-in, a run leaves a hidden Live at rest", async () => {
-  const { visible, observed, state, service } = await checkpointFixture({ headless: true });
+  const { visible, state, service } = await checkpointFixture({ headless: true });
   state.activeRunIds.add("run-1");
   await service.setStageVisible(false);
-  assert.deepEqual([visible.at(-1), observed.at(-1)], [false, false]);
+  assert.equal(visible.at(-1), false);
 });

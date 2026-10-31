@@ -17,23 +17,21 @@ request and outcome; expanding shows captures, Play build and Open game chat. Em
 
 ## Learning and instructions
 
-Learning starts off (an older install is switched off once), as does **Apply suggestions
-automatically**. Activity's header switch toggles learning; Harness's own edits are listed
+Learning starts off (an older install is switched off once). Activity's header switch toggles learning; Harness's own edits are listed
 there, each undoable.
 Off, Harness learns nothing new and cannot edit its own code, prompts or skills; what it learned
-stays in use and undoable, waiting suggestions actionable, runs recorded.
+stays undoable, waiting suggestions actionable, runs recorded. An archive-epoch update
+moves what it learned and edited to `archive/<date>/`.
 
-Harness learns from run evidence and proposes reusable instruction changes; proposed, applied,
-checked and game-quality results are distinct. A game chat shows one plain line about what
-Harness learned from that build, with **Review in Harness**.
+No learning pass follows a run: the harness proposes nothing from run evidence and injects no
+lessons.
 
 Each proposal carries a plain title and summary; checked suggestions are applied or discarded
 together; the file, the proposer's notes and the diff stay behind **See the exact edit**, or show directly
 when the row has nothing else. Applied changes name who let them land and keep
 their diff and **Undo this change**, reverting that change alone; later changes and per-game
 lessons stay. A suggestion written against since-changed instructions is
-applied on top when it still fits, else refused. **Look for
-improvements** (once runs exist) reviews recent builds; its button shows Found, Added or Nothing new. **Settings → Harness** owns automatic application, **Maximum concurrent workers**
+applied on top when it still fits, else refused. **Settings → Harness** owns **Maximum concurrent workers**
 (default four, up to twelve) and **How suggestions are tested**.
 Changes land through validated, recoverable host APIs, never by executing a chat reply; code
 changes are type-checked and started in a copy first, a failing one refused.

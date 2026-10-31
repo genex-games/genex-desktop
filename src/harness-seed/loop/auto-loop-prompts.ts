@@ -7,7 +7,7 @@ import { toolCall } from "./model-roles.ts";
 
 /** The Loop start as a chat is handed it: only when asked, for the hours named. */
 export const AUTO_LAUNCH_WORDS =
-  "Start a Loop (a build that runs on its own) — only when the user asks for one in words (to start one, run it again or start a new one), never for a change you can make yourself. Pass the hours they named as hours, 0 when they said until done, and leave hours out when they named no time. Know first what the game is and how it should look. It starts from this folder as you leave it when your reply ends: call it once, last, then say in one line that it starts.";
+  "Start a Loop (a build that runs on its own) — only when the user asks for one in words (to start one, run it again or start a new one), never for a change you can make yourself. Pass the hours they named as hours, 0 when they said until done, and leave hours out when they named no time. It starts from this folder as you leave it when your reply ends: call it once, last, then say in one line that it starts.";
 
 /** The brief's line for a chat handed `tool`, spelled the way `engine` calls it. */
 export function autoLoopRule(engine: string | undefined, tool: string): string {

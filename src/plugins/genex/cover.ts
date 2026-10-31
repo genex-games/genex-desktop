@@ -1,16 +1,16 @@
 /**
- * The game's Genex cover, the Genex plugin's half: the one real 16:9 frame genex.games shows for a
- * game (its gallery card, its page, every shared link). Not Studio's own sidebar look
- * (`set_game_cover`), which never leaves this Mac.
+ * The game's Genex cover, the Genex plugin's half: the one 16:9 picture genex.games shows for a
+ * game (its gallery card, its page, every shared link), and the optional clip it plays over it. Not
+ * Studio's own sidebar look (`set_game_cover`), which never leaves this Mac.
  *
- * The frame is the game's own demo named `genex-cover` (`config.demos`), photographed by the host
- * through `observe` with a `still` into this plugin's storage, `covers/<project>/`. It is sent with
- * the pinned CLI's `genex cover <file> --json` after a publish is recorded, or at once by
- * genex__cover-set. Until the game has that demo, Studio keeps a plain frame of it as it loads
- * (`GenexCoverOrigin.Studio`), so Publish always shows a cover; the recent frames are kept as
- * candidates the person flips between. Studio never reads the game folder for a frame; Genex
- * decides everything that matters (who outranks whom, the dark and flat gate, the
- * stored size), so every threshold here is an advisory mirror.
+ * The game's agent makes the picture (and the clip) of its real game by any means and hands their
+ * paths to genex__cover; Studio checks them (`cover-image.ts`, `clip-file.ts`) and copies them into
+ * this plugin's storage, `covers/<project>/`. The picture is sent with the pinned CLI's
+ * `genex cover <file> --json` after a publish is recorded, or at once by genex__cover-set; a publish
+ * never takes a new one. Until the agent hands one, Studio keeps a plain frame of the game as it
+ * loads (`GenexCoverOrigin.Studio`), so Publish always shows a cover; the recent pictures are kept
+ * as candidates the person flips between. Genex decides everything that matters (who outranks whom,
+ * the dark and flat gate, the stored size), so every threshold here but the size is an advisory mirror.
  */
 import { createHash, randomUUID } from "node:crypto";
 import { lstat, mkdir, open, readdir, readFile, rm } from "node:fs/promises";
@@ -24,7 +24,6 @@ import {
   type GenexCoverAgentTook,
   GenexCoverOrigin,
   type GenexCoverFrameStats,
-  GenexCoverOperation,
   GenexCoverOutcome,
   type GenexCoverSent,
   type GenexCoverShot,
@@ -40,40 +39,43 @@ import {
   type StillExposure,
   StillMimeType,
 } from "../../shared/preview-contract.ts";
-import { atomicWriteText, isJsonObject, replaceFile } from "../../substrate/fsx.ts";
+import {
+  atomicWriteText,
+  isJsonObject,
+  NotARegularFileError,
+  readRegularFile,
+  replaceFile,
+} from "../../substrate/fsx.ts";
+import { containedReal } from "../../substrate/paths.ts";
 import { stripAnsi } from "./cli.ts";
+import { type ClipFile, readClipFile } from "./clip-file.ts";
+import { COVER_MIN_SIZE, readCoverImage } from "./cover-image.ts";
 
-/** The demo a game stages its cover in (`config.demos`). */
-export const COVER_VIEW = "genex-cover";
 /** Mirror of Genex's cover upload limit (the CLI's `COVER_MAX_BYTES`, the API's `COVER_MAX_UPLOAD_BYTES`). */
 export const COVER_MAX_BYTES = GENEX_COVER_MAX_BYTES;
-/** What the host is asked for: the genex-cover demo at Genex's recommended 1920×1080, within its limit. */
-export const COVER_STILL = { demo: COVER_VIEW, width: 1920, height: 1080, maxBytes: COVER_MAX_BYTES } as const;
-/** The camera of Studio's own frame for a game with no genex-cover demo: the view the game renders itself. */
-export const COVER_FALLBACK_CAMERA = "default";
-/** How soon after its last one Studio may take a game's cover again on its own. */
+/** The largest clip Genex takes beside the cover. */
+export const COVER_CLIP_MAX_BYTES = 8 * 1024 * 1024;
+/**
+ * What the host is asked for when Studio takes its own plain frame of a game whose agent made no
+ * cover: the view the game renders itself, at Genex's recommended 1920×1080, within its limit.
+ */
+export const COVER_FRAME = { camera: "default", width: 1920, height: 1080, maxBytes: COVER_MAX_BYTES } as const;
+/** How soon after its last one Studio may take a game's plain frame again on its own. */
 export const COVER_AUTO_GAP_MS = 2 * MINUTE_MS;
 /** Mirror of the host's ceiling for one backend call (`CALL_TIMEOUT_MS` in the plugin registry). */
 export const INVOCATION_BUDGET_MS = 190 * SECOND_MS;
-/** A publish shoots again only with this much of its call left, so its own answer still arrives. */
-export const MIN_REMAINING_FOR_SHOT_MS = 75 * SECOND_MS;
-/** How long a publish waits for its shot; past it, the last shot is the one sent. */
-export const PUBLISH_SHOT_TIMEOUT_MS = 30 * SECOND_MS;
+/** How long Studio waits for its own plain frame of a game. */
+export const COVER_FRAME_TIMEOUT_MS = 30 * SECOND_MS;
 /** How long one cover upload (the CLI's grant, PUT and commit) may take. */
 export const COVER_SEND_TIMEOUT_MS = 90 * SECOND_MS;
 /** How long asking Genex for the game's current cover may take. */
 export const COVER_VIEW_TIMEOUT_MS = 30 * SECOND_MS;
 
-/** The cover card's comfort line: a frame that only just clears the gate reads murky on a card. */
-const COMFORT = { MinMean: 0.2, MinSpread: 0.08, MaxNearBlack: 0.7 } as const;
-/** Mirror of the size Genex stores a cover at: a smaller frame is scaled up and goes soft. */
-const STORED = { Width: 1280, Height: 720 } as const;
 const WIDE = 16 / 9;
 /** How far from 16:9 a frame may be before Genex's centre crop takes a visible slice off it. */
 const WIDE_TOLERANCE = 0.01;
 /** How much of the page's or the CLI's own words a record keeps. */
 const REASON_CHARS = 240;
-const AVAILABLE_MAX = 32;
 const SHOT_RECORD = "shot.json";
 const CANDIDATES_RECORD = "candidates.json";
 /** How many recent frames the person can flip between in Publish. */
@@ -81,16 +83,12 @@ export const COVER_CANDIDATES_MAX = 4;
 /** A candidate's name: the sha256 of its image bytes, nothing a path could hide in. */
 const CANDIDATE_SHA = /^[0-9a-f]{64}$/;
 const SENT_RECORD = "sent.json";
-/** When the agent itself last kept a shot and a clip (`GenexCoverAgentTook`). */
+/** When the agent itself last kept a picture and a clip (`GenexCoverAgentTook`). */
 const AGENT_RECORD = "agent.json";
 /** A send's own copy of the shot it uploads, beside the shot: removed when the send ends. */
 const SEND_COPY_PREFIX = ".send-";
 const PRIVATE_FILE = 0o600;
 const PRIVATE_DIR = 0o700;
-
-/** What genex__cover does (`GenexCoverOperation`, which Studio's chat reads too). */
-export const CoverOperation = GenexCoverOperation;
-export type CoverOperation = GenexCoverOperation;
 
 const OUTCOME_KINDS = new Set<string>(Object.values(GenexCoverOutcome));
 /** Answers that settle a frame: sending the same bytes again would only get the same answer. */
@@ -111,11 +109,10 @@ const SENT_OUTCOMES = new Set<GenexCoverOutcome>([
   GenexCoverOutcome.Failed,
 ]);
 
-/** What a shot's numbers and size suggest before Genex sees it. Advisory: the server decides. */
+/** What a picture's numbers and size suggest before Genex sees it. Advisory: the server decides. */
 export const CoverAdvice = {
   TooDark: "too_dark",
   Flat: "flat",
-  Dim: "dim",
   Small: "small",
   NotWide: "not_16_9",
 } as const;
@@ -132,16 +129,9 @@ export const CoverDelivery = {
 } as const;
 export type CoverDelivery = (typeof CoverDelivery)[keyof typeof CoverDelivery];
 
-/**
- * The host's camera for one invocation: a still of the genex-cover demo through `observe`, and
- * when the invocation began on the tools' clock, since host services answer only inside it.
- */
+/** The host's camera on the bound game for one invocation: Studio's own plain frame of it, through `observe`. */
 export interface CoverCamera {
-  invokedAt: number;
-  /** A still of the genex-cover demo, or of the camera named (Studio's own frame of a game with no demo). */
-  shoot(view?: { camera: string }): Promise<unknown>;
-  /** A recording of the genex-clip demo; absent where the host records no clips. */
-  record?(): Promise<unknown>;
+  shoot(): Promise<unknown>;
 }
 
 /** The CLI's answer to an upload. */
@@ -160,15 +150,24 @@ export interface CoverView {
   coverSource: string | null;
 }
 
-/** A still the host took, checked: the encoded image, its numbers and its JPEG preview. */
-export interface CoverStill {
+/** A picture to keep as the cover: its encoded bytes and what was read of them. */
+export interface CoverFrame {
   image: Buffer;
   mimeType: StillMimeType;
   width: number;
   height: number;
-  source: CaptureSource;
   stats: StillExposure;
-  preview: Buffer;
+  /** How Studio's capture read it; absent for the agent's own picture. */
+  source?: CaptureSource;
+}
+
+/** A clip to keep beside the cover: its video bytes and what was read of them. */
+export type CoverClipFile = ClipFile & { video: Buffer };
+
+/** What genex__cover was handed, read and checked: the picture, and the clip when there is one. */
+export interface CoverFiles {
+  picture: CoverFrame;
+  clip: CoverClipFile | null;
 }
 
 /** Who chose a cover, in Genex's words (`coverSource`): the owner's pick outranks every other. */
@@ -183,37 +182,34 @@ const rejectedAs = (reason: string) =>
   Object.hasOwn(REJECTED_AS, reason) ? REJECTED_AS[reason] : `refused (${reason})`;
 
 const percent = (n: number) => `${Math.round(n * 100)}%`;
+const megabytes = (bytes: number) => `${Math.round(bytes / (1024 * 1024))} MB`;
 
 /** Every sentence the cover speaks: to the agent in tool answers, and to both in publish warnings. */
 export const MESSAGE = {
-  PreviewLabel: "The genex-cover shot (preview)",
-  BadOperation: "Cover operation must be shoot, clip or status",
-  NoShotSent: "No cover frame was sent: this game has no genex-cover shot, so Genex keeps the cover it has.",
-  NoTimeToShoot:
-    "There was not enough time left in this request to shoot the cover again, so the last genex-cover shot was sent.",
-  ShotSkipped: (code: string) =>
-    `The cover was not shot again (${code}), so the last genex-cover shot, if any, was sent.`,
-  ShotTimedOut: "The cover shot did not finish in time, so the last genex-cover shot, if any, was sent.",
-  ShotNotKept: "The new cover shot could not be kept, so the last genex-cover shot, if any, was sent.",
-  NoDemoAtPublish:
-    "This game has no demo named genex-cover, so no new cover frame was taken; the last genex-cover shot, if any, was sent.",
+  NoShotSent: "No cover picture was sent: this game has none kept, so Genex keeps the cover it has.",
+  /** genex__cover's refusals of what it was handed; nothing is kept when one is refused. */
+  NoImage: "Pass image: the path of the cover picture inside this game's folder.",
+  NotPath: (field: string) => `${field} must be a path inside this game's folder.`,
+  Outside: (field: string) =>
+    `${field} must name a file inside this game's folder, not outside it or through a link out.`,
+  Missing: (field: string, given: string) => `There is no file at ${given} in this game's folder (${field}).`,
+  NotFile: (field: string) => `${field} must name a file, not a folder or anything else.`,
+  TooLarge: (field: string, limit: number) => `The ${field} file is over Genex's ${megabytes(limit)} limit.`,
   Small: (w: number, h: number) =>
-    `The cover frame is ${w}×${h}: Genex stores covers at 1280×720 and scales a smaller one up, so it looks soft.`,
-  NotWide: (w: number, h: number) => `The cover frame is ${w}×${h}, not 16:9: Genex crops it to its middle 16:9.`,
-  TooDark:
-    "Genex will likely refuse this frame as too dark (mean brightness under 0.11, or over 85% near-black). Find the game's best-lit honest moment; if it is dark by design, stop: never relight the game for a cover.",
-  Flat: "Genex will likely refuse this frame as one flat colour (contrast under 0.04): the canvas may not have drawn, or a fade, a loading screen, sky or fog fills it.",
-  Dim: "This frame only just clears Genex's gate and will read murky on a card: where the game's own light allows, aim for brightness 0.2 or more, contrast 0.08 or more and under 70% near-black.",
+    `The cover is ${w}×${h}: Genex stores covers at ${COVER_MIN_SIZE.Width}×${COVER_MIN_SIZE.Height} and scales a smaller one up, so it looks soft.`,
+  NotWide: (w: number, h: number) => `The cover is ${w}×${h}, not 16:9: Genex crops it to its middle 16:9.`,
+  TooDark: "Genex will likely refuse this picture as too dark (mean brightness under 0.11, or over 85% near-black).",
+  Flat: "Genex will likely refuse this picture as one flat colour (contrast under 0.04): it may be blank, or a fade or a loading screen.",
   Rejected: (reason: string, stats: GenexCoverFrameStats | null) => {
     const numbers = stats
       ? ` (brightness ${percent(stats.mean)}, contrast ${percent(stats.std)}, ${percent(stats.darkShare)} near-black)`
       : "";
-    return `Genex did not use the cover frame: it is ${rejectedAs(reason)}${numbers}. The game keeps the cover it had.`;
+    return `Genex did not use the cover picture: it is ${rejectedAs(reason)}${numbers}. The game keeps the cover it had.`;
   },
   Invalid: (message: string | null) =>
-    `Genex could not take the cover frame${message ? `: ${message}` : ""}. The game keeps the cover it had.`,
+    `Genex could not take the cover picture${message ? `: ${message}` : ""}. The game keeps the cover it had.`,
   Failed: (message: string | null) =>
-    `The cover frame was not sent${message ? `: ${message}` : ""}. The next publish tries again.`,
+    `The cover picture was not sent${message ? `: ${message}` : ""}. The next publish tries again.`,
   SendTimedOut: "Genex did not answer about the cover in time",
   OwnerHolds:
     "The owner chose this game's cover on genex.games and that choice stands: send nothing, and never ask them to clear it.",
@@ -224,55 +220,36 @@ export const MESSAGE = {
 
 /** What the agent is told about each send outcome. */
 export const OUTCOME_GUIDANCE: Record<GenexCoverOutcome, string> = {
-  [GenexCoverOutcome.Applied]:
-    "Genex uses this frame as the game's cover now. Record the shot in the project's design notes if it keeps them.",
+  [GenexCoverOutcome.Applied]: "Genex uses this picture as the game's cover now.",
   [GenexCoverOutcome.Outranked]:
     "The owner chose this game's cover on genex.games and that choice stands. Never send another or ask them to clear it.",
   [GenexCoverOutcome.KeptOwner]:
     "The owner chose this game's cover on genex.games, so nothing was uploaded. Never send another or ask them to clear it.",
   [GenexCoverOutcome.Rejected]:
-    "Genex refused the frame. Too dark: only if the game has a brighter honest moment, stage that and shoot again; if it is dark by design, stop and never relight it. Flat: wait for the render or reframe. Otherwise fix the file, not the game.",
-  [GenexCoverOutcome.Invalid]: "The frame was refused before sending: fix the shot, not the game.",
+    "Genex refused the picture (its reason and numbers are in the answer); the game keeps the cover it had.",
+  [GenexCoverOutcome.Invalid]: "The picture was refused before sending: the answer says why.",
   [GenexCoverOutcome.Failed]:
-    "The frame did not reach Genex (sign-in, the hourly limit or the network). Nothing is wrong with it; the next publish tries again.",
+    "The picture did not reach Genex (sign-in, the hourly limit or the network). Nothing is wrong with it; the next publish tries again.",
   [GenexCoverOutcome.None]:
-    'There is no genex-cover shot to send. Stage the cover as a demo named genex-cover and check it with genex__cover {"operation":"shoot"} first.',
-  [GenexCoverOutcome.Unchanged]: "Genex already has this exact frame; nothing was sent.",
+    'There is no cover picture to send: hand one to genex__cover {"image":"<path in the game folder>"} first.',
+  [GenexCoverOutcome.Unchanged]: "Genex already has this exact picture; nothing was sent.",
   [GenexCoverOutcome.NotHosted]:
-    "This game has no hosted Genex project yet, so nothing was sent: the shot goes with the first publish.",
+    "This game has no hosted Genex project yet, so nothing was sent: the picture goes with the first publish.",
   [GenexCoverOutcome.Busy]:
-    'A publish is running for this game, so nothing was sent now. When genex__publish-status says it is done, check genex__cover {"operation":"status"} before sending again.',
-};
-
-/** What the agent is told about each still problem the host can answer. */
-export const PROBLEM_GUIDANCE: Record<PluginStillProblem["code"], string> = {
-  [PluginStillProblemCode.Unavailable]:
-    "This Studio window cannot take a cover shot right now. The last shot, if any, is kept.",
-  [PluginStillProblemCode.LoadFailed]: "The game did not load for the shot: fix the build, then shoot again.",
-  [PluginStillProblemCode.ViewUnknown]:
-    'The game has no demo named genex-cover. Add one to config.demos, read genex__skill {"name":"genex-cover"} first.',
-  [PluginStillProblemCode.ViewFailed]: "The genex-cover demo failed (reason says how). Fix the demo, then shoot again.",
-  [PluginStillProblemCode.CaptureFailed]: "The frame could not be read from the game's window. Shoot again.",
-  [PluginStillProblemCode.TooLarge]:
-    "Even a JPEG of the frame is over Genex's 8 MB limit: lower the detail the demo stages, then shoot again.",
-  [PluginStillProblemCode.Timeout]:
-    "The shot did not finish in time: make the genex-cover demo stage faster (no long waits), then shoot again.",
+    "A publish is running for this game, so nothing was sent now. When genex__publish-status says it is done, look at its cover before sending again.",
 };
 
 /** What the agent is told about when the current shot is sent. */
 export const DELIVERY_GUIDANCE: Record<CoverDelivery, string> = {
-  [CoverDelivery.FirstPublish]:
-    "The first publish (a first draft too) shoots the genex-cover demo again and sends it as the game's Genex cover.",
+  [CoverDelivery.FirstPublish]: "The first publish (a first draft too) sends this picture as the game's Genex cover.",
   [CoverDelivery.NextPublish]:
-    "The next publish (a draft too, until the game is public) shoots it again and sends it; genex__cover-set sends this shot now.",
-  [CoverDelivery.NextGalleryPublish]:
-    "The next Publish shoots it again and sends it (a draft never does); genex__cover-set sends this shot now.",
+    "The next publish (a draft too, until the game is public) sends it; genex__cover-set sends it now.",
+  [CoverDelivery.NextGalleryPublish]: "The next Publish sends it (a draft never does); genex__cover-set sends it now.",
 };
 
 const ADVICE_LINE: Record<CoverAdvice, (shot: Pick<GenexCoverShot, "width" | "height">) => string> = {
   [CoverAdvice.TooDark]: () => MESSAGE.TooDark,
   [CoverAdvice.Flat]: () => MESSAGE.Flat,
-  [CoverAdvice.Dim]: () => MESSAGE.Dim,
   [CoverAdvice.Small]: (shot) => MESSAGE.Small(shot.width, shot.height),
   [CoverAdvice.NotWide]: (shot) => MESSAGE.NotWide(shot.width, shot.height),
 };
@@ -306,12 +283,12 @@ const fitsCover = (image: unknown, mimeType: unknown): image is Uint8Array =>
   isBytes(image) && image.byteLength > 0 && image.byteLength <= COVER_MAX_BYTES && STILL_TYPES.has(String(mimeType));
 
 /** A well-formed still from the host's answer, or null. */
-function stillOf(raw: unknown): CoverStill | null {
+function stillOf(raw: unknown): CoverFrame | null {
   if (!isJsonObject(raw)) return null;
-  const { image, mimeType, width, height, source, preview } = raw;
+  const { image, mimeType, width, height, source } = raw;
   const stats = exposure(raw.stats);
   const sized = wholePixels(width) && wholePixels(height);
-  const valid = fitsCover(image, mimeType) && sized && SOURCES.has(String(source)) && isBytes(preview) && stats;
+  const valid = fitsCover(image, mimeType) && sized && SOURCES.has(String(source)) && stats;
   if (!valid) return null;
   return {
     image: asBuffer(image),
@@ -320,28 +297,23 @@ function stillOf(raw: unknown): CoverStill | null {
     height,
     source: source as CaptureSource,
     stats,
-    preview: asBuffer(preview),
   };
 }
 
-/** A problem the host named, kept to its typed fields. */
+/** A problem the host named, kept to its code and reason. */
 function problemOf(raw: unknown): PluginStillProblem | null {
   if (!isJsonObject(raw) || !PROBLEM_CODES.has(String(raw.code))) return null;
   const problem: PluginStillProblem = { code: raw.code as PluginStillProblem["code"] };
   if (typeof raw.reason === "string") problem.reason = raw.reason.slice(0, REASON_CHARS);
-  if (Array.isArray(raw.available))
-    problem.available = raw.available
-      .filter((name): name is string => typeof name === "string")
-      .slice(0, AVAILABLE_MAX);
   return problem;
 }
 
 /**
- * The host's answer to a still: the picture, or the problem it named. A host older than stills
- * answers an ordinary observation instead, and a malformed answer is no picture either: both read
- * as `unavailable`, this window cannot take a cover shot.
+ * The host's answer to Studio's plain frame: the picture, or the problem it named. A host older
+ * than stills answers an ordinary observation instead, and a malformed answer is no picture either:
+ * both read as `unavailable`, this window cannot take a frame.
  */
-export function readStillAnswer(answer: unknown): { still: CoverStill } | { problem: PluginStillProblem } {
+export function readStillAnswer(answer: unknown): { still: CoverFrame } | { problem: PluginStillProblem } {
   const record = isJsonObject(answer) ? answer : {};
   const picture = stillOf(record.still);
   if (picture) return { still: picture };
@@ -350,16 +322,11 @@ export function readStillAnswer(answer: unknown): { still: CoverStill } | { prob
 
 /** What a shot's numbers and size suggest, in the order they matter. */
 export function coverAdvice(shot: Pick<GenexCoverShot, "width" | "height" | "stats">): CoverAdvice[] {
-  const { lumaMean, lumaStdDev, nearBlackFraction } = shot.stats;
   const advice: CoverAdvice[] = [];
-  // Advisory: Genex's own gate decides, on the encoded frame.
-  const dark = isTooDarkStill(shot.stats);
-  const flat = isFlatStill(shot.stats);
-  const dim = lumaMean < COMFORT.MinMean || lumaStdDev < COMFORT.MinSpread || nearBlackFraction >= COMFORT.MaxNearBlack;
-  if (dark) advice.push(CoverAdvice.TooDark);
-  if (flat) advice.push(CoverAdvice.Flat);
-  if (dim && !dark && !flat) advice.push(CoverAdvice.Dim);
-  if (shot.width < STORED.Width || shot.height < STORED.Height) advice.push(CoverAdvice.Small);
+  // Advisory: Genex's own gate decides, on the encoded picture.
+  if (isTooDarkStill(shot.stats)) advice.push(CoverAdvice.TooDark);
+  if (isFlatStill(shot.stats)) advice.push(CoverAdvice.Flat);
+  if (shot.width < COVER_MIN_SIZE.Width || shot.height < COVER_MIN_SIZE.Height) advice.push(CoverAdvice.Small);
   if (Math.abs(shot.width / shot.height - WIDE) > WIDE * WIDE_TOLERANCE) advice.push(CoverAdvice.NotWide);
   return advice;
 }
@@ -388,7 +355,7 @@ export const ownerHolds = (view: CoverView | null) => view?.coverSource === OWNE
 const everPublic = (state: Pick<GenexPublishState, "status" | "lastPublishAt">) =>
   state.status === GenexHostedStatus.Published || state.lastPublishAt !== undefined;
 
-/** Whether a publish shoots and sends the cover: a gallery publish, or a draft of a game never public. */
+/** Whether a publish sends the kept cover: a gallery publish, or a draft of a game never public. */
 export const coverRides = (kind: GenexPublishKind, state: Pick<GenexPublishState, "status" | "lastPublishAt">) =>
   kind === GenexPublishKind.Gallery || !everPublic(state);
 
@@ -499,14 +466,7 @@ export const keptOwnerRecord = (
 /** Genex's view when it says the owner's own pick is the cover, else null. */
 export const ownerPick = (view: CoverView | null): CoverView | null => (ownerHolds(view) ? view : null);
 
-/** Why a publish took no new shot, from the problem the host named. */
-export function reshootLine(code: PluginStillProblem["code"]): string {
-  if (code === PluginStillProblemCode.ViewUnknown) return MESSAGE.NoDemoAtPublish;
-  if (code === PluginStillProblemCode.Timeout) return MESSAGE.ShotTimedOut;
-  return MESSAGE.ShotSkipped(code);
-}
-
-/** What genex__cover status tells the agent to do next. */
+/** What genex__cover tells the agent about the kept picture: who holds the cover, else when it goes. */
 export function statusGuidance(shot: GenexCoverShot | null, hosted: CoverView | null, delivery: CoverDelivery): string {
   if (ownerHolds(hosted)) return MESSAGE.OwnerHolds;
   if (!shot) return OUTCOME_GUIDANCE[GenexCoverOutcome.None];
@@ -530,7 +490,8 @@ function isShot(value: unknown): value is GenexCoverShot {
   if (!isJsonObject(value)) return false;
   const typed = typeof value.sha256 === "string" && typeof value.takenAt === "string";
   const sized = wholePixels(value.width) && wholePixels(value.height) && wholePixels(value.bytes);
-  const known = STILL_TYPES.has(String(value.mimeType)) && SOURCES.has(String(value.source));
+  const sourced = value.source === undefined || SOURCES.has(String(value.source));
+  const known = STILL_TYPES.has(String(value.mimeType)) && sourced;
   const marks = (value.origin === undefined || ORIGINS.has(String(value.origin))) && optionalFlag(value.pinned);
   return typed && sized && known && marks && exposure(value.stats) !== null;
 }
@@ -605,29 +566,29 @@ async function keepShot(dir: string, shot: GenexCoverShot, image: Uint8Array): P
 }
 
 /**
- * Keep a still as the game's shot, and as the newest of its candidates. `origin` says who staged
+ * Keep a picture as the game's shot, and as the newest of its candidates. `origin` says who made
  * it: a new shot is never pinned, so the person's earlier pick gives way to it.
  */
 export async function saveShot(
   dir: string,
-  still: CoverStill,
+  frame: CoverFrame,
   takenAt: string,
   origin: GenexCoverOrigin = GenexCoverOrigin.Demo,
 ): Promise<GenexCoverShot> {
   await mkdir(dir, { recursive: true, mode: PRIVATE_DIR });
   const shot: GenexCoverShot = {
-    sha256: sha256(still.image),
-    width: still.width,
-    height: still.height,
-    mimeType: still.mimeType,
-    bytes: still.image.byteLength,
-    source: still.source,
-    stats: still.stats,
+    sha256: sha256(frame.image),
+    width: frame.width,
+    height: frame.height,
+    mimeType: frame.mimeType,
+    bytes: frame.image.byteLength,
+    ...(frame.source ? { source: frame.source } : {}),
+    stats: frame.stats,
     takenAt,
     ...(origin === GenexCoverOrigin.Studio ? { origin } : {}),
   };
-  await keepShot(dir, shot, still.image);
-  await addCandidate(dir, shot, still.image);
+  await keepShot(dir, shot, frame.image);
+  await addCandidate(dir, shot, frame.image);
   return shot;
 }
 
@@ -673,8 +634,8 @@ export async function readCandidates(dir: string): Promise<GenexCoverShot[]> {
 }
 
 /**
- * Make one candidate the kept shot, pinned: the person chose it, so neither Studio nor a publish
- * shoots a new frame over it. Null when no candidate by that sha256 is whole on disk.
+ * Make one candidate the kept shot, pinned: the person chose it, so Studio takes no frame of its own
+ * over it. Null when no candidate by that sha256 is whole on disk.
  */
 export async function pickCandidate(dir: string, sha: unknown): Promise<GenexCoverShot | null> {
   if (typeof sha !== "string" || !CANDIDATE_SHA.test(sha)) return null;
@@ -705,4 +666,53 @@ export async function freezeShot(dir: string, shot: GenexCoverShot): Promise<str
 export async function writeSent(dir: string, sent: GenexCoverSent): Promise<void> {
   await mkdir(dir, { recursive: true, mode: PRIVATE_DIR });
   await atomicWriteText(path.join(dir, SENT_RECORD), `${JSON.stringify(sent, null, 2)}\n`, { mode: PRIVATE_FILE });
+}
+
+// ── what genex__cover is handed ──────────────────────────────────────────────────────────────
+
+/** A path the agent gave, as one relative to the game folder: an absolute one inside it is taken too. */
+function gameRelative(directory: string, given: string): string {
+  const relative = path.isAbsolute(given) ? path.relative(directory, given) : given.replace(/^(\.\/)+/, "");
+  return relative.split(path.sep).join("/");
+}
+
+/** Why a file named for genex__cover could not be read, in the agent's words. */
+function readRefusal(error: unknown, field: string, given: string, limit: number): string {
+  if (error instanceof NotARegularFileError)
+    return error.code === "EFBIG" ? MESSAGE.TooLarge(field, limit) : MESSAGE.NotFile(field);
+  const code = isJsonObject(error) ? error.code : undefined;
+  return code === "ENOENT" ? MESSAGE.Missing(field, given) : MESSAGE.Outside(field);
+}
+
+/**
+ * The bytes of the file `given` names inside the game folder `directory`: a regular file reached
+ * through no link out of the folder, at most `limit` bytes. Throws the agent's refusal otherwise.
+ */
+async function gameFile(directory: string, field: string, given: unknown, limit: number): Promise<Buffer> {
+  if (typeof given !== "string" || !given.trim()) throw new Error(MESSAGE.NotPath(field));
+  try {
+    return await readRegularFile(await containedReal(directory, gameRelative(directory, given)), limit);
+  } catch (error) {
+    throw new Error(readRefusal(error, field, given, limit));
+  }
+}
+
+/**
+ * What genex__cover was handed, read from the game folder and checked whole before anything is
+ * kept: the picture (PNG or JPEG, at least 1280×720, within Genex's limit) and the optional clip
+ * (WebM or MP4, at least five seconds). Any refusal throws, and nothing has been written.
+ */
+export async function readCoverFiles(
+  directory: string,
+  args: { image?: unknown; clip?: unknown },
+): Promise<CoverFiles> {
+  if (args.image === undefined) throw new Error(MESSAGE.NoImage);
+  const image = await gameFile(directory, "image", args.image, COVER_MAX_BYTES);
+  const picture = readCoverImage(image);
+  if ("refused" in picture) throw new Error(picture.refused);
+  if (args.clip === undefined || args.clip === null) return { picture: { image, ...picture }, clip: null };
+  const video = await gameFile(directory, "clip", args.clip, COVER_CLIP_MAX_BYTES);
+  const clip = readClipFile(video);
+  if ("refused" in clip) throw new Error(clip.refused);
+  return { picture: { image, ...picture }, clip: { video, ...clip } };
 }

@@ -34,7 +34,7 @@ import {
   storedRolesKey,
   withAvailableEngines,
 } from "../../src/renderer/stored-roles.ts";
-import { resolveRoles, roleName } from "../../src/shared/model-roles.ts";
+import { resolveRoles } from "../../src/shared/model-roles.ts";
 import { runStartWords } from "../../src/renderer/words.ts";
 import { openingRoles, readStoredRoles, storeRoles } from "../../src/renderer/role-store.ts";
 import { toEntries } from "../../src/renderer/chat-entries.ts";
@@ -650,24 +650,8 @@ describe("which model judges the run", () => {
     assert.equal(readStoredRoles(locked, "claude-code"), null);
   });
 
-  it("names the judge in run activity details, and says nothing when there is nothing to name", async () => {
-    const named = runStartWords({ name: "Dirt 5", kind: "direction" }, "Opus");
-    assert.match(named, /Opus, reviewing without being told which build is which, picks the winner/);
-    assert.match(named, /Dirt 5/);
-    // "default" is the engine's own choice, which is not a name anybody can act on.
-    for (const nothing of [null, "", "default", "same"]) {
-      assert.match(runStartWords(null, nothing), /a reviewer that cannot see which is which picks the winner/);
-    }
-    // …by the judges' own engine's name for it, and with that engine named when the judges are
-    // on the other subscription (cross-provider roles).
-    // Both runs say who judged: the lead's own run_started carries it too, and on which engine.
-    // director-cross-engine.test.ts proves it on a real run (a rig, L3); this keeps an L1 gate
-    // until the payload has a pure builder, which is a seed change of its own.
-    // The run's run_started is written where the run is prepared (director/setup.ts).
-    const director = await read("src/harness-seed/loop/director/setup.ts");
-    assert.match(director, /event_type: RunEvent\.RunStarted[\s\S]{0,400}judgeModel/);
-    assert.match(director, /event_type: RunEvent\.RunStarted[\s\S]{0,600}judgeEngine: run\.judgeEngine/);
-    const started = (payload: Record<string, unknown>): string => {
+  it("opens a run with the reference it was given, and with nothing when it was given none", () => {
+    const started = (payload: Record<string, unknown>): string | undefined => {
       const entries = toEntries([
         {
           id: "e1",
@@ -675,40 +659,23 @@ describe("which model judges the run", () => {
           session_id: null,
           turn_id: null,
           created_at: "2026-09-08T02:00:00.000Z",
-          data: {
-            type: "custom",
-            event_type: "run_started",
-            payload: { runId: "run_x", reference: { name: "Dirt 5", kind: "direction" }, ...payload },
-          },
+          data: { type: "custom", event_type: "run_started", payload: { runId: "run_x", ...payload } },
         },
       ]);
       // A routine line is folded into an activity row; either way it is the RUN line.
       const lines = entries.flatMap((entry) =>
         entry.kind === "activity" ? entry.rows : entry.kind === "system" ? [entry] : [],
       );
-      const line = lines.find((row) => row.tag === "RUN");
-      assert.ok(line, "run_started reads as the run's opening line");
-      return line.text;
+      return lines.find((row) => row.tag === "RUN")?.text;
     };
-    assert.equal(
-      started({ engine: "claude-code", judgeModel: "opus" }),
-      runStartWords({ name: "Dirt 5", kind: "direction" }, roleName("claude-code", "opus")),
+    const reference = { name: "Dirt 5", kind: "direction" };
+    assert.equal(started({ reference, engine: "claude-code", judgeModel: "opus" }), runStartWords(reference));
+    assert.doesNotMatch(
+      started({ reference, engine: "claude-code", judgeModel: "opus" }) ?? "",
+      /review|judge|round before/i,
+      "no round-versus-reviewer rule is taught, whichever judge the record names",
     );
-    assert.match(
-      started({ engine: "claude-code", roles: { judge: "opus" } }),
-      new RegExp(`${roleName("claude-code", "opus")}, reviewing`),
-      "an older run's roles still name its judge",
-    );
-    assert.match(
-      started({ engine: "claude-code", judgeEngine: "codex", judgeModel: "gpt-6-astra" }),
-      /GPT-6-astra on Codex, reviewing/i,
-    );
-    assert.match(
-      started({ engine: "claude-code", judgeEngine: "ollama", judgeModel: "qwen2.5vl" }),
-      /qwen2\.5vl on Ollama, reviewing/,
-      "a local reviewer's engine is named as a person says it",
-    );
-    assert.match(started({ engine: "claude-code" }), /a reviewer that cannot see which is which picks the winner/);
+    assert.equal(started({ engine: "claude-code" }), undefined, "a run with no reference has no opening line to read");
   });
 
   it("a remembered pick on a subscription that is not signed in falls back to this engine's default for that job", () => {

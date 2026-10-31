@@ -14,6 +14,7 @@ import path from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import { PluginSourceKind } from "../../src/shared/plugins.ts";
+import { MessageOrigin } from "../../src/shared/protocol.ts";
 import type { DelegateRequest, DelegateResult, LiveToolResult } from "../../src/substrate/engines/types.ts";
 import { copyProject, Project, TOY_PLUGIN, TOY_PLUGIN_ID } from "../helpers/project-fixtures.ts";
 import { reviewerAnswer } from "../helpers/reviewer.ts";
@@ -89,6 +90,7 @@ type Script = (
 function loopEngine(rig: Rig, scripts: { lead: Script[]; worker: Script }) {
   const requests: Array<{ seat: Seat; request: DelegateRequest }> = [];
   let leadTurns = 0;
+  let chatTurns = 0;
   rig.core.engines.register({
     id: ENGINE,
     label: ENGINE,
@@ -112,6 +114,7 @@ function loopEngine(rig: Rig, scripts: { lead: Script[]; worker: Script }) {
         return text(await onLiveTool(name, args));
       };
       if (seat === Seat.Lead) await scripts.lead[leadTurns++]?.(request, call);
+      if (seat === Seat.Chat) chatTurns++;
       if (seat === Seat.Worker) await scripts.worker(request, call);
       const sessionId = request.resume ?? (seat === Seat.Worker ? `worker-${requests.length}` : "chat-session");
       return {
@@ -121,7 +124,8 @@ function loopEngine(rig: Rig, scripts: { lead: Script[]; worker: Script }) {
         usage: {},
         sessionId,
         summary: `${seat} done`,
-        ...(seat === Seat.Chat
+        // Only the person's message starts the Loop; the cover step after it starts none.
+        ...(seat === Seat.Chat && chatTurns === 1
           ? { studioToolCalls: [{ name: "start_autopilot", args: { goal: "a garden with a pond" } }] }
           : {}),
       };
@@ -170,6 +174,21 @@ async function untilCalled(calls: PluginCall[], matches: (call: PluginCall) => b
   return false;
 }
 
+/** Once the landed build's cover step, the chat's own message after the close, is answered. */
+async function coverAnswered(rig: Rig) {
+  await waitForLog(
+    rig.core,
+    (log) => {
+      const cover = customEvents(log, "coordinator_message_queued").find(
+        (queued) => (queued.action as { origin?: string } | undefined)?.origin === MessageOrigin.CoverStep,
+      );
+      return customEvents(log, "coordinator_message_handled").some((handled) => handled.messageId === cover?.messageId);
+    },
+    CLOSE_WAIT_MS,
+    "the cover step's answer",
+  );
+}
+
 /** Whether a file exists. */
 const exists = (file: string) =>
   stat(file).then(
@@ -192,7 +211,6 @@ async function renamedToyPlugin(): Promise<{ dir: string; id: string; rename: (t
   for (const lock of manifest.locks) lock.personFirst = rename(lock.personFirst);
   for (const skill of manifest.skills) skill.tools = skill.tools.map(rename);
   for (const type of manifest.workerTypes) type.tools = type.tools.map(rename);
-  for (const judge of manifest.judges) if (judge.probe) judge.probe = rename(judge.probe);
   await writeFile(path.join(dir, "plugin.json"), JSON.stringify(manifest, null, 2));
   return { dir, id: manifest.id, rename };
 }
@@ -264,6 +282,7 @@ async function toyLoop(plugin: { dir: string; id: string; rename: (tool: string)
   const name = plugin.rename;
   const ended = await untilCalled(calls, (call) => call.moment === "run.end");
   assert.ok(ended, "the run's end moment fired");
+  await coverAnswered(rig);
   const { steps: trail, health } = trailOf(calls, plugin.id);
   // The person's message that started the Loop took its own checkpoints first, with the one step
   // the plugin opts in to for chat messages, before its answer and (flipped: also) after it; the
@@ -282,7 +301,14 @@ async function toyLoop(plugin: { dir: string; id: string; rename: (tool: string)
   ];
   assert.ok(!inOrder(steps, want).includes(-1), `the plugin's steps in order: ${steps.join(", ")}`);
   assert.equal(steps[0], want[0], "the run's start comes first");
-  assert.equal(steps.at(-1), want.at(-1), "and its end last");
+  // The landed build's cover step is a chat message of its own after the close: its message
+  // checkpoints follow the run's end (flipped: the end was the plugin's last step).
+  const afterEnd = steps.slice(steps.lastIndexOf(want.at(-1) ?? "") + 1);
+  assert.ok(afterEnd.length > 0, `the cover step's checkpoint follows the end: ${steps.join(", ")}`);
+  assert.ok(
+    afterEnd.every((step) => step === message),
+    `only a message's checkpoint after the end: ${steps.join(", ")}`,
+  );
   assert.ok(health.length > 0, "the app's health was polled");
   assert.ok(health.every((tool) => tool === `${plugin.id}__${name("editor-state")}`));
   // The save point kept the garden, and the rewind put the folder back to it.

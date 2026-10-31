@@ -6,6 +6,8 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { rm, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { coverStepAsk, coverStepRuns } from "../../src/main/core/cover-step.ts";
 import { GENEX_PLUGIN_ID } from "../../src/shared/genex.ts";
@@ -48,6 +50,13 @@ describe("the Genex cover as a step after a landed build", () => {
     const ask = coverStepAsk(THREAD, events, "r1");
     assert.ok(ask);
     assert.match(ask.text, /genex__skill \{"name":"cover"\}/, "the agent reads the cover skill then");
+    // Flipped from staging a genex-cover demo: the agent makes a picture of its real game by any
+    // means and hands Genex the file paths.
+    assert.match(ask.text, /genex__cover/);
+    assert.match(ask.text, /\{ image: "<path>", clip\?: "<path>" \}/);
+    assert.match(ask.text, /in the game folder/);
+    assert.match(ask.text, /PNG or JPEG, at least 1280×720/);
+    assert.doesNotMatch(ask.text, /demo|stage|shoot/i);
     assert.deepEqual(ask.options, {
       engine: "claude-code",
       model: "opus",
@@ -92,9 +101,10 @@ describe("the Genex cover as a step after a landed build", () => {
 describe("the core asks for the cover when a build lands", () => {
   type Sent = { text: string; options: { origin?: string; thread?: string } };
 
-  async function landedIn(genexOn: boolean): Promise<Sent[]> {
+  async function landedIn(genexOn: boolean, shape?: (dir: string) => Promise<void>): Promise<Sent[]> {
     const { core } = await coreLite();
     await core.games.scaffold("racer", { title: "Racer" });
+    await shape?.(core.games.dirFor("racer"));
     await core.plugins.setEnabled(GENEX_PLUGIN_ID, genexOn);
     const threadId = await core.threadForGame("racer");
     const sent: Sent[] = [];
@@ -123,5 +133,14 @@ describe("the core asks for the cover when a build lands", () => {
 
   it("with Genex off nothing is asked", async () => {
     assert.deepEqual(await landedIn(false), []);
+  });
+
+  it("a game made as an app gets the same ask: no engine has a cover reel of its own any more", async () => {
+    const sent = await landedIn(true, async (dir) => {
+      await rm(path.join(dir, "index.html"), { force: true });
+      await writeFile(path.join(dir, "project.godot"), "config_version=5\n");
+    });
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0]?.options.origin, MessageOrigin.CoverStep);
   });
 });

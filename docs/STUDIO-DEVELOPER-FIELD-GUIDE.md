@@ -272,8 +272,8 @@ It also checks secure contexts in Live and worker views. Register `game` and `st
 privileges in one call before Electron is ready; a second registration loses the game's secure
 context and disables WebGPU, while Three.js can silently render through its WebGL fallback.
 `npm run test:shapes:e2e` is the milestone's own proof, and part of `npm run verify`. It opens
-each of the five games under `tests/fixtures/games` as the user's own game — four of them with no
-edit at all, the bundled one with the two-line `installStudio({ renderer, player })` — waits for
+each of the five games under `tests/fixtures/games` as the user's own game — all of them with no
+edit at all — waits for
 the page to report itself ready, shadow-builds the one that has a build, drives it, photographs
 it and judges the evidence with the harness's own `gatherEvidence`; then drives the same five
 again through the real Codex file bridge (the shim run as a child process, only the CLI scripted)
@@ -382,6 +382,9 @@ chat-workers (a chat message's two workers on Builds and as chat lines, after an
 more games, written after the start so their Loops read as going: Fixture Loop with three workers,
 the lead's background work and the finish check not run yet; Fixture web Loop with build-graph's
 runs and Fixture Unreal Loop with lead-graph's, each with its workers' records, drawn as trees),
+build-timeline (a Loop written after the start: four builds on its line, one a sound-only merge and
+one blank, twelve workers off them with a fold, a re-delivered sign, and deliveries only in its
+integration worktree for the Assets tab),
 finish-check (four Loops written after the start, one per finish check look: Done and Stopped in
 the Builds history, Not yet after one no, and the newest Checking),
 paused-build (a Loop a usage limit paused and resumed, written after the start: one worker's try
@@ -518,16 +521,17 @@ read `logs`. A run paused by an engine limit or a loop crash continues from
 owner is using it; leave the profile running at the end.
 
 Run overrides reach the harness from the studio's environment only by name (`harnessRunEnv`):
-`STUDIO_DIRECTOR_LOOP=turn` picks the long turn for a run that names no loop, and
 `STUDIO_UNREAL_RUNNER=lead` sends a new Loop on an Unreal project, and the resume of a run that
-runner wrote, to the Unreal runner from before the one Loop. Neither is a run record field or shown
-in the UI; set it on start and restart.
+runner wrote, to the Unreal runner from before the one Loop. It is no run record field and not
+shown in the UI; set it on start and restart.
 
 Transport descriptors are private local capabilities under the owned profile; never copy them
 into task records. Unix sockets live in a short 0700 temporary directory, with owner-only socket
 permissions; on Windows the control is a named pipe with a fresh random name, which other accounts
 can open only read-only. Protocol v1 uses bounded newline-delimited JSON, request IDs and one operation at
-a time. A timeout is not success and does not authorize retrying a mutation blindly.
+a time; `status`, `runs` and `stop` answer while another runs, and an operation that times out frees
+the slot though it may still finish (`main/dev/operation-slot.ts`). A timeout is not success and does
+not authorize retrying a mutation blindly.
 
 ## Embedded terminal acceptance
 

@@ -79,7 +79,7 @@ export function workerBrief(parts: WorkerBriefParts): string {
       : "Work from the project and your own knowledge; the web is not part of this task.",
     WORKER_PLUGIN_SEARCH,
     WORKER_ONE_TURN,
-    "Never start workers of your own. Hand back by finishing: end with a report of what you did, what you found (name the files and pictures that show it) and what is left; the lead reads it in full.",
+    "Never start workers of your own. Hand back by finishing: end with a report of what you did and what is left; the lead reads it in full.",
   ];
   return lines.join("\n");
 }
@@ -172,26 +172,4 @@ export const RUN_POOL_WORDS = {
   /** One of the run's own workers waits on the person: the line that wakes the lead (`worker <id>` opens it). */
   waiting: (id: string, question: string) =>
     `worker ${id} is waiting for the person: ${question}. Only that call waits, and nobody answering is not a no; go on with the rest of the work, and the other workers keep going.`,
-} as const;
-
-/** What `worker_mark` answers a director about one of its builders. */
-export const DIRECTOR_MARK_WORDS = {
-  unknown: (id: string) => `no worker "${id}"`,
-  badVerdict: `Say verdict used (integrate its last accepted commit) or rejected (its news stops).`,
-  stillRunning: (id: string) => `worker ${id} is still running: stop it first (${WorkerTool.Stop}), then reject it.`,
-  rejected: (id: string) =>
-    `Rejected ${id}: no digest or ${WorkerTool.Wait} names it again. Its commits stay on its ref.`,
-  inGameAlready: (id: string) =>
-    `worker ${id}'s work is already in the game (integrated), so it cannot be rejected. To take something of it out, change it in your worktree.`,
-  rejectedCard: (id: string, note: string | null) => `director rejected worker ${id}${note ? `: ${note}` : ""}`,
-  rejectedPlain: (title: string) => `set aside the builder's work on ${title}`,
-} as const;
-
-/**
- * A conflict worker as the chat and the Builds graph name it: the work it fits in, in plain
- * words. Its title for the lead names the git step, which the person never reads.
- */
-export const FIT_IN_WORDS = {
-  title: (title: string) => `Fit ${title} in with the rest of the game`,
-  someWork: "Fit the latest work in with the rest of the game",
 } as const;

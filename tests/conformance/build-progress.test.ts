@@ -165,20 +165,6 @@ test("an empty base is reported as infrastructure, not a validated game", () => 
   assert.match(buildProgress(graph).health, /no scenery or gameplay yet/);
 });
 
-test("the final Optimization stage does not announce another creative build", async () => {
-  const { emptyOptimization } = await import("../../src/harness-seed/loop/optimization.ts");
-  const result = { ...emptyOptimization({ runId: "run_x", project: "game" }), phase: "profiling_candidate" };
-  const graph = projectBuildGraph(
-    [...start, event(3, "autopilot_base", { ok: true }), event(4, "optimization_updated", result)],
-    "parent",
-    [],
-    null,
-  )!;
-  assert.equal(buildProgress(graph).nodeId, "optimization");
-  assert.equal(buildProgress(graph).title, "Optimization");
-  assert.match(buildProgress(graph).health, /safe improvements/);
-});
-
 test("an earlier build retains its rounds after an empty replacement run", () => {
   const events = [
     ...start,

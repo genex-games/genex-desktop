@@ -22,10 +22,10 @@ function selfEdits(events: Awaited<ReturnType<import("../../src/main/studio-core
 }
 
 describe("self-improvement is stopped", () => {
-  it("a fresh install starts with learning off, and the harness is told so", async () => {
+  // Flipped (phase 5): the harness no longer asks the switch (`learning.enabled` is gone); it learns nothing.
+  it("a fresh install starts with learning off", async () => {
     const lite = await coreLite();
     assert.equal(lite.core.settings.learning, false);
-    assert.equal(await lite.api()["learning.enabled"]!({} as never), false);
   });
 
   it("an install saved before the stop is switched off once; turning it back on is kept", async () => {

@@ -3,8 +3,7 @@
 ## From a request to a game
 
 Auto edits directly or starts a Loop when asked; Loop: the chat leads and builds beside workers.
-Parts grow boldly within the ask; a round stays unless a passing check fails. Judges and the art
-director answer only when the lead asks. Other
+Judges answer only when the lead asks. Other
 projects' Loops run [in place](projects-engines.md#loops-in-place). Loop hours are a soft cap (the
 lead's finish ends it early, in place after the lead's named gaps; 15 minutes' grace).
 Acceptance survives workers and restarts. External blockers pause the run at its
@@ -16,7 +15,8 @@ An active run opens Builds once; a build shown from chat, or empty Builds, opens
 
 ## The two views
 
-**Live** plays the browser game natively; previews pause unwatched or hidden. The strip
+**Live** plays the browser game natively; previews pause unwatched or hidden. Pages load
+hidden at Live's size, never at none. The strip
 holds Live/Builds/Assets, Reload, Play/Stop and Sound (⌥⌘M; heard when shown) once the
 game has content, Full screen (hold Esc), plugin actions, Multiplayer, Publish. Stop halts it until
 Play/Reload. An empty scaffold shows “Ready for your first idea”, or
@@ -25,23 +25,25 @@ Opening a game starts nothing: Live keeps its game. Otherwise only the user chan
 Reload, Make live, a chat request while hidden) or a finished Unity/Godot `web/` build. A newer
 healthy build, a changed game folder, a chat's show or landing, or a broken shown build lights Reload; hidden and not stopped, all but a new build go
 in at once. The
-preview reaches only public library CDNs; Open Game names other hosts. Other folders' views:
+preview's network is open, as a web page's. Other folders' views:
 [projects](projects-engines.md#lives-views).
 
 **Builds** is a graph: You asked, a row per part, Your build, then the lead while no part
 works. Tries at one step fold into one node; what reached the build forms the line, the rest
-hangs below. Tries a pause cut off show Paused until added. An eye marks (and opens) the reviewers'
-notes. A new build is “Checking it starts…” until it runs. A working node shows its agent's
-screen and action; a selected one opens as a card. **Follow up in chat** notes the next message to its build.
-Tabs (one per build; past three, one picker, newest first) and chat cards open earlier builds. A Loop, workers, jobs or a claim make a tree: the lead (jobs
-below), then a finish check the lead asked for, tinted Checking, Not yet (reasons), Done or Stopped, a
-chat line each round. In place, save points form one line showing each change; workers hang off
-it, solid under the save point taking their work, else ghosts.
+hangs below. Tries a pause cut off show Paused until added. An eye opens the reviewers' notes. A
+working node shows its agent's screen; a selected one opens as a card. **Follow up in chat** notes
+the next message to its build. Tabs (one per build; past three, one picker, newest first) and chat
+cards open earlier builds. A Loop, workers, jobs or a claim make a tree: the lead (jobs below),
+then, when asked, a finish check: Checking, Not yet, Done or Stopped. A web Loop's line is its
+builds (each health check's screenshot and outcome); workers hang off the build they merged into or
+started from; past three finished per build fold into “+N workers”. In place, workers hang off save
+points: solid under the one taking their work, else ghosts. Compares pair only one frame
+(consecutive builds, asset versions) whose pixels differ; else the card says nothing visibly changed.
 
-Agents test hidden, only while playing (Godot too), never Live; blind judges play when the lead
-asks; chat frames never certify a build. A finished worker, passing checks, integration and Live's
-revision are distinct facts; Builds and Studio report missing checks, coverage, revisions and
-studio-verified plays; chat shows a delivery's capture, failures too.
+Agents test hidden (Godot too), never Live. A finished worker, integration and Live's
+revision are distinct facts; chat shows a delivery's capture, failures too. Before integrating or
+landing, one health check loads the page once, with `?genex-shot=1` a game may read: it loads,
+throws nothing uncaught, is not blank.
 
 ## Continuation and interruption
 

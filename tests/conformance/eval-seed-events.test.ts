@@ -91,14 +91,14 @@ describe("completion_call", () => {
           threadId: core.mainThread,
           stream: false,
           messages: [],
-          provenance: { role: CompletionRole.Playtester },
+          provenance: { role: CompletionRole.Judge },
         }),
       /throttled/,
     );
     const [call] = await completionCalls(core, core.mainThread);
     assert.deepEqual(
       [call?.ok, call?.failure, call?.latencyMs, call?.model, call?.usage, call?.role],
-      [false, EngineFailureKind.RateLimit, 40, null, null, CompletionRole.Playtester],
+      [false, EngineFailureKind.RateLimit, 40, null, null, CompletionRole.Judge],
     );
   });
 

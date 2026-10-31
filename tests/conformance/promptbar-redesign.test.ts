@@ -230,7 +230,6 @@ test("the real host stores approval before dispatch and keeps 15-minute Loop set
   const core = new StudioCore({
     paths: { userData: root, resources: await makeResources() },
     engines: fixtureEngines(),
-    executionPolicy: { runBackgroundImprovement: false },
   });
   t.after(async () => {
     await core.stop();
@@ -278,7 +277,6 @@ test("each provider plans with current plugin capabilities without executable to
   const core = new StudioCore({
     paths: { userData: root, resources: await makeResources() },
     engines: fixtureEngines(),
-    executionPolicy: { runBackgroundImprovement: false },
   });
   t.after(async () => {
     await core.stop();

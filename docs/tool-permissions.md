@@ -5,9 +5,8 @@ Allow / Deny cards in the chat, as Claude Code asks in a terminal; so do a build
 run's coordinator, in the chat's mode. Workers of the chat's lead follow the chat's mode too, their
 questions waiting in the chat under the worker's name, and never reach a sign-in, Genex's own data
 or another game in any mode ([Workers](#workers)). A chat on another engine follows the modes that
-engine can honour ([Other engines](#other-engines)). Everything else the studio delegates (the
-playtester, scouts, judges, candidates, a classic Autopilot's builders) stays unattended and
-sandboxed. The [architecture](agent/architecture.md#processes-and-trust-boundaries)
+engine can honour ([Other engines](#other-engines)). Everything else the studio delegates (a
+reviewer, a second opinion, an older run's builders) stays unattended and sandboxed. The [architecture](agent/architecture.md#processes-and-trust-boundaries)
 points here; the [feature map](agent/feature-map.md) lists the selectors and the
 [Models and context](product/models-context.md#permissions) page the visible behaviour.
 
@@ -25,7 +24,7 @@ The host alone decides, from what it recorded itself, never from anything the ha
 delegation asks only when all of these hold:
 
 - the brief has no narrower job: not read-only, no
-  director, coordinator, playtest, worker `ownership`, optimization candidate, own `cwd`, run
+  director, coordinator, optimization candidate, own `cwd`, run
   self-capture, own `timeoutMs` or improvement class, and it is the chat's own session
   (`isChatsOwnSession`), not a lead's turn;
 - it works in its game's own folder and answers a chat turn (`chatTurn`) whose message id the
@@ -85,8 +84,8 @@ mode answers, not the session's, a saved allow rule or the game's own `.claude/s
 lead's failed switch is never the picker's error; Auto refused records its model as without Auto,
 and tells the picker. A message
 handed to a lead never makes the chat's own session ask. A worker the host found (its `worker`
-grant) runs in the chat's mode ([Workers](#workers)); builders a classic Autopilot starts, the
-playtester, scouts, judges and a director with its own hands (in its worktree) stay unattended. A plan
+grant) runs in the chat's mode ([Workers](#workers)); a reviewer, a second opinion and a director
+with its own hands (in its worktree) stay unattended. A plan
 approved in the studio's plan review is dispatched without a composer id, so its build runs
 unattended. A harness that shapes a brief or writes queue records can make the chat's own session
 or the coordinator ask only about a message the person sent that is still unanswered, and a lead
@@ -97,7 +96,7 @@ names: one it reads is one Accept edits writes without asking.
 
 ## The harness cannot forge it
 
-- `thread.create` takes a title and nothing else: no id, kind, game or mode.
+- The harness makes no threads (there is no `thread.create`), so none of its own can read as a person's chat.
 - `events.append` and `turn.append` refuse `tool_permission` and `plugin_consent` rows
   (`refuseHostQuestions`); the host appends both.
 - A session a person answers reads beyond its game only the folders the thread records
@@ -179,9 +178,9 @@ its words never stream as the chat's reply.
 A lead also has the chat's own session's plugins, connectors and cover, whether or not it asks
 (`hostToolsEligible`): its director grant (`root`, or `inPlace`) marks its seat in the game folder
 (`#leadRoot`), and the host's own finding of that seat (`seat.leads`) decides, never the brief; a
-read-only session that leads nothing, the playtester and the coordinator get none. No lead is
+read-only session that leads nothing and the coordinator get none. No lead is
 read-only: a `readOnly` a kept older seed's brief still sends seats it no differently and never
-reaches its engine (`playtestFields`), and a lead of the integration worktree is handed that build
+reaches its engine (`readOnlyField`), and a lead of the integration worktree is handed that build
 (`DelegateRequest.leadBuilds`), which every engine's box writes beside its own folder — Codex's,
 OpenCode's, Grok Build's and Cursor's writable roots, Claude Code's unattended sandbox and its
 folders, a local session's files and commands (`leadBuildWrites`). On an engine that does not ask
@@ -387,8 +386,8 @@ A job is a long command the app runs in the background for an agent and owns
 `job_status {id?}`, `job_tail {id, lines?, contains?}`, `job_stop {id}`. The chat's own session, a
 run's lead and a worker the host seated that writes get them, on an engine that carries a seat
 (`jobToolsFor`): every engine that keeps a session, a local model's (Bonsai, OpenRouter, a local
-server) included; a reader worker, a playtester, the coordinator, a builder no host seated, a judge
-and Ollama's tool loop get none. A plugin tool of the same name is refused.
+server) included; a reader worker, the coordinator, a builder no host seated, a judge and Ollama's
+tool loop get none. A plugin tool of the same name is refused.
 
 A start reads the chat's mode at the moment of the call (`ChatPermissionService.modeOf`, `jobGate`),
 never the mode the session began in:
@@ -470,8 +469,8 @@ bundle id, or a window id or words of its title, it answers that window's screen
 edge 1568 px) and its accessibility tree (roles, titles, values; at most 300 elements, 10 levels and
 12,000 characters). It only looks: it sends no input, so it runs in every mode, Plan included, with
 no card. The chat's own session, a lead, every worker the host seated and a Loop's reviewer get it,
-a reader too (its one host tool); a playtester, the coordinator, a builder no host seated and a local
-model's session do not. A plugin tool of the same name is refused. `save` keeps the screenshot as a
+a reader too (its one host tool); the coordinator, a builder no host seated and a local model's
+session do not. A plugin tool of the same name is refused. `save` keeps the screenshot as a
 `.jpg` in the session's own folder (the one its jobs run in), for proof: only a relative path with no
 `..`, its folders made without following a link and outside the never-touch list, and only for a
 session that may write (the chat's own session, a lead, a writing worker) while its chat is not in
@@ -520,7 +519,7 @@ started, no `readOnly`, another folder, a link that leads elsewhere, another rep
 before an engine starts. It runs read-only in every chat mode, unattended (it never asks), from a
 fresh empty home for each call (`reviewers/<run hash>/<engine>/<call>` in the profile, a folder no
 box writes, made by real path, a link on the way refused and never followed; the lead holds its own folder), loads no project
-settings even for a trusted game, and keeps no other grant: no director, worker, capture or playtest
+settings even for a trusted game, and keeps no other grant: no director, worker or capture
 grant, no run controls, no chat turn, no folder of its own, no plugin tools, connectors or jobs. Its
 reads are the lead's folder and the run's captures folder (refused when that is a link). On Claude
 Code and local sessions those are its only read roots beside its home, and the unattended fence
@@ -591,15 +590,6 @@ sub-agents (`multi_agent`, `multi_agent_v2`) and its screen and browser hands (`
 `in_app_browser`, `browser_use`, `browser_use_external`) disabled, those its `codex features list`
 knows (`CODEX_SUBAGENT_FEATURES`, `CODEX_SCREEN_FEATURES`): the studio's `computer` tool is the
 only hands an agent has ([computer use](computer-use.md)).
-
-A judge that plays (`role: "judge"`) is blind as well as read-only (`DelegateRequest.blind`) where
-the engine can enforce it: Claude Code is offered no built-in but tool search and disallows every file, shell, edit and question tool, OpenCode
-denies every file tool, Grok Build keeps only its shell, approved for the studio bridge alone, and a local session
-gets no file tool. Codex reads the whole disk, so a Codex
-judge is only told to judge by playing. Every engine starts in the empty `scratch/blind-judge`
-folder and is not told the build's path. Writing nothing and reading no file, it takes a folder
-lock of its own (`judgeLockKey`), so the chat's `judge_play` judge plays the game folder its own
-session holds; every other session there is still refused ([computer use](computer-use.md)).
 
 A plan on an engine that ends its turn with it (`plansByTurn`: Bonsai, Codex) is approved by the
 host ([`plan-approval.ts`](../src/main/core/plan-approval.ts) `withPlanApproval`): a Plan reply
@@ -753,7 +743,7 @@ Loop run must confirm the two known changes: builders can no longer read sibling
   merge, and what is left at the close is committed with its final edits and lands with the run.
   A run with nothing beyond its starting point (no worker's merge, no commit of the lead's) lands
   nothing (`nothing-new`), deliveries included. What else a plugin writes there (a package install)
-  is committed with the lead's own uncommitted edits before the next merge, playtest or worker fork
+  is committed with the lead's own uncommitted edits before the next merge or worker fork
   (`commitLeadEdits`), or lands with the final edits after the last one.
 - A plugin's consent card holds a lead's call for up to nine minutes, the plugins' own timeout
   rather than `LEAD_ASK_TIMEOUT_MS`. A lead nobody answers through (another engine, a turn that is

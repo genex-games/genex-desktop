@@ -734,17 +734,14 @@ describe("claude code delegated engine", () => {
     assert.deepEqual(result.studioToolCalls, [{ name: "ask_user", args: { question: "Plan or build?" } }]);
   });
 
-  it("keeps read-only sessions and performance-optimization candidates off the web", async () => {
-    const requests = [{ readOnly: true }, { optimization: { denyWrites: ["/tmp/x"] } }];
-    for (const request of requests) {
-      const { fn, seen } = fakeQuery(successRun);
-      const engine = await engineWithLogin(fn);
-      await engine.delegate({ prompt: "look", cwd: "/tmp/game-workspace", ...request } as never);
-      const call = seen[0] as Record<string, unknown>;
-      assert.equal((call.allowedTools as string[]).includes("WebSearch"), false, JSON.stringify(request));
-      const banned = call.disallowedTools as string[];
-      assert.ok(banned.includes("WebSearch") && banned.includes("WebFetch"), JSON.stringify(request));
-    }
+  it("keeps read-only sessions off the web", async () => {
+    const { fn, seen } = fakeQuery(successRun);
+    const engine = await engineWithLogin(fn);
+    await engine.delegate({ prompt: "look", cwd: "/tmp/game-workspace", readOnly: true } as never);
+    const call = seen[0] as Record<string, unknown>;
+    assert.equal((call.allowedTools as string[]).includes("WebSearch"), false);
+    const banned = call.disallowedTools as string[];
+    assert.ok(banned.includes("WebSearch") && banned.includes("WebFetch"));
   });
 
   /**

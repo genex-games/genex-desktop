@@ -1,24 +1,11 @@
 /**
  * Fire the same events the game would get from a human, even if Chromium will not focus us.
- * `injectInput` is how a paused `step()` playthrough still sees held keys.
  *
  * The page half of the preview's input dispatch, as source text: preview.ts evaluates it inside
  * the game page with `executeJavaScript`, and the conformance suite evaluates the same string
  * against a fake page (tests/conformance/page-shim.test.ts).
  */
 export const PAGE_DISPATCH = `(payload) => {
-  const studio = window.__studio;
-  /* One look, three roads. It reaches a game through the contract's own injectInput, through
-     the synthetic move the shim aims at the element it faked the lock on, and (in a window that
-     hears native input at all) through the browser's own trusted move — and a game that carries
-     the contract AND accumulates mousemove, which the studio's own contract does, added the
-     same delta once per road: every camera turned two or three times as far as it was told to.
-     The de-duplication belongs where the roads MEET, which is the contract's own accumulator
-     (game-template/src/studio.js counts the beats injectInput has already given it), not here:
-     a two-line \`installStudio({ renderer, player })\` game turns its camera from a plain
-     mousemove listener and has no accumulator at all, so this move must keep its real delta or
-     that game never turns again. */
-  if (studio && typeof studio.injectInput === "function" && payload.studio) studio.injectInput(payload.studio);
   const canvas = document.querySelector("canvas");
   const mouseTarget = canvas || document;
   /* Per EVENT TYPE, not per page: a hidden, unfocused window takes native keys and clicks and
@@ -32,8 +19,8 @@ export const PAGE_DISPATCH = `(payload) => {
   const provenBy = { click: "mouseup", dblclick: "mouseup", pointerdown: "mousedown", pointerup: "mouseup", pointermove: "mousemove", keypress: "keydown" };
   for (const ev of payload.dom || []) {
     /* The look is the exception, and it is not a copy: a hidden window's native mousemove, when it
-       arrives at all, carries no pointer-lock movement, and the shim aims this one at the element
-       it faked the lock on. Hearing a trusted mousemove is not proof that this one is a duplicate. */
+       arrives at all, carries no pointer-lock movement, and the shim aims this one at the locked
+       element. Hearing a trusted mousemove is not proof that this one is a duplicate. */
     if (ev.kind === "mouse" && ev.type === "mousemove" && window.__studioClock && typeof window.__studioClock.mouseMove === "function") {
       window.__studioClock.mouseMove(ev.movementX || 0, ev.movementY || 0, ev.x, ev.y);
       continue;
