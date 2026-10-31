@@ -432,12 +432,20 @@ describe("the modeller in the loop (AG-930)", () => {
 });
 
 describe("the loop dies in the middle of the run (M3.9)", () => {
-  /** Poll until it holds, or say what was still true when the clock ran out. */
-  async function until(condition: () => boolean | Promise<boolean>, label: string, timeoutMs = 60_000): Promise<void> {
+  /**
+   * Poll until it holds, or say what was still true when the clock ran out: a label given as a
+   * function is read then, not when the wait began.
+   */
+  async function until(
+    condition: () => boolean | Promise<boolean>,
+    label: string | (() => string),
+    timeoutMs = 60_000,
+  ): Promise<void> {
     const deadline = Date.now() + timeoutMs;
     for (;;) {
       if (await condition()) return;
-      if (Date.now() > deadline) throw new Error(`timed out waiting for ${label}`);
+      if (Date.now() > deadline)
+        throw new Error(`timed out waiting for ${typeof label === "function" ? label() : label}`);
       await new Promise((resolve) => setTimeout(resolve, 150));
     }
   }
@@ -459,6 +467,9 @@ describe("the loop dies in the middle of the run (M3.9)", () => {
     await rig.core.updateSettings({ autoResume: false });
     const project = await rig.core.games.scaffold("crash-run", { title: "Crash run" });
     const aborts = { lead: 0, builder: 0 };
+    // Each engine's session once it listens for the abort. The host lists a delegation before it
+    // calls the engine, so a kill that lands in between aborts a signal no listener has heard yet.
+    const building = { lead: false, builder: false };
     const letBuilderGo: Array<() => void> = [];
     registerFakeEngine(rig, {
       complete: () => null,
@@ -471,6 +482,7 @@ describe("the loop dies in the middle of the run (M3.9)", () => {
               resolve();
             }),
           );
+          building.lead = true;
           const call = (name: string, args: Record<string, unknown>) => request.onLiveTool!(name, args).catch(() => "");
           await call("worker_start", { title: "Plaza", task: "paint the plaza red", isolation: "copy" });
           // A lead that lets go when it is told to — the session ends on the abort.
@@ -483,6 +495,7 @@ describe("the loop dies in the middle of the run (M3.9)", () => {
           request.signal!.addEventListener("abort", () => {
             aborts.builder++;
           });
+          building.builder = true;
           letBuilderGo.push(() => resolve({ sessionId: "worker-1", summary: "let go" }));
         });
       },
@@ -503,7 +516,7 @@ describe("the loop dies in the middle of the run (M3.9)", () => {
       .catch(() => {});
     const delegations = async () =>
       (await apiOf(rig)["engine.delegations"]!({})) as Array<{ project: string; cwd: string }>;
-    await until(async () => (await delegations()).length >= 2, "the lead and one builder to be building", 180_000);
+    await until(() => building.lead && building.builder, "the lead and one builder to be building", 180_000);
 
     // 1 am.
     const pid = rig.core.host.pid;
@@ -513,7 +526,7 @@ describe("the loop dies in the middle of the run (M3.9)", () => {
     // Nothing that was in flight can be judged or committed by a loop that no longer exists.
     await until(
       () => aborts.lead >= 1 && aborts.builder >= 1,
-      `every contractor to be aborted (lead ${aborts.lead}, builder ${aborts.builder})`,
+      () => `every contractor to be aborted (lead ${aborts.lead}, builder ${aborts.builder})`,
       60_000,
     );
     // …and nothing may keep the Mac awake, the quit gate armed or the pill spinning for it.
