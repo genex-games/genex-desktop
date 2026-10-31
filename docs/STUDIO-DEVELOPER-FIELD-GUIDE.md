@@ -384,7 +384,8 @@ the lead's background work and the finish check not run yet; Fixture web Loop wi
 runs and Fixture Unreal Loop with lead-graph's, each with its workers' records, drawn as trees),
 build-timeline (a Loop written after the start: four builds on its line, one a sound-only merge and
 one blank, twelve workers off them with a fold, a re-delivered sign, and deliveries only in its
-integration worktree for the Assets tab),
+integration worktree for the Assets tab; before it in Build history a finished Loop of two pictured
+builds, whose done lead wears its newest build's picture),
 finish-check (four Loops written after the start, one per finish check look: Done and Stopped in
 the Builds history, Not yet after one no, and the newest Checking),
 paused-build (a Loop a usage limit paused and resumed, written after the start: one worker's try

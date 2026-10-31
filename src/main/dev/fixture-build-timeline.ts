@@ -11,6 +11,8 @@
  *   "+3 workers"), and two still at work off Build 4.
  * - The sign and the sounds are only in the run's integration worktree: the Assets tab lists them as
  *   in the running build.
+ * - Before it, a finished Loop in Build history: a horn worker merged into Build 1, the lead's own
+ *   Build 2 checked at the finish, landed; no save points, so its lead rests on Build 2's picture.
  *
  * Written after the app has started ({@link seedBuildTimeline}): the start closes every run an
  * earlier app left open, so a Loop written before it would read as stopped.
@@ -21,6 +23,7 @@ import { CustomEvent, customEventData, customRecord } from "../../shared/custom-
 import { type EventData, EventKind } from "../../shared/event-log.ts";
 import { HealthFinding } from "../../shared/preview-contract.ts";
 import { EngineId } from "../../shared/providers.ts";
+import { ExecutionStatus } from "../../shared/run-state.ts";
 import { poolWorkerId, WorkerEnd, WorkerIsolation, WorkerVerdict } from "../../shared/workers.ts";
 import { git } from "../../substrate/snapshots.ts";
 import type { StudioCore } from "../studio-core.ts";
@@ -28,6 +31,9 @@ import { FIXTURE_MODEL, fixtureRun, gradientShot, type Rgb } from "./fixture-kit
 
 const RUN = "fixture-timeline-run";
 const ASK = "Build a street racer with a shop to buy paint for the car.";
+const DONE_RUN = "fixture-timeline-done";
+const DONE_ASK = "Give the car a horn, and a garage to park it in.";
+const DONE_HEADS = ["e5", "f6"].map((seed) => seed.repeat(20));
 const SIGN = "assets/genex/shop-sign.png";
 const ENGINE = "assets/genex/engine-loop.wav";
 const HEADS = ["a1", "b2", "c3", "d4"].map((seed) => seed.repeat(20));
@@ -60,6 +66,7 @@ const SCHEMES = ["Flame", "Chrome", "Neon", "Camo", "Pearl"].map((name, n) => W(
 const REPAINT = W("w9", "Repaint the shop sign");
 const DRIFT = W("w10", "Tune the drift");
 const SMOKE = W("w11", "Add tyre smoke");
+const HORN = W("w1", "Horn sound");
 
 type Scoped = ReturnType<typeof fixtureRun>;
 
@@ -235,6 +242,51 @@ function laterBuilds(run: Scoped, project: string, pictures: Pictures): EventDat
   ];
 }
 
+/** The finished Loop's two builds' screenshots, under its own run folder: the horn's merge, then the garage. */
+async function writeDonePictures(runsRoot: string): Promise<string[]> {
+  const dir = path.join(runsRoot, DONE_RUN, "director");
+  await fs.mkdir(dir, { recursive: true });
+  return Promise.all(
+    [gradientShot(SKY, ROAD), gradientShot(DUSK, ROAD)].map(async (data, n) => {
+      const file = path.join(dir, `build_${n + 1}.png`);
+      await fs.writeFile(file, data);
+      return file;
+    }),
+  );
+}
+
+/** A Loop that finished before this one: a horn worker merged into Build 1, the lead's own garage in Build 2, landed. */
+function finishedLoop(project: string, pictures: string[]): EventData[] {
+  const run = fixtureRun({ runId: DONE_RUN, project });
+  const check = (n: number, extra: Record<string, unknown> = {}) =>
+    run(CustomEvent.IntegrationHealth, {
+      head: DONE_HEADS[n - 1],
+      ok: true,
+      problems: [],
+      findings: [],
+      picture: pictures[n - 1],
+      ...extra,
+    });
+  return [
+    run(CustomEvent.RunStarted, { goal: DONE_ASK, engine: EngineId.ClaudeCode, model: FIXTURE_MODEL }),
+    run(CustomEvent.AutopilotStarted, { director: true, maxParallel: 8, facets: [], workerRecords: true }),
+    started(run, HORN),
+    ended(run, HORN, WorkerEnd.Done, "Made a two-tone horn."),
+    run(CustomEvent.DirectorProgress, { head: DONE_HEADS[0] }),
+    check(1, { worker: poolWorkerId(HORN.id) }),
+    verdict(run, HORN, true),
+    run(CustomEvent.DirectorProgress, { head: DONE_HEADS[1] }),
+    check(2),
+    run(CustomEvent.RunFinished, {
+      victory: true,
+      landed: true,
+      integrationHead: DONE_HEADS[1],
+      executionStatus: ExecutionStatus.Completed,
+      summary: "The car honks, and a garage stands at the end of the street.",
+    }),
+  ];
+}
+
 /** Whether the fixture game's chat already holds the run. */
 async function seeded(core: StudioCore, threadId: string): Promise<boolean> {
   return (await core.store.listEvents(threadId)).some((e) => customRecord(e.data)?.payload.runId === RUN);
@@ -244,6 +296,7 @@ async function seeded(core: StudioCore, threadId: string): Promise<boolean> {
 export async function seedBuildTimeline(core: StudioCore, project: string, threadId: string): Promise<void> {
   if (await seeded(core, threadId)) return;
   const pictures = await writePictures(core.layout.runs);
+  const donePictures = await writeDonePictures(core.layout.runs);
   await writeIntegration(core, project);
   const run = fixtureRun({ runId: RUN, project });
   const asked: EventData[] = [
@@ -252,7 +305,12 @@ export async function seedBuildTimeline(core: StudioCore, project: string, threa
     customEventData(CustomEvent.CoordinatorMessageProcessing, { messageId: "fixture-timeline-ask" }),
   ];
   await core.append(
-    [...asked, ...firstBuilds(run, project, pictures), ...laterBuilds(run, project, pictures)],
+    [
+      ...finishedLoop(project, donePictures),
+      ...asked,
+      ...firstBuilds(run, project, pictures),
+      ...laterBuilds(run, project, pictures),
+    ],
     threadId,
   );
 }
