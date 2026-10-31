@@ -1,5 +1,6 @@
 /** The studio's own settings (Studio's header, Settings → Harness and Permissions) and the bounds they are read within. */
-import { DEFAULT_BUILDERS, MAX_BUILDERS } from "../../shared/builders.ts";
+import { DEFAULT_BUILDERS } from "../../shared/builders.ts";
+import { MAX_WORKERS_AT_ONCE } from "../../shared/workers.ts";
 import { DEFAULT_POOL_MAX, MAX_POOL_MAX } from "../../substrate/preview-pool.ts";
 import { isLanguageChoice, type LanguageChoice, SYSTEM_LANGUAGE } from "../../shared/locale.ts";
 
@@ -15,11 +16,11 @@ export function clampAgents(value: unknown): number {
   return Math.max(1, Math.min(MAX_POOL_MAX, Math.round(n)));
 }
 
-/** 1..MAX_BUILDERS; anything unusable is the default. */
+/** 1..MAX_WORKERS_AT_ONCE, the most a lead's pool runs at once; anything unusable is the default. */
 export function clampBuilders(value: unknown): number {
   const n = Number(value);
   if (!Number.isFinite(n)) return DEFAULT_BUILDERS;
-  return Math.max(1, Math.min(MAX_BUILDERS, Math.round(n)));
+  return Math.max(1, Math.min(MAX_WORKERS_AT_ONCE, Math.round(n)));
 }
 
 /** The pool size every build before "Maximum workers" saved without ever being changed. */
@@ -37,7 +38,8 @@ export interface StudioSettings {
   learning: boolean;
   /**
    * Maximum concurrent workers (Settings → Harness): the most builders a run may use at once. A ceiling,
-   * not a target — the lead decides how many it starts. Four by default; twelve is the most offered.
+   * not a target — the lead decides how many it starts. Four by default; the most offered is the most
+   * a lead's pool runs at once (`MAX_WORKERS_AT_ONCE`, eight), and a count saved above it reads as it.
    */
   buildersMax: number;
   /**

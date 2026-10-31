@@ -797,7 +797,7 @@ models list in mono with their context, "sees images" or "can't call tools". Loc
 Best fit tag, a memory meter and "Needs a N GB Mac" for the rest, plus Add from Ollama. An installed
 row keeps the quiet Installed badge beside a ghost trash button; it asks on the row ("Delete it from
 this Mac?") with Cancel, which takes focus, and a destructive Delete. Closing or switching sections preserves host installation
-jobs. Harness holds **Maximum concurrent workers** (a ceiling the lead chooses under, default 8, maximum 12)
+jobs. Harness holds **Maximum concurrent workers** (a ceiling the lead chooses under, default 4, maximum 8: the pool's own limit)
 and **Apply suggestions automatically** with how suggestions are tested. The game model list's
 Add more models opens Model Providers. First-launch and Studio setup links open the corresponding
 section. Timed runs start from the composer's Mode menu; MCP stays in Plugins. Permissions lists

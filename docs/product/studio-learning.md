@@ -32,7 +32,7 @@ when the row has nothing else. Applied changes name who let them land and keep
 their diff and **Undo this change**, reverting that change alone; later changes and per-game
 lessons stay. A suggestion written against since-changed instructions is
 applied on top when it still fits, else refused. **Settings → Harness** owns **Maximum concurrent workers**
-(default four, up to twelve) and **How suggestions are tested**.
+(default four, up to eight) and **How suggestions are tested**.
 Changes land through validated, recoverable host APIs, never by executing a chat reply; code
 changes are type-checked and started in a copy first, a failing one refused.
 

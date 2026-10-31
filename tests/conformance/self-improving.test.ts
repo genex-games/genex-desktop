@@ -26,14 +26,15 @@ describe("settings: the one self-improving switch", () => {
     const five = await rig.core.updateSettings({ buildersMax: 5 });
     assert.deepEqual([five.buildersMax, five.agentsMax], [5, 7]);
     const most = await rig.core.updateSettings({ buildersMax: 99 });
-    assert.deepEqual([most.buildersMax, most.agentsMax], [12, 14], "never above the most offered");
+    assert.deepEqual([most.buildersMax, most.agentsMax], [8, 10], "never above the most a lead's pool runs at once");
     await rig.core.updateSettings({ buildersMax: 8 });
     await restart();
     assert.equal(rig.core.settings.buildersMax, 8, "eight chosen now stays eight, though it was the old default");
 
+    // Flipped: Settings offered twelve; the most now is the pool's own limit, eight.
     await rig.core.updateSettings({ buildersMax: 12 });
     await restart();
-    assert.equal(rig.core.settings.buildersMax, 12, "an explicit twelve is not replaced by the default");
+    assert.equal(rig.core.settings.buildersMax, 8, "a twelve asked for is saved as eight and stays eight");
 
     // Settings are saved whole on any change, so only a choice made from now on is told apart from a default.
     await rig.core.updateSettings({ buildersMax: 2 });

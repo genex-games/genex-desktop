@@ -274,7 +274,8 @@ behind Studio and Plugins and reports zero native bounds when hidden, projectles
 by a drawer or dialog; its ResizeObserver keeps reporting geometry. Settings is one modal
 (`SettingsDialog`, routed by `settings-navigation.ts` to Games, Appearance, Model Providers, Local
 Models, Harness and Permissions). Harness
-writes `buildersMax` (1–12, default 4); main derives the preview-pool ceiling as builders + 2. An
+writes `buildersMax` (1–8, default 4; at most `MAX_WORKERS_AT_ONCE`, the pool's own limit, and a
+saved count above it reads as it); main derives the preview-pool ceiling as builders + 2. An
 empty, never-welcomed profile first shows the welcome (`onboarding/`), which fades into home.
 Launches open home (`Room.Home`). Its first message runs `launchGame` (`state/launch.ts`):
 `studio:game.name` names the game (`main/core/game-naming.ts`), `createGame` makes it, its chat

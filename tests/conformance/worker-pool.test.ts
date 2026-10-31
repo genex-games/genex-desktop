@@ -282,6 +282,23 @@ describe("the worker pool", { timeout: TEST_TIMEOUT_MS }, () => {
     assert.equal(host.sessions.length, 8, "nothing was delegated for the ninth");
   });
 
+  it("runs as many as the person's Settings allow, and never past eight however many they allow", async () => {
+    const atOnce = async (allowed: number): Promise<number> => {
+      const repo = await gameRepo();
+      const host = poolHost(repo, { workersAllowed: allowed });
+      const pool = await chatPool(host, repo);
+      let started = 0;
+      for (let n = 1; n <= allowed + 1; n++) {
+        const answer = await pool.call(WorkerTool.Start, { title: `Reader ${n}`, task: "x", isolation: "read" });
+        if (answer.startsWith("Started")) started += 1;
+      }
+      await settle();
+      assert.equal(host.sessions.length, started, "a refused start asks nothing of the host");
+      return started;
+    };
+    assert.deepEqual([await atOnce(3), await atOnce(12)], [3, 8]);
+  });
+
   it("a worker waiting for the person is shown as waiting, and worker_wait wakes for it", async () => {
     const repo = await gameRepo();
     const log: unknown[] = [];

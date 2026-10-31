@@ -6,7 +6,8 @@ import { useEffect, useState, type JSX } from "react";
 import { trackSettingChanged } from "../analytics/workspace-track.ts";
 import { SettingKey } from "../analytics/workspace-vocabulary.ts";
 import type { StudioSettingsView } from "../../shared/studio-api.ts";
-import { DEFAULT_BUILDERS, MAX_BUILDERS } from "../../shared/builders.ts";
+import { DEFAULT_BUILDERS } from "../../shared/builders.ts";
+import { MAX_WORKERS_AT_ONCE } from "../../shared/workers.ts";
 import { Button } from "../ui/Button.tsx";
 import { Switch } from "../ui/switch.tsx";
 import { DiagnosticsRow } from "./DiagnosticsRow.tsx";
@@ -24,7 +25,7 @@ function trackHarnessChange(patch: HarnessPatch, failed: boolean): void {
   if (patch.autoResume !== undefined) trackSettingChanged(SettingKey.AutoResume, patch.autoResume, failed);
 }
 
-/** Maximum concurrent workers' stepper: one fewer down to one, one more up to the most Settings offers. */
+/** Maximum concurrent workers' stepper: one fewer down to one, one more up to the most a lead's pool runs at once. */
 export function WorkersStepper({
   value,
   busy,
@@ -44,7 +45,7 @@ export function WorkersStepper({
       </output>
       <Button
         aria-label={t("More workers")}
-        disabled={busy || value >= MAX_BUILDERS}
+        disabled={busy || value >= MAX_WORKERS_AT_ONCE}
         onClick={() => onChange(value + 1)}
       >
         +
