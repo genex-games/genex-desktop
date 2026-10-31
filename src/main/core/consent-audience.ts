@@ -72,6 +72,21 @@ function chatDecline(
   return null;
 }
 
+/**
+ * Whether the person answered Allow in this chat on a card for `tool` (an `onAccount` tool's,
+ * `chatOffered`) in chat `threadId`: that yes covers the tool's later calls there, whatever
+ * their arguments, for as long as the chat lasts.
+ */
+export async function allowedInChat(core: StudioCore, threadId: string, tool: string): Promise<boolean> {
+  for (const event of await core.store.listEvents(threadId)) {
+    const record = customRecord(event.data);
+    if (record?.event_type !== CustomEvent.PluginConsent || record.payload.tool !== tool) continue;
+    const { state, by, always, chatOffered } = record.payload;
+    if (state === "approved" && by === "user" && always === true && chatOffered === true) return true;
+  }
+  return false;
+}
+
 /** A message of the user's in the log. */
 function userSpoke(event: EventEnvelope): boolean {
   return event.data.type === EventKind.Messages && event.data.messages.some((message) => message.role === "user");

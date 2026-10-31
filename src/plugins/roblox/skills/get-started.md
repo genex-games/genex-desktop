@@ -21,7 +21,10 @@ panel is also a tool of this plugin (`roblox__<name>`), and you call them yourse
   age check, ID, a two-step code, terms or a payment. Say exactly which one and where.
 - **Never close or force-quit Studio unasked.** `restart-studio` and `quit-studio` use Studio's
   normal quit, which asks the person to save first; `restart-studio` only to set Studio up, and
-  `quit-studio` asks the person on a card.
+  `quit-studio` asks the person on a card. When Studio waits on its save question, Genex brings
+  its window to the front by itself: tell the person to answer it there (Save keeps their work),
+  then call the tool again. Never restore, click or close Studio's windows yourself, with the
+  desktop tool or with commands.
 - **Switches only Studio's window offers** are clicked by `do-it-for-me`, which posts the click as
   "Roblox Studio asks: …" to this chat, for the turn that answers that message, with Genex's
   computer control (Genex asks once on a card when computer control is off). That turn clicks it
@@ -41,7 +44,8 @@ picks each state's tool for you; each state has its own too:
 | Set up | Studio is there; the helper or the MCP server isn't | `setup` with Studio closed, or `restart-studio` while it is open |
 | Not open | Everything is set up; Studio isn't running | `open-studio`, which opens this game's place |
 | Starting | Studio is open; Genex is waiting for it to answer | Wait a moment and retry; if it stays so, `do-it-for-me` (the MCP switch is off) |
-| Ready | Studio is open and answering | Nothing; the tools work |
+| Helper not loaded | Studio answers, but was opened before the Genex helper was added: scripts don't reach it and play-tests fail | `restart-studio` (or `finish-setup`), which restarts it with the helper |
+| Ready | Studio is open and answering, with the helper | Nothing; the tools work |
 
 The Roblox Studio plugin must be turned on in Plugins first; it is off until the person turns it on.
 

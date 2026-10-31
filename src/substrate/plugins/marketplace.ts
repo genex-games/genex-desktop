@@ -19,17 +19,19 @@ import {
   GithubVersionKind,
   isPluginSetup,
   PLUGIN_CATEGORIES,
+  PluginInstallProblem,
   PluginSourceKind,
   PluginTier,
 } from "../../shared/plugins.ts";
 import { type GithubLink, manifestFolder, parseGithubLink, pinnedSpec } from "../../shared/github-link.ts";
 import { isPluginId } from "../../shared/plugin-id.ts";
 import { atomicWriteJson } from "../fsx.ts";
-import { inspectPackage, validateManifest } from "./manifest.ts";
+import { inspectForInstall, validateManifest } from "./manifest.ts";
 import { assertRelativePath } from "../paths.ts";
 import { scanPackage } from "./scan.ts";
 import { isPackagePath, MAX_ARTIFACT_BYTES } from "./pack.ts";
-import { errorMessage, UserCancelledError } from "../../shared/errors.ts";
+import { CodedError, errorMessage, UserCancelledError } from "../../shared/errors.ts";
+import { asInstallProblem, refusedNowAs } from "./install-problem.ts";
 import { HOUR_MS, MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 import { t } from "../../shared/i18n.ts";
 
@@ -353,21 +355,23 @@ function packageBlob(node: TreeNode, prefix: string): GithubBlob | undefined {
   const file = node?.path ?? "";
   const inPackage = typeof file === "string" && file !== "" && (!prefix || file.startsWith(prefix));
   if (!inPackage) return undefined;
-  if (node.mode !== undefined && LINK_MODES.has(node.mode)) throw new Error(MESSAGE.LinksInPackage);
+  if (node.mode !== undefined && LINK_MODES.has(node.mode))
+    throw new CodedError(PluginInstallProblem.UnsafePackage, MESSAGE.LinksInPackage);
   if (node.type !== "blob") return undefined;
-  if (node.mode === undefined || !FILE_MODES.has(node.mode)) throw new Error(MESSAGE.FileMode(node.mode, file));
+  if (node.mode === undefined || !FILE_MODES.has(node.mode))
+    throw new CodedError(PluginInstallProblem.UnsafePackage, MESSAGE.FileMode(node.mode, file));
   const relative = file.slice(prefix.length);
   if (!relative) return undefined;
-  assertRelativePath(relative);
+  refusedNowAs(PluginInstallProblem.UnsafePackage, () => assertRelativePath(relative));
   // The repository around a package (`.github/`, `.gitignore`, an author's AGENTS.md) is not installed.
   if (!isPackagePath(relative)) return undefined;
   const size = typeof node.size === "number" ? node.size : 0;
-  if (size > FILE_MAX_BYTES) throw new Error(MESSAGE.FileTooLarge(relative));
+  if (size > FILE_MAX_BYTES) throw new CodedError(PluginInstallProblem.TooLarge, MESSAGE.FileTooLarge(relative));
   return { path: file, relative, sha: typeof node.sha === "string" ? node.sha : "", size };
 }
 
 export function parseGithubSpec(spec: unknown): GithubSpec {
-  if (typeof spec !== "string") throw new Error(MESSAGE.InvalidSpec());
+  if (typeof spec !== "string") throw new CodedError(PluginInstallProblem.InvalidSpec, MESSAGE.InvalidSpec());
   const at = spec.lastIndexOf("@");
   const location = at < 0 ? "" : spec.slice(0, at).trim(),
     sha =
@@ -377,13 +381,13 @@ export function parseGithubSpec(spec: unknown): GithubSpec {
             .slice(at + 1)
             .trim()
             .toLowerCase();
-  if (!SHA.test(sha)) throw new Error(MESSAGE.SpecNeedsSha());
+  if (!SHA.test(sha)) throw new CodedError(PluginInstallProblem.InvalidSpec, MESSAGE.SpecNeedsSha());
   const parts = location.split("/");
   const owner = parts[0] ?? "",
     name = parts[1] ?? "",
     subdir = parts.slice(2).join("/");
-  if (!REPO.test(`${owner}/${name}`)) throw new Error(MESSAGE.SpecNeedsRepo());
-  if (subdir) assertRelativePath(subdir);
+  if (!REPO.test(`${owner}/${name}`)) throw new CodedError(PluginInstallProblem.InvalidSpec, MESSAGE.SpecNeedsRepo());
+  if (subdir) refusedNowAs(PluginInstallProblem.InvalidSpec, () => assertRelativePath(subdir));
   const parsed: GithubSpec = { repo: `${owner}/${name}`, owner, name, sha };
   if (subdir) parsed.subdir = subdir;
   return parsed;
@@ -570,8 +574,10 @@ export class PluginMarketplace {
    * the network by no path at all, not just by skipping the index fetch.
    */
   #request(input: string, init: RequestInit): Promise<Response> {
-    if (this.offline) return Promise.reject(new Error(MESSAGE.Offline()));
-    return this.#fetch(input, init);
+    if (this.offline) return Promise.reject(new CodedError(PluginInstallProblem.Offline, MESSAGE.Offline()));
+    return this.#fetch(input, init).catch((error: unknown) => {
+      throw asInstallProblem(PluginInstallProblem.DownloadFailed, error);
+    });
   }
   /** Host-owned override, outside any plugin's storage; https only so an index can never be served over plain http. */
   async indexUrl(): Promise<string> {
@@ -594,19 +600,21 @@ export class PluginMarketplace {
     }
   }
   async #read(response: Response, cap: number, what: DownloadWords): Promise<Buffer> {
-    if (!response.ok) throw new Error(what.failed(response.status));
+    if (!response.ok) throw new CodedError(PluginInstallProblem.DownloadFailed, what.failed(response.status));
     const body = response.body;
     if (!body) return Buffer.from(await response.arrayBuffer());
     const reader = body.getReader(),
       chunks: Uint8Array[] = [];
     let size = 0;
     for (;;) {
-      const { done, value } = await reader.read();
+      const { done, value } = await reader.read().catch((error: unknown) => {
+        throw asInstallProblem(PluginInstallProblem.DownloadFailed, error);
+      });
       if (done) break;
       size += value.length;
       if (size > cap) {
         await reader.cancel();
-        throw new Error(what.tooLarge(cap));
+        throw new CodedError(PluginInstallProblem.TooLarge, what.tooLarge(cap));
       }
       chunks.push(value);
     }
@@ -694,7 +702,10 @@ export class PluginMarketplace {
   /** Refuse before any download: an index entry that needs a newer Studio cannot be made to work by installing it. */
   #requireStudio(entry: PluginIndexEntry) {
     if (entry.minStudioVersion && !versionGte(this.studioVersion, entry.minStudioVersion))
-      throw new Error(MESSAGE.NeedsNewerStudio(entry.name, entry.minStudioVersion));
+      throw new CodedError(
+        PluginInstallProblem.NeedsNewerStudio,
+        MESSAGE.NeedsNewerStudio(entry.name, entry.minStudioVersion),
+      );
   }
   async #json(url: string, cap: number, what: DownloadWords): Promise<unknown> {
     const response = await this.#request(url, {
@@ -706,15 +717,15 @@ export class PluginMarketplace {
   }
   /** The pinned commit's own tree: no branch, no tag, no archive, no link or submodule may enter a package. */
   async fetchGithubTree(repo: string, sha: string, subdir?: string): Promise<GithubBlob[]> {
-    if (!REPO.test(repo)) throw new Error(MESSAGE.InvalidRepository());
-    if (!SHA.test(sha)) throw new Error(MESSAGE.SpecNeedsSha());
+    if (!REPO.test(repo)) throw new CodedError(PluginInstallProblem.InvalidSpec, MESSAGE.InvalidRepository());
+    if (!SHA.test(sha)) throw new CodedError(PluginInstallProblem.InvalidSpec, MESSAGE.SpecNeedsSha());
     const tree = (await this.#json(
       `https://api.github.com/repos/${repo}/git/trees/${sha}?recursive=1`,
       INDEX_MAX_BYTES * 8,
       DOWNLOAD.Tree,
     )) as { truncated?: boolean; tree?: TreeNode[] };
-    if (tree?.truncated) throw new Error(MESSAGE.TreeTruncated());
-    if (!Array.isArray(tree?.tree)) throw new Error(MESSAGE.TreeUnreadable());
+    if (tree?.truncated) throw new CodedError(PluginInstallProblem.TooLarge, MESSAGE.TreeTruncated());
+    if (!Array.isArray(tree?.tree)) throw new CodedError(PluginInstallProblem.DownloadFailed, MESSAGE.TreeUnreadable());
     const prefix = subdir ? `${subdir}/` : "";
     const blobs: GithubBlob[] = [];
     let total = 0;
@@ -722,12 +733,14 @@ export class PluginMarketplace {
       const blob = packageBlob(node, prefix);
       if (!blob) continue;
       total += blob.size;
-      if (total > TREE_MAX_BYTES) throw new Error(MESSAGE.PackageTooLarge());
-      if (!SHA.test(blob.sha)) throw new Error(MESSAGE.MissingObjectId(blob.relative));
+      if (total > TREE_MAX_BYTES) throw new CodedError(PluginInstallProblem.TooLarge, MESSAGE.PackageTooLarge());
+      if (!SHA.test(blob.sha))
+        throw new CodedError(PluginInstallProblem.IntegrityMismatch, MESSAGE.MissingObjectId(blob.relative));
       blobs.push(blob);
-      if (blobs.length > TREE_MAX_FILES) throw new Error(MESSAGE.TooManyFiles());
+      if (blobs.length > TREE_MAX_FILES) throw new CodedError(PluginInstallProblem.TooLarge, MESSAGE.TooManyFiles());
     }
-    if (!blobs.some((b) => b.relative === "plugin.json")) throw new Error(MESSAGE.NoManifest());
+    if (!blobs.some((b) => b.relative === "plugin.json"))
+      throw new CodedError(PluginInstallProblem.PackageInvalid, MESSAGE.NoManifest());
     return blobs;
   }
   /** Writes the pinned files into a staging folder and reports what the code appears to do; the caller installs and removes the stage. */
@@ -752,12 +765,13 @@ export class PluginMarketplace {
         const objectId = createHash("sha1")
           .update(Buffer.concat([Buffer.from(`blob ${bytes.length}\0`), bytes]))
           .digest("hex");
-        if (objectId !== blob.sha) throw new Error(MESSAGE.IntegrityFailed(blob.relative));
+        if (objectId !== blob.sha)
+          throw new CodedError(PluginInstallProblem.IntegrityMismatch, MESSAGE.IntegrityFailed(blob.relative));
         const destination = path.join(stage, assertRelativePath(blob.relative));
         await mkdir(path.dirname(destination), { recursive: true });
         await writeFile(destination, bytes);
       }
-      const manifest = await inspectPackage(stage);
+      const manifest = await inspectForInstall(stage);
       const scan = await scanPackage(stage, manifest);
       const origin: PluginSource = { kind, repo: parsed.repo, sha: parsed.sha };
       if (parsed.subdir) origin.subdir = parsed.subdir;
@@ -923,7 +937,8 @@ export class PluginMarketplace {
     confirm?: (manifest: PluginManifest, scan: PluginScan, origin: PluginSource, note?: string) => Promise<boolean>,
   ): Promise<void> {
     const origin = info.origin;
-    if (!origin || !isCatalogedOrigin(origin)) throw new Error(MESSAGE.OriginUnknown());
+    if (!origin || !isCatalogedOrigin(origin))
+      throw new CodedError(PluginInstallProblem.SourceGone, MESSAGE.OriginUnknown());
     const capabilities = info.manifest.capabilities;
     if (origin.repo && origin.sha && !origin.url) {
       const note = await this.#movedPinNote(info, origin, origin.sha);
@@ -958,7 +973,7 @@ export class PluginMarketplace {
   /** What the index promised must be what the pinned code declares, or the user approved the wrong thing. */
   #requireMatch(entry: PluginIndexEntry, manifest: PluginManifest) {
     const mismatch = entryMismatch(entry, manifest);
-    if (mismatch) throw new Error(MESSAGE.EntryMismatch(mismatch));
+    if (mismatch) throw new CodedError(PluginInstallProblem.CatalogMismatch, MESSAGE.EntryMismatch(mismatch));
   }
   /**
    * Install a cataloged plugin: the pinned commit, or the curated artifact envelope when the entry carries one.
@@ -972,7 +987,7 @@ export class PluginMarketplace {
     confirm?: (manifest: PluginManifest, scan: PluginScan, origin: PluginSource) => Promise<boolean>,
   ): Promise<InstalledPackage> {
     const entry = this.entry(id);
-    if (!entry) throw new Error(MESSAGE.NotInIndex());
+    if (!entry) throw new CodedError(PluginInstallProblem.NotFound, MESSAGE.NotInIndex());
     this.#requireStudio(entry);
     const origin: PluginSource = { kind: PluginSourceKind.Index, repo: entry.repo, sha: entry.sha };
     if (entry.subdir) origin.subdir = entry.subdir;
@@ -1004,7 +1019,8 @@ export class PluginMarketplace {
       redirect: "error",
     });
     const bytes = await this.#read(response, MAX_ARTIFACT_BYTES, DOWNLOAD.Plugin);
-    if (createHash("sha256").update(bytes).digest("hex") !== artifact.sha256) throw new Error(MESSAGE.DigestMismatch());
+    if (createHash("sha256").update(bytes).digest("hex") !== artifact.sha256)
+      throw new CodedError(PluginInstallProblem.IntegrityMismatch, MESSAGE.DigestMismatch());
     let scanned: PluginScan | undefined;
     const manifest = await target.installEnvelope(
       bytes,
@@ -1019,7 +1035,7 @@ export class PluginMarketplace {
         return scan;
       },
     );
-    if (!scanned) throw new Error(MESSAGE.Unscanned);
+    if (!scanned) throw new CodedError(PluginInstallProblem.IntegrityMismatch, MESSAGE.Unscanned);
     return { manifest, scan: scanned, origin };
   }
 }

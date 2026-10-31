@@ -8,7 +8,6 @@
 import assert from "node:assert/strict";
 import { constants } from "node:fs";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { setImmediate } from "node:timers/promises";
@@ -19,6 +18,7 @@ import {
   openCodeEvents,
   openCodeSandbox,
   openCodeServerUrl,
+  openCodeSessionFolders,
   settledListing,
 } from "../../src/substrate/engines/opencode.ts";
 import {
@@ -487,30 +487,6 @@ describe("OpenCode sessions", () => {
     }
   });
 
-  it("a blind judge reads nothing: no file tool, nothing outside its folder, only its live tools", async () => {
-    const { engine, seen } = await engineWith(async function* () {
-      yield* replay([]);
-    });
-    const cwd = await game();
-    const computer = {
-      name: "computer",
-      description: "hands",
-      parameters: { type: "object" as const, properties: {} },
-    };
-    await engine.delegate({
-      cwd,
-      prompt: "Judge by playing",
-      readOnly: true,
-      blind: true,
-      liveTools: [computer],
-      onLiveTool: async () => "ok",
-    });
-    const config = JSON.parse(seen[0]?.env.OPENCODE_CONFIG_CONTENT ?? "{}");
-    for (const tool of ["read", "glob", "grep", "list", "edit", "external_directory"])
-      assert.equal(config.permission[tool], "deny", `${tool} is not a blind judge's`);
-    assert.equal(config.permission["studio_*"], "allow");
-  });
-
   it("tells a Loop's reviewer the build it tests is the folder it reads, never its own empty home", async () => {
     const { engine, seen, root } = await engineWith(async function* () {
       yield* replay([]);
@@ -715,28 +691,6 @@ describe("OpenCode sessions", () => {
     assert.equal(late.stopReason, "deadline");
   });
 
-  it("keeps a worker to its seam while it runs, and gives the files back after", async () => {
-    const cwd = await game();
-    await mkdir(path.join(cwd, "src"), { recursive: true });
-    await writeFile(path.join(cwd, "src", "sword.js"), "// mine\n");
-    let lockedDuring = false;
-    const { engine } = await engineWith(async function* () {
-      lockedDuring = await access(path.join(cwd, "main.js"), constants.W_OK).then(
-        () => false,
-        () => true,
-      );
-      yield* replay([]);
-    });
-    await engine.delegate({
-      cwd,
-      prompt: "build the sword",
-      ownership: { facetId: "sword", owns: ["src/sword.js"], ownsMain: false },
-    });
-    if (os.platform() !== "win32" && process.getuid?.() !== 0)
-      assert.equal(lockedDuring, true, "an unowned file is read-only while it runs");
-    await access(path.join(cwd, "main.js"), constants.W_OK);
-  });
-
   it("refuses Compact now: OpenCode compacts its own sessions", async () => {
     const { engine } = await engineWith(() => replay([]));
     await assert.rejects(
@@ -797,6 +751,11 @@ describe("OpenCode's sandbox and config", () => {
       path.join(home, "AI Games", "space", "opencode.json"),
       path.join(home, "AI Games", "space", ".opencode"),
     ]);
+    assert.deepEqual(
+      openCodeSessionFolders({}, home),
+      [...options.ownHome, ...options.writableRoots.slice(-2)],
+      "the folders a Windows sandbox grants at its start are the ones each session writes",
+    );
     const relative = openCodeSandbox({
       runDir: "/r",
       gameDir: "/r",
@@ -893,13 +852,6 @@ describe("OpenCode 2.x and the studio's MCP tools", () => {
     const none = JSON.parse(openCodeConfigV2(OpenCodeAccess.ReadOnly, true));
     assert.equal(none.mcp, undefined);
     assert.equal(decideWild(none.permissions as Rule[], "studio_computer"), "deny");
-  });
-
-  it("a blind judge on 2.x reads no file either", () => {
-    const rules = JSON.parse(openCodeConfigV2(OpenCodeAccess.Blind, true, ["node", "x"])).permissions as Rule[];
-    for (const action of ["read", "glob", "grep", "external_directory", "edit"])
-      assert.equal(decideWild(rules, action), "deny", action);
-    assert.equal(decideWild(rules, "studio_computer"), "allow");
   });
 });
 
@@ -1001,6 +953,24 @@ describe("OpenCode 2.x sessions", () => {
       // On Windows loopback goes through the sandbox's proxy, which refuses a host it was not given.
       "and 2.x's own server, which its run command reaches over loopback",
     );
+  });
+
+  it("points every session at the person's own OpenCode folders, which hold its sign-ins", async () => {
+    // On Windows a session runs as the sandbox's own user, whose home holds no sign-in: a signed-in
+    // provider's model (OpenCode Go) then answered "Model unavailable" before its first turn.
+    for (const make of [engineWith, engineV2]) {
+      const { engine, seen } = await make(() => replay([]));
+      await engine.refreshModels(true);
+      await engine.delegate({ cwd: await game(), prompt: "Write hello" });
+      const invocation = seen.at(-1);
+      const env = invocation?.env ?? {};
+      for (const name of ["XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"]) {
+        assert.ok(path.isAbsolute(env[name] ?? ""), `${name} is set, whatever the sandbox's own home is`);
+      }
+      assert.deepEqual(invocation?.sandbox.ownHome, [path.join(env.XDG_DATA_HOME ?? "", "opencode")]);
+      assert.ok(invocation?.sandbox.writableRoots.includes(path.join(env.XDG_STATE_HOME ?? "", "opencode")));
+      assert.ok(invocation?.sandbox.writableRoots.includes(path.join(env.XDG_CACHE_HOME ?? "", "opencode")));
+    }
   });
 
   it("resumes by session id, and leaves the variant off a model with no such dial", async () => {

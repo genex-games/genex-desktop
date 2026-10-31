@@ -11,7 +11,7 @@ import {
   findCodexBinary,
   type CodexAuthStatus,
 } from "../substrate/engines/codex-cli.ts";
-import { isCodexLoginActive, type CodexLoginState } from "../shared/codex-login.ts";
+import { CodexLoginProblem, isCodexLoginActive, type CodexLoginState } from "../shared/codex-login.ts";
 import { errorMessage } from "../shared/errors.ts";
 import { redactSecrets } from "../shared/redact.ts";
 import { MINUTE_MS } from "../shared/duration.ts";
@@ -121,18 +121,23 @@ export class CodexLoginController {
       hasBrowserUrl: false,
       deviceCode: undefined,
       error: undefined,
+      problem: undefined,
     });
     try {
       const installation = await this.#deps.resolveCli?.();
       const binary = installation?.path ?? (await (this.#deps.findBinary ?? findCodexBinary)());
       attempt.env = installation?.env;
       if (attempt.cancelled) return this.snapshot();
-      if (!binary) throw new Error(MESSAGE.notInstalled());
+      if (!binary) {
+        this.#fail(MESSAGE.notInstalled(), CodexLoginProblem.MissingCli);
+        return this.snapshot();
+      }
       await prepareLoginHome(home);
       if (attempt.cancelled) return this.snapshot();
       this.#drive(attempt, binary, method);
     } catch (error) {
-      if (!attempt.cancelled && this.#attempt === attempt) this.#fail(errorMessage(error));
+      if (!attempt.cancelled && this.#attempt === attempt)
+        this.#fail(errorMessage(error), CodexLoginProblem.CouldNotStart);
     }
     return this.snapshot();
   }
@@ -169,7 +174,7 @@ export class CodexLoginController {
     attempt.closed = new Promise<void>((resolve) => {
       child.once("error", (error) => {
         clearTimeout(attempt.timer);
-        if (!attempt.cancelled && this.#attempt === attempt) this.#fail(error.message);
+        if (!attempt.cancelled && this.#attempt === attempt) this.#fail(error.message, CodexLoginProblem.SpawnFailed);
         resolve();
       });
       child.once("close", (code) => {
@@ -182,7 +187,7 @@ export class CodexLoginController {
     });
     attempt.timer = setTimeout(() => {
       void this.cancel().then(() => {
-        if (this.#attempt === attempt) this.#fail(MESSAGE.timedOut());
+        if (this.#attempt === attempt) this.#fail(MESSAGE.timedOut(), CodexLoginProblem.TimedOut);
       });
     }, this.#deps.timeoutMs ?? DEFAULT_TIMEOUT_MS);
     attempt.timer.unref();
@@ -206,7 +211,7 @@ export class CodexLoginController {
 
   async #finish(attempt: LoginAttempt, binary: string, code: number | null): Promise<void> {
     if (code !== 0) {
-      this.#fail(MESSAGE.notFinished());
+      this.#fail(MESSAGE.notFinished(), CodexLoginProblem.NotFinished);
       return;
     }
     this.#update({ phase: "verifying", hasBrowserUrl: false });
@@ -216,19 +221,22 @@ export class CodexLoginController {
         this.#deps.probe ?? ((home, exe) => codexAuthStatus(home, { findBinary: async () => exe, env: attempt.env }))
       )(attempt.home, binary);
       if (this.#attempt !== attempt || attempt.cancelled) return;
-      if (status.loggedIn !== true || status.method !== "chatgpt") {
-        throw new Error(status.method === "api_key" ? MESSAGE.apiKeyLogin() : MESSAGE.notVerified());
+      const problem = unverified(status);
+      if (problem) {
+        this.#fail(problem === CodexLoginProblem.ApiKeyLogin ? MESSAGE.apiKeyLogin() : MESSAGE.notVerified(), problem);
+        return;
       }
       await this.#deps.onConnected(attempt.home);
       if (this.#attempt !== attempt || attempt.cancelled) return;
       this.#line(MESSAGE.connected());
       this.#update({ phase: "connected", deviceCode: undefined });
     } catch (error) {
-      if (this.#attempt === attempt && !attempt.cancelled) this.#fail(errorMessage(error));
+      if (this.#attempt === attempt && !attempt.cancelled)
+        this.#fail(errorMessage(error), CodexLoginProblem.NotVerified);
     }
   }
 
-  #fail(message: string): void {
+  #fail(message: string, problem: CodexLoginProblem): void {
     this.#url = null;
     // A failure opens the window: its output, Try again and a device code are the way back.
     this.#update({
@@ -237,6 +245,7 @@ export class CodexLoginController {
       hasBrowserUrl: false,
       deviceCode: undefined,
       error: sanitizeLoginLine(message),
+      problem,
     });
   }
 
@@ -267,6 +276,12 @@ export class CodexLoginController {
     await this.cancel();
     this.#update({ visible: false, lines: [], deviceCode: undefined });
   }
+}
+
+/** Why a finished login is not a ChatGPT sign-in, or null when it is one. */
+function unverified(status: CodexAuthStatus): CodexLoginProblem | null {
+  if (status.loggedIn === true && status.method === "chatgpt") return null;
+  return status.method === "api_key" ? CodexLoginProblem.ApiKeyLogin : CodexLoginProblem.NotVerified;
 }
 
 export function allowedLoginUrl(value: string): string | null {

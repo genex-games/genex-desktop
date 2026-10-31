@@ -16,10 +16,8 @@ import { describe, it } from "node:test";
 import { StudioBridge } from "../../src/substrate/engines/studio-bridge.ts";
 import {
   LOCK_MARKER,
-  lockUnowned,
   releaseLocks,
   releaseStaleLocks,
-  reapplyLocks,
   type LockRecord,
 } from "../../src/substrate/engines/ownership-locks.ts";
 import { tmpDir } from "../helpers/tmp.ts";
@@ -233,29 +231,14 @@ describe("PH-2: the lock marker is hostile input", () => {
       assert.equal(await modeOf(ctx.secret), ctx.secretMode, `${row.name}: the outside file keeps its mode`);
     });
 
-    it(`releaseLocks and reapplyLocks leave ${row.name} alone even from an in-memory record`, async () => {
+    it(`releaseLocks leaves ${row.name} alone even from an in-memory record`, async () => {
       const ctx = await workspace("locks-hostile-record-");
       const file = await row.entry(ctx);
       const record: LockRecord = { facetId: "x", at: "", files: [{ file, mode: 0o644 }] };
-      await reapplyLocks(ctx.cwd, record);
-      assert.equal(await modeOf(ctx.secret), ctx.secretMode, `${row.name}: re-locking does not reach outside`);
       await releaseLocks(ctx.cwd, record);
       assert.equal(await modeOf(ctx.secret), ctx.secretMode, `${row.name}: releasing does not reach outside`);
     });
   }
-
-  it("a marker planted as a link to an outside file is never written through", async () => {
-    const ctx = await workspace("locks-marker-link-");
-    await writeFile(ctx.secret, "# the user's shell rc\n");
-    await writeFile(path.join(ctx.cwd, "index.html"), "<!doctype html>");
-    await symlink(ctx.secret, path.join(ctx.cwd, LOCK_MARKER));
-    const record = await lockUnowned(ctx.cwd, { facetId: "enemies", owns: ["src/enemies.js"], ownsMain: false }).catch(
-      () => null,
-    );
-    assert.equal(await readFile(ctx.secret, "utf8"), "# the user's shell rc\n", "the outside file keeps its contents");
-    assert.equal(await modeOf(ctx.secret), ctx.secretMode);
-    if (record) await releaseLocks(ctx.cwd, record);
-  });
 
   it("gives back only the write bits the lock took, never a mode the marker invents", async () => {
     const ctx = await workspace("locks-mode-");
@@ -283,9 +266,9 @@ describe("PH-2: the lock marker is hostile input", () => {
     const ctx = await workspace("locks-write-only-");
     const file = path.join(ctx.cwd, "index.html");
     await writeFile(file, "<!doctype html>");
-    await chmod(file, 0o200);
-    const record = await lockUnowned(ctx.cwd, { facetId: "enemies", owns: ["src/enemies.js"], ownsMain: false });
-    assert.equal(await modeOf(file), 0o000);
+    // What an older build's lock left: a write-only file with its write bit taken, and the record.
+    await chmod(file, 0o000);
+    const record: LockRecord = { facetId: "enemies", at: "", files: [{ file: "index.html", mode: 0o200 }] };
     await releaseLocks(ctx.cwd, record);
     assert.equal(await modeOf(file), 0o200);
   });
@@ -337,20 +320,6 @@ describe("a FIFO the contractor planted never stalls the studio", { skip: WINDOW
       assert.equal(await within(releaseStaleLocks(cwd)), false);
     } finally {
       release([marker]);
-    }
-  });
-
-  it("lockUnowned walks past a FIFO in the workspace", async () => {
-    const cwd = await tmpDir("locks-fifo-file-");
-    await writeFile(path.join(cwd, "index.html"), "<!doctype html>");
-    const fifo = path.join(cwd, "pipe.json");
-    execFileSync("/usr/bin/mkfifo", [fifo]);
-    try {
-      const record = await within(lockUnowned(cwd, { facetId: "enemies", owns: ["src/enemies.js"], ownsMain: false }));
-      assert.notEqual(record, "timed out");
-      if (record !== "timed out") await within(releaseLocks(cwd, record));
-    } finally {
-      release([fifo]);
     }
   });
 });

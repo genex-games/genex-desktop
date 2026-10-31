@@ -325,7 +325,8 @@ async function untilOpen(ops: MomentOps): Promise<string | null> {
   const ends = ops.now() + OPEN_WAIT_MS;
   while (ops.now() < ends) {
     const state = await ops.state();
-    if (state.reopening.state === ReopenState.Failed) return MOMENT_WORDS.ReopenFailed(state.reopening.error ?? "");
+    // The job's own reason: the step's words already say Unreal couldn't be reopened.
+    if (state.reopening.state === ReopenState.Failed) return state.reopening.error || MOMENT_WORDS.NoReason;
     const reopened = state.reopening.state === ReopenState.Done || state.reopening.state === ReopenState.Idle;
     if (state.answering && reopened) return null;
     if (!(await paused(ops, OPEN_POLL_MS))) return MOMENT_WORDS.Stopped;

@@ -9,11 +9,16 @@ import type { PlayCuration } from "./play-manage.ts";
 import type { PlayBarNative, PlayNative } from "./play-native.ts";
 import type { PlayPurchaseSheet } from "./play-purchase.ts";
 
-/** Where Play talks to genex.games: the API main calls and the website the app links to. */
+/** Where Play talks to genex.games: the API main calls, the website the app links to, and where games are served. */
 export interface PlayOrigins {
   api: string;
   web: string;
+  /** The origin every published game is served under, each game on its own subdomain (`playGameUrl`). */
+  games: string;
 }
+
+/** The host every published game is served under: `https://<slug>.genex.technology/`. */
+export const PLAY_GAMES_DOMAIN = "genex.technology";
 
 /**
  * genex.games' own origins, which every release uses. A development profile may point Play
@@ -22,9 +27,8 @@ export interface PlayOrigins {
 export const PLAY_ORIGIN = {
   api: "https://api.genex.games",
   web: "https://genex.games",
+  games: `https://${PLAY_GAMES_DOMAIN}`,
 } as const satisfies PlayOrigins;
-/** The host every published game is served under: `https://<slug>.genex.technology/`. */
-export const PLAY_GAMES_DOMAIN = "genex.technology";
 
 /**
  * The website's three shelves, each with its own tabs: what Play's sidebar lists. Values are the
@@ -165,8 +169,11 @@ const SLUG = /^[a-z0-9](?:[a-z0-9-]{0,98}[a-z0-9])?$/;
 /** Whether a value is a slug the app will build an address from. */
 export const isPlaySlug = (value: unknown): value is string => typeof value === "string" && SLUG.test(value);
 
-/** The game itself, served on its own subdomain. */
-export const playGameUrl = (slug: string): string => `https://${slug}.${PLAY_GAMES_DOMAIN}/`;
+/** The game itself, served on its own subdomain of `games` (genex.games' own unless a development profile says). */
+export function playGameUrl(slug: string, games: string = PLAY_ORIGIN.games): string {
+  const served = new URL(games);
+  return `${served.protocol}//${slug}.${served.host}/`;
+}
 
 /** The game's page on the website at `web` (genex.games' unless a development profile says): what Share hands out. */
 export const playPageUrl = (web: string, slug: string): string => `${web}/${slug}`;
@@ -220,6 +227,11 @@ export const PlayControl = {
   NativeApp: "native-app",
   /** Full screen: the game's page takes the whole window, as its own full screen does; Esc brings the bar back. */
   FullScreen: "full-screen",
+  /**
+   * The game's Store, for a game that sells items: it opens in the game's place below the bar (the
+   * game hidden, never closed) and closes again on a second press, Back to game or Esc.
+   */
+  Store: "store",
 } as const;
 export type PlayControl = (typeof PlayControl)[keyof typeof PlayControl];
 
@@ -301,6 +313,14 @@ export interface PlayBarState {
   nativeApp: PlayBarNative | null;
   /** The game asked to be paid: Studio's purchase sheet covers it. Null with none open. */
   purchase: PlayPurchaseSheet | null;
+  /** The game sells items: the bar's Store door, and whether its Store is open. Null with no store. */
+  store: PlayBarStore | null;
+}
+
+/** The bar's Store door for a game that sells items. */
+export interface PlayBarStore {
+  /** The Store is open in the game's place, the game hidden under it. */
+  open: boolean;
 }
 
 /** A remix's name in the library, from the game it copies: what main adopts it as and Create shows while it is made. */

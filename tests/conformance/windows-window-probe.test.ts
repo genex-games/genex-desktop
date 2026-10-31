@@ -33,6 +33,8 @@ after(async () => {
 
 /** The driver's physical screen in the stand-in's desktop: twice the stand-in's own view of it. */
 const SCREEN = { width: 2000, height: 1000 } as const;
+/** The longest command line, and environment variable, Windows starts a process with. */
+const WINDOWS_COMMAND_LINE_CHARS = 32_767;
 
 /** A probe over the stand-in, and what it logged: each start and each request. */
 async function standIn(flags: string[] = [], options: { requestMs?: number; startMs?: number } = {}) {
@@ -88,10 +90,21 @@ describe("the Windows window probe's answers", () => {
       "D:\\Win\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
     );
     assert.equal(windowsPowerShell({}), "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
-    const args = probeCommand({ SystemRoot: "C:\\Windows" }).args;
+    const { args, env } = probeCommand({ SystemRoot: "C:\\Windows" });
     assert.deepEqual(args.slice(0, -1), ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand"]);
-    // No script file, so no execution policy applies; the command is the fixed script itself.
-    assert.equal(Buffer.from(args.at(-1)!, "base64").toString("utf16le"), WINDOW_PROBE_SCRIPT);
+    // No script file, so no execution policy applies: the command runs the fixed script the
+    // environment carries.
+    const loader = Buffer.from(args.at(-1)!, "base64").toString("utf16le");
+    assert.match(loader, /\$env:GENEX_WINDOW_PROBE_SCRIPT/);
+    assert.equal(Buffer.from(env.GENEX_WINDOW_PROBE_SCRIPT!, "base64").toString("utf8"), WINDOW_PROBE_SCRIPT);
+    assert.equal(env.SystemRoot, "C:\\Windows");
+  });
+
+  it("keeps its command line inside Windows' 32,767 characters, however long the script grows", () => {
+    // A longer script once made CreateProcess refuse PowerShell ("The filename or extension is too long").
+    const { command, args, env } = probeCommand({ SystemRoot: "C:\\Windows" });
+    assert.ok([command, ...args].join(" ").length < WINDOWS_COMMAND_LINE_CHARS / 4);
+    assert.ok(Math.max(...Object.values(env).map((value) => value.length)) < WINDOWS_COMMAND_LINE_CHARS);
   });
 });
 
@@ -116,6 +129,33 @@ describe("the Windows window probe's helper (a stand-in process)", () => {
       entries.flatMap((entry) => (entry.request ? [entry.request] : [])),
       ["front", "at 100 201", "at 750 5", "pid 40", "pid 41"],
       "the driver's physical pixels, in the points the helper says it sees",
+    );
+  });
+
+  it("brings an app forward by its executable's name, and never asks for a name that isn't one", async () => {
+    const { probe, logged } = await standIn();
+    assert.equal((await probe.raise("notepad.exe"))?.pid, 40);
+    assert.equal(await probe.raise("calc.exe"), null, "no window of it: nothing raised");
+    for (const hostile of ["", "notepad.exe\nfront", "a b.exe", "..\\cmd.exe", "x".repeat(300)])
+      assert.equal(await probe.raise(hostile), null, JSON.stringify(hostile));
+    assert.deepEqual(
+      (await logged()).flatMap((entry) => (entry.request ? [entry.request] : [])),
+      ["raise notepad.exe", "raise calc.exe"],
+      "only plain executable names reach the helper",
+    );
+  });
+
+  it("finds a running app by its executable's name, windowed or not, and never asks for a name that isn't one", async () => {
+    const { probe, logged } = await standIn();
+    assert.equal((await probe.running("notepad.exe"))?.pid, 40);
+    assert.equal((await probe.running("robloxstudiobeta.exe"))?.pid, 50, "an app whose windows are hidden still runs");
+    assert.equal(await probe.running("robloxstudio.exe"), null, "a name no process has: none");
+    for (const hostile of ["", "notepad.exe\nfront", "a b.exe", "..\\cmd.exe", "x".repeat(300)])
+      assert.equal(await probe.running(hostile), null, JSON.stringify(hostile));
+    assert.deepEqual(
+      (await logged()).flatMap((entry) => (entry.request ? [entry.request] : [])),
+      ["running notepad.exe", "running robloxstudiobeta.exe", "running robloxstudio.exe"],
+      "only plain executable names reach the helper",
     );
   });
 
@@ -169,6 +209,8 @@ describe("the Windows window probe on Windows", () => {
     await probe.ready();
     console.log(`the window probe was ready in ${Date.now() - began} ms`);
     assert.equal((await probe.process(process.pid))?.exe.toLowerCase(), "node.exe");
+    assert.ok(((await probe.running("node.exe"))?.pid ?? 0) > 0, "this very process runs");
+    assert.equal(await probe.running("genex-no-such-app.exe"), null, "a name no process has is none");
     // A runner may have no desktop in front (a service session): either answer is an answer.
     const front = await probe.front();
     assert.ok(front === null || front.pid > 0);

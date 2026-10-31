@@ -22,12 +22,47 @@ import { Pending } from "../../../ui/Pending.tsx";
 import { StepBar } from "../../../ui/StepBar.tsx";
 import { GENEX_WORDS, ROBLOX_PUBLISH_WORDS as WORDS } from "../../../words.ts";
 import { pollAfterMs, RobloxCardStage, type RobloxCardView, robloxCardView } from "./roblox-publish-view.ts";
+import { track } from "../../../analytics/client.ts";
+import { AnalyticsEvent } from "../../../analytics/events.ts";
+import { PublishEnd, PublishKind } from "../../../analytics/events/builds.ts";
+import { elapsedMs } from "../../../analytics/properties.ts";
 
 /** Studio's own menu path for publishing, in Studio's own (English) words. */
 const STUDIO_CLICKS = ["File", "Publish to Roblox"];
 /** A cancelled press is the person's choice, not an error to show. */
 const CANCELLED = /Cancelled/;
 const words = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+
+/** A publish's kind, as its events say it. */
+const publishKind = (view: Pick<RobloxCardView, "first">): PublishKind =>
+  view.first ? PublishKind.First : PublishKind.Update;
+
+/** How a publish the card watched ended, when this stage ends one. */
+function publishEnd(stage: RobloxCardStage): PublishEnd | null {
+  if (stage === RobloxCardStage.Published) return PublishEnd.Published;
+  return stage === RobloxCardStage.Stopped ? PublishEnd.Stopped : null;
+}
+
+/** A publish the card saw running, told once it ends: how, and how long the card saw it run. */
+function usePublishEnded({ stage, first }: Pick<RobloxCardView, "stage" | "first">): void {
+  const running = useRef<{ kind: PublishKind; since: number } | null>(null);
+  useEffect(() => {
+    const now = Date.now();
+    if (stage === RobloxCardStage.Publishing) {
+      running.current ??= { kind: publishKind({ first }), since: now };
+      return;
+    }
+    const ended = publishEnd(stage);
+    const watched = running.current;
+    if (!ended || !watched) return;
+    running.current = null;
+    track(AnalyticsEvent.RobloxPublishFinished, {
+      kind: watched.kind,
+      phase: ended,
+      ms: elapsedMs(watched.since, now),
+    });
+  }, [stage, first]);
+}
 
 /** The strip's Publish for a Roblox game, dressed as Genex's: Play's blue tint. */
 export function RobloxPublishButton({ onPress }: { onPress: () => void }): JSX.Element {
@@ -56,6 +91,7 @@ function usePublishStatus(project: string) {
     } else setFailed(true);
   }, [project]);
   const view = robloxCardView(state, Date.now());
+  usePublishEnded(view);
   const wait = pollAfterMs(view);
   useEffect(() => {
     void read();
@@ -106,16 +142,45 @@ function MainPress({
   );
 }
 
-/** The game's page on Roblox, with Open. */
-function RobloxLink({ url }: { url: string }): JSX.Element {
+/** The game's page on Roblox, with Open: the accent's while anyone can open it, quiet while only its owner can. */
+function RobloxLink({ url, open }: { url: string; open: boolean }): JSX.Element {
   return (
-    <div className="genex-publish-link-field" data-public>
+    // The place's address names the person's game on Roblox.
+    <div className="genex-publish-link-field" data-public={open || undefined} data-analytics-mask>
       <Icon name="globe" size={15} />
       <span title={url}>{url.replace(/^https?:\/\//, "")}</span>
       <Button onClick={() => void window.studio.openUrl(url)}>
         {WORDS.open}
         <Icon name="arrow-up-right" size={14} />
       </Button>
+    </div>
+  );
+}
+
+/**
+ * What a new game on Roblox still needs before others can open it (Roblox keeps it private and
+ * unrated), with Creator Hub, where each is done.
+ */
+function NotPublicYet({ hubUrl }: { hubUrl: string | undefined }): JSX.Element {
+  return (
+    <div className="genex-publish-next" data-roblox-not-public>
+      <p className="genex-publish-hint">{WORDS.onlyYou}</p>
+      <ol className="genex-publish-next-steps">
+        <li>{WORDS.nextQuestions}</li>
+        <li>{WORDS.nextPublic}</li>
+        <li>{WORDS.nextIcon}</li>
+      </ol>
+      {hubUrl && (
+        <Button
+          variant="default"
+          size="default"
+          className="genex-publish-primary"
+          onClick={() => void window.studio.openUrl(hubUrl)}
+        >
+          {WORDS.openHub}
+          <Icon name="arrow-up-right" size={14} />
+        </Button>
+      )}
     </div>
   );
 }
@@ -133,7 +198,8 @@ function Progress({ view }: { view: RobloxCardView }): JSX.Element | null {
 /** A first publish's name: the game's title until the person types another. */
 function NameField({ value, onChange }: { value: string; onChange: (value: string) => void }): JSX.Element {
   return (
-    <label className="grid gap-1.5 text-chat-sub text-ink-2">
+    // The name the person gives their game; the label around it is a control.
+    <label data-analytics-mask className="grid gap-1.5 text-chat-sub text-ink-2">
       {WORDS.name}
       <input
         data-roblox-publish-name
@@ -161,7 +227,7 @@ function Body({
     return (
       <>
         <Progress view={view} />
-        <p role="alert" className="genex-publish-problem">
+        <p role="alert" data-analytics-mask className="genex-publish-problem">
           {view.detail ?? WORDS.stoppedLine}
         </p>
       </>
@@ -187,6 +253,7 @@ function PressCard({ project, view, read }: { project: string; view: RobloxCardV
         view.first ? { name: name.trim() } : {},
         project,
       )) as RobloxPublishAnswer | null;
+      track(AnalyticsEvent.RobloxPublishPressed, { kind: publishKind(view), started: answer?.started === true });
       if (!answer?.started) setRefused(answer ?? { started: false, message: WORDS.stoppedLine });
     } catch (e) {
       if (!CANCELLED.test(words(e))) setRefused({ started: false, message: words(e) });
@@ -203,7 +270,7 @@ function PressCard({ project, view, read }: { project: string; view: RobloxCardV
       <Body view={view} name={name} onName={setTyped} />
       {refused && (
         <div>
-          <p role="alert" className="genex-publish-problem">
+          <p role="alert" data-analytics-mask className="genex-publish-problem">
             {refused.message}
           </p>
           {refused.clickPath && <StudioClicks />}
@@ -269,8 +336,14 @@ function CardContent({
           <Icon name="check" size={16} className="text-green" />
           {view.first ? WORDS.publishedFirst : WORDS.publishedUpdate}
         </p>
-        {view.url && <RobloxLink url={view.url} />}
-        <Button variant="default" size="default" className="genex-publish-primary" onClick={onClose}>
+        {view.url && <RobloxLink url={view.url} open={!view.notPublicYet} />}
+        {view.notPublicYet && <NotPublicYet hubUrl={view.hubUrl} />}
+        <Button
+          variant={view.notPublicYet && view.hubUrl ? "secondary" : "default"}
+          size="default"
+          className="genex-publish-primary"
+          onClick={onClose}
+        >
           {WORDS.done}
         </Button>
       </>

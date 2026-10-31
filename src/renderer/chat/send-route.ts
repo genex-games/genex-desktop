@@ -11,13 +11,22 @@ import { type Notify, ToastTone } from "../state/toasts.ts";
 import type { AutopilotSend, ComposerExtras } from "../ui/PromptBar.tsx";
 import { problemWords } from "../words.ts";
 import type { ConversationEntry } from "./conversation-entries.ts";
-import { leadTakesSend, newClientId, type PendingSend, sendPlacement, waitsBehindWork } from "./pending-sends.ts";
+import { SendRoute } from "../analytics/chat-vocabulary.ts";
+import {
+  leadTakesSend,
+  newClientId,
+  type PendingSend,
+  type SendPlacement,
+  sendPlacement,
+  waitsBehindWork,
+} from "./pending-sends.ts";
 import { finishingRun } from "./transcript.ts";
 import type { ChatThread } from "./use-chat-thread.ts";
 import type { ChatWorkView } from "./use-chat-work.ts";
 import type { ComposerModel } from "./use-composer-model.ts";
 import type { FollowScroll } from "./use-follow-scroll.ts";
 import type { ReplyingAbout } from "./use-reply-about.ts";
+import { errorCode } from "../../shared/errors.ts";
 
 /** A legacy in-run plan that holds the worker until it is answered. */
 export const isHeldPlan = (entry: ConversationEntry, runId: string | null, now: number): boolean =>
@@ -49,7 +58,7 @@ async function sendNote(about: ReplyAbout, text: string, onNotice: Notify): Prom
   await window.studio
     .runFeedback({ threadId: about.threadId, runId: about.runId, ...about.target, text, label: about.label })
     .catch((err: unknown) => {
-      onNotice(problemWords(err), ToastTone.Error);
+      onNotice(problemWords(err), ToastTone.Error, errorCode(err));
       throw err;
     });
   onNotice(noteSentWords(about), ToastTone.Ok);
@@ -114,6 +123,22 @@ export async function sentAsNote(
   reply.drop(about.threadId);
   follow.jumpToLatest();
   return true;
+}
+
+/**
+ * Where a message that is not a note goes, for the send's analytics: the held plan's inbox, plan
+ * review, or the chat, with where its bubble waits. Read before `showSend` adds the bubble.
+ */
+export function sendDestination(
+  parts: { chat: ChatThread; work: ChatWorkView },
+  text: string,
+  extras: ComposerExtras | undefined,
+  heldRun: string | null,
+): { route: SendRoute; placement?: SendPlacement } {
+  const { chat, work } = parts;
+  if (heldRun) return { route: SendRoute.HeldPlan };
+  if (sendRoute(chat, work, extras).toPlanReview) return { route: SendRoute.PlanReview };
+  return { route: SendRoute.Chat, placement: sendPlacement(waitsBehindWork(sendWork(text, chat, work)), chat.queue) };
 }
 
 /**

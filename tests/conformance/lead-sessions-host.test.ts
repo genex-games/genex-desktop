@@ -193,22 +193,6 @@ describe("a run's sessions never take the chat's bookmark", () => {
         extra: { selfCapture: { project: game, root, runId: "run_x", facetId: "prep", iteration: 0, label: "prep" } },
       },
       {
-        label: "the scout",
-        sessionId: "scout-1",
-        extra: {
-          playtest: {
-            project: game,
-            root,
-            runId: "run_x",
-            facetId: "scout",
-            iteration: 0,
-            role: "scout",
-            label: "scout",
-          },
-          readOnly: true,
-        },
-      },
-      {
         label: "the run's coordinator",
         sessionId: "coordinator-1",
         extra: { coordinator: { runId: "run_x" }, readOnly: true },
@@ -339,7 +323,8 @@ describe("a lead that is its chat's own session", () => {
     const honoured = seen.at(-1)!;
     assert.equal(honoured.director?.root, real, "the grant is honoured in the game folder, on the real path checked");
     assert.equal(path.resolve(honoured.cwd), path.resolve(project.dir), "where the session sits");
-    assert.equal(honoured.readOnly, true, "and writes nothing");
+    assert.notEqual(honoured.readOnly, true, "never read-only");
+    assert.equal(honoured.leadBuilds, real, "it builds in the worktree it leads");
     assert.ok(
       (honoured.liveTools ?? []).some((tool) => tool.name === "look"),
       "its window and its tools are on the build it leads",
@@ -371,6 +356,29 @@ describe("a lead that is its chat's own session", () => {
     assert.equal(request.director?.root, real, "the grant the engine gets names the real worktree");
     assert.ok((request.extraReads ?? []).includes(real), "which is what it may read");
     assert.ok(!(request.extraReads ?? []).includes(alias), "never the link");
+    assert.equal(request.leadBuilds, real, "and builds in, by its real path");
+  });
+
+  it("is never read-only, whatever its brief says: a full agent on the build it leads, in the chat's mode on an engine that does not ask about each call", async () => {
+    const { core, project, threadId, delegate, seen } = await gameChat();
+    const worktree = await runWorktree(core, project, "run_one");
+    const real = await realpath(worktree);
+    const briefs: Array<[string, Record<string, unknown>]> = [
+      ["a kept older seed's lead, read-only by its brief", leadGrant(threadId, project.name, "run_one", worktree)],
+      [
+        "a lead with no read-only seat",
+        { director: { runId: "run_one", threadId, project: project.name, root: worktree, setup: null, tools: [] } },
+      ],
+    ];
+    for (const [label, brief] of briefs) {
+      await delegate(`lead-${label.length}`, { chatTurn: { messageId: "run_one" }, ...brief });
+      const request = seen.at(-1)!;
+      assert.equal(request.director?.root, real, `${label}: seated on the build it leads`);
+      assert.notEqual(request.readOnly, true, `${label}: never read-only`);
+      assert.equal(request.leadBuilds, real, `${label}: its box writes that build`);
+      assert.ok(request.permissions?.mode, `${label}: in the chat's mode, as the chat's own session on its engine`);
+      assert.ok((request.liveTools ?? []).length > 0, `${label}: with the host's tools`);
+    }
   });
 
   it("drops the grant for a root that is not this game's worktree of that run, and records no bookmark", async () => {
@@ -414,7 +422,6 @@ describe("a lead that is its chat's own session", () => {
         root: path.join(autopilot, "run_one", "to-live"),
       },
       { label: "a run the record never started", runId: "run_ghost", root: unrecorded },
-      { label: "a lead that may write", runId: "run_one", root: ours.path, extra: { readOnly: false } },
     ];
     const seenGrants: Array<{ label: string; director: unknown; look: boolean; reads: string[]; bookmark: unknown }> =
       [];
@@ -811,7 +818,7 @@ async function leadChat({ leadAskTimeoutMs }: { leadAskTimeoutMs?: number } = {}
  */
 describe("a build's lead and the run's coordinator ask the person they answer", () => {
   it("hands a way to ask only to the lead answering its chat and the coordinator of its run", async () => {
-    const { core, api, game, threadId, worktree, runId, seen, delegate, leadBrief, personSays } = await leadChat();
+    const { core, game, threadId, worktree, runId, seen, delegate, leadBrief, personSays } = await leadChat();
     const said = await personSays();
     const other = await core.games.scaffold("lead-asks-other");
     const otherChat = await core.threadForGame(other.name);
@@ -819,7 +826,7 @@ describe("a build's lead and the run's coordinator ask the person they answer", 
       title: "Second chat",
       metadata: { kind: "game", project: game },
     });
-    const forged = String(await api["thread.create"]!({ title: "x" }));
+    const forged = await core.store.createThread({ title: "x" });
     const cases: Array<{ label: string; extra: Record<string, unknown>; thread?: string; asks: boolean }> = [
       { label: "the lead answering its chat", extra: leadBrief(), asks: true },
       {
@@ -853,7 +860,7 @@ describe("a build's lead and the run's coordinator ask the person they answer", 
         asks: false,
       },
       {
-        label: "a playtester",
+        label: "a read-only session an older harness sent with a playtest grant",
         extra: {
           playtest: {
             project: game,
@@ -886,8 +893,9 @@ describe("a build's lead and the run's coordinator ask the person they answer", 
         label,
         asks: Boolean(request.leadAsks),
         permissions: Boolean(request.permissions),
-        // The chat's main agent: told it reaches the person's whole Mac, as the chat's own session is.
-        reachesMac: request.prompt.includes(mainAgentReachNote()),
+        // The chat's main agent: told it reaches the person's whole Mac, as the chat's own session is
+        // (flipped: in its system context, told once).
+        reachesMac: (request.system ?? "").includes(mainAgentReachNote()),
       });
     }
     assert.deepEqual(
@@ -938,13 +946,16 @@ describe("a build's lead and the run's coordinator ask the person they answer", 
       return done();
     };
 
-    // Flipped: a Bypass chat's lead ran in Manual and the host allowed every
-    // question. It runs in Bypass now, as the chat's own session, so a question that still reaches
-    // the host is one of Claude Code's checks no mode skips (a dangerous `rm`): a card, as the
-    // chat's own session's. A lead started in another mode whose chat moved to Bypass is allowed.
+    // Flipped twice: a Bypass chat's lead ran in Manual and the host allowed every question; then it
+    // ran in Bypass and the checks Claude Code still asks about there were carded. Bypass asks
+    // nothing now (#528): those are allowed at once, with no card, as the chat's own session's are.
+    // A lead started in another mode whose chat moved to Bypass is allowed too.
     await core.setPermissionMode(threadId, "bypassPermissions");
-    const bypassed = await settled({ tool: "Bash", input: { command: "rm -rf ~" } }, { decision: "deny" });
-    assert.deepEqual(bypassed.answer, { decision: "deny" }, "Bypass: the person's answer");
+    assert.deepEqual(
+      await (await asking({ tool: "Bash", input: { command: "rm -rf ~" } })).done(),
+      { answer: { decision: "allow" }, rows: [] },
+      "Bypass: allowed, no card",
+    );
     await core.setPermissionMode(threadId, "default");
     const moved = () => core.setPermissionMode(threadId, "bypassPermissions").then(() => {});
     assert.deepEqual(
@@ -1067,16 +1078,18 @@ describe("a build's lead and the run's coordinator ask the person they answer", 
     assert.deepEqual((await core.permissionSettings()).rules.find((r) => r.project === game)?.rules, ["Bash(ls *)"]);
   });
 
-  it("withdraws a card nobody answered in time, in its own words", async () => {
+  it("withdraws a card nobody answered in time, in its own words: not a no, and the work goes on", async () => {
     const { core, threadId, asking, personSays, handToLead } = await leadChat({ leadAskTimeoutMs: 50 });
     await core.setPermissionMode(threadId, "default");
     await handToLead(await personSays());
     const { answer, rows } = await (await asking({ tool: "Bash", input: { command: "ls ~/Downloads" } })).done();
+    // Flipped (Loop phase 3): "so this was not allowed. Do not retry it" read as a no, and a lead
+    // dropped work over a card nobody saw.
     assert.deepEqual(answer, {
       decision: "deny",
       withdrawn: true,
       message:
-        "Nobody answered within 5 minutes, so this was not allowed. Do not retry it; say in your reply what you needed.",
+        "Nobody answered within 5 minutes: the person may be away. This is not a no; it did not run. Carry on with the rest of the work, and ask again later if it is still needed.",
     });
     assert.deepEqual(
       rows.map((row) => [row.state, row.by]),
@@ -1500,7 +1513,7 @@ function standInHostTools(core: CoreLite["core"]) {
     calls.push({ tool, binding: { ...binding } });
     return answers.plugin(binding, signal);
   }) as never;
-  core.mcp.toolsFor = (async () => [CONNECTOR_TOOL]) as never;
+  core.mcp.toolsReport = (async () => ({ tools: [CONNECTOR_TOOL], silent: [] })) as never;
   core.mcp.owns = ((name: string) => name === CONNECTOR_TOOL.name) as never;
   core.mcp.guidance = ((tools?: Array<{ name: string }>) => (tools?.length ? CONNECTOR_GUIDANCE : "")) as never;
   core.mcp.tool = (async (tool: string, _args: unknown, binding: HostToolCall["binding"], signal: AbortSignal) => {
@@ -1546,11 +1559,13 @@ describe("a lead has the chat's own session's plugins and connectors, on the bui
       const request = seen.at(-1)!;
       assert.equal(Boolean(request.leadAsks), asks, `${label}: asks as before`);
       assert.deepEqual(offered(request), [PLUGIN_TOOL.name, CONNECTOR_TOOL.name], `${label}: offered`);
-      assert.ok(request.prompt.includes(PLUGIN_GUIDANCE), `${label}: the plugins' guidance`);
-      assert.ok(request.prompt.includes(CONNECTOR_GUIDANCE), `${label}: the connectors' guidance`);
+      // Flipped: the guidance is the session's system context, told once rather than every turn.
+      const context = request.system ?? "";
+      assert.ok(context.includes(PLUGIN_GUIDANCE), `${label}: the plugins' guidance`);
+      assert.ok(context.includes(CONNECTOR_GUIDANCE), `${label}: the connectors' guidance`);
       // It sits in the game folder: told its plugins work on the build, whose path its brief never names.
-      assert.ok(request.prompt.includes(leadToolsNote()), `${label}: told where its plugins work`);
-      assert.equal(request.prompt.includes(built), false, `${label}: never the build's path`);
+      assert.ok(context.includes(leadToolsNote()), `${label}: told where its plugins work`);
+      assert.equal(`${request.prompt}\n${context}`.includes(built), false, `${label}: never the build's path`);
       assert.deepEqual(heard, ["delivered", "found"], `${label}: answered`);
       const [plugin, connector] = calls;
       assert.deepEqual(
@@ -1575,14 +1590,14 @@ describe("a lead has the chat's own session's plugins and connectors, on the bui
     assert.equal(phases.includes("connecting"), false, "and none says it is connecting tools");
   });
 
-  it("still gives none to a read-only session that leads nothing, the playtester or the coordinator", async () => {
+  it("still gives none to a read-only session that leads nothing, an older harness's playtest grant or the coordinator", async () => {
     const { core, threadId, game, runId, worktree, delegate, personSays, seen } = await leadChat();
     standInHostTools(core);
     const said = await personSays();
     const cases: Array<[string, Record<string, unknown>]> = [
       ["a read-only session in the game folder", { readOnly: true }],
       [
-        "a playtester",
+        "a read-only session an older harness sent with a playtest grant",
         {
           playtest: {
             project: game,
@@ -1689,6 +1704,50 @@ describe("a lead has the chat's own session's plugins and connectors, on the bui
     );
   });
 
+  // A Loop's lead asks (installing a package, listing a store item) and ends its turn to wait for
+  // its workers: its card waited four minutes and was declined "by stop" as that turn returned, so
+  // nobody could approve it. The card is the person's to answer, whatever the lead's turn does.
+  it("keeps the card a lead's turn left open after that turn ends, until the person answers or a Stop", async () => {
+    const { core, threadId, delegate, leadBrief, whileRunning } = await leadChat();
+    const { answers } = standInHostTools(core);
+    answers.plugin = async (binding, signal) => {
+      const confirmed = { name: "deliver", description: "Deliver an asset", confirmation: "Deliver the asset?" };
+      const { approved, by } = await core.requestConsent("fixture", confirmed as never, {}, binding as never, signal);
+      return approved ? "delivered" : `declined by ${by}`;
+    };
+    let asked: Promise<unknown> = Promise.resolve();
+    // The lead asks and ends its turn without waiting for the answer.
+    whileRunning(async (request) => {
+      asked = request.onLiveTool!(PLUGIN_TOOL.name, {}).catch((err: Error) => err.message);
+    });
+    const consents = async (state: string) =>
+      (await core.store.listEvents(threadId)).flatMap((event) => {
+        const custom = customRecord(event.data);
+        const consent = custom?.payload as { consentId?: string; state?: string } | undefined;
+        return custom?.event_type === "plugin_consent" && consent?.state === state ? [consent.consentId!] : [];
+      });
+    const newCard = async (known: string[]) => {
+      let card: string | undefined;
+      for (let waited = 0; card === undefined && waited < 200; waited++) {
+        card = (await consents("pending")).find((id) => !known.includes(id));
+        if (card === undefined) await sleep(MIRROR_POLL_MS);
+      }
+      assert.ok(card, "the lead's card is in the chat");
+      return card;
+    };
+
+    await delegate(leadBrief());
+    const card = await newCard([]);
+    assert.deepEqual(await consents("declined"), [], "its turn's end declined nothing");
+    assert.equal(core.resolveConsent(card, true), true, "the card still waits for the person");
+    assert.equal(await asked, "delivered", "and the tool runs once they approve");
+
+    await delegate(leadBrief());
+    await newCard([card]);
+    await core.stopThread(threadId);
+    assert.equal(await asked, "declined by stop", "a Stop still withdraws a card a turn left open");
+  });
+
   // A connector action nobody saved "always allow" for asks the person first; a lead's card for it
   // outlives the chat's other turns as its call does, and ends with a Stop.
   it("keeps the card its connector action asks with through the chat's other turns", async () => {
@@ -1765,9 +1824,10 @@ describe("a lead has the chat's own session's plugins and connectors, on the bui
     assert.deepEqual(heard, ["declined by user", "delivered"]);
   });
 
-  // No turn of the chat's ending withdraws them, so the end of the lead's own session must: a card
-  // left waiting after it would run the tool for a session that is gone, once approved.
-  it("withdraws its card and ends its call when its own session ends first", async () => {
+  // Flipped: the end of the lead's own session withdrew its card too ("declined" by stop), so a
+  // Loop's lead, which ends its turn to wait for its workers, could never be answered. Its card now
+  // waits for the person; its connector call, waiting on a service rather than on them, still ends.
+  it("ends its connector call when its own session ends first, and leaves its card for the person", async () => {
     const { core, threadId, delegate, leadBrief, whileRunning } = await leadChat();
     const { calls, answers } = standInHostTools(core);
     answers.plugin = async (binding, signal) => {
@@ -1781,23 +1841,29 @@ describe("a lead has the chat's own session's plugins and connectors, on the bui
       });
     const left: Array<Promise<unknown>> = [];
     whileRunning(async (request) => {
-      // The session ends (its deadline, a crash) while the card and the call still wait.
+      // The session ends (its turn, its deadline, a crash) while the card and the call still wait.
       for (const name of [PLUGIN_TOOL.name, CONNECTOR_TOOL.name]) {
         left.push(request.onLiveTool!(name, {}).catch((err: Error) => err.message));
         for (let waited = 0; calls.length < left.length && waited < 200; waited++) await sleep(MIRROR_POLL_MS);
       }
     });
     await delegate(leadBrief());
-    const settled = await Promise.race([
-      Promise.all(left),
+    const [card, call] = left;
+    const connector = await Promise.race([
+      call,
       sleep(MIRROR_WAIT_MS).then(() => "still waiting after the session ended"),
     ]);
-    assert.deepEqual(settled, ["declined by stop", "aborted"]);
-    const states = (await core.store.listEvents(threadId)).flatMap((event) => {
-      const custom = customRecord(event.data);
-      return custom?.event_type === "plugin_consent" ? [(custom.payload as { state?: string }).state] : [];
-    });
-    assert.deepEqual(states, ["pending", "declined"], "the card says it was withdrawn");
+    assert.equal(connector, "aborted", "the connector call ended with the session");
+    const consents = async () =>
+      (await core.store.listEvents(threadId)).flatMap((event) => {
+        const custom = customRecord(event.data);
+        const consent = custom?.payload as { consentId?: string; state?: string } | undefined;
+        return custom?.event_type === "plugin_consent" ? [[consent?.state, consent?.consentId] as const] : [];
+      });
+    const pending = (await consents()).filter(([state]) => state === "pending");
+    assert.equal(pending.length, 1, "the card is still in the chat");
+    assert.equal(core.resolveConsent(pending[0]![1]!, true), true, "and still waits for the person");
+    assert.equal(await card, "delivered");
   });
 });
 

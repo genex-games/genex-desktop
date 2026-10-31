@@ -20,6 +20,7 @@ const EAGER_ENTRIES = ["src/renderer/main.tsx", "src/renderer/studio-entry.tsx"]
  * wrap the app in Profilers (`renderer/performance.tsx`).
  *
  * @param {{ release?: boolean; development?: boolean; commitCounts?: boolean }} [mode]
+ * @returns {{ define: Record<string, string>; minify: boolean; keepNames: boolean; charset: import("esbuild").Charset }}
  */
 export function rendererBuildOptions({ release = false, development = false, commitCounts = false } = {}) {
   if (release && development) throw new Error("A release renderer cannot bundle development React");
@@ -31,6 +32,40 @@ export function rendererBuildOptions({ release = false, development = false, com
     },
     minify: release,
     keepNames: true,
+    // Module scripts are always read as UTF-8, so the language catalogs keep their letters instead
+    // of six-byte `\u` escapes: the Russian catalog a window reads before it shows, 1.1 → 0.56 MB.
+    charset: "utf8",
+  };
+}
+
+/**
+ * The studio window's bundle (`main.tsx` and the chunks it loads), as the build makes it and the
+ * budget test measures it. Owned builds (`performance`) keep the journey marks.
+ *
+ * @param {{ root: string; outdir: string; mode?: { release?: boolean; development?: boolean; commitCounts?: boolean }; performance?: boolean }} build
+ * @returns {import("esbuild").BuildOptions}
+ */
+export function studioRendererBuild({ root, outdir, mode = {}, performance = false }) {
+  const options = rendererBuildOptions(mode);
+  return {
+    ...options,
+    define: { ...options.define, __STUDIO_PERFORMANCE__: JSON.stringify(performance) },
+    // The report finds the eager entries by their paths from here.
+    absWorkingDir: root,
+    bundle: true,
+    platform: "browser",
+    metafile: true,
+    target: "chrome130",
+    sourcemap: true,
+    logLevel: "info",
+    format: "esm",
+    jsx: "automatic",
+    entryPoints: [path.join(root, "src/renderer/main.tsx")],
+    outdir,
+    entryNames: "renderer",
+    chunkNames: "chunks/[name]-[hash]",
+    splitting: true,
+    loader: { ".css": "css" },
   };
 }
 
@@ -38,7 +73,7 @@ export function rendererBuildOptions({ release = false, development = false, com
  * Refuse development React outside a development build; retain provenance for packaged smoke checks.
  *
  * @param {import("esbuild").Metafile} metafile
- * @param {{ release?: boolean; development?: boolean }} [mode]
+ * @param {{ release?: boolean; development?: boolean; commitCounts?: boolean }} [mode] the build's renderer mode
  */
 export function rendererBundleReport(metafile, { release = false, development = false } = {}) {
   const inputs = Object.keys(metafile.inputs);

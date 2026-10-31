@@ -20,10 +20,12 @@
  *
  * Every refusal is a tool answer in plain words, never a thrown protocol error.
  */
+import path from "node:path";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { MAX_PLAY_SHOT_BYTES } from "../../shared/engine-play.ts";
 import { CONNECTOR_OUTCOME_META } from "../../shared/mcp.ts";
+import { atomicWriteJson, readRegularFile } from "../../substrate/fsx.ts";
 import { RobloxAction } from "./actions.ts";
 import { agentBusyMarker } from "./agent-marks.ts";
 import { type LuauRefusal, LuauReach, screenLuau } from "./luau-screen.ts";
@@ -53,6 +55,10 @@ import { agentTool as pluginTool, RobloxTool } from "./tools.ts";
 import { MCP_SWITCH_CLICK_PATH } from "./words.ts";
 
 const BRIDGE_VERSION = "0.1.0";
+/** The game's last listing of Studio's tools, in the connection's folder. */
+const LISTED_FILE = "studio-tools.json";
+/** The most a kept listing may weigh: Studio's tools with their schemas are a few tens of KB. */
+const MAX_LISTED_BYTES = 1024 * 1024;
 /** The picture types a tool answer may carry as an image. */
 const JPEG = "image/jpeg";
 /** The base of the capture ids the connection fills in, as Studio's own examples spell them. */
@@ -91,7 +97,7 @@ const MESSAGE = {
   },
   Hidden: {
     [StudioToolClass.PlayLane]: (name: string) =>
-      `${name} isn't offered here: play-testing goes through the computer tool and judge_play.`,
+      `${name} isn't offered here: play-testing goes through the computer tool.`,
     [StudioToolClass.CodeIsFiles]: (name: string) =>
       `${name} isn't offered here: scripts are the game's .luau files under src/, which Genex keeps in step with Studio.`,
     [StudioToolClass.Network]: (name: string) =>
@@ -235,6 +241,31 @@ function filledArgs(state: BridgeState, name: string, args: Record<string, unkno
   return filled;
 }
 
+/**
+ * Studio's tools as it lists them now, kept in the connection's folder; the game's last listing
+ * when Studio doesn't answer (busy, or still starting after a restart), so the agent keeps its tools
+ * for the turn and a call says in words what Studio answers.
+ */
+async function listedTools(deps: StudioMcpDeps): Promise<StudioMcpTool[]> {
+  const file = path.join(deps.folder, LISTED_FILE);
+  const listed = await deps.client.listTools().catch(() => []);
+  if (listed.length) {
+    await atomicWriteJson(file, listed).catch(() => undefined);
+    return listed;
+  }
+  const kept: unknown = await readRegularFile(file, MAX_LISTED_BYTES)
+    .then((bytes) => JSON.parse(bytes.toString("utf8")))
+    .catch(() => []);
+  return Array.isArray(kept) ? kept.filter(isListedTool) : [];
+}
+
+/** Whether a kept entry is a tool as Studio lists one: a name and an object schema. */
+function isListedTool(entry: unknown): entry is StudioMcpTool {
+  if (typeof entry !== "object" || entry === null) return false;
+  const { name, inputSchema } = entry as { name?: unknown; inputSchema?: unknown };
+  return typeof name === "string" && typeof inputSchema === "object" && inputSchema !== null;
+}
+
 /** Studio's tools, listed again when the one asked for isn't known yet. */
 async function knownTools(deps: StudioMcpDeps, state: BridgeState, name: string): Promise<void> {
   if (state.tools.has(name)) return;
@@ -286,7 +317,7 @@ export function createStudioMcp(deps: StudioMcpDeps) {
   const busy = agentBusyMarker(deps.folder, deps.now);
   const server = new Server({ name: "roblox-studio", version: BRIDGE_VERSION }, { capabilities: { tools: {} } });
   server.setRequestHandler(ListToolsRequestSchema, async () => {
-    const listed = await deps.client.listTools().catch(() => []);
+    const listed = await listedTools(deps);
     for (const tool of listed) state.tools.set(tool.name, tool);
     return { tools: listed.filter((tool) => passesThrough(classOf(tool.name))).map(agentTool) };
   });

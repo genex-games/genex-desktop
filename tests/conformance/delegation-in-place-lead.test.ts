@@ -79,7 +79,7 @@ async function inPlaceWorld() {
   const announced: string[] = [];
   const lite = await coreLite({
     gamesRoot: path.join(root, "games"),
-    executionPolicy: { allowedProjectRoot: root, runBackgroundImprovement: false },
+    executionPolicy: { allowedProjectRoot: root },
     consentTimeoutMs: CONSENT_WAIT_MS,
     onUiEvent: (event) => {
       announced.push(event.type);
@@ -101,7 +101,9 @@ async function inPlaceWorld() {
       id,
       label: "fixture",
       kind,
-      supportsSessions: true,
+      // Flipped (Loop phase 3): every engine that keeps a session carries a worker's seat now, so
+      // the engine Genex does not seat is one that keeps none of its own.
+      supportsSessions: kind === "delegated",
       permissionPrompts,
       status: async () => ({ code: "ready", detail: "fixture" }),
       models: async () => [],
@@ -267,7 +269,7 @@ describe("a Loop's lead in place has its run's tools on the game folder", () => 
         bindings.push({ tool, ...(binding.directory ? { directory: binding.directory } : {}) });
         return "delivered";
       }) as never;
-      core.mcp.toolsFor = (async () => [CONNECTOR_TOOL]) as never;
+      core.mcp.toolsReport = (async () => ({ tools: [CONNECTOR_TOOL], silent: [] })) as never;
       core.mcp.owns = ((name: string) => name === CONNECTOR_TOOL.name) as never;
       core.mcp.ownerOf = ((id: string) => (id === ENGINE_PLUGIN ? ENGINE_PLUGIN : undefined)) as never;
       core.mcp.tool = (async () => "found") as never;

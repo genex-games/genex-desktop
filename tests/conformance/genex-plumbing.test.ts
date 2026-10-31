@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { customEvents, startRig, waitForLog } from "../helpers/studio-rig.ts";
 import type { DelegateRequest } from "../../src/substrate/engines/types.ts";
 import { createToolRegistry } from "../../src/harness-seed/tools/index.ts";
-import { mkdir, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 
@@ -334,6 +334,8 @@ it("agent publish requests wait for Studio consent on every engine path", async 
   try {
     const project = "publish-consent";
     await rig.core.games.scaffold(project);
+    // A game with code of its own: Publish refuses the untouched empty starter before it asks anyone.
+    await appendFile(path.join(rig.core.games.dirFor(project), "src", "main.js"), "\nconsole.log('a game');\n");
     const threadId = await rig.core.createGameThread(project);
     const api = rig.core.api() as unknown as Record<string, (input: any) => Promise<any>>;
     // Only the Studio UI answers a card: the agent-facing RPC table carries no way to.

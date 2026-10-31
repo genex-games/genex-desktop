@@ -1,6 +1,5 @@
 import { validateDetect } from "./detect-manifest.ts";
 import { validateEngine } from "./engine-manifest.ts";
-import { inspectJudgeBriefs, validateJudges } from "./judge-manifest.ts";
 import { validateAssets, validateWorkspace } from "./workspace-manifest.ts";
 import { validateFolders, validateWorkerTypes } from "./worker-manifest.ts";
 import { validateScaffolds } from "./scaffold-manifest.ts";
@@ -39,9 +38,12 @@ import {
   PLUGIN_TOOL_MAX_TIMEOUT_MS,
   PluginCapability,
   PluginHostTool,
+  PluginInstallProblem,
   PluginToolAudience,
   TOOLBAR_ICON_NAMES,
 } from "../../shared/plugins.ts";
+import { CodedError } from "../../shared/errors.ts";
+import { refusedAs } from "./install-problem.ts";
 import { PLUGIN_ID } from "../../shared/plugin-id.ts";
 import { GameEngine, isGameEngine } from "../../shared/game-engine.ts";
 import { MCP_ID, McpTransport } from "../../shared/mcp.ts";
@@ -60,8 +62,11 @@ const SEMVER = /^\d+\.\d+\.\d+$/;
  * whose CLI Studio already spawns for asset work, may ask for it.
  */
 const HOST_CLI_PLUGIN = "genex";
-/** Host tools that spend credits or change the game: each needs the user's consent every time. */
-const CONSENTED_HOST_TOOLS: ReadonlySet<string> = new Set([PluginHostTool.GenexCliPaid, PluginHostTool.GenexPackage]);
+/**
+ * Host tools that spend Nex or credits or change what a game sells: each needs the user's consent
+ * every time. Genex's own pinned packages spend nothing, so `genex-package` asks nobody.
+ */
+const CONSENTED_HOST_TOOLS: ReadonlySet<string> = new Set([PluginHostTool.GenexCliPaid]);
 const HOST_TOOLS: ReadonlySet<unknown> = new Set(Object.values(PluginHostTool));
 const TOOL_AUDIENCES: ReadonlySet<unknown> = new Set(Object.values(PluginToolAudience));
 const KIB = 1024;
@@ -187,12 +192,13 @@ const MESSAGE = {
   HostToolReserved:
     "tools[].host runs a program Studio ships and is reserved for the bundled Genex plugin on apiVersion 3",
   InvalidHostTool: `Invalid tools[].host (${[...HOST_TOOLS].join(", ")})`,
-  HostToolNeedsConfirmation: "A host tool that spends credits or installs packages needs a confirmation",
+  HostToolNeedsConfirmation: "A host tool that spends Nex or credits or changes what a game sells needs a confirmation",
   AudienceNeedsApi3: "tools[].audience requires apiVersion 3",
   InvalidToolAudience: `Invalid tools[].audience (${[...TOOL_AUDIENCES].join(", ")})`,
   AssetNeedsApi3: "tools[].asset requires apiVersion 3",
   InvalidToolTimeout: `Invalid tools[].timeoutMs (API 3: whole milliseconds from 1000 to ${PLUGIN_TOOL_MAX_TIMEOUT_MS})`,
   InvalidConfirmationInput: `Invalid tools[].confirmationInput (API 3, with a confirmation: { parameter: one of the tool's string parameters, label: one plain line of 1-${CONFIRMATION_INPUT_LABEL_MAX_CHARS} characters })`,
+  InvalidOnAccount: "Invalid tools[].onAccount (API 3, with a confirmation: true or absent)",
   InvalidToolAsset: `Invalid tools[].asset (an agent tool's { kind: ${Object.values(MakingKind).join("|")}, prompt?: one of its parameters, tool?: a short name })`,
   InvalidPanel: "Invalid panel",
   InvalidAction: "Invalid action",
@@ -356,6 +362,13 @@ function confirmationInput(t: PluginManifestTool, m: PluginManifest): PluginConf
   return { parameter: parameter as string, label: label as string };
 }
 
+/** A tool that acts on the person's account elsewhere (API 3): only `true`, on a tool with a card. */
+function onAccount(t: PluginManifestTool, m: PluginManifest): true {
+  const value: unknown = t.onAccount;
+  if (m.apiVersion < 3 || t.confirmation === undefined || value !== true) throw new Error(MESSAGE.InvalidOnAccount);
+  return true;
+}
+
 /** A tool's optional declarations: its consent question (API 2), its host program and its audience. */
 function validateToolOptions(t: PluginManifestTool, m: PluginManifest): void {
   if (t.confirmation !== undefined) {
@@ -400,6 +413,7 @@ function validateTool(t: PluginManifestTool, m: PluginManifest, names: Set<strin
   };
   if (t.confirmation !== undefined) tool.confirmation = t.confirmation;
   if (t.confirmationInput !== undefined) tool.confirmationInput = confirmationInput(t, m);
+  if (t.onAccount !== undefined) tool.onAccount = onAccount(t, m);
   if (t.timeoutMs !== undefined) tool.timeoutMs = toolTimeout(t, m);
   if (t.host !== undefined) tool.host = t.host;
   // Agents are the default audience, so only the harness is written.
@@ -628,20 +642,16 @@ function validateReachSections(m: PluginManifest, canonical: PluginManifest): vo
   }
 }
 
-/**
- * What the plugin shows of a game beside its moments (API 3): its observers, and its judges, whose
- * probes are checked against the tools' canonical locks.
- */
+/** What the plugin shows of a game beside its moments (API 3): its observers. */
 function validateEvidenceSections(m: PluginManifest, canonical: PluginManifest): void {
   if (m.observers !== undefined) canonical.observers = validateObservers(m, canonical);
-  if (m.judges !== undefined) canonical.judges = validateJudges({ ...m, engine: canonical.engine }, canonical.tools);
 }
 
 /**
  * The account flow (API 2), and the API 3 delivery limits, native declarations, project detection,
  * the engine a game-engine plugin declares, what a project's history leaves out and where its assets live, the plugin's worker types, its
  * scaffolds and the folders its engine programs write to, its locks and the handlers of Genex's moments, its
- * observers and its judges.
+ * observers.
  */
 function validateHostSections(m: PluginManifest, canonical: PluginManifest): void {
   if (m.account !== undefined) canonical.account = validateAccount(m, canonical.actions);
@@ -993,10 +1003,17 @@ export async function inspectPackage(root: string): Promise<PluginManifest> {
   await containedReal(root, m.backend);
   for (const p of m.panels) await containedReal(root, p.file);
   await inspectSkillFiles(root, m);
-  await inspectJudgeBriefs(root, m);
   if (m.icon) await readPluginIcon(root, m.icon);
   return m;
 }
+
+/**
+ * `inspectPackage` for an install, update or reinstall: a refusal carries its code beside the same
+ * words (a link or special file `UnsafePackage`, anything else `PackageInvalid`). A check outside an
+ * install (`plugin-check`) reads `inspectPackage`'s own errors, a Node `ENOENT` or a `SyntaxError`.
+ */
+export const inspectForInstall = (root: string): Promise<PluginManifest> =>
+  refusedAs(PluginInstallProblem.PackageInvalid, () => inspectPackage(root));
 
 /**
  * Every entry below `root` must be a plain file or folder: a link or special file anywhere refuses
@@ -1020,7 +1037,7 @@ async function plainFolderEntries(dir: string): Promise<string[]> {
     // A file system that does not say what an entry is gets it asked of the entry itself.
     const kind = typeKnown(entry) ? entry : await lstat(file);
     const linkOrSpecial = kind.isSymbolicLink() || (!kind.isDirectory() && !kind.isFile());
-    if (linkOrSpecial) throw new Error(MESSAGE.LinksInPackage);
+    if (linkOrSpecial) throw new CodedError(PluginInstallProblem.UnsafePackage, MESSAGE.LinksInPackage);
     if (kind.isDirectory()) folders.push(file);
   }
   return folders;

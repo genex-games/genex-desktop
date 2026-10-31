@@ -16,16 +16,14 @@ import {
   parsePoint,
   parseRegion,
   parseSurface,
-  setupReached,
-  setupVerifyExpr,
   unsupportedAction,
   unsupportedPlayer,
 } from "../../src/substrate/computer-tool.ts";
 import {
   BROWSER_CAPABILITIES,
   DESKTOP_CAPABILITIES,
-  ClockLevel,
   PointerLevel,
+  StateLevel,
   TargetRuntime,
 } from "../../src/shared/computer-target.ts";
 import { clickModifiers, parseCombo, pointInView, capActions } from "../../src/substrate/preview-input.ts";
@@ -65,7 +63,8 @@ describe("computer tool — parsing either transport", () => {
     for (const action of COMPUTER_ACTIONS)
       assert.ok(
         described.includes(action) ||
-          ["cursor_position", "left_mouse_down", "left_mouse_up", "middle_click"].includes(action),
+          // `camera` is offered only by a target with named cameras, and none has them now.
+          ["cursor_position", "left_mouse_down", "left_mouse_up", "middle_click", "camera"].includes(action),
         `${action} is described`,
       );
   });
@@ -192,8 +191,8 @@ describe("computer tool — which surface a look photographs (M4.5)", () => {
   });
 });
 
-describe("the requested state — setup and its probe", () => {
-  it("keeps only a setup the studio can run, and drops a path it cannot read", () => {
+describe("the requested state — setup", () => {
+  it("keeps only a setup the studio can run, and drops what it no longer reads", () => {
     const setup = normalizeSetup({
       actions: [{ type: "tap", keys: ["i"] }, { type: "nonsense" }, { type: "click", x: 480, y: 300, px: true }],
       verify: { path: "maps.activeId", equals: "macba" },
@@ -203,8 +202,9 @@ describe("the requested state — setup and its probe", () => {
     assert.ok(setup);
     assert.equal(setup!.actions!.length, 2);
     assert.equal(setup!.settleMs, 10_000);
-    assert.deepEqual(setup!.verify, { path: "maps.activeId", equals: "macba" });
-    assert.equal(normalizeSetup({ verify: { path: "maps[0]" } }), null);
+    // Flipped (phase 5): no goal is checked against a game's own state any more.
+    assert.equal(Object.hasOwn(setup!, "verify"), false);
+    assert.equal(normalizeSetup({ verify: { path: "maps.activeId" } }), null);
     assert.equal(normalizeSetup({}), null);
   });
 
@@ -221,26 +221,15 @@ describe("the requested state — setup and its probe", () => {
       "a placeless knock lands at the view centre",
     );
     assert.equal(normalizeSetup({ gesture: false }), null);
-    const both = normalizeSetup({ gesture: true, demo: "opening" });
-    assert.equal(both!.gesture, true);
-    assert.equal(both!.demo, "opening");
-  });
-
-  it("says whether the state landed, and what the board's probe reads", () => {
-    const verify = { path: "maps.activeId", equals: "macba" };
-    assert.equal(setupReached(verify, { maps: { activeId: "macba" } }), true);
-    assert.equal(setupReached(verify, { maps: { activeId: "street" } }), false);
-    assert.equal(setupReached(verify, { __missing: true }), null, "no contract is no measurement");
-    assert.equal(setupReached({ path: "mode.museum", truthy: true }, { mode: { museum: 1 } }), true);
-    assert.equal(setupVerifyExpr(verify), 'has("maps.activeId") && maps.activeId == "macba"');
-    assert.equal(setupVerifyExpr({ path: "ready", truthy: true }), 'has("ready") && ready');
-    assert.equal(setupVerifyExpr(undefined), null);
+    const withDemo = normalizeSetup({ gesture: true, demo: "opening" });
+    assert.deepEqual(withDemo, { gesture: true }, "a demo name is not part of a setup: there are no demos to run");
+    assert.equal(normalizeSetup({ demo: "opening" }), null, "a setup of nothing but a demo reaches no state");
   });
 });
 
-describe("computer tool — a playtester's clock (golden-boot-glory)", () => {
+describe("computer tool — a builder's clock", () => {
   /** The computer on a fake window that records what reached the game, for one screen role. */
-  async function playOn(role: "playtester" | "builder") {
+  async function playOn(role: "builder") {
     const { computerTools } = await import("../../src/main/core/computer-tools.ts");
     const { tmpDir } = await import("../helpers/tmp.ts");
     const reached: string[] = [];
@@ -278,12 +267,6 @@ describe("computer tool — a playtester's clock (golden-boot-glory)", () => {
     return { reached, prompt: String(tools.liveTools[0]?.description) };
   }
 
-  it("one key press ran four match minutes while the playtester looked: its game stands still between moves and runs only during them", async () => {
-    const played = await playOn("playtester");
-    assert.deepEqual(played.reached, ["pause", "start", "input", "pause", "start", "pause"]);
-    assert.match(played.prompt, /stands still between your actions/);
-  });
-
   it("a builder's game keeps running between actions, as before", async () => {
     const built = await playOn("builder");
     assert.deepEqual(built.reached, ["input"]);
@@ -294,6 +277,7 @@ describe("computer tool — a playtester's clock (golden-boot-glory)", () => {
 describe("computer tool — built from what the target can do", () => {
   const bridge = {
     ...BROWSER_CAPABILITIES,
+    state: StateLevel.Game,
     runtime: TargetRuntime.Bridge,
     pointer: PointerLevel.Relative,
     cameras: false,
@@ -303,15 +287,50 @@ describe("computer tool — built from what the target can do", () => {
     reload: false,
   };
 
-  it("offers a browser game every verb but named game actions, which only a Play Protocol game declares", () => {
+  /** The verbs only a desktop offers: an app brought forward, a page opened in the person's browser. */
+  const DESKTOP_ONLY: ReadonlySet<string> = new Set(["bring_to_front", "open_page"]);
+
+  it("offers a browser game real input, screenshots and its console, and asks the game nothing", () => {
+    // Flipped (phase 5): `camera` and `state` read window.__studio, which no game carries now.
+    const asksTheGame: ReadonlySet<string> = new Set(["camera", "state"]);
     assert.deepEqual(
       computerActionsFor(BROWSER_CAPABILITIES),
-      // Flipped on purpose (web pages): the web verbs are the desktop's, never a game window's.
-      COMPUTER_ACTIONS.filter((action) => action !== "act" && !action.startsWith("web_")),
+      // Flipped on purpose (web pages, then bringing an app forward, then opening a page): the web
+      // verbs, bring_to_front and open_page are the desktop's, never a game window's.
+      COMPUTER_ACTIONS.filter(
+        (action) =>
+          action !== "act" && !action.startsWith("web_") && !DESKTOP_ONLY.has(action) && !asksTheGame.has(action),
+      ),
     );
+    for (const kept of ["screenshot", "zoom", "left_click", "key", "look", "console", "reload"])
+      assert.ok(computerActionsFor(BROWSER_CAPABILITIES).includes(kept as never), `${kept} is offered`);
+    const words = computerToolDefinition({ role: "builder", capabilities: BROWSER_CAPABILITIES }).description;
+    assert.doesNotMatch(words, /camera|state: the game's own numbers/);
     const browser = computerToolDefinition({ role: "builder", capabilities: BROWSER_CAPABILITIES });
     assert.deepEqual(browser, computerToolDefinition({ role: "builder" }));
     assert.ok("surface" in browser.parameters.properties);
+  });
+
+  it("offers the desktop open_page, says what it takes, and asks for the address", () => {
+    assert.ok(computerActionsFor(DESKTOP_CAPABILITIES).includes("open_page"));
+    const description = computerToolDefinition({ role: "operator", capabilities: DESKTOP_CAPABILITIES }).description;
+    assert.match(description, /open_page text=<https:\/\/ address>/);
+    assert.deepEqual(parseComputerArgs({ action: "open_page" }), {
+      ok: false,
+      error: "open_page needs text=<an https:// address> of the page the task names",
+    });
+  });
+
+  it("offers the desktop bring_to_front, says what it takes, and asks for the app it names", () => {
+    assert.ok(computerActionsFor(DESKTOP_CAPABILITIES).includes("bring_to_front"));
+    const description = computerToolDefinition({ role: "operator", capabilities: DESKTOP_CAPABILITIES }).description;
+    assert.match(description, /bring_to_front text=<app>/);
+    assert.match(description, /msedge\.exe/);
+    const missing = parseComputerArgs({ action: "bring_to_front" });
+    assert.deepEqual(missing, {
+      ok: false,
+      error: "bring_to_front needs text=<app>: its executable on Windows (msedge.exe) or bundle id on a Mac",
+    });
   });
 
   it("never offers a verb the target lacks, and says so instead of failing silently", () => {
@@ -320,22 +339,13 @@ describe("computer tool — built from what the target can do", () => {
       assert.ok(!actions.includes(missing as never), `${missing} is not offered`);
     for (const kept of ["screenshot", "key", "hold_key", "type", "scroll", "wait", "state"])
       assert.ok(actions.includes(kept as never), `${kept} is offered`);
-    const schema = computerToolDefinition({ role: "playtester", capabilities: bridge });
+    const schema = computerToolDefinition({ role: "builder", capabilities: bridge });
     assert.ok(!("surface" in schema.parameters.properties), "no surface parameter on a target with one surface");
     assert.doesNotMatch(schema.description, /left_click \|/);
     assert.doesNotMatch(schema.description, /camera text=/);
     assert.match(schema.description, /its own game process/);
     assert.equal(unsupportedAction("zoom", bridge)?.includes("not available"), true);
     assert.equal(unsupportedAction("key", bridge), null);
-  });
-
-  it("tells a paced role the truth when the target cannot hold its clock", () => {
-    const unheld = computerToolDefinition({
-      role: "playtester",
-      capabilities: { ...bridge, clock: ClockLevel.None },
-    }).description;
-    assert.match(unheld, /cannot be held still/);
-    assert.doesNotMatch(unheld, /stands still between your actions/);
   });
 });
 
@@ -448,18 +458,6 @@ describe("computer tool v2 — tolerant names, observing, batching", () => {
   });
 });
 
-describe("computer tool — a goal the host checks cannot be gamed by its own path", () => {
-  it("reads own fields only: nothing on the prototype, no missing value equal to the word undefined", () => {
-    const state = { flow: { phase: "menu" } };
-    assert.equal(setupReached({ path: "constructor", truthy: true }, state), false);
-    assert.equal(setupReached({ path: "__proto__", truthy: true }, state), false);
-    assert.equal(setupReached({ path: "flow.toString", truthy: true }, state), false);
-    assert.equal(setupReached({ path: "missing", equals: "undefined" }, state), false);
-    assert.equal(setupReached({ path: "flow.phase", equals: "menu" }, state), true);
-    assert.equal(normalizeSetup({ verify: { path: "__proto__.x", truthy: true } }), null);
-  });
-});
-
 describe("computer tool — mouse-look and named game actions, where the target has them", () => {
   it("offers look on any target with a pointer, and act only on one that takes named actions", () => {
     const relative = { ...BROWSER_CAPABILITIES, pointer: PointerLevel.Relative };
@@ -504,11 +502,11 @@ describe("computer tool — a play with several players", () => {
 
   it("offers player only where the play has more than one player, and says how many there are", () => {
     for (const one of [editor, { ...editor, players: 1 }]) {
-      const definition = computerToolDefinition({ role: "judge", capabilities: one });
+      const definition = computerToolDefinition({ role: "builder", capabilities: one });
       assert.equal(Object.hasOwn(definition.parameters.properties, "player"), false);
       assert.doesNotMatch(definition.description, /player=/);
     }
-    const three = computerToolDefinition({ role: "judge", capabilities: { ...editor, players: 3 } });
+    const three = computerToolDefinition({ role: "builder", capabilities: { ...editor, players: 3 } });
     assert.equal(three.parameters.properties.player?.type, "number");
     assert.match(three.description, /3 players/);
     assert.match(three.description, /player=<1–3>/);

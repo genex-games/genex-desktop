@@ -215,7 +215,19 @@ export const GIT_ENV = {
  */
 export { HOST_GIT_CONFIG } from "./git-policy.ts";
 
-/** Git as the studio in `dir`; `input`, when given, is written to its standard input. */
+/** How long a git command of the studio waits for another git (a turn's checkpoint, the person's own) to let go of the index. */
+const HELD_INDEX_WAIT_MS = 15 * SECOND_MS;
+/** How often it tries again meanwhile. */
+const HELD_INDEX_POLL_MS = 100;
+
+/** Whether git refused only because another git holds the repository's index: it changed nothing. */
+const heldIndex = (error: unknown): boolean => /index\.lock'?: File exists/.test(errorMessage(error));
+
+/**
+ * Git as the studio in `dir`; `input`, when given, is written to its standard input. A command
+ * another git's index.lock refused is run again once that git lets go, for {@link HELD_INDEX_WAIT_MS}:
+ * two writers of one game (a run starting as a chat turn ends) must not fail the second.
+ */
 export async function git(
   dir: string,
   args: string[],
@@ -224,16 +236,27 @@ export async function git(
 ): Promise<string> {
   const environment = hostGitEnv({ ...GIT_ENV, ...env });
   const config = await hostGitConfig(dir, environment);
-  const { stdout } = await startWithRecovery(() => {
-    const running = execFileAsync("git", [...config, "-C", dir, ...hostGitArgs(args)], {
-      windowsHide: true,
-      env: environment,
-      maxBuffer: GIT_MAX_BUFFER_BYTES,
+  const run = async (): Promise<string> => {
+    const { stdout } = await startWithRecovery(() => {
+      const running = execFileAsync("git", [...config, "-C", dir, ...hostGitArgs(args)], {
+        windowsHide: true,
+        env: environment,
+        maxBuffer: GIT_MAX_BUFFER_BYTES,
+      });
+      if (input !== undefined) running.child.stdin?.end(input);
+      return running;
     });
-    if (input !== undefined) running.child.stdin?.end(input);
-    return running;
-  });
-  return stdout;
+    return stdout;
+  };
+  const deadline = Date.now() + HELD_INDEX_WAIT_MS;
+  for (;;) {
+    try {
+      return await run();
+    } catch (error) {
+      if (!heldIndex(error) || Date.now() >= deadline) throw error;
+      await sleep(HELD_INDEX_POLL_MS);
+    }
+  }
 }
 
 /**

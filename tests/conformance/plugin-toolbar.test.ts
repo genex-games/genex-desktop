@@ -9,7 +9,9 @@ import {
   showsMultiplayer,
   takesEngineMultiplayer,
   shownToolbarStatus,
+  ToolbarPlace,
   toolbarItems,
+  toolbarPlace,
   toolbarReaction,
   toolbarStatusFrom,
   toolbarTip,
@@ -198,6 +200,18 @@ test("toolbarItems keeps enabled installed plugins only and honours requiresProj
   assert.deepEqual(first!.item, item());
   assert.deepEqual(toolbarItems([], "game"), []);
 });
+test("an engine's button, scoped to the games it builds, stands in the chat header; every other on the stage strip", () => {
+  const engine = plugin("roblox", [item({ id: "studio", facts: ["roblox-project"] })]);
+  const other = plugin("tools", [item()]);
+  const game: GameKind = { facts: [{ id: "roblox-project", path: "." }] };
+  const places = Object.fromEntries(toolbarItems([engine, other], "game", game).map((e) => [e.key, toolbarPlace(e)]));
+  assert.deepEqual(places, { "roblox:studio": ToolbarPlace.Header, "tools:demo": ToolbarPlace.Strip });
+  // A game of another kind still asks the engine's button (it may say `shown`), and draws it in the header.
+  const [away] = toolbarItems([engine], "game", { facts: [] });
+  assert.equal(away?.outOfScope, true);
+  assert.equal(toolbarPlace(away!), ToolbarPlace.Header);
+});
+
 test("toolbarStatusFrom sanitizes badge, title, disabled and tone and rejects non-objects", () => {
   for (const value of [null, undefined, "Draft", 3, true, ["Draft"]]) assert.equal(toolbarStatusFrom(value), null);
   assert.deepEqual(toolbarStatusFrom({}), {});

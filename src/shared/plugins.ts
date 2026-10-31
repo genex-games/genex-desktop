@@ -58,16 +58,32 @@ export interface PluginRuntimePin {
   platform?: NativePlatform;
 }
 
-/** API 3. Runtime names and launch recipes come from reviewed plugin code, never tool inputs. */
+/** A runtime's candidate paths for one supported operating system and processor. */
+export interface PluginRuntimeCandidates {
+  platform: NativePlatform;
+  candidates: string[];
+}
+
+/** API 3. A reviewed native runtime, its version probe and optional platform-specific paths. */
 export interface PluginNativeRuntime {
   id: string;
   label: string;
   candidates: string[];
+  /** Replaces the fallback candidates on a matching OS and architecture. */
+  platforms?: PluginRuntimeCandidates[];
   version: { args: string[]; pattern: string; minimum: string };
   /** The pinned download, for a Mac with Apple silicon unless it names another `platform`. */
   install?: PluginRuntimePin;
   /** Pinned downloads for other computers, one per `platform`. */
   installs?: PluginRuntimePin[];
+}
+
+/** Candidate paths for this computer, or the runtime's fallback paths when none match. */
+export function runtimeCandidatesFor(
+  runtime: Pick<PluginNativeRuntime, "candidates" | "platforms">,
+  platform: string,
+): readonly string[] {
+  return runtime.platforms?.find((entry) => entry.platform === platform)?.candidates ?? runtime.candidates;
 }
 
 /** The pinned download of `runtime` for `platform` (this computer's by default), if it has one. */
@@ -268,6 +284,12 @@ export interface PluginManifestTool extends PluginTool {
   asset?: PluginToolAsset;
   /** API 3, with `confirmation`: the text parameter the person may edit on the card. */
   confirmationInput?: PluginConfirmationInput;
+  /**
+   * API 3, with `confirmation`: the call acts on the person's account with another service (an
+   * upload it moderates, a generation that counts against its limits). Its card asks in every chat
+   * mode, Bypass included, and offers Allow in this chat, which covers the tool for that chat.
+   */
+  onAccount?: true;
   /**
    * API 3: the longest one call may run in the backend when that is longer than the host's ceiling
    * (a game engine's import or export), at most {@link PLUGIN_TOOL_MAX_TIMEOUT_MS}.
@@ -603,11 +625,6 @@ export interface PluginManifest {
    * Live view it shows (`shared/observers.ts`).
    */
   observers?: PluginObserver[];
-  /**
-   * API 3, capability `game-engine` with an `engine`: the blind judges that play the engine's games
-   * in its editor, each with its own brief, players and probe (`PluginJudge`).
-   */
-  judges?: PluginJudge[];
   /** Host-managed account flow. Status may finish a pending browser authorization. */
   account?: { connect: string; unlock: string; disconnect: string; status: string; cancel?: string };
   /**
@@ -617,42 +634,6 @@ export interface PluginManifest {
   icon?: string;
   /** What to do to start using it, for its page: plain one-line steps Genex draws ({@link isPluginSetup}). */
   setup?: string[];
-}
-
-/** The most judges one manifest declares. */
-export const MAX_PLUGIN_JUDGES = 8;
-/** The longest judge brief, in characters: a package file read and checked at install. */
-export const MAX_JUDGE_BRIEF_CHARS = 16_000;
-
-/**
- * API 3: a blind judge an engine plugin declares (`judges`). It plays a game in the engine's editor
- * through the play tools, never sees code, and answers from playing. Data only: the host runs it.
- */
-export interface PluginJudge {
-  /** Unique in the manifest: what an agent names the judge by. */
-  id: string;
-  /** What the person and the agent read it as, 1-40 characters on one line. */
-  label: string;
-  /** The facts of the games it judges; every game the plugin plays in its editor when absent. */
-  facts?: string[];
-  /** The package's Markdown file holding its brief, appended to the judge's rubric (at most `MAX_JUDGE_BRIEF_CHARS`). */
-  brief: string;
-  /** How many players its play opens, 1 to the engine's `play.players`; one when absent. */
-  players?: number;
-  /**
-   * A quiet harness tool of the plugin, needing the play tools' locks, that the host runs once in
-   * the judge's play right after it opens: its `note` and `images` (measurements and pictures,
-   * never source) open the judge's first message.
-   */
-  probe?: string;
-}
-
-/** A judge as a game's descriptor and an agent name it. */
-export type JudgeRef = Pick<PluginJudge, "id" | "label">;
-
-/** The judges that reach a game: those naming no facts, and those whose facts the game holds. */
-export function judgesFor(judges: readonly PluginJudge[] | undefined, game: GameKind): PluginJudge[] {
-  return (judges ?? []).filter((judge) => scopeReaches(judge.facts, game));
 }
 
 /** The engines `manifests` declare, by id: the first declaration of an id wins. */
@@ -694,6 +675,64 @@ export const PluginChangeReason = {
   Settings: "settings",
 } as const;
 export type PluginChangeReason = (typeof PluginChangeReason)[keyof typeof PluginChangeReason];
+
+/**
+ * Why installing, updating or reinstalling a plugin was refused: the code that crosses IPC beside
+ * main's own words (`shared/error-codes.ts`).
+ */
+export const PluginInstallProblem = {
+  /** Not in the catalog or the index, or no longer installed or listed under that id. */
+  NotFound: "plugin_not_found",
+  /** The index offers no compatible newer release of the installed plugin. */
+  NoNewerRelease: "plugin_no_newer_release",
+  /** The marketplace is not up in this session yet. */
+  NotReady: "plugins_not_ready",
+  /** This profile reaches no network (every fixture profile). */
+  Offline: "plugins_offline",
+  /** A GitHub spec or repository that does not read as `owner/repo[/subdir]@<sha>`. */
+  InvalidSpec: "plugin_invalid_spec",
+  DownloadFailed: "plugin_download_failed",
+  /** A file, a tree or the whole package past its cap. */
+  TooLarge: "plugin_too_large",
+  /** A file or artifact that does not hash to what its pin says. */
+  IntegrityMismatch: "plugin_integrity_mismatch",
+  /** The catalog's or index's entry is broken or does not describe the code at its pin. */
+  CatalogMismatch: "plugin_catalog_mismatch",
+  /** A link, a special file, an unusual file mode or a name that leaves the package. */
+  UnsafePackage: "plugin_unsafe_package",
+  /** No plugin.json, an invalid one, a file it names missing, or an envelope that does not read. */
+  PackageInvalid: "plugin_package_invalid",
+  NeedsNewerStudio: "plugin_needs_newer_studio",
+  /** A bundled plugin's id, or one a connector already answers for. */
+  IdTaken: "plugin_id_taken",
+  /** It would replace another plugin or widen what it may do without the person's fresh review. */
+  NeedsReview: "plugin_needs_review",
+  /** Its backend did not load and answer. */
+  BackendFailed: "plugin_backend_failed",
+  /** The folder or record it is reinstalled from is gone, or holds another plugin now. */
+  SourceGone: "plugin_source_gone",
+} as const;
+export type PluginInstallProblem = (typeof PluginInstallProblem)[keyof typeof PluginInstallProblem];
+
+/** Why a plugin could not be turned on, off or removed: the code that crosses IPC beside main's words. */
+export const PluginStateRefusal = {
+  /** It is not installed (or was removed): install it first. */
+  InstallFirst: "plugin_install_first",
+  /** It holds the app's account, so it can be turned off but not removed. */
+  KeepsAccount: "plugin_keeps_account",
+} as const;
+export type PluginStateRefusal = (typeof PluginStateRefusal)[keyof typeof PluginStateRefusal];
+
+/** Why a plugin failed while it ran (`PluginChange.failure` with reason `failed`). */
+export const PluginFailure = {
+  /** Its backend process exited. */
+  BackendExited: "plugin_backend_exited",
+  /** Its backend process could not be started or signalled. */
+  BackendError: "plugin_backend_error",
+  /** A watched folder's edit was refused, so the running copy stays. */
+  ReloadRefused: "plugin_reload_refused",
+} as const;
+export type PluginFailure = (typeof PluginFailure)[keyof typeof PluginFailure];
 export interface PluginSource {
   kind: PluginSourceKind;
   directory?: string;
@@ -801,9 +840,15 @@ export interface PluginChange {
   reason: PluginChangeReason;
   /** Set when an update or reload changed the plugin's skills. */
   skills?: PluginSkillChange;
+  /** Why it failed, when `reason` is `failed`. */
+  failure?: PluginFailure;
 }
 /** How a consent question ended; `mode`: the person switched the chat to a mode that asks nothing first for it. */
-export type PluginConsentBy = "user" | "timeout" | "stop" | "turn" | "restart" | "mode";
+/**
+ * Who settled a consent card: the person, the timeout, a stop, the turn's end, a restart, the chat's
+ * mode (Bypass), or the person's earlier Allow in this chat (`chat`).
+ */
+export type PluginConsentBy = "user" | "timeout" | "stop" | "turn" | "restart" | "mode" | "chat";
 /** Host-generated paths in the staged public copy, shown before upload approval. */
 export interface ExportReview {
   included: string[];
@@ -826,8 +871,15 @@ export interface PluginConsentEvent {
   project: string;
   threadId?: string;
   prompt: string;
+  /** One line the card shows under its question: what a yes lets the agent do. */
+  note?: string;
   /** A connector's card: the person may also allow this exact tool from now on. */
   alwaysOffered?: boolean;
+  /**
+   * An `onAccount` tool's card: the person may also allow this tool for the rest of the chat
+   * (answered with `always`).
+   */
+  chatOffered?: boolean;
   /** Approved with Always allow: the tool runs without asking from now on. */
   always?: boolean;
   /**
@@ -1012,9 +1064,12 @@ export type StudioConsentSource = (typeof StudioConsentSource)[keyof typeof Stud
  * consent record keeps it as the prompt, so both say the same words.
  */
 export function computerSettingQuestion(): string {
-  return t(
-    "Turn on computer control? Agents in every chat can then ask to use apps on this computer, one app at a time.",
-  );
+  return t("Turn on computer control?");
+}
+
+/** The line under that question: the setting is one for every chat. */
+export function computerSettingNote(): string {
+  return t("Agents in any chat can then ask to use your apps.");
 }
 
 /** The name a studio consent card shows; getters, as main reads it in the language it sets after loading. */
@@ -1093,6 +1148,11 @@ export const PluginService = {
    * has a desktop and its driver, and the plugin's engine declares apps here. Asks the person nothing.
    */
   GameEngineCanAssist: "game.engine.canAssist",
+  /**
+   * `game-engine`: whether the bound game's chat still runs the turn this plugin's Do it for me
+   * started: false once that turn has ended (answered, failed or taken back) or its time is up.
+   */
+  GameEngineAssisting: "game.engine.assisting",
   /**
    * `game-engine`: a long job of the plugin's (an engine's build or package) started in Genex's
    * process sandbox, writing only folders inside the bound game; answers its id at once, and the
@@ -1200,25 +1260,34 @@ export interface EngineAssistAnswer {
 /** The folder in a `game-engine` plugin's storage where the host keeps each game's link, `<game>.json`. */
 export const ENGINE_LINKS_FOLDER = "links";
 
-/** A still's view name: a `config.demos` or `config.cameras` key, or a built-in `eye:*` camera. */
+/** A still's view name, as a request may spell it (only {@link PLUGIN_STILL_DEFAULT_VIEW} exists). */
 export const PLUGIN_STILL_VIEW_NAME = /^[A-Za-z0-9][A-Za-z0-9:_-]{0,63}$/;
+/** The one view a still takes: the bound game's own page as it stands, loaded and played a moment. */
+export const PLUGIN_STILL_DEFAULT_VIEW = "default";
 /** The least, the most and the default size of a still's encoded image. */
 export const PLUGIN_STILL_MIN_BYTES = 64 * 1024;
 export const PLUGIN_STILL_MAX_BYTES = 16 * 1024 * 1024;
 export const PLUGIN_STILL_DEFAULT_BYTES = 8 * 1024 * 1024;
-/** The most view names a `view_unknown` answer lists. */
-export const PLUGIN_STILL_AVAILABLE_MAX = 32;
 
-/** Which view a still photographs: a demo run to its end state, or a camera placed. Exactly one. */
-export type PluginStillView = { demo: string; camera?: undefined } | { camera: string; demo?: undefined };
 /**
- * `observe` with a `still` (API 3, additive): one named view of the bound game on a hidden window
- * of its own at `width`×`height` (each within a pooled window's least and most size), encoded in at
- * most `maxBytes`. Mirrors `PluginStillRequest` in `src/plugin-sdk/index.d.ts`.
+ * `observe` with a `still` (API 3, additive): a plain frame of the bound game's page on a hidden
+ * window of its own at `width`×`height` (each within a pooled window's least and most size),
+ * encoded in at most `maxBytes`. `camera` may only name {@link PLUGIN_STILL_DEFAULT_VIEW}, the
+ * one view there is. Mirrors `PluginStillRequest` in `src/plugin-sdk/index.d.ts`.
  */
-export type PluginStillRequest = PluginStillView & { width: number; height: number; maxBytes?: number };
-/** A still request as the host checked it: one view, whole-pixel sides, the byte limit filled in. */
-export type PluginStillOrder = PluginStillView & { width: number; height: number; maxBytes: number };
+export interface PluginStillRequest {
+  camera?: typeof PLUGIN_STILL_DEFAULT_VIEW;
+  width: number;
+  height: number;
+  maxBytes?: number;
+}
+/** A still request as the host checked it: whole-pixel sides, the byte limit filled in, the view named as asked. */
+export interface PluginStillOrder {
+  camera: string;
+  width: number;
+  height: number;
+  maxBytes: number;
+}
 
 /** Why `observe` took no still. Published to plugins: never rename a value. */
 export const PluginStillProblemCode = {
@@ -1228,17 +1297,16 @@ export const PluginStillProblemCode = {
    */
   Unavailable: "unavailable",
   LoadFailed: "load_failed",
-  /** The game has no demo or camera by that name; `available` lists the ones it has. */
+  /** The request named a view other than the default; `available` lists the only one there is. */
   ViewUnknown: "view_unknown",
-  ViewFailed: "view_failed",
   CaptureFailed: "capture_failed",
-  /** Not even the lowest-quality JPEG (or, for a clip, the lowest bitrate) fits `maxBytes`. */
+  /** Not even the lowest-quality JPEG fits `maxBytes`. */
   TooLarge: "too_large",
   Timeout: "timeout",
 } as const;
 export type PluginStillProblemCode = (typeof PluginStillProblemCode)[keyof typeof PluginStillProblemCode];
 
-/** A still: the encoded image, its size, which path read it, the view, its exposure and a small JPEG preview. */
+/** A still: the encoded image, its size, which path read it, its exposure and a small JPEG preview. */
 export interface PluginStill {
   image: Uint8Array;
   mimeType: StillMimeType;
@@ -1246,7 +1314,6 @@ export interface PluginStill {
   height: number;
   /** `page` is the page's own read of its canvas; `compositor` is the window's frame. */
   source: CaptureSource;
-  view: PluginStillView;
   stats: StillExposure;
   /** JPEG, at most 1280 px on its long side. */
   preview: Uint8Array;
@@ -1259,60 +1326,12 @@ export interface PluginStillProblem {
 /** What `observe` with a `still` answers. A host older than the option answers an ordinary observation instead. */
 export type PluginStillAnswer = { still: PluginStill } | { stillProblem: PluginStillProblem };
 
-/** The least, the most and the default length of a clip, in seconds of the game running. */
-export const PLUGIN_CLIP_MIN_SECONDS = 2;
-export const PLUGIN_CLIP_MAX_SECONDS = 10;
-export const PLUGIN_CLIP_DEFAULT_SECONDS = 5;
-/** The least, the most and the default frames per second a clip records. */
-export const PLUGIN_CLIP_MIN_FPS = 15;
-export const PLUGIN_CLIP_MAX_FPS = 30;
-export const PLUGIN_CLIP_DEFAULT_FPS = 30;
-/** The least, the most and the default size of a clip's encoded video. */
-export const PLUGIN_CLIP_MIN_BYTES = 256 * 1024;
+/** The largest kept cover clip the host reads back, in bytes. */
 export const PLUGIN_CLIP_MAX_BYTES = 8 * 1024 * 1024;
-export const PLUGIN_CLIP_DEFAULT_BYTES = 8 * 1024 * 1024;
 
-/** How a clip's video is contained: MP4 (H.264) where the recorder can, else WebM. Published to plugins: never rename a value. */
+/** How a kept cover clip's video is contained: MP4 (H.264) or WebM. Published to plugins: never rename a value. */
 export const PluginClipMimeType = { Webm: "video/webm", Mp4: "video/mp4" } as const;
 export type PluginClipMimeType = (typeof PluginClipMimeType)[keyof typeof PluginClipMimeType];
-
-/**
- * `observe` with a `clip` (API 3, additive): `seconds` of the bound game running from the start
- * of a moment a demo stages, recorded on a hidden window of its own at `width`×`height`, at `fps`,
- * in at most `maxBytes`. Mirrors `PluginClipRequest` in `src/plugin-sdk/index.d.ts`.
- */
-export interface PluginClipRequest {
-  demo: string;
-  width: number;
-  height: number;
-  seconds?: number;
-  fps?: number;
-  maxBytes?: number;
-}
-/** A clip request as the host checked it: whole-pixel sides and every default filled in. */
-export interface PluginClipOrder {
-  demo: string;
-  width: number;
-  height: number;
-  seconds: number;
-  fps: number;
-  maxBytes: number;
-}
-/** A clip: the video, its size and length, the demo that staged it, a poster and how much moved. */
-export interface PluginClip {
-  video: Uint8Array;
-  mimeType: PluginClipMimeType;
-  width: number;
-  height: number;
-  durationMs: number;
-  view: { demo: string };
-  /** JPEG of the first recorded frame, at most 1280 px on its long side. */
-  poster: Uint8Array;
-  /** 0–1: the share of sampled frame pairs that differ visibly; a frozen recording is about 0. */
-  motion: number;
-}
-/** What `observe` with a `clip` answers; the problem codes are a still's. A host older than the option answers an ordinary observation. */
-export type PluginClipAnswer = { clip: PluginClip } | { clipProblem: PluginStillProblem };
 
 /** Whether a plugin's own saved account is usable right now (`PluginRegistry.accountState`). */
 export const PluginAccountState = {

@@ -16,6 +16,7 @@ import type { LayoutState } from "./layout.ts";
 import type { LibraryState } from "./library.ts";
 import type { ModelPickerState } from "./model-picker.ts";
 import type { PeopleState } from "./people.ts";
+import type { ItemsState } from "./items.ts";
 import type { PlayState } from "./play.ts";
 import type { PluginsState } from "./plugins.ts";
 import type { ProviderUsageState } from "./provider-usage.ts";
@@ -39,6 +40,7 @@ export const useEngines = <T>(select: Selector<EnginesState, T>): T => useStore(
 export const usePlugins = <T>(select: Selector<PluginsState, T>): T => useStore(studio().plugins, select);
 export const usePlay = <T>(select: Selector<PlayState, T>): T => useStore(studio().play, select);
 export const usePeople = <T>(select: Selector<PeopleState, T>): T => useStore(studio().people, select);
+export const useItems = <T>(select: Selector<ItemsState, T>): T => useStore(studio().items, select);
 export const useSharing = <T>(select: Selector<SharingState, T>): T => useStore(studio().sharing, select);
 export const useAgentScreens = <T>(select: Selector<AgentScreensState, T>): T =>
   useStore(studio().agentScreens, select);
@@ -101,17 +103,15 @@ export const useRailView = () => {
 };
 
 /**
- * The library as the sidebar reads it: the store's own `games` array and `building` set, and a
- * number. Nothing is built by the selector, so a change of `rootLabel`, `runsRoot` or the asset
- * inventories never re-renders the sidebar.
+ * The library as the sidebar reads it: the store's own `games` array and `building` set. Nothing is
+ * built by the selector, so a change of `rootLabel`, `runsRoot` or the asset inventories never
+ * re-renders the sidebar.
  */
-export const useSidebarLibrary = () =>
-  useLibrary(useShallow((s) => ({ games: s.games, building: s.building, stagedCount: s.stagedCount })));
+export const useSidebarLibrary = () => useLibrary(useShallow((s) => ({ games: s.games, building: s.building })));
 
 /**
  * The library as the stage reads it: the store's own `games` array and two strings (or null).
- * Nothing is built by the selector, so a builder starting or the staged count moving never
- * re-renders the stage.
+ * Nothing is built by the selector, so a builder starting never re-renders the stage.
  */
 export const useStageLibrary = () =>
   useLibrary(useShallow((s) => ({ games: s.games, rootLabel: s.rootLabel, runsRoot: s.runsRoot })));

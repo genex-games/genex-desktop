@@ -7,7 +7,7 @@ import path from "node:path";
 import { parseStudioDevArgs, parseOperation } from "../../scripts/studio-dev/args.ts";
 import { FIXTURE_NAMES, installOlderPlugins } from "../../src/main/dev/fixtures.ts";
 import { PluginRegistry } from "../../src/substrate/plugins/registry.ts";
-import { devBuildArgs, launchEnv, main } from "../../scripts/studio-dev.ts";
+import { devBuildArgs, devLaunchCommand, launchEnv, main } from "../../scripts/studio-dev.ts";
 import { gamesRootWarnings, liveEnvStripped, StudioDevWarning } from "../../scripts/studio-dev/live-env.ts";
 import { fixtureElectronEnv } from "../../scripts/electron-runtime.mjs";
 import { freshMachineEnv } from "../../scripts/studio-dev/fresh-machine.ts";
@@ -16,9 +16,10 @@ import { makeResources } from "../helpers/resources.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 test("fixtures lists the one exported fixture list without a profile or app", async () => {
-  // Flipped from 31: data-folder and data-missing joined the list (from 30: native-games, 29: agents-start-failed, 28: asset-library, 27: genex-terms, 26: roblox-game, 25: building-card, 24: paused-build, 23: plugin-updates, 22: open-projects, 21: stills-game).
-  assert.equal(FIXTURE_NAMES.length, 33);
+  // Flipped from 34: build-timeline joined the list (from 33: items-store, 31: data-folder and data-missing, 30: native-games, 29: agents-start-failed, 28: asset-library, 27: genex-terms, 26: roblox-game, 25: building-card, 24: paused-build, 23: plugin-updates, 22: open-projects, 21: stills-game).
+  assert.equal(FIXTURE_NAMES.length, 35);
   for (const added of [
+    "build-timeline",
     "first-launch",
     "notifications",
     "build-graph",
@@ -39,6 +40,7 @@ test("fixtures lists the one exported fixture list without a profile or app", as
     "native-games",
     "data-folder",
     "data-missing",
+    "items-store",
   ])
     assert.ok((FIXTURE_NAMES as readonly string[]).includes(added), added);
   assert.deepEqual(await main(["fixtures"]), { fixtures: [...FIXTURE_NAMES] });
@@ -57,7 +59,15 @@ test("the plugin-updates fixture leaves every bundled plugin one version behind 
     fs.readdirSync(seeds).map((name) => fs.readFileSync(path.join(seeds, name, "plugin.json"), "utf8"));
   const shipped = shippedManifests();
   const versions = new Map(shipped.map((text) => [JSON.parse(text).id as string, JSON.parse(text).version as string]));
-  assert.deepEqual([...versions.keys()].sort(), ["blender", "genex", "godot", "roblox", "unity", "unreal"]);
+  assert.deepEqual([...versions.keys()].sort(), [
+    "blender",
+    "genex",
+    "genex-recommendations",
+    "godot",
+    "roblox",
+    "unity",
+    "unreal",
+  ]);
   /** What the app's own registry says of the profile's plugins, as the core starts it. */
   const installed = async () => {
     const registry = new PluginRegistry(
@@ -344,7 +354,54 @@ test("a live games root under a .claude folder is warned about, through a link t
   }
 });
 
-test("a fixture profile's build counts React commits for its checks; a live profile's does not", () => {
+test("a fixture profile's build counts React commits for its checks; a live profile's carries computer control's driver instead", () => {
   assert.deepEqual(devBuildArgs("b-1", "fixture"), ["scripts/build.mjs", "--dev-build=b-1", "--commit-counts"]);
-  assert.deepEqual(devBuildArgs("b-2", "live"), ["scripts/build.mjs", "--dev-build=b-2"]);
+  assert.deepEqual(devBuildArgs("b-2", "live"), ["scripts/build.mjs", "--dev-build=b-2", "--vendor-cua-driver"]);
+});
+
+test("a live profile on a Mac starts through macOS's launcher, so Electron holds its own Accessibility and Screen Recording", () => {
+  const executable = "/repo/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron";
+  const args = ["/repo/.studio-dev/builds/b-1/main/main.mjs", "--studio-dev-launch=/repo/launch.json"];
+  const env = { HOME: "/Users/me", PATH: "/usr/bin:/bin" };
+  const logs = { stdout: "/logs/stdout.log", stderr: "/logs/stderr.log" };
+  const live = { providers: "live" };
+  // A process the caller spawns stays in the caller's macOS responsibility chain (Terminal, or an
+  // agent's shell), so its grants would be checked against that app instead of Electron.
+  assert.deepEqual(devLaunchCommand({ owner: live, platform: "darwin", executable, args, env, logs }), {
+    command: "/usr/bin/open",
+    args: [
+      "-n",
+      "-W",
+      "--stdout",
+      logs.stdout,
+      "--stderr",
+      logs.stderr,
+      "--env",
+      "HOME=/Users/me",
+      "--env",
+      "PATH=/usr/bin:/bin",
+      "-a",
+      "/repo/node_modules/electron/dist/Electron.app",
+      "--args",
+      ...args,
+    ],
+  });
+  const direct = { command: executable, args };
+  assert.deepEqual(
+    devLaunchCommand({ owner: { providers: "fixture" }, platform: "darwin", executable, args, env, logs }),
+    direct,
+  );
+  assert.deepEqual(
+    devLaunchCommand({
+      owner: { providers: "live", freshMachine: true },
+      platform: "darwin",
+      executable,
+      args,
+      env,
+      logs,
+    }),
+    direct,
+  );
+  for (const platform of ["win32", "linux"] as const)
+    assert.deepEqual(devLaunchCommand({ owner: live, platform, executable, args, env, logs }), direct, platform);
 });

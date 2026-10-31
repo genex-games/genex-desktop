@@ -6,7 +6,6 @@
 import { CallCutOff, type PluginConsentEvent } from "../../shared/plugins.ts";
 import { PluginCallCutOff } from "../../substrate/plugins/process.ts";
 import { ToolPermissionBy, type ToolPermissionEvent, ToolPermissionState } from "../../shared/permissions.ts";
-import type { OptimizationCheckpointV1, OptimizationResultV1 } from "../../shared/optimization.ts";
 import path from "node:path";
 import { once } from "node:events";
 import { interruptedReplyNotice } from "../../shared/message-queue.ts";
@@ -28,7 +27,7 @@ import {
 } from "../../substrate/seed-upgrade.ts";
 import { type TypeCheckResult, diagnosticsFor, typeCheckText, TypeCheckFailure } from "../../substrate/type-gate.ts";
 import type { ForkBoot } from "./self-edit-gate.ts";
-import { seedCallMemory, seedMoveMemory } from "../seed-upgrade-notice.ts";
+import { archiveArtifacts, seedCallMemory, seedMoveMemory } from "../seed-upgrade-notice.ts";
 import { type SnapshotRecord, checkOutNewRepo, HARNESS_WORKSPACE } from "../../substrate/snapshots.ts";
 import type { ThreadFold } from "../../substrate/event-store.ts";
 import { interruptedTurnsIn } from "../../substrate/turns.ts";
@@ -45,8 +44,6 @@ import { SECOND_MS } from "../../shared/duration.ts";
 import { UiEvent } from "../../shared/ui-events.ts";
 import { stopMoments } from "./moment-stops.ts";
 import { releaseHarnessDesktops } from "../harness-rpc/desktop.ts";
-import { forgetHarnessComputers } from "../harness-rpc/preview.ts";
-import { RetainedState } from "../../substrate/game-candidate.ts";
 
 /**
  * Words the recovery writes into the logs the user reads (English, as the log keeps them), and the
@@ -55,10 +52,6 @@ import { RetainedState } from "../../substrate/game-candidate.ts";
 const MESSAGE = {
   replyInterrupted: "This response was interrupted by a restart. Send a message to continue.",
   runInterrupted: "interrupted by restart",
-  optimizationInterrupted: "Optimization interrupted by restart",
-  optimizationNotApplied: "Optimization interrupted; unverified candidate changes were not applied",
-  adoptionRecovered: "Verified optimization kept; adoption recovered after restart",
-  liveFilesChanged: "Live files changed after the saved adoption intent; they were preserved",
   snapshotGone: () => t("Studio no longer has that saved version."),
   buildInFlight: () => t("Studio is building right now. Rewind when the build finishes."),
   rolledBackByUser: "rolled back by the user",
@@ -244,7 +237,6 @@ const SNAPSHOT_FOLD: ThreadFold<EventEnvelope[]> = {
 /** An unattended run's journal artifact (`autopilot_<runId>`), as far as the boot repair reads it. */
 interface RunJournal {
   phase?: string;
-  optimization?: OptimizationCheckpointV1;
   integrationHead?: string;
   director?: { integrationHead?: string; baseCommit?: string };
 }
@@ -258,22 +250,6 @@ interface LoopRunLanding {
 }
 
 const journalArtifact = (runId: string): string => `autopilot_${runId}`;
-
-/** An Optimization stage that was still deciding when the app died. */
-function optimizationLeftOpen(cp: OptimizationCheckpointV1 | undefined): cp is OptimizationCheckpointV1 {
-  return cp?.schemaVersion === 1 && Boolean(cp.result) && !cp.result.outcome;
-}
-
-/** Charge the budget segment the app died inside, and close it. */
-function chargeInterruptedSegment(cp: OptimizationCheckpointV1, now: number): void {
-  const { budget } = cp;
-  if (!budget.activeSegmentStartedAt) return;
-  const elapsed = Math.max(0, now - Date.parse(budget.activeSegmentStartedAt));
-  budget.consumedMs = Math.min(budget.allocatedMs, budget.consumedMs + elapsed);
-  if (cp.phase === "building_candidate")
-    budget.workerConsumedMs = Math.min(budget.workerAllocatedMs, budget.workerConsumedMs + elapsed);
-  budget.activeSegmentStartedAt = null;
-}
 
 /**
  * What the run got as far as, so the user can play it or make it live before deciding whether
@@ -381,6 +357,7 @@ export class RecoveryService {
   async noteSeedMoves(): Promise<void> {
     const report = this.#x.seedReport;
     if (!report) return;
+    await this.#archiveArtifacts(report.archive?.dir ?? null);
     try {
       const memory = ((await this.#core.store.readArtifact<Record<string, unknown>>(this.#core.mainThread, "memory")) ??
         {}) as Record<string, unknown>;
@@ -389,6 +366,27 @@ export class RecoveryService {
         await this.#core.store.writeArtifact(this.#core.mainThread, "memory", next);
     } catch (err) {
       this.#core.options.onLog?.(`[core] noting the seed's moved code failed: ${errorMessage(err)}`, "stderr");
+    }
+  }
+
+  /**
+   * Upgrading into the archive epoch (seed-archive.ts): the Studio thread's learned artifacts go into
+   * the workspace's archive beside the files the seed pass moved, and are cleared. Needs the event
+   * store; a failure is logged, never fatal to the boot.
+   */
+  async #archiveArtifacts(dir: string | null): Promise<void> {
+    if (dir === null) return;
+    const thread = this.#core.mainThread;
+    try {
+      await archiveArtifacts(
+        {
+          read: (id) => this.#core.store.readArtifact(thread, id),
+          write: (id, value) => this.#core.store.writeArtifact(thread, id, value),
+        },
+        path.join(this.#core.layout.harnessWs, dir),
+      );
+    } catch (err) {
+      this.#core.options.onLog?.(`[core] archiving the learned artifacts failed: ${errorMessage(err)}`, "stderr");
     }
   }
 
@@ -490,7 +488,6 @@ export class RecoveryService {
   ): Promise<void> {
     const journal = ((await this.#core.store.readArtifact(threadId, journalArtifact(runId)).catch(() => null)) ??
       null) as RunJournal | null;
-    if (journal) await this.#closeInterruptedOptimization(threadId, runId, journal, finishedAt);
     const paused = journal !== null && journal.phase !== "done";
     const landing = paused ? await this.#pauseLoopRun(threadId, runId, journal) : null;
     await this.#core.store.appendEvents(threadId, [
@@ -514,49 +511,6 @@ export class RecoveryService {
       .writeArtifact(threadId, journalArtifact(runId), { ...journal, phase: "paused" })
       .catch(() => {});
     return loopRunLanding(runId, journal);
-  }
-
-  /** An Optimization stage the app died inside ends as interrupted, with its budget charged. */
-  async #closeInterruptedOptimization(
-    threadId: string,
-    runId: string,
-    journal: RunJournal,
-    finishedAt: string,
-  ): Promise<void> {
-    const cp = journal.optimization;
-    if (!optimizationLeftOpen(cp)) return;
-    const result = cp.result;
-    chargeInterruptedSegment(cp, Date.now());
-    result.outcome = "interrupted";
-    result.reasonCode = "restart";
-    result.reason = MESSAGE.optimizationInterrupted;
-    result.summary = MESSAGE.optimizationNotApplied;
-    await this.#recoverAdoption(cp, result);
-    result.phase = "terminal";
-    result.finishedAt = finishedAt;
-    result.sequence++;
-    cp.phase = "interrupted";
-    await this.#core.saveRunArtifact(runId, "optimization/result.json", Buffer.from(JSON.stringify(result)));
-    await this.#core.saveRunArtifact(runId, "optimization/checkpoint.json", Buffer.from(JSON.stringify(cp)));
-    await this.#core.store.writeArtifact(threadId, journalArtifact(runId), journal);
-    await this.#core.store.appendEvents(threadId, [customEventData(CustomEvent.OptimizationUpdated, { ...result })]);
-  }
-
-  /** An adoption the app died inside: what the game folder now holds decides how it ended. */
-  async #recoverAdoption(cp: OptimizationCheckpointV1, result: OptimizationResultV1): Promise<void> {
-    if (!cp.adoptionIntent || !cp.baseline) return;
-    const recovered = await this.#core.candidates
-      .reconcile(cp.project, cp.baseline.revision, cp.adoptionIntent.verifiedCandidate)
-      .catch(() => null);
-    if (!recovered) return;
-    result.retainedRevision = recovered.revision;
-    result.candidateAdopted = recovered.retained === RetainedState.Candidate;
-    if (result.candidateAdopted) {
-      result.outcome = "improved";
-      result.summary = MESSAGE.adoptionRecovered;
-      return;
-    }
-    if (recovered.retained === RetainedState.Changed) result.summary = MESSAGE.liveFilesChanged;
   }
 
   async rebuildSnapshotIndex(): Promise<void> {
@@ -660,11 +614,8 @@ export class RecoveryService {
     await this.#stopWritersInPlace();
     this.#x.locks.releaseHarnessHolds();
     const owner = `harness:${boot}`;
-    const released = (await this.#x.previewPool?.releaseOwnedBy(owner).catch(() => [] as string[])) ?? [];
-    for (const handle of released) this.#x.profileSources.delete(handle);
-    // The computers it played on those windows end with them (a Play Protocol game's process, an
-    // editor's play), and its sessions on the person's computer let it go.
-    await forgetHarnessComputers(this.#x, released);
+    await this.#x.previewPool?.releaseOwnedBy(owner).catch(() => [] as string[]);
+    // Its sessions on the person's computer let it go.
     await releaseHarnessDesktops(this.#x);
   }
 

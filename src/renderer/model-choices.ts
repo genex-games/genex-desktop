@@ -7,7 +7,7 @@ import { EngineKind, isEngineReady, needsSignIn } from "../shared/engine-descrip
 import { t } from "../shared/i18n.ts";
 import { ReasoningEffort } from "../shared/model-preferences.ts";
 import { crossesTo, resolveRoles, roleEffortCap } from "../shared/model-roles.ts";
-import { EngineId, isMetered } from "../shared/providers.ts";
+import { EngineId, isBeta, isMetered } from "../shared/providers.ts";
 import { modelKey, parseModelKey } from "./model-key.ts";
 import { modelBase, modelName, offersLineup, runnableModels, shownModels } from "./model-lineup.ts";
 import type { EngineDescriptor } from "./types.ts";
@@ -162,6 +162,7 @@ function subscriptionChoice(engine: EngineDescriptor, model: EngineModel, shown:
     ...(model.providerDefault ? { providerDefault: true } : {}),
     ...(model.resolvedModel ? { resolvedModel: model.resolvedModel } : {}),
     ...(model.free ? { free: true } : {}),
+    ...(isBeta(engine.id) ? { beta: true } : {}),
     // Each vendor publishes its own reasoning dial; the effort page offers exactly what
     // the picked model accepts, so a run never dies on a value its CLI refuses.
     contextWindow: model.contextWindow,
@@ -199,6 +200,7 @@ function subscriptionRow(engine: EngineDescriptor, ready: boolean): ModelChoice 
     tag: subscriptionTag(engine, ready, signIn),
     disabled: !ready && !signIn,
     ...(engine.status.remedy ? { title: engine.status.remedy } : {}),
+    ...(isBeta(engine.id) ? { beta: true } : {}),
   };
 }
 

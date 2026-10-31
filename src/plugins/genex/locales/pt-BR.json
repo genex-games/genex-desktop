@@ -1,7 +1,6 @@
 {
   "3D models, characters, sound and art for your games, made in chat with Genex credits. Coding stays on your own provider.": "Modelos 3D, personagens, som e arte para seus jogos, feitos no chat com créditos do Genex. O código continua no seu próprio provedor.",
   "Account and jobs": "Conta e tarefas",
-  "Add the listed pinned Genex packages. Multiplayer includes its player-identity dependency. A template game gets Studio's built-in copies in its import map; any other game installs them with its own package manager, with the npm registry open for that command only.": "Adicionar os pacotes do Genex listados, nas versões fixadas. O multijogador inclui a dependência de identidade do jogador. Um jogo de modelo recebe as cópias internas do Studio no import map; qualquer outro jogo instala com o próprio gerenciador de pacotes, com o registro do npm aberto só para esse comando.",
   "Approve character workflow": "Aprovar o fluxo do personagem",
   "Asset setup state": "Estado da configuração de recursos",
   "Blender server address": "Endereço do servidor do Blender",
@@ -24,7 +23,7 @@
   "Remove Studio’s saved Genex credential and stop new asset submissions.": "Remover a credencial do Genex salva no Studio e parar o envio de novos recursos.",
   "Review Genex terms": "Revisar os termos do Genex",
   "Review character candidates in Studio before approving paid generation.": "Veja as opções de personagem no Studio antes de aprovar a geração paga.",
-  "Run a Genex CLI command that spends coin or credits or changes what this game sells, with your saved Genex account.": "Executar um comando da CLI do Genex que gasta moedas ou créditos ou muda o que este jogo vende, com sua conta do Genex salva.",
+  "Run a Genex CLI command that spends Nex or credits or changes what this game sells, with your saved Genex account.": "Executar um comando da CLI do Genex que gasta Nex ou créditos ou muda o que este jogo vende, com sua conta do Genex salva.",
   "Take this game's cover": "Capturar a capa deste jogo",
   "Unlock saved account": "Desbloquear a conta salva",
   "Upload Studio's exported copy of this game to its Genex draft page and make it the public version in the gallery. Everyone can find and play it. The first time, a hosted Genex project is created for this game under your account. Its cover shot also becomes its picture on Genex, unless you chose one there.": "Enviar a cópia exportada pelo Studio deste jogo para a página de rascunho no Genex e torná-la a versão pública na galeria. Todo mundo vai poder encontrar e jogar. Na primeira vez, um projeto hospedado do Genex é criado para este jogo na sua conta. A captura de capa também vira a imagem dele no Genex, a menos que você tenha escolhido uma lá.",

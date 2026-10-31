@@ -414,12 +414,16 @@ describe("how a purchase popup ends", () => {
 });
 
 describe("where a game's purchases are confirmed", () => {
-  test("genex.games' own website whenever Studio reads genex.games' coin; nowhere when it reads another API", () => {
-    const rows: Array<[{ api: string; web: string }, string | null]> = [
+  test("genex.games' own website whenever Studio reads genex.games' coin; a stand's own when its games are; else nowhere", () => {
+    const games = PLAY_ORIGIN.games;
+    const standGames = "https://localhost:8443";
+    const rows: Array<[{ api: string; web: string; games: string }, string | null]> = [
       [PLAY_ORIGIN, PLAY_ORIGIN.web],
-      [{ api: PLAY_ORIGIN.api, web: "http://localhost:5173" }, PLAY_ORIGIN.web],
-      [{ api: "http://localhost:3000", web: PLAY_ORIGIN.web }, null],
-      [{ api: "http://localhost:3000", web: "http://localhost:5173" }, null],
+      [{ api: PLAY_ORIGIN.api, web: "http://localhost:5173", games }, PLAY_ORIGIN.web],
+      [{ api: "http://localhost:3000", web: PLAY_ORIGIN.web, games }, null],
+      [{ api: "http://localhost:3000", web: "http://localhost:5173", games }, null],
+      // A stand's own games pay on the stand's website.
+      [{ api: "http://localhost:3000", web: "http://localhost:5173", games: standGames }, "http://localhost:5173"],
     ];
     for (const [origins, expected] of rows) assert.equal(purchaseConfirmOrigin(origins), expected, origins.api);
   });

@@ -69,6 +69,8 @@ import {
 import { createModelPickerStore, pickerModelSet, pickerModelsReset } from "../../src/renderer/state/model-picker.ts";
 import { uiEventReads } from "../../src/renderer/state/ui-event-routes.ts";
 import { createStudio, EVENT_POLL_MS, type StudioTimers } from "../../src/renderer/state/studio.ts";
+import { asksAboutAnalytics } from "../../src/renderer/state/session.ts";
+import { AnalyticsChoice } from "../../src/renderer/analytics/consent.ts";
 import type { KeyValueStorage } from "../../src/renderer/storage.ts";
 import { fakeStudioApi } from "../helpers/fake-studio-api.ts";
 
@@ -726,20 +728,11 @@ describe("what each UI event makes the renderer read again", () => {
   const ev = (type: string, payload: unknown = {}): UiEvent => ({ type, payload }) as UiEvent;
 
   it("pulls logged events in live, and lists on their own changes", () => {
-    for (const type of [
-      "chat.message",
-      "run.finished",
-      "delegated.event",
-      "plugin.consent",
-      "improvement.applied",
-      "coordinator.queued",
-      "run.optimization",
-    ]) {
+    for (const type of ["chat.message", "run.finished", "delegated.event", "plugin.consent", "coordinator.queued"]) {
       assert.deepEqual(reads(ev(type)), ["events"], type);
     }
     assert.deepEqual(reads(ev("thread.bound")), ["events", "threads"]);
     assert.deepEqual(reads(ev("game.changed")), ["events", "games", "threads"]);
-    assert.deepEqual(reads(ev("skillopt.staged")), ["staged"]);
     assert.deepEqual(reads(ev("engines.changed")), ["engines"]);
     assert.deepEqual(reads(ev("model.pull", { model: "m", progress: { status: "pulling" } })), []);
     assert.deepEqual(reads(ev("model.pull", { model: "m", progress: { status: "success" } })), ["engines"]);
@@ -781,6 +774,55 @@ describe("the studio: one subscription, the bootstrap and the commands that span
     const stop = app.start();
     return { fake, app, stop, timers, storage };
   }
+
+  it("asks about usage analytics once per consent version, and only in a session that offers them", async () => {
+    const analytics = { key: "phc_x", host: "https://eu.i.posthog.com", version: "1.0.0" };
+    const { app, storage } = started({ bootstrap: async () => boot({ analytics }) as never });
+    assert.equal(asksAboutAnalytics(app.session.getState()), false, "nothing is asked before the bootstrap");
+    await tick();
+    assert.deepEqual(app.session.getState().analytics, analytics);
+    assert.equal(asksAboutAnalytics(app.session.getState()), true);
+    app.chooseAnalytics(AnalyticsChoice.Off);
+    assert.equal(asksAboutAnalytics(app.session.getState()), false);
+    assert.deepEqual(JSON.parse(storage.data.get("studio.analytics") ?? "null"), { choice: "off", version: 1 });
+    app.chooseAnalytics(AnalyticsChoice.On);
+    assert.equal(app.session.getState().analyticsChoice, "on", "Settings → Privacy changes the answer");
+    const answered = memoryStorage({ "studio.analytics": JSON.stringify({ choice: "on", version: 1 }) });
+    const again = started({ bootstrap: async () => boot({ analytics }) as never }, answered);
+    await tick();
+    assert.equal(again.app.session.getState().analyticsChoice, "on");
+    assert.equal(asksAboutAnalytics(again.app.session.getState()), false, "an answered profile is not asked again");
+    const older = memoryStorage({ "studio.analytics": JSON.stringify({ choice: "on", version: 0 }) });
+    const grown = started({ bootstrap: async () => boot({ analytics }) as never }, older);
+    await tick();
+    assert.equal(asksAboutAnalytics(grown.app.session.getState()), true, "an answer to an earlier version asks again");
+    const owned = started({ bootstrap: async () => boot({ analytics: null }) as never });
+    await tick();
+    assert.equal(asksAboutAnalytics(owned.app.session.getState()), false, "a launch that never sends never asks");
+    assert.equal(owned.storage.data.has("studio.analytics.replay"), false, "nor draws a replay");
+  });
+
+  it("draws a first launch's replay once, one install in five, for its first week only", async () => {
+    const analytics = { key: "phc_x", host: "https://eu.i.posthog.com" };
+    const firstLaunch = (random: number, storage = memoryStorage()) => {
+      const fake = fakeStudioApi({ bootstrap: async () => boot({ analytics, games: [], welcome: true }) as never });
+      const app = createStudio(fake.api, { storage, timers: manualTimers(), now: () => 1_000, random: () => random });
+      app.start();
+      return { app, storage };
+    };
+    const sampled = firstLaunch(0.1);
+    await tick();
+    assert.equal(sampled.app.session.getState().replayUntil, 1_000 + 7 * 24 * 60 * 60 * 1000);
+    const unsampled = firstLaunch(0.5);
+    await tick();
+    assert.equal(unsampled.app.session.getState().replayUntil, null);
+    const kept = firstLaunch(0.9, sampled.storage);
+    await tick();
+    assert.equal(kept.app.session.getState().replayUntil, 1_000 + 7 * 24 * 60 * 60 * 1000, "the draw is made once");
+    const welcomedBefore = started({ bootstrap: async () => boot({ analytics }) as never });
+    await tick();
+    assert.equal(welcomedBefore.app.session.getState().replayUntil, null, "a profile welcomed before records none");
+  });
 
   it("opens home, loads no preview, keeps the way back to the last chat, and asks nothing before the cursor", async () => {
     // Intentionally flipped: a launch used to reopen the remembered chat and load its game.
@@ -847,6 +889,20 @@ describe("the studio: one subscription, the bootstrap and the commands that span
       false,
       "a session that may not welcome (smoke, fixtures) does not",
     );
+  });
+
+  it("hands main's events to its own listeners after the stores, through the one subscription", async () => {
+    const { fake, app } = started();
+    await tick();
+    app.selectThread("rift-chat");
+    const heard: Array<[string, string]> = [];
+    const stop = app.onUiEvent((event) => heard.push([event.type, app.layout.getState().stageView]));
+    assert.equal(fake.listeners("onEvent"), 1, "no IPC listener of its own");
+    fake.emit({ type: "stage.show", payload: { project: "rift", view: "live" } });
+    assert.deepEqual(heard, [["stage.show", "live"]], "the stores took it first");
+    stop();
+    fake.emit({ type: "stage.show", payload: { project: "rift", view: "live" } });
+    assert.equal(heard.length, 1, "a stopped listener hears nothing more");
   });
 
   it("a build the chat put on screen for the game on the stage shows Live", async () => {
@@ -988,7 +1044,8 @@ describe("the studio: one subscription, the bootstrap and the commands that span
     assert.equal(fake.listeners("onEvent"), 0, "stopping unsubscribes");
   });
 
-  it("opening a game loads its preview once and then re-reads the library", async () => {
+  it("opening a game starts nothing; opening the game Live holds on the stage again reloads it", async () => {
+    // Intentionally flipped: opening a game used to load its preview.
     const moss = thread("moss-chat", { kind: "game", project: "moss" });
     const { fake, app, storage } = started({ threadForGame: async () => moss });
     await tick();
@@ -997,49 +1054,46 @@ describe("the studio: one subscription, the bootstrap and the commands that span
     await tick();
     assert.equal(record?.id, "moss-chat");
     assert.equal(app.threads.getState().activeThreadId, "moss-chat");
-    assert.deepEqual(
-      fake.callsOf("loadPreview").slice(loads),
-      [["moss"]],
-      "one load, not one from the command and one from the follower",
-    );
+    assert.deepEqual(fake.callsOf("loadPreview").slice(loads), [], "the game waits for Play");
+    assert.equal(app.threads.getState().liveProject, null, "Live holds no game");
     assert.equal(storage.data.get("studio.activeThread"), "moss-chat");
     assert.ok(fake.callsOf("games").length >= 1);
     await app.enterProject("moss");
     await tick();
+    assert.deepEqual(fake.callsOf("loadPreview").slice(loads), [], "opening it again still starts nothing");
+    fake.emit({ type: "preview.identity", payload: { project: "moss", head: null, state: "loading", error: null } });
+    assert.equal(app.threads.getState().liveProject, "moss", "a load holds Live from its start");
+    await app.enterProject("moss");
+    await tick();
     assert.deepEqual(
       fake.callsOf("loadPreview").slice(loads),
-      [["moss"], ["moss"]],
-      "opening the same game again reloads it, as the sidebar always did",
+      [["moss"]],
+      "opening the game Live holds on the stage again reloads it, as the sidebar always did",
     );
   });
 
-  it("coming back from home to the game Live still holds keeps its page; another game or a failed load loads", async () => {
-    const moss = thread("moss-chat", { kind: "game", project: "moss" });
-    const { fake, app } = started({ threadForGame: async () => moss });
+  it("switching games keeps the game Live holds as it was left and starts no other", async () => {
+    // Intentionally flipped: switching to another game used to load it, ending the one in Live.
+    const chats: Record<string, ConversationRecord> = { pond, rift };
+    const { fake, app } = started({ threadForGame: async (name: string) => chats[name] ?? pond });
+    await tick();
+    await app.enterProject("pond");
+    fake.emit({ type: "preview.identity", payload: { project: "pond", head: null, state: "loaded", error: null } });
     await tick();
     const loads = fake.callsOf("loadPreview").length;
-    await app.enterProject("moss");
-    fake.emit({ type: "preview.identity", payload: { project: "moss", head: null, state: "loaded", error: null } });
+    await app.enterProject("rift");
     await tick();
+    assert.equal(app.threads.getState().activeThreadId, "rift-chat");
+    assert.equal(app.threads.getState().liveProject, "pond", "Live keeps the game it holds, out of sight");
+    app.selectThread("pond-chat");
+    app.selectThread("rift-chat");
     app.goHome();
-    await app.enterProject("moss");
+    await app.enterProject("pond");
     await tick();
-    assert.equal(app.threads.getState().activeThreadId, "moss-chat");
-    assert.deepEqual(fake.callsOf("loadPreview").slice(loads), [["moss"]], "the paused game is shown as it was left");
-    app.goHome();
-    fake.emit({ type: "preview.identity", payload: { project: "moss", head: null, state: "failed", error: "boom" } });
-    await app.enterProject("moss");
-    await tick();
-    assert.deepEqual(fake.callsOf("loadPreview").slice(loads), [["moss"], ["moss"]], "a failed load is tried again");
-    app.goHome();
-    fake.emit({ type: "preview.identity", payload: { project: "pond", head: null, state: "loaded", error: null } });
-    await app.enterProject("moss");
-    await tick();
-    assert.deepEqual(
-      fake.callsOf("loadPreview").slice(loads),
-      [["moss"], ["moss"], ["moss"]],
-      "Live holding another game loads this one",
-    );
+    assert.deepEqual(fake.callsOf("loadPreview").slice(loads), [], "no switch loads a game");
+    assert.equal(app.threads.getState().liveProject, "pond", "the game comes back as it was left");
+    fake.emit({ type: "preview.identity", payload: { project: "pond", head: null, state: "failed", error: "boom" } });
+    assert.equal(app.threads.getState().liveProject, null, "a failed load leaves Live holding no game");
   });
 
   it("a refused open is toasted in plain words", async () => {
@@ -1142,9 +1196,9 @@ function rendererFiles(): string[] {
 describe("Settings → Permissions: Let agents control your computer", () => {
   it("is off unless the host's settings say it is on, and offered only on macOS and Windows", () => {
     assert.equal(computerControlOn(null), false, "before the settings load");
-    assert.equal(computerControlOn({ learning: true, selfImproving: false }), false, "an older host's view");
-    assert.equal(computerControlOn({ learning: true, selfImproving: false, computerControl: false }), false);
-    assert.equal(computerControlOn({ learning: true, selfImproving: false, computerControl: true }), true);
+    assert.equal(computerControlOn({ learning: true }), false, "an older host's view");
+    assert.equal(computerControlOn({ learning: true, computerControl: false }), false);
+    assert.equal(computerControlOn({ learning: true, computerControl: true }), true);
     assert.equal(computerControlOffered(StudioPlatform.Mac), true);
     assert.equal(computerControlOffered(StudioPlatform.Windows), true, "the desktop driver ships on Windows too");
     for (const platform of [StudioPlatform.Linux, ""])
@@ -1160,13 +1214,17 @@ describe("Settings → Permissions: Let agents control your computer", () => {
     assert.doesNotMatch(windows.accelerator, /Command|Cmd|Super|Meta/);
     assert.notEqual(windows.accelerator, "Control+Shift+Escape");
     assert.equal(stopShortcutWords(windows), "Ctrl+Alt+Shift+Esc");
-    assert.match(computerControlDetail(StudioPlatform.Windows), /Ctrl\+Alt\+Shift\+Esc stops it/);
-    assert.match(computerControlDetail(StudioPlatform.Mac), /⌃⌥⌘Esc stops it/);
+  });
+
+  it("says in one line that agents ask before each app, and never names the stop shortcut", () => {
+    for (const platform of [StudioPlatform.Mac, StudioPlatform.Windows])
+      assert.equal(computerControlDetail(platform), "They ask before each app.");
+    assert.equal(computerControlDetail(StudioPlatform.Linux), "macOS and Windows only.");
   });
 
   it("the switch sends only this setting and shows what the host saved", async () => {
     const fake = fakeStudioApi();
-    fake.stub("setSettings", async () => ({ learning: true, selfImproving: false, computerControl: false }));
+    fake.stub("setSettings", async () => ({ learning: true, computerControl: false }));
     const view = await setComputerControl(fake.api, true);
     assert.deepEqual(fake.callsOf("setSettings"), [[{ computerControl: true }]]);
     assert.equal(computerControlOn(view), false, "the switch follows the host's answer, not the click");

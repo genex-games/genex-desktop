@@ -1,6 +1,9 @@
 import type { JSX } from "react";
-import { memo, useCallback } from "react";
+import { memo, useCallback, useMemo } from "react";
 import { t } from "../../shared/i18n.ts";
+import { noteNav, noteStageSwitch } from "../analytics/workspace-trackers.ts";
+import { trackGameManaged } from "../analytics/workspace-track.ts";
+import { ActionOutcome, GameAction, ManageVia, NavVia, StageSwitchVia } from "../analytics/workspace-vocabulary.ts";
 import { BootstrapGate } from "../panels/BootstrapGate.tsx";
 import { ChatPanel } from "../panels/ChatPanel.tsx";
 import { ChatResizeHandle } from "../panels/ChatResizeHandle.tsx";
@@ -60,6 +63,12 @@ export const Workspace = memo(function Workspace(props: WorkspaceProps): JSX.Ele
   );
 });
 
+/** A chat link to the stage, named for usage analytics before it moves the stage. */
+const chatLink = (show: () => void) => (): void => {
+  noteStageSwitch(StageSwitchVia.ChatLink);
+  show();
+};
+
 /** The chat column's panel, fed by the open thread's history. */
 function WorkspaceChat({ app, chrome, navigation, views, chat }: WorkspaceProps) {
   const { activeThreadId, activeThread, status: threadStatus } = useThreadsView();
@@ -70,10 +79,31 @@ function WorkspaceChat({ app, chrome, navigation, views, chat }: WorkspaceProps)
   const notify = app.notify;
   const saveGameTitle = useCallback(
     (name: string, title: string) => {
-      void app.saveGame(name, { title }).catch(notifyProblem(notify));
+      const game = app.library.getState().games.find((known) => known.name === name) ?? null;
+      const renamed = (outcome: ActionOutcome, failure?: unknown): void =>
+        trackGameManaged(GameAction.Renamed, ManageVia.ChatHeader, outcome, game, failure);
+      void app.saveGame(name, { title }).then(
+        () => renamed(ActionOutcome.Ok),
+        (error: unknown) => {
+          renamed(ActionOutcome.Failed, error);
+          notifyProblem(notify)(error);
+        },
+      );
     },
     [app, notify],
   );
+  const shows = useMemo(
+    () => ({
+      live: chatLink(views.showLive),
+      assets: chatLink(() => views.chooseStageView(StageView.Assets)),
+      builds: chatLink(() => views.chooseStageView(StageView.Builds)),
+    }),
+    [views],
+  );
+  const newGame = useCallback(() => {
+    noteNav(NavVia.Chat);
+    navigation.newGame();
+  }, [navigation]);
   return (
     <ChatPanel
       loading={chat.loading}
@@ -94,10 +124,10 @@ function WorkspaceChat({ app, chrome, navigation, views, chat }: WorkspaceProps)
       firstAsk={chat.firstAsk}
       onRename={app.renameThread}
       onRenameGame={saveGameTitle}
-      onNewGame={navigation.newGame}
-      onShowLive={views.showLive}
-      onShowAssets={() => views.chooseStageView(StageView.Assets)}
-      onShowBuilds={() => views.chooseStageView(StageView.Builds)}
+      onNewGame={newGame}
+      onShowLive={shows.live}
+      onShowAssets={shows.assets}
+      onShowBuilds={shows.builds}
       onOpenStudio={navigation.enterStudio}
       onNotice={notify}
       onSend={app.send}

@@ -93,7 +93,8 @@ export const MOMENT_WORDS = {
   NotReopened: (why: string) => `the Unreal plugin didn't reopen Unreal (${why})`,
   // Health.
   Reopening: "Genex is reopening Unreal.",
-  ReopenFailed: (error: string) => `reopening Unreal failed: ${error || "no reason given"}`,
+  ReopenFailed: (error: string): string => `reopening Unreal failed: ${error || MOMENT_WORDS.NoReason}`,
+  NoReason: "no reason given",
   Busy: "Unreal is busy: its editor runs and answers nothing yet.",
   CantTellRunning: "Genex can't tell whether Unreal is running.",
   Gone: "Unreal isn't running: it crashed or was quit.",

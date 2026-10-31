@@ -1,11 +1,11 @@
 /* ── Play: the genex.games catalog inside the app ───────────────────────────────────────── */
 /* Play's own blue marks the Genex card's glyphs; the switch and everything else wear the app's roles. */
 :root {
-  /* genex.games' own blue. The colour tweaker's "Play: switch and tabs" group sets the selected
+  /* genex.games' own blue, the app's accent. The colour tweaker's "Play: switch and tabs" group sets the selected
      blue, its edge and text, the switch's track and edge, and the other tabs' backing, edge and text
      (`--play-selected*`, `--play-switch-track`, `--play-switch-edge`, `--play-tab-*`), and the focused
      search's edge (`--play-search-focus`). */
-  --play-blue: #4b60bf;
+  --play-blue: var(--accent);
   --play-icon: #4da3ff;
   --play-track: rgb(77 81 96 / 0.1);
   --play-track-edge: rgb(121 127 139 / 0.21);
@@ -27,17 +27,21 @@
   --purchase-short-ink: color-mix(in oklab, var(--orange) 60%, var(--ink));
 }
 
-/* Play's selected look, genex.games' blue secondary (its Invite and agent buttons): the blue at 12%
-   with a 1px edge of it at 40%, the label in ink. The switch's pill and the selected tab wear it, and so
-   do the app's other segmented switches (the Genex plugin's Tools / Credits, the stats' period), so the
-   colour tweaker's "Play: switches and tabs" group tunes them all at once. */
+/* Play's selected look, the app's own (theme.css `.selected-tint`): the accent mixed into the fill and
+   its edge, the label in ink. The switch's pill and the selected tab wear it, and so do the app's other
+   segmented switches (the Genex plugin's Tools / Credits, the stats' period, a game's Store / My items),
+   so the colour tweaker's "Play: switches and tabs" group tunes them all at once. */
 .play-switch-pill,
 .play-tab[aria-selected="true"],
 .genex-tab[aria-selected="true"],
-.stats-period[aria-selected="true"] {
-  background: color-mix(in srgb, var(--play-selected, var(--play-blue)) 12%, transparent);
+.stats-period[aria-selected="true"],
+.store-tab[aria-selected="true"] {
+  background: color-mix(in srgb, var(--play-selected, var(--play-blue)) var(--select-share), transparent);
   box-shadow: inset 0 0 0 1px
-    var(--play-selected-edge, color-mix(in srgb, var(--play-selected, var(--play-blue)) 40%, transparent));
+    var(
+      --play-selected-edge,
+      color-mix(in srgb, var(--play-selected, var(--play-blue)) var(--select-edge-share), transparent)
+    );
   color: var(--play-selected-text, var(--ink));
 }
 
@@ -182,7 +186,20 @@
   outline-offset: -1px;
 }
 .play-thumb-blank {
+  overflow: hidden;
   background: var(--play-placeholder);
+  color: var(--ink-3);
+}
+/* A game with no cover (`NoCover`): a still wire floor filling the cover's box. */
+.play-no-cover {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.play-card-cover > .play-no-cover {
+  position: absolute;
+  inset: 0;
+  color: var(--ink-3);
 }
 
 /* The Genex card at the sidebar's foot. */
@@ -1182,6 +1199,16 @@
   color: var(--play-selected-text, var(--ink));
 }
 .play-viewer-bar-remix:hover:enabled {
+  background: color-mix(in srgb, var(--play-selected, var(--play-blue)) 22%, transparent);
+}
+/* The Store door, pressed while the game's Store is open in its place: Play's selected look. */
+.play-viewer-bar-store[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--play-selected, var(--play-blue)) 12%, transparent);
+  box-shadow: inset 0 0 0 1px
+    var(--play-selected-edge, color-mix(in srgb, var(--play-selected, var(--play-blue)) 40%, transparent));
+  color: var(--play-selected-text, var(--ink));
+}
+.play-viewer-bar-store[aria-pressed="true"]:hover:enabled {
   background: color-mix(in srgb, var(--play-selected, var(--play-blue)) 22%, transparent);
 }
 /* The game's voice chat: the mic switch and its menu of microphones, joined, beside the name. On,
@@ -2186,4 +2213,91 @@
   outline: 2px solid var(--focus-edge);
   outline-offset: 2px;
   border-radius: 4px;
+}
+
+/* ── The Nex sheet (`play/NexSheet.tsx`): what Nex is, and how it is got, spent and earned ── */
+.nex-sheet {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.nex-figures {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  border-radius: 14px;
+  background: var(--line);
+}
+.nex-figure {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 16px;
+  background: var(--page);
+}
+.nex-figure-label {
+  color: var(--ink-3);
+  font-size: 13px;
+  line-height: 18px;
+}
+.nex-figure-amount {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink);
+  font-family: var(--font-family-mono);
+  font-size: 22px;
+  line-height: 28px;
+  font-variant-numeric: tabular-nums;
+}
+.nex-figure[data-nex-held] .nex-figure-amount {
+  color: var(--ink-2);
+}
+.nex-ways {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.nex-way {
+  display: flex;
+  gap: 14px;
+}
+.nex-way-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: var(--soft);
+  color: var(--ink);
+}
+.nex-way-words {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 14px;
+  line-height: 20px;
+}
+.nex-way-title {
+  font-weight: 500;
+}
+.nex-way-body {
+  color: var(--ink-2);
+}
+.nex-credits {
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--page);
+  color: var(--ink-3);
+  font-size: 13px;
+  line-height: 19px;
+}
+.nex-foot {
+  display: flex;
+  justify-content: flex-end;
 }

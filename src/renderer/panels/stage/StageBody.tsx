@@ -1,15 +1,48 @@
 /** What fills the stage's rectangle when it is not the running game: setup, the loader, an empty game, Builds, Assets or a file. */
-import type { JSX } from "react";
+import { type JSX, useEffect, useRef } from "react";
 import { t } from "../../../shared/i18n.ts";
 import { type RunGraph as RunGraphModel, runBuilding, runIdOf } from "../../run-graph.ts";
 import { readyToPlay } from "../../run-steps.ts";
-import { openSettings, SettingsSection } from "../../settings-navigation.ts";
+import { openSettings, SettingsOpenedFrom, SettingsSection } from "../../settings-navigation.ts";
 import { Button } from "../../ui/Button.tsx";
 import { EmptyState } from "../../ui/EmptyState.tsx";
 import { useRunSummary } from "../../use-run-summary.ts";
 import { PlayButton } from "../run-graph/chrome.tsx";
 import { StageLoading } from "./LiveLoaderArt.tsx";
 import { PlannerArt } from "./PlannerArt.tsx";
+import { track } from "../../analytics/client.ts";
+import { AnalyticsEvent } from "../../analytics/events.ts";
+import { BuildSurface, EmptyAction, EmptyArt } from "../../analytics/events/builds.ts";
+import { oneOf } from "../../analytics/properties.ts";
+import { elapsedMs } from "../../analytics/properties.ts";
+
+/** A Play of a run's build from the stage: which build, and the stage it was pressed on. */
+type PlayFrom = (head: string, surface: BuildSurface) => Promise<void>;
+
+/**
+ * How long an empty stage was up and whether the person acted on it (`actionKind`: what its one
+ * button does), told once it goes; the stage with no game open is not counted.
+ */
+function useEmptyStateLeft(art: string, actionKind: EmptyAction): () => void {
+  const acted = useRef(false);
+  const kind = useRef(actionKind);
+  kind.current = actionKind;
+  useEffect(() => {
+    const counted = oneOf(EmptyArt, art);
+    if (!counted) return;
+    const shownAt = Date.now();
+    acted.current = false;
+    return () =>
+      track(AnalyticsEvent.LiveEmptyStateLeft, {
+        art: counted,
+        ms_shown: elapsedMs(shownAt, Date.now()),
+        action: acted.current ? kind.current : EmptyAction.None,
+      });
+  }, [art]);
+  return () => {
+    acted.current = true;
+  };
+}
 
 /** The stage with nothing to play yet: the shared empty state over the stage's hatch. */
 export function StageEmpty({
@@ -17,18 +50,33 @@ export function StageEmpty({
   title,
   subtitle,
   action,
+  actionKind = EmptyAction.None,
 }: {
   art: "none" | "idea" | "building" | "stopped";
   title: string;
   subtitle: string;
   action?: JSX.Element;
+  /** What `action` does, for the count of empty stages people act on. */
+  actionKind?: EmptyAction;
 }): JSX.Element {
+  const acted = useEmptyStateLeft(art, actionKind);
   return (
     <div
       data-stage-empty={art}
       className="hatch absolute inset-0 grid place-items-center overflow-y-auto p-8 animate-in fade-in-0 duration-200"
     >
-      <EmptyState art={art === "none" ? "idea" : art} title={title} subtitle={subtitle} action={action} />
+      <EmptyState
+        art={art === "none" ? "idea" : art}
+        title={title}
+        subtitle={subtitle}
+        action={
+          action ? (
+            <span className="contents" onClickCapture={acted}>
+              {action}
+            </span>
+          ) : undefined
+        }
+      />
     </div>
   );
 }
@@ -61,10 +109,15 @@ export function ModelSetup(): JSX.Element {
         </div>
       </div>
       <div className="flex flex-wrap gap-2">
-        <Button variant="default" onClick={() => openSettings(SettingsSection.Providers)}>
+        <Button
+          variant="default"
+          onClick={() => openSettings(SettingsSection.Providers, undefined, SettingsOpenedFrom.StageSetup)}
+        >
           {t("Connect a provider")}
         </Button>
-        <Button onClick={() => openSettings(SettingsSection.Local)}>{t("Download a local model")}</Button>
+        <Button onClick={() => openSettings(SettingsSection.Local, undefined, SettingsOpenedFrom.StageSetup)}>
+          {t("Download a local model")}
+        </Button>
       </div>
     </div>
   );
@@ -77,13 +130,16 @@ export function ModelSetup(): JSX.Element {
 function BuildingGame({
   graph,
   project,
+  surface,
   onWatch,
   onPlay,
 }: {
   graph: RunGraphModel;
   project: string | null;
+  /** The stage it is drawn on: an empty game's, or a stopped one's. */
+  surface: BuildSurface;
   onWatch: () => void;
-  onPlay: (head: string) => Promise<void>;
+  onPlay: PlayFrom;
 }): JSX.Element {
   const head = readyToPlay(graph, useRunSummary(project, runIdOf(graph)));
   return (
@@ -91,9 +147,10 @@ function BuildingGame({
       art="building"
       title={t("Building your game")}
       subtitle={head ? t("The latest build is ready to play.") : t("It shows up here as soon as it runs.")}
+      actionKind={head ? EmptyAction.PlayLatest : EmptyAction.WatchProgress}
       action={
         head ? (
-          <PlayButton label={t("Play latest")} onPlay={() => onPlay(head)} />
+          <PlayButton label={t("Play latest")} onPlay={() => onPlay(head, surface)} />
         ) : (
           <Button variant="outline" onClick={onWatch}>
             {t("Watch progress")}
@@ -118,9 +175,18 @@ export function EmptyGame({
   graph: RunGraphModel | null;
   project: string | null;
   onWatch: () => void;
-  onPlay: (head: string) => Promise<void>;
+  onPlay: PlayFrom;
 }): JSX.Element {
-  if (runBuilding(graph)) return <BuildingGame graph={graph} project={project} onWatch={onWatch} onPlay={onPlay} />;
+  if (runBuilding(graph))
+    return (
+      <BuildingGame
+        graph={graph}
+        project={project}
+        surface={BuildSurface.EmptyStage}
+        onWatch={onWatch}
+        onPlay={onPlay}
+      />
+    );
   return (
     <StageEmpty
       art="idea"
@@ -157,28 +223,41 @@ export function LiveLoading({ leaving }: { leaving: boolean }): JSX.Element {
 }
 
 /**
- * The person stopped the game. While a run builds, the stage is what it is for a building game
- * (the crane, Play latest or Watch progress); otherwise it says the game is stopped, with Play.
+ * The game is not running: the person stopped it, or (`idle`) it was opened and waits for Play.
+ * While a run builds, the stage is what it is for a building game (the crane, Play latest or Watch
+ * progress); otherwise it says so, with Play.
  */
 export function StoppedGame({
   graph,
   project,
+  idle = false,
   onWatch,
   onPlay,
   onResume,
 }: {
   graph: RunGraphModel | null;
   project: string | null;
+  idle?: boolean;
   onWatch: () => void;
-  onPlay: (head: string) => Promise<void>;
+  onPlay: PlayFrom;
   onResume: () => void;
 }): JSX.Element {
-  if (runBuilding(graph)) return <BuildingGame graph={graph} project={project} onWatch={onWatch} onPlay={onPlay} />;
+  if (runBuilding(graph))
+    return (
+      <BuildingGame
+        graph={graph}
+        project={project}
+        surface={BuildSurface.StoppedStage}
+        onWatch={onWatch}
+        onPlay={onPlay}
+      />
+    );
   return (
     <StageEmpty
       art="stopped"
-      title={t("Game stopped")}
+      title={idle ? t("Ready to play") : t("Game stopped")}
       subtitle=""
+      actionKind={EmptyAction.Play}
       action={<PlayButton label={t("Play")} onPlay={onResume} />}
     />
   );

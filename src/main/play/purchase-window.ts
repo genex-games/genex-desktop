@@ -135,12 +135,14 @@ const liveIn = new WeakMap<CaptureSession, number>();
 
 /**
  * Where a game's purchases are confirmed: genex.games' own website, the one its API names in a game's
- * confirm address, whatever website a development profile points Studio's links at. Null (nothing is
- * caught) when Studio reads coin from another API than genex.games': it could never read the purchase
- * of a published game, which always pays on genex.games.
+ * confirm address, whatever website a development profile points Studio's links at. A development
+ * stand that serves its own games pays them on its own website. Null (nothing is caught) when Studio
+ * reads coin from a stand but plays genex.games' games: it could never read the purchase of a
+ * published game, which always pays on genex.games.
  */
 export function purchaseConfirmOrigin(origins: PlayOrigins): string | null {
-  return origins.api === PLAY_ORIGIN.api ? PLAY_ORIGIN.web : null;
+  if (origins.api === PLAY_ORIGIN.api) return PLAY_ORIGIN.web;
+  return origins.games === PLAY_ORIGIN.games ? null : origins.web;
 }
 
 /** Whether `page` is a purchase popup: Play's session grants it nothing. */

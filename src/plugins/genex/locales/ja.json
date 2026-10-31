@@ -1,7 +1,6 @@
 {
   "3D models, characters, sound and art for your games, made in chat with Genex credits. Coding stays on your own provider.": "ゲーム用の3Dモデル、キャラクター、サウンド、アートを、チャットでGenexクレジットを使ってつくれます。コーディングはこれまでどおり自分のプロバイダーで行います。",
   "Account and jobs": "アカウントとジョブ",
-  "Add the listed pinned Genex packages. Multiplayer includes its player-identity dependency. A template game gets Studio's built-in copies in its import map; any other game installs them with its own package manager, with the npm registry open for that command only.": "一覧のGenexパッケージを固定バージョンで追加します。マルチプレイには、プレイヤーID用の依存パッケージも含まれます。テンプレートのゲームではStudio内蔵のコピーがimport mapに入り、それ以外のゲームでは自身のパッケージマネージャーでインストールします。npmレジストリはそのコマンドの間だけ開きます。",
   "Approve character workflow": "キャラクター作成を承認",
   "Asset setup state": "アセット設定の状態",
   "Blender server address": "Blenderサーバーのアドレス",
@@ -24,7 +23,7 @@
   "Remove Studio’s saved Genex credential and stop new asset submissions.": "Studioに保存したGenexの認証情報を削除し、新しいアセットの送信を止めます。",
   "Review Genex terms": "Genexの規約を確認",
   "Review character candidates in Studio before approving paid generation.": "有料の生成を承認する前に、Studioでキャラクターの候補を確認してください。",
-  "Run a Genex CLI command that spends coin or credits or changes what this game sells, with your saved Genex account.": "保存したGenexアカウントで、コインやクレジットを使う、またはこのゲームの販売内容を変えるGenex CLIコマンドを実行します。",
+  "Run a Genex CLI command that spends Nex or credits or changes what this game sells, with your saved Genex account.": "保存したGenexアカウントで、Nexやクレジットを使う、またはこのゲームの販売内容を変えるGenex CLIコマンドを実行します。",
   "Take this game's cover": "このゲームのカバーを撮る",
   "Unlock saved account": "保存したアカウントのロックを解除",
   "Upload Studio's exported copy of this game to its Genex draft page and make it the public version in the gallery. Everyone can find and play it. The first time, a hosted Genex project is created for this game under your account. Its cover shot also becomes its picture on Genex, unless you chose one there.": "StudioがエクスポートしたこのゲームのコピーをGenexの下書きページにアップロードし、ギャラリーの公開バージョンにします。誰でも見つけてプレイできるようになります。初回は、あなたのアカウントにこのゲーム用のホスト型Genexプロジェクトが作られます。Genexで自分で選んでいなければ、カバー用ショットもGenexでの画像になります。",

@@ -56,7 +56,8 @@
         "docs/connections-and-context.md",
         "docs/tool-permissions.md",
         "docs/performance.md",
-        "docs/play.md"
+        "docs/play.md",
+        "docs/usage-analytics.md"
       ],
       "commands": ["typecheck", "test:build-ui"]
     },
@@ -65,7 +66,6 @@
       "sources": [
         "src/main/**",
         "src/substrate/**",
-        "src/preview-profiler/**",
         "src/page/**",
         "src/plugins/**",
         "src/plugin-sdk/**",
@@ -114,14 +114,17 @@
         "src/substrate/paths.ts",
         "tests/conformance/paths.test.ts",
         "tests/conformance/fsx.test.ts",
-        "src/substrate/windows-sandbox.ts"
+        "src/substrate/windows-sandbox.ts",
+        "src/substrate/git-policy.ts",
+        "scripts/vendor-git-for-mac.ts"
       ],
       "documents": [
         "docs/agent/context.md",
         "docs/agent/architecture.md",
         "docs/product/workspace.md",
         "docs/harness-runtime.md",
-        "docs/windows-sandbox.md"
+        "docs/windows-sandbox.md",
+        "docs/mac-bundled-git.md"
       ],
       "commands": ["check", "test:fast"]
     },
@@ -143,7 +146,6 @@
         "src/main/core/**",
         "src/shared/coordinator.ts",
         "src/shared/message-queue.ts",
-        "src/shared/skill-edits.ts",
         "scripts/check-boundaries.ts",
         "scripts/boundary-allowlist.json",
         "tests/conformance/seed-contracts.test.ts"
@@ -163,7 +165,6 @@
         "src/main/page-serve.ts",
         "src/main/page-dispatch.ts",
         "src/page/**",
-        "src/preview-profiler/**",
         "src/substrate/preview-*.ts",
         "src/substrate/page-ui.ts",
         "src/substrate/build-preview.ts",
@@ -199,7 +200,6 @@
         "src/shared/event-log.ts",
         "src/shared/custom-events.ts",
         "tests/conformance/custom-events.test.ts",
-        "src/substrate/improvement-journal.ts",
         "src/main/run-evidence.ts",
         "src/main/run-summary-reader.ts",
         "src/shared/protocol.ts",

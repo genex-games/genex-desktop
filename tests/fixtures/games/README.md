@@ -41,8 +41,7 @@ of anything.
    of that path.
 6. **A `manifest.json`** (version 1) recording what the studio must answer about the folder:
    the shape `detectProjectShape` returns, the files adoption may and may not add, the kind and
-   traits, the setup script, the cameras, the warnings the night should produce and the ones it is
-   allowed to, and the state paths a play script must move.
+   traits, the setup script, and the state paths a play script must move.
 
 ## Adding a sixth shape
 
@@ -54,15 +53,7 @@ of anything.
 4. `addsAtLeast` is a **subset** relation and `neverAdded` a **must-not-contain** one, against
    `plannedWrites(dir, { template: false })`. Never write the template's whole file list into a
    fixture: it changes for reasons that have nothing to do with these shapes.
-5. `expectWarnings` entries are **substrings**, matched with `warnings.some((w) => w.includes(s))`,
-   and each must be a literal substring of a sentence in the harness seed. That is what makes a
-   renamed warning fail in `npm test` instead of only in the e2e. `expectWarnings` is what the run
-   MUST warn about and `allowWarnings` what it MAY: together they are the whole list, because the
-   e2e fails on any warning neither names (`tests/e2e/warning-policy.ts`). An empty pair means this
-   game warns about nothing, which is a claim the sheet now checks instead of skipping. The one
-   exception is the warning a slow machine earns — a boot over five seconds is about the laptop,
-   not the game — and it is named once, in `MACHINE_WARNINGS`.
-6. Only one fixture may declare `edits: "two-line-install"`. Everything else is `edits: "none"`,
+5. Only one fixture may declare `edits: "two-line-install"`. Everything else is `edits: "none"`,
    because a fixture that is "fixed" by adding `installStudio` stops being the thing under test.
 
 ## Deliberately unproven

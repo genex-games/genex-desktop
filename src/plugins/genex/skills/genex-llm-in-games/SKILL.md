@@ -1,7 +1,8 @@
 # Genex models at play time in AI Game Studio
 
 You are building inside AI Game Studio. Below the upstream marker is Genex's card on calling a
-model from a running game, unchanged. Where it disagrees with this preface, this preface wins.
+model from a running game, with the passages of advice Studio does not ship taken out. Where it
+disagrees with this preface, this preface wins.
 
 ## Commands, as Studio tools
 
@@ -11,7 +12,7 @@ model from a running game, unchanged. Where it disagrees with this preface, this
 - `npx genex llm bench "<prompt>" --samples 3 --max-coins <n>`: `genex__cli-paid`, with the
   prompt in `args` and whole-number flags in `options`:
   `{"command":"llm bench","args":"<prompt>","options":{"samples":3,"max-coins":5}}`. The user
-  approves each bench because it spends their coin; Studio adds the approval flag itself, so never
+  approves each bench because it spends their Nex (the flag keeps its old name); Studio adds the approval flag itself, so never
   pass `user-approved`.
 - The CLI runs in a folder of Studio's own, not the game, so a flag that names a game file (such as
   `--schema ./answer.schema.json`) cannot be read. `llm price` is not available.
@@ -26,7 +27,7 @@ Read the pricing reference with
 
 Other commands map onto Studio tools as the `genex` skill describes (`genex__skill {"name":"genex"}`).
 
-<!-- upstream @genex-ai/cli-demo/templates/skills/genex-llm-in-games/SKILL.md v1.36.13 sha256 01274d76ee89e945428efeaa3970a63575f2e9727e481980fec9bea726f3c14d -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-llm-in-games/SKILL.md v1.36.17 sha256 d0331e255726dbbaa9cc9e24dadec3ecf887430da8e3647981f31a444781a74f -->
 ---
 name: genex-llm-in-games
 description: Call a language model from inside a running game — an NPC that answers in its own words, a quest written for this save, a judge that reads what the player typed. The PLAYER pays and approves, on a Genex surface the game cannot forge. Covers the two modes (a popup per call, or one standing budget then many silent calls), benchmarking the price before declaring it, the receiver pattern, and honest handling of every refusal.
@@ -61,17 +62,13 @@ npx genex llm models
 ```
 
 - **live** — it prints the FEATURED models this stand serves, and how many more
-  there are. Build the feature.
-- **off on this stand** — the routes answer 404. Build the feature behind a
-  graceful `unavailable` state (the NPC uses its authored lines, the quest falls
-  back to the written one) and **say so plainly in the handoff**. Never promise
-  the player something that 404s.
-- **misconfigured** — say that too; it is an operator fix, not a game bug.
+  there are.
+- **off on this stand** — the routes answer 404.
+- **misconfigured** — an operator fix, not a game bug.
 
 The stand's catalog is synced and filtered, so it can hold far more rows than
-anyone wants to read. **Offer the featured set. Run `npx genex llm models --all`
-only when the user asks for more**, and put the full list in front of them
-rather than picking an obscure row for them.
+anyone wants to read. `npx genex llm models --all` lists every
+row.
 
 Model ids come from that command and from `getGenerationModels()` at runtime.
 Never write one into the game's source: they differ per stand, and a hardcoded
@@ -127,9 +124,8 @@ the gesture; an `await` in front of it loses the gesture and nothing opens.
 **Two shells have no approval surface, and say so before anything is asked or
 charged.** Inside the Genex app every call on this lane resolves
 `{ status: 'failed', error: 'native_unsupported' }`; on a dev server in local
-test mode it is `local_test_unsupported`. Neither is a fault in the game. When
-`getShell()` from `@genex-ai/embed-sdk` is `"app"`, leave the feature's entry
-point out and play the authored fallback; never show it as an error. Which
+test mode it is `local_test_unsupported`. Neither is a fault in the game. `getShell()`
+from `@genex-ai/embed-sdk` names the shell. Which
 shell draws what is in `$genex-threejs-embed-auth` (`references/shells.md`).
 
 ## `estimateCoins` is a price, not an estimate
@@ -220,25 +216,19 @@ await savePlayerState({ ...state, grantId: grant.grantId });
 ```
 
 **The disclosure is computed from this game's own loop, never wished for.** Five
-NPCs deciding once every thirty seconds is ten calls a minute — write that
-arithmetic into `DESIGN.md` beside the feature. The player sees your estimate
+NPCs deciding once every thirty seconds is ten calls a minute. The player sees your estimate
 attributed to the game, beside the platform's own worst case; an estimate that
 is transparently low is a grant that dies mid-session.
 
-**Then keep the burn low, because you wrote the loop:** batch those five NPCs
-into ONE call returning five decisions, cache a decision until the situation
-that caused it changes, pick the cheapest model that passes your own check, and
-never fire on a timer the player cannot see.
+What each grant-ending code means:
 
-Grant endings are ordinary game states with in-fiction copy, never an error toast:
-
-| code | what happened | what the game does |
-| --- | --- | --- |
-| `grant_limit_reached` | the approved limit is spent | authored behaviour returns; a button offers to re-request |
-| `grant_stopped` | the player pressed Stop | accept silently, keep playing |
-| `grant_expired` | 24h passed, or the session ended | as stopped; re-request on the next deliberate click |
-| `waiting_for_plan` | their own plan is rate-limited | wait out the stated time — not a failure, and there is no paid fallback |
-| `grant_insufficient_funds` | the wallet cannot fund the next call | pause the thinking NPCs, say it once, stay playable |
+| code | what happened |
+| --- | --- |
+| `grant_limit_reached` | the approved limit is spent |
+| `grant_stopped` | the player pressed Stop |
+| `grant_expired` | 24h passed, or the session ended |
+| `waiting_for_plan` | their own plan is rate-limited for the stated time: not a failure, and there is no paid fallback |
+| `grant_insufficient_funds` | the wallet cannot fund the next call |
 
 Draw the readout from `getSpendGrant(grantId)` — calls made, coins settled, what
 remains — never from a counter the game keeps itself. A finished grant may be
@@ -264,7 +254,7 @@ function applyGeneration(res) {     // THE only place output becomes game state
 - Boot reads any stored id, calls `waitForGeneration(savedId)`, and passes the
   result to the **same** `applyGeneration`. One writer, two entry points, is the
   difference between "works once" and "survives a reload".
-- Output is **data, never authority**: it may not grant coin, items,
+- Output is **data, never authority**: it may not grant Nex, items,
   entitlements, scores or progression by saying so. `source: 'external'` carries
   `modelProvenance: 'unverified'` because it is user-supplied — check it exactly
   as you would check typed player input.
@@ -281,8 +271,8 @@ There is no compensation lane, so this is all work you do before the call:
 - **Keep prompts short.** Long context is the price.
 - **Never loop `generate()` without a grant**, and never retry in a loop — each
   attempt is a separate charge.
-- **Map every code through `generationErrorMessage(code)`** into in-fiction
-  copy. A player should never read a raw error code inside your game.
+- **`generationErrorMessage(code)`** turns every code into words a player can
+  read.
 - **`status: 'unknown'` is not a failure.** It means the charge is not known
   yet, billing pending. Say "still settling", keep the reserved figure in the
   readout, re-read with `getGeneration(id)` — never call it failed, never retry.
@@ -314,7 +304,7 @@ These are source contracts, not a claim that every stand runs this lane —
 
 ## Checklist
 
-- [ ] `npx genex llm models` was run and its verdict is in the handoff
+- [ ] `npx genex llm models` says the lane is live
 - [ ] Model ids come from `getGenerationModels()`, never from source
 - [ ] The picker offers the featured set, labelled with the server's own `label`
 - [ ] `estimateCoins` is the figure `npx genex llm bench` printed, verbatim — never the bare charged number
@@ -322,10 +312,8 @@ These are source contracts, not a claim that every stand runs this lane —
 - [ ] A bench refused as `generation_limit` was answered with `npx genex llm status`, never a retry
 - [ ] `generate()` / `requestSpendGrant()` is the first statement of a click handler
 - [ ] A repeated-call feature uses a grant; a one-off uses `generate()`
-- [ ] Disclosure numbers derive from the real loop and are written in `DESIGN.md`
-- [ ] Calls are batched and cached; nothing fires on an invisible timer
-- [ ] Every grant-ending code has in-fiction copy and a playable fallback
-- [ ] In the Genex app (`getShell() === "app"`) the feature's entry point is left out and the authored fallback plays
+- [ ] Disclosure numbers derive from the real loop
+- [ ] Every grant-ending code is handled
 - [ ] The in-game readout comes from `getSpendGrant()`
 - [ ] Exactly one `applyGeneration()` writer; boot re-attaches with `waitForGeneration()`
 - [ ] `generationId` is saved BEFORE the await
@@ -336,20 +324,17 @@ These are source contracts, not a claim that every stand runs this lane —
 ## Troubleshooting
 
 **Everything on this lane 404s** — runtime generation is off on this stand.
-Nothing to fix in the game: ship the fallback and say so.
+Nothing to fix in the game.
 
 **Nothing opens when the player clicks** — an `await` ran before `generate()`
 and the gesture was lost. Move the call to the first line of the handler.
 
 **`player_wallet_required`** — ONE code for the two early dead ends: the lane
 refuses a guest and a PREVIEW build on the same line. `waitForPlayer()` tells
-them apart. `guest: true` — guests play but hold no wallet, so show the feature
-as sign-in-to-use rather than hiding it (`$genex-threejs-embed-auth`). Signed
-in and still refused — this is a `genex preview` draft, which never spends:
-check the layout there, and the call itself only after `genex promote`. The
+them apart. `guest: true` — guests play but hold no wallet. Signed
+in and still refused — this is a `genex preview` draft, which never spends. The
 SDK's stock sentence for this code is "Sign in to Genex to use this", which is
-right for the guest and wrong on a draft, so write the in-fiction line per
-cause rather than showing it for both.
+right for the guest and wrong on a draft.
 
 **`grant_price_unreasonable`** — the declared per-call price is far above what
 that prompt can cost on that model. Re-benchmark and declare what it prints.
@@ -381,7 +366,7 @@ object without `additionalProperties: false`. Nothing was charged. Rewrite it in
 the subset above; `description` and `title` are allowed.
 
 **`grant_concurrency` / `grant_rate_limited`** — the game calls faster than the
-grant's own limits. Batch and cache; do not raise the limits to hide it.
+grant's own limits.
 
 **`grant_not_active`** — the saved `grantId` is finished. Clear the stored id
 and re-request from a fresh click.

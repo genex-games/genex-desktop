@@ -281,6 +281,34 @@ describe("a command a chat reply offered", () => {
   });
 });
 
+describe("Cursor's sign-in terminal", () => {
+  it("opens in Settings, never in the dock, and its printed page is found", async () => {
+    const { manager, events } = service();
+    try {
+      const session = manager.open({ ...launch, args: ["login"], kind: TerminalKind.CursorLogin, project: undefined });
+      assert.equal(inDock(session), false, "Settings shows it");
+      assert.ok(events.every((event) => event.type !== "session" || !event.reveal));
+    } finally {
+      await manager.dispose();
+    }
+    // What `cursor-agent login` 2026.10.22 printed in Genex's row (its one-time challenge replaced).
+    const found: string[] = [];
+    const scanner = new LinkScanner((url) => found.push(url));
+    scanner.write(
+      "Starting login process...\r\nAuthenticating with Cursor...\r\nWaiting for browser authentication...\r\n",
+    );
+    scanner.write(
+      "If your browser didn't open, use this link:\r\nhttps://cursor.com/loginDeepControl?challenge=CHALLENGE",
+    );
+    scanner.write(
+      "&uuid=UUID&mode=login&redirectTarget=cli&supportsSelectedTeamLogin=true\r\n\r\nPress q to show a QR code\r\n",
+    );
+    assert.deepEqual(found, [
+      "https://cursor.com/loginDeepControl?challenge=CHALLENGE&uuid=UUID&mode=login&redirectTarget=cli&supportsSelectedTeamLogin=true",
+    ]);
+  });
+});
+
 describe("OpenCode's sign-in terminal", () => {
   const signIn = { ...launch, args: ["auth", "login"], kind: TerminalKind.OpenCodeLogin, project: undefined };
   it("opens in Settings, never popping up the dock, even when asked again while it runs", async () => {

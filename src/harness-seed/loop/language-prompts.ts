@@ -15,7 +15,7 @@ function fallback(app: AppLanguage | null | undefined): string {
 
 /** The builder's rule: every word the person reads in the person's language. */
 export function languageRule(app: AppLanguage | null | undefined): string {
-  return `Write everything the user reads (your replies, questions, plans and progress notes) in the language the user writes to you in.${fallback(app)} Code, file names, commit messages and NOTES.md stay in English.`;
+  return `Write everything the user reads (your replies, questions, plans and progress notes) in the language the user writes to you in.${fallback(app)} Code, file names and commit messages stay in English.`;
 }
 
 /** The Loop chat coordinator's rule, the same in its own voice. */

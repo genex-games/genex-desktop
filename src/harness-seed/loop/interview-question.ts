@@ -3,8 +3,9 @@ import { HostMethod } from "./host-methods.ts";
 import { EventKind, RunEvent } from "./run-events.ts";
 import { clip, CLIP_REASON } from "./text.ts";
 
-/** How long a recorded question may be, how many choices it offers, and how long each choice's label. */
+/** How long a recorded question and its recap may be, how many choices it offers, and how long each choice's label. */
 const QUESTION_CHARS = 600;
+const RECAP_CHARS = 300;
 const MAX_CHOICES = 3;
 const CHOICE_LABEL_CHARS = 160;
 
@@ -12,10 +13,12 @@ const CHOICE_LABEL_CHARS = 160;
  * No provider session, permission grant or timeout is held while the user decides. */
 export function interviewQuestion(args: AnyRecord = {}): {
   question: string;
+  recap?: string;
   choices: Array<{ id: string; label: string; description?: string }>;
 } {
   const question = typeof args.question === "string" ? args.question.trim().slice(0, QUESTION_CHARS) : "";
   if (!question) throw new Error("Ask one short question.");
+  const recap = typeof args.recap === "string" ? args.recap.trim().slice(0, RECAP_CHARS) : "";
   const choices = String(args.options ?? "")
     .split("\n")
     .filter((line) => line.trim())
@@ -29,7 +32,7 @@ export function interviewQuestion(args: AnyRecord = {}): {
       };
     })
     .filter((choice) => choice.label);
-  return { question, choices };
+  return { question, ...(recap ? { recap } : {}), choices };
 }
 
 /** The next user reply inherits the question's commission, including after a restart.
@@ -82,14 +85,17 @@ export async function recordInterviewQuestion(ctx: ToolCtx, args: AnyRecord): Pr
 export const askUser: HarnessTool = {
   name: "ask_user",
   description:
-    "Ask one necessary question in the chat's answer panel. Offer up to 3 concise choices, recommended first. The user can also type a different answer. End your reply after calling this; wait for the next user message before starting a run. Before a build, ask it when you do not know what the game is or how it should look. Never use this for progress updates, permission to do work already requested, or a reply to a greeting or small talk (answer that in words).",
+    "Ask one necessary question in the chat's answer panel. Offer up to 3 concise choices, recommended first. The user can also type a different answer. End your reply after calling this; wait for the next user message before starting a run. Never use this for progress updates, permission to do work already requested, or a reply to a greeting or small talk (answer that in words).",
   parameters: {
     type: "object",
     properties: {
+      recap: {
+        type: "string",
+        description: "Optional: one short sentence on what you found or just did, shown above the question.",
+      },
       question: {
         type: "string",
-        description:
-          "One short question whose answer changes what you do next (for example: what the player does or how the game should look, before a build; or a build versus research and a plan first).",
+        description: "One short question whose answer changes what you do next.",
       },
       options: {
         type: "string",

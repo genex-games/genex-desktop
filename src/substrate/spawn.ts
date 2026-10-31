@@ -9,7 +9,7 @@
  * tools. Host RPC arguments are therefore not pre-contained: a path-taking method validates its
  * own paths.
  *
- * Verified against @anthropic-ai/sandbox-runtime 0.0.73:
+ * Verified against @anthropic-ai/sandbox-runtime 0.0.81:
  *  - `SandboxManager.initialize(config)` is a **singleton**; per-run policy goes through the
  *    `customConfig` argument of `wrapWithSandboxArgv`.
  *  - `network.deniedDomains` and `filesystem.denyWrite` are **required** by the config schema
@@ -17,7 +17,8 @@
  *  - `wrapWithSandboxArgv()` returns `{ argv, env }`, which we spawn without a shell.
  *
  * On Windows the backend is srt-win under Git Bash, with session-wide grants and the environment
- * in an env file; `windows-sandbox.ts` holds those rules and the one grant session.
+ * in an env file; `windows-sandbox.ts` holds those rules and the one grant session. Its loopback
+ * mode is fixed by the install, which Genex makes closed (`toRuntimeConfig`).
  */
 import { type ChildProcess, type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -78,21 +79,27 @@ import {
 import { DenyAccess } from "./windows-folder-ace.ts";
 import { type LiveInput, openLiveInput } from "./windows-live-input.ts";
 
-// Linux launches this native helper through a shell, which cannot traverse Electron's asar.
-// The runtime's automatic lookup returns its virtual archive path even when the file is unpacked.
-const sandboxPackage =
+/**
+ * A file of sandbox-runtime's `vendor` folder in a package, as its unpacked copy; undefined outside
+ * one. A program the sandbox starts (Linux's seccomp helper through a shell, a JVM loading the proxy
+ * agent) cannot read Electron's archive, and the runtime's own lookup answers the archive's virtual
+ * path even for an unpacked file, since Electron's fs answers for it.
+ */
+export function packagedVendorFile(packageDir: string, sep: string, ...parts: string[]): string | undefined {
+  const archive = `app.asar${sep}`;
+  if (!packageDir.includes(archive)) return undefined;
+  return [packageDir.replace(archive, `app.asar.unpacked${sep}`), "vendor", ...parts].join(sep);
+}
+
+const sandboxPackage = path.dirname(
+  createRequire(import.meta.url).resolve("@anthropic-ai/sandbox-runtime/package.json"),
+);
+const packagedSeccomp =
   process.platform === "linux"
-    ? path.dirname(createRequire(import.meta.url).resolve("@anthropic-ai/sandbox-runtime/package.json"))
-    : "";
-const packagedSeccomp = sandboxPackage.includes(`app.asar${path.sep}`)
-  ? path.join(
-      sandboxPackage.replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`),
-      "vendor",
-      "seccomp",
-      process.arch,
-      "apply-seccomp",
-    )
-  : undefined;
+    ? packagedVendorFile(sandboxPackage, path.sep, "seccomp", process.arch, "apply-seccomp")
+    : undefined;
+/** The JVM proxy agent sandbox-runtime hands every sandboxed Java (`JAVA_TOOL_OPTIONS`), in a package. */
+const packagedJavaAgent = packagedVendorFile(sandboxPackage, path.sep, "java-proxy-agent", "srt-proxy-agent.jar");
 
 export interface SandboxPolicy {
   /** Domains reachable through srt's filtering proxy. Empty = no outbound network. */
@@ -829,11 +836,14 @@ export class ProcessSandbox {
   toRuntimeConfig(policy: SandboxPolicy): import("@anthropic-ai/sandbox-runtime").SandboxRuntimeConfig {
     return {
       ...(packagedSeccomp ? { seccomp: { applyPath: packagedSeccomp } } : {}),
+      ...(packagedJavaAgent ? { javaAgentJarPath: packagedJavaAgent } : {}),
       ...(this.#bubblewrap ? { bwrapPath: this.#bubblewrap } : {}),
       network: {
         allowedDomains: policy.allowedDomains,
         deniedDomains: [],
-        allowLocalBinding: policy.allowLocalBinding,
+        // Windows: loopback is the install's, machine-wide, and Genex installs it closed (commands
+        // reach the sandbox's proxies only); srt-win refuses a session or command that asks otherwise.
+        allowLocalBinding: this.#platform !== StudioPlatform.Windows && policy.allowLocalBinding,
       },
       filesystem: {
         allowWrite: policy.allowWrite,
@@ -1248,7 +1258,7 @@ export class ProcessSandbox {
 
   /**
    * srt assigns its own `TMPDIR` (`/tmp/claude`) *inside* the wrapped argv, so an env override
-   * cannot win — the assignment has to happen in the command itself. Verified against 0.0.73.
+   * cannot win — the assignment has to happen in the command itself. Verified against 0.0.81.
    */
   #withTmp(command: string, tmp: string): string {
     const dir = shellQuote(tmp);

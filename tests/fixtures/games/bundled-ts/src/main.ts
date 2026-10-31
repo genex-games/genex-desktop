@@ -1,8 +1,5 @@
 import * as THREE from "three";
 import { createLook } from "./look.js";
-// The whole edit, line 1 of 2. `./studio.js` is written into the folder when the studio adopts
-// it; this fixture is checked in without it on purpose, so the build path cannot rot silently.
-import { installStudio } from "./studio.js";
 
 // Corridor: walk a lit corridor, look around with the mouse. `three` is a bare specifier that
 // the bundler resolves into the bundle — this game's THREE is its own copy, not the studio's.
@@ -104,9 +101,3 @@ function frame(): void {
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
-
-// The whole edit, line 2 of 2.
-installStudio({
-  renderer,
-  player: () => ({ x: camera.position.x, y: camera.position.y, z: camera.position.z, yaw: look.yaw, pitch: look.pitch }),
-});

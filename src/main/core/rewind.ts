@@ -25,6 +25,7 @@ import {
   type RewindPlan,
   type RewindPreview,
   type RewindResult,
+  RewindBlock,
   rewindRefusalWords,
   RewindRefusal,
   rewindsOf,
@@ -36,10 +37,10 @@ import {
   undoRewindRefusalWords,
   withoutRewound,
 } from "../../shared/chat-rewind.ts";
-import type { PlanReview } from "../../shared/composer.ts";
+import { type PlanReview, SendFailure } from "../../shared/composer.ts";
 import { CustomEvent, customEventData, customRecord } from "../../shared/custom-events.ts";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
-import { errorMessage } from "../../shared/errors.ts";
+import { CodedError, errorMessage } from "../../shared/errors.ts";
 import { t } from "../../shared/i18n.ts";
 import { EventKind, type EventData, type EventEnvelope, type Message, ThreadKind } from "../../shared/event-log.ts";
 import { messageQueueState } from "../../shared/message-queue.ts";
@@ -217,7 +218,7 @@ interface AppliedRewind {
 }
 
 function plannedOrThrow(plan: RewindPlan): PlannedRewind {
-  if (!plan.ok) throw new Error(rewindRefusalWords(plan.reason));
+  if (!plan.ok) throw new CodedError(plan.reason, rewindRefusalWords(plan.reason));
   return plan;
 }
 
@@ -347,7 +348,7 @@ export class ChatRewindService {
    * resume the session the rewind is clearing, or land between its plan and its marker.
    */
   async whileSending(threadId: string, send: () => Promise<void>): Promise<void> {
-    this.assertNotRewinding(threadId, MESSAGE.WaitToSend);
+    if (this.#rewinding.has(threadId)) throw new CodedError(SendFailure.Rewinding, MESSAGE.WaitToSend());
     this.#sending.set(threadId, (this.#sending.get(threadId) ?? 0) + 1);
     const sending = send();
     const inFlight = this.#inFlight.get(threadId) ?? new Set<Promise<void>>();
@@ -574,9 +575,9 @@ export class ChatRewindService {
    * in the same batch, and everything a rewind withdraws comes after it.
    */
   async #rowsFrom(threadId: string, eventId: string): Promise<EventEnvelope[]> {
-    if (!isUuid(eventId)) throw new Error(MESSAGE.NotInChat());
+    if (!isUuid(eventId)) throw new CodedError(RewindBlock.NotInChat, MESSAGE.NotInChat());
     const first = await this.#core.store.getEvent(threadId, eventId);
-    if (!first) throw new Error(MESSAGE.NotInChat());
+    if (!first) throw new CodedError(RewindBlock.NotInChat, MESSAGE.NotInChat());
     return [first, ...(await this.#core.store.listEvents(threadId, { after: eventId }))];
   }
 
@@ -611,11 +612,12 @@ export class ChatRewindService {
    * meanwhile (its lead, its coordinator, its workers). Returns that build.
    */
   async #assertRewindable(threadId: string, meta: RewindMeta): Promise<string | null> {
-    if (meta?.kind !== ThreadKind.Game) throw new Error(MESSAGE.OnlyGameChat());
-    if (this.#core.host.state !== HarnessState.Ready) throw new Error(MESSAGE.Restarting());
+    if (meta?.kind !== ThreadKind.Game) throw new CodedError(RewindBlock.NotGameChat, MESSAGE.OnlyGameChat());
+    if (this.#core.host.state !== HarnessState.Ready)
+      throw new CodedError(RewindBlock.Restarting, MESSAGE.Restarting());
     const building = await this.#runningBuild(threadId);
     const answering = building ? this.#chatSending(threadId) : this.#chatBusy(threadId, meta.project ?? null);
-    if (answering) throw new Error(rewindRefusalWords(RewindRefusal.Busy));
+    if (answering) throw new CodedError(RewindRefusal.Busy, rewindRefusalWords(RewindRefusal.Busy));
     return building;
   }
 
@@ -631,7 +633,7 @@ export class ChatRewindService {
   ): RewindPlan {
     const plan = planRewind(rows, rewinds, messageId);
     const settledByStop = building !== null && !plan.ok && plan.reason === RewindRefusal.Busy;
-    if (!plan.ok && !settledByStop) throw new Error(rewindRefusalWords(plan.reason));
+    if (!plan.ok && !settledByStop) throw new CodedError(plan.reason, rewindRefusalWords(plan.reason));
     return plan;
   }
 
@@ -686,7 +688,7 @@ export class ChatRewindService {
     messageId: string,
     options: { files?: boolean } = {},
   ): Promise<RewindResult> {
-    if (this.#rewinding.has(threadId)) throw new Error(MESSAGE.AlreadyRewinding());
+    if (this.#rewinding.has(threadId)) throw new CodedError(RewindBlock.AlreadyRewinding, MESSAGE.AlreadyRewinding());
     this.#rewinding.add(threadId);
     try {
       return await this.#rewindOnce(threadId, eventId, messageId, options.files === true);
@@ -763,7 +765,7 @@ export class ChatRewindService {
     const wait = clock.sleep ?? sleep;
     const deadline = now() + (clock.timeoutMs ?? REWIND_BUILD_STOP_WAIT_MS);
     while (await this.#stillStopping(threadId, project, runId)) {
-      if (now() >= deadline) throw new Error(MESSAGE.BuildStillStopping());
+      if (now() >= deadline) throw new CodedError(RewindBlock.BuildStillStopping, MESSAGE.BuildStillStopping());
       await wait(REWIND_BUILD_STOP_POLL_MS);
     }
   }
@@ -791,7 +793,8 @@ export class ChatRewindService {
   async #holdFollowUps(threadId: string, first: PlannedRewind): Promise<void> {
     const [oldest] = first.held;
     if (!oldest) return;
-    if (!this.#core.host.hasCapability(HarnessCapability.MessageQueue)) throw new Error(MESSAGE.HeldNeedsQueue());
+    if (!this.#core.host.hasCapability(HarnessCapability.MessageQueue))
+      throw new CodedError(RewindBlock.HeldNeedsQueue, MESSAGE.HeldNeedsQueue());
     await this.#queueMessage(threadId, oldest.messageId, "hold");
   }
 
@@ -953,7 +956,7 @@ export class ChatRewindService {
    * (`undoRewindRefusal`). Held as a rewind is: no message is taken meanwhile.
    */
   async undo(threadId: string, rewindId: string): Promise<UndoRewindResult> {
-    if (this.#rewinding.has(threadId)) throw new Error(MESSAGE.AlreadyRewinding());
+    if (this.#rewinding.has(threadId)) throw new CodedError(RewindBlock.AlreadyRewinding, MESSAGE.AlreadyRewinding());
     this.#rewinding.add(threadId);
     try {
       return await this.#undoOnce(threadId, rewindId);
@@ -964,12 +967,13 @@ export class ChatRewindService {
 
   async #undoOnce(threadId: string, rewindId: string): Promise<UndoRewindResult> {
     const meta = await this.#meta(threadId);
-    if (meta?.kind !== ThreadKind.Game || !meta.project) throw new Error(MESSAGE.OnlyGameChat());
+    if (meta?.kind !== ThreadKind.Game || !meta.project)
+      throw new CodedError(RewindBlock.NotGameChat, MESSAGE.OnlyGameChat());
     const project = meta.project;
     const refusal = undoRewindRefusal(await this.#core.store.listEvents(threadId), rewindId);
-    if (refusal) throw new Error(undoRewindRefusalWords(refusal));
+    if (refusal) throw new CodedError(refusal, undoRewindRefusalWords(refusal));
     if (this.#chatBusy(threadId, project) || (await this.#runningBuild(threadId))) {
-      throw new Error(undoRewindRefusalWords(UndoRewindRefusal.Busy));
+      throw new CodedError(UndoRewindRefusal.Busy, undoRewindRefusalWords(UndoRewindRefusal.Busy));
     }
     const dir = this.#core.games.dirFor(project);
     await this.#core.assertProjectAllowed(dir);

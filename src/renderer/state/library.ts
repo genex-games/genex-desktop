@@ -33,8 +33,6 @@ export interface LibraryState {
   runsRoot: string | null;
   /** Games a builder is working in right now. */
   building: ReadonlySet<string>;
-  /** Self-improvement suggestions waiting for the user. */
-  stagedCount: number;
   /** Watched games' asset inventories. */
   assets: Record<string, AssetInventory>;
 }
@@ -44,7 +42,6 @@ export const initialLibrary = (): LibraryState => ({
   rootLabel: "games",
   runsRoot: null,
   building: new Set(),
-  stagedCount: 0,
   assets: {},
 });
 
@@ -111,10 +108,6 @@ export function rootLabelChanged(state: LibraryState, rootLabel: string): Librar
   return state.rootLabel === rootLabel ? state : { ...state, rootLabel };
 }
 
-export function stagedCounted(state: LibraryState, count: number): LibraryState {
-  return state.stagedCount === count ? state : { ...state, stagedCount: count };
-}
-
 export function assetsLoaded(state: LibraryState, project: string, value: ProjectAssets): LibraryState {
   const previous = state.assets[project];
   if (previous?.error === null && sameSnapshot(previous.value, value)) return state;
@@ -131,7 +124,6 @@ export const assetsOf = (state: LibraryState, project: string | null | undefined
 
 export interface LibraryStore extends StoreApi<LibraryState> {
   refreshGames(): Promise<void>;
-  refreshStaged(): Promise<void>;
   saveGame(name: string, patch: GameUpdate): Promise<void>;
   removeGame(name: string): Promise<void>;
   /** Keep this game's inventory fresh while the returned function has not been called. */
@@ -151,7 +143,7 @@ const browserTimers: LibraryTimers = {
 };
 
 export function createLibraryStore(
-  api: Pick<StudioApi, "games" | "staged" | "updateGame" | "removeGame" | "projectAssets">,
+  api: Pick<StudioApi, "games" | "updateGame" | "removeGame" | "projectAssets">,
   timers: LibraryTimers = browserTimers,
   visibility: VisibilitySource = browserVisibility,
   publish?: (apply: () => void) => void,
@@ -161,9 +153,6 @@ export function createLibraryStore(
     api.games.bind(api),
     (list) => store.setState((state) => gamesLoaded(state, list), true),
     { publish },
-  );
-  const staged = createRefresher(api.staged.bind(api), (list) =>
-    store.setState((state) => stagedCounted(state, list.length), true),
   );
   let unwatchVisibility: (() => void) | undefined;
   const watched = new Map<string, { count: number; timer: unknown; reader: Refresher }>();
@@ -180,7 +169,6 @@ export function createLibraryStore(
 
   return Object.assign(store, {
     refreshGames: () => games.request(),
-    refreshStaged: () => staged.request(),
     async saveGame(name: string, patch: GameUpdate): Promise<void> {
       const updated = await api.updateGame(name, patch);
       store.setState((state) => gameSaved(state, updated), true);

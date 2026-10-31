@@ -181,7 +181,7 @@ describe("PH-3: a per-run domain reaches the proxy for the run, and only the run
     await applied;
     assert.deepEqual(fake.domains(), [], "the install's opening is closed");
     // The Windows backend spells every grant with backslashes, here on any platform.
-    const slashes = (p: string) => p.replaceAll("\\", "/");
+    const slashes = (p: string | { path: string }) => (typeof p === "string" ? p : p.path).replaceAll("\\", "/");
     assert.ok(fake.writes().map(slashes).includes(slashes(extra)), "the regrant took the folder in");
   });
 

@@ -37,6 +37,23 @@ describe("OpenCode's row", () => {
     );
   });
 
+  it("asks for an update when the installed CLI is too old to run", () => {
+    const outdated = {
+      status: { code: EngineStatusCode.Error, detail: "" },
+      account: {
+        source: LoginSource.None,
+        afterSignOut: "signed-out" as const,
+        cli: { state: "incompatible" as const },
+      },
+    };
+    assert.equal(openCodeRowState(outdated, idle), OpenCodeRowState.Outdated);
+    assert.equal(
+      openCodeRowState(outdated, { installing: true, signingIn: false }),
+      OpenCodeRowState.Installing,
+      "an update under way says so",
+    );
+  });
+
   it("follows the engine's status otherwise", () => {
     assert.equal(
       openCodeRowState(engine(EngineStatusCode.NotInstalled), { installing: true, signingIn: false }),

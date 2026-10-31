@@ -197,7 +197,12 @@ export type HostCall = { method: string; args: Record<string, unknown> };
 export function hostFor(
   mac: Mac,
   game: Game | undefined,
-  options: { runs?: unknown[]; assist?: (args: unknown) => PluginEngineAssistAnswer } = {},
+  options: {
+    runs?: unknown[];
+    assist?: (args: unknown) => PluginEngineAssistAnswer;
+    /** The host's word on whether the game's chat still has this plugin's assist under way. */
+    assisting?: () => boolean;
+  } = {},
 ) {
   const calls: HostCall[] = [];
   const made: Game[] = [];
@@ -229,6 +234,7 @@ export function hostFor(
     if (method === "game.engine.runs") return options.runs ?? [];
     if (method === "game.engine.assist")
       return (options.assist ?? (() => ({ started: false, reason: "unavailable" })))(args);
+    if (method === "game.engine.assisting" && options.assisting) return options.assisting();
     if (method === "game.create") {
       const created = await makeGame(mac, `made-${made.length + 1}`, String(args.title));
       made.push(created);

@@ -1,8 +1,7 @@
 /**
  * What reaches an open Loop's lead while its turn works: news that would wake a resting lead — a
  * worker of its pool that ended or asks the person something, a job of the run that ended, the
- * project's app that stopped and what Genex did — and, once a turn, a reminder to keep a save point
- * when the last is `SAVE_REMINDER_MS` old. Each goes into the turn under way (`engine.steer`, never
+ * project's app that stopped and what Genex did. Each goes into the turn under way (`engine.steer`, never
  * cutting it short), once; a line the session read (`DelegateResult.steered`, settled when its call
  * ends) is not told again by a digest, and one it did not read rides the next digest as news always
  * did — a line a replaced session took included. The lines of the Loop's cap ride the same rounds
@@ -12,17 +11,17 @@
  */
 import type { DelegateResult } from "../../../types/host-api.d.ts";
 import { HostMethod } from "../../host-methods.ts";
-import { closeUnderWay, finishUnderWay } from "../close-latch.ts";
+import { closeUnderWay } from "../close-latch.ts";
 import { settleCapLines, steerCapLine } from "../cap-lines.ts";
 import { StopReason } from "../../outage.ts";
-import { minutes, SECOND_MS } from "../../time.ts";
+import { SECOND_MS } from "../../time.ts";
 import { RUN_POOL_WORDS } from "../../workers/prompts.ts";
 import { waitingWorkers } from "../../workers/questions.ts";
 import type { LoopRun, LoopRunLogEntry } from "../loop-run.ts";
 import { NoteKind } from "../wake-schedule.ts";
-import { type OpenClock, type OpenLoop, SAVE_REMINDER_MS } from "./contract.ts";
+import { heardInTurn } from "../turn-news.ts";
+import type { OpenClock, OpenLoop } from "./contract.ts";
 import { abortLead, healthWatch } from "./health.ts";
-import { OPEN_NEWS } from "./prompts.ts";
 
 /** How often a turn under way is looked at for news. */
 const TURN_WATCH_MS = SECOND_MS;
@@ -53,9 +52,12 @@ export function wentBackUnheard(loopRun: Pick<LoopRun, "open" | "waitSeq">): str
   return heard ? null : open.wentBack;
 }
 
-/** Whether a turn under way already took this line of the run's log: no digest tells it again. */
+/**
+ * Whether a turn under way already took this line of the run's log: no digest tells it again. A web
+ * Loop's lead hears its news from a watch of its own (turn-news.ts).
+ */
 export function heardMidTurn(loopRun: Pick<LoopRun, "open">, seq: number): boolean {
-  return loopRun.open?.heard.has(seq) === true;
+  return loopRun.open?.heard.has(seq) === true || heardInTurn(loopRun, seq);
 }
 
 /**
@@ -94,16 +96,6 @@ function newsFor(loopRun: LoopRun, open: OpenLoop, watch: TurnWatch): LoopRunLog
     .filter((entry) => !watch.tried.has(entry.seq));
 }
 
-/** The reminder to keep a save point, once a turn, when the last one (or the Loop's start) is old enough. */
-async function remindToSave(loopRun: LoopRun, open: OpenLoop, watch: TurnWatch): Promise<void> {
-  if (open.remindedTurn === watch.turn) return;
-  const since = Math.max(open.journal.savePoints.at(-1)?.at ?? 0, open.since);
-  const elapsed = open.clock.now() - since;
-  if (elapsed < SAVE_REMINDER_MS) return;
-  open.remindedTurn = watch.turn;
-  await steer(loopRun, `${loopRun.run.runId}:${watch.turn}:save`, OPEN_NEWS.saveReminder(minutes(elapsed)));
-}
-
 /** Whether the Loop is closing or closed: its lead hears no more news, and no reminder. */
 const closing = (loopRun: LoopRun): boolean => loopRun.state.finished || closeUnderWay(loopRun.state);
 
@@ -127,7 +119,6 @@ async function lookOnce(loopRun: LoopRun, open: OpenLoop, watch: TurnWatch, poll
     open.heard.add(entry.seq);
     watch.taken.set(id, entry.seq);
   }
-  if (!finishUnderWay(loopRun.state) && !closing(loopRun)) await remindToSave(loopRun, open, watch);
   // The heads-up before the Loop's cap and the time's-up at it (cap-lines.ts).
   if (!closing(loopRun)) await steerCapLine(loopRun, open.clock.now());
 }

@@ -127,7 +127,7 @@ describe("the open-projects dev fixture", () => {
     assert.equal(run?.kind === GraphNodeKind.Run ? run.durationMs : undefined, HOUR_MS, "the graph reads it as timed");
   });
 
-  it("the Godot game's Loop going in place draws its worker and the finish check, and the worker's question waits", async () => {
+  it("the Godot game's Loop going in place draws its worker and no final look nobody asked for, and the worker's question waits", async () => {
     const events = await chat(OPEN_PROJECTS.godot);
     const graph = buildRunGraph(events);
     assert.ok(graph);
@@ -140,9 +140,12 @@ describe("the open-projects dev fixture", () => {
       partRows(graph, null).some((row) => row.facet.title === OPEN_PROJECTS.askingWorker),
       "the worker's row",
     );
-    const check = graph.nodes.find((node) => node.kind === GraphNodeKind.FinishCheck);
-    assert.ok(check?.kind === GraphNodeKind.FinishCheck);
-    assert.equal(check.state, FinishCheckState.NotYet);
+    // Flipped: its lead asked no reviewer yet, so no check waits at the Loop's end.
+    assert.equal(
+      graph.nodes.some((node) => node.kind === GraphNodeKind.FinishCheck),
+      false,
+      "no final look its lead never asked for",
+    );
     const asks = toEntries(events).filter(
       (entry) => entry.kind === EntryKind.Action && entry.action === EntryAction.Permission && entry.pending,
     );

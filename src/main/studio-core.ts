@@ -18,7 +18,7 @@ import { cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, sta
 import os from "node:os";
 import path from "node:path";
 import { sandboxBesidePlugins } from "./core/boot-side-by-side.ts";
-import { assistAvailable, coreAssistHost, engineAssist } from "./core/desktop-assist.ts";
+import { assistAvailable, assistUnderWay, coreAssistHost, engineAssist } from "./core/desktop-assist.ts";
 import type { DesktopControl } from "./core/desktop-control.ts";
 import type { MentionSources } from "./core/mention-tags.ts";
 import type { BuildPreviewRequest } from "../shared/build-preview.ts";
@@ -35,28 +35,31 @@ import { coverLookName, coverRecipeFromTool } from "../shared/cover-recipe.ts";
 import { CustomEvent, customEventData } from "../shared/custom-events.ts";
 import { MINUTE_MS, SECOND_MS } from "../shared/duration.ts";
 import { EngineStatusCode } from "../shared/engine-descriptor.ts";
-import { errorMessage } from "../shared/errors.ts";
+import { CodedError, errorMessage } from "../shared/errors.ts";
 import { t } from "../shared/i18n.ts";
 import { EventKind, ThreadKind, SnapshotScope } from "../shared/event-log.ts";
 import { assetKind, isAudioFile, type AssetDeliveredPayload } from "../shared/game-assets.ts";
-import { coverFromBrief, replaceableCover, type GameUpdate } from "../shared/game-library.ts";
+import { keepDeliveredPicture } from "./delivery-picture.ts";
+import {
+  coverFromBrief,
+  ExportRefusal,
+  replaceableCover,
+  type GameUpdate,
+  WorkspaceRefusal,
+} from "../shared/game-library.ts";
 import type { HarnessHostHandlers, HarnessParams, HarnessResult, HostMethod } from "../shared/harness-api.ts";
 import type { WebBuildLoad } from "../shared/live-behind.ts";
 import {
   type ExportReview,
   type PluginBinding,
   PluginCapability,
-  type PluginClipAnswer,
-  type PluginClipOrder,
   type PluginStillAnswer,
   type PluginStillOrder,
   PluginToolAudience,
   NativeRuntimeState,
 } from "../shared/plugins.ts";
 import { EngineHostAction, type EngineLinkUndo, type EngineUndoSetUpArgs } from "../shared/game-engine.ts";
-import { type ViewOpener, viewStill, type ViewStillOptions } from "./core/view-still.ts";
-import { type ReelView, throughCoverReel } from "./core/cover-reel.ts";
-import { viewClip, type ViewClipOptions } from "./core/view-clip.ts";
+import { viewStill, type ViewStillOptions } from "./core/view-still.ts";
 import { ToolPermissionBy } from "../shared/permissions.ts";
 import { type JobRecord, JobScopeKind, JobStopper } from "../shared/jobs.ts";
 import { recordJobEnded, recordJobStarted } from "./core/job-records.ts";
@@ -70,7 +73,7 @@ import {
   HarnessState,
 } from "../shared/protocol.ts";
 import { EngineId } from "../shared/providers.ts";
-import { ExecutionStatus, isExecutionEvent, JournalPhase, RunState } from "../shared/run-state.ts";
+import { ExecutionStatus, isExecutionEvent, JournalPhase, ResumeRefusal, RunState } from "../shared/run-state.ts";
 import { credentialEnvValues, redactTokens, secretRedactor } from "../shared/redact.ts";
 import { ActivityIndex, feedsActivity, type StudioActivityItem } from "../shared/studio-activity.ts";
 import {
@@ -90,7 +93,10 @@ import { BonsaiEngine } from "../substrate/engines/bonsai.ts";
 import { ClaudeCodeEngine } from "../substrate/engines/claude-code.ts";
 import { CodexEngine } from "../substrate/engines/codex.ts";
 import { OllamaEngine, OllamaSidecar } from "../substrate/engines/ollama.ts";
-import { OpenCodeEngine } from "../substrate/engines/opencode.ts";
+import { OpenCodeEngine, openCodeSessionFolders } from "../substrate/engines/opencode.ts";
+import { CursorEngine } from "../substrate/engines/cursor.ts";
+import { GrokEngine } from "../substrate/engines/grok.ts";
+import { cursorHomes, grokHome } from "../substrate/credential-homes.ts";
 import { LOCK_RECOVERY_DIR } from "../substrate/engines/ownership-locks.ts";
 import { OpenRouterEngine } from "../substrate/engines/openrouter.ts";
 import { LocalServerEngine } from "../substrate/engines/local-server.ts";
@@ -101,7 +107,6 @@ import type { Engine, LiveToolResult } from "../substrate/engines/types.ts";
 import { EventStore } from "../substrate/event-store.ts";
 import { atomicWriteJson, ensureDir, readJsonIfExists } from "../substrate/fsx.ts";
 import type { ExportResult } from "../substrate/game-export.ts";
-import { GameCandidates } from "../substrate/game-candidate.ts";
 import {
   GameWorkspaces,
   readProjectShape,
@@ -113,7 +118,6 @@ import {
 import { HarnessHost, UpdateJournal, type UpdateRecord } from "../substrate/harness-host.ts";
 import { shortId } from "../substrate/ids.ts";
 import { ExportApprovals, sortedReview } from "./core/export-approvals.ts";
-import { ImprovementJournal } from "../substrate/improvement-journal.ts";
 import { McpRegistry } from "../substrate/mcp/registry.ts";
 import { ensureFactIgnoreRules } from "../substrate/nested-repos.ts";
 import { mcpSecretPort, type SecretPort } from "../substrate/mcp/store.ts";
@@ -131,6 +135,7 @@ import { SnapshotEngine, SnapshotIndex, HARNESS_WORKSPACE } from "../substrate/s
 import { gitMissingProblem, SandboxUnavailableError } from "../substrate/sandbox-unavailable.ts";
 import { claudeFolderDenyWrites, ProcessSandbox } from "../substrate/spawn.ts";
 import { ensureHostGit } from "../substrate/windows-sandbox.ts";
+import { ensureMacGit } from "../substrate/git-policy.ts";
 import { type JobProbe, JobService, type JobSpawn } from "../substrate/jobs.ts";
 import { type AppLookPort, type ScreenAccess, unsupportedAppLook } from "../substrate/app-look.ts";
 import { checkLinuxIsolation } from "../substrate/linux-isolation.ts";
@@ -146,10 +151,25 @@ import { DelegationService } from "./core/delegation.ts";
 import { GameFileService } from "./core/game-files.ts";
 import { nameFromIdea, nameGame } from "./core/game-naming.ts";
 import { makeBackdropShader } from "./core/backdrop-generation.ts";
-import { GENEX_PLUGIN_ID, GenexCliService, genexHostPreflight, genexHostTool } from "./core/genex-cli.ts";
+import {
+  GENEX_PLUGIN_ID,
+  GenexCliService,
+  type GenexStand,
+  genexHostPreflight,
+  genexPluginAccount,
+  genexHostTool,
+  standCredentialFile,
+} from "./core/genex-cli.ts";
+import { isLocalDraft, type ListingRecord } from "../shared/item-draft.ts";
+import { type CreatorItem, type Selling, type StoreRefused, StoreRefusal } from "../shared/store-items.ts";
+import { ITEM_APPROVALS_FILE, ItemApprovals } from "./core/item-approvals.ts";
+import { hasLocalDrafts } from "./core/local-item-files.ts";
+import { hostedDraftIds, LocalItems, type LocalItemsDeps } from "./core/local-items.ts";
 import { GenexPackageService } from "./core/genex-package.ts";
+import { boundGameFolder } from "./core/genex-bound-game.ts";
 import { assertPublishable } from "./core/genex-publish.ts";
 import { GENEX_ACCOUNT_ACTIONS } from "../shared/genex.ts";
+import { GENEX_RECOMMENDATIONS_PLUGIN_ID } from "../shared/plugin-id.ts";
 import { GameThreadService } from "./core/game-threads.ts";
 import {
   type CoreInternals,
@@ -167,6 +187,8 @@ import { ObserverService, type ObserverServiceOptions } from "./core/observers.t
 import { FinishReviews, finishHistory } from "./core/finish-review.ts";
 import { PreviewService } from "./core/previews.ts";
 import { AutoResumeService, type AutoResumeDeps } from "./core/auto-resume.ts";
+import { heldStartAsk, heldStartRuns } from "./core/held-start.ts";
+import { coverStepAsk, coverStepRuns } from "./core/cover-step.ts";
 import { availableMemory } from "../substrate/hardware.ts";
 import { RecoveryService } from "./core/recovery.ts";
 import { ChatRewindService } from "./core/rewind.ts";
@@ -190,11 +212,9 @@ import { engineRpc } from "./harness-rpc/engine.ts";
 import { eventsRpc } from "./harness-rpc/events.ts";
 import { gameRpc } from "./harness-rpc/game.ts";
 import { jobsRpc } from "./harness-rpc/jobs.ts";
-import { optimizationRpc } from "./harness-rpc/optimization.ts";
 import { pluginsRpc } from "./harness-rpc/plugins.ts";
 import { previewRpc } from "./harness-rpc/preview.ts";
 import { desktopRpc } from "./harness-rpc/desktop.ts";
-import { judgeRpc } from "./harness-rpc/judge.ts";
 import { runsRpc } from "./harness-rpc/runs.ts";
 import { snapshotRpc } from "./harness-rpc/snapshot.ts";
 import { hooksRpc } from "./harness-rpc/hooks.ts";
@@ -222,8 +242,6 @@ const HARNESS_CRASH_LOOP = { count: 3, windowMs: 5 * MINUTE_MS } as const;
 const GAMES_ROOT_FILE = "games-root.json";
 /** The folder in the sandbox's scratch where each engine plugin's sandbox job keeps its own. */
 const PLUGIN_JOBS_FOLDER = "plugin-jobs";
-/** The folder in the sandbox's scratch where an engine game's cover reel is staged for a still or clip. */
-const COVER_REEL_FOLDER = "cover-reels";
 /** The folder in the sandbox's scratch where Node keeps the harness's compiled modules between boots. */
 const HARNESS_COMPILE_CACHE_FOLDER = "harness-compile-cache";
 /** The prefix of the scratch folder an engine's game runs with (its private home and temp files). */
@@ -275,16 +293,15 @@ const COVER_RENDERER = "renderer";
 
 /** settings.json as this build or an older one may have written it. */
 type SavedSettings = Partial<StudioSettings> & {
-  autoApplyImprovements?: boolean;
   /** The `DEFAULT_BUILDERS` in force when the file was written; older builds wrote none. */
   buildersDefault?: number;
+  /** Written since self-improvement was stopped; a file without it was saved while learning started on. */
+  learningStopped?: boolean;
 };
 
-/** Migration: installs that had the old auto-apply switch off chose caution — keep it. */
-function savedSelfImproving(saved: SavedSettings): boolean {
-  if (saved.selfImproving !== undefined) return Boolean(saved.selfImproving);
-  if (saved.autoApplyImprovements !== undefined) return Boolean(saved.autoApplyImprovements);
-  return false;
+/** Migration: self-improvement is stopped, so a file saved before the stop turns learning off once. */
+function savedLearning(saved: SavedSettings): boolean {
+  return saved.learningStopped === true && saved.learning === true;
 }
 
 /** The worker default in force when `saved` was written: the file's own record, else the older builds' default. */
@@ -356,18 +373,16 @@ export interface StudioCoreOptions {
   /** Notes each boot step as it finishes (`main/performance.ts`); a launch without diagnostics passes nothing. */
   markBoot?: (step: string) => void;
   engines?: Engine[];
-  executionPolicy?: { allowedProjectRoot?: string; runBackgroundImprovement?: boolean };
+  executionPolicy?: { allowedProjectRoot?: string };
   paths: StudioPaths;
   preview?: PreviewPort;
   /**
    * Factory for headless observation ports (a hidden window on the same `game://` protocol).
    * Absent = the pool serves only the live view and `preview.acquire` refuses loudly.
    */
-  createHeadlessPreview?: (options?: { purpose?: "optimization" }) => Promise<PreviewPort>;
+  createHeadlessPreview?: () => Promise<PreviewPort>;
   /** Max concurrent headless preview leases (default 4). */
   previewPoolMax?: number;
-  /** Idle-architect pacing — overridable so tests need not wait ten real minutes. */
-  improvementIdle?: { idleMs?: number; checkMs?: number; minGapMs?: number };
   /** `process.execPath`; in Electron this needs `runAsNode`. */
   execPath?: string;
   runAsNode?: boolean;
@@ -437,14 +452,29 @@ export interface StudioCoreOptions {
   autoResume?: Partial<Pick<AutoResumeDeps, "now" | "setTimer" | "clearTimer" | "freeMb">>;
   /** A plugin still's budget (default one minute) and the clock it runs on (`core/view-still.ts`); a test seam. */
   pluginStill?: ViewStillOptions;
-  /** A plugin clip's budget (default its seconds and a minute) and the clock it runs on (`core/view-clip.ts`); a test seam. */
-  pluginClip?: ViewClipOptions;
   /** A planned automatic resume started (true) or stopped (false) waiting; main holds the Mac awake meanwhile. */
   onAutoResumePending?: (pending: boolean) => void;
   onUiEvent?: (event: UiEvent) => void;
   onLog?: (line: string, stream: "stdout" | "stderr") => void;
   /** Where a message's @ tags are fetched from: genex.games, the account and git (`core/mention-tags.ts`). */
   mentionSources?: MentionSources;
+  /**
+   * A development profile's stand (`main/play/origins.ts`): the Genex host tools' CLI runs against its
+   * API with the account the profile signed in to there, never the Genex plugin's genex.games account.
+   * Absent: genex.games, with the Genex plugin's account.
+   */
+  genexStand?: GenexStand;
+  /**
+   * A game's local item drafts after its publish: Put on sale as the app's Genex account, and in a
+   * fixture launch the fixture's own sync and sharing in place of the CLI's (`dev/fixture-items.ts`).
+   * Absent: nothing a local draft's settle uploads goes on sale.
+   */
+  localItems?: {
+    putOnSale(skuId: string): Promise<CreatorItem | StoreRefused>;
+    /** The account's items on genex.games (Selling), for the drafts a publish puts on sale. */
+    selling(): Promise<Selling | StoreRefused>;
+    runs?: Pick<LocalItemsDeps, "sync" | "setShared">;
+  };
 }
 
 export type { CoreInternals };
@@ -454,7 +484,6 @@ export class StudioCore {
   readonly layout: StudioLayout;
   readonly snapshots: SnapshotEngine;
   readonly snapshotIndex = new SnapshotIndex();
-  readonly candidates: GameCandidates;
   readonly engines = new EngineRegistry();
   readonly contextPreferences: ContextPreferences;
   readonly games: GameWorkspaces;
@@ -462,8 +491,6 @@ export class StudioCore {
   readonly ollamaSidecar: OllamaSidecar;
   /** Token bookkeeping + improvement-class caps, enforced at the engine seam (A9). */
   readonly budget: BudgetLedger;
-  /** Durable queued architect jobs, executed only when idle (A6, §6.5). */
-  readonly improvements: ImprovementJournal;
 
   // Set by init().
   store!: EventStore;
@@ -484,6 +511,8 @@ export class StudioCore {
   pluginServices!: PluginServices;
   /** The plugins' native runtimes: detected for jobs, and for an engine a bridge game's play names. */
   #nativePlugins: PluginNativeServices | null = null;
+  /** A game's local item drafts, made on first use (`localItems`). */
+  #localItems: LocalItems | null = null;
   /** Each game's link to an engine project, kept for `game-engine` plugins (`game.engine.*`, Undo, the first call's link). */
   engineLinks!: EngineLinks;
   /**
@@ -529,9 +558,7 @@ export class StudioCore {
   #mcpSecrets: SecretPort | null = null;
   #started = false;
   #settings: StudioSettings = {
-    learning: true,
-    selfImproving: false,
-    architect: false,
+    learning: false,
     buildersMax: DEFAULT_BUILDERS,
     agentsMax: DEFAULT_POOL_MAX,
     blender: true,
@@ -570,7 +597,6 @@ export class StudioCore {
     this.screenAccess = options.screenAccess ?? null;
     if (options.gamesRoot) this.layout.gamesRoot = options.gamesRoot;
     this.snapshots = new SnapshotEngine([{ name: HARNESS_WORKSPACE, dir: this.layout.harnessWs }]);
-    this.candidates = new GameCandidates(this.snapshots, path.join(this.layout.scratch, "optimization"));
     this.games = new GameWorkspaces({
       root: this.layout.gamesRoot,
       templateDir: path.join(options.paths.resources, "game-template"),
@@ -607,7 +633,6 @@ export class StudioCore {
     this.journal = new UpdateJournal(this.layout.updates);
     this.ollamaSidecar = new OllamaSidecar({ ...(options.ollamaHost ? { host: options.ollamaHost } : {}) });
     this.budget = new BudgetLedger({ file: path.join(options.paths.userData, "budget-ledger.json") });
-    this.improvements = new ImprovementJournal(path.join(options.paths.userData, "improvements"));
     this.#connections = new ConnectionService(this, (threadId) => this.#threadBusy(threadId));
     this.#x = this.#createInternals();
     this.hooks = new HookService(this, this.#x, options.hooks ?? {});
@@ -779,6 +804,9 @@ export class StudioCore {
     if (process.platform === StudioPlatform.Windows && !(await ensureHostGit())) {
       throw new SandboxUnavailableError(gitMissingProblem());
     }
+    // A Mac without Apple's developer tools: its /usr/bin/git only asks to install them, so the host
+    // and every PATH made from the app's (the agents', the terminal's) run Genex's own git instead.
+    if (process.platform === StudioPlatform.Mac) await ensureMacGit(this.options.paths.resources);
     await this.#restoreGamesRoot();
     for (const dir of Object.values(this.layout)) await ensureDir(dir);
     await this.#loadSettings();
@@ -1006,7 +1034,11 @@ export class StudioCore {
     // Windows: native jobs work in, and read pinned runtimes from, folders granted now. srt-win
     // changes grants only while no sandboxed command runs, and agents keep commands running.
     const windows = process.platform === StudioPlatform.Windows;
-    if (windows) await mkdir(this.layout.nativeRuntimes, { recursive: true });
+    // OpenCode's, Grok Build's and Cursor's own folders too: their sessions run as the sandbox user
+    // and read their sign-ins there.
+    const cliFolders = windows ? [...openCodeSessionFolders(), grokHome(), ...cursorHomes()] : [];
+    if (windows)
+      await Promise.all([this.layout.nativeRuntimes, ...cliFolders].map((dir) => mkdir(dir, { recursive: true })));
     return ProcessSandbox.create({
       writableRoots: [
         this.layout.workspaces,
@@ -1015,6 +1047,7 @@ export class StudioCore {
         this.layout.gamesRoot,
         ...games.map((game) => game.dir),
         ...(windows ? [this.layout.nativeWork] : []),
+        ...cliFolders,
       ],
       scratchDir: this.layout.scratch,
       secretPaths: this.#protectedPaths(),
@@ -1049,8 +1082,9 @@ export class StudioCore {
    * package on Windows), which keeps its scratch in the sandbox's own scratch folder.
    */
   #wirePluginPrograms(): void {
-    this.plugins.hostTool = genexHostTool({ cli: this.#genexCli(), packages: this.#genexPackages() });
-    this.plugins.hostToolConsent = genexHostPreflight(this.#genexPackages());
+    const genex = { cli: this.#genexCli(), packages: this.#genexPackages() };
+    this.plugins.hostTool = genexHostTool(genex);
+    this.plugins.hostToolConsent = genexHostPreflight(genex.packages, genex.cli);
     this.plugins.sandboxJobs = new PluginSandboxJobs({
       run: (request) => this.sandbox.run(request),
       scratch: path.join(this.layout.scratch, PLUGIN_JOBS_FOLDER),
@@ -1062,10 +1096,7 @@ export class StudioCore {
     this.pluginServices = new PluginServices(
       path.join(this.layout.engineHomes, "plugins", "data"),
       { genex: path.join(this.layout.engineHomes, "genex") },
-      (binding, files, still, clip) => {
-        if (clip) return this.#observeClip(binding, clip);
-        return still ? this.#observeStill(binding, still) : this.#observeAssets(binding, files);
-      },
+      (binding, files, still) => (still ? this.#observeStill(binding, still) : this.#observeAssets(binding, files)),
     );
     this.pluginServices.onEvent = (id, event, binding) =>
       this.emit(UiEvent.PluginEvent, { id, event, project: binding?.project, threadId: binding?.threadId });
@@ -1098,11 +1129,7 @@ export class StudioCore {
     };
     // `game.engine.runs`: the games whose run is going, so an engine plugin never quits an editor a Loop uses.
     this.pluginServices.runningGames = () => this.#runningGames();
-    // `game.engine.assist`: Do it for me, a setup task handed to the game's chat (`desktop-assist.ts`).
-    this.pluginServices.engineAssist = (pluginId, binding, task, call) =>
-      engineAssist(coreAssistHost(this), { pluginId, binding, task, ...call });
-    // `game.engine.canAssist`: whether that can run here, so a plugin shows its click path instead.
-    this.pluginServices.engineCanAssist = (pluginId) => assistAvailable(coreAssistHost(this), pluginId);
+    this.#wireAssists(this.pluginServices);
     this.plugins = new PluginRegistry(
       path.join(this.layout.engineHomes, "plugins"),
       path.join(this.options.paths.resources, "plugins"),
@@ -1131,16 +1158,20 @@ export class StudioCore {
       return shape.build ? path.join(binding.directory, "public") : binding.directory;
     };
     // The Unreal, Unity, Godot and Roblox Studio plugins are bundled and off until the user turns
-    // them on: each needs its editor, and Roblox an account for people 18 and over.
+    // them on: each needs its editor, and Roblox an account for people 18 and over. Genex's own
+    // advice is off too: none of it is required, and the person opts in to it.
     this.plugins.seedEnabled = {
       blender: this.#settings.blender,
       unreal: false,
       unity: false,
       godot: false,
       roblox: false,
+      [GENEX_RECOMMENDATIONS_PLUGIN_ID]: false,
     };
     // The Genex account is the app's: Genex off takes the agent's tools, never the sign-in or Publish.
     this.plugins.appAccount = { id: GENEX_PLUGIN_ID, actions: GENEX_ACCOUNT_ACTIONS };
+    // A development profile on a stand: the Genex plugin (its publish) talks to the stand as its account.
+    this.plugins.hostAccount = genexPluginAccount(this.options.genexStand);
     this.plugins.onChange = (c) => {
       this.emit(UiEvent.PluginsChanged, c);
       this.#connections.changed();
@@ -1163,6 +1194,17 @@ export class StudioCore {
     await this.#initPlugins();
   }
 
+  /** Do it for me's host services (`desktop-assist.ts`). */
+  #wireAssists(services: PluginServices): void {
+    // `game.engine.assist`: Do it for me, a setup task handed to the game's chat.
+    services.engineAssist = (pluginId, binding, task, call) =>
+      engineAssist(coreAssistHost(this), { pluginId, binding, task, ...call });
+    // `game.engine.canAssist`: whether that can run here, so a plugin shows its click path instead.
+    services.engineCanAssist = (pluginId) => assistAvailable(coreAssistHost(this), pluginId);
+    // `game.engine.assisting`: whether the chat still runs it, so a plugin's card ends with its turn.
+    services.engineAssisting = (pluginId, binding) => assistUnderWay(coreAssistHost(this), pluginId, binding);
+  }
+
   /** The registry's start, each part of it marked so a slow plugin setup's log says which part held it. */
   async #initPlugins(): Promise<void> {
     // A first launch also marks each seed it copies.
@@ -1173,18 +1215,76 @@ export class StudioCore {
 
   /**
    * `genex__cli`: Studio's pinned Genex CLI, run in the sandbox in a folder under userData that no
-   * agent can write, never in a game, which it may not write either.
+   * agent can write, never in a game, which it may not write either. Studio itself copies a store
+   * item's files in from the bound game and moves a shared item's folder into it.
    */
   #genexCli(): GenexCliService {
+    const stand = this.options.genexStand;
     return new GenexCliService({
       run: (request) => this.sandbox.run(request),
-      credentialFile: () => this.plugins.hostCredentialFile(GENEX_PLUGIN_ID),
+      credentialFile: stand ? standCredentialFile(stand) : () => this.plugins.hostCredentialFile(GENEX_PLUGIN_ID),
+      ...(stand ? { api: stand.api } : {}),
       heldCredentials: () => this.plugins.heldCredentials(),
       runsRoot: path.join(this.options.paths.userData, "genex-cli"),
       resources: this.options.paths.resources,
       genexStorage: this.pluginServices.root(GENEX_PLUGIN_ID),
       protectedWrites: async () => [this.games.root, ...(await this.games.list()).map((game) => game.dir)],
+      onListingDraft: (draft, binding, fingerprint) => this.#recordListingDraft(draft, binding.threadId, fingerprint),
+      onLocalDraftsRemoved: (project, localIds) => this.localItems.forget(project, localIds),
+      picturesRoot: this.layout.itemPictures,
+      gameFolder: (project) => realpath(this.games.dirFor(project)),
+      // A store item's files and a shared item's folder: the bound game's own folder or its Studio worktree.
+      boundGame: (binding) =>
+        boundGameFolder(binding, { gameDir: (project) => this.games.dirFor(project), scratch: this.layout.scratch }),
       ...(this.options.execPath ? { execPath: this.options.execPath } : {}),
+    });
+  }
+
+  /**
+   * A store item the game's agent made (`genex__cli`) or changed (`genex__cli-paid`): its Listing draft card
+   * in the chat that asked (`item_drafted`, a record only the host writes), and a nudge for Create ›
+   * Items. The card's buttons call genex.games from main; the agent never presses them (D40). A local
+   * draft is noted first, so the person's "Sell when published" can name only what the CLI printed.
+   */
+  async #recordListingDraft(
+    draft: ListingRecord,
+    threadId: string | undefined,
+    fingerprint?: string | null,
+  ): Promise<void> {
+    if (isLocalDraft(draft)) await this.localItems.noteDraft(draft, fingerprint ?? null);
+    if (threadId) await this.append([customEventData(CustomEvent.ItemDrafted, { ...draft })], threadId);
+    const itemId = isLocalDraft(draft) ? draft.localId : draft.itemId;
+    this.emit(UiEvent.ItemDrafted, { project: draft.project, itemId, ...(threadId ? { threadId } : {}) });
+  }
+
+  /**
+   * A game's local item drafts (`core/local-items.ts`): the person's approvals, kept in this profile's
+   * app data, and the settle after the game's publish, which puts on sale only what they approved.
+   */
+  get localItems(): LocalItems {
+    this.#localItems ??= this.#makeLocalItems();
+    return this.#localItems;
+  }
+
+  #makeLocalItems(): LocalItems {
+    const cli = this.#genexCli();
+    const options = this.options.localItems;
+    const gameFolder = (project: string) => realpath(this.games.dirFor(project));
+    return new LocalItems({
+      approvals: new ItemApprovals(path.join(this.options.paths.userData, ITEM_APPROVALS_FILE)),
+      published: (project) => cli.published(project),
+      hasDrafts: async (project) => hasLocalDrafts(await gameFolder(project)),
+      sync: options?.runs?.sync ?? ((project) => cli.syncLocalItems(project)),
+      setShared:
+        options?.runs?.setShared ?? ((project, localId, shared) => cli.setLocalShared(project, localId, shared)),
+      putOnSale: (skuId) => (options ? options.putOnSale(skuId) : Promise.resolve({ refused: StoreRefusal.Unknown })),
+      hostedDrafts: async (project) => {
+        const hosted = await cli.hostedProjectId(project);
+        if (!hosted || !options) return [];
+        return hostedDraftIds(await options.selling(), hosted);
+      },
+      now: Date.now,
+      changed: (project) => this.emit(UiEvent.ItemsLocal, { project }),
     });
   }
 
@@ -1231,38 +1331,11 @@ export class StudioCore {
   }
 
   /**
-   * A plugin's still of one named view (`observe` with `still`): on a hidden window of its own at
-   * the asked size, never Live, given back however it ends (`core/view-still.ts`).
+   * A plugin's still (`observe` with `still`): a plain frame of the game's page on a hidden window
+   * of its own at the asked size, never Live, given back however it ends (`core/view-still.ts`).
    */
   #observeStill(binding: PluginBinding, still: PluginStillOrder): Promise<PluginStillAnswer> {
-    const view = still.demo === undefined ? {} : { stillDemo: still.demo };
-    return this.#throughReel(binding, view, (open) =>
-      viewStill(this.#previews, binding, still, { ...this.options.pluginStill, ...(open ? { open } : {}) }),
-    );
-  }
-
-  /**
-   * A plugin's clip of a moment a demo stages (`observe` with `clip`): recorded on a hidden window
-   * of its own at the asked size, never Live, given back however it ends (`core/view-clip.ts`).
-   */
-  #observeClip(binding: PluginBinding, clip: PluginClipOrder): Promise<PluginClipAnswer> {
-    return this.#throughReel(binding, { clipDemo: clip.demo }, (open) =>
-      viewClip(this.#previews, binding, clip, { ...this.options.pluginClip, ...(open ? { open } : {}) }),
-    );
-  }
-
-  /**
-   * A still or clip of an engine game is taken of the cover its agent rendered in the engine
-   * (`core/cover-reel.ts`): a web page of a game that runs as an app shows nothing of it.
-   */
-  async #throughReel<A>(
-    binding: PluginBinding,
-    view: ReelView,
-    take: (open: ViewOpener | undefined) => Promise<A>,
-  ): Promise<A> {
-    const game = await this.games.kindOf(binding.project).catch(() => null);
-    const scratch = path.join(this.layout.scratch, COVER_REEL_FOLDER);
-    return throughCoverReel({ game, gameDir: binding.directory, scratch }, view, take);
+    return viewStill(this.#previews, binding, still, this.options.pluginStill);
   }
 
   /**
@@ -1287,6 +1360,17 @@ export class StudioCore {
     const game = await realpath(this.games.dirFor(binding.project)).catch(() => null);
     const workspace: AssetDeliveredPayload["workspace"] =
       game && (await realpath(root).catch(() => root)) === game ? "game" : "build";
+    // A Loop's files reach the game folder only when its build lands: Builds reads this copy until then.
+    const picture =
+      workspace === "build" && asked?.runId
+        ? await keepDeliveredPicture(
+            { root, files: landed.map((row) => row.file), runId: asked.runId, jobId },
+            {
+              save: (runId, name, data) => this.saveRunArtifact(runId, name, data),
+              resize: (data, maxPx) => this.#previews.resizeStill(data, maxPx),
+            },
+          )
+        : null;
     const payload: AssetDeliveredPayload = {
       project: binding.project,
       source: id,
@@ -1299,6 +1383,7 @@ export class StudioCore {
       ...(asked?.runId ? { runId: asked.runId } : {}),
       ...(asked?.facetId ? { facetId: asked.facetId } : {}),
       ...(asked?.iteration !== undefined ? { iteration: asked.iteration } : {}),
+      ...(picture ? { picture } : {}),
     };
     await this.append(
       [customEventData(CustomEvent.AssetDelivered, { ...payload })],
@@ -1364,6 +1449,8 @@ export class StudioCore {
       EngineId.LocalServer,
       ...SUBSCRIPTION_ENGINES,
       EngineId.OpenCode,
+      EngineId.Grok,
+      EngineId.Cursor,
       EngineId.OpenRouter,
     ]);
   }
@@ -1410,6 +1497,15 @@ export class StudioCore {
         protectedPaths: this.#protectedPaths(),
         ...(this.options.codexExecutable ? { executable: this.options.codexExecutable } : {}),
       }),
+      // Cursor on the person's Cursor plan, signed in in its own CLI. Registered whether or not the
+      // CLI is on this computer, so the picker and Settings can offer it.
+      new CursorEngine({
+        scratchRoot: path.join(this.layout.scratch, EngineId.Cursor),
+        protectedPaths: this.#protectedPaths(),
+        toolPath: async () => (await this.sandbox.toolPath()) ?? process.env.PATH ?? "",
+        lockRecovery: path.join(this.layout.engineHomes, LOCK_RECOVERY_DIR),
+        onModelsChanged: () => this.emit(UiEvent.EnginesChanged, { engine: EngineId.Cursor }),
+      }),
       // Metered: OpenCode on whatever the person signed it in to, OpenRouter on the key pasted in
       // Settings. Registered like the subscriptions, so the picker can offer them.
       new OpenCodeEngine({
@@ -1418,6 +1514,15 @@ export class StudioCore {
         toolPath: async () => (await this.sandbox.toolPath()) ?? process.env.PATH ?? "",
         lockRecovery: path.join(this.layout.engineHomes, LOCK_RECOVERY_DIR),
         onModelsChanged: () => this.emit(UiEvent.EnginesChanged, { engine: EngineId.OpenCode }),
+      }),
+      // Grok Build on the person's own Grok sign-in, in the studio's sandbox as OpenCode is (a
+      // Bypass chat's builds run as the person, as Codex's do).
+      new GrokEngine({
+        scratchRoot: path.join(this.layout.scratch, EngineId.Grok),
+        protectedPaths: this.#protectedPaths(),
+        toolPath: async () => (await this.sandbox.toolPath()) ?? process.env.PATH ?? "",
+        lockRecovery: path.join(this.layout.engineHomes, LOCK_RECOVERY_DIR),
+        onModelsChanged: () => this.emit(UiEvent.EnginesChanged, { engine: EngineId.Grok }),
       }),
       new OpenRouterEngine({
         root: path.join(this.layout.engineHomes, EngineId.OpenRouter),
@@ -1491,11 +1596,6 @@ export class StudioCore {
     this.#activityWarmup = setTimeout(() => void this.activityItems().catch(() => {}), ACTIVITY_WARMUP_DELAY_MS);
     this.#activityWarmup.unref?.();
     void this.#probeSubscriptions();
-
-    // Self-improving background (A6): requeue any job the last shutdown interrupted, then
-    // watch for idle windows. No clock scheduling — "nightly" is dead.
-    await this.improvements.sweep().catch(() => {});
-    if (this.options.executionPolicy?.runBackgroundImprovement !== false) this.#selfImprovement.startIdleWatch();
     await this.#settlePendingUpdates(pending, rewound);
   }
 
@@ -1589,8 +1689,6 @@ export class StudioCore {
     await this.plugins?.sandboxJobs?.stopAll().catch(() => {});
     this.#consent.cancel({}, "stop");
     this.#permissions.cancel({}, ToolPermissionBy.Stop);
-    if (this.#x.idleTimer) clearInterval(this.#x.idleTimer);
-    this.#x.idleTimer = null;
     if (this.#activityWarmup) clearTimeout(this.#activityWarmup);
     // No orphan contractors: a delegation must not outlive the studio that briefed it. (The
     // first live build's contractor survived an app restart and collided with its successor.)
@@ -1679,10 +1777,54 @@ export class StudioCore {
       }
     }
     for (const runId of changedRuns) this.emit(UiEvent.RunSummaryChanged, { runId });
-    this.#autoResume.observe(threadId, result.events);
-    // Off the append's path: reading the game's folder never holds up the log.
-    void noteBuildEnd(this.#buildEnds, threadId, result.events).catch(() => {});
+    this.#afterRunEnds(threadId, result.events);
     return result.latestEventId;
+  }
+
+  /**
+   * What a chat's appended events start once a run ends: a Resume, the agent told why a Loop did not
+   * start, the cover of a landed build, and the game list's view of the build. Off the append's
+   * path: reading the game's folder never holds up the log.
+   */
+  #afterRunEnds(threadId: string, events: readonly EventEnvelope[]): void {
+    this.#autoResume.observe(threadId, events);
+    for (const runId of heldStartRuns(events)) void this.#askAfterHeldStart(threadId, runId);
+    for (const runId of coverStepRuns(events)) void this.#askForCover(threadId, runId);
+    void noteBuildEnd(this.#buildEnds, threadId, events).catch(() => {});
+  }
+
+  /** A Loop a plugin held back at its start: the chat's agent is told why, to fix it (`core/held-start.ts`). */
+  async #askAfterHeldStart(threadId: string, runId: string): Promise<void> {
+    try {
+      const ask = heldStartAsk(threadId, await this.store.listEvents(threadId), runId);
+      if (ask) await this.sendUserMessage(ask.text, ask.options);
+    } catch (err) {
+      this.options.onLog?.(
+        `[core] the agent wasn't told why the Loop didn't start in ${threadId}: ${errorMessage(err)}`,
+        "stderr",
+      );
+    }
+  }
+
+  /**
+   * A run that landed its build in a game while the Genex plugin is on: the chat's agent makes the
+   * game's Genex cover now, as a step of its own (`core/cover-step.ts`). A game made as an app
+   * (Unity, Godot, Unreal) gets the same step: its agent renders the picture its own way.
+   */
+  async #askForCover(threadId: string, runId: string): Promise<void> {
+    try {
+      if (!this.plugins?.enabled(GENEX_PLUGIN_ID)) return;
+      const project = gameOfThread((await this.store.getRecord(threadId).catch(() => null))?.metadata);
+      if (!project) return;
+      if (!(await this.games.kindOf(project).catch(() => null))) return;
+      const ask = coverStepAsk(threadId, await this.store.listEvents(threadId), runId);
+      if (ask) await this.sendUserMessage(ask.text, ask.options);
+    } catch (err) {
+      this.options.onLog?.(
+        `[core] the agent wasn't asked for the cover in ${threadId}: ${errorMessage(err)}`,
+        "stderr",
+      );
+    }
   }
 
   /** How `append` tells the game list what a build's end changed (`core/build-ends.ts`). */
@@ -1844,13 +1986,6 @@ export class StudioCore {
       if (runId) this.#stopRunJobs(runId);
       this.#previews.refreshVisibility();
     }
-    // Auto-mode: an improvement that won its blind gate lands the moment it is staged. The same
-    // path as the Apply button — snapshot first, logged, reversible — just without the wait.
-    if (event.type === UiEvent.SkilloptStaged && this.#autoApplies()) {
-      void this.#selfImprovement.autoApplyStaged().catch((err) => {
-        this.emit(UiEvent.SkilloptAutoApplyFailed, { error: errorMessage(err) });
-      });
-    }
   }
 
   // ── settings ─────────────────────────────────────────────────────────────────────────────
@@ -1877,20 +2012,13 @@ export class StudioCore {
     if (computerOff) await this.options.desktop?.stopAll();
     // Atomic (CQ-3): a torn write would read back as defaults at the next start. The default goes
     // beside the settings so the next start can tell a worker count someone chose from one never touched.
-    const saved: SavedSettings = { ...this.#settings, buildersDefault: DEFAULT_BUILDERS };
+    const saved: SavedSettings = { ...this.#settings, buildersDefault: DEFAULT_BUILDERS, learningStopped: true };
     await atomicWriteJson(this.#settingsFile(), saved);
     // The pool follows the setting at once; a run already going sizes its next round to it.
     if (this.#x.previewPool && this.options.previewPoolMax === undefined)
       this.#x.previewPool.max = this.#settings.agentsMax;
     this.emit(UiEvent.SettingsChanged, this.settings);
-    // Turning automatic apply (or learning itself) on sweeps anything already waiting.
-    if (this.#autoApplies()) void this.#selfImprovement.autoApplyStaged().catch(() => {});
     return this.settings;
-  }
-
-  /** Learning and self-improving both on: a staged improvement applies itself. */
-  #autoApplies(): boolean {
-    return this.#settings.learning && this.#settings.selfImproving;
   }
 
   #settingsFile(): string {
@@ -1902,9 +2030,7 @@ export class StudioCore {
       const parsed = JSON.parse(await readFile(this.#settingsFile(), "utf8")) as SavedSettings;
       const buildersMax = savedBuildersMax(parsed);
       this.#settings = {
-        learning: parsed.learning !== false,
-        selfImproving: savedSelfImproving(parsed),
-        architect: parsed.architect === true,
+        learning: savedLearning(parsed),
         buildersMax,
         agentsMax: buildersMax + LEAD_WINDOWS,
         blender: parsed.blender !== false,
@@ -2007,7 +2133,7 @@ export class StudioCore {
     for (const guarded of this.#protectedPaths()) {
       // Compared real path to real path: the Genex folder may itself be a link.
       const resolved = await realpath(guarded).catch(() => path.resolve(guarded));
-      if (isInside(resolved, real)) throw new Error(MESSAGE.protectedLocation());
+      if (isInside(resolved, real)) throw new CodedError(WorkspaceRefusal.LocationRefused, MESSAGE.protectedLocation());
     }
   }
 
@@ -2101,10 +2227,12 @@ export class StudioCore {
     const threadWorking = threads.some(
       (thread) => this.#x.activeCompletions.has(thread.id) || this.#x.pluginTurnLeases.has(thread.id),
     );
-    if (this.#building(project) || threadWorking) throw new Error(MESSAGE.workStillRunning());
+    if (this.#building(project) || threadWorking)
+      throw new CodedError(WorkspaceRefusal.WorkRunning, MESSAGE.workStillRunning());
     for (const thread of threads) {
       const run = latestRun(await this.store.listEvents(thread.id));
-      if (run?.state === RunState.Running) throw new Error(MESSAGE.buildStillRunning());
+      if (run?.state === RunState.Running)
+        throw new CodedError(WorkspaceRefusal.BuildRunning, MESSAGE.buildStillRunning());
     }
     await this.games.forget(project);
     this.emit(UiEvent.GameChanged, { project });
@@ -2192,13 +2320,13 @@ export class StudioCore {
    */
   async exportPublicCopy(project: string, targetDir: string): Promise<ExportResult> {
     const game = (await this.games.list()).find((g) => g.name === project);
-    if (!game) throw new Error(MESSAGE.gameNotFound());
+    if (!game) throw new CodedError(WorkspaceRefusal.GameNotFound, MESSAGE.gameNotFound());
     // A game whose web game is in a folder of it (an engine's web export) publishes that folder.
     const folder = webFolderOf(game);
     let output: string | undefined = folder ? path.join(game.dir, folder) : undefined;
     if (!folder && game.shape?.build) {
       const built = await this.builds.ensure({ project: game.name, dir: game.dir, shape: game.shape });
-      if (!built.ok || !built.output) throw new Error(MESSAGE.exportBuildFailed());
+      if (!built.ok || !built.output) throw new CodedError(ExportRefusal.BuildFailed, MESSAGE.exportBuildFailed());
       output = built.output;
     }
     return this.games.export(project, targetDir, output, { secretValues: this.knownSecretValues() });
@@ -2284,7 +2412,6 @@ export class StudioCore {
     const table: HarnessHostHandlers = {
       ...gameRpc(this, this.#x),
       ...eventsRpc(this, this.#x),
-      ...optimizationRpc(this, this.#x),
       ...snapshotRpc(this, this.#x),
       ...hooksRpc(this, this.#x),
       ...observersRpc(this, this.#x),
@@ -2293,10 +2420,9 @@ export class StudioCore {
       ...runsRpc(this, this.#x),
       ...jobsRpc(this, this.#x),
       ...engineRpc(this, this.#x),
-      ...studioRpc(this, this.#x),
+      ...studioRpc(this),
       ...previewRpc(this, this.#x),
       ...desktopRpc(this, this.#x),
-      ...judgeRpc(this),
     };
     return table;
   }
@@ -2448,8 +2574,8 @@ export class StudioCore {
   }
 
   /** Reflect stage visibility (and whether the person watches a game in Live) while preserving active observations. */
-  previewStageVisible(visible: boolean, watching = visible): Promise<void> {
-    return this.#previews.setStageVisible(visible, watching);
+  previewStageVisible(visible: boolean, watching = visible, stageGame: string | null = null): Promise<void> {
+    return this.#previews.setStageVisible(visible, watching, stageGame);
   }
 
   /** The Live game's sound switch, as the user left it. */
@@ -2679,12 +2805,6 @@ export class StudioCore {
     return this.#delegation._directorToolsFor(...args);
   }
 
-  _playtestToolsFor(
-    ...args: Parameters<DelegationService["_playtestToolsFor"]>
-  ): ReturnType<DelegationService["_playtestToolsFor"]> {
-    return this.#delegation._playtestToolsFor(...args);
-  }
-
   // ── recovery ─────────────────────────────────────────────────────────────────────────────
   recover(...args: Parameters<RecoveryService["recover"]>): ReturnType<RecoveryService["recover"]> {
     // A loop the watchdog has to rewind crashed in a loop: its runs are the user's to resume.
@@ -2773,7 +2893,6 @@ export class StudioCore {
   }
 
   async dispatchRun(run: Extract<DispatchAction, { type: typeof DispatchActionType.RunStart }>["run"]): Promise<void> {
-    this.#selfImprovement.touchActivity();
     // A run is that game's story: its briefs, iterations and verdict belong in its own chat.
     const threadId = await this.threadForGame(run.project);
     this.#rewind.assertNotRewinding(threadId);
@@ -2817,22 +2936,22 @@ export class StudioCore {
   }
 
   async #resumeAutopilot(runId: string): Promise<void> {
-    this.#selfImprovement.touchActivity();
     const loopPredatesResume =
       this.host.state === HarnessState.Ready && !this.host.hasCapability(HarnessCapability.Autopilot);
-    if (loopPredatesResume) throw new Error(MESSAGE.resumeUnsupported());
+    if (loopPredatesResume) throw new CodedError(ResumeRefusal.Unsupported, MESSAGE.resumeUnsupported());
     for (const thread of await this.store.listThreads()) {
       const journal = (await this.store.readArtifact(thread.id, `autopilot_${runId}`).catch(() => null)) as {
         phase?: string;
       } | null;
       if (!journal) continue;
-      if (journal.phase === JournalPhase.Done) throw new Error(MESSAGE.runAlreadyFinished(runId));
+      if (journal.phase === JournalPhase.Done)
+        throw new CodedError(ResumeRefusal.AlreadyFinished, MESSAGE.runAlreadyFinished(runId));
       // A rewind stopping this chat's build waits for it to close: a Resume must not restart it.
       this.#rewind.assertNotRewinding(thread.id);
       await this.host.dispatch({ type: DispatchActionType.AutopilotResume, threadId: thread.id, runId });
       return;
     }
-    throw new Error(MESSAGE.noAutopilotJournal(runId));
+    throw new CodedError(ResumeRefusal.NoJournal, MESSAGE.noAutopilotJournal(runId));
   }
 
   newRunId(): string {
@@ -2850,38 +2969,7 @@ export class StudioCore {
     return this.planReviews.answer(thread, id, approved);
   }
 
-  // ── self-improvement ─────────────────────────────────────────────────────────────────────
-  runIdleCheckNow(
-    ...args: Parameters<SelfImprovementService["runIdleCheckNow"]>
-  ): ReturnType<SelfImprovementService["runIdleCheckNow"]> {
-    return this.#selfImprovement.runIdleCheckNow(...args);
-  }
-
-  /**
-   * Apply a staged SkillOpt proposal. By default this is the human-review path;
-   * with the auto-apply setting on it is also called with `approvedBy: "auto"` the moment a
-   * proposal is staged. Snapshot before and after, keep a `best_skill` copy, and record the
-   * approval in the log so the accepted-edit history is inspectable either way. `key` names
-   * the suggestion the person saw; the index is only a fallback for callers without one.
-   */
-  async acceptStagedProposal(
-    index: number,
-    approvedBy: "human" | "auto" = "human",
-    key?: { at?: string; skill?: string },
-  ): Promise<{ skill: string }> {
-    // One change at a time: with self-improving ON, the auto-sweep and a human Apply click can
-    // land together, and two concurrent snapshots fight over the same git index.lock.
-    return this.#selfImprovement.selfChangeTurn(() =>
-      this.#selfImprovement.acceptStagedProposal(index, approvedBy, key),
-    );
-  }
-
-  discardStagedProposal(
-    ...args: Parameters<SelfImprovementService["discardStagedProposal"]>
-  ): ReturnType<SelfImprovementService["discardStagedProposal"]> {
-    return this.#selfImprovement.discardStagedProposal(...args);
-  }
-
+  // ── the harness's own changes ────────────────────────────────────────────────────────────
   /**
    * Undo one learned change and nothing else. Its own diff is reversed on the file it wrote,
    * so later changes, the per-game lessons and the app's own updates stay where they are —

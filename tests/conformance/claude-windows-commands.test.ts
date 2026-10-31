@@ -134,12 +134,8 @@ async function session(
   return { options: options as Options, scripted, sandboxes, result };
 }
 
-const WRITER_MODES = [
-  PermissionMode.Bypass,
-  PermissionMode.Auto,
-  PermissionMode.AcceptEdits,
-  PermissionMode.Manual,
-] as const;
+/** The writing modes whose workers run in a box, the studio's on Windows; Bypass's run with none. */
+const WRITER_MODES = [PermissionMode.Auto, PermissionMode.AcceptEdits, PermissionMode.Manual] as const;
 
 /** Whether a studio tool is marked to load with the prompt, never deferred behind Claude Code's tool search. */
 function alwaysLoaded(options: Options, tool: string): boolean {
@@ -174,7 +170,7 @@ describe("Claude Code on Windows runs its commands in Genex's sandbox", () => {
         `${mode}: its shell is never deferred behind tool search`,
       );
       const allowed = (options.allowedTools as string[]).includes(RUN_COMMAND);
-      const unasked = mode === PermissionMode.Bypass || mode === PermissionMode.Auto;
+      const unasked = mode === PermissionMode.Auto;
       assert.equal(allowed, unasked, `${mode}: its commands run unasked only where Claude Code's box ran them unasked`);
       assert.notEqual(result.stopReason, "sandbox_unavailable", `${mode}: the worker is not refused`);
     }
@@ -256,12 +252,17 @@ describe("Claude Code on Windows runs its commands in Genex's sandbox", () => {
     }
   });
 
-  it("Bypass writes the home folder too, as Claude Code's Bypass box did", async () => {
+  it("a Bypass worker runs Claude Code's own shell with no box, as the person's Bypass does", async () => {
     const f = await fixture();
-    const { sandboxes } = await session(f, "win32", { worker: seat(f, PermissionMode.Bypass) }, [
-      { tool: "run_command", args: { command: "true" } },
-    ]);
-    assert.ok(sandboxes.made[0]?.writableRoots.includes(os.homedir()));
+    const { options, scripted, sandboxes } = await session(f, "win32", { worker: seat(f, PermissionMode.Bypass) });
+    assert.equal(scripted.tools.includes("run_command"), false, "no studio shell");
+    assert.equal((options.disallowedTools as string[]).includes("Bash"), false, "Claude Code's own Bash");
+    assert.notEqual(
+      (options.sandbox as { enabled?: boolean } | undefined)?.enabled,
+      true,
+      "no sandbox of Claude Code's",
+    );
+    assert.equal(sandboxes.made.length, 0, "no box of Genex's either");
   });
 
   it("a failing command reports its exit code as a failed call, never ending the session", async () => {

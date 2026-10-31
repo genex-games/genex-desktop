@@ -1,0 +1,14 @@
+[2m2026-10-25T13:49:30.134882Z[0m [31mERROR[0m responses API error [3mstatus[0m[2m=[0m426 Upgrade Required [3merror_message[0m[2m=[0mYour Grok CLI version (1.0.3) is outdated. Please update to version 1.0.13 or later via `grok update` or the installation documentation. [3mbody_preview[0m[2m=[0m{"error":"Your Grok CLI version (1.0.3) is outdated. Please update to version 1.0.13 or later via `grok update` or the installation documentation."} [3mmodel_id[0m[2m=[0mgrok-4.5
+[2m2026-10-25T13:49:36.374128Z[0m [31mERROR[0m responses API error [3mstatus[0m[2m=[0m426 Upgrade Required [3merror_message[0m[2m=[0mYour Grok CLI version (1.0.3) is outdated. Please update to version 1.0.13 or later via `grok update` or the installation documentation. [3mbody_preview[0m[2m=[0m{"error":"Your Grok CLI version (1.0.3) is outdated. Please update to version 1.0.13 or later via `grok update` or the installation documentation."} [3mmodel_id[0m[2m=[0mgrok-4.7
+[2m2026-10-25T13:49:36.402933Z[0m [31mERROR[0m [3merror[0m[2m=[0mInternal error: {
+  "message": "API error (status 426 Upgrade Required): Your Grok CLI version (1.0.3) is outdated. Please update to version 1.0.13 or later via `grok update` or the installation documentation.",
+  "http_status": 426
+}
+[2m2026-10-25T13:49:36.402971Z[0m [31mERROR[0m [3merror[0m[2m=[0mInternal error: {
+  "message": "API error (status 426 Upgrade Required): Your Grok CLI version (1.0.3) is outdated. Please update to version 1.0.13 or later via `grok update` or the installation documentation.",
+  "http_status": 426
+}
+Error: Internal error: {
+  "message": "API error (status 426 Upgrade Required): Your Grok CLI version (1.0.3) is outdated. Please update to version 1.0.13 or later via `grok update` or the installation documentation.",
+  "http_status": 426
+}

@@ -10,13 +10,13 @@ import type {
   CaptureSource,
   CaptureSurface,
   CropRect,
+  LiveLoadFailure,
   PreviewConsoleEntry,
   PreviewPixelStats,
   PreviewPortStatus,
   StillExposure,
   StillMimeType,
 } from "../shared/preview-contract.ts";
-import type { PluginClipMimeType } from "../shared/plugins.ts";
 
 export type { CaptureSurface, CropRect, PreviewConsoleEntry, PreviewPixelStats, PreviewPortStatus };
 
@@ -43,29 +43,6 @@ export interface PreviewStill {
 /** A still, or the size of the smallest encoding that was still over the byte limit. */
 export type PreviewStillAnswer = { still: PreviewStill } | { tooLarge: { smallestBytes: number } };
 
-/** What a clip is asked for: how long and how fast to record, its byte limit and its poster's long side. */
-export interface PreviewClipRequest {
-  seconds: number;
-  fps: number;
-  maxBytes: number;
-  posterMaxPx: number;
-}
-
-/** One clip as a port recorded it: the video, the canvas's size, how long it ran, a JPEG poster and its motion. */
-export interface PreviewClip {
-  video: Buffer;
-  mimeType: PluginClipMimeType;
-  width: number;
-  height: number;
-  durationMs: number;
-  poster: Buffer;
-  /** 0–1: the share of sampled frame pairs that differ visibly. */
-  motion: number;
-}
-
-/** A clip, or the size of the smallest recording that was still over the byte limit. */
-export type PreviewClipAnswer = { clip: PreviewClip } | { tooLarge: { smallestBytes: number } };
-
 /**
  * What the studio's page shim is told when it is served onto a game's page (M4.1). The values
  * live here, in the port, because both sides need them: the main process bakes them into the
@@ -81,10 +58,6 @@ export interface ShimOptions {
   readyMs: number;
   /** No fetch, no XHR and no resource entry for this long counts as quiet. */
   quietMs: number;
-  /** Installed as `Math.random` at document start; null leaves the page's own generator alone. */
-  seed: number | null;
-  /** Report pointer lock as held even where Chromium refuses to grant it (a hidden window). */
-  pointerLock: boolean;
   /** Count draw calls at the graphics API. */
   counters: boolean;
   /** Beyond this many outstanding timers the wrapper passes through to the natives. */
@@ -95,7 +68,7 @@ export interface ShimOptions {
  * How this game is connected to the studio, and what the studio can see of it (M4.2a) — the page
  * half of `game.attached`. Read off the renderer hook (what it wrapped, what it has seen
  * rendered, which scene and camera the last judged frame used), never off the game's own claim
- * about itself. `installed` is a game that assigned `window.__studio`; `attached` is a game the
+ * about itself. `installed` is an older page's word for a game that assigned its own contract; `attached` is a game the
  * studio recognised in the frames it drew, with nothing added to it.
  *
  * Every field but `contract` is optional: the caller (studio-core's `game.attached`) fills the
@@ -129,8 +102,6 @@ export interface PageAttachReport {
 
 /** One observation port on a game. Implemented by Electron's GamePreview. */
 export interface PreviewPort {
-  invalidateProfile?(reason: string): Promise<void>;
-  profile?(request: import("./preview-profiler.ts").ProfileRequest): Promise<unknown>;
   /** `root` is a playable worktree; omit it to serve the live game folder. `loopback` serves it as http://localhost:<port>/ — what a game with its own shape expects. `shim` overrides the page shim for this load (the boot budget is the one that changes per game). */
   load(
     project: string,
@@ -143,8 +114,11 @@ export interface PreviewPort {
   stop?(): Promise<void>;
   /** Optional: the person's Play on a stopped page — the same page again, from the top. */
   resume?(): Promise<void>;
-  /** Optional: a line the studio itself puts on the game's console — e.g. a build that failed before the page could load. */
-  note?(level: string, message: string, options?: { loadError?: boolean }): void;
+  /**
+   * Optional: a line the studio itself puts on the game's console — e.g. a build that failed before
+   * the page could load. With `loadError` it is the page's load error, of the kind `failure` names.
+   */
+  note?(level: string, message: string, options?: { loadError?: boolean; failure?: LiveLoadFailure }): void;
   screenshot(quality?: number): Promise<Buffer>;
   /** A thumbnail capture with bounded statistics, never used as judged evidence. */
   screenshotCard?(quality: number, maxPx: number): Promise<Buffer | null>;
@@ -152,9 +126,7 @@ export interface PreviewPort {
   setVisible?(visible: boolean): void;
   /** Pace the page's frames to at most this many a second; 0 for the display's own rate. */
   setMaxFps?(fps: number): void;
-  /** Keep simulation alive while an agent observes the hidden stage. */
-  setObserved?(observed: boolean): void;
-  /** Silence the page's speakers; its own audio graph keeps running, so `__studio.audio()` still measures. */
+  /** Silence the page's speakers; its own audio graph keeps running. */
   setAudioMuted?(muted: boolean): void;
   /**
    * Optional: FakePreview and headless builds compile without it; callers fall back to `screenshot`.
@@ -179,9 +151,8 @@ export interface PreviewPort {
   /** `keep`: state paths a board reads, cut last when the state is over the studio's budget. */
   studioState(options?: { keep?: readonly string[] }): Promise<unknown>;
   /**
-   * Call a `window.__studio` method by name. The classic set is typed; the v2 contract adds
-   * `eye`, `inspect` and `audio`, and a game may expose more — the page answers `{__missing}`
-   * for anything it does not have.
+   * Call a verb of the page shim's own clock (`__studioClock`) by name: step, pause, start, state,
+   * ready, errors. The game is never called; the page answers `{__missing}` for any other name.
    */
   studioCall(method: string, arg?: unknown): Promise<unknown>;
   input(actions: PreviewInputAction[]): Promise<{ ok: boolean; applied: number; width: number; height: number }>;
@@ -203,12 +174,6 @@ export interface PreviewPort {
    * ports compile without it; a caller that finds none takes no still.
    */
   still?(request: PreviewStillRequest): Promise<PreviewStillAnswer>;
-  /**
-   * Optional: `seconds` of the canvas the still reads, recorded in real time as the page draws it,
-   * for a plugin's clip. FakePreview and older ports compile without it; a caller that finds none
-   * records no clip.
-   */
-  clip?(request: PreviewClipRequest): Promise<PreviewClipAnswer>;
   /** Optional: a fresh capture cropped to `region` (pixels) and scaled up — the computer tool's zoom. */
   zoom?(
     region: [number, number, number, number],

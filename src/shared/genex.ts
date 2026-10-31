@@ -288,6 +288,8 @@ export type GenexUseVerification = (typeof GenexUseVerification)[keyof typeof Ge
 export const GenexBlocked = {
   /** Genex's terms changed and the account has not accepted them yet. */
   Terms: "terms",
+  /** The account had too few credits for it: Genex refused it before making or charging anything. */
+  Credits: "credits",
 } as const;
 export type GenexBlocked = (typeof GenexBlocked)[keyof typeof GenexBlocked];
 
@@ -443,7 +445,11 @@ export function withoutGenexSources<T extends Output>(files: readonly T[]): T[] 
   return files.filter((file) => !(isSource(file) && finished.has(file.generationId)));
 }
 
-/** What genex__cover does: photograph the genex-cover demo and keep it, record the genex-clip demo, or report. */
+/**
+ * What older genex__cover calls did (photograph the genex-cover demo, record the genex-clip demo, or
+ * report), as a recorded call's arguments name it. genex__cover now keeps the picture and clip the
+ * agent hands it (`{ image, clip? }`) and takes no operation.
+ */
 export const GenexCoverOperation = { Shoot: "shoot", Status: "status", Clip: "clip" } as const;
 export type GenexCoverOperation = (typeof GenexCoverOperation)[keyof typeof GenexCoverOperation];
 
@@ -475,20 +481,21 @@ export interface GenexCoverShot {
   height: number;
   mimeType: StillMimeType;
   bytes: number;
-  source: CaptureSource;
+  /** How Studio's capture read the frame; absent for a picture the game's agent made and handed genex__cover. */
+  source?: CaptureSource;
   stats: StillExposure;
   takenAt: string;
-  /** Who staged the frame: the game's genex-cover demo, or Studio's plain frame of a game with none. Absent: the demo. */
+  /** Who made the frame: the game's own (its agent's picture), or Studio's plain frame of a game with none. Absent: the game's own. */
   origin?: GenexCoverOrigin;
-  /** The person picked this frame among the candidates: Studio and a publish shoot no new one over it. */
+  /** The person picked this frame among the candidates: Studio takes no new frame over it. */
   pinned?: boolean;
 }
 
 /** Who staged a kept cover frame (`GenexCoverShot.origin`). Persisted: never rename one. */
 export const GenexCoverOrigin = {
-  /** The game's own `genex-cover` demo. */
+  /** The game's own picture: the one its agent handed genex__cover (once, its `genex-cover` demo). */
   Demo: "demo",
-  /** Studio's plain frame of the game as it loads, for a game with no genex-cover demo yet. */
+  /** Studio's plain frame of the game as it loads, for a game whose agent made no cover yet. */
   Studio: "studio",
 } as const;
 export type GenexCoverOrigin = (typeof GenexCoverOrigin)[keyof typeof GenexCoverOrigin];
@@ -539,7 +546,7 @@ export interface GenexCoverRecord {
   sending: boolean;
   /** The recent frames the person can flip between, newest first, the kept shot among them. Absent from older plugins. */
   candidates?: GenexCoverShot[];
-  /** The kept genex-clip recording, or null; absent from a plugin older than clips. */
+  /** The kept cover clip, or null; absent from a plugin older than clips. */
   clip?: GenexCoverClip | null;
   /** How the last clip send went; null before any. */
   clipLast?: GenexCoverSent | null;
@@ -548,16 +555,16 @@ export interface GenexCoverRecord {
 }
 
 /**
- * When the agent itself last kept the game's cover shot and clip (`genex__cover` shoot and clip),
- * ISO; a kind it never took is absent. Studio's own takes and a publish's shot leave it, so Publish
- * knows a frame the person asked the agent for has come (`covers/<project>/agent.json`).
+ * When the agent itself last kept the game's cover picture and clip (`genex__cover`), ISO; a kind it
+ * never kept is absent. Studio's own frames leave it, so Publish knows a cover the person asked the
+ * agent for has come (`covers/<project>/agent.json`).
  */
 export interface GenexCoverAgentTook {
   shot?: string;
   clip?: string;
 }
 
-/** The game's kept cover clip (`covers/<project>/clip.json`), beside its video: five seconds of real play. */
+/** The game's kept cover clip (`covers/<project>/clip.json`), beside its video: at least five seconds of play. */
 export interface GenexCoverClip {
   sha256: string;
   mimeType: string;
@@ -565,8 +572,8 @@ export interface GenexCoverClip {
   width: number;
   height: number;
   durationMs: number;
-  /** Share of sampled frame pairs that differ: a frozen recording is near 0. */
-  motion: number;
+  /** Share of sampled frame pairs that differ (a frozen recording is near 0); absent for a clip the agent made, which Studio does not decode. */
+  motion?: number;
   takenAt: string;
 }
 

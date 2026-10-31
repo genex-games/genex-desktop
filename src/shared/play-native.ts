@@ -381,6 +381,8 @@ export const InstallFailure = {
   TooLarge: "too-large",
   /** The app is not built for this computer's processor or system. */
   UnsupportedOs: "unsupported-os",
+  /** The app is for Intel only, and this Apple silicon Mac has no Rosetta to run it. */
+  NeedsRosetta: "needs-rosetta",
   /** The archive does not hold the app the catalog names. */
   EntryMissing: "entry-missing",
   /** The catalog offers no build for this computer. */

@@ -12,7 +12,10 @@ import { hardwareReport } from "../core/hardware-report.ts";
 import type { SubscriptionEngine } from "../login-controllers.ts";
 import type { OpenRouterLogin } from "../openrouter-login.ts";
 import type { IpcHandle } from "./registrar.ts";
-import { errorMessage } from "../../shared/errors.ts";
+import { CodedError, errorCodeIn, errorMessage } from "../../shared/errors.ts";
+import { ModelInstallProblem, ModelPullProblem, ModelPullStatus } from "../../shared/model-install.ts";
+import { EngineFailureKind } from "../../shared/engine-requests.ts";
+import { EngineError } from "../../substrate/engines/types.ts";
 import { t } from "../../shared/i18n.ts";
 import { EngineId } from "../../shared/providers.ts";
 import type { EngineStatus } from "../../shared/engine-descriptor.ts";
@@ -22,11 +25,19 @@ const REFRESHABLE: ReadonlySet<string> = new Set([
   EngineId.ClaudeCode,
   EngineId.Codex,
   EngineId.OpenCode,
+  EngineId.Grok,
+  EngineId.Cursor,
   EngineId.OpenRouter,
   EngineId.LocalServer,
 ]);
 /** The engines with no subscription sign-in: a recheck reads their models (and status) again. */
-const RECHECKED_BY_MODELS: readonly string[] = [EngineId.OpenCode, EngineId.OpenRouter, EngineId.LocalServer];
+const RECHECKED_BY_MODELS: readonly string[] = [
+  EngineId.OpenCode,
+  EngineId.Grok,
+  EngineId.Cursor,
+  EngineId.OpenRouter,
+  EngineId.LocalServer,
+];
 
 /** An engine whose API key is pasted in Settings (OpenRouter). */
 interface ApiKeyEngine {
@@ -42,6 +53,12 @@ const isApiKeyEngine = (engine: unknown): engine is ApiKeyEngine =>
  * Why a local model request from the renderer is refused. The functions are words the person reads
  * in Settings; `unknownProvider` and `noModel` answer only a malformed call from our own renderer.
  */
+/** Why an Ollama pull failed: the server gone or unable, a refusal it answered, or a stream cut short. */
+function pullProblem(err: unknown): ModelPullProblem {
+  if (!(err instanceof EngineError)) return ModelPullProblem.Interrupted;
+  return err.kind === EngineFailureKind.Unavailable ? ModelPullProblem.Unavailable : ModelPullProblem.Refused;
+}
+
 const MESSAGE = {
   unknownProvider: "Unknown coding provider",
   noKeyEngine: () => t("OpenRouter is unavailable"),
@@ -57,13 +74,15 @@ export interface ModelsIpcDeps {
   pushUiEvent(event: UiEvent): void;
   /** OpenRouter's browser sign-in, which hands the key it gets to the engine. */
   openRouterLogin: OpenRouterLogin;
+  /** The isolated UI smoke supplies a catalog machine without probing the host. */
+  readHardware?: typeof hardwareReport;
   /** The subscriptions' plan limits, kept live (`core/provider-usage.ts`). */
   usage: Pick<ProviderUsageService, "snapshot" | "refresh">;
 }
 
 export function registerModelsIpc(
   handle: IpcHandle,
-  { core, subscription, pushUiEvent, openRouterLogin, usage }: ModelsIpcDeps,
+  { core, subscription, pushUiEvent, openRouterLogin, usage, readHardware = hardwareReport }: ModelsIpcDeps,
 ): void {
   handle("studio:engines", async () => core.engines.describe());
   handle("studio:models.refresh", async (payload) => {
@@ -81,7 +100,7 @@ export function registerModelsIpc(
     void usage.refresh().catch(() => {});
     return usage.snapshot();
   });
-  handle("studio:hardware", async () => hardwareReport());
+  handle("studio:hardware", async () => readHardware());
   handle("studio:engines.recheck", async (payload) => {
     const ids = payload?.engine ? [payload.engine] : [...SUBSCRIPTION_ENGINES, ...RECHECKED_BY_MODELS];
     for (const id of ids) {
@@ -137,9 +156,13 @@ export function registerModelsIpc(
         return true;
       } catch (err) {
         progressUpdates.flush();
+        const problem = errorCodeIn(ModelInstallProblem, err) ?? ModelInstallProblem.Other;
         pushUiEvent({
           type: UiEvent.ModelPull,
-          payload: { model: payload.model, progress: { status: "error", error: errorMessage(err) } },
+          payload: {
+            model: payload.model,
+            progress: { status: ModelPullStatus.Error, error: errorMessage(err), problem },
+          },
         });
         throw err;
       } finally {
@@ -151,6 +174,8 @@ export function registerModelsIpc(
     };
     try {
       for await (const progress of engine.client.pull(payload.model)) progressUpdates.update(progress);
+    } catch (err) {
+      throw new CodedError(pullProblem(err), errorMessage(err));
     } finally {
       progressUpdates.flush();
     }

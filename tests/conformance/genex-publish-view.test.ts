@@ -431,6 +431,39 @@ test("Studio takes a cover as the dialog opens only while the game has none and 
   }
 });
 
+test("the dialog says plainly when the game goes out without a cover", () => {
+  const live = { slug: "g", status: "published", lastPublishAt: "2026-10-09T10:05:00Z" } as const;
+  const blank = { ...shot, stats: { lumaMean: 0.02, lumaStdDev: 0.01, nearBlackFraction: 0.99, litFraction: 0 } };
+  const rows: Array<[string, GenexPublishState, boolean]> = [
+    ["no shot, and Genex has none", state({ cover: cover() }), true],
+    ["a kept shot that is only a black screen", state({ cover: cover({ shot: blank }) }), true],
+    [
+      "a published game whose last publish sent nothing",
+      state({ ...live, cover: cover({ last: last(GenexCoverOutcome.None) }) }),
+      true,
+    ],
+    ["a real picture kept to send", state({ cover: cover({ shot }) }), false],
+    ["a cover Genex already shows", state({ ...live, cover: cover({ last: last(GenexCoverOutcome.Applied) }) }), false],
+    [
+      "the same frame Genex already shows",
+      state({
+        ...live,
+        cover: cover({ last: { ...last(GenexCoverOutcome.Unchanged), settled: GenexCoverOutcome.Applied } }),
+      }),
+      false,
+    ],
+    [
+      "the owner's own pick on genex.games",
+      state({ ...live, cover: cover({ last: last(GenexCoverOutcome.KeptOwner) }) }),
+      false,
+    ],
+    ["a cover being sent now", state({ cover: cover({ sending: true }) }), false],
+    ["a publish running", state({ cover: cover(), job: job() }), false],
+    ["a plugin older than covers", state(), false],
+  ];
+  for (const [label, record, says] of rows) assert.equal(publishView(record).withoutCover, says, label);
+});
+
 test("Another cover is offered while nothing runs and the owner chose no cover", () => {
   const rows: Array<[string, GenexPublishState, boolean]> = [
     ["a kept shot", state({ cover: cover({ shot }) }), true],

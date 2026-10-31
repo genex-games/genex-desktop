@@ -9,7 +9,7 @@
  * own records, so its cards need no declaration.
  */
 import { HOUR_MS } from "./duration.ts";
-import { GENEX_PLUGIN_ID, GenexJobStatus, GenexOperation } from "./genex.ts";
+import { GENEX_PLUGIN_ID, GenexBlocked, GenexJobStatus, GenexOperation } from "./genex.ts";
 
 /** What a job makes. A plugin manifest names these: never rename a value. */
 export const MakingKind = {
@@ -47,6 +47,8 @@ export const MakingPhase = {
   Stopped: "stopped",
   /** Its request never got an answer: it may or may not be running. */
   Unsure: "unsure",
+  /** The account had too few credits for it: nothing was made or charged, and more credits make it. */
+  NeedsCredits: "needs-credits",
 } as const;
 export type MakingPhase = (typeof MakingPhase)[keyof typeof MakingPhase];
 
@@ -224,14 +226,22 @@ export interface GenexJobFacts {
   delivered?: boolean;
   /** How long ago the job started, in milliseconds; absent when it did not say. */
   ageMs?: number | null;
+  /** What it went no further for (`GenexJob.blocked`). */
+  blocked?: string | null;
 }
+
+/** A Genex job the account had too few credits for: it ended unmade, held only by its credits. */
+const needsCredits = (status: string | null | undefined, blocked: string | null | undefined): boolean =>
+  blocked === GenexBlocked.Credits && genexEndedUnmade(status);
 
 /**
  * Where a Genex job is, from its own word for it; a word Studio does not know is still being made.
  * A job that delivered files the game no longer holds is never still being made, and one that has
- * said so for longer than any lane takes is not confirmed.
+ * said so for longer than any lane takes is not confirmed. One the account had too few credits for
+ * waits on credits.
  */
 export function genexPhase(status: string | null | undefined, facts: GenexJobFacts = {}): MakingPhase {
+  if (needsCredits(status, facts.blocked)) return MakingPhase.NeedsCredits;
   const word = status ?? "";
   const phase = Object.hasOwn(GENEX_PHASE, word) ? GENEX_PHASE[word] : undefined;
   if (facts.delivered && (!phase || phase === MakingPhase.Making)) return MakingPhase.NotInGame;
@@ -254,16 +264,25 @@ export const genexEndedUnmade = (status: string | null | undefined): boolean => 
 /**
  * A Genex request that ended before Genex started a generation for it (no `generationId`), such as
  * one it could not quote: nothing was ever on its way, and the call that asked already said why.
+ * One refused for too few credits is not: it waits on credits, and its card offers them.
  */
-export const genexRefused = (job: { status?: string | null; generationId?: string | null }): boolean =>
-  !job.generationId && genexEndedUnmade(job.status);
+export const genexRefused = (job: {
+  status?: string | null;
+  generationId?: string | null;
+  blocked?: string | null;
+}): boolean => !job.generationId && genexEndedUnmade(job.status) && !needsCredits(job.status, job.blocked);
 
 /**
  * A Genex job that gets a card: not an approved review (its run goes on in a new job), not a call
  * that makes nothing, and not a request Genex refused (`genexRefused`). A record that names no
  * operation is still shown, as an asset.
  */
-export function genexJobShown(job: { operation?: string; status?: string; generationId?: string }): boolean {
+export function genexJobShown(job: {
+  operation?: string;
+  status?: string;
+  generationId?: string;
+  blocked?: string;
+}): boolean {
   if (job.status === GenexJobStatus.Approved || genexRefused(job)) return false;
   return !job.operation || genexMaking(job.operation) !== null;
 }
@@ -289,6 +308,8 @@ export interface MakingJob {
   operation?: string;
   /** It delivered files earlier that the game no longer holds. */
   delivered?: boolean;
+  /** What it costs in Genex credits, as Genex quoted or charged it (after refunds); absent when unknown. */
+  credits?: number;
 }
 
 /** Whether a source is Genex's own: its jobs are read from its records, never from its calls. */

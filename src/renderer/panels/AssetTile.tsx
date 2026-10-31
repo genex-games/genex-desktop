@@ -36,6 +36,8 @@ export function AssetTile({
     >
       <button
         type="button"
+        // The file's name is the person's work.
+        data-analytics-mask
         aria-label={t("Preview {name}", { name })}
         title={name}
         onClick={onOpen}

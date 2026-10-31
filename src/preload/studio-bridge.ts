@@ -3,6 +3,7 @@
  * test can drive it with a recorder. Every call goes through {@link invoke} or {@link subscribe},
  * whose channel, payload and result types come from `shared/ipc-channels.ts`.
  */
+import { CodedError, errorCode } from "../shared/errors.ts";
 import { createRunSummaryFeeds, type GraphCursor } from "../shared/run-summary-feed.ts";
 import type { StudioApi } from "../shared/studio-api.ts";
 import type {
@@ -54,7 +55,7 @@ export function createStudioBridge(
   ): Promise<StudioInvokeResult<C>> {
     // Main answers every invoke with `IpcResult` (`main/ipc-handle.ts`), typed by the same map.
     const result = (await ipc.invoke(channel, args[0])) as IpcResult<StudioInvokeResult<C>>;
-    if (!result.ok) throw new Error(result.error);
+    if (!result.ok) throw failure(result);
     return result.value;
   }
   function subscribe<C extends StudioPushChannel>(
@@ -82,11 +83,18 @@ export function createStudioBridge(
     ...runCalls(bridge),
     ...studioCalls(bridge),
     ...playCalls(bridge),
+    ...storeCalls(bridge),
     ...pluginCalls(bridge),
     ...accountCalls(bridge),
     ...terminalCalls(bridge),
     ...previewCalls(bridge),
   };
+}
+
+/** A failed invoke as the renderer catches it: its words, and its code when it is one of the app's. */
+function failure(result: Extract<IpcResult, { ok: false }>): Error {
+  const code = errorCode(result);
+  return code ? new CodedError(code, result.error) : new Error(result.error);
 }
 
 /** What every group of calls is built from: the raw IPC, and the typed invoke and subscribe over it. */
@@ -263,6 +271,39 @@ function playCalls(bridge: BridgeCalls) {
   } satisfies Partial<StudioApi>;
 }
 
+/** The store: a game's Store and My items, the purchase sheet, the shelf, complaints and Create › Items. */
+function storeCalls(bridge: BridgeCalls) {
+  const { invoke, subscribe } = bridge;
+  return {
+    storeItems: (slug) => invoke("studio:store.items", { slug }),
+    storeMyItems: (slug) => invoke("studio:store.my-items", { slug }),
+    storeItemGames: (itemId) => invoke("studio:store.item-games", { itemId }),
+    storeBuy: (itemId, slug) => invoke("studio:store.buy", { itemId, slug }),
+    storeAnswer: (sheet, answer) => invoke("studio:store.answer", { sheet, answer }),
+    onStoreSheet: (listener) => subscribe("studio:store.sheet", listener),
+    storeClaim: (itemId, slug) => invoke("studio:store.claim", { itemId, slug }),
+    storeShelf: (userId) => invoke("studio:store.shelf", { userId }),
+    storeCoins: () => invoke("studio:store.coins"),
+    storeGetCoin: () => invoke("studio:store.get-coin"),
+    storeReport: (itemId, reason, message) => invoke("studio:store.report", { itemId, reason, message }),
+    itemsBrowse: (query, cursor, tags = []) => invoke("studio:items.browse", { query, cursor, tags }),
+    itemsBrowseDetail: (itemId) => invoke("studio:items.detail", { itemId }),
+    itemsAddToGame: (itemId, projectId) => invoke("studio:items.add", { itemId, projectId }),
+    itemsRemoveFromGame: (itemId, projectId) => invoke("studio:items.remove", { itemId, projectId }),
+    itemsSelling: () => invoke("studio:items.selling"),
+    itemPutOnSale: (itemId) => invoke("studio:items.put-on-sale", { itemId }),
+    itemTakeOffSale: (itemId) => invoke("studio:items.take-off-sale", { itemId }),
+    itemSetShared: (itemId, shared) => invoke("studio:items.shared", { itemId, shared }),
+    itemsLocal: (project) => invoke("studio:items.local", { project }),
+    itemsLocalApprove: (project, localId, contentHash) =>
+      invoke("studio:items.local-approve", { project, localId, contentHash }),
+    itemsLocalWithdraw: (project, localId) => invoke("studio:items.local-withdraw", { project, localId }),
+    itemsLocalShare: (project, localId, contentHash, shared) =>
+      invoke("studio:items.local-share", { project, localId, contentHash, shared }),
+    itemsLocalSettle: (project, force) => invoke("studio:items.local-settle", { project, force }),
+  } satisfies Partial<StudioApi>;
+}
+
 /** Settings, models, skills, learning and notifications. */
 function studioCalls(bridge: BridgeCalls) {
   const { invoke } = bridge;
@@ -281,7 +322,6 @@ function studioCalls(bridge: BridgeCalls) {
     engines: () => invoke("studio:engines"),
     providerUsage: () => invoke("studio:provider-usage"),
     hardware: () => invoke("studio:hardware"),
-    staged: () => invoke("studio:staged"),
     settings: () => invoke("studio:settings"),
     setSettings: (patch) => invoke("studio:settings.set", patch),
     diagnostics: () => invoke("studio:diagnostics"),
@@ -298,9 +338,6 @@ function studioCalls(bridge: BridgeCalls) {
     contextSettings: (engine, model, threadId) => invoke("studio:context.get", { engine, model, threadId }),
     setContextPolicy: (engine, model, policy, threadId) =>
       invoke("studio:context.set", { engine, model, policy, threadId }),
-    startSkillOpt: () => invoke("studio:skillopt.start"),
-    acceptProposal: (index, key) => invoke("studio:skillopt.accept", { index, ...key }),
-    discardProposal: (index, reason, key) => invoke("studio:skillopt.discard", { index, reason, ...key }),
     cancelModelDownload: () => invoke("studio:cancel-model-download", {}),
     modelInstallStatus: () => invoke("studio:model-install.status"),
     refreshModels: (provider) => invoke("studio:models.refresh", { provider }),
@@ -391,6 +428,9 @@ function accountCalls(bridge: BridgeCalls) {
     claudeLoginOpenBrowser: () => invoke("studio:claude-login.browser"),
     claudeLoginCancel: () => invoke("studio:claude-login.cancel"),
     openCodeSignIn: () => invoke("studio:opencode.signin"),
+    grokSignIn: () => invoke("studio:grok.signin"),
+    cursorSignIn: () => invoke("studio:cursor.signin"),
+    cursorSignOut: () => invoke("studio:cursor.signout"),
     openRouterKeySave: (key) => invoke("studio:openrouter.key.save", { key }),
     openRouterKeyClear: () => invoke("studio:openrouter.key.clear"),
     openRouterSignIn: () => invoke("studio:openrouter.signin"),

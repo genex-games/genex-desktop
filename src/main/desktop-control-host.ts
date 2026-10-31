@@ -12,10 +12,13 @@ import { StudioPlatform } from "../shared/boot.ts";
 import { computerControlOffered, desktopStopShortcut } from "../shared/computer-control.ts";
 import { type DesktopControl, desktopControl } from "./core/desktop-control.ts";
 import {
+  awaitGrants,
   connectCuaDriver,
   driverEnv,
   findCuaDriver,
   GrantHolder,
+  GrantStage,
+  openConnection,
   vmDriverCommand,
 } from "../substrate/cua-driver-client.ts";
 import {
@@ -23,11 +26,26 @@ import {
   type EmbeddedCuaDriver,
   embeddedCuaDriver,
   HOST_BUNDLE_ID,
+  hostAppName,
 } from "../substrate/cua-embedded.ts";
 import type { DesktopApp } from "../substrate/desktop-driver.ts";
 
 /** Where macOS lets the person turn screen recording on for an app. */
 const SCREEN_RECORDING_SETTINGS = "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture";
+
+/**
+ * Ask macOS for one of Genex's own grants: Accessibility through its prompt; Screen Recording by a
+ * capture attempt, which puts Genex in that list, and System Settings opened there.
+ */
+async function askForGrant(stage: GrantStage): Promise<void> {
+  if (stage === GrantStage.Accessibility) {
+    systemPreferences.isTrustedAccessibilityClient(true);
+    return;
+  }
+  if (stage !== GrantStage.ScreenRecording) return;
+  await desktopCapturer.getSources({ types: ["screen"], thumbnailSize: { width: 0, height: 0 } }).catch(() => []);
+  await shell.openExternal(SCREEN_RECORDING_SETTINGS);
+}
 
 /** Whether an app is this studio: one of its own processes, or its own name. */
 function isStudio(desktopApp: DesktopApp): boolean {
@@ -65,14 +83,17 @@ export function createDesktopControl(options: { automated: boolean; resources: s
     if (count > 0 && !held) globalShortcut.register(stop, () => void control?.stopAll());
     if (count === 0 && held) globalShortcut.unregister(stop);
   };
-  const connectLocal = (binary: string) => {
+  const daemonFor = (binary: string) => {
     embedded ??= embeddedCuaDriver({ command: binary, args: [] }, { hostBundleId: HOST_BUNDLE_ID, env: driverEnv() });
-    const daemon = embedded;
+    return embedded;
+  };
+  const connectLocal = (binary: string) => {
+    const daemon = daemonFor(binary);
     return connectCuaDriver(() => daemon.command(), {
       local: true,
       holder: GrantHolder.Host,
       restart: () => daemon.restart(),
-      ...(mac ? { askForGrants } : {}),
+      ...(mac ? { askForGrants, hostApp: hostAppName(process.execPath) } : {}),
     });
   };
   control = desktopControl({
@@ -80,7 +101,22 @@ export function createDesktopControl(options: { automated: boolean; resources: s
     connect: (binary) => (vmCommand ? connectCuaDriver(vmCommand, { local: false }) : connectLocal(binary)),
     ownApp: isStudio,
     ...(vmCommand ? { vm: true } : {}),
+    // A press that hands a task to computer control waits here for the person to allow Genex.
+    ...(mac && !vmCommand
+      ? {
+          awaitGrants: (binary: string, signal?: AbortSignal) => {
+            const daemon = daemonFor(binary);
+            return awaitGrants(async () => openConnection(await daemon.command()), {
+              ask: askForGrant,
+              restart: () => daemon.restart(),
+              ...(signal ? { signal } : {}),
+            });
+          },
+        }
+      : {}),
     onActive,
+    // A page of the task the agent answers (Creator Hub), in the browser where the person is signed in.
+    ...(vmCommand ? {} : { openPage: (address: string) => shell.openExternal(address) }),
     shutdown: async () => {
       await embedded?.stop();
     },

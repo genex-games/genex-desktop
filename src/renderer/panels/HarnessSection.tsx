@@ -3,6 +3,8 @@
  * paused builds resume on their own, and Copy diagnostics.
  */
 import { useEffect, useState, type JSX } from "react";
+import { trackSettingChanged } from "../analytics/workspace-track.ts";
+import { SettingKey } from "../analytics/workspace-vocabulary.ts";
 import type { StudioSettingsView } from "../../shared/studio-api.ts";
 import { DEFAULT_BUILDERS, MAX_BUILDERS } from "../../shared/builders.ts";
 import { Button } from "../ui/Button.tsx";
@@ -13,12 +15,13 @@ import { Pending } from "../ui/Pending.tsx";
 import { t } from "../../shared/i18n.ts";
 import { SkeletonRows } from "../ui/Skeleton.tsx";
 
-/** What the auto-apply switch means, given whether the harness learns at all. */
-function applyWords(learning: boolean, selfImproving: boolean): string {
-  if (!learning) return t("Self-improvement is off in Harness, so there is nothing to apply.");
-  return selfImproving
-    ? t("Suggestions that pass testing apply without asking. You can undo any of them in Harness.")
-    : t("Harness asks before changing how it builds. You can undo any change in Harness.");
+/** One of the section's settings, as its patch names it. */
+type HarnessPatch = { buildersMax?: number; autoResume?: boolean };
+
+/** Count a change of the section's settings (usage analytics): each key it changed, with its new value. */
+function trackHarnessChange(patch: HarnessPatch, failed: boolean): void {
+  if (patch.buildersMax !== undefined) trackSettingChanged(SettingKey.BuildersMax, patch.buildersMax, failed);
+  if (patch.autoResume !== undefined) trackSettingChanged(SettingKey.AutoResume, patch.autoResume, failed);
 }
 
 export function HarnessSection(): JSX.Element {
@@ -31,13 +34,15 @@ export function HarnessSection(): JSX.Element {
       .then(setSettings)
       .catch((cause) => setError(problemWords(cause)));
   }, []);
-  const change = async (patch: { selfImproving?: boolean; buildersMax?: number; autoResume?: boolean }) => {
+  const change = async (patch: HarnessPatch) => {
     if (busy) return;
     setBusy(true);
     setError(null);
     try {
       setSettings(await window.studio.setSettings(patch));
+      trackHarnessChange(patch, false);
     } catch (cause) {
+      trackHarnessChange(patch, true);
       setError(problemWords(cause));
     } finally {
       setBusy(false);
@@ -58,23 +63,10 @@ export function HarnessSection(): JSX.Element {
       </div>
     );
   const builders = settings.buildersMax ?? DEFAULT_BUILDERS;
-  const { learning, selfImproving } = settings;
   const autoResume = settings.autoResume !== false;
   return (
     <div data-harness-settings className="appearance-section">
       <section className="appearance-theme settings-rows">
-        <div className="appearance-row">
-          <label htmlFor="harness-self-improving" className="flex min-w-0 flex-col">
-            <span className="text-ink">{t("Apply suggestions automatically")}</span>
-            <span className="text-ink-3">{applyWords(learning, selfImproving)}</span>
-          </label>
-          <Switch
-            id="harness-self-improving"
-            checked={selfImproving}
-            disabled={busy || !learning}
-            onCheckedChange={(next) => void change({ selfImproving: next })}
-          />
-        </div>
         <div className="appearance-row">
           <span className="flex min-w-0 flex-col">
             <span id="harness-builders" className="text-ink">

@@ -505,6 +505,25 @@ describe("New Roblox game", () => {
     assert.equal(path.dirname(String(link?.project)), made[0]?.directory);
   });
 
+  it("sets a closed Studio up before opening the new place, so no restart is needed", async () => {
+    for (const name of ["create", "new-game"]) {
+      const mac = await robloxMac({ setUp: false, running: false });
+      // Where Studio, once run, keeps its plugins: Set up adds Genex's helper there.
+      await mkdir(path.join(mac.home, "Documents", "Roblox"), { recursive: true });
+      const game = await makeGame(mac, "sky-race", "Sky Race");
+      const record = path.join(mac.storage, "setup", "record.json");
+      const setUpAtLaunch: boolean[] = [];
+      const open = mac.deps.open;
+      mac.deps.open = async (launch) => {
+        setUpAtLaunch.push(existsSync(record));
+        await open(launch);
+      };
+      const { context } = hostFor(mac, game);
+      await (name === "create" ? action(mac, name, {}, context) : tool(mac, name, {}, context));
+      assert.deepEqual(setUpAtLaunch, [true], `${name}: Genex's helper is in before Studio opens`);
+    }
+  });
+
   it("is the agent's new-game in an open game, and refused outside one", async () => {
     const mac = await robloxMac({ running: false });
     const game = await makeGame(mac, "sky-race", "Sky Race");

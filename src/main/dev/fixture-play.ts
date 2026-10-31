@@ -434,7 +434,7 @@ const coin = createFixtureCoin({
   },
 });
 
-/** Get coin in a fixture launch: no page opens, and the balance grows as though coin were bought on genex.games. */
+/** Get Nex in a fixture launch: no page opens, and the balance grows as though coin were bought on genex.games. */
 export const fixtureGetCoin = (): void => coin.topUp();
 
 /** The fixture catalog by author: the gallery items of one author's games, as a profile lists them. */

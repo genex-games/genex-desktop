@@ -19,17 +19,31 @@ What Play sends is in [PRIVACY](../PRIVACY.md#play).
   signed out: the last account and balance are remembered on this Mac (`studio.genex.me`,
   `studio.genex.credits`); signing out, which Studio asks first, forgets them.
 - The sidebar plate: signed out (a quiet generated face, Sign in to Genex), finishing in the
-  browser (× cancels), signed in (avatar, name, credits opening Credits; a Pro's name has a PRO tag
-  and their row lights up with their nameplate under the pointer), offline (the last account with the offline mark), ended (dimmed, Sign in again). Its
-  menu: Profile, Friends, Credits (the Genex plugin page's Credits tab), Nameplate (Pro), Account
-  settings, Sign out.
-- The sidebar's friends, signed in, in Play and Create: right under the games, the word Friends
-  (the Friends page, with the requests waiting) and each friend in the API's order, their game on
-  one green line while they play (no online or offline); a Pro friend's row lights up with their first nameplate under the pointer. A row opens the profile; hovering a friend
-  in a game offers Join. About 4½ rows show, then they scroll; the page is read every 20 seconds,
-  as genex.games polls. Offline nobody is playing.
+  browser (× cancels), signed in (avatar, name, and in Play beside it the Nex the account may spend
+  (`studio:store.coins`, read as Play opens, as the purchase sheet closes and on focus) opening Get
+  Nex; nothing beside it in Create; a Pro's name has a PRO tag and their row lights up with their
+  nameplate under the pointer), offline (the last account with the offline mark), ended (dimmed,
+  Sign in again). Its menu: Profile, Friends, Genex credits with the whole balance (the Genex plugin
+  page's Credits tab; at zero Get credits under it, genex.games' dark buy button, opening its
+  plans), Nex (Get Nex), Account settings, Sign out.
+- Credits show where they are spent, never as a balance by the account: building runs on the
+  person's own Claude or ChatGPT plan, and credits pay only for Genex tools. A Genex card on its way
+  shows its price (Genex's quote or charge, else the price list's for its operation; none for an
+  unlimited account); Approve on a review shows what its next step costs, and Get credits in its
+  place when the balance cannot pay. A request Genex refused for too few credits (the plugin reads
+  the balance against the price list and records `blocked: credits`) keeps its card, Not enough
+  credits with Get credits, then Make it once the balance read on return pays for it, which asks
+  the game's chat to make it.
+- The sidebar's friends, signed in, in Play and Create: at the sidebar's foot, right on the account
+  plate, with the games taking the room above. The word Friends with the requests waiting after it,
+  then ↗ (the Friends page), and a chevron that folds them to that one line or opens them again,
+  remembered on this Mac for Play and Create alike. Open, each friend in the API's order, their game
+  on one green line while they play (no online or offline); a Pro friend's row lights up with their first nameplate under the pointer. A row opens the profile; hovering a friend
+  in a game offers Join. About 4½ rows show (at most half the list in a short window), then they
+  scroll; faces and names start where the games' and the plate's do. The page is read every 20
+  seconds, as genex.games polls. Offline nobody is playing.
 - Settings › Genex account: avatar (generated or photo, Regenerate), a Pro's nameplate (New one), name, nickname (`@handle` and
-  Edit, once genex.games knows nicknames), credits with Buy credits, Sign out by the title. Signed
+  Edit, once genex.games knows nicknames), credits with Get credits, Sign out by the title. Signed
   out it is the sign-in stage, with the account-card drawing.
 - Publish needs only the account: signed out it asks to sign in. Its "Share its N assets on Play"
   switch (off; shown while some Genex asset is not on Play) shares them when the game goes live. Multiplayer needs the Genex plugin
@@ -37,8 +51,12 @@ What Play sends is in [PRIVACY](../PRIVACY.md#play).
 
 ## The dashboard
 
-- Games, Tools and Assets, each with tabs and search; Recent once something was played; Top
-  creators (the last 30 days) above Games' tabs. The promo card shows until the first sign-in or
+- Games, Tools and Assets, each with tabs and search; Recent once something was played (opened in
+  the viewer, a native-only game's page shown however it was reached, or a native app launched). A
+  Recent row takes the newest cover any card or page shows for its game; one still without a cover,
+  or whose cover no longer loads, reads its game's page once a window. A game with no cover shows a
+  still wire floor (`NoCover.tsx`) on its row and card. Top creators (the last 30 days) above
+  Games' tabs. The promo card shows until the first sign-in or
   its ×.
 - Assets are square tiles under two switchers: kind (All · 3D · Images · Sounds · Videos, a kind
   read from the whole catalog) and Everyone · Mine (the account's library, Saved/Shared tags, signed
@@ -128,13 +146,14 @@ What Play sends is in [PRIVACY](../PRIVACY.md#play).
   cancels it on genex.games, and the next sheet waits 5 seconds; a page that reloads or leaves, or a
   viewer that closes, cancels one still unpaid. Its states: Ask (`× N` above one; a game-priced
   payment's terms whole, in a scroll area), Paying, Paid (the receipt and what is left), Not enough
-  coin (Get coin opens genex.games; once the coin arrives, Review; after genex.games refused Pay for
-  want of coin, try again in the game), Sign in (Review once signed in), Pending (genex.games has not
-  answered; asked every 2 seconds) and Failed (timed out, canceled, refused or refunded). A purchase
+  coin (Get Nex opens genex.games' Buy Nex picker, `/inventory?buy=nex`; once the coin arrives,
+  Review; after genex.games refused Pay for want of coin, try again in the game), Sign in (Review
+  once signed in), Pending (genex.games has not answered; asked every 2 seconds) and Failed (timed
+  out, canceled, refused or refunded). A purchase
   genex.games still holds open never times out sooner than its two minutes after the game asked, by
   the app's own clock, however far that clock runs ahead. Signing in from the sheet signs the bar in
-  too. UNCONFIRMED with genex.games: confirming from Studio on the `native_modal` surface, and
-  `/inventory` as Get coin's page; each is one constant (`STUDIO_CONFIRM_SURFACE`, `playCoinPageUrl`).
+  too. UNCONFIRMED with genex.games: confirming from Studio on the `native_modal` surface, one
+  constant (`STUDIO_CONFIRM_SURFACE`). Get Nex's page is the website's own coin page (`playCoinPageUrl`).
   A development profile pointing Studio at another API catches nothing.
 - The page stays on Genex games' addresses; a link it opens goes to the browser, at most one every
   few seconds. A coin purchase's popup is the exception above: its confirm address no longer goes to
@@ -150,7 +169,10 @@ What Play sends is in [PRIVACY](../PRIVACY.md#play).
   project: a creator who never shared its project, `game-source.ts`) makes nothing and says so
   (`PlayRemixRefusal`). Cards and the viewer offer Remix only once main has looked at the source
   (`studio:play.remix-ready`, `remix-ready.ts`: the head commit by `git ls-remote`, its file names by a
-  blobless shallow clone, kept by commit in `play-remix-ready.json`).
+  blobless shallow clone, kept by commit in `play-remix-ready.json`). A Mac without Apple's developer
+  tools has only a stand-in for Git, which asks to install them; there the app runs its own git
+  ([Bundled git](mac-bundled-git.md)), and Remix stays hidden only where no git runs, as in a
+  development build without it (`hostGitRuns`, asked once a minute).
   A game reaches Genex with its project only from a Publish that allowed remixing (the dialog's
   Allow remixing, ticked by default; Rights says what remixers may do): Studio stages the files the
   game's git keeps, without history, packages, agent settings, secrets or an engine's caches and
@@ -211,7 +233,9 @@ is.
   anything is unpacked (`native-zip.ts`: no entry or link outside it, nothing written through a
   link, no more than the stated size), unpacked with `ditto --noqtn`, every link resolved inside it,
   its program made runnable (an app packed on Windows carries no execute bit), the app's signature
-  (ad hoc is enough) and processor checked, then its bundle id set to
+  (ad hoc is enough) and processor checked (its Mach-O header read in the app, since `lipo` needs
+  Apple's developer tools; an Intel-only app on Apple silicon without Rosetta fails as
+  `needs-rosetta`), then its bundle id set to
   `games.genex.play.<slug>` and signed again ad hoc, so it can only write its own preferences. A
   Linux build is unpacked by the app itself (`unpackZip`: the same checks, each file no larger than
   its record, execute bits kept, links last) and its `entry` must be a regular file, an ELF program
@@ -299,6 +323,137 @@ is.
 - `studio:play.game` reads a game's own page (`StudioApi.playGame`): its card, likes, comments,
   description, screenshots and when it changed.
 
+## The item store
+
+Games sell items for Nex, Genex's currency, which players buy with real money (the code, the API
+and genex.games' routes still call it coin; marketplace plan; `/api/store`, off while `STORE_MODE` is).
+An item is a SKU: a name, a description, a picture (maybe a 3D model), a price or Free, and
+consumable or durable. A **shared item** is a durable its author lets other games use; a game that
+adds one holds an **allowance** for it, and sells it once a live build made after the add is promoted.
+Main reads every store answer as hostile input as the app's Genex account (`main/play/store.ts`,
+channels `studio:store.*` and `studio:items.*` in `main/ipc/store.ts`, answered for Studio's main
+frame only, `STUDIO_UI_ONLY`); prices, shares and counts are genex.games' own, never computed here.
+
+- A game's page has a **Store** section with **Store / My items N** (`play/GameStore.tsx`): cards
+  with the render, the name and the price, Free or Owned, a shared item's "N games" badge; My items
+  marks each owned item Works here, N left, or dimmed Not in this game. It hides while the store is
+  off, unreadable or empty. A card opens the item's sheet (`play/ItemSheet.tsx`): Works in N games,
+  the price, Balance X → Y (short: You have X · Y more needed, and, when genex.games holds earned
+  coin, "N of your coin is on hold until <date>.") and one button: Pay N runs Play's purchase sheet in the studio window
+  (`main/play/store-sheet.ts`, confirmed on `STUDIO_CONFIRM_SURFACE`; `followStudioWindow` makes Pay
+  wait again when the window loses or regains focus, and a reload, a dead page or a closed window
+  cancels a purchase still unpaid), Get claims a Free item, Get Nex opens genex.games and Review
+  follows the coin; ⋯ reports the item (Copy, Doesn't work, Inappropriate, Scam). Drag to turn loads
+  the item's GLB only from Genex's asset hosts, the only ones main passes on and the window's
+  `connect-src` allows. A profile shows up to five owned items over its stats (`play/ItemShelf.tsx`),
+  each with **Get in \<game>** and that game's cover, which opens the game's page; an item that game
+  no longer sells (`onSale: false`; absent reads as true) stays, without the button (P21).
+  The Store tab is read again when Store or My items is chosen again and when the window comes
+  back to the front, a burst of those once (`play/game-store-reads.ts`, `REREAD_GAP_MS`).
+- A web game's card opens the viewer, not its page (a web game's page is the game, as on
+  genex.games), so the viewer's bar has the **Store** door, after Share, for a game whose Store tab
+  has items (`PlayViewerDeps.store`; none while the store is off, empty or unreadable). It opens
+  the same `GameStore` in the game's place on the app's own page (`PlayViewerLayer.tsx`), never over
+  the game in the bar's layer: main hides the game's view and never closes it, so the game keeps its
+  session (a player mid-run loses nothing; an item bought here reaches the game when it reads its
+  entitlements again), and the item sheet, its purchase machine and `STUDIO_UI_ONLY` stay the studio
+  window's. The keyboard goes to the page; the door again, **Back to game** or Esc closes it and
+  gives the game its place and keyboard back (an item sheet's own Esc closes only the sheet,
+  `viewerEscape`). While it is open, a game that finishes loading stays hidden, and Full screen and
+  Resume do nothing. A native game's card still opens its page, with its Store under it.
+- **Create › Items** (sidebar row `[data-sidebar-room="items"]`, `panels/items/`,
+  `state/items.ts`) is a room over the workspace, like Plugins. **Browse** lists other creators'
+  shared items with a search, read once the typing pauses; the intro and You get per sale name the
+  selling game's share genex.games sends (`sellerShareBps`, `panels/items/browse-model.ts`), else the
+  design's words; the panel shows Players pay, You get per sale, **For \<game ▾>** (the account's
+  local games whose Genex publish record names a project) and **Add to game**: it adds the
+  allowance, then opens that game's chat and sends the prompt that has the agent run
+  `genex items add <id>` (`panels/items/items-prompts.ts`, `composeInChatWhenOpen`): the agent calls
+  `genex__cli-paid` `items add`, and Studio moves the CLI's `genex-items/<id>/` into the game
+  ([host tools](plugins.md#first-party-privileges)). An item already in the chosen game (Browse's
+  detail names the account's games it was added to) says **Added to your game**, "Players see it after
+  your next publish." until a build made after it goes live (Q5), then **On sale in your game**, and
+  **Remove from game**, asked first, calls `itemsRemoveFromGame`. Both tabs share one frame (at most
+  1,160 px wide), so the page keeps its width when the tab changes. **Selling**
+  shows Ready to use and On hold for N days with **What is Nex?**, each opening the **Nex sheet**
+  (`play/NexSheet.tsx`, also opened by the coin beside the account's name in Play and the account
+  menu's Nex): what Nex is, the account's Nex and what Selling holds back, how it is got, spent and
+  earned, that credits are separate, and **Get Nex**. Then the account's items (Draft, put on sale; Report
+  under review; Off sale, dimmed) with Put on sale, Take off sale, Other games can use it and Ask the
+  agent to change it, which leaves words in the item's game's composer; a Free item's price says Free.
+  Items are made in a game's chat, so the page has no New item.
+  A tab chosen, the sidebar's Items row pressed again and the window coming back read the tab on
+  show again (a burst once, `REREAD_GAP_MS`); Put on sale, Take off sale and sharing read Selling
+  again at once, Add to and Remove from the item's detail.
+- The **Listing draft card**: when `genex__cli` runs `shop add` (no card asks first; it refuses an item
+  without its picture, `image`, and a picture that is not a square PNG or WebP of at least 768 × 768,
+  since the card shows it edge to edge (`item-pictures.ts` `fitsItemCard`); it runs at any time, with
+  or without a build) or `genex__cli-paid` runs `shop set` and the pinned
+  CLI answers its `--json` draft (`kind: "genex.item_draft"`, version 1) for the game's own hosted
+  project, main records `item_drafted` in the chat (`main/core/item-draft.ts`) and announces
+  `item.drafted`. The harness may write neither, and a draft an agent writes in words is text. The
+  card goes up after the turn's reply, one per item (a newer draft replaces it), with the price,
+  **Other games can use it** (main's `itemSetShared`, on an item genex.games holds) and where its sale
+  stands: "Draft · goes on sale when you publish", On sale (read from Selling too, so a sale Studio
+  made shows), or Off sale; the description shows two lines at most; changes are the agent's ("Ask for
+  changes below"). Nothing on the card puts an item on sale, and Studio's
+  CLI runs never publish (`shop publish` is not in its command table): Studio itself does, after a
+  publish (below). `picture_missing` / `picture_invalid` ask the agent to upload the picture. The
+  agent's `shop add|set` takes the description, tags, sharing, Free and the game's picture, model
+  and package files ([host tools](plugins.md#first-party-privileges)). The card needs CLI 1.36.14
+  (`kind`/`version` in `--json`); the pin is 1.36.15.
+- **Local drafts** (an item made before its game is on Genex, contract "Local item drafts"): the CLI
+  keeps it in the game's `.genex/items/` (`<localId>.json` and a `<localId>/` folder). Studio copies
+  those drafts into each `shop` run's folder and carries a `shop add|set|remove`'s change back
+  (`main/core/local-item-files.ts`: drafts only, never through a link, capped). A Loop's builder makes
+  its drafts in its build's copy of the game, which reaches the game's folder only when the build
+  lands, so Studio also keeps its own copy of each draft's picture as the CLI wrote it
+  (`<userData>/item-pictures/<game>/`, `main/core/item-pictures.ts`; a plain file, never through a
+  link): the card reads that copy first, then the game's folder. Its card (`state:
+  "local"`, keyed by local id) says "Draft · goes on sale when you publish" and offers no **Other games
+  can use it**, since no other game can reach an item before its game is on Genex. Once the game's publish
+  record says its publish made it public (`status: "published"`, written last: a publish that failed
+  part-way or is still running has none), `main/core/local-items.ts` settles the game while one of its
+  chats shows a local card or Studio's record (`<userData>/item-approvals.json`) holds a draft not yet
+  uploaded: on open, on focus (at most every 15 s, one at a time) and at once when a Genex publish
+  finishes (`chat/use-local-items.ts`). It runs Studio's own `shop sync --json` (never an agent's;
+  uploaded drafts leave the game) and puts every upload on sale (`itemPutOnSale`); right after a
+  publish it also puts on sale the game's items still drafts on genex.games (`hostedDraftIds` over
+  Selling), never on a mere focus, since only a publish carries the code that delivers them. The card
+  then becomes the item's: On sale, or genex.games' refusal; a refused upload stays local with its
+  reason, and with genex.games' own code beside the words when Studio has none for it
+  (`unwordedRefusalCode`, `[data-listing-refusal]`). When the content Genex got is not the draft the card shows (files edited outside Studio),
+  the card offers no sharing and sends the person to Items › Selling. Nothing in the game folder names
+  what goes up, so a `last-sync.json` from a terminal `genex publish` uploads nothing.
+- The **Shop** tab (`panels/shop/`): beside Live and Builds once the game sells something, every item
+  of the game as its chat's cards show it (its local drafts, then its items Selling lists for its
+  hosted project), drawn as tiles (`ListingLook.Tile`): the picture on top with the sale's word (Draft,
+  On sale, Off sale) and a pencil whose tooltip says **Ask for changes**, which leaves
+  `changeItemPrompt` in the game's chat; then the name beside the price, the description and sharing.
+
+Fixtures: with `STUDIO_FIXTURE_GENEX_ACCOUNT=1`, `dev/fixture-store.ts` answers the store (Stick &
+Steel's store; the account's Snowball items); `--fixture items-store` makes the fixture game the
+account's Snowball on Genex and puts Frost Axe's Listing draft card in its chat, and adds `fixture-duty`
+(Claude of Duty, not on Genex yet) with Ice Shield's local draft; once its publish record names the
+account's `claude-of-duty` as published, the fixture's own sync uploads it to the fixture store (`dev/fixture-items.ts`).
+Selectors: the viewer's door `[data-play-bar="store"]` (`aria-pressed` while open), its Store
+`[data-play-viewer-store="<slug>"]` with `[data-play-viewer-store-back]`, a page's Store
+`[data-game-store="<slug>"]` (`[data-game-store-view="store|my-items"]`, `[data-store-item="<id>"]`),
+the sheet's `[data-item-sheet-held]`, the shelf's `[data-shelf-item="<id>"]` / `[data-shelf-get="<slug>"]`;
+`[data-sidebar-room="items"]`; `[data-items-page="browse|selling"]` with
+`[data-items-tab="<tab>"]`, `[data-items-search]`, `[data-items-browse]`, `[data-items-grid]`,
+`[data-items-card="<id>"]`, `[data-items-detail="<id>"]`, `[data-items-add-to="<game>"]`,
+`[data-items-added="<game>"]`, `[data-items-remove-from="<game>"]` → `[data-items-remove-confirm="<game>"]`,
+`[data-items-choose-game]` (`[data-items-game="<game>"]`), `[data-items-selling]`, `[data-items-held]`,
+`[data-items-about-nex]` (the Nex sheet `[data-nex-sheet]`, `[data-nex-get]`), `[data-items-row="<id>"]`, `[data-items-status="draft|under-review|off-sale"]`,
+`[data-items-put-on-sale="<id>"]`, `[data-items-actions="<id>"]` → `[data-items-action="<action>"]`;
+in the chat `[data-listing-draft="<id>"][data-listing-sale="offer|pressing|on-sale|taken-down"]`,
+`[data-listing-share="<id>"]`, `[data-listing-put-on-sale="<id>"]`, `[data-listing-on-sale]`; a local draft's
+`[data-listing-draft="<localId>"][data-listing-local="offer|approved|changed|removed"]`,
+`[data-listing-local-status]`, `[data-listing-sell-when-published="<localId>"]` (`aria-pressed`),
+`[data-listing-undo-sell="<localId>"]`, `[data-listing-local-changed]`, `[data-listing-stayed-draft]`;
+the Shop tab's `[data-shop-stage]`, each tile's pencil `[data-listing-ask]`.
+
 ## Where to work
 
 `src/renderer/play/`, `src/renderer/state/play.ts` and `people.ts`, `src/renderer/avatars/`,
@@ -312,12 +467,25 @@ state of the sheet, on a confirm website that resolves nowhere; the account hold
 coin adds 1,000. Tests: `tests/conformance/play-*`, `genex-account`, `app-account-plugin`; the
 purchase popup in Electron: `npm run test:ui -- play-purchase`.
 
-A live `studio:dev` profile can point Play at a local or test genex.games with
-`GENEX_DEV_PLAY_API_ORIGIN` and `GENEX_DEV_PLAY_WEB_ORIGIN` (bare origins: https, or http on this
-Mac; `src/main/play/origins.ts`). A packaged app or a fixture launch ignores them. With another
-API the account signs in on that server's own device sign-in, for the launch only
-(`src/main/dev/dev-stand-account.ts`); Publish, the Genex plugin, games' pages and their
-pictures stay on genex.games.
+A live `studio:dev` profile can point Play at a local or test genex.games (a stand) with
+`GENEX_DEV_PLAY_API_ORIGIN`, `GENEX_DEV_PLAY_WEB_ORIGIN` and `GENEX_DEV_PLAY_GAMES_ORIGIN` (bare
+origins: https, or http on this Mac), plus `GENEX_DEV_PLAY_GAMES_CA` (an absolute PEM path;
+`src/main/play/origins.ts` `devStand`). A packaged app, a fixture launch and the normal profile
+ignore them. With another API the account signs in on that server's own device sign-in, for the
+launch only (`src/main/dev/dev-stand-account.ts`), and `genex__cli` and the Genex plugin's backend
+(its publish, and so its asset tools and account page) run against that API with that account
+(`launchStand`, `genexPluginAccount`: the registry's `hostAccount` names the API to the backend as
+`STUDIO_PLUGIN_API` and hands the stand's token as its lease; its saved genex.games account is
+neither read nor written). The games origin counts only with a stand API: the viewer plays
+`<scheme>://<slug>.<games host>/`, its pages may hop only to the stand's website, purchases are caught
+on that website (`purchaseConfirmOrigin`), and the CA is trusted for those game hosts alone
+(`play/dev-games-trust.ts`) and by the Genex plugin's publish, whose backend and CLI runs trust it
+beside the system's to push to the stand's source host and check its game host
+(`STUDIO_PLUGIN_CA`, `NODE_EXTRA_CA_CERTS`, `GIT_SSL_CAINFO`); that publish tests its draft on the
+stand's game host (`STUDIO_PLUGIN_GAMES`, `publish.ts` `stagingLink`). A development launch still takes no `genex://` link, and item pictures and models from hosts other
+than Genex's (a local MinIO) still draw the stand-in. Get Nex opens the website's coin page as sign-in
+opens its pages (`websitePageOpener`), so a development website's http page opens too. See the
+[field guide](STUDIO-DEVELOPER-FIELD-GUIDE.md#run-an-owned-development-profile).
 
 ## Asset library and sharing
 

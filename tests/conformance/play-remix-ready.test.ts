@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { sourceHoldsGame } from "../../src/main/play/game-source.ts";
 import {
+  GIT_RUNS_TRUST_MS,
   type KeptReadiness,
   READY_TRUST_MS,
   readyFor,
@@ -72,7 +73,9 @@ function fakeReadiness(
     [OTHER]: { paths: ["index.html"], packageJson: null },
     ...options.listings,
   };
-  const calls = { head: [] as string[], list: [] as string[], saves: 0 };
+  const calls = { head: [] as string[], list: [] as string[], saves: 0, gitRuns: 0 };
+  /** Whether this computer has a Git that runs: a test takes it away as a Mac without developer tools has none. */
+  const git = { runs: true };
   let now = 1_000;
   let kept: Record<string, KeptReadiness> = {};
   let listing = 0;
@@ -94,6 +97,10 @@ function fakeReadiness(
       if (!found) throw new Error("clone failed");
       return found;
     },
+    gitRuns: async () => {
+      calls.gitRuns += 1;
+      return git.runs;
+    },
     load: async () => kept,
     save: async (next) => {
       calls.saves += 1;
@@ -104,6 +111,7 @@ function fakeReadiness(
   return {
     readiness,
     calls,
+    git,
     heads,
     advance: (ms: number) => {
       now += ms;
@@ -142,6 +150,21 @@ describe("Play's look at a game's source", () => {
     const unlisted = fakeReadiness({ listings: { [OTHER]: undefined as unknown as SourceListing } });
     assert.equal(await unlisted.readiness.ready(OTHER), false);
     assert.equal(unlisted.kept()[OTHER], undefined);
+  });
+
+  it("runs no git on a computer without one (a Mac without Apple's developer tools) and looks once it has one", async () => {
+    const fake = fakeReadiness();
+    fake.git.runs = false;
+    assert.deepEqual(await Promise.all([SOURCE, OTHER].map((url) => fake.readiness.ready(url))), [false, false]);
+    assert.deepEqual(fake.calls.head, [], "git's stand-in never runs, so macOS never asks to install the tools");
+    assert.equal(fake.calls.gitRuns, 1, "one ask for every card shown at once");
+    fake.git.runs = true;
+    assert.equal(await fake.readiness.ready(OTHER), false, "the answer is trusted a while");
+    fake.advance(GIT_RUNS_TRUST_MS);
+    assert.equal(await fake.readiness.ready(OTHER), true, "with the tools installed, Remix shows");
+    fake.git.runs = false;
+    fake.advance(GIT_RUNS_TRUST_MS);
+    assert.equal(await fake.readiness.ready(OTHER), false, "a kept yes is no without a Git to remix with");
   });
 
   it("never asks git about an address that is not Genex's https git", async () => {

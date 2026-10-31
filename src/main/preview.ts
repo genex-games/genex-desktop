@@ -2,11 +2,12 @@ import { previewVisibility } from "./preview-visibility.ts";
 import {
   CaptureSource,
   CaptureSurface,
+  LiveLoadFailure,
   type PreviewGone,
   PreviewConsoleSource,
   previewGone,
 } from "../shared/preview-contract.ts";
-import { PreviewProfiler, type ProfileRequest } from "../substrate/preview-profiler.ts";
+import { failedLoad, PageLoadWait, waitForLoad } from "./preview-load-failure.ts";
 /**
  * Game preview.
  *
@@ -16,13 +17,14 @@ import { PreviewProfiler, type ProfileRequest } from "../substrate/preview-profi
  * `webContents` APIs.
  *
  * These are also the studio's senses. Screenshots, console output, crash signals and
- * `window.__studio.state()` are what turn "it renders" into something a critic can judge.
+ * the page's own console are what turn "it renders" into something the agents can read.
  */
 import {
   type BaseWindow,
   type CustomScheme,
   type NativeImage,
   type Session,
+  type WebContents,
   WebContentsView,
   nativeImage,
   net,
@@ -30,13 +32,12 @@ import {
   session,
 } from "electron";
 import path from "node:path";
-import { readFile, realpath, stat } from "node:fs/promises";
+import { realpath, stat } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import {
   HttpRouteKind,
   HttpStatus,
   MAX_REWRITE_BYTES,
-  confinePreviewContents,
   packedBuildFile,
   gameRequestAllowed,
   previewNavigationAllowed,
@@ -54,13 +55,12 @@ import {
   unpackedResponse,
 } from "./page-serve.ts";
 import { PAGE_DISPATCH } from "./page-dispatch.ts";
-import { anchoredBounds } from "./preview-anchor.ts";
+import { anchoredBounds, placedBounds, slotHidden } from "./preview-anchor.ts";
 import { gameViewPreferences } from "./game-view.ts";
 import { capActions, type PreviewInputAction } from "../substrate/preview-input.ts";
 import { applyInputAction, type PageDispatch } from "./preview-input-driver.ts";
 import { cropImageFile, diffImageFiles, encodedImageStats, pairJpeg, resizeToJpeg } from "./preview-images.ts";
 import { DEFAULT_SHOT_QUALITY, encodeStill, stillFit } from "./core/capture.ts";
-import { clipPageOn, recordClip } from "./preview-clip.ts";
 import {
   ATTACH_PROBE,
   GL_PROBE,
@@ -73,24 +73,16 @@ import {
   studioStateExpression,
 } from "./preview-page-scripts.ts";
 import { StateShape } from "../shared/studio-state-shape.ts";
-import {
-  computePixelStats,
-  exposureStats,
-  isEffectivelyBlack,
-  type PixelDiff,
-  type PixelStats,
-} from "../substrate/pixel-stats.ts";
+import { computePixelStats, exposureStats, isEffectivelyBlack, type PixelDiff } from "../substrate/pixel-stats.ts";
 import { chooseCapture, probePageUi, resolveSurface, type PageUi } from "../substrate/page-ui.ts";
 import type {
   CropRect,
   PageAttachReport,
-  PreviewClipAnswer,
-  PreviewClipRequest,
   PreviewStillAnswer,
   PreviewStillRequest,
   ShimOptions,
 } from "../substrate/preview-port.ts";
-import { SECOND_MS } from "../shared/duration.ts";
+import { MINUTE_MS, SECOND_MS } from "../shared/duration.ts";
 import type { PreviewPixelStats } from "./studio-core.ts";
 import { errorMessage } from "../shared/errors.ts";
 import { setTimeout as delay } from "node:timers/promises";
@@ -99,7 +91,7 @@ import { setTimeout as delay } from "node:timers/promises";
 const MESSAGE = {
   renderGone: (reason: string) => `render process gone: ${reason}`,
   unresponsive: "game loop is unresponsive",
-  blocked: (what: string) => `the studio blocked ${what}: games run offline in the preview`,
+  blocked: (what: string) => `the studio blocked ${what}`,
   pageSurfaceFallback: (reason: string | null) =>
     `the page surface could not be photographed${reason === null ? "" : ` (${reason})`}; the canvas was photographed instead`,
   noFrame: "the page produced no frame to photograph",
@@ -108,6 +100,9 @@ const MESSAGE = {
   notMethodName: (method: string) => `not a studio method name: ${method}`,
   consoleUnavailable: "Console observation unavailable; no console-clean claim is possible",
   closed: "this game window was closed",
+  noPage: (why: string | null) => `this game window holds no page: ${why ?? "nothing was loaded into it"}`,
+  loadStalled: (url: string, seconds: number) =>
+    `${url} had not finished loading after ${seconds} s: a script that never ends (a loop at start-up) or a request that never answers holds it`,
 } as const;
 
 export type { PageCaptureInfo };
@@ -139,7 +134,13 @@ export interface PreviewLiveStatus {
   /** The person stopped the game: its page is gone until Play (`resume`) brings it back. */
   stopped: boolean;
   loadError: string | null;
+  /** What kind of failure `loadError` is: Chromium's, or the game's own build; null while there is none. */
+  loadFailure: LiveLoadFailure | null;
   crashed: boolean;
+  /** Why the renderer went away while `crashed`; null while it runs. */
+  gone: PreviewGone | null;
+  /** The page's loop stopped answering (Electron's `unresponsive`) and has not answered since. */
+  unresponsive: boolean;
   page: { complete: boolean; resources: number; state: Record<string, unknown> | null } | null;
 }
 
@@ -163,6 +164,11 @@ export interface GamePreviewOptions {
 const SCHEME = "game";
 /** What a stopped game's view holds: an empty page, allowed by the game partition (`data:`). */
 const STOPPED_PAGE = "data:text/html;charset=utf-8,";
+/**
+ * The longest a load, Play, Reload or Stop waits for its page: past it the page is noted as
+ * stalled (`waitForLoad`). Longer than Live's own loader (45 s), which gives up first.
+ */
+const PAGE_LOAD_MAX_MS = MINUTE_MS;
 /** The pause before the one compositor retry a failed capture gets. */
 const COMPOSITOR_RETRY_MS = 250;
 /** How long a dialog waits for the stage's cover frame before the game view leaves without one. */
@@ -226,7 +232,6 @@ export class GamePreview {
    * this window's handlers serving the next window opened on the same partition.
    */
   #closed = false;
-  #observed = false;
   #renderingVisible = true;
   /** The most frames a second the page draws (`live-pace.ts`), 0 for the display's rate. */
   #maxFps = 0;
@@ -237,6 +242,7 @@ export class GamePreview {
   #fill: Electron.Rectangle | null = null;
   /** The stopped game's address, kept for `resume`; null while the game runs. */
   #stoppedUrl: string | null = null;
+  /** The last size the view was shown at: the size it keeps out of sight (`placedBounds`). */
   #visibleBounds: Electron.Rectangle = { x: 0, y: 0, width: 960, height: 600 };
   /** The stage's slot as last measured, and the window size it was measured in. */
   #slot: { bounds: Electron.Rectangle; viewport: Electron.Size | null } | null = null;
@@ -252,6 +258,8 @@ export class GamePreview {
   #gone: PreviewGone | null = null;
   #unresponsive = false;
   #loadError: string | null = null;
+  /** What kind of failure `#loadError` is; set and cleared with it. */
+  #loadFailure: LiveLoadFailure | null = null;
   #captureRecoveries = 0;
   /** What the page said about the last picture it took (or declined to take) — M4.9a. */
   #pageCaptureInfo: PageCaptureInfo | null = null;
@@ -288,29 +296,6 @@ export class GamePreview {
   /** How the studio reached this page's `three`, recorded when the entry was rewritten. */
   #reach: { reach: string; hooked: Record<string, string> } = { reach: "none", hooked: {} };
 
-  #profiler = new PreviewProfiler(
-    (s) => this.evaluate(s),
-    async () => {
-      const manifest = JSON.parse(await readFile(path.join(this.options.vendorDir, "VERSION.json"), "utf8"));
-      return String(manifest.three);
-    },
-  );
-
-  async profile(request: ProfileRequest) {
-    const result = (await this.#profiler.profile(request)) as {
-      state?: string;
-      sample?: { configuration: Record<string, unknown> };
-    };
-    if (result.state === "finished" && result.sample) {
-      result.sample.configuration.surface = this.options.offscreen ? "electron-gpu-offscreen" : "electron-window";
-      result.sample.configuration.frameRateLimit = this.options.offscreen ? 60 : null;
-    }
-    return result;
-  }
-  invalidateProfile(reason: string) {
-    return this.#profiler.invalidate(reason);
-  }
-
   constructor(options: GamePreviewOptions) {
     this.options = options;
     this.#audioMuted = options.muted ?? false;
@@ -341,14 +326,14 @@ export class GamePreview {
       gameSession.protocol.handle(SCHEME, (request) => this.#serve(request));
     }
     // http://localhost:<port>/ is the same server under the origin a bundled game expects; any
-    // other http request is a 403.
+    // other http request goes to the network from this partition.
     if (!gameSession.protocol.isProtocolHandled("http")) {
       gameSession.protocol.handle("http", (request) => this.#serveLoopback(request));
     }
-    // A game runs offline (SECUI-3): the partition may reach the studio's own server and nothing
-    // else, so what an agent wrote into a game cannot leave the machine when the studio loads it.
+    // The network is open like a normal web page's (backends, WebSockets, any host); the filter
+    // refuses only what a page never reaches (the disk, the browser's own pages).
     gameSession.webRequest.onBeforeRequest((details, callback) => {
-      const allowed = gameRequestAllowed(details.url, loopbackPorts, details.method);
+      const allowed = gameRequestAllowed(details.url);
       if (!allowed) this.#noteBlocked("request", details.url);
       callback(allowed ? {} : { cancel: true });
     });
@@ -361,10 +346,6 @@ export class GamePreview {
     const wc = view.webContents;
     if (this.options.offscreen) wc.setFrameRate(60);
     if (this.#audioMuted) wc.setAudioMuted(true);
-    confinePreviewContents(wc);
-    wc.on("did-start-navigation", () => {
-      void this.#profiler.invalidate("navigation changed");
-    });
     wc.setWindowOpenHandler(() => ({ action: "deny" }));
     // The page stays on game:// or its loopback origin: a remote page inside the studio's chrome,
     // which has no URL bar, is a sign-in form nobody can tell from the studio's own (SECUI-3).
@@ -412,8 +393,11 @@ export class GamePreview {
       this.#unresponsive = false;
     });
     wc.on("did-fail-load", (_event, code, description, url) => {
-      if (code === -3) return; // aborted, e.g. superseded navigation
-      this.#loadError = `${description} (${code}) for ${url}`;
+      // Null for an aborted load, e.g. a superseded navigation.
+      const failed = failedLoad(code, description, url);
+      if (!failed) return;
+      this.#loadError = failed.loadError;
+      this.#loadFailure = failed.loadFailure;
       this.#push({ at: Date.now(), level: "error", message: this.#loadError });
     });
     // At commit the new document exists and its module scripts are still being fetched: the
@@ -423,6 +407,7 @@ export class GamePreview {
     wc.on("did-finish-load", () => {
       this.#syncAnimationVisibility();
       this.#loadError = null;
+      this.#loadFailure = null;
       this.#crashed = false;
       this.#gone = null;
       void wc.executeJavaScript('console.debug("__studio_console_channel_probe__")').catch(() => {
@@ -436,10 +421,11 @@ export class GamePreview {
     return view;
   }
 
+  /** Put the view in `window` at `bounds`; a zero rectangle keeps it hidden, as the stage does (`placedBounds`). */
   attachTo(window: BaseWindow, bounds: Electron.Rectangle): void {
     const view = this.create();
     window.contentView.addChildView(view);
-    view.setBounds(bounds);
+    this.#request(bounds);
   }
 
   /** The stage's slot, measured in a window of `viewport` size (null: place it as measured). */
@@ -457,39 +443,32 @@ export class GamePreview {
   #placeSlot(): void {
     const slot = this.#slot;
     if (!slot) return;
-    void this.#profiler.invalidate("preview resized");
-    const bounds = anchoredBounds(slot.bounds, slot.viewport, this.#content);
-    this.#requestedBounds = bounds;
-    if (bounds.width > 0 && bounds.height > 0) this.#visibleBounds = bounds;
-    this.#applyBounds();
+    this.#request(anchoredBounds(slot.bounds, slot.viewport, this.#content));
   }
 
-  /** Preserve the observation size when the stage moves the live view out of sight. */
-  setObserved(observed: boolean): void {
-    this.#observed = observed;
+  /** The rectangle the view is asked to take; one with an area is also the size it keeps while hidden. */
+  #request(bounds: Electron.Rectangle): void {
+    this.#requestedBounds = bounds;
+    if (!slotHidden(bounds)) this.#visibleBounds = bounds;
     this.#applyBounds();
   }
 
   /** Full screen: cover `bounds` (the window's content) until called with null, then the slot again. */
   fill(bounds: Electron.Rectangle | null): void {
     this.#fill = bounds;
-    if (bounds) this.#view?.setBounds(bounds);
-    else this.#applyBounds();
+    this.#applyBounds();
   }
 
   #applyBounds(): void {
-    if (this.#fill) {
-      this.#view?.setBounds(this.#fill);
-      return;
-    }
-    const bounds = this.#requestedBounds;
-    if (!bounds) return;
-    const observingHidden = this.#observed && (bounds.width === 0 || bounds.height === 0);
-    this.#view?.setBounds(
-      observingHidden
-        ? { ...this.#visibleBounds, x: -this.#visibleBounds.width, y: -this.#visibleBounds.height }
-        : bounds,
-    );
+    const requested = this.#requestedBounds;
+    const target = this.#fill ?? (requested ? placedBounds(requested, this.#visibleBounds) : null);
+    if (!target) return;
+    const onStage = this.#fill !== null || (requested !== null && !slotHidden(requested));
+    // Sized first, then hidden, in the same task (no frame paints between the two): Chromium
+    // hands a hidden view's new size to its page only once it is shown again, so a view hidden
+    // first, as Live's is from the moment it is attached, would lay its page out at 0x0.
+    this.#view?.setBounds(target);
+    this.#visibility.setPlaced(onStage);
   }
 
   /** Record stage/observer visibility independently of an occluding HTML modal. */
@@ -535,8 +514,12 @@ export class GamePreview {
   async #serveLoopback(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const route = routeHttp(url, loopbackPorts);
-    // Never re-fetched from the main process: that sent a game's plain-http beacon off the machine.
-    if (route.route === HttpRouteKind.Deny) return textResponse(HttpStatus.Forbidden);
+    // Fetched from the game's own partition, past this handler, as the page itself would have.
+    if (route.route === HttpRouteKind.Pass) {
+      const session = this.#session;
+      if (!session) return textResponse(HttpStatus.Forbidden);
+      return session.fetch(request, { bypassCustomProtocolHandlers: true });
+    }
     return this.#serveFile(route.project, url.pathname, request);
   }
 
@@ -703,36 +686,50 @@ export class GamePreview {
     root?: string,
     options: { loopback?: boolean; shim?: Partial<ShimOptions> } = {},
   ): Promise<string> {
-    this.#nativeDelivery = null;
-    this.#pageSurfaceNoted = false;
-    this.#stoppedUrl = null;
-    this.#entryPath = String(entry ?? "index.html").split(/[?#]/)[0] ?? "index.html";
-    this.#shimLoad = options.shim ?? null;
-    this.#reach = { reach: "none", hooked: {} };
-    await this.#profiler.invalidate("source loaded");
-    const view = this.create();
+    // From the first line: a page call made while this load gets ready waits for its page (`#page`).
     this.#navigating = true;
-    // Entries cached before no-store shipped would otherwise outlive it.
-    await this.#session?.clearCache().catch(() => {});
-    this.#project = project;
-    this.#rootOverride = root ? { project, dir: path.resolve(root) } : null;
-    const servedDir = path.resolve(this.#gameRoot(project));
-    this.#pinnedRoot = { project, dir: servedDir, real: await realpath(servedDir).catch(() => null) };
-    this.#loadError = null;
-    this.#crashed = false;
-    this.#gone = null;
-    this.#console = [];
-    this.#blockedNoted.clear();
-    this.#consoleAvailable = false;
-    const url = options.loopback
-      ? `http://localhost:${loopbackPortFor(project)}/${entry}`
-      : `${SCHEME}://${project}/${entry}`;
     try {
-      await view.webContents.loadURL(url);
+      this.#nativeDelivery = null;
+      this.#pageSurfaceNoted = false;
+      this.#stoppedUrl = null;
+      this.#entryPath = String(entry ?? "index.html").split(/[?#]/)[0] ?? "index.html";
+      this.#shimLoad = options.shim ?? null;
+      this.#reach = { reach: "none", hooked: {} };
+      const view = this.create();
+      // Entries cached before no-store shipped would otherwise outlive it.
+      await this.#session?.clearCache().catch(() => {});
+      this.#project = project;
+      this.#rootOverride = root ? { project, dir: path.resolve(root) } : null;
+      const servedDir = path.resolve(this.#gameRoot(project));
+      this.#pinnedRoot = { project, dir: servedDir, real: await realpath(servedDir).catch(() => null) };
+      this.#loadError = null;
+      this.#loadFailure = null;
+      this.#crashed = false;
+      this.#gone = null;
+      this.#console = [];
+      this.#blockedNoted.clear();
+      this.#consoleAvailable = false;
+      const url = options.loopback
+        ? `http://localhost:${loopbackPortFor(project)}/${entry}`
+        : `${SCHEME}://${project}/${entry}`;
+      await this.#arrive(view.webContents.loadURL(url), url);
+      return url;
     } finally {
       this.#navigating = false;
     }
-    return url;
+  }
+
+  /**
+   * Wait for this page's navigation, at most `PAGE_LOAD_MAX_MS`: a page still loading then (a
+   * script that never yields) is noted as stalled, and its caller (Live's load queue, an agent,
+   * the person's Play or Reload) waits for it no longer.
+   */
+  async #arrive(loading: Promise<unknown>, url: string): Promise<void> {
+    if ((await waitForLoad(loading, PAGE_LOAD_MAX_MS)) === PageLoadWait.Finished) return;
+    this.note("error", MESSAGE.loadStalled(url, PAGE_LOAD_MAX_MS / SECOND_MS), {
+      loadError: true,
+      failure: LiveLoadFailure.Stalled,
+    });
   }
 
   /**
@@ -743,10 +740,9 @@ export class GamePreview {
     const wc = this.#view?.webContents;
     if (!wc || wc.isDestroyed() || this.#stoppedUrl !== null) return;
     this.#stoppedUrl = wc.getURL();
-    await this.#profiler.invalidate("preview stopped");
     this.#navigating = true;
     try {
-      await wc.loadURL(STOPPED_PAGE);
+      await waitForLoad(wc.loadURL(STOPPED_PAGE), PAGE_LOAD_MAX_MS);
     } finally {
       this.#navigating = false;
     }
@@ -764,9 +760,10 @@ export class GamePreview {
     this.#blockedNoted.clear();
     this.#consoleAvailable = false;
     this.#loadError = null;
+    this.#loadFailure = null;
     this.#navigating = true;
     try {
-      await wc.loadURL(url);
+      await this.#arrive(wc.loadURL(url), url);
     } finally {
       this.#navigating = false;
     }
@@ -777,26 +774,29 @@ export class GamePreview {
     if (this.#stoppedUrl !== null) return this.resume();
     this.#nativeDelivery = null;
     this.#pageSurfaceNoted = false;
-    await this.#profiler.invalidate("preview reloaded");
     if (!this.#view) return;
     this.#console = [];
     this.#blockedNoted.clear();
     this.#consoleAvailable = false;
     this.#loadError = null;
+    this.#loadFailure = null;
     // The user pressing Reload means "show me what is on disk NOW" — never a cached copy.
     this.#navigating = true;
     const wc = this.#view.webContents;
-    wc.reloadIgnoringCache();
-    await new Promise<void>((resolve) => {
-      const done = () => {
-        wc.off("did-finish-load", done);
-        wc.off("did-fail-load", done);
-        this.#navigating = false;
-        resolve();
-      };
+    let done = (): void => {};
+    const finished = new Promise<void>((resolve) => {
+      done = () => resolve();
       wc.once("did-finish-load", done);
       wc.once("did-fail-load", done);
     });
+    wc.reloadIgnoringCache();
+    try {
+      await this.#arrive(finished, wc.getURL());
+    } finally {
+      wc.off("did-finish-load", done);
+      wc.off("did-fail-load", done);
+      this.#navigating = false;
+    }
   }
 
   /**
@@ -825,18 +825,16 @@ export class GamePreview {
 
   /** JPEG because these go straight into a vision model's context. */
   async screenshot(quality = DEFAULT_SHOT_QUALITY): Promise<Buffer> {
-    await this.#profiler.invalidate("screenshot during sample");
     return (await this.#capture()).image.toJPEG(quality);
   }
 
   /** A card-sized photograph using bounded statistics and a single JPEG encode. */
   async screenshotCard(quality: number, maxPx: number): Promise<Buffer | null> {
-    await this.#profiler.invalidate("screenshot during sample");
-    const shot = await this.#capture({ surface: CaptureSurface.Auto }, CARD_STATS_SAMPLES);
+    const shot = await this.#capture();
     const size = shot.image.getSize();
-    const stats =
-      shot.stats ??
-      computePixelStats(shot.image.toBitmap(), size.width, size.height, { maxSamples: CARD_STATS_SAMPLES });
+    const stats = computePixelStats(shot.image.toBitmap(), size.width, size.height, {
+      maxSamples: CARD_STATS_SAMPLES,
+    });
     if (isEffectivelyBlack(stats)) return null;
     const scale = Math.min(1, maxPx / Math.max(size.width, size.height));
     const image =
@@ -859,12 +857,9 @@ export class GamePreview {
     quality = DEFAULT_SHOT_QUALITY,
     opts: { page?: boolean; surface?: CaptureSurface } = {},
   ): Promise<{ jpeg: Buffer; stats: PreviewPixelStats; surface: CaptureSurface }> {
-    await this.#profiler.invalidate("screenshot during sample");
-    const { image, source, info, stats: measured } = await this.#capture(opts);
+    const { image, source, info } = await this.#capture(opts);
     const size = image.getSize();
-    // `auto` already measured this exact frame to decide whether the canvas eye was the broken
-    // one; measuring it twice would be the same arithmetic over the same bitmap.
-    const stats = measured ?? computePixelStats(image.toBitmap(), size.width, size.height);
+    const stats = computePixelStats(image.toBitmap(), size.width, size.height);
     let canvas = true;
     try {
       canvas = Boolean(await this.evaluate("!!document.querySelector('canvas')"));
@@ -927,7 +922,6 @@ export class GamePreview {
     quality = 85,
     opts: { page?: boolean; surface?: CaptureSurface } = {},
   ): Promise<{ jpeg: Buffer; width: number; height: number; region: [number, number, number, number] }> {
-    await this.#profiler.invalidate("zoom during sample");
     const { image } = await this.#capture(opts);
     const size = image.getSize();
     const clamp = (v: number, max: number) => Math.max(0, Math.min(max, Math.round(v)));
@@ -956,7 +950,6 @@ export class GamePreview {
    * compositor is the fallback exactly as for any canvas capture.
    */
   async still(request: PreviewStillRequest): Promise<PreviewStillAnswer> {
-    await this.#profiler.invalidate("still during sample");
     const shot = await this.#captureCanvas(STILL_PAGE_CAPTURE_TIMEOUT_MS);
     const taken = shot.image.getSize();
     const size = stillFit(taken, request);
@@ -983,67 +976,19 @@ export class GamePreview {
   }
 
   /**
-   * A plugin's clip: `seconds` of the canvas a still reads, recorded in the page as the game draws
-   * it (`preview-clip.ts`), never longer, with a JPEG poster of its first frame and its motion. An
-   * offscreen window paints at least `fps` frames a second while it records, and its own rate after.
-   */
-  async clip(request: PreviewClipRequest): Promise<PreviewClipAnswer> {
-    await this.#profiler.invalidate("clip during sample");
-    const wc = this.create().webContents;
-    const rate = this.options.offscreen ? wc.getFrameRate() : null;
-    if (rate !== null && rate < request.fps) wc.setFrameRate(request.fps);
-    if (this.options.offscreen && !wc.isPainting()) wc.startPainting();
-    try {
-      return await recordClip(
-        {
-          page: clipPageOn((expression) => wc.executeJavaScript(expression, true)),
-          sleep,
-          now: () => performance.now(),
-          bitmap: (dataUrl) => {
-            const image = nativeImage.createFromDataURL(dataUrl);
-            if (image.isEmpty()) return null;
-            const size = image.getSize();
-            return { bgra: image.toBitmap(), width: size.width, height: size.height };
-          },
-          jpeg: (dataUrl, maxPx) => {
-            const image = nativeImage.createFromDataURL(dataUrl);
-            if (image.isEmpty()) return null;
-            return scaledTo(image, image.getSize(), maxPx).toJPEG(STILL_PREVIEW_QUALITY);
-          },
-        },
-        request,
-      );
-    } finally {
-      if (rate !== null && rate < request.fps && !wc.isDestroyed()) wc.setFrameRate(rate);
-    }
-  }
-
-  /**
-   * The whole surface question in one place (M4.5a). `canvas` is what the game draws, `page` is
-   * the compositor frame with every DOM element on it — the menu, the loader, the HTML HUD —
-   * and `auto` asks the page what it looks like before it decides. Only `auto` costs a probe,
-   * and the probe can never fail a capture: every rung of the ladder falls toward a picture.
+   * The whole surface question in one place (M4.5a): the page as the player sees it (the
+   * compositor frame, DOM included), unless a caller names the canvas — and a page frame that
+   * cannot be had falls back to the canvas, toward a picture.
    */
   async #capture(
     opts: { page?: boolean; surface?: CaptureSurface } = {},
-    maxSamples?: number,
-  ): Promise<{ image: NativeImage; source: CaptureSource; info: PageCaptureInfo | null; stats?: PixelStats }> {
-    const asked = resolveSurface(opts);
-    const chosen = await chooseCapture(asked, {
-      pageUi: () => this.pageUi(),
+  ): Promise<{ image: NativeImage; source: CaptureSource; info: PageCaptureInfo | null }> {
+    this.#page();
+    const chosen = await chooseCapture(resolveSurface(opts), {
       canvas: () => this.#captureCanvas(),
       page: () => this.#capturePageSurface(),
-      measure: (shot) => {
-        const size = shot.image.getSize();
-        return computePixelStats(
-          shot.image.toBitmap(),
-          size.width,
-          size.height,
-          maxSamples ? { maxSamples } : undefined,
-        );
-      },
     });
-    return chosen.stats ? { ...chosen.shot, stats: chosen.stats } : chosen.shot;
+    return chosen.shot;
   }
 
   /**
@@ -1118,8 +1063,8 @@ export class GamePreview {
   async #captureCanvas(
     pageTimeoutMs = PAGE_CAPTURE_TIMEOUT_MS,
   ): Promise<{ image: NativeImage; source: CaptureSource; info: PageCaptureInfo | null }> {
-    const view = this.create();
-    // First choice: ask the page itself. `__studio.capture()` re-renders and reads the WebGL
+    const page = this.#page();
+    // First choice: ask the page itself. The shim's `__studioCapture.capture()` reads the WebGL
     // canvas in one JS turn, so the pixels never touch the compositor — a window that is
     // covered, on another Space, or on a sleeping display photographs exactly the same. One
     // occluded run lost every first-iteration build to "display surface not available".
@@ -1128,7 +1073,7 @@ export class GamePreview {
     const declined = this.#pageCaptureInfo;
     await this.#awaitPresent();
     try {
-      return { image: await view.webContents.capturePage(), source: CaptureSource.Compositor, info: declined };
+      return { image: await page.capturePage(), source: CaptureSource.Compositor, info: declined };
     } catch (err) {
       // Occluded windows can lose their compositor surface too. The failed request can wake
       // the compositor, so allow one paced retry without changing the user's window state.
@@ -1139,13 +1084,13 @@ export class GamePreview {
         message: MESSAGE.compositorRetry(errorMessage(err)),
       });
       try {
-        view.webContents.invalidate();
+        page.invalidate();
       } catch {
         /* offscreen-only in some Electron versions — the timed retry still stands alone */
       }
       await sleep(COMPOSITOR_RETRY_MS);
       await this.#awaitPresent();
-      return { image: await view.webContents.capturePage(), source: CaptureSource.Compositor, info: declined };
+      return { image: await page.capturePage(), source: CaptureSource.Compositor, info: declined };
     }
   }
 
@@ -1223,15 +1168,28 @@ export class GamePreview {
   }
 
   /**
+   * The view's page, for a call that runs script in it or photographs it. A view nothing was
+   * loaded into (a pooled window whose game did not build, so it was served no page) is refused
+   * at once with the reason it has none: Electron holds a script until a load stops, and no load
+   * is coming, so each call would otherwise wait out the caller's whole deadline.
+   */
+  #page(): WebContents {
+    const wc = this.create().webContents;
+    const holdsNoPage = wc.getURL() === "" && !wc.isLoading() && !this.#navigating;
+    if (holdsNoPage) throw new Error(MESSAGE.noPage(this.#loadError));
+    return wc;
+  }
+
+  /**
    * Evaluate in the game's main world. The result is untrusted data — it is produced by code the
    * agent wrote — so it is size-capped and only ever handled as JSON.
    */
   async evaluate(expression: string, maxChars = 64_000): Promise<unknown> {
-    const view = this.create();
+    const page = this.#page();
     // `Promise.resolve` first: an expression that evaluates to a promise (a `fetch`, an async
     // probe) must be awaited *before* serialising, otherwise every async probe silently returns
     // `{}` and any check built on it passes without testing anything.
-    const raw = (await view.webContents.executeJavaScript(pageEvaluation(expression), true)) as string | undefined;
+    const raw = (await page.executeJavaScript(pageEvaluation(expression), true)) as string | undefined;
     if (raw === undefined) return undefined;
     const text = String(raw);
     if (text.length > maxChars) {
@@ -1250,12 +1208,15 @@ export class GamePreview {
     const base = {
       project: this.#project,
       loadError: this.#loadError,
+      loadFailure: this.#loadFailure,
       crashed: this.#crashed,
+      gone: this.#gone,
+      unresponsive: this.#unresponsive,
       stopped: this.#stoppedUrl !== null,
     };
     if (!wc || wc.isDestroyed()) return { ...base, navigating: false, page: null };
     if (this.#navigating || wc.isLoading()) return { ...base, navigating: true, page: null };
-    const probe = `(() => { let state = null; try { const full = window.__studio ? window.__studio.state() : null; state = full ? { phase: full.phase, drawCalls: full.drawCalls } : null; } catch {} return { complete: document.readyState === "complete", resources: performance.getEntriesByType("resource").length, state }; })()`;
+    const probe = `(() => { let state = null; try { const clock = window.__studioClock; const full = clock && clock.state ? clock.state() : null; state = full ? { drawCalls: full.render ? full.render.drawCalls : null } : null; } catch {} return { complete: document.readyState === "complete", resources: performance.getEntriesByType("resource").length, state }; })()`;
     const page = (await Promise.race([
       this.evaluate(probe).catch(() => null),
       delay(LIVE_PROBE_MS, null),
@@ -1265,9 +1226,8 @@ export class GamePreview {
   }
 
   /**
-   * `window.__studio.state()` — the structural probe that complements screenshots. Bounded by
-   * structure in the page (`boundStudioState`): a state past {@link STATE_MAX_CHARS} loses its
-   * largest lists to stubs, never the tail of its text, and the `keep` paths are cut last.
+   * What the page is doing by the shim's own clock and counters (`__studioClock.state()`); the
+   * game is never asked. Bounded by structure in the page (`boundStudioState`).
    */
   async studioState(options?: { keep?: readonly string[] }): Promise<unknown> {
     return this.evaluate(studioStateExpression(STATE_MAX_CHARS, options?.keep));
@@ -1315,12 +1275,13 @@ export class GamePreview {
   }
 
   async studioCall(method: string, arg?: unknown): Promise<unknown> {
-    await this.#profiler.invalidate(`studio ${method} during sample`);
     // The method name is interpolated into page JS: only a plain identifier may travel.
     if (!/^[A-Za-z_$][\w$]*$/.test(method)) throw new Error(MESSAGE.notMethodName(method));
     const argument = arg === undefined ? "" : JSON.stringify(arg);
+    // The studio's own clock answers its verbs (step, pause, start, state, ready); the game is
+    // never called, so anything else is missing on every page.
     return this.evaluate(
-      `(window.__studio && typeof window.__studio.${method} === "function") ? window.__studio.${method}(${argument}) : { __missing: true }`,
+      `(window.__studioClock && typeof window.__studioClock.${method} === "function") ? window.__studioClock.${method}(${argument}) : { __missing: true }`,
     );
   }
 
@@ -1365,10 +1326,10 @@ export class GamePreview {
 
   /**
    * Drive the game the way a player does: keys, clicks, look. Chromium `sendInputEvent` plus
-   * DOM events plus `__studio.injectInput`, so a paused `step()` playthrough still sees WASD.
+   * DOM events, so a paused `step()` playthrough still sees the keys held.
    */
   async input(actions: PreviewInputAction[]): Promise<{ ok: boolean; applied: number; width: number; height: number }> {
-    await this.#profiler.invalidate("input during sample");
+    this.#page();
     const view = this.create();
     const bounds = view.getBounds();
     const width = Math.max(1, Math.round(bounds.width));
@@ -1478,10 +1439,15 @@ export class GamePreview {
         ];
   }
 
-  /** A line the studio itself puts on the game's console — a build that failed before the page could load. */
-  note(level: string, message: string, options: { loadError?: boolean } = {}): void {
+  /**
+   * A line the studio itself puts on the game's console — a build that failed before the page could
+   * load. As the page's load error it keeps its kind (`failure`, `Other` when the caller names none).
+   */
+  note(level: string, message: string, options: { loadError?: boolean; failure?: LiveLoadFailure } = {}): void {
     this.#push({ at: Date.now(), level, message });
-    if (options.loadError) this.#loadError = message;
+    if (!options.loadError) return;
+    this.#loadError = message;
+    this.#loadFailure = options.failure ?? LiveLoadFailure.Other;
   }
 
   status(): PreviewStatus {
@@ -1504,7 +1470,6 @@ export class GamePreview {
   }
 
   async destroy(): Promise<void> {
-    void this.#profiler.invalidate("preview disposed");
     this.#closed = true;
     this.#view?.webContents.close();
     this.#view = null;

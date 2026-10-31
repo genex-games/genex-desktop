@@ -20,7 +20,7 @@ import type { DelegateRequest } from "../../src/substrate/engines/types.ts";
 import { ENGINES, GODOT_ENGINE } from "../helpers/engines.ts";
 import { gitFile } from "../helpers/git.ts";
 import { tmpDir } from "../helpers/tmp.ts";
-import { CODEX, closeWorkerChats, LOCAL, RUN_ID, realNearest, workerChat } from "../helpers/worker-chat.ts";
+import { CODEX, closeWorkerChats, LOCAL, RUN_ID, realNearest, SEATLESS, workerChat } from "../helpers/worker-chat.ts";
 
 after(closeWorkerChats);
 
@@ -183,28 +183,101 @@ describe("the host's worker seat", () => {
     void core;
   });
 
-  it("a worker is never handed the connector its game's kind brings (an engine's live editor); the chat's own session is", {
+  it("a building worker is handed the connector its game's kind brings (an engine's live editor), as the chat's own session is", {
     timeout: CASE_TIMEOUT_MS,
   }, async () => {
     const { core, delegate, runWorker, personSays } = await workerChat();
     const asked: Array<{ kindServers?: boolean }> = [];
-    const toolsFor = core.mcp.toolsFor.bind(core.mcp);
-    core.mcp.toolsFor = async (project, options = {}) => {
+    const toolsReport = core.mcp.toolsReport.bind(core.mcp);
+    core.mcp.toolsReport = async (project, options = {}) => {
       asked.push(options);
-      return toolsFor(project, options);
+      return toolsReport(project, options);
     };
     await delegate(runWorker());
     await delegate({ chatTurn: { messageId: await personSays() } });
     assert.deepEqual(
       asked.map((options) => options.kindServers),
-      [false, undefined],
-      "the worker without, the chat's own session with",
+      [undefined, undefined],
+      "the worker with it, as the chat's own session",
     );
   });
 
+  it("a run worker's consent card waits out the chat's other turns: a lead's turn ending never withdraws its question", {
+    timeout: CASE_TIMEOUT_MS,
+  }, async () => {
+    const { core, threadId, delegate, runWorker, whileRunning } = await workerChat();
+    const tool = { name: "fixture__deliver", description: "Deliver an asset", parameters: { type: "object" } };
+    core.plugins.snapshot = (() => ({
+      tools: [tool],
+      guidance: "",
+      applied: { plugins: ["fixture"], skills: [] },
+    })) as never;
+    core.plugins.tool = (async (_name: string, _args: unknown, binding: unknown, signal?: AbortSignal) => {
+      const confirmed = { name: "deliver", description: "Deliver an asset", confirmation: "Deliver the asset?" };
+      const { approved, by } = await core.requestConsent("fixture", confirmed as never, {}, binding as never, signal);
+      return approved ? "delivered" : `declined by ${by}`;
+    }) as never;
+    let heard: unknown = null;
+    whileRunning(async (request) => {
+      heard = await request.onLiveTool!(tool.name, {}).catch((err: Error) => err.message);
+    });
+    const pending = async () =>
+      (await core.store.listEvents(threadId)).flatMap((event) => {
+        const custom = customRecord(event.data);
+        const consent = custom?.payload as { consentId?: string; state?: string } | undefined;
+        return custom?.event_type === CustomEvent.PluginConsent && consent?.state === "pending"
+          ? [String(consent.consentId)]
+          : [];
+      });
+    const turn = delegate(runWorker());
+    let card: string | undefined;
+    for (let waited = 0; !card && waited < 400; waited++) {
+      card = (await pending())[0];
+      if (!card) await new Promise((resolve) => setImmediate(resolve));
+    }
+    assert.ok(card, "the worker's call asked the person");
+    // The lead's turn ends on the chat, as a waking lead's turns do all through a run.
+    await core.append([{ type: "turn_ended", status: "ok" }] as never, threadId);
+    assert.equal(core.resolveConsent(card, true), true, "the card still waits for the person");
+    await turn;
+    assert.equal(
+      JSON.stringify(heard).includes("delivered"),
+      true,
+      `the worker's call went on: ${JSON.stringify(heard)}`,
+    );
+  });
+
+  it("a worker on a local model's session engine is seated as on any engine that keeps sessions, with the same tools", {
+    timeout: CASE_TIMEOUT_MS,
+  }, async () => {
+    const { seen, delegate, runWorker } = await workerChat();
+    await delegate(runWorker());
+    const delegated = seen.at(-1)!;
+    // Flipped (Loop phase 3): a local model's session carried no seat, and its work ran unattended.
+    await delegate(runWorker(), LOCAL);
+    const local = seen.at(-1)!;
+    assert.ok(local.worker, "seated");
+    assert.equal(local.worker?.mode, delegated.worker?.mode, "in the chat's mode");
+    assert.deepEqual(local.worker?.writeRoots, delegated.worker?.writeRoots, "writing what any worker writes");
+    const names = (request: DelegateRequest) => (request.liveTools ?? []).map((tool) => tool.name).sort();
+    assert.deepEqual(names(local), names(delegated), "offered the same tools");
+  });
+
+  it("a building worker is offered every tool the lead is, whatever its type names: a type is the kind of work, never a fence", {
+    timeout: CASE_TIMEOUT_MS,
+  }, async () => {
+    const { seen, delegate, runWorker } = await workerChat();
+    const names = () => (seen.at(-1)?.liveTools ?? []).map((tool) => tool.name).sort();
+    await delegate(runWorker());
+    const untyped = names();
+    await delegate({ ...runWorker(), toolAllow: ["blender__"] });
+    const typed = names();
+    assert.ok(untyped.length > 0, "a worker has host tools");
+    assert.deepEqual(typed, untyped, "a typed worker has every one of them");
+  });
+
   it("a worker grant the host cannot confirm runs unattended as before", { timeout: CASE_TIMEOUT_MS }, async () => {
-    const { core, api, game, other, threadId, project, seen, delegate, startRun, copyOf, runWorker } =
-      await workerChat();
+    const { core, game, other, threadId, project, seen, delegate, startRun, copyOf, runWorker } = await workerChat();
     const otherChat = await core.threadForGame(other.name);
     await startRun("run_other_game", otherChat, other.name);
     const secondChat = await core.store.createThread({
@@ -217,7 +290,7 @@ describe("the host's worker seat", () => {
       [{ type: "custom", event_type: "run_finished", payload: { runId: "run_finished", project: game } }] as never,
       threadId,
     );
-    const studioThread = String(await api["thread.create"]!({ title: "x" }));
+    const studioThread = await core.store.createThread({ title: "x" });
     const elsewhere = await copyOf("run_elsewhere", "w1");
     const grant = (runId: string, cwd: string) => ({ cwd, worker: { id: "w1", title: "Worker", runId } });
     const turnGrant = { cwd: project.dir, worker: { id: "w1", title: "Worker", turn: "msg-x" } };
@@ -231,8 +304,8 @@ describe("the host's worker seat", () => {
       { label: "a turn the chat is not answering", extra: turnGrant },
       { label: "a Studio thread", extra: turnGrant, thread: studioThread },
       { label: "a cwd outside the run's worktrees", extra: runWorker("w1", elsewhere) },
-      // A local model's session never carries a seat: its work stays fenced as unattended work.
-      { label: "a local model's engine", extra: runWorker(), engine: LOCAL },
+      // An engine with no session of its own carries no seat: its work stays fenced as unattended work.
+      { label: "an engine that keeps no session", extra: runWorker(), engine: SEATLESS },
     ];
     for (const { label, extra, thread, engine } of rows) {
       await delegate({ ...extra, ...(thread ? { threadId: thread } : {}) }, engine);

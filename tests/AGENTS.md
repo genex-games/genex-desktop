@@ -56,7 +56,9 @@ through the JS API imports `@typescript/typescript6`.
   `fake-anthropic.ts`: enough of Anthropic's Messages API for the real Claude Code CLI to run one
   scripted worker command (`ANTHROPIC_BASE_URL`, a dummy OAuth token, nothing billed).
   `fake-openai-responses.ts`: the same for the real Codex CLI over OpenAI's Responses API (a custom
-  model provider, no sign-in).
+  model provider, no sign-in), a command that may ask to run outside the sandbox, and a one-shot
+  answer (`startFakeAnswer`, an Auto check's verdict). `fake-xai-responses.ts`: the same for the real Grok Build CLI over
+  xAI's (Grok's session service stood in for, signed in with a made-up token in a test's own home).
 - `snapshot-fixtures.ts`: dirty, untracked and nested user repositories.
 - `unreal-lead-host.ts`: a fake host for the Unreal runner's lead (its scripted turns calling the
   run tools, the editor's answers, the clock), whose moments run on `unreal-moment-bus.ts`, a fake
@@ -131,6 +133,9 @@ through the JS API imports `@typescript/typescript6`.
 - `leftover-children.ts`: the runners' per-file check for child processes left running (above).
 - `pe-image.ts`: minimal Windows PE images naming the DLLs a test gives (import and delay-load
   tables, a machine type), for the package's Visual C++ runtime checks.
+- `failure-codes.ts`: the analytics failure-code suites' hostile inputs (words, paths, Node codes
+  and ids that must never reach an event property, thrown values that must read as no code) and
+  `crossed`, a failure carried across IPC as the app carries it (main's `handle`, then the preload).
 - `processes.ts`: `running(pid)`, whether a process still runs. A test that proves a stop left
   nothing behind asks it, not `process.kill(pid, 0)`, which also finds a process that exited but
   is not reaped yet.
@@ -183,6 +188,8 @@ jobs, `blender-windows-live.test.ts` and `godot-windows-live.test.ts`), `STUDIO_
 (`godot-live.test.ts`), `STUDIO_CLAUDE_CLI_TESTS=1` for the real Claude Code CLI against
 `fake-anthropic.ts` (`claude-studio-shell-cli.test.ts`, `claude-tool-loading.test.ts`),
 `STUDIO_CODEX_CLI_TESTS=1` for the real Codex CLI against `fake-openai-responses.ts`
-(`codex-sandbox-cli.test.ts`). Never make a default test depend on this machine. `STUDIO_RIG_UNSANDBOXED=1`
+(`codex-sandbox-cli.test.ts`), `STUDIO_GROK_CLI_TESTS=1` for the real Grok Build CLI in the real
+sandbox against `fake-xai-responses.ts` (`grok-cli-live.test.ts`; `STUDIO_GROK_BIN` names one, which
+must sit outside `~/.grok`: the test's sandbox denies the person's own Grok home). Never make a default test depend on this machine. `STUDIO_RIG_UNSANDBOXED=1`
 runs rigs without the process sandbox, for a container where it cannot start (no user
 namespaces); containment cases prove nothing there, and CI keeps the sandbox.

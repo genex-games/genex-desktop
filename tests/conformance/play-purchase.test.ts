@@ -329,14 +329,14 @@ describe("A game's purchase sheet: a game that keeps asking", () => {
 });
 
 describe("A game's purchase sheet: not enough coin", () => {
-  it("offers Get coin when the balance is short, and comes back to Ask only through Review once the coin lands", async () => {
+  it("offers Get Nex when the balance is short, and comes back to Ask only through Review once the coin lands", async () => {
     const balances = [40, 40, WALLET];
     const made = await asked({ coin: { balance: async () => balances.shift() ?? WALLET } });
     assert.deepEqual(face(made), NOT_ENOUGH(PurchaseRecovery.Waiting));
     assert.equal(made.sheet()?.balance, 40);
     made.advance(PURCHASE_RECHECK_MS * 3);
     await settle();
-    assert.equal(balances.length, 2, "nothing is checked again before Get coin");
+    assert.equal(balances.length, 2, "nothing is checked again before Get Nex");
     answer(made, PurchaseAnswer.GetCoin);
     assert.deepEqual(made.pages, [playCoinPageUrl("https://genex.games")]);
     made.advance(PURCHASE_RECHECK_MS);
@@ -346,7 +346,7 @@ describe("A game's purchase sheet: not enough coin", () => {
     made.advance(PURCHASE_RECHECK_MS);
     await settle();
     assert.deepEqual(face(made), NOT_ENOUGH(PurchaseRecovery.Ready));
-    assert.ok((made.sheet()?.sheet ?? 0) > waiting, "a new sheet: a press meant for Get coin is dropped");
+    assert.ok((made.sheet()?.sheet ?? 0) > waiting, "a new sheet: a press meant for Get Nex is dropped");
     made.advance(PURCHASE_RECHECK_MS * 3);
     await settle();
     assert.deepEqual(face(made), NOT_ENOUGH(PurchaseRecovery.Ready), "never Ask by itself");
@@ -374,7 +374,7 @@ describe("A game's purchase sheet: not enough coin", () => {
     answer(made, PurchaseAnswer.Pay);
     made.advance(INTENT_LONG);
     await settle();
-    assert.equal(made.pages.length, 1, "Get coin still opens genex.games");
+    assert.equal(made.pages.length, 1, "Get Nex still opens genex.games");
     assert.equal(made.sheet()?.balance, 40);
     assert.deepEqual(face(made), NOT_ENOUGH(PurchaseRecovery.Over));
     assert.equal(coinCalls(made, "confirm").length, 1);

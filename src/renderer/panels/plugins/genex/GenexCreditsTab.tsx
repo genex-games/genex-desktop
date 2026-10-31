@@ -41,6 +41,8 @@ const DAY = new Intl.DateTimeFormat(intlLocale(), { month: "short", day: "numeri
 const KIND_TOOLS: Record<CreditKind, GenexTool> = {
   [CreditKind.Model]: GenexTool.Tripo,
   [CreditKind.Character]: GenexTool.Meshy,
+  [CreditKind.CharacterPreview]: GenexTool.Meshy,
+  [CreditKind.CharacterFinalize]: GenexTool.Meshy,
   [CreditKind.ModelAnimation]: GenexTool.Tripo,
   [CreditKind.Image]: GenexTool.GptImage,
   [CreditKind.Texture]: GenexTool.NanoBanana,
@@ -136,15 +138,18 @@ function Balance({ credits }: { credits: PlayCredits }): JSX.Element {
             </span>
           )}
         </button>
-        <button
-          type="button"
-          className="people-button"
-          data-tone="primary"
-          data-credits-get
-          onClick={() => void window.studio.openUrl(creditsPlansUrl(web))}
-        >
-          {WORDS.getCredits}
-        </button>
+        {/* An unlimited account never runs out: nothing to get. */}
+        {!credits.unlimited && (
+          <button
+            type="button"
+            className="people-button"
+            data-tone="primary"
+            data-credits-get
+            onClick={() => void window.studio.openUrl(creditsPlansUrl(web))}
+          >
+            {WORDS.getCredits}
+          </button>
+        )}
       </span>
     </div>
   );
@@ -258,7 +263,8 @@ function RecentRow({ entry }: { entry: CreditEntry }): JSX.Element {
 function RecentSpending({ credits }: { credits: PlayCredits }): JSX.Element {
   const none = credits.recent.length === 0;
   return (
-    <section className="credits-column" aria-label={WORDS.recent} data-credits-recent>
+    // Each spend names the game it was for.
+    <section className="credits-column" aria-label={WORDS.recent} data-credits-recent data-analytics-mask>
       {/* Its heading and line stand at the foot of the heading rows, just over its list. */}
       <div className="credits-head-end">
         <h2 className="credits-heading">{WORDS.recent}</h2>

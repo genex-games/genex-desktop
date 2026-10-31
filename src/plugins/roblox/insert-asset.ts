@@ -60,6 +60,10 @@ const MESSAGE = {
     `Genex couldn't confirm that asset ${id} is free (not on the Creator Store as free, not public and not the person's own), so it inserts only free assets and left it out.`,
   inserted: (id: string, parent: string) => `Inserted asset ${id} under ${parent}.`,
   noScripts: "It brought no scripts.",
+  beforeFailed:
+    "Genex couldn't inspect the destination before inserting, so nothing was inserted. Check the parent in Studio and try again.",
+  reviewFailed: (id: string, parent: string) =>
+    `Asset ${id} was already inserted under ${parent}, but Genex couldn't finish reviewing the scripts it brought. Do not insert it again. Inspect the asset's scripts in Studio before playing the game.`,
   scripts: (count: number) =>
     `It brought ${count === 1 ? "1 script" : `${count} scripts`}, which run when the game plays. Read each one; delete any you don't understand, and every one flagged below:`,
   scriptLine: (script: InsertedScript) =>
@@ -229,16 +233,41 @@ async function freeByInfo(deps: AskFirstDeps, game: AskFirstGame, id: string): P
   return info.creatorType === "User" && typeof info.user === "number" && info.creatorId === info.user;
 }
 
-/** A list of strings out of Luau's answer: Luau writes an empty table as [] or {}. */
-const strings = (value: unknown): string[] => (Array.isArray(value) ? value.filter((v) => typeof v === "string") : []);
+/** Luau encodes an empty table as [] or {}; missing and malformed lists are not empty lists. */
+function listOf(value: unknown): unknown[] | undefined {
+  if (Array.isArray(value)) return value;
+  if (value && typeof value === "object" && Object.keys(value).length === 0) return [];
+  return undefined;
+}
 
-function scriptsOf(value: unknown): InsertedScript[] {
-  if (!Array.isArray(value)) return [];
-  return value.flatMap((item) => {
-    const one = item as Record<string, unknown>;
-    if (typeof one?.path !== "string" || typeof one.class !== "string") return [];
-    return [{ path: one.path, class: one.class, lines: Number(one.lines) || 0, flags: strings(one.flags) }];
-  });
+function strings(value: unknown): string[] | undefined {
+  const list = listOf(value);
+  return list?.every((item) => typeof item === "string") ? list : undefined;
+}
+
+function scriptOf(value: unknown): InsertedScript | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const one = value as Record<string, unknown>;
+  const flags = strings(one.flags);
+  const valid =
+    typeof one.path === "string" &&
+    typeof one.class === "string" &&
+    typeof one.lines === "number" &&
+    Number.isInteger(one.lines) &&
+    one.lines > 0;
+  if (!valid || !flags) return undefined;
+  return { path: String(one.path), class: String(one.class), lines: Number(one.lines), flags };
+}
+
+/** A complete inventory only: never turn unreadable or missing scripts into a no-scripts claim. */
+function inventoryOf(after: Record<string, unknown> | undefined): Pick<Inserted, "added" | "scripts"> | undefined {
+  if (!after || after.error !== undefined) return undefined;
+  const added = strings(after.added);
+  const raw = listOf(after.scripts);
+  if (!added || !raw) return undefined;
+  const scripts = raw.map(scriptOf);
+  if (scripts.some((script) => !script)) return undefined;
+  return { added, scripts: scripts.filter((script) => script !== undefined) };
 }
 
 /** The agent's answer after a free insert: what was added and each script it brought. */
@@ -246,12 +275,12 @@ function insertedAnswer(
   id: string,
   parent: string,
   words: string,
-  after: Record<string, unknown> | undefined,
+  after: Pick<Inserted, "added" | "scripts">,
 ): AskFirstAnswer {
-  const scripts = scriptsOf(after?.scripts);
+  const { added, scripts } = after;
   const lines = [MESSAGE.inserted(id, parent), words].filter(Boolean);
   lines.push(scripts.length ? MESSAGE.scripts(scripts.length) : MESSAGE.noScripts, ...scripts.map(MESSAGE.scriptLine));
-  const result: Inserted = { assetId: id, added: strings(after?.added), scripts };
+  const result: Inserted = { assetId: id, added, scripts };
   return { done: true, message: lines.join("\n"), result };
 }
 
@@ -262,6 +291,8 @@ async function insertChecked(deps: AskFirstDeps, game: AskFirstGame, checked: In
   if (!store && !(await freeByInfo(deps, game, id))) return { done: false, message: MESSAGE.unknownPrice(id) };
   const parent = checked.parent ?? DEFAULT_PARENT;
   const before = await luauStep(deps, game, { op: InsertStep.Children, parent });
+  const ids = before?.error === undefined ? strings(before?.ids) : undefined;
+  if (!ids) return { done: false, message: MESSAGE.beforeFailed };
   const insertArgs = {
     assetId: id,
     ...(checked.name ? { assetName: checked.name } : {}),
@@ -270,8 +301,13 @@ async function insertChecked(deps: AskFirstDeps, game: AskFirstGame, checked: In
   };
   const outcome = await askStudio(deps, game, { tool: StudioTool.InsertAsset, args: insertArgs, mark: CallMark.Busy });
   if (!outcome.ok) return { done: false, message: refusedWords(outcome) };
-  const after = await luauStep(deps, game, { op: InsertStep.Scripts, parent, before: strings(before?.ids) });
-  return insertedAnswer(id, parent, outcome.text, after);
+  const after = inventoryOf(await luauStep(deps, game, { op: InsertStep.Scripts, parent, before: ids }));
+  if (after) return insertedAnswer(id, parent, outcome.text, after);
+  return {
+    done: false,
+    message: MESSAGE.reviewFailed(id, parent),
+    result: { assetId: id, inserted: true, scriptsReviewed: false },
+  };
 }
 
 /** Inserts a free Creator Store asset in the game's own Studio; anything refused reaches no Studio. */

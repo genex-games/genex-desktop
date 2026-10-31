@@ -1,4 +1,4 @@
-import { InstallPhase, type ModelInstallJob } from "../../shared/model-install.ts";
+import { InstallPhase, type ModelInstallJob, ModelInstallProblem } from "../../shared/model-install.ts";
 import { atomicWriteJson, pathExists, readJsonIfExists } from "../fsx.ts";
 import { spawn, execFile, type ChildProcess } from "node:child_process";
 import { mkdir, readFile, writeFile, readdir, rm, rename, stat, statfs } from "node:fs/promises";
@@ -18,7 +18,7 @@ import {
   type DownloadFile,
 } from "./manifest.ts";
 import { download, DownloadStatus, type DownloadProgress } from "./download.ts";
-import { errorMessage } from "../../shared/errors.ts";
+import { CodedError, errorCodeIn, errorMessage } from "../../shared/errors.ts";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 import { t } from "../../shared/i18n.ts";
 import { setTimeout as delay } from "node:timers/promises";
@@ -75,6 +75,21 @@ const MESSAGE = {
   StoppedDuringStartup: (stderr: string) => `Bonsai stopped during startup: ${stderr}`,
   StartupTimedOut: (stderr: string) => `Bonsai startup timed out: ${stderr}`,
 } as const;
+
+/** What a failure in each phase of an install is, when nothing more exact was said. */
+const PHASE_PROBLEMS: Partial<Record<InstallPhase, ModelInstallProblem>> = {
+  [InstallPhase.Downloading]: ModelInstallProblem.Download,
+  [InstallPhase.Verifying]: ModelInstallProblem.Download,
+  [InstallPhase.Extracting]: ModelInstallProblem.Extract,
+  [InstallPhase.Starting]: ModelInstallProblem.Startup,
+};
+
+/** Why an install failed in `phase`: the refusal's own code, else what failing in that phase means. */
+export function installProblem(err: unknown, phase: InstallPhase | undefined): ModelInstallProblem {
+  const coded = errorCodeIn(ModelInstallProblem, err);
+  if (coded) return coded;
+  return (phase && PHASE_PROBLEMS[phase]) || ModelInstallProblem.Other;
+}
 
 /** The llama-server flags Studio pins for Bonsai, after the per-launch model, port and context. */
 const LLAMA_SERVER_TUNING = [
@@ -402,7 +417,8 @@ export class BonsaiRuntime {
   }
   install(id: string, progress: (p: DownloadProgress) => void): Promise<void> {
     if (this.#installPromise) {
-      if (this.#job?.model !== id) return Promise.reject(new Error(MESSAGE.AnotherInstall()));
+      if (this.#job?.model !== id)
+        return Promise.reject(new CodedError(ModelInstallProblem.AnotherDownload, MESSAGE.AnotherInstall()));
       return this.#installPromise;
     }
     this.#installPromise = this.#performInstall(id, progress).finally(() => {
@@ -411,8 +427,9 @@ export class BonsaiRuntime {
     return this.#installPromise;
   }
   async #performInstall(id: string, progress: (p: DownloadProgress) => void): Promise<void> {
-    if (!this.#machine.appleSilicon) throw new Error(MESSAGE.NeedsAppleSilicon());
-    if (this.#install) throw new Error(MESSAGE.AnotherDownload());
+    if (!this.#machine.appleSilicon)
+      throw new CodedError(ModelInstallProblem.NeedsAppleSilicon, MESSAGE.NeedsAppleSilicon());
+    if (this.#install) throw new CodedError(ModelInstallProblem.AnotherDownload, MESSAGE.AnotherDownload());
     const controller = new AbortController();
     this.#install = controller;
     try {
@@ -436,13 +453,20 @@ export class BonsaiRuntime {
       await this.#updateJob({ phase: InstallPhase.Ready, active: false });
       progress({ status: DownloadStatus.Success, completed: total, total });
     } catch (err) {
-      const cancelled = controller.signal.aborted;
+      if (controller.signal.aborted) {
+        await this.#updateJob({ phase: InstallPhase.Cancelled, error: MESSAGE.DownloadCancelled(), active: false });
+        throw err;
+      }
+      const failedPhase = this.#job?.phase;
+      const problem = installProblem(err, failedPhase);
       await this.#updateJob({
-        phase: cancelled ? InstallPhase.Cancelled : InstallPhase.Failed,
-        error: cancelled ? MESSAGE.DownloadCancelled() : errorMessage(err),
+        phase: InstallPhase.Failed,
+        error: errorMessage(err),
+        problem,
+        ...(failedPhase ? { failedPhase } : {}),
         active: false,
       });
-      throw err;
+      throw new CodedError(problem, errorMessage(err));
     } finally {
       this.#install = null;
     }
@@ -477,9 +501,13 @@ export class BonsaiRuntime {
       active: true,
     };
     await this.#updateJob({});
-    if (this.#machine.memoryBytes < MIN_MEMORY_BYTES) throw new Error(MESSAGE.NeedsMemory());
+    if (this.#machine.memoryBytes < MIN_MEMORY_BYTES)
+      throw new CodedError(ModelInstallProblem.NeedsMemory, MESSAGE.NeedsMemory());
     if (requiredBytes > availableBytes(disk))
-      throw new Error(MESSAGE.NotEnoughSpace(requiredBytes, availableBytes(disk)));
+      throw new CodedError(
+        ModelInstallProblem.NotEnoughSpace,
+        MESSAGE.NotEnoughSpace(requiredBytes, availableBytes(disk)),
+      );
   }
   async #downloadAll(
     files: DownloadFile[],
@@ -507,7 +535,8 @@ export class BonsaiRuntime {
     await rm(stage, { recursive: true, force: true });
     await mkdir(stage, { recursive: true });
     const listing = await exec("/usr/bin/tar", ["-tzf", archive], { signal, timeout: TAR_LIST_TIMEOUT_MS });
-    if (listing.stdout.split("\n").some(isUnsafeArchiveEntry)) throw new Error(MESSAGE.UnsafeArchive());
+    if (listing.stdout.split("\n").some(isUnsafeArchiveEntry))
+      throw new CodedError(ModelInstallProblem.UnsafeArchive, MESSAGE.UnsafeArchive());
     // This exact publisher archive was verified above before any native code is extracted.
     await exec("/usr/bin/tar", ["-xzf", archive, "-C", stage], { signal, timeout: TAR_EXTRACT_TIMEOUT_MS });
     await rm(path.join(this.root, BONSAI_RUNTIME), { recursive: true, force: true });

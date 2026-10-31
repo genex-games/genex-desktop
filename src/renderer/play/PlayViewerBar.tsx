@@ -1,9 +1,10 @@
 /**
  * The viewer's bar: the app's own 48px strip across the window's top, the game below it, drawn in the bar's
  * layer above the game's view (`PlayBarPage.tsx`). Back and the game's name with its facts (players now,
- * plays, maker) on the left; Like, Comments (its count, or the icon alone), Share (its icon alone), Invite
- * a friend in a multiplayer game, Remix, Full screen (its icon alone, once the game plays) and Exit on the
- * right, as 32px buttons with 9px corners, every one with a visible background. A note is worn by the
+ * plays, maker) on the left; Like, Comments (its count, or the icon alone), Share (its icon alone), Store
+ * (a game that sells items), Invite a friend in a multiplayer game, Remix, Full screen (its icon alone,
+ * once the game plays) and Exit on the right, as 32px buttons with 9px corners, every one with a visible
+ * background. A note is worn by the
  * button it is about, in place of its label ("Link copied" on Share), and the button turns back when main
  * drops it; a like of the player's own bursts. Main keeps what it shows (`PlayViewerEvent.bar`) and acts on
  * what it asks (`studio:play.control`). An Esc held in the game puts the keyboard here (Esc gives it back).
@@ -313,8 +314,9 @@ function CommentsButton({ count, onOpen }: { count: number | null; onOpen: () =>
 }
 
 /**
- * The game's actions: Like with its count, Comments, Share, Invite a friend in a multiplayer game,
- * Remix when it may be remixed, Full screen once the game is on screen, Exit.
+ * The game's actions: Like with its count, Comments, Share, the Store for a game that sells items
+ * (pressed while it is open in the game's place), Invite a friend in a multiplayer game, Remix when it
+ * may be remixed, Full screen once the game is on screen, Exit.
  */
 function Actions({
   bar,
@@ -356,6 +358,17 @@ function Actions({
       />
       <CommentsButton count={bar?.comments ?? null} onOpen={onComments} />
       <BarButton control={PlayControl.Share} icon="export" ariaLabel={WORDS.share} bar={bar} send={send} />
+      {bar?.store && (
+        <BarButton
+          control={PlayControl.Store}
+          icon="tag"
+          label={WORDS.store}
+          bar={bar}
+          send={send}
+          className="play-viewer-bar-store"
+          ariaPressed={bar.store.open}
+        />
+      )}
       {bar?.multiplayer && (
         <BarButton control={PlayControl.Invite} icon="users" label={WORDS.invite} bar={bar} send={send} />
       )}

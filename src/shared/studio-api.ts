@@ -1,3 +1,4 @@
+import type { AnalyticsConfig } from "./analytics.ts";
 import type {
   PlayControl,
   PlayFeedPage,
@@ -30,6 +31,24 @@ import type { GenexAccountView } from "./genex-account.ts";
 import type { PlayBarHold } from "./play-bar.ts";
 import type { PurchaseAnswer } from "./play-purchase.ts";
 import type { PlayComment, PlayCommentsPage } from "./play-comments.ts";
+import type {
+  BrowseDetail,
+  BrowsePage,
+  CreatorItem,
+  ItemAdded,
+  ItemAllowance,
+  ItemGames,
+  ItemReportReason,
+  MyItem,
+  Selling,
+  ShelfItem,
+  StoreBuyResult,
+  StoreClaimed,
+  StoreRefused,
+  StoreSheet,
+  StoreTab,
+} from "./store-items.ts";
+import type { LocalItemsView, LocalShareResult } from "./item-draft.ts";
 import type { PlayCredits } from "./play-credits.ts";
 import type {
   AddOutcome,
@@ -63,7 +82,6 @@ import type { BackdropShaderRequest, BackdropShaderResult } from "./backdrop-sha
 import type { FolderInspection, GameLocation, GameName, GameNameRequest, GameProject } from "./game-project.ts";
 import type { BuildProblem, InstallResult } from "./build-problem.ts";
 import type { LoopRunReview } from "./run-review.ts";
-import type { StagedTarget } from "./self-change-files.ts";
 import type { CodexLoginState } from "./codex-login.ts";
 import type { ClaudeLoginState } from "./claude-login.ts";
 import type { ProjectAsset, ProjectAssetRead, ProjectAssets } from "./game-assets.ts";
@@ -74,7 +92,8 @@ import type { ChatFileLink, ChatFileOpenOutside, ChatFileRef } from "./chat-file
 import type { ReferenceFrame } from "./protocol.ts";
 import type { ProviderUsageReport } from "./provider-usage.ts";
 import type { BootState, SandboxSetupResult } from "./boot.ts";
-import type { AppAbout, ReadyUpdate, UpdateCheckResult } from "./app-update.ts";
+import type { AppAbout, ReadyUpdate, RestartAnswer, UpdateCheckResult } from "./app-update.ts";
+import type { LaunchFacts } from "./app-session.ts";
 import type { PermissionMode, PermissionSettingsView, ToolPermissionAnswer } from "./permissions.ts";
 import type { LiveBehindEvent, WebBuildLoad } from "./live-behind.ts";
 import type { FieldRow, RunSharingDeleteResult, RunSharingStatus } from "./run-sharing.ts";
@@ -107,6 +126,13 @@ export interface Bootstrap {
   developer?: boolean;
   /** The website Play links to: genex.games', unless a development profile points Play elsewhere. */
   playWebOrigin?: string;
+  /** Usage analytics this session may offer; null in builds without a key and in launches that never send. */
+  analytics?: AnalyticsConfig | null;
+  /**
+   * How this launch started and how the session before it ended, for usage analytics: only in a
+   * launch that keeps them, and only in its first bootstrap (a reload or Retry gets none).
+   */
+  launch?: LaunchFacts | null;
 }
 
 /** The window-control overlay's background and glyph colours, as `#rrggbb`. */
@@ -135,22 +161,6 @@ export interface SelfChange {
   at: string;
   healthy: boolean;
   diff: string;
-}
-
-export interface StagedProposal {
-  /** What it changes (`self-change-files.ts`): a skill when absent, or the lessons every brief carries. */
-  target?: StagedTarget;
-  skill: string;
-  file: string;
-  proposedText: string;
-  currentText: string;
-  /** The blind gate's verdict on a skill edit; lessons are not gated, so they carry none. */
-  gate?: { accept: boolean; votes: string; reason: string };
-  rationale: string;
-  /** Plain-language description for the person using the app; absent on older proposals. */
-  title?: string;
-  summary?: string[];
-  at: string;
 }
 
 /** One catalog model judged against this Mac (Settings → Local Models). */
@@ -303,10 +313,10 @@ export interface StudioApi {
   /** The new version of the app downloaded in the background, or null; `onEvent` announces later ones. */
   readyUpdate(): Promise<ReadyUpdate | null>;
   /**
-   * Quit and relaunch into the downloaded version. Asks first while a run is active; false when
-   * there is nothing to install or the person kept the run going.
+   * Quit and relaunch into the downloaded version. Asks first while a run is active; says why it
+   * did not relaunch: nothing to install, a Relaunch already asking, or the person kept the run going.
    */
-  restartToUpdate(): Promise<boolean>;
+  restartToUpdate(): Promise<RestartAnswer>;
   /** Check for a newer version now (Settings → About, the app menu); a found one also announces itself. */
   checkForUpdates(): Promise<UpdateCheckResult>;
   /** Open the waiting downloadable release's page in the browser; false when none waits. */
@@ -395,7 +405,7 @@ export interface StudioApi {
   updateGame(project: string, patch: import("./game-library.ts").GameUpdate): Promise<GameProject>;
   removeGame(project: string): Promise<void>;
   snapshots(): Promise<SnapshotRecord[]>;
-  selfChanges(): Promise<{ changes: SelfChange[]; staged: StagedProposal[] }>;
+  selfChanges(): Promise<{ changes: SelfChange[] }>;
   studioActivity(): Promise<import("./studio-activity.ts").StudioActivityItem[]>;
   /** With `graphFrom`, `graphEvents` holds only the events after it; `graphEventsFrom` says where they start. */
   runSummary(
@@ -409,12 +419,9 @@ export interface StudioApi {
     listener: (summary: import("./run-summary.ts").RunSummary) => void,
   ): () => void;
   runReview(project: string, runId?: string): Promise<LoopRunReview>;
-  staged(): Promise<StagedProposal[]>;
   settings(): Promise<StudioSettingsView>;
   setSettings(patch: {
     learning?: boolean;
-    selfImproving?: boolean;
-    architect?: boolean;
     buildersMax?: number;
     agentsMax?: number;
     blender?: boolean;
@@ -458,6 +465,12 @@ export interface StudioApi {
   claudeLoginCancel(): Promise<unknown>;
   /** OpenCode's own sign-in (`opencode auth login`), in the terminal dock. */
   openCodeSignIn(): Promise<{ started: boolean; missingCli?: boolean }>;
+  /** Grok Build's own sign-in (`grok login`, a Grok account in the browser), in its Settings row. */
+  grokSignIn(): Promise<{ started: boolean; missingCli?: boolean }>;
+  /** Cursor's own sign-in (`cursor-agent login`), in a terminal in its Settings row. */
+  cursorSignIn(): Promise<{ started: boolean; missingCli?: boolean }>;
+  /** Sign Cursor's CLI out of the account Genex runs on; answers Cursor's status. */
+  cursorSignOut(): Promise<import("./engine-descriptor.ts").EngineStatus>;
   /**
    * Check a pasted OpenRouter API key with OpenRouter and keep it in the OS secret store when it is
    * accepted. The answer is OpenRouter's status; the key never comes back.
@@ -606,6 +619,60 @@ export interface StudioApi {
   playManage(gameId: string, change: PlayGameChange): Promise<PlayChangeResult>;
   /** Play: make a picture (already cropped to 16:9) a published game's cover on genex.games. */
   playCover(gameId: string, image: Uint8Array, contentType: PlayCoverType): Promise<PlayCoverResult>;
+  /** Store: a game's Store tab (its items on sale, then the shared ones it added); empty when it sells nothing or the store is off. */
+  storeItems(slug: string): Promise<StoreTab>;
+  /** Store: My items on a game's page, each marked Works here or Not in this game; signed out, `unauthorized`. */
+  storeMyItems(slug: string): Promise<MyItem[] | StoreRefused>;
+  /** Store: "Works in N games", with the first games' covers. */
+  storeItemGames(itemId: string): Promise<ItemGames>;
+  /**
+   * Store: buy an item on a game's page. Main starts the purchase and shows Play's sheet for it
+   * (`onStoreSheet`); answers when the sheet closes, or with genex.games' refusal before any sheet.
+   */
+  storeBuy(itemId: string, slug: string): Promise<StoreBuyResult>;
+  /** Store: the studio window's answer to the purchase sheet numbered `sheet`; main acts only on the one on screen. */
+  storeAnswer(sheet: number, answer: PurchaseAnswer): Promise<void>;
+  /** Store: the purchase sheet main draws in the studio window, or null once it closes. */
+  onStoreSheet(listener: (sheet: StoreSheet | null) => void): () => void;
+  /** Store: claim a Free item on a game's page; a second claim replays the first. */
+  storeClaim(itemId: string, slug: string): Promise<StoreClaimed | StoreRefused>;
+  /** Store: a profile's shelf, at most five items; none for a person genex.games does not know. */
+  storeShelf(userId: string): Promise<ShelfItem[]>;
+  /** The coin the Genex account may spend, for the account plate in Play; null signed out or with coin off. */
+  storeCoins(): Promise<number | null>;
+  /** Get Nex: genex.games' coin page in the browser. */
+  storeGetCoin(): Promise<void>;
+  /** Store: report an item (Copy, Doesn't work, Inappropriate, Scam), as the account when there is one. */
+  storeReport(itemId: string, reason: ItemReportReason, message: string | null): Promise<true | StoreRefused>;
+  /** Create › Items › Browse: other creators' shared items, a page at a time. */
+  itemsBrowse(query: string, cursor: string | null, tags?: string[]): Promise<BrowsePage | StoreRefused>;
+  /** Create › Items › Browse: one item's detail panel. */
+  itemsBrowseDetail(itemId: string): Promise<BrowseDetail | StoreRefused>;
+  /** Create › Items: Add to \<game>, a game of the account's named by its Genex project id. */
+  itemsAddToGame(itemId: string, projectId: string): Promise<ItemAdded | StoreRefused>;
+  /** Create › Items: take a shared item out of one of the account's games. */
+  itemsRemoveFromGame(itemId: string, projectId: string): Promise<ItemAllowance | StoreRefused>;
+  /** Create › Items › Selling: the ready / on-hold strip and the account's items. */
+  itemsSelling(): Promise<Selling | StoreRefused>;
+  /** Create › Items: Put on sale, from the listing draft card or Selling. Only Studio's own button publishes (D40). */
+  itemPutOnSale(itemId: string): Promise<CreatorItem | StoreRefused>;
+  /** Create › Items › Selling: Take off sale; owners keep it. */
+  itemTakeOffSale(itemId: string): Promise<CreatorItem | StoreRefused>;
+  /** Create › Items: "Other games can use it", on or off. */
+  itemSetShared(itemId: string, shared: boolean): Promise<CreatorItem | StoreRefused>;
+  /** A game's local item drafts as Studio holds them: approvals, drafts and what became of each after its publish. */
+  itemsLocal(project: string): Promise<LocalItemsView>;
+  /** "Sell when published" on a local draft as its card shows it (`contentHash`); kept in Studio's app data. */
+  itemsLocalApprove(project: string, localId: string, contentHash: string): Promise<LocalItemsView>;
+  /** Undo "Sell when published" on a local draft. */
+  itemsLocalWithdraw(project: string, localId: string): Promise<LocalItemsView>;
+  /** "Other games can use it" on a local draft, whose card shows `contentHash`: main runs the CLI's `shop set`. */
+  itemsLocalShare(project: string, localId: string, contentHash: string, shared: boolean): Promise<LocalShareResult>;
+  /**
+   * Settle a game's local drafts once it is on Genex: upload them, then put on sale only what the
+   * person approved unchanged. Paced in main; `force` right after a publish finished.
+   */
+  itemsLocalSettle(project: string, force: boolean): Promise<LocalItemsView>;
   /** The app's Genex account: signed out, signing in, signed in, or a sign-in genex.games ended. Never asks the network. */
   genexAccount(): Promise<GenexAccountView>;
   /** Sign in to Genex in the browser (again, after a sign-in ended); the account as it is after. */
@@ -698,6 +765,11 @@ export interface StudioApi {
     width: number;
     height: number;
     watching: boolean;
+    /**
+     * The game open on the stage (absent under home, Play or Studio): a show the person asks for in
+     * its chat may load it even while Live holds another game out of sight.
+     */
+    project?: string | null;
     viewport?: { width: number; height: number };
   }): Promise<boolean>;
   /** The Live game's sound switch; main decides when Live is actually heard. */
@@ -722,7 +794,13 @@ export interface StudioApi {
     /** The person stopped the game (`stopPreview`): Live holds no page until Play. */
     stopped: boolean;
     loadError: string | null;
+    /** What kind of failure `loadError` is (Chromium's, or the game's own build); null while there is none. */
+    loadFailure: import("./preview-contract.ts").LiveLoadFailure | null;
     crashed: boolean;
+    /** Why the page's renderer went away while `crashed`; null while it runs. */
+    gone: import("./preview-contract.ts").PreviewGone | null;
+    /** The page's loop stopped answering and has not answered since. */
+    unresponsive: boolean;
     page: { complete: boolean; resources: number; state: Record<string, unknown> | null } | null;
   }>;
   /** Why the stage cannot show this game's own build; null when the last build was fine. */
@@ -752,10 +830,6 @@ export interface StudioApi {
   /** Wrap up: the builders finish what they are on, then the run integrates, checks and shows. */
   finishRun(runId: string, threadId: string): Promise<boolean>;
   resumeAutopilot(runId: string): Promise<boolean>;
-  startSkillOpt(): Promise<boolean>;
-  /** `key` names the suggestion the person saw; the index alone names whatever sits there now. */
-  acceptProposal(index: number, key?: { at?: string; skill?: string }): Promise<{ skill: string }>;
-  discardProposal(index: number, reason?: string, key?: { at?: string; skill?: string }): Promise<boolean>;
   exportGame(project: string): Promise<{ dir: string; files: number; included: string[]; excluded: string[] }>;
   modelInstallStatus(): Promise<import("./model-install.ts").ModelInstallJob | null>;
   /** Install Claude Code or Codex with its vendor's own installer, or join the install already running. */
@@ -822,11 +896,8 @@ export interface StudioApi {
 }
 
 export interface StudioSettingsView {
-  /** Self-improvement: off, Studio learns nothing new and changes nothing about itself. */
+  /** Self-improvement: off, Studio changes nothing about itself. */
   learning: boolean;
-  /** Apply suggestions automatically, while learning is on. */
-  selfImproving: boolean;
-  architect?: boolean;
   /** Maximum builders a run may use at once; the lead decides how many it starts. */
   buildersMax?: number;
   agentsMax?: number;

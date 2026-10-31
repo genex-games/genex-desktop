@@ -191,8 +191,11 @@ export function Panel({
               <PanelButton label={t("Close (Esc)")} icon="close" onClick={onClose} />
             </div>
           </header>
-          {media}
-          {children}
+          {/* A card shows the build's own work: its steps, notes, files and pictures. */}
+          <div data-analytics-mask className="contents">
+            {media}
+            {children}
+          </div>
         </div>
         <CardFooter actions={actions} reply={reply} onReply={onReply} />
       </section>

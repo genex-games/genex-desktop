@@ -10,6 +10,7 @@ import {
   REWOUND_EVENT,
   harnessView,
   planRewind,
+  RewindRefusal,
   rewindableMessages,
   rewindsOf,
   withdrawnId,
@@ -192,7 +193,7 @@ test("a rewind keeps a job's end whose start stays, and the start of a job still
 
 test("a rewind is refused while a message is being answered or handed in, for waiting input, and once gone", () => {
   const events = conversation();
-  assert.deepEqual(planRewind(events.slice(0, 13), [], "b"), { ok: false, reason: "busy" });
+  assert.deepEqual(planRewind(events.slice(0, 13), [], "b"), { ok: false, reason: RewindRefusal.Busy });
   assert.deepEqual(
     planRewind(
       [
@@ -204,17 +205,17 @@ test("a rewind is refused while a message is being answered or handed in, for wa
       [],
       "a",
     ),
-    { ok: false, reason: "busy" },
+    { ok: false, reason: RewindRefusal.Busy },
     "not while a message is being handed to the turn answering",
   );
-  assert.deepEqual(planRewind(events.slice(0, 10), [], "b"), { ok: false, reason: "not-answered" });
-  assert.deepEqual(planRewind(events, [], "missing"), { ok: false, reason: "not-found" });
+  assert.deepEqual(planRewind(events.slice(0, 10), [], "b"), { ok: false, reason: RewindRefusal.NotAnswered });
+  assert.deepEqual(planRewind(events, [], "missing"), { ok: false, reason: RewindRefusal.NotFound });
   const removed = [...events.slice(0, 10), custom(11, "coordinator_message_removed", { messageId: "b" })];
-  assert.deepEqual(planRewind(removed, [], "b"), { ok: false, reason: "not-found" });
+  assert.deepEqual(planRewind(removed, [], "b"), { ok: false, reason: RewindRefusal.NotFound });
   // Twice to the same message: the second finds it gone.
   const first = planRewind(events, [], "b");
   assert.ok(first.ok);
-  assert.deepEqual(planRewind(events, [first.rewind], "b"), { ok: false, reason: "not-found" });
+  assert.deepEqual(planRewind(events, [first.rewind], "b"), { ok: false, reason: RewindRefusal.NotFound });
 });
 
 test("a bubble with no queue record is rewound by its own id; its bubble id finds a queued message too", () => {
@@ -234,7 +235,11 @@ test("a bubble with no queue record is rewound by its own id; its bubble id find
     { messageId: "000003", from: "000003", text: "Add a boss" },
   );
   assert.deepEqual(ids(withoutRewound(events, [planned.rewind])), [1, 2]);
-  assert.deepEqual(planRewind(events, [], "000002"), { ok: false, reason: "not-found" }, "a reply is no bubble");
+  assert.deepEqual(
+    planRewind(events, [], "000002"),
+    { ok: false, reason: RewindRefusal.NotFound },
+    "a reply is no bubble",
+  );
   const byBubble = planRewind(events, [], "000019");
   assert.ok(byBubble.ok);
   assert.equal(byBubble.rewind.messageId, "b", "the queued message its bubble carries");
@@ -559,7 +564,7 @@ test("a message read into a running answer is a rewind target of its own; the an
   );
   assert.deepEqual(
     planRewind(events.slice(0, 12), [], "a"),
-    { ok: false, reason: "busy" },
+    { ok: false, reason: RewindRefusal.Busy },
     "not while it is being handed in",
   );
   assert.deepEqual([...rewindableMessages(events.slice(0, 12))], [["000001", "a"]], "nor while it is handed in");

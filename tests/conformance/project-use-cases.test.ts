@@ -30,14 +30,13 @@ import { RunEvent } from "../../src/harness-seed/loop/run-events.ts";
 import { UNREAL_NEW_GAME_TOOL } from "../../src/harness-seed/loop/unreal-prompts.ts";
 import { HostMethod } from "../../src/shared/harness-api.ts";
 import { UiEvent } from "../../src/shared/ui-events.ts";
-import { type EventEnvelope, EventKind, SnapshotScope } from "../../src/shared/event-log.ts";
+import { SnapshotScope } from "../../src/shared/event-log.ts";
 import { ObserverLive, PREVIEW_OBSERVER } from "../../src/shared/observers.ts";
-import { latestCaptures, liveViewFor, liveViewsFor } from "../../src/renderer/live-views.ts";
+import { liveViewFor, liveViewsFor } from "../../src/renderer/live-views.ts";
 import { stageTabs } from "../../src/renderer/panels/stage/stage-tabs.ts";
 import { STAGE_WORDS } from "../../src/renderer/words.ts";
 import { projectKindLabel } from "../../src/renderer/project-kind.ts";
 import type { GameProject } from "../../src/shared/game-project.ts";
-import { buildRunGraph } from "../../src/renderer/run-graph.ts";
 import { isAgentTool, PluginSourceKind } from "../../src/shared/plugins.ts";
 import { FolderHolds } from "../../src/shared/project-facts.ts";
 import { FindNext, PluginOffer } from "../../src/shared/project-tools.ts";
@@ -46,16 +45,8 @@ import { PluginRegistry } from "../../src/substrate/plugins/registry.ts";
 import { buildContractorBrief } from "../../src/harness-seed/loop/chat-session.ts";
 import { runUnrealLead } from "../../src/harness-seed/loop/unreal/lead.ts";
 import { CustomEvent, customRecord } from "../../src/shared/custom-events.ts";
-import {
-  checkFinish,
-  type FinishOutcome,
-  type FinishScope,
-  type FinishTally,
-  newTally,
-} from "../../src/harness-seed/loop/finish-check.ts";
-import { FinishCheckStep, MAX_FINISH_REJECTIONS, ObserverSource } from "../../src/harness-seed/loop/finish-contract.ts";
+import { FinishCheckStep } from "../../src/harness-seed/loop/finish-contract.ts";
 import { GRACE_MS } from "../../src/harness-seed/loop/time-cap.ts";
-import type { Evidence } from "../../src/harness-seed/loop/evidence.ts";
 import type { Run } from "../../src/harness-seed/types/harness.d.ts";
 import { PERMISSION_MODES, PermissionMode, type ToolPermissionEvent } from "../../src/shared/permissions.ts";
 import { APP_LOOK_TOOL_NAME, JobTool } from "../../src/shared/jobs.ts";
@@ -72,10 +63,9 @@ import { type NeverTouchHit, NeverTouchKind, neverTouchVerdict } from "../../src
 import { MAX_WORKERS_AT_ONCE, WorkerIsolation, type WorkerType } from "../../src/shared/workers.ts";
 import unrealManifest from "../../src/plugins/unreal/plugin.json" with { type: "json" };
 import { type CoreLite, coreLite } from "../helpers/core-lite.ts";
-import { type CtxHandler, ctxRecorder } from "../helpers/ctx-recorder.ts";
+import { ctxRecorder } from "../helpers/ctx-recorder.ts";
 import { gitFile } from "../helpers/git.ts";
 import { copyOfExample, PLUGIN_SDK_BACKEND, personAllowsLocalTools } from "../helpers/plugins.ts";
-import { unrealBackendFixture } from "../helpers/unreal-fake-engine.ts";
 import { writeSkillExample } from "../helpers/plugin-author.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 import { Changes, until } from "../helpers/worker-chat.ts";
@@ -88,7 +78,7 @@ import {
   type LoopTurn,
   loopHost,
 } from "../helpers/loop-host.ts";
-import { fakeFinishReview, reviewerAnswer } from "../helpers/reviewer.ts";
+import { reviewerAnswer } from "../helpers/reviewer.ts";
 import {
   copyProject,
   factIds,
@@ -148,7 +138,7 @@ async function unrealLoopHost(turns: LoopTurn[], run: Record<string, unknown> = 
 
 /** A lead turn that claims the goal is reached, naming the project file as proof. */
 const finishesLoop: LoopTurn = async ({ tool }) => {
-  await tool("finish", { summary: "The level is built and the door opens.", proof: "Lantern.uproject" });
+  await tool("finish", { review: "yes", summary: "The level is built and the door opens.", proof: "Lantern.uproject" });
   return undefined;
 };
 
@@ -172,7 +162,7 @@ before(async () => {
   await mkdir(cases);
   lite = await coreLite({
     gamesRoot: path.join(root, "games"),
-    executionPolicy: { allowedProjectRoot: root, runBackgroundImprovement: false },
+    executionPolicy: { allowedProjectRoot: root },
     // Looks go to the stub and jobs to a recording spawn: nothing here sees the screen or runs a build.
     appLook: stubAppLook(),
     jobSpawn: recordingJobSpawn,
@@ -302,85 +292,6 @@ async function listed(name: string): Promise<object> {
   return game;
 }
 
-/** The run a use case's finish checks belong to. */
-const FINISH_RUN_ID = "run_finish_check";
-/** The lead's claim at a use case's finish. */
-const FINISH_CLAIM = {
-  summary: "The game meets the request.",
-  proof: ["reports/tests.txt"],
-  hookNotes: [],
-  hookImages: [],
-};
-/** A render as a prop's turntable writes it: a PNG's first bytes. */
-const RENDER_PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13]);
-/** A preview pass's answer: one still with pixels. */
-const PREVIEW_PASS = {
-  ok: true,
-  problems: [],
-  warnings: [],
-  consoleErrors: [],
-  shots: [{ camera: "default", path: "/runs/finish/default.jpg", base64: "PREVIEW" }],
-  motion: [],
-} as unknown as Evidence;
-
-/** A reviewer's answer as its session's summary. */
-const reviewerSays = (verdict: string, reasons: string[]) => ({
-  ok: true,
-  engine: CLAUDE,
-  turns: 1,
-  usage: {},
-  summary: JSON.stringify({ verdict, reasons }),
-});
-
-/**
- * A Loop's finish check on the lite core (`liteHost`): Claude Code holds the reviewer's sessions and
- * answers from `answers` in order, a scripted preview pass stands in for the evidence pass, and every
- * record is kept: the harness's, and the host's finish check records (`fakeFinishReview`).
- * `reviewers` holds the reviewer sessions the host started, with their params.
- */
-function finishHost(game: object, dir: string, answers: unknown[], handlers: Record<string, CtxHandler> = {}) {
-  const records: Array<{ event_type: string; payload: Record<string, unknown> }> = [];
-  const checks = () =>
-    records.filter((record) => record.event_type === CustomEvent.FinishCheck).map((record) => record.payload);
-  const review = fakeFinishReview({
-    delegate: () => answers.shift(),
-    append: (payload) => records.push({ event_type: CustomEvent.FinishCheck, payload }),
-    records: checks,
-  });
-  const r = liteHost(lite, {
-    [HostMethod.EngineDescribe]: () => [
-      { id: CLAUDE, label: CLAUDE, kind: "delegated", supportsSessions: true, models: [] },
-    ],
-    ...review.handlers,
-    [HostMethod.EventsAppend]: (params) => {
-      records.push(...(params.batch as typeof records));
-      return "e1";
-    },
-    ...handlers,
-  });
-  const name = String((game as { name?: unknown }).name);
-  const run = {
-    runId: FINISH_RUN_ID,
-    project: name,
-    goal: "a kite racing game with three laps",
-    engine: CLAUDE,
-  } as unknown as Run;
-  const scope = (tally: FinishTally): FinishScope => ({
-    ctx: r.ctx as never,
-    run,
-    threadId: "chat-finish",
-    game: game as never,
-    leadFolder: dir,
-    tally,
-    now: Date.now,
-    callStarted: Date.now(),
-    closeMs: 0,
-    said: [],
-    previewPass: async () => PREVIEW_PASS,
-  });
-  return { r, records, checks, scope, reviewers: review.asked };
-}
-
 /** Whether a file exists in a folder. */
 const exists = (dir: string, file: string) =>
   readFile(path.join(dir, file)).then(
@@ -453,22 +364,6 @@ async function writeIn(dir: string, files: Record<string, string>): Promise<void
 /** The files a commit of a game's repository holds. */
 const trackedAt = async (dir: string, commit: string) =>
   (await gitFile(["ls-tree", "-r", "--name-only", commit], { cwd: dir })).stdout.split("\n").filter(Boolean);
-
-/** A run's records as the chat's log hands them to the Builds graph: its start, then each record. */
-function runLog(runId: string, records: Array<{ event_type: string; payload: Record<string, unknown> }>) {
-  const started = { event_type: CustomEvent.RunStarted, payload: { runId, goal: "Make it", project: "game" } };
-  return [started, ...records].map(
-    (data, n) =>
-      ({
-        id: `e${n + 1}`,
-        thread_id: "t1",
-        session_id: null,
-        turn_id: null,
-        created_at: new Date(Date.UTC(2026, 0, 1, 9, 0, n)).toISOString(),
-        data: { type: EventKind.Custom, ...data },
-      }) as EventEnvelope,
-  );
-}
 
 /** A listed game's facts, read structurally: what and where. */
 const factsOfListed = (game: object) =>
@@ -825,102 +720,6 @@ export async function activate() {
   return `${id}__new-plugin`;
 }
 
-/** A JPEG's first bytes: the plugin window's picture as app_look keeps it. */
-const WINDOW_JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 16, 0x4a, 0x46, 0x49, 0x46]);
-
-/** What UBT, the headless editor and UAT answer in the plugin's backend: a build, two passing tests and a package. */
-const SHIP_PROGRAMS = {
-  compile: async () => ({
-    ok: true,
-    seconds: 30,
-    errors: [],
-    summary: "LevelToolsHostEditor built in 30 s.",
-    retryable: false,
-  }),
-  runProgram: async (_file: string, args: readonly string[]) => {
-    const report = (args.find((arg) => arg.startsWith("-ReportExportPath=")) ?? "").split("=")[1] ?? "";
-    const tests = ["Opens", "Lists"].map((name) => ({ fullTestPath: `LevelTools.Window.${name}`, state: "Success" }));
-    await writeFile(path.join(report, "index.json"), JSON.stringify({ tests }));
-    return { code: 0, output: "", timedOut: false };
-  },
-  prepareSandbox: async () => {
-    const scratch = await tmpDir("studio-ship-sandbox-");
-    return { profile: path.join(scratch, "ubt.sb"), env: {}, cwd: scratch, dispose: async () => {} };
-  },
-  runCommand: async (_file: string, args: readonly string[]) => {
-    const packaged = (args.find((arg) => arg.startsWith("-Package=")) ?? "").slice("-Package=".length);
-    await writeFile(path.join(packaged, "LevelTools.uplugin"), JSON.stringify({ VersionName: "1.0" }));
-    return { code: 0, output: "BUILD SUCCESSFUL\n" };
-  },
-};
-
-/** Waits until a file exists. */
-async function untilFile(file: string): Promise<void> {
-  for (let i = 0; i < 2_000; i++) {
-    if (await exists(path.dirname(file), path.basename(file))) return;
-    await pause(5);
-  }
-  throw new Error(`${path.basename(file)} never appeared`);
-}
-
-/**
- * A local stand-in of the Unreal plugin, turned on, with the bundled manifest's editor lock and its
- * `plugin-build` and `editor-activity` declarations copied at test time: its probe says the person
- * isn't at Unreal, and its build marks that it runs, then answers once the test lets it. The
- * person's yes on the build's card is recorded in `asked`.
- */
-async function shipStandIn(t: { after: (fn: () => Promise<void>) => void }) {
-  const id = "unreal-ship-standin";
-  const root = await tmpDir("studio-unreal-ship-standin-");
-  const dir = path.join(root, id);
-  const markers = path.join(root, "markers");
-  await mkdir(markers);
-  await cp(TOY_PLUGIN, dir, { recursive: true });
-  const manifest = JSON.parse(await readFile(path.join(dir, "plugin.json"), "utf8"));
-  const real = unrealManifest as unknown as { tools: Array<{ name: string }>; locks: unknown[] };
-  manifest.id = id;
-  manifest.engine.id = id;
-  manifest.locks.push(...real.locks);
-  manifest.tools.push(...real.tools.filter((declared) => ["plugin-build", "editor-activity"].includes(declared.name)));
-  manifest.detect.push({ fact: "unreal-plugin", files: ["**/*.uplugin"], notUnder: ["**/GenexEditorHelper/"] });
-  await writeFile(path.join(dir, "plugin.json"), JSON.stringify(manifest, null, 2));
-  await writeFile(
-    path.join(dir, "backend.mjs"),
-    `import { access, writeFile } from "node:fs/promises";
-import path from "node:path";
-import { setTimeout as pause } from "node:timers/promises";
-const markers = ${JSON.stringify(markers)};
-const there = (name) => access(path.join(markers, name)).then(() => true, () => false);
-export async function activate() {
-  return {
-    async tool(name) {
-      if (name === "editor-activity") {
-        await writeFile(path.join(markers, "probed"), "");
-        return { personActive: false, pie: false, dirty: 0 };
-      }
-      if (name !== "plugin-build") return "nothing";
-      await writeFile(path.join(markers, "inside"), "");
-      while (!(await there("release"))) await pause(10);
-      return { started: true };
-    },
-  };
-}\n`,
-  );
-  await lite.core.plugins.installLocal(dir, PluginSourceKind.Local, []);
-  await lite.core.plugins.setEnabled(id, true);
-  const asked: string[] = [];
-  const ask = lite.core.plugins.consent;
-  lite.core.plugins.consent = async (_plugin, tool) => {
-    asked.push(tool.name);
-    return { approved: true, by: "user" };
-  };
-  t.after(async () => {
-    lite.core.plugins.consent = ask;
-    await lite.core.plugins.setEnabled(id, false);
-  });
-  return { id, tool: `${id}__plugin-build`, markers, inside: path.join(markers, "inside"), asked };
-}
-
 /** A chat turn on an opened copy of the project whose builder changes one of the game's files. */
 async function chatTurnOn(name: Project, changed: string) {
   const { dir, game } = await adopted(name);
@@ -1033,39 +832,6 @@ describe("a new web game: the first message picks web, and a Loop ends on the fi
     assert.equal(sessions[0]?.includes(START_WEB_GAME), true, "the first turn is offered the starter");
     assert.equal(sessions[1]?.includes(START_WEB_GAME), false, "a web game's next turn is not");
   });
-  it("a Loop on it ends only after a reviewer accepts the lead's finish, and three rejections in a row stop it with what isn't done", async () => {
-    const game = await lite.core.createGame("Kite Finish");
-    const dir = lite.core.games.dirFor(game.name);
-    await mkdir(path.join(dir, "reports"), { recursive: true });
-    await writeFile(path.join(dir, "reports", "tests.txt"), "8 passed\n");
-    const notDone = ["The race has two laps, not three."];
-    const { reviewers, checks, scope } = finishHost(game, dir, [
-      reviewerSays("no", notDone),
-      reviewerSays("no", notDone),
-      reviewerSays("no", notDone),
-    ]);
-    const tally = newTally();
-    const outcomes: FinishOutcome[] = [];
-    for (let n = 0; n < MAX_FINISH_REJECTIONS; n++) outcomes.push(await checkFinish(scope(tally), FINISH_CLAIM));
-    const last = outcomes.at(-1);
-    assert.ok(last && !("noTime" in last) && last.step === FinishCheckStep.Rejected, "the third check is a no");
-    assert.equal(last.stop, true, "and it stops the Loop");
-    assert.deepEqual(last.reasons, notDone, "with what isn't done");
-    for (const asked of reviewers) {
-      assert.equal(asked.readOnly, true, "the reviewer only reads");
-      assert.deepEqual(asked.reviewer, { runId: FINISH_RUN_ID, reads: dir }, "the lead's folder, for this run");
-    }
-    const ends = checks().filter((check) => check.step === FinishCheckStep.Rejected);
-    assert.deepEqual(
-      ends.map((check) => check.reasons),
-      [notDone, notDone, notDone],
-      "each record names the reasons",
-    );
-    const accepting = finishHost(game, dir, [reviewerSays("yes", ["Three laps and a timer."])]);
-    const yes = await checkFinish(accepting.scope(newTally()), FINISH_CLAIM);
-    assert.ok(!("noTime" in yes) && yes.step === FinishCheckStep.Accepted, "a reviewer's yes ends the Loop");
-    assert.equal(accepting.checks().at(-1)?.step, FinishCheckStep.Accepted);
-  });
 });
 
 describe("a new Unreal game, plugin on: the editor under its lock, workers in copies, the Unreal card", () => {
@@ -1166,7 +932,11 @@ describe("a new Unreal game, plugin on: the editor under its lock, workers in co
         async ({ tool }) => {
           await tool("save_point", { label: "One", summary: "the first room" });
           answers.push(textOf(await tool(WORKER_START, { type: "cpp", title: "Door", task: "A door that opens." })));
-          await tool("finish", { summary: "The level is built and the door opens.", proof: "Lantern.uproject" });
+          await tool("finish", {
+            review: "yes",
+            summary: "The level is built and the door opens.",
+            proof: "Lantern.uproject",
+          });
           return undefined;
         },
       ]);
@@ -1452,79 +1222,6 @@ describe("an Unreal C++ editor plugin: build, test and package it", () => {
     assert.equal(kind.scaffold?.label, "Unreal plugin");
     assert.match(projectKindLabel(kind) ?? "", /plugin/i);
   });
-  it("plugin tools build under the editor lock, run the automation tests headless and package with BuildPlugin; the finish carries the test report, the package path and a screenshot of the plugin's window", async (t) => {
-    // Under the editor lock: the person-first check comes first, and the call holds the project's lock.
-    const ship = await shipStandIn(t);
-    const game = await lite.core.createGame("Level Ship");
-    const dir = lite.core.games.dirFor(game.name);
-    for (const [file, text] of Object.entries(LEVEL_TOOLS_SHAPE)) {
-      await mkdir(path.dirname(path.join(dir, file)), { recursive: true });
-      await writeFile(path.join(dir, file), text);
-    }
-    const building = lite.api()[HostMethod.PluginsInvoke]({
-      project: game.name,
-      threadId: await lite.core.threadForGame(game.name),
-      name: ship.tool,
-      args: {},
-    });
-    await untilFile(ship.inside);
-    assert.ok(await exists(ship.markers, "probed"), "the person-first check ran before the call");
-    const key = `${game.name}:${ship.id}:editor`;
-    assert.ok(
-      lite.core.locks.holders().some((held) => held.key === key),
-      "the project's editor lock is held during the call",
-    );
-    await writeFile(path.join(ship.markers, "release"), "");
-    assert.match(JSON.stringify(await building), /started/);
-    assert.ok(!lite.core.locks.holders().some((held) => held.key === key), "and let go after");
-    assert.deepEqual(ship.asked, ["plugin-build"], "the person was asked first");
-
-    // The plugin's backend on a fake engine: build, tests and package, and the proof plugin-status lists.
-    const f = await unrealBackendFixture({ programs: SHIP_PROGRAMS });
-    await f.call("new-plugin", { name: "LevelTools" });
-    const status = async () =>
-      (await f.call("plugin-status", {})) as { proof: string[] } & Record<string, { state: string }>;
-    for (const [tool, job] of [
-      ["plugin-build", "build"],
-      ["plugin-test", "test"],
-      ["plugin-package", "package"],
-    ] as const) {
-      await f.call(tool, {});
-      for (let i = 0; i < 2_000 && (await status())[job]?.state === "running"; i++) await pause(5);
-      assert.equal((await status())[job]?.state, "done", `${job} is done`);
-    }
-    const shot = path.join(f.dir, "unreal", "Saved", "Genex", "Shots", "LevelTools-window.jpg");
-    await mkdir(path.dirname(shot), { recursive: true });
-    await writeFile(shot, WINDOW_JPEG);
-    const { proof } = await status();
-    assert.deepEqual(proof, [
-      "unreal/Saved/Genex/Tests/LevelTools/summary.md",
-      "unreal/Saved/Genex/Packages/LevelTools.md",
-      "unreal/Saved/Genex/Shots/LevelTools-window.jpg",
-    ]);
-
-    // The finish names that proof: its reviewer reads the test summary, the package note's path and one picture.
-    const proofGame = await lite.core.createGame("Level Proof");
-    const proofDir = lite.core.games.dirFor(proofGame.name);
-    for (const file of proof) await cp(path.join(f.dir, file), path.join(proofDir, file), { recursive: true });
-    const api = lite.api() as unknown as Record<string, (params: unknown) => Promise<unknown>>;
-    const kept = {
-      [HostMethod.RunArtifact]: (params: Record<string, unknown>) => api[HostMethod.RunArtifact]?.(params),
-    };
-    const { reviewers, scope } = finishHost(
-      await listed(proofGame.name),
-      proofDir,
-      [reviewerSays("yes", ["Built, tested and packaged."])],
-      kept,
-    );
-    const outcome = await checkFinish(scope(newTally()), { ...FINISH_CLAIM, proof });
-    assert.ok(!("noTime" in outcome) && outcome.step === FinishCheckStep.Accepted);
-    const [asked] = reviewers;
-    const brief = JSON.stringify(asked);
-    assert.ok(brief.includes("2 passed, 0 failed, 0 not run."), "the test summary's text");
-    assert.ok(brief.includes("unreal/Saved/Genex/Packages/LevelTools.md"), "the package note's path");
-    assert.equal(((asked?.images ?? []) as unknown[]).length, 1, "one picture: the plugin's window");
-  });
 });
 
 describe("a Godot game with its plugin off: generic tools, jobs and looking at the app", () => {
@@ -1682,51 +1379,11 @@ describe("assets only, a Blender pack: Blender workers, renders and the Assets t
     assert.match(answers[8] ?? "", /at most 8 run at once/, "the ninth is told why");
     for (const request of workers) {
       const plugins = namesOf(request.liveTools).filter((name) => name.includes("__"));
-      assert.deepEqual(plugins.sort(), [...model.tools].sort(), "each is offered its type's tools and no others");
+      // Flipped (Loop phase 3): its type was a fence of three tools; a worker has every tool its lead has.
+      for (const tool of model.tools) assert.ok(plugins.includes(tool), `offered its type's ${tool}`);
+      assert.ok(plugins.includes("blender__install"), "and the plugin's other tools besides");
       assert.notEqual(request.cwd, dir, "each works in its own copy");
     }
-  });
-  it("each prop gets a turntable render; the finish check reads the renders and Live shows them", async () => {
-    const { dir, game } = await adopted(Project.BlenderAssets);
-    await mkdir(path.join(dir, "renders"), { recursive: true });
-    for (const prop of ["crate", "lamp"]) await writeFile(path.join(dir, "renders", `${prop}.png`), RENDER_PNG);
-    const api = lite.api() as unknown as Record<string, (params: unknown) => Promise<unknown>>;
-    const kept = {
-      [HostMethod.RunArtifact]: (params: Record<string, unknown>) => api[HostMethod.RunArtifact]?.(params),
-    };
-    const listedGame = await listed(game.name);
-    const { reviewers, records, scope } = finishHost(
-      listedGame,
-      dir,
-      [reviewerSays("yes", ["Both props have renders."])],
-      kept,
-    );
-    const claim = { ...FINISH_CLAIM, proof: ["renders/crate.png", "renders/lamp.png"] };
-    const outcome = await checkFinish(scope(newTally()), claim);
-    assert.ok(!("noTime" in outcome) && outcome.step === FinishCheckStep.Accepted);
-    const [asked] = reviewers;
-    const images = (asked?.images ?? []) as Array<{ label: string; data: string }>;
-    assert.deepEqual(
-      images.map((image) => image.data),
-      [RENDER_PNG.toString("base64"), RENDER_PNG.toString("base64")],
-      "the reviewer is handed both renders",
-    );
-    const proofs = records.filter(
-      (record) => record.event_type === CustomEvent.ObserverCapture && record.payload.source === ObserverSource.Proof,
-    );
-    assert.equal(proofs.length, 1, "one capture of the lead's proof");
-    const files = ((proofs[0]?.payload.images ?? []) as Array<{ file: string }>).map((image) =>
-      path.basename(image.file),
-    );
-    assert.deepEqual(files, ["1-crate.png", "2-lamp.png"], "listing both renders, kept with the run");
-    // Live: a Blender pack has no view of its own, so it shows the run's latest pictures.
-    assert.equal(liveViewFor({ facts: factsOfListed(listedGame) }, lite.core.plugins.list()).live, ObserverLive.Stills);
-    const graph = buildRunGraph(runLog(FINISH_RUN_ID, records));
-    assert.deepEqual(
-      latestCaptures(graph).map((picture) => path.basename(picture.file)),
-      ["1-crate.png", "2-lamp.png"],
-      "Live shows both renders",
-    );
   });
 });
 
@@ -1750,7 +1407,7 @@ describe("an Unreal game with a web site: two facts, two views", () => {
       registry.cancel();
     }
     const lines = buildContractorBrief({ ask: ASK, engine: CLAUDE, facts }).split("\n");
-    const web = lines.filter((line) => line.includes("window.__studio"));
+    const web = lines.filter((line) => line.includes("serves its index.html"));
     assert.ok(web.length > 0 && web.every((line) => line.startsWith("For the web game in `site/`: ")));
     const unreal = lines.filter((line) => line.includes("the Unreal editor connector's tools"));
     assert.ok(unreal.length > 0 && unreal.every((line) => !line.startsWith("For the ")));
@@ -1833,7 +1490,6 @@ describe("a Genex plugin for an engine Genex lacks: written, loaded by the perso
     { part: "assets", read: (m) => sectionOf(m, "assets") },
     { part: "workerTypes", read: (m) => sectionOf(m, "workerTypes") },
     { part: "scaffolds", read: (m) => sectionOf(m, "scaffolds") },
-    { part: "judges", read: (m) => sectionOf(m, "judges") },
     {
       part: "tools[].needs",
       read: (m) => toolOf(m, "build")?.needs,
@@ -2116,7 +1772,7 @@ describe("an unlimited Loop on any of these: the lead, the facts' hooks and obse
         [
           async ({ tool }) => {
             await tool(WORKER_START, { type: "cpp", title: "Door", task: "A door that opens." });
-            await tool("finish", { summary: "The level is built.", proof: "Lantern.uproject" });
+            await tool("finish", { review: "yes", summary: "The level is built.", proof: "Lantern.uproject" });
             return undefined;
           },
           finishesLoop,
@@ -2164,10 +1820,7 @@ describe("an unlimited Loop on any of these: the lead, the facts' hooks and obse
         { budgets: unlimited },
       );
       const report = await idle.start();
-      assert.equal(
-        report.stoppedBecause,
-        "the Loop's time ran out before a reviewer accepted the goal; here is where it stands",
-      );
+      assert.equal(report.stoppedBecause, "the Loop's time ran out; here is where it stands");
       assert.equal(idle.reviewed().length, 0, "no reviewer was asked");
     },
   );

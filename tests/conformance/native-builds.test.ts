@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import { mkdir, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
-import { elfArch, findNativeBuilds, machOArch, peArch } from "../../src/main/core/native-builds.ts";
+import { elfArch, findNativeBuilds, machOArch, machOProcessors, peArch } from "../../src/main/core/native-builds.ts";
 import { NativeArch, NativePlatform } from "../../src/shared/play-native.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
@@ -29,6 +29,15 @@ function fatMachO(cpus: number[]): Buffer {
   bytes.writeUInt32BE(0xcafebabe, 0);
   bytes.writeUInt32BE(cpus.length, 4);
   cpus.forEach((cpu, at) => bytes.writeUInt32BE(cpu, 8 + at * 20));
+  return bytes;
+}
+
+/** A fat Mach-O header of 64-bit entries (`fat_arch_64`) carrying `cpus`. */
+function fat64MachO(cpus: number[]): Buffer {
+  const bytes = Buffer.alloc(8 + cpus.length * 32 + 16);
+  bytes.writeUInt32BE(0xcafebabf, 0);
+  bytes.writeUInt32BE(cpus.length, 4);
+  cpus.forEach((cpu, at) => bytes.writeUInt32BE(cpu, 8 + at * 32));
   return bytes;
 }
 
@@ -195,6 +204,39 @@ describe("a game folder's player builds", () => {
     await put(path.join(root, "Dust.x86_64"), elf(ELF_X64));
     await put(path.join(root, ".godot", "exported", "Dust.x86_64"), elf(ELF_X64));
     assert.deepEqual(await findNativeBuilds(root), []);
+  });
+
+  it("reads a Mac program's processors from its header alone, and nothing from one cut short or made up", async () => {
+    const root = await tmpDir("native-builds-");
+    const i386 = Buffer.alloc(28);
+    i386.writeUInt32LE(0xfeedface, 0);
+    i386.writeUInt32LE(7, 4);
+    const java = Buffer.from("cafebabe00000034", "hex");
+    const fatOfTwoWithOne = fatMachO([CPU_ARM64, CPU_X86_64]).subarray(0, 8 + 20);
+    const fatOfMany = fatMachO([CPU_ARM64]);
+    fatOfMany.writeUInt32BE(0xffffffff, 4);
+    const cases: Array<[string, Buffer, readonly string[] | null]> = [
+      ["thin Apple silicon", thinMachO(CPU_ARM64), [NativeArch.Arm64]],
+      ["thin Intel", thinMachO(CPU_X86_64), [NativeArch.X64]],
+      ["universal", fatMachO([CPU_X86_64, CPU_ARM64]), [NativeArch.Arm64, NativeArch.X64]],
+      ["universal of 64-bit fat entries", fat64MachO([CPU_ARM64]), [NativeArch.Arm64]],
+      ["fat with no processor Genex knows (PowerPC, i386)", fatMachO([0x12, 7]), []],
+      ["thin 32-bit i386", i386, []],
+      ["a thin header cut short", thinMachO(CPU_ARM64).subarray(0, 20), null],
+      ["only the magic", thinMachO(CPU_ARM64).subarray(0, 4), null],
+      ["a fat header listing two, holding one", fatOfTwoWithOne, null],
+      ["a fat header listing none", fatMachO([]), null],
+      ["a fat header listing more than any program has", fatOfMany, null],
+      ["a Java class, which starts as a fat header does", java, null],
+      ["words", Buffer.from("#!/bin/sh\necho not a program\n"), null],
+      ["nothing", Buffer.alloc(0), null],
+    ];
+    for (const [why, bytes, processors] of cases) {
+      const file = path.join(root, why.replace(/\W+/g, "-"));
+      await writeFile(file, bytes);
+      assert.deepEqual(await machOProcessors(file), processors, why);
+    }
+    assert.equal(await machOProcessors(path.join(root, "missing")), null, "a file that is not there");
   });
 
   it("answers the header readers nothing for a file that is not a program", async () => {

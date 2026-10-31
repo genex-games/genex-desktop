@@ -6,6 +6,7 @@ import {
   type PluginNativeJob,
   type PluginNativeArg,
   type PluginRuntimePin,
+  type PluginRuntimeCandidates,
 } from "../../shared/plugins.ts";
 import { assertRelativePath } from "../paths.ts";
 import { PLUGIN_ID } from "../../shared/plugin-id.ts";
@@ -38,6 +39,7 @@ const NATIVE_MANIFEST_LIMITS = {
   jobs: 8,
   labelChars: 120,
   candidates: 16,
+  platforms: 4,
   versionArgs: 16,
   versionPatternChars: 200,
   urlChars: 2048,
@@ -65,6 +67,7 @@ const MESSAGE = {
   DuplicatePlatform: "Each pinned native installation needs a platform of its own",
   InvalidInstall: "Invalid pinned native installation or missing trusted install action",
   InvalidRuntime: "Invalid native runtime",
+  InvalidCandidates: "Invalid platform-specific native runtime candidates",
   InvalidVersionPattern: "Invalid runtime version pattern",
   TimeoutRange: (label: string) => `${label}: timeoutMs must be an integer from 1000 to 300000 milliseconds`,
   OutputLimit: (label: string) =>
@@ -134,12 +137,33 @@ function validateCandidate(candidate: string, m: PluginManifest): void {
   const kind = alias?.[1] ?? "",
     rest = alias?.[2] ?? candidate.slice(1);
   const relative = kind === "opens" || kind === "package" ? anchoredPath(kind, rest) : rest;
+  validateCandidatePath(relative);
+}
+
+/** A candidate's part inside its declared root, including the bounded optional wildcard. */
+function validateCandidatePath(relative: string): void {
   // Windows reads `\` as a separator and `C:` as a drive, so `..\` or a drive would leave the root.
   if (WINDOWS_SEPARATORS.test(relative)) throw new Error(MESSAGE.CandidatePath);
   assertRelativePath(relative);
   const patterned = relative.split("/").filter((segment) => segment.includes(WILDCARD));
   if (patterned.length > 1 || (patterned[0] ?? "").split(WILDCARD).length > 2)
     throw new Error(MESSAGE.CandidatePattern);
+}
+
+/** Optional OS/architecture-specific paths, validated before any runtime discovery can use them. */
+function validatePlatforms(r: PluginNativeRuntime, m: PluginManifest): PluginRuntimeCandidates[] | undefined {
+  if (r.platforms === undefined) return undefined;
+  if (!Array.isArray(r.platforms) || r.platforms.length > L.platforms) throw new Error(MESSAGE.InvalidCandidates);
+  const seen = new Set<string>();
+  return r.platforms.map((entry) => {
+    const target = typeof entry?.platform === "string" ? entry.platform : "";
+    if (!PLATFORMS.includes(target)) throw new Error(MESSAGE.InvalidCandidates);
+    if (seen.has(target) || !paths(entry.candidates, L.candidates) || !entry.candidates.length)
+      throw new Error(MESSAGE.InvalidCandidates);
+    seen.add(target);
+    for (const candidate of entry.candidates) validateCandidate(candidate, m);
+    return { platform: entry.platform, candidates: [...entry.candidates] };
+  });
 }
 
 /** A pinned download behind a confirmed setup action: https, a digest, sizes, a known format and computer. */
@@ -182,10 +206,12 @@ function validateRuntime(r: PluginNativeRuntime, m: PluginManifest, ids: Set<str
   for (const c of r.candidates) validateCandidate(c, m);
   if (!isValidPattern(r.version.pattern)) throw new Error(MESSAGE.InvalidVersionPattern);
   ids.add(r.id);
+  const platforms = validatePlatforms(r, m);
   return {
     id: r.id,
     label: r.label,
     candidates: [...r.candidates],
+    ...(platforms ? { platforms } : {}),
     version: { ...r.version, args: [...r.version.args] },
     ...validatePins(r, m),
   };

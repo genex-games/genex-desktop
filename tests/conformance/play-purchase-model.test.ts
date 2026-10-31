@@ -67,14 +67,14 @@ const answers = (sheet: PlayPurchaseSheet) => {
 
 describe("how coin, dollars and the balance read on the sheet", () => {
   it("writes coin grouped the way genex.games does, and dollars from cents", () => {
-    assert.equal(coinText(1240), "1,240 coin");
-    assert.equal(coinText(1), "1 coin");
-    assert.equal(coinText(100000), "100,000 coin");
+    assert.equal(coinText(1240), "1,240 Nex");
+    assert.equal(coinText(1), "1 Nex");
+    assert.equal(coinText(100000), "100,000 Nex");
     assert.equal(usdText(75), "$0.75");
     assert.equal(usdText(1240), "$12.40");
     assert.equal(usdText(0), "$0.00");
-    assert.equal(payLabel(75), "Pay 75 coin");
-    assert.equal(payLabel(1240), "Pay 1,240 coin");
+    assert.equal(payLabel(75), "Pay 75 Nex");
+    assert.equal(payLabel(1240), "Pay 1,240 Nex");
   });
 
   it("reckons the balance after paying and the coin still needed, and nothing it cannot know", () => {
@@ -141,7 +141,7 @@ describe("what each step of the sheet offers", () => {
   it("holds Pay until main has armed it, and keeps it busy, with Cancel out of reach, while paying", () => {
     assert.equal(sheetActions(sheetWith({ armed: false })).primary.disabled, true, "not armed yet");
     assert.equal(sheetActions(ASK).primary.disabled, false);
-    assert.equal(sheetActions(ASK).primary.label, "Pay 75 coin");
+    assert.equal(sheetActions(ASK).primary.label, "Pay 75 Nex");
     assert.equal(sheetActions(sheetWith({ price: null })).primary.disabled, true, "no price read: nothing to pay");
     const paying = sheetActions(PAYING);
     assert.equal(paying.primary.busy, true);
@@ -151,14 +151,14 @@ describe("what each step of the sheet offers", () => {
       assert.equal(sheetActions(sheet).primary.busy, false, sheet.step);
   });
 
-  it("marks only Get coin as opening the browser", () => {
+  it("marks only Get Nex as opening the browser", () => {
     assert.equal(sheetActions(notEnough(PurchaseRecovery.Waiting)).primary.outside, true);
     assert.equal(sheetActions(notEnough(PurchaseRecovery.Over)).primary.outside, true);
     for (const sheet of [ASK, PAID, signedOut(PurchaseRecovery.Waiting), notEnough(PurchaseRecovery.Ready, 1240)])
       assert.equal(sheetActions(sheet).primary.outside, false, sheet.step);
   });
 
-  it("starts the keyboard on Cancel whenever there is one, never on Pay, Review, Get coin or Sign in", () => {
+  it("starts the keyboard on Cancel whenever there is one, never on Pay, Review, Get Nex or Sign in", () => {
     const rows: [PlayPurchaseSheet, PurchaseAnswer | null][] = [
       [ASK, PurchaseAnswer.Cancel],
       [sheetWith({ armed: false }), PurchaseAnswer.Cancel],
@@ -211,7 +211,7 @@ describe("what the sheet says", () => {
     const expired = noticeWords(failed(PurchaseProblem.Expired));
     assert.deepEqual(expired, {
       title: "This purchase timed out",
-      body: "Try again in the game. No coin was reserved or charged.",
+      body: "Try again in the game. No Nex was reserved or charged.",
     });
     const canceled = noticeWords(failed(PurchaseProblem.Canceled));
     const refused = noticeWords(failed(PurchaseProblem.Refused));
@@ -225,7 +225,7 @@ describe("what the sheet says", () => {
   it("says a refunded purchase's coin came back, never that none was charged", () => {
     assert.deepEqual(noticeWords(failed(PurchaseProblem.Refunded)), {
       title: "This purchase was refunded",
-      body: "Try again in the game. The coin went back to your balance.",
+      body: "Try again in the game. The Nex went back to your balance.",
     });
   });
 
@@ -236,19 +236,19 @@ describe("what the sheet says", () => {
     });
     assert.deepEqual(noticeWords(signedOut(PurchaseRecovery.Waiting)), {
       title: "Sign in to buy things in games",
-      body: "Coin lives in your Genex account. Sign in once, then pay here.",
+      body: "Nex lives in your Genex account. Sign in once, then pay here.",
     });
     assert.notEqual(noticeWords(signedOut(PurchaseRecovery.Ready))?.title, WORDS.signedOutTitle);
     for (const sheet of [ASK, PAYING, PAID, notEnough(PurchaseRecovery.Waiting)])
       assert.equal(noticeWords(sheet), null, sheet.step);
   });
 
-  it("notes where Get coin and Sign in lead, and that a refused payment is tried again in the game", () => {
+  it("notes where Get Nex and Sign in lead, and that a refused payment is tried again in the game", () => {
     assert.equal(
       sheetNote(notEnough(PurchaseRecovery.Waiting)),
-      "Opens genex.games. Pay comes back once the coin lands.",
+      "Opens genex.games. Pay comes back once the Nex lands.",
     );
-    assert.equal(sheetNote(notEnough(PurchaseRecovery.Over)), "Try again in the game once the coin lands.");
+    assert.equal(sheetNote(notEnough(PurchaseRecovery.Over)), "Try again in the game once the Nex lands.");
     assert.equal(sheetNote(signedOut(PurchaseRecovery.Waiting)), "Opens your browser. You’ll come back here to pay.");
     assert.ok(sheetNote(notEnough(PurchaseRecovery.Ready, 1240)), "coin arrived: say so before Review");
     for (const sheet of [

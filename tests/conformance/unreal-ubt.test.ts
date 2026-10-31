@@ -7,7 +7,7 @@
  */
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { after, describe, it, type TestContext } from "node:test";
@@ -291,6 +291,33 @@ describe("reading UBT's errors", () => {
           "Could not find definition for module 'NoSuchModule', (referenced via GxCheckEditor -> GxCheck.Build.cs)",
       },
     ]);
+  });
+
+  it("a target UBT can't find is named by UBT's own line, not the rules file it looked in", async () => {
+    const { run } = answering(await fixture("rules-missing-target.log"));
+    const result = await compileEditor(options({ run, ...CHECK }));
+    assert.equal(result.failure, CompileFailure.Failed);
+    assert.deepEqual(
+      result.errors.map((error) => error.message),
+      [
+        "Couldn't find target rules file for target 'GxCheckEditor' in rules assembly 'UE5Rules, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null'",
+      ],
+    );
+    assertNoAbsolutePaths(result);
+  });
+
+  it("builds the project's own editor target when it isn't named after the module", async () => {
+    const dir = await tmpDir("studio-ubt-targets-");
+    const projectFile = path.join(dir, "Bodycam.uproject");
+    await mkdir(path.join(dir, "Source"), { recursive: true });
+    await writeFile(projectFile, "{}");
+    await writeFile(
+      path.join(dir, "Source", "BodycamEditor.Target.cs"),
+      "public class BodycamEditorTarget : TargetRules\n{\n\tpublic BodycamEditorTarget(TargetInfo Target) : base(Target)\n\t{\n\t\tType = TargetType.Editor;\n\t}\n}\n",
+    );
+    const { run, calls } = answering(await fixture("first.log"));
+    await compileEditor(options({ run, projectFile }));
+    assert.equal(calls[0]?.args[0], "BodycamEditor");
   });
 
   it("a Build.cs that doesn't compile names its line, and only that", async () => {

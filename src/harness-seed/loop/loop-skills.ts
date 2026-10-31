@@ -1,8 +1,7 @@
 /**
  * The skills a Loop's brief reads: the seed skills whose facts reach the folder. A skill names the
- * facts it serves in its front matter (`facts: web-game`); the web method (the director's playbook,
- * the facet decomposition) serves web games only, so a Loop that works in place on any other project
- * never carries it.
+ * facts it serves in its front matter (`facts: web-game`); a skill for web games only is never
+ * carried by a Loop that works in place on any other project.
  *
  * A module of its own: `skills.ts` is one an agent may have kept from before, and a kept copy exports
  * only what it did then.

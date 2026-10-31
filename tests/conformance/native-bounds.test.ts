@@ -6,7 +6,7 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { anchoredBounds } from "../../src/main/preview-anchor.ts";
+import { anchoredBounds, placedBounds, slotHidden } from "../../src/main/preview-anchor.ts";
 import { paddingOffView } from "../../src/renderer/native-view.ts";
 import { type BoundsClock, scheduleBounds } from "../../src/renderer/panels/stage/bounds-schedule.ts";
 
@@ -98,6 +98,33 @@ describe("the native view's bounds as the window resizes", () => {
     assert.deepEqual(anchoredBounds(slot, viewport, { width: 100, height: 50 }), { ...slot, width: 0, height: 0 });
     assert.deepEqual(anchoredBounds(slot, null, { width: 1400, height: 900 }), slot);
     assert.deepEqual(anchoredBounds(slot, viewport, null), slot);
+  });
+});
+
+describe("the native view while the stage hides it", () => {
+  const slot = { x: 420, y: 64, width: 800, height: 600 };
+  const shown = { x: 420, y: 64, width: 1024, height: 640 };
+
+  it("takes the slot while the stage shows it", () => {
+    assert.deepEqual(placedBounds(slot, shown), slot);
+    assert.equal(slotHidden(slot), false);
+  });
+
+  // Live keeps its view out of sight while a page loads (the loader) or a dialog covers it. A page
+  // laid out at 0x0 is one no browser ever lays out: a game whose start-up placed rocks a fixed
+  // distance from the boat across its canvas never ended its loop at width 0, so its `load` never
+  // came, `loadURL` never settled, and Live showed "Loading game" for good. A view moved wholly
+  // outside the window is laid out at 0x0 by Chromium too, so it stays where it was last shown.
+  it("is never laid out at zero size or outside the window: it keeps the rectangle it was last shown in", () => {
+    for (const hidden of [
+      { x: 0, y: 0, width: 0, height: 0 },
+      { x: 420, y: 64, width: 0, height: 600 },
+      { x: 420, y: 64, width: 800, height: 0 },
+      { x: 420, y: 64, width: -5, height: 600 },
+    ]) {
+      assert.equal(slotHidden(hidden), true, JSON.stringify(hidden));
+      assert.deepEqual(placedBounds(hidden, shown), shown, JSON.stringify(hidden));
+    }
   });
 });
 

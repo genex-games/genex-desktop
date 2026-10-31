@@ -1,21 +1,20 @@
 /**
- * `genex__package`: the bundled Genex plugin's consented install of one of its two SDK packages
+ * `genex__package`: the bundled Genex plugin's install of one of its two SDK packages, which asks nobody,
  * into the game a call is bound to. The agent names the package; the version comes from
  * `GENEX_GAME_PACKAGES` and the command from the game's lockfile (`GameBuilds.addPackages`), and
  * the folder must be, by real path, the game's own or a Studio worktree git registers for it. A
  * game made from Studio's template has no package manager: its page maps Studio's copies instead
  * (`GENEX_STUDIO_IMPORTS`, built at the same pins), as it maps three.js, and nothing is downloaded.
  */
-import { lstat, readFile, realpath, stat } from "node:fs/promises";
+import { lstat, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import type { InstallResult } from "../../shared/build-problem.ts";
 import { GENEX_GAME_PACKAGES, type GenexGamePackage, genexPackageSet, isGenexGamePackage } from "../../shared/genex.ts";
 import { withGenexSdkImport } from "../../shared/genex-page.ts";
 import type { PluginBinding } from "../../shared/plugins.ts";
 import { atomicWriteText } from "../../substrate/fsx.ts";
-import { isBelow } from "../../substrate/paths.ts";
 import { detectProjectShape, TEMPLATE_SHAPE } from "../../substrate/project-shape.ts";
-import { git } from "../../substrate/snapshots.ts";
+import { type BoundGameDeps, boundGameFolder } from "./genex-bound-game.ts";
 import { GENEX_CLI_PROMPT } from "./genex-cli-prompts.ts";
 
 /** A Godot game's project, where the Godot plugin makes it (`godot/`): it takes Genex's multiplayer itself. */
@@ -33,16 +32,10 @@ async function noPackageRefusal(dir: string): Promise<string> {
   return GENEX_CLI_PROMPT.NoPackageJson;
 }
 
-const WORKTREE_LINE = "worktree ";
-
-/** What an install needs from Studio. */
-export interface GenexPackageDeps {
+/** What an install needs from Studio: the install itself, and where the game and its worktrees live. */
+export interface GenexPackageDeps extends BoundGameDeps {
   /** `GameBuilds.addPackages`: the one command, with the registry opened for it alone. */
   addPackages: (source: { project: string; dir: string }, names: readonly string[]) => Promise<InstallResult>;
-  /** The game's folder in the library; throws for a name that is not a game. */
-  gameDir: (project: string) => string;
-  /** Studio's scratch, where its worktrees of a game live. */
-  scratch: string;
 }
 
 /** What the agent reads back after an install ran. */
@@ -128,7 +121,7 @@ export class GenexPackageService {
     return { package: name, version, ...result };
   }
 
-  /** Refuse unsupported or foreign folders before asking for installation approval. No process is started. */
+  /** Refuse unsupported or foreign folders before anything is installed. No process is started. */
   async preflight(args: Record<string, unknown>, binding: PluginBinding): Promise<string> {
     genexPackageOf(args);
     return (await this.#target(binding)).dir;
@@ -139,37 +132,11 @@ export class GenexPackageService {
    * a template game maps Studio's copies, anything else is refused.
    */
   async #target(binding: PluginBinding): Promise<{ dir: string; templatePage?: string }> {
-    const dir = await this.#boundFolder(binding);
+    const dir = await boundGameFolder(binding, this.#deps);
     const manifest = await stat(path.join(dir, "package.json")).catch(() => null);
     if (manifest?.isFile()) return { dir };
     const templatePage = await templatePageOf(dir);
     if (templatePage) return { dir, templatePage };
     throw new Error(await noPackageRefusal(dir));
-  }
-
-  /** The binding's folder by real path: the game's own, or a worktree of it under Studio's scratch. */
-  async #boundFolder(binding: PluginBinding): Promise<string> {
-    const game = await this.#gameFolder(binding.project);
-    const real = await realpath(binding.directory).catch(() => null);
-    if (real && game && (real === game || (await this.#isWorktreeOf(game, real)))) return real;
-    throw new Error(GENEX_CLI_PROMPT.ForeignFolder);
-  }
-
-  async #gameFolder(project: string): Promise<string | null> {
-    try {
-      return await realpath(this.#deps.gameDir(project));
-    } catch {
-      return null;
-    }
-  }
-
-  /** Whether git lists `dir` as a worktree of `game`, and it lies under Studio's scratch. */
-  async #isWorktreeOf(game: string, dir: string): Promise<boolean> {
-    const scratch = await realpath(this.#deps.scratch).catch(() => null);
-    if (!scratch || !isBelow(scratch, dir)) return false;
-    const listing = await git(game, ["worktree", "list", "--porcelain"]).catch(() => "");
-    const worktrees = listing.split("\n").filter((line) => line.startsWith(WORKTREE_LINE));
-    const real = await Promise.all(worktrees.map((line) => realpath(line.slice(WORKTREE_LINE.length)).catch(() => "")));
-    return real.includes(dir);
   }
 }

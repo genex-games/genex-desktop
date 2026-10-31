@@ -1,19 +1,29 @@
 /**
- * Whether the person has signed in to Roblox in Studio, read from Studio's own logs in a real
- * temporary folder: only Studio's logs written since the wait began count, each look reads only
- * what a log gained, and a hostile folder (a link, a linked log, another program's log) answers no
- * and is never followed.
+ * Whether the person has signed in to Roblox in Studio, and whether a publish went through, read
+ * from Studio's own logs in a real temporary folder: only Studio's logs written since the wait (or
+ * the publish) began count, each sign-in look reads only what a log gained, and a hostile folder (a
+ * link, a linked log, another program's log) answers no and is never followed.
  */
 import assert from "node:assert/strict";
 import { appendFile, mkdir, symlink, utimes, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
-import { SIGNED_IN_MARK, signInWatch, studioLogFolder } from "../../src/plugins/roblox/studio-logs.ts";
+import {
+  PUBLISHED_MARK,
+  publishedSince,
+  SIGNED_IN_MARK,
+  signInWatch,
+  studioLogFolder,
+} from "../../src/plugins/roblox/studio-logs.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 const STUDIO_LOG = "0.744.0.7441077_20261022T120919Z_Studio_ECD98_last.log";
-const LINE = (text: string) => `2026-10-22T12:56:36.800Z,2878.800537,1f84,6,Info ${text}\n`;
+const lineAt = (time: number, text: string) => `${new Date(time).toISOString()},2878.800537,1f84,6,Debug ${text}\n`;
+const LINE = (text: string) => lineAt(Date.parse("2026-10-22T12:56:36.800Z"), text);
 const SIGNED_IN = LINE(SIGNED_IN_MARK);
+/** A publish that went through just now, as Studio logs it. */
+const PUBLISHED = () => lineAt(Date.now(), PUBLISHED_MARK);
+const PUBLISH_STARTED = (time: number) => lineAt(time, "[FLog::PublishSessionStateController] Go to PublishInProgress");
 const STARTED = LINE("[FLog::StudioKeyEvents] login (automatic) [start]");
 const NOT_ON_WINDOWS = { skip: process.platform === "win32" && "links need privileges on Windows" };
 
@@ -36,7 +46,7 @@ describe("Studio's log folder", () => {
   });
 });
 
-describe("whether the person has signed in, from Studio's logs", () => {
+describe("what Studio's logs record: a finished sign-in, a publish that went through", () => {
   it("answers no until Studio's log records a finished sign-in, then yes", async () => {
     const { folder, since } = await logs();
     const file = path.join(folder, STUDIO_LOG);
@@ -64,12 +74,30 @@ describe("whether the person has signed in, from Studio's logs", () => {
     assert.equal(await signInWatch(undefined, since)(), false);
   });
 
+  it("a publish counts only once Studio logs it went through, at or after the press", async () => {
+    const { folder, since } = await logs();
+    const file = path.join(folder, STUDIO_LOG);
+    await writeFile(file, lineAt(since - 1_000, PUBLISHED_MARK) + PUBLISH_STARTED(since + 1_000));
+    assert.equal(await publishedSince(folder, since), false, "an earlier publish, and one still under way");
+    await appendFile(file, PUBLISHED());
+    assert.equal(await publishedSince(folder, since), true);
+    assert.equal(await publishedSince(path.join(folder, "missing"), since), false);
+    assert.equal(await publishedSince(undefined, since), false);
+  });
+
+  it("a publish is found at the end of a long log", async () => {
+    const { folder, since } = await logs();
+    const file = path.join(folder, STUDIO_LOG);
+    await writeFile(file, PUBLISH_STARTED(since + 1_000).repeat(100_000) + PUBLISHED());
+    assert.equal(await publishedSince(folder, since), true);
+  });
+
   const hostile: { name: string; make: (folder: string, outside: string) => Promise<string>; options?: object }[] = [
     {
       name: "a log written before the wait began (an earlier sign-in)",
       make: async (folder) => {
         const file = path.join(folder, STUDIO_LOG);
-        await writeFile(file, SIGNED_IN);
+        await writeFile(file, SIGNED_IN + PUBLISHED());
         const old = new Date(Date.now() - 3_600_000);
         await utimes(file, old, old);
         return folder;
@@ -78,7 +106,7 @@ describe("whether the person has signed in, from Studio's logs", () => {
     {
       name: "another program's log (the installer's)",
       make: async (folder) => {
-        await writeFile(path.join(folder, "RobloxStudioInstaller_3EBAA.log"), SIGNED_IN);
+        await writeFile(path.join(folder, "RobloxStudioInstaller_3EBAA.log"), SIGNED_IN + PUBLISHED());
         return folder;
       },
     },
@@ -86,7 +114,7 @@ describe("whether the person has signed in, from Studio's logs", () => {
       name: "a Studio log that links to a file outside",
       make: async (folder, outside) => {
         const target = path.join(outside, "planted.log");
-        await writeFile(target, SIGNED_IN);
+        await writeFile(target, SIGNED_IN + PUBLISHED());
         await symlink(target, path.join(folder, STUDIO_LOG));
         return folder;
       },
@@ -95,7 +123,7 @@ describe("whether the person has signed in, from Studio's logs", () => {
     {
       name: "a log folder that is a link to a folder outside",
       make: async (folder, outside) => {
-        await writeFile(path.join(outside, STUDIO_LOG), SIGNED_IN);
+        await writeFile(path.join(outside, STUDIO_LOG), SIGNED_IN + PUBLISHED());
         const linked = path.join(path.dirname(folder), "linked-logs");
         await symlink(outside, linked);
         return linked;
@@ -117,5 +145,6 @@ describe("whether the person has signed in, from Studio's logs", () => {
       await mkdir(outside);
       const watched = await each.make(folder, outside);
       assert.equal(await signInWatch(watched, since)(), false);
+      assert.equal(await publishedSince(watched, since), false);
     });
 });

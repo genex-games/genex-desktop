@@ -8,6 +8,7 @@ import { McpHealth, mcpScopeCovers, type McpConnectorView } from "../../shared/m
 import { PluginHealth, type PluginInfo } from "../../shared/plugins.ts";
 import { t } from "../../shared/i18n.ts";
 import { PLUGINS_WORDS } from "../words.ts";
+import { isOwnPlugin } from "../analytics/plugins-ref.ts";
 
 export interface EntryStatus {
   text: string;
@@ -25,6 +26,8 @@ export interface AddMenuEntry {
   id: string;
   kind: "plugin" | "mcp";
   name: string;
+  /** Named by the person (a local or GitHub plugin, a server they added): kept out of usage recordings. */
+  own: boolean;
   on: boolean;
   locked?: boolean;
   /** Where the switch applies, when the row says so. */
@@ -202,6 +205,7 @@ export function addMenuEntries(
       id: `plugin:${plugin.manifest.id}`,
       kind: "plugin",
       name: plugin.manifest.name,
+      own: isOwnPlugin(plugin),
       on: plugin.enabled,
       scope: EntryScope.AllGames,
       status,
@@ -223,6 +227,7 @@ export function addMenuEntries(
       id: `mcp:${c.id}`,
       kind: "mcp",
       name: c.name,
+      own: true,
       on: c.enabled,
       locked: Boolean(pluginId),
       status: connectorStatus(view, pluginId, c.enabled, "", actions),

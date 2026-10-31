@@ -3,6 +3,7 @@ import type { JSX } from "react";
 import { t } from "../../../shared/i18n.ts";
 import { LOCAL_BLENDER_PLUGIN_ID } from "../../../shared/local-blender.ts";
 import type { PluginInfo } from "../../../shared/plugins.ts";
+import { PluginAction, trackedPluginAction } from "../../analytics/plugins-page.ts";
 import { Button } from "../../ui/Button.tsx";
 import { BlenderDoes, BlenderRuntimeCard } from "./BlenderRuntime.tsx";
 import { InstalledSteps } from "./CatalogDetail.tsx";
@@ -19,7 +20,7 @@ import { GenexDetail } from "./genex/GenexDetail.tsx";
 import { hasOwnPage, isActive, isOffList } from "./labels.ts";
 import type { OpenPanel, PluginsPage } from "./page.ts";
 import { PluginConnections } from "./PluginConnections.tsx";
-import { AccountStep, ReinstallButton, Section } from "./rows.tsx";
+import { AccountStep, pagePress, ReinstallButton, Section } from "./rows.tsx";
 import type { ShownSkill } from "./skills-sections.ts";
 
 export type { SettingValues } from "./detail-parts.tsx";
@@ -55,7 +56,9 @@ function InstalledActions({
                 void page.act(async () =>
                   page.setSelected({
                     id: manifest.id,
-                    document: await window.studio.pluginPanel(manifest.id, panel.id),
+                    document: await trackedPluginAction(pagePress(PluginAction.PanelOpened, detail), () =>
+                      window.studio.pluginPanel(manifest.id, panel.id),
+                    ),
                   }),
                 )
               }
@@ -66,7 +69,15 @@ function InstalledActions({
       {detail.enabled && manifest.settings.length > 0 && (
         <Button
           disabled={page.busy}
-          onClick={() => void page.act(async () => onSettings(await window.studio.pluginSettings(manifest.id)))}
+          onClick={() =>
+            void page.act(async () =>
+              onSettings(
+                await trackedPluginAction(pagePress(PluginAction.SettingsOpened, detail), () =>
+                  window.studio.pluginSettings(manifest.id),
+                ),
+              ),
+            )
+          }
         >
           {t("Settings")}
         </Button>

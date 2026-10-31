@@ -32,11 +32,11 @@ import { DataFolderProblem } from "../shared/data-folder.ts";
 import { SkippedBy, type SkippedFile } from "../shared/chat-rewind.ts";
 import { LiveBehindReason } from "../shared/live-behind.ts";
 import { PlayCardAction, PlayCoverRefusal, PlayMobileSupport } from "../shared/play-manage.ts";
-import { AutoResumeCause, type CustomEvent, type CustomPayload } from "../shared/custom-events.ts";
+import { AutoResumeCause, type CustomEvent, type CustomPayload, LoopRefusal } from "../shared/custom-events.ts";
 import { EngineFailureKind } from "../shared/engine-requests.ts";
 import { LocalServerProblem } from "../shared/local-server.ts";
 import { computerSettingQuestion, type GithubLookupProblem } from "../shared/plugins.ts";
-import { computerControlOffered, desktopStopShortcut } from "../shared/computer-control.ts";
+import { computerControlOffered } from "../shared/computer-control.ts";
 import type { GenexPublishPhase } from "../shared/genex.ts";
 import { PlayCategory, PlayNote, PlayRemixRefusal, PlayShelf, RemixStep } from "../shared/play.ts";
 import {
@@ -50,6 +50,7 @@ import {
 import { PublishTarget } from "../shared/publish-platforms.ts";
 import { CreditKind } from "../shared/play-credits.ts";
 import { PurchaseProblem } from "../shared/play-purchase.ts";
+import { ItemReportReason, StoreRefusal } from "../shared/store-items.ts";
 import { AvatarBody, AvatarEyes, AvatarGear, BlockState } from "../shared/avatar-recipe.ts";
 import { HANDLE_LENGTH, HandleState } from "../shared/handle.ts";
 import { MakingKind } from "../shared/asset-making.ts";
@@ -73,9 +74,11 @@ import { RunSharingDeleteOutcome, type RunSharingDeleteResult } from "../shared/
 import type { ProviderBuilderUse } from "../shared/provider-skills.ts";
 import type { FinishCheckState, IterationStatus } from "./run-graph.ts";
 import type { LeadFace } from "./run-tree.ts";
+import type { BuildOutcome } from "./run-graph-builds.ts";
+import type { HealthFinding } from "../shared/preview-contract.ts";
 import type { CommandState } from "./state/command-runs.ts";
 import type { JobState } from "./panels/plugins/genex/genex-view.ts";
-import { formatList, t, tc } from "../shared/i18n.ts";
+import { formatList, intlLocale, t, tc } from "../shared/i18n.ts";
 import { JUDGE_PLAY_TOOL_NAME } from "../shared/chat-judge.ts";
 import {
   APP_LOOK_TOOL_NAME,
@@ -169,8 +172,6 @@ const PHRASES: Array<[RegExp, (match: RegExpMatchArray) => StatusWords]> = [
     /^building the (?:shared base|starting point)$/i,
     () => ({ line: t("Building the starting point"), short: t("Starting point") }),
   ],
-  // The run's other first step: a game the user brought that the studio cannot see into yet.
-  [/^making the game judgeable$/i, () => ({ line: t("Connecting your game to the studio"), short: t("Connecting") })],
   [
     /^plan ready — waiting for steering$/i,
     () => ({ line: t("The plan is ready — waiting for your go-ahead"), short: t("Plan ready") }),
@@ -268,13 +269,6 @@ const PART_PHRASES: Array<[RegExp, (part: string, match: RegExpMatchArray) => St
     }),
   ],
   [
-    /^judge overloaded, retrying verification in (\d+)s$/i,
-    (part, m) => ({
-      line: t("{part} · the reviewer is busy — trying again in {seconds}s", { part, seconds: m[1] }),
-      short: t("{part} · waiting", { part }),
-    }),
-  ],
-  [
     /^waiting for its model provider \((.+)\)$/i,
     (part, m) => ({
       line: t("{part} · waiting for the model provider ({provider})", { part, provider: m[1] }),
@@ -285,7 +279,7 @@ const PART_PHRASES: Array<[RegExp, (part: string, match: RegExpMatchArray) => St
 
 /** The phases the harness hangs off a title with " — ": stripped when the title itself has a dash. */
 const PHASE_SUFFIX =
-  /\s+—\s+(iteration \d+|verifying|spike on .+|fixing review findings|reverting a regression|(?:provider|judge) overloaded.*|waiting for its model provider.*)$/i;
+  /\s+—\s+(iteration \d+|verifying|spike on .+|fixing review findings|reverting a regression|provider overloaded.*|waiting for its model provider.*)$/i;
 
 /**
  * Turn a harness status line into what the user reads. The harness prefixes almost every status
@@ -396,7 +390,6 @@ export function isKept(winner: string | null | undefined): boolean {
 
 const UNDONE_BECAUSE: Record<string, string> = {
   invisible: t("nothing visible changed"),
-  "taste-veto": t("the reviewer preferred the round before"),
   "no-move": t("the step it was asked for was not delivered"),
   unfixed: t("the must-fix was not fixed"),
   broken: t("the build was broken"),
@@ -426,6 +419,9 @@ export function judgeUnreachable(source: string | null | undefined): boolean {
 export function wasStopped(source: string | null | undefined): boolean {
   return stoppedSource(source);
 }
+
+/** The harness's verdict source for a round kept because nothing regressed (its `VerdictSource.NoRegression`). */
+const KEPT_UNHARMED = "no-regression";
 
 /** The harness's verdict source for a save point the Unreal lead made itself (its `VerdictSource.Lead`). */
 const LEAD_SAVE = "lead";
@@ -563,12 +559,11 @@ export function sideBySideWords(node: { status: IterationStatus; satisfied: bool
   if (savedByLead(node.source)) return t("Not reviewed — the lead saved it after looking at its own captures.");
   if (node.status === "unjudged") return t("Not reviewed — no verdict was recorded for this round.");
   if (node.status === "rolled") {
-    if (node.source === "taste-veto") return t("The reviewer preferred the round before.");
     if (node.source === "no-move") return t("Not asked — the step did not land.");
     return t("Not needed — the round was undone on the checks.");
   }
   if (node.satisfied) return t("The reviewer is satisfied with this part.");
-  return node.source === "checks"
+  return node.source === "checks" || node.source === KEPT_UNHARMED
     ? t("No objection to the new build.")
     : t("The reviewer preferred the new build to the round before.");
 }
@@ -810,7 +805,10 @@ export function loopRunWords(loopRun: {
   landing?: string | null;
   /** How the Loop worked on its project (`run_finished.profile`): `open` kept its work in the project's own folder. */
   profile?: string | null;
+  /** Why the Loop did not run at all (`run_finished.refusal`), when it didn't. */
+  refusal?: LoopRefusal | null;
 }): LoopRunWords {
+  if (loopRun.refusal === LoopRefusal.NeedsSession) return NEEDS_SESSION_WORDS;
   const rounds = Math.max(0, Math.trunc(loopRun.rounds || 0));
   const hasBuild = loopRun.hasBuild ?? true;
   const landing = reviewerWords(withoutIds((loopRun.landing ?? "").trim()));
@@ -858,6 +856,14 @@ export function loopRunWords(loopRun: {
     because: fullStop(capitalise(why)),
   };
 }
+
+/** A Loop refused on an engine that keeps no session (`LoopRefusal.NeedsSession`): its chat stays plain chat. */
+const NEEDS_SESSION_WORDS: LoopRunWords = {
+  headline: t("Loop not started"),
+  because: t(
+    "A Loop needs an engine that keeps a session of its own, and this chat's engine doesn't, so nothing was built. The chat still answers here.",
+  ),
+};
 
 /** Text that ends a sentence: a full stop added only when it has no end of its own (a close's reason may). */
 function fullStop(text: string): string {
@@ -1044,30 +1050,14 @@ export function partRoundWords(part: PartRound): string {
 }
 
 /**
- * What the run is: the reference it was given, if it was given one, and which model judges it.
- *
- * The judge is named because it is the one role a saved preference can quietly get wrong — a
- * run was judged by the orchestrator's model and nothing said so. `judge` is the model's own
- * short name (model-roles' `roleName`); "default" is not a name a person can act on, so a run
- * whose critic is whatever the engine happens to use says nothing about it.
+ * What the run is, for the records that name a reference it was given ("direction" or a bar):
+ * nothing for a run that has none, which the chat already shows as the person's own message.
  */
-export function runStartWords(
-  reference: { name?: string | null; kind?: string | null } | null | undefined,
-  judge: string | null = null,
-): string {
+export function runStartWords(reference: { name?: string | null; kind?: string | null } | null | undefined): string {
   const name = withoutIds((reference?.name ?? "").trim());
-  const named = name && name.toLowerCase() !== "unnamed" ? name : "";
-  const who = withoutIds((judge ?? "").trim());
-  const rule =
-    who && !/^(default|same)$/i.test(who)
-      ? t(
-          "each round has to beat the one before, and {reviewer}, reviewing without being told which build is which, picks the winner",
-          { reviewer: who },
-        )
-      : t("each round has to beat the one before, and a reviewer that cannot see which is which picks the winner");
-  if (reference?.kind === "direction")
-    return named ? t('heading in the direction of "{name}" — {rule}', { name: named, rule }) : rule;
-  return named ? t('the bar for this build is "{name}" — {rule}', { name: named, rule }) : rule;
+  if (!name || name.toLowerCase() === "unnamed") return "";
+  if (reference?.kind === "direction") return t('heading in the direction of "{name}"', { name });
+  return t('the bar for this build is "{name}"', { name });
 }
 
 /** How the run is organised — the first thing the user reads after pressing send. */
@@ -1293,9 +1283,29 @@ function isSkippedFile(entry: unknown): entry is SkippedFile {
 }
 
 /**
+ * The change budget a checkpoint's files were left out by, when each one was under the file limit
+ * (sized as the checkpoint left them out): their change was too large at once, not any of them.
+ * Null when a file was over the limit, or for an older record that doesn't say its limits.
+ */
+function overBudget(skipped: CustomPayload<typeof CustomEvent.CheckpointSkipped>, files: SkippedFile[]): number | null {
+  const { fileLimitBytes, changeLimitBytes } = skipped;
+  if (typeof fileLimitBytes !== "number" || typeof changeLimitBytes !== "number") return null;
+  return files.every((file) => file.bytes <= fileLimitBytes) ? changeLimitBytes : null;
+}
+
+/** A checkpoint's line for files a change too large at once left out, `limit` being its budget. */
+function overBudgetWords(total: number, files: string, limit: number): string {
+  return t(
+    "{count, plural, one {Rewind can’t bring back # file from this change: it was over {size} at once, so the largest stayed out: {files}.} other {Rewind can’t bring back # files from this change: it was over {size} at once, so the largest stayed out: {files}.}}",
+    { count: total, size: sizeWords(limit), files },
+  );
+}
+
+/**
  * Files too large to save, which Rewind cannot bring back, as the chat says it: left out by a
- * message's checkpoint, or left as they were by a rewind. Up to three names with their sizes, then
- * how many more. Null when the record names no file it can read.
+ * message's checkpoint, or left as they were by a rewind; a checkpoint's change too large at once
+ * says so rather than calling each file too large (a rewind sizes its files later, so it can't tell). Up to three names with their sizes, then how many more.
+ * Null when the record names no file it can read.
  */
 export function checkpointSkippedWords(skipped: CustomPayload<typeof CustomEvent.CheckpointSkipped>): string | null {
   const listed: unknown[] = Array.isArray(skipped.files) ? skipped.files : [];
@@ -1306,11 +1316,14 @@ export function checkpointSkippedWords(skipped: CustomPayload<typeof CustomEvent
   const named = shown.map((file) => `${file.file.split("/").pop()} (${sizeWords(file.bytes)})`).join(", ");
   const which =
     total > shown.length ? t("{files} and {count} more", { files: named, count: total - shown.length }) : named;
-  if (skipped.by !== SkippedBy.Rewind)
+  if (skipped.by !== SkippedBy.Rewind) {
+    const budget = overBudget(skipped, files);
+    if (budget !== null) return overBudgetWords(total, which, budget);
     return t(
       "{count, plural, one {Rewind can’t bring back # file that is too large to save: {files}.} other {Rewind can’t bring back # files that are too large to save: {files}.}}",
       { count: total, files: which },
     );
+  }
   if (total === 1)
     return t("This file was too large to save, so the rewind left it as it is: {files}.", { files: which });
   return t("These files were too large to save, so the rewind left them as they are: {files}.", { files: which });
@@ -1811,19 +1824,20 @@ export const AUTO_RESUME_SETTING_WORDS = {
 /** Settings → Permissions: the switch that lets agents ask to control the person's computer. */
 export const COMPUTER_CONTROL_SETTING_WORDS = {
   section: t("Computer control"),
-  label: t("Let agents control your computer"),
+  label: t("Let agents use your computer"),
 } as const;
 
-/** What the switch says on `platform`: how to stop it there and what it never touches, or where it runs. */
+/** What the switch says on `platform`, in one line: agents ask first, or where it runs. */
 export function computerControlDetail(platform: string): string {
-  const can = t("With this on, an agent can click and type in the apps you allow.");
-  if (!computerControlOffered(platform)) return `${can} ${t("macOS and Windows only.")}`;
-  const stops = t("Each chat session asks you first, and {keys} stops it.", {
-    keys: desktopStopShortcut(platform).keys,
-  });
+  if (!computerControlOffered(platform)) return t("macOS and Windows only.");
+  return t("They ask before each app.");
+}
+
+/** What computer control never touches on `platform`, under a computer-control card's Details. */
+export function computerNeverWords(platform: string): string {
   if (platform === StudioPlatform.Windows)
-    return `${can} ${stops} ${t("It never uses password managers, Windows Settings, password prompts or Genex.")}`;
-  return `${can} ${stops} ${t("Agents can look at an app’s window without it, never at password managers, System Settings, password prompts or Genex.")}`;
+    return t("It never uses password managers, Windows Settings, password prompts or Genex.");
+  return t("It never uses password managers, System Settings, password prompts or Genex.");
 }
 
 export function resumedWords(parts: number): string {
@@ -1868,7 +1882,14 @@ export const STAGE_WORDS = {
   /** The folded views' button: the switcher's name and the view it shows ("Game view: Builds"). */
   viewsButton: (view: string) => t("Game view: {view}", { view }),
   /** The view switcher's tabs; a folder with more than one Live view names each by what it shows. */
-  tabs: { live: t("Live"), builds: t("Builds"), assets: t("Assets"), webGame: t("Web game"), unreal: "Unreal" },
+  tabs: {
+    live: t("Live"),
+    builds: t("Builds"),
+    shop: t("Shop"),
+    assets: t("Assets"),
+    webGame: t("Web game"),
+    unreal: "Unreal",
+  },
 } as const;
 
 /** Live for a folder with no view of its own (Godot, Blender, files of its own): the latest pictures its runs kept. */
@@ -2419,7 +2440,6 @@ export const FINISH_CHECK_WORDS = {
     done: t("Done"),
     stopped: t("Not finished"),
   } satisfies Record<FinishCheckState, string>,
-  placeholder: t("Runs at the end"),
   about: t("Before the Loop calls it done, a second AI looks at your game."),
   /** The node's line and the card while the second AI looks. */
   checking: t("Looking at your game"),
@@ -2435,6 +2455,60 @@ export const FINISH_CHECK_WORDS = {
   /** After a no, once the Loop has ended some other way. */
   endedAfterNo: t("The Loop ended before another look."),
 } as const;
+
+/**
+ * A Loop's builds on the Builds graph (`run-graph-builds.ts`): each one's name and health check
+ * outcome, where a worker hangs, the card that folds a build's finished workers, and the compare.
+ */
+export const BUILD_LINE_WORDS = {
+  name: (n: number) => t("Build {number}", { number: n }),
+  outcome: {
+    passed: t("Passed"),
+    blank: t("Blank screen"),
+    errors: t("Errors"),
+    failed: t("Did not pass"),
+  } satisfies Record<BuildOutcome, string>,
+  /** The card's line under its outcome: what made the build. */
+  merged: (worker: string) => t("After {worker}", { worker }),
+  leadsOwn: t("The main agent's own changes"),
+  /** A merged worker's status on the build line: in that build, not yet the game. */
+  addedToBuild: t("Added to your build"),
+  /** A worker's first line on the graph: the build it hangs off, and why. */
+  mergedInto: (n: number) => t("Merged into Build {number}", { number: n }),
+  startedFrom: (n: number) => t("Started from Build {number}", { number: n }),
+  startedFirst: t("Started before the first build"),
+  /** The card that folds a build's finished workers, and what pressing it does. */
+  folded: (count: number) => t("{count, plural, one {+# worker} other {+# workers}}", { count }),
+  showAll: t("Show all"),
+  showFewer: t("Show fewer"),
+  foldLabel: (count: number) => t("{count, plural, one {Show # more worker} other {Show # more workers}}", { count }),
+  /** The compare, when the picture is the one before it, measured. */
+  unchanged: (n: number) => t("The picture did not visibly change from Build {number}.", { number: n }),
+  before: (n: number) => t("Build {number}", { number: n }),
+  problems: t("What the check found"),
+  finding: {
+    not_loaded: t("The page did not load."),
+    crashed: t("The page crashed."),
+    uncaught: t("The page threw an error it did not catch."),
+    blank: t("The screen was blank: one flat colour, nothing drawn."),
+  } satisfies Record<HealthFinding, string>,
+  /** The technical details' key for the check's own words. */
+  found: t("found"),
+} as const;
+
+/** An asset delivered again, beside the version before it on the run's Assets card. */
+export const ASSET_VERSION_WORDS = {
+  compare: t("Compare with the earlier version"),
+  earlier: t("Earlier"),
+  now: t("Now"),
+  unchanged: t("The picture did not visibly change from the earlier version."),
+} as const;
+
+/** A worker's first line on a Loop's build line: the build its work went into, or the one it started from. */
+export function workerPlaceWords(place: { build: number; merged: boolean }): string {
+  if (place.merged) return BUILD_LINE_WORDS.mergedInto(place.build);
+  return place.build ? BUILD_LINE_WORDS.startedFrom(place.build) : BUILD_LINE_WORDS.startedFirst;
+}
 
 /** A build in the stage's history, by what it was and the day it started; never a number or a count. */
 /** The Builds bar's tabs, one for each of the chat's builds. */
@@ -2640,6 +2714,8 @@ export const MODEL_PICKER_WORDS = {
   subscription: t("subscription"),
   signIn: t("sign in"),
   free: t("Free"),
+  /** A provider that ships before a live test proved it, in the picker and in Settings. */
+  beta: t("Beta"),
 } as const;
 
 /** A subscription's accounts, in Model Providers and the composer's usage panel (`subscription-accounts.ts`). */
@@ -2823,22 +2899,9 @@ export function permissionWords(plugin: string, prompt: string | undefined): str
 
 // ── Harness activity ──────────────────────────────────────────────────────────────────────
 
-/** The suggestions card in Activity and its exact-edit view (`ui/ProposalsTable.tsx`). */
+/** The exact-edit view of a change in Activity (`ui/ProposalsTable.tsx`). */
 export const SUGGESTION_WORDS = {
-  title: (count: number) =>
-    t(
-      "{count, plural, one {Harness suggests # change to how it builds} other {Harness suggests # changes to how it builds}}",
-      { count },
-    ),
-  subtitle: t("Nothing changes until you apply."),
-  include: (title: string) => t("Include: {title}", { title }),
-  fallbackSummary: t("Suggested after reviewing your recent builds."),
-  whatChanges: t("What changes"),
   seeExactEdit: t("See the exact edit"),
-  selected: (included: number, total: number) =>
-    t("{included} of {total} selected · you can undo later", { included, total }),
-  discard: t("Discard"),
-  apply: (count: number) => t("{count, plural, one {Apply # change} other {Apply # changes}}", { count }),
 } as const;
 
 /** Activity's header and its Self-improvement switch (`panels/ReviewPanel.tsx`). */
@@ -2846,7 +2909,7 @@ export const ACTIVITY_WORDS = {
   title: t("Activity"),
   learning: t("Self-improvement"),
   learningHint: t(
-    "When off, Harness stops learning from your builds. What it already learned stays until you undo it.",
+    "When off, Harness doesn’t change its own instructions. Changes it already made stay until you undo them.",
   ),
 } as const;
 
@@ -2931,6 +2994,9 @@ export const PLUGIN_UPDATE_WORDS = {
     if (chosen < total) return t("Update {count}", { count: chosen });
     return total === 1 ? t("Update") : t("Update all");
   },
+  /** The line's own button: Update, or Update N while some are unticked in the list. */
+  updateLine: (chosen: number, total: number) =>
+    chosen < total ? t("Update {count}", { count: chosen }) : t("Update"),
   updating: t("Updating plugins…"),
   heading: t("Plugin updates"),
   /** Beside the heading while some updates are unticked. */
@@ -3042,9 +3108,6 @@ export const SETUP_SCRIPTS_WORDS = {
 
 /** The fixed titles and sentences of the Builds tab's progress line (`build-progress.ts`). */
 export const PROGRESS_WORDS = {
-  optimizationFinished: t("Optimization finished"),
-  optimization: t("Optimization"),
-  optimizing: t("The assembled game is being measured and checked for safe improvements."),
   buildingStart: t("Building the starting point"),
   startBeforeParts: t("The starting point is built and checked before the lead delegates the parts."),
   startReady: t("The starting point is ready"),
@@ -3142,7 +3205,7 @@ const STUDIO_TOOLS: Record<string, ToolWords> = {
   set_game_cover: { icon: "write", label: t("painted the game's cover") },
   checkpoint: { icon: "see", label: t("marked a moment worth seeing") },
   capture: { icon: "see", label: t("captured the game"), active: t("Capturing the game") },
-  // The lead's run tools. `wait` stays neutral: a playtester waits too.
+  // The lead's run tools. `wait` stays neutral.
   plan: { icon: "think", label: t("set out the plan"), active: t("Writing the plan") },
   goal_update: {
     icon: "think",
@@ -3255,6 +3318,7 @@ export const CONSENT_CHOICE_WORDS = {
     label: t("Always allow"),
     description: t("Don't ask again for this action in {source}.", { source }),
   }),
+  inChat: { label: t("Allow in this chat"), description: t("Don't ask again for this action in this chat.") },
   decline: { label: t("Don't allow"), description: t("The agent carries on without it.") },
 } as const;
 
@@ -3272,6 +3336,14 @@ export const COMPUTER_SETTING_CARD_WORDS = {
 export const consentNeededWords = (source: string | undefined): string =>
   t("{source} needs your permission", { source: source || A_PLUGIN });
 
+/** How an approved consent question was approved: by the chat's Bypass, for the chat, for good, or once. */
+function approvedWords(outcome: { by?: string | null; always?: boolean | null; chatOffered?: boolean | null }) {
+  if (outcome.by === "mode") return t("Allowed in Bypass");
+  const inChat = outcome.by === "chat" || (outcome.always === true && outcome.chatOffered === true);
+  if (inChat) return t("Allowed in this chat");
+  return outcome.always ? t("Always allowed") : t("Allowed");
+}
+
 /** A settled consent question as one line, as Claude's own are: how it ended, then whose it was. */
 export const consentLineWords = (outcome: string, source: string | undefined): string =>
   `${outcome} · ${source || A_PLUGIN}`;
@@ -3281,8 +3353,9 @@ export function consentOutcomeWords(outcome: {
   state?: string | null;
   by?: string | null;
   always?: boolean | null;
+  chatOffered?: boolean | null;
 }): string {
-  if (outcome.state === "approved") return outcome.always ? t("Always allowed") : t("Allowed");
+  if (outcome.state === "approved") return approvedWords(outcome);
   if (outcome.by === "timeout") return t("Nobody answered");
   if (outcome.by === "restart") return t("Withdrawn when the studio restarted");
   if (outcome.by === "stop" || outcome.by === "turn") return t("Withdrawn when the turn stopped");
@@ -3914,6 +3987,9 @@ export const ASSET_LIBRARY_WORDS = {
   /** The tags on a card. */
   saved: t("Saved"),
   shared: t("Shared"),
+  /** A file only in the build of a run still going: it reaches the game when the run lands. */
+  building: t("In the running build"),
+  buildingTip: t("Not in your game yet. It arrives when the build lands."),
   save: t("Save"),
   saveTip: t("Save to your library"),
   unsaveTip: t("Remove from Saved"),
@@ -4011,6 +4087,18 @@ export const MAKING_WORDS = {
   /** A candidate's tab, and its picture. */
   candidate: (n: number) => t("Candidate {index}", { index: n }),
   candidates: t("Candidates"),
+  /** A job the account had too few Genex credits for: nothing was made or charged. */
+  needsCredits: t("Not enough credits"),
+  /** Its action: genex.games' plans in the browser. */
+  getCredits: t("Get credits"),
+  getCreditsLabel: t("Get Genex credits on genex.games"),
+  /** Once the balance pays for it: the chat's agent is asked to make it now. */
+  makeIt: t("Make it"),
+  /** What Make it sends in the game's chat, as if typed: "Make the 3D model with Genex now: Dragon boss". */
+  makeAgain: (kind: string, prompt: string | null) =>
+    prompt
+      ? t("Make the {kind} with Genex now: {prompt}", { kind, prompt })
+      : t("Make the {kind} with Genex now.", { kind }),
   /** The chat's cards of the assets a piece of work is still making. */
   inChat: t("Assets being made"),
   spoken: {
@@ -4138,6 +4226,13 @@ export const SANDBOX_SETUP_WORDS = {
       sent: t("Report sent"),
       reportFailed: t("The report didn’t send. Try again in a moment."),
     },
+    /** An earlier Genex set the protected space up for an older sandbox: one approval updates it. */
+    reinstall: {
+      title: t("Genex’s protected space needs an update"),
+      line: t("Windows will ask you to allow it once."),
+      update: t("Update"),
+      updating: t("Waiting for your OK"),
+    },
     /** Windows' Secondary Logon service is disabled: agents start through it. */
     logonService: {
       line: t("Secondary Logon is turned off on this PC. Set up turns it back on, since agents start through it."),
@@ -4253,7 +4348,7 @@ export const PLUGINS_WORDS = {
   /** The MCP servers section before anyone has added one. */
   servers: {
     emptyTitle: t("Connect any MCP server"),
-    emptyText: t("A command on this Mac, or a URL with browser sign-in. Agents in every game can use its tools."),
+    emptyText: t("A command on this computer, or a URL with browser sign-in. Agents in every game can use its tools."),
   },
   own: {
     title: t("Make a community plugin"),
@@ -4300,7 +4395,7 @@ export const PLUGINS_WORDS = {
     folders: t("Folders"),
     folder: (path: string, why: string) => `${path} — ${why}`,
     scan: t("Code scan"),
-    trusted: t("This plugin runs trusted code on your Mac."),
+    trusted: t("This plugin runs trusted code on your computer."),
     /** A plugin loaded from a folder, in place of `trusted`. */
     localAccess: t(
       "Loaded from a folder on this Mac. It runs with your access: its code isn't sandboxed. Each of its tools asks you before an agent runs it; its own steps at Genex's moments don't ask.",
@@ -4598,6 +4693,8 @@ export const GENEX_WORDS = {
     kinds: {
       [CreditKind.Model]: { name: t("3D model"), tool: "Tripo" },
       [CreditKind.Character]: { name: t("Rigged character"), tool: "Meshy" },
+      [CreditKind.CharacterPreview]: { name: t("Character preview"), tool: "Meshy" },
+      [CreditKind.CharacterFinalize]: { name: t("Finished character"), tool: "Meshy" },
       [CreditKind.ModelAnimation]: { name: t("Animation clip"), tool: "Tripo · Uthana" },
       [CreditKind.Image]: { name: t("Image or sprite"), tool: "GPT Image" },
       [CreditKind.Texture]: { name: t("Texture set"), tool: "Nano Banana" },
@@ -4694,6 +4791,8 @@ export const GENEX_WORDS = {
     coverLeft: (minutes: number) => t("~{minutes} min", { minutes }),
     /** Under the presses while the agent makes it: who is making it, and where it shows. */
     coverMakingSoon: t("The agent is making it in the chat. It shows here when it’s ready."),
+    /** Under the presses when the game has no picture to go out with. */
+    withoutCover: t("No cover yet, so it goes out without a picture."),
     /** What Another cover sends in the game's chat, with what the person typed. */
     coverAnotherPrompt: (want: string) =>
       want
@@ -4800,6 +4899,32 @@ export const LICENSE_WORDS = {
   missing: t("This build of Genex doesn’t include its license files."),
 } as const;
 
+/**
+ * Usage analytics: the one-time question (`panels/AnalyticsConsent.tsx`) and its switch in Settings →
+ * Privacy. Both say the same things, and PRIVACY.md says them too. The replay line shows only to an
+ * install that records one (`analytics/consent.ts`).
+ */
+export const ANALYTICS_WORDS = {
+  question: t("Help improve Genex?"),
+  lead: t("Show us where Genex gets in your way."),
+  events: t("Screens, clicks and errors"),
+  eventsWhat: t("Where you go, what fails and how long it takes"),
+  replay: t("A replay of your first week"),
+  replayWhat: t("How you move through the app, with your work blanked out"),
+  never: t("Never your work or name"),
+  neverWhat: t("Prompts, code, files, game names and accounts are left out"),
+  later: t("Change it anytime in Settings."),
+  keep: t("Don't share"),
+  share: tc("usage data", "Share"),
+  switchLabel: t("Share usage data"),
+  switchWhat: t("Screens, clicks, errors and wait times. Sent to PostHog in the EU under a random id."),
+  switchWhatReplay: (until: number) =>
+    t(
+      "Screens, clicks, errors and wait times, and until {date} a replay of how you move through the app with your work blanked out. Sent to PostHog in the EU under a random id.",
+      { date: new Date(until).toLocaleDateString(intlLocale(), { month: "long", day: "numeric" }) },
+    ),
+} as const;
+
 /** Settings → Privacy: Share build metrics (`panels/PrivacySection.tsx`). PRIVACY.md says the same things. */
 export const PRIVACY_WORDS = {
   tab: t("Privacy"),
@@ -4873,15 +4998,22 @@ export const PLAY_WORDS = {
   people: {
     friends: t("Friends"),
     friendsLabel: (waiting: number) => (waiting > 0 ? t("Friends, {count} waiting", { count: waiting }) : t("Friends")),
+    hideFriends: t("Hide friends"),
+    showFriends: t("Show friends"),
     plateLabel: (name: string) => t("{name}, Genex account", { name }),
     pro: "Pro",
     proTag: "PRO",
     menuLabel: t("Genex account"),
     profile: t("Profile"),
-    credits: t("Credits"),
+    /** The menu's row for the account's credits, which pay for Genex tools only. */
+    credits: t("Genex credits"),
     creditsUnlimited: t("Unlimited"),
-    /** The credits beside the plate's name: "1,700 credits, open Credits". */
-    creditsLabel: (amount: string) => t("{amount} credits, open Credits", { amount }),
+    /** Under the credits row once none are left: genex.games' plans in the browser. */
+    getCredits: t("Get credits"),
+    getCreditsLabel: t("Get Genex credits on genex.games"),
+    coins: t("Nex"),
+    /** The coin beside the plate's name in Play, which opens the Nex sheet: "1,240 Nex, about Nex". */
+    coinsLabel: (amount: string) => t("{amount} Nex, about Nex", { amount }),
     accountSettings: t("Account settings"),
     signOut: t("Sign out"),
     /** The plate while signed out, signing in, offline, and once genex.games ended the sign-in. */
@@ -5180,6 +5312,8 @@ export const PLAY_WORDS = {
     failedText: t("Check your connection, then try again."),
     retry: t("Try again"),
     back: t("Back to Play"),
+    /** The game's Store, opened in its place from the bar: back to the game hidden under it. */
+    backToGame: t("Back to game"),
   },
   /** The viewer's header across the window's top. */
   bar: {
@@ -5190,6 +5324,8 @@ export const PLAY_WORDS = {
     share: t("Share"),
     invite: t("Invite a friend"),
     remix: t("Remix"),
+    /** The door to the game's Store, for a game that sells items (the web's game bar has the same). */
+    store: t("Store"),
     fullScreen: t("Full screen"),
     exit: t("Exit"),
     playing: (count: number) => t("{count} playing", { count }),
@@ -5240,7 +5376,7 @@ export const PLAY_WORDS = {
     balance: t("Your balance"),
     /** Read between the balance and what it comes to, in place of the arrow. */
     afterPaying: t("after paying"),
-    coin: (amount: string) => t("{amount} coin", { amount }),
+    coin: (amount: string) => t("{amount} Nex", { amount }),
     quantity: (count: string) => `× ${count}`,
     cancel: t("Cancel"),
     pay: (amount: string) => t("Pay {amount}", { amount }),
@@ -5251,14 +5387,14 @@ export const PLAY_WORDS = {
     receipt: (game: string) => t("{game} has your receipt.", { game }),
     back: t("Back to game"),
     moreNeeded: (amount: string) => t("{amount} more needed", { amount }),
-    getCoin: t("Get coin"),
-    getCoinNote: t("Opens genex.games. Pay comes back once the coin lands."),
+    getCoin: t("Get Nex"),
+    getCoinNote: t("Opens genex.games. Pay comes back once the Nex lands."),
     /** genex.games already ended the purchase for want of coin: it cannot come back here. */
-    overNote: t("Try again in the game once the coin lands."),
+    overNote: t("Try again in the game once the Nex lands."),
     review: t("Review"),
-    coinArrived: t("Your coin arrived. Review the purchase, then pay."),
+    coinArrived: t("Your Nex arrived. Review the purchase, then pay."),
     signedOutTitle: t("Sign in to buy things in games"),
-    signedOutBody: t("Coin lives in your Genex account. Sign in once, then pay here."),
+    signedOutBody: t("Nex lives in your Genex account. Sign in once, then pay here."),
     signIn: t("Sign in to Genex"),
     signInNote: t("Opens your browser. You’ll come back here to pay."),
     signedInTitle: t("You’re signed in"),
@@ -5272,20 +5408,20 @@ export const PLAY_WORDS = {
     failed: {
       [PurchaseProblem.Expired]: {
         title: t("This purchase timed out"),
-        body: t("Try again in the game. No coin was reserved or charged."),
+        body: t("Try again in the game. No Nex was reserved or charged."),
       },
       [PurchaseProblem.Canceled]: {
         title: t("This purchase was canceled"),
-        body: t("Try again in the game. No coin was charged."),
+        body: t("Try again in the game. No Nex was charged."),
       },
       [PurchaseProblem.Refused]: {
         title: t("This purchase didn’t go through"),
-        body: t("Try again in the game. No coin was charged."),
+        body: t("Try again in the game. No Nex was charged."),
       },
       /** Paid, then given back: the coin was charged, so never "No coin was charged". */
       [PurchaseProblem.Refunded]: {
         title: t("This purchase was refunded"),
-        body: t("Try again in the game. The coin went back to your balance."),
+        body: t("Try again in the game. The Nex went back to your balance."),
       },
     } satisfies Record<PurchaseProblem, { title: string; body: string }>,
   },
@@ -5304,6 +5440,218 @@ export const PLAY_WORDS = {
     dismiss: t("Close"),
   },
 } as const;
+
+/**
+ * A game's Store section, its items' purchase sheet and the profile's item shelf (`play/GameStore.tsx`,
+ * `play/ItemSheet.tsx`, `play/ItemShelf.tsx`; marketplace screens 01–06). Money is coin here, and only
+ * here (P24); the words match genex.games' own store.
+ */
+export const PLAY_STORE_WORDS = {
+  title: t("Store"),
+  storeTab: t("Store"),
+  myItemsTab: t("My items"),
+  /** The Store / My items toggle, read aloud. */
+  tabsLabel: t("Store and my items"),
+  free: t("Free"),
+  owned: t("Owned"),
+  worksHere: t("Works here"),
+  notHere: t("Not in this game"),
+  left: (count: number) => t("{count, number} left", { count }),
+  /** A shared item's badge: "4 games". */
+  games: (count: number) => t("{count, plural, one {# game} other {# games}}", { count }),
+  /** No design screen: My items while signed out, and with nothing owned yet (the website's words). */
+  signInForItems: t("Sign in to see the items you own."),
+  noItems: t("Items you own show up here."),
+  itemsFailed: t("Your items couldn’t load."),
+  // The purchase sheet (screens 03–05).
+  dragToTurn: t("Drag to turn"),
+  worksIn: (count: number) => t("{count, plural, one {Works in # game} other {Works in # games}}", { count }),
+  price: t("Price"),
+  balanceAfter: (now: string, after: string) => t("Balance {now} → {after}", { now, after }),
+  balance: (amount: string) => t("Balance {amount}", { amount }),
+  short: (have: string, more: string) => t("You have {have} · {more} more needed", { have, more }),
+  /** Under a short balance, when part of the coin is earned coin still on hold (web and desktop say the same). */
+  held: (coins: string, date: string) => t("{coins} of your Nex is on hold until {date}.", { coins, date }),
+  pay: (amount: string) => t("Pay {amount}", { amount }),
+  get: t("Get"),
+  yours: t("It's yours. Find it under Store › My items in every game it works in."),
+  done: t("Done"),
+  close: t("Close"),
+  more: t("More"),
+  /** genex.games already ended the purchase for want of coin: it is started again from the card. */
+  overNote: t("Try again once the Nex lands."),
+  pendingBody: t("Genex hasn’t confirmed it yet. It shows under My items once it does. You won’t be charged twice."),
+  /** How a purchase from the page that ended unpaid (or refunded) reads; its titles are the in-game sheet's. */
+  failedBody: {
+    [PurchaseProblem.Expired]: t("No Nex was reserved or charged."),
+    [PurchaseProblem.Canceled]: t("No Nex was charged."),
+    [PurchaseProblem.Refused]: t("No Nex was charged."),
+    [PurchaseProblem.Refunded]: t("The Nex went back to your balance."),
+  } satisfies Record<PurchaseProblem, string>,
+  /** The item is no longer sold on this page. */
+  goneTitle: t("This item isn’t sold here anymore"),
+  goneBody: t("It may be back later. No Nex was charged."),
+  // The item report (P22), from the sheet's ⋯ menu.
+  reportItem: t("Report item…"),
+  reportTitle: t("Report item"),
+  reasons: {
+    /** A copy of someone else's work, not the verb. */
+    [ItemReportReason.Copy]: tc("item report", "Copy"),
+    [ItemReportReason.Broken]: t("Doesn't work"),
+    [ItemReportReason.Inappropriate]: t("Inappropriate"),
+    [ItemReportReason.Scam]: t("Scam"),
+  } satisfies Record<ItemReportReason, string>,
+  reasonsLabel: t("Why are you reporting it?"),
+  reportMessage: t("Anything else we should know? (optional)"),
+  sendReport: t("Send report"),
+  reportSent: t("Report sent"),
+  reportFailed: t("The report didn’t send. Try again in a moment."),
+  reportLimited: t("Too many reports for now. Try again later."),
+  back: t("Back"),
+  // The profile's item shelf (screen 06).
+  shelfLabel: t("Items"),
+  itemTag: t("Item"),
+  getIn: (game: string) => t("Get in {game}", { game }),
+} as const;
+
+/**
+ * Create › Items (`panels/items/`; marketplace screens 07–08) and the chat's Listing draft card
+ * (`chat/ListingDraftCard.tsx`; screen 09). Money is coin here (P24); every number is genex.games'
+ * own. Lines marked "no design copy" have no screen of their own.
+ */
+/** The Nex sheet (`play/NexSheet.tsx`): what Nex is, and how it is got, spent and earned. */
+export const NEX_WORDS = {
+  title: t("Nex"),
+  lead: t("Nex is the money of games on Genex. Players buy it, then spend it on items inside any game."),
+  yours: t("Your Nex"),
+  get: t("Get"),
+  getBody: t("Buy Nex in packs. One balance works in every game."),
+  spend: t("Spend"),
+  spendBody: t("Buy items in a game’s store: characters, skins, upgrades. What you buy stays yours."),
+  earn: t("Earn"),
+  earnBody: t("Players pay Nex for your items. After a short hold, you spend it like any Nex."),
+  credits: t("Credits are separate: they pay for making games. Nex pays for what games sell."),
+  getNex: t("Get Nex"),
+} as const;
+
+export const ITEMS_WORDS = {
+  title: t("Items"),
+  tabsLabel: t("Browse and selling"),
+  browse: t("Browse"),
+  selling: t("Selling"),
+  // Browse (screen 07).
+  /** The design's intro, for an API that does not name the selling game's share. */
+  intro: t("Items other creators made. Free to add to your game, and you get 15% of every sale in it."),
+  /** The intro with the selling game's share as genex.games configures it ("15%"). */
+  introShare: (share: string) =>
+    t("Items other creators made. Free to add to your game, and you get {share} of every sale in it.", { share }),
+  search: t("Search items"),
+  inGames: (count: number) => t("{count, plural, one {in # game} other {in # games}}", { count }),
+  by: (name: string) => t("By {name}", { name }),
+  playersPay: t("Players pay"),
+  youGet: t("You get per sale"),
+  /** "You get per sale" with the selling game's share genex.games configures ("15%"). */
+  youGetShare: (share: string) => t("You get per sale ({share})", { share }),
+  /** The selling game's share of one sale, as genex.games computed it: "+1,200". */
+  gain: (amount: string) => t("+{amount}", { amount }),
+  /** The label over the game picker: which of the account's games the item is for. */
+  forGame: t("For"),
+  chooseGame: t("Choose a game"),
+  addToGame: t("Add to game"),
+  agentPutsIt: t("Your agent puts it in the game."),
+  /** An item already in the chosen game (Q5: players see it once the game publishes a build). */
+  addedToGame: t("Added to your game"),
+  seenAfterPublish: t("Players see it after your next publish."),
+  /** An item added and sold there: a build that has it went live. */
+  onSaleInGame: t("On sale in your game"),
+  buyableNow: t("Players can buy it there now."),
+  removeFromGame: t("Remove from game"),
+  removeTitle: (item: string, game: string) => t("Remove {item} from {game}?", { item, game }),
+  removeBody: t("It leaves the game’s Store. Players who own it keep it."),
+  remove: t("Remove"),
+  /** No design copy: none of the account's games on this computer is on Genex yet. */
+  noGame: t("Publish a game to Genex first, then add items to it."),
+  /** No design copy: a search that found nothing, and Browse with nothing shared yet. */
+  noMatch: t("No items match."),
+  noneShared: t("No one has shared an item yet."),
+  more: t("Show more"),
+  // Selling (screen 08).
+  readyToUse: t("Ready to use"),
+  onHold: (days: number) => t("{days, plural, one {On hold for # day} other {On hold for # days}}", { days }),
+  /** The strip's own way to the Nex sheet; its figures open it too. */
+  whatIsNex: t("What is Nex?"),
+  item: t("Item"),
+  price: t("Price"),
+  sold: t("Sold"),
+  earned: t("Earned"),
+  gameLine: (game: string, games: string) => t("{game} · {games}", { game, games }),
+  /** Selling's draft row: one press puts it on sale (P12). */
+  draftPutOnSale: t("Draft, put on sale"),
+  underReview: t("Report under review"),
+  offSale: t("Off sale"),
+  status: t("Status"),
+  actionsColumn: t("Actions"),
+  actions: (name: string) => t("Actions for {name}", { name }),
+  putOnSale: t("Put on sale"),
+  takeOffSale: t("Take off sale"),
+  shared: t("Other games can use it"),
+  askAgent: t("Ask the agent to change it"),
+  /** No design copy: Selling with nothing made yet. */
+  noItems: t("Items you make show up here. Ask your game’s agent for one."),
+  // The Listing draft card (screen 09): in the chat its composer below takes a change; on Shop, a pencil.
+  askBelow: t("Ask for changes below"),
+  askForChanges: t("Ask for changes"),
+  /** No design copy: the card once its item is on sale. */
+  onSale: t("On sale"),
+  listingLabel: (name: string) => t("Listing draft: {name}", { name }),
+  /** A draft, here or on Genex: Studio puts it on sale when the game is published. */
+  draftStatus: t("Draft · goes on sale when you publish"),
+  /** The same in a word, on a Shop tile's picture. */
+  draft: t("Draft"),
+  /** Above the Shop tab's tiles. */
+  draftsNote: t("Drafts go on sale when you publish."),
+  /** No design copy: after the publish, a draft changed since its approval stays a draft. */
+  stayedDraft: t("It changed since you approved it, so it stayed a draft."),
+  /** No design copy: Genex got a version of the item this card never showed (an edit outside Studio). */
+  unseenVersion: t("This item changed after this card. See it in Items › Selling before you put it on sale."),
+  /** No design copy: the agent removed the local draft. */
+  localRemoved: t("Removed from this game"),
+  /** No design copy: main could not run the change on the draft. */
+  localFailed: t("Genex couldn’t change this draft. Try again."),
+  // Every read.
+  failed: t("Items couldn’t load."),
+  /** No design copy: the app's Genex account is signed out, or genex.games' store is off. */
+  signedOut: t("Sign in to Genex to see items."),
+  storeOff: t("The item store is off right now."),
+  tryAgain: t("Try again"),
+} as const;
+
+/** Why genex.games refused a press on an item, in the person's words; any other reads as `unknown`. */
+export const ITEM_REFUSAL_WORDS: Partial<Record<StoreRefusal, string>> & { unknown: string } = {
+  // Put on sale reads the picture from Genex's own storage (D62): the fix is always an upload.
+  [StoreRefusal.PictureMissing]: t("It needs a picture first. Ask the agent to upload the picture."),
+  [StoreRefusal.PictureInvalid]: t("Genex couldn’t use its picture. Ask the agent to upload the picture."),
+  [StoreRefusal.ModelInvalid]: t("Genex couldn’t use its 3D model. Ask the agent to fix it."),
+  [StoreRefusal.PackageInvalid]: t("Genex couldn’t use its files. Ask the agent to fix them."),
+  [StoreRefusal.PackageTooLarge]: t("Its files are too large. Ask the agent to make them smaller."),
+  [StoreRefusal.PriceOffGrid]: t("That price isn’t one the store takes. Ask the agent to pick another."),
+  [StoreRefusal.NameRefused]: t("Genex can’t sell it under that name. Ask the agent for another."),
+  [StoreRefusal.DescriptionRefused]: t("Genex can’t sell it with that description. Ask the agent to change it."),
+  [StoreRefusal.NotDurable]: t("Only an item players keep can be used in other games."),
+  [StoreRefusal.TakenDown]: t("Genex took this item off sale."),
+  [StoreRefusal.TooManySkus]: t("This game sells as many items as it can."),
+  [StoreRefusal.PublishRateLimited]: t("You’ve put a lot on sale today. Try again tomorrow."),
+  [StoreRefusal.Unauthorized]: t("Sign in to Genex first."),
+  [StoreRefusal.ProjectNotFound]: t("Only the item’s maker can change it."),
+  [StoreRefusal.NotShareable]: t("Its maker doesn’t let other games use it anymore."),
+  [StoreRefusal.ItemOffSale]: t("It isn’t on sale anymore."),
+  [StoreRefusal.HomeGame]: t("It’s already this game’s own item."),
+  [StoreRefusal.NotFound]: t("The item store is off right now."),
+  unknown: t("Genex couldn’t do that. Try again in a moment."),
+};
+
+/** The words for a refusal. */
+export const itemRefusalWords = (code: StoreRefusal): string => ITEM_REFUSAL_WORDS[code] ?? ITEM_REFUSAL_WORDS.unknown;
 
 /** A Play card's ⋯ menu and its dialogs: genex.games' card menu, in the app (`play/card-menu/`). */
 export const PLAY_CARD_MENU_WORDS = {
@@ -5476,6 +5824,7 @@ const INSTALL_FAILED: Readonly<Record<InstallFailure, (free: string, here: Nativ
   [InstallFailure.Unsigned]: () => t("Couldn’t install: this game isn’t signed."),
   [InstallFailure.TooLarge]: () => t("Couldn’t install: this game is larger than it says."),
   [InstallFailure.UnsupportedOs]: (_free: string, here: NativeHereWords) => here.unsupported,
+  [InstallFailure.NeedsRosetta]: () => t("Couldn’t install: this game needs Rosetta to run on this Mac."),
   [InstallFailure.EntryMissing]: () => t("Couldn’t install: the download doesn’t hold the game."),
   [InstallFailure.NotOffered]: (_free: string, here: NativeHereWords) => here.notOffered,
   [InstallFailure.Failed]: () => t("Couldn’t install. Try again."),
@@ -5764,8 +6113,8 @@ export const ACCOUNT_WORDS = {
   credits: t("Credits"),
   creditsCount: (count: string) => t("{count} credits", { count }),
   creditsUnlimited: t("Unlimited credits"),
-  buyCredits: t("Buy credits"),
-  buyCreditsLabel: t("Buy credits on genex.games"),
+  buyCredits: t("Get credits"),
+  buyCreditsLabel: t("Get Genex credits on genex.games"),
   /** Under the balance: what credits pay for, the plugin's name a link to its page. */
   creditsNote: t("For <plugin>Genex plugin</plugin> tools: 3D, animation, textures, music. Optional."),
   creditsPluginLabel: t("Open the Genex plugin page"),
@@ -5982,7 +6331,7 @@ export const ROBLOX_PUBLISH_WORDS = {
   publishUpdate: t("Publish an update"),
   updateLine: t("Everyone who plays gets this version."),
   handing: t("Handing it to the agent…"),
-  chatAsks: t("If the chat asks to use computer control, answer it there."),
+  chatAsks: t("If the chat or macOS asks for permission, allow it: publishing goes on by itself."),
   progress: t("Publishing to Roblox"),
   stepAgent: t("To the agent"),
   stepStudio: t("In Roblox Studio"),
@@ -5992,6 +6341,11 @@ export const ROBLOX_PUBLISH_WORDS = {
   publishedFirst: t("Your game is on Roblox"),
   publishedUpdate: t("The update is on Roblox"),
   open: t("Open on Roblox"),
+  onlyYou: t("Only you can open it for now. Roblox keeps a new game private until you finish these in Creator Hub:"),
+  nextQuestions: t("Answer Roblox's questions about what's in the game, so it gets an age rating."),
+  nextPublic: t("Make the game public, so anyone can play it."),
+  nextIcon: t("Add an icon and a thumbnail, or Roblox shows a grey square."),
+  openHub: t("Open Creator Hub"),
   stoppedLine: t("The agent stopped before Studio published. The chat says why."),
   tryAgain: t("Try again"),
   noPlace: t("This game has no Roblox place yet. Set up Roblox Studio first."),

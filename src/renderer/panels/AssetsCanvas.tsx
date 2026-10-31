@@ -34,12 +34,16 @@ import { Pending } from "../ui/Pending.tsx";
 import { MakingCard, usePluginSources } from "./MakingCard.tsx";
 import { MakingReviewsProvider } from "./MakingReviews.tsx";
 import { AssetSearchField, AssetSearchResults } from "./assets/AssetSearch.tsx";
-import { CardTagMark, PickCircle, ShareLineMark } from "./assets/CardMarks.tsx";
+import { BuildingMark, CardTagMark, PickCircle, ShareLineMark } from "./assets/CardMarks.tsx";
 import { SelectionBar } from "./assets/SelectionBar.tsx";
 import { ShareDialog } from "./assets/ShareDialog.tsx";
 import { ViewerActions } from "./assets/ViewerActions.tsx";
 import { t } from "../../shared/i18n.ts";
 import { Skeleton } from "../ui/Skeleton.tsx";
+import { assetPreviewMode } from "../../shared/asset-preview.ts";
+import { track } from "../analytics/client.ts";
+import { AnalyticsEvent } from "../analytics/events.ts";
+import { AssetOpenedFrom } from "../analytics/events/builds.ts";
 
 /** How wide each waiting tile's name is: six tiles, as many as a first look usually shows. */
 const ASSET_TILE_NAMES = ["70%", "55%", "62%", "48%", "66%", "40%"] as const;
@@ -71,17 +75,19 @@ function WaitingCard({
   group,
   job,
   plugin,
+  project,
 }: {
   layout: Layout;
   group: Group;
   job: MakingJob;
   plugin: MakingSource;
+  project: string;
 }): JSX.Element | null {
   const rect = layout.rects[`pending:${group.source}:${job.jobId}`];
   if (!rect) return null;
   return (
     <div className="absolute" style={{ left: rect.x, top: rect.y, width: rect.w, height: rect.h }}>
-      <MakingCard job={job} plugin={plugin} />
+      <MakingCard job={job} plugin={plugin} project={project} />
     </div>
   );
 }
@@ -181,7 +187,7 @@ function AssetCard({
       onClick={(event) => event.stopPropagation()}
     >
       {children}
-      {tag && <CardTagMark tag={tag} />}
+      {asset.building ? <BuildingMark /> : tag && <CardTagMark tag={tag} />}
       {marks.picked.size > 0 && (
         <PickCircle picked={picked} name={assetName(asset)} onToggle={() => marks.onToggle(asset.file)} />
       )}
@@ -242,7 +248,9 @@ const AssetGroups = memo(function AssetGroups({
             </div>
             {group.jobs.map((job) => (
               <div key={job.id}>
-                {job.waiting && <WaitingCard layout={layout} group={group} job={job.waiting} plugin={source} />}
+                {job.waiting && (
+                  <WaitingCard layout={layout} group={group} job={job.waiting} plugin={source} project={project} />
+                )}
                 {job.assets.map((asset) => card(group, asset))}
               </div>
             ))}
@@ -685,7 +693,8 @@ function OpenedAsset({
         />
       }
       onClose={() => model.setPreviewAsset(null)}
-      onReveal={reveal}
+      // A file only in a running build has no place in the game folder to show yet.
+      onReveal={asset.building ? null : reveal}
     />
   );
 }
@@ -697,20 +706,22 @@ export function AssetsCanvas({ project, onNotice, focusJob }: Props): JSX.Elemen
   const [sharing, setSharing] = useState<ProjectAsset[] | null>(null);
   const clearPicks = pick.picked.size > 0 ? pick.clear : () => setSelected(null);
   useEscapeClears(pick.picked.size > 0 || selected !== null, previewAsset !== null, clearPicks);
-  const openAsset = useCallback(
-    (asset: ProjectAsset) => {
+  const show = useCallback(
+    (asset: ProjectAsset, from: AssetOpenedFrom) => {
+      track(AnalyticsEvent.AssetPreviewOpened, { mode: assetPreviewMode(asset.file), kind: asset.kind, from });
       pick.clear();
       setSelected(asset.file);
       setPreviewAsset(asset);
     },
     [pick.clear, setSelected, setPreviewAsset],
   );
+  const openAsset = useCallback((asset: ProjectAsset) => show(asset, AssetOpenedFrom.Canvas), [show]);
   const openFound = useCallback(
     (asset: ProjectAsset) => {
       setQuery("");
-      openAsset(asset);
+      show(asset, AssetOpenedFrom.Search);
     },
-    [setQuery, openAsset],
+    [setQuery, show],
   );
 
   return (

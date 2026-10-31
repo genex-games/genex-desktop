@@ -14,7 +14,6 @@ import {
 } from "../../shared/boot.ts";
 import type { CustomEventType } from "../../shared/custom-events.ts";
 import { EventKind, type EventData } from "../../shared/event-log.ts";
-import { applyEdits } from "../../shared/skill-edits.ts";
 import { ShotKind, iterationDir } from "../core/run-shots.ts";
 
 export const FIXTURE_VERSION = 1;
@@ -56,6 +55,11 @@ export const FixtureName = {
    * with their workers' records.
    */
   ChatWorkers: "chat-workers",
+  /**
+   * A Loop still going whose integration head grew through four builds (a sound-only merge, a
+   * repainted sign, a blank one), twelve workers off them, and deliveries only in its build.
+   */
+  BuildTimeline: "build-timeline",
   /** The finish check on the Builds graph and in the chat: four Loops, one in each of its looks. */
   FinishCheck: "finish-check",
   /** Live's run pictures for a folder no observer draws, and the sentence for one with none yet. */
@@ -92,6 +96,11 @@ export const FixtureName = {
   DataFolder: "data-folder",
   /** The start window for a data folder whose drive is unplugged: its folder, Try again and Quit. */
   DataMissing: "data-missing",
+  /**
+   * Create › Items over the fixture store (with `STUDIO_FIXTURE_GENEX_ACCOUNT=1`): the fixture game is
+   * the account's Snowball on Genex, its chat holding a Listing draft card for Frost Axe.
+   */
+  ItemsStore: "items-store",
 } as const;
 export type FixtureName = (typeof FixtureName)[keyof typeof FixtureName];
 
@@ -201,10 +210,4 @@ export function fixtureRun(scope: Record<string, unknown>) {
     event_type: name,
     payload: { ...scope, ...payload },
   });
-}
-
-/** A staged suggestion as SkillOpt writes one: the edits, and the file as they leave it. */
-export function appendSuggestion(skill: string, currentText: string, text: string) {
-  const edits = [{ op: "append", text }];
-  return { skill, file: `skills/${skill}.md`, currentText, edits, proposedText: applyEdits(currentText, edits).text };
 }

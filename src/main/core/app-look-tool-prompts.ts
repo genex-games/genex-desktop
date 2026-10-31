@@ -14,7 +14,7 @@ export const APP_LOOK_TOOL: LiveToolSpec = {
       window: { type: "string", description: "A window id from the list, or words of its title." },
       save: {
         type: "string",
-        description: "A .jpg path inside your project folder to keep the picture, for example as proof.",
+        description: "A .jpg path inside your project folder to keep the picture.",
       },
     },
   },

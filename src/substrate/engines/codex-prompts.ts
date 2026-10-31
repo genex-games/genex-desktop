@@ -1,13 +1,13 @@
 /**
  * What `codex.ts` tells a Codex session in words, because Codex has no switch that could say it
- * at the boundary: the critic's rules, the folders a builder must not read, and where a
+ * at the boundary: the reviewer's rules, the folders a builder must not read, and where a
  * read-only session may write.
  */
 import { MCP_SERVER_NAME } from "./studio-mcp-shim.ts";
 
 /**
- * The critic's two rules, appended to every judge prompt. The Claude critic has its tools,
- * skills and settings taken away at the boundary; this one cannot, so it is told.
+ * The reviewer's two rules, appended to every reviewer prompt. A Claude reviewer has its tools,
+ * skills and settings taken away at the boundary; a Codex one cannot, so it is told.
  */
 export const JUDGE_RULES = [
   // R4: the yardstick is not the agent's to bend, and a verdict reached by going and
@@ -26,14 +26,11 @@ export function offLimitsNote(dirs: string[]): string {
 }
 
 /**
- * A read-only session's orientation: the build it tests, and the only place it can write. A lead
- * (`leads`: the integration worktree it leads) is told where its game and that build are instead:
- * it runs from a folder of its own, because Codex can always write where it is started.
+ * A read-only session's orientation (a reviewer, a reader): the build it tests, and
+ * the only place it can write. No lead is read-only, so none reads this.
  */
-export function readOnlyNote(cwd: string, scratch: string | null, leads: string | null = null): string {
+export function readOnlyNote(cwd: string, scratch: string | null): string {
   if (!scratch) return "";
-  if (leads)
-    return `\n\nWhile this build runs you only read: the game folder is ${cwd} and the build you lead is at ${leads}. Read both freely by their full paths; you cannot change either — your workers write, and the studio merges and commits. You are running from ${scratch}, which holds only the studio's tools.`;
   return `\n\nThe build you are testing is at ${cwd}. Read it freely; you cannot change it, and you are not here to. You are running from ${scratch}, which is the only place you can write.`;
 }
 
@@ -58,14 +55,6 @@ export function mcpToolsNote(tools: readonly string[]): string {
   const named = tools.map((tool) => `${MCP_SERVER_NAME}_${tool}`).join(", ");
   return `STUDIO TOOLS — ${named} are your own tools in this session: call them directly with JSON arguments, and a tool that looks at the build answers with the picture itself. Only if one is refused, run \`node .studio/bridge/tool.mjs <tool> ...\` for the same tool instead.`;
 }
-
-/**
- * What a judge that plays is told on an engine that cannot take its file tools away at the
- * boundary (Codex reads the whole disk): it judges only from playing. The studio's own goal check
- * does not rest on this — it reads the game's state itself — but the judge's other answers do.
- */
-export const BLIND_JUDGE_NOTE =
-  "YOU JUDGE BY PLAYING — read, list or search no file of the build or anywhere else; the only files you may open are the pictures your studio tools save. Everything you say must come from what you did and saw in the game.";
 
 export function dynamicToolsNote(tools: readonly string[]): string {
   if (!tools.length) return "";

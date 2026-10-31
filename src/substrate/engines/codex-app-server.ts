@@ -52,6 +52,7 @@ export const AppServerMethod = {
   ThreadCompactStart: "thread/compact/start",
   TurnStart: "turn/start",
   TurnInterrupt: "turn/interrupt",
+  TurnSteer: "turn/steer",
   ItemStarted: "item/started",
   ItemCompleted: "item/completed",
   AgentMessageDelta: "item/agentMessage/delta",

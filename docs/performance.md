@@ -79,7 +79,9 @@ counters carry the regression gates.
 - Fixture messages for journeys: `fixture:stream` (a short streamed reply) and `fixture:stream-long`
   (about ten thousand characters of Markdown and code, streamed at a fast model's pace, in a game chat).
 - `dist/renderer/bundle-report.json`: eager renderer bytes against the budget in
-  `scripts/renderer-build.mjs`; three.js must stay out of the eager graph.
+  `scripts/renderer-build.mjs`; three.js must stay out of the eager graph. CI's own build bundles
+  production React, so `renderer-build.test.ts` bundles the studio as an owned fixture build and a
+  packaged build do and holds each to its budget.
 - The eval ledger's `time.*` fields and `npm run eval -- compare|check` for whole-build timing
   ([evals](evals.md)).
 - `scripts/bench/event-log.ts` for event-store reads at scale.
@@ -93,10 +95,13 @@ counters carry the regression gates.
 | three.js in the eager renderer graph | none | `scripts/renderer-build.mjs` |
 | Production React in a packaged app | required | `tests/e2e/run-packaged-smoke.mjs` |
 | sandbox-runtime, the Agent SDK or the MCP SDK imported at the top of main | none | `scripts/main-build.mjs` |
+| A language catalog inside `app.mjs` | none | `scripts/main-build.mjs` |
 | Chat typing commits | unchanged per key | `tests/e2e/run-chat-ui.mjs` |
 
 ## Rules that keep work off the critical path
 
+- Launch opens Create's home, so what covers it later loads the first time it opens, each a chunk
+  of its own outside the eager graph: Plugins, Create › Items, Play's pages and Settings.
 - The chat transcript mounts rows three screens ahead both ways and keeps them four screens
   back (`chat/transcript-window.ts`): a GPU busy with Live's game draws newly mounted rows late,
   so rows mounted just in time showed as a blank block under a fast fling.
@@ -143,13 +148,18 @@ counters carry the regression gates.
 differs from an owned development build:
 
 - **Renderer:** minified, production React, no StrictMode replays, no Profiler or journey marks.
-  Owned builds overstate render cost; a packaged measurement needs `--studio-diagnostics`.
+  Owned builds overstate render cost; a packaged measurement needs `--studio-diagnostics`. In
+  every mode its chunks keep a catalog's letters as UTF-8 rather than `\u` escapes, which halves
+  the Russian catalog a window reads before it shows (1.1 → 0.56 MB).
 - **Main bundle:** `main.mjs` is a small entry (`main/boot.ts`) that turns on V8's compile cache
   and then imports the app, `app.mjs`, which is not minified in any mode. A packaged normal launch
   keeps the compiled code in `<userData>/v8-compile-cache` (`main/compile-cache.ts`), written 30 s
   after launch and at quit, so later launches skip most parsing and compiling (Electron 43, Linux:
   the bundle's import 238 → 168 ms median). Development, test and runner launches never write it.
-  Heavy packages load on first use, not at its top.
+  Heavy packages load on first use, not at its top, and each language catalog but English is a
+  file of its own beside it (`main/locales/<locale>.mjs`), read only when that language is chosen:
+  bundled in, the eight of them made `app.mjs` 12.2 MB instead of 7 and kept 10 MB more of main's
+  heap.
 - **Archive:** the app loads from `app.asar` with integrity validation; `dist/resources` (harness
   seed, vendored TypeScript, three.js, plugin payloads), node-pty and the sandbox vendor folder
   are unpacked because they are spawned or served. Packages esbuild bundles (React, xterm,

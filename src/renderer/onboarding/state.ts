@@ -16,13 +16,25 @@ import { STORAGE_KEYS } from "../storage.ts";
 
 /** Set once the welcome is finished or skipped on this profile. */
 export const WELCOMED_KEY = STORAGE_KEYS.welcomed;
-/** The demo prompt names the game the Judges' screen plays. */
+/** The demo prompt names the game the second opinion's screen plays. */
 export const DEMO_IDEA = t("A tiny space shooter in a field of asteroids");
 
 /** Welcome only a first launch: the session allows it, the library is empty and this profile was never welcomed. */
 export function shouldWelcome(allowed: boolean | undefined, games: number, storage: Pick<Storage, "getItem">): boolean {
   return allowed === true && games === 0 && storage.getItem(WELCOMED_KEY) !== "1";
 }
+
+/** The onboarding screens: the welcome, Connect, and one for each of Connect's other ways. */
+export const WelcomeScreen = {
+  Welcome: "welcome",
+  Connect: "connect",
+  Local: "local",
+  OpenRouter: "openrouter",
+  OpenCode: "opencode",
+  Grok: "grok",
+  Cursor: "cursor",
+} as const;
+export type WelcomeScreen = (typeof WelcomeScreen)[keyof typeof WelcomeScreen];
 
 /** A subscription first launch offers to connect: Claude Code or Codex. */
 export type Subscription = SubscriptionId;

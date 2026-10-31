@@ -10,6 +10,7 @@ import {
   DEFAULT_PERMISSION_MODE,
   engineMode,
   isPermissionMode,
+  ModeSwitchFailure,
   PermissionMode,
   planContinuations,
 } from "../../shared/permissions.ts";
@@ -19,6 +20,10 @@ import { type Notify, ToastTone } from "../state/toasts.ts";
 import type { ComposerPermissions } from "../ui/PromptBar.tsx";
 import { usePermissionSettings } from "../use-permission-settings.ts";
 import { problemWords } from "../words.ts";
+import { ModeVia } from "../analytics/chat-vocabulary.ts";
+import { track } from "../analytics/client.ts";
+import { AnalyticsEvent } from "../analytics/events.ts";
+import { errorCode, errorCodeIn } from "../../shared/errors.ts";
 
 export interface ChatPermissionMode {
   /** The composer's pill, or null in Studio's own chat. */
@@ -71,12 +76,25 @@ export function usePermissionMode(input: {
   const mode = shownPermissionMode({ engine, picked, recorded, defaultMode: settings?.defaultMode });
   const onMode = (next: PermissionMode): void => {
     setPick({ thread: threadId, mode: next });
+    // Why a switch failed is its error's code, when the session gave one.
+    const changed = (failed: boolean, error?: unknown): void =>
+      track(AnalyticsEvent.PermissionModeChanged, {
+        from: mode,
+        to: next,
+        via: ModeVia.Composer,
+        failed,
+        ...(failed ? { code: errorCodeIn(ModeSwitchFailure, error) } : {}),
+      });
     void window.studio
       .setPermissionMode(threadId ?? null, next)
-      .then(setSettings)
+      .then((settings) => {
+        setSettings(settings);
+        changed(false);
+      })
       .catch((error) => {
         setPick(null);
-        onNotice(problemWords(error), ToastTone.Error);
+        changed(true, error);
+        onNotice(problemWords(error), ToastTone.Error, errorCode(error));
       });
   };
   return { bar: { mode, onMode, autoUnavailable, engine }, planModes };

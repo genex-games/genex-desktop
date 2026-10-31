@@ -5,9 +5,8 @@
  * that answer. The harness then settles the round (`finish.settle`): it may turn the held answer into
  * no answer (a yes that lapsed, a turn that ended), never into a yes. The host counts the no's in a
  * row from its own records (a finished run reopened for a new ask starts them over; a resumed one goes
- * on) and writes the outcome: `MAX_FINISH_REJECTIONS` no's in a row stop the Loop, unless the settle
- * names more than `FINISH_TIME_LEFT_MS` of a timed Loop's working time left (then it goes on). A
- * run's start, pause or close drops its held round: nothing more is recorded for it, and the graph
+ * on) and writes the outcome. A reviewer's no is advice: no row of them stops the Loop, whose lead
+ * decides what to do with it. A run's start, pause or close drops its held round: nothing more is recorded for it, and the graph
  * reads the round as one the Loop ended before. A round answered and never settled gives way to the
  * run's next claim, recorded as no answer.
  *
@@ -23,7 +22,6 @@ import {
   FinishCheckStep,
   type FinishRecord,
   finishRecordOf,
-  MAX_FINISH_REJECTIONS,
   type ReviewerVerdict,
   rejectionsInRow,
   reviewerVerdict,
@@ -225,7 +223,8 @@ export class FinishReviews {
 
   /**
    * Record a held round's outcome and the row of no's it leaves; `stillOurs` throws once the run's
-   * round was dropped. A no the Loop had time left at (`goesOn`) never stops it, and says so.
+   * round was dropped. No outcome stops the Loop (`stopped` stays false); a no the Loop had time
+   * left at (`goesOn`) says so.
    */
   async #outcome(
     threadId: string,
@@ -241,10 +240,9 @@ export class FinishReviews {
     const rejections = rejectionsInRow(placed([...sinceOpened, outcome], runId), runId);
     const rejected = verdict.step === FinishCheckStep.Rejected;
     const timeLeft = rejected && goesOn;
-    const stopped = rejected && !timeLeft && rejections >= MAX_FINISH_REJECTIONS;
+    const stopped = false;
     await this.#record(threadId, {
       ...outcome,
-      ...(stopped ? { stopped: true } : {}),
       ...(timeLeft ? { timeLeft: true } : {}),
       rejections,
       observers: held.observers,

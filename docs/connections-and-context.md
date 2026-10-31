@@ -117,7 +117,12 @@ Set up in first launch, installs Claude Code or Codex with its vendor's own inst
 `install.sh` on macOS and Linux, `install.ps1` on Windows, from `claude.ai` and
 `chatgpt.com/codex`. Settings installs OpenCode the same way from `opencode.ai/install` (macOS and
 Linux only; it publishes no Windows script) into `~/.opencode/bin`, and updates it with
-`opencode upgrade`. Main fetches the script over HTTPS itself, runs it as the person with the
+`opencode upgrade`; Grok Build from `x.ai/cli/install.sh` (`install.ps1` on Windows) into
+`~/.grok/bin`, updated with `grok update`; and Cursor from `cursor.com/install` (`?win32=true` on
+Windows) into `~/.local/bin` (`%LOCALAPPDATA%\cursor-agent` on Windows), updated with
+`cursor-agent update`. Cursor's installer also links `~/.local/bin/agent`, a name Grok Build's
+installer uses too, so discovery looks only for `cursor-agent`. Main fetches the script over HTTPS
+itself, with a program's user agent (cursor.com answers a browser's with its web page), runs it as the person with the
 contractor environment (no keys, none of the other vendor's variables; Codex with
 `CODEX_NON_INTERACTIVE=1` so it asks nothing), keeps only its last output for `studio.log` and
 stops it after ten minutes. Both installers use folders discovery already searches (`~/.local/bin`;
@@ -167,7 +172,9 @@ settings of whoever started it, so each session runs a private one inside `Proce
 reads its folder from `PWD`, gets `OPENCODE_DISABLE_PROJECT_CONFIG=1` (a game's own OpenCode config,
 plugins and agents never load, as `--pure` kept them out on 1.18) and an empty `OPENCODE_TEST_HOME`
 (2.x stops when the sandbox refuses it the home folder's `.claude`), and takes the effort as
-`--model provider/model#variant`. Its model list is `GET /api/model` from a private `opencode serve`
+`--model provider/model#variant`. Every session, either dialect, is given the person's own
+`XDG_DATA_HOME`, `XDG_STATE_HOME` and `XDG_CACHE_HOME`: on Windows it runs as the sandbox's own
+user, whose home holds no sign-in, so only the free models would run. Its model list is `GET /api/model` from a private `opencode serve`
 started on the host for the listing alone, read until two reads agree (its first answer can come
 before its catalog loads); the sign-in runs `opencode auth login --standalone`.
 
@@ -182,7 +189,10 @@ free model's prompts may be used to improve it. Once a provider is signed in, it
 list and the free ones wait in Settings; a paid provider not yet set up shows no rows at all. It has
 no sandbox of its own, so each session runs in `ProcessSandbox`: the workspace (a scratch folder
 when read-only) plus OpenCode's state and cache are writable, its own data folder is exempt from the
-credential denies for that sandbox only (`SandboxOptions.ownHome`), and only the picked model's
+credential denies for that sandbox only (`SandboxOptions.ownHome`; on Windows, where a deny is an
+ACE for the whole sandbox group, no sandbox denies it, `keepWindowsDenies`, and the studio's own
+sandbox grants OpenCode's data, state and cache folders at its start, `openCodeSessionFolders`,
+since srt-win regrants only while no sandboxed command runs), and only the picked model's
 provider hosts (the address OpenCode lists, plus a built-in provider's known API and browser
 sign-in hosts, OpenCode Zen's `opencode.ai` among them, which a session started before the list was
 read still gets) and OpenCode's catalogs (`models.dev`, `models.opencode.ai`) are
@@ -199,8 +209,7 @@ A session with live tools (the `computer`) also gets them as a local MCP server,
 over the same bridge, and a picture comes back as MCP image content the model sees inline. Both
 dialects allow `studio_*` (1.18's `run` rejects any tool it would ask about; 2.x's rules deny
 everything first); 2.x declares it under `mcp.servers` with Code Mode off. The bridge command stays
-the fallback, and `mcpTools: false` turns the server off. A blind judge (`OpenCodeAccess.Blind`)
-reads no file on either dialect. Compact now is refused on
+the fallback, and `mcpTools: false` turns the server off. Compact now is refused on
 both: OpenCode compacts its own sessions. A provider's HTTP status in an `error` event (1.18's
 `data.statusCode`, 2.x's `status`) decides the failure kind, as for OpenRouter; a 400 or 404 for a
 picked model ends the build saying which model the provider refused and to pick another; a 403 for
@@ -210,6 +219,126 @@ lists every OpenAI model even on a ChatGPT sign-in, where OpenAI refuses some, s
 signed in the picker starts OpenCode's GPT models with the ones Codex lists (`runnableModels` in
 `renderer/model-lineup.ts`). Recorded streams and listings: `tests/fixtures/transcripts/opencode-*`
 (OpenCode 1.18 and 2.0.20).
+
+## Grok Build
+
+**Grok Build** ([grok.ts](../src/substrate/engines/grok.ts)) is xAI's coding CLI (`grok`) as a
+delegated engine, metered like OpenCode (`billing: "metered"`): it runs on whatever its own sign-in
+is, so only the person's pick runs it. Grok keeps its sign-in in its home (`$GROK_HOME`, default
+`~/.grok`); Sign in runs `grok login` in a terminal inside its Settings row (Open sign-in page,
+as for OpenCode), which signs in to the person's Grok account in the browser, and Genex reads it
+only to copy it for a Windows session (below). First launch offers it in its "or use" row, with the same Install and Sign in on its own screen
+(`CliScreen.tsx`); signed in, it counts as something to build with. An xAI key the person's shell exports never reaches the CLI (`childEnv` vendor `grok`), so a
+session never turns into a per-token bill behind their back; a key put in Grok's own config still
+runs, and a result is then billed `api` (`_x.ai/auth/info` says `xai.api_key`), else `subscription`.
+
+Whether it is signed in and which models it offers, the CLI says itself
+([grok-cli.ts](../src/substrate/engines/grok-cli.ts), `probeGrok`): `grok agent stdio` speaks the
+Agent Client Protocol, and its `_x.ai/auth/info` (`methodId`: `cached_token` for `grok login`, null
+when signed out) and `_x.ai/models/list` (names, context windows, effort levels, the current model)
+answer after `initialize`, with no session and no model call. A turn is headless
+([grok-events.ts](../src/substrate/engines/grok-events.ts)): `grok --prompt-file … --output-format
+streaming-json`, the prompt a file of ACP content blocks (Grok reads no piped stdin, and on Windows
+the sandbox passes none), resumed by `--resume` (by id, from any folder). Grok drops a picture block
+(its ACP says `image: false`), so each picture is a file beside the prompt that the words name, and
+Grok's own `read_file` shows it to the model (`grok-prompts.ts`).
+Each turn gets `--sandbox off` (the studio's holds it), `--no-wait-for-background`, Grok's own ask
+tools, plan mode, goal, schedulers and workflows removed, and `GROK_HOME` named outright; the person's
+Claude and Cursor MCP servers, hooks and skills, Grok's memory and its updater are off by variable,
+and `RUST_LOG=error` makes its error log name a failed call's HTTP status (`grokStderrStatus`),
+which a 429 after Grok's own retries leaves out of the `error` event. A build and a read-only
+session approve every call (`--always-approve`): a call Grok's headless ask mode refuses ends the
+whole turn, so a read-only session's sandbox, which writes only its scratch folder, keeps the game
+as it is, and its file-editing tools are gone. A one-shot answer keeps Grok's ask mode and approves
+nothing. Studio tools reach it through the file bridge, as Codex's.
+Each tool call is mirrored as it starts and its result as it ends, so a steer cuts the turn between
+calls; a reply streams to the chat and becomes one row per response; each response's whole prompt
+is the context reading. Compact now runs Grok's own `/compact` on the resumed session
+(`auto_compact_completed`). Its sandbox writes the workspace (a scratch folder when read-only) and
+Grok's home (`ownHome`; on Windows the studio's sandbox grants it at start, as OpenCode's folders),
+denies writing a game's own `.grok`, and reaches only xAI's hosts (`api.x.ai`,
+`cli-chat-proxy.grok.com`, `auth.x.ai`, `accounts.x.ai`, `grok.com`). A chat the person set to
+Bypass runs its builds outside that sandbox, as the person, as Codex's Bypass does
+(`runsAsPerson`, `grokOutside`): in their environment less every credential and other vendors'
+variables, with the studio's toolchain PATH, on Grok's own sign-in, which it renews itself. A
+read-only session of that chat, and Compact now (which the harness asks for as unattended work),
+keep the sandbox, which can resume the session the person's Grok kept. On Windows the sandbox runs
+Grok as its own user, and Grok gives `auth.json` to the Windows user who signed in alone, on every
+read and write (#531): each run reads a copy in its own folder instead (`GROK_AUTH_PATH`,
+`copySessionSignIn`), every account's entry without its refresh token, removed after the run (and,
+after a crash, before the next one). A run never renews the sign-in: xAI takes each refresh token
+once, and a renewal kept in the copy would leave the person's own file holding a spent one. So when
+an account's token has less than two hours (or half its life) left, the person's own Grok renews it
+on the host first (`renewGrokSignIn`: `grok agent stdio`, with Grok's early-renewal lead
+`GROK_AUTH_EARLY_INVALIDATION_SECS` reaching just past that expiry, short of a new token's life),
+and the run copies the renewed file. A run waits 20 s at most; Grok gets two minutes and is never
+stopped between xAI's answer and its write, which would leave a spent token. A sign-in a renewal
+left unchanged waits five minutes before another try. Status codes decide failures
+(401/403 sign-in, 429 rate limit, 400/404 the picked model refused); a failure with none is a
+sign-in failure only when the probe then finds Grok signed out. xAI refuses a CLI older than 1.0.13
+with 426: discovery calls it outdated, and so does a 426 mid-session until the CLI changes, and the
+row shows Update needed with its installer. An X Premium+ account signs in (`cached_token`).
+Recorded streams and probes: `tests/fixtures/transcripts/grok-live-*` (Grok Build 1.0.70 on a real
+account), `grok-standin-*` (xAI's error answers from a scripted stand-in);
+`STUDIO_GROK_CLI_TESTS=1` runs the real CLI in the real sandbox (`grok-cli-live.test.ts`).
+On Windows the real CLI runs in the real sandbox on the Windows runner with a made-up sign-in
+(`windows.yml` dispatched with `grok`), including a renewal through a provider-command sign-in.
+Unproven: a real plan's usage limit (Genex does not read plan limits yet), a real Grok account on
+Windows, a renewal of xAI's own sign-in (its OIDC refresher; the provider-command one is proven),
+and a Windows run that outlives what its copy has left.
+
+Residual risk, as for OpenCode: Grok Build must read its own `auth.json` and its shell shares its
+sandbox, so a Grok session can read Grok's sign-in; every other sandbox denies `~/.grok`. On
+Windows a run holds only access tokens, never a refresh token, but one Windows user runs every
+sandboxed command, so any of them can read the copy while the run lasts, or after a crash until the
+engine's next run clears it.
+
+## Cursor
+
+**Cursor** ([cursor.ts](../src/substrate/engines/cursor.ts)) is a delegated engine that runs Cursor's
+agent CLI, `cursor-agent --print --output-format stream-json --stream-partial-output`, one process
+per turn, the brief on stdin, resumed by `--resume <session id>`
+([cursor-cli.ts](../src/substrate/engines/cursor-cli.ts)). It runs on the person's Cursor account:
+Cursor's own models draw on the plan's weekly pool, and Claude, GPT and Gemini in Cursor, or use past
+the pool, are paid from the account's prepaid credit. So it is `billing: "metered"`: the app never
+picks it by itself. It ships as Beta until a live test proves it (`beta` in the provider table: a
+Beta tag beside its name in Settings and its group in the picker). Settings shows it in the CLI rows ([CliSignInRow](../src/renderer/panels/CliSignInRow.tsx)), as
+OpenCode and Grok Build: Install, Sign in (`cursor-agent login` in a terminal inside the row, which
+opens the browser and prints the page for Open sign-in page; `studio:cursor.signin`, native), and
+once connected Check connection, Sign in again, Sign out (`cursor-agent logout`,
+`studio:cursor.signout`, native) and Update. First launch's "or use" row offers it with its Beta
+tag, as Grok Build: Install and Sign in on its own screen. The engine is Ready once `cursor-agent status --format json` says `isAuthenticated` and
+`cursor-agent models` lists a model; the picker shows the CLI's default (`auto`) and the first three
+it lists, the rest under Older models.
+
+Cursor keeps its sign-in itself and Genex never reads it. On a Mac the CLI keeps it in the Keychain
+unless told otherwise, and no sandboxed command can reach the Keychain, so every call Genex makes sets
+`AGENT_CLI_CREDENTIAL_STORE=file`: the sign-in lives in `~/.cursor/auth.json` (on Windows
+`%APPDATA%\Cursor\auth.json`, on Linux `$XDG_CONFIG_HOME/cursor`), and a Terminal sign-in kept in
+the Keychain is not Genex's. Cursor's homes (`cursorHomes` in
+[credential-homes.ts](../src/substrate/credential-homes.ts)) join the credential homes every other
+sandbox denies, and are `ownHome` in Cursor's own sandbox only.
+
+Cursor's sandbox cannot start inside Genex's, so each turn runs in `ProcessSandbox` with
+`--sandbox disabled`, `--trust` and `--force`: the box is the boundary, as for OpenCode. Its network
+is Cursor's hosts (`*.cursor.sh`, `*.cursorapi.com`, `cursor.com`); Cursor's agent connection reads
+the sandbox's proxy itself and `NODE_USE_ENV_PROXY=1` covers Node's own requests. It writes the
+workspace (a read-only session, Plan or a reviewer runs from a scratch folder), Cursor's own folders and a Node compile cache, never a game's
+`.cursor` (its rules, hooks and MCP servers). Two options `--help` does not list are passed, checked
+on 2026.10.22: `--disable-auto-update` (its updater rewrites `~/.local/bin/agent`) and
+`--single-turn` (a turn ends with its reply instead of waiting on a dev server left in the
+background, which kept `--print` from exiting). A judge's answer runs in `--mode ask` from an empty
+folder. Studio tools reach it through the file bridge, as for Codex; pictures are files it is told to
+open.
+
+A failed turn writes no event: the CLI says why on stderr and exits non-zero. Its Connect code
+decides the kind (`[resource_exhausted]` a usage limit, `[unauthenticated]` a sign-in failure,
+`[unavailable]`, `[internal]`, `[deadline_exceeded]` unavailable); a CLI that stops before its
+session starts is a sign-in failure only when `status` then says no account is signed in; anything
+else ends the build with the CLI's words, its session kept. A turn that prints nothing for 10 minutes
+(30 while a tool call is open) is stopped, and one still running 5 seconds after its result is
+stopped and kept; either way its process group goes with it. Compact now is refused: Cursor compacts
+its own sessions. Tests: `engine-cursor.test.ts` on `tests/fixtures/transcripts/cursor-*`.
 
 ## Your own model server
 
@@ -252,7 +381,7 @@ nothing is `unavailable`, so another engine may take over. Tests: `engine-local-
 against `helpers/fake-local-server.ts`, which speaks each server's dialect.
 
 Residual risk: the CLI must read its sign-ins and its shell tool shares its sandbox, so an OpenCode
-session can read OpenCode's own `auth.json`, and its commands can reach the provider host the session
+session can read OpenCode's own `auth.json` (and a Cursor session Cursor's), and its commands can reach the provider host the session
 calls. OpenCode's permission rules keep its own tools inside the workspace, but that is not an OS
 boundary. Every other sandbox still denies the folder. Every sandbox allows localhost, where
 OpenCode 2.x's background server listens outside any sandbox; its password
@@ -276,6 +405,10 @@ saved is that Connect's failure. Studio resolves its launch environment through 
 login-shell PATH. A changed launch command requires renewed user trust.
 Connect completes setup in one Studio flow. A connected row shows its tool count;
 Connect is offered for recovery, not as an extra required step after a successful connection.
+Each agent session asks every in-scope connector for its tools as it starts
+(`McpRegistry.toolsReport`); one that fails, or lists none (an editor's connection whose editor isn't
+there yet), is logged with why and named in the session's brief as missing this turn, so the agent
+doesn't search for the tools its plugin's guidance names.
 
 Folder roots are opt-in. A server receives only the host-bound project's root when the user
 enabled sharing. Roots describe relevant files; they are not an OS filesystem sandbox. Agent
@@ -396,8 +529,10 @@ Compact now is the context panel's Compact button (on the reading's line), or `/
 composer's command list (`ui/ComposerCommandMenu.tsx`), which runs it instead of sending the text,
 and lists it as waiting while a turn or a build runs (`loop/session-compact.ts`).
 
-On Claude Code and Codex (`EngineDescriptor.compactsNatively`) the chat's latest session compacts
-itself with the provider's own compaction and goes on under the same id. Claude Code is sent its
+On Claude Code, Codex and Grok Build (`EngineDescriptor.compactsNatively`) the chat's latest
+session compacts itself with the provider's own compaction and goes on under the same id. Grok
+Build is sent its own `/compact` headless on the resumed session (`grok -p /compact --resume`), and
+keeps its summary sealed inside the session, as Codex does. Claude Code is sent its
 `/compact` on the resumed session, as the Agent SDK documents; its `PostCompact` hook hands over
 the summary, without the model's scratch analysis. `codex exec` has no compaction command, so
 Codex compacts the thread on its app server (`codex app-server`, `thread/compact/start`,
@@ -590,9 +725,10 @@ agents read a card with `genex__skill` before that work, and the host serves it 
 never from or into the game folder.
 
 With an unlocked account, agents also reach Studio's pinned Genex CLI: `genex__cli` for free
-commands (doctor, budget, LLM models, job status and cancel, shop list) and, after a consent card,
+commands (doctor, budget, LLM models, job status and cancel, shop list, a store item's draft) and, after a consent card,
 `genex__cli-paid` for commands that spend or change what the game sells. Studio runs every command
-in a throwaway folder of its own, never the game, with only the Genex API reachable; setup,
+in a throwaway folder of its own, never the game, with only the Genex API reachable (and Genex's
+object storage while a store item's picture, model or package moves); setup,
 sign-in, publishing and generation commands are refused and point to the matching Genex tool.
 `genex__package` adds `@genex-ai/multiplayer` or `@genex-ai/embed-sdk` at Studio's pin to a
 build game after consent, opening the npm registry for that one install. A Studio-template game
@@ -604,33 +740,28 @@ preview stays single-player. Fixture profiles refuse the CLI and package tools.
 
 ### The game's Genex cover
 
-Genex 1.6.0 adds the game's Genex cover: the one real 16:9 frame genex.games shows on its gallery
-card, its page and every shared link, unrelated to Studio's own sidebar cover. The game stages it as
-a demo named `genex-cover`. An inline skill in every brief says when and by whom (once the game
-looks like itself; before every publish, the first or an update, it checks `genex__cover` status
-and shoots first while no shot is kept; after a big visual change; by the session that owns the
-build; after a publish whose own outcome sent no frame it offers once to make one, never again
-once declined; none of this for a game whose owner keeps its code untouched), and the vendored
-`genex-cover` card, behind a Studio preface, says how. `genex__cover` photographs that demo at
-1920×1080 in a hidden preview window of its own (the host's `observe` still) into the plugin's
-storage and answers its preview and exposure numbers, or reports the kept shot, the last send and
-the cover Genex holds with who chose it. A publish, and a draft until the game is first public,
-shoots the demo again after exporting and sends the frame once the upload is recorded, through the
-pinned CLI's `genex cover --json` in Studio's publish copy, with the kept clip behind it;
-`genex__cover-set` sends the picture alone now after a consent card (the clip goes only with a
-publish). Bytes Genex already answered for, and a cover the owner picked on genex.games, are
-never uploaded again; the owner's pick is recorded (`kept_owner`) whenever Genex reports it, at a
-send or a status check, a shot kept or not; a refused, rate-limited, failed or silent send leaves the publish done with a
-warning in `genex__publish-status`. Nothing is read from or written to the game folder for it.
-Once the turns on the open game settle, and as the Publish dialog opens with no shot, Studio asks
-the plugin for the cover itself (`cover-auto`): the `genex-cover` demo, or for a game with none a
-plain frame of it as it loads, and the `genex-clip` demo's clip (5.5 s: Genex keeps five seconds after
-trimming up to 300 ms of the start, so an exact five is refused as too short); never over the
-person's pick or the owner's cover. The dialog's banner flips between the last four frames
-(`cover-pick` pins one, and a publish then sends it as it is) and its Another cover sends a request
-to the game's chat ([plugins](plugins.md#first-party-privileges)). The thread's latest kept shot shows in the chat as
-a Genex cover card whose Publish opens that dialog; since Genex 1.6.3 the guidance tells the builder
-to shoot the winner last and then say one line, never how to publish.
+The game's Genex cover is the 16:9 picture genex.games shows on its gallery card, its page and
+every shared link, unrelated to Studio's own sidebar cover; a clip of play can run over it on the
+cards. Once a run lands its build in a web game while Genex is on, Studio asks the chat's agent for
+it as a step of its own, in a hidden message sent with the person's engine and model but not their
+Loop (`core/cover-step.ts`). The plugin's `cover` skill states the requirement and the API: the
+agent makes a picture of the real game by any means, saves it in the game folder and hands its path
+to `genex__cover {"image": …, "clip"?: …}` (a PNG or JPEG of at least 1280×720 within 8 MB; a WebM
+or MP4 of at least 5.3 s, since Genex keeps five seconds after trimming up to 300 ms). The plugin
+reads each by its bytes, through no link out of the folder, measures the picture's light as Genex's
+gate does, copies both into its own storage and answers what it kept, the last send and the cover
+Genex holds with who chose it; a refused file keeps nothing. A publish, and a draft until the game is
+first public, sends the kept picture once the upload is recorded, through the pinned CLI's `genex
+cover --json` in Studio's publish copy, with the kept clip behind it, and takes no picture of its
+own; `genex__cover-set` sends the picture alone now after a consent card. Bytes Genex already
+answered for, and a cover the owner picked on genex.games, are never uploaded again; the owner's pick
+is recorded (`kept_owner`) whenever Genex reports it; a refused, rate-limited, failed or silent send
+leaves the publish done with a warning in `genex__publish-status`. Until the agent hands a picture,
+Studio keeps a plain frame of the game as it loads (`cover-auto`, once the turns on the open game
+settle and as the Publish dialog opens), never over the agent's picture, the person's pick or the
+owner's cover. The dialog's banner flips between the last four pictures (`cover-pick` pins one) and
+its Another cover sends a request to the game's chat ([plugins](plugins.md#first-party-privileges)).
+How to compose a cover is optional advice in the `genex-recommendations` plugin, off by default.
 
 ## Credentials
 
@@ -660,13 +791,14 @@ Package inspection checks both ASAR and unpacked resources for Codex/Claude nati
 The packaged smoke matrix uses isolated discovery roots for neither/one/both providers and scripted
 status/structured execution. Live subscription execution is separate: explicitly select GPT-5.6-Sol,
 never Astra. A fixture or successful version probe is not live Claude SDK compatibility evidence.
-The version-guarded `scripts/patch-sandbox-runtime.mjs` fixes SRT 0.0.73 at install/build time.
+The version-guarded `scripts/patch-sandbox-runtime.mjs` fixes SRT 0.0.81 at install/build time.
 Absolute-path lookup checks filesystem executability without a one-second `which` subprocess.
-Windows `initialize()` runs srt-win's egress check, folder grants and deny stamps through SRT's own
-async runner instead of `spawnSync`, which froze the start window ("Not Responding") on Electron's
-main thread; `sandbox-windows-start.test.ts` fails on Windows CI when the start holds the event loop.
-Those steps report their times (`setStudioStepLog`); with the session's own steps and the core's
-boot marks they land in `studio.log`, so a slow start names its slow step. The core's Windows
+SRT 0.0.81 runs Windows `initialize()` (its one `acl grant --persistent` and the egress check)
+off the event loop itself; the patch moves the session release (`acl revoke`, `acl restore`) there
+too, which `spawnSync` ran on Electron's main thread and froze the window ("Not Responding");
+`sandbox-windows-start.test.ts` fails on Windows CI when the start holds the event loop.
+The grant and the egress check report their times (`setStudioStepLog`); with the session's own
+steps and the core's boot marks they land in `studio.log`, so a slow start names its slow step. The core's Windows
 sandbox starts in the background (`startInBackground`): `create` refuses only what Set up fixes,
 the window opens on the games, and every launch waits for the rest or retries a failed start.
 The patch changes neither sandbox policy nor command execution. Re-review on dependency changes.

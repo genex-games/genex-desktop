@@ -1,10 +1,20 @@
 /**
- * The sidebar's plugin updates: one line over the foot of the game list while installed plugins
- * have newer versions waiting. Hovering it lists them, each with its versions and a box to leave it
+ * The sidebar's plugin updates: one line under the friends while installed plugins have newer
+ * versions waiting. Hovering it lists them, each with its versions and a box to leave it
  * out; the line and the list install what is ticked, one update after another.
  */
 import type { JSX } from "react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { track } from "../analytics/client.ts";
+import { AnalyticsEvent } from "../analytics/events.ts";
+import {
+  notePluginsOpening,
+  PluginsOpenedFrom,
+  UpdatesRunSurface,
+  updatesRunProperties,
+} from "../analytics/plugins-page.ts";
+import { isOwnPlugin } from "../analytics/plugins-ref.ts";
+import { usePlugins } from "../state/hooks.ts";
 import { chosenUpdates, type PluginUpdate, updateKey } from "../state/plugins.ts";
 import { Checkbox } from "../ui/Checkbox.tsx";
 import { Icon } from "../ui/icons.tsx";
@@ -29,10 +39,57 @@ interface Props {
   onOpenPlugin: (id: string) => void;
 }
 
+/** A run of Update plugins as it was pressed: which updates, from where, and since when. */
+interface UpdatesRun {
+  surface: UpdatesRunSurface;
+  keys: ReadonlySet<string>;
+  skipped: number;
+  at: number;
+  /** The store said it is installing: its end is the next time it says it is not. */
+  seen: boolean;
+}
+
+/**
+ * Report a run of Update plugins once the store says it ended: how many were chosen and skipped,
+ * how many are still offered, how many of those failed or were turned down in a trust dialog
+ * (the store's `lastRun`), and how long it took.
+ */
+function useUpdatesRunReport(updates: readonly PluginUpdate[], updating: boolean) {
+  const run = useRef<UpdatesRun | null>(null);
+  const lastRun = usePlugins((s) => s.lastRun);
+  useEffect(() => {
+    const current = run.current;
+    if (!current) return;
+    if (updating) {
+      current.seen = true;
+      return;
+    }
+    if (!current.seen) return;
+    run.current = null;
+    const notUpdated = updates.filter((update) => current.keys.has(updateKey(update))).length;
+    const chosen = current.keys.size;
+    const ended = { chosen, skipped: current.skipped, notUpdated, ...lastRun, startedAt: current.at, now: Date.now() };
+    track(AnalyticsEvent.PluginUpdatesRun, updatesRunProperties({ surface: current.surface, ...ended }));
+  }, [updating, updates, lastRun]);
+  return (surface: UpdatesRunSurface, skipped: ReadonlySet<string>): void => {
+    const keys = new Set(chosenUpdates(updates, skipped).map(updateKey));
+    run.current = { surface, keys, skipped: updates.length - keys.size, at: Date.now(), seen: false };
+  };
+}
+
+/** Go to Plugins from the updates list; usage analytics hears where it came from. */
+const fromUpdates =
+  <A extends unknown[]>(go: (...args: A) => void) =>
+  (...args: A): void => {
+    notePluginsOpening(PluginsOpenedFrom.PluginUpdatesMenu);
+    go(...args);
+  };
+
 /** The line, its list and the boxes they share: an untick in the list changes the line's count too. */
 export function SidebarPluginUpdates({ updates, updating, onUpdate, onOpenPlugins, onOpenPlugin }: Props): JSX.Element {
   const [skipped, setSkipped] = useState<ReadonlySet<string>>(new Set());
   const [open, setOpen] = useState(false);
+  const runStarted = useUpdatesRunReport(updates, updating);
   const chosen = chosenUpdates(updates, skipped).length;
   const total = updates.length;
   const toggle = (update: PluginUpdate): void =>
@@ -43,8 +100,9 @@ export function SidebarPluginUpdates({ updates, updating, onUpdate, onOpenPlugin
       return next;
     });
   const chooseAll = (all: boolean): void => setSkipped(all ? new Set() : new Set(updates.map(updateKey)));
-  const update = (): void => {
+  const update = (surface: UpdatesRunSurface) => (): void => {
     setOpen(false);
+    runStarted(surface, skipped);
     onUpdate(skipped);
   };
   /** Close the list, then go where its button leads. */
@@ -74,13 +132,18 @@ export function SidebarPluginUpdates({ updates, updating, onUpdate, onOpenPlugin
             disabled={updating}
             onToggle={toggle}
             onChooseAll={chooseAll}
-            onOpenPlugin={(id) => closeThen(() => onOpenPlugin(id))()}
+            onOpenPlugin={(id) => closeThen(() => fromUpdates(onOpenPlugin)(id))()}
           />
           <div className="plugin-updates-actions">
-            <button type="button" className="plugin-updates-open-all" onClick={closeThen(onOpenPlugins)}>
+            <button type="button" className="plugin-updates-open-all" onClick={closeThen(fromUpdates(onOpenPlugins))}>
               {PLUGIN_UPDATE_WORDS.openPlugins}
             </button>
-            <button type="button" className="plugin-updates-run" disabled={updating || chosen === 0} onClick={update}>
+            <button
+              type="button"
+              className="plugin-updates-run"
+              disabled={updating || chosen === 0}
+              onClick={update(UpdatesRunSurface.SidebarMenu)}
+            >
               {PLUGIN_UPDATE_WORDS.update(chosen, total)}
             </button>
           </div>
@@ -92,9 +155,9 @@ export function SidebarPluginUpdates({ updates, updating, onUpdate, onOpenPlugin
           className="plugin-updates-run"
           data-plugins-update
           disabled={chosen === 0}
-          onClick={update}
+          onClick={update(UpdatesRunSurface.SidebarButton)}
         >
-          {PLUGIN_UPDATE_WORDS.update(chosen, total)}
+          {PLUGIN_UPDATE_WORDS.updateLine(chosen, total)}
         </button>
       )}
     </div>
@@ -165,7 +228,13 @@ function PluginUpdateRow({
   const name = shownName(update.plugin);
   const from = update.plugin.manifest.version;
   return (
-    <li className="plugin-update-row" data-plugin-update={update.plugin.manifest.id} data-off={!ticked}>
+    <li
+      className="plugin-update-row"
+      data-plugin-update={update.plugin.manifest.id}
+      data-off={!ticked}
+      // A local or GitHub plugin is the person's own: its name stays out of usage recordings.
+      {...(isOwnPlugin(update.plugin) ? { "data-analytics-mask": "" } : {})}
+    >
       <label className="plugin-update-pick">
         <Checkbox checked={ticked} disabled={disabled} onChange={onToggle} />
         <PluginIcon name={name} src={update.plugin.iconUrl} size="menu" />

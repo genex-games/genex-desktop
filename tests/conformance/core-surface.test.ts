@@ -13,9 +13,7 @@ import { coreLite } from "../helpers/core-lite.ts";
 const METHODS = [
   "_computerToolsFor",
   "_directorToolsFor",
-  "_playtestToolsFor",
   "_runOfGame",
-  "acceptStagedProposal",
   "activeBuilders",
   "activityEvents",
   "activityItems",
@@ -38,7 +36,6 @@ const METHODS = [
   "createGame",
   "createGameThread",
   "defaultDelegatedEngine",
-  "discardStagedProposal",
   "dispatchRun",
   "emit",
   "exportPublicCopy",
@@ -104,7 +101,6 @@ const METHODS = [
   "rewindPreview",
   "rollbackTo",
   "runFeedback",
-  "runIdleCheckNow",
   "runPreviewIdentity",
   "saveReferenceFrames",
   "saveRunArtifact",
@@ -134,20 +130,18 @@ const METHODS = [
   "withApprovedExport",
 ];
 // `planReviews` is TypeScript-`private`, which is erased: it is still reachable at run time.
-const ACCESSORS = ["assetCheckpoints", "autoResumeAt", "pendingUpdateId", "planReviews", "settings"];
+const ACCESSORS = ["assetCheckpoints", "autoResumeAt", "localItems", "pendingUpdateId", "planReviews", "settings"];
 /** Own enumerable fields after `init()` (true `#private` state is not visible and not listed). */
 const FIELDS = [
   "appLook",
   "budget",
   "builds",
-  "candidates",
   "contextPreferences",
   "engineLinks",
   "engines",
   "games",
   "hooks",
   "host",
-  "improvements",
   "jobs",
   "journal",
   "layout",

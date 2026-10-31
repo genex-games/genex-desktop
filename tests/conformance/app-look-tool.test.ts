@@ -149,12 +149,14 @@ describe("app_look", () => {
     const none: Array<[string, Record<string, unknown>, string?]> = [
       ["an unseated builder", { cwd: chat.worktree }],
       ["the coordinator", { coordinator: { runId: RUN_ID }, readOnly: true }],
-      ["the chat's own session on a local model", await ownTurn(chat), LOCAL],
     ];
     for (const [label, brief, engine] of none) {
       const { request } = await looksIn(chat, brief, [], engine);
       assert.ok(!toolsOf(request).includes(APP_LOOK_TOOL_NAME), label);
     }
+    // Flipped (Loop phase 3): a local model's own session is seated as any engine with sessions.
+    const local = await looksIn(chat, await ownTurn(chat), [], LOCAL);
+    assert.ok(toolsOf(local.request).includes(APP_LOOK_TOOL_NAME), "the chat's own session on a local model");
   });
 
   it("answers a picture and a tree, and lists windows when asked for none", { timeout: CASE_TIMEOUT_MS }, async () => {

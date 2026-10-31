@@ -3,6 +3,7 @@
  * to anyone, so a ready engine is not yet a signed-in one: until OpenCode lists a provider's model
  * the row asks for a sign-in, while the free models stay in the picker.
  */
+import { CodingCliState } from "../../shared/coding-cli.ts";
 import {
   type EngineAccount,
   type EngineStatus,
@@ -18,6 +19,8 @@ export const OpenCodeRowState = {
   SignedOut: "signed_out",
   FreeOnly: "free_only",
   Connected: "connected",
+  /** The installed CLI is too old to run: the row offers its update. */
+  Outdated: "outdated",
   Unreachable: "unreachable",
 } as const;
 export type OpenCodeRowState = (typeof OpenCodeRowState)[keyof typeof OpenCodeRowState];
@@ -28,7 +31,10 @@ const signedIn = (account: Pick<EngineAccount, "source"> | null | undefined): bo
 
 /** The row's state from the engine's status and account, and what the row itself is running. */
 export function openCodeRowState(
-  engine: { status: Pick<EngineStatus, "code">; account?: Pick<EngineAccount, "source"> | null },
+  engine: {
+    status: Pick<EngineStatus, "code">;
+    account?: (Pick<EngineAccount, "source"> & { cli?: Pick<EngineAccount["cli"], "state"> }) | null;
+  },
   local: { installing: boolean; signingIn: boolean },
 ): OpenCodeRowState {
   const code = engine.status.code;
@@ -40,5 +46,6 @@ export function openCodeRowState(
   if (code === EngineStatusCode.Ready)
     return signedIn(engine.account) ? OpenCodeRowState.Connected : OpenCodeRowState.FreeOnly;
   if (code === EngineStatusCode.NeedsLogin) return OpenCodeRowState.SignedOut;
+  if (engine.account?.cli?.state === CodingCliState.Incompatible) return OpenCodeRowState.Outdated;
   return OpenCodeRowState.Unreachable;
 }

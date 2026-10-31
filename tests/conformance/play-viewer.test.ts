@@ -25,8 +25,19 @@ import { closePage, closeWithWindow, dropGameView } from "../../src/main/play/vi
 import { NOTE_MS, SHOW_GAME_AFTER_MS } from "../../src/main/play/viewer.ts";
 import type { PlayComment } from "../../src/shared/play-comments.ts";
 import { NativeAppOffer, NativePlatform, type PlayBarNative } from "../../src/shared/play-native.ts";
-import { PLAY_BAR_HEIGHT, PlayControl, PlayNote, PlayViewerPhase } from "../../src/shared/play.ts";
-import { esc, MINTED, NOT_MINTED, rig, SIGNED_OUT, saved, settle, WINDOW, WORLD } from "../helpers/play-viewer-rig.ts";
+import { PLAY_BAR_HEIGHT, PLAY_ORIGIN, PlayControl, PlayNote, PlayViewerPhase } from "../../src/shared/play.ts";
+import {
+  esc,
+  MINTED,
+  NOT_MINTED,
+  type RigOverrides,
+  rig,
+  SIGNED_OUT,
+  saved,
+  settle,
+  WINDOW,
+  WORLD,
+} from "../helpers/play-viewer-rig.ts";
 
 /** A long session in a game: longer than any of the viewer's own timers. */
 const LONG_PLAY_MS = 30 * 60_000;
@@ -61,6 +72,7 @@ describe("Play viewer", () => {
         remixing: false,
         nativeApp: null,
         purchase: null,
+        store: null,
       },
     });
     assert.deepEqual(opened, ["game:lost-cathedral:T1"]);
@@ -79,6 +91,7 @@ describe("Play viewer", () => {
       remixing: false,
       nativeApp: null,
       purchase: null,
+      store: null,
     });
     assert.equal(viewer.showing(), "lost-cathedral");
   });
@@ -838,6 +851,35 @@ describe("Play addresses", () => {
     assert.equal(playNavigationAllowed("https://lost-cathedral.genex.technology/", true), false);
   });
 
+  it("plays a development stand's game from the stand's game host, and lets it hop only to the stand's website", () => {
+    const stand = { api: "http://localhost:3000", web: "http://localhost:5173", games: "https://localhost:8443" };
+    assert.equal(
+      playAddress("stick-steel", "t.k", stand.games),
+      "https://stick-steel.localhost:8443/?genex_r=1#genex_ticket=t.k",
+    );
+    const cases: Array<[string, boolean]> = [
+      ["https://stick-steel.localhost:8443/", true],
+      ["https://preview--stick-steel.localhost:8443/level-2", true],
+      ["http://localhost:5173/play/authorize?returnTo=x&guest=ok", true],
+      ["http://localhost:5173/play/authorize?returnTo=x", false],
+      ["http://localhost:5173/", false],
+      ["https://stick-steel.localhost:8444/", false],
+      ["http://stick-steel.localhost:8443/", false],
+      ["https://localhost:8443/", false],
+      ["https://stick-steel.localhost.evil.example:8443/", false],
+      ["https://user@stick-steel.localhost:8443/", false],
+      // genex.games' own games and hop belong to genex.games' account, not the stand's.
+      ["https://lost-cathedral.genex.technology/", false],
+      ["https://genex.games/play/authorize?returnTo=x&guest=ok", false],
+    ];
+    for (const [url, allowed] of cases) assert.equal(playNavigationAllowed(url, false, stand), allowed, url);
+    // A stand with genex.games' game hosts keeps genex.games' rules.
+    const games = { ...stand, games: PLAY_ORIGIN.games };
+    assert.equal(playNavigationAllowed("https://lost-cathedral.genex.technology/", false, games), true);
+    assert.equal(playNavigationAllowed("https://genex.games/play/authorize?guest=ok", false, games), true);
+    assert.equal(playNavigationAllowed("https://stick-steel.localhost:8443/", false, games), false);
+  });
+
   it("sends a game's links to the browser without their fragment, https only, one at a time", () => {
     assert.equal(externalAddress("https://evil.example/collect#genex_ticket=SECRET"), "https://evil.example/collect");
     for (const raw of ["http://a.example/", "file:///etc/passwd", "javascript:alert(1)", "not a url"])
@@ -927,5 +969,99 @@ describe("Play viewer: a web game's native app", () => {
     await settle();
     plain.viewer.control(PlayControl.NativeApp);
     assert.equal(plain.bar()?.nativeApp, null);
+  });
+});
+
+describe("Play viewer: the game's Store door", () => {
+  const selling = async () => true;
+
+  it("offers the Store in the bar once the game sells items, and none when it sells nothing or can't be read", async () => {
+    const sells = rig({ storeShown: selling });
+    sells.viewer.open("lost-cathedral", "Lost Cathedral");
+    await settle();
+    assert.deepEqual(sells.bar()?.store, { open: false });
+    const rows: Array<[string, RigOverrides]> = [
+      ["nothing on sale (or the store off)", { storeShown: async () => false }],
+      [
+        "an outage",
+        {
+          storeShown: async () => {
+            throw new Error("HTTP 503");
+          },
+        },
+      ],
+      ["no store on this computer", {}],
+    ];
+    for (const [name, overrides] of rows) {
+      const none = rig(overrides);
+      none.viewer.open("lost-cathedral", "Lost Cathedral");
+      await settle();
+      assert.equal(none.bar()?.store, null, name);
+      none.viewer.control(PlayControl.Store);
+      assert.ok(!none.log.includes("game.hide"), `${name}: the press does nothing`);
+    }
+  });
+
+  it("opens over the game's place: the game is hidden, never closed, and the app's page takes the keyboard", async () => {
+    const { viewer, log, bar, events } = rig({ storeShown: selling });
+    viewer.open("lost-cathedral", "Lost Cathedral");
+    await settle();
+    viewer.loaded();
+    log.length = 0;
+    viewer.control(PlayControl.Store);
+    assert.deepEqual(bar()?.store, { open: true });
+    assert.deepEqual(log, ["game.hide", "page.focus"]);
+    assert.equal(events.at(-1)?.phase, PlayViewerPhase.Playing, "the game plays on under it");
+    log.length = 0;
+    viewer.control(PlayControl.Resume);
+    viewer.control(PlayControl.FullScreen);
+    viewer.resized();
+    viewer.fullScreen(false);
+    assert.deepEqual(log, [`bar.show ${BAR_STRIP}`], "the game stays hidden and keeps no keyboard while it is open");
+    viewer.control(PlayControl.Store);
+    assert.deepEqual(bar()?.store, { open: false });
+    assert.deepEqual(log.slice(1), [`game.show ${UNDER_BAR}`, "game.focus"], "closing it brings the game back");
+    assert.ok(!log.includes("game.close"));
+  });
+
+  it("keeps a game that loads under the open Store hidden until it closes", async () => {
+    const { viewer, log, events } = rig({ storeShown: selling });
+    viewer.open("lost-cathedral", "Lost Cathedral");
+    await settle();
+    viewer.control(PlayControl.Store);
+    log.length = 0;
+    viewer.loaded();
+    assert.equal(events.at(-1)?.phase, PlayViewerPhase.Playing);
+    assert.ok(!log.some((line) => line.startsWith("game.show")), log.join("; "));
+    assert.ok(!log.includes("game.focus"));
+    viewer.control(PlayControl.Store);
+    assert.deepEqual(log.slice(-2), [`game.show ${UNDER_BAR}`, "game.focus"]);
+  });
+
+  it("gives the app's page the keyboard back when Comments closes over the open Store", async () => {
+    const { viewer, log } = rig({ storeShown: selling });
+    viewer.open("lost-cathedral", "Lost Cathedral");
+    await settle();
+    viewer.loaded();
+    viewer.control(PlayControl.Store);
+    viewer.hold({ comments: true });
+    log.length = 0;
+    viewer.hold({ comments: false });
+    assert.ok(log.includes("page.focus"), log.join("; "));
+    assert.ok(!log.includes("game.focus"));
+  });
+
+  it("closes with the game on Back or Exit, and the next game starts with it closed", async () => {
+    const { viewer, events, bar, log } = rig({ storeShown: selling });
+    viewer.open("lost-cathedral", "Lost Cathedral");
+    await settle();
+    viewer.loaded();
+    viewer.control(PlayControl.Store);
+    viewer.control(PlayControl.Back);
+    assert.equal(events.at(-1)?.phase, PlayViewerPhase.Closed);
+    assert.ok(log.includes("game.close"));
+    viewer.open("lost-cathedral", "Lost Cathedral");
+    await settle();
+    assert.deepEqual(bar()?.store, { open: false });
   });
 });

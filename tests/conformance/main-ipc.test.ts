@@ -29,9 +29,14 @@ import os from "node:os";
 import path from "node:path";
 import type { ClaudeLoginState } from "../../src/shared/claude-login.ts";
 import type { CodexLoginState } from "../../src/shared/codex-login.ts";
+import { OpenRouterSignInProblem } from "../../src/shared/openrouter-login.ts";
+import { ModelPullProblem } from "../../src/shared/model-install.ts";
+import { EngineFailureKind } from "../../src/shared/engine-requests.ts";
+import { EngineError } from "../../src/substrate/engines/types.ts";
 import type { UiEvent } from "../../src/shared/ui-events.ts";
-import { UpdateAction, UpdateCheckStatus } from "../../src/shared/app-update.ts";
+import { RestartAnswer, UpdateAction, UpdateCheckStatus } from "../../src/shared/app-update.ts";
 import type { EventEnvelope } from "../../src/shared/event-log.ts";
+import { recommendModels, type HardwareInfo } from "../../src/substrate/hardware.ts";
 
 type Listener = (event: IpcSender, payload: unknown) => Promise<IpcResult>;
 const studio = { sender: "studio", senderFrame: "main-frame" };
@@ -285,7 +290,7 @@ const codexIdle: CodexLoginState = {
 function loginFixture(
   logins: Record<string, Awaited<ReturnType<SubscriptionEngine["resolveLogin"]>>>,
   busy = false,
-  accountsFor: { signedIn?: string[]; emails?: Record<string, string> } = {},
+  accountsFor: { signedIn?: string[]; emails?: Record<string, string>; noCursor?: boolean } = {},
 ) {
   const started: string[] = [];
   const accountsRoot = mkdtempSync(path.join(os.tmpdir(), "studio-ipc-accounts-"));
@@ -324,6 +329,27 @@ function loginFixture(
         return { started: true };
       },
     },
+    grokLogin: {
+      start: async () => {
+        started.push("grok");
+        return { started: true };
+      },
+    },
+    cursorLogin: {
+      start: async () => {
+        started.push("cursor");
+        return { started: true };
+      },
+    },
+    cursor: () =>
+      accountsFor.noCursor
+        ? null
+        : {
+            signOut: async () => {
+              started.push("cursor sign-out");
+            },
+            status: async () => ({ code: EngineStatusCode.NeedsLogin, detail: "Not signed in to Cursor." }),
+          },
     claudeLogin: {
       start: async (home: string | null) => {
         started.push(`claude ${home}`);
@@ -533,6 +559,64 @@ describe("both sign-in paths go through the controllers", () => {
     assert.deepEqual(started, ["opencode"]);
   });
 
+  it("Cursor signs in through its own CLI in its row's terminal, whatever else is running, and signs out through its engine", async () => {
+    const { invoke, started } = loginFixture({}, true);
+    assert.deepEqual(await invoke("studio:cursor.signin"), { ok: true, value: { started: true } });
+    assert.deepEqual(await invoke("studio:cursor.signout"), {
+      ok: true,
+      value: { code: EngineStatusCode.NeedsLogin, detail: "Not signed in to Cursor." },
+    });
+    assert.deepEqual(started, ["cursor", "cursor sign-out"]);
+    const none = loginFixture({}, false, { noCursor: true });
+    assert.equal((await none.invoke("studio:cursor.signout")).ok, false, "no Cursor engine, nothing to sign out");
+  });
+
+  it("the Cursor sign-in runs `cursor-agent login` keeping its sign-in in its file, and rechecks when it ends", async () => {
+    const opened: Array<{ file: string; args: string[]; kind: string; env: NodeJS.ProcessEnv }> = [];
+    let exit: ((code: number) => void) | undefined;
+    let signedIn = 0;
+    const { cursorLogin } = createLoginControllers({
+      terminals: {
+        open: (launch) => {
+          opened.push(launch);
+          exit = launch.onExit;
+          return { id: "t1", title: launch.title, kind: launch.kind, phase: "running" };
+        },
+        stop: async () => {},
+      },
+      openExternal: async () => {},
+      subscription: () => null,
+      pushUiEvent: () => {},
+      showCodexState: () => {},
+      showClaudeState: () => {},
+      onCursorSignedIn: async () => {
+        signedIn++;
+      },
+      requireCli: async (provider) => ({
+        path: `/bin/${provider}`,
+        env: { PATH: "/bin", OPENCODE_CONFIG: "/oc.json", CURSOR_API_KEY: "key_not_for_genex" },
+        status: {
+          provider,
+          state: "ready",
+          selection: "automatic",
+          path: `/bin/${provider}`,
+          detail: "",
+          guidanceUrl: "",
+        },
+      }),
+    });
+    assert.deepEqual(await cursorLogin.start(), { started: true });
+    assert.equal(opened[0]?.file, "/bin/cursor");
+    assert.deepEqual(opened[0]?.args, ["login"]);
+    assert.equal(opened[0]?.kind, "cursor-login");
+    assert.equal(opened[0]?.env.AGENT_CLI_CREDENTIAL_STORE, "file", "the sign-in every sandboxed session can read");
+    assert.equal(opened[0]?.env.OPENCODE_CONFIG, undefined, "no other vendor's variables reach the sign-in");
+    assert.equal(opened[0]?.env.CURSOR_API_KEY, undefined, "nor a key: the person signs in with their account");
+    exit?.(0);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(signedIn, 1);
+  });
+
   it("the OpenCode sign-in runs `opencode auth login` in the terminal, and rechecks its models when it ends", async () => {
     const opened: Array<{ file: string; args: string[]; kind: string; env: NodeJS.ProcessEnv }> = [];
     let exit: ((code: number) => void) | undefined;
@@ -599,6 +683,58 @@ describe("both sign-in paths go through the controllers", () => {
       },
     });
     assert.deepEqual(await missing.openCodeLogin.start(), { started: false, missingCli: true });
+  });
+
+  it("Grok Build signs in through its own CLI in the terminal, whatever else is running", async () => {
+    const { invoke, started } = loginFixture({}, true);
+    assert.deepEqual(await invoke("studio:grok.signin"), { ok: true, value: { started: true } });
+    assert.deepEqual(started, ["grok"]);
+  });
+
+  it("the Grok Build sign-in runs `grok login` in the terminal, on its own home, and rechecks it when it ends", async () => {
+    const opened: Array<{ file: string; args: string[]; kind: string; env: NodeJS.ProcessEnv }> = [];
+    let exit: ((code: number) => void) | undefined;
+    let signedIn = 0;
+    const { grokLogin } = createLoginControllers({
+      terminals: {
+        open: (launch) => {
+          opened.push(launch);
+          exit = launch.onExit;
+          return { id: "t3", title: launch.title, kind: launch.kind, phase: "running" };
+        },
+        stop: async () => {},
+      },
+      openExternal: async () => {},
+      subscription: () => null,
+      pushUiEvent: () => {},
+      showCodexState: () => {},
+      showClaudeState: () => {},
+      onGrokSignedIn: async () => {
+        signedIn++;
+      },
+      requireCli: async (provider) => ({
+        path: `/bin/${provider}`,
+        env: { PATH: "/bin", ANTHROPIC_API_KEY: "sk-ant-not-for-grok", XAI_API_KEY: "xai-not-for-grok" },
+        status: {
+          provider,
+          state: "ready",
+          selection: "automatic",
+          path: `/bin/${provider}`,
+          detail: "",
+          guidanceUrl: "",
+        },
+      }),
+    });
+    assert.deepEqual(await grokLogin.start(), { started: true });
+    assert.equal(opened[0]?.file, "/bin/grok");
+    assert.deepEqual(opened[0]?.args, ["login"]);
+    assert.equal(opened[0]?.kind, "grok-login");
+    assert.equal(opened[0]?.env.ANTHROPIC_API_KEY, undefined, "no other vendor's key reaches the sign-in");
+    assert.equal(opened[0]?.env.XAI_API_KEY, undefined, "an xAI key never stands in for the Grok sign-in");
+    assert.ok(opened[0]?.env.GROK_HOME, "the home its sessions read the sign-in from");
+    exit?.(0);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(signedIn, 1);
   });
 
   it("on OpenCode 2.x the sign-in runs on a server of its own, never the shared background one", async () => {
@@ -671,6 +807,39 @@ describe("both sign-in paths go through the controllers", () => {
     assert.deepEqual(await claudeLogin.start(null), { started: false, error: "claude-code is not installed" });
     await codexLogin.start("/homes/codex");
     assert.deepEqual(asked, ["claude-code", "codex"]);
+  });
+});
+
+describe("local model hardware in isolated acceptance", () => {
+  it("uses the supplied machine and its catalog without detecting the host", async () => {
+    const hardware: HardwareInfo = {
+      cpu: "Fixture Apple Silicon",
+      ramBytes: 32 * 1024 ** 3,
+      ramGb: 32,
+      usableModelGb: 23,
+      platform: "darwin",
+      arch: "arm64",
+      appleSilicon: true,
+    };
+    const report = { hardware, recommendation: await recommendModels(hardware) };
+    let reads = 0;
+    const core = { engines: {} } as ModelsIpcDeps["core"];
+    const { handle, invoke } = registrar();
+    registerModelsIpc(handle, {
+      core,
+      subscription: () => null,
+      pushUiEvent: () => {},
+      openRouterLogin: noSignIn,
+      readHardware: async () => {
+        reads++;
+        return report;
+      },
+      usage: noUsage,
+    });
+    assert.deepEqual(await invoke("studio:hardware"), { ok: true, value: report });
+    assert.equal(reads, 1);
+    for (const model of ["bonsai-2:27b-pq2_0", "bonsai-2:27b-ptq1_0"])
+      assert.ok(report.recommendation.picks.some((pick) => pick.model === model && pick.fits));
   });
 });
 
@@ -1015,7 +1184,9 @@ it("the browser sign-in hands its key to the engine, and only how it ended comes
       start: async (saveKey) => {
         calls.push("start");
         const status = await saveKey(key);
-        return status.code === "ready" ? { outcome: "connected" } : { outcome: "failed", error: status.detail };
+        return status.code === "ready"
+          ? { outcome: "connected" }
+          : { outcome: "failed", error: status.detail, problem: OpenRouterSignInProblem.KeyRefused };
       },
       reopen: async () => {
         calls.push("reopen");
@@ -1056,6 +1227,46 @@ it("the browser sign-in hands its key to the engine, and only how it ended comes
     );
   } finally {
     await server.close();
+  }
+});
+
+it("an Ollama download that fails rejects with why, as a code, never with the server's words", async () => {
+  let failure: unknown = null;
+  const ollama = {
+    client: {
+      // biome-ignore lint/correctness/useYield: the pull fails before its first step
+      pull: async function* () {
+        throw failure;
+      },
+    },
+  };
+  const core = {
+    engines: { has: (id: string) => id === "ollama", get: () => ollama },
+  } as unknown as ModelsIpcDeps["core"];
+  const { handle, invoke } = registrar();
+  registerModelsIpc(handle, {
+    core,
+    subscription: () => null,
+    usage: noUsage,
+    pushUiEvent: () => undefined,
+    openRouterLogin: noSignIn,
+  });
+  const failures: ReadonlyArray<[unknown, ModelPullProblem]> = [
+    [
+      new EngineError(EngineFailureKind.Unavailable, "ollama", "Ollama isn't running at http://10.0.0.7:11434"),
+      ModelPullProblem.Unavailable,
+    ],
+    [
+      new EngineError(EngineFailureKind.Other, "ollama", "pull model manifest: file does not exist"),
+      ModelPullProblem.Refused,
+    ],
+    [Object.assign(new TypeError("terminated"), { code: "ECONNRESET" }), ModelPullProblem.Interrupted],
+  ];
+  for (const [thrown, problem] of failures) {
+    failure = thrown;
+    const result = await invoke("studio:pull-model", { model: "gemma4:12b" });
+    assert.equal(result.ok, false);
+    assert.equal(result.ok === false && result.code, problem, String(thrown));
   }
 });
 
@@ -1113,7 +1324,7 @@ describe("the in-window update prompt", () => {
         ready: () => ({ version: "0.2.0", action: UpdateAction.Restart }),
         restart: async () => {
           restarts.push("restart");
-          return true;
+          return RestartAnswer.Relaunching;
         },
         download: () => {
           restarts.push("download");
@@ -1141,7 +1352,7 @@ describe("the in-window update prompt", () => {
       ok: true,
       value: { version: "0.2.0", action: UpdateAction.Restart },
     });
-    assert.deepEqual(await invoke("studio:update.restart"), { ok: true, value: true });
+    assert.deepEqual(await invoke("studio:update.restart"), { ok: true, value: RestartAnswer.Relaunching });
     assert.deepEqual(restarts, ["restart"]);
   });
 

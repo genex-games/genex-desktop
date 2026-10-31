@@ -55,6 +55,7 @@ function standInEngine(options: { refuseOpen?: boolean; afterOpen?: (answer: unk
         return { held: keys, gameSeconds: 1 };
       }
       case EnginePlayTool.Shot:
+        if (!game.playing) return { refused: EnginePlayRefusal.NotPlaying, message: "No play test is running." };
         return { png: PIXEL, ...ENGINE_PLAY_VIEW };
       case EnginePlayTool.State:
         return { pawn: "Hero_0", phase: game.heldW >= 2 ? "won" : "playing" };
@@ -117,21 +118,6 @@ describe("the computer on a game played in its engine's editor", () => {
       false,
       "a builder's game is never paused",
     );
-  });
-
-  it("asks for a fresh play when its session judges the game, and joins one otherwise", async () => {
-    for (const fresh of [true, false]) {
-      const calls: Array<Record<string, unknown>> = [];
-      const source = editorPlaySource({
-        call: async (tool, args) => {
-          if (tool === EnginePlayTool.Open) calls.push(args);
-          return tool === EnginePlayTool.Open ? { ...ENGINE_PLAY_VIEW, joined: false } : {};
-        },
-        fresh,
-      });
-      await source.load("/game", false);
-      assert.deepEqual(calls, [fresh ? { fresh: true } : {}], String(fresh));
-    }
   });
 
   it("carries each key verb as holds on the game's own time", async () => {
@@ -198,6 +184,18 @@ describe("the computer on a game played in its engine's editor", () => {
     assert.equal(calls.filter(([tool]) => tool === EnginePlayTool.Close).length, 1, "closed once");
   });
 
+  it("opens play again once the engine says its play ended, instead of failing every call after", async () => {
+    const { source, game, calls } = standInEngine();
+    const session = computerSession(source, "/game", { pacing: "running", frameDir: await tmpDir("editor-play-") });
+    await session.run("computer", { action: "screenshot" });
+    game.playing = false;
+    assert.match(text(await session.run("computer", { action: "screenshot" })), /No play test is running/);
+    const again = await session.run("computer", { action: "screenshot" });
+    assert.equal(images(again), 1, "the next look plays again");
+    assert.equal(calls.filter(([tool]) => tool === EnginePlayTool.Open).length, 2, "a fresh play was opened");
+    await source.release();
+  });
+
   it("runs its after-open step once, right after the play opens and before any move, with the open's answer", async () => {
     const seen: Array<{ before: EnginePlayTool[]; answer: unknown }> = [];
     const { source, calls } = standInEngine({
@@ -220,21 +218,6 @@ describe("the computer on a game played in its engine's editor", () => {
     assert.match(text(await session.run("computer", { action: "screenshot" })), /playing a build for the Loop/);
     await source.release();
     assert.equal(calls.filter(([tool]) => tool === EnginePlayTool.Close).length, 0);
-  });
-
-  it("verifies a goal it reads in the player's state, as on any target", async () => {
-    const { source } = standInEngine();
-    const reached: string[] = [];
-    const session = computerSession(source, "/game", {
-      pacing: "running",
-      frameDir: await tmpDir("editor-play-"),
-      quest: { id: "reach-the-end", until: { path: "phase", equals: "won" } },
-      onReached: (trace) => reached.push(trace),
-    });
-    await session.run("computer", { action: "screenshot" });
-    const held = text(await session.run("computer", { action: "hold_key", text: "w", duration: 2 }));
-    assert.match(held, /GOAL REACHED \(studio-verified\): reach-the-end/);
-    assert.equal(reached.length, 1);
   });
 });
 

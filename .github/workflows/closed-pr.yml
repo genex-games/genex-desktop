@@ -1,0 +1,31 @@
+name: Closed pull request
+# A pull request into main runs the billed macOS and Windows checks. Merged before they finish,
+# they keep running beside main's own Check, Package and the release, which wait for the same few
+# macOS runners. Closing the pull request cancels its unfinished runs; main's push runs test the
+# merged commit (scripts/cancel-closed-pr-runs.mjs).
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+permissions:
+  contents: read
+  actions: write
+jobs:
+  cancel:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/cancel-closed-pr-runs.mjs
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - name: Cancel the pull request's unfinished runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: node scripts/cancel-closed-pr-runs.mjs

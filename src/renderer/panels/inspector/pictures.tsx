@@ -3,11 +3,12 @@ import type { JSX, KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react"
 import { useRef, useState } from "react";
 import { t } from "../../../shared/i18n.ts";
 import { clamp } from "../../canvas-view.ts";
-import { type IterationNode, type RunGraph as RunGraphModel, thumbShot } from "../../run-graph.ts";
+import { type IterationNode, type RunGraph as RunGraphModel, roundShot } from "../../run-graph.ts";
 import { TRY_GLYPH, tryWord } from "../../round-status.ts";
 import { Icon } from "../../ui/icons.tsx";
-import { useRoundStill } from "../run-stills.ts";
-import { capitalise } from "./format.ts";
+import { PairView, pairView } from "../../run-graph-pictures.ts";
+import { useStill } from "../../stills.ts";
+import { usePictureChange, useRoundStill } from "../run-stills.ts";
 
 /** Where the compare handle starts, how far it may go toward either edge, and one arrow key's step. */
 const SPLIT_START = 0.5;
@@ -122,6 +123,47 @@ export function Compare({
   );
 }
 
+/** The largest side of a picture a card shows. */
+const CARD_PICTURE_PX = 640;
+
+/**
+ * Two pictures of the same frame under the run folder — a build's screenshot and the build's before
+ * it, or two versions of one asset from one view — measured: the compare when they visibly differ,
+ * else the newer alone, saying so when it did not visibly change. Never give it unrelated pictures.
+ */
+export function PictureChange({
+  before,
+  now,
+  beforeLabel,
+  nowLabel,
+  unchanged,
+  onOpen,
+}: {
+  before: string | null;
+  now: string | null;
+  beforeLabel: string;
+  nowLabel: string;
+  /** what the card says when the picture did not visibly change */
+  unchanged: string;
+  onOpen?: () => void;
+}): JSX.Element {
+  const beforeSrc = useStill(before ? { run: before, maxPx: CARD_PICTURE_PX } : null);
+  const nowSrc = useStill(now ? { run: now, maxPx: CARD_PICTURE_PX } : null);
+  const view = pairView(before, now, usePictureChange(before, now));
+  if (view === PairView.Compare)
+    return <Compare left={beforeSrc} right={nowSrc} leftLabel={beforeLabel} rightLabel={nowLabel} onOpen={onOpen} />;
+  return (
+    <div className="flex flex-col gap-2">
+      <Single src={nowSrc} label={nowLabel} {...(onOpen ? { onOpen } : {})} />
+      {view === PairView.Unchanged ? (
+        <p data-picture-unchanged className="text-body-sm text-ink-3">
+          {unchanged}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 /** One still, or a line saying why there is none (by default, that none was saved). */
 export function Single({
   src,
@@ -151,29 +193,29 @@ export function Single({
   );
 }
 
-/** The camera switch, when a try looked through more than one. */
+/** The picture switch, when a try has more than one: the lead's named picture and each camera, by name. */
 export function Cameras({
-  names,
+  views,
   value,
   onChange,
 }: {
-  names: string[];
+  views: Array<{ key: string; label: string }>;
   value: string | null;
-  onChange: (name: string) => void;
+  onChange: (key: string) => void;
 }): JSX.Element | null {
-  if (names.length < 2) return null;
+  if (views.length < 2) return null;
   return (
     <div role="group" aria-label={t("Camera")} className="flex flex-wrap gap-1">
-      {names.map((name) => (
+      {views.map((view) => (
         <button
-          key={name}
+          key={view.key}
           type="button"
-          aria-pressed={name === value}
-          onClick={() => onChange(name)}
-          className={`inline-flex h-[26px] cursor-pointer items-center gap-1.5 rounded-[8px] px-2.5 font-mono text-xs focus-visible:outline-2 focus-visible:outline-accent ${name === value ? "bg-line-strong text-ink" : "text-ink-3 hover:bg-control-hover hover:text-control-text-hover"}`}
+          aria-pressed={view.key === value}
+          onClick={() => onChange(view.key)}
+          className={`inline-flex h-[26px] cursor-pointer items-center gap-1.5 rounded-[8px] px-2.5 text-xs focus-visible:outline-2 focus-visible:outline-accent ${view.key === value ? "bg-line-strong text-ink" : "text-ink-3 hover:bg-control-hover hover:text-control-text-hover"}`}
         >
           <Icon name="camera" size={13} />
-          {capitalise(name.replace(/[-_]+/g, " "))}
+          {view.label}
         </button>
       ))}
     </div>
@@ -196,7 +238,7 @@ export function TryThumb({
   live: boolean;
   onSelect: () => void;
 }): JSX.Element {
-  const src = useRoundStill(graph, node.facetId, node.iteration, thumbShot(node)?.path ?? null, live);
+  const src = useRoundStill(graph, node.facetId, node.iteration, roundShot(node)?.path ?? null, live);
   const glyph = TRY_GLYPH[node.status];
   return (
     <button

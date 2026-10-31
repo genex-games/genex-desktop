@@ -77,7 +77,8 @@ export function PeopleCarousel({
     element.scrollBy({ left: direction * element.clientWidth * PAGE_SHARE, behavior });
   };
   return (
-    <section className="people-carousel" aria-label={label} {...hook}>
+    // People, by their names: friends, creators, a profile's friends.
+    <section className="people-carousel" aria-label={label} data-analytics-mask {...hook}>
       <div className="people-carousel-head">
         <h2 className="people-carousel-title" data-quiet={quiet || undefined}>
           {title}

@@ -35,6 +35,8 @@ import {
   type RpcResponse,
 } from "../shared/protocol.ts";
 import { StudioPlatform } from "../shared/boot.ts";
+import { SendFailure } from "../shared/composer.ts";
+import { CodedError } from "../shared/errors.ts";
 import { type ProcessSandbox, killChild, shellQuote } from "./spawn.ts";
 import { longPath, windowsAccessReport } from "./windows-sandbox.ts";
 import { HarnessInbox } from "./harness-inbox.ts";
@@ -496,7 +498,7 @@ export class HarnessHost {
    * a `director_tool` answers with the tool's result.
    */
   async dispatch(action: DispatchAction, timeoutMs = 0): Promise<unknown> {
-    if (!this.#child) throw new Error(MESSAGE.NotRunning);
+    if (!this.#child) throw new CodedError(SendFailure.HarnessNotRunning, MESSAGE.NotRunning);
     const id = this.#nextDispatchId++;
     const promise = new Promise<unknown>((resolve, reject) => {
       const pending: PendingDispatch = { resolve, reject };

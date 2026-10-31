@@ -26,12 +26,24 @@ export const PLAN_PLACEHOLDER = t("Describe what to plan…");
 /** What home asks: its first message starts a game, and a chat with no game yet asks the same. */
 export const HOME_PLACEHOLDER = t("What do you want to make?");
 
+/**
+ * What a game's chat asks under a Listing draft card, while it makes a store item ("or ask for
+ * changes below"; marketplace screen 09).
+ */
+export const ITEM_PLACEHOLDER = t("Ask for an item or a change…");
+
 /** What the chat asks for when nothing is running: the most specific task wins. */
-export function chatPlaceholder(state: { revisingPlan: boolean; studio: boolean; draft: boolean }): string {
+export function chatPlaceholder(state: {
+  revisingPlan: boolean;
+  studio: boolean;
+  draft: boolean;
+  item?: boolean;
+}): string {
   // An intake question takes its typed answer in its own card, so it does not change these words.
   if (state.revisingPlan) return t("Describe the changes to the plan…");
   if (state.studio) return t("Ask about Harness…");
-  return state.draft ? HOME_PLACEHOLDER : t("Ask for a change…");
+  if (state.draft) return HOME_PLACEHOLDER;
+  return state.item ? ITEM_PLACEHOLDER : t("Ask for a change…");
 }
 
 /** Only an active build overrides the contextual instruction: by its queue, or by its lead when that takes the chat. */

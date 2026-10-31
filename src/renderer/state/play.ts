@@ -56,6 +56,7 @@ import {
   viewerAfter,
   withOnline,
   withPage,
+  withReadCovers,
   withRecent,
   writeRecent,
 } from "../play/play-model.ts";
@@ -254,15 +255,49 @@ export function gameShown(state: PlayState, slug: string): PlayState {
   return { ...state, view: { page: PlayPage.Game, slug, back: current } };
 }
 
-/** Whether a game Play has read opens its page: a native game with no web build. */
-export function opensItsPage(state: PlayState, slug: string): boolean {
+/** The game Play has read as `slug`: its page, else a card; null when Play has read neither. */
+function readGame(state: PlayState, slug: string): PlayGame | null {
   const page = state.games[slug]?.game;
-  if (page) return opensPage(page);
+  if (page) return page;
   for (const feed of Object.values(state.feeds)) {
     const card = feed?.games.find((game) => game.slug === slug);
-    if (card) return opensPage(card);
+    if (card) return card;
   }
-  return false;
+  return null;
+}
+
+/** Whether a game Play has read opens its page: a native game with no web build. */
+export function opensItsPage(state: PlayState, slug: string): boolean {
+  const game = readGame(state, slug);
+  return game ? opensPage(game) : false;
+}
+
+/** A game Play has read, as Recent keeps it (opening its page when it has no web build); null when unread. */
+function recentEntryOf(state: PlayState, slug: string): PlayRecentEntry | null {
+  const game = readGame(state, slug);
+  if (!game) return null;
+  const entry = { slug: game.slug, title: game.title, coverUrl: game.coverUrl };
+  return opensPage(game) ? { ...entry, page: true } : entry;
+}
+
+/** A native game was played in its own window: it leads Recent, as a game opened in the viewer does. */
+export function gameLaunched(state: PlayState, slug: string): PlayState {
+  const entry = recentEntryOf(state, slug);
+  return entry ? { ...state, recent: withRecent(state.recent, entry) } : state;
+}
+
+/** Whether `slug`'s own page is what Play shows now, with no game open over it. */
+const pageShownNow = (state: PlayState, slug: string): boolean =>
+  state.view.page === PlayPage.Game && state.view.slug === slug && state.viewer === null;
+
+/**
+ * A game's page was read for showing: a native-only game leads Recent, as its card would have put
+ * it, while its page is still what Play shows. A read that lands after the person moved on moves nothing.
+ */
+export function nativePageShown(state: PlayState, slug: string): PlayState {
+  const entry = recentEntryOf(state, slug);
+  if (!entry?.page || !pageShownNow(state, slug)) return state;
+  return { ...state, recent: withRecent(state.recent, entry) };
 }
 
 /** A game's page is on its way: one already read stays shown while it is read again. */
@@ -272,10 +307,11 @@ export function gameRequested(state: PlayState, slug: string): PlayState {
   return { ...state, games: { ...state.games, [slug]: { status: FeedStatus.Loading, game: null } } };
 }
 
-/** A game's page arrived. */
+/** A game's page arrived: Recent takes its cover. */
 export const gameLoaded = (state: PlayState, game: PlayGameDetail): PlayState => ({
   ...state,
   games: { ...state.games, [game.slug]: { status: FeedStatus.Ready, game } },
+  recent: withReadCovers(state.recent, [game]),
 });
 
 /** A game's page could not be read: one read before stays. */
@@ -303,14 +339,17 @@ export function feedRequested(state: PlayState, category: PlayCategory, more: bo
   return withFeed(state, category, { ...feed, status: FeedStatus.Loading });
 }
 
-/** A page arrived. */
+/** A page arrived: Recent takes the covers of its games. */
 export const feedLoaded = (
   state: PlayState,
   category: PlayCategory,
   page: PlayFeedPage,
   more: boolean,
   at: number,
-): PlayState => withFeed(state, category, withPage(feedOf(state, category), page, more, at));
+): PlayState => ({
+  ...withFeed(state, category, withPage(feedOf(state, category), page, more, at)),
+  recent: withReadCovers(state.recent, page.games),
+});
 
 /**
  * A page could not be read: a tab with games keeps them (a further page's failure is said under
@@ -351,21 +390,25 @@ export function gameChanged(state: PlayState, game: Pick<PlayGame, "id" | "slug"
   }
   const recent = next
     ? state.recent.map((entry) =>
-        entry.slug === game.slug ? { slug: next.slug, title: next.title, coverUrl: next.coverUrl } : entry,
+        entry.slug === game.slug ? { ...entry, slug: next.slug, title: next.title, coverUrl: next.coverUrl } : entry,
       )
     : state.recent.filter((entry) => entry.slug !== game.slug);
   return { ...state, feeds, recent };
 }
 
-/** A game was opened: its cover shows at once, and it leads Recent. */
+/**
+ * A game was opened: its cover shows at once, and it leads Recent. An opener that names no cover (a
+ * friend's Join) gets the one Play read for the game.
+ */
 export function gameOpened(state: PlayState, game: PlayRecentEntry): PlayState {
+  const coverUrl = game.coverUrl ?? readGame(state, game.slug)?.coverUrl ?? null;
   return {
     ...state,
-    recent: withRecent(state.recent, { slug: game.slug, title: game.title, coverUrl: game.coverUrl }),
+    recent: withRecent(state.recent, { slug: game.slug, title: game.title, coverUrl }),
     viewer: {
       slug: game.slug,
       title: game.title,
-      coverUrl: game.coverUrl,
+      coverUrl,
       phase: PlayViewerPhase.Loading,
       openId: null,
     },
@@ -573,8 +616,10 @@ export interface PlayStore extends StoreApi<PlayState> {
   manage(game: PlayGame, change: PlayGameChange): Promise<PlayChangeResult>;
   /** A game's new cover took: its cards show it. */
   coverChanged(game: PlayGame, coverUrl: string): void;
-  /** Show a native game's own page, and read it. */
+  /** Show a game's own page, and read it; a native-only game then leads Recent. */
   showGame(slug: string): void;
+  /** A Recent game shows no cover: read its page once in this window, for the cover it has now. */
+  findCover(slug: string): Promise<void>;
   /** Read a native game's page (again). */
   loadGame(slug: string): Promise<void>;
   /** Read what is installed and installing here, and the games being played. */
@@ -585,7 +630,7 @@ export interface PlayStore extends StoreApi<PlayState> {
   cancelInstall(slug: string): Promise<void>;
   /** Remove a game from this computer; its saves stay. */
   uninstall(slug: string): Promise<void>;
-  /** Play an installed game in its own window. */
+  /** Play an installed game in its own window; it leads Recent. */
   launch(slug: string): Promise<void>;
   /** Bring a running game forward. */
   showWindow(slug: string): Promise<void>;
@@ -659,19 +704,13 @@ const withoutGone = (page: PlayFeedPage, gone: ReadonlySet<string>): PlayFeedPag
   gone.size === 0 ? page : { ...page, games: page.games.filter((game) => !gone.has(game.id)) };
 
 /**
- * Show a game's change on every card and in Recent (kept in `storage`), remember one that left the
- * catalog in `gone`, and tell `onGameChanged`.
+ * Show a game's change on every card and in Recent, remember one that left the catalog in `gone`,
+ * and tell `onGameChanged`.
  */
-function showing(
-  store: StoreApi<PlayState>,
-  storage: KeyValueStorage | null,
-  gone: Set<string>,
-  onGameChanged: GameChangeListener,
-) {
+function showing(store: StoreApi<PlayState>, gone: Set<string>, onGameChanged: GameChangeListener) {
   return (game: PlayGame, next: PlayGame | null): void => {
     if (!next) gone.add(game.id);
     store.setState((state) => gameChanged(state, game, next), true);
-    writeRecent(store.getState().recent, storage);
     onGameChanged(game.id, next);
   };
 }
@@ -687,6 +726,7 @@ export function createPlayStore(
   onGameChanged: GameChangeListener = () => {},
 ): PlayStore {
   const store = createStore<PlayState>()(() => initialPlay(readRecent(storage)));
+  rememberRecent(store, storage);
   const set = (change: (state: PlayState) => PlayState) => store.setState(change, true);
   const inFlight = new Map<string, Promise<void>>();
   /** Each tab's first-page reads so far: a further page read before the latest one lands nowhere. */
@@ -744,7 +784,7 @@ export function createPlayStore(
   };
 
   const native = nativeActions(api, set);
-  const { open, close } = opening(api, store, set, storage, native.showGame);
+  const { open, close } = opening(api, store, set, native.showGame);
 
   /** Make a game a new one of the person's own: shown from the press, its name or its failure kept for the shell. */
   const remix = async (game: PlayRecentEntry): Promise<void> => {
@@ -761,7 +801,7 @@ export function createPlayStore(
 
   const assets = assetReads(api, store, set, now);
   const checkRemix = remixChecks(api, store);
-  const shown = showing(store, storage, gone, onGameChanged);
+  const shown = showing(store, gone, onGameChanged);
   const manage = managing(api, shown);
 
   return Object.assign(store, {
@@ -775,6 +815,7 @@ export function createPlayStore(
     back: () => set(backFromProfile),
     loadFeed,
     countOnline,
+    findCover: coverFinder(native.loadGame),
     open,
     close,
     retry: async () => {
@@ -796,6 +837,23 @@ export function createPlayStore(
   });
 }
 
+/** Remember Recent in `storage` whenever it changes, whichever press or read changed it. */
+function rememberRecent(store: StoreApi<PlayState>, storage: KeyValueStorage | null): void {
+  store.subscribe((state, before) => {
+    if (state.recent !== before.recent) writeRecent(state.recent, storage);
+  });
+}
+
+/** Reading a Recent game's page for the cover it has now: once a window for each game, whatever it answered. */
+function coverFinder(loadGame: (slug: string) => Promise<void>): (slug: string) => Promise<void> {
+  const asked = new Set<string>();
+  return (slug) => {
+    if (asked.has(slug)) return Promise.resolve();
+    asked.add(slug);
+    return loadGame(slug);
+  };
+}
+
 /**
  * Opening a game and closing its viewer. A native game with no web build opens its own page, never
  * a viewer with nothing to play; any other game's cover shows at once and leads Recent.
@@ -804,7 +862,6 @@ function opening(
   api: Pick<PlayApi, "playOpen" | "playClose" | "playSession">,
   store: StoreApi<PlayState>,
   set: (change: (state: PlayState) => PlayState) => void,
-  storage: KeyValueStorage | null,
   showGame: (slug: string) => void,
 ) {
   const open = async (game: PlayRecentEntry): Promise<void> => {
@@ -812,11 +869,9 @@ function opening(
     if (beingPlayed(store.getState(), game.slug)) return api.playSession(game.slug, SessionAction.Show);
     if (game.page || opensItsPage(store.getState(), game.slug)) {
       set((state) => ({ ...state, recent: withRecent(state.recent, { ...game, page: true }) }));
-      writeRecent(store.getState().recent, storage);
       return showGame(game.slug);
     }
     set((state) => gameOpened(state, game));
-    writeRecent(store.getState().recent, storage);
     try {
       await api.playOpen(game.slug, game.title);
     } catch {
@@ -937,14 +992,17 @@ function nativeActions(
   return {
     showGame: (slug: string) => {
       set((state) => gameShown(state, slug));
-      void loadGame(slug);
+      void loadGame(slug).then(() => set((state) => nativePageShown(state, slug)));
     },
     loadGame,
     loadNative,
     install: (slug: string) => api.playInstall(slug),
     cancelInstall: (slug: string) => api.playInstallCancel(slug),
     uninstall: (slug: string) => api.playUninstall(slug),
-    launch: (slug: string) => api.playLaunch(slug),
+    launch: (slug: string) => {
+      set((state) => gameLaunched(state, slug));
+      return api.playLaunch(slug);
+    },
     showWindow: (slug: string) => api.playSession(slug, SessionAction.Show),
     quitGame: (slug: string) => api.playSession(slug, SessionAction.Quit),
   };

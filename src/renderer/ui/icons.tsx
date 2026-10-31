@@ -484,6 +484,13 @@ const glyphs = {
       <path d="M4.5 7.7L12 12l7.5-4.3M12 12v8.5" />
     </g>
   ),
+  // Create › Items: a stack of three sheets, the top one lifting.
+  layers: (
+    <>
+      <path className="a-lift" d="M12 4l8 4.2-8 4.2-8-4.2z" />
+      <path d="M4 12.2l8 4.2 8-4.2M4 16l8 4.2 8-4.2" />
+    </>
+  ),
   boxes: (
     <g transform="translate(-.5 0)">
       <g className="a-b1">

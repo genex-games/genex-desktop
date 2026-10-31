@@ -21,7 +21,7 @@ export function ChatSpecimen() {
   const [answer,setAnswer] = useState('');
   const [plan,setPlan] = useState('');
   return <><section id="chat-specimen" className="max-w-[440px] space-y-5">
-    <div id="export-review-specimen"><ChatQuestion title="Review the files that will be uploaded." choices={[
+    <div id="export-review-specimen"><ChatQuestion keys={false} title="Review the files that will be uploaded." choices={[
       {id:'approve',label:'Approve',description:'Upload this staged copy.'},
       {id:'decline',label:'Decline',description:'Keep it local.'}
     ]} onConfirm={async()=>{}}><ExportReview review={{included:['index.html','assets/bridge.png'],excluded:['.env.local','references/private.png']}}/></ChatQuestion></div>
@@ -32,8 +32,13 @@ export function ChatSpecimen() {
     <div id="question-specimen"><ChatQuestion title="Use the new moon texture in this game?" description="Image studio" choices={[
       {id:'approve',label:'Approve',description:'Allow this action once.'},
       {id:'decline',label:'Decline',description:'Continue without this action.'},
-    ]} onConfirm={async id=>{await new Promise(resolve=>setTimeout(resolve,80));setAnswer(id);}}/>
+    ]} onConfirm={async id=>{await new Promise(resolve=>setTimeout(resolve,300));setAnswer(id);}}/>
     <output id="question-answer">{answer}</output></div>
+    <div id="ask-specimen"><ChatQuestion keys={false} recap="The road, two cars and the lap timer are in." title="Which camera should the race use?" choices={[
+      {id:'0',label:'Behind the car (Recommended)',description:'You see the car and the road ahead.'},
+      {id:'1',label:'Hood view',description:'From the bonnet, a faster feel.'},
+      {id:'2',label:'Top-down',description:'The whole track from above.'},
+    ]} onConfirm={async()=>{}}/></div>
     <div id="plan-specimen"><PlanQuestion review={{id:'plan',state:'waiting',text:'A bridge and a village at dusk',plan:planText}} busy={false} onAnswer={async approved=>setPlan(approved?'approved':'cancelled')} onRevise={()=>setPlan('revise')}/><output id="plan-answer">{plan}</output></div>
   </section><ChatPolishSpecimen/></>;
 }

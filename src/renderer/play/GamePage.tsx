@@ -1,10 +1,13 @@
 /**
- * A native game's own page (canvas board "GamePage"): its media and About on the left; on the right
+ * A game's own page (canvas board "GamePage"): its media and About on the left; on the right
  * its title, maker and facts, one primary block that carries the whole life of the game on this
  * computer (install, installing, play, playing, update, elsewhere, failed), Like, Comments and
- * Share, and four one-line tiles. Installing goes on when the page is left (its card shows it); a
- * game installed while the page stays open starts by itself. Every action is main's; the page only
- * reads what main says (`UiEvent.PlayInstalls`, `UiEvent.PlaySessions`).
+ * Share, and four one-line tiles; under both, the game's Store (`GameStore.tsx`), once it sells
+ * something. A native game opens here from its card; any game opens here from a link or the
+ * profile's item shelf, and one with a web build that is not installed here plays in the viewer, as
+ * its card does. Installing goes on when the page is left (its card shows it); a game installed
+ * while the page stays open starts by itself. Every action is main's; the page only reads what main
+ * says (`UiEvent.PlayInstalls`, `UiEvent.PlaySessions`).
  */
 import type { JSX } from "react";
 import { useEffect, useState } from "react";
@@ -13,6 +16,7 @@ import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 import { intlLocale, t } from "../../shared/i18n.ts";
 import { type PlayGameDetail, PlayNote, playPageUrl, PlayShelf } from "../../shared/play.ts";
 import {
+  hasWebBuild,
   InstallFailure,
   InstallPhase,
   NativeArch,
@@ -33,6 +37,7 @@ import { formatCount } from "./play-model.ts";
 import { GamePhase, type GameStanding, gameStanding, installPercent, minutesSince } from "./native-model.ts";
 import { PlayPageFrame } from "./PlayPageFrame.tsx";
 import { PlatformMarks, platformNames } from "./NativeBadge.tsx";
+import { GameStore } from "./GameStore.tsx";
 
 const WORDS = NATIVE_WORDS;
 /** How often the minutes played are counted again. */
@@ -181,6 +186,29 @@ function Elsewhere({ game, standing }: { game: PlayGameDetail; standing: GameSta
   );
 }
 
+/**
+ * Whether the page plays the game in the viewer: it has a web build, and nothing of it is installed,
+ * installing, running or failed here, so Play does what its card does.
+ */
+const playsInViewer = (game: PlayGameDetail, standing: GameStanding): boolean =>
+  hasWebBuild(game) && (standing.phase === GamePhase.Install || standing.phase === GamePhase.Elsewhere);
+
+/** Play for a game with a web build: the viewer opens over the page, as the game's card opens it. */
+function PlayInViewer({ game }: { game: PlayGameDetail }): JSX.Element {
+  return (
+    <Button
+      variant="play-fill"
+      className="game-primary"
+      aria-label={WORDS.playLabel(game.title)}
+      data-game-action="play-web"
+      onClick={() => void studio().play.open({ slug: game.slug, title: game.title, coverUrl: game.coverUrl })}
+    >
+      <Icon name="play" size={14} />
+      {WORDS.play}
+    </Button>
+  );
+}
+
 /** The one block that carries the game's life on this computer. */
 function PrimaryBlock({
   game,
@@ -197,6 +225,7 @@ function PrimaryBlock({
     onPlayWhenReady();
     void studio().play.install(game.slug);
   };
+  if (playsInViewer(game, standing)) return <PlayInViewer game={game} />;
   switch (standing.phase) {
     case GamePhase.Installing:
       return <Installing game={game} standing={standing} />;
@@ -346,12 +375,14 @@ function Tiles({ game, standing }: { game: PlayGameDetail; standing: GameStandin
   const armOnly = appleSilicon ? ` · ${WORDS.appleSiliconOnly}` : "";
   return (
     <div className="game-tiles">
-      <Tile
-        hook="platforms"
-        mark={<PlatformMarks platforms={platforms} />}
-        text={WORDS.platformsTile}
-        label={`${platformNames(platforms)}${armOnly}`}
-      />
+      {platforms.length > 0 && (
+        <Tile
+          hook="platforms"
+          mark={<PlatformMarks platforms={platforms} />}
+          text={WORDS.platformsTile}
+          label={`${platformNames(platforms)}${armOnly}`}
+        />
+      )}
       {bytes > 0 && <Tile hook="size" mark={<Icon name="drive" />} text={sizeWords(bytes)} />}
       <Tile
         hook="players"
@@ -470,10 +501,13 @@ export function GamePage({
       backLabel={backLabel(back)}
     >
       {game && (
-        <div className="game-page" data-game-page={slug}>
-          <Media game={game} />
-          <Side game={game} />
-        </div>
+        <>
+          <div className="game-page" data-game-page={slug}>
+            <Media game={game} />
+            <Side game={game} />
+          </div>
+          <GameStore slug={slug} />
+        </>
       )}
       {!game && entry?.status === FeedStatus.Failed && (
         <div className="people-note">

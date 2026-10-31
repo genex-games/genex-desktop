@@ -9,12 +9,15 @@
  * name those producers pass is a key of {@link UiEventMap}, and that every key is still produced.
  */
 import type { AgentScreenEvent, AgentScreenFrame } from "./agent-screen.ts";
-import type { ReadyUpdate } from "./app-update.ts";
+import type { ReadyUpdate, UpdateFailure } from "./app-update.ts";
+import type { MainDiagnostic } from "./app-session.ts";
+import type { BootFailureCode } from "./boot.ts";
 import type { AssetDeliveredPayload } from "./game-assets.ts";
 import type { LiveBehindEvent } from "./live-behind.ts";
 import type { McpChange } from "./mcp.ts";
 import type { CliInstallJob } from "./cli-install.ts";
-import type { ModelInstallJob } from "./model-install.ts";
+import type { ModelInstallJob, ModelInstallProblem, ModelPullProblem } from "./model-install.ts";
+import type { SendFailure, SendRefusal } from "./composer.ts";
 import type { ProviderUsageReport } from "./provider-usage.ts";
 import type { ToolPermissionState } from "./permissions.ts";
 import type { PlayViewerEvent, RemixProgress } from "./play.ts";
@@ -32,11 +35,14 @@ export type ThreadStatusMap = Record<string, { status: string; since: number }>;
 
 /** A download step for a local model: Ollama's pull stream, Bonsai's installer, or the failure. */
 export interface ModelPullProgress {
+  /** Ollama's own step, Bonsai's `DownloadStatus`, or the app's end (`ModelPullStatus`). */
   status: string;
   digest?: string;
   completed?: number;
   total?: number;
   error?: string;
+  /** Why the download failed (`ModelPullStatus.Error`). */
+  problem?: ModelPullProblem | ModelInstallProblem;
 }
 
 /** A contractor's reply streaming into a thread, before its words land in the log. */
@@ -53,7 +59,8 @@ export interface ChatDelta {
 export interface UiEventMap {
   // — chat and threads —
   "chat.message": { threadId?: string; role?: string; content?: string };
-  "chat.error": { threadId?: string; message?: string };
+  /** A message that did not reach its chat (`failure`), or reached it and was refused there (`refusal`). */
+  "chat.error": { threadId?: string; message?: string; failure?: SendFailure; refusal?: SendRefusal };
   "chat.delta": ChatDelta;
   "chat.stream.started": { threadId: string; streamId: string; afterEventId: string | null };
   "chat.stream.ended": { threadId: string; streamId: string; failed?: boolean };
@@ -90,7 +97,7 @@ export interface UiEventMap {
   "harness.log": { line: string; stream: "stdout" | "stderr" };
   "harness.boot": Partial<BootNotice>;
   /** The open studio's harness would not start (main's own, never the harness's): why, for its line. */
-  "harness.start-failed": { failure: string };
+  "harness.start-failed": { failure: string; failureCode?: BootFailureCode };
   "seed.upgraded": { added: string[]; updated: string[]; kept: string[]; retired: string[] };
   "watchdog.triggered": { reason: string; snapshot: string | null };
   "watchdog.recovered": { reason: string; ok: boolean; reseeded?: boolean };
@@ -100,6 +107,10 @@ export interface UiEventMap {
   "notification.open": { id: string };
   /** A new version of the app is downloaded; a restart installs it (`main/auto-update.ts`). */
   "update.ready": ReadyUpdate;
+  /** An update the app looked for on its own failed, at `stage` (`main/auto-update.ts`). */
+  "update.failed": { stage?: UpdateFailure };
+  /** Main's own process caught an error nowhere, or a window answered again after `durationMs`. */
+  "app.diagnostic": { kind?: MainDiagnostic; durationMs?: number; errorType?: string };
 
   // — engines and models —
   "engines.changed": { engine?: string };
@@ -133,26 +144,8 @@ export interface UiEventMap {
   "run.settled": { runId?: string };
   "run.failed": { runId?: string; error?: string };
   "run.feedback": { threadId: string; runId: string | null };
-  "run.iteration": HarnessRecord<{ runId: string }>;
-  "run.optimization": { runId?: string; sequence?: number };
   "run.summary.changed": { runId: string };
   "autopilot.facet": HarnessRecord<{ runId: string }>;
-  "autopilot.spike": { runId?: string; facetId?: string; checkId?: string; ok?: boolean; reason?: string };
-  "judge.verdict": HarnessRecord;
-  "judge.facet": HarnessRecord;
-  "judge.vision": HarnessRecord<{ checkId: string }>;
-  "judge.taste": HarnessRecord;
-  "judge.panel": HarnessRecord;
-  "judge.playtest": HarnessRecord;
-  "judge.retry": { engine?: string; kind?: string; attempt?: number; waitMs?: number; message?: string };
-  "judge.liveness": {
-    facetId?: string;
-    iterationId?: string;
-    critic?: string;
-    total?: number;
-    max?: number;
-    biggest?: unknown;
-  };
 
   // — preview —
   "preview.identity": NonNullable<RunSummary["preview"]>;
@@ -175,6 +168,18 @@ export interface UiEventMap {
   /** A `genex://game/<slug>` link waits for the page to take it (`studio:play.take-game-link`, `main/play/game-links.ts`). */
   "play.game-link": Record<string, never>;
 
+  // — store —
+  /**
+   * A game's agent made or changed a store item and Studio drew its Listing draft card
+   * (`item_drafted`, `main/core/item-draft.ts`): Create › Items reads Selling again. Host only.
+   */
+  "item.drafted": { project: string; itemId: string; threadId?: string };
+  /**
+   * A game's local item drafts changed in Studio's app data (an approval, a draft the CLI printed, the
+   * settle after its publish): its Listing draft cards read them again (`studio:items.local`). Host only.
+   */
+  "items.local": { project: string };
+
   // — plugins and connectors —
   "plugins.changed": PluginChange;
   /** Something a plugin reported about itself; `event` is the plugin's own value, unchecked. */
@@ -196,17 +201,8 @@ export interface UiEventMap {
   "connections.changed": { revision: number };
   "connections.applied": { threadId: string; revision: number };
 
-  // — self-improvement —
+  // — settings and the harness's own changes —
   "settings.changed": StudioSettingsView;
-  "skillopt.accepted": { skill?: string; approvedBy?: "human" | "auto"; gate?: unknown };
-  "skillopt.staged": { skill?: string; gate?: unknown };
-  "skillopt.discarded": { skill: string };
-  "skillopt.autoApplied": { skill: string };
-  "skillopt.autoApplyFailed": { error: string };
-  "skillopt.finished": HarnessRecord<{ note: string }>;
-  "skillopt.failed": { error?: string };
-  "improvement.finished": { id: string; status: "rejected" | "failed"; note: string };
-  "improvement.applied": { id: string; file: string; reason: string };
   "selfchange.undone": { snapshotId: string; file: string };
   "selfmod.edited": { file?: string; reason?: string };
   "selfmod.tool_installed": { file?: string; reason?: string };
@@ -260,6 +256,8 @@ export const UiEvent = {
   StudioReady: "studio.ready",
   NotificationOpen: "notification.open",
   UpdateReady: "update.ready",
+  UpdateFailed: "update.failed",
+  AppDiagnostic: "app.diagnostic",
   EnginesChanged: "engines.changed",
   EngineAuth: "engine.auth",
   EngineFallback: "engine.fallback",
@@ -282,19 +280,8 @@ export const UiEvent = {
   RunSettled: "run.settled",
   RunFailed: "run.failed",
   RunFeedback: "run.feedback",
-  RunIteration: "run.iteration",
-  RunOptimization: "run.optimization",
   RunSummaryChanged: "run.summary.changed",
   AutopilotFacet: "autopilot.facet",
-  AutopilotSpike: "autopilot.spike",
-  JudgeVerdict: "judge.verdict",
-  JudgeFacet: "judge.facet",
-  JudgeVision: "judge.vision",
-  JudgeTaste: "judge.taste",
-  JudgePanel: "judge.panel",
-  JudgePlaytest: "judge.playtest",
-  JudgeRetry: "judge.retry",
-  JudgeLiveness: "judge.liveness",
   PreviewIdentity: "preview.identity",
   PreviewScreen: "preview.screen",
   PreviewFrame: "preview.frame",
@@ -305,6 +292,8 @@ export const UiEvent = {
   PlayInstalls: "play.installs",
   PlaySessions: "play.sessions",
   PlayGameLink: "play.game-link",
+  ItemDrafted: "item.drafted",
+  ItemsLocal: "items.local",
   PluginsChanged: "plugins.changed",
   PluginEvent: "plugin.event",
   PluginConsent: "plugin.consent",
@@ -315,15 +304,6 @@ export const UiEvent = {
   ConnectionsChanged: "connections.changed",
   ConnectionsApplied: "connections.applied",
   SettingsChanged: "settings.changed",
-  SkilloptAccepted: "skillopt.accepted",
-  SkilloptStaged: "skillopt.staged",
-  SkilloptDiscarded: "skillopt.discarded",
-  SkilloptAutoApplied: "skillopt.autoApplied",
-  SkilloptAutoApplyFailed: "skillopt.autoApplyFailed",
-  SkilloptFinished: "skillopt.finished",
-  SkilloptFailed: "skillopt.failed",
-  ImprovementFinished: "improvement.finished",
-  ImprovementApplied: "improvement.applied",
   SelfchangeUndone: "selfchange.undone",
   SelfmodEdited: "selfmod.edited",
   SelfmodToolInstalled: "selfmod.tool_installed",
@@ -374,9 +354,15 @@ export function uiEvent<K extends UiEventType>(type: K, payload: UiEventMap[K]):
 
 /**
  * Events only the host may send: what they say the renderer acts on (`live.behind` names the
- * build Live's Reload plays), so the harness's forwarded notifications never carry one.
+ * build Live's Reload plays; `item.drafted` stands for a real `genex shop add` result, `items.local`
+ * for Studio's own record of local drafts), so the
+ * harness's forwarded notifications never carry one.
  */
-const HOST_ONLY: ReadonlySet<string> = new Set<UiEventType>([UiEvent.LiveBehind]);
+const HOST_ONLY: ReadonlySet<string> = new Set<UiEventType>([
+  UiEvent.LiveBehind,
+  UiEvent.ItemDrafted,
+  UiEvent.ItemsLocal,
+]);
 
 /** Whether a harness notification names an event only the host sends. */
 export const isHostOnlyUiEvent = (name: string): boolean => HOST_ONLY.has(name);

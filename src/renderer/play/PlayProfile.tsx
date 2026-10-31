@@ -1,8 +1,9 @@
 /**
  * A profile in Play, centred and at most 1080px wide: the person's live avatar, their name with
  * PRO, and beside it a pencil and Share on the account's own (the pencil opens Settings → Genex
- * account, Share its link) or the friend button on anyone else's; under it their @handle, their
- * games and players as chips, then when they joined. Then their friends as a row (people the viewer knows first), the account's own last 7
+ * account, Share its link) or the friend button on anyone else's; under it their @handle, the shelf
+ * of items they own (`ItemShelf.tsx`, none when they own none), their games and players as chips,
+ * then when they joined. Then their friends as a row (people the viewer knows first), the account's own last 7
  * days (only it ever sees them), and their games as the dashboard's cards. Offline it shows what
  * was read last, and reads again once the Mac is back online.
  */
@@ -16,7 +17,7 @@ import {
   type PlayProfileFriend,
 } from "../../shared/play-people.ts";
 import { AvatarMotion } from "../avatars/GeneratedAvatar.tsx";
-import { openSettings, SettingsSection } from "../settings-navigation.ts";
+import { openSettings, SettingsOpenedFrom, SettingsSection } from "../settings-navigation.ts";
 import { usePeople } from "../state/hooks.ts";
 import { LoadStatus } from "../state/people.ts";
 import { studio } from "../state/studio.ts";
@@ -32,6 +33,7 @@ import { ShareProfile } from "./ShareProfile.tsx";
 import { OfflineNotice } from "./PlayOffline.tsx";
 import { Grid, useCardRemix } from "./PlayRoom.tsx";
 import { formatCount } from "./play-model.ts";
+import { ItemShelf } from "./ItemShelf.tsx";
 import { joinedWhen } from "./ProfilePlate.tsx";
 import { StatsStrip } from "./StatsStrip.tsx";
 
@@ -89,7 +91,7 @@ function ProfileHead({ profile, me }: { profile: Profile; me: PlayMe | null }): 
             aria-label={WORDS.editProfile}
             title={WORDS.editProfile}
             data-profile-edit
-            onClick={() => openSettings(SettingsSection.Account)}
+            onClick={() => openSettings(SettingsSection.Account, undefined, SettingsOpenedFrom.PlayProfile)}
           >
             <Icon name="rename" size={15} />
           </button>
@@ -104,6 +106,7 @@ function ProfileHead({ profile, me }: { profile: Profile; me: PlayMe | null }): 
           @{person.handle}
         </span>
       )}
+      <ItemShelf userId={person.id} />
       <ProfileFacts profile={profile} />
     </header>
   );

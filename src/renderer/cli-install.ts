@@ -8,6 +8,7 @@ import { CliInstallOperation, CliInstallPhase, CliInstallProblem, type CliInstal
 import { t } from "../shared/i18n.ts";
 import { providerInfo } from "../shared/providers.ts";
 import { UiEvent } from "../shared/ui-events.ts";
+import { reportCliInstallRefused } from "./analytics/welcome-report.ts";
 import { problemWords } from "./words.ts";
 
 /** What each failed install says, by why it failed. */
@@ -64,6 +65,7 @@ export function useCliInstall(provider: string) {
       const started = await window.studio.cliInstall(provider);
       setJob((current) => newerReport(current, started));
     } catch (err) {
+      reportCliInstallRefused(provider, CliInstallOperation.Install, err);
       setRefused(problemWords(err));
     }
   }, [provider]);
@@ -73,6 +75,7 @@ export function useCliInstall(provider: string) {
       const started = await window.studio.cliUpdate(provider);
       setJob((current) => newerReport(current, started));
     } catch (err) {
+      reportCliInstallRefused(provider, CliInstallOperation.Update, err);
       setRefused(problemWords(err));
     }
   }, [provider]);

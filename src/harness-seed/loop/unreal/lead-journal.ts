@@ -21,7 +21,6 @@ import {
   type AgentOffers,
   type AgentRecord,
   AgentState,
-  type CriticDefect,
   LEAD_JOURNAL_KIND,
   LEAD_PART,
   type LeadCost,
@@ -204,9 +203,6 @@ export async function saveLead(lead: Lead, phase?: JournalPhase): Promise<void> 
   journal.savedAt = new Date(lead.clock.now()).toISOString();
   await saveJournal(lead.ctx, lead.threadId, lead.run.runId, journal);
 }
-
-/** The critic's required items still open: those of its latest look (a defect it saw in two looks in a row). */
-export const requiredNow = (journal: LeadJournal): CriticDefect[] => journal.critiques.at(-1)?.required ?? [];
 
 /** The milestone the lead works on now: its last one, or the lead's own part before it named any. */
 export function milestoneNow(journal: LeadJournal): LeadMilestone {

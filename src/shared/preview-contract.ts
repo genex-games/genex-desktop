@@ -6,15 +6,11 @@
  */
 
 /**
- * The `__studio` verbs that hold a game's clock (`src/game-template/src/studio.js`, `src/page/shim.ts`):
- * start and pause it, step it by a number of milliseconds, and reseed its `Math.random`.
+ * The verbs of the page shim's own clock (`window.__studioClock`, `src/page/shim.ts`) that hold a
+ * page's time: start and pause it, and step it by a number of milliseconds. The game is never asked.
  */
-export const GameClock = { Start: "start", Pause: "pause", Step: "step", Seed: "seed" } as const;
+export const GameClock = { Start: "start", Pause: "pause", Step: "step" } as const;
 export type GameClock = (typeof GameClock)[keyof typeof GameClock];
-
-/** The `__studio` verb that lets a racing game's own line (`config.steer`) steer the held keys. */
-export const GameSteer = { Assist: "assist" } as const;
-export type GameSteer = (typeof GameSteer)[keyof typeof GameSteer];
 
 /**
  * Which surface a capture photographs (M4.5/M4.9a). `canvas` is what the game draws, `page` is
@@ -170,6 +166,59 @@ export function previewGone(reason: string): PreviewGone {
   return RENDER_GONE_REASONS.get(reason) ?? PreviewGone.Crashed;
 }
 
+/**
+ * Why Live's page did not load, as one typed code beside the words (`PreviewLiveStatus.loadFailure`):
+ * Chromium's load error read by kind, a page still loading past the preview's deadline (`Stalled`),
+ * or the game's own build, which failed with nothing to serve (`BuildFailed`) or with the last build
+ * that worked served instead (`StaleBuild`). A load the renderer asked for that Electron refused
+ * also crosses IPC with it (`shared/error-codes.ts`).
+ */
+export const LiveLoadFailure = {
+  NotFound: "live_not_found",
+  Blocked: "live_blocked",
+  ServerDown: "live_server_down",
+  /** Another navigation took the load's place (Chromium's `ERR_ABORTED`): that load reports itself. */
+  Aborted: "live_load_aborted",
+  /** The page had not finished loading by the preview's deadline: a script that never yields, or a request never answered. */
+  Stalled: "live_load_stalled",
+  BuildFailed: "live_build_failed",
+  StaleBuild: "live_stale_build",
+  Other: "live_load_other",
+} as const;
+export type LiveLoadFailure = (typeof LiveLoadFailure)[keyof typeof LiveLoadFailure];
+
+/** Chromium's net error numbers (`net_error_list.h`), each read as a {@link LiveLoadFailure}. */
+const LOAD_ERRORS: ReadonlyMap<number, LiveLoadFailure> = new Map([
+  [-3, LiveLoadFailure.Aborted], // ERR_ABORTED
+  [-6, LiveLoadFailure.NotFound], // ERR_FILE_NOT_FOUND
+  [-379, LiveLoadFailure.NotFound], // ERR_HTTP_RESPONSE_CODE_FAILURE: the game protocol's 404 for a missing file
+  [-10, LiveLoadFailure.Blocked], // ERR_ACCESS_DENIED
+  [-20, LiveLoadFailure.Blocked], // ERR_BLOCKED_BY_CLIENT
+  [-22, LiveLoadFailure.Blocked], // ERR_BLOCKED_BY_ADMINISTRATOR
+  [-27, LiveLoadFailure.Blocked], // ERR_BLOCKED_BY_RESPONSE
+  [-30, LiveLoadFailure.Blocked], // ERR_BLOCKED_BY_CSP
+  [-301, LiveLoadFailure.Blocked], // ERR_DISALLOWED_URL_SCHEME
+  [-302, LiveLoadFailure.Blocked], // ERR_UNKNOWN_URL_SCHEME
+  [-7, LiveLoadFailure.ServerDown], // ERR_TIMED_OUT
+  [-100, LiveLoadFailure.ServerDown], // ERR_CONNECTION_CLOSED
+  [-101, LiveLoadFailure.ServerDown], // ERR_CONNECTION_RESET
+  [-102, LiveLoadFailure.ServerDown], // ERR_CONNECTION_REFUSED
+  [-104, LiveLoadFailure.ServerDown], // ERR_CONNECTION_FAILED
+  [-105, LiveLoadFailure.ServerDown], // ERR_NAME_NOT_RESOLVED
+  [-109, LiveLoadFailure.ServerDown], // ERR_ADDRESS_UNREACHABLE
+  [-118, LiveLoadFailure.ServerDown], // ERR_CONNECTION_TIMED_OUT
+  [-324, LiveLoadFailure.ServerDown], // ERR_EMPTY_RESPONSE
+]);
+
+/** Read Chromium's load error number (`did-fail-load`, a refused `loadURL`'s `errno`); any other value is `Other`. */
+export function liveLoadFailure(errno: unknown): LiveLoadFailure {
+  return (typeof errno === "number" ? LOAD_ERRORS.get(errno) : undefined) ?? LiveLoadFailure.Other;
+}
+
+/** Did the page fail because the game's own build did, rather than its load? */
+export const isBuildLoadFailure = (failure: LiveLoadFailure | null): boolean =>
+  failure === LiveLoadFailure.BuildFailed || failure === LiveLoadFailure.StaleBuild;
+
 /** What `PreviewPort.status()` and the `preview.status` RPC answer. */
 export interface PreviewPortStatus {
   project: string | null;
@@ -233,10 +282,8 @@ export type PreviewInputAction =
 
 /**
  * The state a run is about, reached the way a player reaches it, after every load and before
- * anyone looks: the scout writes it (a key that opens the map picker, the click on the map,
- * a demo that does the same), the harness applies it before judges, captures and the computer
- * tool's first frame. `verify` is a probe over `__studio.state()` that says the state landed —
- * without it a run can build and judge the wrong map for hours because nothing checked.
+ * anyone looks (a key that opens the map picker, the click on the map): the studio applies it
+ * before captures and the computer tool's first frame.
  */
 export interface PreviewSetup {
   /**
@@ -248,40 +295,11 @@ export interface PreviewSetup {
   gesture?: true | { x?: number; y?: number; keys?: string[] };
   /** Input actions in order (tap, hold, click, wait …), capped like any script. */
   actions?: PreviewInputAction[];
-  /** A `config.demos` entry that reaches the state deterministically — preferred when it exists. */
-  demo?: string;
   /** Milliseconds to let the game settle after the script; default 400. */
   settleMs?: number;
-  /** A dotted state path and the value it must hold (`equals`), or merely be truthy. */
-  verify?: { path: string; equals?: unknown; truthy?: boolean };
   /** One sentence for the log and the briefs: what this reaches and why. */
   note?: string;
-  /**
-   * A game that reports a front-end (`state().flow.playing === false`) is put into play with
-   * `__studio.begin()` by default: by a studio window before the setup is replayed (the scout
-   * recorded it in play), by the evidence pass after its seed. `false` keeps its title, menu or
-   * countdown on screen for the worker that builds them; the playtester's window always does.
-   */
-  begin?: boolean;
 }
-
-/** The `__studio` verb that takes a game past its title, menu and countdown into play (`config.begin`). */
-export const GameFront = { Begin: "begin" } as const;
-export type GameFront = (typeof GameFront)[keyof typeof GameFront];
-
-/**
- * The `__studio` verbs that put a named view on screen (`src/game-template/src/studio.js`): the
- * game's demo names, one demo run to its end state, the game's camera names and its built-in eye
- * cameras, and one camera placed.
- */
-export const GameView = {
-  Demos: "demos",
-  Demo: "demo",
-  Cameras: "cameras",
-  Eyes: "eyes",
-  DebugCamera: "debugCamera",
-} as const;
-export type GameView = (typeof GameView)[keyof typeof GameView];
 
 /** How a still is encoded: lossless PNG, or a high-quality JPEG when the PNG is over its byte limit. */
 export const StillMimeType = { Png: "image/png", Jpeg: "image/jpeg" } as const;
@@ -298,6 +316,23 @@ export interface StillExposure {
   nearBlackFraction: number;
   litFraction: number;
 }
+
+/**
+ * The exposure a still needs to be a picture rather than a blank or loading screen, on the same
+ * numbers as Genex's cover gate: a mean of at least 0.11 (a game's dark start menu measured 0.117),
+ * at most 85% near-black samples, and a spread of at least 0.04 (one flat colour has none).
+ */
+export const STILL_EXPOSURE_FLOOR = { MinMean: 0.11, MaxNearBlack: 0.85, MinSpread: 0.04 } as const;
+
+/** Whether a still is too dark to show anything ({@link STILL_EXPOSURE_FLOOR}). */
+export const isTooDarkStill = (stats: StillExposure): boolean =>
+  stats.lumaMean < STILL_EXPOSURE_FLOOR.MinMean || stats.nearBlackFraction > STILL_EXPOSURE_FLOOR.MaxNearBlack;
+
+/** Whether a still is one flat colour ({@link STILL_EXPOSURE_FLOOR}). */
+export const isFlatStill = (stats: StillExposure): boolean => stats.lumaStdDev < STILL_EXPOSURE_FLOOR.MinSpread;
+
+/** Whether a still is a blank or loading screen: too dark, or one flat colour. */
+export const isBlankStill = (stats: StillExposure): boolean => isTooDarkStill(stats) || isFlatStill(stats);
 
 /** Which signal answered: the studio's own page shim, the game's own contract, or nothing. Wire values. */
 export const ReadyVia = {
@@ -334,9 +369,35 @@ export interface ReadyResult {
   gesture: { needed: boolean; done: boolean; reasons: string[] };
 }
 
+/**
+ * What the build health check found wrong, as codes beside its words (`BuildObservation.findings`):
+ * the page did not load, its renderer crashed, it threw an error it did not catch, or its frame is
+ * blank. Wire values: the Loop's `integration_health` record carries them.
+ */
+export const HealthFinding = {
+  NotLoaded: "not_loaded",
+  Crashed: "crashed",
+  Uncaught: "uncaught",
+  Blank: "blank",
+} as const;
+export type HealthFinding = (typeof HealthFinding)[keyof typeof HealthFinding];
+
+const HEALTH_FINDINGS: ReadonlySet<string> = new Set(Object.values(HealthFinding));
+/** Whether a value is one of the health check's own codes. */
+export const isHealthFinding = (value: unknown): value is HealthFinding =>
+  typeof value === "string" && HEALTH_FINDINGS.has(value);
+
+/**
+ * The query parameter on a page the health check loads (`preview.load` with `shot`): the one load
+ * whose screenshot becomes the build's picture. A page may read it; one that ignores it loses nothing.
+ */
+export const SHOT_QUERY = "genex-shot";
+
 export interface BuildObservation {
   ok: boolean;
   reasons: string[];
+  /** One code per reason it found, in the same order. Absent from observations made before it. */
+  findings?: HealthFinding[];
   pixels: PreviewPixelStats | null;
   studioMissing: boolean;
   frameBefore: number | null;

@@ -34,7 +34,7 @@ import { CoreFact, type GameKind } from "../../src/shared/project-facts.ts";
 import { UiEvent, type UiEvent as UiEventEnvelope } from "../../src/shared/ui-events.ts";
 import { BRIDGE_TOOL_DEADLINE_MS } from "../../src/substrate/engines/studio-bridge.ts";
 import { type CoreLite, coreLite } from "../helpers/core-lite.ts";
-import { closeWorkerChats, LOCAL, RUN_ID, workerChat } from "../helpers/worker-chat.ts";
+import { closeWorkerChats, RUN_ID, SEATLESS, workerChat } from "../helpers/worker-chat.ts";
 import { personAllowsLocalTools } from "../helpers/plugins.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
@@ -1186,6 +1186,17 @@ describe("locks in a real core", () => {
   it("an agent's call holds no lock while its card waits for the person, and a declined card takes nothing", async () => {
     await reset();
     const asking = await lite.core.createGameThread(PROJECT);
+    // A chat that asks: Bypass would answer the card itself (an empty chat may come back as the suite's).
+    await lite.core.setPermissionMode(asking, PermissionMode.Manual);
+    try {
+      await cardWaitsUnlocked(asking);
+    } finally {
+      await lite.core.setPermissionMode(asking, PermissionMode.Bypass);
+    }
+  });
+
+  /** A varnish call in chat `asking`: no lock is held while its card waits, and the card's no takes nothing. */
+  async function cardWaitsUnlocked(asking: string): Promise<void> {
     const cards = async () =>
       (await lite.core.listAllEvents()).flatMap((event) =>
         event.data.type === EventKind.Custom && event.data.event_type === CustomEvent.PluginConsent
@@ -1217,7 +1228,7 @@ describe("locks in a real core", () => {
     assert.equal(((await varnish) as { consent?: string }).consent, "declined");
     assert.deepEqual(lite.core.locks.holders(), [], "a declined call took nothing");
     assert.deepEqual(await paintLog(), [], "and never ran");
-  });
+  }
 
   it("a plugin turned off while its call waits its turn is refused once granted: its backend never runs", async () => {
     await reset();
@@ -2215,7 +2226,7 @@ describe("a worker's own session passes the locks its pool holds for it", () => 
         const call = request.onLiveTool;
         if (call) answers.push(JSON.stringify(await call(`${PLUGIN_ID}__paint`, {})));
       });
-      await delegate(runWorker("w1", gameDir), LOCAL);
+      await delegate(runWorker("w1", gameDir), SEATLESS);
       assert.equal(answers.length, 1, "the local session called the tool");
       assert.match(String(answers[0]), /painted/, "its own call passed the lock it holds for its life");
     } finally {
@@ -2258,7 +2269,7 @@ describe("a worker's own session passes the locks its pool holds for it", () => 
       holdersWhileStopping.push([...new Set(core.locks.holders().map((held) => held.holder))]);
       await lettingGo;
     });
-    const session = delegate(runWorker("w1", gameDir), LOCAL).catch(() => {});
+    const session = delegate(runWorker("w1", gameDir), SEATLESS).catch(() => {});
     await working;
     const seen: number[] = [];
     const { restart, healthcheck } = core.host;
@@ -2321,7 +2332,7 @@ describe("a worker's own session passes the locks its pool holds for it", () => 
       begun();
       await hung;
     });
-    const session = delegate(runWorker("w1", gameDir), LOCAL).catch(() => {});
+    const session = delegate(runWorker("w1", gameDir), SEATLESS).catch(() => {});
     await working;
     const seen: number[] = [];
     const { restart, healthcheck } = core.host;
@@ -2378,7 +2389,7 @@ describe("a worker's own session passes the locks its pool holds for it", () => 
       ];
       for (const [name, params] of sessions) {
         answers.length = 0;
-        await delegate(params, LOCAL);
+        await delegate(params, SEATLESS);
         assert.equal(answers.length, 1, `${name}: the local session called the tool`);
         for (const answer of answers) {
           assert.match(answer, new RegExp(PluginCallBlocker.Lock), `${name}: its call waited, then was told why`);

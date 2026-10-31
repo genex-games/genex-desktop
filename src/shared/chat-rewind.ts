@@ -155,13 +155,29 @@ function withoutSession<T extends EventEnvelope>(event: T, rewound: boolean): T 
   return event;
 }
 
-/** Why a chat cannot be rewound to a message. */
+/** Why a chat cannot be rewound to a message; each is also the refusal's code across IPC (`shared/error-codes.ts`). */
 export const RewindRefusal = {
-  NotFound: "not-found",
-  NotAnswered: "not-answered",
-  Busy: "busy",
+  NotFound: "rewind_not_found",
+  NotAnswered: "rewind_not_answered",
+  Busy: "rewind_busy",
 } as const;
 export type RewindRefusal = (typeof RewindRefusal)[keyof typeof RewindRefusal];
+
+/**
+ * Why the core refused a rewind, its preview or its undo before planning it (`main/core/rewind.ts`):
+ * the code that crosses IPC beside the core's own words.
+ */
+export const RewindBlock = {
+  NotInChat: "rewind_not_in_chat",
+  NotGameChat: "rewind_not_game_chat",
+  /** The harness is not ready: it is starting or restarting. */
+  Restarting: "rewind_restarting",
+  AlreadyRewinding: "rewind_already_rewinding",
+  /** Messages wait behind the target and this harness cannot take them back. */
+  HeldNeedsQueue: "rewind_held_needs_queue",
+  BuildStillStopping: "rewind_build_still_stopping",
+} as const;
+export type RewindBlock = (typeof RewindBlock)[keyof typeof RewindBlock];
 
 /** Each refusal's words; functions, as main loads this module before it sets its language. */
 const REFUSAL_WORDS: Record<RewindRefusal, () => string> = {
@@ -291,17 +307,17 @@ export interface UndoRewindResult {
   files: number;
 }
 
-/** Why the newer version a rewind replaced cannot come back. */
+/** Why the newer version a rewind replaced cannot come back; each is also the refusal's code across IPC. */
 export const UndoRewindRefusal = {
   /** Not the chat's newest rewind, or one that put no files back. */
-  NotOffered: "not-offered",
-  AlreadyBack: "already-back",
-  MessageSent: "message-sent",
-  Busy: "busy",
+  NotOffered: "undo_rewind_not_offered",
+  AlreadyBack: "undo_rewind_already_back",
+  MessageSent: "undo_rewind_message_sent",
+  Busy: "undo_rewind_busy",
   /** HEAD moved since the rewind: a commit or a landed build. */
-  HistoryChanged: "history-changed",
+  HistoryChanged: "undo_rewind_history_changed",
   /** The saved folder is no longer kept. */
-  Gone: "gone",
+  Gone: "undo_rewind_gone",
 } as const;
 export type UndoRewindRefusal = (typeof UndoRewindRefusal)[keyof typeof UndoRewindRefusal];
 

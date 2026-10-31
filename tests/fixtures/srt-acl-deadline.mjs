@@ -1,4 +1,4 @@
-// Runs SRT's synchronous ACL calls against a recording spawnSync in a process of its own; never
+// Runs SRT's synchronous release calls against a recording spawnSync in a process of its own; never
 // starts srt-win or edits a filesystem ACL. Prints each call's deadline, by its srt-win verb.
 import childProcess from "node:child_process";
 import { createRequire } from "node:module";
@@ -20,8 +20,6 @@ mock.module("node:child_process", {
 });
 const windows = await import(pathToFileURL(path.join(dist, "sandbox/windows-sandbox-utils.js")).href);
 const opts = { sandboxUserSid: "fixture-sid", srtWin: { exe: "fixture-srt-win", prependArgs: [] } };
-windows.grantWindowsAcl({ ...opts, read: [], write: [] });
-windows.stampWindowsAcl({ ...opts, denyRead: [], denyWrite: [] });
-windows.revokeWindowsAcl(opts);
+windows.revokeWindowsAclChecked(opts);
 windows.restoreWindowsAcl(opts);
 process.stdout.write(JSON.stringify(deadlines));

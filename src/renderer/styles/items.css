@@ -1,0 +1,702 @@
+/* Create › Items (marketplace screens 07–08) and the chat's Listing draft card (screen 09):
+   `panels/items/` and `chat/ListingDraftCard.tsx`. Cards and renders are the Play store's
+   (store.css); coin is the coin mark (play.css). */
+
+/* ── The room ───────────────────────────────────────────────────────────────────────────── */
+.items-page {
+  display: flex;
+  height: 100%;
+  min-width: 0;
+  background: var(--canvas);
+  container-type: inline-size;
+}
+/* One frame for both tabs, so nothing moves when the tab changes. */
+.items-scroll {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+.items-frame {
+  width: 100%;
+  max-width: 1160px;
+  margin-inline: auto;
+  padding: 0 40px 48px;
+}
+/* The head is the window's drag line: the title, the tabs, then Browse's search. */
+.items-head {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  min-height: 76px;
+  padding-block: 14px 10px;
+}
+:root[data-platform="darwin"] .items-head-inset {
+  padding-inline-start: 56px;
+}
+.items-head .sidebar-toggle {
+  margin-inline-start: -4px;
+}
+.items-title {
+  margin: 0;
+  font-size: 26px;
+  font-weight: 500;
+  line-height: 32px;
+  letter-spacing: -0.02em;
+}
+.items-head-end {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-inline-start: auto;
+}
+.items-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: min(260px, 38cqi);
+  height: 32px;
+  padding-inline: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--soft);
+  color: var(--ink-3);
+}
+.items-search:focus-within {
+  border-color: var(--focus-edge);
+}
+.items-search input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 14px;
+  outline: none;
+}
+.items-search input::-webkit-search-cancel-button {
+  display: none;
+}
+.items-note {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-block: 24px;
+  color: var(--ink-3);
+  font-size: 14px;
+  line-height: 20px;
+}
+.items-coin {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-family-mono);
+}
+
+/* ── Browse: the list, and the item on show beside it ───────────────────────────────────── */
+.items-browse {
+  display: flex;
+  align-items: flex-start;
+  gap: 24px;
+}
+.items-browse-list {
+  flex: 1;
+  min-width: 0;
+}
+.items-intro {
+  max-width: 500px;
+  margin: 0 0 24px;
+  color: var(--ink-2);
+  font-size: 15px;
+  line-height: 22px;
+  text-wrap: pretty;
+}
+.items-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 26px 16px;
+}
+.items-card .store-card-render {
+  aspect-ratio: 4 / 3;
+}
+.items-card[aria-pressed="true"] .store-card-render {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 0;
+}
+.items-card-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--ink-3);
+  font-size: 13px;
+  line-height: 18px;
+}
+.items-card-line .items-coin {
+  color: var(--ink-2);
+}
+.items-more {
+  margin-block-start: 24px;
+}
+.items-detail {
+  position: sticky;
+  inset-block-start: 16px;
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 16px;
+  width: 340px;
+  min-width: 0;
+  padding: 18px;
+  border-radius: 18px;
+  background: var(--page);
+}
+.items-detail-render {
+  height: 220px;
+  border-radius: 14px;
+  box-shadow: inset 0 0 0 1px var(--item-edge);
+}
+.items-detail-words {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.items-detail-name {
+  margin: 0;
+  font-size: 21px;
+  font-weight: 500;
+  line-height: 28px;
+  overflow-wrap: anywhere;
+}
+.items-detail-by {
+  color: var(--ink-2);
+  font-size: 14px;
+}
+.items-detail-description {
+  margin-block-start: 8px;
+  color: var(--ink-2);
+  font-size: 13px;
+  line-height: 19px;
+  white-space: pre-line;
+}
+.items-detail-money {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding-block: 14px;
+  border-block: 1px solid var(--line);
+}
+.items-detail-money > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--ink-2);
+  font-size: 14px;
+}
+.items-detail-money dd {
+  margin: 0;
+  color: var(--ink);
+}
+.items-detail-money .items-gain {
+  font-family: var(--font-family-mono);
+  color: var(--purchase-paid-ink);
+}
+.items-detail-add {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+/* For <game ▾>: the game the item goes in. */
+.items-for {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.items-for-label {
+  color: var(--ink-3);
+  font-size: 13px;
+  line-height: 18px;
+}
+.items-for-pick {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  padding-inline: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-button);
+  background: var(--soft);
+  color: var(--ink);
+  font-size: 14px;
+  text-align: start;
+  cursor: pointer;
+}
+.items-for-pick > .truncate {
+  flex: 1;
+  min-width: 0;
+}
+.items-for-pick:hover:enabled {
+  background: var(--control-hover, var(--hover));
+}
+.items-for-pick:focus-visible {
+  outline: 2px solid var(--focus-edge);
+  outline-offset: 2px;
+}
+.items-for-pick:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+/* Added to your game: where it stands there, in place of Add to game. */
+.items-added {
+  display: flex;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 12px;
+  background: var(--soft);
+  color: var(--purchase-paid-ink);
+}
+.items-added-words {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 20px;
+}
+.items-added-sub {
+  color: var(--ink-3);
+  font-size: 13px;
+  line-height: 18px;
+}
+.items-detail-note {
+  color: var(--ink-3);
+  font-size: 13px;
+  line-height: 18px;
+  text-align: center;
+}
+.items-detail-refusal {
+  color: var(--red);
+  font-size: 13px;
+  line-height: 18px;
+}
+/* A narrow room: the item on show goes above the list. */
+@container (max-width: 860px) {
+  .items-frame {
+    padding-inline: 20px;
+  }
+  .items-browse {
+    flex-direction: column-reverse;
+    align-items: stretch;
+  }
+  .items-detail {
+    position: static;
+    width: auto;
+  }
+  .items-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* ── Selling: the strip, then the table ─────────────────────────────────────────────────── */
+.items-strip {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px 28px;
+  margin-block: 14px 36px;
+  padding: 18px 20px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--page);
+}
+.items-strip-figure {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-radius: 8px;
+  text-align: start;
+  cursor: pointer;
+}
+.items-strip-figure:focus-visible,
+.items-strip-about:focus-visible {
+  outline: 2px solid var(--focus-edge);
+  outline-offset: 4px;
+}
+.items-strip-label {
+  color: var(--ink-3);
+  font-size: 13px;
+  line-height: 18px;
+}
+.items-strip-figure .items-coin {
+  gap: 9px;
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 26px;
+  line-height: 32px;
+  font-variant-numeric: tabular-nums;
+}
+.items-strip-figure[data-items-held] .items-coin {
+  color: var(--ink-2);
+}
+.items-strip-about {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  margin-inline-start: auto;
+  padding-inline: 14px;
+  border-radius: 11px;
+  background: var(--soft);
+  color: var(--ink);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background-color var(--dur) ease-out;
+}
+.items-strip-about:hover {
+  background: var(--control-hover, var(--hover));
+}
+.items-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+.items-table th {
+  padding: 0 12px 10px 0;
+  border-block-end: 1px solid var(--line);
+  color: var(--ink-3);
+  font-size: 12px;
+  font-weight: 400;
+  text-align: start;
+}
+.items-table .items-num {
+  padding-inline: 12px 24px;
+  font-family: var(--font-family-mono);
+  font-variant-numeric: tabular-nums;
+  text-align: end;
+  white-space: nowrap;
+}
+.items-row td {
+  height: 58px;
+  padding-block: 6px;
+  border-block-end: 1px solid var(--line);
+}
+.items-row-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.items-row-render {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  border-radius: 9px;
+  box-shadow: inset 0 0 0 1px var(--item-edge);
+}
+.items-row-render .item-render-picture {
+  width: 76%;
+  height: 76%;
+}
+.items-row-words {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.items-row-name {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 15px;
+  line-height: 20px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.items-row-game {
+  overflow: hidden;
+  color: var(--ink-3);
+  font-size: 13px;
+  line-height: 18px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.items-row[data-dimmed] :is(.items-row-render, .items-row-name, .items-num) {
+  opacity: 0.5;
+}
+.items-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink-3);
+  font-size: 14px;
+  white-space: nowrap;
+}
+.items-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: currentcolor;
+}
+.items-status[data-items-status="draft"] {
+  color: var(--ink);
+  cursor: pointer;
+}
+.items-status[data-items-status="draft"] .items-status-dot {
+  background: var(--accent-primary);
+}
+.items-status[data-items-status="draft"]:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.items-status-link {
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+.items-status[data-items-status="under-review"] {
+  color: var(--orange);
+}
+.items-status:focus-visible,
+.items-row-more:focus-visible {
+  outline: 2px solid var(--focus-edge);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+.items-row-actions {
+  width: 40px;
+  text-align: end;
+}
+.items-row-more {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-control);
+  color: var(--ink-3);
+  cursor: pointer;
+}
+.items-row-more:hover {
+  background: var(--control-hover, var(--hover));
+  color: var(--ink);
+}
+.items-row-more:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+@container (max-width: 720px) {
+  .items-table .items-num:nth-child(4) {
+    display: none;
+  }
+}
+
+/* ── The chat's Listing draft card ──────────────────────────────────────────────────────── */
+/* The stage's Shop tab: the game's item tiles, as many to a row as the stage's width holds. */
+.shop-stage {
+  padding: 20px;
+}
+.shop-note {
+  margin-block-end: 14px;
+  color: var(--ink-3);
+  font-size: 13px;
+  line-height: 18px;
+}
+.shop-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  align-items: start;
+  gap: 12px;
+}
+.shop-grid .listing-card {
+  max-width: none;
+}
+.listing-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 512px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--page);
+}
+.listing-head {
+  display: flex;
+  gap: 14px;
+  min-width: 0;
+}
+.listing-render {
+  flex: none;
+  width: 132px;
+  height: 132px;
+  border-radius: 12px;
+  box-shadow: inset 0 0 0 1px var(--item-edge);
+}
+/* A store item's picture is square and fills its card edge to edge (Studio refuses a smaller one). */
+.listing-render .item-render-picture {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.listing-words {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding-block-start: 4px;
+}
+.listing-name {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 500;
+  line-height: 24px;
+  overflow-wrap: anywhere;
+}
+.listing-description {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--ink-2);
+  font-size: 13px;
+  line-height: 19px;
+  white-space: pre-line;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.listing-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.listing-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding-inline: 9px 11px;
+  border-radius: 8px;
+  background: var(--soft);
+  color: var(--ink);
+  font-size: 13px;
+}
+.listing-price {
+  font-family: var(--font-family-mono);
+}
+.listing-share .peer {
+  margin: 0;
+}
+.listing-share label {
+  cursor: pointer;
+}
+.listing-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.listing-or {
+  color: var(--ink-3);
+  font-size: 13px;
+}
+.listing-sale-state {
+  color: var(--purchase-paid-ink);
+  font-size: 13px;
+}
+.listing-refusal {
+  color: var(--red);
+  font-size: 13px;
+  line-height: 18px;
+}
+.listing-local-status {
+  color: var(--ink-3);
+  font-size: 13px;
+  line-height: 18px;
+}
+.listing-note {
+  color: var(--ink-2);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+/* The Shop's tile: the picture on top, its status and pencil over it, then the name beside the price. */
+.listing-tile {
+  gap: 10px;
+  padding: 10px;
+}
+.listing-picture {
+  position: relative;
+}
+.listing-tile .listing-render {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1;
+  border-radius: 11px;
+}
+.listing-pill {
+  position: absolute;
+  inset-block-start: 8px;
+  inset-inline-start: 8px;
+  padding: 3px 8px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--page) 72%, transparent);
+  color: var(--ink);
+  font-family: var(--font-family-mono);
+  font-size: 11px;
+  line-height: 16px;
+}
+.listing-pill[data-listing-on-sale] {
+  color: var(--purchase-paid-ink);
+}
+.listing-ask {
+  position: absolute;
+  inset-block-start: 6px;
+  inset-inline-end: 6px;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--page) 72%, transparent);
+  color: var(--ink);
+  cursor: pointer;
+  transition: background-color var(--dur) ease-out;
+}
+.listing-ask:hover {
+  background: var(--control-hover, var(--hover));
+}
+.listing-ask:focus-visible {
+  outline: 2px solid var(--focus-edge);
+  outline-offset: 2px;
+}
+.listing-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  padding-inline: 4px;
+}
+.listing-tile .listing-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 15px;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.listing-title .listing-chip {
+  height: auto;
+  padding: 0;
+  background: none;
+}
+.listing-tile .listing-description {
+  padding-inline: 4px;
+}
+.listing-tile .listing-share {
+  align-self: flex-start;
+}
+.listing-tile > :last-child:not(.listing-picture) {
+  margin-block-end: 4px;
+}
+/* The code genex.games refused with, when Studio has no words of its own for it. */
+.listing-refusal-code {
+  margin-inline-start: 6px;
+  font-family: var(--font-family-mono);
+  font-size: 12px;
+  opacity: 0.85;
+}

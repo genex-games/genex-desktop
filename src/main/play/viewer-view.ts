@@ -25,7 +25,7 @@ import {
   webContents,
 } from "electron";
 import { StudioPlatform } from "../../shared/boot.ts";
-import type { PlayPoint, PlayViewerEvent } from "../../shared/play.ts";
+import type { PlayOrigins, PlayPoint, PlayViewerEvent } from "../../shared/play.ts";
 import { UiEvent } from "../../shared/ui-events.ts";
 import { type PlayMicCommand, PlayMicChannel, type PlayMicReport, readMicReport } from "../../shared/play-mic.ts";
 import type { FullScreenKey, Rect } from "../game-full-screen.ts";
@@ -34,6 +34,7 @@ import { createReloadPolicy, ReloadDecision } from "../app-lifecycle.ts";
 import { pushToRenderer } from "../ipc-handle.ts";
 import type { PlayComments } from "./comments.ts";
 import type { SheetInput, ViewerCoin } from "./viewer-purchase.ts";
+import type { CertificateRequest, CertificateVerdict } from "./dev-games-trust.ts";
 import { linkGate, playAddress, playNavigationAllowed } from "./game-address.ts";
 import type { PlayGallery } from "./gallery.ts";
 import { playPermissionShown, playPermitted } from "./game-permissions.ts";
@@ -107,6 +108,13 @@ export interface PlayViewDeps {
   openExternal(url: string): void;
   /** The website Play links to: Share and Invite copy the game's page there. */
   web: string;
+  /** Where games are served and the website their pages hop to: genex.games', or a development stand's. */
+  origins: Pick<PlayOrigins, "web" | "games">;
+  /**
+   * A development stand's own CA, trusted for its game hosts only (`dev-games-trust.ts`); absent in
+   * every other launch, where Chromium alone judges certificates.
+   */
+  certificates?: (request: CertificateRequest) => CertificateVerdict;
   /** Fixture launches: a local stand-in page instead of the network. */
   offline: { gamePage(slug: string): string } | null;
   /** The game view's preload (`dist/preload/play-mic.cjs`). */
@@ -122,11 +130,13 @@ export interface PlayViewDeps {
   comments: PlayComments;
   /** A web game's native app on this computer, for the bar's pill; absent where Genex plays no native game. */
   nativeApp?: PlayViewerDeps["nativeApp"];
+  /** Whether a game sells items, for the bar's Store door; the Store itself is drawn by the studio's page. */
+  storeShown?: (slug: string) => Promise<boolean>;
   /** genex.games' coin, for a game's purchase sheet. */
   coin: ViewerCoin;
   /** The app's Genex account: the purchase sheet's Sign in. */
   account: { signIn(): void };
-  /** A genex.games page the purchase sheet opens (Get coin): to the browser. */
+  /** A genex.games page the purchase sheet opens (Get Nex): to the browser. */
   openPage(url: string): void;
   /**
    * Where genex.games confirms a game's purchase (`purchaseConfirmOrigin`): the game's popup for it is
@@ -247,12 +257,12 @@ function guardNavigation(contents: WebContents, play: Session, deps: PlayViewDep
   const offline = deps.offline !== null;
   const sendOut = linkGate(deps.openExternal);
   contents.on("will-navigate", (event, target) => {
-    if (playNavigationAllowed(target, offline)) return;
+    if (playNavigationAllowed(target, offline, deps.origins)) return;
     event.preventDefault();
     sendOut(target);
   });
   contents.on("will-redirect", (event) => {
-    if (!event.isMainFrame || playNavigationAllowed(event.url, offline)) return;
+    if (!event.isMainFrame || playNavigationAllowed(event.url, offline, deps.origins)) return;
     event.preventDefault();
   });
   wirePurchaseCapture(play, contents, {
@@ -366,6 +376,9 @@ function barLayer(win: BrowserWindow, deps: PlayViewDeps, lost: () => void, hear
  */
 function gameView(win: BrowserWindow, deps: PlayViewDeps, events: ViewerEvents, raiseBar: () => void) {
   const play = playSession();
+  const trust = deps.certificates;
+  // A development stand's own CA, for its game hosts only; every other launch leaves Chromium to judge.
+  if (trust) play.setCertificateVerifyProc((request, answer) => answer(trust(request)));
   let current: WebContentsView | null = null;
   const close = (): void => {
     const view = current;
@@ -475,7 +488,7 @@ export function wirePlayViewer(deps: PlayViewDeps): PlayViewer {
   viewsOf.set(win, { bar: bar.view, game: game.view });
   const made = playViewer({
     gallery: deps.gallery,
-    gameUrl: (slug, ticket) => (offline ? offline.gamePage(slug) : playAddress(slug, ticket)),
+    gameUrl: (slug, ticket) => (offline ? offline.gamePage(slug) : playAddress(slug, ticket, deps.origins.games)),
     window: {
       contentSize: () => {
         if (win.isDestroyed()) return { width: 0, height: 0 };
@@ -491,6 +504,17 @@ export function wirePlayViewer(deps: PlayViewDeps): PlayViewer {
     bar,
     comments: deps.comments,
     ...(deps.nativeApp ? { nativeApp: deps.nativeApp } : {}),
+    // The Store opens in the game's place on the studio's own page, which takes the keyboard for it.
+    ...(deps.storeShown
+      ? {
+          store: {
+            shown: deps.storeShown,
+            focusPage: () => {
+              if (!win.isDestroyed()) win.webContents.focus();
+            },
+          },
+        }
+      : {}),
     coin: deps.coin,
     account: deps.account,
     openPage: deps.openPage,

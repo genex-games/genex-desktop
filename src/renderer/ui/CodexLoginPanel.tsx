@@ -4,6 +4,9 @@ import { isCodexLoginActive, type CodexLoginState } from "../../shared/codex-log
 import { Button } from "./Button.tsx";
 import { errorMessage } from "../../shared/errors.ts";
 import { t } from "../../shared/i18n.ts";
+import { EngineId } from "../../shared/providers.ts";
+import { reportSignInHelper } from "../analytics/welcome-report.ts";
+import { SignInHelper } from "../analytics/welcome-vocabulary.ts";
 import { useAsyncEffect } from "../use-async-effect.ts";
 
 /** What the dialog says under its title, for where the sign-in stands. */
@@ -52,7 +55,8 @@ export function CodexLoginPanel(): JSX.Element | null {
   }, [state?.revision]);
 
   if (!state?.visible) return null;
-  const act = async (action: () => Promise<unknown>): Promise<void> => {
+  const act = async (action: () => Promise<unknown>, helper?: SignInHelper): Promise<void> => {
+    if (helper) reportSignInHelper(EngineId.Codex, helper, { phase: state.phase });
     setBusy(true);
     setError(null);
     try {
@@ -73,16 +77,21 @@ export function CodexLoginPanel(): JSX.Element | null {
       description={<span aria-live="polite">{loginDescription(state)}</span>}
       size="xl"
       testId="codex-login-panel"
-      onDismiss={() => void window.studio.codexLoginDismiss().catch(() => {})}
+      onDismiss={() => {
+        reportSignInHelper(EngineId.Codex, SignInHelper.PanelDismissed, { phase: state.phase });
+        void window.studio.codexLoginDismiss().catch(() => {});
+      }}
     >
       <div>
         <div className="mt-4 overflow-hidden rounded-control bg-inset shadow-hairline">
           <div className="border-b border-line px-3 py-2 font-mono text-micro text-ink-3">
             $ codex login{state.method === "device" ? " --device-auth" : ""}
           </div>
+          {/* The CLI's lines can name the account: a replay shows them masked. */}
           <pre
             ref={log}
             aria-label={t("Codex sign-in output")}
+            data-analytics-mask
             tabIndex={0}
             className="max-h-[220px] min-h-[100px] overflow-auto px-3 py-3 font-mono text-xs leading-relaxed whitespace-pre-wrap break-all text-ink-2"
           >
@@ -92,7 +101,7 @@ export function CodexLoginPanel(): JSX.Element | null {
         {state.deviceCode && (
           <div className="mt-3 rounded-control bg-accent-tint p-3 text-center">
             <span className="text-micro text-ink-2">{t("Your one-time code")}</span>
-            <div className="mt-1 select-all font-mono text-[23px] tracking-widest text-accent-ink">
+            <div className="mt-1 select-all font-mono text-[23px] tracking-widest text-accent-ink" data-analytics-mask>
               {state.deviceCode}
             </div>
           </div>
@@ -107,7 +116,7 @@ export function CodexLoginPanel(): JSX.Element | null {
             <Button
               variant="default"
               disabled={busy}
-              onClick={() => void act(() => window.studio.codexLoginOpenBrowser())}
+              onClick={() => void act(() => window.studio.codexLoginOpenBrowser(), SignInHelper.PageReopened)}
             >
               {t("Open sign-in page")}
             </Button>
@@ -116,13 +125,16 @@ export function CodexLoginPanel(): JSX.Element | null {
             <Button
               variant="default"
               disabled={busy}
-              onClick={() => void act(() => window.studio.codexLoginRetry("browser"))}
+              onClick={() => void act(() => window.studio.codexLoginRetry("browser"), SignInHelper.Retried)}
             >
               {t("Try again")}
             </Button>
           )}
           {offersDeviceCode && (
-            <Button disabled={busy} onClick={() => void act(() => window.studio.codexLoginRetry("device"))}>
+            <Button
+              disabled={busy}
+              onClick={() => void act(() => window.studio.codexLoginRetry("device"), SignInHelper.DeviceCodeRequested)}
+            >
               {t("Use a device code")}
             </Button>
           )}
@@ -130,7 +142,7 @@ export function CodexLoginPanel(): JSX.Element | null {
           <Button
             variant={connected ? "default" : "secondary"}
             disabled={busy}
-            onClick={() => void act(() => window.studio.codexLoginDismiss())}
+            onClick={() => void act(() => window.studio.codexLoginDismiss(), SignInHelper.PanelDismissed)}
           >
             {dismissLabel(state)}
           </Button>

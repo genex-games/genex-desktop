@@ -29,6 +29,12 @@ const NATIVE_CHANNELS = [
   "studio:subscription.use-account",
   // OpenCode's sign-in runs its CLI in a terminal and reaches the provider the person picks.
   "studio:opencode.signin",
+  // Grok Build's sign-in runs its CLI in a terminal and signs in to the person's Grok account.
+  "studio:grok.signin",
+  // Cursor's sign-in runs its CLI in a terminal and opens Cursor in the browser; signing out has
+  // the CLI forget the account it keeps.
+  "studio:cursor.signin",
+  "studio:cursor.signout",
   // Opens the sign-in page a terminal printed in the person's browser.
   "studio:terminal.open-link",
   // Saving checks the key with OpenRouter and writes it to the OS secret store; forgetting it
@@ -245,12 +251,8 @@ const FIXTURE_SAFE = [
   "studio:run.finish",
   "studio:review.play",
   "studio:autopilot.resume",
-  "studio:skillopt.start",
-  "studio:skillopt.accept",
-  "studio:skillopt.discard",
   "studio:selfchanges",
   "studio:selfchange.undo",
-  "studio:staged",
   "studio:settings",
   "studio:settings.set",
   // Reads the profile's own log and engine statuses; the renderer does the copying.
@@ -373,6 +375,35 @@ const FIXTURE_SAFE = [
   // socket opens.
   "studio:play.manage",
   "studio:play.cover",
+  // The store and Create › Items: a fixture launch answers every store and creator route, a page
+  // purchase and its coin from its own data (`dev/fixture-store.ts` over `dev/fixture-play.ts`),
+  // signed out unless it asks for its fixture account; a purchase, a claim, an allowance or Put on
+  // sale lasts the launch, and Get Nex opens no page, so no socket opens.
+  "studio:store.items",
+  "studio:store.my-items",
+  "studio:store.item-games",
+  "studio:store.buy",
+  "studio:store.answer",
+  "studio:store.claim",
+  "studio:store.shelf",
+  "studio:store.coins",
+  "studio:store.get-coin",
+  "studio:store.report",
+  "studio:items.browse",
+  "studio:items.detail",
+  "studio:items.add",
+  "studio:items.remove",
+  "studio:items.selling",
+  "studio:items.put-on-sale",
+  "studio:items.take-off-sale",
+  "studio:items.shared",
+  // A game's local item drafts: approvals live in the profile's own app data, and a fixture launch
+  // settles and shares them from its own store (`dev/fixture-items.ts`), so no CLI runs and no socket opens.
+  "studio:items.local",
+  "studio:items.local-approve",
+  "studio:items.local-withdraw",
+  "studio:items.local-share",
+  "studio:items.local-settle",
   // The app's Genex account: a fixture launch's is its own (`dev/fixture-genex-account.ts`), signed
   // in as the fixture account it asked for; its sign-in opens no page and its sign-out lasts the launch.
   "studio:genex-account.read",

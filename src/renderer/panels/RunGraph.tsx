@@ -46,14 +46,16 @@ import { BuildStatus, type BuildTabs, PlayButton, ZoomPill } from "./run-graph/c
 import { GateButton, GateTip, gateWords } from "./run-graph/gates.tsx";
 import {
   AssetsTile,
+  BuildNode,
   FinishCheckNode,
+  FoldCard,
   JobsTile,
   LeadNode,
-  OptimizationTile,
   ResultNode,
   StartNode,
   StepNode,
 } from "./run-graph/nodes.tsx";
+import { foldId } from "../run-graph-builds.ts";
 import { useBuildsModel, useNow, useRunStills } from "./run-graph/use-builds-model.ts";
 import { GLIDE_MS, useGraphCamera } from "./run-graph/use-graph-camera.ts";
 import { Inspector, Lightbox, type LightItem, type Reply } from "./RunInspector.tsx";
@@ -61,6 +63,15 @@ import { type ReferenceFrame, useReferenceFrames } from "./run-stills.ts";
 import { webBuildShown } from "../web-build-shown.ts";
 import { Pending } from "../ui/Pending.tsx";
 import { Skeleton, SkeletonLines } from "../ui/Skeleton.tsx";
+import { nodeKindOf } from "../analytics/builds-stage.ts";
+import { track } from "../analytics/client.ts";
+import { AnalyticsEvent } from "../analytics/events.ts";
+import { BuildSurface, NodeVia } from "../analytics/events/builds.ts";
+
+/** A node opened on the graph, and how. */
+function noteNodeOpened(id: string, via: NodeVia, active: boolean): void {
+  track(AnalyticsEvent.BuildsNodeOpened, { node_kind: nodeKindOf(id), via, run_active: active });
+}
 
 export { gateWords } from "./run-graph/gates.tsx";
 export { assetsStatus } from "./inspector/asset-jobs.ts";
@@ -194,22 +205,25 @@ function useStepper(overlays: Overlays, model: BuildsModel): (dir: number) => vo
       const facetId = partOf(selected);
       const first = facetId ? rows.find((row) => row.facet.facetId === facetId)?.steps[0]?.id : undefined;
       const next = first && dir > 0 ? first : ringStep(selectable, selectable.indexOf(first ?? selected ?? ""), dir);
-      if (next) setSelectedId(next);
+      if (!next) return;
+      noteNodeOpened(next, NodeVia.Arrow, model.graph.active === true);
+      setSelectedId(next);
     },
-    [rows, selectable, selected, setSelectedId],
+    [rows, selectable, selected, setSelectedId, model.graph.active],
   );
 }
 
 /** What a press on the canvas does: select a node, clear, or open a gate's node on its judges' notes. */
-function useCanvasActions(overlays: Overlays, moved: { current: boolean }) {
+function useCanvasActions(overlays: Overlays, moved: { current: boolean }, active: boolean) {
   const { setSelectedId, setTip } = overlays;
   const select = useCallback(
     (id: string): void => {
       if (moved.current) return;
       setTip(null);
+      noteNodeOpened(id, NodeVia.Click, active);
       setSelectedId(id);
     },
-    [moved, setSelectedId, setTip],
+    [moved, setSelectedId, setTip, active],
   );
   const onBackgroundClick = useCallback((): void => {
     if (moved.current) return;
@@ -220,9 +234,10 @@ function useCanvasActions(overlays: Overlays, moved: { current: boolean }) {
     (gate: GatePoint, notesId: string | null): void => {
       if (moved.current) return;
       setTip(null);
+      noteNodeOpened(gate.target, NodeVia.GateNotes, active);
       setSelectedId(gate.target, notesId);
     },
-    [moved, setSelectedId, setTip],
+    [moved, setSelectedId, setTip, active],
   );
   return useMemo(() => ({ select, onBackgroundClick, openGate }), [select, onBackgroundClick, openGate]);
 }
@@ -239,15 +254,20 @@ function useBuildActions(
   const { outcome, graph } = model;
   if (!runIdOf(graph)) return turnActions(graph, onShowLive);
   const hasBuild = Boolean(outcome?.head && outcome.head !== outcome.base);
+  const runActive = graph.active === true;
   const play = (): Promise<void> | void => {
     if (!project || !outcome?.head) return;
     return window.studio
       .showBuild(project, outcome.head)
       .then(() => {
+        track(AnalyticsEvent.BuildPlayed, { surface: BuildSurface.BuildsBar, run_active: runActive, ok: true });
         webBuildShown(project);
         onShowLive?.();
       })
-      .catch(notifyProblem(onNotice));
+      .catch((error: unknown) => {
+        track(AnalyticsEvent.BuildPlayed, { surface: BuildSurface.BuildsBar, run_active: runActive, ok: false });
+        notifyProblem(onNotice)(error);
+      });
   };
   const openJob = (job: AssetInfo): void => {
     if (!onShowAsset || !(job.generationId || job.jobId)) return;
@@ -309,7 +329,7 @@ export const RunGraph = memo(function RunGraph({
   });
   const step = useStepper(overlays, model);
   useGraphKeys(overlays, camera.fitAll, step);
-  const actions = useCanvasActions(overlays, camera.moved);
+  const actions = useCanvasActions(overlays, camera.moved, model.graph.active === true);
   const { hasBuild, play, openJob } = useBuildActions(project, model, { onShowLive, onShowAsset, onNotice });
   const playBar = barPlay(hasBuild, play, onShowLive);
 
@@ -421,13 +441,14 @@ function SelectedPanel({
       base={model.base}
       blender={model.blender}
       assets={model.assets}
-      optimization={model.optimization}
       project={project}
       references={references}
       baseSrc={stills.baseSrc}
       resultSrc={stills.resultSrc}
       resultPath={stills.resultPath}
       resultBorrowed={stills.borrowed}
+      resultPairsWithBase={stills.pairsWithBase}
+      timeline={model.timeline}
       leadFrame={leadFrame}
       onClose={() => overlays.setSelectedId(null)}
       onSelect={(id) => overlays.setSelectedId(id)}
@@ -603,6 +624,8 @@ const RowLabels = memo(function RowLabels({
             key={row.facet.id}
             type="button"
             data-graph-row={row.facet.facetId}
+            // A part is named by the build, from the person's request.
+            data-analytics-mask
             aria-pressed={selected === id}
             className="absolute flex min-w-0 cursor-pointer items-baseline gap-1.5 overflow-hidden rounded-[6px] px-0.5 text-left whitespace-nowrap hover:[&>span:first-child]:underline focus-visible:outline-2 focus-visible:outline-accent group-data-[zoom=far]/canvas:hidden"
             style={{ left: rect.x - 2, top: rect.y, maxWidth: rect.w }}
@@ -637,7 +660,7 @@ const GraphNodes = memo(function GraphNodes({
   selected: string | null;
   onSelect: (id: string) => void;
 }): JSX.Element {
-  const { graph, layout, optimization, leadNode, finishCheck } = model;
+  const { graph, layout, leadNode, finishCheck } = model;
   const lastSave = useMemo(() => lastSavePoint(model.rows), [model.rows]);
   const jobsRect = layout.rects[GraphSelection.Jobs];
   const finishRect = layout.rects[GraphSelection.FinishCheck];
@@ -663,27 +686,24 @@ const GraphNodes = memo(function GraphNodes({
           onSelect={() => onSelect(GraphSelection.Assets)}
         />
       ) : null}
-      {model.steps.map((node) => (
-        <StepNode
-          key={node.id}
-          project={project}
-          runId={graph.runId}
-          active={graph.active}
-          step={node}
-          rect={layout.rects[node.id]}
-          ghost={layout.ghosts.has(node.id)}
-          selected={selected === node.id}
-          onSelect={onSelect}
-        />
-      ))}
-      {optimization && layout.rects.optimization ? (
-        <OptimizationTile
-          node={optimization}
-          rect={layout.rects.optimization}
-          selected={selected === GraphSelection.Optimization}
-          onSelect={() => onSelect(GraphSelection.Optimization)}
-        />
-      ) : null}
+      {model.steps.map((node) => {
+        const place = model.timeline?.places.get(node.id);
+        return (
+          <StepNode
+            key={node.id}
+            project={project}
+            runId={graph.runId}
+            active={graph.active}
+            step={node}
+            rect={layout.rects[node.id]}
+            ghost={layout.ghosts.has(node.id)}
+            selected={selected === node.id}
+            onSelect={onSelect}
+            place={place ?? null}
+          />
+        );
+      })}
+      <BuildLine model={model} selected={selected} onSelect={onSelect} />
       <ResultNode
         active={graph.active}
         status={stills.result}
@@ -722,6 +742,43 @@ const GraphNodes = memo(function GraphNodes({
     </>
   );
 });
+
+/** A Loop's builds on their line, and the cards that fold a build's finished workers. */
+function BuildLine({
+  model,
+  selected,
+  onSelect,
+}: {
+  model: BuildsModel;
+  selected: string | null;
+  onSelect: (id: string) => void;
+}): JSX.Element | null {
+  const { timeline, layout, toggleFold } = model;
+  if (!timeline) return null;
+  return (
+    <>
+      {timeline.builds.map((build) => (
+        <BuildNode
+          key={build.id}
+          build={build}
+          rect={layout.rects[build.id]}
+          selected={selected === build.id}
+          onSelect={onSelect}
+        />
+      ))}
+      {timeline.hangers.map((hangers) =>
+        hangers.folded ? (
+          <FoldCard
+            key={hangers.build}
+            hangers={hangers}
+            rect={layout.rects[foldId(hangers.build)]}
+            onToggle={toggleFold}
+          />
+        ) : null,
+      )}
+    </>
+  );
+}
 
 /** Opening the only build there is does nothing. */
 const STAY = (): void => {};

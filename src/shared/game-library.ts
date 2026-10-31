@@ -60,9 +60,70 @@ export function coverFromBrief(brief: string, style: CoverStyle = "world"): Extr
   return { kind: "procedural", seed, style, palette };
 }
 
+/**
+ * Why a game, or a folder for one, was refused: making one, choosing where, opening a folder,
+ * renaming, pinning, a new cover, removing one, or moving the games folder. Each value is also the
+ * refusal's code across IPC (`shared/error-codes.ts`), beside the words a person reads.
+ */
+export const WorkspaceRefusal = {
+  InvalidTitle: "game_title_invalid",
+  InvalidCover: "game_cover_invalid",
+  CoverUnreadable: "game_cover_unreadable",
+  CoverTooLarge: "game_cover_too_large",
+  FolderGone: "game_folder_gone",
+  InvalidPin: "game_pin_invalid",
+  /** A chat or a contractor is still working in the game. */
+  WorkRunning: "game_work_running",
+  BuildRunning: "game_build_running",
+  GameNotFound: "game_not_found",
+  /** The whole disk, the app's own data, a Claude Code folder, or a folder this launch protects. */
+  LocationRefused: "location_refused",
+  LocationGone: "location_gone",
+  LocationNotFolder: "location_not_folder",
+  InsideGame: "location_inside_game",
+  RootNotEmpty: "games_root_not_empty",
+  SubdirIsPath: "folder_subdir_is_path",
+  NoSuchSubdir: "folder_no_such_subdir",
+  /** The home folder, the disk, the Library folder, the app's data or the games folder itself. */
+  BannedFolder: "folder_banned",
+  AppFolder: "folder_of_app",
+  InvalidName: "project_name_invalid",
+  /** A folder picker asked for with no window to show it over. */
+  NoWindow: "picker_no_window",
+} as const;
+export type WorkspaceRefusal = (typeof WorkspaceRefusal)[keyof typeof WorkspaceRefusal];
+
+/** Why an export of a game's public copy stopped, as its code across IPC beside the words. */
+export const ExportRefusal = {
+  NeedsBuild: "export_needs_build",
+  BuildFailed: "export_build_failed",
+  FilesUndeclared: "export_files_undeclared",
+  FilesInvalid: "export_files_invalid",
+  TargetInsideGame: "export_target_inside_game",
+  TargetNotFolder: "export_target_not_folder",
+  TargetNotExport: "export_target_not_export",
+  PublicPathInvalid: "export_public_path_invalid",
+  PublicPathMissing: "export_public_path_missing",
+  Symlink: "export_symlink",
+  NotAFile: "export_not_a_file",
+  /** A public file holds a credential Studio keeps. */
+  SecretLeaked: "export_secret_leaked",
+  NoEntry: "export_no_entry",
+  ScopedImportMap: "export_scoped_import_map",
+  UnresolvedModule: "export_unresolved_module",
+  MissingReference: "export_missing_reference",
+} as const;
+export type ExportRefusal = (typeof ExportRefusal)[keyof typeof ExportRefusal];
+
+/**
+ * A refusal with its code, for this module: it cannot import `CodedError` (`shared/errors.ts`
+ * lists this module's vocabularies), and `errorCode` reads any thrown value's `code`.
+ */
+const refused = (code: WorkspaceRefusal, words: string): Error => Object.assign(new Error(words), { code });
+
 export function validateGameTitle(value: unknown): string {
   if (typeof value !== "string" || !value.trim() || value.trim().length > 80 || /[\x00-\x1f]/.test(value)) {
-    throw new Error(t("Enter a game name between 1 and 80 characters."));
+    throw refused(WorkspaceRefusal.InvalidTitle, t("Enter a game name between 1 and 80 characters."));
   }
   return value.trim();
 }
@@ -110,7 +171,7 @@ export function validateGameCover(cover: GameCover): void {
     return;
   }
   if (isProceduralCover(cover) || isImageCover(cover)) return;
-  throw new Error(t("Choose a PNG, JPEG or WebP image, or a valid cover recipe."));
+  throw refused(WorkspaceRefusal.InvalidCover, t("Choose a PNG, JPEG or WebP image, or a valid cover recipe."));
 }
 
 const UNKEYED_COVER: CoverRecipe = { kind: "recipe", family: "clouds", palette: "genex", seed: 23, placeholder: true };

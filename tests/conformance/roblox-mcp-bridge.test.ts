@@ -10,7 +10,12 @@ import { MAX_PLAY_SHOT_BYTES } from "../../src/shared/engine-play.ts";
 import { validateManifest } from "../../src/substrate/plugins/manifest.ts";
 import { AGENT_BUSY_FILE } from "../../src/plugins/roblox/agent-marks.ts";
 import { BINDING_FILE, BINDING_MAX_AGE_MS, type PlaceLink } from "../../src/plugins/roblox/studio-binding.ts";
-import { createStudioClient, type StudioClient } from "../../src/plugins/roblox/studio-client.ts";
+import {
+  createStudioClient,
+  type StudioClient,
+  StudioClientError,
+  StudioClientFailure,
+} from "../../src/plugins/roblox/studio-client.ts";
 import { createStudioMcp, type StudioMcpDeps } from "../../src/plugins/roblox/studio-mcp.ts";
 import { shrinkCommand, systemShrink } from "../../src/plugins/roblox/studio-shot.ts";
 import { classOf, READ_TOOLS, STUDIO_TOOLS, StudioToolClass } from "../../src/plugins/roblox/studio-tools.ts";
@@ -57,11 +62,13 @@ type Setup = {
   running?: boolean;
   shrink?: StudioMcpDeps["shrink"];
   wrap?: (client: StudioClient, folder: string) => StudioClient;
+  /** The connection's folder: a later connection of the same game reuses an earlier one's. */
+  folder?: string;
 };
 
 async function connect(setup: Setup = {}) {
   const dir = await tmpDir("roblox-bridge-");
-  const folder = path.join(dir, "mcp", "game-1");
+  const folder = setup.folder ?? path.join(dir, "mcp", "game-1");
   await mkdir(folder, { recursive: true });
   const log = path.join(dir, "calls.jsonl");
   const stand = standInClient(["--log", log, ...(setup.flags ?? [])]);
@@ -320,6 +327,27 @@ test("a write marks the agent busy around the call; a read marks nothing", async
     assert.deepEqual(after, { since: NOW, until: NOW });
   } finally {
     await bridge.close();
+  }
+});
+
+test("a connection whose Studio does not answer its listing offers the tools the game's last listing had", async () => {
+  const first = await connect();
+  const listed = (await first.agent.listTools()).tools.map((tool) => tool.name).sort();
+  await first.close();
+  // A new connection (a plugin update, a restart) while Studio is too busy to list its tools.
+  const silent = (client: StudioClient): StudioClient => ({
+    ...client,
+    listTools: async () => {
+      throw new StudioClientError(StudioClientFailure.TimedOut, "no answer");
+    },
+  });
+  const later = await connect({ folder: first.folder, wrap: silent });
+  try {
+    const names = (await later.agent.listTools()).tools.map((tool) => tool.name).sort();
+    assert.deepEqual(names, listed, "the agent keeps its Studio tools, and a call says what Studio answers");
+    assert.ok(names.includes("execute_luau"));
+  } finally {
+    await later.close();
   }
 });
 

@@ -1,7 +1,8 @@
 # Genex models at play time in AI Game Studio: the first step
 
 You are building inside AI Game Studio. Below the upstream marker is Genex's card on the play-time
-model lane, unchanged. Where it disagrees with this preface, this preface wins.
+model lane, with the passages of advice Studio does not ship taken out. Where it disagrees with
+this preface, this preface wins.
 
 - `npx genex llm models`: `genex__cli {"command":"llm models"}`. `npx genex doctor`:
   `genex__cli {"command":"doctor"}`, or `genex__asset` with operation `status`.
@@ -11,10 +12,10 @@ model lane, unchanged. Where it disagrees with this preface, this preface wins.
 - Other commands map onto Studio tools as the `genex` skill describes
   (`genex__skill {"name":"genex"}`).
 
-<!-- upstream @genex-ai/cli-demo/templates/skills/genex-tool-llm/SKILL.md v1.36.13 sha256 5c36a3715b43ceee8aef777769298d8a686b5fa64b81013b4d4babf49c99ca42 -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-tool-llm/SKILL.md v1.36.17 sha256 61ca897ac8d006b6fa61abbd74583a45488150ce9fe6d91b7970a87e4cd816ea -->
 ---
 name: genex-tool-llm
-description: A language model running while somebody PLAYS the finished game — an NPC that answers in its own words, a quest written from what the player typed, a prompt box in the game. On Genex the player pays and approves it, so this is a platform feature, never a key on the author's meter. Read this the moment a request implies a model at play time, before building anything.
+description: A language model running while somebody PLAYS the finished game — an NPC that answers in its own words, a quest written from what the player typed, a prompt box in the game. On Genex the player pays and approves it, so this is a platform feature, never a key on the author's meter.
 ---
 
 # Genex Tools · Models at play time
@@ -49,27 +50,13 @@ Any of these means a model at PLAY time, however it is phrased:
 - "let the player choose a model", "use my API key in the game", "hook a chatbot into it"
 - a judge, a grader, or a referee that reads free-form player input
 
-## Offer it in one line, then ASK
-
-Say this and stop:
-
-> A model running while people play is built into the Genex platform — the
-> player pays, with Genex coins or their own Claude/ChatGPT subscription, and
-> approves it on a Genex sheet; your game just calls `generate()`. Want it
-> that way?
-
-Wait for the answer. Do not start building either version first, and do not
-expand the offer into a pitch — one line, one question.
-
-## On a yes
+## Building it
 
 1. `npx genex llm models` — whether this stand serves the lane at all, and
    which models. It answers in this folder as it is, before anything is
    converted, so it comes first: if it says the lane is off, in-game calls
-   answer 404 here — tell the user so plainly, build the graceful fallback, and
-   do not convert a folder for a feature the stand does not serve. It prints
-   the FEATURED models; `--all` lists the whole catalog, and you run that only
-   when the user asks for more. Whatever they pick, the picker in the game
+   answer 404 here. It prints
+   the FEATURED models; `--all` lists the whole catalog. Whatever model is picked, the picker in the game
    shows the server's own label for it — a name you invent is a name that
    differs from the model they are billed for.
 2. `npx genex init --convert` — it connects this folder to a hosted Genex game
@@ -86,29 +73,21 @@ a small local Express/Flask app that holds a key and proxies the model — works
 on your machine and can never ship. Calling `generate()` from the browser is
 the shipping shape of that idea.
 
-## On a no
+## No author key
 
-Then build nothing that calls a model at play time. Not a key in `.env`, not a
+A shipped game never calls a model on its author's credential: not a key in `.env`, not a
 local proxy, not the author's own account behind a fetch. A shipped game
 carrying the author's credential means every visitor spends the author's money,
 with nobody approving anything and no limit on it — and the credential is
-readable in the bundle. Say that in one plain sentence, then build the authored
-version instead: a written dialogue tree, a table of lines, a rule-based
-director. Those are not consolation prizes; they are what most good games use.
+readable in the bundle.
 
 ## The honest boundary — text and JSON only
 
 Player-funded generation returns **text or JSON**. Nothing else.
 
 - **"The player types anything and gets a 3D model, paid by them"** is not a
-  thing on this platform. Say so plainly instead of half-building it.
+  thing on this platform.
 - 3D models, images, textures, video, music, voice and characters are the ASSET
   lanes of this toolkit: you generate them while you build, on the user's own
   meter, and they download into `./assets` and ship inside the game. What is
   live and what it costs: `npx genex doctor`.
-- The shape that does work is **JSON parameters, then render**: the model
-  returns a structured description and the game builds it from assets and code
-  you already shipped — a creature assembled from parts you generated, a room
-  laid out from a list of prefab ids, a palette, a stat block, a line delivered
-  from pre-generated voice clips. Offer that when somebody asks for the
-  impossible version.

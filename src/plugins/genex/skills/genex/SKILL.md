@@ -1,60 +1,77 @@
 # Genex in AI Game Studio
 
-You are building inside AI Game Studio. Below the upstream marker is Genex's own guide, unchanged.
-Where it disagrees with this preface, this preface wins.
+You are building inside AI Game Studio. Below the upstream marker is Genex's own guide, with the
+passages of advice Studio does not ship taken out. Where it disagrees with this preface, this preface wins.
 
 ## What does not apply in Studio
 
-- "Where to run this", "Setup" and the CLI version paragraph. The game's folder is already the
-  workspace, Studio ships and pins the Genex CLI, and the user signs in to Genex once in Studio.
+- Setup. The game's folder is already the workspace, Studio ships and pins the Genex CLI, and the
+  user signs in to Genex once in Studio.
   Never check or install Node, never run `npx genex`, `npm i -g` or `npm i -D @genex-ai/cli-demo`,
   and never run `auth`, `tools` or `init`.
 - Skill cards are never copied into the game: no `.claude/skills`, `.agents/skills` or `AGENTS.md`
   is written. The Genex cards Studio carries are this plugin's skills, listed in your brief; read
   one with `genex__skill {"name":"<skill>"}`. The lane cards the "Use it" section points to are
   `genex-tool-model`, `genex-tool-character`, `genex-tool-texture`, `genex-tool-audio` and
-  `genex-tool-image`: read the one for a lane before its first call.
+  `genex-tool-image`, one per lane.
 
 ## Commands, as Studio tools
 
 - Generation (`image`, `model`, `model segment|rig|animate`, `texture`, `sfx`, `music`, `voice`,
-  `character`, `animations search`) and `wait`: `genex__asset`. Call it with operation `status`
-  first; it reports the account, credits and live lanes that `doctor` would. Its description lists
+  `character`, `animations search`) and `wait`: `genex__asset`. Its operation `status` reports
+  the account, credits and live lanes that `doctor` would. Its description lists
   the operations and which provider each lane is; its `options` parameter lists each lane's
   options. Studio passes `--out-dir` and `--no-wait` itself, and delivered files land in the game,
   so wire in those local paths. In a Godot game they land in its project (`godot/assets/...`),
   which the game loads as `res://assets/...`.
-- `doctor`, `budget`, `llm models`, `llm status`, `llm cancel` and `shop list`: `genex__cli`.
-  `budget --assets` is not available: Studio's own asset allowance and the user's approval govern
-  asset spending.
-- `llm bench` and `shop add|set|remove|test`: `genex__cli-paid`. The user approves each call,
-  because it spends coin or changes what the game sells.
+- `doctor`, `budget`, `llm models`, `llm status`, `llm cancel`, `shop list`, `shop add`,
+  `items list` and `items search`: `genex__cli`. `budget --assets` is not available: Studio's own
+  asset allowance and the user's approval govern asset spending. `shop add` asks nobody: it makes
+  a store item's draft, which spends nothing and sells nothing until Studio puts it on sale with the game's publish,
+  and it needs the item's picture (`image`, a square PNG of at least 768 × 768), at any time, with or
+  without a build.
+  So do `shop set` and `shop remove` on a local draft (`local_…`).
+- `llm bench`, `shop set|remove` on an item in the store, `shop test` and `items add|remove`:
+  `genex__cli-paid`. The user
+  approves each call, because it spends Nex (Genex's currency, which the cards call coin) or changes
+  what the game sells. A store item's `image`, `model` and `package` name paths inside this game,
+  and `items add` writes `genex-items/<id>/` into it; `shop publish` is not available, because Studio puts
+  a game's items on sale when it is published. Read the `genex-items` skill first. A thing priced in Nex is a store item; coins, gold or gems are the game's own currency unless the person says they are
+  for real money.
 - `publish` and `promote`: `genex__publish {"operation":"gallery"}`, which also updates the draft;
   use it when the user wants the game published. `preview` alone: `genex__publish
   {"operation":"draft"}`, a test build that leaves the public version as it is. Follow a publish
   with `genex__publish-status` for the job and the links.
-- `cover`, and the frame `preview` picks up from `.genex/scratch/cover.png`: the game's demo named
-  `genex-cover`, checked with `genex__cover {"operation":"shoot"}`. Publish (`genex__publish`)
-  shoots it again and sends it, and `genex__cover-set` sends it now; `genex__cover
-  {"operation":"status"}` is `npx genex cover` with no file. Read `genex__skill
-  {"name":"genex-cover"}` first, and never save a frame in `.genex/scratch`.
+- `cover`, and the frame `preview` picks up from `.genex/scratch/cover.png`: `genex__cover
+  {"image":"<path in the game folder>"}` keeps the picture (and an optional clip) of the game as
+  its cover, and its answer says who chose the cover on Genex, as `npx genex cover` with no file
+  does. Publish (`genex__publish`) sends the kept picture and `genex__cover-set` sends it now; the
+  `cover` skill has the requirement. Never save a frame in `.genex/scratch`.
 - `npm i @genex-ai/multiplayer`: `genex__package {"package":"@genex-ai/multiplayer"}`, and
   `npm i @genex-ai/embed-sdk`: `genex__package {"package":"@genex-ai/embed-sdk"}`. Studio picks
-  the version and the user approves the install. In a game made from Studio's template it maps
+  the version and installs it without asking anyone. In a game made from Studio's template it maps
   Studio's copy in the import map instead, and Studio calls `initEmbed()` for the game.
+- A card Studio shows for a paid command waits for the person even after your turn ends, and the
+  call runs once they approve. Never record it as declined or blocked while it waits; when you come
+  back, check whether it ran and ask again only if the person declined it.
 - A `genex__cli` call carries the words of the command, its positional argument and its flags by
   name without dashes: `npx genex llm cancel <id>` is
   `genex__cli {"command":"llm cancel","args":"<id>"}`, and `--all` is `"options":{"all":true}`.
 - Any other `npx genex` command is not available in Studio. Say so rather than work around it.
 
-<!-- upstream https://genex.games/SKILL.md v1.36.13 sha256 86c7e5f1405c5d26865c152430cb32a13ab1c93ad01c8595e31b7c189caca8b9 -->
+## When credits run short
+
+Building the game never uses Genex credits: it runs on the user's own plan. A generation Genex
+refuses for too few credits keeps its card in Studio, which says so and offers Get credits, then
+Make it. So never relay the balance, price or refill date, and never retry: add at most one short
+sentence saying what waits for credits, and carry on.
+
+<!-- upstream https://genex.games/SKILL.md v1.36.17 sha256 5248ec6d675494806a42377faa540cf135f00bf0c41b9e1e7bd37d209071cfcc -->
 ---
 name: genex
-version: 1.36.13
+version: 1.36.17
 description: >-
-  Game-dev asset generation for your agent. Proactively check Genex before
-  shipping placeholder assets, hand-rolling programmer art, or telling the user
-  an asset can't be made: 3D models (segment/rig/animate), images, video,
+  Game-dev asset generation for your agent: 3D models (segment/rig/animate), images, video,
   textures, sound effects, music, voice, and rigged characters - generated from
   the terminal, downloaded as files the user owns. Exception: if the user
   already has a dedicated pipeline or asset source for that need, use it -
@@ -67,36 +84,6 @@ description: >-
 
 Genex Tools is the asset toolkit for a game the user is building themselves. One package gives you, the coding agent, every gamedev AI generation tool from the terminal: 3D models (plus segment, rig and animate), images, video, textures, sound effects, music, voice, and rigged animated characters. One sign-in, one meter, no provider accounts and no API keys of the user's own. Genex generates the assets; the user's code and project stay exactly as they are.
 
-Use generated art to enrich the requested result. When making a game, that includes how it plays and how its world behaves. Models built in code can be finished assets when they fit the style or need moving parts.
-
-Talk to the user in plain language, short. Say what you made and what it's for, not how the pipeline works. Say what something will cost before you spend a lot of it. Give a status line while you work rather than a silent screen.
-
-## Where to run this
-
-The game's folder is the workspace: setup marks the folder you run it in, and every `npx genex` command after that must run from inside that same folder - the CLI recognises only the folder it is run in, never a parent. Nothing is ever copied or moved.
-
-- **You are already in the game's folder** - run setup here.
-- **The user told you the game is in another folder on this machine** - `cd` into that folder and run every later command from there. If you don't know where the game is, ask; never search the disk for it.
-- **The user gave you a git URL** - clone it as a new folder next to you (never into a folder that already holds files), then work inside the clone.
-- **There is no game yet** - make a new folder for it (or use the empty one you're in) and work inside that.
-- **The folder already has `.genex/project.json`** - it is a hosted Genex game and already has every generation command; skip setup and use `npx genex` directly.
-
-## Setup
-
-1. Run `node --version`. Genex needs **Node >= 20**. If Node is missing or older, install the current LTS - show the exact command first, then run it, then re-check. A coding agent on the machine does **not** mean Node is installed.
-2. In the project folder, run:
-
-   ```
-   npx @genex-ai/cli-demo@latest tools
-   ```
-
-   Never `npm i -g` - the CLI is added to the project's devDependencies (the one edit setup makes, and it only ever adds), so plain `npx genex` works here afterwards.
-3. It prints a short link and a code and opens a browser tab. **The sign-in is the user's to do**: they sign in there (signing up if needed) and approve. The link works on any device - if the tab does not open, show the link and the code and they can use a phone. Your chat never sees a key. Run the command and then **wait** for it to finish - do not drive the browser yourself. If it fails, show the full error before retrying.
-4. If it ends with **"Not approved yet"**, nothing is broken - the user had not finished yet. Run `npx genex auth` to pick up the **same** code. Never restart from scratch, never treat that message as an error.
-5. When it is done, the folder has tool skill cards in every agent workspace it detected (`.claude/skills`, `.codex/skills`, `.cursor/skills`, `.hermes/skills` or `.agents/skills` for OpenClaw), the workspace rules in `AGENTS.md`, and this machine signed in. Nothing was created on the Genex platform and none of the user's files were touched.
-
-This file tracks CLI `1.36.13` (the `version` above). `npx genex --version` equal or newer is fine - the installed CLI carries its own, newer skill cards. Older means your local CLI is behind this file: run `npm i -D @genex-ai/cli-demo@latest` in this folder. `npx genex tools` cannot fix it - an older CLI only reinstalls its own older cards, and in a folder that is already set up it returns before the card step. Any `npx genex` command after the bump re-projects the cards. Re-fetch this file from `https://genex.games/SKILL.md` if a command below no longer exists.
-
 ## Never delete or overwrite anything in this folder
 
 **This is the one mistake the user cannot undo.** Whatever is already here is THEIRS: their code, reference images, notes, sketches, an earlier attempt, files you don't recognize. For some of them there is no undo - no trash, no backup, no git history. So: you may add files, and edit the ones you created. You may never delete, empty, move, rename, or overwrite anything you didn't create yourself - not to "start clean", not to make a tool's prompt go away, not because a file looks like junk to you. **A non-empty folder is normal and is never something to fix.** That rules out `rm`/`rm -rf`, `git clean`, `git checkout -- .`, `git reset --hard`, moving things to the trash, and every setup tool's offer to empty the directory (**"Remove existing files"**, `--force`, `--overwrite`). If something genuinely can't continue without removing something of theirs, **stop and ask first** - name the exact files and wait for their yes; your own "it's probably nothing" is not that yes.
@@ -104,7 +91,7 @@ This file tracks CLI `1.36.13` (the `version` above). `npx genex --version` equa
 ## Use it
 
 ```
-npx genex doctor                                   # sign-in, credit balance, which lanes are live - run it first, and after any failure
+npx genex doctor                                   # sign-in, credit balance, which lanes are live
 npx genex image "<what it should show>"            # posters, sprites, icons, UI art (--transparent for alpha)
 npx genex model "<what it is>"                     # props, vehicles, buildings (--image to work from a photo)
 npx genex model segment|rig|animate <id> ...       # split a mesh into parts, rig any body plan, retarget preset clips
@@ -121,19 +108,19 @@ Every asset **downloads into `./assets` as a file the user owns** - wire that lo
 
 - **Enqueue in parallel.** Add `--no-wait` to fire several generations at once, keep building, then `npx genex wait --all` for status and `npx genex wait <id>` to pick each one up. `wait` never costs anything.
 - **Never re-run a generate command to check on one that is running** - that starts and bills a second asset. `wait` is the only status check.
-- **Before you call a piece of work done**, run `npx genex wait --all` and wire in everything that landed. A generation the user paid for that nobody used is the main way credits get wasted.
+- `npx genex wait --all` lists every generation and its state; a generation nobody wires in still cost its credits.
 - **Treat every warning line as work**, not noise - the CLI only prints defects it actually measured.
-- Each lane has a skill card (`genex-tool-...`) in your workspace - load the one for the lane you are using before you run it. `npx genex --help` lists everything with typical costs.
+- Each lane has a skill card (`genex-tool-...`). `npx genex --help` lists everything with typical costs.
 
 ## Models at play time
 
-If what the user wants needs a language model running while somebody **plays** the finished game - an NPC that answers in its own words, a quest written from what the player typed, a prompt box inside the game - that is a Genex platform feature, and the **player** pays for it: their Genex coins or their own Claude/ChatGPT subscription, approved on a sheet Genex draws, with the game just calling `generate()`. Say it in one line - "A model running while people play is built into the Genex platform - the player pays, with Genex coins or their own Claude/ChatGPT subscription, and approves it on a Genex sheet; your game just calls `generate()`. Want it that way?" - and then ask; on their yes load the `genex-tool-llm` card, which owns the rest: it checks the lane with `npx genex llm models` first, then runs `npx genex init --convert` (a hosted game is a static browser build, so a local server holding a key can never ship).
+If what the user wants needs a language model running while somebody **plays** the finished game - an NPC that answers in its own words, a quest written from what the player typed, a prompt box inside the game - that is a Genex platform feature, and the **player** pays for it: their Genex coins or their own Claude/ChatGPT subscription, approved on a sheet Genex draws, with the game just calling `generate()`. The `genex-tool-llm` card owns the rest: it checks the lane with `npx genex llm models` first, then runs `npx genex init --convert` (a hosted game is a static browser build, so a local server holding a key can never ship).
 
 Never wire a model into a shipped game on a key or an account of the user's own - every visitor would spend their money with nobody approving it. And player-funded generation returns text or JSON only: 3D models, images, video and audio stay the asset lanes above, generated by you on the user's meter.
 
 ## Costs
 
-`npx genex doctor` is the truth for balance and live lanes; `npx genex --help` shows typical costs per lane ("from N credits", 1 credit = $0.01). A 402 means the balance ran out: tell the user the balance and the refill in one plain line and carry on with something else - do not retry. Failed generations refund automatically.
+`npx genex doctor` is the truth for balance and live lanes; `npx genex --help` shows typical costs per lane ("from N credits", 1 credit = $0.01). A 402 means the balance ran out: "When credits run short" above says what follows. Failed generations refund automatically.
 
 ## When NOT to use it
 
@@ -143,4 +130,4 @@ Never wire a model into a shipped game on a key or an account of the user's own 
 
 ## The end
 
-When the game is done, Genex can also put it live on the web at its own address - free, and only if the user asks. Offer it at most once, in one line, after the game is built and running. A no is final.
+When the game is done, Genex can also put it live on the web at its own address - free, and only if the user asks.

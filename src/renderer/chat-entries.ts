@@ -2,6 +2,7 @@ import { t, tc } from "../shared/i18n.ts";
 import { providerInfo } from "../shared/providers.ts";
 import type { ExportReview } from "../shared/plugins.ts";
 import type { PluginSuggestedPayload } from "../shared/project-tools.ts";
+import { type ListingRecord, listingDraftOf, listingKey } from "../shared/item-draft.ts";
 import { parseSuggestion } from "./chat/plugin-suggestion.ts";
 import { type JobHandle, type JobStart, jobEndLine, jobStart, missingPanes } from "./chat/job-lines.ts";
 import { type AppLookAccessKind, JobTool } from "../shared/jobs.ts";
@@ -27,6 +28,8 @@ import {
   customRecord,
   DELEGATED_PREFIX,
   delegatedPayload,
+  type LoopRefusal,
+  loopRefusalOf,
 } from "../shared/custom-events.ts";
 import { isHandoffNarration } from "../shared/chat-presentation.ts";
 import { isCoordinatorTool } from "../shared/coordinator.ts";
@@ -41,7 +44,6 @@ import {
 } from "../shared/game-assets.ts";
 import { GENEX_COVER_TOOL, GENEX_PLUGIN_ID, GenexCoverOperation } from "../shared/genex.ts";
 import { SteerDelivery } from "../shared/message-queue.ts";
-import { engineLabel, roleName } from "../shared/model-roles.ts";
 import { ExecutionStatus, RoundOutcome, roundOutcome } from "../shared/run-state.ts";
 import { skillUpdatedWords } from "../shared/skill-words.ts";
 import { MINUTE_MS } from "../shared/duration.ts";
@@ -123,6 +125,8 @@ export const EntryKind = {
   PluginSuggestion: "plugin-suggestion",
   /** What a message's @ tags gave the agent (`mention_tagged`): one card under the message. */
   Mentions: "mentions",
+  /** A store item the game's agent made: its Listing draft card, with Put on sale (`item_drafted`). */
+  ListingDraft: "listing-draft",
 } as const;
 export type EntryKind = (typeof EntryKind)[keyof typeof EntryKind];
 
@@ -195,6 +199,8 @@ export type Entry =
       kind: typeof EntryKind.Question;
       id: string;
       text: string;
+      /** The agent's one line above its question: what it found or did. */
+      recap?: string;
       choices: Array<{ id: string; label: string; description?: string }>;
       pending: boolean;
     }
@@ -205,6 +211,11 @@ export type Entry =
    * only that last shot has a card.
    */
   | { kind: typeof EntryKind.GenexCover; id: string; callId: string; project?: string }
+  /**
+   * A store item the game's agent made or changed, read from a record only the host writes: once the
+   * turn that made it has ended, the item's latest draft (an earlier card of the same item comes down).
+   */
+  | { kind: typeof EntryKind.ListingDraft; id: string; draft: ListingRecord }
   /** A card with one affordance: Resume a paused run, prefill a steering message, or Rewind. */
   | {
       kind: typeof EntryKind.Action;
@@ -220,9 +231,12 @@ export type Entry =
       consentSourceId?: string;
       consentSource?: string;
       consentPrompt?: string;
+      /** The line the card shows under its question (the studio's own cards). */
+      consentNote?: string;
       consentExport?: ExportReview;
       /** A connector's card: Always allow is offered. */
       consentAlwaysOffered?: boolean;
+      consentChatOffered?: boolean;
       /** A card with a field the person may edit before Allow: its label and the value it holds. */
       consentInput?: { label: string; value: string };
       /** action "permission": Claude's own Allow / Deny question (or a plan to approve), as first asked, and how it ended. */
@@ -277,6 +291,8 @@ export type Entry =
       landed: boolean | null;
       /** how the Loop worked on its project (`run_finished.profile`): an `open` Loop kept its work in place */
       profile: LoopProfile | null;
+      /** why the Loop did not run at all (`run_finished.refusal`), when it didn't */
+      refusal: LoopRefusal | null;
       project: string | null;
       commit: string | null;
       /** the first and last frames the run recorded, as saved-run stills */
@@ -297,6 +313,8 @@ export type Entry =
 type ToolsEntry = Extract<Entry, { kind: typeof EntryKind.Tools }>;
 /** The card of the Genex cover a builder kept. */
 export type GenexCoverEntry = Extract<Entry, { kind: typeof EntryKind.GenexCover }>;
+/** A store item's Listing draft card. */
+export type ListingDraftEntry = Extract<Entry, { kind: typeof EntryKind.ListingDraft }>;
 type ActionEntry = Extract<Entry, { kind: typeof EntryKind.Action }>;
 
 /** A plugin's permission card in the transcript. */
@@ -532,6 +550,13 @@ interface CoverCard {
   placed: boolean;
 }
 
+/** A Listing draft card and the chat it waits in: it goes up once that chat's turn has ended. */
+interface ListingCard {
+  entry: ListingDraftEntry;
+  thread: string;
+  placed: boolean;
+}
+
 /** Everything `toEntries` keeps while it walks the log. */
 interface ChatDraft {
   signInReplies: Set<string>;
@@ -551,6 +576,8 @@ interface ChatDraft {
   pluginCalls: Map<string, ToolChipRow>;
   /** The Genex cover card of the latest shoot that kept a shot, held until the work that took it ends. */
   cover: CoverCard | null;
+  /** Each item's latest Listing draft card, held until the turn that made it ends. */
+  listings: ListingCard[];
   /**
    * A delegated builder's own chip row, by the tool it called. The SDK mirrors the call but never
    * its result, so a plugin tool that failed used to leave a row that looked like it worked; the
@@ -607,6 +634,7 @@ export function toEntries(events: EventEnvelope[], queueIds?: ReadonlyMap<string
   for (const event of events) readEvent(chat, event);
   keepOfferedRewind(chat, events);
   placeLastCoverCard(chat);
+  placeLastListings(chat);
   for (const [runId, deliveries] of chat.runAssets) {
     const result = chat.runResults.get(runId);
     if (result) result.assets = deliveries;
@@ -652,6 +680,7 @@ function newChatDraft(events: EventEnvelope[], queueIds: ReadonlyMap<string, str
     workerCalls: new Set(),
     pluginCalls: new Map(),
     cover: null,
+    listings: [],
     hostedTools: new Set(events.flatMap(hostedToolKey)),
     hostedCalls: new Set(),
     playing: false,
@@ -671,6 +700,7 @@ function readEvent(chat: ChatDraft, event: EventEnvelope): void {
   if (readConversation(chat, event)) return;
   settleWaitingCards(chat, event.data);
   if (readToolTraffic(chat, event)) return;
+  if (holdListing(chat, event)) return;
   if (readQuiet(chat, event.data)) return;
   closeGroup(chat);
   for (const narrate of NARRATORS) narrate(chat, event);
@@ -725,6 +755,7 @@ function endTurn(chat: ChatDraft, event: EventEnvelope, status: string | undefin
     if (row.state === ToolState.Running && !chat.runByCall.has(id)) row.state = ended;
   // After the turn's reply: a stopped turn too, since the shot it kept stays kept.
   if (coverWaitsForTurn(chat.cover, event.thread_id)) placeCoverCard(chat);
+  placeListings(chat, event.thread_id);
 }
 
 /** A question or a steering card still waiting for the user. */
@@ -758,6 +789,7 @@ function readConversation(chat: ChatDraft, event: EventEnvelope): boolean {
       kind: EntryKind.Question,
       id: event.id,
       text: asked.question,
+      ...(asked.recap ? { recap: asked.recap } : {}),
       choices: asked.choices ?? [],
       pending: true,
     });
@@ -1491,26 +1523,12 @@ function narrateSkillAccepted(chat: ChatDraft, event: EventEnvelope): void {
   chat.entries.push({ id: event.id, kind: EntryKind.Learning, text, link: TRANSCRIPT_WORDS.seeInHarness });
 }
 
-/** An engine's name as a person says it: the provider table's, else the role table's. */
-function providerName(engine: string): string {
-  return providerInfo(engine)?.label ?? engineLabel(engine);
-}
-
 /** An unattended run narrates itself in the game's own chat: start, verdicts, ending, lessons. */
 function narrateRunStart(chat: ChatDraft, event: EventEnvelope): void {
   const started = customPayload(event.data, CustomEvent.RunStarted);
   if (!started) return;
-  // Which model judges this run, by name: a stale saved preference can put the judging on the
-  // orchestrator's model, and nothing else on screen says which model is answering. And on
-  // which subscription, when the judges are not on the run's own (cross-provider roles).
-  const judge = started.judgeModel ?? started.roles?.judge;
-  const judgeEngine = started.judgeEngine ?? started.engine ?? "";
-  const judgeName = judge ? roleName(judgeEngine, judge) : null;
-  const crossProvider = Boolean(judgeName && started.engine && judgeEngine !== started.engine);
-  const judgeWords = crossProvider
-    ? t("{model} on {provider}", { model: judgeName ?? "", provider: providerName(judgeEngine) })
-    : judgeName;
-  say(chat, event.id, SystemTag.Run, runStartWords(started.reference ?? null, judgeWords));
+  const words = runStartWords(started.reference ?? null);
+  if (words) say(chat, event.id, SystemTag.Run, words);
 }
 
 function narrateAutopilotStart(chat: ChatDraft, event: EventEnvelope): void {
@@ -1614,18 +1632,30 @@ function makingIds(payload: { callId?: string; jobId?: string; generationId?: st
 }
 
 /**
- * A finished `genex__cover` shoot that kept a new shot: Genex's own tool asked to shoot, and its
- * answer carried the shot's preview (a shot the host could not take answers none, and the last
- * shot stays kept). The tool is read however the record names it (`cover`, `genex__cover`,
- * `mcp__studio__genex__cover`).
+ * A finished `genex__cover` call that kept a new cover: the agent handed over its picture as a file
+ * (`{ image, clip? }`, the call the tool takes now; the caller passes only one that succeeded), or
+ * an older record's shoot whose answer carried the shot's preview (a shot the host could not take
+ * answers none, and the last shot stays kept). The tool is read however the record names it
+ * (`cover`, `genex__cover`, `mcp__studio__genex__cover`).
  */
 function keptGenexCover(payload: PluginCallPayload): boolean {
   const named = pluginToolKey(String(payload.tool ?? payload.toolName ?? ""));
   const tool = named.startsWith(`${GENEX_PLUGIN_ID}__`) ? named.slice(GENEX_PLUGIN_ID.length + 2) : named;
-  const genexCover = payload.pluginId === GENEX_PLUGIN_ID && tool === GENEX_COVER_TOOL;
-  const shoot = digestOperation(payload.args) === GenexCoverOperation.Shoot;
-  return genexCover && shoot && Number(payload.images ?? 0) > 0;
+  if (payload.pluginId !== GENEX_PLUGIN_ID || tool !== GENEX_COVER_TOOL) return false;
+  const operation = digestOperation(payload.args);
+  if (operation === null) return handsOverImage(payload.args);
+  return operation === GenexCoverOperation.Shoot && Number(payload.images ?? 0) > 0;
 }
+
+/** Whether a call's arguments digest names the image file it hands over (`image=<path>`). */
+function handsOverImage(args: string | undefined): boolean {
+  return (args ?? "")
+    .split(" ")
+    .some((part) => part.startsWith(COVER_IMAGE_ARG) && part.length > COVER_IMAGE_ARG.length);
+}
+
+/** How the host's arguments digest names the cover picture a `genex__cover` call hands over. */
+const COVER_IMAGE_ARG = "image=";
 
 /**
  * This shoot's shot is the one Genex's storage holds now, so the card is its: an earlier card comes
@@ -1659,6 +1689,42 @@ function placeLastCoverCard(chat: ChatDraft): void {
   const thread = chat.cover?.thread;
   if (thread === undefined || chat.activeTurns.has(thread)) return;
   if (coverWaitsForTurn(chat.cover, thread)) placeCoverCard(chat);
+}
+
+/**
+ * A Listing draft record (`item_drafted`): the item's card is held until the chat's turn ends, after
+ * the agent's reply; a newer draft of the same item takes an earlier card's place. A record that
+ * does not read draws nothing. True when the record was one.
+ */
+function holdListing(chat: ChatDraft, event: EventEnvelope): boolean {
+  const recorded = customPayload(event.data, CustomEvent.ItemDrafted);
+  if (!recorded) return false;
+  const draft = listingDraftOf(recorded);
+  if (!draft) return true;
+  const key = listingKey(draft);
+  const earlier = chat.listings.findIndex((card) => listingKey(card.entry.draft) === key);
+  const [replaced] = earlier >= 0 ? chat.listings.splice(earlier, 1) : [];
+  const shown = replaced ? chat.entries.indexOf(replaced.entry) : -1;
+  if (shown >= 0) chat.entries.splice(shown, 1);
+  const entry: ListingDraftEntry = { kind: EntryKind.ListingDraft, id: event.id, draft };
+  chat.listings.push({ entry, thread: event.thread_id, placed: false });
+  if (!chat.activeTurns.has(event.thread_id)) placeListings(chat, event.thread_id);
+  return true;
+}
+
+/** The thread's held Listing draft cards go up, in the order they were made. */
+function placeListings(chat: ChatDraft, thread: string): void {
+  for (const card of chat.listings) {
+    if (card.placed || card.thread !== thread) continue;
+    chat.entries.push(card.entry);
+    card.placed = true;
+  }
+}
+
+/** A log that ends with no turn open in a card's thread shows its held cards last. */
+function placeLastListings(chat: ChatDraft): void {
+  const threads = new Set(chat.listings.map((card) => card.thread));
+  for (const thread of threads) if (!chat.activeTurns.has(thread)) placeListings(chat, thread);
 }
 
 function pluginCallState(closing: boolean, ok: boolean | undefined): ToolState {
@@ -1884,7 +1950,13 @@ function narrateConsent(chat: ChatDraft, event: EventEnvelope): void {
   const consentId = consent.consentId ?? event.id;
   const existing = chat.entries.find((e): e is ActionEntry => isConsentCard(e) && e.consentId === consentId);
   const pending = consent.state === "pending";
-  const outcome = () => consentOutcomeWords({ state: consent.state, by: consent.by, always: consent.always });
+  const outcome = () =>
+    consentOutcomeWords({
+      state: consent.state,
+      by: consent.by,
+      always: consent.always,
+      chatOffered: consent.chatOffered,
+    });
   if (existing) {
     existing.pending = pending;
     if (!pending) existing.outcome = outcome();
@@ -1900,8 +1972,10 @@ function narrateConsent(chat: ChatDraft, event: EventEnvelope): void {
     ...(consent.pluginId ? { consentSourceId: consent.pluginId } : {}),
     consentSource: consent.pluginName || A_PLUGIN,
     consentPrompt: consent.prompt || undefined,
+    ...(consent.note ? { consentNote: consent.note } : {}),
     consentExport: consent.exportReview,
     ...(consent.alwaysOffered ? { consentAlwaysOffered: true } : {}),
+    ...(consent.chatOffered ? { consentChatOffered: true } : {}),
     ...(consent.input ? { consentInput: consent.input } : {}),
     text: consentAskWords({
       pluginName: consent.pluginName,
@@ -2066,6 +2140,7 @@ function morningCard(chat: ChatDraft, id: string, finished: FinishedPayload): Mo
     undone: rounds.undone,
     landed: finished.landed ?? null,
     profile: profileOf(finished),
+    refusal: loopRefusalOf(finished.refusal),
     project: finished.project ?? null,
     commit: unlandedHead && finished.project ? unlandedHead : null,
     before: rounds.firstShot,

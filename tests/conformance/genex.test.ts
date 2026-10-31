@@ -6,6 +6,8 @@ import os from "node:os";
 import http from "node:http";
 import { GenexTools, validateGenexRequest, parseGenexJson } from "../../src/plugins/genex/adapter.ts";
 import { createGenexPlugin } from "../../src/plugins/genex/backend.ts";
+import { shortOfCredits } from "../../src/plugins/genex/jobs.ts";
+import { GenexBlocked, GenexJobStatus, GenexOperation } from "../../src/shared/genex.ts";
 
 const credentials = new Map<
   string,
@@ -1012,4 +1014,74 @@ describe("character approval review", () => {
       await fx.cleanup();
     }
   });
+});
+
+it("marks a generation Genex refused for too few credits as waiting on credits, from the balance and the price list", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "studio-genex-credits-"));
+  let account = { balance: 0, spendable: 0, reserved: 0, unlimited: false };
+  const server = http.createServer(async (req, res) => {
+    for await (const _ of req);
+    res.setHeader("content-type", "application/json");
+    const send = (v: unknown, status = 200) => {
+      res.statusCode = status;
+      res.end(JSON.stringify(v));
+    };
+    if (req.url === "/api/credits/me") return send({ ...account, prices: { model: 35 }, budget: { cap: 100 } });
+    if (req.url === "/api/credits/prices") return send({ lanes: [{ kind: "model", from: 35, options: [] }] });
+    if (req.url === "/api/generations/lanes")
+      return send({ paused: false, lanes: [{ kind: "model", provider: "fixture", mock: false, credit: "ok" }] });
+    if (req.url === "/api/generations/quote") return send({ creditsQuoted: 35 });
+    if (req.url === "/api/generations" && req.method === "POST")
+      return send({ error: "insufficient_credits", price: 35, balance: account.spendable }, 402);
+    if (req.url?.includes("terms") || req.url?.includes("legal"))
+      return send({ accepted: true, required: "1", acceptedVersion: "1" });
+    return send({ error: "not_found" }, 404);
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const api = `http://127.0.0.1:${(server.address() as any).port}`;
+  try {
+    const tools = fixtureTools(path.join(root, "host"), api);
+    await tools.init();
+    await fixtureCredentials(tools.root).set("fixture-token");
+    const game = path.join(root, "game");
+    await mkdir(game);
+    const short = (await tools.execute("fixture", game, { operation: "model", prompt: "Dragon boss" })) as any;
+    assert.equal(short.status, GenexJobStatus.Failed, JSON.stringify(short));
+    assert.equal(short.generationId, undefined, "nothing was started");
+    assert.equal(short.blocked, GenexBlocked.Credits);
+    const saved = JSON.parse(
+      await readFile(path.join(tools.root, "projects/fixture/jobs", short.id, "job.json"), "utf8"),
+    );
+    assert.equal(saved.blocked, GenexBlocked.Credits, "the record the Assets inventory reads says so too");
+
+    account = { balance: 0, spendable: 0, reserved: 0, unlimited: true };
+    const unlimited = (await tools.execute("fixture", game, { operation: "model", prompt: "Dragon boss" })) as any;
+    assert.equal(unlimited.status, GenexJobStatus.Failed);
+    assert.equal(unlimited.blocked, undefined, "an unlimited account is never short: the refusal was something else");
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>((r) => server.close(() => r()));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+it("reads too few credits from the balance against the operation's price, and never from an unread balance", () => {
+  const prices = {
+    lanes: [
+      { kind: "model", from: 35 },
+      { kind: "character_finalize", from: 29 },
+    ],
+  };
+  assert.equal(shortOfCredits({ spendable: 18, balance: 40 }, prices, GenexOperation.Model), true, "spendable counts");
+  assert.equal(shortOfCredits({ spendable: 35 }, prices, GenexOperation.Model), false, "exactly enough is enough");
+  assert.equal(shortOfCredits({ balance: 28 }, prices, GenexOperation.CharacterFinalize), true);
+  assert.equal(shortOfCredits({ spendable: 0, unlimited: true }, prices, GenexOperation.Model), false);
+  assert.equal(
+    shortOfCredits({ spendable: 5 }, prices, GenexOperation.Character),
+    false,
+    "no price: only zero is short",
+  );
+  assert.equal(shortOfCredits({ spendable: 0 }, null, GenexOperation.Character), true);
+  assert.equal(shortOfCredits({}, prices, GenexOperation.Model), false, "an unread balance is never short");
+  assert.equal(shortOfCredits(null, prices, GenexOperation.Model), false);
 });

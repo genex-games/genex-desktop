@@ -360,17 +360,6 @@ it("the sessions with a narrower job never receive a connector tool", async () =
     // Flipped (step 1): a Loop chat that may launch a build is a full contractor and gets what
     // the Auto chat gets.
     assert.equal(seen[1]!.tools.includes("echo__echo"), true, "a Loop chat reaches the connector");
-
-    // A candidate's tool registry is the optimizer's, and it is built from the game tools alone.
-    const candidate = await createToolRegistry(
-      { workspace: rig.core.layout.harnessWs, call: (name: string, args: any) => api[name]!(args) } as never,
-      { candidateId: "trusted", project },
-    );
-    assert.equal(
-      candidate.names().some((name: string) => name.startsWith("echo__")),
-      false,
-    );
-    assert.doesNotMatch(candidate.summary(), /\[CONNECTORS\]/);
   } finally {
     await rig.stop();
   }

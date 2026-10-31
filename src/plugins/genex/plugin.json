@@ -1,7 +1,7 @@
 {
   "apiVersion": 3,
   "id": "genex",
-  "version": "1.10.32",
+  "version": "1.11.1",
   "name": "Genex plugin",
   "publisher": "Genex",
   "description": "3D models, characters, sound and art for your games, made in chat with Genex credits. Coding stays on your own provider.",
@@ -11,7 +11,7 @@
   "tools": [
     {
       "name": "asset",
-      "description": "Generate assets with Genex credits, or pick up an existing generation with wait. Generate only as needed: when Local Blender is enabled it comes first for hard-surface models (weapons, props, vehicles, buildings, kit pieces); respect explicit user preferences. Each lane's provider is fixed and there is no provider option: model, model.segment, model.rig and model.animate are Tripo; character, creature, character.preview and character.finalize are Meshy (rigged, biped-shaped bodies with clips); character.import rigs a humanoid GLB from this game with Uthana; status names every lane's live provider. When the user asks for a provider a lane lacks, say so once and name what you will use instead. Before first using a lane, read its card with genex__skill: genex-tool-model, genex-tool-character, genex-tool-texture, genex-tool-audio or genex-tool-image. Options differ by lane: the options parameter lists them. A model prompt is at most 1024 characters, the 3D provider's limit: describe the object itself and leave scene, style-guide and gameplay context out. Studio submits every create without waiting, so never pass wait or no-wait: pick results up with operation wait and the remote generationId, not the Studio job id. Re-running a create bills a new asset: never repeat an unresolved create request. Inspect Genex status first. Coding remains on your subscription. Other Genex commands run through genex__cli. After download use the returned local files. For inspect_use and verify_use, pass the id of the Studio job whose files array contains those delivered files. inspect_use captures the running game and checks loaded asset URLs; verify_use records your visual judgement using options.inspectionId and a specific prompt. inspect_use also measures currently playing DOM audio/video elements per delivered audio file; silent, muted, paused or unsupported players remain unverified. It never starts playback. Web Audio buffers and physical speaker output are not certified. Operations: status, model, image, texture, video, sfx, music, voice, model.import, model.segment, model.rig, model.animate, character, creature, character.preview, character.finalize, character.import, character.animate, creature.animate, character.motions, animations.search, wait, inspect_use, verify_use",
+      "description": "Generate assets with Genex credits, or pick up an existing generation with wait. Respect the user's explicit choices (procedural only, no paid assets, a budget, Local Blender). Each lane's provider is fixed and there is no provider option: model, model.segment, model.rig and model.animate are Tripo; character, creature, character.preview and character.finalize are Meshy (rigged, biped-shaped bodies with clips); character.import rigs a humanoid GLB from this game with Uthana; status names every lane's live provider and whether the account can generate. When the user asks for a provider a lane lacks, say so. Each lane has a card in genex__skill: genex-tool-model, genex-tool-character, genex-tool-texture, genex-tool-audio and genex-tool-image. Options differ by lane: the options parameter lists them. A model prompt is at most 1024 characters, the 3D provider's limit: describe the object itself and leave scene, style-guide and gameplay context out. Studio submits every create without waiting, so never pass wait or no-wait: pick results up with operation wait and the remote generationId, not the Studio job id. Re-running a create bills a new asset: never repeat an unresolved create request. Coding remains on your subscription. Other Genex commands run through genex__cli. After download use the returned local files. inspect_use and verify_use take the id of the Studio job whose files array contains the delivered files: inspect_use reports which of them the running game loaded, and for audio which playing DOM audio or video elements use them (silent, muted, paused or unsupported players stay unverified; it never starts playback; Web Audio buffers and speaker output are not certified); verify_use records a visual judgement under options.inspectionId with a prompt. Operations: status, model, image, texture, video, sfx, music, voice, model.import, model.segment, model.rig, model.animate, character, creature, character.preview, character.finalize, character.import, character.animate, creature.animate, character.motions, animations.search, wait, inspect_use, verify_use",
       "parameters": {
         "type": "object",
         "properties": {
@@ -26,7 +26,7 @@
           },
           "options": {
             "type": "object",
-            "description": "Options as an object with kebab-case keys: true for a bare flag, false or left out for none; a file option names a file inside this game. No account, allowance, output, provider or wait flags. By operation: model: auto-size (real-world metres, else not to scale), face-limit (1000-2000000, 1000-20000 with low-poly), low-poly (game-ready topology, can take up to 30 min), texture (standard|detailed|none), geometry (detailed, for hero pieces), quad, parts, image (a reference image file, 4 MB at most); model.import: none; model.segment: granularity (simple|balanced|detailed); model.rig: type (biped|quadruped|hexapod|octopod|avian|serpentine|aquatic); model.animate: preset (comma-separated clips, biped idle|walk|run|dive|climb|jump|slash|shoot|hurt|fall|turn); character: direct-text (one shot, no approval), image (a reference view file), polycount (10000-100000, 20000-30000 for a player body), height (0.5-3 m), pose (a-pose|t-pose), texture (2k|4k|8k), no-ultra, animation (up to 16 catalog clips, names or ids), no-controller-pack; creature: image, polycount, height, pose, texture, no-ultra, animation; character.preview: candidate (1|2|3), texture, no-ultra; character.finalize: animation, height; character.import: height, no-fingers; character.animate: action (a catalog clip), animation, locomotion (the 8-way walk and run set), video (a footage file), duration (5-8 s); creature.animate: locomotion, video, duration, lean (forward walk and run only); character.motions: none; animations.search: none; image: aspect, size (WxH), quality (low|medium|high|xhigh|max), transparent, candidates (2-4, with quality or size), edit (an image file), inpaint (a mask file, with edit), remove-bg, bg-mode (sprite|glyph|sheet|matte), clean (a Genex asset URL), upscale (a Genex asset URL); texture: terrain (seamless, for ground and large planes); sfx: duration (seconds, else the model picks), loop (an ambient bed that wraps without a pop); music: duration (10-300 s); voice: voice (narrator|heroine|gruff|elder|robot|imp), voice-id; video: duration, resolution, loop, frame, start-frame, first-frame, last-frame; wait: none.",
+            "description": "Options as an object with kebab-case keys: true for a bare flag, false or left out for none; a file option names a file inside this game. No account, allowance, output, provider or wait flags. By operation: model: auto-size (real-world metres, else not to scale), face-limit (1000-2000000, 1000-20000 with low-poly), low-poly (game-ready topology, can take up to 30 min), texture (standard|detailed|none), geometry (detailed), quad, parts, image (a reference image file, 4 MB at most); model.import: none; model.segment: granularity (simple|balanced|detailed); model.rig: type (biped|quadruped|hexapod|octopod|avian|serpentine|aquatic); model.animate: preset (comma-separated clips, biped idle|walk|run|dive|climb|jump|slash|shoot|hurt|fall|turn); character: direct-text (one shot, no approval), image (a reference view file), polycount (10000-100000), height (0.5-3 m), pose (a-pose|t-pose), texture (2k|4k|8k), no-ultra, animation (up to 16 catalog clips, names or ids), no-controller-pack; creature: image, polycount, height, pose, texture, no-ultra, animation; character.preview: candidate (1|2|3), texture, no-ultra; character.finalize: animation, height; character.import: height, no-fingers; character.animate: action (a catalog clip), animation, locomotion (the 8-way walk and run set), video (a footage file), duration (5-8 s); creature.animate: locomotion, video, duration, lean (forward walk and run only); character.motions: none; animations.search: none; image: aspect, size (WxH), quality (low|medium|high|xhigh|max), transparent, candidates (2-4, with quality or size), edit (an image file), inpaint (a mask file, with edit), remove-bg, bg-mode (sprite|glyph|sheet|matte), clean (a Genex asset URL), upscale (a Genex asset URL); texture: terrain (seamless, for ground and large planes); sfx: duration (seconds, else the model picks), loop (an ambient bed that wraps without a pop); music: duration (10-300 s); voice: voice (narrator|heroine|gruff|elder|robot|imp), voice-id; video: duration, resolution, loop, frame, start-frame, first-frame, last-frame; wait: none.",
             "acceptJsonString": true
           }
         },
@@ -35,7 +35,7 @@
     },
     {
       "name": "publish",
-      "description": "Put this game online on Genex. operation 'gallery' publishes it: Studio exports the game, updates its draft page and makes that same build the public version, listing it in the gallery the first time. operation 'draft' updates only the unlisted draft page, a test build that leaves the public version as it is. Studio exports the game itself and asks the user before either runs, so this call can wait several minutes for the answer. Other Genex commands run through genex__cli. Publishing, and a draft until the game is first public, also shoots the game's genex-cover demo again and, once the upload is recorded, sends that frame as its Genex cover; its outcome is publish-status's cover. So before either, the first publish or an update, check genex__cover {\"operation\":\"status\"}: with no kept shot and no cover the owner chose, stage the genex-cover demo and shoot it first. When this publish's own cover outcome is none (cover.last.jobId is its jobId), no frame was sent: offer once to make one, and never again in this chat once the user says no. Neither applies to a game whose owner keeps its code untouched (a folder brought only to publish). Returns a job: poll genex__publish-status with operation 'wait' and the jobId until state is done or failed, then give the user galleryUrl after publishing, or draftUrl for a draft.",
+      "description": "Put this game online on Genex. operation 'gallery' publishes it: Studio exports the game, updates its draft page and makes that same build the public version, listing it in the gallery the first time. operation 'draft' updates only the unlisted draft page, a test build that leaves the public version as it is. Studio exports the game itself and asks the user before either runs, so this call can wait several minutes for the answer. Other Genex commands run through genex__cli. A game on Genex shows a cover: a publish, and a draft until the game is first public, sends the picture kept with genex__cover once the upload is recorded (publish-status's cover says how it went) and takes no picture of its own; with none kept and none the owner chose, Genex keeps the cover it has. Returns a job: poll genex__publish-status with operation 'wait' and the jobId until state is done or failed, then give the user galleryUrl after publishing, or draftUrl for a draft.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -50,7 +50,7 @@
     },
     {
       "name": "publish-status",
-      "description": "Read this game's Genex publishing state, or wait for a running publish. operation 'status' returns immediately; operation 'wait' waits for the job named by jobId and then returns the same state. The state carries the job phase, the draft and gallery links, any error and warnings, and cover: the kept genex-cover shot and how its last send went (last.kind). 'wait' also waits for the cover a publish sends after its upload. Asks the user nothing and charges nothing.",
+      "description": "Read this game's Genex publishing state, or wait for a running publish. operation 'status' returns immediately; operation 'wait' waits for the job named by jobId and then returns the same state. The state carries the job phase, the draft and gallery links, any error and warnings, and cover: the kept cover picture and clip and how their last send went (last.kind). 'wait' also waits for the cover a publish sends after its upload. Asks the user nothing and charges nothing.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -67,7 +67,7 @@
     },
     {
       "name": "cli",
-      "description": "Run a free Genex CLI command with the user's saved Genex account: doctor, budget, llm models, llm status, llm cancel or shop list. Studio runs its own pinned CLI in a folder of its own, never in the game, and returns the command's output. Commands that spend coin or credits or change what the game sells go through genex__cli-paid, generation through genex__asset and publishing through genex__publish; other commands are not available.",
+      "description": "Run a free Genex CLI command with the user's saved Genex account: doctor, budget, llm models, llm status, llm cancel, shop list, shop add, items list (the other creators' items this game added) or items search (Browse, with the words in args and a tag list option). shop add makes a new store item's draft, which spends nothing and asks nobody, at any time: its name in args, its price (0 is Free) and its picture (image, required: no item is listed without one; a square PNG or WebP of at least 768 × 768, 1024 × 1024 best, that the item fills edge to edge), and type, description, tag (a list), shared (true or false), model and package; image, model and package are each a path inside this game that Studio copies in; the answer is the draft, which Studio puts on sale when the game is published (shop publish is not available). It also works before the game is on Genex, as a local draft its publish uploads; shop set and shop remove on such a draft (its local_ id in args) run here too, asking nobody. Studio runs its own pinned CLI in a folder of its own, never in the game, and returns the command's output. Commands that spend Nex or credits or change what the game sells go through genex__cli-paid, generation through genex__asset and publishing through genex__publish; other commands are not available.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -91,7 +91,7 @@
     },
     {
       "name": "cli-paid",
-      "description": "Run a Genex CLI command that spends coin or credits or changes what this game sells: llm bench (with a whole-number max-coins option), shop add, shop set, shop remove or shop test. The user approves each call, so it can wait several minutes for the answer; never repeat a declined or expired request unless the user asks again. Parameters are as for genex__cli; the game needs a published Genex draft first.",
+      "description": "Run a Genex CLI command that spends Nex or credits or changes what this game sells: llm bench (with a whole-number max-coins option), shop set or shop remove on an item in the store (a local draft's go through genex__cli), shop test, items add or items remove. A new item's draft is genex__cli shop add, never this tool. shop set takes the item's id in args and genex__cli shop add's options plus rename; the answer is the item's draft. items add with an item id in args adds another creator's item to this game and Studio writes its genex-items/<id>/ folder (item.json and the author's files) into the game for you to integrate; read the genex-items skill first. The user approves each call, so it can wait several minutes for the answer; never repeat a declined or expired request unless the user asks again. Parameters are as for genex__cli. The commands need a published Genex draft first.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -111,12 +111,12 @@
         },
         "required": ["command"]
       },
-      "confirmation": "Run a Genex CLI command that spends coin or credits or changes what this game sells, with your saved Genex account.",
+      "confirmation": "Run a Genex CLI command that spends Nex or credits or changes what this game sells, with your saved Genex account.",
       "host": "genex-cli-paid"
     },
     {
       "name": "package",
-      "description": "Add Genex's multiplayer package (@genex-ai/multiplayer) or player-identity package (@genex-ai/embed-sdk) to this game, at the version Studio pins. A game with a package.json installs it with its own package manager; a multiplayer request installs both multiplayer and player identity in one approved command. A game made from Studio's template (no package.json) gets Studio's copies mapped into its index.html import map instead, with nothing downloaded, and Studio connects the game. Any other game without package.json cannot add them.",
+      "description": "Add Genex's multiplayer package (@genex-ai/multiplayer) or player-identity package (@genex-ai/embed-sdk) to this game, at the version Studio pins. A game with a package.json installs it with its own package manager; a multiplayer request installs both multiplayer and player identity in one command, with the npm registry open for that command only. It asks nobody. A game made from Studio's template (no package.json) gets Studio's copies mapped into its index.html import map instead, with nothing downloaded, and Studio connects the game. Any other game without package.json cannot add them.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -127,26 +127,29 @@
         },
         "required": ["package"]
       },
-      "confirmation": "Add the listed pinned Genex packages. Multiplayer includes its player-identity dependency. A template game gets Studio's built-in copies in its import map; any other game installs them with its own package manager, with the npm registry open for that command only.",
       "host": "genex-package"
     },
     {
       "name": "cover",
-      "description": "Check this game's Genex cover: the one real 16:9 frame genex.games shows on its gallery card, its page and every shared link (not Studio's own sidebar look, set_game_cover). operation 'shoot' runs the game's demo named genex-cover at 1920x1080 in a hidden window, keeps that frame as the game's shot, replacing the last one, and answers with its preview image and its brightness, contrast and near-black share (stats); 'clip' runs the game's demo named genex-clip (it starts a moment the game then plays by itself) and records five seconds of it at 960x540 as the game's clip, the video genex.games plays over the cover on its cards, answering with its first frame and how much moved (motion); 'status' reports the kept shot, the last send and, once the game is hosted and the account connected, Genex's current cover and who chose it (coverSource; the owner's pick always stands). Shoot once the game first looks like itself, before any publish while no shot is kept, and after a big visual change, and judge the preview before any send. Publish shoots it again and sends it, then sends the kept clip; genex__cover-set sends the kept shot now. Asks nothing, charges nothing and uploads nothing.",
+      "description": "Keep this game's Genex cover: the 16:9 picture genex.games shows on its gallery card, its page and every shared link (not Studio's own sidebar look, set_game_cover), and optionally the clip it plays over the cover on its cards. Make them of the real game by any means, save them inside this game's folder and pass their paths: image is a PNG or JPEG of at least 1280×720 and at most 8 MB (Genex shows 16:9 whole and crops other shapes to their middle 16:9); clip is a WebM or MP4 of at least 5.3 seconds of play (Genex keeps five) and at most 8 MB. Studio checks both and copies them into its own storage in place of the last cover; when either is refused nothing is kept. The answer has the kept picture's size and light (Genex refuses a picture too dark or one flat colour), the last send, who chose the cover on Genex (coverSource; the owner's pick always stands) and when it is sent: the next publish sends it (a draft only until the game is public), genex__cover-set sends it now. Asks nothing, charges nothing and uploads nothing.",
       "parameters": {
         "type": "object",
         "properties": {
-          "operation": {
+          "image": {
             "type": "string",
-            "description": "shoot, clip or status"
+            "description": "The cover picture: a path inside this game's folder to a PNG or JPEG of at least 1280×720."
+          },
+          "clip": {
+            "type": "string",
+            "description": "Optional: a path inside this game's folder to a WebM or MP4 of at least 5.3 seconds of play."
           }
         },
-        "required": ["operation"]
+        "required": ["image"]
       }
     },
     {
       "name": "cover-set",
-      "description": "Make the kept genex-cover shot this game's Genex cover now, without publishing: the picture on its gallery card, its page and every shared link. Shoot and judge it with genex__cover first. The user approves each call, so it can wait several minutes for the answer; never repeat a declined or expired request unless the user asks again. With no hosted Genex project yet it sends nothing: the shot goes with the first publish. A cover the owner chose on genex.games always stays. Genex limits cover uploads per hour: send one judged frame, and never send a frame Genex turned down again unchanged. The answer's kind says how it went.",
+      "description": "Make the kept cover picture this game's Genex cover now, without publishing: the picture on its gallery card, its page and every shared link. Keep one with genex__cover first. The user approves each call, so it can wait several minutes for the answer; never repeat a declined or expired request unless the user asks again. With no hosted Genex project yet it sends nothing: the picture goes with the first publish. A cover the owner chose on genex.games always stays. Genex limits cover uploads per hour, and a picture Genex turned down is never sent again unchanged. The answer's kind says how it went.",
       "parameters": {
         "type": "object",
         "properties": {}
@@ -157,104 +160,98 @@
   "skills": [
     {
       "name": "creator-mcp",
-      "text": "Genex includes the main creator MCP at mcp.genex.games, sharing this plugin account. Its genex-creator__ tools search games and animations, list your games and inspect generation status. Use genex__asset for generation, local delivery and authoritative account/credit status (including Unlimited); use genex__publish for Studio-managed publishing. The generic remote generate, credits, setup_genex_tools and publish_game tools are intentionally replaced by these Studio operations. Never install another CLI or sign in again just to use the bundled MCP. Account unlocked is local credential availability; remote failures remain actionable errors."
-    },
-    {
-      "name": "asset-preference",
-      "text": "When this plugin is enabled, Genex can generate the assets a requested game build needs: generate only as needed. When Local Blender is enabled, model hard-surface pieces there first (weapons, props, vehicles, buildings, kit pieces). Use Genex for what Blender cannot make well: rigged characters and creatures (Meshy, through character or creature), sound and music, tiling textures, images for decals, signage and UI, and the model lane (Tripo) for an occasional hero prop, with auto-size. Never stand a picture in for something the game shows in 3D. Each lane's provider is fixed: when the user asks for a provider a lane lacks (Meshy for props, say), tell them once and name what you will use instead. When planning a new game or an asset-related change, you may suggest a small, concrete asset set suited to the brief and say where each piece comes from. Planning remains tool-free: describe generation as conditional on execution-time account readiness, not as already verified or completed. If host context says the account needs setup, mention Connect Genex once as an optional next step; do not claim it is ready or block ordinary game creation. During authorized building, call genex__asset with operation status first. Generate only when accountVerified is true and status reports no blocking account, terms, credit or service issue. An unlocked credential alone is not remote verification; unlimited true overrides a numeric zero balance, and unknown credit data is not zero. Use existing suitable assets before creating more, and do not generate assets just to satisfy a quota or on a status-only question. Respect explicit user choices such as procedural-only, no paid assets, an asset budget, or Local Blender. Do not add another spending-enable step or mandatory project allowance. If status or generation fails, explain the actual blocker and what you will use instead; never silently replace promised Genex assets or repeat an unresolved generation. Keep the first playable loop moving while assets generate, and state which generated assets were actually integrated."
+      "summary": "Genex's creator MCP (genex-creator__ tools): searching games and animations, checking generation status, and which Studio tools replace its generate, credits and publish calls.",
+      "file": "skills/creator-mcp/SKILL.md"
     },
     {
       "name": "publishing",
-      "text": "When the user wants to publish this game or put it online, call genex__publish with operation 'gallery': Studio exports the game, updates its draft page and makes that same build the public version. Use operation 'draft' only for an unlisted test build, such as trying multiplayer or sign-in, or when the user asks for a private link. Studio asks the user to approve in the chat; that call may wait several minutes for the answer, and a declined or expired request must not be repeated unless the user asks again. The result is a job: call genex__publish-status with operation 'wait' and the jobId until state is done or failed, then give the user galleryUrl, or draftUrl for a draft. Offer publishing once when a milestone works. Publishing, and a draft until the game is first public, also shoots the game's genex-cover demo again and sends that frame as its Genex cover after the upload; publish-status reports how it went. Before any publish, the first or an update, and after one, handle the cover as the cover skill says. Studio runs Genex's CLI for you: use genex__cli for other Genex commands.",
-      "engines": ["web"]
+      "engines": ["web"],
+      "summary": "Putting a web game on Genex: genex__publish for the gallery or an unlisted draft, waiting on genex__publish-status, and what the person approves.",
+      "file": "skills/publishing/SKILL.md"
     },
     {
       "name": "publishing-apps",
-      "text": "A game made in Unity, Godot or Unreal reaches Genex players as its Mac, Windows and Linux apps, which people install from Play in the Genex desktop app, and a Unity or Godot game also as a web version: Genex publishes them, so never send the person to itch.io or another store for this. To publish an app, build the player app into the game's folder (Unity: a macOS build at unity/Builds/Mac/<Game>.app, a Windows build at unity/Builds/Windows/<Game>.exe, a Linux build at unity/Builds/Linux/<Game>.x86_64; Godot and Unreal: their export into a Builds folder of the project), check that it starts where this computer can run it, then tell the person to press Publish on the stage strip. A web version goes in web/ at the game's root: Godot's web export makes it there; for Unity, build for WebGL into web/ with Compression Format set to Disabled, so the page loads from any host (it needs Unity's WebGL Build Support module; if it is missing, say so), and with a page that fills the window: Unity's own Default and Minimal templates draw the game as a fixed 960x600 box with a Unity logo bar under it. Before building, write a WebGL template at unity/Assets/WebGLTemplates/Genex/index.html whose html, body and canvas take the whole window (width and height 100%, no margin, no scroll bars, black background, no footer or logo) and that starts the build with Unity's template tags ({{{ LOADER_FILENAME }}}, {{{ DATA_FILENAME }}}, {{{ FRAMEWORK_FILENAME }}}, {{{ CODE_FILENAME }}}, {{{ PRODUCT_NAME }}}), then select it with PlayerSettings.WebGL.template = \"PROJECT:Genex\". Unity keeps the game's resolution matched to the canvas, so nothing stretches. Unreal has no web export: say so plainly. For Linux: Unity builds it with its Linux Build Support (Mono) module (if it is missing, say so), as a 64-bit x86_64 player named <Game>.x86_64 beside its <Game>_Data folder. Godot exports it with a Linux preset into its own folder (Builds/Linux/<Game>.x86_64; godot__export-templates with linux gets the template first). Unreal packages it for Linux only on Windows (with Epic's Linux cross-compile toolchain) or on Linux: on a Mac, say plainly it cannot, and keep the whole packaged folder (its <Game>.sh, <Game> and Engine folders) together. A Linux build cannot be started on a Mac or on Windows: check that it was written whole, and say so instead of running it. Publish's window lists the Web, Mac, Windows and Linux builds it found and sends each ready one to genex.games, listing the game in the gallery; you do not run any publish command yourself. An app built before the game's last change is not sent: when the person asks to build it again, rebuild it the same way. Genex opens a Mac app full screen. When the person wants it in a window instead, build it windowed in the engine's own settings, then set GenexWindowed in the app's Info.plist and sign it again ad hoc: plutil -replace GenexWindowed -bool YES \"<Game>.app/Contents/Info.plist\", then codesign --force --deep --sign - \"<Game>.app\". Remove the key the same way to open it full screen again. Say plainly when a build is ready to publish."
+      "summary": "Publishing a Unity, Godot or Unreal game on Genex as Mac, Windows and Linux apps (and a web version): where each build goes and the Publish button.",
+      "file": "skills/publishing-apps/SKILL.md"
     },
     {
       "name": "cover",
-      "text": "The Genex cover is the one real 16:9 frame genex.games shows for this game (its gallery card, its page, every shared link), not Studio's own sidebar look (set_game_cover). WHEN: in the same turn the game first looks like itself (a small side task, never a turn of its own), and again before a run ends; before every publish, the first or an update, gallery or draft: check genex__cover {\"operation\":\"status\"} and, with no kept shot, stage and shoot it first; after a big visual change; never every turn. A publish whose own cover outcome is none (cover.last.jobId is its jobId) sent no frame: offer once to make one, and never again in this chat once the user says no. Neither applies to a game whose owner keeps its code untouched (a folder brought only to publish): it gets no genex-cover demo. WHO: the session that owns the whole build, not a worker with a narrower brief. HOW: read genex__skill {\"name\":\"genex-cover\"}; stage it as a demo named genex-cover in config.demos (the game's own world, light and effects, HUD hidden, ending in window.__studio.pause(), a camera composed for 16:9); check it with genex__cover {\"operation\":\"shoot\"}. CLIP: beside it, a demo named genex-clip that starts a moment the game then plays by itself for five seconds (its own scripted input, HUD hidden, never paused), recorded with genex__cover {\"operation\":\"clip\"}; motion near 0 means frozen. Until a genex-cover demo exists, Studio keeps a plain frame of the game as it loads, so Publish always shows a cover; yours replaces it. SHOWN: your last shot is the cover the person sees, a card in the chat that offers Publish itself; shoot the winner last, then say one short line about it, never how to publish. Publish shoots it again and sends it; genex__cover-set sends it now. HONESTY: never relight the game or add text or anything it lacks; a dark-by-design game stays dark. A cover the owner chose on genex.games always wins: never ask to replace it.",
-      "engines": ["web"]
+      "summary": "The game's Genex cover: what genex.games needs (a picture, an optional clip), how genex__cover keeps them and when Studio sends them.",
+      "file": "skills/cover/SKILL.md"
     },
     {
       "name": "genex",
-      "summary": "Genex's own guide to its asset toolkit, with Studio's map from each Genex CLI command to the Studio tool that runs it (genex__asset, genex__publish, genex__cover, genex__cli, genex__cli-paid, genex__package). Read it before using Genex beyond asset generation.",
+      "summary": "Genex's own guide to its asset toolkit, with Studio's map from each Genex CLI command to the Studio tool that runs it (genex__asset, genex__publish, genex__cover, genex__cli, genex__cli-paid, genex__package).",
       "file": "skills/genex/SKILL.md"
     },
     {
       "name": "genex-threejs-multiplayer",
       "engines": ["web"],
-      "summary": "Realtime multiplayer for Three.js games with @genex-ai/multiplayer: movement sync, shared objects, host authority, matchmaking. MANDATORY before networking code. Test it on the Genex draft link with two different players; Studio's preview stays single-player.",
+      "summary": "The @genex-ai/multiplayer API for a web game: rooms, matchmaking, shared state, host and ownership, rate limits, and the draft link that runs it (Studio's preview is single-player).",
       "file": "skills/genex-threejs-multiplayer/SKILL.md",
-      "references": [
-        "skills/genex-threejs-multiplayer/references/realtime-patterns.md",
-        "skills/genex-threejs-multiplayer/references/genre-recipes.md",
-        "skills/genex-threejs-multiplayer/references/host-physics.md",
-        "skills/genex-threejs-multiplayer/references/genex-netcode-feel-checklist.md"
-      ]
+      "references": ["skills/genex-threejs-multiplayer/references/realtime-patterns.md"]
     },
     {
       "name": "genex-threejs-embed-auth",
       "engines": ["web"],
-      "summary": "Player identity, saves and leaderboards with @genex-ai/embed-sdk, whose token multiplayer needs. Read before writing boot code for a game that will be published on Genex. The owner can try sign-in on the published draft; server saves persist only once the game is in the gallery.",
+      "summary": "The @genex-ai/embed-sdk API: player identity, saves and leaderboards, the token multiplayer needs, and what works on the published draft and in the gallery.",
       "file": "skills/genex-threejs-embed-auth/SKILL.md",
       "references": ["skills/genex-threejs-embed-auth/references/shells.md"]
     },
     {
       "name": "genex-llm-in-games",
       "engines": ["web"],
-      "summary": "Call a language model from a running game (NPC dialogue, quests, judging what the player typed) that the player pays for and approves on Genex: the call modes, benchmarking the price with genex__cli-paid, and handling every refusal.",
+      "summary": "Calling a language model from a running game that the player pays for and approves on Genex: the call modes, benchmarking the price with genex__cli-paid, and its refusals.",
       "file": "skills/genex-llm-in-games/SKILL.md",
       "references": ["skills/genex-llm-in-games/references/pricing.md"]
     },
     {
       "name": "genex-tool-llm",
       "engines": ["web"],
-      "summary": "Read first when a request implies a language model running while someone plays the finished game: on Genex that is a platform feature the player pays for and approves, never a key on the author's account.",
+      "summary": "A language model running while someone plays the finished game: on Genex a platform feature the player pays for and approves, never a key on the author's account.",
       "file": "skills/genex-tool-llm/SKILL.md"
     },
     {
       "name": "genex-monetization",
       "engines": ["web"],
-      "summary": "Build an in-game shop that sells items for Genex coin: the catalog, purchase flow, delivery and the hard rules (no paid randomness, no gambling). Items are listed with genex__cli and changed with genex__cli-paid.",
+      "summary": "Selling for Nex, Genex's currency: the purchase flow, delivery and the hard rules (no paid randomness, no gambling); fixed Nex prices are store items (genex-items), dynamic payments are for amounts decided while playing.",
       "file": "skills/genex-monetization/SKILL.md"
+    },
+    {
+      "name": "genex-items",
+      "engines": ["web"],
+      "summary": "Genex store items: anything priced in Nex is a store item listed with genex__cli shop add (its picture required), getEntitlements(), and other creators' items with items add. Coins or gold are the game's own.",
+      "file": "skills/genex-items/SKILL.md"
     },
     {
       "name": "genex-tool-publish",
       "engines": ["web"],
-      "summary": "Put the game on the web with Genex: the glue a published game needs, the draft link to hand the user, size limits and the preflight report. Publishing itself runs through genex__publish.",
+      "summary": "Putting the game on the web with Genex: the glue a published game needs, the draft link, size limits and the preflight report; publishing itself runs through genex__publish.",
       "file": "skills/genex-tool-publish/SKILL.md"
     },
     {
-      "name": "genex-cover",
-      "summary": "Read before making or refreshing this game's Genex cover: once it looks like itself, after a big visual change, or before publishing while it has none. How to stage the genex-cover demo from the game's own world, light and effects (no HUD, no text, 16:9), judge it with genex__cover and send it.",
-      "file": "skills/genex-cover/SKILL.md",
-      "engines": ["web"]
-    },
-    {
       "name": "genex-tool-model",
-      "summary": "Genex's card for the model lane (Tripo): text or image to GLB, the quality knobs (auto-size, low-poly, face-limit), segment, rig and animate. Read it before your first genex__asset model call.",
+      "summary": "Genex's card for the model lane (Tripo): text or image to GLB, the quality knobs (auto-size, low-poly, face-limit), segment, rig and animate.",
       "file": "skills/genex-tool-model/SKILL.md"
     },
     {
       "name": "genex-tool-character",
-      "summary": "Genex's card for rigged characters and creatures (Meshy): the one-shot and guided routes, polycount, height and pose, Uthana import, plain-word animation and the free clip catalog. Read it before your first character or creature call.",
+      "summary": "Genex's card for rigged characters and creatures (Meshy): the one-shot and guided routes, polycount, height and pose, Uthana import, plain-word animation and the free clip catalog.",
       "file": "skills/genex-tool-character/SKILL.md"
     },
     {
       "name": "genex-tool-texture",
-      "summary": "Genex's card for tiling PBR texture sets (base colour, normal, roughness) and terrain-seamless surfaces. Read it before your first genex__asset texture call.",
+      "summary": "Genex's card for tiling PBR texture sets (base colour, normal, roughness) and terrain-seamless surfaces.",
       "file": "skills/genex-tool-texture/SKILL.md"
     },
     {
       "name": "genex-tool-audio",
-      "summary": "Genex's card for sound effects (duration, loop for ambient beds), looping music and short voice lines, all MP3. Read it before your first sfx, music or voice call.",
+      "summary": "Genex's card for sound effects (duration, loop for ambient beds), looping music and short voice lines, all MP3.",
       "file": "skills/genex-tool-audio/SKILL.md"
     },
     {
       "name": "genex-tool-image",
-      "summary": "Genex's card for images: decals, signage, UI art and icons, transparent cut-outs, edits and upscales. Read it before your first genex__asset image call.",
+      "summary": "Genex's card for images: decals, signage, UI art and icons, transparent cut-outs, edits and upscales.",
       "file": "skills/genex-tool-image/SKILL.md"
     },
     {
@@ -264,7 +261,7 @@
     },
     {
       "name": "plugin-author",
-      "summary": "How to write a Genex plugin for an engine or tool Genex has no plugin for, with a complete example: where it goes in this project, checking it with plugin_check, and how the person loads it. Read it before writing one.",
+      "summary": "How to write a Genex plugin for an engine or tool Genex has no plugin for, with a complete example: where it goes in this project, checking it with plugin_check, and how the person loads it.",
       "file": "skills/plugin-author/SKILL.md",
       "references": [
         "skills/plugin-author/references/manifest.md",
@@ -438,7 +435,7 @@
     },
     {
       "id": "sound",
-      "description": "Genex sound effects or music, delivered as WAV",
+      "description": "Genex sound effects or music, delivered as MP3",
       "tools": ["asset"],
       "isolation": "copy"
     },

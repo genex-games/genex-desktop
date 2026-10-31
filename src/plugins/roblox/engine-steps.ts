@@ -84,6 +84,11 @@ export interface RobloxStepFacts {
   setUp: boolean;
   running: boolean;
   answering: boolean;
+  /**
+   * Studio answers with this game's place, but the Genex helper in it never connected: Studio was
+   * opened before the helper reached its Plugins folder, so a restart loads it.
+   */
+  helperAway?: boolean;
   /** The game the rows are for builds in a Roblox place. */
   linked: boolean;
   /** That place's name. */
@@ -134,6 +139,9 @@ function signInRow(facts: RobloxStepFacts): RobloxRow {
   return canOpen ? { ...row, action: button(RobloxAction.OpenStudio, W.OpenStudio()) } : row;
 }
 
+/** Studio answers with the game's place while the helper it should have loaded isn't connected. */
+const helperNotLoaded = (facts: RobloxStepFacts) => facts.setUp && facts.answering && facts.helperAway === true;
+
 /** Get Roblox Studio sets Studio up only once its installer's Studio is here and the person has signed in there. */
 const waitsForSignIn = (facts: RobloxStepFacts) =>
   Boolean(facts.getting) && (!facts.installed || facts.getting?.signingIn === true);
@@ -141,6 +149,9 @@ const waitsForSignIn = (facts: RobloxStepFacts) =>
 function helperRow(facts: RobloxStepFacts): RobloxRow {
   const W = MESSAGE.Steps;
   const id = RobloxStepId.Helper;
+  const restart = button(RobloxAction.RestartStudio, MESSAGE.Choice.RestartStudio());
+  if (helperNotLoaded(facts))
+    return { id, label: W.HelperAway(), detail: W.HelperAwayDetail(), done: false, action: restart };
   if (facts.setUp) return { id, label: W.HelperDone(), detail: W.HelperDoneDetail(), done: true };
   const row: RobloxRow = { id, label: W.Helper(), detail: W.HelperDetail(), done: false };
   if (waitsForSignIn(facts)) return { ...row, detail: W.AfterSignIn() };
@@ -148,12 +159,7 @@ function helperRow(facts: RobloxStepFacts): RobloxRow {
   if (facts.getting) return { ...row, detail: facts.getting.detail, busy: true };
   if (!facts.installed) return row;
   // Set up writes Studio's settings only while it is closed, so an open Studio is restarted for it.
-  if (facts.running)
-    return {
-      ...row,
-      detail: W.HelperStudioOpen(),
-      action: button(RobloxAction.RestartStudio, MESSAGE.Choice.RestartStudio()),
-    };
+  if (facts.running) return { ...row, detail: W.HelperStudioOpen(), action: restart };
   const withSetUp = { ...row, action: button(RobloxAction.Setup, W.SetUp()) };
   return facts.mac ? { ...withSetUp, note: MESSAGE.Setup.DocumentsNote() } : withSetUp;
 }
@@ -214,6 +220,7 @@ export function nowStep(facts: RobloxStepFacts): RobloxStepId | undefined {
   if (!facts.setUp) return RobloxStepId.Helper;
   if (!facts.running) return RobloxStepId.SignIn;
   if (!facts.answering) return RobloxStepId.Mcp;
+  if (helperNotLoaded(facts)) return RobloxStepId.Helper;
   return facts.linked ? undefined : RobloxStepId.Place;
 }
 
@@ -246,6 +253,7 @@ function cardRow(row: RobloxRow): RobloxStep {
 function genexCanDo(facts: RobloxStepFacts): boolean {
   if (facts.getting) return false;
   if (!facts.installed || !facts.setUp || !facts.linked) return true;
+  if (helperNotLoaded(facts)) return true;
   return facts.running && !facts.answering && !facts.mcpOn;
 }
 

@@ -57,7 +57,7 @@ export function StillsStage({
         {pictures.map((picture) => (
           <Still key={picture.file} picture={picture} label={label} />
         ))}
-        <h2 className="empty-state-title max-w-full" title={title}>
+        <h2 data-analytics-mask className="empty-state-title max-w-full" title={title}>
           {title}
         </h2>
       </div>

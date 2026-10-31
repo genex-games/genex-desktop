@@ -1,9 +1,8 @@
 /**
- * Self-modification — hard constraint #1 (full recursion), PLAN.md §5.3.
+ * Self-modification: the harness reads and changes its own files.
  *
- * These tools let the studio rewrite its own loop, tools, skills, prompts and memory policy while
- * it runs. That is the root of the experiment, and it is only survivable because of what the
- * substrate guarantees underneath: every edit is preceded by a snapshot, a restart is the only
+ * These tools let the studio read and change its own loop, tools, skills and prompts while it runs.
+ * That is only survivable because of what the substrate guarantees underneath: every edit is preceded by a snapshot, a restart is the only
  * way to load new code, and a version that cannot boot is rewound by the watchdog without a human.
  *
  * The one thing they cannot touch is the substrate itself — it lives in the app bundle, outside
@@ -11,7 +10,6 @@
  */
 import { readFile, readdir, stat } from "node:fs/promises";
 import path from "node:path";
-import { MAX_VALUE_CHARS, normalise, shouldRemember } from "../memory/policy.ts";
 import type { AnyRecord, HarnessTool, ToolCtx } from "../types/harness.d.ts";
 import { HostMethod } from "../loop/host-methods.ts";
 import { EventKind, RunEvent } from "../loop/run-events.ts";
@@ -85,23 +83,10 @@ function notApplied(file: string, reason: string): { ok: false; content: string 
   };
 }
 
-/**
- * What `remember` says it kept: the fact, and what fitting memory (`normalise`) cut or let go — a
- * fact cut or dropped without a word was lost silently.
- */
-function rememberedWords(key: string, { clipped, dropped }: { clipped: boolean; dropped: string[] }): string {
-  return [
-    `Remembered ${key}${clipped ? ` (only its first ${MAX_VALUE_CHARS} characters — memory keeps facts short)` : ""}.`,
-    dropped.length ? `Memory is full, so the oldest facts were dropped: ${dropped.join(", ")}.` : "",
-  ]
-    .filter(Boolean)
-    .join(" ");
-}
-
 export const tools: HarnessTool[] = [
   {
     name: "list_own_files",
-    description: "List your own source: loop, tools, skills, prompts, judge, memory.",
+    description: "List your own source: loop, tools, skills, prompts.",
     parameters: { type: "object", properties: { dir: str("subdirectory, default '.'") } },
     async execute(args, ctx) {
       const base = selfPath(ctx, args.dir ?? ".");
@@ -149,11 +134,6 @@ export const tools: HarnessTool[] = [
       required: ["file", "contents", "reason", "title", "summary"],
     },
     async execute(args, ctx) {
-      // R4: the judge rubrics are the yardstick this self is measured by — frozen. The sandbox
-      // denies the write anyway; this guard just says why instead of a bare EPERM.
-      if (args.file === "judge" || args.file.startsWith("judge/")) {
-        throw new Error(`judge/ is frozen: the blind critic's rubric is not yours to edit (refused: ${args.file})`);
-      }
       const written = await writeSelf(ctx, args.file, args.contents, changeWords(args));
       if (!written.ok) return notApplied(args.file, written.message);
       ctx.notify("selfmod.edited", { file: args.file, reason: args.reason });
@@ -208,13 +188,13 @@ export const tools: HarnessTool[] = [
   {
     name: "write_skill",
     description:
-      "Create or rewrite a skill. Skills are how you keep what you learn: be concrete — quote exact thresholds, section names and formats. Vague rules do not change behaviour. The change is tried in a copy of you first, and the person sees it in Activity and can undo it.",
+      "Create or rewrite a skill: a reference note an agent may read on demand. The change is tried in a copy of you first, and the person sees it in Activity and can undo it.",
     parameters: {
       type: "object",
       properties: {
         slug: str("file name without .md"),
         contents: str("full markdown, starting with --- name: … description: … ---"),
-        reason: str("what you learned that made you write this"),
+        reason: str("why you are writing this"),
         ...PLAIN_WORDS_PARAMS,
       },
       required: ["slug", "contents", "reason", "title", "summary"],
@@ -258,56 +238,12 @@ export const tools: HarnessTool[] = [
         RunEvent.ToolInstalled,
         RunEvent.SkillEdited,
         RunEvent.RebuildAndRestartStudio,
-        RunEvent.SkilloptAccepted,
-        RunEvent.SkilloptRejected,
       ]);
       const rows = events
         .filter((e) => e.data.type === EventKind.Custom && interesting.has(e.data.event_type))
         .slice(-(args.limit ?? 20))
         .map((e) => `- ${e.created_at} ${e.data.event_type}: ${JSON.stringify(e.data.payload)}`);
       return rows.length ? rows.join("\n") : "You have not changed yourself yet.";
-    },
-  },
-
-  {
-    name: "remember",
-    description:
-      "Store a durable fact about this studio, this machine, or the user's taste. Memory is injected into every prompt, so keep it short and specific.",
-    parameters: {
-      type: "object",
-      properties: { key: str("short key"), value: str("the fact") },
-      required: ["key", "value"],
-    },
-    async execute(args, ctx) {
-      // The policy is harness code, so the studio can change what it considers worth keeping.
-      if (!shouldRemember(args.key, args.value)) {
-        return {
-          ok: false,
-          content: `Not remembered: "${args.key}" looks transient. Memory is for durable facts — put anything about the current task in the log instead.`,
-        };
-      }
-      const memory = ((await ctx.call(HostMethod.ArtifactRead, { artifactId: "memory" })) ?? {}) as AnyRecord;
-      // Re-set, not overwritten in place: a fact just updated is the newest, never the next to go.
-      delete memory[args.key];
-      memory[args.key] = args.value;
-      const fitted = normalise(memory);
-      await ctx.call(HostMethod.ArtifactWrite, { artifactId: "memory", value: fitted });
-      return rememberedWords(args.key, {
-        clipped: fitted[args.key] !== args.value,
-        dropped: Object.keys(memory).filter((key) => !(key in fitted)),
-      });
-    },
-  },
-
-  {
-    name: "forget",
-    description: "Remove a memory that turned out to be wrong or stale.",
-    parameters: { type: "object", properties: { key: str("key to remove") }, required: ["key"] },
-    async execute(args, ctx) {
-      const memory = ((await ctx.call(HostMethod.ArtifactRead, { artifactId: "memory" })) ?? {}) as AnyRecord;
-      delete memory[args.key];
-      await ctx.call(HostMethod.ArtifactWrite, { artifactId: "memory", value: normalise(memory) });
-      return `Forgot ${args.key}.`;
     },
   },
 

@@ -16,6 +16,7 @@ import {
   type BootState,
   type SandboxProblem,
   type SandboxSetupResult,
+  WindowsSetupNeed,
 } from "../../src/shared/boot.ts";
 import { BootView, bootView, canSetUp, createBoot, SetupReport } from "../../src/renderer/state/boot.ts";
 import { nativeViewsUp } from "../../src/renderer/play/play-model.ts";
@@ -196,6 +197,17 @@ describe("Set up on Windows", () => {
     await controller.start();
     assert.equal(fake.callsOf("setUpSandbox").length, 0);
     assert.equal(bootView(controller.store.getState()), BootView.SandboxSetup);
+  });
+
+  it("waits for the press to update a sandbox another release set up: an update raises no prompt unasked", async () => {
+    const { controller, fake } = windowsBoot([]);
+    const reinstall = { ...NOT_PROVISIONED, windowsNeeds: [WindowsSetupNeed.Reinstall] };
+    fake.stub("bootState", async () => ({ ...WINDOWS_SETUP, sandbox: reinstall }));
+    await controller.start();
+    assert.equal(fake.callsOf("setUpSandbox").length, 0);
+    assert.equal(bootView(controller.store.getState()), BootView.SandboxSetup);
+    await controller.setUp();
+    assert.equal(fake.callsOf("setUpSandbox").length, 1);
   });
 
   it("starts nothing by itself where Set up is not offered: a ready start, or Linux", async () => {

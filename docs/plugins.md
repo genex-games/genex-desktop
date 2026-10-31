@@ -32,13 +32,8 @@ exports work with no enabled plugins.
   its own). A host older than the option ignores it and answers an ordinary observation, so a
   caller checks the answer for `still`, then `stillProblem`, and handles neither (the SDK types the
   answer as `PluginStillAnswer | PluginStillIgnored`).
-- API 3's `observe` takes an optional `clip` the same way (additive, no field or capability of its
-  own; never beside `still` or files): `{ demo, width, height, seconds?, fps?, maxBytes? }` records
-  `seconds` of the game running from the moment the demo stages, after the host starts its clock
-  (`__studio.start()`), on a hidden window (`core/view-clip.ts`, budget: its seconds and a minute).
-  The page records the canvas a still reads with `MediaRecorder` (MP4/H.264, else WebM VP9/VP8) at
-  two bitrates and the host keeps the best that fits (`main/preview-clip.ts`). The answer is
-  `clip` (video, poster, `motion`) or `clipProblem` with a still's codes.
+- API 3's `observe` records no clip: a call with a `clip` is refused (`observe records no clip`).
+  A cover clip is a file the game's agent hands `genex__cover`.
 - Plugin tool parameters are scalar (`string` / `number` / `boolean` properties); API 3 also accepts `type: "object"`, optionally with `acceptJsonString` for a migrated scalar (`toolParameter` in `src/substrate/plugins/manifest.ts`; see the plugin guide's structured arguments). External MCP tools retain their full nested schemas.
 
 ## Package and distribution
@@ -139,13 +134,15 @@ as one set (`pluginUpdates` in `renderer/state/plugins.ts`; none for a plugin wh
 waits for sessions): each plugin's row and page offer **Update to x**, and the sidebar's **Update
 plugins** runs them one after another. A seed's update asks nothing: it is Genex's own code, shipped
 inside the app the user installed (`asksBeforeInstall` in `main/plugin-local-install.ts`); an index
-release goes through its own trust dialog. A removed preference suppresses the seed across Studio upgrades.
+release goes through its own trust dialog, and a no there rejects `studio:plugins.update` as the
+person's no (`isUserCancelled`; a no to an install still resolves). A removed preference suppresses the seed across Studio upgrades.
 Normal updates preserve settings, protected credentials and job state. The Genex plugin adopts
 `engine-homes/genex`, keeping existing allowances and unresolved jobs; remove/reinstall is not a
 required upgrade step.
 
 The registry reports every mutation through `onChange` (`PluginChange` reasons `installed`,
-`updated`, `enabled`, `disabled`, `removed`, `failed`, `reloaded`); Studio forwards it to the
+`updated`, `enabled`, `disabled`, `removed`, `failed`, `reloaded`; a `failed` one says how in
+`failure`, a `PluginFailure`); Studio forwards it to the
 renderer as the UI event `plugins.changed`, which is what refreshes the plugin list, the toolbar
 and the Plugins page — no polling is needed for a change to show.
 
@@ -158,6 +155,7 @@ and the Plugins page — no polling is needed for a change to show.
 | `capabilities` | 1 | Host services the backend may call: `settings`, `project.read`, `project.write`, `jobs` (also `events.emit`), `observe`, `credentials`, `external-auth`, `network`, (API 2) `export`, and (API 3) `native-runtime` and `game-engine` |
 | `tools[]` | 1 | `{name, description, parameters}`; scalar properties only; agent-invoked as `<id>__<name>` |
 | `tools[].confirmation` | 2 | 1–300 characters. The tool needs the user's consent before it runs; see the consent model below |
+| `tools[].onAccount` | 3 | `true`, with `confirmation`: the call acts on the person's account with another service; its card asks in Bypass too and offers Allow in this chat (consent model below) |
 | `tools[].confirmationInput` | 3 | `{parameter, label}`, with `confirmation`: one of the tool's string parameters the person may edit on the card, under a one-line label of at most 60 characters; see the consent model below |
 | `tools[].timeoutMs` | 3 | 1,000–540,000: the longest one call may run in the backend when that is longer than the host's 190-second ceiling (a game engine's import or export), within an agent's own call deadline |
 | `tools[].host` | 3 | A program Studio runs for the tool instead of the backend; reserved for the bundled Genex plugin (see [First-party privileges](#first-party-privileges)) |
@@ -170,7 +168,7 @@ and the Plugins page — no polling is needed for a change to show.
 | `toolbar[]` | 2 | Up to 4 buttons in the stage strip; see below |
 | `mcpServers[]` | 2 | Up to 4 MCP servers the plugin ships, run by the host as connectors the plugin owns, each (API 3) with `facts`; see below |
 | `detect[]` | 3 | Up to 8 `{fact, files, notUnder?}` rules that recognise the plugin's kinds of project by their files; see [Project facts](#project-facts) |
-| `engine` | 3 | Capability `game-engine` only: `{id, label, projectFiles, fact, projectInFolder, play?, apps?, playerApps?}`, the engine the plugin declares; see [The engine declaration](#the-engine-declaration) |
+| `engine` | 3 | Capability `game-engine` only: `{id, label, projectFiles, fact, projectInFolder, play?, apps?, playerApps?, pages?}`, the engine the plugin declares; see [The engine declaration](#the-engine-declaration) |
 | `workspace` | 3 | `{facts?, ignore?, copySkip?}`: what history and writers' copies leave out of a folder holding the plugin's facts; see [Workspace rules](#workspace-rules) |
 | `assets` | 3 | `{facts?, folders, formats?}`: where the assets of a folder holding the plugin's facts live (1–8 folders inside the fact's folder or `.`, up to 32 lowercase extensions without the dot) |
 | `workerTypes[]` | 3 | Up to 16 `{id, description, tools, isolation}`: the kinds of worker a lead may start while the plugin is on; see [Worker types](#worker-types) |
@@ -180,7 +178,6 @@ and the Plugins page — no polling is needed for a change to show.
 | `tools[].needs`, `mcpServers[].needs` | 3 | 1–4 of the manifest's lock ids a call of the tool, or of the connector's tools, holds while it runs; see [Locks](#locks-the-person-comes-first) |
 | `hooks[]` | 3 | Up to 32 `{on, tool, facts?, messages?}`: the plugin's harness tools Genex runs at its moments; see [Hooks](#hooks-genexs-moments) |
 | `observers[]` | 3 | Up to 8 `{id, facts, tool, live?, label?}`: what Genex can capture of a project with these facts, and the Live view it shows; see [Observers](#observers) |
-| `judges[]` | 3 | Beside `engine` only: up to 8 `{id, label, facts?, brief, players?, probe?}`, blind judges that play the engine's games in its editor; see [Judges](#judges) |
 | `tools[].ready` | 3 | Agent tools with `makes` only: the harness tool that answers whether the kind can be made now (`{ready, note}`) |
 | `tools[].asset` | 3 | Agent tools only: `{kind, prompt?, tool?}`, the kind of asset a call makes; see [Assets being made](#assets-being-made) |
 | `icon` | any | The plugin's picture: a `.png`, `.jpg`, `.webp` or `.svg` file in the package, at most 512 KiB, square and full-bleed (Studio rounds the corners); see [Icons](#icons) |
@@ -297,9 +294,12 @@ gets no such notice: the list names what is on (`delegation-prompts.ts`).
   and its panel follows [Engine panels](../design/genex/README.md#engine-panels). Out of its facts the button is still
   asked for its status and shows while that status says `shown: true` (its chat chose the engine
   before the project exists); `visibleToolbarEntries` in `shared/plugin-toolbar.ts` decides.
-- Buttons render as `button[data-plugin-toolbar="<plugin>:<item>"]` immediately after the
-  Live/Builds group, for enabled installed plugins only; a disabled, removed or not-enabled plugin
-  contributes nothing.
+- Buttons render as `button[data-plugin-toolbar="<plugin>:<item>"]` at the stage strip's end, for
+  enabled installed plugins only; a disabled, removed or not-enabled plugin contributes nothing. A
+  button with `facts` (an engine's) stands in the chat header instead, left of Show in Finder
+  (`toolbarPlace` in `shared/plugin-toolbar.ts`), drawn there by the strip's toolbar through a portal
+  (`renderer/panels/engine-slot.ts`), so its status, panel and approvals stay the strip's; with no
+  game chat header it stays on the strip. Its `label` is the engine's short name (Roblox, Unity).
 
 **Status.** `status` names a declared action **without** confirmation. Studio calls it with no
 arguments (and the current project binding) when the toolbar mounts, on every `plugins.changed`,
@@ -944,7 +944,8 @@ without a ready Xcode, for a listed class whose `UCLASS()` declaration (`class <
 or `U<Name>`) no header has, for C++ files `cpp` doesn't list, for a class another part defines, and
 for anything else UnrealBuildTool reads that the copy added, changed or lost against the game: its
 Source (outside `Parts/`, a part that landed later is no change), `.uproject` and `Plugins/`.
-Then it compiles the copy with UnrealBuildTool (`ubt.ts`, at most two at once) and names each error
+Then it compiles the copy with UnrealBuildTool (`ubt.ts`, at most two at once; the editor target is
+`<Module>Editor`, else the Source's editor target named for the project, else its first) and names each error
 as `<file>:<line>: <message>`; an error in a file outside the game and the engine names only where
 it is. UBT runs under `sandbox-exec` (`ubt-sandbox.ts`): of the home folder it reads only the copy,
 the engine, Xcode and its own folders (its configuration read-only), it writes only the copy's
@@ -1196,8 +1197,8 @@ plugin into Studio's Plugins folder. `studio-locate.ts` finds Studio on a Mac at
 from Info.plist through `plutil`) with `Contents/MacOS/StudioMCP`, and on Windows as the newest
 `%LOCALAPPDATA%\Roblox\Versions\version-*\RobloxStudioBeta.exe` beside `mcp.bat`; it refuses
 links out of those folders and a home or LOCALAPPDATA of the other system. Whether Studio runs is
-`pgrep -x RobloxStudio`, or `tasklist` by its full path. The toolbar item `studio` ("Roblox Studio"
-after the host's `roblox` mark, scoped to `roblox-project` games like every engine's button) opens the panel; its `toolbar-status` is a
+`pgrep -x RobloxStudio`, or `tasklist` by its full path. The toolbar item `studio` ("Roblox"
+after the host's `roblox` mark in the chat header, aria-label "Roblox Studio", scoped to `roblox-project` games like every engine's button) opens the panel; its `toolbar-status` is a
 dot: Not installed and Not open `info`, Set up and Starting `warn`, Ready `ok`. Set up holds until
 Genex's setup record (`setup/record.json` in plugin storage) exists; Ready means Studio's own MCP
 server lists an open Studio, asked through the one StudioMCP the backend keeps once Studio runs. Neither the button nor the
@@ -1304,7 +1305,10 @@ person's sign-in must work. Studio joins a fresh StudioMCP a moment after it sta
 to that Studio: `studio_id` is filled from the binding file `studio.json` the backend keeps in the
 connection's folder (`{studioId, session, at}`, believed for `BINDING_MAX_AGE_MS`), or with no file
 yet from the game's linked place matched by name; two matching Studios, a stale binding and a call
-naming another Studio are refused in plain words. `studio-tools.ts` gives each of StudioMCP 0.743's
+naming another Studio are refused in plain words. Each listing of Studio's tools is kept in
+`studio-tools.json` there, and a listing Studio does not answer (busy, or still starting after a
+restart) offers the last one, so a turn never loses `execute_luau` and a call says what Studio
+answers. `studio-tools.ts` gives each of StudioMCP 0.743's
 30 tools a class: the reads pass with no card (the manifest's `reads`), `execute_luau` passes as a
 write (Edit unless the agent names another data model) with `agent-busy.json` kept around it, once
 its code passes `luau-screen.ts`: code that names Creator Store inserts, uploads, publishing, the
@@ -1323,6 +1327,10 @@ fetch any address for the agent: a path for leaking data and for planted instruc
 every time (Ask first, below), and a call to one through the connection names the plugin tool to
 use instead. A `screen_capture` JPEG over 1 MB is shrunk with `sips` or PowerShell's System.Drawing,
 and refused in plain words when it can't be.
+
+A call already cancelled is refused before starting StudioMCP or sending its tool request; the
+cancel is checked again after startup. Non-object JSON values on the MCP output are ignored,
+so a malformed line cannot crash the connection or prevent a later valid answer.
 
 The binding file comes from the helper link (`helper-link.ts`), which the backend starts once Studio
 is set up. It is a hand-written RFC 6455 server (`helper-socket.ts`, no dependency) on 127.0.0.1
@@ -1423,8 +1431,10 @@ through a link), written in the plugin's storage for each check and removed afte
 its own `sourcemap.json` (a Rojo project) uses that. Findings come back as plain lines at a file
 and line (`TypeError` and `SyntaxError`, selene's `Error` and StyLua's parse errors are errors;
 lints are warnings; StyLua's layout differences are format). A program that hangs, prints past the
-cap, can't start or exits with another code is named and never counts as a clean check. A file
-every program found clean is remembered with its sha256 and the programs that checked it
+cap, can't start or exits with another code is named and never counts as a clean check. Exit 1
+counts as findings only when Genex can read at least one finding; empty or unrecognized output
+is a failed check and caches no clean scripts. Records from before this distinction are rechecked
+once. A file every program found clean is remembered with its sha256 and the programs that checked it
 (`luau/clean/<game>.json`) and checked again only once it changes. The programs are found where
 the person keeps them (PATH, then `~/.rokit/bin`, `~/.aftman/bin`, `~/.foreman/bin`), then in the
 plugin's storage (`luau-tools.ts`); the definitions only in the storage. **Add Luau checks**
@@ -1464,7 +1474,12 @@ beside it (whole or not at all, never over a file), adds the lock lines to `.git
 --universeId` for a published place (ids of digits only), each starting a Studio of its own, so
 **Open Studio** brings Studio forward instead when the game's place is already listed. **Quit
 Studio** and **Restart Studio** use Studio's normal quit and are refused while a build uses Studio
-(`game.engine.runs`). `use-project` links a game to an open place by its label from `places` or a
+(`game.engine.runs`). Still open three seconds after it was asked (`QUIT_RAISE_MS`), Studio is
+brought to the front once, its minimized window restored on Windows (`raiseLaunches`), so its save
+question shows; the quit then waits for the person's answer up to two minutes and never forces.
+Setup counts as done only once the Genex helper in the game's Studio is bound: a Studio that answers
+but was opened before the helper reached its Plugins folder (`helperAway`) keeps the helper step
+open with Restart Studio, and Set it up for me restarts it. `use-project` links a game to an open place by its label from `places` or a
 file by path (the agent's own call when the game has no place or lost it; another place only when
 the person asks), never reading Documents, Desktop or Downloads: a file there is linked by its label
 once open in Studio. `show-steps` puts the steps card in the chat.
@@ -1489,9 +1504,10 @@ person's and the answers give its path.
 
 **Ask first.** Roblox's own AI tools, uploads and Creator Store inserts are plugin tools with a
 `confirmation` card (`ai-tools.ts`, `insert-asset.ts`, `AskFirstTool` in `studio-tools.ts`), so
-they ask the person every call in every chat mode, Bypass included: they run on the person's Roblox
-account, against its limits, and Roblox's moderation of what they make or upload lands on that
-account. Each card is at most 300 characters and says what goes to Roblox. `generate-mesh`,
+they are `onAccount`: they ask in every chat mode, Bypass included, because they run on the
+person's Roblox account, against its limits, and Roblox's moderation of what they make or upload
+lands on that account. Each card offers **Allow in this chat**, after which that tool asks no more
+in that chat. Each card is at most 300 characters and says what goes to Roblox. `generate-mesh`,
 `generate-model` (Studio's `generate_procedural_model`, about 50 a day), `generate-texture`,
 `generate-material`, `segment-mesh`, `roblox-playtest` and `roblox-explore` (Studio's `subagent`
 types `playtest` and `explore`), `upload-image`, `store-image` and `insert-asset` each call one
@@ -1508,7 +1524,9 @@ the name the agent gave. `insert-asset` takes an id of plain digits, reads the p
 `search_asset` for that id; one it doesn't find by its product info in Edit, free only when public
 or the signed-in person's own), refuses a paid asset with nothing inserted, and answers every
 script the asset brought, flagging `require` with an id, `loadstring`, `getfenv`, `HttpService` and
-`MarketplaceService`.
+`MarketplaceService`. Insertion requires a readable destination inventory first. If the script
+inventory fails after insertion, the result says the asset was inserted but its scripts remain
+unreviewed, asks the agent not to insert it again, and never claims it brought no scripts.
 
 **Models.** `check-model` (no card, no lock) runs the asset gate (`asset-gate.ts`) over a `.glb` or
 `.gltf` in the game folder: at most 20,000 triangles, closed (every edge, once vertices at the same
@@ -1528,16 +1546,26 @@ Import 3D.
 
 **Publishing** (`publish.ts`, the `publish` skill). No Studio or plugin API publishes a place, and
 Open Cloud's place publishing takes API keys Genex never asks for, so publishing is a Do it for me:
-the game's changed script files go to Studio first, then the game's chat is handed the task through
+Studio is brought back to its editor first (`studio-edit.ts`: a play test that `get_studio_state`
+reports is ended with `start_stop_play` and waited out), the game's changed script files go to
+Studio, then the game's chat is handed the task through
 `game.engine.assist`, and the turn that answers it (the agent's own turn when the message joins it)
 clicks File › Publish to Roblox in Studio itself, as the `publish` skill says. The person's press is
 their go-ahead: the actions ask on no card, while the agent's tools still do. A Roblox game's strip
 shows Genex's **Publish** (when no other Publish does), whose card (`RobloxPublish.tsx`) has one
 press and then follows the publish through `publish-status`: handed to the agent, in Studio, on
-Roblox, with the game's page once it is there. The publish under way is recorded
+Roblox, with the game's page once it is there. After a first publish the card says only the person
+can open the game yet (Roblox keeps a new game private and unrated, so its page reads "not
+accessible" to anyone else), lists what Creator Hub still needs (Roblox's content questions,
+making it public, an icon and a thumbnail) and opens the game's Creator Hub page
+(`robloxCreatorHubUrl`, from the universe id `publish-status` answers); the agent's last line says
+the same and does neither for the person. The publish under way is recorded
 (`publish-attempts/<game>.json`) when the chat takes it; the agent ends it with `publish-result`
-(published, or stopped with what Roblox asked, one plain line), a first publish also ends once Genex
-links the published place, and one never ended stops after 20 minutes. A place never published gets
+(published, or stopped with what Roblox asked, one plain line; a publish it could not confirm is
+published when Studio's own log records one that went through since the press, `studio-logs.ts`,
+because Roblox's `Updated` time of a Team Create place moves with Studio's saves, not its
+publishes), a first publish also ends once Genex links the published place, and one never ended stops once the chat's turn that clicks it has ended
+(`game.engine.assisting`, saying to read the chat), or after 20 minutes. A place never published gets
 **Publish to Roblox** (`first-publish`, native, with a name field filled with the game's title; the
 agent's `first-publish {name}`, whose card shows the name in a field the person may edit,
 `confirmationInput`): "Publish this place to Roblox as a new game named "<name>"…",
@@ -1550,6 +1578,16 @@ first links a place just published by hand): "Publish <place> to Roblox: File �
 in its Roblox Studio window…". Each answers the other's case with the right tool, clicking nothing.
 The place block keeps Studio's click path under either button, and where Genex can't click (no
 driver, Windows, or the person said no), the answer and the block give it instead.
+The same turn then gives the game its cover on Roblox, which Studio's publish never sets (after a
+first publish, or an update while the game still shows Roblox's default icon): `cover-pictures`
+(`cover-pictures.ts`) makes Studio's viewport into the game icon (512 × 512) and a thumbnail
+(1920 × 1080) in the game's `.genex/roblox-cover/` (a centred crop, scaled by `sips` or PowerShell;
+a link there is refused or replaced, never followed), and the agent uploads both on the game's
+Creator Hub page (Icon, then Thumbnails ticked Active) in the person's browser, as the `publish` skill
+says: Studio's Game Settings no longer take them. The answer names the folder and each picture's
+file name apart, so a file dialog opens the folder first and the picture is picked by name. Once all
+is done the turn closes what it opened: its Creator Hub tabs (and a browser it started with
+`open_page`), then the game's Studio window, saving rather than discarding.
 
 **After a publish** (`relink.ts`) Genex links the game to the published place by itself: Studio
 reopens a newly published place under its name ("<name> (placeId: N)"), which the game's link no
@@ -1560,7 +1598,7 @@ it; a hand-over the chat refused leaves none. Where Genex can't click, the panel
 once per Studio holding the game when it shows Studio's clicks, never again as the panel keeps
 looking. With no Studio holding the game nothing is noted, and only a note that names one follows
 a reopening by name. The panel's status,
-every Genex moment and each publish call then ask the Studios that could be the game's whether
+every Genex moment, each publish call and `publish-result` (before the turn closes Studio) then ask the Studios that could be the game's whether
 Roblox has their place now: the noted Studio, the one bound now, and, once no open Studio still
 holds the game's own unpublished place, one whose place carries the noted name. With no note, the
 Studio the game's helper was last connected from is asked within `LOST_STUDIO_MS` (10 minutes) of
@@ -1580,6 +1618,7 @@ so the person's Studio stays open when a run ends.
 | --- | --- | --- |
 | `open-for-run` at `run.prepare` | quiet once the helper is connected and answers; opens the place (`open-studio`'s way) and waits up to `OPEN_WAIT_MS` (3 minutes) for its helper (a note names the place); blocks with the step when Studio isn't set up, the game has no place, the helper doesn't answer (a dialog may be open) or never connects | — |
 | `team-note` at `turn.start` | notes who else is in a Team Create place, only when that changed | same |
+| `close-after-publish` at `turn.end` | — | once per publish `publish-result` recorded on Roblox (within `CLOSE_MARK_MS`, 30 minutes), quits each Studio whose command line opened the game's place (its file or its published place id; `studio-close.ts`, a Mac only), as the person asked; another place's Studio stays open and Studio's save question stays theirs; quiet |
 | `save-place` at `checkpoint.before` (`messages: true`) | sends the script sync's pending file changes, then has the helper export what changed into `.genex/place/` (up to 2 minutes); blocks while Studio isn't connected or the export fails | the same within the message's wait (`SAVE_PLACE_CHAT_MAX_MS`: the flush and `PLACE_EXPORT_MAX_MS`); never blocks, notes what it saved or why the checkpoint holds the scripts only |
 | `hero-shots` at `checkpoint.after` | Studio's `screen_capture` of the game's Studio as one `viewport` picture | nothing |
 | `save-place` at `restore.before` | the same export, so the newer state is saved first (Bring back newer version); blocks when it fails; notes that going back undoes the edits of others in Team Create | same |
@@ -1603,8 +1642,8 @@ reads, Choose your place asking each Studio for its place); a mark older than 30
 The `viewport` [observer](#observers) runs `hero-shots` and shows Live's `stills`.
 
 Its skills reach a game that holds a Roblox place only (`facts: ["roblox-project"]`, never
-`engines`): the inline `roblox-studio` (scripts are files, play goes through `computer` and
-`judge_play`, the desktop tool never builds or play-tests in Studio, Roblox's AI tools, uploads and
+`engines`): the inline `roblox-studio` (scripts are files, play goes through `computer`, a Loop's lead
+may ask a judge for a second opinion on its pictures with `judge`, the desktop tool never builds or play-tests in Studio, Roblox's AI tools, uploads and
 inserts ask) and the file skills `luau`, `remotes` (server-authoritative), `player-data`
 (session-locked, `UpdateAsync`, `BindToClose`), `purchases` (idempotent `ProcessReceipt`),
 `ui-scale` (`UIScale`, `ScreenInsets`, touch targets), `assets` (Roblox's mesh and texture rules)
@@ -1718,6 +1757,13 @@ the set-up with the link. The host — never the plugin, never the agent — ask
   one plain line of 1–200 characters; otherwise the agent's value stands. The answered card records
   the value the call ran with. A yes from a mode never edits. The Roblox plugin's `first-publish`
   uses it for the game's name on Roblox.
+- Bypass asks nothing: in a chat in Bypass an agent's card is logged approved by the mode
+  (`by: 'mode'`, "Allowed in Bypass"), and a card that waited when the person switched to Bypass is
+  answered by the switch. These still ask: a card for the person's own press (`afresh`), an
+  export's review, a local plugin's (below), and an `onAccount` tool's. An `onAccount` card offers
+  **Allow in this chat** (answered as `always`, logged with `chatOffered`): the tool's later calls
+  in that chat go on with no card, logged `by: 'chat'`, read back from the chat's own log
+  (`allowedInChat`), so it outlasts a restart and a new chat asks again.
 - A local plugin's agent tools ask too, each call, even with no `confirmation`: the card says the
   plugin was loaded from a folder on this Mac and runs with your access, and offers **Always
   allow** for that one tool. The grant (`PluginInfo.allowedTools`) goes when the plugin's code
@@ -1784,16 +1830,18 @@ Available services are capability checked and scoped to the calling plugin:
   payload of kind `toolbar` is a toolbar status update (see above).
 - `observe`: current game loading/capture/audio evidence for authorized local files. With
   `still` (API 3, additive) it photographs one named view instead: `{ project, root, files: [],
-  still: { demo | camera, width, height, maxBytes? } }` loads the bound game on a hidden window of
-  its own at `width`×`height` (whole pixels, 320–1920 × 240–1200), puts it in play, runs the
-  `config.demos` entry to its end state or places the camera (one the page lists in `cameras()` or
-  `eyes()`, or `default`; any other name is never called), and reads the canvas. The answer is `{ still: { image, mimeType, width, height, source,
-  view, stats, preview } }`: a PNG, or the first JPEG at quality 95, 90 or 85 that fits `maxBytes`
-  (64 KiB–16 MiB, default 8 MiB), never larger than asked; `stats` holds `lumaMean`, `lumaStdDev`,
-  `nearBlackFraction` (luma below 0.10) and `litFraction`, each 0–1 on a small downscale; `preview`
-  is a JPEG at most 1280 px. Otherwise it is `{ stillProblem: { code, reason?, available? } }` with
-  `unavailable`, `load_failed`, `view_unknown` (with the names the game has, at most 32),
-  `view_failed`, `capture_failed`, `too_large` or `timeout` (one minute for the whole still). A
+  still: { camera?, width, height, maxBytes? } }` loads the bound game on a hidden window of
+  its own at `width`×`height` (whole pixels, 320–1920 × 240–1200), puts it in play and photographs
+  the page as a player sees it. It asks the game for nothing: there are no demos or cameras, so
+  `camera` may only be `default` (a request with a `demo` is refused, and any other camera name is
+  answered `view_unknown` with `available: ["default"]`, before a window is leased). The answer is
+  `{ still: { image, mimeType, width, height, source, stats, preview } }`: a PNG, or the first JPEG
+  at quality 95, 90 or 85 that fits `maxBytes` (64 KiB–16 MiB, default 8 MiB), never larger than
+  asked; `stats` holds `lumaMean`, `lumaStdDev`, `nearBlackFraction` (luma below 0.10) and
+  `litFraction`, each 0–1 on a small downscale; `preview` is a JPEG at most 1280 px. Otherwise it is
+  `{ stillProblem: { code, reason?, available? } }` with `unavailable`, `load_failed`,
+  `view_unknown`, `capture_failed`, `too_large` or `timeout` (one minute for the whole still). A
+  blank or loading frame is taken again up to three times, two seconds apart. A
   still never borrows Live: a build with no hidden window answers `unavailable`. Every field is
   checked before anything runs, and the window is given back however the still ends; once its
   budget gives a still up, nothing reaches that window again, and a closed preview refuses every
@@ -1835,6 +1883,9 @@ Available services are capability checked and scoped to the calling plugin:
   on this computer: a desktop with its driver, and apps its `engine.apps` declares here (computer
   control that is off still counts, since its card offers to turn it on). It asks nothing and
   needs no bound game; offer Do it for me only when it answers true, and the click path otherwise.
+- `game.engine.assisting` (capability `game-engine`): whether the bound game's chat still runs the
+  turn the plugin's Do it for me started: false once the queue records its message answered (or
+  failed) or taken back, or after 20 minutes. Roblox's publishing card ends with it.
 - `sandbox.run {program, args, reads, writes, scratchEnv?, env?, timeoutMs}` / `sandbox.result {id}` /
   `sandbox.stop {id}` (capability `game-engine`, `substrate/plugins/sandbox-jobs.ts`): a long job of
   the plugin's (Unreal's package on Windows) run in the studio's ProcessSandbox. `sandbox.run` checks
@@ -1977,8 +2028,10 @@ other plugin being on); the first declaration of an id wins. The bundled plugins
 Unreal lead's kinds: Unreal `cpp` (`check-part`, so only on an Unreal game), Local Blender
 `blender_model` and `blender_prep`, Genex `genex_cast`, `sound` and `texture`, all in copies.
 The harness reads a game's kinds with `plugins.workerTypes {project}` (by the game's facts, as
-`plugins.tools`); `worker_start`'s `type` gives a worker its kind's tools (`toolAllow`) and, unless
-the lead says otherwise, its isolation ([harness runtime](harness-runtime.md#workers-in-a-chat)).
+`plugins.tools`); `worker_start`'s `type` gives a worker its kind's know-how and, unless the lead
+says otherwise, its isolation. A kind's `tools` no longer fence a building worker: it has every
+enabled plugin's tools and the connectors its lead has; only the developer-only Unreal runner's
+typed agents are still held to them ([harness runtime](harness-runtime.md#workers-in-a-chat)).
 
 ### Scaffolds
 
@@ -2320,7 +2373,7 @@ The chat's own session is handed Genex's plugin tools on every game, beside `sta
 session gets is its seat's (`ProjectToolSeat`): a run's lead (a web run's director, an open Loop's lead in place)
 gets both, and its card shows in the one chat its run was started in, as the host's records say,
 never a thread the harness names; a worker the host seated gets `plugins_find` only and reports
-what it found to its lead; any other session (a classic run's builder, a judge, a scout) gets
+what it found to its lead; any other session (a reviewer, a judge) gets
 neither. Only the chat's own session gets `start_web_game`. `plugins_find {fact?, text?}` is read-only, so it runs in Plan mode: it lists
 the installed plugins that match (on, then off or removed), then the entries of Genex's curated
 catalog not installed, and never anything from another source (`main/core/plugin-finder.ts`). A
@@ -2590,7 +2643,10 @@ The manifest is refused unless:
   tool refuses them outside its `game.engine.assist` turns, and those turns may drive only them;
 - `playerApps`, when present, has `apps`' shape and names the apps the engine's published games are
   played in by everyone (Roblox's player app): while the plugin is on, the `desktop` tool refuses
-  them always, an assist turn included, so no agent plays in a live server.
+  them always, an assist turn included, so no agent plays in a live server;
+- `pages`, when present, lists 1–4 distinct lowercase web hosts (never an address, a port or a path)
+  the engine's assist turn may open in the person's own browser with the desktop tool's `open_page`
+  (https only, exact host); Roblox declares `create.roblox.com` for the cover step of Publish.
 
 Unknown keys are dropped and the rest kept in a fixed order. `engineCatalog` lists the declared
 engines by id, the first declaration of an id winning. `parseEngineRemote` reads a published game's
@@ -2605,44 +2661,16 @@ Unreal's card, editor and words ask for Unreal by name. Its descriptor carries `
 game folder, Mode offers no Loop and Rewind says what it can't undo, both in the engine's label
 (`renderer/engine-game.ts`); with it false the Loop runs wherever the project is.
 
-### Judges
+### Editor play in the harness
 
-An engine plugin may declare blind judges in `judges` (API 3, beside its `engine`;
-`substrate/plugins/judge-manifest.ts`, `PluginJudge` in `shared/plugins.ts`). A judge is data: it
-plays a game in the engine's editor through the play tools, never sees code, and answers from
-playing. The manifest is refused unless there are at most 8 and each has:
-
-- `id`, 2–40 lowercase letters, digits and dashes with a letter first, unique in the manifest, and
-  `label`, 1–40 characters on one line;
-- `facts`, when present, 1–8 fact ids: the games it judges (none: every game the plugin plays);
-- `brief`, a Markdown file in the package outside every dot folder. Installing reads it and refuses
-  a missing file, a folder, or more than `MAX_JUDGE_BRIEF_CHARS` (16 000) characters;
-- `players`, when present, a whole number from 1 to the engine's `play.players` (one when it
-  declares none);
-- `probe`, when present, one of the plugin's harness tools that asks nothing, runs no host program
-  and needs every lock `play-open` needs (`quietHarnessTool`).
-
-Unknown keys are dropped and the rest kept in a fixed order. The harness's `game.list` marks a game
-an engine plugin that is on plays in its editor `editorPlay`, with `judges` (`{id, label}`) that
-reach it by its facts (`withEditorPlay` in `main/core/editor-play-session.ts`); a web game, or one no
-plugin that is on plays, has neither. The chat's `judge_play` then takes `judge`, an id the host
-checks against the game's own (an unknown one is refused in plain words and nothing plays), and a
-judge's playtest grant names it. The host appends the judge's brief to the session's rubric (to its
-first answer in the harness's own loop), opens its players, and right after the play opens runs its
-probe once through the plugin's tool call, which holds the play's locks. The probe answers `{note,
-images}`: measurements and pictures, never source. They open the judge's first answer, and the
-pictures are kept in the game's captures folder and shown on the chat's judge line, only for the
-trace the host wrote (`judge-probe-pictures.ts`). A `play-open` that answers `liveData: true` adds
-the note that saved data there is the live game's and only the play's test players may be used.
-In an open Loop the lead's `judge_play` names the game's judges too, and after each turn that keeps
-a save point every one of them plays it in turn, each answer a run check carried to the lead
-([harness runtime](harness-runtime.md)). Whether a chat's session calls a judge is its own choice: a
-change that touches what a judge tests is a hint, not a rule.
-
-The Roblox Studio plugin declares `multiplayer` (3 players, probe `players-state`), `cheater`
-(1, `cheat-remotes`) and `phone` (1, `phone-check`), for `roblox-project` games. Their briefs are in
-`judges/`; the cheater and phone probes send Luau the build copies beside `backend.mjs`
-(`cheat-remotes.luau`, `phone-check.luau`), read from the package at run time
+The harness's `game.list` marks a game an engine plugin that is on plays in its editor `editorPlay`
+(`withEditorPlay` in `main/core/editor-play-session.ts`); a web game, or one no plugin that is on
+plays, is not. A `play-open` that answers `liveData: true` adds the note that saved data there is
+the live game's and only the play's test players may be used. A manifest's `judges` key is not part
+of API 3 and is dropped like any unknown key: Roblox Studio's still names three, which Genex never
+runs. Its probe tools (`players-state`, `cheat-remotes`, `phone-check`) are harness tools of its own;
+the cheater and phone probes send Luau the build copies beside `backend.mjs` (`cheat-remotes.luau`,
+`phone-check.luau`), read from the package at run time
 ([computer use](computer-use.md#game-engines-and-other-targets) says what each measures).
 
 ### The bundled Unity plugin
@@ -2738,7 +2766,7 @@ The plugin makes, sets up and opens that project itself (`backend.ts`), with no 
 
 The six harness-only `play-*` tools implement the shared editor computer contract
 ([computer use](computer-use.md#game-engines-and-other-targets)). Each requires the `editor` lock
-and the `unity-project` fact, so chat agents and judges can play this folder's Unity game without
+and the `unity-project` fact, so chat agents and workers can play this folder's Unity game without
 an engine link. Pipeline carries Play mode, Game-view captures, pause and input; keyboard and
 mouse control require an installed, active Input System package. Genex never adds that dependency
 or changes the project's input settings implicitly. Unsupported input answers with the reason.
@@ -3308,36 +3336,32 @@ Genex:
   kept shot and no send running, the owner chose no cover on genex.games (`kept_owner`, which the
   plugin records whenever Genex reports the owner's pick, at a send or a status check, a shot kept
   or not; `outranked`) and no publish runs, the dialog asks the plugin to take one (`needsCover` in
-  `genex-publish-view.ts`, action `cover-auto`): the `genex-cover` demo, or a plain frame of the game
-  as it loads (`origin: "studio"`), never over a demo's frame; the strip asks the same once a game's
-  turns settle (`use-cover-after-turns.ts`), and it records the `genex-clip` demo's clip when there is
-  one. The banner flips between the record's `candidates` (the last four frames; `cover-pick` makes
-  one the kept shot, pinned, which a publish sends without shooting again), shows a kept clip behind
+  `genex-publish-view.ts`, action `cover-auto`): a plain frame of the game as it loads
+  (`origin: "studio"`, the host's `observe` still of its `default` view), never over the picture the
+  agent kept; the strip asks the same once a game's turns settle (`use-cover-after-turns.ts`). The
+  agent's own picture and clip come from `genex__cover {image, clip?}`: files in the game folder,
+  read by their bytes (`cover-image.ts`, `clip-file.ts`), refused through a link out or at the wrong
+  size or type, and copied into `covers/<project>/`. The banner flips between the record's
+  `candidates` (the last four pictures; `cover-pick` makes one the kept shot, pinned, which a publish
+  sends as it is; a publish never takes a picture), shows a kept clip behind
   a Picture / Clip switch, and Another cover (`[data-genex-another-cover]`) opens a field whose Ask
   agent sends "Make another Genex cover for this game: …" through the chat's own send
   (`renderer/compose-in-chat.ts`) and closes the dialog there. Once the chat really sent it, the ask
   is kept per game on this Mac (`genex/cover-asks.ts`), so the banner opened again says one is being
   made until the agent's own frame arrives: the record's `agentTook` (`covers/<project>/agent.json`,
-  set only by `genex__cover` shoot and clip, never by Studio's takes or a publish's shot). Roughly how
+  set only by `genex__cover`, never by Studio's own frames). Roughly how
   long is left shows once that game's last ask was timed (ask to `agentTook`; no number before one,
   none once it runs over). A
   Genex plugin older than covers answers no record, and none of this shows. Genex-specific core UI, accepted
   by the owner; a second plugin with a cover would need a declared host surface instead.
-- A game that runs as its own program (a Unity, Godot or Unreal fact, or nothing served as a web
-  page: `takenFromReel` in `main/core/cover-reel.ts`) cannot be photographed, so its builder renders
-  the cover inside the engine: the session that owns its build is told to (`appCoverGuidance`,
-  `cover-reel-prompts.ts`, added to the brief in `core/delegation.ts`), with no Genex tool needed:
-  `.studio/cover/cover.png` (1920x1080) and `.studio/cover/clip/0001.png` onward (five seconds at
-  30 fps, 960x540), or one `clip.mp4`/`clip.webm`. A plugin's `observe` with a `still` or a `clip`
-  of such a game takes it of its cover reel (`throughCoverReel`, through `ViewStillOptions.open`):
-  the media copied, by `lstat` and never through a link, sniffed and capped, into a folder of the
-  host's scratch (`cover-reels/`) beside a page whose `__studio` answers the `genex-cover` demo with
-  the picture and `genex-clip` with the frames played from `start()`, removed when the take ends.
-  So `cover-auto`, the banner and a publish work on it as on a web game. With no media, or for a
-  web game, the game is served as before.
+- A game that runs as its own program (a Unity, Godot or Unreal fact) cannot be photographed by
+  Studio: its page shows nothing of it. Its agent renders the cover inside the engine and hands
+  `genex__cover` the file paths like a web game's; the landed-run cover step asks for it the same
+  way (`core/cover-step.ts`), and there is no cover reel or per-turn cover note for an engine.
 - The chat shows the game's kept Genex cover as one card (`chat/GenexCoverCard.tsx`) for the
   thread's latest `genex__cover` call from plugin `genex` whose operation is `shoot` and whose
-  answer carried a picture (`chat-entries.ts`, the tool read with or without `genex__` and
+  answer carried a picture (a call of the newer `{image, clip?}` shape names no operation and is
+  not read there yet) (`chat-entries.ts`, the tool read with or without `genex__` and
   `mcp__studio__`). Like a build's result card it goes up once that work has ended, after the turn's
   reply (or a build's result card when the build's builder shot it), never mid-turn, and a newer
   kept shot takes it down at once; earlier shots stay rows of the work. Its picture is the kept shot
@@ -3348,11 +3372,9 @@ Genex:
   dialog; that dialog's press is the consent, and for a live game it offers Publish update. Publish
   is left out while Genex puts no Publish on the strip (off or removed), while publish-status
   reports an attempt running, and once Genex has answered for the kept frame itself (`applied`,
-  `unchanged`, `outranked` or `kept_owner` for its hash: a publish re-shoots and sends it, so the
-  cover's next step is done; `failed` and `not_hosted` keep it) (`coverCardPublish`, read on mount,
-  on Genex's plugin events and on the dialog's cadence by `use-genex-publishing.ts`). The cover
-  guidance (inline `cover` skill, `genex-cover` preface) tells the builder to shoot the winner last
-  and then say one line, never how to publish. Genex-specific on purpose and with no manifest field:
+  `unchanged`, `outranked` or `kept_owner` for its hash: a publish sends it, so the cover's next
+  step is done; `failed` and `not_hosted` keep it) (`coverCardPublish`, read on mount, on Genex's
+  plugin events and on the dialog's cadence by `use-genex-publishing.ts`). Genex-specific on purpose and with no manifest field:
   when plugin pictures get a general home in the chat, the card moves onto it and keeps only
   Publish.
 - `~/.genex` is on the protected and secret path lists every sandboxed engine and native job is
@@ -3373,14 +3395,36 @@ Genex:
   `genex__cli` and `genex-cli-paid` backs `genex__cli-paid`: Studio's pinned CLI runs in
   ProcessSandbox in a fresh `<userData>/genex-cli/<id>` folder (also its `HOME`), never a game
   folder, so the CLI's skill sync and contract healing touch only that folder, which is removed
-  afterwards. `main/core/genex-cli-policy.ts` allows doctor, budget, `llm models|status|cancel`
-  and `shop list` free, and `llm bench` and `shop add|set|remove|test` paid; everything else,
-  `budget --assets` (its allowance would live only in the removed run folder) and every flag Studio
-  sets itself is refused with a typed reason naming the tool to use instead. Studio adds `--env`,
-  `--api-url https://api.genex.games`, `--no-auth` and `--json`, and `--user-approved` only for an
-  approved bench. The consent card shows Studio's summary of the validated call (the command, what
+  afterwards. `main/core/genex-cli-policy.ts` allows doctor, budget, `llm models|status|cancel`,
+  `shop list`, `shop add` (a draft spends and sells nothing, so no card asks; it requires `image`,
+  since no item is listed without its picture), `shop set|remove` on a
+  local draft (`freeOnLocalDraft`) and `items list|search` free, and `llm bench`, `shop set|remove`
+  on an item in the store, `shop test` and `items add|remove` paid; everything else, `shop publish|unpublish` (Studio puts a game's items
+  on sale after its publish), `shop sync` (Studio's own upload of local drafts after a publish, `syncLocalItems`), `budget --assets` (its allowance would live only in the removed run folder) and
+  every flag Studio sets itself is refused with a typed reason naming the tool to use instead. A
+  store item's `shop add|set` takes `price` (0 is Free), `type`, `description` (≤ 1000, `""` clears
+  it on `set`), `tag` (one or a list, ≤ 10 × 32), `shared` (`--shared`/`--no-shared`) and `image`,
+  `model` and `package`: paths inside the bound game (`main/core/genex-game-paths.ts`), refused as
+  text when absolute, `~`, `..` or the game itself, then by real path when they lead out of the game
+  (a link), are missing or are the wrong kind, all before any card and again before the run, which
+  gets a copy in the run folder (a package without links, `.git`, `node_modules`, `.genex` or
+  `genex-items`, at most 2,000 files and 200 MiB). `items add <id>` (an item id, never a path) runs
+  in the run folder too; Studio then moves its `genex-items/<id>/` into the bound game, refusing a
+  link or a file at `genex-items`, the item's folder or `.genex/replaced-items` (where an earlier
+  copy goes, stamped), so the CLI never writes a game. `shop list|add|set|remove` also see the game's
+  local item drafts (`.genex/items/`, made before the game is on Genex): Studio copies each clean draft
+  into the run folder and carries a change back (`local-item-files.ts`: a `<localId>.json` and a flat
+  `<localId>/` of regular files, at most 8 files and 300 MiB, never through a link either way); in a
+  game with no hosted project they run on those drafts alone ([store](play.md#the-item-store);
+  `genex-cli-local-items.test.ts` holds the hostile tables). The bound folder is the game's or its Studio
+  worktree (`genex-bound-game.ts`, shared with `genex__package`); `genex-cli-game-paths.test.ts`
+  holds the hostile table. Studio adds `--env`,
+  `--api-url https://api.genex.games` (a development profile's stand API instead, with the stand
+  account's token: `GenexStand`, [play](play.md); the Genex plugin's backend follows the same stand,
+  `PluginRegistry.hostAccount`), `--no-auth` and `--json`, and `--user-approved`
+  only for an approved bench. The consent card shows Studio's summary of the validated call (the command, what
   it spends first, the agent's text last and clipped), and a call Studio would refuse asks nobody. The token reaches the
-  preload on stdin; the network is `api.genex.games` only; the games root and every game are
+  preload on stdin; the network is that API's host only; the games root and every game are
   write-denied; a run stops after 90 s; output is redacted and capped at 64 KiB. A project
   command sees only `{id, slug}` from the publish workspace. `genex-package` backs
   `genex__package`: it adds `@genex-ai/multiplayer` or `@genex-ai/embed-sdk` at the exact pin in
@@ -3391,17 +3435,31 @@ Genex:
   loads `/vendor/genex/connect.js` after the map (`withGenexSdkImport`); its page must be a
   regular file, never a link. Multiplayer is refused there. A Godot game (`godot/project.godot`)
   or a Unity game (`[unity/]ProjectSettings/ProjectVersion.txt`) is refused with a pointer to
-  `godot__multiplayer` or `unity__multiplayer`: its multiplayer goes into its project. The paid tool and the package tool need consent; fixture profiles refuse
+  `godot__multiplayer` or `unity__multiplayer`: its multiplayer goes into its project. The paid tool needs consent; the package tool asks nobody (Genex's own pinned packages spend nothing), and fixture profiles refuse
   both host steps (`studio:plugins.host-cli`, `studio:plugins.host-package`).
 - `genex__asset` accepts only each lane's own options (`LANE_OPTIONS`, `plugins/genex/request.ts`),
   and a refusal names them (`Unsupported Genex option for <op>`). Each lane's provider is fixed and
   its description says which (the `model` lanes are Tripo; `character` and `creature` are Meshy;
-  `character.import` is Uthana), with Local Blender first for hard-surface models when it is on; a
-  chat's coordinator promises no provider a lane lacks (`coordinator-prompts.ts`).
-- Genex's guide, seven platform cards and five lane cards (model, character, texture, audio,
+  `character.import` is Uthana); it names no order between Genex and Local Blender, and a chat's
+  coordinator promises no provider a lane lacks (`coordinator-prompts.ts`).
+- Genex's guide, eight platform cards and five lane cards (model, character, texture, audio,
   image) are vendored behind Studio-written prefaces in
   `src/plugins/genex/skills` (`vendor.json` pins each source and hash; `npm run genex:skills`
-  refreshes them; `genex-skills-vendor.test.ts` catches drift) and served as file skills.
+  refreshes them; `genex-skills-vendor.test.ts` catches drift) and served as file skills. The
+  `genex` plugin keeps Genex's product requirements and API facts: Studio's cuts (`cuts.json`, a
+  section, a run of lines, a replaced sentence or a dropped reference, each matching the pinned text
+  exactly once) take Genex's design and process advice out of the vendored text, and the prefaces
+  carry the API facts those passages held. That advice, reworded as optional, is the bundled
+  `genex-recommendations` plugin (skills only: multiplayer patterns, cover craft, asset sources, shop
+  design, player experience, play-time models), which every new profile installs off (`seedEnabled`). Genex's currency is Nex (the cards
+  call it coin): a thing priced in Nex, or sold for real money with no currency named, is a store
+  item listed with `shop add` and its picture; coins, gold or gems are the game's own currency
+  unless the person says they are for real money. Dynamic payments
+  stay for amounts decided while playing. A card a
+  CLI release not yet on npm changed is vendored ahead of the pin (`--ahead-from <apps/cli> --ahead
+  <cards> --ahead-source <label>`): its files record that `version` and a `pending` note, plain
+  refreshes keep them, and the test fails once the pin reaches that version until a refresh takes
+  them from the published CLI. Today every card comes from the pinned CLI 1.36.15, none ahead of it.
 - The bundled CLI follows npm: every 6 hours `.github/workflows/genex-cli-follow.yml` compares
   npm's `latest` `@genex-ai/cli-demo` with the pin. When npm is ahead, `scripts/follow-genex-cli.ts`
   opens one bump PR against `dev` with the exact pin, refreshed skills, the plugin's next patch
@@ -3463,6 +3521,13 @@ from the person's confirmed action, or from an agent's tool of the same name tha
 answers `{started: true}` as the download starts and the installation record says how it ended,
 since a call's deadline must not cut the download short. An agent cannot choose a binary, download
 URL or installation action: either way the manifest's pinned one is installed.
+
+A runtime may declare `platforms: [{platform: "win32-x64", candidates: [...]}]`, using the same
+computer names as `installs`. The matching list replaces the fallback `candidates`; when there is
+no match, the fallback remains in use. Each list uses the same candidate path rules below.
+Use `storage:` for a runtime managed in plugin storage, including when the person moves Genex
+storage to another drive, or `setting:` for a path the person chooses. A missing matching runtime
+remains missing; another platform's candidate list is not probed.
 
 A candidate (`native-candidates.ts`) is an absolute POSIX path (skipped on Windows), a path under
 `home:`, `studio:`, `storage:` or, on Windows, `programfiles:`, `programfilesx86:` and
@@ -3559,7 +3624,9 @@ of a stage's path (forward slashes) is named as its folder too. The Genex addon'
 (`addons/genex`, `addons/genex_multiplayer`) are made one at a time as folders of their own, and
 each file is written only while its folder still resolves to itself. A save point's or the observer's
 stills that fail answer nothing, as the checkpoint's check does.
-Its observer is a `card` whose `stage-status` says where the game stands (get Godot, set
+A game set up for Genex's play (`genex-addon.ts`: `runtime: bridge`, the plugin's Godot as its
+engine) starts only when an agent's `computer` makes its first move, never because a chat turn
+began, and stops when that session lets go. Its observer is a `card` whose `stage-status` says where the game stands (get Godot, set
 it up for Genex's play, open it, or open in the person's Godot) and its manifest has no lock: it never drives the person's editor.
 On a Mac without Godot 4.3 or newer, `show-steps` (and the refusals of `new-game` and the engine
 question's note, which point to it) puts the Godot setup card in the chat (`godot-setup.ts`): one
@@ -3739,14 +3806,16 @@ assets remain ordinary files. A fixture `assets.deliver` must leave an `asset_de
 the project's log and a card on the Assets tab; no paid generation is needed for either. Use
 fixture accounts and existing assets, with no additional paid generation.
 
-`genex-cover.test.ts` pins the Genex cover the same way, with a fake `observe` and the cover routes
-on the fixture API: `genex__cover` shoots only the `genex-cover` demo into the plugin's storage
-(the game folder locked, never read) and answers its preview; a publish sends the frame only after
-its upload is recorded (a draft's page check may still be running), sends nothing for unchanged
-bytes or over the owner's own cover (recorded as such with no shot kept, by a publish and by a
-status check), stays done with a warning when the commit is refused, limited,
-failed or silent or the shot cannot be kept, skips the shot without enough of its invocation left,
-never sends from a listed game's draft (listed from the dashboard too), sends the bytes it records
+`genex-cover-files.test.ts` pins what `genex__cover` keeps: the agent's PNG or JPEG (its light
+read from the pixels, a JPEG's from its blocks) and WebM or MP4 copied into the plugin's storage with
+no frame asked of the host, and a hostile table (outside the folder, through a link out, a folder,
+a missing file, the wrong type, too small, too large, damaged, a clip too short) that keeps nothing
+and touches nothing. `genex-cover.test.ts` pins the Genex cover's sends, with the cover routes on
+the fixture API: a publish sends the kept picture only after its upload is recorded (a draft's page
+check may still be running) and takes none of its own, sends nothing for unchanged bytes or over the
+owner's own cover (recorded as such with no picture kept, by a publish and by a status check), stays
+done with a warning when the commit is refused, limited, failed or silent, never sends from a listed
+game's draft (listed from the dashboard too), sends the bytes it records
 however shots interleave, and is stopped by the next publish; `genex__cover-set` waits for consent,
 sends nothing without a hosted project and never sends the clip; a bad project name reaches no host and writes nothing.
 The chat's cover card: `chat-transcript.test.ts` pins which shoot gets it (the latest that kept a

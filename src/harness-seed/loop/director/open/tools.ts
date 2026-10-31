@@ -7,9 +7,9 @@
  */
 import type { AnyRecord } from "../../../types/harness.d.ts";
 import { HostMethod } from "../../host-methods.ts";
-import { askJudge, JUDGE_PLAY_TOOL } from "../../judge-play.ts";
+import { askSecondOpinion, picturesIn, SECOND_OPINION_TOOL, SECOND_OPINION_WORDS } from "../../second-opinion.ts";
 import { minutes } from "../../time.ts";
-import { WorkerIsolation, WorkerTool } from "../../workers/contract.ts";
+import { WorkerTool } from "../../workers/contract.ts";
 import type { LoopRun } from "../loop-run.ts";
 import { plainly } from "../rules.ts";
 import { DirectorTool } from "../tool-specs.ts";
@@ -22,7 +22,6 @@ import { OPEN_WORDS } from "./prompts.ts";
 import { restartTool, rewindTool, savePointTool } from "./save-point.ts";
 import { turnRoomNote, waitWithinTurn } from "./turn-room.ts";
 import { finishAsked, wrapUp } from "../wrap-up.ts";
-import { judgedInEditor, leadAsker } from "./judge-rounds.ts";
 import { WRAP_UP_WORDS } from "../wrap-up-prompts.ts";
 
 /** The longest note Genex keeps, and its plain sentence. */
@@ -127,15 +126,16 @@ async function workerAnswer(loopRun: LoopRun, name: string, args: AnyRecord): Pr
     const waited = await open.pool.call(name, fitted.args);
     return fitted.endsBy === null ? waited : `${waited}\n\n${turnRoomNote(fitted.endsBy, open.clock.now())}`;
   }
-  const answered = await open.pool.call(name, args);
-  if (name === WorkerTool.Start && args.isolation === WorkerIsolation.Read)
-    open.journal.lastReaderAt = open.clock.now();
-  return answered;
+  return open.pool.call(name, args);
 }
 
-/** A blind judge (one of the game's own, when the lead names it) plays the game folder in its engine's editor and answers the lead's yes/no question. */
-function judgeTool(loopRun: LoopRun, args: AnyRecord): Promise<string> {
-  return askJudge(leadAsker(loopRun), args);
+/** A second opinion: the pictures the lead names in the project's folder and its question, to a model that did none of the work. */
+async function judgeTool(loopRun: LoopRun, args: AnyRecord): Promise<string> {
+  const question = String(args.question ?? "").trim();
+  if (!question) return SECOND_OPINION_WORDS.noQuestion;
+  const pictures = await picturesIn(loopRun.projectDir, args.pictures);
+  if ("refused" in pictures) return pictures.refused;
+  return askSecondOpinion(loopRun.ctx, { run: loopRun.run, question, images: pictures.images });
 }
 
 /** The Loop's save points, rewinds and restarts (a restart only where a plugin restarts the project's app); null for any other tool. */
@@ -158,7 +158,7 @@ async function answer(loopRun: LoopRun, name: string, args: AnyRecord): Promise<
   if (name === DirectorTool.WrapUp) return wrapUp(loopRun, args);
   if (name === DirectorTool.RunStatus) return JSON.stringify(await openStatus(loopRun));
   if (name === DirectorTool.Finish) return openFinish(loopRun, args);
-  if (name === JUDGE_PLAY_TOOL && judgedInEditor(loopRun)) return judgeTool(loopRun, args);
+  if (name === SECOND_OPINION_TOOL) return judgeTool(loopRun, args);
   // The studio asking where the lead's build lives: the game folder itself.
   if (name === DirectorTool.ResolveRoot) return loopRun.projectDir;
   return OPEN_WORDS.unknownTool(name);

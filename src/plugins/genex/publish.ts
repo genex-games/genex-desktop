@@ -45,6 +45,9 @@ export const MESSAGE = {
   NotCurrent: () => t("That upload is no longer the current one"),
   OnlyDraftUpdated: "Only the draft page was updated: the public version is unchanged. Publish again to update it.",
   AllowedNewUpload: "Published again before Studio knew whether this upload reached Genex.",
+  EmptyStarter: "This game is still the empty starter: build something first, then publish.",
+  /** {@link MESSAGE.EmptyStarter} as Publish's refusal. */
+  EmptyStarterRefusal: () => t("This game is still the empty starter: build something first, then publish."),
   ConnectFirst: "Connect the Genex plugin first",
   /** {@link MESSAGE.ConnectFirst} as Publish's refusal. */
   ConnectFirstRefusal: () => t("Connect the Genex plugin first"),
@@ -85,6 +88,23 @@ export interface HostedMeta {
   playUrl?: unknown;
   dashboardOrigins?: unknown;
   stagingCommit?: string;
+}
+
+/** What Genex says about the game a workspace is linked to: the project under its slug and that project's owner. */
+export interface LinkedAnswer {
+  id?: unknown;
+  ownerId?: unknown;
+}
+
+/**
+ * Whether the game a workspace is linked to is no longer this account's to publish to: another
+ * project now holds its slug, or someone else owns it (an admin's sign-in sees other people's
+ * games). A field Genex or the sign-in didn't give never decides.
+ */
+export function linkedElsewhere(meta: HostedMeta, answer: LinkedAnswer, userId: unknown): boolean {
+  const known = (value: unknown): value is string => typeof value === "string" && value !== "";
+  if (known(meta.id) && known(answer.id) && meta.id !== answer.id) return true;
+  return known(answer.ownerId) && known(userId) && answer.ownerId !== userId;
 }
 
 /** A job's phase when its outcome became unknown: `phase` then reads 'unresolved' for the panel, and Check again still needs to know a gallery listing from a promotion. */
@@ -329,15 +349,36 @@ export function shareLink(out: string): string | undefined {
   return undefined;
 }
 
-/** The staging URL the CLI printed after "Live." or "Published.": ours, or the fixture API's own origin. */
-export function stagingLink(out: string, api: string): string | undefined {
+/**
+ * The staging URL the CLI printed after "Live." or "Published.": ours, the fixture API's own origin,
+ * or a game on a development stand's game host (`standGames`, which the host names).
+ */
+export function stagingLink(out: string, api: string, standGames?: string): string | undefined {
   const apiUrl = new URL(api);
   const isFixtureOrigin = (value: string) => apiUrl.hostname === "127.0.0.1" && new URL(value).origin === apiUrl.origin;
+  const onStand = (value: string) => standGames !== undefined && isStandGameLink(value, standGames);
   return stripAnsi(out)
     .split("\n")
     .filter((line) => /Live\.|Published\./.test(line))
     .flatMap((line) => line.match(/https?:\/\/[^\s)]+/g) ?? [])
-    .find((value) => isGenexLink(value) || isFixtureOrigin(value));
+    .find((value) => isGenexLink(value) || isFixtureOrigin(value) || onStand(value));
+}
+
+/** One DNS label, as a game's (or its draft's) subdomain spells it. */
+const GAME_LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+
+/** Whether `value` is a game one label under the stand's game host `games`: its scheme and port, no user. */
+function isStandGameLink(value: string, games: string): boolean {
+  try {
+    const url = new URL(value);
+    const host = new URL(games);
+    const sameServer = url.protocol === host.protocol && url.port === host.port && !url.username && !url.password;
+    const suffix = `.${host.hostname}`;
+    const label = url.hostname.endsWith(suffix) ? url.hostname.slice(0, -suffix.length) : "";
+    return sameServer && GAME_LABEL.test(label);
+  } catch {
+    return false;
+  }
 }
 
 /** Which page a "publish-open" action may open. */

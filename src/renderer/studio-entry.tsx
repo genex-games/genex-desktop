@@ -24,6 +24,9 @@ import { installMotionRest } from "./motion-rest.ts";
 import { BootRoot } from "./SandboxSetup.tsx";
 import { createBoot } from "./state/boot.ts";
 import { startStudio } from "./state/studio.ts";
+import { quietly } from "./analytics/client.ts";
+import { startUsageAnalytics } from "./analytics/start.ts";
+import { browserStorage } from "./storage.ts";
 import { syncWindowControls } from "./window-controls.ts";
 import { MINUTE_MS } from "../shared/duration.ts";
 
@@ -39,9 +42,16 @@ if (process.env.NODE_ENV !== "production") setInterval(() => performance.clearMe
 // mounts: StrictMode's replayed effects can then neither subscribe twice nor drop a reply.
 // Main learns a language chosen while it kept none (its menus and notifications); it is told
 // again on the next switch, so a failed call costs nothing.
+// Usage analytics listen beside the stores, once; nothing leaves before the person's yes. They
+// start quietly: analytics failing to start never stops the studio from starting.
+let analyticsWired = false;
 const boot = createBoot(window.studio, {
   onReady: () => {
-    startStudio();
+    const app = startStudio();
+    if (!analyticsWired) {
+      analyticsWired = true;
+      quietly(() => startUsageAnalytics(app, { storage: browserStorage(), now: Date.now, random: Math.random }));
+    }
     shareLanguage(window.studio).catch(() => undefined);
   },
 });

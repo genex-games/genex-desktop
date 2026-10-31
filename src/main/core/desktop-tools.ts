@@ -19,7 +19,7 @@ import { DESKTOP_TOOL_NAME, computerToolDefinition } from "../../substrate/compu
 import type { DesktopApp, DesktopDriver, DesktopShot } from "../../substrate/desktop-driver.ts";
 import type { DelegateRequest } from "../../substrate/engines/types.ts";
 import { computerSession, type TargetSource } from "./computer-session.ts";
-import { type DesktopTarget, desktopTarget } from "./desktop-target.ts";
+import { type DesktopTarget, type DesktopTargetOptions, desktopTarget } from "./desktop-target.ts";
 
 /** The most moves one desktop session makes unless the grant says otherwise. */
 const DESKTOP_MAX_ACTIONS = 200;
@@ -66,6 +66,25 @@ export interface DesktopToolsDeps {
   maxActions?: number;
   /** Whether computer control is on in Settings now; asked before every call (on when absent). */
   enabled?: () => boolean;
+  /**
+   * The app this session's turn works in (a pressed assist's editor), or null: brought forward once
+   * the driver is connected, and again before an action that finds the studio itself in front of
+   * it (the app reopened behind Genex). A failure to raise it stops nothing.
+   */
+  keepInFront?: () => string | null;
+  /** Open a page in the person's own browser (`open_page`), the host deciding which: why not, or null. */
+  openPage?: (address: URL) => Promise<string | null>;
+}
+
+/** What a session's target takes from its deps, beside its driver and its app check. */
+function targetOptions(deps: DesktopToolsDeps): Omit<DesktopTargetOptions, "driver" | "allowApp"> {
+  return {
+    ownApp: deps.ownApp,
+    vm: deps.vm === true,
+    ...(deps.engineApps ? { engineApps: deps.engineApps } : {}),
+    ...(deps.downscale ? { downscale: deps.downscale } : {}),
+    ...(deps.openPage ? { openPage: deps.openPage } : {}),
+  };
 }
 
 /** The desktop tool for one session, and how to stop it. */
@@ -102,6 +121,17 @@ function appAllowance(deps: DesktopToolsDeps) {
  * while the card waits or the driver starts cancels that call: a late yes connects nothing, and a
  * driver that arrives after the stop is closed unused.
  */
+/** Bring the session's app forward: always on a fresh connection, later only when the studio covers it. */
+async function raiseKept(deps: DesktopToolsDeps, driver: DesktopDriver, fresh: boolean): Promise<void> {
+  const app = deps.keepInFront?.();
+  if (!app || !driver.bringToFront) return;
+  if (!fresh) {
+    const { app: front } = await driver.focus();
+    if (!front || !deps.ownApp(front)) return;
+  }
+  await driver.bringToFront(app);
+}
+
 function desktopSource(deps: DesktopToolsDeps): TargetSource<DesktopTarget> & { release(): Promise<void> } {
   let driver: DesktopDriver | null = null;
   let target: DesktopTarget | null = null;
@@ -110,6 +140,10 @@ function desktopSource(deps: DesktopToolsDeps): TargetSource<DesktopTarget> & { 
   // Counts stops, so a call that waited across one knows it was stopped.
   let stops = 0;
   const allowApp = appAllowance(deps);
+  const reused = async (held: DesktopTarget) => {
+    if (driver) await raiseKept(deps, driver, false).catch(() => {});
+    return { target: held, problem: null, note: null, fresh: false };
+  };
   const unusable = (problem: string) => ({
     target: desktopTarget({ driver: deadDriver(problem), allowApp: async () => false }),
     problem,
@@ -126,7 +160,7 @@ function desktopSource(deps: DesktopToolsDeps): TargetSource<DesktopTarget> & { 
   return {
     caps: desktopTarget({ driver: deadDriver(""), allowApp: async () => false, vm: deps.vm === true }).caps,
     load: async () => {
-      if (target) return { target, problem: null, note: null, fresh: false };
+      if (target) return reused(target);
       const ticket = stops;
       const answer = session ?? (await deps.ask(DesktopQuestion.Session));
       // Stopped while the card waited: that yes ends with the stop, and the next call asks again.
@@ -138,14 +172,8 @@ function desktopSource(deps: DesktopToolsDeps): TargetSource<DesktopTarget> & { 
       const connected = await connect(ticket);
       if (typeof connected === "string") return unusable(connected);
       driver = connected;
-      target = desktopTarget({
-        driver,
-        allowApp,
-        ownApp: deps.ownApp,
-        vm: deps.vm === true,
-        ...(deps.engineApps ? { engineApps: deps.engineApps } : {}),
-        ...(deps.downscale ? { downscale: deps.downscale } : {}),
-      });
+      await raiseKept(deps, connected, true).catch(() => {});
+      target = desktopTarget({ driver, allowApp, ...targetOptions(deps) });
       return { target, problem: null, note: null, fresh: true };
     },
     frame: (shown, jpeg, caption, act) => deps.frame?.(shown, jpeg, caption, act) ?? Promise.resolve(),

@@ -106,6 +106,8 @@ export type RigOverrides = Partial<PlayViewerDeps["gallery"]> & {
   coin?: Partial<ViewerCoin>;
   /** A web game's native app on this computer, for the bar's pill. */
   nativeApp?: PlayViewerDeps["nativeApp"];
+  /** Whether a game sells items, for the bar's Store door; the app's page takes the keyboard as `page.focus`. */
+  storeShown?: (slug: string) => Promise<boolean>;
 };
 
 /**
@@ -212,6 +214,9 @@ export function rig(overrides: RigOverrides = {}) {
       store: { on: () => false, setOn: () => {}, device: () => null, setDevice: () => {} },
     },
     ...(overrides.nativeApp ? { nativeApp: overrides.nativeApp } : {}),
+    ...(overrides.storeShown
+      ? { store: { shown: overrides.storeShown, focusPage: () => log.push("page.focus") } }
+      : {}),
   };
   const viewer = playViewer(deps);
   /** The header as last drawn. */

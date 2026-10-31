@@ -557,6 +557,15 @@ describe("what a chat's Loop is", () => {
     assert.deepEqual(storedChatLoop(store, "B"), halfHour, "pinning never overwrites a chat's own pick");
   });
 
+  // A one-line idea in a fresh install asked a style question, then ran a multi-agent build with a
+  // 24-hour ceiling: twenty minutes in, nothing had landed, where the plain agent had finished the
+  // game. The first chat is the plain agent; Loop is one tap, or the person's words, away.
+  it("a fresh install's first chat starts with Loop off", () => {
+    const store = storage();
+    assert.equal(storedChatLoop(store, "A").on, false);
+    assert.equal(sendFrom(store, "A").autopilot, undefined, "a message builds in the chat, no Loop commissioned");
+  });
+
   it("Off keeps the saved time", () => {
     const store = storage();
     rememberChatLoop(store, "A", { on: false, hours: 2 });
@@ -586,17 +595,19 @@ describe("what a chat's Loop is", () => {
     assert.deepEqual(modeMenuReach({ view: own, coordinating: true }), { opens: false, changes: false });
   });
 
-  it("Mode shows the chat's own Loop with no build or after it finished, and a running or paused build's own limit", () => {
+  it("Mode shows the chat's own Loop with no build, after it finished or while it is paused, and a running build's own limit", () => {
     const own = halfHour;
     assert.deepEqual(composerLoopView({ own, build: null }), { shown: own, editable: true });
     assert.deepEqual(composerLoopView({ own, build: { state: "running", loop: infinite } }), {
       shown: infinite,
       editable: false,
     });
-    assert.deepEqual(composerLoopView({ own: infinite, build: { state: "paused", loop: halfHour } }), {
-      shown: halfHour,
-      editable: false,
-    });
+    // A paused build no longer holds Mode on its own limit: Off can be picked after a Stop.
+    assert.deepEqual(
+      composerLoopView({ own: infinite, build: { state: "paused", loop: halfHour } }),
+      { shown: infinite, editable: true, forLater: true },
+      "a paused build shows the chat's own Loop, which can change",
+    );
     assert.deepEqual(
       composerLoopView({ own, build: { state: "running", loop: null } }).shown,
       infinite,

@@ -141,6 +141,8 @@ const plugin = {
   candidates: [] as string[],
   clip: false,
   owner: false,
+  /** Studio's take finds only a blank screen, so nothing is kept. */
+  blank: false,
   /** When the agent itself last kept a shot (ISO), as the plugin's `agentTook` says. */
   agentShot: null as string | null,
   actions: [] as Array<{ name: string; args: unknown }>,
@@ -170,8 +172,10 @@ fake.stub("pluginAction", async (_id, name, args) => {
     await new Promise<void>((resolve) => {
       finishTake = resolve;
     });
-    plugin.kept = "a";
-    plugin.candidates = ["a"];
+    if (!plugin.blank) {
+      plugin.kept = "a";
+      plugin.candidates = ["a"];
+    }
   }
   if (name === GenexAction.CoverPick) plugin.kept = String((args as { sha256: string }).sha256)[0] ?? null;
   return name === GenexAction.PublishStatus || name.startsWith("cover") ? record() : {};
@@ -256,6 +260,7 @@ function sample() {
     dots: q(".genex-publish-pips")?.getAttribute("aria-label") ?? null,
     field: Boolean(q("[data-genex-cover-ask]")),
     hint: q(".genex-publish-hint")?.textContent?.trim() ?? null,
+    hints: [...document.querySelectorAll(".genex-publish-hint")].map((p) => p.textContent?.trim() ?? ""),
     show: q(".genex-publish-show")
       ? [...document.querySelectorAll(".genex-publish-show-option")].map((b) => b.getAttribute("aria-pressed"))
       : null,
@@ -275,13 +280,24 @@ async function until(check: () => boolean, frames = 200) {
 
 /** Open the dialog with the fake plugin holding `kept` among `candidates`, a clip or not, and a chat with a model or not. */
 async function open(
-  state: { kept?: string | null; candidates?: string[]; clip?: boolean; owner?: boolean; model?: boolean } = {},
+  state: {
+    kept?: string | null;
+    candidates?: string[];
+    clip?: boolean;
+    owner?: boolean;
+    model?: boolean;
+    blank?: boolean;
+  } = {},
 ) {
   if (!pictures.size) for (const look of LOOKS) pictures.set(look.sha, picture(look));
   if (state.clip && !clipData) clipData = await recordClip();
   const { model = true, ...kept } = state;
   chat.model = model;
-  Object.assign(plugin, { kept: null, candidates: [], clip: false, owner: false, agentShot: null, actions: [] }, kept);
+  Object.assign(
+    plugin,
+    { kept: null, candidates: [], clip: false, owner: false, blank: false, agentShot: null, actions: [] },
+    kept,
+  );
   sends.length = 0;
   takenAt.clear();
   removeKey(storageKeyFor.coverAsks(GAME));
@@ -301,6 +317,14 @@ async function reopen() {
 async function untilShot() {
   finishTake();
   await until(() => Boolean(q(".genex-publish-banner[data-shot]")), 900);
+  await settle(10);
+  return sample();
+}
+
+/** Let Studio's take end and wait for its pill to go. */
+async function untilTaken() {
+  finishTake();
+  await until(() => !q("[data-genex-cover-busy]"), 900);
   await settle(10);
   return sample();
 }
@@ -363,4 +387,4 @@ async function theme(name: "dark" | "light") {
   return sample();
 }
 
-Object.assign(window, { publishCover: { open, reopen, untilShot, press, next, make, studioTake, arrive, theme, sample, settle } });
+Object.assign(window, { publishCover: { open, reopen, untilShot, untilTaken, press, next, make, studioTake, arrive, theme, sample, settle } });

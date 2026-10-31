@@ -1,4 +1,3 @@
-import { CompletionPolicy } from "./completion-policy.ts";
 /**
  * One user message, from the queue to its answer: which run (if any) it belongs to, the turn that
  * answers it — the chat's own, after a run its lead led too (after-loop-run.ts), else the run's
@@ -10,6 +9,8 @@ import { runTurn, type TurnOptions, type TurnOutcome } from "./turn-loop.ts";
 import * as turnLoopParts from "./turn-loop.ts";
 import { sayInTurn, TurnStatus, TurnStop } from "./turn-record.ts";
 import { runCoordinatorTurn } from "./coordinator.ts";
+import { type StopAsk, stopAfterReply, stopAskedFor } from "./chat-stop.ts";
+import { dropSteeringBacklog } from "./steering-backlog.ts";
 import * as coordinatorParts from "./coordinator.ts";
 import * as coordinatorPromptsParts from "./coordinator-prompts.ts";
 import * as chatSessionParts from "./chat-session.ts";
@@ -47,7 +48,6 @@ import { servesOpenLoop } from "./director/open/contract.ts";
 import { OLDER_LEAD_JOURNAL_KIND } from "./director/open/older-journal.ts";
 import { withSteers } from "./chat-steer-prompts.ts";
 import { HostMethod } from "./host-methods.ts";
-import { StudioContract } from "./page-contract.ts";
 import { EventKind, RunEvent, RunMode, RunState } from "./run-events.ts";
 import { HOUR_MS } from "./time.ts";
 import { endClock } from "./wall-clock.ts";
@@ -58,11 +58,11 @@ import { followupAsk } from "./studio-prompts.ts";
 import { type ActiveRun, type RunReopen, StatusLane, type Studio } from "./studio-state.ts";
 import { clampRunHours, MAX_RUN_HOURS } from "./config.ts";
 import { CLIP_GAME_TITLE } from "./text.ts";
-import { createScope, userWordsInLog } from "./scope.ts";
+import { type StoreItem, storeItemsOf, storeLaunchWords, storeScopeItems } from "./store-items.ts";
 import { closeCarriedPool } from "./workers/carry.ts";
 import type { AnyRecord, ForwardedCall, HarnessCtx, HarnessEvent, Host, HostCall } from "../types/harness.d.ts";
-import type { ModelPreferences, RunSpec } from "../types/host-api.d.ts";
-import { messageQueueState, type QueueAction, type SteerHandle } from "./message-queue.ts";
+import type { MessageOrigin, ModelPreferences, RunSpec } from "../types/host-api.d.ts";
+import { type QueueAction, type SteerHandle } from "./message-queue.ts";
 
 /** The run an interview commissions when it names no length, in hours. */
 const DEFAULT_RUN_HOURS = 8;
@@ -76,9 +76,8 @@ const INTERRUPTED_PHASE = "interrupted";
 /** What the chat is told. */
 const MESSAGE = {
   studioThreadBuilds:
-    "Builds happen in a game's chat — this is the Studio's own chat, which never builds. Press Start a game in the sidebar, set the hours there, and describe a feeling.",
-  noGoal:
-    "the interview produced no usable goal — the intake tool call must carry a real `goal`; ask again instead of launching",
+    "Builds happen in a game's chat — this is the Studio's own chat, which never builds. Press Start a game in the sidebar, set the hours there, and describe the game.",
+  noGoal: "no usable goal — call the launch tool again with a real `goal` instead of launching",
   alreadyBuilding: (project: string) =>
     `a build is already running for ${project} — wait for it to finish, or stop it, before starting another`,
   couldNotLaunch: (failure: string) => `the run could not launch: ${failure}`,
@@ -92,11 +91,9 @@ const MESSAGE = {
   buildPromised: (end: string) => `Building until about ${end} — keep the app open and the computer awake. `,
   // ∞ has no end to promise; its 24 h ceiling is a date, since as a bare clock it is "now".
   untilSatisfiedPromised: (ceiling: string) =>
-    `It finishes when the required outcomes are verified, with a safety stop by about ${ceiling} — keep the app open and the computer awake. `,
+    `It finishes when the lead calls finish, with a safety stop by about ${ceiling} — keep the app open and the computer awake. `,
   planWindow:
-    "Your Claude plan's window can pause it partway; it waits out the reset and resumes itself, or one tap on Resume.",
-  connectionFirst:
-    " Your game doesn't have the studio's connection yet, so the first thing this build does is add it — without it nothing can tell whether a change made the game better.",
+    "Your plan's usage window can pause it partway; it waits out the reset and resumes itself, or one tap on Resume.",
 } as const;
 
 /** The run a message belongs to, when it names one (the queued action carries the same fields). */
@@ -163,10 +160,13 @@ export async function handleUserMessage(studio: Studio, action: QueueAction, ste
   const existing = await routeMessage(studio, action);
   const loopRuns = await loopRunsFor(studio.host, action, existing);
   const { after } = loopRuns;
-  carryMoodBoard(studio.moodBoards, action);
+  carryAttachedPictures(studio.attachedPictures, action);
   const ctx = studio.scoped(action.threadId, StatusLane.Chat);
   if (steering) await expectSession(studio.host, action, existing, steering);
   if (asksStudioThreadToBuild(action)) return answerStudioThreadBuild(studio.host, ctx, action);
+  // A build's late steering stays with that build: the section older builds left in NOTES.md goes
+  // before the chat answers, so no later agent reads it as its own instruction.
+  if (!action.studioThread) await dropSteeringBacklog(studio.host, action.project);
 
   ctx.setStatus("thinking");
   const turn = await studio.host.call(HostMethod.TurnBegin, {
@@ -236,7 +236,7 @@ async function answersInSession(host: Host, engine: string): Promise<boolean> {
 async function loopRunsFor(host: Host, action: QueueAction, existing: RunRecord | null): Promise<RoutedLoopRuns> {
   if (!existing) return { after: null, coordinated: null, loopUnused: false };
   // Words the chat wrote itself are never the person asking for more: whatever Loop they came with.
-  if (chatWrote(action)) dropCommission(action);
+  if (chatWroteOwn(action)) dropCommission(action);
   const after = await afterLoopRunFor(host, action, existing);
   const coordinated = after ? null : await coordinatorLoopRun(host, action, existing);
   const kept = keepsCommission(existing, after ?? coordinated);
@@ -272,7 +272,7 @@ function ownsMessage(active: ActiveRun, action: QueueAction): boolean {
 
 /**
  * The run a message is for: the one under way on its thread or game, else the thread's last one.
- * A run that has closed is the log's (finished or paused) even while its learning pass runs. Whether
+ * A run that has closed is the log's (finished or paused). Whether
  * the message keeps its commission is decided once the run it answers after is known
  * (`keepsCommission`). A Loop message after an Unreal game's finished run is for no run: it may
  * start the next one (`startsNextOpenLoop`).
@@ -300,7 +300,7 @@ async function routeMessage(studio: Studio, action: QueueAction): Promise<RunRec
  * build. Exported for its tests.
  */
 export async function startsNextOpenLoop(host: Host, action: QueueAction, run: RunRecord | null): Promise<boolean> {
-  if (run?.state !== RunState.Finished || chatWrote(action)) return false;
+  if (run?.state !== RunState.Finished || chatWroteOwn(action)) return false;
   if (!(action.autopilot ?? action.loop)) return false;
   // The finished run's own journal says what it was, whatever its folder reads as now.
   const inPlace = await finishedInPlace(host, action.threadId, run);
@@ -335,6 +335,16 @@ function chatWrote(action: QueueAction): boolean {
   return action.origin !== undefined && action.origin !== null;
 }
 
+/**
+ * Genex's word to the chat's agent after a Loop the person started was held back before its first
+ * turn (the app's `MessageOrigin.LoopHeld`, main/core/held-start.ts): it carries the person's own
+ * Loop, so the agent may start it again once it fixed what stopped it.
+ */
+const RETRIES_PERSONS_LOOP: MessageOrigin = "loop-held";
+
+/** Did the chat write this message itself, and not to start the person's own Loop again? */
+const chatWroteOwn = (action: QueueAction): boolean => chatWrote(action) && action.origin !== RETRIES_PERSONS_LOOP;
+
 /** A routed message's Loop or Autopilot commission, dropped. */
 function dropCommission(action: QueueAction): void {
   delete action.autopilot;
@@ -352,32 +362,32 @@ function existingRun(action: QueueAction, active: ActiveRun | undefined, previou
 }
 
 /**
- * Before a run exists, "keep going" can be the answer to its intake interview. Preserve the
- * explicitly selected mode and launch tool: the mood board a message brings is kept for the
- * thread, and a message without one gets the thread's.
+ * Before a run exists, "keep going" can answer the launch tool's question. Preserve the
+ * explicitly selected mode and launch tool: the pictures a message brings are kept for the
+ * thread, and a message without any gets the thread's.
  */
-function carryMoodBoard(moodBoards: Studio["moodBoards"], action: QueueAction): void {
+function carryAttachedPictures(attachedPictures: Studio["attachedPictures"], action: QueueAction): void {
   if (!action.autopilot) return;
   if (action.autopilot.frames?.length) {
-    moodBoards.set(action.threadId, action.autopilot.frames);
+    attachedPictures.set(action.threadId, action.autopilot.frames);
     return;
   }
-  const kept = moodBoards.get(action.threadId);
+  const kept = attachedPictures.get(action.threadId);
   if (kept?.length) action.autopilot.frames = kept;
 }
 
 /**
- * The host rewound this chat (its log reads without the withdrawn turns). A Loop interview's
- * mood board rides in memory between messages: it becomes the one the remaining messages gave,
- * when the withdrawn ones had changed it. Absent `frames` leaves the board untouched.
+ * The host rewound this chat (its log reads without the withdrawn turns). The pictures a launch
+ * will carry ride in memory between messages: they become the ones the remaining messages gave,
+ * when the withdrawn ones had changed them. Absent `frames` leaves them untouched.
  */
-export function rewindMoodBoard(
-  moodBoards: Studio["moodBoards"],
+export function rewindAttachedPictures(
+  attachedPictures: Studio["attachedPictures"],
   action: { threadId: string; frames?: unknown[] | null },
 ): void {
   if (!("frames" in action)) return;
-  if (action.frames?.length) moodBoards.set(action.threadId, action.frames);
-  else moodBoards.delete(action.threadId);
+  if (action.frames?.length) attachedPictures.set(action.threadId, action.frames);
+  else attachedPictures.delete(action.threadId);
 }
 
 function asksStudioThreadToBuild(action: QueueAction): boolean {
@@ -589,11 +599,23 @@ async function coordinatorAnswer(
   const frameCount = action.stills?.length ?? 0;
   const reopen = reopens(coordinated, commission) ? { hours: commissionHours(commission), frameCount } : null;
   await runCoordinatorTurn(ctx, { ...action, turnId, run: existing, ...(steer ? { steer } : {}), reopen });
+  const stop = ctx.cancelled ? null : await stopAsked(host, action, existing);
+  if (stop) return stopOutcome(stop);
   const followup = ctx.cancelled ? null : await followupFor(host, action, existing);
   if (!followup) return undefined;
   // A contained change is one builder turn, Loop or not: only more work reopens the build.
   if (reopen && !followup.contained) return reopenOutcome(reopen.hours, reopenRequest(followup.text, steer));
   return runTurn(turnCtx, followupOptions(action, turnId, followup, existing, steer));
+}
+
+/** The stop the run's coordinator recorded for this message (chat-stop.ts), or null. */
+function stopAsked(host: Host, action: QueueAction, existing: RunRecord): Promise<StopAsk | null> {
+  return stopAskedFor(host, { threadId: action.threadId, runId: String(existing.runId), messageId: action.messageId });
+}
+
+/** The coordinator's stop of the build, done once the reply ends (`afterTheReply`). */
+function stopOutcome(stop: StopAsk): TurnOutcome {
+  return { stopped: TurnStop.Done, round: 0, details: { stopRun: stop } };
 }
 
 /** The coordinator's continued work as a reopen of the same build, done once the reply ends (`afterTheReply`). */
@@ -602,19 +624,25 @@ function reopenOutcome(hours: number | null, text: string): TurnOutcome {
 }
 
 /**
- * What the reply asked for, done once it has ended: the paused run the chat's own session asked
- * to resume (its lead is that same session), the finished build it or the run's coordinator asked to
- * reopen, or the run an interview launched.
+ * What the reply asked for, done once it has ended: the build the run's coordinator asked to stop
+ * (and maybe go on again), the paused run the chat's own session asked to resume (its lead is that
+ * same session), the finished build it or the run's coordinator asked to reopen, or the run an
+ * interview launched.
  */
 async function afterTheReply(
   studio: Studio,
   ctx: HarnessCtx,
   asked: QueueAction,
   outcome: TurnOutcome | undefined,
-  { after, coordinated }: RoutedLoopRuns,
+  { after, coordinated, existing }: RoutedLoopRuns & { existing: RunRecord | null },
 ): Promise<void> {
   // A message sent while the turn worked may have changed its settings: what it asked for follows them.
   const action = followedSettings(asked, outcome);
+  const stop = existing ? outcome?.details?.stopRun : null;
+  if (existing && stop) {
+    const where = { threadId: action.threadId, runId: String(existing.runId), messageId: action.messageId };
+    return stopAfterReply(studio, where, stop);
+  }
   const resume = after ? outcome?.details?.resumeRun : null;
   if (after && resume) return resumeAfterReply(studio, ctx, after, resume);
   const loopRun = after ?? coordinated;
@@ -796,7 +824,7 @@ function reopenRequest(request: string, steer: SteerHandle | undefined): string 
   );
 }
 
-/** The follow-up the coordinator asked for on this message, with the plan the work was saved under. */
+/** The follow-up the coordinator asked for on this message, with the plan the person reviewed, when there is one. */
 async function followupFor(
   host: Host,
   action: QueueAction,
@@ -901,11 +929,10 @@ export async function launchFromIntake(
     readiness?.missing,
   );
   if (refusal) throw new Error(refusal);
-  const run = intakeRun(spec, action, project, readiness, await userWordsSoFar(host, action));
   // A promise the run cannot keep is worse than no promise: a second Loop for a game
   // that already owns a run is refused below, and the only record of that refusal is an event
   // no chat surface renders. Ask the same question here, before anything is promised — once a
-  // run that has closed there is past its learning pass, which a new run waits out.
+  // run that has closed there has settled, which a new run waits out.
   const busy = await runUnderWay(studio, action.threadId, project);
   if (busy) throw new Error(MESSAGE.alreadyBuilding(busy.run.project));
   // Stop while that pass was waited out was for this run too.
@@ -914,13 +941,15 @@ export async function launchFromIntake(
   // before anything is promised, when the run's engine is none the host seats there.
   const needsSession = await needsSessionRefusal(host, listed, spec);
   if (needsSession) throw new Error(needsSession);
-  // Such a Loop adds no connection and ends on a reviewer's yes: its own promise.
-  const promise = openLoop
-    ? openLaunchPromise(run.budgets, Date.now())
-    : launchPromise(run.budgets, run.readiness, Date.now());
-  // The board did its job — the run spec carries the frames now; the next interview on this
+  // What the user sells in the Genex store rides the run's goal; the build lists each item once it
+  // has drawn its picture, since the store takes none without one.
+  const store = storeItemsOf(spec.storeItems);
+  const run = intakeRun(spec, action, project, store);
+  const launched = openLoop ? openLaunchPromise(run.budgets, Date.now()) : launchPromise(run.budgets, Date.now());
+  const promise = [launched, storeLaunchWords(store)].filter(Boolean).join("\n\n");
+  // The pictures did their job — the run spec carries the frames now; the next launch on this
   // thread starts with a clean slate.
-  studio.moodBoards.delete(action.threadId);
+  studio.attachedPictures.delete(action.threadId);
   await host
     .call(HostMethod.EventsAppend, {
       threadId: action.threadId,
@@ -933,7 +962,7 @@ export async function launchFromIntake(
     })
     .catch(() => {});
   // Same thread: the run is this chat's story. handleRunStart holds keep-awake via notify.
-  // The commission is handled at launch, so restart cannot replay it. Synchronous run
+  // The launch is handled here, so a restart cannot replay it. Synchronous run
   // reservation keeps later queued messages behind the build until it saves and settles.
   // A Stop since this message is for this build: the start keeps it (`keepStop`).
   void handleRunStart(studio, { type: "run_start", threadId: action.threadId, run }, { keepStop: true }).catch(
@@ -950,19 +979,20 @@ function openLoopLaunches(): boolean {
 }
 
 /**
- * Why a Loop on this game can't start on the run's engine, or null: a Loop on a project that isn't a
- * web game needs an engine the host seats in place (`leadsInPlace`: its lead is the chat's own, with
- * its jobs and looks); a web game keeps classic Autopilot on any engine.
+ * Why a Loop can't start on the run's engine, or null: every Loop is led by the chat's own session,
+ * so it needs an engine that keeps one (`leadsInPlace`). An engine that keeps none (Ollama's tool loop)
+ * stays plain chat.
  */
 async function needsSessionRefusal(host: Host, game: AnyRecord | null, spec: AnyRecord): Promise<string | null> {
-  const openLoop = spec.mode === RunMode.Autopilot && game !== null && loopProfileOf(game) === LoopProfile.Open;
-  if (!openLoop) return null;
   const engine = typeof spec.engine === "string" ? spec.engine : EngineId.Ollama;
   const listed = await host.call(HostMethod.EngineDescribe, {}).catch(() => []);
   const described = (Array.isArray(listed) ? listed : []).find((e) => e.id === engine);
   return leadsInPlace(described)
     ? null
-    : OPEN_LOOP_REFUSAL.needsSession(described?.label ?? engine, openLoopBecause(game));
+    : OPEN_LOOP_REFUSAL.needsSession(
+        described?.label ?? engine,
+        game && loopProfileOf(game) === LoopProfile.Open ? openLoopBecause(game) : undefined,
+      );
 }
 
 /**
@@ -990,83 +1020,22 @@ function intakeProject(action: QueueAction, spec: AnyRecord, games: readonly { n
 
 /**
  * The time a commissioned run is given: its hours (held to the run limits), and whether the
- * composer asked for ∞, which runs until what was asked is verified, with those hours as the ceiling.
+ * composer asked for ∞, which runs until the lead finishes it, with those hours as the ceiling.
  * The app reads these back (`src/shared/run-state.ts` `recordedRunLoop`).
  */
 export function intakeBudgets(spec: AnyRecord): RunSpec["budgets"] {
   const hours = clampRunHours(Number(spec.hours) || DEFAULT_RUN_HOURS);
   return {
     wallClockMs: Math.round(hours * HOUR_MS),
-    completionPolicy: spec.untilSatisfied === true ? CompletionPolicy.Goal : CompletionPolicy.Duration,
     ...(spec.untilSatisfied === true ? { untilSatisfied: true } : {}),
   };
 }
 
-/**
- * The user's own messages for this build, as the log has them (scope.ts `userWordsInLog`): since the
- * thread's previous run, up to the one that launched, never the chat's own reports nor a model's
- * words. With none in the log, the launching message's own text.
- */
-async function userWordsSoFar(host: Host, action: QueueAction): Promise<string[]> {
-  const events: HarnessEvent[] = await host
-    .call(HostMethod.EventsList, { threadId: action.threadId })
-    .then((listed) => (Array.isArray(listed) ? listed : []))
-    .catch(() => []);
-  const said = launchWords(events, action.messageId);
-  return said.length ? said : [String(action.text ?? "")];
-}
-
-/**
- * The user's words a launched build is for: since the thread's previous run, through the launching
- * message, then each message its session read mid-turn (delivered into it, and not handed back since).
- * Those read after the launch was recorded reach the build no other way: the session can't launch
- * twice. A message sent meanwhile that never joined keeps its own turn, so it isn't counted here.
- */
-export function launchWords(events: readonly HarnessEvent[], messageId: string | undefined): string[] {
-  const asked = userWordsInLog(events, { through: messageId, sinceLastRun: true });
-  return messageId ? [...asked, ...joinedWords(events, messageId)] : asked;
-}
-
-/** The words of the messages read into `messageId`'s turn and still part of it, in the order sent. */
-function joinedWords(events: readonly HarnessEvent[], messageId: string): string[] {
-  const read = readInto(events, messageId);
-  const words: string[] = [];
-  for (const message of messageQueueState(events).messages.values()) {
-    const text = message.action?.text;
-    // A message the chat queued itself (a command's result) is never the person's words.
-    const fromThePerson = message.action?.origin === undefined || message.action?.origin === null;
-    if (read.has(message.messageId) && fromThePerson && typeof text === "string" && text.trim()) words.push(text);
-  }
-  return words;
-}
-
-/** The messages whose latest steer record says `messageId`'s turn read them: a later hand-back or re-steer undoes it. */
-function readInto(events: readonly HarnessEvent[], messageId: string): Set<string> {
-  const read = new Set<string>();
-  for (const event of events) {
-    if (event.data?.type !== EventKind.Custom) continue;
-    const payload = event.data.payload ?? {};
-    const id = payload.messageId;
-    if (typeof id !== "string") continue;
-    const type = event.data.event_type;
-    if (type === RunEvent.CoordinatorMessageDelivered && payload.into === messageId) read.add(id);
-    else if (type === RunEvent.CoordinatorMessageRequeued || type === RunEvent.CoordinatorMessageSteering)
-      read.delete(id);
-  }
-  return read;
-}
-
-/**
- * What the run is for (loop/scope.ts): the user's words as the log has them, and the in-scope and cut
- * lists the launch named. None when there are no words to keep.
- */
-function intakeScope(spec: AnyRecord, asked: readonly string[]): AnyRecord {
-  const scope = createScope({
-    asked,
-    inScope: Array.isArray(spec.inScope) ? spec.inScope : [],
-    cut: Array.isArray(spec.cut) ? spec.cut : [],
-  });
-  return scope.asked.length ? { scope } : {};
+/** The goal a launch runs: the chat's goal, and what it sells in the Genex store when it sells anything. */
+function intakeGoal(spec: AnyRecord, store: readonly StoreItem[]): string {
+  const goal = String(spec.goal ?? "").trim();
+  const items = storeScopeItems(store);
+  return items.length ? `${goal}\n\nSell in the Genex store: ${items.join("; ")}.` : goal;
 }
 
 /** The run an interview commissioned, as `run_start` takes it. */
@@ -1074,31 +1043,21 @@ function intakeRun(
   spec: AnyRecord,
   action: QueueAction,
   project: string,
-  readiness: { contract?: string; problems?: string[] } | null,
-  asked: readonly string[] = [],
+  store: readonly StoreItem[] = [],
 ): RunSpec & AnyRecord {
   return {
     runId: `run_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
-    goal: spec.goal,
+    goal: intakeGoal(spec, store),
     project,
     reference: spec.reference,
     budgets: intakeBudgets(spec),
-    // What the folder still needs, as `game.validate` found it a moment ago. Not a refusal —
-    // `loopRunRefusal` above decides those — but the run's own first job: a page that never
-    // loads the studio contract cannot be judged at all, so the run carries the fact and the
-    // director installs it before anyone builds (M2.6, loop/director.ts `installContract`).
-    ...(readiness
-      ? { readiness: { contract: readiness.contract ?? "loaded", problems: readiness.problems ?? [] } }
-      : {}),
-    ...(spec.reviewPlan ? { reviewPlan: true } : {}),
     ...(spec.mode ? { mode: spec.mode } : {}),
     ...(typeof spec.keepBuildingFrom === "string" ? { keepBuildingFrom: spec.keepBuildingFrom } : {}),
     ...(spec.engine ? { engine: spec.engine } : {}),
     ...(spec.model ? { model: spec.model } : {}),
     ...(spec.roles ? { roles: spec.roles } : {}),
-    ...intakeScope(spec, asked),
-    // The run inherits the interview's effort: builders work at exactly the model and effort
-    // the user generates with, never a quieter tier than the chat that commissioned them.
+    // The run inherits the interview's effort: workers work at exactly the model and effort the user
+    // generates with, never a quieter tier than the chat that commissioned them.
     ...commissionedWith(action),
   };
 }
@@ -1111,28 +1070,12 @@ function commissionedWith(action: QueueAction): { effort?: string; preferences?:
   };
 }
 
-/**
- * The one sentence a run owes the user before they walk away when their game cannot yet be
- * judged: the studio has to wire its own connection into the game before it can tell whether
- * anything it changes is an improvement, and that is the first thing this run does (M2.6). Said
- * here, in the chat, rather than discovered in the morning as "the other build could not be
- * observed" — the words no one outside the harness could read.
- */
-export function judgeableFirst(readiness: { contract?: string } | null | undefined): string {
-  if (readiness?.contract !== StudioContract.Missing) return "";
-  return MESSAGE.connectionFirst;
-}
-
-/** What the chat promises the moment a commissioned run launches at `now`: when it ends, and what it needs. */
-export function launchPromise(
-  budgets: RunSpec["budgets"],
-  readiness: { contract?: string } | null | undefined,
-  now: number,
-): string {
+/** What the chat promises the moment a commissioned run launches at `now`: when it ends. */
+export function launchPromise(budgets: RunSpec["budgets"], now: number): string {
   const when = budgets.untilSatisfied
     ? MESSAGE.untilSatisfiedPromised(dayAndClockAfter(budgets.wallClockMs, now))
     : MESSAGE.buildPromised(clockAfter(budgets.wallClockMs, now));
-  return when + MESSAGE.planWindow + judgeableFirst(readiness);
+  return when + MESSAGE.planWindow;
 }
 
 /**

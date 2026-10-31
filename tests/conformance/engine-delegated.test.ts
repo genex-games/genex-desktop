@@ -734,17 +734,14 @@ describe("claude code delegated engine", () => {
     assert.deepEqual(result.studioToolCalls, [{ name: "ask_user", args: { question: "Plan or build?" } }]);
   });
 
-  it("keeps read-only sessions and performance-optimization candidates off the web", async () => {
-    const requests = [{ readOnly: true }, { optimization: { denyWrites: ["/tmp/x"] } }];
-    for (const request of requests) {
-      const { fn, seen } = fakeQuery(successRun);
-      const engine = await engineWithLogin(fn);
-      await engine.delegate({ prompt: "look", cwd: "/tmp/game-workspace", ...request } as never);
-      const call = seen[0] as Record<string, unknown>;
-      assert.equal((call.allowedTools as string[]).includes("WebSearch"), false, JSON.stringify(request));
-      const banned = call.disallowedTools as string[];
-      assert.ok(banned.includes("WebSearch") && banned.includes("WebFetch"), JSON.stringify(request));
-    }
+  it("keeps read-only sessions off the web", async () => {
+    const { fn, seen } = fakeQuery(successRun);
+    const engine = await engineWithLogin(fn);
+    await engine.delegate({ prompt: "look", cwd: "/tmp/game-workspace", readOnly: true } as never);
+    const call = seen[0] as Record<string, unknown>;
+    assert.equal((call.allowedTools as string[]).includes("WebSearch"), false);
+    const banned = call.disallowedTools as string[];
+    assert.ok(banned.includes("WebSearch") && banned.includes("WebFetch"));
   });
 
   /**
@@ -909,6 +906,30 @@ describe("claude code delegated engine", () => {
       message: { content: [{ type: "text", text: "x".repeat(5_000) }] },
     }) as { parts: Array<{ text: string }> };
     assert.equal(compacted.parts[0]!.text, "x".repeat(5_000));
+  });
+
+  // The Agent SDK sends an EMPTY system prompt unless it is asked for Claude Code's: every Genex
+  // session ran without the coding guidance, environment and tool habits plain Claude Code has.
+  it("runs every session on Claude Code's own system prompt, the session's context appended", async () => {
+    const root = await tmpDir("studio-engine-");
+    const { fn, seen } = fakeQuery(successRun);
+    const engine = new ClaudeCodeEngine({
+      resolveCli: fixtureCodingCli,
+      engineHome: path.join(root, "claude-home"),
+      systemHome: path.join(root, "no-system-login"),
+      queryFn: fn,
+      platform: "darwin",
+    });
+    await engine.delegate({ prompt: "make a snake game", system: "You are working inside Genex.", cwd: root });
+    await engine.delegate({ prompt: "make it faster", cwd: root });
+
+    assert.deepEqual(seen[0]!.systemPrompt, {
+      type: "preset",
+      preset: "claude_code",
+      append: "You are working inside Genex.",
+    });
+    assert.equal(seen[0]!.prompt, "make a snake game", "the session's context is not repeated in the message");
+    assert.deepEqual(seen[1]!.systemPrompt, { type: "preset", preset: "claude_code" });
   });
 
   it("confines the contractor: no user config, no cross-session tools, sandboxed shell", async () => {
@@ -1267,8 +1288,9 @@ describe("steering a running Claude Code turn", () => {
 
   it("hands a message into the running turn and reports it read where the session read it", { timeout }, async () => {
     const { fn, seen } = steerableQuery(async function* ({ read }) {
-      await read();
+      const brief = (await read())!;
       yield steerInit();
+      yield lifecycle(brief, "started");
       yield toolUse("tu_1");
       const steer = (await read())!;
       yield lifecycle(steer, "queued");
@@ -1312,8 +1334,10 @@ describe("steering a running Claude Code turn", () => {
     assert.equal(readies.length, 1, "ready is said exactly once");
     assert.equal(typeof readies[0], "function", "a CLI with msg_lifecycle_v1 takes input mid-turn");
     assert.equal(sent, true);
-    // The brief carries no uuid: lifecycles are tracked only for steers.
-    assert.deepEqual(seen.inputs[0], {
+    // The brief carries a uuid too: the session says when it read it.
+    const { uuid: briefUuid, ...brief } = seen.inputs[0]!;
+    assert.match(briefUuid, /^[0-9a-f]{8}-/);
+    assert.deepEqual(brief, {
       type: "user",
       message: { role: "user", content: [{ type: "text", text: "Run the command" }] },
       parent_tool_use_id: null,
@@ -1345,12 +1369,78 @@ describe("steering a running Claude Code turn", () => {
     assert.equal(readies[0]!({ id: "m2", text: "too late" }), false, "nothing is taken once the input ended");
   });
 
+  it("a resumed session that first answers what it had queued keeps its input open for the brief", {
+    timeout,
+  }, async () => {
+    const { fn } = steerableQuery(async function* ({ read }) {
+      const brief = (await read())!;
+      yield steerInit();
+      // A background task the last process left running: the CLI answers its notice before the brief.
+      yield said("No response requested.");
+      yield { type: "result", subtype: "success", is_error: false, result: "", num_turns: 0, usage: {} };
+      yield { ...steerInit(), uuid: "second-init" };
+      yield lifecycle(brief, "started");
+      // Genex's own tools answer over the input: a call made now needs it open.
+      yield toolUse("tu_1", "mcp__studio__desktop");
+      const steer = (await read())!;
+      yield lifecycle(steer, "queued");
+      yield toolResult("tu_1");
+      yield lifecycle(steer, "started");
+      yield said("Published.");
+      yield { type: "result", subtype: "success", is_error: false, result: "Published.", num_turns: 2, usage: {} };
+      assert.equal(await read(), null);
+    });
+    const engine = await engineWithLogin(fn);
+    const readies: Send[] = [];
+    const sent: boolean[] = [];
+    const result = await engine.delegate({
+      prompt: "Publish the game",
+      cwd: "/tmp/x",
+      resume: "ses_steer",
+      steer: { ready: (send) => readies.push(send) },
+      onEvent: (event) => {
+        if (event.type === "assistant" && (event.payload as any).parts[0].type === "tool_use")
+          sent.push(readies[0]!({ id: "m1", text: "and the cover" }));
+      },
+    });
+
+    assert.deepEqual(sent, [true], "the notice's result is not the brief's: the input is still open");
+    assert.deepEqual(result.steered, ["m1"]);
+    assert.equal(result.summary, "Published.");
+  });
+
+  it("a resumed session nobody steers keeps its input open past a queued notice too", { timeout }, async () => {
+    const { fn } = steerableQuery(async function* ({ read }) {
+      const brief = await read();
+      yield steerInit();
+      yield { type: "result", subtype: "success", is_error: false, result: "", num_turns: 0, usage: {} };
+      let ended = false;
+      const ending = read().then((frame) => {
+        ended = frame === null;
+      });
+      yield lifecycle(brief ?? {}, "started");
+      yield toolUse("tu_1", "mcp__studio__desktop");
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(ended, false, "the brief's Genex tool calls answer over the input");
+      yield toolResult("tu_1");
+      yield said("Published.");
+      yield { type: "result", subtype: "success", is_error: false, result: "Published.", num_turns: 2, usage: {} };
+      await ending;
+      assert.equal(ended, true);
+    });
+    const engine = await engineWithLogin(fn);
+    const result = await engine.delegate({ prompt: "Publish the game", cwd: "/tmp/x", resume: "ses_steer" });
+    assert.equal(result.ok, true);
+    assert.equal(result.summary, "Published.");
+  });
+
   it("keeps the input open for a message taken during the final answer, and reports the last answer", {
     timeout,
   }, async () => {
     const { fn } = steerableQuery(async function* ({ read }) {
-      await read();
+      const brief = (await read())!;
       yield steerInit();
+      yield lifecycle(brief, "started");
       yield said("First answer.");
       const late = (await read())!;
       yield lifecycle(late, "queued");
@@ -1431,8 +1521,9 @@ describe("steering a running Claude Code turn", () => {
   it("a stop with a message still queued reports it unread, and ends the input", { timeout }, async () => {
     const abort = new AbortController();
     const { fn, seen } = steerableQuery(async function* ({ read }) {
-      await read();
+      const brief = (await read())!;
       yield steerInit();
+      yield lifecycle(brief, "started");
       yield toolUse("tu_1");
       const steer = (await read())!;
       yield lifecycle(steer, "queued");
@@ -1472,8 +1563,9 @@ describe("steering a running Claude Code turn", () => {
     // Folded in at its question's or launch's tool result, a message would be answered by a turn
     // that had already decided; interrupted, the harness resumes it or lets the message wait.
     const { fn } = steerableQuery(async function* ({ read }) {
-      await read();
+      const brief = (await read())!;
       yield steerInit();
+      yield lifecycle(brief, "started");
       yield {
         type: "assistant",
         message: {
@@ -1519,8 +1611,9 @@ describe("steering a running Claude Code turn", () => {
     timeout,
   }, async () => {
     const { fn } = steerableQuery(async function* ({ read }) {
-      await read();
+      const brief = (await read())!;
       yield steerInit();
+      yield lifecycle(brief, "started");
       yield said("Done.");
       yield { type: "result", subtype: "success", is_error: false, result: "Done.", num_turns: 1, usage: {} };
     });
@@ -1549,8 +1642,9 @@ describe("steering a running Claude Code turn", () => {
 
   it("a message the CLI discards is not delivered, and the input still ends", { timeout }, async () => {
     const { fn } = steerableQuery(async function* ({ read }) {
-      await read();
+      const brief = (await read())!;
       yield steerInit();
+      yield lifecycle(brief, "started");
       yield toolUse("tu_1");
       const steer = (await read())!;
       yield lifecycle(steer, "queued");
@@ -1599,8 +1693,10 @@ describe("steering a running Claude Code turn", () => {
     );
     const input = feed.prompt[Symbol.asyncIterator]();
     const next = async () => (await input.next()) as IteratorResult<Frame>;
-    assert.equal((await next()).value.message.content[0].text, "Run the command");
+    const brief = (await next()).value;
+    assert.equal(brief.message.content[0].text, "Run the command");
     feed.initialized(steerInit(), false);
+    feed.lifecycle(lifecycle(brief, "started"), () => {});
     const send = readies[0]!;
 
     // Read in time: the stall is called off, and the input ends at the result that answers it.
@@ -1631,6 +1727,55 @@ describe("steering a running Claude Code turn", () => {
     assert.deepEqual(steer.steered, ["m1"], "the unread message reports as not delivered");
     assert.equal(send({ id: "m3", text: "too late" }), false);
     feed.dispose();
+  });
+
+  it("a result before the brief is read keeps the input open until the brief's own, or the stall", async () => {
+    const stalls: Array<{ fire: () => void; cancelled: boolean }> = [];
+    const schedule = (fire: () => void) => {
+      const stall = { fire, cancelled: false };
+      stalls.push(stall);
+      return () => {
+        stall.cancelled = true;
+      };
+    };
+    const feedFor = () => {
+      const feed = steerFeed(
+        steerSession(() => {}),
+        userFrame("Publish", []),
+        new AbortController().signal,
+        () => "ses_steer",
+        schedule,
+      );
+      const input = feed.prompt[Symbol.asyncIterator]();
+      return { feed, next: async () => (await input.next()) as IteratorResult<Frame> };
+    };
+
+    // A queued notice answered first: the brief starts after it, and only its result ends the input.
+    const resumed = feedFor();
+    const brief = (await resumed.next()).value;
+    resumed.feed.initialized(steerInit(), false);
+    resumed.feed.answered();
+    assert.equal(resumed.feed.ended, false, "the notice's result is not the brief's");
+    resumed.feed.lifecycle(lifecycle(brief, "started"), () => {});
+    assert.equal(stalls[0]!.cancelled, true);
+    resumed.feed.answered();
+    assert.equal(resumed.feed.ended, true);
+
+    // A brief that never starts holds the input only until the stall passes.
+    const stuck = feedFor();
+    await stuck.next();
+    stuck.feed.initialized(steerInit(), false);
+    stuck.feed.answered();
+    assert.equal(stuck.feed.ended, false);
+    stalls[1]!.fire();
+    assert.equal(stuck.feed.ended, true);
+
+    // An older CLI never says it read the brief: its first result answers it.
+    const old = feedFor();
+    await old.next();
+    old.feed.initialized(steerInit(["interrupt_receipt_v1"]), false);
+    old.feed.answered();
+    assert.equal(old.feed.ended, true);
   });
 
   it("says null to a CLI without message lifecycles, and to a session that never reached its init", {

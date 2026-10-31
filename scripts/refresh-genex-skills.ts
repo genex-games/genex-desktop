@@ -3,16 +3,25 @@
  * nothing is fetched at runtime or in CI).
  *
  * Each skill's `SKILL.md` is its Studio-written `PREFACE.md`, then a fixed upstream marker, then the
- * upstream bytes unchanged; a card's `references/*.md` are copied unchanged. The cards come from the
+ * upstream bytes with only Studio's cuts taken out; a card's `references/*.md` are copied the same way.
+ * The cuts (`cuts.json`, Studio-written) name whole passages of upstream advice Studio does not ship:
+ * a section by its heading, a run of lines by its first and last line, a sentence replaced, or a whole
+ * reference file dropped. Each must match the upstream text exactly once, so an upstream change that
+ * moves a cut fails the refresh instead of shipping the passage. The cards come from the
  * pinned `@genex-ai/cli-demo` in node_modules (MIT); the `genex` skill is https://genex.games/SKILL.md,
- * read from `--skill-md <file>`, fetched with `--fetch`, or kept from the current vendored copy.
- * The CLI's MIT license is copied beside them as `LICENSE-cards`, so every build carries it.
+ * read from `--skill-md <file>`, fetched with `--fetch`, or kept from the current vendored copy
+ * (already cut: a change to its cuts needs `--skill-md` or `--fetch`). The CLI's MIT license is copied beside them as `LICENSE-cards`, so every build carries it.
  * `vendor.json` records the versions and each upstream part's sha256, which
  * `tests/conformance/genex-skills-vendor.test.ts` holds to the pin. Each card's `references` in
  * plugin.json is rewritten to the references just vendored, so a reference the CLI adds or drops
  * needs no hand edit; a card the manifest never declared still fails the refresh.
  *
- *   npm run genex:skills -- [--skill-md <file> | --fetch]
+ * A card a CLI release not yet on npm changed can be vendored ahead of the pin from that CLI's
+ * source (`--ahead-from <apps/cli> --ahead <card,…> --ahead-source <label>`): its files record that
+ * version and a note to re-vendor them, and later refreshes keep them as they are until the pin
+ * reaches that version, when they come from the published CLI again.
+ *
+ *   npm run genex:skills -- [--skill-md <file> | --fetch] [--ahead-from <dir> --ahead <cards> --ahead-source <label>]
  */
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -34,8 +43,8 @@ export const GENEX_CARDS = [
   "genex-llm-in-games",
   "genex-tool-llm",
   "genex-monetization",
+  "genex-items",
   "genex-tool-publish",
-  "genex-cover",
   "genex-updates",
   "genex-tool-model",
   "genex-tool-character",
@@ -44,7 +53,15 @@ export const GENEX_CARDS = [
   "genex-tool-image",
 ] as const;
 /** Skills Studio writes itself beside the vendored ones: never fetched, never in `vendor.json`. */
-export const STUDIO_SKILLS: readonly string[] = ["plugin-author"];
+export const STUDIO_SKILLS: readonly string[] = [
+  "plugin-author",
+  "creator-mcp",
+  "publishing",
+  "publishing-apps",
+  "cover",
+];
+/** Studio's cuts of upstream text, beside the skills (never shipped). */
+export const CUTS_FILE = "cuts.json";
 /** The CLI's own license, copied beside the cards so every build of the payload carries it. */
 export const CARDS_LICENSE = "LICENSE-cards";
 const CLI_PACKAGE = "@genex-ai/cli-demo";
@@ -62,6 +79,10 @@ export interface VendoredFile {
   source: string;
   sha256: string;
   bytes: number;
+  /** The CLI version a card vendored ahead of the pin came from; absent for the pinned CLI's. */
+  version?: string;
+  /** Why it is ahead of the pin, and to re-vendor it from the published CLI. */
+  pending?: string;
 }
 /** `src/plugins/genex/skills/vendor.json`. */
 export interface GenexSkillsVendor {
@@ -82,6 +103,101 @@ export interface VendoredSkill {
 }
 
 const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
+
+/**
+ * One passage Studio takes out of an upstream file: a section (its heading line through the line
+ * before the next heading of the same or a higher level), a run of lines (`from` through `to`,
+ * whole lines), or a span of text replaced by Studio's words.
+ */
+export type GenexCut = { section: string } | { from: string; to: string } | { replace: string; with: string };
+/** `cuts.json`: per vendored file (`<card>/SKILL.md`, `<card>/references/<name>.md`), its cuts, or `drop` for none of it. */
+export type GenexCuts = Record<string, GenexCut[] | "drop">;
+
+/** Where `needle` occurs in `text`, which must be exactly once. */
+function onlyIndex(text: string, needle: string, what: string): number {
+  const at = text.indexOf(needle);
+  if (at < 0 || text.indexOf(needle, at + 1) >= 0)
+    throw new Error(
+      `Cut ${JSON.stringify(what.slice(0, 80))} ${at < 0 ? "is not in" : "is more than once in"} the upstream text`,
+    );
+  return at;
+}
+
+/** The heading level of a Markdown line (`## x` is 2), or 0 for a line that is no heading. */
+const headingLevel = (line: string) => /^(#{1,6}) /.exec(line)?.[1]?.length ?? 0;
+
+/** The lines `from` through the end of its section: up to the next heading of the same or a higher level. */
+function sectionEnd(lines: string[], start: number): number {
+  const level = headingLevel(lines[start] ?? "");
+  let fenced = false;
+  for (let i = start + 1; i < lines.length; i++) {
+    const line = lines[i] ?? "";
+    if (line.startsWith("```")) fenced = !fenced;
+    const heading = headingLevel(line);
+    if (!fenced && heading > 0 && heading <= level) return i;
+  }
+  return lines.length;
+}
+
+/** The index of the one line equal to `line`. */
+function onlyLine(lines: string[], line: string): number {
+  const found = lines.flatMap((text, index) => (text === line ? [index] : []));
+  if (found.length !== 1)
+    throw new Error(
+      `Cut line ${JSON.stringify(line.slice(0, 80))} is ${found.length ? "more than once" : "not"} in the upstream text`,
+    );
+  return found[0] ?? 0;
+}
+
+/** `text` with one cut taken out. */
+function applyCut(text: string, cut: GenexCut): string {
+  if ("replace" in cut) {
+    const at = onlyIndex(text, cut.replace, cut.replace);
+    return text.slice(0, at) + cut.with + text.slice(at + cut.replace.length);
+  }
+  const lines = text.split("\n");
+  if ("section" in cut) {
+    const start = onlyLine(lines, cut.section);
+    if (headingLevel(cut.section) === 0) throw new Error(`Cut section ${JSON.stringify(cut.section)} is no heading`);
+    return [...lines.slice(0, start), ...lines.slice(sectionEnd(lines, start))].join("\n");
+  }
+  const start = onlyLine(lines, cut.from);
+  const end = onlyLine(lines, cut.to);
+  if (end < start) throw new Error(`Cut ${JSON.stringify(cut.from.slice(0, 80))} ends before it starts`);
+  return [...lines.slice(0, start), ...lines.slice(end + 1)].join("\n");
+}
+
+/** An upstream file as Studio vendors it: every cut taken out, in order. */
+export function applyCuts(text: string, cuts: readonly GenexCut[] = []): string {
+  return cuts.reduce(applyCut, text);
+}
+
+/** Whether `cuts.json` drops a vendored file whole. */
+export const isDropped = (cuts: GenexCuts, file: string) => cuts[file] === "drop";
+/** A vendored file's cuts (none for a file it does not name). */
+export function cutsFor(cuts: GenexCuts, file: string): GenexCut[] {
+  const entry = cuts[file];
+  return Array.isArray(entry) ? entry : [];
+}
+
+/** `cuts.json` from the skills folder; none when it is missing. */
+export async function readCuts(skills: string): Promise<GenexCuts> {
+  return JSON.parse(await readFile(path.join(skills, CUTS_FILE), "utf8").catch(() => "{}"));
+}
+
+const SEMVER = /^(\d+)\.(\d+)\.(\d+)$/;
+
+/** Whether `version` is a release newer than `pinned` (plain MAJOR.MINOR.PATCH only). */
+export function isAheadOf(version: string, pinned: string): boolean {
+  const a = SEMVER.exec(version);
+  const b = SEMVER.exec(pinned);
+  if (!a || !b) return false;
+  for (let i = 1; i <= 3; i++) {
+    const difference = Number(a[i]) - Number(b[i]);
+    if (difference !== 0) return difference > 0;
+  }
+  return false;
+}
 
 /** The marker line between a Studio preface and the upstream bytes. */
 const marker = (source: string, version: string, upstream: string) =>
@@ -112,16 +228,46 @@ interface Options {
   root: string;
   skillMd?: string;
   fetch: boolean;
+  /** A CLI package's source folder (`apps/cli`) whose cards `ahead` are vendored ahead of the pin. */
+  aheadFrom?: string;
+  ahead: string[];
+  /** How the record names where that CLI came from, without spaces (a repository, branch and folder). */
+  aheadSource?: string;
 }
 
+/** The flags that take a value, and where each one goes. */
+const VALUE_FLAGS: Record<string, (options: Options, value: string) => void> = {
+  "--skill-md": (options, value) => {
+    options.skillMd = value;
+  },
+  "--ahead-from": (options, value) => {
+    options.aheadFrom = value;
+  },
+  "--ahead": (options, value) => {
+    options.ahead = value.split(",").filter(Boolean);
+  },
+  "--ahead-source": (options, value) => {
+    options.aheadSource = value;
+  },
+};
+
 function parseArgs(argv: string[], root: string): Options {
-  const options: Options = { root, fetch: false };
+  const options: Options = { root, fetch: false, ahead: [] };
   for (let i = 0; i < argv.length; i++) {
-    if (argv[i] === "--fetch") options.fetch = true;
-    else if (argv[i] === "--skill-md") options.skillMd = argv[++i];
-    else throw new Error(`Unknown argument ${argv[i]}; use --skill-md <file> or --fetch`);
+    const flag = argv[i] ?? "";
+    const takes = VALUE_FLAGS[flag];
+    if (flag === "--fetch") options.fetch = true;
+    else if (takes) takes(options, argv[++i] ?? "");
+    else
+      throw new Error(
+        `Unknown argument ${flag}; use --skill-md <file>, --fetch or --ahead-from/--ahead/--ahead-source`,
+      );
   }
   if (options.fetch && options.skillMd) throw new Error("Pass --skill-md or --fetch, not both");
+  const aheadAsked = options.aheadFrom !== undefined || options.ahead.length > 0;
+  const aheadWhole =
+    options.aheadFrom !== undefined && options.ahead.length > 0 && /^\S+$/.test(options.aheadSource ?? "");
+  if (aheadAsked && !aheadWhole) throw new Error("Pass --ahead-from, --ahead and --ahead-source (no spaces) together");
   return options;
 }
 
@@ -150,38 +296,93 @@ interface Vendoring {
   skills: string;
   cliVersion: string;
   files: Record<string, VendoredFile>;
+  cuts: GenexCuts;
 }
 
-/** Write one skill's SKILL.md from its preface and the upstream text, and record the upstream part. */
-async function vendorSkill(v: Vendoring, skill: string, source: string, version: string, upstream: string) {
+/** Where a card's upstream comes from: the pinned CLI, or a newer one ahead of the pin. */
+interface CardOrigin {
+  /** The folder holding the CLI's `templates/skills`. */
+  cards: string;
+  /** How the record names that folder. */
+  source: string;
+  version: string;
+  /** For a card ahead of the pin: its version and the note to re-vendor it. */
+  ahead?: Pick<VendoredFile, "version" | "pending">;
+}
+
+/**
+ * Write one skill's SKILL.md from its preface and the upstream text with Studio's cuts taken out, and
+ * record the part shipped. `cut` is false for text already cut (a card kept ahead of the pin).
+ */
+async function vendorSkill(
+  v: Vendoring,
+  skill: string,
+  source: string,
+  version: string,
+  upstream: string,
+  ahead?: CardOrigin["ahead"],
+  cut = true,
+) {
   const dir = path.join(v.skills, skill);
   const preface = await readFile(path.join(dir, PREFACE_FILE), "utf8");
-  await writeFile(path.join(dir, SKILL_FILE), vendoredSkill(preface, source, version, upstream));
-  v.files[`${skill}/${SKILL_FILE}`] = { source, sha256: sha256(upstream), bytes: Buffer.byteLength(upstream) };
+  const shipped = cut ? applyCuts(upstream, cutsFor(v.cuts, `${skill}/${SKILL_FILE}`)) : upstream;
+  await writeFile(path.join(dir, SKILL_FILE), vendoredSkill(preface, source, version, shipped));
+  v.files[`${skill}/${SKILL_FILE}`] = {
+    source,
+    sha256: sha256(shipped),
+    bytes: Buffer.byteLength(shipped),
+    ...ahead,
+  };
 }
 
-/** Vendor one CLI card: its SKILL.md behind the preface, and its references unchanged. */
-async function vendorCard(v: Vendoring, cards: string, card: string) {
-  const from = path.join(cards, card);
-  const source = `${CLI_PACKAGE}/templates/skills/${card}`;
-  await vendorSkill(
-    v,
-    card,
-    `${source}/${SKILL_FILE}`,
-    v.cliVersion,
-    await readFile(path.join(from, SKILL_FILE), "utf8"),
-  );
+/** Vendor one CLI card: its SKILL.md behind the preface, and its references, each with Studio's cuts out. */
+async function vendorCard(v: Vendoring, origin: CardOrigin, card: string) {
+  const from = path.join(origin.cards, card);
+  const source = `${origin.source}/templates/skills/${card}`;
+  const upstream = await readFile(path.join(from, SKILL_FILE), "utf8");
+  await vendorSkill(v, card, `${source}/${SKILL_FILE}`, origin.version, upstream, origin.ahead);
   await rm(path.join(v.skills, card, REFERENCES), { recursive: true, force: true });
   for (const reference of await cardReferences(from)) {
-    const text = await readFile(path.join(from, reference), "utf8");
+    const file = `${card}/${reference}`;
+    if (isDropped(v.cuts, file)) continue;
+    const text = applyCuts(await readFile(path.join(from, reference), "utf8"), cutsFor(v.cuts, file));
     await mkdir(path.dirname(path.join(v.skills, card, reference)), { recursive: true });
     await writeFile(path.join(v.skills, card, reference), text);
-    v.files[`${card}/${reference}`] = {
+    v.files[file] = {
       source: `${source}/${reference}`,
       sha256: sha256(text),
       bytes: Buffer.byteLength(text),
+      ...origin.ahead,
     };
   }
+}
+
+/**
+ * Keep a card vendored ahead of the pin as it is: its upstream bytes and references from the
+ * current copy, behind its preface as it reads now. False when it is not ahead of `cliVersion`.
+ */
+async function keepAheadCard(v: Vendoring, previous: GenexSkillsVendor | null, card: string): Promise<boolean> {
+  const entry = previous?.files[`${card}/${SKILL_FILE}`];
+  if (!previous || !entry?.version || !isAheadOf(entry.version, v.cliVersion)) return false;
+  const current = splitVendoredSkill(await readFile(path.join(v.skills, card, SKILL_FILE), "utf8"));
+  const ahead = { version: entry.version, pending: entry.pending };
+  await vendorSkill(v, card, entry.source, entry.version, current.upstream, ahead, false);
+  for (const [file, kept] of Object.entries(previous.files))
+    if (file.startsWith(`${card}/${REFERENCES}/`)) v.files[file] = kept;
+  return true;
+}
+
+/** The newer CLI the `--ahead` cards come from, checked to be ahead of the pin. */
+async function aheadOrigin(options: Options, cliVersion: string): Promise<CardOrigin | null> {
+  if (!options.aheadFrom) return null;
+  const version: string = JSON.parse(await readFile(path.join(options.aheadFrom, "package.json"), "utf8")).version;
+  if (!isAheadOf(version, cliVersion))
+    throw new Error(
+      `${options.aheadFrom} is ${version}, not ahead of the pinned ${cliVersion}: refresh without --ahead`,
+    );
+  const source = options.aheadSource ?? "";
+  const pending = `CLI ${version} is not on npm yet: vendored from ${source}. Re-vendor from the published CLI (npm run genex:skills) once the package.json pin moves to ${version}.`;
+  return { cards: path.join(options.aheadFrom, "templates", "skills"), source, version, ahead: { version, pending } };
 }
 
 /**
@@ -241,11 +442,22 @@ export async function refreshGenexSkills(options: Options): Promise<string[]> {
   const require = createRequire(path.join(options.root, "package.json"));
   const cli = path.dirname(require.resolve(`${CLI_PACKAGE}/package.json`));
   const cliVersion: string = JSON.parse(await readFile(path.join(cli, "package.json"), "utf8")).version;
-  const v: Vendoring = { skills: path.join(options.root, SKILLS_DIR), cliVersion, files: {} };
+  const skills = path.join(options.root, SKILLS_DIR);
+  const v: Vendoring = { skills, cliVersion, files: {}, cuts: await readCuts(skills) };
+  const previous: GenexSkillsVendor | null = JSON.parse(
+    await readFile(path.join(v.skills, "vendor.json"), "utf8").catch(() => "null"),
+  );
   const skillMd = await upstreamSkillMd(options);
   const skillMdVersion = frontMatterVersion(skillMd);
-  await vendorSkill(v, GENEX_SKILL, SKILL_MD_URL, skillMdVersion, skillMd);
-  for (const card of GENEX_CARDS) await vendorCard(v, path.join(cli, "templates", "skills"), card);
+  // The copy kept from the current vendored skill already had its cuts taken out.
+  const fresh = Boolean(options.skillMd) || options.fetch;
+  await vendorSkill(v, GENEX_SKILL, SKILL_MD_URL, skillMdVersion, skillMd, undefined, fresh);
+  const pinned: CardOrigin = { cards: path.join(cli, "templates", "skills"), source: CLI_PACKAGE, version: cliVersion };
+  const ahead = await aheadOrigin(options, cliVersion);
+  for (const card of GENEX_CARDS) {
+    if (ahead && options.ahead.includes(card)) await vendorCard(v, ahead, card);
+    else if (!(await keepAheadCard(v, previous, card))) await vendorCard(v, pinned, card);
+  }
   const license = await readFile(path.join(cli, "LICENSE"), "utf8");
   await writeFile(path.join(v.skills, CARDS_LICENSE), license);
   const record: GenexSkillsVendor = {

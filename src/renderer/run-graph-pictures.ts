@@ -11,6 +11,10 @@ import { type IterationNode, type Shot, thumbShot } from "./run-graph.ts";
 
 /** How much a frame changed when its camera is new since the save point before. */
 const NEW_CAMERA_CHANGE = 1;
+/** A pixel counts as changed when one of its colour channels moved by more than this: past JPEG noise. */
+const CHANGE_NOISE = 24;
+/** Below this share of changed pixels, two pictures of one frame read as the same picture. */
+export const UNCHANGED_SHARE = 0.002;
 /** The colour channels compared per pixel (red, green, blue); the fourth, alpha, is not. */
 const COLOUR_CHANNELS = 3;
 const CHANNELS_PER_PIXEL = 4;
@@ -59,6 +63,45 @@ export function savePointShot(
   return best ?? thumbShot(node);
 }
 
+/** The demo cameras record play, not the scene: a step's pictures never include them. */
+const isDemoCamera = (camera: string): boolean => camera.startsWith("demo");
+
+/** One picture an opened step can show: the lead's named picture of its change, or one camera's. */
+export interface ShotView {
+  key: string;
+  shot: Shot;
+  /** the picture the lead named as showing what the step changed */
+  changed: boolean;
+}
+
+const CHANGED_VIEW_KEY = "changed";
+const cameraViewKey = (camera: string): string => `camera:${camera}`;
+
+/** A try's pictures: the one the lead named first, then each scene camera once. */
+export function shotViews(node: IterationNode): ShotView[] {
+  const views: ShotView[] = node.shown ? [{ key: CHANGED_VIEW_KEY, shot: node.shown, changed: true }] : [];
+  for (const shot of node.shots) {
+    const key = cameraViewKey(shot.camera);
+    if (isDemoCamera(shot.camera) || views.some((view) => view.key === key)) continue;
+    views.push({ key, shot, changed: false });
+  }
+  return views;
+}
+
+/** The picture a step opens on: the one its card wears (`savePointShot`), else its first. */
+export function openingView(views: readonly ShotView[], card: Shot | null): ShotView | null {
+  return views.find((view) => view.shot.path === card?.path) ?? views[0] ?? null;
+}
+
+/**
+ * The same picture of the step before, for the compare: that camera's, never another one's. The
+ * lead's named picture is its own framing, so it has none.
+ */
+export function viewBefore(view: ShotView, before: IterationNode): Shot | null {
+  if (view.changed) return null;
+  return before.shots.find((shot) => shot.camera === view.shot.camera) ?? null;
+}
+
 /**
  * How different two frames of one size are, 0 (the same) to 1: the mean difference of their colour
  * channels. Frames of different sizes are as different as can be.
@@ -74,4 +117,37 @@ export function frameDifference(a: ArrayLike<number>, b: ArrayLike<number>): num
     }
   }
   return total / (channels * CHANNEL_MAX);
+}
+
+/**
+ * The share of pixels, 0 to 1, whose colour moved past compression noise between two frames of one
+ * size: a small sprite changed counts, the same frame saved twice does not. Frames of different
+ * sizes changed entirely.
+ */
+export function changedShare(a: ArrayLike<number>, b: ArrayLike<number>): number {
+  if (a.length !== b.length || a.length === 0) return 1;
+  let changed = 0;
+  for (let at = 0; at < a.length; at += CHANNELS_PER_PIXEL) {
+    for (let channel = 0; channel < COLOUR_CHANNELS; channel++) {
+      if (Math.abs((a[at + channel] ?? 0) - (b[at + channel] ?? 0)) > CHANGE_NOISE) {
+        changed += 1;
+        break;
+      }
+    }
+  }
+  return changed / (a.length / CHANNELS_PER_PIXEL);
+}
+
+/** How a card shows two pictures of one frame: the compare, the newer alone saying nothing changed, or the newer alone. */
+export const PairView = { Compare: "compare", Unchanged: "unchanged", Single: "single" } as const;
+export type PairView = (typeof PairView)[keyof typeof PairView];
+
+/**
+ * How to show `now` beside `before`, two pictures of the same frame, by `share`, their measured
+ * change: undefined while it is measured, null when either could not be read. Only a measured
+ * change at or past `UNCHANGED_SHARE` earns the compare; below it the picture did not visibly change.
+ */
+export function pairView(before: string | null, now: string | null, share: number | null | undefined): PairView {
+  if (!before || !now || before === now || share === undefined || share === null) return PairView.Single;
+  return share < UNCHANGED_SHARE ? PairView.Unchanged : PairView.Compare;
 }

@@ -4,12 +4,13 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import { type BrowserWindow, dialog } from "electron";
 import { MINUTE_MS } from "../../shared/duration.ts";
-import { isUserCancelled, UserCancelledError } from "../../shared/errors.ts";
+import { CodedError, isUserCancelled, UserCancelledError } from "../../shared/errors.ts";
 import { t } from "../../shared/i18n.ts";
 import type { StudioInvokePayload } from "../../shared/ipc-channels.ts";
 import {
   isGithubVersion,
   PluginCapability,
+  PluginInstallProblem,
   type PluginManifest,
   type PluginSource,
   PluginSourceKind,
@@ -156,13 +157,14 @@ export function registerPluginsIpc(handle: IpcHandle, deps: PluginsIpcDeps): voi
     if (typeof p?.repo !== "string" || p.repo.length > GITHUB_LINK_MAX_CHARS) throw new Error(MESSAGE.invalidLink());
     return requireMarketplace(ctx).githubVersions(p.repo);
   });
+  // The trust dialog's no rejects as the person's (`UserCancelledError`): a declined update is not one.
   handle("studio:plugins.update", async (p) => {
     const market = requireMarketplace(ctx);
     await market.index(true, core.plugins.list());
     const entry = market.entry(p.id);
-    if (!entry) throw new Error(MESSAGE.notInIndex());
+    if (!entry) throw new CodedError(PluginInstallProblem.NotFound, MESSAGE.notInIndex());
     if (!market.updates(core.plugins.list()).some((update) => update.id === p.id))
-      throw new Error(MESSAGE.noNewerRelease());
+      throw new CodedError(PluginInstallProblem.NoNewerRelease, MESSAGE.noNewerRelease());
     await installFromIndex(ctx, p.id, entry.capabilities);
   });
   handle("studio:plugins.watch", async (p) => {
@@ -257,7 +259,7 @@ function opensSignIn(plugin: InstalledPlugin, name: string): boolean {
 
 function requireMarketplace(ctx: PluginsContext): PluginMarketplace {
   const marketplace = ctx.marketplace();
-  if (!marketplace) throw new Error(MESSAGE.stillStarting());
+  if (!marketplace) throw new CodedError(PluginInstallProblem.NotReady, MESSAGE.stillStarting());
   return marketplace;
 }
 
@@ -270,14 +272,15 @@ async function unlessCancelled(step: () => Promise<unknown>): Promise<void> {
   }
 }
 
-/** Cataloged installs and updates: the pinned commit is staged and scanned first, so the dialog describes the real code. */
+/**
+ * Cataloged installs and updates: the pinned commit is staged and scanned first, so the dialog
+ * describes the real code. A no there rejects as the person's (`UserCancelledError`).
+ */
 async function installFromIndex(ctx: PluginsContext, id: string, capabilities: string[]): Promise<void> {
   const known = ctx.core.plugins.list().find((x) => x.manifest.id === id);
   const current = known && !known.removed ? known.manifest : undefined;
-  await unlessCancelled(() =>
-    requireMarketplace(ctx).installIndex(id, ctx.core.plugins, capabilities, (manifest, scan, origin) =>
-      ctx.confirmInstall(manifest, origin, scan, current),
-    ),
+  await requireMarketplace(ctx).installIndex(id, ctx.core.plugins, capabilities, (manifest, scan, origin) =>
+    ctx.confirmInstall(manifest, origin, scan, current),
   );
 }
 
@@ -294,7 +297,7 @@ async function installPlugin(ctx: PluginsContext, id: string | undefined): Promi
   }
   // Nothing installed and nothing curated under that id: it is a marketplace entry, installed from the index.
   const entry = !known && !curated ? ctx.marketplace()?.entry(id) : undefined;
-  if (entry) return installFromIndex(ctx, id, entry.capabilities);
+  if (entry) return unlessCancelled(() => installFromIndex(ctx, id, entry.capabilities));
   // A removed plugin that came from a commit, an index entry or a curated release is re-acquired
   // through `restore`, which stages and scans the real code and asks about that. Asking here first
   // would describe the record's old manifest and a scan nobody ran.
@@ -316,7 +319,7 @@ async function installReviewed(
     known?.source === PluginSourceKind.Bundled
       ? core.plugins.bundledManifest(known.manifest.id)
       : (curated?.manifest ?? known?.manifest);
-  if (!manifest) throw new Error(MESSAGE.notFound());
+  if (!manifest) throw new CodedError(PluginInstallProblem.NotFound, MESSAGE.notFound());
   // Code on disk is read where it lies, so the dialog reports the package the user is about to trust.
   const scanTarget = known?.unlisted ? known.origin?.directory : undefined;
   const scan = scanTarget ? await scanPackage(scanTarget, manifest) : undefined;

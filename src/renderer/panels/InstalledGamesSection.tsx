@@ -29,8 +29,10 @@ function InstalledRow({ game, now }: { game: InstalledGame; now: number }): JSX.
     }
   };
   return (
+    // Which games the person plays is theirs.
     <li
       data-installed-game={game.slug}
+      data-analytics-mask
       className="settings-list-row flex min-h-13 min-w-0 items-center gap-3 px-3 py-1.5"
     >
       <span className="installed-game-thumb" aria-hidden="true">

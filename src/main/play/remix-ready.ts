@@ -5,7 +5,9 @@
  * commit for its file names without their contents (a blobless shallow clone of Genex's https git)
  * and, when that decides it, its package.json. Answers are kept by commit in Studio's data and
  * trusted for a while before git is asked again, so a game is looked at anew only once its source
- * changes. A look that fails says no and keeps nothing: Remix stays hidden until one works.
+ * changes. A look that fails says no and keeps nothing: Remix stays hidden until one works. A
+ * computer without Git (a Mac without Apple's developer tools) is never asked: its /usr/bin/git only
+ * stands in for theirs and would ask the person to install them while they browse.
  */
 import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
@@ -13,7 +15,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 import { isPlaySlug } from "../../shared/play.ts";
-import { HOST_GIT_CONFIG, hostGitEnv } from "../../substrate/git-policy.ts";
+import { HOST_GIT_CONFIG, hostGitEnv, hostGitRuns } from "../../substrate/git-policy.ts";
 import { atomicWriteJson } from "../../substrate/fsx.ts";
 import { marksGame, sourceHoldsGame } from "./game-source.ts";
 import { isRemixSource } from "./remix.ts";
@@ -22,6 +24,11 @@ const exec = promisify(execFile);
 
 /** How long a kept answer is trusted before git is asked for the source's head again. */
 export const READY_TRUST_MS = 10 * MINUTE_MS;
+/**
+ * How long the answer to whether this computer runs Git is trusted: once Apple's developer tools are
+ * installed, Remix shows within it.
+ */
+export const GIT_RUNS_TRUST_MS = MINUTE_MS;
 /** How long asking git for a source's head may take. */
 const HEAD_TIMEOUT_MS = 15 * SECOND_MS;
 /** How long listing a source's files may take: a blobless clone of one commit. */
@@ -60,6 +67,8 @@ export interface KeptReadiness {
 
 /** How a readiness asks git and keeps its answers. */
 export interface RemixReadyDeps {
+  /** Whether this computer runs Git at all: a Mac without Apple's developer tools has only a stand-in. */
+  gitRuns(): Promise<boolean>;
   /** The source's head commit, or null when git can't say. */
   head(url: string): Promise<string | null>;
   /** The source's files at its head. */
@@ -81,6 +90,13 @@ export function remixReadiness(deps: RemixReadyDeps) {
   const looking = new Map<string, Promise<boolean>>();
   const queue: Array<() => void> = [];
   let running = 0;
+  let git: { at: number; runs: Promise<boolean> } | null = null;
+  /** Whether git runs here, asked once for a while: never run a stand-in that asks to install tools. */
+  const gitRuns = () => {
+    if (!git || deps.now() - git.at >= GIT_RUNS_TRUST_MS)
+      git = { at: deps.now(), runs: deps.gitRuns().catch(() => false) };
+    return git.runs;
+  };
   const memory = () => {
     kept ??= deps.load().then(
       (all) => Object.fromEntries(Object.entries(all).filter(([, value]) => isKept(value))),
@@ -100,6 +116,7 @@ export function remixReadiness(deps: RemixReadyDeps) {
     }
   };
   const look = async (url: string): Promise<boolean> => {
+    if (!(await gitRuns())) return false;
     const all = await memory();
     const known = all[url];
     if (known && deps.now() - known.at < READY_TRUST_MS) return known.holds;
@@ -217,6 +234,7 @@ async function gitList(url: string, scratch: string): Promise<SourceListing> {
 /** Readiness over the host's git, keeping its answers in `file` and its looks in `scratch`. */
 export function gitRemixReadiness(file: string, scratch: string, now: () => number = Date.now): RemixReadiness {
   return remixReadiness({
+    gitRuns: () => hostGitRuns(),
     head: gitHead,
     list: (url) => gitList(url, scratch),
     load: async () => JSON.parse(await readFile(file, "utf8")) as Record<string, KeptReadiness>,

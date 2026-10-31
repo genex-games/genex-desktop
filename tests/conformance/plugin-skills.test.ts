@@ -168,14 +168,6 @@ const HOSTILE: Array<[string, (dir: string, m: RawManifest) => Promise<void> | v
     /confirmation/,
   ],
   [
-    "a Genex package host tool without confirmation",
-    (_d, m) => {
-      genex(m);
-      m.tools.push(hostTool(PluginHostTool.GenexPackage));
-    },
-    /confirmation/,
-  ],
-  [
     "an unknown host",
     (_d, m) => {
       genex(m);
@@ -213,6 +205,8 @@ test("a valid file skill and the bundled Genex host tools keep their canonical f
       genex(m);
       m.tools.push(hostTool(PluginHostTool.GenexCli));
       m.tools.push({ ...hostTool(PluginHostTool.GenexCliPaid, "Spends Genex credits."), name: "cli-paid" });
+      // Genex's own pinned packages go in without a card: they spend nothing.
+      m.tools.push({ ...hostTool(PluginHostTool.GenexPackage), name: "package" });
       skill(m).extra = "dropped";
     },
     async (dir) => {
@@ -230,6 +224,7 @@ test("a valid file skill and the bundled Genex host tools keep their canonical f
           ["shout", undefined, "The example plugin wants to shout your text back."],
           ["cli", PluginHostTool.GenexCli, undefined],
           ["cli-paid", PluginHostTool.GenexCliPaid, "Spends Genex credits."],
+          ["package", PluginHostTool.GenexPackage, undefined],
         ],
       );
       assert.deepEqual(m.skills[0], exampleManifest.skills[0], "an inline skill stays {name,text}");

@@ -19,6 +19,8 @@ import { RUN_START_EVENTS } from "./run-state.ts";
 export const RunControlAction = {
   /** Wrap up: let the current attempts finish, then integrate and show what is ready. */
   Finish: "finish",
+  /** Stop the run once the chat's reply ends (the coordinator's `stop_run`), and with `restart` go on again. */
+  Stop: "stop",
 } as const;
 export type RunControlAction = (typeof RunControlAction)[keyof typeof RunControlAction];
 
@@ -32,6 +34,7 @@ export const CoordinatorTool = {
   RunStatus: "run_status",
   SteerRun: "steer_run",
   FinishRun: "finish_run",
+  StopRun: "stop_run",
   ResumeRun: "resume_run",
   ContinueBuild: "continue_build",
   ShowBuild: "show_build",
@@ -50,18 +53,18 @@ export const DELEGATE_TOOL = "delegate_to_contractor";
 export const coordinatorTools: readonly StudioToolSpec[] = [
   {
     name: CoordinatorTool.RunStatus,
-    description: "Read the current run, worker progress and recent checks. This does not start or stop work.",
+    description: "Read the current run and its workers' progress. This does not start or stop work.",
     parameters: { type: "object", properties: {} },
   },
   {
     name: CoordinatorTool.SteerRun,
     description:
-      "Send a concrete instruction to the existing workers at their next iteration boundary. Use only for requested changes, not questions or status requests.",
+      "Send a concrete instruction to the existing workers. Use only for requested changes, not questions or status requests.",
     parameters: {
       type: "object",
       properties: {
         text: { type: "string", description: "The user's requested change, with enough context for a worker." },
-        facetId: { type: "string", description: "Optional facet id; omit to address every worker." },
+        facetId: { type: "string", description: "Optional worker id; omit to address every worker." },
       },
       required: ["text"],
     },
@@ -69,13 +72,25 @@ export const coordinatorTools: readonly StudioToolSpec[] = [
   {
     name: CoordinatorTool.FinishRun,
     description:
-      "Finish the current attempts, then integrate and check the accepted work and show it live. No new facet rounds, no reset, no cancellation. Use when the user asks to wrap up or wait for the remaining workers and show what is ready.",
+      "Let the workers at work end, then integrate what they made and show it live. No new work starts, no reset, no cancellation. Use when the user asks to wrap up or wait for the remaining workers and show what is ready.",
     parameters: { type: "object", properties: {} },
+  },
+  {
+    name: CoordinatorTool.StopRun,
+    description:
+      "Stop the build when your reply ends: its workers stop, what it built is kept, and it pauses. With restart true it goes on again as soon as it has stopped, with text as the user's instruction for it. Use when the user asks to stop, cancel, kill or halt the build or its workers, or to restart it; never steer_run for that, and never send the user to a button.",
+    parameters: {
+      type: "object",
+      properties: {
+        restart: { type: "boolean", description: "true to start the build again once it has stopped." },
+        text: { type: "string", description: "With restart: the user's instruction for the build as it goes on." },
+      },
+    },
   },
   {
     name: CoordinatorTool.ResumeRun,
     description:
-      "Continue a paused run with its saved plan and completed work when the user requests further work, including a new instruction after Stop. Supply that instruction as text before builders resume. Questions alone do not resume work.",
+      "Continue a paused run with its completed work when the user asks to go on with that build — resume, continue, keep going, run it again — including new guidance for it after Stop. Supply that instruction as text before builders resume. Questions alone do not resume work, and other work asked for after a stop is continue_build with build false.",
     parameters: {
       type: "object",
       properties: {
@@ -93,7 +108,7 @@ export const coordinatorTools: readonly StudioToolSpec[] = [
   {
     name: CoordinatorTool.ContinueBuild,
     description:
-      "Continue implementation in this game's existing conversation after the run has finished. Use for a requested change or unfinished work, never a question. The saved plan and results are retained; this does not repeat intake or create a new timed run.",
+      "Continue implementation in this game's existing conversation after the run has finished, or make a contained change (build false) after a paused run, which stays paused. Use for a requested change or unfinished work, never a question. The conversation and results are retained; this does not create a new timed run.",
     parameters: {
       type: "object",
       properties: {
@@ -101,7 +116,7 @@ export const coordinatorTools: readonly StudioToolSpec[] = [
         build: {
           type: "boolean",
           description:
-            "false for a contained change (a fix, a tweak, one feature): one builder makes it in this chat and the build stays finished. Omit to continue the build itself.",
+            "false for a contained change (a fix, a tweak, one feature): one builder makes it in this chat and the build stays finished or paused. Omit to continue a finished build itself.",
         },
       },
       required: ["text"],

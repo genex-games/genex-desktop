@@ -18,6 +18,7 @@ import {
   daemonEndpoint,
   type EmbeddedCuaDriver,
   embeddedCuaDriver,
+  hostAppName,
 } from "../../src/substrate/cua-embedded.ts";
 import { running } from "../helpers/processes.ts";
 import { tmpDir } from "../helpers/tmp.ts";
@@ -187,6 +188,17 @@ describe("the studio's embedded cua-driver", () => {
     const resources = "/Applications/Genex.app/Contents/Resources/r";
     assert.equal(bundledCuaDriver(resources, "darwin"), path.join(resources, "cua-driver", "cua-driver"));
     assert.equal(bundledCuaDriver(resources, "win32"), path.join(resources, "cua-driver", "cua-driver.exe"));
+  });
+
+  it("names the app macOS keeps the grants under: the outermost app the studio runs from", () => {
+    const cases: Array<[string, string]> = [
+      ["/Applications/Genex.app/Contents/MacOS/Genex", "Genex"],
+      ["/Users/me/genex/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron", "Electron"],
+      ["/Applications/Genex.app/Contents/Frameworks/Genex Helper.app/Contents/MacOS/Genex Helper", "Genex"],
+      ["/usr/local/bin/node", "Genex"],
+      ["", "Genex"],
+    ];
+    for (const [execPath, name] of cases) assert.equal(hostAppName(execPath), name, execPath);
   });
 
   it("gives each daemon an endpoint of its own: a fresh named pipe on Windows, a private folder's socket elsewhere", async () => {

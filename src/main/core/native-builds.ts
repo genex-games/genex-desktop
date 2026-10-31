@@ -8,7 +8,7 @@
  */
 import { lstat, open, readdir, realpath, stat } from "node:fs/promises";
 import path from "node:path";
-import { NativeArch, NativePlatform } from "../../shared/play-native.ts";
+import { NativeArch, type NativeHost, NativePlatform } from "../../shared/play-native.ts";
 import { linuxBuildOf } from "../../shared/publish-platforms.ts";
 import { diskBytes } from "../../substrate/storage-folders.ts";
 
@@ -45,8 +45,27 @@ const UNREAL_LINUX_BINARIES = new Set(["Linux", "LinuxArm64"]);
 /** Unreal's own folder in a package: its programs are the engine's, never the game. */
 const UNREAL_ENGINE = "Engine";
 
-/** Mach-O magic numbers, as the first four bytes read big-endian: thin 64-bit either way round, and fat. */
-const MACH_O = new Set([0xfeedfacf, 0xcffaedfe, 0xcafebabe, 0xbebafeca]);
+/**
+ * A thin Mach-O header by its first four bytes read big-endian: its whole size (`mach_header_64`,
+ * `mach_header`) and whether its fields are little-endian, as arm64 and x86_64 programs write them.
+ */
+const THIN_MACH_O: ReadonlyMap<number, { bytes: number; little: boolean }> = new Map([
+  [0xcffaedfe, { bytes: 32, little: true }],
+  [0xfeedfacf, { bytes: 32, little: false }],
+  [0xcefaedfe, { bytes: 28, little: true }],
+  [0xfeedface, { bytes: 28, little: false }],
+]);
+/** A fat Mach-O header's magic and the size of each entry it lists (`fat_arch`, `fat_arch_64`); its fields are big-endian. */
+const FAT_ENTRY_BYTES: ReadonlyMap<number, number> = new Map([
+  [0xcafebabe, 20],
+  [0xcafebabf, 32],
+]);
+/** A fat header's magic and entry count, before its entries. */
+const FAT_HEADER_BYTES = 8;
+/** The most processors one fat program lists: more is another file that starts the same way (a Java class). */
+const FAT_ENTRIES_MAX = 16;
+/** How much of a program its Mach-O header is read from: the largest fat header fits. */
+const MACH_O_HEAD_BYTES = 4096;
 /** The PE machine field's values Genex knows. */
 const PE_MACHINE: Readonly<Record<number, typeof NativeArch.X64 | typeof NativeArch.Arm64>> = {
   0x8664: NativeArch.X64,
@@ -63,9 +82,13 @@ const ELF_MACHINE: Readonly<Record<number, typeof NativeArch.X64 | typeof Native
   0x3e: NativeArch.X64,
   0xb7: NativeArch.Arm64,
 };
-/** Mach-O CPU types in a fat header or a thin one. */
-const CPU_ARM64 = 0x0100000c;
-const CPU_X86_64 = 0x01000007;
+/** Mach-O CPU types in a fat header or a thin one, and the processor each is (arm64e and x86_64h among them). */
+const MACH_O_CPU: Readonly<Record<number, NativeHost["arch"]>> = {
+  0x0100000c: NativeArch.Arm64,
+  0x01000007: NativeArch.X64,
+};
+/** The processors a Mac program may carry, in the order they are answered. */
+const MAC_PROCESSORS: readonly NativeHost["arch"][] = [NativeArch.Arm64, NativeArch.X64];
 
 /** A player build found in a game folder. */
 export interface FoundBuild {
@@ -94,21 +117,40 @@ async function head(file: string, length: number): Promise<Buffer | null> {
   }
 }
 
-/** The processors a Mach-O program carries, read from its header; null when it is not one. */
-export async function machOArch(file: string): Promise<NativeArch | null> {
-  const bytes = await head(file, 4096);
-  if (!bytes || bytes.length < 8 || !MACH_O.has(bytes.readUInt32BE(0))) return null;
+/** The CPU types a Mach-O header lists, or null when `bytes` do not start with a whole one. */
+function machOCpus(bytes: Buffer): number[] | null {
+  if (bytes.length < FAT_HEADER_BYTES) return null;
   const magic = bytes.readUInt32BE(0);
-  const cpus: number[] = [];
-  if (magic === 0xcafebabe) {
-    const count = Math.min(bytes.readUInt32BE(4), 16);
-    for (let at = 0; at < count && 8 + at * 20 + 4 <= bytes.length; at++) cpus.push(bytes.readUInt32BE(8 + at * 20));
-  } else cpus.push(magic === 0xfeedfacf ? bytes.readUInt32BE(4) : bytes.readUInt32LE(4));
-  const arm = cpus.includes(CPU_ARM64);
-  const intel = cpus.includes(CPU_X86_64);
-  if (arm && intel) return NativeArch.Universal;
-  if (arm) return NativeArch.Arm64;
-  return intel ? NativeArch.X64 : null;
+  const thin = THIN_MACH_O.get(magic);
+  if (thin) {
+    if (bytes.length < thin.bytes) return null;
+    return [thin.little ? bytes.readUInt32LE(4) : bytes.readUInt32BE(4)];
+  }
+  const entry = FAT_ENTRY_BYTES.get(magic);
+  if (entry === undefined) return null;
+  const count = bytes.readUInt32BE(4);
+  const listed = count > 0 && count <= FAT_ENTRIES_MAX && FAT_HEADER_BYTES + count * entry <= bytes.length;
+  if (!listed) return null;
+  return Array.from({ length: count }, (_, at) => bytes.readUInt32BE(FAT_HEADER_BYTES + at * entry));
+}
+
+/**
+ * The processors a Mac program carries, read from its Mach-O header (thin or fat) in this process:
+ * `lipo` needs Apple's developer tools, which most Macs don't have. Empty for a Mach-O program for
+ * no processor Genex knows; null for a file that does not start with a whole Mach-O header.
+ */
+export async function machOProcessors(file: string): Promise<NativeHost["arch"][] | null> {
+  const bytes = await head(file, MACH_O_HEAD_BYTES);
+  const cpus = bytes ? machOCpus(bytes) : null;
+  if (!cpus) return null;
+  return MAC_PROCESSORS.filter((arch) => cpus.some((cpu) => MACH_O_CPU[cpu] === arch));
+}
+
+/** The processors a Mach-O program carries, read from its header; null when it is not one or carries none Genex knows. */
+export async function machOArch(file: string): Promise<NativeArch | null> {
+  const processors = await machOProcessors(file);
+  if (processors?.length === MAC_PROCESSORS.length) return NativeArch.Universal;
+  return processors?.[0] ?? null;
 }
 
 /** The processor a PE program is for, read from its header; null when it is not one Genex knows. */

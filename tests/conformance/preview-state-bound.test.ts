@@ -1,5 +1,5 @@
 /**
- * The studio reads `__studio.state()` as a bounded structure, never as a cut string
+ * The studio reads the shim's `__studioClock.state()` as a bounded structure, never as a cut string
  * (AUDIT-STATE-STUB): an 82 KB state came back as
  * `{__truncated, length, head}` and every probe of every facet read the stub. A state over the
  * budget now loses its largest lists to typed stubs and keeps every scalar; a state under it is
@@ -19,7 +19,8 @@ import {
 import { ElidedKind, MAX_KEEP_PATHS, StateShape, keepPathsOf } from "../../src/shared/studio-state-shape.ts";
 
 /** The expression the studio evaluated before the bounder: the state, whole. */
-const UNBOUNDED = "window.__studio ? window.__studio.state() : { __missing: true }";
+const UNBOUNDED =
+  'window.__studioClock && typeof window.__studioClock.state === "function" ? window.__studioClock.state() : { __missing: true }';
 
 type AnyRecord = Record<string, any>;
 
@@ -28,7 +29,7 @@ type AnyRecord = Record<string, any>;
  * evaluation failed (a state the page cannot serialise fails it, outside the `{__error}` handler).
  */
 async function pageText(expression: string, studio: unknown): Promise<string> {
-  const window = studio === undefined ? {} : { __studio: studio };
+  const window = studio === undefined ? {} : { __studioClock: studio };
   try {
     return (await runInNewContext(pageEvaluation(expression), { window })) as string;
   } catch (err) {
@@ -212,7 +213,7 @@ describe("hostile states: bounded or answered exactly as before, never a prototy
         },
       },
     ],
-    ["no __studio", undefined],
+    ["no __studioClock", undefined],
     ["no state() method", {}],
     ["state() answers undefined", { state: () => undefined }],
     ["state() answers a promise", { state: async () => ({ phase: "menu", n: 1 }) }],

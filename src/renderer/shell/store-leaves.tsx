@@ -3,11 +3,15 @@
  * only them and never the whole shell. Agent frames are read by the Builds graph's own nodes.
  */
 import type { ComponentProps, JSX } from "react";
-import { PluginsPanel } from "../panels/PluginsPanel.tsx";
+import { lazy, Suspense } from "react";
+import type { PluginsPanel as PluginsPage } from "../panels/PluginsPanel.tsx";
 import { PreviewPanel } from "../panels/PreviewPanel.tsx";
 import { usePlugins, useToasts } from "../state/hooks.ts";
 import { studio } from "../state/studio.ts";
 import { ToastStack } from "../ui/Toast.tsx";
+
+/** The Plugins page: loaded the first time Plugins opens, as a window's first screen never shows it. */
+const PluginsPanel = lazy(() => import("../panels/PluginsPanel.tsx").then((room) => ({ default: room.PluginsPanel })));
 
 /** The stage, reading the plugins itself: a plugin change re-renders only the stage. */
 export function StagePreview(props: Omit<ComponentProps<typeof PreviewPanel>, "plugins">): JSX.Element {
@@ -17,12 +21,16 @@ export function StagePreview(props: Omit<ComponentProps<typeof PreviewPanel>, "p
 
 /** The Plugins room, reading the plugin list, the index and Update plugins' run itself. */
 export function PluginsRoom(
-  props: Omit<ComponentProps<typeof PluginsPanel>, "plugins" | "index" | "updating">,
+  props: Omit<ComponentProps<typeof PluginsPage>, "plugins" | "index" | "updating">,
 ): JSX.Element {
   const plugins = usePlugins((s) => s.list);
   const index = usePlugins((s) => s.index);
   const updating = usePlugins((s) => s.updating);
-  return <PluginsPanel {...props} plugins={plugins} index={index} updating={updating} />;
+  return (
+    <Suspense fallback={null}>
+      <PluginsPanel {...props} plugins={plugins} index={index} updating={updating} />
+    </Suspense>
+  );
 }
 
 /** The toast stack, reading the toasts itself: a toast coming or going re-renders only the stack. */

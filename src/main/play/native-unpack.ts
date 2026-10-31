@@ -2,18 +2,19 @@
  * A verified Mac build unpacked into a staging folder and made Genex's: its zip listed and checked
  * before anything is written (`native-zip.ts`), unpacked by `ditto` without quarantine, every link
  * in it resolved inside it, the app it names found and checked (a signature, even ad hoc; a binary
- * for this Mac's processor), then given a bundle id of Genex's own (`games.genex.play.<slug>`) and
- * signed again ad hoc, so the game can only ever read and write its own preferences. A Linux build
- * is unpacked by the app itself (`unpackZip`), checked the same way, and its program must be an ELF
- * binary for this computer's processor; Linux has no signature or bundle to check. A Windows build
- * is unpacked the same way, and its program must be a PE `.exe` for this computer's processor.
+ * for this Mac's processor, read from its header), then given a bundle id of Genex's own
+ * (`games.genex.play.<slug>`) and signed again ad hoc, so the game can only ever read and write its
+ * own preferences. A Linux build is unpacked by the app itself (`unpackZip`), checked the same way,
+ * and its program must be an ELF binary for this computer's processor; Linux has no signature or
+ * bundle to check. A Windows build is unpacked the same way, and its program must be a PE `.exe` for
+ * this computer's processor.
  */
 import { execFile } from "node:child_process";
 import { chmod, lstat, mkdir, readdir, readlink, realpath } from "node:fs/promises";
 import path from "node:path";
 import { MINUTE_MS } from "../../shared/duration.ts";
 import { InstallFailure, type NativeBuild, NativeArch, type NativeHost } from "../../shared/play-native.ts";
-import { elfArch, peArch } from "../core/native-builds.ts";
+import { elfArch, machOProcessors, peArch } from "../core/native-builds.ts";
 import { InstallError } from "./native-download.ts";
 import { listZip, unpackZip, ZipEntryKind, ZipError, ZipRefusal } from "./native-zip.ts";
 
@@ -25,11 +26,13 @@ const TOOL_TIMEOUT_MS = 20 * MINUTE_MS;
 const UNPACKED_SLACK = 1.05;
 const UNPACKED_SLACK_BYTES = 64 * 1024 ** 2;
 
-/** The macOS tools the unpack runs, by full path. */
+/**
+ * The macOS tools the unpack runs, by full path: each one macOS's own. Never one that only stands in
+ * for Apple's developer tools (`lipo`, `otool`), which most Macs don't have.
+ */
 const TOOL = {
   Ditto: "/usr/bin/ditto",
   Codesign: "/usr/bin/codesign",
-  Lipo: "/usr/bin/lipo",
   Plutil: "/usr/bin/plutil",
 } as const;
 
@@ -83,12 +86,6 @@ export interface UnpackedApp {
   /** The app asks to open in a window ({@link WINDOWED_KEY}), not full screen. */
   windowed: boolean;
 }
-
-/** The processor names `lipo` reports that each architecture runs. */
-const RUNS: Record<NativeHost["arch"], readonly string[]> = {
-  [NativeArch.Arm64]: ["arm64", "arm64e"],
-  [NativeArch.X64]: ["x86_64", "x86_64h"],
-};
 
 const refused = (failure: InstallFailure, detail: string) => new InstallError(failure, detail);
 
@@ -175,13 +172,18 @@ async function makeRunnable(program: string): Promise<void> {
   if ((mode & RUNNABLE) !== RUNNABLE) await chmod(program, mode | RUNNABLE);
 }
 
-/** Whether the binary runs on `host`: its own processor, or Intel through Rosetta. */
-async function assertRunsOn(run: ToolRun, program: string, host: NativeHost): Promise<void> {
-  const archs = (await tool(run, TOOL.Lipo, ["-archs", program], InstallFailure.UnsupportedOs)).trim().split(/\s+/);
-  const own = archs.some((arch) => RUNS[host.arch].includes(arch));
-  const translated = host.arch === NativeArch.Arm64 && host.rosetta === true;
-  const intel = translated && archs.some((arch) => RUNS[NativeArch.X64].includes(arch));
-  if (!own && !intel) throw refused(InstallFailure.UnsupportedOs, archs.join(" "));
+/**
+ * Throw unless the program runs on `host`: its own processor, or Intel through Rosetta. An Intel-only
+ * program on an Apple silicon Mac without Rosetta asks for Rosetta, not for another Mac.
+ */
+async function assertRunsOn(program: string, host: NativeHost): Promise<void> {
+  const processors = await machOProcessors(program);
+  if (!processors) throw refused(InstallFailure.UnsupportedOs, "not a Mac program");
+  if (processors.includes(host.arch)) return;
+  const intelOnAppleSilicon = host.arch === NativeArch.Arm64 && processors.includes(NativeArch.X64);
+  if (intelOnAppleSilicon && host.rosetta === true) return;
+  if (intelOnAppleSilicon) throw refused(InstallFailure.NeedsRosetta, NativeArch.X64);
+  throw refused(InstallFailure.UnsupportedOs, processors.join(" ") || "no processor Genex knows");
 }
 
 /**
@@ -206,7 +208,7 @@ export async function unpackMacBuild(
   const { app, executable } = await appOf(run, staging, top);
   await makeRunnable(path.join(app, executable));
   await tool(run, TOOL.Codesign, ["--verify", "--deep", "--strict", app], InstallFailure.Unsigned);
-  await assertRunsOn(run, path.join(app, executable), game.host);
+  await assertRunsOn(path.join(app, executable), game.host);
   const plist = path.join(app, "Contents", "Info.plist");
   const bundleId = `${GAME_BUNDLE_PREFIX}${game.slug}`;
   const bundleName = (await plistValue(run, plist, "CFBundleName")) || path.basename(executable);

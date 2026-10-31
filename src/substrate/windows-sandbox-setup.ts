@@ -10,6 +10,8 @@
  *
  * Where the Secondary Logon service is disabled, Set up first turns it back on, behind a prompt of
  * its own (`windows-logon-service.ts`): srt-win elevates itself, so the two cannot share one.
+ * A PC an earlier Genex set up for another srt-win release runs the same install again, which
+ * upgrades it in place.
  */
 import path from "node:path";
 import { type SandboxProblem, WindowsSetupNeed } from "../shared/boot.ts";
@@ -31,11 +33,32 @@ export async function srtWinPath(): Promise<string> {
   return unpackedPath(VENDORED_SRT_WIN_EXE);
 }
 
+/** The setup versions srt-win's `user status` reports: the install's, and the one it needs. */
+export interface SetupVersions {
+  markerVersion?: number;
+  setupVersion?: number;
+}
+
+/**
+ * How Genex runs srt-win's install. It never makes the person's profile readable to sandboxed
+ * commands: Genex grants its own folders, and the sandbox account is one per PC, so on a shared PC
+ * every sandboxed session of every user could read this person's profile. It replaces only an
+ * install a newer release made (srt-win refuses that without `--force`), never another
+ * configuration in place, which may be another program's.
+ */
+export function srtInstallOptions(status: SetupVersions): { skipProfileGrant: true; force: boolean } {
+  const { markerVersion, setupVersion } = status;
+  const newer = markerVersion !== undefined && setupVersion !== undefined && markerVersion > setupVersion;
+  return { skipProfileGrant: true, force: newer };
+}
+
 /** srt-win's install: the sandbox user and its network filters; `cancelled` when the prompt was dismissed. */
 async function installSrtSandbox(): Promise<{ cancelled: boolean }> {
-  const { installWindowsSandboxAsync, resolveSrtWin } = await import("@anthropic-ai/sandbox-runtime");
-  const srtWin = resolveSrtWin({ path: await srtWinPath() });
-  const result = await installWindowsSandboxAsync({ srtWin, timeoutMs: INSTALL_TIMEOUT_MS });
+  const srt = await import("@anthropic-ai/sandbox-runtime");
+  const srtWin = srt.resolveSrtWin({ path: await srtWinPath() });
+  const status: SetupVersions = await srt.getWindowsSandboxUserStatusAsync({ srtWin }).catch(() => ({}));
+  const options = srtInstallOptions(status);
+  const result = await srt.installWindowsSandboxAsync({ srtWin, timeoutMs: INSTALL_TIMEOUT_MS, ...options });
   return { cancelled: result.cancelled === true };
 }
 
@@ -64,8 +87,8 @@ async function logonServiceStillOff(needs: readonly WindowsSetupNeed[], steps: W
 
 /**
  * Set up what `problem` needs (the sandbox install when it does not say): the Secondary Logon
- * service first, then srt-win's install; `cancelled` when an approval prompt was dismissed, which
- * leaves the rest undone.
+ * service first, then srt-win's install, for a first install or again over another release's;
+ * `cancelled` when an approval prompt was dismissed, which leaves the rest undone.
  */
 export async function installWindowsSandbox(
   problem: SandboxProblem,
@@ -76,6 +99,7 @@ export async function installWindowsSandbox(
     const { cancelled } = await steps.enableLogonService();
     if (cancelled) return { cancelled };
   }
-  if (!needs.includes(WindowsSetupNeed.Sandbox)) return { cancelled: false };
+  const installs = needs.includes(WindowsSetupNeed.Sandbox) || needs.includes(WindowsSetupNeed.Reinstall);
+  if (!installs) return { cancelled: false };
   return steps.installSandbox();
 }

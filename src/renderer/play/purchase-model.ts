@@ -14,7 +14,7 @@ import {
   withoutBidiControls,
 } from "../../shared/play-purchase.ts";
 import { intlLocale } from "../../shared/i18n.ts";
-import { PLAY_WORDS } from "../words.ts";
+import { PLAY_STORE_WORDS, PLAY_WORDS } from "../words.ts";
 
 const WORDS = PLAY_WORDS.purchase;
 const CENTS_PER_DOLLAR = 100;
@@ -141,7 +141,7 @@ function askActions(sheet: Pick<PlayPurchaseSheet, "armed" | "price">): SheetAct
   return { quiet: CANCEL, primary: button(PurchaseAnswer.Pay, label, { disabled: !sheet.armed || !price }) };
 }
 
-/** Not enough coin: Get coin until the coin arrives (then Review), or Back once genex.games ended it. */
+/** Not enough coin: Get Nex until the coin arrives (then Review), or Back once genex.games ended it. */
 function shortActions(recovery: PurchaseRecovery | null): SheetActions {
   if (recovery === PurchaseRecovery.Over) return { quiet: BACK, primary: GET_COIN };
   return { quiet: CANCEL, primary: recovery === PurchaseRecovery.Ready ? REVIEW : GET_COIN };
@@ -208,10 +208,116 @@ export function noticeWords(
   }
 }
 
-/** The small line under the buttons: where Get coin or Sign in leads, and what comes after. */
+/** The small line under the buttons: where Get Nex or Sign in leads, and what comes after. */
 export function sheetNote(sheet: Pick<PlayPurchaseSheet, "step" | "recovery">): string | null {
   if (sheet.step === PurchaseStep.SignedOut) return sheet.recovery === PurchaseRecovery.Ready ? null : WORDS.signInNote;
   if (sheet.step !== PurchaseStep.NotEnough) return null;
   if (sheet.recovery === PurchaseRecovery.Over) return WORDS.overNote;
   return sheet.recovery === PurchaseRecovery.Ready ? WORDS.coinArrived : WORDS.getCoinNote;
+}
+
+// ── The store's item sheet (marketplace P7, screens 03–05) ─────────────────────────────────────
+// Main runs the same sheet for an item bought on a game's Play page (`main/play/store-sheet.ts`);
+// the page lays it out as the design's item sheet: one full-width button under the price (no
+// Cancel: ✕, Esc and a click outside answer as on the game's sheet), the balance as one line,
+// and on the page no word sends the player "back to the game" they are not in.
+
+const STORE = PLAY_STORE_WORDS;
+
+/** Pay's label on the store sheet: `Pay 50,000`, the coin mark beside the price says what in. */
+export const storePayLabel = (coins: number): string => STORE.pay(coinNumber(coins));
+
+const DONE = button(PurchaseAnswer.Back, STORE.done);
+const CLOSE = button(PurchaseAnswer.Back, STORE.close);
+
+/** The store sheet's one button on each step main shows. Review never turns into Pay under the pointer. */
+export function storeSheetAction(sheet: Pick<PlayPurchaseSheet, "step" | "recovery" | "armed" | "price">): SheetButton {
+  switch (sheet.step) {
+    case PurchaseStep.Ask:
+      return button(PurchaseAnswer.Pay, sheet.price ? storePayLabel(sheet.price.coins) : WORDS.payBare, {
+        disabled: !sheet.armed || !sheet.price,
+      });
+    case PurchaseStep.Paying:
+      return button(PurchaseAnswer.Pay, WORDS.paying, { busy: true });
+    case PurchaseStep.NotEnough:
+      return sheet.recovery === PurchaseRecovery.Ready ? REVIEW : GET_COIN;
+    case PurchaseStep.SignedOut:
+      return sheet.recovery === PurchaseRecovery.Ready ? REVIEW : SIGN_IN;
+    case PurchaseStep.Paid:
+      return DONE;
+    default:
+      return CLOSE;
+  }
+}
+
+/** The balance line under the price: `Balance 62,450 → 12,450`, `You have X · Y more needed`, `Balance 12,450`. */
+export function storeBalanceLine(sheet: PlayPurchaseSheet): string | null {
+  const view = balanceView(sheet);
+  if (!view) return null;
+  if (view.line === BalanceLine.After) return STORE.balanceAfter(coinNumber(view.now), coinNumber(view.after));
+  if (view.line === BalanceLine.Short) return STORE.short(coinNumber(view.now), coinNumber(view.more));
+  return STORE.balance(coinNumber(view.now));
+}
+
+/** A day as the app's language writes it short: "Oct 30". */
+const dayText = (at: number): string =>
+  new Date(at).toLocaleDateString(intlLocale(), { month: "short", day: "numeric" });
+
+/**
+ * The line under a short balance when part of the account's coin is earned coin still on hold:
+ * `7,500 of your coin is on hold until Oct 30.`; null with none on hold, or a balance that is not short.
+ */
+export function storeHeldLine(sheet: PlayPurchaseSheet): string | null {
+  const { held } = sheet;
+  if (!held || balanceView(sheet)?.line !== BalanceLine.Short) return null;
+  return STORE.held(coinNumber(held.coins), dayText(held.releaseAt));
+}
+
+/** The small line under the store sheet's button: where Get Nex or Sign in leads, and what comes after. */
+export function storeSheetNote(sheet: Pick<PlayPurchaseSheet, "step" | "recovery">): string | null {
+  if (sheet.step === PurchaseStep.NotEnough && sheet.recovery === PurchaseRecovery.Over) return STORE.overNote;
+  return sheetNote(sheet);
+}
+
+/** What the store sheet says in place of the item's description; a null title keeps the item's name as the title. */
+export interface StoreNotice {
+  title: string | null;
+  body: string;
+}
+
+/** What the store sheet says once paid, pending, failed or signed out; null while the item can still be paid. */
+export function storeNotice(sheet: Pick<PlayPurchaseSheet, "step" | "problem" | "recovery">): StoreNotice | null {
+  switch (sheet.step) {
+    case PurchaseStep.Paid:
+      return { title: null, body: STORE.yours };
+    case PurchaseStep.Pending:
+      return { title: WORDS.pendingTitle, body: STORE.pendingBody };
+    case PurchaseStep.Failed: {
+      // Main always says how; one it did not is read as genex.games' refusal, as main reads one.
+      const problem = sheet.problem ?? PurchaseProblem.Refused;
+      return { title: WORDS.failed[problem].title, body: STORE.failedBody[problem] };
+    }
+    case PurchaseStep.SignedOut:
+      return sheet.recovery === PurchaseRecovery.Ready
+        ? { title: WORDS.signedInTitle, body: WORDS.signedInBody }
+        : { title: WORDS.signedOutTitle, body: WORDS.signedOutBody };
+    default:
+      return null;
+  }
+}
+
+/** Where the keyboard starts on the store sheet. Never rename a value. */
+export const StoreFocus = {
+  /** ✕: the button is Pay, which no key meant for something else may press. */
+  Close: "close",
+  Action: "action",
+} as const;
+export type StoreFocus = (typeof StoreFocus)[keyof typeof StoreFocus];
+
+/** Where the keyboard starts on the store sheet: ✕ while the button is Pay, else the button; nowhere while paying. */
+export function storeSheetFocus(
+  sheet: Pick<PlayPurchaseSheet, "step" | "recovery" | "armed" | "price">,
+): StoreFocus | null {
+  if (sheet.step === PurchaseStep.Paying) return null;
+  return storeSheetAction(sheet).answer === PurchaseAnswer.Pay ? StoreFocus.Close : StoreFocus.Action;
 }

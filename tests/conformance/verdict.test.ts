@@ -26,7 +26,6 @@ import {
   verdictRecord,
   VERDICT_PASSES,
 } from "../../src/harness-seed/loop/verdict.ts";
-import { iterationDigest } from "../../src/harness-seed/loop/director.ts";
 import { buildRunGraph, headVerdict, plannedFlips, type IterationNode } from "../../src/renderer/run-graph.ts";
 import { buildProgress, buildVerdictLine } from "../../src/renderer/build-progress.ts";
 import { undoneBecause, verdictWords } from "../../src/renderer/words.ts";
@@ -198,6 +197,7 @@ describe("one record, whatever judged the build", () => {
       "the loop calls a regression a checks verdict too",
     );
     assert.equal(roundRule({ source: "taste", won: true }), "judge-preferred");
+    assert.equal(roundRule({ source: "no-regression", won: true }), "no-regression");
     assert.equal(roundRule({ source: "taste", won: false }), "vetoed");
     assert.equal(roundRule({ source: "checks", won: true, satisfied: true }), "satisfied");
     assert.equal(roundRule({ source: "stopped" }), "stopped");
@@ -248,69 +248,22 @@ function loopTree(module: string, folder: string): string {
 }
 
 describe("one producer, and every path that judges a build calls it", () => {
-  it("keeps the five emitters where they are, so a sixth judge cannot answer in its own shape", () => {
-    // A worker's judged round and the round the lead stopped mid-build. The facet loop is
-    // facet-loop.ts and every module under loop/facet/.
-    const facetLoop = loopTree("facet-loop.ts", "facet");
-    assert.equal((facetLoop.match(/verdictRecord\(/g) ?? []).length, 2, "the judged round and the stopped round");
-    // The lead's four passes, all through the one helper that also puts them on the log. The
-    // director is director.ts and every module under director/.
+  it("keeps the two emitters where they are, so a third judge cannot answer in its own shape", () => {
+    // Flipped (Loop phase 5): the facet loop, the gauntlet, the fork gate and the lead's judge are
+    // gone (a judge is a second opinion and decides nothing). The lead's two passes, the health
+    // check and the close, go through the one helper that also puts them on the log. The director
+    // is director.ts and every module under director/.
     const director = loopTree("director.ts", "director");
     assert.equal(
-      (director.match(/await recordVerdict\(\{/g) ?? []).length,
-      4,
-      "the fork gate, the judge, the health pass and the close",
+      (director.match(/await loopRun\.recordVerdict\(\{/g) ?? []).length,
+      2,
+      "the health check and the close",
     );
     assert.match(
       director,
       /appendRun\(RunEvent\.DirectorVerdict, record\)/,
       "and each reaches the app on the event path",
     );
-    // The programmed pipeline, frozen but still judging: its round writes the same record.
-    assert.equal(
-      (
-        readFileSync(new URL("../../src/harness-seed/loop/gauntlet.ts", import.meta.url), "utf8").match(
-          /verdictRecord\(/g,
-        ) ?? []
-      ).length,
-      1,
-    );
-  });
-});
-
-describe("the report keeps how a round was judged", () => {
-  const journal = JSON.parse(
-    readFileSync(new URL("../fixtures/director-loop-run.json", import.meta.url), "utf8"),
-  ) as EventEnvelope[];
-  const rounds = journal
-    .filter((event) => event.data.type === "custom" && event.data.event_type === "facet_iteration")
-    .map((event) => (event.data as { payload: Record<string, any> }).payload);
-
-  it("keeps verdictSource and the scoreboard for all twenty-one rounds of the synthetic run", () => {
-    assert.equal(rounds.length, 21);
-    for (const round of rounds) {
-      const digest = iterationDigest(round);
-      assert.equal(digest.verdictSource, round.verdictSource, `round ${round.iteration} of ${round.facetId}`);
-      assert.ok(digest.verdictSource, "every round says how it was judged");
-      assert.ok(digest.scoreboard, "every round keeps what it measured");
-      assert.deepEqual(digest.scoreboard!.flips, round.scoreboard.flips);
-      assert.equal(digest.scoreboard!.results.length, round.scoreboard.results.length);
-    }
-    // The synthetic run has ten kept rounds and no stopped rounds.
-    assert.equal(rounds.filter((round) => iterationDigest(round).won).length, 10);
-  });
-
-  it("keeps a round's own record when it has one, and a truthful digest when it does not", () => {
-    const withRecord = iterationDigest({
-      ...rounds[0],
-      verdict: { because: "Undone: the game did not start after this build." },
-    });
-    assert.equal(withRecord.verdict!.because, "Undone: the game did not start after this build.");
-    assert.equal(iterationDigest(rounds[0]).verdict, null, "the first run wrote none");
-    const stopped = iterationDigest({ iteration: 4, verdictSource: "stopped", winner: null, scoreboard: null });
-    assert.equal(stopped.stopped, true);
-    assert.equal(stopped.won, false);
-    assert.equal(stopped.scoreboard, null);
   });
 });
 
@@ -520,9 +473,9 @@ describe("the build box shows the last look at the build, not a line about the r
 // ── the run itself ──────────────────────────────────────────────────────────────────────
 
 /**
- * One short run through the real core and the real harness child: a worker is started (the
- * fork gate looks), its commit is merged (the health pass looks), the merged build is judged,
- * and the run is closed (the landing). All four of the lead's passes must reach the log as
+ * One short run through the real core and the real harness child: a worker is started, its copy is
+ * merged (the health check looks), the lead asks a second opinion (which decides nothing), and the
+ * run is closed (the health check again, and the landing). Every pass reaches the log as
  * `director_verdict`, in the one shape, each with a sentence the app can print as it stands.
  */
 describe("every pass of a real run writes one", () => {
@@ -531,7 +484,7 @@ describe("every pass of a real run writes one", () => {
     await Promise.all(rigs.map((rig) => rig.stop().catch(() => {})));
   });
 
-  it("emits a gate, a health pass, a judge, the close's own judge and a close — same shape, plain sentences", async () => {
+  it("emits a health check after the merge and at the finish, and a close — same shape, plain sentences; a second opinion writes none", async () => {
     const rig = await startRig(
       { replies: [] },
       { previewPoolMax: 2, createHeadlessPreview: async () => makeFakePreview() },
@@ -546,7 +499,7 @@ describe("every pass of a real run writes one", () => {
       status: async () => ({ code: "ready", detail: "" }),
       models: async () => [],
       complete: async () => ({
-        message: { role: "assistant", content: "{}" },
+        message: { role: "assistant", content: "yes, the plaza is red" },
         usage: {},
         model: "fixture",
         engine: "codex",
@@ -559,34 +512,10 @@ describe("every pass of a real run writes one", () => {
             trace.push({ tool: name, result });
             return result;
           };
-          // A run says what it is for before a builder starts (M3.8).
-          await call("plan", {
-            summary: "This run: a red plaza.",
-            workers: JSON.stringify([
-              {
-                id: "plaza",
-                title: "Plaza",
-                seam: "the plaza",
-                owns: "src/plaza.js",
-                done: ["the plaza is red"],
-                minutes: 5,
-              },
-            ]),
-          });
-          await call("worker_start", {
-            id: "plaza",
-            title: "Plaza",
-            brief: "paint the plaza red",
-            mode: "single",
-            minutes: "5",
-            owns: "src/plaza.js",
-          });
-          for (let i = 0; i < 30; i++) {
-            const waited = JSON.parse(String(await call("wait", { seconds: "5", worker: "plaza" })));
-            if (waited.status.workers[0]?.state !== "running") break;
-          }
-          await call("integrate", { worker: "plaza" });
-          await call("judge", { target: "integration", against: "none" });
+          await call("worker_start", { title: "Plaza", task: "paint the plaza red", isolation: "copy" });
+          await call("worker_wait", { id: "w1", seconds: "120" });
+          await call("worker_mark", { id: "w1", verdict: "used" });
+          await call("judge", { question: "is the plaza red?" });
           await call("finish", { summary: "the plaza is red", land: "yes", victory: "no" });
           return { ok: true, engine: "codex", turns: 6, usage: {}, sessionId: "director-1", summary: "run done" };
         }
@@ -621,32 +550,22 @@ describe("every pass of a real run writes one", () => {
     );
 
     const verdicts = customEvents(events, "director_verdict").filter((e) => e.runId === runId);
-    // Flipped (the close's judge): the lead's judge only looked (against=none), so the close judges
-    // the head it makes live against the start before it lands — a fifth pass.
+    // Flipped (Loop phase 5): no fork gate and no judge pass: the health check after the merge and
+    // at the finish, then the close.
     assert.deepEqual(
       verdicts.map((verdict) => verdict.pass),
-      ["gate", "health", "judge", "judge", "close"],
-      `the five passes, in the order they looked: ${JSON.stringify(verdicts.map((v) => [v.pass, (v as { decision: { rule: string } }).decision?.rule]))}; tool trace: ${JSON.stringify(trace)}; decisions: ${JSON.stringify(customEvents(events, "autopilot_decision"))}`,
+      ["health", "health", "close"],
+      `the passes, in the order they looked: ${JSON.stringify(verdicts.map((v) => [v.pass, (v as { decision: { rule: string } }).decision?.rule]))}; tool trace: ${JSON.stringify(trace)}`,
     );
     for (const verdict of verdicts) assertShape(verdict as Record<string, any>, `${verdict.pass} of the run`);
     const byPass = Object.fromEntries(
       verdicts.map((verdict) => [String(verdict.pass), verdict as Record<string, any>]),
     );
-    assert.equal(byPass.gate.decision.kept, true, "the scaffold the worker forked from runs");
-    assert.equal(byPass.gate.build.worker, "plaza");
-    assert.equal(byPass.health.decision.kept, true, JSON.stringify(byPass.health.observed.problems));
-    assert.ok(byPass.health.observed.cameras.length >= 1, "the health pass photographed it");
-    const [leadJudge, closeJudge] = verdicts.filter((verdict) => verdict.pass === "judge") as Array<
-      Record<string, any>
-    >;
-    assert.ok(leadJudge && closeJudge, "the lead's judge and the close's");
-    assert.equal(leadJudge.decision.rule, "starts", "against=none: it was looked at, not preferred");
-    assert.equal(leadJudge.decision.kept, null, "a pass that only looked decides nothing");
+    assert.equal(byPass.health.decision.kept, true, JSON.stringify(byPass.health));
+    assert.equal(byPass.health.decision.rule, "starts");
     const landedHead = (
       customEvents(events, "run_finished").find((e) => e.runId === runId) as { integrationHead: string }
     ).integrationHead;
-    assert.equal(closeJudge.build.head, landedHead, "the close judged the head it made live");
-    assert.equal(closeJudge.seen.judgeCalls, 1, "blind, against the game the user had");
     assert.equal(byPass.close.decision.rule, "landed");
     assert.equal(byPass.close.build.head, landedHead);
 
@@ -662,7 +581,7 @@ describe("every pass of a real run writes one", () => {
           log.filter((e) => e.data.type === "custom" && (e.data.payload as { runId?: string })?.runId === runId),
         ),
     )!;
-    assert.equal(graph.verdicts.length, 5);
+    assert.equal(graph.verdicts.length, 3);
     assert.equal(headVerdict(graph)!.pass, "close", "the last word on the build that landed");
     assertPlain(buildVerdictLine(graph)!, "the build box of a finished run");
   });

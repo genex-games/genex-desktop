@@ -112,3 +112,27 @@ describe("the toolchain on Windows", () => {
     assert.doesNotMatch(value, /%SystemRoot%/i, "variables are expanded");
   });
 });
+
+describe("the toolchain's git on a Mac", () => {
+  const OWN = "/Applications/Genex.app/Contents/Resources/app.asar.unpacked/dist/resources/git/bin";
+  const resolveWith = (loginPath: string, files: readonly string[]) =>
+    resolveToolchain({
+      platform: "darwin",
+      home: "/Users/nobody",
+      envPath: `${OWN}:/usr/bin:/bin`,
+      loginPath: async () => loginPath,
+      executable: async (file) => files.includes(file),
+      developerDir: async () => null,
+    });
+
+  it("runs the app's own git where the login shell's is Apple's stand-in", async () => {
+    const tools = await resolveWith("/usr/bin:/bin:/Users/nobody/.nvm/bin", ["/usr/bin/git", `${OWN}/git`]);
+    assert.equal(tools.path, `${OWN}:/usr/bin:/bin:/Users/nobody/.nvm/bin:/usr/sbin:/sbin`);
+  });
+
+  it("keeps the login shell's own git, and its order, where it runs", async () => {
+    const files = ["/opt/homebrew/bin/git", "/usr/bin/git", `${OWN}/git`];
+    const tools = await resolveWith("/opt/homebrew/bin:/usr/bin:/bin", files);
+    assert.equal(tools.path, `/opt/homebrew/bin:/usr/bin:/bin:${OWN}:/usr/sbin:/sbin`);
+  });
+});

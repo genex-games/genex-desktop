@@ -1,5 +1,5 @@
 /** Everything the Builds tab draws, folded once from the run's graph, its recorded outcome and the game's assets. */
-import { useDeferredValue, useEffect, useMemo, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useState } from "react";
 import { SECOND_MS } from "../../../shared/duration.ts";
 import {
   type AssetsNode,
@@ -9,16 +9,17 @@ import {
   type FinishCheckNode,
   joinBuildsView,
   GraphNodeKind,
+  healthPicture,
   type IntegrationNode,
   type IterationNode,
-  type OptimizationNode,
   type RunGraph as RunGraphModel,
   type RunNode,
   runIdOf,
   RunStillStage,
   runStillPath,
-  thumbShot,
+  roundShot,
 } from "../../run-graph.ts";
+import { buildTimeline } from "../../run-graph-builds.ts";
 import { leadWorking, partRows, resultStatus, StepState } from "../../run-steps.ts";
 import { buildsLayout, graphLoaded, leadFace, leadNodeOf, readingNodes, readingOrder } from "../../run-tree.ts";
 import { useLibrary } from "../../state/hooks.ts";
@@ -83,7 +84,6 @@ export function useBuildsModel(suppliedGraph: RunGraphModel, project: string | n
   const base = nodeOfKind<BaseNode>(graph, GraphNodeKind.Base);
   const blender = useMemo(() => nodeOfKind<BlenderNode>(graph, GraphNodeKind.Blender), [graph]);
   const assets = useMemo(() => nodeOfKind<AssetsNode>(graph, GraphNodeKind.Assets), [graph]);
-  const optimization = useMemo(() => nodeOfKind<OptimizationNode>(graph, GraphNodeKind.Optimization), [graph]);
   const finishCheck = useMemo(() => nodeOfKind<FinishCheckNode>(graph, GraphNodeKind.FinishCheck), [graph]);
   const loaded = graphLoaded(graph, outcome);
   const leadNode = useMemo(() => leadNodeOf(graph), [graph]);
@@ -92,7 +92,12 @@ export function useBuildsModel(suppliedGraph: RunGraphModel, project: string | n
   const lead = useMemo(() => leadWorking(graph, outcome, rows), [graph, outcome, rows]);
   // A tree draws the lead for the whole run, saying what it is doing.
   const face = useMemo(() => (graph.tree ? leadFace(graph, outcome, rows) : null), [graph, outcome, rows]);
-  const layout = useSharedSnapshot(useMemo(() => buildsLayout(graph, rows, outcome), [graph, rows, outcome]));
+  const folds = useFolds();
+  // A Loop's build history: its builds on one line, each worker beside its build (null for any other graph).
+  const timeline = useMemo(() => buildTimeline(graph, rows, folds.open), [graph, rows, folds.open]);
+  const layout = useSharedSnapshot(
+    useMemo(() => buildsLayout(graph, rows, outcome, folds.open), [graph, rows, outcome, folds.open]),
+  );
   const steps = useMemo(() => rows.flatMap((row) => row.steps), [rows]);
   const stepById = useMemo(() => new Map(steps.map((step) => [step.id, step] as const)), [steps]);
   const rounds = useMemo(
@@ -114,7 +119,6 @@ export function useBuildsModel(suppliedGraph: RunGraphModel, project: string | n
       base,
       blender,
       assets,
-      optimization,
       finishCheck,
       leadNode,
       face,
@@ -126,6 +130,8 @@ export function useBuildsModel(suppliedGraph: RunGraphModel, project: string | n
       rounds,
       roundById,
       selectable,
+      timeline,
+      toggleFold: folds.toggle,
     }),
     [
       outcome,
@@ -135,7 +141,6 @@ export function useBuildsModel(suppliedGraph: RunGraphModel, project: string | n
       base,
       blender,
       assets,
-      optimization,
       finishCheck,
       leadNode,
       face,
@@ -147,8 +152,23 @@ export function useBuildsModel(suppliedGraph: RunGraphModel, project: string | n
       rounds,
       roundById,
       selectable,
+      timeline,
+      folds.toggle,
     ],
   );
+}
+
+/** Which builds' folded workers show (0: the lead's); pressing a fold card opens or closes it in place. */
+function useFolds() {
+  const [open, setOpen] = useState<ReadonlySet<number>>(() => new Set());
+  const toggle = useCallback((build: number) => {
+    setOpen((current) => {
+      const next = new Set(current);
+      if (!next.delete(build)) next.add(build);
+      return next;
+    });
+  }, []);
+  return { open, toggle };
 }
 
 /** Where the run's starting still is: the outcome's capture, else the run folder's. */
@@ -168,32 +188,58 @@ function newestMergedPart(graph: RunGraphModel): string | null {
 }
 
 /**
- * The run's two stills: where it started, and its build now — the final capture, else the last
- * merged try's, else (a lead's merge names no round) the picture of the part it merged last. A
- * build still being tried shows that borrowed picture softened, never as the build's own.
+ * The newest health check's screenshot of the build (`healthPicture`), unless the build already has
+ * a picture of its own (`skip`): `found` while a check kept one, `borrowed` when it shows an earlier head.
+ */
+function useHealthStill(graph: RunGraphModel, outcome: BuildsOutcome, skip: boolean) {
+  const head = outcome?.head ?? graph.mergedHead?.head ?? null;
+  const checked = useMemo(() => healthPicture(graph, head), [graph, head]);
+  const path = skip ? null : (checked?.path ?? null);
+  const src = useStill(path ? { run: path, maxPx: 640 } : null);
+  return { found: checked !== null, path, src, borrowed: src !== null && checked?.borrowed === true };
+}
+
+/**
+ * The build's picture in a run whose health checks named none: the last merged try's, else (a lead's
+ * merge names no round) the picture of the part it merged last; nothing is read while `skip`.
+ */
+function useMergedStill(model: ReturnType<typeof useBuildsModel>, skip: boolean) {
+  const { graph, roundById } = model;
+  const merged = graph.lastMerged;
+  const lastMergedRound = merged ? (roundById.get(`iter:${merged.facetId}:${merged.iteration}`) ?? null) : null;
+  const shot = lastMergedRound ? roundShot(lastMergedRound) : null;
+  const shotPath = skip ? null : (shot?.path ?? null);
+  const shotSrc = useStill(shotPath ? { run: shotPath, maxPx: 640 } : null);
+  const newestPart = useMemo(() => newestMergedPart(graph), [graph]);
+  // No part named: nothing to ask for while the build has a picture of its own.
+  const partSrc = useRoundStill(graph, skip || shot ? "" : (newestPart ?? ""), 1, null, false);
+  return { src: shotSrc ?? partSrc, path: shot?.path ?? null };
+}
+
+/**
+ * The run's two stills: where it started, and its build now — the final capture, else the newest
+ * health check's screenshot of it, else the last merged try's, else (a lead's merge names no round)
+ * the picture of the part it merged last. A build still being tried, or a health check's picture of
+ * an earlier head, shows that borrowed picture softened, never as the build's own.
  */
 export function useRunStills(model: ReturnType<typeof useBuildsModel>) {
-  const { graph, outcome, base, roundById } = model;
+  const { graph, outcome, base } = model;
   const baseStillPath = baseStillOf(graph, outcome);
   const baseSrc = useStill(
     baseStillPath ? { run: baseStillPath, maxPx: 640, retry: `${graph.runDir}:${baseStillPath}:${base?.done}` } : null,
   );
-  const merged = graph.lastMerged;
-  const lastMergedRound = merged ? (roundById.get(`iter:${merged.facetId}:${merged.iteration}`) ?? null) : null;
   const finalStillPath = finalStillOf(graph, outcome);
   const finalSrc = useStill(
     finalStillPath ? { run: finalStillPath, maxPx: 640, retry: `${graph.runId}:${outcome?.head}` } : null,
   );
-  const mergedShot = lastMergedRound ? thumbShot(lastMergedRound) : null;
-  const mergedPath = finalSrc ? null : (mergedShot?.path ?? null);
-  const mergedSrc = useStill(mergedPath ? { run: mergedPath, maxPx: 640 } : null);
-  const newestPart = useMemo(() => newestMergedPart(graph), [graph]);
-  // No part named: nothing to ask for while the build has a picture of its own.
-  const partSrc = useRoundStill(graph, finalSrc || mergedShot ? "" : (newestPart ?? ""), 1, null, false);
+  const checked = useHealthStill(graph, outcome, finalSrc !== null);
+  const older = useMergedStill(model, finalSrc !== null || checked.found);
   const result = useMemo(() => resultStatus(graph, outcome), [graph, outcome]);
-  const resultSrc = finalSrc ?? mergedSrc ?? partSrc;
-  const resultPath = finalSrc ? finalStillPath : (mergedShot?.path ?? null);
-  const borrowed = result.state === StepState.Judging && !finalSrc;
+  const resultSrc = finalSrc ?? checked.src ?? older.src;
+  const resultPath = finalSrc ? finalStillPath : (checked.path ?? older.path);
+  const borrowed = (result.state === StepState.Judging && !finalSrc) || checked.borrowed;
+  // Only the final capture is taken as the starting one was: any other picture is no pair for it.
+  const pairsWithBase = finalSrc !== null;
   return useMemo(
     () => ({
       baseSrc,
@@ -201,7 +247,8 @@ export function useRunStills(model: ReturnType<typeof useBuildsModel>) {
       resultPath,
       result,
       borrowed,
+      pairsWithBase,
     }),
-    [baseSrc, resultSrc, resultPath, result, borrowed],
+    [baseSrc, resultSrc, resultPath, result, borrowed, pairsWithBase],
   );
 }

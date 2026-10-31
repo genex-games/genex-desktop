@@ -1,7 +1,8 @@
 /** Harness RPC: the event log, threads, artifacts and turns. */
 import { HostMethod, type HarnessHostHandlers } from "../../shared/harness-api.ts";
+import { assistGrants, followAssistDeliveries } from "../core/desktop-assist.ts";
 import { inboxOf } from "../core/inbox.ts";
-import { refuseHostRecords, vouchedInteractions } from "../core/harness-events.ts";
+import { refuseHostRecords } from "../core/harness-events.ts";
 import { threadOr } from "../core/main-thread.ts";
 import type { CoreInternals, StudioCore } from "../studio-core.ts";
 
@@ -17,12 +18,14 @@ export function eventsRpc(core: StudioCore, x: CoreInternals) {
     [HostMethod.EventsAppend]: async (p) => {
       const threadId = threadOr(core, p.threadId);
       refuseHostRecords(p.batch);
-      const latest = await core.append(vouchedInteractions(p.batch), threadId);
+      const latest = await core.append(p.batch, threadId);
       await x.rewind.forgetCompactedSession(threadId, p.batch);
       x.rewind.checkpointQueueRecords(threadId, p.batch);
       // A message the queue answered or took back is nobody's to answer any more; one still
       // queued outlives a Stop.
       x.permissions.followQueueRecords(threadId, p.batch);
+      // An assist's message delivered into a running turn takes its grant there, by interrupt too.
+      followAssistDeliveries(assistGrants(core), threadId, p.batch);
       return latest;
     },
     // A rewound chat reads without its withdrawn rows and sessions (`core/rewind.ts`).
@@ -38,10 +41,6 @@ export function eventsRpc(core: StudioCore, x: CoreInternals) {
     [HostMethod.EventsMessages]: async (p) => x.rewind.harnessMessages(threadOr(core, p.threadId)),
     [HostMethod.EventsInbox]: async () => inboxOf(core.store).pending(core.store),
     [HostMethod.ThreadMain]: async () => core.mainThread,
-    // A title and nothing else: a thread's kind, game, id and permission mode are the host's to
-    // set. A harness that could write them could make a thread of its own read as the person's chat.
-    [HostMethod.ThreadCreate]: async (p) =>
-      core.store.createThread(typeof p?.title === "string" ? { title: p.title } : {}),
     [HostMethod.ThreadList]: async () => core.store.listThreads(),
     [HostMethod.ThreadFork]: async (p) =>
       core.store.forkThread(p.threadId, p.upToInclusive, p.title ? { title: p.title } : {}),
@@ -78,7 +77,10 @@ export function eventsRpc(core: StudioCore, x: CoreInternals) {
     [HostMethod.TurnEnd]: async (p) => {
       const turn = x.openTurns.get(p.turnId);
       if (!turn) return null;
-      const head = await turn.end(p.status ?? "ok", p.outcome ? { outcome: p.outcome } : undefined);
+      // How the chat's engine failed reaches the record from main: the harness knows only the words.
+      const failed = core.turns.takeFailure(turn.threadId);
+      const metadata = { ...(p.outcome ? { outcome: p.outcome } : {}), ...failed };
+      const head = await turn.end(p.status ?? "ok", Object.keys(metadata).length ? metadata : undefined);
       x.openTurns.delete(p.turnId);
       return head;
     },

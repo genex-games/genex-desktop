@@ -13,15 +13,15 @@ export type GenexStudioTool = (typeof GenexStudioTool)[keyof typeof GenexStudioT
 /** Refusals and failures of a Studio-run Genex CLI command or package install. */
 export const GENEX_CLI_PROMPT = {
   Unavailable: (command: string) =>
-    `\`genex ${command}\` is not available in Studio. Available: doctor, budget, llm models, llm status, llm cancel and shop list through genex__cli; llm bench and shop add|set|remove|test through genex__cli-paid. Say so rather than work around it.`,
+    `\`genex ${command}\` is not available in Studio. Available: doctor, budget, llm models, llm status, llm cancel, shop list, shop add, shop set|remove on a local draft, items list and items search through genex__cli; llm bench, shop set|remove on an item in the store, shop test and items add|remove through genex__cli-paid. Studio puts the game's items on sale when it is published; items made before the game is on Genex wait as local drafts, and Studio uploads them after the publish. Say so rather than work around it.`,
   UseTool: (command: string, tool: GenexStudioTool) =>
     `\`genex ${command}\` is ${tool} in Studio: call that tool instead.`,
   PaidTool: (command: string) =>
-    `\`genex ${command}\` spends coin or credits or changes what the game sells: call genex__cli-paid, which asks the user first.`,
+    `\`genex ${command}\` spends Nex or credits or changes what the game sells: call genex__cli-paid, which asks the user first.`,
   FreeTool: (command: string) => `\`genex ${command}\` spends nothing: call genex__cli.`,
   ReservedFlag: (name: string) => `--${name} is set by Studio and cannot be passed.`,
   UnknownOption: (command: string, name: string, allowed: readonly string[]) =>
-    `\`genex ${command}\` takes no ${name} option here. ${allowed.length ? `It takes: ${allowed.join(", ")}.` : "It takes no options."} Name flags without dashes; a flag that names a file cannot be read in Studio.`,
+    `\`genex ${command}\` takes no ${name} option here. ${allowed.length ? `It takes: ${allowed.join(", ")}.` : "It takes no options."} Name flags without dashes; only image, model and package name a file or folder, inside this game.`,
   BudgetAllowance:
     "Studio does not set a Genex asset allowance: its own asset allowance and the user's consent govern asset spending. genex__cli budget shows the balance.",
   InvalidOptions: 'options must be an object of flags by name, for example {"all": true}.',
@@ -29,6 +29,13 @@ export const GENEX_CLI_PROMPT = {
   NoPositional: (command: string) => `\`genex ${command}\` takes no positional argument; leave args out.`,
   NeedsPositional: (command: string) => `\`genex ${command}\` needs its positional argument in args.`,
   NeedsOption: (command: string, name: string) => `\`genex ${command}\` needs the ${name} option.`,
+  NeedsPicture:
+    "A store item is listed with its picture, never without: a square PNG of at least 768 × 768 (1024 × 1024 is best) that the item fills edge to edge, made by any means (genex__asset image among them), saved under .genex/scratch/; then call shop add again with the image option.",
+  /** A picture that would not fill its card: its size, and what a card takes. */
+  PictureShape: (given: string, width: number, height: number) =>
+    `image ${JSON.stringify(given)} is ${width} × ${height}: a store item's picture is square, at least 768 × 768 (1024 × 1024 is best), and fills its card edge to edge. Render it again at that size with the item filling the frame; nothing was run.`,
+  PictureNotImage: (given: string) =>
+    `image ${JSON.stringify(given)} is not a PNG or WebP picture. Save the render as a square PNG of at least 768 × 768; nothing was run.`,
   Locked: "Genex is locked: ask the user to unlock Genex in Studio's Plugins page, then try again.",
   NoDraft:
     'This game has no hosted Genex project yet. Publish a draft first with genex__publish {"operation":"draft"}, then run the command again.',
@@ -38,13 +45,13 @@ export const GENEX_CLI_PROMPT = {
   UnknownPackage: (name: string, allowed: readonly string[]) =>
     `${name} is not a package genex__package adds. It adds: ${allowed.join(", ")}.`,
   NoPackageJson:
-    "This game has its own page but no package.json, and is not made from Studio's template, so there is nothing to add Genex packages to. Give it one with a build (npm init, then a bundler such as Vite), then call genex__package again.",
+    "This game has its own page but no package.json, and is not made from Studio's template, so there is nothing to add Genex packages to: genex__package needs a package.json.",
   GodotGame:
     "This is a Godot game: Genex's multiplayer goes into its Godot project with godot__multiplayer (read the godot-multiplayer skill first), and its web build is Godot's export, which takes no npm packages. Its players' sign-in on Genex is Studio's: nothing to add for it.",
   UnityGame:
     "This is a Unity game: Genex's multiplayer goes into its Unity project with unity__multiplayer (read the unity-multiplayer skill first), and its WebGL build is Unity's, which takes no npm packages. Its players' sign-in on Genex is Studio's: nothing to add for it.",
   TemplatePageUnreadable:
-    "This game's index.html has no import map Studio can read, so nothing was added. Restore the template's import map (three from /vendor/) and try again.",
+    "This game's index.html has no import map Studio can read, so nothing was added: genex__package adds its entries to the page's import map.",
   TemplateSdkMapped: [
     "index.html now maps @genex-ai/embed-sdk to Studio's copy (/vendor/genex/embed-sdk/index.js) and loads Studio's connect module (/vendor/genex/connect.js) right after its import map. Keep both.",
     'Studio connects the game: in the preview in local test mode, and on Genex to the game\'s project when it is published. Import what you need from "@genex-ai/embed-sdk" (waitForPlayer, loadPlayerState, savePlayerState, submitScore, getLeaderboard) and never call initEmbed() yourself.',
@@ -54,7 +61,31 @@ export const GENEX_CLI_PROMPT = {
     'Studio connects the game: never call initEmbed() yourself. Import the rest exactly as the card shows, in plain JavaScript: waitForPlayer, getColyseusAuth and getColyseusUrls from "@genex-ai/embed-sdk", connect() from "@genex-ai/multiplayer". The preview runs in Genex local test mode, where connect() and matchmake() fail: test multiplayer on a published draft.',
   ],
   ForeignFolder:
-    "This call is not bound to the game's own folder or one of its Studio worktrees; nothing was installed.",
+    "This call is not bound to the game's own folder or one of its Studio worktrees; nothing was installed, read or written.",
+  /** A path option that, by its real path, does not lead to what it should inside the game. */
+  GamePathOutside: (name: string, given: string) =>
+    `${name} ${JSON.stringify(given)} leads outside this game's folder (through ../ or a link). Name a file or folder inside the game; nothing was run.`,
+  GamePathMissing: (name: string, given: string) =>
+    `${name} ${JSON.stringify(given)} names nothing in this game's folder. Make it first, then run the command again; nothing was run.`,
+  GamePathNotFile: (name: string, given: string) =>
+    `${name} ${JSON.stringify(given)} is not a file in this game: it takes one file (a .png or .webp picture, a .glb model). Nothing was run.`,
+  GamePathNotFolder: (name: string, given: string) =>
+    `${name} ${JSON.stringify(given)} is not a folder in this game: it takes the folder of files other games' agents read. Nothing was run.`,
+  GamePathTooLarge: (name: string, files: number, megabytes: number) =>
+    `${name} holds more than ${files} files or ${megabytes} MB, which Genex does not take for an item. Keep only what another game's agent needs; nothing was run.`,
+  /** `items add` ran, but its folder could not go into the game. */
+  ItemNotDelivered: (itemId: string, why: string) =>
+    `The item ${itemId} is added to this game on Genex, but Studio wrote nothing to genex-items/${itemId}/ in it: ${why} Fix that, then run items add ${itemId} again.`,
+  ItemFolderLink: (where: string) => `${where} is a link or a file, not a folder. Move it aside first.`,
+  ItemFolderMissing: "the Genex CLI wrote no item folder.",
+  ItemFolderUnwritable: "the game's folder could not be written.",
+  ItemFolderEntry: (entry: string) =>
+    `the item folder holds ${JSON.stringify(entry)}, which is not a file or a folder.`,
+  /** A local `shop add|set|remove` ran, but what it changed could not go into the game's `.genex/items/`. */
+  LocalDraftsNotCarried: (why: string) =>
+    `The Genex CLI changed this game's local item drafts, but Studio wrote nothing to .genex/items/ in it: ${why} Fix that, then run the command again.`,
+  LocalDraftsLink: (where: string) => `${where} is a link or a file, not a folder. Move it aside first.`,
+  LocalDraftUnclean: (localId: string) => `the draft ${localId} holds a link, a folder or more than a draft holds.`,
 } as const;
 
 /** How each value rule reads in a refusal. */
@@ -68,4 +99,10 @@ export const GENEX_VALUE_RULE = {
   Choice: (values: readonly string[]) => `takes one of ${values.join(", ")}`,
   Text: (max: number) =>
     `takes text of at most ${max} characters, with no line breaks or control characters, not starting with -`,
+  TextList: (count: number, max: number) =>
+    `takes one text or a list of at most ${count}, each at most ${max} characters, with no line breaks or control characters, not starting with -`,
+  GamePath: (target: string) =>
+    `takes a ${target === "folder" ? "folder" : "file"} inside this game, relative to its folder (for example .genex/scratch/frost-axe.png), never an absolute path, ~ or ..`,
+  ItemId: "takes one store item id, as genex items search or Browse shows it (letters, digits, - and _)",
+  LocalId: "takes one local draft id, as genex shop add printed it (local_ and 12 lowercase letters or digits)",
 } as const;

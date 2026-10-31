@@ -26,13 +26,14 @@ import {
 import { desktopControl } from "../../src/main/core/desktop-control.ts";
 import { assistGrants, engineAppIds } from "../../src/main/core/desktop-assist.ts";
 import { toEntries } from "../../src/renderer/chat-entries.ts";
-import { ConsentChoice, consentChoices, consentTitle } from "../../src/renderer/chat/consent-card.ts";
+import { consentChoices, consentTitle } from "../../src/renderer/chat/consent-card.ts";
 import {
   ENGINE_ASSIST_TASK_MAX_CHARS,
   EngineAssistRefusal,
   type PluginBinding,
   StudioConsentSource,
 } from "../../src/shared/plugins.ts";
+import { EngineId } from "../../src/shared/providers.ts";
 import { UiEvent, type UiEvent as UiEventData } from "../../src/shared/ui-events.ts";
 import type { DesktopDriver } from "../../src/substrate/desktop-driver.ts";
 import { validateManifest } from "../../src/substrate/plugins/manifest.ts";
@@ -67,6 +68,10 @@ function assisting(answer: PluginEngineAssistAnswer = { started: true }) {
       flush: async () => {
         order.push("flush");
       },
+      toEdit: async () => {
+        order.push("edit");
+        return true;
+      },
     },
   };
 }
@@ -78,7 +83,11 @@ describe("publish-update hands the task to the game's chat", () => {
       const answer = await publishUpdate({ link: linkTo(true), name: "Sky Race" }, host.deps, asker);
       assert.equal(answer.started, true, answer.message);
       assert.deepEqual(host.tasks, [publishTask("Sky Race")]);
-      assert.deepEqual(host.order, ["flush", "assist"], "the script files reach Studio before it publishes");
+      assert.deepEqual(
+        host.order,
+        ["edit", "flush", "assist"],
+        "Studio is back at its editor and has the script files before it publishes",
+      );
       assert.match(answer.message, /publish/i);
     });
 
@@ -174,7 +183,7 @@ describe("first-publish publishes a place never on Roblox, under the game's name
       assert.equal(answer.started, true, answer.message);
       assert.equal(answer.name, "Sky Racers");
       assert.deepEqual(host.tasks, [firstPublishTask("Sky Racers")]);
-      assert.deepEqual(host.order, ["flush", "assist"]);
+      assert.deepEqual(host.order, ["edit", "flush", "assist"]);
       assert.match(answer.message, /Sky Racers/);
     });
 
@@ -447,7 +456,14 @@ describe("the agent's card and the assist turn, through a real core with a fake 
   let approve = true;
   /** What the next card's Allow sends as the edit of its field; undefined sends none. */
   let edit: string | undefined;
-  const posted: Array<{ text: string; thread?: string; clientId?: string }> = [];
+  const posted: Array<{
+    text: string;
+    thread?: string;
+    clientId?: string;
+    engine?: string;
+    model?: string;
+    effort?: string;
+  }> = [];
 
   before(async () => {
     lite = await coreLite({
@@ -476,6 +492,9 @@ describe("the agent's card and the assist turn, through a real core with a fake 
         text,
         ...(options.thread ? { thread: options.thread } : {}),
         ...(options.clientId ? { clientId: options.clientId } : {}),
+        ...(options.engine ? { engine: options.engine } : {}),
+        ...(options.model ? { model: options.model } : {}),
+        ...(options.effort ? { effort: options.effort } : {}),
       });
     };
   });
@@ -523,9 +542,9 @@ describe("the agent's card and the assist turn, through a real core with a fake 
     assert.ok(card);
     assert.equal(consentTitle(card), manifest.tools.find((tool) => tool.name === "publish-update")?.confirmation);
     assert.deepEqual(
-      consentChoices(card).map((choice) => choice.id),
-      [ConsentChoice.Once, ConsentChoice.Decline],
-      "no Always allow",
+      consentChoices(card).map((choice) => choice.label),
+      ["Allow once", "Allow in this chat", "Don't allow"],
+      "a yes for this chat, never Always allow",
     );
   });
 
@@ -564,6 +583,27 @@ describe("the agent's card and the assist turn, through a real core with a fake 
     } finally {
       edit = undefined;
     }
+  });
+
+  it("the task's turn runs on the model the chat last used, or the first ready subscription", async () => {
+    const { core } = lite;
+    const chosen = { lastEngine: EngineId.ClaudeCode, lastModel: "claude-opus-5-5", lastEffort: "high" };
+    await core.store.updateThread(threadId, { metadata: chosen });
+    await core.plugins.tool("roblox__publish-update", {}, binding);
+    const last = posted.at(-1);
+    assert.deepEqual(
+      { engine: last?.engine, model: last?.model, effort: last?.effort },
+      { engine: EngineId.ClaudeCode, model: "claude-opus-5-5", effort: "high" },
+    );
+
+    const dir = (await core.games.scaffold("slide")).dir;
+    await writeFile(path.join(dir, "slide.rbxlx"), "<roblox/>");
+    const slide = { project: "slide", directory: dir, threadId: await core.threadForGame("slide") };
+    await core.engineLinks.link("roblox", slide, { project: path.join(dir, "slide.rbxlx"), remote: REMOTE });
+    await core.plugins.tool("roblox__publish-update", {}, slide);
+    const fresh = posted.at(-1);
+    assert.equal(fresh?.engine, await core.defaultDelegatedEngine(), "never the local default");
+    assert.equal(fresh?.model, undefined);
   });
 
   it("declined, nothing is posted", async () => {

@@ -58,7 +58,7 @@ export function parseGenexJson(output: string): any {
  */
 export function genexCliEnv(
   parent: NodeJS.ProcessEnv,
-  options: { api: string; home?: string; platform?: NodeJS.Platform },
+  options: { api: string; home?: string; platform?: NodeJS.Platform; ca?: string },
 ): NodeJS.ProcessEnv {
   return {
     ...windowsBaseEnv(parent, options.platform, options.home),
@@ -72,6 +72,8 @@ export function genexCliEnv(
     NO_COLOR: "1",
     ...genexTelemetryEnv(parent),
     ...(options.home ? GIT_ENV : {}),
+    // A development stand's own CA (`ca`), for Node's requests and git's pushes to the stand alone.
+    ...(options.ca ? { NODE_EXTRA_CA_CERTS: options.ca, GIT_SSL_CAINFO: options.ca } : {}),
   };
 }
 
@@ -113,6 +115,8 @@ export interface GenexCliRun {
    * `genex cover <file>` exits 1 for a frame Genex refused, which is an answer like any other.
    */
   answerExitCodes?: readonly number[];
+  /** A development stand's own CA file the run trusts (`genexCliEnv`); absent on genex.games. */
+  ca?: string;
 }
 
 /** A run stopped here, by its signal or its timeout, before the CLI answered. */
@@ -202,7 +206,7 @@ export function runGenexCli(run: GenexCliRun): Promise<unknown> {
         // A publish spawn keeps the CLI's `~` inside Studio's workspace and commits as the studio:
         // `pushSource` runs git with no user identity of its own and must never read or write the user's config.
         cwd: run.cwd,
-        env: genexCliEnv(process.env, { api: run.api, home: run.home }),
+        env: genexCliEnv(process.env, { api: run.api, home: run.home, ...(run.ca ? { ca: run.ca } : {}) }),
         stdio: ["ignore", "pipe", "pipe", "pipe"],
       },
     );

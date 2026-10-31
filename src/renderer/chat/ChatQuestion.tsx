@@ -1,153 +1,107 @@
-import { useId, useRef, useState, type ReactNode, type RefObject } from "react";
+/**
+ * A question waiting on the person, asked the way Claude asks: a bold question (a short grey recap
+ * above it, or one grey line under it), then its answers as buttons from the card's left edge. The
+ * first answer is the recommended one, filled, with the keys that press it from anywhere in the chat
+ * (⌘↩, Ctrl+Enter elsewhere). A press answers at once; the person's own words go in the composer.
+ */
+import { type ReactNode, type RefObject, useEffect, useId, useRef, useState } from "react";
 import { t } from "../../shared/i18n.ts";
+import { hostPlatform } from "../platform.ts";
 import { problemWords } from "../words.ts";
 import { Icon } from "../ui/icons.tsx";
 import { FileText } from "../ui/FileText.tsx";
+import { answerKeys, pressesAnswer } from "./answer-keys.ts";
+import { QuestionDeferral } from "../analytics/chat-vocabulary.ts";
+import { track } from "../analytics/client.ts";
+import { AnalyticsEvent } from "../analytics/events.ts";
 
 export interface ChatChoice {
   id: string;
   label: string;
+  /** Shown as the answer's tooltip: the answer's own words carry the card. */
   description?: string;
 }
 
-/** The pick that is the person's own words, typed in the card. */
-const OWN = "\u0000own";
-/** What the own-words row says before anything is typed, unless the card says otherwise. */
-const OWN_PLACEHOLDER = t("Write your own answer…");
+/** The mark a model puts on its recommended choice, which the first button already says. */
+const RECOMMENDED_MARK = /\s*\(Recommended\)\s*$/i;
 
-/** A choice row's class: dimmed while the card cannot answer, else the cursor for its kind. */
-const choiceClass = (blocked: boolean, cursor: string): string =>
-  `chat-choice ${blocked ? "cursor-default opacity-50" : cursor}`;
+/** A choice's words as its button and its sent answer say them. */
+export function choiceLabel(choice: ChatChoice): string {
+  return choice.label.replace(RECOMMENDED_MARK, "");
+}
+
+/** Whether `element` takes typing. */
+const takesTyping = (element: HTMLElement): boolean =>
+  element.isContentEditable || element.matches("input, textarea, select");
 
 /**
- * Sending the picked answer: one send at a time, and its failure in the user's words. A pick of
- * the typed row sends the typed text.
+ * Whether the answer keys pressed at `target` are this card's: it shows, no dialog stands over it,
+ * and the press is not someone else's typing (the chat's own composer is fine).
  */
-function useAnswerSubmit(input: {
-  blocked: boolean;
-  ready: boolean;
-  picked: string;
-  own: string;
-  onConfirm: (id: string) => Promise<void> | void;
-  onAnswerText?: (text: string) => Promise<void> | void;
-  setBusy: (busy: boolean) => void;
-}) {
+function keysReachCard(target: EventTarget | null, card: HTMLElement): boolean {
+  if (!card.isConnected || card.getClientRects().length === 0) return false;
+  const dialog = document.querySelector('[aria-modal="true"], dialog[open]');
+  if (dialog && !dialog.contains(card)) return false;
+  if (!(target instanceof HTMLElement) || !takesTyping(target)) return true;
+  return Boolean(card.closest("[data-chat-composer]")?.contains(target)) || card.contains(target);
+}
+
+/**
+ * The answer keys press `answer` while `card` shows. The latest `answer` is read at the press, and
+ * the press goes no further: one card answers, and the composer does not also send.
+ */
+export function useAnswerKeys(card: RefObject<HTMLElement | null>, on: boolean, answer: () => void): void {
+  const latest = useRef(answer);
+  latest.current = answer;
+  useEffect(() => {
+    if (!on) return;
+    const onKey = (event: KeyboardEvent): void => {
+      const shown = card.current;
+      if (!shown || !pressesAnswer(event, hostPlatform())) return;
+      if (!keysReachCard(event.target, shown)) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      latest.current();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [card, on]);
+}
+
+/** The answer keys as the recommended button shows them; screen readers get `aria-keyshortcuts` instead. */
+export function AnswerKeyCaps(): ReactNode {
+  return (
+    <span data-keys aria-hidden="true" className="chat-answer-keys">
+      {answerKeys(hostPlatform()).caps.map((cap) => (
+        <kbd key={cap}>{cap}</kbd>
+      ))}
+    </span>
+  );
+}
+
+/**
+ * Sending the pressed answer: one send at a time, and its failure in the person's words. Which
+ * answer is on its way stays until it settles.
+ */
+function useAnswerSubmit(blocked: boolean, onConfirm: (id: string) => Promise<void> | void) {
   const [failure, setFailure] = useState<string>();
+  const [sending, setSending] = useState<string | null>(null);
   const submitting = useRef(false);
-  const submit = async () => {
-    if (input.blocked || !input.ready) return;
-    if (submitting.current) return;
+  const submit = async (id: string): Promise<void> => {
+    if (blocked || submitting.current) return;
     submitting.current = true;
-    input.setBusy(true);
+    setSending(id);
     setFailure(undefined);
     try {
-      await (input.picked === OWN ? input.onAnswerText?.(input.own.trim()) : input.onConfirm(input.picked));
+      await onConfirm(id);
     } catch (error) {
       setFailure(problemWords(error));
     } finally {
       submitting.current = false;
-      input.setBusy(false);
+      setSending(null);
     }
   };
-  return { failure, submit };
-}
-
-/** The row that takes the person's own answer, typed in the card. */
-function OwnAnswer({
-  name,
-  picked,
-  own,
-  blocked,
-  input,
-  placeholder,
-  onPick,
-  onType,
-}: {
-  name: string;
-  picked: boolean;
-  own: string;
-  blocked: boolean;
-  input: RefObject<HTMLInputElement | null>;
-  placeholder: string;
-  onPick: () => void;
-  onType: (text: string) => void;
-}) {
-  return (
-    <label data-question-own className={choiceClass(blocked, "cursor-text")}>
-      <input
-        type="radio"
-        name={name}
-        value={OWN}
-        aria-label={t("Your own answer")}
-        checked={picked}
-        onChange={() => {
-          onPick();
-          input.current?.focus();
-        }}
-        className="chat-choice-mark"
-      />
-      <input
-        ref={input}
-        type="text"
-        value={own}
-        placeholder={placeholder}
-        aria-label={t("Your own answer")}
-        onFocus={onPick}
-        onChange={(event) => {
-          onType(event.target.value);
-          onPick();
-        }}
-        className="chat-choice-input"
-      />
-    </label>
-  );
-}
-
-/** "Chat about this": the card steps aside and the conversation continues, even while it cannot be answered. */
-function ChatAboutButton({ blocked, onClick }: { blocked: boolean; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      data-question-chat
-      onClick={onClick}
-      className={`chat-question-secondary ${blocked ? "opacity-50" : ""}`}
-    >
-      <Icon name="chat" size={14} />
-      {t("Chat about this")}
-    </button>
-  );
-}
-
-/**
- * The card's footer, outside its scroll: Chat about this at the leading edge, the answer's send at
- * the trailing one. Nothing when the card offers neither.
- */
-function QuestionFooter({
-  blocked,
-  answerable,
-  submitLabel,
-  canSubmit,
-  onChatAbout,
-}: {
-  blocked: boolean;
-  /** The card takes an answer, so it has a send. */
-  answerable: boolean;
-  submitLabel: string;
-  canSubmit: boolean;
-  onChatAbout: (() => void) | undefined;
-}) {
-  if (!answerable && !onChatAbout) return null;
-  return (
-    <div className="flex shrink-0 items-center gap-3 border-t border-line px-4 py-2.5">
-      {onChatAbout && <ChatAboutButton blocked={blocked} onClick={onChatAbout} />}
-      {answerable && (
-        <button type="submit" disabled={blocked || !canSubmit} className="chat-question-submit ms-auto">
-          {submitLabel}
-          <Icon name="chevron-right" size={14} />
-        </button>
-      )}
-    </div>
-  );
+  return { failure, sending, submit };
 }
 
 /** A card put aside: one button brings it back. */
@@ -168,50 +122,127 @@ function ReopenButton({
   );
 }
 
-/** The web chat's question layout, with explicit submission for desktop decisions.
- * The caller keys this by request id. Only the host can settle a request. */
+/**
+ * The answers in one row from the card's left edge, the recommended one first, showing the answer
+ * keys where they press it. While one sends the row looks as it did when pressed, so nothing in it
+ * changes size; the pressed one is marked busy, and no answer takes a press until it settles.
+ */
+function Answers({
+  choices,
+  sending,
+  disabled,
+  keys,
+  first,
+  onAnswer,
+}: {
+  choices: ChatChoice[];
+  /** The answer on its way, if one is. */
+  sending: string | null;
+  disabled: boolean;
+  keys: boolean;
+  first: RefObject<HTMLButtonElement | null>;
+  onAnswer: (id: string) => void;
+}) {
+  if (choices.length === 0) return null;
+  return (
+    <div data-question-answers className="chat-answers">
+      {choices.map((choice, index) => {
+        const shortcut = index === 0 && keys;
+        return (
+          <button
+            key={choice.id}
+            ref={index === 0 ? first : undefined}
+            type="button"
+            data-answer={choice.id}
+            data-primary={index === 0 ? "" : undefined}
+            aria-busy={choice.id === sending || undefined}
+            aria-disabled={sending !== null || undefined}
+            aria-keyshortcuts={shortcut ? answerKeys(hostPlatform()).aria : undefined}
+            title={choice.description}
+            disabled={disabled}
+            onClick={() => onAnswer(choice.id)}
+            className={`chat-answer ${index === 0 ? "chat-answer-primary" : "chat-answer-secondary"}`}
+          >
+            {choiceLabel(choice)}
+            {shortcut && <AnswerKeyCaps />}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** The grey line under the question, ending in "Details ›" when the card has details to open. */
+function Fineprint({
+  description,
+  hasDetails,
+  open,
+  onToggle,
+}: {
+  description?: string;
+  hasDetails: boolean;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  if (!description && !hasDetails) return null;
+  return (
+    <p className="chat-question-sub">
+      {description && <FileText text={description} />}
+      {description && hasDetails && " "}
+      {hasDetails && (
+        <button type="button" data-question-details-toggle aria-expanded={open} onClick={onToggle}>
+          {t("Details")}
+          <Icon name="chevron-right" size={13} className={`chat-chevron ${open ? "rotate-90" : ""}`} />
+        </button>
+      )}
+    </p>
+  );
+}
+
+/**
+ * A waiting question: the caller keys it by request id, and only the host settles a request.
+ * `recap` sits above the question (an agent's own question); `description` is one grey line under
+ * it, with `details` behind "Details ›". `keys` off leaves the answer keys to the docked cards.
+ */
 export function ChatQuestion({
   title,
+  recap,
   description,
+  details,
   choices,
   onConfirm,
-  onAnswerText,
-  onChatAbout,
   children,
   disabled = false,
   error,
-  confirmLabel = t("Continue"),
   reopenLabel = t("Answer question"),
-  answerPlaceholder = OWN_PLACEHOLDER,
+  keys = true,
 }: {
   title: string;
+  recap?: string;
   description?: string;
+  details?: ReactNode;
   choices: ChatChoice[];
   onConfirm: (id: string) => Promise<void> | void;
-  /** Offers a row to type an answer in the card itself. */
-  onAnswerText?: (text: string) => Promise<void> | void;
-  /** What that row says before anything is typed. */
-  answerPlaceholder?: string;
-  /** Offers "Chat about this": the card steps aside and the conversation continues. */
-  onChatAbout?: () => void;
   children?: ReactNode;
   disabled?: boolean;
   error?: string;
-  confirmLabel?: string;
   reopenLabel?: string;
+  keys?: boolean;
 }) {
   const id = useId();
-  const [picked, setPicked] = useState("");
-  const [own, setOwn] = useState("");
   const [collapsed, setCollapsed] = useState(false);
-  const [busy, setBusy] = useState(false);
+  const [open, setOpen] = useState(false);
+  const card = useRef<HTMLFormElement>(null);
   const reopen = useRef<HTMLButtonElement>(null);
-  const close = useRef<HTMLButtonElement>(null);
-  const ownInput = useRef<HTMLInputElement>(null);
-  const blocked = disabled || busy;
-  const ready = picked === OWN ? own.trim().length > 0 : choices.some((choice) => choice.id === picked);
-  const { failure, submit } = useAnswerSubmit({ blocked, ready, picked, own, onConfirm, onAnswerText, setBusy });
+  const first = useRef<HTMLButtonElement>(null);
+  const { failure, sending, submit } = useAnswerSubmit(disabled, onConfirm);
+  const blocked = disabled || sending !== null;
+  const recommended = choices[0];
+  useAnswerKeys(card, keys && !collapsed && !blocked && Boolean(recommended), () => {
+    if (recommended) void submit(recommended.id);
+  });
   const putAside = (): void => {
+    track(AnalyticsEvent.ChatQuestionDeferred, { action: QuestionDeferral.PutAside });
     setCollapsed(true);
     requestAnimationFrame(() => reopen.current?.focus());
   };
@@ -221,98 +252,72 @@ export function ChatQuestion({
         buttonRef={reopen}
         label={reopenLabel}
         onReopen={() => {
+          track(AnalyticsEvent.ChatQuestionDeferred, { action: QuestionDeferral.Reopened });
           setCollapsed(false);
-          requestAnimationFrame(() => (close.current ?? ownInput.current)?.focus());
+          requestAnimationFrame(() => (first.current ?? card.current)?.focus());
         }}
       />
     );
   const problem = error || failure;
-  const answerable = choices.length > 0 || Boolean(onAnswerText);
   return (
     <form
+      ref={card}
       data-chat-question
       aria-labelledby={id}
-      aria-busy={busy}
-      onSubmit={(event) => {
-        event.preventDefault();
-        void submit();
+      aria-busy={sending !== null}
+      tabIndex={-1}
+      onSubmit={(event) => event.preventDefault()}
+      onKeyDown={(event) => {
+        if (event.key !== "Escape" || event.nativeEvent.isComposing) return;
+        event.stopPropagation();
+        putAside();
       }}
       className="chat-question"
     >
-      <div className="min-h-0 overflow-y-auto px-4 py-3">
-        <div className="flex items-start justify-between gap-3">
-          <h3 id={id} className="min-w-0 text-chat font-medium [overflow-wrap:anywhere]">
-            {title}
-          </h3>
-          {!onChatAbout && (
-            <button
-              ref={close}
-              type="button"
-              aria-label={t("Put question aside")}
-              disabled={busy}
-              onClick={putAside}
-              className="-me-1 flex size-6 shrink-0 items-center justify-center rounded-control text-ink-3 enabled:hover:bg-control-hover enabled:hover:text-control-text-hover disabled:cursor-default"
-            >
-              <Icon name="close" size={14} />
-            </button>
-          )}
-        </div>
-        {description && (
-          <p className="mt-1 text-chat-sub text-ink-2 [overflow-wrap:anywhere]">
-            <FileText text={description} />
+      <div className="chat-question-body">
+        {recap && (
+          <p data-question-recap className="chat-question-recap">
+            {recap}
           </p>
         )}
+        <h3 id={id} className="chat-question-title">
+          {title}
+        </h3>
+        <Fineprint
+          description={description}
+          hasDetails={Boolean(details)}
+          open={open}
+          onToggle={() => setOpen((shown) => !shown)}
+        />
+        {open && details && (
+          <div data-question-details className="chat-question-details">
+            {details}
+          </div>
+        )}
         {children}
-        <fieldset disabled={blocked} className="mt-2 flex min-w-0 flex-col gap-0.5">
-          <legend className="sr-only">{t("Choose an answer")}</legend>
-          {choices.map((choice) => (
-            <label key={choice.id} className={choiceClass(blocked, "cursor-pointer")}>
-              <input
-                type="radio"
-                name={id}
-                value={choice.id}
-                checked={picked === choice.id}
-                onChange={() => setPicked(choice.id)}
-                className="chat-choice-mark"
-              />
-              <span className="min-w-0">
-                <span className="block text-chat text-ink-2">{choice.label}</span>
-                {choice.description && <span className="block text-chat-sub text-ink-3">{choice.description}</span>}
-              </span>
-            </label>
-          ))}
-          {onAnswerText && (
-            <OwnAnswer
-              name={id}
-              picked={picked === OWN}
-              own={own}
-              blocked={blocked}
-              input={ownInput}
-              placeholder={answerPlaceholder}
-              onPick={() => setPicked(OWN)}
-              onType={setOwn}
-            />
-          )}
-        </fieldset>
         {problem && (
           <p role="alert" className="mt-2 text-chat-sub text-red">
             {problem}
           </p>
         )}
       </div>
-      <QuestionFooter
-        blocked={blocked}
-        answerable={answerable}
-        submitLabel={busy ? t("Sending…") : confirmLabel}
-        canSubmit={ready}
-        onChatAbout={
-          onChatAbout &&
-          (() => {
-            putAside();
-            onChatAbout();
-          })
-        }
+      <Answers
+        choices={choices}
+        sending={sending}
+        disabled={disabled}
+        keys={keys}
+        first={first}
+        onAnswer={(choice) => void submit(choice)}
       />
+      <button
+        type="button"
+        aria-label={t("Put question aside")}
+        disabled={sending !== null}
+        onClick={putAside}
+        className="chat-question-aside"
+      >
+        <Icon name="close" size={14} />
+      </button>
     </form>
   );
 }

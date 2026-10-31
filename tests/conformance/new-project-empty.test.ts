@@ -43,7 +43,7 @@ before(async () => {
   await mkdir(places);
   lite = await coreLite({
     gamesRoot: path.join(root, "games"),
-    executionPolicy: { allowedProjectRoot: root, runBackgroundImprovement: false },
+    executionPolicy: { allowedProjectRoot: root },
   });
 });
 after(async () => {
@@ -342,7 +342,7 @@ describe("new projects start empty", () => {
     const root = await realpath(await tmpDir("studio-start-plan-"));
     const own = await coreLite({
       gamesRoot: path.join(root, "games"),
-      executionPolicy: { allowedProjectRoot: root, runBackgroundImprovement: false },
+      executionPolicy: { allowedProjectRoot: root },
       onUiEvent: (event) => {
         if (event.type === UiEvent.GameChanged) changed.push((event.payload as { project: string }).project);
       },
@@ -406,7 +406,7 @@ describe("new projects start empty", () => {
     const held = { blocker: PluginCallBlocker.PlanMode, message: PROJECT_TOOL_ANSWER.inPlan };
     for (const [answer, says] of [
       [held, PROJECT_TOOL_ANSWER.inPlan],
-      [{ name: "kite" }, "The web starter is in the folder; build on it."],
+      [{ name: "kite" }, PROJECT_TOOL_ANSWER.webStarted],
     ] as const) {
       const host = ctxRecorder({
         threadId: "chat-1",
@@ -445,7 +445,14 @@ describe("new projects start empty", () => {
       assert.deepEqual(order, starts ? [HostMethod.GameStart, HostMethod.GameValidate] : [HostMethod.GameValidate]);
 
       const run = loopRecorder(facts, extra);
-      const run2 = { runId: "run-1", project: "moth", goal: "g", reference: { name: "r", shots: [] }, budgets: {} };
+      const run2 = {
+        runId: "run-1",
+        project: "moth",
+        goal: "g",
+        engine: "codex",
+        reference: { name: "r", shots: [] },
+        budgets: {},
+      };
       await handleRunStart(studioOf(run.ctx) as never, { type: "run_start", threadId: "t-2", run: run2 } as never);
       const started = run.sequence((method) => method === HostMethod.GameStart || method === HostMethod.GameScaffold);
       assert.deepEqual(started, starts ? [HostMethod.GameStart, HostMethod.GameScaffold] : [HostMethod.GameScaffold]);
@@ -596,7 +603,8 @@ function loopRecorder(facts: readonly object[], extra: object = {}) {
       [HostMethod.GameList]: () => [{ name: "moth", title: "Moth", facts, ...extra }],
       [HostMethod.GameStart]: () => ({ name: "moth" }),
       [HostMethod.GameValidate]: () => ({ ok: true, contract: "loaded", problems: [], warnings: [] }),
-      [HostMethod.EngineDescribe]: () => [],
+      // An engine that keeps a session of its own: a Loop needs one to lead it.
+      [HostMethod.EngineDescribe]: () => [{ id: "codex", label: "Codex", supportsSessions: true }],
       [HostMethod.GameScaffold]: () => {
         throw new Error("the runner began");
       },
@@ -611,7 +619,7 @@ function studioOf(ctx: ReturnType<typeof ctxRecorder>["ctx"]) {
   return {
     host: { ...ctx.host, heartbeat: () => {} },
     cancels: new Set<string>(),
-    moodBoards: new Map(),
+    attachedPictures: new Map(),
     activeRuns: new Map(),
     startingRuns: new Map(),
     orphanRuns: new Map(),

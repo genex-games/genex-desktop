@@ -3,7 +3,7 @@
  * job the run asked for, joined across the records one asset leaves in the log.
  */
 import { GENEX_LOOKUPS, genexEndedUnmade, genexRefused, isGenexSource } from "../shared/asset-making.ts";
-import { digestOperation } from "../shared/game-assets.ts";
+import { assetFormat, digestOperation } from "../shared/game-assets.ts";
 import { GenexOperation } from "../shared/genex.ts";
 import { t } from "../shared/i18n.ts";
 import type { AssetInfo, AssetState } from "./run-graph.ts";
@@ -67,6 +67,11 @@ export interface AssetLedger {
   /** An open in-game check, by call, naming the Studio job it checks. */
   checkByCall: Map<string, string>;
   foldedInto: Map<AssetInfo, AssetInfo>;
+  /**
+   * The copy the host kept of a delivery's picture (`asset_delivered.picture`), by each file the
+   * delivery listed: a call's card (Blender's names no job) is joined to it by the files it holds.
+   */
+  pictures: Map<string, string>;
 }
 
 /** An empty ledger, before the run asked for anything. */
@@ -79,6 +84,7 @@ export function newAssetLedger(): AssetLedger {
     dropped: new Set(),
     checkByCall: new Map(),
     foldedInto: new Map(),
+    pictures: new Map(),
   };
 }
 
@@ -132,6 +138,7 @@ const sameAsset = (failed: AssetInfo, later: AssetInfo): boolean =>
  * not finished: nothing will deliver it now, so it is never "making" after the end.
  */
 export function settleAssetJobs(ledger: AssetLedger, over: boolean): void {
+  for (const job of ledger.jobs) job.picture ??= keptPictureOf(ledger, job);
   ledger.jobs.forEach((job, index) => {
     if (job.state !== AssetCardState.Failed || job.facetId === null) return;
     const retried = ledger.jobs
@@ -199,6 +206,44 @@ export function blenderAsset(payload: Payload, place: AssetPlace): AssetInfo {
     state: ok ? AssetCardState.Delivered : AssetCardState.Failed,
     files: file ? [file] : [],
   };
+}
+
+/** The file a delivery's kept picture was copied from: its first picture (`main/delivery-picture.ts`). */
+const viewOf = (job: AssetInfo): string | null => job.files.find((file) => assetFormat(file)?.raster === true) ?? null;
+
+/** The name of a file without its folders. */
+const leafOf = (file: string): string => file.slice(file.lastIndexOf("/") + 1);
+
+/** Two delivered cards are one asset: the same game file again, or the same plugin tool's asset of the same name. */
+function oneAsset(a: AssetInfo, b: AssetInfo): boolean {
+  if (a.files.some((file) => b.files.includes(file))) return true;
+  return Boolean(a.name) && a.name === b.name && a.source === b.source && a.tool === b.tool;
+}
+
+/**
+ * The version of `job`'s asset delivered before it, for the compare: the newest card before it in
+ * the log's order of the same asset whose kept picture shows the same view (the same picture file).
+ * Null for a first version, another view, or a card without a kept picture: unrelated pictures are
+ * never paired.
+ */
+export function earlierVersion(jobs: readonly AssetInfo[], job: AssetInfo): AssetInfo | null {
+  const view = viewOf(job);
+  if (!job.picture || job.state !== AssetCardState.Delivered || !view) return null;
+  const pairs = (other: AssetInfo): boolean => {
+    const otherView = viewOf(other);
+    const pictured = other.state === AssetCardState.Delivered && Boolean(other.picture);
+    return pictured && otherView !== null && leafOf(otherView) === leafOf(view) && oneAsset(other, job);
+  };
+  return jobs.slice(0, Math.max(0, jobs.indexOf(job))).findLast(pairs) ?? null;
+}
+
+/** The copy the host kept of a picture this card's files delivered, when it kept one. */
+function keptPictureOf(ledger: AssetLedger, job: AssetInfo): string | undefined {
+  for (const file of job.files) {
+    const kept = ledger.pictures.get(file);
+    if (kept) return kept;
+  }
+  return undefined;
 }
 
 /** Two records of one asset: the card that was asked for keeps what the other one learned. */
@@ -369,7 +414,8 @@ function genexEnding(job: AssetInfo, payload: Payload): { refused: boolean; erro
   const status = strOrNull(reply?.status);
   if (!genexEndedUnmade(status)) return null;
   const generationId = job.generationId ?? strOrNull(reply?.generationId);
-  return { refused: genexRefused({ status, generationId }), error: strOrNull(reply?.error)?.trim() || null };
+  const blocked = strOrNull(reply?.blocked);
+  return { refused: genexRefused({ status, generationId, blocked }), error: strOrNull(reply?.error)?.trim() || null };
 }
 
 /**
@@ -424,16 +470,19 @@ function foldDerivedWork(ledger: AssetLedger, job: AssetInfo, payload: Payload):
 /**
  * `asset_delivered`: the host's own record of files that landed. It joins the open call on
  * `jobId`; a delivery nothing asked for in this run still earns a card, except Blender's, which
- * already has one.
+ * already has one. The copy the host kept of its picture goes to whichever card holds its files.
  */
 export function assetDelivered(ledger: AssetLedger, payload: Payload, place: AssetPlace): void {
   const jobId = strOrNull(payload.jobId);
   const source = str(payload.source, "plugin");
-  if (!jobId || source === BLENDER_SOURCE) return;
+  if (!jobId) return;
   const rows = records(payload.files);
   const files = rows.map((row) => str(row.file)).filter(Boolean);
   // A delivery that landed no file (a lookup the host still records) made nothing.
   if (!files.length) return;
+  const picture = strOrNull(payload.picture);
+  if (picture) for (const file of files) ledger.pictures.set(file, picture);
+  if (source === BLENDER_SOURCE) return;
   const bytes = rows.reduce((total, row) => total + (num(row.bytes) ?? 0), 0);
   const at = strOrNull(payload.at) ?? place.at;
   const job = ledger.byJob.get(jobId) ?? openDeliveryCard(ledger, place, { jobId, source, at, payload });
@@ -445,6 +494,8 @@ export function assetDelivered(ledger: AssetLedger, payload: Payload, place: Ass
   job.bytes = bytes || job.bytes;
   job.render = strOrNull(payload.render) ?? job.render;
   job.renderFront = strOrNull(payload.renderFront) ?? job.renderFront;
+  // Its own picture: the files' map holds the newest delivery's, and a file delivered again is another version.
+  if (picture) job.picture = picture;
   if (job.name === jobId) job.name = job.files[0] ?? job.name;
 }
 

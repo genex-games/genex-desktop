@@ -63,6 +63,11 @@ export interface ProjectAsset {
   runId?: string;
   facetId?: string;
   iteration?: number;
+  /**
+   * The file is only in a build of a run still going (its integration worktree, or the worker's
+   * copy `workspace` names), not in the game yet: it arrives when the run lands. Its `assetRef` reads it.
+   */
+  building?: { runId: string; workspace: string };
 }
 
 export interface ProjectAssets {
@@ -97,6 +102,12 @@ export interface AssetDeliveredPayload {
    * Records written before this field existed say neither; their `runId` is the tell.
    */
   workspace?: "game" | "build";
+  /**
+   * A copy of the delivery's first picture under the run's folder (`readRunStill`), kept by the host
+   * for a Loop's delivery into a build workspace: the game folder has the files only once the build
+   * lands, and a worker's copy is removed after its merge. Absent on records written before it.
+   */
+  picture?: string;
 }
 
 /**
@@ -125,6 +136,8 @@ export const ProjectAssetScope = {
   GenexInspection: "genex-inspection",
   GenexCover: "genex-cover",
   GenexCoverClip: "genex-cover-clip",
+  /** A store item's picture in its local draft's own folder (`.genex/items/<localId>/`). */
+  ItemPicture: "item-picture",
 } as const;
 export type ProjectAssetScope = (typeof ProjectAssetScope)[keyof typeof ProjectAssetScope];
 
@@ -143,6 +156,7 @@ export type ProjectAssetRead =
       jobId?: string;
     }
   | { project: string; scope: typeof ProjectAssetScope.GenexCover; maxPx?: number; candidate?: string }
+  | { project: string; scope: typeof ProjectAssetScope.ItemPicture; file: string; maxPx?: number }
   | { project: string; scope: typeof ProjectAssetScope.GenexCoverClip };
 
 /** Which session asked for the tool. There is no `role` on a delegate request; it is derived. */

@@ -8,9 +8,10 @@ import {
   type PluginManifest,
   type PluginScan,
   type PluginSource,
+  PluginInstallProblem,
   PluginSourceKind,
 } from "../shared/plugins.ts";
-import { UserCancelledError } from "../shared/errors.ts";
+import { CodedError, UserCancelledError } from "../shared/errors.ts";
 import { t } from "../shared/i18n.ts";
 import type { PluginMarketplace } from "../substrate/plugins/marketplace.ts";
 import { assertNativeActionAllowed } from "./dev/native-policy.ts";
@@ -86,7 +87,7 @@ export async function reacquirePlugin(
   if (origin?.kind === PluginSourceKind.Catalog) {
     // The curated artifact is verified against the catalog's own manifest on the staged copy.
     const entry = (await studio.plugins.catalog()).find((p) => p.manifest.id === info.manifest.id);
-    if (!entry) throw new Error(MESSAGE.notInCatalog());
+    if (!entry) throw new CodedError(PluginInstallProblem.NotFound, MESSAGE.notInCatalog());
     if (!(await confirmInstall(entry.manifest, origin, undefined, info.manifest))) throw new UserCancelledError();
     await studio.plugins.installCatalog(info.manifest.id, entry.manifest.capabilities);
     return;

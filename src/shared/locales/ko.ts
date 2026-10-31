@@ -28,6 +28,8 @@ export default {
   "A ChatGPT connection change is already in progress.": "ChatGPT 연결을 이미 바꾸는 중이에요.",
   "A GLB for the game plus reference renders to check it.": "게임용 GLB와 확인용 참고 렌더.",
   "A Loop in {game} is using Unreal.": "{game}의 Loop가 Unreal을 쓰고 있어요.",
+  "A Loop needs an engine that keeps a session of its own, and this chat's engine doesn't, so nothing was built. The chat still answers here.":
+    "Loop에는 자체 세션을 유지하는 엔진이 필요하지만 이 채팅의 엔진은 그렇지 않아 아무것도 만들지 않았습니다. 채팅은 여기서 계속 답합니다.",
   "A bakery rush where orders pile up on a conveyor belt": "컨베이어 벨트에 주문이 쌓이는 정신없는 빵집",
   "A balloon pop game with a hedgehog that rolls through the sky": "하늘을 굴러다니는 고슴도치로 풍선을 터뜨리는 게임",
   "A beekeeping game where you plan a garden to keep the hive happy": "벌집이 행복하도록 정원을 계획하는 양봉 게임",
@@ -48,8 +50,8 @@ export default {
   "A comet herding game where you guide ice rocks into orbit": "얼음 바위를 궤도로 몰아넣는 혜성 몰이 게임",
   "A command is already running for this game. Wait for it to finish or stop it.":
     "이 게임에서 이미 명령이 실행 중이에요. 끝날 때까지 기다리거나 중지하세요.",
-  "A command on this Mac, or a URL with browser sign-in. Agents in every game can use its tools.":
-    "이 Mac의 명령이나 브라우저 로그인이 있는 URL. 모든 게임의 에이전트가 그 도구를 쓸 수 있어요.",
+  "A command on this computer, or a URL with browser sign-in. Agents in every game can use its tools.":
+    "이 컴퓨터의 명령이나 브라우저 로그인이 있는 URL. 모든 게임의 에이전트가 그 도구를 쓸 수 있어요.",
   'A connector already uses the id "{id}"; remove or rename that connector before installing this plugin':
     "이미 다른 커넥터가 ID “{id}” 사용 중이에요. 이 플러그인을 설치하기 전에 그 커넥터를 제거하거나 이름을 바꾸세요",
   "A connector id is lowercase letters, digits and dashes, up to 32 characters":
@@ -57,12 +59,12 @@ export default {
   "A connector needs a name": "커넥터에는 이름이 필요해요",
   "A connector url must be https, or http on localhost": "커넥터 URL은 https이거나 localhost의 http여야 해요",
   "A connector working directory must be an absolute path": "커넥터 작업 디렉터리는 절대 경로여야 해요",
-  "A cooking game in a food truck that serves ghosts at midnight": "한밤중에 유령에게 음식을 파는 푸드트럭 요리 게임",
-  "A cozy café where you make latte art for forest animals": "숲속 동물들에게 라테 아트를 만들어 주는 아늑한 카페",
-  "A cozy fishing game on a tiny island where you sell your catch at the dock":
-    "작은 섬에서 잡은 물고기를 부두에서 파는 아늑한 낚시 게임",
-  "A cozy library where you match lost books to their readers": "잃어버린 책을 주인에게 찾아 주는 아늑한 도서관",
-  "A cozy puzzle about packing a suitcase for a trip": "여행 가방을 싸는 아늑한 퍼즐",
+  "A cooking game in a food truck that serves ghosts": "유령에게 음식을 파는 푸드트럭 요리 게임",
+  "A café where you make latte art for forest animals": "숲속 동물들에게 라테 아트를 만들어 주는 카페",
+  "A fishing game on a tiny island where you sell your catch at the dock":
+    "작은 섬에서 잡은 물고기를 부두에서 파는 낚시 게임",
+  "A library where you match lost books to their readers": "잃어버린 책을 주인에게 찾아 주는 도서관",
+  "A puzzle about packing a suitcase for a trip": "여행 가방을 싸는 퍼즐",
   "A dead terminal's cursor leaving trails": "꺼진 터미널의 커서가 남기는 잔상",
   "A desert caravan trading spices across shifting dunes": "움직이는 모래 언덕을 건너며 향신료를 파는 사막 대상",
   "A detective game where you question houseplants about a missing cookie":
@@ -77,9 +79,9 @@ export default {
     "다운로드가 Genex가 예상한 릴리스보다 커서 Genex가 중지했어요. 아무것도 보관하지 않았어요.",
   "A download wasn't over a secure link, so Genex stopped. Nothing was kept.":
     "다운로드가 안전한 링크를 거치지 않아서 Genex가 중지했어요. 아무것도 보관하지 않았어요.",
-  "A dragon who hoards cozy blankets instead of gold": "금 대신 포근한 담요를 모으는 드래곤",
+  "A dragon who hoards blankets instead of gold": "금 대신 담요를 모으는 드래곤",
   "A dream world where doors lead to memories": "문이 추억으로 이어지는 꿈의 세계",
-  "A drift racer on frozen mountain roads at night": "밤의 얼어붙은 산길을 달리는 드리프트 레이싱",
+  "A sandbox where you build working machines from blocks and wheels": "블록과 바퀴로 움직이는 기계를 만드는 샌드박스",
   "A dungeon where you play the monster defending its treasure from heroes":
     "몬스터가 되어 영웅들로부터 보물을 지키는 던전",
   "A farming sim on a floating island that drifts between seasons": "계절 사이를 떠다니는 공중 섬의 농장 시뮬레이션",
@@ -88,31 +90,31 @@ export default {
     "파일이 사용 중이었거나 드라이브가 거부했어요. 다른 앱을 닫은 다음 다시 시도하세요.",
   "A file was in use. Close other programs and try again.":
     "파일이 사용 중이었어요. 다른 프로그램을 닫고 다시 시도하세요.",
-  "A firefly-catching game in a summer meadow at dusk": "해 질 녘 여름 들판에서 반딧불이를 잡는 게임",
+  "A turn-based strategy game on a hex map with three rival factions": "세 세력이 맞서는 육각형 맵의 턴제 전략 게임",
   "A frog hopping across lily pads that sink when you stay too long":
     "오래 머물면 가라앉는 연잎 위를 뛰어다니는 개구리",
   "A full path, such as /Users/you/server.": "/Users/you/server 같은 전체 경로예요.",
   "A garden defense game where vegetables guard against snails": "채소들이 달팽이로부터 텃밭을 지키는 디펜스 게임",
-  "A garden gnome sneaking through backyards at night": "밤마다 뒷마당을 몰래 누비는 정원 노움",
+  "A visual novel where your choices decide who wins the school election":
+    "선택에 따라 학생회 선거의 승자가 정해지는 비주얼 노벨",
   "A gardening game where plants grow into puzzles you have to solve":
     "식물이 자라 풀어야 할 퍼즐이 되는 정원 가꾸기 게임",
   "A ghost ship sailing through a sea of clouds": "구름 바다를 항해하는 유령선",
   "A gravity golf game between tiny planets": "작은 행성들 사이에서 치는 중력 골프",
   "A greenhouse where every plant has a strange personality": "모든 식물이 별난 성격을 가진 온실",
-  "A haunted house you redecorate to scare away noisy guests": "시끄러운 손님을 쫓아내려고 새로 꾸미는 유령의 집",
+  "A house you redecorate to scare away noisy guests": "시끄러운 손님을 쫓아내려고 꾸미는 집",
   "A hot air balloon game where you ride the winds between islands": "바람을 타고 섬과 섬 사이를 오가는 열기구 게임",
   "A judge is playing the game": "심사위원이 게임을 플레이하는 중",
   "A juggling game where the balls are on fire": "불붙은 공으로 저글링하는 게임",
   "A jungle temple escape with rolling boulders and traps": "굴러오는 바위와 함정을 피해 정글 신전을 탈출하는 게임",
-  "A kite flying game through a festival of lanterns": "등불 축제 사이로 연을 날리는 게임",
+  "A kite flying game through a festival": "축제 위로 연을 날리는 게임",
   "A lane-switching runner through a candy factory": "레인을 바꾸며 사탕 공장을 달리는 러너 게임",
-  "A lantern-lit night market where you run a noodle stand": "등불이 밝힌 야시장에서 국수 가게를 운영하는 게임",
+  "A market where you run a noodle stand": "시장에서 국수 가게를 운영하는 게임",
   "A later change edited the same part of Harness’s instructions. Undo that change first.":
     "그 뒤에 한 변경이 Harness 지침의 같은 부분을 고쳤어요. 그 변경을 먼저 되돌려 주세요.",
   "A later restore took this change back. Harness works the way it did before.":
     "이후 복원으로 이 변경이 되돌려졌어요. Harness는 이전처럼 동작해요.",
-  "A lighthouse keeper guiding ships through a storm by turning the beam":
-    "등대 불빛을 돌려 폭풍 속 배들을 안내하는 등대지기",
+  "A lighthouse keeper guiding ships past rocks by turning the beam": "불빛을 돌려 배를 바위 사이로 안내하는 등대지기",
   "A mail sorting game in a busy post office before closing time":
     "문 닫기 전 붐비는 우체국에서 우편물을 분류하는 게임",
   "A match-three puzzle where matches grow a forest": "맞출 때마다 숲이 자라는 3매치 퍼즐",
@@ -121,12 +123,12 @@ export default {
     "되감기 후에 메시지를 보내서 이제 새 버전을 되돌릴 수 없어요.",
   "A meteor shower dodge game with a small dinosaur": "작은 공룡이 유성우를 피하는 게임",
   "A mini golf course on the surface of the moon with low gravity": "중력이 약한 달 표면의 미니 골프 코스",
-  "A minimalist tower stacking game where the wind gets stronger": "바람이 점점 세지는 미니멀 탑 쌓기 게임",
+  "A tower stacking game where the wind gets stronger": "바람이 점점 거세지는 탑 쌓기 게임",
   "A model is downloading. Delete this one when the download finishes.":
     "모델을 다운로드하는 중이에요. 다운로드가 끝나면 이 모델을 삭제해 주세요.",
   "A mountain rescue game with a dog and a sled": "개와 썰매로 산에서 구조하는 게임",
-  "A museum night guard game where the exhibits come alive": "전시품이 살아 움직이는 박물관 야간 경비 게임",
-  "A neon arcade shooter where your bullets bounce off the walls": "총알이 벽에 튕기는 네온 아케이드 슈팅",
+  "A museum guard game where the exhibits come alive": "전시품이 살아 움직이는 박물관 경비원 게임",
+  "An arcade shooter where your bullets bounce off the walls": "총알이 벽에 튕기는 아케이드 슈팅 게임",
   "A new build is ready to play.": "새 빌드를 플레이할 수 있어요.",
   "A new build is ready — reload to play it": "새 빌드가 준비됐어요 — 새로 고침해서 플레이하세요",
   "A new version is downloading. Genex offers the relaunch when it's ready.":
@@ -135,8 +137,6 @@ export default {
     "Genex 새 버전 다운로드가 끝났어요. 클릭하면 지금 다시 시작해요. 안 하면 다음에 종료할 때 설치돼요.",
   "A new version of Genex is downloading.": "Genex 새 버전을 다운로드하고 있어요.",
   "A new version of Genex is ready and may fix this.": "Genex 새 버전이 준비됐어요. 이 문제가 해결될 수도 있어요.",
-  "A newer Genex helper is already in Studio's Plugins folder, so Genex left it.":
-    "Studio의 Plugins 폴더에 더 새로운 Genex 도우미가 이미 있어서 Genex가 그대로 뒀어요.",
   "A night-vision security camera, its timestamp burned in": "타임스탬프가 박힌 야간 투시 보안 카메라",
   "A ninja who can only move when the music plays": "음악이 나올 때만 움직일 수 있는 닌자",
   "A note for every part": "모든 파트에 남길 메모",
@@ -150,7 +150,7 @@ export default {
     "일시 정지된 빌드가 {time}에 자동으로 재개돼요. 다시 시작해 업데이트하고 자동 재개를 취소할까요?",
   "A pinball table where the ball is a tiny knight fighting monsters": "공 대신 작은 기사가 몬스터와 싸우는 핀볼",
   "A pirate ship battle with cannons that shoot fruit": "과일을 쏘는 대포로 싸우는 해적선 전투",
-  "A pixel-art fishing game under a frozen lake": "얼어붙은 호수 아래에서 하는 픽셀 아트 낚시 게임",
+  "An ice fishing game where you drill holes across a lake": "호수 곳곳에 구멍을 뚫는 얼음낚시 게임",
   "A plan is ready for your review.": "계획이 준비됐어요. 검토해 주세요.",
   "A platformer where gravity flips every time you jump": "점프할 때마다 중력이 뒤집히는 플랫포머",
   "A plugin": "플러그인",
@@ -171,7 +171,7 @@ export default {
   "A second AI is looking at your game": "두 번째 AI가 게임을 살펴보고 있어요",
   "A self-improving harness": "스스로 발전하는 Harness",
   "A shop keeping game in a fantasy town that sells only potions": "물약만 파는 판타지 마을의 가게 운영 게임",
-  "A side-scrolling skateboarding game through a neon city": "네온 도시를 달리는 횡스크롤 스케이트보드 게임",
+  "A side-scrolling skateboarding game through a city": "도시를 달리는 횡스크롤 스케이트보드 게임",
   "A sky courier delivering letters between floating towns on a glider":
     "글라이더를 타고 떠다니는 마을 사이로 편지를 배달하는 하늘 집배원",
   "A slow train journey where you trade goods between stations": "역과 역 사이에서 물건을 사고파는 느긋한 기차 여행",
@@ -183,9 +183,9 @@ export default {
   "A space shooter where every enemy you destroy becomes part of your ship":
     "파괴한 적이 모두 내 우주선의 일부가 되는 우주 슈팅 게임",
   "A space station repair game with a robot and a timer": "로봇과 타이머로 우주 정거장을 고치는 게임",
-  "A spooky graveyard where you help lost ghosts find home": "길 잃은 유령들이 집을 찾도록 돕는 으스스한 묘지",
+  "A graveyard where you help lost ghosts find home": "길 잃은 유령이 집을 찾도록 돕는 묘지",
   "A sports car and an off-road buggy with gears and a speedometer.": "기어와 속도계가 있는 스포츠카와 오프로드 버기.",
-  "A starlit camping trip where you build the perfect campfire": "별빛 아래에서 완벽한 모닥불을 피우는 캠핑",
+  "A two-player online card game with a deck you build between matches": "경기 사이에 덱을 짜는 2인용 온라인 카드 게임",
   "A starship captain choosing which planet to visit next": "다음에 어느 행성으로 갈지 고르는 우주선 선장",
   "A stdio connector has no url": "stdio 커넥터에는 URL이 없어요",
   "A stdio connector needs a command": "stdio 커넥터에는 명령이 필요해요",
@@ -201,7 +201,7 @@ export default {
     "걸어 다니며 나무를 심어 초록빛으로 물들이는 작은 행성",
   "A tiny racing game on a kitchen table with toy cars": "장난감 자동차로 부엌 식탁 위를 달리는 작은 레이싱 게임",
   "A tiny space shooter in a field of asteroids": "소행성 지대에서 펼쳐지는 작은 우주 슈팅 게임",
-  "A tiny submarine exploring a glowing deep-sea cave": "빛나는 심해 동굴을 탐험하는 작은 잠수함",
+  "A tiny submarine exploring a deep-sea cave": "심해 동굴을 탐험하는 작은 잠수함",
   "A tiny wizard school where you mix colors into spells": "색을 섞어 주문을 만드는 작은 마법 학교",
   "A top-down racer with drifting and a boost that charges in corners":
     "드리프트와 코너에서 충전되는 부스트가 있는 탑다운 레이싱 게임",
@@ -222,7 +222,7 @@ export default {
   "A worker is busy in your game folder right now — try again once it has finished.":
     "지금 작업자가 게임 폴더에서 작업 중이에요 — 끝나면 다시 시도하세요.",
   "A worker wants to run {job} in the background": "작업자가 백그라운드에서 {job} 실행을 요청해요",
-  "A zen sand garden where you rake patterns around stones": "돌 주변 모래에 갈퀴로 무늬를 그리는 젠 정원",
+  "A sand garden where you rake patterns around stones": "돌 주위 모래에 갈퀴로 무늬를 그리는 모래 정원",
   "API key": "API 키",
   "API key (optional)": "API 키(선택)",
   About: "정보",
@@ -296,8 +296,6 @@ export default {
   "Agents build in it in your Studio, and its scripts are files in this game's folder.":
     "에이전트가 내 Studio에서 이 플레이스에 만들고, 스크립트는 이 게임 폴더에 파일로 있어요.",
   "Agents can edit and play it from this chat.": "이 채팅에서 에이전트가 게임을 수정하고 플레이할 수 있어요.",
-  "Agents can look at an app’s window without it, never at password managers, System Settings, password prompts or Genex.":
-    "꺼져 있어도 에이전트는 앱 창을 볼 수 있지만, 비밀번호 관리자, 시스템 설정, 비밀번호 입력 창, Genex는 절대 보지 않아요.",
   "Agents didn’t start": "에이전트가 시작되지 않았어요",
   "Agents only run in a protected space that Windows has to allow once. If you aren’t an administrator of this PC, ask one to enter their password when Windows asks, then press Set up.":
     "에이전트는 Windows가 한 번 허용해야 하는 보호 공간에서만 실행돼요. 이 PC의 관리자가 아니라면 Windows가 물을 때 관리자에게 비밀번호를 입력해 달라고 한 뒤 ‘설정하기’를 눌러 주세요.",
@@ -312,7 +310,6 @@ export default {
   "All done": "모두 완료",
   "All done.": "모두 완료됐어요.",
   "All games": "모든 게임",
-  Allow: "허용",
   "Allow all edits in this chat": "이 채팅의 모든 편집 허용",
   "Allow calls without asking, including changes this tool can make": "묻지 않고 호출 허용(이 도구가 하는 변경 포함)",
   "Allow it for Studio in a terminal, then quit and reopen Studio:":
@@ -398,9 +395,6 @@ export default {
   Applied: "적용됨",
   "Applied automatically": "자동 적용됨",
   "Applied part {part}": "파트 {part} 적용했어요",
-  "Applied {count, plural, one {# improvement} other {# improvements}}.":
-    "개선 사항 {count, plural, other {#개}}를 적용했어요.",
-  "Apply suggestions automatically": "제안 자동 적용",
   "Applying part {part}": "파트 {part} 적용하는 중",
   "Approval is no longer pending": "더 이상 승인 대기 중이 아니에요",
   Approve: "승인",
@@ -473,6 +467,7 @@ export default {
   "Ben-Day": "벤데이",
   "Best fit": "가장 적합",
   Better: "개선",
+  Beta: "베타",
   "Between builds": "빌드 사이",
   "Billed by each provider you use": "사용하는 제공자마다 따로 청구돼요",
   "Billed by each provider you use.": "사용하는 제공자마다 따로 청구돼요.",
@@ -532,7 +527,15 @@ export default {
   "Build the {players} app of {title} again so I can publish it.":
     "{title}의 {players} 앱을 다시 빌드해 주세요. 게시하고 싶어요.",
   "Build updated": "빌드가 업데이트됐어요",
-  "Build with workers": "작업자와 함께 만들기",
+  "Build with the Cursor plan you already have.": "이미 있는 Cursor 요금제로 만들어요.",
+  "Build with the Grok account you already have.": "이미 있는 Grok 계정으로 만들어요.",
+  "Changes Harness made to its own instructions. Undo any of them.":
+    "Harness가 자기 지침에 한 변경이에요. 어떤 것이든 되돌릴 수 있어요.",
+  "Self-improvement is off. Harness keeps its own instructions as they are.":
+    "자기 개선이 꺼져 있어요. Harness가 자기 지침을 그대로 둬요.",
+  "When off, Harness doesn’t change its own instructions. Changes it already made stay until you undo them.":
+    "끄면 Harness가 자기 지침을 바꾸지 않아요. 이미 한 변경은 되돌리기 전까지 남아요.",
+  "Workers pitch in": "작업자가 거들어요",
   Building: "만드는 중",
   "Building the game": "게임 빌드 중",
   "Building the starting point": "시작점을 만드는 중",
@@ -547,8 +550,6 @@ export default {
   "Built in one session. Its work wasn't merged into your build.":
     "한 세션에서 만들었어요. 작업이 빌드에 합쳐지지 않았어요.",
   Bundled: "기본 포함",
-  "Buy credits": "크레딧 구매",
-  "Buy credits on genex.games": "genex.games에서 크레딧 구매",
   "By <maker>{name}</maker>": "만든 사람: <maker>{name}</maker>",
   "By {author}": "제작: {author}",
   "Bypass permissions": "권한 우회",
@@ -566,8 +567,6 @@ export default {
   "Cancel signing in": "로그인 취소",
   "Cancel the connector form": "커넥터 양식 취소",
   "Cancel your request to {name}": "{name}에게 보낸 요청 취소",
-  "Candidate kept.": "후보를 유지했어요.",
-  "Candidate not kept.": "후보를 유지하지 않았어요.",
   "Candidate {index}": "후보 {index}",
   Candidates: "후보",
   "Cannot read model installation status.": "모델 설치 상태를 읽을 수 없어요.",
@@ -584,7 +583,6 @@ export default {
   "Change image…": "이미지 변경…",
   "Change it": "변경하기",
   "Change the plan: ": "계획 변경: ",
-  "Change {skill}": "{skill} 변경",
   Changed: "변경됨",
   "Changed {skill}": "{skill} 변경됨",
   "Changes apply immediately and save on this Mac.": "변경 사항은 바로 적용되고 이 Mac에 저장돼요.",
@@ -601,7 +599,6 @@ export default {
   "Character approval no longer available": "캐릭터 승인을 더 이상 할 수 없어요",
   Characters: "문자",
   Chat: "채팅",
-  "Chat about this": "채팅으로 이야기하기",
   "Chat actions": "채팅 작업",
   "Chat name": "채팅 이름",
   "Chat turn from {day}": "{day} 채팅",
@@ -638,7 +635,6 @@ export default {
   "Checking on background work": "백그라운드 작업 확인 중",
   "Checking plan usage…": "요금제 사용량을 확인하는 중…",
   "Checking play": "플레이를 확인하는 중",
-  "Checking preservation": "빠진 게 없는지 확인 중",
   "Checking that Epic signed the installer…": "설치 프로그램에 Epic 서명이 있는지 확인하고 있어요…",
   "Checking that Microsoft signed Unreal's runtime installer…":
     "Unreal에 들어 있는 런타임 설치 프로그램에 Microsoft 서명이 있는지 확인하고 있어요…",
@@ -676,7 +672,6 @@ export default {
   "Choose a provider below and finish signing in. OpenCode keeps the sign-in.":
     "아래에서 제공자를 고르고 로그인을 마무리하세요. 로그인 정보는 OpenCode가 보관해요.",
   "Choose a theme smaller than 128 KB.": "128KB보다 작은 테마를 고르세요.",
-  "Choose an answer": "답을 골라 주세요",
   "Choose an auto-compaction threshold between 5% and 95%.": "자동 압축 기준을 5%~95% 사이로 선택하세요.",
   "Choose an empty folder, or create one. Games you already have stay where they are.":
     "빈 폴더를 선택하거나 새로 만들어 주세요. 이미 있는 게임은 원래 위치에 그대로 있어요.",
@@ -777,8 +772,40 @@ export default {
   "Codex skill discovery closed. Refresh to retry.": "Codex 스킬 검색이 종료됐어요. 새로 고침해서 다시 시도하세요.",
   "Codex skill discovery timed out. Refresh to retry.":
     "Codex 스킬 검색 시간이 초과됐어요. 새로 고침해서 다시 시도하세요.",
-  "Coin lives in your Genex account. Sign in once, then pay here.":
-    "코인은 Genex 계정에 있어요. 한 번 로그인하면 여기서 결제할 수 있어요.",
+  "Connect Cursor": "Cursor 연결",
+  "Connect Grok Build": "Grok Build 연결",
+  "Cursor didn't answer. Check the installation, then try again.":
+    "Cursor가 응답하지 않았어요. 설치를 확인한 뒤 다시 시도해 주세요.",
+  "Cursor is unavailable": "Cursor를 사용할 수 없어요",
+  "Cursor isn't installed on this computer.": "이 컴퓨터에 Cursor가 설치되어 있지 않아요.",
+  "Cursor ready": "Cursor 준비됨",
+  "Cursor sign-in": "Cursor 로그인",
+  "Cursor {version}, {count, plural, other {# model(s)}}": "Cursor {version}, 모델 {count, plural, other {#개}}",
+  "Cursor's CLI forgets this computer's sign-in": "Cursor CLI가 이 컴퓨터의 로그인을 지워요",
+  "Cursor's model list could not be read.": "Cursor의 모델 목록을 읽을 수 없어요.",
+  "Cursor's sign-in status could not be read.": "Cursor의 로그인 상태를 읽을 수 없어요.",
+  "Finish signing in to Cursor in your browser. Cursor keeps the sign-in.":
+    "브라우저에서 Cursor 로그인을 마쳐 주세요. 로그인은 Cursor가 보관해요.",
+  "Finish signing in to Grok in your browser.": "브라우저에서 Grok 로그인을 마쳐 주세요.",
+  "Grok Build didn't answer. Check the installation, then try again.":
+    "Grok Build가 응답하지 않았어요. 설치를 확인한 뒤 다시 시도해 주세요.",
+  "Grok Build isn't installed on this Mac.": "이 Mac에 Grok Build가 설치되어 있지 않아요.",
+  "Grok Build isn't signed in.": "Grok Build에 로그인되어 있지 않아요.",
+  "Grok Build ready": "Grok Build 준비됨",
+  "Grok Build sign-in": "Grok Build 로그인",
+  "Grok Build {version}, {count, plural, one {# model} other {# models}}":
+    "Grok Build {version}, 모델 {count, plural, other {#개}}",
+  "Grok Build's model list could not be read.": "Grok Build의 모델 목록을 읽을 수 없었어요.",
+  "Install Cursor": "Cursor 설치",
+  "Install Cursor from Settings › Model Providers.": "설정 › 모델 제공자에서 Cursor를 설치해 주세요.",
+  "Install Cursor's CLI to build with your Cursor plan.": "Cursor CLI를 설치하면 Cursor 요금제로 만들 수 있어요.",
+  "Install Grok Build": "Grok Build 설치",
+  "Install Grok Build from Settings › Model Providers.": "설정 › 모델 제공자에서 Grok Build를 설치해 주세요.",
+  "Install it to build games with your Grok account.": "설치하면 Grok 계정으로 게임을 만들 수 있어요.",
+  "Installing Cursor. This can take a minute.": "Cursor를 설치하는 중이에요. 1분 정도 걸릴 수 있어요.",
+  "Installing Grok Build. This can take a minute.": "Grok Build를 설치하는 중이에요. 1분 정도 걸릴 수 있어요.",
+  "Nex lives in your Genex account. Sign in once, then pay here.":
+    "Nex는 Genex 계정에 있어요. 한 번 로그인하면 여기서 결제할 수 있어요.",
   Color: "색상",
   Colors: "색상",
   Columns: "열",
@@ -801,7 +828,6 @@ export default {
   "Compacting…": "압축하는 중…",
   "Compacts automatically": "자동으로 압축",
   "Comparative judgement": "비교 평가",
-  "Comparing before and after": "전후 비교 중",
   "Compiled {blueprint}": "{blueprint} 컴파일했어요",
   "Compiling {blueprint}": "{blueprint} 컴파일하는 중",
   Completed: "완료됨",
@@ -841,9 +867,7 @@ export default {
   "Connect {name}": "{name} 연결",
   Connected: "연결됨",
   "Connected to {name}.": "{name}에 연결됐어요.",
-  Connecting: "연결 중",
   "Connecting tools": "도구 연결 중",
-  "Connecting your game to the studio": "게임을 Studio에 연결하는 중",
   "Connecting…": "연결 중…",
   "Connection cancelled": "연결 취소됨",
   Connections: "연결",
@@ -894,7 +918,6 @@ export default {
   "Could not load local models. Reopen Settings to try again. {error}":
     "로컬 모델을 불러오지 못했어요. 설정을 다시 열고 다시 시도하세요. {error}",
   "Could not load this chat.": "이 채팅을 불러오지 못했어요.",
-  "Could not look for improvements. Try again.": "개선점을 찾지 못했어요. 다시 시도해 주세요.",
   "Could not open the local sign-in callback": "로컬 로그인 콜백을 열 수 없어요",
   "Could not open the sign-in terminal. Close an unused session and try again.":
     "로그인 터미널을 열지 못했어요. 안 쓰는 세션을 닫고 다시 시도해 주세요.",
@@ -1017,6 +1040,8 @@ export default {
   "Couldn’t install: this game doesn’t run on this Mac.": "설치하지 못했어요. 이 게임은 이 Mac에서 실행되지 않아요.",
   "Couldn’t install: this game is larger than it says.": "설치하지 못했어요. 이 게임이 표시된 크기보다 커요.",
   "Couldn’t install: this game isn’t signed.": "설치하지 못했어요. 이 게임은 서명되지 않았어요.",
+  "Couldn’t install: this game needs Rosetta to run on this Mac.":
+    "설치하지 못했어요. 이 Mac에서 이 게임을 실행하려면 Rosetta가 필요해요.",
   "Couldn’t install: this game’s files aren’t safe to open.":
     "설치하지 못했어요. 이 게임의 파일은 열기에 안전하지 않아요.",
   "Couldn’t load other versions.": "다른 버전을 불러오지 못했어요.",
@@ -1089,7 +1114,6 @@ export default {
   Default: "기본값",
   "Default game folder": "기본 게임 폴더",
   "Default model": "기본 모델",
-  "Default view": "기본 보기",
   Delete: "삭제",
   "Delete every row shared from this computer?": "이 컴퓨터에서 공유한 모든 행을 삭제할까요?",
   "Delete game": "게임 삭제",
@@ -1107,7 +1131,6 @@ export default {
   Delivered: "전달됨",
   "Delivered revision: {revision} · from integration {source}": "전달된 버전: {revision} · 통합 {source}에서",
   "Delivered, not used yet": "전달됨, 아직 안 씀",
-  "Demo: {demo}": "데모: {demo}",
   Demon: "악마",
   Denied: "거부됨",
   "Denied · {reason}": "거부됨 · {reason}",
@@ -1136,7 +1159,6 @@ export default {
   "Didn’t finish": "완료되지 않음",
   Disabled: "꺼짐",
   "Disabled in the provider configuration.": "제공자 설정에서 꺼져 있어요.",
-  Discard: "버리기",
   Disconnect: "연결 해제",
   "Disconnect account": "계정 연결 해제",
   Dismiss: "닫기",
@@ -1196,7 +1218,6 @@ export default {
   "Drop to add {count, plural, one {# picture} other {# pictures}}":
     "놓으면 {count, plural, other {이미지 #개}}가 추가돼요",
   "Drove the route": "경로를 주행했어요",
-  "Each chat session asks you first, and {keys} stops it.": "채팅 세션마다 먼저 물어보고, {keys} 키로 멈출 수 있어요.",
   Earlier: "이전",
   "Earlier builds": "이전 빌드",
   "Earlier conversation · no folder": "이전 대화 · 폴더 없음",
@@ -1286,7 +1307,6 @@ export default {
   Extensions: "확장 기능",
   "External MCP tools reach every coding agent through Studio.":
     "외부 MCP 도구는 Studio를 통해 모든 코딩 에이전트에 전달돼요.",
-  FPS: "FPS",
   Failed: "실패",
   "Failed to connect": "연결 실패",
   "Failed to start": "시작 실패",
@@ -1307,7 +1327,6 @@ export default {
   "Filled in from your paste": "붙여 넣은 내용으로 채웠어요",
   "Filter the picture": "이미지 필터",
   "Final look": "최종 점검",
-  "Final verification": "최종 확인",
   "Find people by name": "이름으로 사람 찾기",
   "Finding people by name isn’t on Genex yet. Send your link instead.":
     "이름으로 사람 찾기는 아직 Genex에 없어요. 대신 링크를 보내 보세요.",
@@ -1359,12 +1378,8 @@ export default {
   "For <plugin>Genex plugin</plugin> tools: 3D, animation, textures, music. Optional.":
     "<plugin>Genex 플러그인</plugin> 도구용: 3D, 애니메이션, 텍스처, 음악. 선택 사항이에요.",
   "Force Reload": "강제 새로 고침",
-  Found: "찾음",
   "Found locally. These plugins only run after you allow them.":
     "이 컴퓨터에서 찾았어요. 이 플러그인들은 허용해야 실행돼요.",
-  "Found {count, plural, one {# new suggestion} other {# new suggestions}} at the top of Activity.":
-    "새 제안 {count, plural, other {#개}}를 찾았어요. ‘활동’ 맨 위에 있어요.",
-  "Frame interval (ms)": "프레임 간격(ms)",
   Free: "무료",
   "Free and open source, about 170 MB. Genex installs it in Applications.":
     "무료 오픈 소스이고 약 170MB예요. Genex가 응용 프로그램 폴더에 설치해요.",
@@ -1584,7 +1599,29 @@ export default {
     "Unreal에서 게임을 만들려면 Unreal Engine {version} 버전을 받으세요.",
   "Get Xcode": "Xcode 받기",
   "Get a key": "키 받기",
-  "Get coin": "코인 받기",
+  "Get Nex": "Nex 받기",
+  Nex: "Nex",
+  "Not signed in to Cursor.": "Cursor에 로그인되어 있지 않아요.",
+  "Runs on your Grok account": "Grok 계정으로 실행돼요",
+  "Setting up Cursor…": "Cursor 설치 중…",
+  "Setting up Grok Build…": "Grok Build 설치 중…",
+  "Sign in again…": "다시 로그인…",
+  "Sign in to Cursor from Settings › Model Providers.": "설정 › 모델 제공자에서 Cursor에 로그인해 주세요.",
+  "Sign in to Grok from Settings › Model Providers.": "설정 › 모델 제공자에서 Grok에 로그인해 주세요.",
+  "Sign in with your Cursor account to build with your plan.": "Cursor 계정으로 로그인하면 요금제로 만들 수 있어요.",
+  "Sign in with your Grok account. Grok Build keeps the sign-in.":
+    "Grok 계정으로 로그인해 주세요. 로그인 정보는 Grok Build가 보관해요.",
+  "Switch to another Cursor account": "다른 Cursor 계정으로 전환",
+  "Switch to another Grok account": "다른 Grok 계정으로 전환",
+  "Update Cursor": "Cursor 업데이트",
+  "Update Grok Build": "Grok Build 업데이트",
+  "Update Grok Build from Settings › Model Providers.": "설정 › 모델 제공자에서 Grok Build를 업데이트해 주세요.",
+  "Uses your Cursor plan": "Cursor 요금제를 사용해요",
+  "Your Cursor account has no model it can run.": "Cursor 계정에서 실행할 수 있는 모델이 없어요.",
+  "xAI blocked this Grok account: {reason}": "xAI가 이 Grok 계정을 차단했어요: {reason}",
+  "xAI no longer accepts this Grok Build.": "xAI가 이 Grok Build를 더 이상 받지 않아요.",
+  "xAI no longer accepts this version. Update it to keep building.":
+    "xAI가 이 버전을 더 이상 받지 않아요. 업데이트하고 계속 만들어 보세요.",
   "Get credits": "크레딧 받기",
   "Get the Epic Games Launcher": "Epic Games Launcher 받기",
   "Getting Roblox Studio": "Roblox Studio 받는 중",
@@ -1619,8 +1656,6 @@ export default {
     "에이전트가 쓸 수 있는 가이드예요. 사용할 수 있는지는 출처와 선택한 제공자에 따라 달라요.",
   Guide: "가이드",
   "Harness added a tool for itself: {file}": "Harness가 스스로 쓸 도구를 추가했어요: {file}",
-  "Harness asks before changing how it builds. You can undo any change in Harness.":
-    "Harness는 만드는 방식을 바꾸기 전에 물어봐요. 모든 변경은 Harness에서 되돌릴 수 있어요.",
   "Harness can run up to this many workers at the same time.": "Harness가 동시에 실행할 수 있는 작업자의 최대 수예요.",
   "Harness changed one of its own files.": "Harness가 자기 파일 하나를 변경했어요.",
   "Harness could not read how this run ended.": "Harness가 이 빌드가 어떻게 끝났는지 읽지 못했어요.",
@@ -1634,8 +1669,6 @@ export default {
   "Harness is the set of instructions the agents follow when they build your games. It learns from every build and suggests better ways to work. You decide what changes.":
     "Harness는 에이전트가 게임을 만들 때 따르는 지침 모음이에요. 빌드할 때마다 배우고 더 나은 작업 방식을 제안해요. 무엇을 바꿀지는 직접 결정해요.",
   "Harness learned to {skill}.": "Harness가 새로 배웠어요: {skill}.",
-  "Harness looks at your finished builds for better ways to build.":
-    "Harness가 완료된 빌드를 보고 더 나은 제작 방법을 찾아요.",
   "Harness looks back.": "Harness가 돌아봐요.",
   "Harness no longer has the version from before this change, so it can’t undo it.":
     "Harness에 이 변경 전 버전이 더 이상 없어서 되돌릴 수 없어요.",
@@ -1656,6 +1689,7 @@ export default {
   Help: "도움말",
   Hide: "숨기기",
   "Hide Others": "기타 가리기",
+  "Hide friends": "친구 숨기기",
   "Hide sidebar": "사이드바 숨기기",
   "Hide terminal": "터미널 숨기기",
   "Hide terminal · keeps running": "터미널 숨기기 · 계속 실행돼요",
@@ -1730,7 +1764,6 @@ export default {
   "In your game": "게임에 있음",
   "In {folder}": "{folder}에서",
   "In-game economy": "게임 내 경제",
-  "Include: {title}": "포함: {title}",
   Incomplete: "미완료",
   "Independent interaction coverage is incomplete.": "독립 상호작용 검사 범위가 불완전해요.",
   "Independent interaction coverage is unavailable for this revision.": "이 버전에는 독립 상호작용 검사 범위가 없어요.",
@@ -1810,7 +1843,6 @@ export default {
   "Integrity check failed for {file}: the file does not match the pinned commit":
     "{file} 무결성 검사 실패: 파일이 고정된 커밋과 일치하지 않아요",
   "Interface font": "인터페이스 글꼴",
-  Interrupted: "중단됨",
   Interviewing: "질문 중",
   "Invalid GitHub link": "잘못된 GitHub 링크",
   "Invalid approval": "잘못된 승인",
@@ -1846,6 +1878,8 @@ export default {
   "It kept getting this wrong, so it stopped to save your credits.": "계속 잘 안 돼서 크레딧을 아끼려고 멈췄어요.",
   "It leaves Play and genex.games and goes back to drafts. The direct link still works, and plays and likes stay if it’s published again.":
     "플레이와 genex.games에서 내려가고 초안으로 돌아가요. 직접 링크는 계속 작동하고, 다시 게시하면 플레이 수와 좋아요도 그대로 남아요.",
+  "It leaves the game’s Store. Players who own it keep it.":
+    "게임 스토어에서 빠져요. 이미 가진 플레이어는 계속 가져요.",
   "It may need the setup scripts its packages came with, which didn’t run.":
     "패키지와 함께 온 설정 스크립트가 실행되지 않았는데, 그게 필요할 수도 있어요.",
   "It merged this part's work without a reviewer's verdict. The reviewers score parts that build in steps; this one was built in one session.":
@@ -1907,7 +1941,6 @@ export default {
   "Judge who played it": "직접 플레이한 심사위원",
   "Jump to latest": "최신으로 이동",
   "Jump to now": "현재로 이동",
-  "Just this once.": "이번 한 번만.",
   Keep: "유지",
   "Keep building": "계속 만들기",
   "Keep building where you left off.": "멈춘 곳부터 계속 만들어 주세요.",
@@ -1919,7 +1952,6 @@ export default {
   "Keep this cover": "이 커버 유지",
   "Keep this folder": "이 폴더 유지하기",
   "Keep working on a game you already have": "이미 있는 게임 이어서 만들기",
-  "Keeping verified change": "확인된 변경 적용 중",
   Kept: "유지됨",
   "Kept by reviewers": "리뷰어가 유지함",
   "Kept by reviewers, not added": "리뷰어가 유지함, 추가 안 됨",
@@ -1960,19 +1992,10 @@ export default {
   "Left {count, plural, one {# game} other {# games}} alone while they work.":
     "작업 중인 {count, plural, other {게임 #개}}는 그대로 뒀어요.",
   "Left {game} alone while it works.": "{game}: 작업 중이라 그대로 뒀어요.",
-  "Let agents control your computer": "에이전트의 컴퓨터 제어 허용",
   "Let go of every input": "모든 입력을 뗐어요",
   "Let it see this game's folder": "이 게임 폴더 보기 허용",
   "Let the agent use {name}?": "에이전트에게 {name} 사용을 허용할까요?",
   "Let the game settle": "게임이 안정되길 기다렸어요",
-  "Let this chat's agent do this for you with computer control? {plugin} asks: {task}":
-    "이 채팅의 에이전트가 컴퓨터 제어로 대신 처리하게 할까요? {plugin}의 요청: {task}",
-  "Let this chat's agent see your screen and use your computer during this session? Each app it reaches asks you first. Stop it any time with Stop, or {shortcut}.":
-    "이 세션 동안 이 채팅의 에이전트가 화면을 보고 컴퓨터를 사용하게 할까요? 앱마다 먼저 물어봐요. 언제든 ‘중지’ 버튼이나 {shortcut} 키로 멈출 수 있어요.",
-  "Let this chat's agent use this app? It can click, type and read what this app shows.":
-    "이 채팅의 에이전트가 이 앱을 쓰게 할까요? 이 앱 화면을 읽고 클릭하고 입력할 수 있어요.",
-  "Let this chat's agent use {app}? It can click, type and read what {app} shows.":
-    "이 채팅의 에이전트가 {app} 앱을 쓰게 할까요? {app} 화면을 읽고 클릭하고 입력할 수 있어요.",
   "Letters a–z, digits and dashes.": "영문 a–z, 숫자, 대시만 쓸 수 있어요.",
   "Letting go of every input": "모든 입력을 떼는 중",
   "Letting the game settle": "게임이 안정되길 기다리는 중",
@@ -2033,8 +2056,6 @@ export default {
   "Long work the lead or a worker started, like a build. It runs on while the agents go on working.":
     "빌드처럼 메인 에이전트나 작업자가 시작한 오래 걸리는 작업이에요. 에이전트가 계속 일하는 동안에도 계속 실행돼요.",
   "Look and move from the player's eyes.": "플레이어의 눈으로 보고 움직여요.",
-  "Look for improvements": "개선점 찾기",
-  "Look for improvements in recent builds": "최근 빌드에서 개선점 찾기",
   Looked: "둘러봤어요",
   "Looked at the level": "레벨을 살펴봤어요",
   "Looked through the assets": "에셋을 훑어봤어요",
@@ -2049,7 +2070,6 @@ export default {
   "Looking at this Mac…": "이 Mac을 확인하는 중…",
   "Looking at your game": "게임 살펴보는 중",
   "Looking at your game.": "게임을 살펴보고 있어요.",
-  "Looking for improvements": "개선점을 찾는 중",
   "Looking something up": "정보 찾는 중",
   "Looking through the assets": "에셋을 훑어보는 중",
   "Looking up Blueprint nodes": "블루프린트 노드를 찾아보는 중",
@@ -2061,6 +2081,7 @@ export default {
   "Loop finished · Changes kept in your project": "Loop 끝남 · 변경 사항은 프로젝트에 남아 있어요",
   "Loop from {day}": "{day} Loop",
   "Loop mode": "Loop 모드",
+  "Loop not started": "Loop가 시작되지 않음",
   "Loop time limit": "Loop 시간 제한",
   "Loops need the {engine} project inside this game’s folder, so Rewind can undo each step; {project} is in {place}. Make a new one from the {engine} button, or move {project} into this game’s folder and choose it there. Until then, it does what you ask, then stops.":
     "Loop가 되감기로 각 단계를 되돌리려면 {engine} 프로젝트가 이 게임 폴더 안에 있어야 해요. {project} 프로젝트는 {place}에 있어요. {engine} 버튼으로 새로 만들거나, {project} 프로젝트를 이 게임 폴더로 옮긴 뒤 거기서 선택하세요. 그전까지는 요청한 일을 하고 멈춰요.",
@@ -2138,9 +2159,6 @@ export default {
   "Measured in a plugin": "플러그인에서 측정",
   "Measured in {plugin}": "{plugin}에서 측정",
   "Measured the route": "경로를 측정했어요",
-  Measurement: "측정 항목",
-  "Measurement has not completed": "측정이 끝나지 않았어요",
-  "Measuring before": "변경 전 측정 중",
   "Measuring the route": "경로를 측정하는 중",
   "Measuring…": "측정 중…",
   "Meet your Genex avatar": "나만의 Genex 아바타를 만나 보세요",
@@ -2263,6 +2281,7 @@ export default {
   "No comments on {title} yet": "{title}에 아직 댓글이 없어요",
   "No compatible newer release is available for this installed plugin":
     "설치된 이 플러그인에 호환되는 새 버전이 없어요",
+  "No cover yet, so it goes out without a picture.": "아직 커버가 없어서 사진 없이 공개돼요.",
   "No dash at the ends": "양 끝에 대시 불가",
   "No friends yet — send your link and play together.": "아직 친구가 없어요 — 링크를 보내고 같이 플레이해 보세요.",
   "No games for “{query}”.": "“{query}”에 해당하는 게임이 없어요.",
@@ -2306,7 +2325,6 @@ export default {
   "No time limit": "시간 제한 없음",
   "No unlocked system keyring is available. Start GNOME Keyring or KWallet and unlock it, then restart Genex.":
     "잠금 해제된 시스템 키링이 없어요. GNOME Keyring이나 KWallet을 실행해 잠금을 풀고 Genex를 다시 시작하세요.",
-  "No verified improvement": "확인된 개선 없음",
   "Nobody answered": "응답 없음",
   "Nobody else has this one.": "다른 누구에게도 없는 아바타예요.",
   "Nobody named “{query}”.": "“{query}”라는 이름의 사람이 없어요.",
@@ -2318,7 +2336,6 @@ export default {
   "Not added": "추가 안 됨",
   "Not approved": "승인 안 됨",
   "Not asked — the step did not land.": "요청 안 함 — 단계가 반영되지 않았어요.",
-  "Not comparable": "비교 불가",
   "Not confirmed": "확인되지 않음",
   "Not connected": "연결 안 됨",
   "Not decided yet.": "아직 정해지지 않았어요.",
@@ -2341,7 +2358,6 @@ export default {
   "Not made yet": "아직 만들지 않음",
   "Not measured": "측정 안 됨",
   "Not measured yet": "아직 측정 전",
-  "Not measured — {reason}": "측정 안 됨 — {reason}",
   "Not needed — the round was undone on the checks.": "필요 없음 — 검사 결과로 라운드가 되돌려졌어요.",
   "Not now": "나중에",
   "Not on this plan or model": "이 요금제나 모델에서는 사용할 수 없음",
@@ -2371,7 +2387,6 @@ export default {
     "{host}에서 응답이 없어요. 서버를 시작한 다음 다시 확인하세요.",
   "Nothing beyond its own tools": "자체 도구 외에는 없음",
   "Nothing changed. Try again in a moment.": "바뀐 게 없어요. 잠시 후 다시 시도해 주세요.",
-  "Nothing changes until you apply.": "적용하기 전에는 아무것도 바뀌지 않아요.",
   "Nothing is added to this folder.": "이 폴더에는 아무것도 추가되지 않아요.",
   "Nothing is failing.": "실패하는 게 없어요.",
   "Nothing is installing.": "설치 중인 게 없어요.",
@@ -2379,8 +2394,6 @@ export default {
   "Nothing kept yet": "아직 유지된 라운드 없음",
   "Nothing made": "만든 것 없음",
   "Nothing made yet": "아직 만든 게 없어요",
-  "Nothing new": "새 항목 없음",
-  "Nothing new to suggest.": "새로 제안할 게 없어요.",
   "Nothing spent yet": "아직 사용 내역이 없어요",
   "Nothing to free up": "확보할 공간이 없어요",
   "Nothing was clicked. Install Unreal {version} yourself in the launcher: {clicks}.":
@@ -2595,8 +2608,8 @@ export default {
     "브라우저에서 OpenRouter가 열려요. 거기서 Genex를 승인하면 여기로 돌아와요.",
   "Opens System Settings → Privacy & Security → {pane}": "시스템 설정 → 개인정보 보호 및 보안 → {pane} 열기",
   "Opens beside the chat": "채팅 옆에 열려요",
-  "Opens genex.games. Pay comes back once the coin lands.":
-    "genex.games가 열려요. 코인이 들어오면 다시 결제할 수 있어요.",
+  "Opens genex.games. Pay comes back once the Nex lands.":
+    "genex.games가 열려요. Nex가 들어오면 다시 결제할 수 있어요.",
   "Opens in Explorer": "탐색기에서 열려요",
   "Opens in Finder": "Finder에서 열려요",
   "Opens in its default app": "기본 앱에서 열려요",
@@ -2604,10 +2617,6 @@ export default {
   "Opens the release page": "릴리스 페이지가 열려요",
   "Opens your browser. You’ll come back here to pay.": "브라우저가 열려요. 결제하려면 다시 여기로 돌아오세요.",
   Optic: "옵틱",
-  Optimization: "최적화",
-  "Optimization finished": "최적화 완료",
-  "Optimization stage details": "최적화 단계 세부 정보",
-  Optimizing: "최적화 중",
   "Or in Studio: {clicks}.": "또는 Studio에서: {clicks}.",
   "Otherwise every game can use it.": "아니면 모든 게임에서 쓸 수 있어요.",
   "Outcome not recorded": "결과 기록 없음",
@@ -2685,7 +2694,7 @@ export default {
   "Plan ready": "계획 준비됨",
   "Plan ready for review": "검토할 계획이 준비됐어요",
   "Plan usage isn’t available right now.": "지금은 요금제 사용량을 확인할 수 없어요.",
-  "Plan your game": "게임 계획",
+  "Your agent leads": "에이전트가 이끌어요",
   Planning: "계획 중",
   "Planning the build": "빌드 계획 중",
   "Planning the next step": "다음 단계를 계획하는 중",
@@ -2926,6 +2935,7 @@ export default {
   "Remove the waiting messages first: this harness cannot take them back.":
     "먼저 대기 중인 메시지를 지워 주세요. 이 Harness는 메시지를 되돌릴 수 없어요.",
   "Remove this row": "이 줄 삭제",
+  "Remove {item} from {game}?": "{item}을(를) {game}에서 뺄까요?",
   "Remove {name}": "{name} 삭제",
   Removed: "제거됨",
   "Removed {actor}": "{actor} 제거했어요",
@@ -2958,7 +2968,6 @@ export default {
   "Repository tree is truncated; point the spec at a smaller subdirectory":
     "저장소 트리가 잘렸어요. 더 작은 하위 디렉터리를 지정하세요",
   "Repository tree is unreadable": "저장소 트리를 읽을 수 없어요",
-  "Request details": "요청 세부 정보",
   "Request sent": "요청 보냄",
   Requests: "요청",
   Reset: "초기화",
@@ -3020,9 +3029,7 @@ export default {
   "Reviewers model": "리뷰어 모델",
   "Reviewers preferred it": "리뷰어가 이쪽을 골랐어요",
   "Reviewers preferred the game you had": "리뷰어가 이전 게임을 골랐어요",
-  "Reviewers test every result and decide when the game is done.":
-    "리뷰어는 모든 결과를 테스트하고 게임이 완성됐는지 판단해요.",
-  "Reviewers test it": "리뷰어가 테스트하고",
+  "A second opinion": "다른 시선",
   "Reviewers undid it": "리뷰어가 되돌렸어요",
   "Reviewers undid {count, plural, other {# tries}}": "리뷰어가 시도 {count, plural, other {#개}}를 되돌렸어요",
   "Reviewers · try {number}": "리뷰어 · 시도 {number}",
@@ -3122,7 +3129,6 @@ export default {
   "Running {script}": "{script} 실행하는 중",
   "Running…": "실행 중…",
   "Runs and improvements will show up here.": "빌드와 개선 사항이 여기에 표시돼요.",
-  "Runs at the end": "마지막에 실행",
   "Runs outside its sandbox": "샌드박스 밖에서 실행",
   "Runs without asking: {tools}.": "묻지 않고 실행: {tools}.",
   "Runtime context is unknown; 8K is an estimated planning budget. Load the model to measure it.":
@@ -3206,15 +3212,8 @@ export default {
   "Selected public path is missing or unreadable: {path}": "선택한 공개 경로가 없거나 읽을 수 없어요: {path}",
   "Selected step": "선택한 단계",
   "Self-improvement": "자기 개선",
-  "Self-improvement is off in Harness, so there is nothing to apply.":
-    "Harness에서 자기 개선이 꺼져 있어서 적용할 게 없어요.",
-  "Self-improvement is off. Harness isn’t learning from new builds.":
-    "자기 개선이 꺼져 있어요. Harness가 새 빌드에서 배우지 않아요.",
-  "Self-improvement is off. Turn it on at the top of Studio to look for improvements.":
-    "자기 개선이 꺼져 있어요. 개선할 점을 찾으려면 Studio 상단에서 켜 주세요.",
   Send: "보내기",
   "Send a report": "보고서 보내기",
-  "Send answer": "답변 보내기",
   "Send feedback": "피드백 보내기",
   "Send idea": "아이디어 보내기",
   "Send report": "보고서 보내기",
@@ -3298,6 +3297,7 @@ export default {
   "Show earlier runs": "이전 빌드 보기",
   "Show earlier updates": "이전 업데이트 보기",
   "Show fewer": "접기",
+  "Show friends": "친구 보기",
   "Show friends what I’m playing": "내가 플레이 중인 게임을 친구에게 보여 주기",
   "Show game": "게임 보기",
   "Show in Explorer": "탐색기에서 보기",
@@ -3378,7 +3378,6 @@ export default {
   "Skill details": "스킬 세부 정보",
   Skills: "스킬",
   "Skip for now": "지금은 건너뛰기",
-  Skipped: "건너뜀",
   'Skipped "{name}": Studio connector ids are lowercase letters, digits and dashes.':
     "“{name}” 건너뜀: Studio 커넥터 ID는 영문 소문자, 숫자, 대시로만 만들 수 있어요.",
   'Skipped "{name}": a stdio server needs a command.': "“{name}” 건너뜀: stdio 서버에는 명령어가 필요해요.",
@@ -3527,13 +3526,8 @@ export default {
   "Studio's MCP server is on and answering Genex": "Studio의 MCP 서버가 켜져 있고 Genex에 응답하고 있어요",
   "Studio’s agents only run inside a protected workspace that keeps them away from your files and accounts.":
     "Studio의 에이전트는 파일과 계정에 접근하지 못하게 막아 주는 보호된 작업 공간 안에서만 실행돼요.",
-  "Studio’s instructions changed after this suggestion was made, and it no longer fits. Discard it; Studio will suggest again after a later build.":
-    "이 제안이 만들어진 뒤 Studio의 지침이 바뀌어서 더 이상 맞지 않아요. 버리세요. 다음 빌드 이후에 Studio가 다시 제안할 거예요.",
   Success: "성공",
   "Suggest prompt": "아이디어 추천",
-  "Suggested after reviewing your recent builds.": "최근 빌드를 검토한 뒤 제안됐어요.",
-  "Suggestions that pass testing apply without asking. You can undo any of them in Harness.":
-    "테스트를 통과한 제안은 묻지 않고 적용돼요. Harness에서 언제든 되돌릴 수 있어요.",
   "Suggestions wait until you apply them. Every applied change can be undone.":
     "제안은 적용할 때까지 기다려요. 적용한 변경은 모두 되돌릴 수 있어요.",
   "Summarise the older part of this chat into the log so it fits the model":
@@ -3677,8 +3671,6 @@ export default {
   "The approved plan is starting. Please wait.": "승인된 계획을 시작하고 있어요. 잠시만 기다려 주세요.",
   "The apps are on Genex, but the game isn’t in the gallery yet. Publish again to list it.":
     "앱은 Genex에 올라갔지만 게임은 아직 갤러리에 없어요. 다시 게시하면 등록돼요.",
-  "The assembled game is being measured and checked for safe improvements.":
-    "완성된 게임을 측정하고 안전한 개선점을 확인하고 있어요.",
   "The best game dev tools, always up to date. No MCPs or API keys to install: they’re connected in one click.":
     "최고의 게임 개발 도구를 항상 최신으로. MCP나 API 키를 설치할 필요 없이 클릭 한 번으로 연결돼요.",
   "The best game dev tools, in one click": "최고의 게임 개발 도구를 클릭 한 번으로",
@@ -3736,8 +3728,6 @@ export default {
     "설치 프로그램에 만든 곳의 서명이 없어서 Genex가 실행하지 않았어요.",
   "The installer isn't signed, so Genex didn't run it.": "설치 프로그램에 서명이 없어서 Genex가 실행하지 않았어요.",
   "The installer stopped before it finished. Try again.": "설치 프로그램이 끝나기 전에 멈췄어요. 다시 시도하세요.",
-  "The instructions this suggestion changes are gone. Discard it.":
-    "이 제안이 바꾸려는 지침이 없어졌어요. 제안을 버려 주세요.",
   "The judge didn't play": "심사위원이 플레이하지 않았어요",
   "The judge's moves were replayed on this build, and the goal held.":
     "이 빌드에서 심사위원의 조작을 재현했고, 목표가 그대로 유지됐어요.",
@@ -3811,7 +3801,6 @@ export default {
   "The rest of this file is too long to show here.": "이 파일의 나머지는 너무 길어서 여기에 표시할 수 없어요.",
   "The reviewer is satisfied with this part.": "리뷰어가 이 파트에 만족해요.",
   "The reviewer preferred the new build to the round before.": "리뷰어가 이전 라운드보다 새 빌드를 더 좋게 봤어요.",
-  "The reviewer preferred the round before.": "리뷰어가 이전 라운드를 더 좋게 봤어요.",
   "The reviewers are looking at try {tryNumber}.": "리뷰어가 {tryNumber}번째 시도를 보고 있어요.",
   "The reviewers kept it on the first try.": "리뷰어가 첫 시도에서 유지했어요.",
   "The reviewers kept try {tryNumber} after undoing the one before it.":
@@ -4045,7 +4034,7 @@ export default {
   "This plan is no longer waiting for approval.": "이 계획은 더 이상 승인을 기다리지 않아요.",
   "This plugin has no releases, so Studio takes the newest code. It stays as installed until you update it.":
     "이 플러그인에는 릴리스가 없어서 Studio가 최신 코드를 가져와요. 업데이트하기 전까지는 설치한 상태 그대로예요.",
-  "This plugin runs trusted code on your Mac.": "이 플러그인은 Mac에서 신뢰할 수 있는 코드를 실행해요.",
+  "This plugin runs trusted code on your computer.": "이 플러그인은 이 컴퓨터에서 신뢰할 수 있는 코드를 실행해요.",
   "This plugin's package is missing; remove the plugin and install it again":
     "이 플러그인의 패키지가 없어요. 플러그인을 제거하고 다시 설치하세요",
   "This plugin’s plugin.json can’t be used.": "이 플러그인의 plugin.json은 사용할 수 없어요.",
@@ -4081,12 +4070,6 @@ export default {
   "This sound could not be played": "이 사운드를 재생하지 못했어요",
   "This step": "이 단계",
   "This step's plugin isn't installed any more.": "이 단계의 플러그인이 더 이상 설치되어 있지 않아요.",
-  "This suggestion is damaged, so Studio did not apply it. Discard it.":
-    "이 제안은 손상돼서 Studio가 적용하지 않았어요. 버리세요.",
-  "This suggestion is no longer waiting. Harness may have applied or discarded it already.":
-    "이 제안은 더 이상 대기 중이 아니에요. Harness가 이미 적용했거나 버렸을 수 있어요.",
-  "This suggestion’s file is not a plain file in Harness’s instructions, so Studio did not apply it. Discard it.":
-    "이 제안의 파일은 Harness 지침 안의 일반 파일이 아니라서 Studio가 적용하지 않았어요. 제안을 버려 주세요.",
   "This system can’t run the protected workspace. Studio needs macOS, Windows, or Linux (not WSL 1).":
     "이 시스템에서는 보호된 작업 공간을 실행할 수 없어요. Studio에는 macOS, Windows 또는 Linux(WSL 1 제외)가 필요해요.",
   "This system is blocking the isolation the protected workspace uses to keep agents apart.":
@@ -4103,7 +4086,6 @@ export default {
     "이 비디오 코덱은 재생할 수 없어요. MP4(H.264)나 WebM으로 내보내 보세요.",
   "This {name} install needs Node.js, which isn't installed. Install the native version instead.":
     "이 {name} 설치에는 Node.js가 필요한데 설치되어 있지 않아요. 대신 네이티브 버전을 설치하세요.",
-  "Three version": "Three 버전",
   Threshold: "임계값",
   "To {folder}. Genex reopens when it’s done.": "{folder} 폴더로 옮기고 있어요. 끝나면 Genex가 다시 열려요.",
   Today: "오늘",
@@ -4141,12 +4123,12 @@ export default {
   Try: "추천",
   "Try again": "다시 시도",
   "Try again in a few minutes.": "몇 분 뒤에 다시 시도해 주세요.",
-  "Try again in the game once the coin lands.": "코인이 들어오면 게임에서 다시 시도해 주세요.",
-  "Try again in the game. No coin was charged.": "게임에서 다시 시도해 주세요. 코인은 청구되지 않았어요.",
-  "Try again in the game. No coin was reserved or charged.":
-    "게임에서 다시 시도해 주세요. 코인은 예약되거나 청구되지 않았어요.",
-  "Try again in the game. The coin went back to your balance.":
-    "게임에서 다시 시도해 주세요. 코인은 잔액으로 돌아갔어요.",
+  "Try again in the game once the Nex lands.": "Nex가 들어오면 게임에서 다시 시도해 주세요.",
+  "Try again in the game. No Nex was charged.": "게임에서 다시 시도해 주세요. Nex는 청구되지 않았어요.",
+  "Try again in the game. No Nex was reserved or charged.":
+    "게임에서 다시 시도해 주세요. Nex는 예약되거나 청구되지 않았어요.",
+  "Try again in the game. The Nex went back to your balance.":
+    "게임에서 다시 시도해 주세요. Nex는 잔액으로 돌아갔어요.",
   "Try again, or choose another model.": "다시 시도하거나 다른 모델을 골라 주세요.",
   "Try the build again": "빌드 다시 시도",
   "Try your changes before you update.": "업데이트하기 전에 변경 사항을 확인해 보세요.",
@@ -4165,8 +4147,6 @@ export default {
   "Turn on Secondary Logon in Windows Services (Startup type: Manual), then try again.":
     "Windows 서비스에서 보조 로그온(Secondary Logon)을 켜고(시작 유형: 수동) 다시 시도해 주세요.",
   "Turn on Studio's MCP server": "Studio의 MCP 서버 켜기",
-  "Turn on computer control? Agents in every chat can then ask to use apps on this computer, one app at a time.":
-    "컴퓨터 제어를 켤까요? 그러면 모든 채팅의 에이전트가 이 컴퓨터의 앱을 한 번에 하나씩 사용하겠다고 요청할 수 있어요.",
   "Turn on mic": "마이크 켜기",
   "Turn on microphone": "마이크 켜기",
   "Turn on {name}": "{name} 켜기",
@@ -4368,7 +4348,6 @@ export default {
   "Variable names use capital letters, digits and _; header names letters, digits and -.":
     "변수 이름에는 대문자, 숫자, _를, 헤더 이름에는 문자, 숫자, -를 쓸 수 있어요.",
   Verdict: "판정",
-  "Verifying game": "게임 확인 중",
   Version: "버전",
   "Version {version}": "버전 {version}",
   "Versions of your games saved for Rewind and builds.": "되감기와 빌드를 위해 저장한 게임 버전이에요.",
@@ -4438,7 +4417,7 @@ export default {
   "What Claude does without asking. Choosing Always allow in a chat adds an action here, for that game.":
     "Claude가 묻지 않고 하는 작업이에요. 채팅에서 ‘항상 허용’을 고르면 그 게임에 대한 작업이 여기에 추가돼요.",
   "What Harness has learned": "Harness가 배운 것",
-  "What changes": "바뀌는 내용",
+  "What changed": "바뀐 점",
   "What credits pay for": "크레딧 사용처",
   "What do you want to make?": "무엇을 만들고 싶어요?",
   "What happened, and what did you expect?": "무슨 일이 있었고, 원래 어떻게 되길 기대했나요?",
@@ -4460,8 +4439,6 @@ export default {
   "What's missing: {task}": "빠진 것: {task}",
   "When a session limit resets, a while after a model provider’s outage, or when Studio’s loop restarts, a paused build picks up where it left off, up to twice per build. A build you stop stays stopped, and one paused on a sign-in waits for you.":
     "세션 한도가 초기화되거나, 모델 제공자 장애 후 잠시 지나거나, Studio 루프가 다시 시작되면 일시 정지된 빌드가 멈춘 곳부터 다시 이어가요(빌드당 최대 두 번). 직접 멈춘 빌드는 그대로 멈춰 있고, 로그인 때문에 멈춘 빌드는 내가 로그인할 때까지 기다려요.",
-  "When off, Harness stops learning from your builds. What it already learned stays until you undo it.":
-    "끄면 Harness가 빌드에서 더 이상 배우지 않아요. 이미 배운 내용은 되돌리기 전까지 남아요.",
   "Where Genex keeps its files": "Genex가 파일을 보관하는 곳",
   "Where the server runs": "서버 실행 위치",
   "Where this game is saved": "이 게임이 저장된 곳",
@@ -4480,12 +4457,11 @@ export default {
     "Windows가 설치 권한을 받지 못했어요. '대신 해 주기'를 다시 누르고 Windows가 물어보면 '예'를 고르세요.",
   "Windows needs a one-time setup of the protected workspace, approved by an administrator.":
     "Windows에서는 관리자 승인을 받아 보호된 작업 공간을 한 번 설정해야 해요.",
+  "Windows will ask you to allow it once.": "Windows가 한 번 허용을 요청해요.",
   "Windows will ask you to allow this once. If it asks for a password, an administrator of this PC can enter theirs. Agents work in their own protected space, away from your files.":
     "Windows가 한 번 허용을 요청해요. 비밀번호를 물으면 이 PC의 관리자가 자기 비밀번호를 입력하면 돼요. 에이전트는 내 파일과 떨어진 전용 보호 공간에서 작업해요.",
   "Windows wouldn’t start Genex’s protected space.": "Windows가 Genex 보호 공간을 시작하지 않았어요.",
   "Wireframe terrain flying by at dusk": "해 질 녘 스쳐 지나가는 와이어프레임 지형",
-  "With this on, an agent can click and type in the apps you allow.":
-    "켜면 허용한 앱에서 에이전트가 클릭하고 입력할 수 있어요.",
   "Withdrawn by a restart": "다시 시작되어 취소됨",
   "Withdrawn when the studio restarted": "Studio가 다시 시작되어 취소됨",
   "Withdrawn when the turn ended": "응답이 끝나서 취소됨",
@@ -4499,7 +4475,6 @@ export default {
   "Worked on {count, plural, one {# step} other {# steps}}": "{count, plural, other {#단계}} 작업",
   Worker: "작업자",
   Workers: "작업자",
-  "Workers build the parts of the plan, several at once.": "작업자는 계획의 파트를 여러 개 동시에 만들어요.",
   "Workers model": "작업자 모델",
   "Workers: {model}": "작업자: {model}",
   Working: "작업 중",
@@ -4513,8 +4488,6 @@ export default {
   "Works on phones": "휴대폰에서 작동",
   "Workspace restored": "작업 공간을 복원했어요",
   "Workspace unavailable until Studio loads.": "Studio를 불러올 때까지 작업 공간을 쓸 수 없어요.",
-  "World draw calls": "월드 드로 콜",
-  "World triangles": "월드 삼각형",
   "Wrapping up the build": "빌드 정리 중",
   "Write a message…": "메시지 입력…",
   "Write your own answer…": "직접 답변 쓰기…",
@@ -4578,7 +4551,7 @@ export default {
   "Your browser should show": "브라우저에 표시될 코드",
   "Your build": "내 빌드",
   "Your coding provider": "사용 중인 모델 제공자",
-  "Your coin arrived. Review the purchase, then pay.": "코인이 들어왔어요. 구매 내용을 확인하고 결제하세요.",
+  "Your Nex arrived. Review the purchase, then pay.": "Nex가 들어왔어요. 구매 내용을 확인하고 결제하세요.",
   "Your files": "내 파일",
   "Your game appears here": "여기에 게임이 표시돼요",
   "Your game as it was when the run started.": "빌드를 시작했을 때의 게임이에요.",
@@ -4610,7 +4583,6 @@ export default {
     "열려 있는 Roblox Studio예요. 에이전트가 여기서 Roblox 게임을 만들어요.",
   "Your open Unreal Editor, where agents build Unreal games.":
     "열려 있는 Unreal 에디터예요. 에이전트가 여기서 Unreal 게임을 만들어요.",
-  "Your own answer": "직접 쓴 답변",
   "Your profile link": "내 프로필 링크",
   "Your profile link.": "내 프로필 링크예요.",
   "Your profile, friends and Publish stay.": "프로필, 친구, 게시 기능은 그대로예요.",
@@ -4683,7 +4655,7 @@ export default {
   "an earlier build is ready to play · resume from chat": "이전 빌드를 플레이할 수 있어요 · 채팅에서 이어 가기",
   "an empty folder": "빈 폴더",
   "an input": "입력",
-  "and approve each build": "빌드마다 승인해요",
+  "when the lead asks for one": "메인 에이전트가 요청할 때",
   "and {count} more": "외 {count}개",
   "another project or no recorded preview": "다른 프로젝트이거나 기록된 미리보기 없음",
   "app update left every harness file as it was": "앱 업데이트에서 Harness 파일은 그대로 유지됐어요",
@@ -4703,12 +4675,10 @@ export default {
   "asset group\u0004Delivered": "전달됨",
   attempts: "시도",
   back: "후면",
-  backend: "백엔드",
   "badge\u0004Set up": "설정 필요",
   "badge\u0004Update": "업데이트",
   "balance couldn’t be read": "잔액을 불러올 수 없음",
   "base commit": "기준 커밋",
-  "baseline version": "기준 버전",
   "before a Loop starts": "Loop 시작 전",
   "before a project of its kind is made": "해당 종류의 프로젝트를 만들기 전",
   "before a restore": "복원 전",
@@ -4733,11 +4703,9 @@ export default {
   "camera: {camera}": "카메라: {camera}",
   cameras: "카메라",
   "can't call tools, so it can't build": "도구를 호출할 수 없어서 만들 수 없음",
-  "candidate version": "후보 버전",
   "captured the game": "게임을 캡처했어요",
   "change files in your games": "게임의 파일 변경",
   changed: "변경됨",
-  "changed files": "변경된 파일",
   chat: "채팅",
   "checked for graphics errors": "그래픽 오류를 확인했어요",
   "checked on a worker": "작업자를 확인했어요",
@@ -4769,14 +4737,9 @@ export default {
   "count\u0004six": "6",
   "count\u0004three": "3",
   "count\u0004two": "2",
-  "counter scope": "카운터 범위",
   "development build": "개발 빌드",
   done: "완료",
   "down {percent}%": "{percent}% 감소",
-  "each round has to beat the one before, and a reviewer that cannot see which is which picks the winner":
-    "각 라운드는 이전 라운드를 이겨야 하고, 어느 쪽인지 모르는 리뷰어가 승자를 골라요",
-  "each round has to beat the one before, and {reviewer}, reviewing without being told which build is which, picks the winner":
-    "각 라운드는 이전 라운드를 이겨야 하고, {reviewer} 모델이 어느 빌드인지 모른 채 리뷰해서 승자를 골라요",
   "edited itself": "자기 코드를 편집했어요",
   "edited the code": "코드를 편집했어요",
   "editor\u0004Waiting for you": "기다리는 중",
@@ -4792,7 +4755,7 @@ export default {
   eighth: "여덟 번째",
   ended: "종료됨",
   "every object has a reason to be there": "모든 물건에 있을 이유가 있는지",
-  "every piece at once": "모든 부분을 동시에",
+  "on parts at the same time": "여러 부분을 동시에",
   "every step landed": "모든 단계가 반영됐어요",
   "exit {code}": "종료 코드 {code}",
   "export games": "게임 내보내기",
@@ -4830,7 +4793,7 @@ export default {
   "had a judge play the game": "심사위원에게 게임을 플레이하게 했어요",
   "handed the work to a worker": "작업자에게 일을 넘겼어요",
   "heading\u0004Installed": "설치됨",
-  'heading in the direction of "{name}" — {rule}': "“{name}” 방향으로 가는 중 — {rule}",
+  'heading in the direction of "{name}"': "“{name}” 방향으로 가는 중",
   "how Genex runs this game": "Genex가 이 게임을 실행하는 방법",
   "how Harness leads a build": "Harness가 빌드를 이끄는 방식",
   "how Harness plans a build": "Harness가 빌드를 계획하는 방식",
@@ -4846,7 +4809,6 @@ export default {
   "in {game} and {count} more": "{game} 외 {count}개 게임에서 플레이 중",
   "install and run the apps it names, such as Blender": "Blender처럼 지정한 앱 설치 및 실행",
   "installs Genex packages in the game": "게임에 Genex 패키지 설치",
-  "insufficient samples": "샘플 부족",
   integrations: "병합 횟수",
   "it finished": "끝났어요",
   "it landed": "반영됐어요",
@@ -4956,7 +4918,6 @@ export default {
   "planned its next steps": "다음 단계를 계획했어요",
   "played the game": "게임을 플레이했어요",
   "playing now": "플레이 중",
-  preservation: "보존",
   "pressed keys": "키를 눌렀어요",
   "programs on this Mac": "이 Mac의 프로그램",
   project: "프로젝트",
@@ -4978,14 +4939,11 @@ export default {
   refunded: "환불됨",
   "reloaded the game": "게임을 새로 고침했어요",
   "remembered something": "무언가를 기억했어요",
-  renderer: "렌더러",
   "reopened the build": "빌드를 다시 열었어요",
-  report: "보고서",
   "requested an iterative build": "여러 라운드 빌드를 요청했어요",
   "restarted itself": "스스로 다시 시작했어요",
   "resume from chat": "채팅에서 이어 가기",
   "resumed the saved build": "저장된 빌드를 재개했어요",
-  "retained version": "유지된 버전",
   "reviewed a build": "빌드를 리뷰했어요",
   "revision unknown ({state})": "버전 알 수 없음 ({state})",
   right: "오른쪽",
@@ -5054,7 +5012,7 @@ export default {
   "that snapshot has no game to play": "그 스냅샷에는 플레이할 게임이 없어요",
   "the Claude Agent SDK is not installed": "Claude Agent SDK가 설치되어 있지 않아요",
   "the Genex CLI": "Genex CLI",
-  'the bar for this build is "{name}" — {rule}': "이 빌드의 기준: “{name}” — {rule}",
+  'the bar for this build is "{name}"': "이 빌드의 기준: “{name}”",
   "the build finished": "빌드가 끝났어요",
   "the build finished but its output could not be kept": "빌드는 끝났지만 결과물을 보관하지 못했어요",
   "the build finished but wrote nothing to {folder}/": "빌드는 끝났지만 {folder}/에 아무것도 쓰지 않았어요",
@@ -5062,7 +5020,6 @@ export default {
   "the build was broken": "빌드가 깨져 있었어요",
   "the checks it was given now pass, and no reviewer objected": "주어진 검사를 이제 통과했고, 반대한 리뷰어가 없어요",
   "the checks it was given pass and the reviewer agrees": "주어진 검사를 통과했고 리뷰어도 동의해요",
-  "the contract reviewers read": "리뷰어가 읽는 계약",
   "the engine hit its limit — the build can pick up again when it resets":
     "엔진이 한도에 도달했어요 — 한도가 초기화되면 빌드를 이어서 할 수 있어요",
   "the engine's session ended early": "엔진 세션이 일찍 끝났어요",
@@ -5070,7 +5027,7 @@ export default {
   "the game had not finished loading when it was looked at": "확인할 때 게임이 아직 다 로드되지 않았어요",
   "the game inside it stays exactly where it is": "안에 있는 게임은 지금 위치 그대로 있어요",
   "the game's app": "게임 앱",
-  "the idea becomes tasks": "아이디어가 작업이 돼요",
+  "and plans when it helps": "필요하면 계획도 세워요",
   "the kept {file} still has its own {names}, but {callers} now use {target}":
     "유지된 {file} 파일에는 자체 {names} 코드가 남아 있지만, 이제 {callers}에서는 {target} 파일을 써요",
   "the lead ended it before it was finished, so nobody reviewed it and the work it had done is kept":
@@ -5112,7 +5069,6 @@ export default {
   "the player's word": "플레이어의 말",
   "the preview shows the current build": "미리보기에 현재 빌드가 표시돼요",
   "the reviewer preferred it to the round before": "리뷰어가 이전 라운드보다 이쪽을 더 좋게 봤어요",
-  "the reviewer preferred the round before": "리뷰어가 이전 라운드를 더 좋게 봤어요",
   "the reviewers are looking at try {tryNumber} of {step}": "리뷰어가 “{step}”의 {tryNumber}번째 시도를 보는 중",
   "the run's record is incomplete": "빌드 기록이 불완전해요",
   "the server": "서버",
@@ -5204,8 +5160,7 @@ export default {
   "{added} of {total} added": "{total}개 중 {added}개 추가됨",
   "{added} of {total} parts added": "파트 {total}개 중 {added}개 추가됨",
   "{added} of {total} parts added · {working} working": "파트 {total}개 중 {added}개 추가됨 · {working}개 작업 중",
-  "{amount} coin": "{amount}코인",
-  "{amount} credits, open Credits": "{amount} 크레딧, 크레딧 열기",
+  "{amount} Nex": "{amount} Nex",
   "{amount} more needed": "{amount} 더 필요해요",
   "{app} settings": "{app} 설정",
   "{brand} doesn’t share limits for this plan": "{brand}은(는) 이 요금제의 한도를 알려주지 않아요",
@@ -5229,6 +5184,7 @@ export default {
   "{chart}: {readings}": "{chart}: {readings}",
   "{check}: {name} · {status}": "{check}: {name} · {status}",
   "{chosen} of {total}": "{chosen}/{total}",
+  "{coins} of your Nex is on hold until {date}.": "Nex 중 {coins}은(는) {date}까지 보류 중이에요.",
   "{command} (exit {code})": "{command} (종료: {code})",
   "{command} failed": "{command} 실패",
   "{commit} (cataloged, not audited)": "{commit} (카탈로그 등록, 검수 안 됨)",
@@ -5287,8 +5243,6 @@ export default {
   "{count, plural, one {# save point} other {# save points}}": "{count, plural, other {저장 지점 #개}}",
   "{count, plural, one {# self-edited file} other {# self-edited files}} kept":
     "{count, plural, other {에이전트가 편집한 파일 #개 유지}}",
-  "{count, plural, one {# skill improvement to review} other {# skill improvements to review}}":
-    "{count, plural, other {검토할 스킬 개선 #개}}",
   "{count, plural, one {# step} other {# steps}}": "{count, plural, other {#단계}}",
   "{count, plural, one {# structural check} other {# structural checks}} passed.":
     "구조 검사 {count, plural, other {#개}}를 통과했어요.",
@@ -5306,7 +5260,6 @@ export default {
     "{count, plural, other {작업자 #명이 전달 못 함}}",
   "{count, plural, one {# worker} other {# workers}} on it": "{count, plural, other {작업자 #명이 작업 중}}",
   "{count, plural, one {# year ago} other {# years ago}}": "{count, plural, other {#년 전}}",
-  "{count, plural, one {Apply # change} other {Apply # changes}}": "{count, plural, other {변경 #개 적용}}",
   "{count, plural, one {Genex adds # file.} other {Genex adds # files.}} Everything else stays as it is.":
     "{count, plural, other {Genex가 파일 #개를 추가해요.}} 나머지는 그대로예요.",
   "{count, plural, one {Genex left # file you changed in Plugins/{folder}.} other {Genex left # files you changed in Plugins/{folder}.}}":
@@ -5315,8 +5268,6 @@ export default {
     "{count, plural, other {Genex가 Genex 에디터 도우미를 {version} 버전으로 업데이트하고, 직접 수정한 파일 #개는 새 파일 옆에 .mine으로 보관했어요.}}",
   "{count, plural, one {Harness learned # thing from this build.} other {Harness learned # things from this build.}}":
     "{count, plural, other {Harness가 이번 빌드에서 #가지를 배웠어요.}}",
-  "{count, plural, one {Harness suggests # change to how it builds} other {Harness suggests # changes to how it builds}}":
-    "{count, plural, other {Harness가 만드는 방식에 대해 변경 #개를 제안해요}}",
   "{count, plural, one {Ignored # invalid catalog entry.} other {Ignored # invalid catalog entries.}}":
     "{count, plural, other {잘못된 카탈로그 항목 #개를 무시했어요.}}",
   "{count, plural, one {Including # file changed outside this chat: {names}.} other {Including # files changed outside this chat: {names}.}}":
@@ -5325,6 +5276,8 @@ export default {
     "{count, plural, other {원래 기록은 이름을 .git.studio-backup으로 바꿔서 바로 옆에 보관해 뒀어요.}}",
   "{count, plural, one {Restored # game file.} other {Restored # game files.}}":
     "{count, plural, other {게임 파일 #개를 복원했어요.}}",
+  "{count, plural, one {Rewind can’t bring back # file from this change: it was over {size} at once, so the largest stayed out: {files}.} other {Rewind can’t bring back # files from this change: it was over {size} at once, so the largest stayed out: {files}.}}":
+    "{count, plural, other {이 변경이 한 번에 {size}를 넘어 가장 큰 파일 #개가 저장되지 않았고, 되감기로 되돌릴 수 없어요: {files}.}}",
   "{count, plural, one {Rewind can’t bring back # file that is too large to save: {files}.} other {Rewind can’t bring back # files that are too large to save: {files}.}}":
     "{count, plural, other {저장하기에 너무 큰 파일 #개는 되감기로 되돌릴 수 없어요: {files}.}}",
   "{count, plural, one {The chat went back, and # game file with it.} other {The chat went back, and # game files with it.}}":
@@ -5453,7 +5406,6 @@ export default {
   "{hours}h {minutes}m": "{hours}시간 {minutes}분",
   "{hours}h{minutes}": "{hours}시간 {minutes}분",
   "{hours}h {minutes}m": "{hours}시간 {minutes}분",
-  "{included} of {total} selected · you can undo later": "{total}개 중 {included}개 선택됨 · 나중에 되돌릴 수 있어요",
   "{input} in / {output} out per M tokens": "100만 토큰당 입력 {input} / 출력 {output}",
   "{kept} · {count} finished.": "{kept} · {count}개 완료.",
   "{kept}.": "{kept}.",
@@ -5490,7 +5442,6 @@ export default {
   "{model} (selected)": "{model} (선택됨)",
   "{model} animations": "{model} 애니메이션",
   "{model} is not installed in Ollama.": "{model} 모델은 Ollama에 설치되어 있지 않아요.",
-  "{model} on {provider}": "{provider}의 {model}",
   "{model} ready": "{model} 준비됨",
   "{name} account": "{name} 계정",
   "{name} already builds in {title}.": "{name} 플레이스는 이미 {title}에서 사용 중이에요.",
@@ -5558,8 +5509,6 @@ export default {
   "{part} · fixing what the review found": "{part} · 리뷰에서 찾은 문제 수정 중",
   "{part} · round {round}": "{part} · {round}라운드",
   "{part} · the model is busy — trying again in {seconds}s": "{part} · 모델이 바빠요 — {seconds}초 후 다시 시도해요",
-  "{part} · the reviewer is busy — trying again in {seconds}s":
-    "{part} · 리뷰어가 바빠요 — {seconds}초 후 다시 시도해요",
   "{part} · undoing": "{part} · 되돌리는 중",
   "{part} · undoing something that broke": "{part} · 깨진 부분 되돌리는 중",
   "{part} · waiting": "{part} · 대기 중",
@@ -5778,8 +5727,8 @@ export default {
   "Genex can't click in Roblox Studio on this computer. Publish it yourself in Studio:":
     "이 컴퓨터에서는 Genex가 Roblox Studio를 클릭할 수 없어요. Studio에서 직접 게시하세요:",
   "Handing it to the agent…": "에이전트에게 넘기는 중…",
-  "If the chat asks to use computer control, answer it there.":
-    "채팅에서 컴퓨터 제어를 써도 되는지 물으면 거기서 답하세요.",
+  "If the chat or macOS asks for permission, allow it: publishing goes on by itself.":
+    "채팅이나 macOS에서 권한을 물으면 허용하세요. 게시는 알아서 계속됩니다.",
   "In Roblox Studio": "Roblox Studio에서",
   "Name on Roblox": "Roblox에서의 이름",
   "On Roblox": "Roblox에",
@@ -5799,4 +5748,224 @@ export default {
   "Your game is on Roblox": "게임이 Roblox에 올라갔어요",
   "Your game's agent publishes it in Roblox Studio while you keep working.":
     "작업을 계속하는 동안 게임의 에이전트가 Roblox Studio에서 게시해요.",
+  "Anything else we should know? (optional)": "더 알려 줄 내용이 있나요? (선택)",
+  "Balance {amount}": "잔액 {amount}",
+  "Balance {now} → {after}": "잔액 {now} → {after}",
+  "Doesn't work": "작동하지 않아요",
+  "Drag to turn": "드래그해서 돌리기",
+  "Genex hasn’t confirmed it yet. It shows under My items once it does. You won’t be charged twice.":
+    "Genex가 아직 확인하지 않았어요. 확인되면 내 아이템에 나타나요. 두 번 청구되지 않아요.",
+  "Genex’s protected space needs an update": "Genex 보호 공간을 업데이트해야 해요",
+  Get: "받기",
+  "Get in {game}": "{game}에서 받기",
+  Inappropriate: "부적절해요",
+  "It may be back later. No Nex was charged.": "나중에 다시 판매될 수도 있어요. Nex는 청구되지 않았어요.",
+  "It's yours. Find it under Store › My items in every game it works in.":
+    "이제 내 거예요. 작동하는 모든 게임의 스토어 › 내 아이템에서 찾을 수 있어요.",
+  Item: "아이템",
+  Items: "아이템",
+  "Items you own show up here.": "가진 아이템이 여기에 나타나요.",
+  "My items": "내 아이템",
+  "No Nex was charged.": "Nex는 청구되지 않았어요.",
+  "No Nex was reserved or charged.": "Nex는 예약되거나 청구되지 않았어요.",
+  "Not in this game": "이 게임에서는 안 돼요",
+  Owned: "보유 중",
+  "Report item": "아이템 신고",
+  "Report item…": "아이템 신고…",
+  Scam: "사기",
+  "Sign in to see the items you own.": "로그인하면 가진 아이템을 볼 수 있어요.",
+  Store: "스토어",
+  "Store and my items": "스토어와 내 아이템",
+  "The Nex went back to your balance.": "Nex가 잔액으로 돌아갔어요.",
+  "This item isn’t sold here anymore": "이 아이템은 더 이상 여기서 판매되지 않아요",
+  "Too many reports for now. Try again later.": "지금은 신고가 너무 많아요. 나중에 다시 시도해 주세요.",
+  "Try again once the Nex lands.": "Nex가 들어오면 다시 시도해 주세요.",
+  "Why are you reporting it?": "왜 신고하나요?",
+  "Works here": "여기서 작동해요",
+  "You have {have} · {more} more needed": "보유 {have} · {more} 더 필요",
+  "Your items couldn’t load.": "아이템을 불러오지 못했어요.",
+  "item report\u0004Copy": "복제품",
+  "{count, number} left": "{count, number}개 남음",
+  "{count, plural, one {Works in # game} other {Works in # games}}": "{count, plural, other {게임 #개에서 작동}}",
+  "+{amount}": "+{amount}",
+  Actions: "작업",
+  "Actions for {name}": "{name} 작업",
+  "Ask for an item or a change…": "아이템이나 변경을 요청하세요…",
+  "Ask the agent to change it": "에이전트에게 변경 요청",
+  Browse: "둘러보기",
+  "Browse and selling": "둘러보기와 판매",
+  "By {name}": "{name} 제작",
+  "Choose a game": "게임 선택",
+  "Draft, put on sale": "초안, 판매 시작",
+  Earned: "수익",
+  "Genex can’t sell it under that name. Ask the agent for another.":
+    "Genex에서 이 이름으로는 팔 수 없어요. 에이전트에게 다른 이름을 요청하세요.",
+  "Genex can’t sell it with that description. Ask the agent to change it.":
+    "Genex에서 이 설명으로는 팔 수 없어요. 에이전트에게 바꿔 달라고 하세요.",
+  "Genex couldn’t do that. Try again in a moment.": "Genex에서 처리하지 못했어요. 잠시 후 다시 시도해 주세요.",
+  "Genex couldn’t use its 3D model. Ask the agent to fix it.":
+    "Genex에서 3D 모델을 쓸 수 없었어요. 에이전트에게 고쳐 달라고 하세요.",
+  "Genex couldn’t use its files. Ask the agent to fix them.":
+    "Genex에서 파일을 쓸 수 없었어요. 에이전트에게 고쳐 달라고 하세요.",
+  "Genex couldn’t use its picture. Ask the agent to upload the picture.":
+    "Genex에서 그림을 쓸 수 없었어요. 에이전트에게 그림을 업로드해 달라고 하세요.",
+  "Genex took this item off sale.": "Genex가 이 아이템의 판매를 중단했어요.",
+  "It isn’t on sale anymore.": "더 이상 판매하지 않아요.",
+  "It needs a picture first. Ask the agent to upload the picture.":
+    "먼저 그림이 필요해요. 에이전트에게 그림을 업로드해 달라고 하세요.",
+  "Items couldn’t load.": "아이템을 불러오지 못했어요.",
+  "Items other creators made. Free to add to your game, and you get 15% of every sale in it.":
+    "다른 크리에이터가 만든 아이템이에요. 내 게임에 무료로 추가할 수 있고, 그 게임에서 팔릴 때마다 15%를 받아요.",
+  "Items other creators made. Free to add to your game, and you get {share} of every sale in it.":
+    "다른 크리에이터가 만든 아이템이에요. 내 게임에 무료로 추가할 수 있고, 그 게임에서 팔릴 때마다 {share}를 받아요.",
+  "Items you make show up here. Ask your game’s agent for one.":
+    "만든 아이템은 여기에 나타나요. 게임의 에이전트에게 하나 요청해 보세요.",
+  "Its files are too large. Ask the agent to make them smaller.": "파일이 너무 커요. 에이전트에게 줄여 달라고 하세요.",
+  "Its maker doesn’t let other games use it anymore.": "제작자가 더 이상 다른 게임에서 쓰지 못하게 했어요.",
+  "It’s already this game’s own item.": "이미 이 게임의 아이템이에요.",
+  "Listing draft: {name}": "판매 초안: {name}",
+  "Draft · goes on sale when you publish": "초안 · 게시하면 판매 시작",
+  Draft: "초안",
+  "Drafts go on sale when you publish.": "초안은 게시하면 판매가 시작돼요.",
+  For: "대상",
+  "Add to game": "게임에 추가",
+  "Players see it after your next publish.": "다음 게시 후 플레이어에게 보여요.",
+  "On sale in your game": "게임에서 판매 중",
+  "Players can buy it there now.": "플레이어가 지금 바로 구매할 수 있어요.",
+  "Remove from game": "게임에서 제거",
+  "What is Nex?": "Nex가 뭔가요?",
+  "{amount} Nex, about Nex": "{amount} Nex, Nex 알아보기",
+  "Nex is the money of games on Genex. Players buy it, then spend it on items inside any game.":
+    "Nex는 Genex 게임의 화폐예요. 플레이어가 Nex를 구매해 어떤 게임에서든 아이템에 써요.",
+  "Your Nex": "내 Nex",
+  "Buy Nex in packs. One balance works in every game.": "Nex를 묶음으로 구매하세요. 하나의 잔액을 모든 게임에서 써요.",
+  Spend: "쓰기",
+  "Buy items in a game’s store: characters, skins, upgrades. What you buy stays yours.":
+    "게임 스토어에서 아이템을 구매하세요: 캐릭터, 스킨, 업그레이드. 구매한 건 계속 내 거예요.",
+  Earn: "벌기",
+  "Players pay Nex for your items. After a short hold, you spend it like any Nex.":
+    "플레이어가 내 아이템에 Nex를 지불해요. 짧은 보류 기간이 지나면 다른 Nex처럼 쓸 수 있어요.",
+  "Credits are separate: they pay for making games. Nex pays for what games sell.":
+    "크레딧은 별개예요: 게임을 만드는 데 쓰여요. Nex는 게임이 파는 것에 쓰여요.",
+  "This item changed after this card. See it in Items › Selling before you put it on sale.":
+    "이 아이템은 이 카드 이후에 바뀌었어요. 판매하기 전에 아이템 › 판매에서 확인해 주세요.",
+  "It changed since you approved it, so it stayed a draft.": "승인한 뒤에 바뀌어서 초안으로 남았어요.",
+  "Removed from this game": "이 게임에서 삭제됨",
+  "Genex couldn’t change this draft. Try again.": "Genex가 이 초안을 바꾸지 못했어요. 다시 시도해 주세요.",
+  "No items match.": "일치하는 아이템이 없어요.",
+  "No one has shared an item yet.": "아직 아무도 아이템을 공유하지 않았어요.",
+  "Off sale": "판매 중단",
+  "On sale": "판매 중",
+  "Only an item players keep can be used in other games.": "플레이어가 계속 갖는 아이템만 다른 게임에서 쓸 수 있어요.",
+  "Only the item’s maker can change it.": "아이템 제작자만 바꿀 수 있어요.",
+  "Other games can use it": "다른 게임에서도 사용 가능",
+  "Players pay": "플레이어 결제 금액",
+  "Publish a game to Genex first, then add items to it.": "먼저 게임을 Genex에 게시한 다음 아이템을 추가하세요.",
+  "Put on sale": "판매 시작",
+  "Ready to use": "사용 가능",
+  "Report under review": "신고 검토 중",
+  "Search items": "아이템 검색",
+  Selling: "판매",
+  "Sign in to Genex first.": "먼저 Genex에 로그인하세요.",
+  "Sign in to Genex to see items.": "아이템을 보려면 Genex에 로그인하세요.",
+  Sold: "판매 수",
+  Status: "상태",
+  "Take off sale": "판매 중단",
+  "That price isn’t one the store takes. Ask the agent to pick another.":
+    "스토어에서 받지 않는 가격이에요. 에이전트에게 다른 가격을 골라 달라고 하세요.",
+  "The item store is off right now.": "지금은 아이템 스토어가 꺼져 있어요.",
+  "This game is still the empty starter: build something first, then publish.":
+    "이 게임은 아직 빈 시작 프로젝트예요. 먼저 뭔가 만들고 나서 공개하세요.",
+  "This game sells as many items as it can.": "이 게임은 이미 최대한 많은 아이템을 팔고 있어요.",
+  "You get per sale": "판매당 받는 금액",
+  "You get per sale ({share})": "판매당 받는 금액 ({share})",
+  "Your agent puts it in the game.": "에이전트가 게임에 넣어 줘요.",
+  "You’ve put a lot on sale today. Try again tomorrow.": "오늘은 이미 많이 판매에 올렸어요. 내일 다시 시도하세요.",
+  "{count, plural, one {in # game} other {in # games}}": "{count, plural, other {게임 #개에서 사용}}",
+  "{days, plural, one {On hold for # day} other {On hold for # days}}": "{days, plural, other {#일 동안 보류}}",
+  "{game} · {games}": "{game} · {games}",
+  "Ask for changes": "변경 요청",
+  "Ask for changes below": "아래에서 변경을 요청하세요",
+  Shop: "상점",
+  "Character preview": "캐릭터 미리보기",
+  "Finished character": "완성된 캐릭터",
+  "Get Genex credits on genex.games": "genex.games에서 Genex 크레딧 받기",
+  "Make the {kind} with Genex now.": "Genex로 지금 만들어 줘: {kind}",
+  "Make the {kind} with Genex now: {prompt}": "Genex로 지금 만들어 줘: {kind} — {prompt}",
+  "Not enough credits": "크레딧이 부족해요",
+  "{count, plural, other {# need credits}}": "{count, plural, other {#개 크레딧 필요}}",
+  "Agents in any chat can then ask to use your apps.":
+    "그러면 모든 채팅의 에이전트가 앱을 사용하겠다고 요청할 수 있어요.",
+  "It asks before each app.": "앱마다 먼저 물어봐요.",
+  "It can click and type there.": "그 앱에서 클릭하고 입력할 수 있어요.",
+  "It never uses password managers, System Settings, password prompts or Genex.":
+    "비밀번호 관리자, 시스템 설정, 비밀번호 입력 창, Genex는 절대 사용하지 않아요.",
+  "Let agents use your computer": "에이전트의 컴퓨터 사용 허용",
+  "Let the agent do this with computer control?": "에이전트가 컴퓨터 제어로 처리하게 할까요?",
+  "Let the agent see your screen in this chat?": "이 채팅에서 에이전트가 화면을 보게 할까요?",
+  "Let the agent use this app?": "에이전트가 이 앱을 쓰게 할까요?",
+  "Let the agent use {app}?": "에이전트가 {app} 앱을 쓰게 할까요?",
+  "They ask before each app.": "에이전트는 앱마다 먼저 물어봐요.",
+  "Turn on computer control?": "컴퓨터 제어를 켤까요?",
+  "{plugin} asks: {task}": "{plugin}의 요청: {task}",
+  "Add an icon and a thumbnail, or Roblox shows a grey square.":
+    "아이콘과 썸네일을 추가해요. 없으면 Roblox가 회색 사각형을 보여줘요.",
+  "Answer Roblox's questions about what's in the game, so it gets an age rating.":
+    "게임 내용에 대한 Roblox의 질문에 답하면 연령 등급을 받아요.",
+  "Make the game public, so anyone can play it.": "게임을 공개하면 누구나 플레이할 수 있어요.",
+  "Only you can open it for now. Roblox keeps a new game private until you finish these in Creator Hub:":
+    "지금은 나만 열 수 있어요. Creator Hub에서 이걸 마칠 때까지 Roblox는 새 게임을 비공개로 둬요:",
+  "Open Creator Hub": "Creator Hub 열기",
+  "Studio hasn't loaded the Genex helper": "Studio가 Genex 도우미를 불러오지 않았어요",
+  "Studio was open before the helper was added, so your scripts don't reach it yet. Restart Studio loads the helper.":
+    "도우미를 추가하기 전에 Studio가 이미 열려 있어서 스크립트가 아직 전달되지 않아요. 「Studio 다시 시작」을 누르면 도우미를 불러와요.",
+  "The Genex helper was already in Studio's Plugins folder, so Genex left it as it is.":
+    "Genex 도우미가 이미 Studio의 Plugins 폴더에 있어서 Genex가 그대로 두었어요.",
+  "Allow in this chat": "이 채팅에서 허용",
+  "Allowed in this chat": "이 채팅에서 허용됨",
+  "Don't ask again for this action in this chat.": "이 채팅에서는 이 작업을 다시 묻지 않아요.",
+  "A replay of your first week": "첫 1주일 기록",
+  "Change it anytime in Settings.": "설정에서 언제든 바꿀 수 있어요.",
+  "Don't share": "공유 안 함",
+  "Help improve Genex?": "Genex 개선을 도와줄래요?",
+  "How you move through the app, with your work blanked out": "앱에서 어떻게 움직이는지, 작업 내용은 가려져요",
+  "Never your work or name": "작업 내용과 이름은 절대 보내지 않아요",
+  "Prompts, code, files, game names and accounts are left out": "프롬프트, 코드, 파일, 게임 이름, 계정은 빠져요",
+  "Screens, clicks and errors": "화면, 클릭, 오류",
+  "Screens, clicks, errors and wait times, and until {date} a replay of how you move through the app with your work blanked out. Sent to PostHog in the EU under a random id.":
+    "화면, 클릭, 오류, 대기 시간, 그리고 {date}까지는 작업 내용을 가린 채 앱에서 어떻게 움직이는지 기록해요. 무작위 ID로 EU의 PostHog에 보내요.",
+  "Screens, clicks, errors and wait times. Sent to PostHog in the EU under a random id.":
+    "화면, 클릭, 오류, 대기 시간. 무작위 ID로 EU의 PostHog에 보내요.",
+  "Share usage data": "사용 데이터 공유",
+  "Show us where Genex gets in your way.": "Genex가 어디서 방해되는지 알려 주세요.",
+  "Where you go, what fails and how long it takes": "어디로 가고, 무엇이 실패하고, 얼마나 걸리는지",
+  "usage data\u0004Share": "공유",
+  "Reviewers give a second opinion when the lead asks for one.":
+    "메인 에이전트가 요청하면 리뷰어가 두 번째 의견을 줍니다.",
+  "Workers take parts of the build, several at once.": "작업자가 빌드의 일부를 맡아 여러 개를 동시에 진행합니다.",
+  "After {worker}": "{worker} 이후",
+  "Blank screen": "빈 화면",
+  "Build {number}": "빌드 {number}",
+  "Compare with the earlier version": "이전 버전과 비교",
+  "Did not pass": "통과 못 함",
+  Errors: "오류",
+  "Merged into Build {number}": "빌드 {number}에 병합됨",
+  "Started before the first build": "첫 빌드 전에 시작",
+  "Started from Build {number}": "빌드 {number}에서 시작",
+  "The main agent's own changes": "메인 에이전트의 자체 변경",
+  "The page crashed.": "페이지가 충돌했어요.",
+  "The page did not load.": "페이지가 로드되지 않았어요.",
+  "The page threw an error it did not catch.": "페이지에서 처리되지 않은 오류가 났어요.",
+  "The picture did not visibly change from Build {number}.": "빌드 {number} 이후 그림이 눈에 띄게 바뀌지 않았어요.",
+  "The picture did not visibly change from the earlier version.": "이전 버전 이후 그림이 눈에 띄게 바뀌지 않았어요.",
+  "The screen was blank: one flat colour, nothing drawn.":
+    "화면이 비어 있었어요: 한 가지 색뿐, 아무것도 그려지지 않았어요.",
+  "What the check found": "검사에서 찾은 것",
+  commit: "커밋",
+  found: "발견",
+  "{count, plural, one {+# worker} other {+# workers}}": "{count, plural, other {+# 작업자}}",
+  "{count, plural, one {Show # more worker} other {Show # more workers}}":
+    "{count, plural, other {작업자 #명 더 보기}}",
+  "In the running build": "진행 중인 빌드에 있음",
+  "Not in your game yet. It arrives when the build lands.": "아직 게임에 없어요. 빌드가 반영되면 들어와요.",
 } satisfies LocaleCatalog;

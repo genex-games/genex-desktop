@@ -1,6 +1,7 @@
 /** The stage: the live preview's bounds and state, a run's builds, and the game's own build. */
 import { kindPending } from "../../shared/project-facts.ts";
 import type { GamePreview } from "../preview.ts";
+import { codedLoadRefusal } from "../preview-load-failure.ts";
 import type { StudioCore } from "../studio-core.ts";
 import type { IpcHandle } from "./registrar.ts";
 
@@ -15,6 +16,15 @@ const MESSAGE = {
 async function kindPendingGame(core: StudioCore, project: string): Promise<boolean> {
   const kind = await core.games.kindOf(project).catch(() => null);
   return kind !== null && kindPending(kind);
+}
+
+/** A load of Live's page: one Electron refused crosses IPC with its kind (`LiveLoadFailure`) beside the same words. */
+async function liveLoad<T>(load: Promise<T>): Promise<T> {
+  try {
+    return await load;
+  } catch (error) {
+    throw codedLoadRefusal(error);
+  }
 }
 
 export interface PreviewBoundsRecord {
@@ -46,7 +56,7 @@ export function registerPreviewIpc(
     // A game with no kind yet has no page: Live shows its first-idea state and loads nothing.
     if (await kindPendingGame(core, payload.project)) return "";
     // Through the core, not the port: a game with its own build is built and served from its output.
-    return core.loadPreview({ project: payload.project });
+    return liveLoad(core.loadPreview({ project: payload.project }));
   });
   handle("studio:build.preview", async (payload) => core.buildPreview(payload));
   handle("studio:preview.screens", async () => core.agentScreens());
@@ -61,7 +71,8 @@ export function registerPreviewIpc(
     // placed again when full screen ends.
     if (fullScreen?.active()) return true;
     // Anything but a plain `false` counts as watching: Live then only offers a chat's show.
-    await core.previewStageVisible(payload.width > 0 && payload.height > 0, payload.watching !== false);
+    const stageGame = typeof payload.project === "string" ? payload.project : null;
+    await core.previewStageVisible(payload.width > 0 && payload.height > 0, payload.watching !== false, stageGame);
     preview()?.setBounds(
       {
         x: Math.round(payload.x),
@@ -80,7 +91,7 @@ export function registerPreviewIpc(
     return true;
   });
   handle("studio:preview.play", async () => {
-    await core.playLive();
+    await liveLoad(core.playLive());
     return true;
   });
   handle("studio:preview.fullscreen", async () => {
@@ -95,7 +106,7 @@ export function registerPreviewIpc(
   handle("studio:preview.reload", async (payload) => {
     // The person's Reload: what waits for Live (`live.behind`) if anything does. `retry` is the
     // build-failure strip's own button: drop the memoised failure and build again.
-    await core.reloadLive({ retry: payload?.retry === true });
+    await liveLoad(core.reloadLive({ retry: payload?.retry === true }));
     return true;
   });
   // What waits for Live's Reload and the build Live shows: the stage reads it on mount, so a

@@ -14,6 +14,7 @@ import type { ChatActivityPhase } from "./chat-activity.ts";
 import type { ChatRewind, CheckpointSkippedPayload, RewindUndonePayload } from "./chat-rewind.ts";
 import type { PlanReviewRecord } from "./composer.ts";
 import type { ContextMeasurement } from "./context.ts";
+import type { EngineFailureKind } from "./engine-requests.ts";
 import type { AssetDeliveredPayload, PluginToolFinishedPayload, PluginToolStartedPayload } from "./game-assets.ts";
 import type { MentionTaggedPayload } from "./prompt-mention.ts";
 import type { PluginConsentEvent } from "./plugins.ts";
@@ -22,7 +23,7 @@ import type { ToolPermissionEvent } from "./permissions.ts";
 import type { SteerDelivery } from "./message-queue.ts";
 import type { Usage } from "./event-log.ts";
 import type { LoopProfile } from "./project-facts.ts";
-import type { BuildObservation, ReadyResult, ReadyVia } from "./preview-contract.ts";
+import type { BuildObservation, HealthFinding, ReadyResult, ReadyVia } from "./preview-contract.ts";
 import type { EngineLinkedPayload, EngineLinkUndonePayload, EngineStepsPayload } from "./game-engine.ts";
 import type { RunSpec } from "./protocol.ts";
 import type { PluginSuggestedPayload } from "./project-tools.ts";
@@ -33,6 +34,7 @@ import type { WorkerFinishedPayload, WorkerStartedPayload } from "./workers.ts";
 import type { ObserverCapturePayload } from "./observers.ts";
 import type { FinishCheckPayload, StillToFix } from "./finish-check.ts";
 import type { InstallFailure, PlayInstallPayload } from "./play-native.ts";
+import type { ListingDraft, LocalListingDraft } from "./item-draft.ts";
 
 /**
  * Every custom event name in the studio's own code. A few are only read: names older versions
@@ -72,6 +74,8 @@ export const CustomEvent = {
   AgentWentAhead: "agent_went_ahead",
   /** A blind judge played the game for the chat's own session (shared/chat-judge.ts); written by the host only. */
   ChatJudgeResult: "chat_judge_result",
+  /** The game's agent made or changed a store item, on genex.games or as a local draft: its Listing draft card (shared/item-draft.ts); written by the host only. */
+  ItemDrafted: "item_drafted",
   // the unattended run and its lead
   AutopilotBase: "autopilot_base",
   AutopilotBaseStarted: "autopilot_base_started",
@@ -90,13 +94,9 @@ export const CustomEvent = {
   IntegrationHealth: "integration_health",
   IntegrationLedger: "integration_ledger",
   IntegrationMerge: "integration_merge",
-  ObservationOutage: "observation_outage",
-  OptimizationUpdated: "optimization_updated",
   /** The studio resumed a paused run on its own (`main/core/auto-resume.ts`); written by the host only. */
   RunAutoResumed: "run_auto_resumed",
-  RunBackoff: "run_backoff",
   RunControl: "run_control",
-  RunControlApplied: "run_control_applied",
   RunFinished: "run_finished",
   RunFollowupRequested: "run_followup_requested",
   RunInteractionEvidence: "run_interaction_evidence",
@@ -123,29 +123,17 @@ export const CustomEvent = {
   FacetBuildStarted: "facet_build_started",
   FacetCheckAdded: "facet_check_added",
   FacetCheckReplanned: "facet_check_replanned",
-  FacetCheckRetired: "facet_check_retired",
   FacetCircuitBreak: "facet_circuit_break",
   FacetDefectRouted: "facet_defect_routed",
   FacetFix: "facet_fix",
   FacetFlag: "facet_flag",
-  FacetFollowup: "facet_followup",
   FacetIteration: "facet_iteration",
-  FacetLessons: "facet_lessons",
   FacetLiveness: "facet_liveness",
   FacetMachinePressure: "facet_machine_pressure",
   FacetMove: "facet_move",
-  FacetObservationOutage: "facet_observation_outage",
-  FacetPartialEvaluated: "facet_partial_evaluated",
   FacetProviderOutage: "facet_provider_outage",
-  FacetRebaselined: "facet_rebaselined",
-  FacetReview: "facet_review",
-  FacetReviewEnforced: "facet_review_enforced",
-  FacetSessionReset: "facet_session_reset",
-  FacetSpike: "facet_spike",
-  FacetSteered: "facet_steered",
   FacetStopped: "facet_stopped",
   FacetWindDown: "facet_wind_down",
-  RecipeOutcome: "recipe_outcome",
   // the conversation, its queue and its sessions
   /** Files too large to save that a chat checkpoint left out, or a rewind left as they were; written by the host only. */
   CheckpointSkipped: "checkpoint_skipped",
@@ -211,7 +199,6 @@ export const CustomEvent = {
   SkilloptStaged: "skillopt_staged",
   SnapshotHealthy: "snapshot_healthy",
   ThreadAdopted: "thread_adopted",
-  ToolFailure: "tool_failure",
   ToolInstalled: "tool_installed",
 } as const;
 export type CustomEvent = (typeof CustomEvent)[keyof typeof CustomEvent];
@@ -328,8 +315,29 @@ export interface RunLimit {
   at?: number;
 }
 
+/**
+ * Why a Loop did not run at all (`refusal` on its `run_finished`), beside the words its close
+ * carries. The seed's copy is `LoopRefusal` in `loop/run-dispatch.ts`
+ * (tests/conformance/seed-contracts.test.ts holds the two together); an older seed writes none.
+ * Persisted: never rename a value.
+ */
+export const LoopRefusal = {
+  /** The engine keeps no session of its own (Ollama's tool loop): its chat is plain chat, and a Loop needs a lead's session. */
+  NeedsSession: "needs_session",
+} as const;
+export type LoopRefusal = (typeof LoopRefusal)[keyof typeof LoopRefusal];
+
+const LOOP_REFUSALS: ReadonlySet<unknown> = new Set<LoopRefusal>(Object.values(LoopRefusal));
+
+/** A recorded close's Loop refusal, or null for none or a code this app does not know. */
+export function loopRefusalOf(value: unknown): LoopRefusal | null {
+  return LOOP_REFUSALS.has(value) ? (value as LoopRefusal) : null;
+}
+
 export interface RunFinishedPayload extends RunScope {
   victory?: boolean;
+  /** Why the Loop did not run at all, when it didn't (`LoopRefusal`). */
+  refusal?: LoopRefusal;
   /** Why the run stopped, as a code (autopilot closes carry one; older closes and other modes may not). */
   stopCode?: StopCode;
   reference?: string;
@@ -349,6 +357,11 @@ export interface RunFinishedPayload extends RunScope {
   limit?: RunLimit | null;
   /** Older closes marked a pause with this flag instead of `executionStatus`. */
   paused?: boolean;
+  /**
+   * A new Loop a plugin's step held back before its first turn (not Genex's own hold, not a resume):
+   * the chat's agent is told why, to fix it and start the Loop again (`core/held-start.ts`).
+   */
+  startHeld?: boolean;
   integrationHead?: string;
   baseCommit?: string;
   landingResult?: { line?: string };
@@ -379,6 +392,29 @@ export type AutoResumeCause = (typeof AutoResumeCause)[keyof typeof AutoResumeCa
 export interface RunAutoResumedPayload extends RunScope {
   cause?: AutoResumeCause;
   attempt?: number;
+}
+
+/**
+ * Why the harness refused to start a run (`refusal` on `run_start_blocked`, beside its English
+ * `reason`). The seed's copy is `RunStartRefusal` in `loop/run-dispatch.ts`
+ * (tests/conformance/seed-contracts.test.ts holds the two together); an older seed writes none.
+ * Persisted: never rename a value.
+ */
+export const RunStartRefusal = {
+  /** A run already owns the chat or the game. */
+  RunOwnsThread: "run_owns_thread",
+  /** The folder is an engine's export: compiled, with nothing a run could edit. */
+  EngineExport: "engine_export",
+  /** Genex's `web.ready` gate: the web page lacks files it needs to load. */
+  WebNotReady: "web_not_ready",
+} as const;
+export type RunStartRefusal = (typeof RunStartRefusal)[keyof typeof RunStartRefusal];
+
+/** A run's start the harness refused: the run that holds the chat (when one does), the one asked for, and why. */
+export interface RunStartBlockedPayload extends RunScope {
+  requestedRunId?: string;
+  reason?: string;
+  refusal?: RunStartRefusal;
 }
 
 /** One part of the plan, as the start and plan-review records list it. */
@@ -449,23 +485,6 @@ export interface SessionActivityPayload extends RunScope {
   role?: string;
   /** The delegation that reported it: a settled phase ends only its own delegation's reply. */
   delegationId?: string;
-}
-
-/**
- * What a round's code review enforced, by file. Logs written before the split carry every enforced
- * file under `reverted`, kept and quarantined ones included, and nothing under the other lists.
- */
-export interface FacetReviewEnforcedPayload extends RunScope {
-  /** Files outside the part's ownership, checked out from the diff base. */
-  reverted?: string[];
-  /** Files outside the part's ownership whose content arrived by merge, left as they are. */
-  kept?: string[];
-  /** New files outside the part's ownership, moved to `.studio/quarantine/`. */
-  quarantined?: string[];
-  /** Another part's changes a merge into this part dropped, checked out from the merged head. */
-  restored?: string[];
-  /** Checks the model reviewer marked as made to pass without the work. */
-  gamed?: string[];
 }
 
 /** A part-level notice: a circuit break, a replanned check, a raised flag, or the lead's plan. */
@@ -542,8 +561,6 @@ export interface PreviewReadyPayload extends RunScope {
  */
 export const CompletionRole = {
   Judge: "judge",
-  Playtester: "playtester",
-  SkilloptGate: "skillopt-gate",
 } as const;
 export type CompletionRole = (typeof CompletionRole)[keyof typeof CompletionRole];
 
@@ -644,6 +661,8 @@ export interface CustomEventMap {
    * (shared/chat-rewind.ts `endsChatSessions`); its summary, when it reports one, is the provider's own.
    */
   compacted: Partial<ContextMeasurement> & { messages?: number; trigger?: string; summary?: string; native?: boolean };
+  /** A summary that could not be written (loop/compact.ts): its engine, the words, and why. */
+  compaction_failed: { engine?: string; model?: string; error?: string; failure?: EngineFailureKind };
   completion_call: CompletionCallPayload;
   connector_tool: RunScope & Omit<ConnectorToolEvent, "error"> & { error?: string | null };
   connector_tool_started: RunScope & ConnectorToolStartedEvent;
@@ -710,9 +729,24 @@ export interface CustomEventMap {
   };
   /** `lost`: the provider was lost (an engine failure kind), and the round waits for it rather than retry on a ladder. */
   facet_provider_outage: RunScope & { phase?: string; wait?: number; attempt?: number; error?: string; lost?: string };
-  facet_review_enforced: FacetReviewEnforcedPayload;
   improvement_applied: { file?: string; reason?: string; snapshot_id?: string };
-  interview_question: { question?: string; choices?: InterviewChoice[] };
+  /**
+   * The Loop's health check of its integration head (seed `loop/director/integrate.ts`): the page
+   * loads, throws no uncaught error and its frame is not blank. `picture`: the screenshot the check
+   * kept, under the run's folder (`readRunStill`); `worker`: the worker whose merge it checked, as
+   * its own records name it (`pool.w2`); `findings`: the host's code for each of its own problems
+   * (`HealthFinding`). Records written before each existed lack it.
+   */
+  integration_health: RunScope & {
+    head?: string | null;
+    ok?: boolean;
+    problems?: string[];
+    findings?: HealthFinding[];
+    picture?: string;
+    worker?: string;
+  };
+  /** `recap`: one line the agent wrote on what it found or did, shown above the question. */
+  interview_question: { question?: string; recap?: string; choices?: InterviewChoice[] };
   /** A provider signed out mid-turn (harness `turn-loop.ts`); `message` is the provider's own error. */
   needs_signin: { engine?: string; message?: string };
   plan_review: PlanReviewRecord;
@@ -727,6 +761,7 @@ export interface CustomEventMap {
   app_look_access: Partial<AppLookAccessPayload>;
   agent_went_ahead: Partial<AgentWentAheadPayload>;
   chat_judge_result: Partial<ChatJudgeResultPayload>;
+  item_drafted: Partial<ListingDraft> | Partial<LocalListingDraft>;
   worker_started: WorkerStartedPayload;
   worker_finished: WorkerFinishedPayload;
   observer_capture: Partial<ObserverCapturePayload>;
@@ -737,6 +772,7 @@ export interface CustomEventMap {
   run_finished: RunFinishedPayload;
   run_iteration: RunScope & { winner?: string; biggest_gap?: string; verdict?: RoundVerdict | null };
   run_registered: RunScope & { budgets?: RecordedRunBudgets; resumed?: boolean };
+  run_start_blocked: RunStartBlockedPayload;
   run_started: RunScope & {
     budgets?: RecordedRunBudgets;
     goal?: string;

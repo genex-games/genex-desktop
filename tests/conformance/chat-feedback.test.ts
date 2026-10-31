@@ -12,7 +12,6 @@ import {
   rememberChatEffort,
 } from "../../src/renderer/stored-model.ts";
 import { interviewQuestion, interviewForReply } from "../../src/harness-seed/loop/interview-question.ts";
-import { preparationBudgetMs, wrapReserveMs } from "../../src/harness-seed/loop/director.ts";
 
 const event = (id: number, data: EventData): EventEnvelope => ({
   id: String(id).padStart(6, "0"),
@@ -67,6 +66,18 @@ test("real intake questions survive pagination and settle on either a choice rep
     false,
   );
   assert.throws(() => interviewQuestion({ question: " " }));
+});
+
+test("an agent's question keeps its one-line recap above it, and the card reads it", () => {
+  const asked = interviewQuestion({
+    recap: "  The road, two cars and the lap timer are in.  ",
+    question: "Which camera should the race use?",
+    options: "Behind the car (Recommended) | You see the car and the road ahead\nHood view\nTop-down",
+  });
+  assert.equal(asked.recap, "The road, two cars and the lap timer are in.");
+  assert.equal("recap" in interviewQuestion({ question: "Which camera?", recap: " " }), false, "no empty recap");
+  const card = toEntries([custom(1, "interview_question", asked)]).find((e) => e.kind === "question");
+  assert.equal(card?.kind === "question" ? card.recap : undefined, "The road, two cars and the lap timer are in.");
 });
 
 test("host handoff diagnostics disappear while ordinary explanations and errors remain", () => {
@@ -186,17 +197,6 @@ test("a game chat keeps its own effort; the effort saved for a model only seeds 
     null,
     "Studio keeps only its per-model effort",
   );
-});
-
-test("preparation leaves working time in a fifteen-minute run and never enlarges its deadline", () => {
-  const total = 15 * 60_000,
-    soft = total - wrapReserveMs(total),
-    base = preparationBudgetMs(soft);
-  assert.ok(base > 0 && base <= soft / 3);
-  assert.ok(soft - base >= 6 * 60_000, "the lead has working time before wrap-up");
-  assert.equal(preparationBudgetMs(2 * 60_000), 0, "short remainder goes directly to the lead");
-  assert.equal(preparationBudgetMs(-1), 0);
-  assert.equal(preparationBudgetMs(24 * 3_600_000), 30 * 60_000);
 });
 
 test("a delegated reply reconciles on its durable row before the stream acknowledgement", async () => {

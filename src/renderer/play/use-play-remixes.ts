@@ -7,14 +7,30 @@
  */
 import { useEffect, useLayoutEffect } from "react";
 import { remixTitle } from "../../shared/play.ts";
+import { noteNav } from "../analytics/workspace-trackers.ts";
+import { trackGameCreated } from "../analytics/workspace-track.ts";
+import { GameCreatedFrom, NavVia } from "../analytics/workspace-vocabulary.ts";
 import type { Navigation } from "../shell/use-navigation.ts";
 import type { ShellChrome } from "../shell/use-shell-chrome.ts";
 import { usePlay } from "../state/hooks.ts";
 import { remixEnded, remixFailureTold, remixOpened } from "../state/play.ts";
-import { studio } from "../state/studio.ts";
+import { type Studio, studio } from "../state/studio.ts";
 import { notifyProblem, ToastTone } from "../state/toasts.ts";
 import { PLAY_WORDS } from "../words.ts";
 import { stillWithRemix } from "./remix-model.ts";
+
+/** A remix's game was made: counted once, by its ref (`trackGameCreated` never sends the name). */
+function remixCreated(app: Studio, name: string): void {
+  const { games } = app.library.getState();
+  const known = games.some((game) => game.name === name);
+  trackGameCreated({
+    from: GameCreatedFrom.Remix,
+    name,
+    customLocation: false,
+    provisional: false,
+    games: games.length + (known ? 0 : 1),
+  });
+}
 
 /** Follow a remix from its press to its game: Create while it is made, the game once it is. */
 export function usePlayRemixes(
@@ -38,13 +54,16 @@ export function usePlayRemixes(
     if (!stillWithRemix(making, workspaceCovered)) {
       app.play.setState((state) => remixEnded(remixOpened(state)), true);
       app.notify(PLAY_WORDS.making.ready(making ? remixTitle(making.title) : remixed), ToastTone.Ok);
+      remixCreated(app, remixed);
       return;
     }
     app.play.setState(remixOpened, true);
     // The copy stays on screen until its game is open under it.
+    noteNav(NavVia.Remix);
     void enterProject(remixed, true)
       .catch(notifyProblem(app.notify))
       .finally(() => app.play.setState(remixEnded, true));
+    remixCreated(app, remixed);
   }, [remixed, enterProject, workspaceCovered]);
   useEffect(() => {
     if (!remixFailed) return;

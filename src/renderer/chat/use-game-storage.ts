@@ -3,7 +3,11 @@
  * opens and each time the game's work ends, and freeing it, one clean-up at a time.
  */
 import { useEffect, useRef, useState } from "react";
-import type { StorageSpace } from "../../shared/storage-space.ts";
+import { freeableBytes, type StorageFreed, type StorageSpace } from "../../shared/storage-space.ts";
+import { track } from "../analytics/client.ts";
+import { AnalyticsEvent } from "../analytics/events.ts";
+import { freedProperties } from "../analytics/workspace-properties.ts";
+import { StorageSurface } from "../analytics/workspace-vocabulary.ts";
 import { type Notify, notifyProblem, ToastTone } from "../state/toasts.ts";
 import { freedWords } from "../words.ts";
 
@@ -38,14 +42,21 @@ export function useGameStorage(project: string | null, working: boolean, onNotic
     if (!project || pending.current) return;
     pending.current = true;
     setFreeing(true);
+    const offered = space ? freeableBytes(space) : 0;
+    const answered = (freed: StorageFreed | null): void =>
+      track(AnalyticsEvent.FreeSpaceAnswered, freedProperties(StorageSurface.ChatHeader, offered, freed));
     void window.studio
       .freeStorage(project)
       .then((freed) => {
+        answered(freed);
         reads.current++;
         setSpace(null);
         onNotice(freedWords(freed), ToastTone.Ok);
       })
-      .catch(notifyProblem(onNotice))
+      .catch((error: unknown) => {
+        answered(null);
+        notifyProblem(onNotice)(error);
+      })
       .finally(() => {
         pending.current = false;
         setFreeing(false);

@@ -1,8 +1,11 @@
 /**
  * The Genex account's credits as the Genex plugin's Credits tab shows them: the balance, the Pro
  * allowance and when it comes, the invite bonus, what each kind of generation costs (read live from
- * genex.games, never typed into the app) and the last few spends and refunds with their game.
+ * genex.games, never typed into the app) and the last few spends and refunds with their game. The
+ * same prices and balance put a price on what is being made, where credits are spent.
  */
+import { GenexOperation } from "./genex.ts";
+
 /** Kinds of generation the price list names. Wire values, as genex.games spells them. */
 export const CreditKind = {
   Model: "model",
@@ -15,6 +18,10 @@ export const CreditKind = {
   Music: "music",
   Voice: "voice",
   Character: "character",
+  /** The guided character's 3D preview of the candidate the person approved. */
+  CharacterPreview: "character_preview",
+  /** The guided character's finished, rigged model, once its preview is approved. */
+  CharacterFinalize: "character_finalize",
   CoverRegenerate: "cover_regen",
 } as const;
 export type CreditKind = (typeof CreditKind)[keyof typeof CreditKind];
@@ -69,6 +76,44 @@ export interface PlayCredits {
   prices: Partial<Record<CreditKind, number>>;
   /** The last few spends and refunds, newest first. */
   recent: CreditEntry[];
+}
+
+/**
+ * The price list's kind for each Genex operation whose price it names exactly. A bare `character`
+ * is left out: it is either the guided concept or a one-shot rigged character, priced apart.
+ */
+const OPERATION_KINDS: Partial<Record<string, CreditKind>> = {
+  [GenexOperation.Model]: CreditKind.Model,
+  [GenexOperation.ModelRig]: CreditKind.ModelRig,
+  [GenexOperation.ModelAnimate]: CreditKind.ModelAnimation,
+  [GenexOperation.Image]: CreditKind.Image,
+  [GenexOperation.Texture]: CreditKind.Texture,
+  [GenexOperation.Video]: CreditKind.Video,
+  [GenexOperation.Sfx]: CreditKind.Sound,
+  [GenexOperation.Music]: CreditKind.Music,
+  [GenexOperation.Voice]: CreditKind.Voice,
+  [GenexOperation.CharacterPreview]: CreditKind.CharacterPreview,
+  [GenexOperation.CharacterFinalize]: CreditKind.CharacterFinalize,
+};
+
+/** What a Genex operation costs by default, from the price list; null when the list does not say. */
+export function operationPrice(
+  operation: string | null | undefined,
+  prices: Readonly<Partial<Record<string, number>>> | null | undefined,
+): number | null {
+  // The plugin's word, never an inherited name (`constructor`) read off the table.
+  if (!operation || !prices || !Object.hasOwn(OPERATION_KINDS, operation)) return null;
+  const kind = OPERATION_KINDS[operation];
+  return kind ? (prices[kind] ?? null) : null;
+}
+
+/**
+ * Whether a balance pays for a price: an unlimited account always does, and an unread balance or
+ * price is never taken for too little.
+ */
+export function canAfford(credits: { balance: number | null; unlimited: boolean }, price: number | null): boolean {
+  if (credits.unlimited || credits.balance === null) return true;
+  return price === null ? credits.balance > 0 : credits.balance >= price;
 }
 
 /** How many spends and refunds the tab lists. */

@@ -11,8 +11,8 @@
  * ask, so it is always boxed. In every mode, Bypass included, a worker never reaches a sign-in,
  * Genex's own data or another game (the never-touch list). A web Loop snapshots the game before its
  * first turn; the Unreal Loop's lead takes its first snapshot at its first save point, so its
- * in-place workers before then have only the chat's checkpoints behind them. Other unattended work (playtesters, scouts, judges, candidates, a classic Autopilot's
- * builders) keeps the sandboxed contract of the engine that runs it. The host decides which is
+ * in-place workers before then have only the chat's checkpoints behind them. Other unattended work (a reviewer, a second opinion, an
+ * older run's builders) keeps the sandboxed contract of the engine that runs it. The host decides which is
  * which from what it recorded itself, and keeps the mode and every saved grant; the harness can
  * neither read nor set them, and no agent's message ever counts as the person's answer.
  */
@@ -80,11 +80,13 @@ interface EnginePermissions {
 /**
  * Each engine's row. Claude Code asks mid-turn in every mode. Bonsai's tools run in the studio,
  * which asks before each edit or command; its commands always run in the studio's sandbox, so it
- * has no Bypass. Codex (`codex exec`) cannot ask mid-turn: Auto keeps its sandbox, Plan only reads,
- * Bypass drops its sandbox. OpenRouter's and a local server's tools run in the studio's own session
+ * has no Bypass. Codex has no Manual or Accept edits: Auto keeps its sandbox (on its app server, what
+ * the sandbox would not run is asked about and settled by the Auto check), Plan only reads, Bypass
+ * drops its sandbox. OpenRouter's and a local server's tools run in the studio's own session
  * loop, as Bonsai's do.
- * OpenCode (`opencode run`) cannot ask mid-turn and always runs in the studio's sandbox: Auto, or Plan
- * (read only). Any other engine (Ollama, whose tools run in the harness, or one added later) keeps its
+ * OpenCode (`opencode run`), Grok Build (`grok -p`) and Cursor (`cursor-agent --print`) cannot ask
+ * mid-turn: Auto runs them in the studio's sandbox, Plan reads only, and Grok Build's Bypass runs it
+ * as the person outside that sandbox, as Codex's does. Any other engine (Ollama, whose tools run in the harness, or one added later) keeps its
  * own sandboxed contract, which is Auto.
  */
 const ENGINE_PERMISSIONS: Readonly<Record<string, EnginePermissions>> = {
@@ -106,6 +108,14 @@ const ENGINE_PERMISSIONS: Readonly<Record<string, EnginePermissions>> = {
     withheld: UnavailableModeReason.AlwaysSandboxed,
   },
   [EngineId.OpenCode]: {
+    modes: [PermissionMode.Auto, PermissionMode.Plan],
+    withheld: UnavailableModeReason.CannotAsk,
+  },
+  [EngineId.Grok]: {
+    modes: [PermissionMode.Auto, PermissionMode.Plan, PermissionMode.Bypass],
+    withheld: UnavailableModeReason.CannotAsk,
+  },
+  [EngineId.Cursor]: {
     modes: [PermissionMode.Auto, PermissionMode.Plan],
     withheld: UnavailableModeReason.CannotAsk,
   },

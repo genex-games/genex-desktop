@@ -1,11 +1,13 @@
 /**
- * The chat column's identity row — which game, how full the context is, and its file actions.
+ * The chat column's identity row — which game, what it is made in, how full the context is, and its
+ * file actions.
  * Rename lives here (click the title, or ⋯). One game has one chat, so there is no chat switcher.
  * Every gap between the controls drags the window.
  */
 import type { JSX, ReactNode, RefObject } from "react";
 import { useEffect, useRef, useState } from "react";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "../ui/dropdown-menu.tsx";
+import { Button } from "../ui/Button.tsx";
 import { Icon, type IconName } from "../ui/icons.tsx";
 import { Shortcut } from "../ui/Shortcut.tsx";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip.tsx";
@@ -20,6 +22,8 @@ import { t } from "../../shared/i18n.ts";
 import { FreeSpaceSheet } from "./FreeSpaceSheet.tsx";
 import { HarnessGuideButton } from "../chat/HarnessGuide.tsx";
 import { SidebarToggle } from "../shell/use-shell-chrome.ts";
+import { HEADER_BUTTON, setEngineSlot } from "./engine-slot.ts";
+import { StorageSurface } from "../analytics/workspace-vocabulary.ts";
 
 interface Props {
   chatTitle: string;
@@ -189,6 +193,7 @@ function ChatTitle({
         project ? t("Rename game: {name}", { name: chatTitle }) : t("Rename chat: {name}", { name: chatTitle })
       }
       onClick={onEdit}
+      data-analytics-mask
       className="no-drag chat-header-title"
     >
       {isDraft ? t("New chat") : chatTitle}
@@ -207,21 +212,26 @@ function FreeSpaceButton({ storage, game }: { storage: GameStorage; game: string
   return (
     <>
       {confirming && (
-        <FreeSpaceSheet space={space} game={game} onFree={storage.free} onDone={() => setConfirming(false)} />
+        <FreeSpaceSheet
+          space={space}
+          game={game}
+          surface={StorageSurface.ChatHeader}
+          onFree={storage.free}
+          onDone={() => setConfirming(false)}
+        />
       )}
       <Tooltip>
         <TooltipTrigger asChild>
-          <button
-            type="button"
+          <Button
+            variant="pill"
             data-free-space
-            data-label
             disabled={storage.freeing}
             onClick={() => setConfirming(true)}
-            className="no-drag header-control"
+            className={`no-drag me-1 ${HEADER_BUTTON}`}
           >
             <Icon name="drive" />
             {freeGameWords(space)}
-          </button>
+          </Button>
         </TooltipTrigger>
         <TooltipContent className="max-w-64">{freeSpaceWords(space, game)}</TooltipContent>
       </Tooltip>
@@ -376,6 +386,10 @@ export function ChatHeader({
       {contextUsage && contextWindow ? (
         <ContextMeter usage={{ ...contextUsage, contextWindow }} compacting={compacting} onCompact={onCompact} />
       ) : null}
+      {/* The game's engine button (Roblox, Unity…), drawn here by the stage's toolbar (`engine-slot.ts`). */}
+      {project && (
+        <span ref={setEngineSlot} data-chat-engine="" className="me-1 flex shrink-0 items-center empty:hidden" />
+      )}
 
       {project && onReveal && (
         <HeaderButton

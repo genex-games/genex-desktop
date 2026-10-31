@@ -224,6 +224,8 @@ describe("SEC-2: a contractor keeps its own sign-in and nobody else's", () => {
       CODEX_HOME: "/codex/home",
       OPENAI_BASE_URL: "https://proxy.example",
       OPENCODE_CONFIG: "/opencode/config.json",
+      GROK_HOME: "/grok/home",
+      XAI_API_KEY: "xai-leak",
       SSH_AUTH_SOCK: "/tmp/agent.sock",
       ...FOREIGN,
     };
@@ -251,6 +253,8 @@ describe("SEC-2: a contractor keeps its own sign-in and nobody else's", () => {
         keeps: ["PATH", "HOME", "HARMLESS_FLAG", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CONFIG_DIR"],
         drops: [
           "OPENCODE_CONFIG",
+          "GROK_HOME",
+          "XAI_API_KEY",
           "ANTHROPIC_API_KEY",
           "ANTHROPIC_AUTH_TOKEN",
           "CODEX_HOME",
@@ -273,6 +277,7 @@ describe("SEC-2: a contractor keeps its own sign-in and nobody else's", () => {
         keeps: ["PATH", "HOME", "HARMLESS_FLAG", "CODEX_HOME", "OPENAI_BASE_URL"],
         drops: [
           "OPENCODE_CONFIG",
+          "GROK_HOME",
           "OPENAI_API_KEY",
           "CODEX_API_KEY",
           "CODEX_ACCESS_TOKEN",
@@ -291,6 +296,8 @@ describe("SEC-2: a contractor keeps its own sign-in and nobody else's", () => {
         request: { base: "contractor", vendor: "opencode", set: { OPENCODE_DISABLE_AUTOUPDATE: "1" } },
         keeps: ["PATH", "HOME", "HARMLESS_FLAG", "OPENCODE_CONFIG", "OPENCODE_DISABLE_AUTOUPDATE"],
         drops: [
+          "GROK_HOME",
+          "XAI_API_KEY",
           "CLAUDE_CODE_OAUTH_TOKEN",
           "CLAUDE_CONFIG_DIR",
           "CODEX_HOME",
@@ -303,10 +310,28 @@ describe("SEC-2: a contractor keeps its own sign-in and nobody else's", () => {
         ],
       },
       {
+        // Grok Build runs on its own sign-in: an xAI key the shell exports never makes it a metered bill.
+        name: "grok contractor",
+        request: { base: "contractor", vendor: "grok", set: { GROK_DISABLE_AUTOUPDATER: "1" } },
+        keeps: ["PATH", "HOME", "HARMLESS_FLAG", "GROK_HOME", "GROK_DISABLE_AUTOUPDATER"],
+        drops: [
+          "XAI_API_KEY",
+          "CLAUDE_CODE_OAUTH_TOKEN",
+          "CLAUDE_CONFIG_DIR",
+          "CODEX_HOME",
+          "OPENAI_BASE_URL",
+          "OPENCODE_CONFIG",
+          "OPENAI_API_KEY",
+          "ANTHROPIC_API_KEY",
+          "GENEX_TOKEN",
+          "SSH_AUTH_SOCK",
+        ],
+      },
+      {
         name: "a tool of no vendor",
         request: { base: "contractor", vendor: "none" },
         keeps: ["PATH", "HOME", "HARMLESS_FLAG"],
-        drops: ["CLAUDE_CONFIG_DIR", "CODEX_HOME", "OPENAI_BASE_URL", "OPENCODE_CONFIG", "SSH_AUTH_SOCK"],
+        drops: ["CLAUDE_CONFIG_DIR", "CODEX_HOME", "OPENAI_BASE_URL", "OPENCODE_CONFIG", "GROK_HOME", "SSH_AUTH_SOCK"],
       },
     ];
     for (const row of rows) {
@@ -607,11 +632,19 @@ describe("SEC-3: both CLIs' sign-in homes are off limits to every agent process"
     // Absolute on this platform: `/Users/me` on macOS and Linux, `<drive>:\Users\me` on Windows.
     const at = (...parts: string[]) => path.resolve(path.sep, ...parts);
     const home = at("Users", "me");
-    // Flipped (OpenCode): OpenCode's sign-in store joins the list, so no other agent reads it.
+    // Flipped (OpenCode, Grok Build): each sign-in store joins the list, so no other agent reads it.
+    // Flipped (Cursor): so do Cursor's settings and chats, and its sign-in file's own folder.
+    const cursorSignIn: Partial<Record<NodeJS.Platform, string>> = {
+      win32: at("Users", "me", "AppData", "Roaming", "Cursor"),
+      linux: at("Users", "me", ".config", "cursor"),
+    };
     const defaults = [
       at("Users", "me", ".codex"),
       at("Users", "me", ".claude"),
       at("Users", "me", ".local", "share", "opencode"),
+      at("Users", "me", ".grok"),
+      at("Users", "me", ".cursor"),
+      ...[cursorSignIn[process.platform]].filter((dir): dir is string => Boolean(dir)),
     ];
     assert.deepEqual(credentialHomes([], {}, home), defaults);
     assert.deepEqual(
@@ -621,13 +654,25 @@ describe("SEC-3: both CLIs' sign-in homes are off limits to every agent process"
           CODEX_HOME: at("env", "codex"),
           CLAUDE_CONFIG_DIR: `${at("env", "claude")}${path.sep}`,
           XDG_DATA_HOME: at("env", "data"),
+          GROK_HOME: at("env", "grok"),
         },
         home,
       ),
-      [...defaults, at("env", "codex"), at("env", "claude"), at("env", "data", "opencode"), at("login", "claude")],
+      [
+        ...defaults,
+        at("env", "codex"),
+        at("env", "claude"),
+        at("env", "data", "opencode"),
+        at("env", "grok"),
+        at("login", "claude"),
+      ],
     );
     assert.deepEqual(
-      credentialHomes([at("Users"), at(), home], { CODEX_HOME: home, XDG_DATA_HOME: "relative" }, home),
+      credentialHomes(
+        [at("Users"), at(), home],
+        { CODEX_HOME: home, XDG_DATA_HOME: "relative", GROK_HOME: "relative/grok" },
+        home,
+      ),
       defaults,
       "never the home folder, its ancestors, the root or a relative data folder",
     );

@@ -46,6 +46,24 @@ is product copy, not this glossary.
 - **Colour tweaker**: the developer panel for tuning colour presets live, hidden in code between
   tuning sessions (`COLOR_TWEAKER_ON` in `src/renderer/appearance/tweaker/ColorTweakerHost.tsx`;
   how to use it in [design](design.md)).
+- **Item**: what a game sells for coin in genex.games' store: one SKU (name, description, picture,
+  maybe a 3D model and a package, a price or Free, consumable or durable) whose id the game passes to
+  `buy({ skuId })`. It has no category; the game decides what it does (`src/shared/store-items.ts`,
+  [store](../play.md#the-item-store)).
+- **Shared item**: a durable item its author lets other games use ("Other games can use it", the
+  `shareable` field). A game that adds one sells it at the author's price and gets the selling game's
+  share; turning sharing off stops new adds only.
+- **Allowance**: one game's permission to sell and support a shared item, made by Create › Items'
+  Add to \<game> (`itemsAddToGame`) or the game agent's `genex items add` (which also puts the
+  item's `genex-items/<id>/` in the game); not a purchase or a copy. It is sold there once that game
+  promotes a live build made after the add (`ItemAllowance`, `AllowanceState`).
+- **Store door**: the viewer bar's Store for a web game that sells items; its Store opens in the
+  game's place while the game, hidden, keeps playing ([store](../play.md#the-item-store)).
+- **Listing draft card**: the chat card for an item the game's agent made, recorded by main from a
+  real `genex shop add|set --json` result only (`item_drafted`, `src/main/core/item-draft.ts`); its Put
+  on sale is the person's press, never the agent's.
+- **Local draft**: an item made before its game is on Genex (`.genex/items/`); its card's Sell when
+  published is an approval in app data (`item-approvals.ts`).
 
 ## Runs
 
@@ -54,59 +72,44 @@ is product copy, not this glossary.
 - **Build**: what the Builds stage shows for one run or build turn: its graph, verdicts and
   resulting game state (`src/renderer/build-progress.ts`, `src/renderer/run-graph.ts`). Not
   `src/main/game-build.ts`, which runs a game's own build step in a shadow copy.
-- **Autopilot**: the harness's name for a Loop-mode run and the classic orchestrator used on
-  completion-only engines: plan facets, build a base, loop facets, merge (`loop/autopilot.ts`).
-- **Director**: one delegated session that conducts a whole run on session-capable engines,
-  using the harness machinery as tools (`loop/director.ts`, its parts under `loop/director/`).
-- **Run**: the director's run as one explicit object (`prepareLoopRun` in
+- **Autopilot**: the harness's older name for a Loop-mode run, kept in wire names (`start_autopilot`,
+  `autopilot_<runId>`, `autopilot_started`). The classic pipeline it once named is gone.
+- **Director**: the Loop's code that drives its lead's session, on a project of any kind
+  (`loop/director.ts`, its parts under `loop/director/`).
+- **Run**: the Loop's run as one explicit object (`prepareLoopRun` in
   `loop/director/setup.ts`); every function of the run takes it first (`loop/director/loop-run.ts`),
-  and what needs no run is beside it: `rules.ts` (plan, monitor, landing, defect routing, worker
-  spec), `args.ts`, `budgets.ts`, `briefs.ts`, `digests.ts`, `memory.ts` and `tool-specs.ts`.
+  and what needs no run is beside it: `rules.ts` (the landing's words, plain card sentences),
+  `args.ts`, `briefs.ts` and `tool-specs.ts`.
+- **Health check**: the one check before a web game's merge settles and before its build lands —
+  the page loads, no uncaught error, a frame that is not blank — the host's `preview.observe` in a
+  window of the Loop's own (`loop/health-check.ts`).
+- **Second opinion**: a model that did none of the work, asked by the lead about pictures and a
+  question it chooses (`judge`, `loop/second-opinion.ts`), or a reviewer asked with `finish
+  review=yes` (`loop/finish-check.ts`); it decides nothing.
 - **Wake / digest**: how the director's session is driven (`loop/director/wake.ts`). The lead
   ends its turn after each decision and the harness wakes the same session when something happens
   (`wake-schedule.ts` decides when, from typed `NoteKind` lines and timers). The digest opens each
-  wake: the user's words verbatim, what happened, where the run stands and a short build card
-  (`wake-prompts.ts`). `run.directorLoop: "turn"` (or `STUDIO_DIRECTOR_LOOP=turn` in the studio's
-  environment) keeps the older long turn with `worker_wait`.
-- **Lead / one session**: a waking web run's director that is its chat's own session, leaving the
-  game's changes to its workers while the build runs (`loop/director/lead-session.ts`). After the close the same
+  wake: the user's words verbatim, what happened and where the run stands (`wake-prompts.ts`).
+- **Lead / one session**: a waking web run's director that is its chat's own session, building in
+  the integration worktree with its own hands beside its workers, never read-only
+  (`loop/director/lead-session.ts`). After the close the same
   session answers the chat with its hands back and the run's controls — `run_status`,
   `show_build`, `land_build` (`runControls`) and a paused run's recorded `resume_run`
   (`loop/after-loop-run.ts`).
 - **Reopen**: a finished build whose journal seated a lead, started again as the same run when a
   Loop message asks for more: the chat's own session records `reopen_run` (workers and judges
   then take the message's picks), or the run's coordinator `continue_build` (the build's own
-  models); the chat rewrites the journal with the Loop's fresh budget and completion policy, a
-  Loop ∞'s required outcomes left to the lead's first plan for the ask (`loop/reopen-run.ts`,
+  models); the chat rewrites the journal with the Loop's fresh budget (`loop/reopen-run.ts`,
   `loop/director/reopen.ts`).
 - **Run journal**: the durable artifact `autopilot_<runId>` a run resumes from. A director run
   keeps its whole record there (`loop/director/journal.ts`): the time it has worked, so a Resume
-  goes on with what the budget has left, its workers, the defects nobody owns, the plan window,
-  the log and the wake loop's state.
-- **Gauntlet**: the single-builder run with blind judging; also the one-facet case of Autopilot
-  (`loop/gauntlet.ts`).
-- **Scout**: the read-only session that looks at the running game before planning
-  (`loop/scout.ts`).
-- **Facet**: a planned slice of a game with its own typed spec, checks, thread and, in parallel
-  runs, its own worktree (`loop/spec.ts`, `loop/facet-loop.ts`).
-- **Contractor**: the persistent builder session that writes game code for a facet or turn
-  (`loop/facet-loop.ts`, `loop/turn-loop.ts`; its page is `src/game-template/CLAUDE.md`).
-- **Spike**: a throwaway mini-scene built in isolation when an identity check keeps failing;
-  a passing spike becomes a recipe in the technique library (`loop/spike.ts`, `library/`).
-- **Judge**: a fresh-context model that compares candidates blind and names defects, never a
-  score (`loop/judge.ts`, prompts in `judge/`). The app calls it a reviewer; the harness and its
-  prompts keep "judge" on purpose, and `words.ts` `reviewerWords` rewords the harness's sentences
-  only when they are shown. Do not rename it in the seed.
-- **Scoreboard**: per-iteration pass/fail of each check, compared mechanically between
-  iterations (`loop/checks.ts`).
-- **Round phase**: one named step of a facet loop's round (`ROUND_PHASES` in
-  `loop/facet-loop.ts`), over the facet's state (`loop`) and the round's (`round`). The classic
-  run (`PIPELINE_PHASES`, `loop/autopilot.ts`), a gauntlet iteration (`ITERATION_PHASES`) and
-  the evidence pass (`LOOK_PHASES`) are lists of named phases the same way.
+  goes on with what the budget has left, the log and the wake loop's state.
+- **Judge**: the seed's name for a second opinion (the `judge` tool, the Reviewers role); it gates
+  nothing. The app calls it a reviewer;
+  the harness and its prompts keep "judge" on purpose, and `words.ts` `reviewerWords` rewords the
+  harness's sentences only when they are shown. Do not rename it in the seed.
 - **Stop code**: why a loop stopped, as a code from `StopCode` beside the `stoppedBecause` sentence
   (`loop/outcomes.ts`); code decides on the code, never on the sentence.
-- **Evidence pass**: one look at a build — load, prove the clock, drive, photograph, read
-  (`loop/evidence.ts` `gatherEvidence`), with the one classifier of why a look failed.
 
 ## The one Loop
 
@@ -118,7 +121,7 @@ Every project's Loop is the director's wake loop, in one of two profiles (`LoopP
 - **Open Loop / lead in place**: the open profile (`loop/director/open/`): the chat's own session
   writes in the game folder (`director.inPlace`), in turns of at most 45 minutes, starts workers
   from the run pool (the plugins' worker types among them) and claims `finish`, which a reviewer
-  checks. Not the web run's **Lead / one session**, which leaves building to its workers.
+  checks. Not the web run's **Lead / one session**, which builds in the integration worktree.
 - **Save point**: the open lead's checkpoint (`save_point`): Genex's snapshot of the game folder
   with the project's plugins' steps around it; `rewind` goes back to one and `restart` closes and
   reopens the project's app between turns (`open/save-point.ts`, `open/between.ts`). The harness
@@ -145,11 +148,7 @@ Every project's Loop is the director's wake loop, in one of two profiles (`LoopP
   `src/shared/game-engine.ts`). The registry's catalog (`engines()`) lets a game link to it and
   read as an engine game (`isEngineGame`); the core names no engine of its own.
 - **Play lane**: an engine editor's one play session, driven only by Genex's six play tools
-  (`EnginePlayTool`, `src/shared/engine-play.ts`) through `computer` and `judge_play` under the
-  plugin's lock; the editor's own play-driving tools stay hidden from agents.
-- **Judge probe**: a plugin judge's quiet harness tool (manifest `judges[].probe`) that measures
-  the play once it opens and adds its note and pictures to the judge's first answer
-  (`src/main/core/editor-play-session.ts`).
+  (`EnginePlayTool`, `src/shared/engine-play.ts`) through `computer` under the plugin's lock; the editor's own play-driving tools stay hidden from agents.
 - **Message checkpoint steps**: `checkpoint.before` hooks that opt in with `messages: true`, run
   before each chat message's two checkpoints inside their 30-second wait so Rewind brings back the
   engine's state too (`HookService.prepareMessageCheckpoint`, `src/main/core/rewind.ts`).
@@ -164,21 +163,22 @@ Every project's Loop is the director's wake loop, in one of two profiles (`LoopP
   open profile's **lead in place**; the role the UI calls Main agent. Run copy says "the lead".
 - **Worker**: a session the lead or the chat's session starts (`worker_start`, `worker_status`,
   `worker_stop`), depth one, in the chat's permission mode, standing in the project as a reader,
-  in a copy or in place under a lock (`WorkerIsolation`, `src/shared/workers.ts`); a plugin's
-  worker types give it tools (`src/main/core/worker-tools.ts`, `loop/workers/run-pool.ts`).
+  in a copy or in place under a lock (`WorkerIsolation`, `src/shared/workers.ts`), with every
+  plugin tool and connector its lead has; a plugin's worker type gives it know-how and an
+  isolation, never a tool fence (`src/main/core/worker-tools.ts`, `loop/workers/run-pool.ts`).
+  `worker_start` answers at once; a worker's end reaches its lead as it comes.
 - **Reviewer**: the UI's word for a judge (the Reviewers role); a Loop's reviewer also answers its
   finish check, seated read-only by the host.
-- **Finish check**: the lead's `finish` claim checked by a reviewer. The seed asks `finish.review`
-  and settles with `finish.settle` (`loop/finish-check.ts`); only the host seats the reviewer and
-  writes the `finish_check` record (`src/main/core/finish-review.ts`); three no's in a row since
-  the run last opened stop it (`MAX_FINISH_REJECTIONS`, `src/shared/finish-check.ts`), except a
-  timed Loop with more than `FINISH_TIME_LEFT_MS` (20 min) left, which keeps working. Builds draws
-  it as Checking, Not yet, Done or Stopped (`FinishCheckState`, `FinishLook` in
-  `src/renderer/run-tree.ts`).
+- **Finish check**: a reviewer reading the lead's claim, when the lead asks (`finish review=yes`);
+  without it the claim closes on the lead's word. The seed asks `finish.review` and settles with
+  `finish.settle` (`loop/finish-check.ts`); only the host seats the reviewer and writes the
+  `finish_check` record (`src/main/core/finish-review.ts`). A yes closes the run as reviewed; a no
+  goes back to the lead and decides nothing. Builds draws it as Checking, Not yet, Done or Stopped
+  (`FinishCheckState`, `FinishLook` in `src/renderer/run-tree.ts`).
 - **Soft cap**: a timed Loop's hours (`loop/time-cap.ts`): a heads-up 15 minutes before, time's up
   at the cap (no new workers then), 15 minutes' grace (`GRACE_MS`), then Genex closes it with what
   is and isn't done ("not checked by a reviewer" when no claim reached one since it last opened);
-  an ∞ Loop's cap is 24 hours. A reviewer's yes ends it early.
+  an ∞ Loop's cap is 24 hours. The lead's finish ends it early.
 - **Unreal runner**: the Unreal lead from before the one Loop (`loop/unreal/lead.ts`: milestones,
   typed sub-agents, the critic, hero-camera captures), reached only through `STUDIO_UNREAL_RUNNER=lead`
   until a live Unreal Loop passes on the one Loop.
@@ -191,7 +191,7 @@ Every project's Loop is the director's wake loop, in one of two profiles (`LoopP
   `autopilot`). UI "Auto" means Loop off. The UI calls the roles Main agent (orchestrator),
   Workers and Reviewers (judge); run copy says the lead, workers and reviewers.
 - **The `loop/` folder**: the harness's policy modules (`src/harness-seed/loop/`).
-- **Facet loop**: one facet's build → review → evidence → checks iteration (`loop/facet-loop.ts`).
+- **The Loop**: a run, its lead's session and the workers it may start (above).
 
 ## Data and profiles
 

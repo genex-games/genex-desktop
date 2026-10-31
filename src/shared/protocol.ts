@@ -106,7 +106,7 @@ export interface AutopilotCommission {
 /**
  * Who wrote a message the chat sends when the words are not the user's: the chat reporting how a
  * command the user ran from a reply went, that the person turned on a plugin the agent suggested,
- * or what an engine's setup card has to say (done, or a step stopped). The agent reads it; the transcript never
+ * what an engine's setup card has to say (done, or a step stopped), or why a Loop didn't start. The agent reads it; the transcript never
  * draws it. Recorded with the queued message: never rename a value.
  */
 export const MessageOrigin = {
@@ -115,6 +115,10 @@ export const MessageOrigin = {
   SetupCard: "setup-card",
   /** A tag the person tried again, now attached: its line for the agent. */
   TagRetry: "tag-retry",
+  /** A Loop the chat started that a plugin held back before its first turn: why, for the agent to fix (`core/held-start.ts`). */
+  LoopHeld: "loop-held",
+  /** A run landed its build: the agent is asked to make the game's Genex cover now (`core/cover-step.ts`). */
+  CoverStep: "cover-step",
 } as const;
 export type MessageOrigin = (typeof MessageOrigin)[keyof typeof MessageOrigin];
 const MESSAGE_ORIGINS: ReadonlySet<unknown> = new Set(Object.values(MessageOrigin));
@@ -185,25 +189,6 @@ export type DispatchAction =
    * message id), forwarded to the harness's worker pool for that turn. Answers with the tool's result.
    */
   | { type: "worker_tool"; threadId: string; turn: string; name: string; args: Record<string, unknown> }
-  /**
-   * A judge that plays (`judge_play`), asked for by the chat's own session after a change: one blind
-   * judge plays the game in `root` (the game folder, as the host resolved it) on a hidden window and
-   * answers `ask`, held to `goalState` when given. Answers with the judge's outcome, never throws.
-   */
-  | {
-      type: "chat_judge";
-      threadId: string;
-      project: string;
-      root: string;
-      engine: string;
-      model?: string;
-      effort?: string;
-      ask: string;
-      goalState?: string;
-      /** The engine plugin's judge to play as (`PluginJudge.id`), checked by the host against the game's judges. */
-      judge?: string;
-    }
-  | { type: "skillopt_start"; threadId: string; options?: Record<string, unknown> }
   | { type: "boot_notice"; notice: BootNotice };
 
 /** The `type` of a dispatch action: the work the host hands the harness. Wire names: never rename one. */
@@ -221,8 +206,6 @@ export const DispatchActionType = {
   AutopilotResume: "autopilot_resume",
   DirectorTool: "director_tool",
   WorkerTool: "worker_tool",
-  ChatJudge: "chat_judge",
-  SkilloptStart: "skillopt_start",
   BootNotice: "boot_notice",
 } as const satisfies Record<string, DispatchAction["type"]>;
 export type DispatchActionType = DispatchAction["type"];
@@ -241,7 +224,6 @@ export const HarnessCapability = {
   Autopilot: "autopilot",
   RunStart: "run.start",
   RunStop: "run.stop",
-  Skillopt: "skillopt",
   Compact: "compact",
   Selftest: "selftest",
   Scoreboard: "scoreboard",
@@ -255,8 +237,6 @@ export const HarnessCapability = {
   Workers: "workers",
   /** A build whose jobs cross to or from a completion-only local engine (`crossesCompletionEngine`). */
   LocalRoles: "local-roles",
-  /** The chat's own session may ask a blind judge to play its game: the harness answers `chat_judge`. */
-  ChatJudge: "chat-judge",
 } as const;
 export type HarnessCapability = (typeof HarnessCapability)[keyof typeof HarnessCapability];
 
@@ -307,21 +287,11 @@ export interface RunReference {
   /** Saved file paths (the morning-review timeline). */
   shots: string[];
   notes?: string;
-  /**
-   * "reference" is a real game to beat (the blind panel is the exit); "direction" is free text
-   * to push toward — no panel, the run spends its whole budget iterating.
-   */
+  /** "reference" is a real game's stills the lead aims at; "direction" is free text to push toward. */
   kind?: "reference" | "direction";
   /** Pixels the critic actually sees. Not written into the event log. */
   frames?: ReferenceFrame[];
 }
-
-/**
- * The studio's environment variable that picks the director's loop for a run that names none
- * (`RunSpec.directorLoop`): a shipped build's way back to the long turn, for one release.
- * The seed's copy is loop/director/wake-schedule.ts `DIRECTOR_LOOP_ENV`.
- */
-export const DIRECTOR_LOOP_ENV = "STUDIO_DIRECTOR_LOOP";
 
 /**
  * The studio's environment variable that sends a Loop on an Unreal game to the Unreal runner it had
@@ -335,7 +305,7 @@ export const UnrealRunnerChoice = { Lead: "lead" } as const;
 export type UnrealRunnerChoice = (typeof UnrealRunnerChoice)[keyof typeof UnrealRunnerChoice];
 
 /** The studio's own variables a run's harness reads; nothing else of its environment is handed on. */
-const HARNESS_RUN_ENV = [DIRECTOR_LOOP_ENV, UNREAL_RUNNER_ENV] as const;
+const HARNESS_RUN_ENV = [UNREAL_RUNNER_ENV] as const;
 
 /**
  * What of the studio's own environment the harness it spawns is handed: the run overrides it
@@ -355,26 +325,9 @@ export interface RunSpec {
   runId: string;
   goal: string;
   project: string;
-  /** "autopilot" decomposes into facet loops; absent = the plain gauntlet. */
+  /** "autopilot": the wire name of a Loop's run, kept for the records it is in. */
   mode?: "autopilot";
-  /**
-   * The programmed pipeline on purpose: planner → base → facet loops → merge. A
-   * delegated engine's Autopilot is otherwise the director's — one session that decides the run.
-   */
-  classic?: boolean;
-  /**
-   * How a director's session is driven. "wake" (absent): the lead ends its turn after each
-   * decision and the harness wakes the same session with a digest when something happens.
-   * "turn": the long turn before the wake loop, with `wait` and continuation prompts — kept for
-   * one release, set by rigs and dev dispatches; a run that names none follows
-   * `DIRECTOR_LOOP_ENV` in the studio's environment.
-   */
-  directorLoop?: "wake" | "turn";
-  /**
-   * gauntlet reference bar — Named / Fetchable / Comparable. `kind` widens it:
-   * "reference" is a real game to beat (the blind panel is the exit condition); "direction" is
-   * free text to push toward — no reference panel. Completion is controlled by budgets.
-   */
+  /** What the run aims at: a named game's stills, or a direction in words. Completion is controlled by budgets. */
   reference: RunReference;
   /** observationDelays: backoff (ms) before re-trying a blind camera — a test/ops knob. */
   budgets: {

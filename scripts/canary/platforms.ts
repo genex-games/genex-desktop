@@ -50,7 +50,11 @@ const OVERRUN_SCRIPT = path.join(import.meta.dirname, "windows", "overrun.ps1");
 export interface Platform {
   /** The app's userData folder for this account, known before the install. */
   userData(): string;
-  install(file: string, evidence: string): Promise<Installed>;
+  /**
+   * Install `file`; over an earlier install (`over`), as its update: the newer app's folder. A file
+   * not `downloaded` lacks a browser's Mark of the Web, so Windows' SmartScreen does not check it.
+   */
+  install(file: string, evidence: string, over?: Installed, downloaded?: boolean): Promise<Installed>;
   trust(file: string, installed: Installed): Promise<Verdict>;
   launch(installed: Installed, evidence: string): Promise<void>;
   quit(installed: Installed): Promise<void>;
@@ -136,15 +140,40 @@ const macos: Platform = {
   },
 };
 
-/** The installed Squirrel app's folder, once Setup.exe has laid it down. */
-async function squirrelApp(): Promise<string | null> {
+/** `app-1.2.3` as numbers, to put Squirrel's version folders in order. */
+function appVersion(name: string): number[] {
+  return name
+    .replace(/^app-/, "")
+    .split(".")
+    .map((part) => Number.parseInt(part, 10) || 0);
+}
+
+/** Whether version `a` comes after `b`. */
+function newerVersion(a: number[], b: number[]): boolean {
+  for (let index = 0; index < Math.max(a.length, b.length); index++) {
+    const diff = (a[index] ?? 0) - (b[index] ?? 0);
+    if (diff !== 0) return diff > 0;
+  }
+  return false;
+}
+
+/**
+ * The installed Squirrel app's newest folder, once Setup.exe has laid it down; not `besides` (the
+ * folder an update replaces, which Squirrel keeps until the next start).
+ */
+export function newestSquirrelApp(names: readonly string[], besides?: string): string | null {
+  const apps = names.filter((name) => name.startsWith("app-") && name !== besides);
+  let newest: string | null = null;
+  for (const name of apps) if (newest === null || newerVersion(appVersion(name), appVersion(newest))) newest = name;
+  return newest;
+}
+
+async function squirrelApp(besides?: string): Promise<string | null> {
   const root = path.join(process.env.LOCALAPPDATA ?? "", SQUIRREL_NAME);
   const versions = await readdir(root).catch(() => []);
-  const dir = versions
-    .filter((name) => name.startsWith("app-"))
-    .map((name) => path.join(root, name))
-    .find((candidate) => existsSync(path.join(candidate, `${SQUIRREL_NAME}.exe`)));
-  return dir ?? null;
+  const ready = versions.filter((name) => existsSync(path.join(root, name, `${SQUIRREL_NAME}.exe`)));
+  const name = newestSquirrelApp(ready, besides);
+  return name ? path.join(root, name) : null;
 }
 
 /** An Authenticode status and signer for one file, as Get-AuthenticodeSignature reports it. */
@@ -159,13 +188,15 @@ async function signature(file: string): Promise<{ status: string; signer: string
 
 const windows: Platform = {
   userData: () => path.join(process.env.APPDATA ?? "", PRODUCT_NAME),
-  async install(file, evidence) {
+  async install(file, evidence, over, downloaded = true) {
     // As a browser leaves a download: Mark of the Web, which SmartScreen and Office read.
     const zone = `[ZoneTransfer]\r\nZoneId=3\r\nHostUrl=${PUBLIC_LINKS[PackageKind.Exe].url}\r\n`;
-    await writeFile(`${file}:Zone.Identifier`, zone);
-    // A double-click: no arguments. Setup.exe installs into %LOCALAPPDATA%\genex and opens the app.
-    startDetached(file, [], evidence, "setup");
-    const dir = await settle(squirrelApp, SETUP_SETTLE_MS);
+    if (downloaded) await writeFile(`${file}:Zone.Identifier`, zone);
+    // A double-click: no arguments. Setup.exe installs into %LOCALAPPDATA%\genex and opens the app;
+    // over an earlier install it lays the newer version beside it, as an update does.
+    startDetached(file, [], evidence, over ? "setup-update" : "setup");
+    const replaced = over ? path.basename(over.packageDir) : undefined;
+    const dir = await settle(() => squirrelApp(replaced), SETUP_SETTLE_MS);
     if (!dir)
       throw new Error(
         `Setup.exe laid down no app-<version>\\${SQUIRREL_NAME}.exe in ${SETUP_SETTLE_MS / MINUTE_MS} minutes`,

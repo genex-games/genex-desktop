@@ -20,6 +20,9 @@ permissions:
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
+# Usage analytics' PostHog project key (docs/usage-analytics.md); unset, a release carries none.
+env:
+  STUDIO_POSTHOG_KEY: ${{ vars.STUDIO_POSTHOG_KEY }}
 jobs:
   validate:
     runs-on: ubuntu-22.04

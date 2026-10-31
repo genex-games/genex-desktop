@@ -1,7 +1,8 @@
 # Genex models at play time in AI Game Studio
 
 You are building inside AI Game Studio. Below the upstream marker is Genex's card on calling a
-model from a running game, unchanged. Where it disagrees with this preface, this preface wins.
+model from a running game, with the passages of advice Studio does not ship taken out. Where it
+disagrees with this preface, this preface wins.
 
 ## Commands, as Studio tools
 
@@ -11,7 +12,7 @@ model from a running game, unchanged. Where it disagrees with this preface, this
 - `npx genex llm bench "<prompt>" --samples 3 --max-coins <n>`: `genex__cli-paid`, with the
   prompt in `args` and whole-number flags in `options`:
   `{"command":"llm bench","args":"<prompt>","options":{"samples":3,"max-coins":5}}`. The user
-  approves each bench because it spends their coin; Studio adds the approval flag itself, so never
+  approves each bench because it spends their Nex (the flag keeps its old name); Studio adds the approval flag itself, so never
   pass `user-approved`.
 - The CLI runs in a folder of Studio's own, not the game, so a flag that names a game file (such as
   `--schema ./answer.schema.json`) cannot be read. `llm price` is not available.

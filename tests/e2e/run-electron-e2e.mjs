@@ -10,26 +10,34 @@ import { resolveElectron, fixtureElectronArgs, fixtureElectronEnv } from "../../
  *   node tests/e2e/run-electron-e2e.mjs [--show] [--keep]
  */
 import { spawn } from "node:child_process";
+import { realpathSync } from "node:fs";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CLAUDE_WORKER_COMMAND, CLAUDE_WORKER_PROOF, startFakeAnthropic } from "../helpers/fake-anthropic.ts";
-import { startFakeOllama, stateFixtureBuild } from "../helpers/fake-ollama.ts";
+import { startFakeOllama } from "../helpers/fake-ollama.ts";
 import { packagedApp } from "./packaged-app.mjs";
 
 const root = fileURLToPath(new URL("../..", import.meta.url));
 const show = process.argv.includes("--show");
 const keep = process.argv.includes("--keep");
+/**
+ * `--userdata=<dir>`: run the self test on that data folder and keep it, as the release canary's
+ * upgrade mode does on the profile an earlier release left; by default a folder of its own.
+ */
+const givenUserData = process.argv.find((arg) => arg.startsWith("--userdata="))?.slice("--userdata=".length);
 // `--claude-worker`: the self test also runs one Claude Code worker on the real CLI, its model the
 // scripted Anthropic stand-in below (the release canary asks for it; it needs a machine that has
 // or may install the CLI).
 const claudeWorker = process.argv.includes("--claude-worker");
 
-/** A small but real game: keeps the studio contract, adds its own probe. */
+/** A small but real game: its own loop, its own rendering, nothing of the studio's on its page. */
 const GAME_SOURCE = `import * as THREE from "three";
-import { installStudio } from "./studio.js";
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(1);
+document.body.style.margin = "0";
 document.body.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
@@ -39,14 +47,20 @@ scene.add(new THREE.DirectionalLight(0xffffff, 2.4).translateY(6), new THREE.Hem
 
 const rings = new THREE.Group();
 scene.add(rings);
+for (let i = 0; i < 14; i++) {
+  const ring = new THREE.Mesh(
+    new THREE.TorusGeometry(1.4, 0.12, 8, 24),
+    new THREE.MeshStandardMaterial({ color: 0xffd166, flatShading: true }),
+  );
+  ring.position.set(Math.sin(i * 1.7) * 3, Math.cos(i * 2.3) * 1.5, -6 - i * 7);
+  rings.add(ring);
+}
 const ship = new THREE.Mesh(
   new THREE.ConeGeometry(0.4, 1.2, 8),
   new THREE.MeshStandardMaterial({ color: 0x6ee7ff, flatShading: true }),
 );
 ship.rotation.x = Math.PI / 2;
 scene.add(ship);
-
-const state = { score: 0, phase: "flying", z: 0, smokeRevision: 0 };
 
 function resize() {
   const w = Math.max(1, innerWidth), h = Math.max(1, innerHeight);
@@ -57,58 +71,19 @@ function resize() {
 addEventListener("resize", resize);
 resize();
 
-// Every camera travels with the ship: the run's critic screenshots them after ~30s of
-// simulated play, and cameras parked at the origin would all frame the same empty background —
-// byte-identical JPEGs, which the evidence pass rightly reads as a dead debugCamera.
-const cameras = {
-  default: () => { camera.position.set(0, 2.5, ship.position.z + 7); camera.lookAt(0, 0, ship.position.z - 6); },
-  close: () => { camera.position.set(1.6, 1.2, ship.position.z + 3); camera.lookAt(ship.position); },
-  wide: () => { camera.position.set(-9, 6, ship.position.z + 11); camera.lookAt(0, 0, ship.position.z - 6); },
-  top: () => { camera.position.set(0, 16, ship.position.z + 0.001); camera.lookAt(0, 0, ship.position.z); },
-};
-
-installStudio({
-  reset(seed) {
-    state.score = 0; state.phase = "flying"; state.z = 0;
-    ship.position.set(0, 0, 0);
-    rings.clear();
-    let a = seed >>> 0;
-    const rng = () => { a += 0x6d2b79f5; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
-    for (let i = 0; i < 14; i++) {
-      const ring = new THREE.Mesh(
-        new THREE.TorusGeometry(1.4, 0.12, 8, 24),
-        new THREE.MeshStandardMaterial({ color: 0xffd166, flatShading: true }),
-      );
-      ring.position.set((rng() - 0.5) * 6, (rng() - 0.5) * 3, -6 - i * 7);
-      rings.add(ring);
-    }
-    cameras.default();
-  },
-  update(dt) {
-    state.z -= dt * 12;
-    ship.position.z = state.z;
-    camera.position.z = state.z + 7;
-    for (const ring of [...rings.children]) {
-      ring.rotation.z += dt;
-      if (Math.abs(ring.position.z - ship.position.z) < 0.6) { rings.remove(ring); state.score += 25; }
-    }
-    if (rings.children.length === 0) state.phase = "cleared";
-  },
-  render() { renderer.render(scene, camera); },
-  probes() {
-    return { score: state.score, phase: state.phase, smokeRevision: state.smokeRevision, entities: { rings: rings.children.length },
-             shipZ: Number(ship.position.z.toFixed(3)), drawCalls: renderer.info.render.calls };
-  },
-  cameras,
-});
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(0.1, Math.max(0, (now - last) / 1000));
+  last = now;
+  ship.position.z -= dt * 12;
+  camera.position.set(0, 2.5, ship.position.z + 7);
+  camera.lookAt(0, 0, ship.position.z - 6);
+  for (const ring of rings.children) ring.rotation.z += dt;
+  renderer.render(scene, camera);
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
 `;
-
-/** Give authored smoke builds distinct state and pixels so a blind fixture can compare them. */
-const smokeGameSource = (revision) =>
-  GAME_SOURCE.replace("smokeRevision: 0", `smokeRevision: ${revision}`).replace(
-    "0x080b14",
-    `0x${(0x080b14 + revision * 0x010100).toString(16)}`,
-  );
 
 const replies = [
   {
@@ -126,202 +101,12 @@ const replies = [
     text: "Writing the game.",
   },
   { toolCalls: [{ id: "call_reload", name: "reload_preview", arguments: {} }] },
-  { toolCalls: [{ id: "call_state", name: "game_state", arguments: {} }] },
+  { toolCalls: [{ id: "call_console", name: "console_log", arguments: {} }] },
   { text: "Done — a ring-flying prototype is running in the preview." },
 ];
 
-// The self test also exercises SkillOpt-free paths only; extra replies keep any additional
-// round (e.g. a retry) from hanging the run.
+// Extra replies keep any additional round (e.g. a retry) from hanging the run.
 for (let i = 0; i < 6; i++) replies.push({ text: "Nothing further." });
-
-/**
- * Content-aware responder for the Loop commission the self test sends: it plays the intake
- * clerk, the builder, the blind judge and the reference panel. Keyed on prompt text because the
- * judge's candidates are shuffled — a fixed reply cannot say "pick the challenger"; the
- * responder reads the authored smoke state from the evidence. Anything it
- * does not recognise returns null and falls through to the scripted chat replies above.
- */
-let commissioned = false;
-let autopilotCommissioned = false;
-let loopBuilds = 0;
-let facetBuilds = 0;
-let baseBuilds = 0;
-const respond = (request) => {
-  const text = request.messages.map((m) => m.content).join("\n");
-
-  if (text.includes("Final optimization specialist"))
-    return { text: "No safe change is justified for this smoke fixture." };
-  if (text.includes("Optimization preservation review"))
-    return {
-      text: JSON.stringify({
-        status: "unavailable",
-        reasons: ["Smoke responder cannot prove preservation"],
-        summary: "Keep the verified baseline",
-      }),
-    };
-
-  // Autopilot's decomposer: the only prompt carrying the engine hint.
-  if (text.includes("ENGINE HINT: maxParallel")) {
-    return {
-      text: JSON.stringify({
-        facets: [
-          { id: "water", title: "Water", brief: "dark harbor water with slow swell", budgetShare: 0.5 },
-          { id: "mist", title: "Mist", brief: "dawn mist and warm light", budgetShare: 0.5 },
-        ],
-        game: { mouseLook: false, keyboardMove: false },
-        integrationNotes: "one shared palette",
-        assumptions: ["chose a warm dawn palette — no reference colours given"],
-      }),
-    };
-  }
-
-  // v2 loop: the base builder's one turn (no tools needed for the smoke), and the playtester
-  // answering the integration facet's play check — both keyed on their own prompt text.
-  if (text.includes("You are the BASE BUILDER")) {
-    baseBuilds++;
-    return baseBuilds % 2
-      ? {
-          toolCalls: [
-            {
-              id: "call_base",
-              name: "write_file",
-              arguments: { project: "misty-harbor", file: "src/main.js", contents: smokeGameSource(10) },
-            },
-          ],
-          text: "Build a playable baseline.",
-        }
-      : { text: "Base ready." };
-  }
-  if (text.includes("QUESTIONS TO ANSWER AT THE END")) {
-    return {
-      text: JSON.stringify({
-        answers: { "integration-play": { answer: "yes", note: "walked" } },
-        report: "scripted play",
-      }),
-    };
-  }
-
-  // Autopilot's per-facet critic — must be matched BEFORE the generic BUILD A/B judge:
-  // both prompts carry the two builds, only this one names the facet under judgement.
-  if (text.includes("THE FACET UNDER JUDGEMENT")) {
-    const letter = stateFixtureBuild(request);
-    return {
-      text: JSON.stringify({
-        pick: letter,
-        satisfied: true,
-        biggest_gap: "",
-        reason: "scripted facet critic",
-      }),
-    };
-  }
-
-  // Blind head-to-head: compare authored state, independent of the shuffled letter.
-  if (text.includes("BUILD A") && text.includes("BUILD B")) {
-    const letter = stateFixtureBuild(request);
-    return {
-      text: JSON.stringify({
-        facets: { works: letter, visuals: letter, feel: letter, play: letter },
-        biggest_gap: "the water needs more shimmer",
-        reason: "scripted facets",
-      }),
-    };
-  }
-
-  // Reference panel: three votes for the build — the victory exit is the only fast honest way
-  // out of a run whose hours clamp to at least half an hour of wall clock.
-  if (text.includes("THE BUILD") && text.includes("REFERENCE:")) {
-    return {
-      text: JSON.stringify({
-        looks: "build",
-        plays: "build",
-        better: "Clear moving ship and readable ring silhouettes",
-        biggest_gap: "nothing left",
-        reason: "scripted panel",
-      }),
-    };
-  }
-
-  // Autopilot intake: interview done in one breath, commission the run.
-  if (text.includes("Autopilot is ON") && !autopilotCommissioned) {
-    autopilotCommissioned = true;
-    return {
-      toolCalls: [
-        {
-          id: "call_autopilot",
-          name: "start_autopilot",
-          arguments: {
-            goal: "a misty harbor scene at dawn",
-            direction: "misty harbor at dawn",
-            project: "misty-harbor",
-          },
-        },
-      ],
-      text: "Commissioning Autopilot.",
-    };
-  }
-
-  // Autopilot facet builders: the proven game, once per facet, then done.
-  if (text.includes("You are building ONE FACET")) {
-    facetBuilds++;
-    if (facetBuilds % 2 === 1) {
-      return {
-        toolCalls: [
-          {
-            id: `call_facet_${facetBuilds}`,
-            name: "write_file",
-            arguments: { project: "misty-harbor", file: "src/main.js", contents: smokeGameSource(20 + facetBuilds) },
-          },
-        ],
-        text: "Building this facet.",
-      };
-    }
-    return { text: "Done with this facet iteration." };
-  }
-
-  // Loop-on intake: commission the run instead of chatting.
-  if (text.includes("Loop is ON") && !commissioned) {
-    commissioned = true;
-    return {
-      toolCalls: [
-        {
-          id: "call_loop",
-          name: "start_unattended_run",
-          arguments: {
-            goal: "a neon ring game over dark water",
-            direction: "neon rings over dark water",
-            project: "neon-rings",
-          },
-        },
-      ],
-      text: "Commissioning the run.",
-    };
-  }
-
-  // Builder turns inside the run: the proven game, then done. Keyed on the brief's own opening
-  // line (gauntlet or facet), not a loose phrase — "unattended run" alone once matched the
-  // operating-rules prose that rides in every prompt.
-  if (text.includes("You are in an unattended run (") || text.includes("You are building ONE FACET")) {
-    loopBuilds++;
-    if (loopBuilds % 2 === 1) {
-      return {
-        toolCalls: [
-          {
-            id: `call_build_${loopBuilds}`,
-            name: "write_file",
-            arguments: { project: "neon-rings", file: "src/main.js", contents: smokeGameSource(loopBuilds) },
-          },
-        ],
-        text: "Building the first playable.",
-      };
-    }
-    return { text: "Done with this iteration." };
-  }
-
-  // Post-run self-improvement: propose nothing, so the pass (and run.settled behind it) is quick.
-  if (text.includes("SKILL FILE (")) return { text: '{"edits":[],"rationale":"nothing"}' };
-
-  return null;
-};
 
 const server = await startFakeOllama({
   models: [
@@ -334,16 +119,18 @@ const server = await startFakeOllama({
   ],
   loaded: [{ name: "qwen3.6:27b", context_length: 262144 }],
   replies,
-  respond,
 });
 
 const packaged = process.argv.includes("--packaged");
 // The package this machine makes (out/Genex-<platform>-<arch>, or STUDIO_PACKAGE_DIR).
 const electron = packaged ? packagedApp(root).bin : resolveElectron(root);
 const appArgs = packaged ? [] : ["."];
-const args = [...appArgs, "--studio-selftest", `--ollama-host=${server.host}`];
+// The self test's own data folder, named here so its log can be shown when a check fails: on a
+// machine only the release canary reaches, that log is the one account of what the core did.
+// Windows' temp folder can be spelled with 8.3 names (GENEXO~1), which the app's folders never are.
+const userData = givenUserData ?? realpathSync.native(await mkdtemp(path.join(os.tmpdir(), "studio-selftest-")));
+const args = [...appArgs, "--studio-selftest", `--ollama-host=${server.host}`, `--userdata=${userData}`];
 if (show) args.push("--show");
-if (keep) args.push("--keep-userdata");
 const anthropic = claudeWorker ? await startFakeAnthropic({ command: CLAUDE_WORKER_COMMAND }) : null;
 if (anthropic) args.push(`--claude-worker-check=${CLAUDE_WORKER_PROOF.file}`);
 // The scripted Anthropic stand-in, and a dummy token so the CLI starts signed in to nothing real.
@@ -389,26 +176,31 @@ if (anthropic) {
   await anthropic.close();
 }
 
+/** How much of the self test's log a failed run prints. */
+const LOG_TAIL_LINES = 300;
+
+/** Print the end of the self test's log, then drop its data folder unless asked to keep it. */
+async function settleUserData(failed) {
+  if (failed) {
+    const log = await readFile(path.join(userData, "logs", "studio.log"), "utf8").catch(() => "");
+    const tail = log.split(/\r?\n/).slice(-LOG_TAIL_LINES).join("\n");
+    console.log(`\n── the self test's log (last ${LOG_TAIL_LINES} lines) ──\n${tail || "(no log)"}`);
+  }
+  if (!keep && !givenUserData) await rm(userData, { recursive: true, force: true }).catch(() => {});
+}
+
 const match = /__SELFTEST_JSON__([\s\S]*?)__END__/.exec(stdout);
 if (!match) {
   console.error(`\ne2e: no report was produced (exit ${code})`);
+  await settleUserData(true);
   process.exit(1);
 }
 const report = JSON.parse(match[1]);
+await settleUserData(report.failed > 0);
 console.log("\n── e2e checks (headless self test) ──");
 for (const check of report.checks) {
   console.log(`${check.ok ? "✔" : "✖"} ${check.name}${check.detail ? `  — ${check.detail}` : ""}`);
 }
-
-// Only the wire can prove this one: the composer's commission once reached the harness as a
-// plain chat delegation, and every in-app check still passed. The model must have been briefed
-// with "Loop is ON" — that briefing exists only on the commission path.
-const loopReached = server.requests.some(
-  (r) => r.path.startsWith("/v1/chat/completions") && JSON.stringify(r.body).includes("Loop is ON"),
-);
-console.log(
-  `${loopReached ? "✔" : "✖"} the commission reached the harness as a Loop commission, not a chat delegation`,
-);
 
 // ── phase 2: boot the real app and check the window a person actually sees ──────────────────
 console.log("\nlaunching the real app (smoke)…");
@@ -450,7 +242,7 @@ if (smokeMatch) {
   console.error("smoke: no report was produced");
 }
 
-const total = report.checks.length + 1 + (smokeMatch ? JSON.parse(smokeMatch[1]).checks.length : 0);
-const failedTotal = report.failed + (loopReached ? 0 : 1) + smokeFailed;
+const total = report.checks.length + (smokeMatch ? JSON.parse(smokeMatch[1]).checks.length : 0);
+const failedTotal = report.failed + smokeFailed;
 console.log(`\n${total - failedTotal}/${total} e2e checks passed`);
 process.exit(failedTotal === 0 && code === 0 && smokeCode === 0 ? 0 : 1);

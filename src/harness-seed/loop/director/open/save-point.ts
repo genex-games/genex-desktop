@@ -94,9 +94,9 @@ export async function savePointTool(loopRun: LoopRun, args: AnyRecord): Promise<
   return OPEN_WORDS.saved(point.label, point.notes, left, showsWords(rel, picture));
 }
 
-/** What the save point's answer says of its `shows`: nothing when it kept the picture, else what to do. */
+/** What the save point's answer says of its `shows`: nothing when it kept the picture or named none, else why not. */
 function showsWords(rel: string, picture: { image: HookImage } | { problem: string } | null): string | null {
-  if (!picture) return SHOWS_WORDS.none;
+  if (!picture) return null;
   return "problem" in picture ? SHOWS_WORDS.refused(rel, picture.problem) : null;
 }
 

@@ -79,14 +79,24 @@ export function agentVerdict(
   return { outcome: StepOutcome.Fail, detail: `${lines.join("; ")} (${exit})` };
 }
 
-/** Run the release's e2e runner on the installed app until the agent checks report; its verdict. */
-export async function runAgentCommand(releaseSrc: string, packageDir: string, logFile: string): Promise<Verdict> {
+/**
+ * Run the release's e2e runner on the installed app until the agent checks report; its verdict.
+ * `userData`, when given, is the data folder the self test runs on and keeps (upgrade mode: the
+ * profile an earlier release left); by default the runner makes one of its own.
+ */
+export async function runAgentCommand(
+  releaseSrc: string,
+  packageDir: string,
+  logFile: string,
+  userData?: string,
+): Promise<Verdict> {
   const runner = path.join(releaseSrc, "tests", "e2e", "run-electron-e2e.mjs");
   if (!existsSync(runner)) return { outcome: StepOutcome.Skip, detail: `no ${runner}` };
   const checks = agentChecksFor(process.platform, readFileSync(runner, "utf8"));
   const claudeWorker = checks.length > AGENT_CHECKS.length ? [CLAUDE_WORKER_SWITCH] : [];
   const out = createWriteStream(logFile);
-  const child = spawn(process.execPath, [runner, "--packaged", ...claudeWorker], {
+  const profile = userData ? [`--userdata=${userData}`] : [];
+  const child = spawn(process.execPath, [runner, "--packaged", ...claudeWorker, ...profile], {
     cwd: releaseSrc,
     env: { ...process.env, STUDIO_PACKAGE_DIR: packageDir },
     stdio: ["ignore", "pipe", "pipe"],

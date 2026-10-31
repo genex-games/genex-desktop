@@ -11,6 +11,7 @@ import type { JSX } from "react";
 import { useEffect, useRef, useState } from "react";
 import type { GameLocation } from "../../shared/game-project.ts";
 import { t } from "../../shared/i18n.ts";
+import { ComposerRoom } from "../analytics/chat-vocabulary.ts";
 import { UserMessage } from "../chat/UserMessage.tsx";
 import { chatPlaceholder, HOME_PLACEHOLDER } from "../composer-placeholder.ts";
 import { ShowSidebarButton } from "../panels/ChatHeader.tsx";
@@ -29,6 +30,7 @@ import { prefersReducedMotion } from "../ui/media-queries.ts";
 import { PromptBar, type ComposerExtras } from "../ui/PromptBar.tsx";
 import { withViewTransition } from "../ui/view-transition.ts";
 import type { ComposerHandoff } from "./use-composer-handoff.ts";
+import { type HomeVisitAnalytics, useHomeVisit } from "./use-home-analytics.ts";
 import { useHomeComposerModel } from "./use-home-composer.ts";
 import { homeUnderControls, useHomeUnderControls } from "../window-controls.ts";
 import { nativeViewsUp } from "../play/play-model.ts";
@@ -111,9 +113,10 @@ function HomeScreen({
   const model = useHomeComposerModel(engines, app.engines.refresh);
   const [location, setLocation] = useState<GameLocation | null>(null);
   const [draft, setDraft] = useState("");
-  const suggestion = useSuggestion(draft, setDraft, handoff);
+  const visit = useHomeVisit(app, draft);
+  const suggestion = useSuggestion(draft, setDraft, handoff, visit);
   const leaving = launch?.phase === LaunchPhase.Handed;
-  useHomeComposerWords(app, handoff, launch === null);
+  useHomeComposerWords(app, handoff, launch === null, visit);
   const finish = (id: string): void => {
     app.launchFinished(id);
     // The message is the chat's now; so is the cursor.
@@ -128,11 +131,13 @@ function HomeScreen({
       effort: model.effort ?? null,
       ...(location ? { parent: location.dir } : {}),
     };
+    visit.launched(input);
     // The launch's first step is synchronous: home becomes the chat and stage in one frame.
     withViewTransition(() => void app.launchGame(input));
   };
   const composer = (
-    <div data-home-composer className="home-composer">
+    // Its chips and model name the person's files and models.
+    <div data-home-composer data-analytics-mask className="home-composer">
       <PromptBar
         ref={handoff.homeComposer}
         gameMode
@@ -143,6 +148,7 @@ function HomeScreen({
         onChange={setDraft}
         onSend={send}
         mentionSide="bottom"
+        room={ComposerRoom.Home}
       />
     </div>
   );
@@ -199,10 +205,16 @@ function HomeScreen({
  * Suggest prompt: a random idea in the composer, cursor after it. It is offered while the box is
  * empty or still holds the idea it last put there, so it never replaces the user's own words.
  */
-function useSuggestion(draft: string, setDraft: (text: string) => void, handoff: ComposerHandoff) {
+function useSuggestion(
+  draft: string,
+  setDraft: (text: string) => void,
+  handoff: ComposerHandoff,
+  visit: HomeVisitAnalytics,
+) {
   const suggested = useRef<string | null>(null);
   const offered = !draft.trim() || draft === suggested.current;
   const suggest = (): void => {
+    visit.suggested(draft);
     const idea = pickPromptIdea(suggested.current);
     suggested.current = idea;
     setDraft(idea);
@@ -215,12 +227,14 @@ function useSuggestion(draft: string, setDraft: (text: string) => void, handoff:
  * Home's composer opens with words waiting for it — the welcome's idea, or a launch that failed
  * — else with the cursor in it.
  */
-function useHomeComposerWords(app: Studio, handoff: ComposerHandoff, atHome: boolean): void {
+function useHomeComposerWords(app: Studio, handoff: ComposerHandoff, atHome: boolean, visit: HomeVisitAnalytics): void {
   const returned = useLaunch((s) => s.returned);
   // biome-ignore lint/correctness/useExhaustiveDependencies: the handoff is new each render; its refs are not
   useEffect(() => {
     if (!atHome) return;
     const words = returned?.text ?? handoff.takeIdea();
+    // Home is up: once a visit, with what waits in it (taking the words back runs this again).
+    visit.viewed(returned !== null, words);
     if (returned) app.returnTaken();
     const frame = requestAnimationFrame(() => {
       if (words) handoff.homeComposer.current?.compose(words);
@@ -283,7 +297,7 @@ function LaunchingHome({
           className={`titlebar-drag flex h-12 shrink-0 items-center gap-0.5 border-b border-line bg-page ps-2.5 pe-2 ${sidebarHidden ? "chat-header-sidebar-hidden" : ""}`}
         >
           {sidebarHidden && <ShowSidebarButton onToggle={onToggleSidebar} />}
-          <span className="chat-header-title truncate" data-naming={named ? undefined : ""}>
+          <span className="chat-header-title truncate" data-naming={named ? undefined : ""} data-analytics-mask>
             {launch.title ?? MESSAGE.naming}
           </span>
         </div>

@@ -162,6 +162,30 @@ describe("snapshot engine", () => {
     );
   });
 
+  // A Loop's start failed: its starting-point snapshot ran while another git (a chat turn ending in
+  // the same game) held the index, and git refused with "index.lock: File exists" at once.
+  it("waits for another git's index.lock instead of failing the snapshot", async () => {
+    const { engine, games } = await harnessWorkspace();
+    await writeFile(path.join(games, "index.html"), "<h1>v2</h1>\n");
+    const lock = path.join(games, ".git", "index.lock");
+    await writeFile(lock, "");
+    const released = setTimeout(() => void rm(lock, { force: true }), 400);
+    try {
+      const snap = await engine.snapshot({ scope: "game", reason: "director starting point", gameWorkspace: "pong" });
+      assert.ok(snap.git.game, "the snapshot was taken once the other git let go");
+      assert.equal(await git(games, ["show", "HEAD:index.html"]), "<h1>v2</h1>\n");
+    } finally {
+      clearTimeout(released);
+      await rm(lock, { force: true });
+    }
+  });
+
+  it("still fails at once when git refuses for any other reason", async () => {
+    const started = Date.now();
+    await assert.rejects(git(await tmpDir("studio-not-a-repo-"), ["commit", "-q", "-m", "x"]));
+    assert.ok(Date.now() - started < 5_000, "no wait for a refusal that is not a held index");
+  });
+
   it("commits under one name, so a run leaves one committer in the user's log", async () => {
     const { engine, games } = await harnessWorkspace();
     await writeFile(path.join(games, "index.html"), "<h1>v2</h1>\n");

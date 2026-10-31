@@ -74,6 +74,8 @@ export function RemixLayer({
       tabIndex={-1}
       aria-label={remixTitle(shown.title)}
       data-remix-layer={shown.step}
+      // It names the game being copied, and so do its words.
+      data-analytics-mask
       aria-busy={!leaving}
       className="home-layer home-launching outline-none"
       data-leaving={leaving || undefined}

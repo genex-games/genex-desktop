@@ -5,22 +5,13 @@ import {
   ENGINE_ASSIST_TASK_MAX_CHARS,
   type EngineAssistAnswer,
   EngineAssistRefusal,
-  PLUGIN_CLIP_DEFAULT_BYTES,
-  PLUGIN_CLIP_DEFAULT_FPS,
-  PLUGIN_CLIP_DEFAULT_SECONDS,
-  PLUGIN_CLIP_MAX_BYTES,
-  PLUGIN_CLIP_MAX_FPS,
-  PLUGIN_CLIP_MAX_SECONDS,
-  PLUGIN_CLIP_MIN_BYTES,
-  PLUGIN_CLIP_MIN_FPS,
-  PLUGIN_CLIP_MIN_SECONDS,
   PLUGIN_STILL_DEFAULT_BYTES,
+  PLUGIN_STILL_DEFAULT_VIEW,
   PLUGIN_STILL_MAX_BYTES,
   PLUGIN_STILL_MIN_BYTES,
   PLUGIN_STILL_VIEW_NAME,
   PluginService,
   type PluginBinding,
-  type PluginClipOrder,
   type PluginStillOrder,
 } from "../../shared/plugins.ts";
 import { VIEWPORT_MAX, VIEWPORT_MIN } from "../preview-pool.ts";
@@ -75,10 +66,11 @@ const MESSAGE = {
   InvalidAssistTask: `Invalid task: one plain line of at most ${ENGINE_ASSIST_TASK_MAX_CHARS} characters`,
   GamesUnavailable: "Games unavailable",
   RunsUnavailable: "Runs unavailable",
+  AssistsUnavailable: "Assists unavailable",
   NotMadeHere: "A link may name only a game this plugin made, and only from outside another game",
   InvalidObservation: "Invalid observation: give { project, root, files }",
   InvalidStill: (why: string) => `Invalid still: ${why}`,
-  InvalidClip: (why: string) => `Invalid clip: ${why}`,
+  ClipRetired: "Invalid observation: observe records no clip; a cover clip is a file handed to genex__cover",
   Unknown: "Unknown plugin service",
 } as const;
 
@@ -86,29 +78,14 @@ const MESSAGE = {
 const STILL_REFUSAL = {
   NotObject: "it must be an object",
   UnknownKey: (key: string) => `unknown key ${JSON.stringify(key)}`,
-  OneView: "name exactly one of demo or camera",
+  Demo: 'there are no demos to name: a still is a plain frame of the page, so ask for camera "default" or none',
   ViewName: "a view name is 1–64 letters, digits, ':', '_' or '-', starting with a letter or digit",
   Side: (side: string, min: number, max: number) => `${side} must be a whole number from ${min} to ${max}`,
   Bytes: `maxBytes must be a whole number from ${PLUGIN_STILL_MIN_BYTES} to ${PLUGIN_STILL_MAX_BYTES}`,
   Files: "a still observes no files: send files: []",
 } as const;
 /** The keys a still request may carry. */
-const STILL_KEYS = new Set(["demo", "camera", "width", "height", "maxBytes"]);
-
-/** Why a clip request is refused, in the words of {@link MESSAGE.InvalidClip}. */
-const CLIP_REFUSAL = {
-  NotObject: "it must be an object",
-  UnknownKey: (key: string) => `unknown key ${JSON.stringify(key)}`,
-  Demo: "name the demo that stages it: 1–64 letters, digits, ':', '_' or '-', starting with a letter or digit",
-  Side: STILL_REFUSAL.Side,
-  Seconds: `seconds must be a number from ${PLUGIN_CLIP_MIN_SECONDS} to ${PLUGIN_CLIP_MAX_SECONDS}`,
-  Fps: `fps must be a whole number from ${PLUGIN_CLIP_MIN_FPS} to ${PLUGIN_CLIP_MAX_FPS}`,
-  Bytes: `maxBytes must be a whole number from ${PLUGIN_CLIP_MIN_BYTES} to ${PLUGIN_CLIP_MAX_BYTES}`,
-  Files: "a clip observes no files: send files: []",
-  Both: "ask for a still or a clip, not both",
-} as const;
-/** The keys a clip request may carry. */
-const CLIP_KEYS = new Set(["demo", "width", "height", "seconds", "fps", "maxBytes"]);
+const STILL_KEYS = new Set(["camera", "width", "height", "maxBytes"]);
 
 /**
  * One service call: the plugin, its storage root, the backend's untyped arguments, the bound game,
@@ -132,29 +109,28 @@ const isMissing = (error: NodeJS.ErrnoException) => error.code === "ENOENT";
 const isWholeWithin = (value: unknown, min: number, max: number): value is number =>
   typeof value === "number" && Number.isInteger(value) && value >= min && value <= max;
 
-/** The one view a still names, as `{demo}` or `{camera}`; refused unless exactly one is a valid name. */
-function stillView(still: Record<string, unknown>): { demo: string } | { camera: string } {
-  const demo = still.demo;
-  const camera = still.camera;
-  if ((demo === undefined) === (camera === undefined)) throw new Error(MESSAGE.InvalidStill(STILL_REFUSAL.OneView));
-  const name = demo ?? camera;
-  if (typeof name !== "string" || !PLUGIN_STILL_VIEW_NAME.test(name))
+/** The view a still names: the page's `default` one when it names none; refused unless a valid view name. */
+function stillView(still: Record<string, unknown>): string {
+  const camera = still.camera === undefined ? PLUGIN_STILL_DEFAULT_VIEW : still.camera;
+  if (typeof camera !== "string" || !PLUGIN_STILL_VIEW_NAME.test(camera))
     throw new Error(MESSAGE.InvalidStill(STILL_REFUSAL.ViewName));
-  return demo === undefined ? { camera: name } : { demo: name };
+  return camera;
 }
 
 /**
  * A plugin's still request, checked field by field and rebuilt from its known keys, so nothing
- * unchecked reaches the host: one view by a plain name, whole-pixel sides a pooled window can take,
- * and a byte limit (defaulted) within the host's bounds. Throws before anything else runs.
+ * unchecked reaches the host: a plain view name (only `default` is served, which the host answers),
+ * whole-pixel sides a pooled window can take, and a byte limit (defaulted) within the host's
+ * bounds. Throws before anything else runs.
  */
 export function stillOrder(raw: unknown): PluginStillOrder {
   if (raw === null || typeof raw !== "object" || Array.isArray(raw))
     throw new Error(MESSAGE.InvalidStill(STILL_REFUSAL.NotObject));
   const still = raw as Record<string, unknown>;
+  if ("demo" in still) throw new Error(MESSAGE.InvalidStill(STILL_REFUSAL.Demo));
   const unknown = Object.keys(still).find((key) => !STILL_KEYS.has(key));
   if (unknown !== undefined) throw new Error(MESSAGE.InvalidStill(STILL_REFUSAL.UnknownKey(unknown)));
-  const view = stillView(still);
+  const camera = stillView(still);
   if (!isWholeWithin(still.width, VIEWPORT_MIN.width, VIEWPORT_MAX.width))
     throw new Error(MESSAGE.InvalidStill(STILL_REFUSAL.Side("width", VIEWPORT_MIN.width, VIEWPORT_MAX.width)));
   if (!isWholeWithin(still.height, VIEWPORT_MIN.height, VIEWPORT_MAX.height))
@@ -162,65 +138,12 @@ export function stillOrder(raw: unknown): PluginStillOrder {
   const maxBytes = still.maxBytes === undefined ? PLUGIN_STILL_DEFAULT_BYTES : still.maxBytes;
   if (!isWholeWithin(maxBytes, PLUGIN_STILL_MIN_BYTES, PLUGIN_STILL_MAX_BYTES))
     throw new Error(MESSAGE.InvalidStill(STILL_REFUSAL.Bytes));
-  return { ...view, width: still.width, height: still.height, maxBytes };
+  return { camera, width: still.width, height: still.height, maxBytes };
 }
 
-const isNumberWithin = (value: unknown, min: number, max: number): value is number =>
-  typeof value === "number" && Number.isFinite(value) && value >= min && value <= max;
-
-/** A clip's whole-pixel sides, each within what a pooled window can take. */
-function clipSides(clip: Record<string, unknown>): { width: number; height: number } {
-  const { width, height } = clip;
-  if (!isWholeWithin(width, VIEWPORT_MIN.width, VIEWPORT_MAX.width))
-    throw new Error(MESSAGE.InvalidClip(CLIP_REFUSAL.Side("width", VIEWPORT_MIN.width, VIEWPORT_MAX.width)));
-  if (!isWholeWithin(height, VIEWPORT_MIN.height, VIEWPORT_MAX.height))
-    throw new Error(MESSAGE.InvalidClip(CLIP_REFUSAL.Side("height", VIEWPORT_MIN.height, VIEWPORT_MAX.height)));
-  return { width, height };
-}
-
-/** A clip's length, rate and byte limit, each defaulted when absent and refused when out of bounds. */
-function clipPacing(clip: Record<string, unknown>): { seconds: number; fps: number; maxBytes: number } {
-  const seconds = clip.seconds === undefined ? PLUGIN_CLIP_DEFAULT_SECONDS : clip.seconds;
-  if (!isNumberWithin(seconds, PLUGIN_CLIP_MIN_SECONDS, PLUGIN_CLIP_MAX_SECONDS))
-    throw new Error(MESSAGE.InvalidClip(CLIP_REFUSAL.Seconds));
-  const fps = clip.fps === undefined ? PLUGIN_CLIP_DEFAULT_FPS : clip.fps;
-  if (!isWholeWithin(fps, PLUGIN_CLIP_MIN_FPS, PLUGIN_CLIP_MAX_FPS))
-    throw new Error(MESSAGE.InvalidClip(CLIP_REFUSAL.Fps));
-  const maxBytes = clip.maxBytes === undefined ? PLUGIN_CLIP_DEFAULT_BYTES : clip.maxBytes;
-  if (!isWholeWithin(maxBytes, PLUGIN_CLIP_MIN_BYTES, PLUGIN_CLIP_MAX_BYTES))
-    throw new Error(MESSAGE.InvalidClip(CLIP_REFUSAL.Bytes));
-  return { seconds, fps, maxBytes };
-}
-
-/**
- * A plugin's clip request, checked field by field and rebuilt from its known keys, so nothing
- * unchecked reaches the host: the demo that stages it by a plain name, whole-pixel sides a pooled
- * window can take, and a length, rate and byte limit (each defaulted) within the host's bounds.
- * Throws before anything else runs.
- */
-export function clipOrder(raw: unknown): PluginClipOrder {
-  if (raw === null || typeof raw !== "object" || Array.isArray(raw))
-    throw new Error(MESSAGE.InvalidClip(CLIP_REFUSAL.NotObject));
-  const clip = raw as Record<string, unknown>;
-  const unknown = Object.keys(clip).find((key) => !CLIP_KEYS.has(key));
-  if (unknown !== undefined) throw new Error(MESSAGE.InvalidClip(CLIP_REFUSAL.UnknownKey(unknown)));
-  const demo = clip.demo;
-  if (typeof demo !== "string" || !PLUGIN_STILL_VIEW_NAME.test(demo))
-    throw new Error(MESSAGE.InvalidClip(CLIP_REFUSAL.Demo));
-  return { demo, ...clipSides(clip), ...clipPacing(clip) };
-}
-
-/** The still or the clip an `observe` asks for, each checked, never both and never beside files. */
-function observedView(args: { still?: unknown; clip?: unknown; files: unknown[] }): {
-  still?: PluginStillOrder;
-  clip?: PluginClipOrder;
-} {
-  if (args.still !== undefined && args.clip !== undefined) throw new Error(MESSAGE.InvalidClip(CLIP_REFUSAL.Both));
-  if (args.clip !== undefined) {
-    const clip = clipOrder(args.clip);
-    if (args.files.length) throw new Error(MESSAGE.InvalidClip(CLIP_REFUSAL.Files));
-    return { clip };
-  }
+/** The still an `observe` asks for, checked and never beside files; a `clip` is refused (observe records none). */
+function observedView(args: { still?: unknown; clip?: unknown; files: unknown[] }): { still?: PluginStillOrder } {
+  if (args.clip !== undefined) throw new Error(MESSAGE.ClipRetired);
   if (args.still === undefined) return {};
   const still = stillOrder(args.still);
   if (args.files.length) throw new Error(MESSAGE.InvalidStill(STILL_REFUSAL.Files));
@@ -343,21 +266,13 @@ async function jobReferenceFile({ root, args }: ServiceCall): Promise<string> {
   return path.join(dir, `${args.id}.json`);
 }
 
-/**
- * The host's look at the bound game. A clip comes as the fourth argument, and only then: a call
- * with no clip is the three-argument call it always was.
- */
-export type PluginObserve = (
-  binding: PluginBinding,
-  files: string[],
-  still?: PluginStillOrder,
-  clip?: PluginClipOrder,
-) => Promise<unknown>;
+/** The host's look at the bound game: its loaded files, or (with `still`) a plain frame of its page. */
+export type PluginObserve = (binding: PluginBinding, files: string[], still?: PluginStillOrder) => Promise<unknown>;
 
 export class PluginServices {
   readonly dataRoot: string;
   readonly adoptedRoots: Record<string, string>;
-  /** The host's look at the bound game: its loaded files, (with `still`) one named view, or (with `clip`) a recorded moment. */
+  /** The host's look at the bound game: its loaded files, or (with `still`) a plain frame of its page. */
   readonly observe: PluginObserve;
   constructor(dataRoot: string, adoptedRoots: Record<string, string>, observe: PluginObserve) {
     this.dataRoot = dataRoot;
@@ -397,6 +312,11 @@ export class PluginServices {
    * computer. Unset, it never can.
    */
   engineCanAssist: ((pluginId: string) => Promise<boolean>) | undefined;
+  /**
+   * Host assists' turn (`game.engine.assisting`): whether the bound game's chat still runs the turn
+   * the plugin's Do it for me started. Unset → 'Assists unavailable'.
+   */
+  engineAssisting: ((pluginId: string, binding: PluginBinding) => Promise<boolean>) | undefined;
   /** Host runs (`game.engine.runs`): the games whose run is going now. Unset → 'Runs unavailable'. */
   runningGames: (() => Promise<Array<{ project: string; directory: string; title: string }>>) | undefined;
   /** The games each plugin made through `game.create` while this host runs, by name, with their folders. */
@@ -434,6 +354,10 @@ export class PluginServices {
     [PluginService.GameEngineRuns]: ({ id }) => this.#engineRuns(id),
     [PluginService.GameEngineAssist]: (call) => this.#assist(call),
     [PluginService.GameEngineCanAssist]: async ({ id }) => (this.engineCanAssist ? this.engineCanAssist(id) : false),
+    [PluginService.GameEngineAssisting]: async ({ id, binding }) => {
+      if (!this.engineAssisting) throw new Error(MESSAGE.AssistsUnavailable);
+      return this.engineAssisting(id, requireBinding(binding));
+    },
     [PluginService.JobsRead]: async (call) =>
       JSON.parse(await readFile(await jobReferenceFile(call), "utf8").catch(() => "null")),
     [PluginService.JobsWrite]: async (call) => {
@@ -568,8 +492,7 @@ export class PluginServices {
   }
   /**
    * `observe`: every argument is checked before the host looks: the bound game's own project and
-   * root, a bounded list of files that exist inside it, and a still or a clip request (if any, never
-   * both) with no files.
+   * root, a bounded list of files that exist inside it, and a still request (if any) with no files.
    */
   async #observeFiles({ args, binding }: ServiceCall): Promise<unknown> {
     if (args === null || typeof args !== "object" || typeof args.root !== "string")
@@ -578,13 +501,12 @@ export class PluginServices {
       binding && args.project === binding.project && path.resolve(args.root) === path.resolve(binding.directory);
     if (!binding || !inWorktree) throw new Error(MESSAGE.OutsideWorktree);
     if (!Array.isArray(args.files) || args.files.length > MAX_OBSERVED_FILES) throw new Error(MESSAGE.InvalidAssetList);
-    const { still, clip } = observedView(args);
+    const { still } = observedView(args);
     for (const file of args.files)
       await containedReal(binding.directory, file).catch((e: NodeJS.ErrnoException) => {
         if (isMissing(e)) throw new Error(MESSAGE.NotInWorkspace(file));
         throw e;
       });
-    if (clip) return this.observe(binding, [], undefined, clip);
     return this.observe(binding, args.files, still);
   }
 }

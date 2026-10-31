@@ -8,8 +8,11 @@
  * the bar shows and acts on what it asks (`studio:play.control`, `studio:play.purchase`). Holding Esc in
  * the game moves the keyboard to the bar (a tap still reaches the game: pause menus, mouse lock); Esc there
  * gives it back. A guest with no Genex account is offered a Genex account in the bar until its ×. A game in
- * voice chat gets the bar's mic switch and its menu (`mic.ts`). Electron-free: the game's view, the bar's
- * layer, the window, the clipboard, the microphone, genex.games' coin and the clock come in as deps.
+ * voice chat gets the bar's mic switch and its menu (`mic.ts`). A game that sells items gets the bar's
+ * Store door: its Store opens in the game's place, drawn by the app's own page below the bar, while the
+ * game's view is hidden (never closed, so the game keeps its session) and the keyboard is the page's.
+ * Electron-free: the game's view, the bar's layer, the window, the clipboard, the microphone, genex.games'
+ * coin and store, and the clock come in as deps.
  */
 import { ESC_HOLD_MS, type FullScreenKey, type Rect } from "../game-full-screen.ts";
 import { SECOND_MS } from "../../shared/duration.ts";
@@ -82,7 +85,7 @@ export interface PlayViewerDeps {
   coin: ViewerCoin;
   /** The app's Genex account: the purchase sheet's Sign in signs in to it in the browser. */
   account: { signIn(): void };
-  /** Open a genex.games page in the browser (the purchase sheet's Get coin); a fixture launch opens nothing. */
+  /** Open a genex.games page in the browser (the purchase sheet's Get Nex); a fixture launch opens nothing. */
   openPage(url: string): void;
   clipboard(text: string): void;
   /** The website Play links to: Share and Invite copy the game's page there. */
@@ -91,6 +94,16 @@ export interface PlayViewerDeps {
   clock: { setTimeout(run: () => void, ms: number): unknown; clearTimeout(handle: unknown): void; now(): number };
   /** The game's voice chat: the system, the page's microphone, the menu and what is remembered. */
   mic: PlayMicDeps;
+  /**
+   * The game's Store (`PlayControl.Store`): whether the game sells items, and the app's own page,
+   * which draws the Store in the game's place and takes the keyboard while it is open. None, no door.
+   */
+  store?: {
+    /** The game `slug` has items on sale; false when it has none or the store is off. */
+    shown(slug: string): Promise<boolean>;
+    /** Give the keyboard to the app's own page. */
+    focusPage(): void;
+  };
   /** A web game's native app on this computer (`PlayControl.NativeApp`); none where Genex plays no native game. */
   nativeApp?: {
     /** What the bar offers for `slug`'s app, or null when this computer has none. */
@@ -132,6 +145,7 @@ const IDLE_STATE: PlayBarState = {
   remixing: false,
   nativeApp: null,
   purchase: null,
+  store: null,
 };
 
 type Clock = PlayViewerDeps["clock"];
@@ -172,10 +186,12 @@ interface ViewerContext {
   current(epoch: number): Session | null;
   /** Tell the app how the header looks now. */
   draw(): void;
-  /** Comments or a purchase sheet covers the window: the keyboard stays with the bar's layer. */
+  /** Comments, a purchase sheet or the Store covers the game: the keyboard stays off it. */
   covering(): boolean;
   /** Where the game's view goes now: below the bar, or the whole window while its page is full screen. */
   gameBounds(): Rect;
+  /** Show the game's view where it goes now, unless its Store is open over its place. */
+  showGame(): void;
   note(value: PlayNote | null): void;
   close(news?: ClosedNews): void;
 }
@@ -246,6 +262,7 @@ async function loadGame(ctx: ViewerContext, epoch: number, showAnyway: () => voi
     () => null,
   );
   void readNativeApp(ctx, epoch);
+  void readStore(ctx, epoch);
   const ticket = await gallery.ticket(s.slug);
   if (!ctx.current(epoch)) return null;
   // Only a missing account earns the guest card: a ticket the account could not mint is no reason to install Genex.
@@ -254,6 +271,42 @@ async function loadGame(ctx: ViewerContext, epoch: number, showAnyway: () => voi
   ctx.draw();
   ctx.deps.game.open(ctx.deps.gameUrl(s.slug, mintedTicket(ticket)), s.slug, ctx.gameBounds());
   return ctx.deps.clock.setTimeout(showAnyway, SHOW_GAME_AFTER_MS);
+}
+
+/** Whether the game opened as `epoch` sells items: the bar shows its Store door once it does. */
+async function readStore(ctx: ViewerContext, epoch: number): Promise<void> {
+  const s = ctx.current(epoch);
+  const store = ctx.deps.store;
+  if (!s || !store) return;
+  // An outage reads as a store with nothing in it: no door.
+  const shown = await store.shown(s.slug).catch(() => false);
+  const live = ctx.current(epoch);
+  if (!live || !shown) return;
+  live.state = { ...live.state, store: { open: false } };
+  ctx.draw();
+}
+
+/** Whether the game's Store is open over its place. */
+const storeOpen = (s: Session | null): boolean => s?.state.store?.open === true;
+
+/**
+ * The Store door pressed: the Store opens in the game's place (the game hidden, its session kept, the
+ * keyboard the app page's), or closes and gives the game back its place and, once it plays, the keyboard.
+ */
+function toggleStore(ctx: ViewerContext): void {
+  const s = ctx.session();
+  const store = ctx.deps.store;
+  if (!s?.state.store || !store) return;
+  const open = !s.state.store.open;
+  s.state = { ...s.state, store: { open } };
+  if (open) {
+    ctx.deps.game.hide();
+    store.focusPage();
+  } else if (s.phase === PlayViewerPhase.Playing) {
+    ctx.showGame();
+    if (!ctx.covering()) ctx.deps.game.focus();
+  }
+  ctx.draw();
 }
 
 /** What the bar offers for the game opened as `epoch`'s native app, read again whenever an install changes. */
@@ -365,6 +418,7 @@ function barActions(ctx: ViewerContext): Record<PlayControl, (at?: PlayPoint) =>
     [PlayControl.FullScreen]: () => {
       if (ctx.session()?.phase === PlayViewerPhase.Playing && !ctx.covering()) ctx.deps.game.fullScreen();
     },
+    [PlayControl.Store]: () => toggleStore(ctx),
   };
 }
 
@@ -424,8 +478,8 @@ interface ViewerLoop {
 
 /**
  * The bar's layer said whether Comments is open: opening takes the keyboard, closing gives it back to
- * the game unless a purchase sheet still covers it. A page that has just mounted is drawn the bar
- * again, whatever news it missed loading.
+ * the game unless a purchase sheet still covers it, or to the app's page under the open Store. A page
+ * that has just mounted is drawn the bar again, whatever news it missed loading.
  */
 function holdBar(loop: ViewerLoop, value: unknown): void {
   const s = loop.ctx.session();
@@ -435,8 +489,11 @@ function holdBar(loop: ViewerLoop, value: unknown): void {
   const was = loop.layer.comments();
   loop.layer.hold(next);
   if (next.comments && !was) loop.ctx.deps.bar.focus();
-  const closedOverGame = !next.comments && was && s.phase === PlayViewerPhase.Playing;
-  if (closedOverGame && !loop.layer.covering()) loop.ctx.deps.game.focus();
+  const closed = !next.comments && was;
+  // Comments closed over the open Store: the keyboard goes back to the Store's page, never the hidden game.
+  if (closed && storeOpen(s)) loop.ctx.deps.store?.focusPage();
+  const closedOverGame = closed && s.phase === PlayViewerPhase.Playing;
+  if (closedOverGame && !loop.ctx.covering()) loop.ctx.deps.game.focus();
 }
 
 /** What the viewer answers beyond opening and closing: its view's news, the bar's asks and the window. */
@@ -454,7 +511,7 @@ function viewerCalls(loop: ViewerLoop, heldEsc: ReturnType<typeof heldEscape>) {
       if (ctx.session()?.phase !== PlayViewerPhase.Loading) return;
       loop.stopShowTimer();
       loop.setPhase(PlayViewerPhase.Playing);
-      if (!layer.covering()) deps.game.focus();
+      if (!ctx.covering()) deps.game.focus();
     },
     /** The game's page could not load, or its renderer went away: an unpaid purchase sheet goes with it. */
     failed: (): void => {
@@ -483,11 +540,11 @@ function viewerCalls(loop: ViewerLoop, heldEsc: ReturnType<typeof heldEscape>) {
     fullScreen: (on: boolean): void => {
       if (!ctx.session()) return;
       layer.fullScreen(on);
-      if (playing()) deps.game.show(ctx.gameBounds());
+      if (playing()) ctx.showGame();
     },
     /** The window changed size: the game and the bar follow. */
     resized: (): void => {
-      if (playing()) deps.game.show(ctx.gameBounds());
+      if (playing()) ctx.showGame();
       if (ctx.session() && layer.layout() !== BarLayout.Hidden) deps.bar.show(barBounds(deps, layer.layout()));
     },
     ...viewerComments(ctx),
@@ -521,7 +578,7 @@ export function playViewer(deps: PlayViewerDeps) {
     if (!session || session.phase === phase) return;
     session.phase = phase;
     if (phase === PlayViewerPhase.Failed) game.hide();
-    if (phase === PlayViewerPhase.Playing) game.show(ctx.gameBounds());
+    if (phase === PlayViewerPhase.Playing) ctx.showGame();
     deps.emit({ slug: session.slug, openId: session.epoch, phase });
     if (phase === PlayViewerPhase.Playing) offerGuestCard(ctx, session);
   };
@@ -545,8 +602,11 @@ export function playViewer(deps: PlayViewerDeps) {
     draw: () => {
       if (session) deps.emit({ slug: session.slug, openId: session.epoch, phase: session.phase, bar: session.state });
     },
-    covering: () => layer.covering(),
+    covering: () => layer.covering() || storeOpen(session),
     gameBounds: () => gameBounds(deps, layer.isFullScreen()),
+    showGame: () => {
+      if (!storeOpen(session)) game.show(ctx.gameBounds());
+    },
     note: (value) => {
       if (!session) return;
       noteTimer = stop(clock, noteTimer);
@@ -583,7 +643,8 @@ export function playViewer(deps: PlayViewerDeps) {
   const loop: ViewerLoop = {
     ctx,
     layer,
-    purchases: viewerPurchase({ ...ctx, layer }),
+    // A sheet that closes gives the game the keyboard only with nothing else over it, its Store included.
+    purchases: viewerPurchase({ ...ctx, layer: { sheet: (on) => layer.sheet(on), covering: ctx.covering } }),
     setPhase,
     stopShowTimer: () => (showTimer = stop(clock, showTimer)),
   };

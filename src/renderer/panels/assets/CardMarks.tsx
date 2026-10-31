@@ -41,6 +41,16 @@ export function CardTagMark({ tag }: { tag: CardTag }): JSX.Element {
   );
 }
 
+/** A card's tag for a file only in the build of a run still going: not in the game until the run lands. */
+export function BuildingMark(): JSX.Element {
+  return (
+    <span data-asset-building className="asset-tag asset-glass" title={WORDS.buildingTip}>
+      <Icon name="layers" size={12} strokeWidth={2} />
+      {WORDS.building}
+    </span>
+  );
+}
+
 /** The circle over a card's top right while several are being picked: filled with a check when picked. */
 export function PickCircle({
   picked,
@@ -52,9 +62,11 @@ export function PickCircle({
   onToggle: () => void;
 }): JSX.Element {
   return (
+    // Its label names the asset's file.
     <button
       type="button"
       data-asset-pick={picked || undefined}
+      data-analytics-mask
       aria-pressed={picked}
       aria-label={picked ? WORDS.deselect(name) : WORDS.select(name)}
       className="asset-pick"
@@ -108,6 +120,7 @@ function ReportButton({
     <button
       type="button"
       data-share-report
+      data-analytics-mask
       aria-label={WORDS.sendReportLabel}
       disabled={busy}
       className="asset-line-button"

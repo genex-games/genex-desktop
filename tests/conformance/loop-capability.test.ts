@@ -12,7 +12,9 @@ import assert from "node:assert/strict";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { after, describe, it } from "node:test";
+import { SendRefusal } from "../../src/shared/composer.ts";
 import { HarnessCapability } from "../../src/shared/protocol.ts";
+import { UiEvent } from "../../src/shared/ui-events.ts";
 import { customEvents, startRig, waitForLog, type Rig } from "../helpers/studio-rig.ts";
 
 const rigs: Rig[] = [];
@@ -49,9 +51,9 @@ describe("loop capability handshake", () => {
       HarnessCapability.Loop,
       HarnessCapability.RunStart,
       HarnessCapability.RunStop,
-      HarnessCapability.Skillopt,
       HarnessCapability.Compact,
     ];
+    // Flipped (Loop phase 5): the seed has no SkillOpt, so it claims no skillopt.
     for (const name of claimed) {
       assert.equal(rig.core.host.hasCapability(name), true, `the seed must claim ${name}`);
     }
@@ -105,6 +107,13 @@ describe("loop capability handshake", () => {
       rig.events.some((e) => e.type === "chat.error"),
       "the open window is told, not just the log",
     );
+    assert.ok(
+      rig.events.some(
+        (e) =>
+          e.type === UiEvent.ChatError && (e.payload as { refusal?: unknown }).refusal === SendRefusal.LoopOutdated,
+      ),
+      "and told which refusal it was, as a code beside the words",
+    );
 
     // Only Loop is gated: the same stale self still gets plain chat.
     await rig.core.sendUserMessage("hello there", { thread: threadId });
@@ -128,11 +137,12 @@ describe("loop capability handshake", () => {
       "the shipped seed serves local roles",
     );
 
-    // The agent edited its scout before local roles existed: the upgrade kept its copy, which has no
-    // marker and would ask Ollama for a session.
-    const scout = path.join(rig.core.layout.harnessWs, "loop", "scout.ts");
-    const kept = (await readFile(scout, "utf8")).replace("export const SERVES_LOCAL_ROLES = true;", "");
-    await writeFile(scout, kept);
+    // The agent edited its model roles before local roles existed: the upgrade kept its copy, which
+    // has no marker and would ask Ollama for a session. Flipped (Loop phase 5): the scout is gone, so
+    // the part edited is model-roles.ts.
+    const roles = path.join(rig.core.layout.harnessWs, "loop", "model-roles.ts");
+    const kept = (await readFile(roles, "utf8")).replace("export const SERVES_LOCAL_ROLES = true;", "");
+    await writeFile(roles, kept);
     await rig.core.host.restart();
     assert.equal(rig.core.host.state, "ready");
     assert.equal(rig.core.host.hasCapability(HarnessCapability.LocalRoles), false);

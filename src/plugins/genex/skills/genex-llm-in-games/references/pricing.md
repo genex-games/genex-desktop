@@ -96,8 +96,7 @@ const NPC_CALL_PRICE = <the recommended figure>;    // from `npx genex llm bench
 const NPC_CALL_CEILING = <the printed ceiling>;     // same run — grants only
 ```
 
-Write the benchmark date and the model id beside it in `DESIGN.md`, so the next
-person knows what the number describes. Do not add a margin of your own on top
+Do not add a margin of your own on top
 of the recommendation, and do not round it down to look cheaper.
 
 For a grant, the run prints a **second** number beside the price: the ceiling,

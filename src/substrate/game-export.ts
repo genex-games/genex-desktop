@@ -5,6 +5,8 @@ import type { Stats } from "node:fs";
 import type { ExportResult } from "../shared/game-project.ts";
 import { t } from "../shared/i18n.ts";
 import { isBelow, isInside, toPosixRelative } from "./paths.ts";
+import { CodedError } from "../shared/errors.ts";
+import { ExportRefusal } from "../shared/game-library.ts";
 import { MIN_SECRET_LENGTH } from "../shared/redact.ts";
 
 const excluded = (name: string) =>
@@ -100,15 +102,16 @@ async function resolveExportTarget(
   requested: string,
 ): Promise<{ target: string; parent: string; existing: Stats | null }> {
   const lexical = path.resolve(requested);
-  if (overlaps(source, lexical)) throw new Error(MESSAGE.InsideGame());
+  if (overlaps(source, lexical)) throw new CodedError(ExportRefusal.TargetInsideGame, MESSAGE.InsideGame());
   await mkdir(path.dirname(lexical), { recursive: true });
   const parent = await realpath(path.dirname(lexical));
   const target = path.join(parent, path.basename(lexical));
-  if (overlaps(source, target)) throw new Error(MESSAGE.ResolvesInsideGame());
+  if (overlaps(source, target)) throw new CodedError(ExportRefusal.TargetInsideGame, MESSAGE.ResolvesInsideGame());
   const existing = await lstat(target).catch(() => null);
   const plainDirectory = existing?.isDirectory() && !existing.isSymbolicLink();
-  if (existing && !plainDirectory) throw new Error(MESSAGE.NotADirectory());
-  if (existing && !(await isReplaceableExport(target))) throw new Error(MESSAGE.NotAnExport());
+  if (existing && !plainDirectory) throw new CodedError(ExportRefusal.TargetNotFolder, MESSAGE.NotADirectory());
+  if (existing && !(await isReplaceableExport(target)))
+    throw new CodedError(ExportRefusal.TargetNotExport, MESSAGE.NotAnExport());
   return { target, parent, existing };
 }
 
@@ -117,7 +120,7 @@ async function refuseSymlinkOnTheWay(base: string, parts: string[], rel: string)
   let parentPath = base;
   for (const part of parts) {
     parentPath = path.join(parentPath, part);
-    if ((await lstat(parentPath)).isSymbolicLink()) throw new Error(MESSAGE.Symlink(rel));
+    if ((await lstat(parentPath)).isSymbolicLink()) throw new CodedError(ExportRefusal.Symlink, MESSAGE.Symlink(rel));
   }
 }
 
@@ -130,14 +133,15 @@ async function stagePath(
   destRel = rel,
 ): Promise<void> {
   const parts = rel.split(/[\\/]/);
-  if (path.isAbsolute(rel) || parts.includes("..")) throw new Error(MESSAGE.InvalidPublicPath(rel));
+  if (path.isAbsolute(rel) || parts.includes(".."))
+    throw new CodedError(ExportRefusal.PublicPathInvalid, MESSAGE.InvalidPublicPath(rel));
   if (parts.some(excluded)) {
     result.excluded.push(destRel);
     return;
   }
   const src = path.join(base, rel);
   const st = await lstat(src).catch(() => null);
-  if (!st) throw new Error(MESSAGE.MissingPublicPath(rel));
+  if (!st) throw new CodedError(ExportRefusal.PublicPathMissing, MESSAGE.MissingPublicPath(rel));
   await refuseSymlinkOnTheWay(base, parts, rel);
   if (st.isDirectory()) {
     for (const name of await readdir(src)) {
@@ -146,7 +150,7 @@ async function stagePath(
     }
     return;
   }
-  if (!st.isFile()) throw new Error(MESSAGE.NotAFile(rel));
+  if (!st.isFile()) throw new CodedError(ExportRefusal.NotAFile, MESSAGE.NotAFile(rel));
   const dest = path.join(staging, destRel);
   await mkdir(path.dirname(dest), { recursive: true });
   await copyFile(src, dest);
@@ -162,7 +166,7 @@ function isVendorFile(rel: string, vendor: string | undefined): boolean {
 async function rewriteEntry(staging: string): Promise<{ entry: string; html: string }> {
   const entry = path.join(staging, "index.html");
   const original = await readFile(entry, "utf8").catch(() => null);
-  if (original === null) throw new Error(MESSAGE.NoEntry());
+  if (original === null) throw new CodedError(ExportRefusal.NoEntry, MESSAGE.NoEntry());
   const html = original.replaceAll('"/vendor/', '"./vendor/').replaceAll('"/src/', '"./src/');
   await writeFile(entry, html);
   return { entry, html };
@@ -174,7 +178,8 @@ function importMapOf(html: string): Record<string, string> {
   for (const [, body = ""] of html.matchAll(/<script\b[^>]*type=["']importmap["'][^>]*>([\s\S]*?)<\/script>/gi)) {
     const map = JSON.parse(body);
     for (const [key, value] of Object.entries(map.imports ?? {})) if (typeof value === "string") imports[key] = value;
-    if (map.scopes && Object.keys(map.scopes).length) throw new Error(MESSAGE.ScopedImportMap());
+    if (map.scopes && Object.keys(map.scopes).length)
+      throw new CodedError(ExportRefusal.ScopedImportMap, MESSAGE.ScopedImportMap());
   }
   return imports;
 }
@@ -202,7 +207,7 @@ function mapBareSpecifier(imports: Record<string, string>, ref: string): string 
   const match = Object.entries(imports)
     .sort(([a], [b]) => b.length - a.length)
     .find(([key]) => key === ref || (key.endsWith("/") && ref.startsWith(key)));
-  if (!match) throw new Error(MESSAGE.UnresolvedModule(ref));
+  if (!match) throw new CodedError(ExportRefusal.UnresolvedModule, MESSAGE.UnresolvedModule(ref));
   const [key, target] = match;
   return target + ref.slice(key.length);
 }
@@ -235,7 +240,11 @@ async function checkReference(
     : path.resolve(path.dirname(from), pathname);
   const st = await lstat(file).catch(() => null);
   const publicFile = isInside(staging, file) && st?.isFile() === true;
-  if (!publicFile) throw new Error(MESSAGE.MissingReference(ref, toPosixRelative(path.relative(staging, from))));
+  if (!publicFile)
+    throw new CodedError(
+      ExportRefusal.MissingReference,
+      MESSAGE.MissingReference(ref, toPosixRelative(path.relative(staging, from))),
+    );
   if (isBelow(path.join(staging, VENDOR_DIR), file))
     check.neededVendor.add(toPosixRelative(path.relative(staging, file)));
   if (kind !== ReferenceKind.File && /\.m?js$/i.test(file)) check.queue.push(file);
@@ -370,7 +379,7 @@ export async function exportPublicGame(
           options.secretValues,
         )
       : undefined;
-    if (leaked) throw new Error(MESSAGE.SecretLeaked(leaked));
+    if (leaked) throw new CodedError(ExportRefusal.SecretLeaked, MESSAGE.SecretLeaked(leaked));
     const page = await rewriteEntry(staging);
     const neededVendor = await checkReferences(staging, page, result.included, vendor);
     if (vendor) await pruneUnusedVendor(staging, result, neededVendor);

@@ -1,6 +1,7 @@
 import type { AutopilotCommission, LoopCommission, MessageOrigin, ReferenceFrame } from "./protocol.ts";
 import type { ModelPreferences } from "./model-preferences.ts";
 import type { MentionRef } from "./prompt-mention.ts";
+import type { EngineFailureKind } from "./engine-requests.ts";
 /** One send contract from the renderer through preload to the host. */
 export interface ComposerSendOptions {
   thread?: string;
@@ -22,6 +23,28 @@ export interface ComposerSendOptions {
   /** Words the chat wrote itself rather than the user; absent for the user's own. */
   origin?: MessageOrigin;
 }
+/**
+ * Why a message the composer sent did not reach its chat: the send's IPC failure carries it as its
+ * code, and `chat.error` beside its words. Never rename a value.
+ */
+export const SendFailure = {
+  /** The harness that takes messages was not running. */
+  HarnessNotRunning: "harness_not_running",
+  /** The chat was being rewound. */
+  Rewinding: "rewinding",
+  Other: "send_failed",
+} as const;
+export type SendFailure = (typeof SendFailure)[keyof typeof SendFailure];
+/**
+ * Why a message reached its chat but was refused there (`chat.error`'s `refusal`): the harness's
+ * loop predates what the message commissions. Never rename a value.
+ */
+export const SendRefusal = {
+  AutopilotOutdated: "autopilot_outdated",
+  LoopOutdated: "loop_outdated",
+  LocalRolesOutdated: "local_roles_outdated",
+} as const;
+export type SendRefusal = (typeof SendRefusal)[keyof typeof SendRefusal];
 /**
  * What an approved plan's message puts between the user's request and the plan
  * (`main/plan-review-prompts.ts`); a rewind gives back only the request before it.
@@ -47,6 +70,8 @@ export interface PlanReview {
   text: string;
   plan?: string;
   error?: string;
+  /** Why the plan could not be written, when it failed (`error` holds the words). */
+  failure?: EngineFailureKind;
   options: ComposerSendOptions;
 }
 /** A plan review as the log records it (`plan_review`): the whole review except its send options. */

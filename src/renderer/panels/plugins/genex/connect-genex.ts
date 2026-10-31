@@ -5,6 +5,7 @@
  * signs in to nothing.
  */
 import type { PluginInfo } from "../../../../shared/plugins.ts";
+import { PluginAction, PluginSurface, trackedPluginAction } from "../../../analytics/plugins-page.ts";
 import type { PluginsPage } from "../page.ts";
 
 /** The app's Genex account as Connect needs it: whether it is signed in, and how to sign in. */
@@ -20,7 +21,8 @@ export function turnOnAndConnect(
   account: ConnectAccount,
 ): Promise<void> {
   return page.act(async () => {
-    await window.studio.pluginEnable(plugin.manifest.id, true);
+    const press = { action: PluginAction.Enable, plugin, surface: PluginSurface.PluginsPage };
+    await trackedPluginAction(press, () => window.studio.pluginEnable(plugin.manifest.id, true));
     if (!account.signedIn) await account.signIn();
   });
 }

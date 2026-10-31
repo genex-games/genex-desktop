@@ -64,14 +64,29 @@ async function writeMark(folder: string, name: string, value: AgentBusy | AgentP
   await atomicWriteJson(path.join(folder, name), value).catch(() => undefined);
 }
 
-/** A busy mark kept in `folder`, stamped by `now`; overlapping writes share one mark. */
+/**
+ * When a write starting at `start` begins its busy window: the window already in `folder` when it
+ * still runs, or ended within {@link AGENT_TRAIL_MS}, so Studio's late report of that earlier write
+ * stays covered; otherwise `start`.
+ */
+async function windowStart(folder: string, start: number): Promise<number> {
+  const before = busyOf(await readMark(folder, AGENT_BUSY_FILE), start);
+  if (!before) return start;
+  const joins = before.until === undefined || start - before.until <= AGENT_TRAIL_MS;
+  return joins ? before.since : start;
+}
+
+/**
+ * A busy mark kept in `folder`, stamped by `now`; overlapping writes share one mark, and a write
+ * that follows another closely (any marker's) extends its window.
+ */
 export function agentBusyMarker(folder: string, now: () => number): BusyMarker {
   let running = 0;
   let since = 0;
   return {
     async around(write) {
       if (running++ === 0) {
-        since = now();
+        since = await windowStart(folder, now());
         await writeMark(folder, AGENT_BUSY_FILE, { since });
       }
       try {

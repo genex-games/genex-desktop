@@ -48,6 +48,11 @@ its `npm install -g` stays in the profile. A Claude Code sign-in leaves a
 `Claude Code-credentials-<hash>` item in your login keychain that neither sign-out nor `clean`
 removes; delete it in Keychain Access when you like.
 
+To see [usage analytics](usage-analytics.md) send from an owned profile, set
+`STUDIO_POSTHOG_KEY` to a test PostHog project's key and `STUDIO_ANALYTICS=1` on the start: the
+development build then keeps the key and the launch offers the question. Never use the release
+project's key; releases read it from the repository variable `STUDIO_POSTHOG_KEY`.
+
 A live launch keeps the caller's environment except its agent session's own variables: the
 keys and endpoint it routes model calls through, Claude Code's and the Agent SDK's switches, the
 session's nesting, effort, context, timeout, MCP and OAuth markers, and `ELECTRON_RUN_AS_NODE`
@@ -63,10 +68,37 @@ Live profiles isolate Studio data, not all machine accounts, Keychain, quotas, l
 or compute. They do not copy credentials. Follow the [credential restriction](agent/verification.md#credentials)
 for account-connected checks. Preserve active user work; inspect ownership/status before a restart.
 
+A live profile can run against a local or test genex.games (a stand) instead of genex.games itself
+(`src/main/play/origins.ts`, `devStand`):
+
+```sh
+GENEX_DEV_PLAY_API_ORIGIN=http://localhost:3000 GENEX_DEV_PLAY_WEB_ORIGIN=http://localhost:5173 \
+GENEX_DEV_PLAY_GAMES_ORIGIN=https://localhost:8443 GENEX_DEV_PLAY_GAMES_CA=/abs/path/certs/ca.pem \
+  npm run studio:dev -- start --profile stand-review --providers live
+```
+
+Origins are bare (https, or http on this Mac); the CA is an absolute path to a PEM file. With the stand's
+API the account signs in on the stand's device sign-in, for the launch only; Play, the store,
+`genex__cli`/`genex__cli-paid` (the CLI's `--api-url` and token) and the Genex plugin's backend (Publish,
+its asset tools and its account page) use the stand and that account, never genex.games or the Genex
+plugin's saved account. With a games origin too, the Play viewer plays
+`https://<slug>.localhost:8443/`, trusts that CA for those game hosts only, and catches their purchases
+on the stand's website; the Genex plugin's Publish trusts the CA too (its backend and CLI runs, beside
+the system's), so it can push to a local stand's source host and test its draft on the stand's
+game host. `genex://` links stay on genex.games: a development launch never registers as
+the system's link handler. To tie a local game to a stand
+project, write the stand's `{ "id", "slug" }` to `.studio-dev/profiles/<name>/core/engine-homes/genex/publish/<game>/.genex/project.json`.
+The pinned CLI decides which `genex` commands exist (shop JSON drafts need 1.36.14, local item drafts
+and `shop sync` 1.36.15). A packaged app, a
+fixture launch, smoke and the normal profile ignore every one of these variables, and a malformed value
+leaves that side on genex.games.
+
 The controller builds immutable output under `.studio-dev/builds/<id>` and returns actual
 readiness and profile/build/source/runtime identity. Rebuilding does not update a running app.
 Each start removes the builds no profile's `launch.json` or `attempt.json` names, once they are an
-hour old.
+hour old. A running app keeps its build's `build.json` open, so `lsof +D .studio-dev/builds/<id>`
+lists it; never remove a build by age alone, because the app loads screens such as the terminal
+from it hours after it started.
 Use the controller to stop owned sessions; a PID alone is not authority to signal a process.
 `clean --profile <name>` removes only stopped recognized disposable state. Retained live
 profiles, evidence and normal games are not disposable fixture cleanup.
@@ -240,8 +272,8 @@ It also checks secure contexts in Live and worker views. Register `game` and `st
 privileges in one call before Electron is ready; a second registration loses the game's secure
 context and disables WebGPU, while Three.js can silently render through its WebGL fallback.
 `npm run test:shapes:e2e` is the milestone's own proof, and part of `npm run verify`. It opens
-each of the five games under `tests/fixtures/games` as the user's own game — four of them with no
-edit at all, the bundled one with the two-line `installStudio({ renderer, player })` — waits for
+each of the five games under `tests/fixtures/games` as the user's own game — all of them with no
+edit at all — waits for
 the page to report itself ready, shadow-builds the one that has a build, drives it, photographs
 it and judges the evidence with the harness's own `gatherEvidence`; then drives the same five
 again through the real Codex file bridge (the shim run as a child process, only the CLI scripted)
@@ -350,6 +382,9 @@ chat-workers (a chat message's two workers on Builds and as chat lines, after an
 more games, written after the start so their Loops read as going: Fixture Loop with three workers,
 the lead's background work and the finish check not run yet; Fixture web Loop with build-graph's
 runs and Fixture Unreal Loop with lead-graph's, each with its workers' records, drawn as trees),
+build-timeline (a Loop written after the start: four builds on its line, one a sound-only merge and
+one blank, twelve workers off them with a fold, a re-delivered sign, and deliveries only in its
+integration worktree for the Assets tab),
 finish-check (four Loops written after the start, one per finish check look: Done and Stopped in
 the Builds history, Not yet after one no, and the newest Checking),
 paused-build (a Loop a usage limit paused and resumed, written after the start: one worker's try
@@ -386,9 +421,12 @@ stand-in viewport shot from one finished run, and the steps card, whose rows com
 and unreal-chat (a short synthetic Unreal chat, `tests/fixtures/unreal-chat/sample-chat.json`:
 connector rows in words, Worked in Unreal headings, failures, play views and a Blender delivery)
 and roblox-game (the game linked to a stand-in place, `FixtureGame.rbxlx`, at its top with the
-Roblox Studio plugin on: the toolbar's Roblox Studio button, the chat's link line with Undo and the
+Roblox Studio plugin on: the chat header's Roblox button, the chat's link line with Undo and the
 steps card `[data-engine-steps]` (rows `[data-step=studio|sign-in|helper|mcp|place]`), whose rows come from the real plugin on
-this machine; Set up, Open Studio and Get Roblox Studio are native, so a fixture refuses them).
+this machine; Set up, Open Studio and Get Roblox Studio are native, so a fixture refuses them)
+and items-store (with `STUDIO_FIXTURE_GENEX_ACCOUNT=1`: the fixture game is the account's Snowball on
+Genex, so Create › Items' Add to and Ask the agent reach its chat, which ends with Frost Axe's Listing draft
+card; [the item store](play.md#the-item-store)).
 Use `--reuse` explicitly for a stopped existing profile with the same fixture/provider mode.
 `--providers live` is explicit, retained, and uses existing ambient account semantics; no auth
 or account copying is performed. Fixtures park background improvement but keep the real core,
@@ -483,16 +521,17 @@ read `logs`. A run paused by an engine limit or a loop crash continues from
 owner is using it; leave the profile running at the end.
 
 Run overrides reach the harness from the studio's environment only by name (`harnessRunEnv`):
-`STUDIO_DIRECTOR_LOOP=turn` picks the long turn for a run that names no loop, and
 `STUDIO_UNREAL_RUNNER=lead` sends a new Loop on an Unreal project, and the resume of a run that
-runner wrote, to the Unreal runner from before the one Loop. Neither is a run record field or shown
-in the UI; set it on start and restart.
+runner wrote, to the Unreal runner from before the one Loop. It is no run record field and not
+shown in the UI; set it on start and restart.
 
 Transport descriptors are private local capabilities under the owned profile; never copy them
 into task records. Unix sockets live in a short 0700 temporary directory, with owner-only socket
 permissions; on Windows the control is a named pipe with a fresh random name, which other accounts
 can open only read-only. Protocol v1 uses bounded newline-delimited JSON, request IDs and one operation at
-a time. A timeout is not success and does not authorize retrying a mutation blindly.
+a time; `status`, `runs` and `stop` answer while another runs, and an operation that times out frees
+the slot though it may still finish (`main/dev/operation-slot.ts`). A timeout is not success and does
+not authorize retrying a mutation blindly.
 
 ## Embedded terminal acceptance
 

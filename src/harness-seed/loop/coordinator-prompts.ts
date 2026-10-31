@@ -18,7 +18,7 @@ export const SERVES_REOPEN = true;
 /** The system prompt of a completion-only coordinator, which answers only through its tools. */
 export const COORDINATOR_SYSTEM = "You coordinate the existing run using only the provided tools.";
 
-/** How much of the saved plan, the run snapshot and the saved progress the prompt carries. */
+/** How much of the saved plan (a plan the person reviewed, when there is one), the run snapshot and the saved progress the prompt carries. */
 const PLAN_CHARS = 24_000;
 const SNAPSHOT_CHARS = 24_000;
 const PROGRESS_CHARS = 18_000;
@@ -30,24 +30,25 @@ export const COORDINATOR_RECORD_CHARS = PLAN_CHARS + SNAPSHOT_CHARS + PROGRESS_C
 /** Who the coordinator is to the user, and the rules it answers by. */
 const COORDINATOR_RULES = [
   "You are the assistant in this game's chat. A build (a Loop run) was started from this chat and now exists; you answer here on its behalf. To the user you are simply this chat: never describe yourself as a coordinator, a registrar or a separate Studio chat.",
-  "Answer the latest message in context. The intake interview is over. Do not commission another run, repeat planning, reset a clock, or edit game files. Workers own implementation: you cannot generate assets or change files yourself, but the builders can, with the capabilities listed below, once resume_run or continue_build hands them the request. Promise only what those tools can do: each asset lane's provider is fixed (the Genex model lane is Tripo; Meshy makes only characters and creatures), so when the user asks for a provider or tool a lane lacks, say so once, name what the builders will use instead, and hand them that.",
-  "Use run_status for current facts, steer_run for requested changes during a run, finish_run to wait for current attempts then integrate/show the accepted work, or resume_run for continued work on a paused run. A new instruction after a stop is a request to continue with that instruction; include it as text in resume_run so the saved run receives it before building. A question alone needs an answer without restarting builders.",
+  "Answer the latest message in context. Do not commission another run, reset a clock, or edit game files. You cannot generate assets or change files yourself; the build can, once resume_run or continue_build hands it the request. Promise only what the capabilities listed below can do.",
+  "Use run_status for current facts, steer_run for requested changes during a run, finish_run to wait for the workers at work then integrate and show what they made, or resume_run to go on with a paused run. After a stop, resume_run is for going on with that build itself — resume, continue, keep going, run it again, or new guidance for its goal: include their instruction as text so the saved run receives it before building. Other work asked for after a stop — a fix, an update, one feature that is not the build's goal — is not a resume: hand it to one builder with continue_build and build: false, and the build stays paused. A question alone needs an answer without restarting builders.",
   "When the user asks to see, run, play or launch what a run made — during, after or when it paused — use show_build (integration: what the run built; live: the game folder as it is), then say what it answered: open in Live, on the right, or waiting behind Reload while the user watches Live. A finished or paused run whose work was not landed can be put in the game folder with land_build; say what was landed.",
   "Speak the user's language, not the studio's internals: the panel on the right is Live (the game), Builds (the run's progress) and Assets. Never say integration branch, worktree, studio window, integration view or live view. The run's build is \"the build\"; the folder they play from is \"your game folder\".",
-  "A question needs an answer, not worker instructions. Guidance is queued at iteration boundaries, not injected mid-command. Do not claim it has been applied until the evidence says so. Finish still performs integration and validation; never promise a broken build is playable.",
-  "If this run has finished, answer questions about its results. For requested changes or unfinished work, use continue_build to continue in the existing game with its saved plan and conversation. Do not require a Keep going, Resume, or New build button. Never silently replace the plan or repeat completed work.",
+  "When the user asks to stop, cancel, kill or halt the build or its workers, call stop_run: it stops when your reply ends, what it built is kept, and it pauses. To restart it, call stop_run with restart true and their instruction as text. Never steer_run a stop, and never tell the user to press a button or use the app for it.",
+  "A question needs an answer, not worker instructions. Do not claim it has been applied until the evidence says so. Finish still runs its health check; never promise a broken build is playable.",
+  "If this run has finished, answer questions about its results. For requested changes or unfinished work, use continue_build to continue in the existing game with its conversation. Do not require a Keep going, Resume, or New build button. Never repeat completed work.",
 ];
 
 /**
  * The coordinator's prompt: its rules — with a Loop's reopen when the chat offers one (`reopen`, the
- * Loop's hours) — then the saved plan and progress, the run, the conversation and the message.
+ * Loop's hours) — then the saved plan when there is one, the progress, the run, the conversation and the message.
  */
 export function coordinatorPrompt({
   events,
   run,
   text,
   journal,
-  savedPlan,
+  savedPlan = null,
   history,
   reopen = null,
   budgetChars = COORDINATOR_RECORD_CHARS,
@@ -57,7 +58,8 @@ export function coordinatorPrompt({
   run: AnyRecord;
   text: string | undefined;
   journal: AnyRecord | null;
-  savedPlan: unknown;
+  /** The plan the person reviewed before the build, when there is one. */
+  savedPlan?: unknown;
   history: string;
   reopen?: { hours: number | null; frameCount?: number } | null;
   /** How much of the run the prompt may carry: a share of the model's window. */
@@ -65,7 +67,7 @@ export function coordinatorPrompt({
   /** The language Genex speaks (`studio.language`): the fallback for Genex's own messages. */
   appLanguage?: AppLanguage | null;
 }): string {
-  const progress = { phase: journal?.phase, base: journal?.base, facets: journal?.facets, director: journal?.director };
+  const progress = { phase: journal?.phase, director: journal?.director };
   // Each part keeps its share of what this model can take; the message is never cut.
   const share = (chars: number) =>
     Math.floor((chars * Math.min(budgetChars, COORDINATOR_RECORD_CHARS)) / COORDINATOR_RECORD_CHARS);
@@ -73,7 +75,9 @@ export function coordinatorPrompt({
     ...COORDINATOR_RULES,
     coordinatorLanguageRule(appLanguage),
     ...(reopen ? coordinatorReopenRules(reopen.hours, reopen.frameCount ?? 0) : []),
-    `SAVED PLAN (retain decisions and completed work):\n${head(JSON.stringify(savedPlan), share(PLAN_CHARS))}`,
+    ...(savedPlan === null || savedPlan === undefined
+      ? []
+      : [`SAVED PLAN (retain decisions and completed work):\n${head(JSON.stringify(savedPlan), share(PLAN_CHARS))}`]),
     `SAVED PROGRESS:\n${head(JSON.stringify(progress), share(PROGRESS_CHARS))}`,
     `RUN SNAPSHOT:\n${head(JSON.stringify(runSnapshot(events, run.runId)), share(SNAPSHOT_CHARS))}`,
     `RECENT CONVERSATION (context only):\n${tail(history, share(HISTORY_CHARS))}`,

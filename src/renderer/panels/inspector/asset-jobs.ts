@@ -48,6 +48,7 @@ export const STOPPED_PHASES = [
   MakingPhase.Unsure,
   MakingPhase.NotFetched,
   MakingPhase.NotInGame,
+  MakingPhase.NeedsCredits,
 ] as const;
 
 /** A way a job stops short. */
@@ -60,6 +61,7 @@ const STOPPED_COUNT: Record<StoppedPhase, (count: number) => string> = {
   [MakingPhase.Unsure]: (count) => t("{count, plural, other {# not confirmed}}", { count }),
   [MakingPhase.NotFetched]: (count) => t("{count, plural, other {# not downloaded}}", { count }),
   [MakingPhase.NotInGame]: (count) => t("{count, plural, other {# not in your game}}", { count }),
+  [MakingPhase.NeedsCredits]: (count) => t("{count, plural, other {# need credits}}", { count }),
 };
 
 /** The jobs that stopped short in one way, in the panel's order, and how. */

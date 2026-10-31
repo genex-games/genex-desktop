@@ -196,7 +196,10 @@ test("afterPrune on Windows keeps node-pty's conpty and winpty files for the tar
   assert.deepEqual(pty, expected);
 });
 
-/** sandbox-runtime's vendored helpers as npm installs them: Linux seccomp and Windows srt-win, both arches. */
+/**
+ * sandbox-runtime's vendored helpers as npm installs them: Linux seccomp and Windows srt-win, both
+ * arches, each beside its build script, and the JVM proxy agent every platform's sandbox hands Java.
+ */
 async function sandboxVendor(app: string): Promise<void> {
   const vendor = "node_modules/@anthropic-ai/sandbox-runtime/vendor";
   await put(app, "node_modules/@anthropic-ai/sandbox-runtime/package.json", pkg("@anthropic-ai/sandbox-runtime"));
@@ -204,6 +207,8 @@ async function sandboxVendor(app: string): Promise<void> {
     await put(app, `${vendor}/seccomp/${arch}/apply-seccomp`, "elf");
     await put(app, `${vendor}/srt-win/${arch}/srt-win.exe`, "pe");
   }
+  for (const helper of ["seccomp", "srt-win", "java-proxy-agent"]) await put(app, `${vendor}/${helper}/build.ts`, "ts");
+  await put(app, `${vendor}/java-proxy-agent/srt-proxy-agent.jar`, "jar");
 }
 
 const vendorFiles = async (app: string) =>
@@ -212,11 +217,12 @@ const vendorFiles = async (app: string) =>
     .map((file) => file.slice("node_modules/@anthropic-ai/sandbox-runtime/vendor/".length));
 
 test("afterPrune keeps only the target's sandbox helper: none on macOS, seccomp on Linux, srt-win on Windows", async () => {
+  const jar = "java-proxy-agent/srt-proxy-agent.jar";
   const cases = [
-    { platform: "darwin", arch: "arm64", kept: [] },
-    { platform: "linux", arch: "x64", kept: ["seccomp/x64/apply-seccomp"] },
-    { platform: "linux", arch: "arm64", kept: ["seccomp/arm64/apply-seccomp"] },
-    { platform: "win32", arch: "arm64", kept: ["srt-win/arm64/srt-win.exe"] },
+    { platform: "darwin", arch: "arm64", kept: [jar] },
+    { platform: "linux", arch: "x64", kept: [jar, "seccomp/x64/apply-seccomp"] },
+    { platform: "linux", arch: "arm64", kept: [jar, "seccomp/arm64/apply-seccomp"] },
+    { platform: "win32", arch: "arm64", kept: [jar, "srt-win/arm64/srt-win.exe"] },
   ];
   for (const { platform, arch, kept } of cases) {
     const app = await appFolder();

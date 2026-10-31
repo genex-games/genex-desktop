@@ -59,9 +59,9 @@ test("characterization: a first install from the catalog gives one block each, i
       "Genex runs 3 tools for it:",
       "• cli — runs the Genex CLI",
       "• cli-paid — runs the Genex CLI, asks you each time",
-      "• package — installs Genex packages in the game, asks you each time",
+      "• package — installs Genex packages in the game",
     ].join("\n"),
-    "Adds 20 skills for agents: creator-mcp, asset-preference, publishing, publishing-apps, cover, genex, genex-threejs-multiplayer, genex-threejs-embed-auth, genex-llm-in-games, genex-tool-llm, genex-monetization, genex-tool-publish, genex-cover, genex-tool-model, genex-tool-character, genex-tool-texture, genex-tool-audio, genex-tool-image, genex-updates, plugin-author.",
+    "Adds 19 skills for agents: creator-mcp, publishing, publishing-apps, cover, genex, genex-threejs-multiplayer, genex-threejs-embed-auth, genex-llm-in-games, genex-tool-llm, genex-monetization, genex-items, genex-tool-publish, genex-tool-model, genex-tool-character, genex-tool-texture, genex-tool-audio, genex-tool-image, genex-updates, plugin-author.",
     "Scan: caution, 1 finding: child-process in backend.mjs:12.",
   ]);
 });
@@ -189,7 +189,7 @@ test("tools Genex runs itself are named with what they do and whether each asks 
     before: { ...genex, tools: genex.tools.filter((t) => t.name !== "package") },
   });
   assert.match(update, /\n• cli — runs the Genex CLI\n/);
-  assert.match(update, /\n• package \(new\) — installs Genex packages in the game, asks you each time\n/);
+  assert.match(update, /\n• package \(new\) — installs Genex packages in the game\n/);
   const withoutHostTools = { ...genex, tools: genex.tools.filter((t) => t.host === undefined) };
   assert.doesNotMatch(installDetail({ manifest: withoutHostTools }), /Genex runs/);
 });

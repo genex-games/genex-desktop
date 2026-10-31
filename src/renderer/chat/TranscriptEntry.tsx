@@ -3,6 +3,9 @@
  */
 import { type JSX, memo, useCallback, useMemo } from "react";
 import { t } from "../../shared/i18n.ts";
+import { track } from "../analytics/client.ts";
+import { AnalyticsEvent } from "../analytics/events.ts";
+import { BuildSurface } from "../analytics/events/builds.ts";
 import { type Entry, EntryAction, EntryKind, type MorningEntry, systemTagWords } from "../chat-entries.ts";
 import { ExportReview } from "./ExportReview.tsx";
 import { type ConversationEntry, WORK_KIND } from "./conversation-entries.ts";
@@ -19,6 +22,7 @@ import { AssetResults } from "./AssetResults.tsx";
 import { ChatDisclosure } from "./ChatDisclosure.tsx";
 import { CommandRun } from "./CommandRun.tsx";
 import { GenexCoverCard } from "./GenexCoverCard.tsx";
+import { ListingDraftCard } from "./ListingDraftCard.tsx";
 import { ChatQuestion } from "./ChatQuestion.tsx";
 import { EngineLinkLine } from "./EngineLinkLine.tsx";
 import { RewindLine } from "./RewindLine.tsx";
@@ -106,8 +110,6 @@ export const TranscriptEntry = memo(function TranscriptEntry({
       );
     case EntryKind.Assets:
       return <AssetResults deliveries={deliveries} onOpenAssets={context.onShowAssets} />;
-    case EntryKind.GenexCover:
-      return <GenexCoverCard entry={entry} project={context.project} />;
     case EntryKind.User:
       return <UserEntry key={entry.id} entry={entry} context={context} />;
     case EntryKind.Mentions:
@@ -145,6 +147,7 @@ export const TranscriptEntry = memo(function TranscriptEntry({
           undone={entry.undone}
           landed={entry.landed}
           profile={entry.profile}
+          refusal={entry.refusal}
           // A run the plan limit cut off is paused, not finished: the card says so and
           // offers Resume itself, instead of leaving it to a grey line underneath.
           paused={!entry.superseded && resumable(entry.runId, context)}
@@ -167,12 +170,24 @@ export const TranscriptEntry = memo(function TranscriptEntry({
       return <ActionEntry entry={entry} context={context} resume={resume} />;
     case EntryKind.Compaction:
       return <CompactionEntry messages={entry.messages} summary={entry.summary} />;
+    default:
+      return <CardEntry entry={entry} context={context} />;
+  }
+});
+
+/** A card the host put in the conversation: the Genex cover, a plugin to turn on, a store item's Listing draft. */
+function CardEntry({ entry, context }: { entry: ConversationEntry; context: TranscriptContext }): JSX.Element | null {
+  switch (entry.kind) {
+    case EntryKind.GenexCover:
+      return <GenexCoverCard entry={entry} project={context.project} />;
     case EntryKind.PluginSuggestion:
-      return <PluginSuggestionCard entry={entry} onNotice={onNotice} onTurnedOn={context.onPluginTurnedOn} />;
+      return <PluginSuggestionCard entry={entry} onNotice={context.onNotice} onTurnedOn={context.onPluginTurnedOn} />;
+    case EntryKind.ListingDraft:
+      return <ListingDraftCard draft={entry.draft} />;
     default:
       return null;
   }
-});
+}
 
 /** A finished compaction, in the work rows' type: it opens to the summary that replaced the messages. */
 function CompactionEntry({ messages, summary }: { messages: number | null; summary: string | null }): JSX.Element {
@@ -322,6 +337,12 @@ function quietLine(
   return null;
 }
 
+/** The chat card's own Resume, counted from the card; MorningCard's Resume counts its own. */
+const resumedFromCard = (resume: (runId: string) => () => void, runId: string) => (): void => {
+  resume(runId)();
+  track(AnalyticsEvent.RunResumePressed, { surface: BuildSurface.ChatCard });
+};
+
 function ActionEntry({
   entry,
   context,
@@ -339,6 +360,7 @@ function ActionEntry({
     const held = entry.pending && entry.runId === activeRunId && (entry.expiresAt ?? 0) > Date.now();
     return held ? (
       <ChatQuestion
+        keys={false}
         title={t("Review the build plan")}
         choices={[
           { id: "approve", label: t("Approve plan") },
@@ -376,7 +398,7 @@ function ActionEntry({
           <FileText text={entry.text} />
         </span>
         {resumable(entry.runId, context) ? (
-          <ResultButton type="button" data-run-resume={entry.runId} onClick={resume(entry.runId)}>
+          <ResultButton type="button" data-run-resume={entry.runId} onClick={resumedFromCard(resume, entry.runId)}>
             <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
               <path d="M8 5v14l11-7z" />
             </svg>

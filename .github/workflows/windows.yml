@@ -25,6 +25,10 @@ on:
         description: Only drive computer control on the desktop; skips typecheck, lint and the tests
         type: boolean
         default: false
+      grok:
+        description: Install the real Grok Build CLI first, for its opt-in tests (name them in files)
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -52,6 +56,20 @@ jobs:
         run: npm run lint
       - name: Windows sandbox setup (srt-sandbox user and WFP filters)
         run: node scripts/ci-windows-sandbox.mjs
+      # Grok Build from xAI's own installer, for STUDIO_GROK_CLI_TESTS. It installs into the
+      # profile (`~/.grok/bin`), which the sandbox user cannot read, so the tests run a copy beside
+      # the runner's temporary files.
+      - name: Grok Build
+        if: ${{ inputs.grok }}
+        shell: pwsh
+        run: |
+          irm https://x.ai/cli/install.ps1 | iex
+          $bin = Join-Path $env:RUNNER_TEMP "grok-bin"
+          Copy-Item -Recurse (Join-Path $env:USERPROFILE ".grok\bin") $bin
+          Get-ChildItem $bin | Format-Table Name, Length
+          & (Join-Path $bin "grok.exe") --version
+          "STUDIO_GROK_BIN=$(Join-Path $bin 'grok.exe')" >> $env:GITHUB_ENV
+          "STUDIO_GROK_CLI_TESTS=1" >> $env:GITHUB_ENV
       - name: Tests
         if: ${{ !inputs.desktop }}
         env:

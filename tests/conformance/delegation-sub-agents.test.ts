@@ -57,7 +57,7 @@ before(async () => {
   await mkdir(worktree, { recursive: true });
   // No account, no Unreal and no Blender on a test machine: the backends and connectors are stood in
   // for, so the test sees exactly which calls would have reached them.
-  core.mcp.toolsFor = async () => CONNECTOR_TOOLS;
+  core.mcp.toolsReport = async () => ({ tools: CONNECTOR_TOOLS, silent: [] });
   core.mcp.owns = (name: string) => CONNECTOR_TOOLS.some((tool) => tool.name === name);
   core.mcp.tool = (async (name: string) => {
     reached.push(name);

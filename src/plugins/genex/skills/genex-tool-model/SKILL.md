@@ -1,7 +1,8 @@
 # Genex models in AI Game Studio
 
 You are building inside AI Game Studio. Below the upstream marker is Genex's model card,
-unchanged. Where it disagrees with this preface, this preface wins.
+with the passages of advice Studio does not ship taken out. Where it disagrees with this preface,
+this preface wins.
 
 - Run every command through `genex__asset`, never `npx genex`. `npx genex model "<prompt>"
   --auto-size --low-poly` is `genex__asset {"operation":"model","prompt":"<prompt>","options":
@@ -16,10 +17,9 @@ unchanged. Where it disagrees with this preface, this preface wins.
 - This lane is Tripo, and Studio has no provider option. A rigged character or creature is the
   character card's lane (Meshy).
 - Pass `auto-size` whenever the model's real size matters: without it the model is not to scale.
-  Its meshes are dense (150000 faces by default): use `low-poly` or `face-limit` for props seen in
-  numbers.
+  Its meshes are dense (150000 faces by default); `low-poly` and `face-limit` lower the count.
 
-<!-- upstream @genex-ai/cli-demo/templates/skills/genex-tool-model/SKILL.md v1.36.13 sha256 f3b1f01dad1bc7bb44aa550bbb8ee4d589963a0574be7e341541d1c1e692b4b3 -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-tool-model/SKILL.md v1.36.17 sha256 849485e095d91b019e09dda27123c33297889cf732b219772eb075b5373f4771 -->
 ---
 name: genex-tool-model
 description: Generate a 3D model (GLB) from a text prompt or a reference image with `npx genex model` — props, vehicles, weapons, furniture, environment pieces, anything the scene needs as geometry. Also splits a model into named parts, rigs any mesh across 7 body plans, and retargets ready-made animation clips onto that rig. Files download to ./assets.
@@ -36,7 +36,7 @@ For a character or creature with a skeleton and animations, use
 ## Run
 
 ```bash
-npx genex model "weathered wooden barrel with rusted iron bands"
+npx genex model "wooden barrel with iron bands"
 npx genex model --image ./reference-photo.jpg       # build it FROM an image; prompt optional
 ```
 
@@ -64,14 +64,14 @@ npx genex model rig <model-id> --type quadruped
 npx genex model animate <rig-id> --preset walk,run
 ```
 
-- **`segment`** — one GLB split into addressable parts: doors, turrets, magazines, destructibles. `--granularity simple|balanced|detailed`. The parts are named by index (`tripo_part_0`, `tripo_part_1`, …), not by what they are — find the one you want by its bounds (the sails are the part with the widest extent, the door the lowest thin one), then keep that index in your manifest.
+- **`segment`** — one GLB split into addressable parts: doors, turrets, magazines, destructibles. `--granularity simple|balanced|detailed`. The parts are named by index (`tripo_part_0`, `tripo_part_1`, …), not by what they are — find the one you want by its bounds (the sails are the part with the widest extent, the door the lowest thin one), then keep that index.
 - **`rig`** — a skeleton for any mesh, across 7 body plans: `biped`, `quadruped`, `hexapod`, `octopod`, `avian`, `serpentine`, `aquatic`. The plan is auto-detected; `--type` picks it. A mesh that cannot be rigged is refused and refunded before the paid step.
 - **`animate`** — retarget ready-made clips onto a rig, billed per clip. biped: `idle|walk|run|dive|climb|jump|slash|shoot|hurt|fall|turn`; quadruped/hexapod/octopod: `walk`; serpentine/aquatic: `march`.
 
 ## Options
 
 - `--image <path|url>` — build the model from a reference image (local file ≤ 4 MB, or a previous generation's URL). The prompt becomes optional.
-- **Quality knobs** (Tripo H3.1, each priced in the quote — pick per asset, say it in one line): `--texture standard|detailed|none` (detailed default, +10 over standard; none = geometry only), `--geometry detailed` (+20, hero pieces only), `--quad` (+5, for meshes you will edit; face limit ≤150000), `--low-poly` (+10, game-ready topology for props in numbers — it holds `--face-limit` to 1000-20000, 500-10000 with `--quad`; omit the flag to take 20000; it runs a post-process after the mesh, so allow up to 30 minutes), `--parts` (+20, named parts at generation), `--face-limit <n>` (1000-2000000, default 150000; see `--low-poly` for its band), `--auto-size` (real-world metres).
+- **Quality knobs** (Tripo H3.1, each priced in the quote): `--texture standard|detailed|none` (detailed default, +10 over standard; none = geometry only), `--geometry detailed` (+20), `--quad` (+5, for meshes you will edit; face limit ≤150000), `--low-poly` (+10, game-ready topology for props in numbers — it holds `--face-limit` to 1000-20000, 500-10000 with `--quad`; omit the flag to take 20000; it runs a post-process after the mesh, so allow up to 30 minutes), `--parts` (+20, named parts at generation), `--face-limit <n>` (1000-2000000, default 150000; see `--low-poly` for its band), `--auto-size` (real-world metres).
 - `--out-dir <dir>` — where the file lands (default `./assets`).
 - `--no-download` — print the URL only.
 - `--no-wait` — enqueue and return; pick it up with `npx genex wait <id>`.
@@ -106,13 +106,13 @@ built in code.
 A generated GLB has no shared "front": one building's door faces −x, the next
 one's +z. Do not guess and do not spend a render per side — read the mesh once
 on load (bounding box, and where the detail is: the door, the counter, the
-opening) or check it in a viewer, then record a per-model `front` (a yaw in
-your manifest) beside its path and apply it when you place it. Ask for a facing
+opening) or check it in a viewer, then record a per-model `front` (a yaw)
+beside its path and apply it when you place it. Ask for a facing
 in the prompt too (`"…front toward +Z"`) — it helps, it does not guarantee.
 
 ## Troubleshooting
 
-- **Out of credits** — the error prints the balance, the price and the refill date. Relay it; don't retry.
-- **The rig was refused** — that mesh has no usable skeleton for any body plan. It is refunded. Ship it static, or animate it in code.
-- **Repeated failures in this folder** — the CLI says so after the second one. That pattern is the lane, not your prompt: build the piece in code or move on, and tell the user in one plain line.
+- **Out of credits** — Studio keeps the generation's card, which says so and offers Get credits. Never relay the balance, price or refill date, and don't retry.
+- **The rig was refused** — that mesh has no usable skeleton for any body plan. It is refunded.
+- **Repeated failures in this folder** — the CLI says so after the second one. That pattern is the lane, not your prompt.
 - **Anything else** — `npx genex doctor`.

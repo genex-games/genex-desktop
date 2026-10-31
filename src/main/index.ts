@@ -3,6 +3,7 @@ import { isCodexLoginActive } from "../shared/codex-login.ts";
 import { updateCodingCli } from "../substrate/cli-update.ts";
 import { HarnessLogBatch } from "./harness-log-batch.ts";
 import { createDesktopControl } from "./desktop-control-host.ts";
+import { assistGrants } from "./core/desktop-assist.ts";
 import type { DesktopControl } from "./core/desktop-control.ts";
 import { showAfterPaint } from "./window-ready.ts";
 import { PerformanceRecorder, watchEventLoop } from "./performance.ts";
@@ -34,7 +35,7 @@ import {
   utilityProcess,
 } from "electron";
 import { spawn } from "node:child_process";
-import { appendFileSync, existsSync, mkdtempSync, mkdirSync } from "node:fs";
+import { appendFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -46,6 +47,7 @@ import { wireGameFullScreen } from "./full-screen-view.ts";
 import { HarnessState } from "../shared/protocol.ts";
 import { ClaudeCodeEngine } from "../substrate/engines/claude-code.ts";
 import { CodexEngine } from "../substrate/engines/codex.ts";
+import { CursorEngine } from "../substrate/engines/cursor.ts";
 import { configureCodingClis, resolveCodingCli } from "../substrate/engines/external-cli.ts";
 import { installCodingCli } from "../substrate/cli-installer.ts";
 import { CodingCliState } from "../shared/coding-cli.ts";
@@ -56,16 +58,29 @@ import { scanPackage } from "../substrate/plugins/scan.ts";
 import {
   createReloadPolicy,
   installProcessHandlers,
+  installQuitSignals,
   PageRecovery,
   pageRecovery,
   QuitQuestion,
   quitQuestion,
   runShutdown,
+  settleWithin,
   shutdownSteps,
   type ShutdownStep,
   WindowClose,
   windowClose,
 } from "./app-lifecycle.ts";
+import { createAppDiagnostics } from "./app-diagnostics.ts";
+import {
+  createSessionMarker,
+  handOnce,
+  launchFacts,
+  markerFileIo,
+  noteNextStart,
+  SESSION_HEARTBEAT_MS,
+  SESSION_MARKER_WAIT_MS,
+  type SessionBegun,
+} from "./session-marker.ts";
 import { createBootGate, startStepAfter } from "./boot-gate.ts";
 import {
   activateChatFixture,
@@ -96,8 +111,8 @@ import {
   watchInstaller,
 } from "./auto-update.ts";
 import { RELEASE_CHECK_INTERVAL_MS, latestRelease } from "./release-check.ts";
-import { UpdateAction } from "../shared/app-update.ts";
-import { gatedHostTool } from "./core/genex-cli.ts";
+import { UpdateAction, UpdateCheckStatus, UpdateFailure } from "../shared/app-update.ts";
+import { gatedHostTool, type GenexStand, launchStand } from "./core/genex-cli.ts";
 import { normalGamesElsewhere, normalGamesFolder } from "./core/never-touch-list.ts";
 import { diagnosticsText, gatherDiagnostics } from "./diagnostics.ts";
 import { type FeedbackSources, sendFeedback } from "./feedback.ts";
@@ -114,12 +129,14 @@ import { registerCliInstallIpc } from "./ipc/cli-install.ts";
 import { createCliInstalls } from "./cli-install.ts";
 import { registerMcpIpc } from "./ipc/mcp.ts";
 import { registerModelsIpc } from "./ipc/models.ts";
+import { hardwareReport } from "./core/hardware-report.ts";
 import { registerNotificationsIpc } from "./ipc/notifications.ts";
 import { registerPermissionsIpc } from "./ipc/permissions.ts";
 import { registerPluginsIpc } from "./ipc/plugins.ts";
 import { type PreviewBoundsRecord, registerPreviewIpc } from "./ipc/preview.ts";
 import { registerProjectsIpc } from "./ipc/projects.ts";
 import { type PlayIpcDeps, registerPlayIpc } from "./ipc/play.ts";
+import { registerStoreIpc, type StoreIpcDeps } from "./ipc/store.ts";
 import { registerGenexAccountIpc } from "./ipc/genex-account.ts";
 import {
   createGenexAccount,
@@ -131,6 +148,8 @@ import { devStandAccountPort } from "./dev/dev-stand-account.ts";
 import { fixtureAccountPort } from "./dev/fixture-genex-account.ts";
 import { openGenexPage } from "./genex-browser.ts";
 import { fixtureGamePage, fixtureGetCoin, fixtureNativeGames, fixturePlayRequest } from "./dev/fixture-play.ts";
+import { createFixtureStore } from "./dev/fixture-store.ts";
+import { fixtureLocalRuns } from "./dev/fixture-items.ts";
 import { FIXTURE_CONFIRM_ORIGIN } from "./dev/fixture-coin.ts";
 import { launchFixtureAccount } from "./dev/fixture-people.ts";
 import {
@@ -158,6 +177,7 @@ import { readAssetPreview } from "./asset-preview.ts";
 import { fixtureDownload, fixtureFileResponse } from "./dev/fixture-asset-library.ts";
 import {
   buildHostsFor,
+  type GalleryRequest,
   mintedTicket,
   networkRequest,
   type PlayGallery,
@@ -194,14 +214,18 @@ import { playViewsOf, wirePlayViewer } from "./play/viewer-view.ts";
 import { purchaseConfirmOrigin } from "./play/purchase-window.ts";
 import { type PlayComments, playComments } from "./play/comments.ts";
 import { type PlayCoin, playCoin } from "./play/coin.ts";
-import { playOrigins } from "./play/origins.ts";
+import { playStore } from "./play/store.ts";
+import { followStudioWindow, type StoreSheetControl, storeSheet } from "./play/store-sheet.ts";
+import { devStand, websitePageOpener } from "./play/origins.ts";
+import { devGamesTrust } from "./play/dev-games-trust.ts";
 import { PLAY_ORIGIN, type PlayPoint } from "../shared/play.ts";
+import { playCoinPageUrl } from "../shared/play-purchase.ts";
 import { registerRunsIpc } from "./ipc/runs.ts";
 import { registerSettingsIpc } from "./ipc/settings.ts";
 import { readLicenseTexts } from "./licenses.ts";
 import { registerSkillsIpc } from "./ipc/skills.ts";
 import { registerTerminalIpc } from "./ipc/terminal.ts";
-import { registerMentionRetry, registerThreadsIpc } from "./ipc/threads.ts";
+import { registerMentionRetry, registerThreadsIpc, type ThreadsIpcDeps } from "./ipc/threads.ts";
 import { engineBoot, type EngineBoot } from "./engine-boot.ts";
 import { KeepAwake } from "./keep-awake.ts";
 import { routeStudioLink } from "./link-policy.ts";
@@ -234,6 +258,7 @@ import { GamePreview, registerGameScheme } from "./preview.ts";
 import { RunSummaryReader } from "./run-summary-reader.ts";
 import { registerRunSharingIpc } from "./ipc/run-sharing.ts";
 import { createRunSharing, finishedBuildRef, launchSends, runsOrigin } from "./run-sharing.ts";
+import { type AnalyticsConfig, sessionAnalytics } from "../shared/analytics.ts";
 import { readFinishedFacts } from "./run-sharing-facts.ts";
 import { fieldPlatform } from "../shared/run-sharing.ts";
 import type { SmokeReadGates } from "./smoke/read-gates.ts";
@@ -253,10 +278,25 @@ import {
   squirrelStartup,
 } from "./windows-install.ts";
 import { samePath } from "../substrate/paths.ts";
-import { BootPhase, type SandboxProblem, StartStep, StudioPlatform } from "../shared/boot.ts";
+import {
+  BootFailure,
+  type BootFailureCode,
+  BootPhase,
+  type SandboxProblem,
+  StartPassage,
+  StartStep,
+  StudioPlatform,
+} from "../shared/boot.ts";
 import { SandboxUnavailableError } from "../substrate/sandbox-unavailable.ts";
 import { type Painter, paintWhileUsed } from "../substrate/paint-while-used.ts";
-import { ensureHostGit, longPath, takeBackSandboxEntries } from "../substrate/windows-sandbox.ts";
+import {
+  type DetachedSpawn,
+  ensureHostGit,
+  forgetKeptGrants,
+  longPath,
+  takeBackSandboxEntries,
+} from "../substrate/windows-sandbox.ts";
+import { ensureMacGit } from "../substrate/git-policy.ts";
 import { installWindowsSandbox } from "../substrate/windows-sandbox-setup.ts";
 import { toolchain } from "../substrate/toolchain.ts";
 import { errorMessage } from "../shared/errors.ts";
@@ -383,12 +423,14 @@ app.on("open-url", (event, url) => {
 // anything else runs: no profile, no window (main/windows-install.ts).
 const squirrelStep = squirrelStartup(process.platform, process.argv, process.execPath);
 if (squirrelStep) {
-  // The sandbox's grants and denies outlive each launch; an uninstall takes them back.
-  if (squirrelStep.takeBackSandbox)
-    takeBackSandboxEntries(
-      (file, args, env) => spawn(file, args, { env, detached: true, stdio: "ignore", windowsHide: true }),
-      os.homedir(),
-    );
+  // The sandbox's grants and denies outlive each launch; an uninstall takes them back: Genex's own,
+  // and the write grants srt-win keeps.
+  if (squirrelStep.takeBackSandbox) {
+    const detached: DetachedSpawn = (file, args, env) =>
+      spawn(file, args, { env, detached: true, stdio: "ignore", windowsHide: true });
+    takeBackSandboxEntries(detached, os.homedir());
+    forgetKeptGrants(detached);
+  }
   await runSquirrelStep(squirrelStep, (file, args) =>
     spawn(file, args, { detached: true, stdio: "ignore", windowsHide: true }),
   );
@@ -403,6 +445,8 @@ const userModelId = appUserModelId(process.platform, process.execPath, existsSyn
 if (userModelId) app.setAppUserModelId(userModelId);
 
 declare const __STUDIO_DEV_BUILD__: { checkout: string; buildId: string } | null;
+/** The build's usage analytics, from `STUDIO_POSTHOG_KEY` at build time (scripts/build.mjs); null without it. */
+declare const __STUDIO_ANALYTICS__: AnalyticsConfig | null;
 const devLaunchConfig = flagValue(StudioFlag.DevLaunch);
 const asksForDeveloper = process.argv.some((arg) => arg.startsWith(StudioFlag.Dev));
 const developerBuildUnlaunched = Boolean(__STUDIO_DEV_BUILD__) && devLaunchConfig === undefined;
@@ -477,11 +521,19 @@ const studioLog = openStudioLog(path.join(userDataRoot, "logs"), { home: app.get
 const userDataMigrationLog = userDataMigrationLine(userDataMigration);
 if (userDataMigrationLog) studioLog.write("main", userDataMigrationLog);
 // An error nothing caught is logged, never a quit or Electron's modal box; developer and smoke
-// launches also print it, where their runners read stderr.
-installProcessHandlers(process, (source, line) => {
-  studioLog.write(source, line);
-  if (dev || isSmoke) console.error(`[${source}] ${line}`);
-});
+// launches also print it, where their runners read stderr. Its kind is then told to the window
+// (`appDiagnostics`, made below: one thrown while main still loads is only logged).
+installProcessHandlers(
+  process,
+  (source, line) => {
+    studioLog.write(source, line);
+    if (dev || isSmoke) console.error(`[${source}] ${line}`);
+  },
+  (kind, reason) => appDiagnostics.fault(kind, reason),
+);
+// SIGTERM and SIGINT quit through `before-quit`, as Chromium's own handler would have, had the
+// process sandbox's runtime not taken both for its clean-up (`installQuitSignals`).
+installQuitSignals(process, { quit: () => app.quit(), exit: () => app.exit(0) });
 // Native crash dumps stay on this Mac, beside the log in this launch's own data; nothing is uploaded.
 app.setPath("crashDumps", path.join(userDataRoot, "Crashpad"));
 crashReporter.start({ uploadToServer: false });
@@ -509,16 +561,58 @@ for (const [name, value] of testLanguageSwitches(
 ))
   app.commandLine.appendSwitch(name, value);
 /**
- * Where Play talks to genex.games in this launch: genex.games itself, or a local or test copy that a
- * development profile names (`play/origins.ts`); never in a packaged app, and never in a fixture
- * launch, which answers Play from its own data.
+ * Where Play talks to genex.games in this launch: genex.games itself, or a local or test copy (a
+ * stand) that a development profile names (`play/origins.ts`), with its game host, the Genex host
+ * tools' API and its own CA; never in a packaged app, and never in a fixture launch, which answers
+ * Play from its own data.
  */
-const playOrigin = playOrigins(process.env, dev !== null && !app.isPackaged && !fixtureNativePolicy);
+const stand = devStand(process.env, {
+  developerProfile: dev !== null,
+  packaged: app.isPackaged,
+  fixture: fixtureNativePolicy,
+});
+const playOrigin = stand.origins;
 // Human review is an explicit opt-in; automated fixture windows stay parked and unfocusable.
 const interactiveFixture = process.env.STUDIO_FIXTURE_INTERACTIVE === "1";
 const parkedFixtureWindow = isSmoke || (fixtureProviders && !interactiveFixture);
 const rendererConsole: Array<{ level: string; message: string; source?: string; line?: number; at?: string }> = [];
 let core: StudioCore | null = null;
+/** Whether this launch may ever send: share build metrics and usage analytics both ask it. */
+const launchMaySend = launchSends({
+  packaged: app.isPackaged,
+  argv: process.argv,
+  developerProfile: dev !== null,
+  testData: testUserData !== null,
+});
+/** Usage analytics the renderer may offer; the person still decides (src/renderer/analytics/). */
+const analytics = sessionAnalytics(__STUDIO_ANALYTICS__, {
+  sends: launchMaySend,
+  env: process.env,
+  version: app.getVersion(),
+});
+/**
+ * How this session ends, kept for the next launch's usage analytics (`session-marker.ts`): only in
+ * a launch that may offer analytics, and only in Genex's own data folder, never the stand-in a move
+ * or a missing folder starts in.
+ */
+const sessionMarker =
+  analytics && (dataLaunch.kind === DataLaunchKind.Default || dataLaunch.kind === DataLaunchKind.Moved)
+    ? createSessionMarker({ io: markerFileIo(userDataRoot), version: app.getVersion(), now: Date.now })
+    : null;
+/** Main's own uncaught errors and window hangs: told to the window, counted in the marker (`app-diagnostics.ts`). */
+const appDiagnostics = createAppDiagnostics({
+  push: (payload) => pushUiEvent({ type: UiEvent.AppDiagnostic, payload }),
+  marker: sessionMarker,
+  now: Date.now,
+});
+/** What the previous session's marker said, once this launch has read it (`beginSession`). */
+let sessionBegun: Promise<SessionBegun> | null = null;
+/** How this launch started and the session before it ended: the first bootstrap's alone. */
+const handLaunchFacts = handOnce(async () => {
+  if (!sessionBegun) return null;
+  const fellBack = dataLaunch.kind === DataLaunchKind.Default && dataLaunch.fellBack === true;
+  return launchFacts(await sessionBegun, bootGate.started(), fellBack);
+});
 /**
  * Share build metrics (Settings → Privacy): off by default, and silent in every developer and test
  * launch. Node's own fetch carries no cookies; Electron's session fetch would carry the profile's.
@@ -526,12 +620,7 @@ let core: StudioCore | null = null;
 const runSharing = createRunSharing({
   dir: path.join(userDataRoot, "run-sharing"),
   origin: runsOrigin(process.env),
-  sends: launchSends({
-    packaged: app.isPackaged,
-    argv: process.argv,
-    developerProfile: dev !== null,
-    testData: testUserData !== null,
-  }),
+  sends: launchMaySend,
   fetch: (url, init) => globalThis.fetch(url, init),
   app: { version: app.getVersion(), platform: fieldPlatform(process.platform) },
   readFacts: async (ref) => (core ? readFinishedFacts(core.store, ref) : null),
@@ -548,6 +637,8 @@ let playAccount: { people: PlayPeople; creators: CreatorStats; credits: GenexCre
   null;
 let gameLibrary: LibrarySharing | null = null;
 let playManage: PlayManage | null = null;
+/** The store on the Genex account and its purchase sheet in the studio window, made on first use (`storeFor`). */
+let playStoreDeps: PlayStoreParts | null = null;
 /** Play's native installs and the games being played, made on first use (`playInstallsFor`, `playSessionsFor`). */
 let nativeInstaller: NativeInstaller | null = null;
 let nativeLauncher: NativeSessions | null = null;
@@ -590,7 +681,7 @@ const updates = createUpdateAnnouncer({
   announce: (update) => pushUiEvent({ type: UiEvent.UpdateReady, payload: update }),
   notify: showUpdateNote,
   confirmRestart: confirmUpdateRestart,
-  quitAndInstall: () => autoUpdater.quitAndInstall(),
+  quitAndInstall: relaunchIntoUpdate,
   openRelease: (url) => void shell.openExternal(url),
 });
 /** Whether and how this launch updates: only a released build checks (./auto-update.ts). */
@@ -604,7 +695,7 @@ const updateDecision = autoUpdateDecision({
   systemPackages: process.platform === "linux" && installedFromGenexRepository(process.execPath, existsSync),
 });
 /** The installer's checks, watched from launch so Check for Updates never collides with one (./auto-update.ts). */
-const installer = watchInstaller(autoUpdater);
+const installer = watchInstaller(autoUpdater, { failed: updateFailed });
 /** Check for Updates, from Settings and the app menu; Linux's periodic check runs it too. */
 const updateChecker = createUpdateChecker({
   decision: updateDecision,
@@ -647,7 +738,7 @@ app.on("accessibility-support-changed", (_event, enabled) => {
 let liveThreadStatus: ThreadStatusMap = {};
 /** An eval-lane launch's view of the core's UI events (it digests the game its chat seeds); null otherwise. */
 let evalLaneUiTap: ((event: UiEvent) => void) | null = null;
-const { codexLogin, claudeLogin, openCodeLogin } = createLoginControllers({
+const { codexLogin, claudeLogin, openCodeLogin, grokLogin, cursorLogin } = createLoginControllers({
   terminals,
   openExternal: (url) => shell.openExternal(url),
   subscription,
@@ -655,6 +746,14 @@ const { codexLogin, claudeLogin, openCodeLogin } = createLoginControllers({
   onOpenCodeSignedIn: async () => {
     if (core?.engines.has(EngineId.OpenCode)) await core.engines.get(EngineId.OpenCode).refreshModels?.(true);
     pushUiEvent({ type: UiEvent.EnginesChanged, payload: { engine: EngineId.OpenCode } });
+  },
+  onGrokSignedIn: async () => {
+    if (core?.engines.has(EngineId.Grok)) await core.engines.get(EngineId.Grok).refreshModels?.(true);
+    pushUiEvent({ type: UiEvent.EnginesChanged, payload: { engine: EngineId.Grok } });
+  },
+  onCursorSignedIn: async () => {
+    if (core?.engines.has(EngineId.Cursor)) await core.engines.get(EngineId.Cursor).refreshModels?.(true);
+    pushUiEvent({ type: UiEvent.EnginesChanged, payload: { engine: EngineId.Cursor } });
   },
   showCodexState: (state) => {
     preview?.setOccluded(state.visible);
@@ -785,10 +884,7 @@ function launchCoreOptions(): Partial<ConstructorParameters<typeof StudioCore>[0
     const chatFixture = isChatFixture(dev.fixture);
     return {
       gamesRoot: dev.games,
-      executionPolicy: {
-        allowedProjectRoot: dev.games,
-        ...(fixtureProviders ? { runBackgroundImprovement: false } : {}),
-      },
+      executionPolicy: { allowedProjectRoot: dev.games },
       ...(fixtureProviders
         ? {
             engines: fixtureEngines(
@@ -807,7 +903,6 @@ function launchCoreOptions(): Partial<ConstructorParameters<typeof StudioCore>[0
         new OllamaEngine({ ...(ollamaHost ? { host: ollamaHost } : {}) }),
         ...fixtureEngines().filter((e) => e.id !== EngineId.Ollama),
       ],
-      executionPolicy: { runBackgroundImprovement: false },
     };
   // Games live in a plain visible folder, not buried in Library — Finder should show them.
   return { gamesRoot: normalGamesFolder(app.getPath("home")) };
@@ -835,6 +930,20 @@ function appLookOptions(userData: string): Pick<StudioCoreOptions, "appLook" | "
   return { appLook: macAppLook({ run: appLookRun, scratchDir: scratch, access: access.status }), screenAccess: access };
 }
 
+/** The studio's window back in front of other apps, as an assist's turn ends. */
+function bringStudioForward(): void {
+  const win = window;
+  if (!win || win.isDestroyed()) return;
+  if (win.isMinimized()) win.restore();
+  win.show();
+  app.focus({ steal: true });
+  win.focus();
+}
+
+/** The core's stand option, when this launch has one. */
+const optionalStand = (genexStand: GenexStand | undefined): Pick<StudioCoreOptions, "genexStand"> =>
+  genexStand ? { genexStand } : {};
+
 /** Computer control (cua-driver), made with the first core: one registry, stopped on quit. */
 let desktop: DesktopControl | undefined;
 
@@ -852,6 +961,24 @@ async function createCore(userData: string): Promise<StudioCore> {
     neverTouch: otherProfiles(userData),
     // The normal profile keeps its games outside its data: another launch's workers never reach them.
     neverTouchGames: normalGamesElsewhere(launch.gamesRoot, app.getPath("home")),
+    // A development profile on a stand: the Genex host tools' CLI and the Genex plugin (its publish)
+    // go to the stand as the account it signed in to.
+    ...optionalStand(launchStand(stand, () => genexAccountFor(studio).token())),
+    // A game's local item drafts after its publish: Put on sale as the app's account; a fixture
+    // launch uploads them to its own store in place of the CLI.
+    localItems: {
+      putOnSale: (skuId) => storeFor(studio).store.putOnSale(skuId),
+      selling: () => storeFor(studio).store.selling(),
+      ...(fixtureNativePolicy
+        ? {
+            runs: fixtureLocalRuns({
+              request: (route, init) => storeFor(studio).request(route, init),
+              token: () => genexAccountFor(studio).token(),
+              core: () => studio,
+            }),
+          }
+        : {}),
+    },
     ...launch,
     ...(ollamaHost ? { ollamaHost } : {}),
     // Electron's binary doubles as node for the harness child process.
@@ -956,6 +1083,8 @@ function studioWindowOptions(): Electron.BrowserWindowConstructorOptions {
     show: false,
     // Fixed-size acceptance must not depend on the current display's work-area height.
     ...(isSmoke ? { enableLargerThanScreen: true } : {}),
+    // Windows mismeasures the resize frame offscreen; fixture viewports need exact client bounds.
+    ...(isSmoke && process.platform === StudioPlatform.Windows ? { thickFrame: false } : {}),
     ...parkedWindowOptions(),
     ...windowTitle(),
     webPreferences: {
@@ -972,7 +1101,7 @@ function studioWindowOptions(): Electron.BrowserWindowConstructorOptions {
 async function createWindow(studio: StudioCore): Promise<BrowserWindow> {
   const win = new BrowserWindow(studioWindowOptions());
   performanceRecorder.mark("window-created");
-  win.on("unresponsive", () => studioLog.write("main", "studio window unresponsive"));
+  watchHangs(win);
   attachPreviews(studio, win);
   attachPlay(studio, win);
   collectRendererConsole(win);
@@ -991,6 +1120,16 @@ async function createWindow(studio: StudioCore): Promise<BrowserWindow> {
   return win;
 }
 
+/** A window that stops answering is logged and counted, and how long it hung is told once it answers again. */
+function watchHangs(win: BrowserWindow): void {
+  const hang = appDiagnostics.hangWatch();
+  win.on("unresponsive", () => {
+    studioLog.write("main", "studio window unresponsive");
+    hang.unresponsive();
+  });
+  win.on("responsive", () => hang.responsive());
+}
+
 /**
  * The window a launch opens when the sandbox cannot start: the same renderer, which asks
  * `studio:boot` first and shows "Set up the protected workspace" with Retry. There is no core
@@ -1002,7 +1141,7 @@ async function createSetupWindow(): Promise<BrowserWindow> {
   // question can be before it has loaded.
   window = win;
   performanceRecorder.mark("window-created");
-  win.on("unresponsive", () => studioLog.write("main", "studio window unresponsive"));
+  watchHangs(win);
   collectRendererConsole(win);
   win.webContents.on("will-navigate", (event) => event.preventDefault());
   win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
@@ -1025,7 +1164,7 @@ function attachPreviews(studio: StudioCore, win: BrowserWindow): void {
   preview = view;
   studio.options.preview = view;
   // Pooled observation ports for parallel Autopilot facets. Captures are page-side
-  // (__studio.capture() renders straight from the canvas), so the window needs no compositor
+  // (the shim's __studioCapture reads straight from the canvas), so the window needs no compositor
   // surface and stays genuinely hidden. The previous shown-but-parked windows (x=-4400)
   // resurfaced whenever macOS reshuffled displays or Mission Control ran — four ghost windows
   // on the user's desktop mid-run. Rendering is offscreen: a hidden window with a
@@ -1424,6 +1563,73 @@ function playCoinFor(studio: StudioCore): PlayCoin {
   });
 }
 
+/** The store's parts: its client, the purchase sheet, and the requests both make. */
+type PlayStoreParts = Omit<StoreIpcDeps, "local" | "coin"> & { sheet: StoreSheetControl; request: GalleryRequest };
+
+/** The account's coin for the plate in Play, and Get Nex, read as the purchase sheet's is (`playCoinFor`). */
+function plateCoinFor(studio: StudioCore): StoreIpcDeps["coin"] {
+  const coin = playCoinFor(studio);
+  return {
+    spendable: () => coin.spendableOrNone(),
+    // Get Nex: genex.games in the browser; a fixture launch opens nothing and tops its balance up.
+    getCoin: () => {
+      if (fixtureNativePolicy) fixtureGetCoin();
+      else if (window) openGenexWebsitePage(studio, window, playCoinPageUrl(playOrigin.web));
+    },
+  };
+}
+
+/**
+ * The store on the Genex account (marketplace plan 10.1): its client, and the purchase sheet a game's
+ * page shows in the studio window, confirmed as the viewer's is. A fixture launch answers both from
+ * its own store over its other fixture answers (`dev/fixture-store.ts`), so no socket opens.
+ */
+function storeFor(studio: StudioCore): PlayStoreParts {
+  if (playStoreDeps) return playStoreDeps;
+  const account = genexAccountFor(studio);
+  const deps = {
+    request: fixtureNativePolicy
+      ? createFixtureStore({ now: Date.now, fallback: fixturePlayRequest })
+      : networkRequest(globalThis.fetch, playOrigin.api),
+    token: account.token,
+    now: Date.now,
+    localImages: fixtureNativePolicy,
+    refused: account.refused,
+  };
+  const store = playStore(deps);
+  const sheet = storeSheet({
+    purchase: store.purchase,
+    world: (slug) => playCatalogFor(studio).world(slug),
+    coin: playCoin(deps),
+    account: { signIn: () => signInToGenex(studio) },
+    // Get Nex: genex.games in the browser; a fixture launch opens nothing and tops its balance up.
+    openPage: (url) => {
+      if (fixtureNativePolicy) fixtureGetCoin();
+      else if (window) openGenexWebsitePage(studio, window, url);
+    },
+    web: playOrigin.web,
+    clock: SYSTEM_CLOCK,
+    push: (shown) => {
+      const page = livePage();
+      if (page) pushToRenderer(page, "studio:store.sheet", shown);
+    },
+  });
+  playStoreDeps = { store, sheet, request: deps.request };
+  return playStoreDeps;
+}
+
+/**
+ * A genex.games page the app links to (Get Nex): a page of Play's website opens as a sign-in page
+ * does, which takes a development website's plain http; anything else as every other link does.
+ */
+function openGenexWebsitePage(studio: StudioCore, win: BrowserWindow, url: string): void {
+  websitePageOpener(
+    playOrigin.web,
+    (page) => void openGenexPage(fixtureNativePolicy, page, playOrigin.web).catch(() => openOutside(studio, win, page)),
+    (other) => void openOutside(studio, win, other),
+  )(url);
+}
+
 /** The purchase sheet's Sign in: the app's own Genex sign-in in the browser; how it went shows on the sheet's next read. */
 function signInToGenex(studio: StudioCore): void {
   void genexAccountFor(studio)
@@ -1433,6 +1639,8 @@ function signInToGenex(studio: StudioCore): void {
 
 /** Play's full-screen viewer in `win`: a published game, the studio's bar over its top edge. */
 function attachPlay(studio: StudioCore, win: BrowserWindow): void {
+  // The store's purchase sheet is drawn in this window: Pay waits again on focus, and it goes with the page.
+  followStudioWindow(win, storeFor(studio).sheet);
   playView = wirePlayViewer({
     win,
     // The viewer's Remix shows only for a game whose source holds a game, as a card's does.
@@ -1442,6 +1650,8 @@ function attachPlay(studio: StudioCore, win: BrowserWindow): void {
       if (!fixtureNativePolicy) void openOutside(studio, win, url);
     },
     web: playOrigin.web,
+    origins: playOrigin,
+    ...devGamesCertificates(),
     offline: fixtureNativePolicy ? { gamePage: fixtureGamePage } : null,
     micPreload: path.join(distRoot, "preload", "play-mic.cjs"),
     micStore: playMicStore(path.join(userDataRoot, "play-mic.json")),
@@ -1450,16 +1660,36 @@ function attachPlay(studio: StudioCore, win: BrowserWindow): void {
     barArguments: pageLanguageArguments,
     comments: playCommentsFor(studio),
     ...(playInstallsFor(studio) ? { nativeApp: nativeAppFor(studio) } : {}),
+    // The bar's Store door: only a game whose Store tab has items (the store off reads as none).
+    storeShown: async (slug) => (await storeFor(studio).store.items(slug)).items.length > 0,
     coin: playCoinFor(studio),
     account: { signIn: () => signInToGenex(studio) },
-    // Get coin: genex.games in the browser; a fixture launch opens nothing and tops its balance up.
+    // Get Nex: genex.games in the browser; a fixture launch opens nothing and tops its balance up.
     openPage: (url) => {
       if (fixtureNativePolicy) fixtureGetCoin();
-      else void openOutside(studio, win, url);
+      else openGenexWebsitePage(studio, win, url);
     },
     // A fixture launch's stand-in game confirms on a website that resolves nowhere (`fixture-coin.ts`).
     confirmOrigin: fixtureNativePolicy ? FIXTURE_CONFIRM_ORIGIN : purchaseConfirmOrigin(playOrigin),
   });
+}
+
+/**
+ * A development stand's own CA for the viewer, trusted for the stand's game hosts only
+ * (`play/dev-games-trust.ts`); nothing in any other launch, or when the CA file cannot be read.
+ */
+function devGamesCertificates(): Pick<Parameters<typeof wirePlayViewer>[0], "certificates"> {
+  if (!stand.gamesCaFile) return {};
+  let pem: string;
+  try {
+    pem = readFileSync(stand.gamesCaFile, "utf8");
+  } catch (error) {
+    studioLog.write("main", `stand CA not read: ${errorMessage(error)}`);
+    return {};
+  }
+  const trust = devGamesTrust(playOrigin.games, pem, Date.now);
+  if (!trust) studioLog.write("main", "stand CA is not a certificate: nothing is trusted");
+  return trust ? { certificates: trust } : {};
 }
 
 /**
@@ -1513,7 +1743,7 @@ function createFacetPreview(studio: StudioCore, index: number, released: () => v
     vendorDir: path.join(resources, "vendor"),
     partition: `game-preview-facet-${index}`,
     offscreen: true,
-    // Builders, playtesters, reviewers and the lead all play the game here; only Live is heard.
+    // Workers, reviewers and the lead all play the game here; only Live is heard.
     muted: true,
     resolveRoot: (name) => studio.games.dirFor(name),
   });
@@ -1671,6 +1901,7 @@ function watchWindowLifecycle(win: BrowserWindow): void {
     const decision = shutdownInProgress ? QUITTING : reloads.decide(details.reason);
     studioLog.write("main", `renderer gone: ${details.reason} (exit ${details.exitCode}); ${decision}`);
     if (decision === QUITTING) return;
+    sessionMarker?.rendererGone(details.reason);
     const step = pageRecovery(decision, { quitting: win.isDestroyed(), unattended: fixtureNativePolicy });
     recoverPage(win, `${details.reason}, exit code ${details.exitCode}`, step);
   });
@@ -1903,6 +2134,24 @@ function playIpcDeps(studio: StudioCore): PlayIpcDeps {
   };
 }
 
+/** The bootstrap's and the chats' channels: what a window opens on, and the sends behind it. */
+function threadsIpcDeps(studio: StudioCore, engines: EngineBoot): ThreadsIpcDeps {
+  return {
+    core: studio,
+    engines,
+    gamesRootLabel,
+    threadStatus: () => liveThreadStatus,
+    pushUiEvent,
+    appendErrorDurably,
+    smokeReads: isSmoke ? smokeReads : null,
+    welcome: showsWelcome,
+    developer: !app.isPackaged,
+    playWeb: playOrigin.web,
+    analytics,
+    launchFacts: handLaunchFacts,
+  };
+}
+
 function registerIpc(studio: StudioCore, engines: EngineBoot): void {
   const handle = createIpcHandle(ipcMain, {
     fixture: fixtureNativePolicy,
@@ -1921,23 +2170,19 @@ function registerIpc(studio: StudioCore, engines: EngineBoot): void {
     shellPath: async () => (await toolchain()).path,
     openExternal: (url) => shell.openExternal(url),
   });
-  registerThreadsIpc(handle, {
-    core: studio,
-    engines,
-    gamesRootLabel,
-    threadStatus: () => liveThreadStatus,
-    pushUiEvent,
-    appendErrorDurably,
-    smokeReads: isSmoke ? smokeReads : null,
-    welcome: showsWelcome,
-    developer: !app.isPackaged,
-    playWeb: playOrigin.web,
-  });
+  registerThreadsIpc(handle, threadsIpcDeps(studio, engines));
   registerMentionRetry(handle, studio);
   registerGamesIpc(handle, { core: studio, runSummaryReader, pushUiEvent });
   registerStorageIpc(handle, { core: studio });
   registerJobsIpc(handle, { core: studio, openExternal: (url) => shell.openExternal(url) });
-  registerModelsIpc(handle, { core: studio, subscription, pushUiEvent, openRouterLogin, usage: providerUsage });
+  registerModelsIpc(handle, {
+    core: studio,
+    subscription,
+    pushUiEvent,
+    openRouterLogin,
+    usage: providerUsage,
+    readHardware: isSmoke ? async () => smokeReads.hardware ?? hardwareReport() : undefined,
+  });
   registerPreviewIpc(handle, {
     core: studio,
     preview: () => preview,
@@ -1945,11 +2190,7 @@ function registerIpc(studio: StudioCore, engines: EngineBoot): void {
     fullScreen: { enter: () => gameScreen?.enter(), active: () => gameScreen?.active() ?? false },
   });
   registerRunsIpc(handle, { core: studio, runSummaryReader, keepAwake, pushUiEvent, appendErrorDurably });
-  registerLearningIpc(handle, {
-    core: studio,
-    scriptedImprovementPass: fixtureProviders && dev?.fixture === FixtureName.StudioActivity,
-    pushUiEvent,
-  });
+  registerLearningIpc(handle, { core: studio });
   registerSettingsIpc(handle, {
     core: studio,
     diagnostics: () => diagnosticsReport(studio),
@@ -1971,6 +2212,12 @@ function registerIpc(studio: StudioCore, engines: EngineBoot): void {
     claudeLogin,
     codexLogin,
     openCodeLogin,
+    grokLogin,
+    cursorLogin,
+    cursor: () => {
+      const engine = core?.engines.has(EngineId.Cursor) ? core.engines.get(EngineId.Cursor) : null;
+      return engine instanceof CursorEngine ? engine : null;
+    },
     subscription,
     pushUiEvent,
     busy: () => keepAwake.held || (core?.budget.userInFlight ?? 0) > 0,
@@ -1980,6 +2227,7 @@ function registerIpc(studio: StudioCore, engines: EngineBoot): void {
   registerDataFolderIpc(handle, dataFolderIpc(studio));
   registerGenexAccountIpc(handle, { account: genexAccountFor(studio) });
   registerPlayIpc(handle, playIpcDeps(studio));
+  registerStoreIpc(handle, { ...storeFor(studio), coin: plateCoinFor(studio), local: studio.localItems });
   const { library } = playAccountFor(studio);
   registerAssetLibraryIpc(handle, { library, sharing: librarySharingFor(studio), pictureFile: pictureFileFor() });
   registerNotificationsIpc(handle, {
@@ -2030,6 +2278,7 @@ async function main(): Promise<void> {
   });
   setAppMenu();
   if (await settleDataFolder()) return;
+  beginSession();
   // Before the core: a start that fails, waits on Set up or never ends (a Windows start can take
   // minutes) still finds the release that fixes it, and its screen offers the relaunch.
   setTimeout(checkForUpdates, firstCheckDelay(process.argv)).unref();
@@ -2070,9 +2319,11 @@ async function settleDataFolder(): Promise<boolean> {
   return false;
 }
 
-/** The host's own Git for repairing build copies after a move (Windows); elsewhere the PATH's. */
+/** The host's own Git for repairing build copies after a move (Windows, a Mac without developer tools); elsewhere the PATH's. */
 function hostGitForMoves(): { hostGit?: () => Promise<boolean> } {
-  return process.platform === StudioPlatform.Windows ? { hostGit: () => ensureHostGit() } : {};
+  if (process.platform === StudioPlatform.Windows) return { hostGit: () => ensureHostGit() };
+  if (process.platform === StudioPlatform.Mac) return { hostGit: () => ensureMacGit(resources) };
+  return {};
 }
 
 /** Move the data with the start window showing how far, then start Genex again; quitting waits for it. */
@@ -2114,8 +2365,18 @@ async function moveDataAndRestart(from: string, to: string): Promise<void> {
   };
   // Part of the data in each folder, or a move that ended without saying: no restart into it on
   // its own (that could repeat for ever); the window offers Try again, which carries it on, and Quit.
-  if (!outcome.moved && outcome.stranded) bootGate.moveStopped(to, MESSAGE.moveStopped(), restart);
-  else await restart();
+  if (!outcome.moved && outcome.stranded) {
+    bootGate.moveStopped(to, MESSAGE.moveStopped(), restart);
+    return;
+  }
+  if (outcome.moved) await noteNextLaunch(to, StartPassage.DataMoved);
+  await restart();
+}
+
+/** Leave `passage` in the data folder `dir` for the launch this one starts next, for its usage analytics. */
+async function noteNextLaunch(dir: string, passage: StartPassage): Promise<void> {
+  if (!analytics) return;
+  await settleWithin(noteNextStart(markerFileIo(dir), passage), SESSION_MARKER_WAIT_MS, undefined);
 }
 
 /** The data folder a moving launch's log lines go to: the one Genex starts from, or none while the move is unfinished. */
@@ -2135,6 +2396,7 @@ async function waitForDataFolder(dir: string): Promise<void> {
 function holdOnMissingData(dir: string): void {
   bootGate.dataMissing(dir, async () => {
     if (!existsSync(dir)) throw new Error(MESSAGE.dataFolderStillMissing(dir));
+    await noteNextLaunch(dir, StartPassage.DataMissing);
     app.relaunch();
     app.exit(0);
   });
@@ -2177,14 +2439,44 @@ function checkForUpdates(): void {
   }
   if (updateDecision.mode === UpdateMode.Notify) {
     // Linux: ask GitHub now and every few hours; a newer release announces itself.
-    const ask = () => void updateChecker.check().then((result) => log(`release check: ${result.status}`));
+    const ask = () =>
+      void updateChecker.check().then((result) => {
+        log(`release check: ${result.status}`);
+        if (result.status === UpdateCheckStatus.Failed) updateFailed(UpdateFailure.Check);
+      });
     ask();
     setInterval(ask, RELEASE_CHECK_INTERVAL_MS).unref();
     return;
   }
-  startAutoUpdate({ log, downloaded: (releaseName) => updates.downloaded(releaseName) }).catch((err) =>
-    log(errorMessage(err)),
-  );
+  startAutoUpdate({ log, downloaded: (releaseName) => updates.downloaded(releaseName) }).catch((err) => {
+    log(errorMessage(err));
+    updateFailed(UpdateFailure.Check);
+  });
+}
+
+/** An update this launch looked for on its own failed at `stage`: counted for the next launch, and told to the window. */
+function updateFailed(stage: UpdateFailure): void {
+  sessionMarker?.updateFailed();
+  pushUiEvent({ type: UiEvent.UpdateFailed, payload: { stage } });
+}
+
+/** Relaunch into the downloaded update once the marker says so, so the next launch knows it was one. */
+async function relaunchIntoUpdate(): Promise<void> {
+  await settleWithin(sessionMarker?.updating() ?? Promise.resolve(), SESSION_MARKER_WAIT_MS, undefined);
+  autoUpdater.quitAndInstall();
+}
+
+/** The session ends by Genex's own hand: said in the marker before a quit, or a relaunch that skips it. */
+function sessionQuits(): Promise<void> {
+  return settleWithin(sessionMarker?.quitting() ?? Promise.resolve(), SESSION_MARKER_WAIT_MS, undefined);
+}
+
+/** Read how the previous session ended, once, and keep this one's marker, alive while it runs. */
+function beginSession(): void {
+  if (!sessionMarker) return;
+  const marker = sessionMarker;
+  sessionBegun = marker.begin();
+  setInterval(() => marker.heartbeat(), SESSION_HEARTBEAT_MS).unref();
 }
 
 /**
@@ -2393,6 +2685,7 @@ function openStartWindow(): void {
 function startTookTooLong(): void {
   const { step } = bootGate.state();
   const shown = bootGate.overdue(MESSAGE.startTookTooLong(START_TIMEOUT_MS / MINUTE_MS), async () => {
+    await sessionQuits();
     app.relaunch();
     app.exit(0);
   });
@@ -2498,6 +2791,9 @@ async function launchStudio(studio: StudioCore): Promise<StartedStudio | null> {
     const win = await createWindow(studio);
     studio.options.markBoot?.("window");
     window = win;
+    // A turn that clicked in another app (a publish in Studio) ends with Genex in front again, so
+    // the person sees it is done and can come back.
+    assistGrants(studio).onEnded(() => bringStudioForward());
     // The start or setup window this launch opened first gives way to the studio's.
     if (before && before !== win && !before.isDestroyed()) before.destroy();
     // First launch opens on an empty library, with no game chat to select.
@@ -2505,7 +2801,7 @@ async function launchStudio(studio: StudioCore): Promise<StartedStudio | null> {
     const booted = await startHarness(studio);
     if (!booted) return null;
     if (fixture) await activateChatFixture(studio, fixture);
-    if (fixture?.project) await openFixtureGame(win, fixture.project);
+    if (fixture?.project) await openFixtureGame(studio, win, fixture.project);
     announceReady(userData);
     showFixtureAgentsFailure(userData);
     const view = requirePreview();
@@ -2583,13 +2879,14 @@ async function seedFixtureModel(win: BrowserWindow, threadId: string): Promise<v
 }
 
 /**
- * A fixture session begins in its game: every launch opens home, so the fixture opens the game
- * from the sidebar as a person would, and waits until the window shows it (or the sandbox setup,
- * which has no games). A game that never opens fails the launch, as a broken fixture should.
+ * A fixture session begins in its game, running: every launch opens home, so the fixture opens the
+ * game from the sidebar as a person would, and waits until the window shows it (or the sandbox
+ * setup, which has no games); opening a game starts nothing, so it then loads the game into Live as
+ * Play would. A game that never opens fails the launch, as a broken fixture should.
  */
-async function openFixtureGame(win: BrowserWindow, project: string): Promise<void> {
+async function openFixtureGame(studio: StudioCore, win: BrowserWindow, project: string): Promise<void> {
   const row = `nav [data-project=${JSON.stringify(project)}]`;
-  await win.webContents.executeJavaScript(`new Promise((resolve, reject) => {
+  const opened = await win.webContents.executeJavaScript(`new Promise((resolve, reject) => {
     const until = Date.now() + ${FIXTURE_OPEN_TIMEOUT_MS};
     let clicked = false;
     const tick = () => {
@@ -2607,6 +2904,7 @@ async function openFixtureGame(win: BrowserWindow, project: string): Promise<voi
     };
     tick();
   })`);
+  if (opened === true) void studio.loadPreview({ project }).catch(() => {});
 }
 
 /**
@@ -2620,10 +2918,15 @@ async function startHarness(studio: StudioCore): Promise<boolean> {
     return true;
   } catch (err) {
     if (dev || isSmoke) throw err;
-    showAgentsFailure(errorMessage(err), async () => {
-      await studio.start();
-      announceReady(userDataRoot);
-    });
+    const code = err instanceof SandboxUnavailableError ? err.problem.code : BootFailure.HarnessFailed;
+    showAgentsFailure(
+      errorMessage(err),
+      async () => {
+        await studio.start();
+        announceReady(userDataRoot);
+      },
+      code,
+    );
     return false;
   }
 }
@@ -2634,10 +2937,14 @@ async function startHarness(studio: StudioCore): Promise<boolean> {
  * harness waits on a sandbox that starts behind the open window, so this can come a minute after
  * the window opened. A Try again that fails shows its own words.
  */
-function showAgentsFailure(failure: string, retry: () => Promise<void>): void {
+function showAgentsFailure(
+  failure: string,
+  retry: () => Promise<void>,
+  failureCode: BootFailureCode = BootFailure.HarnessFailed,
+): void {
   studioLog.write("main", `harness would not start: ${failure}`);
-  bootGate.agentsFailed(failure, retry);
-  pushUiEvent({ type: UiEvent.HarnessStartFailed, payload: { failure } });
+  bootGate.agentsFailed(failure, retry, failureCode);
+  pushUiEvent({ type: UiEvent.HarnessStartFailed, payload: { failure, failureCode } });
 }
 
 /** The developer runtime, once the renderer shows its threads. */
@@ -2800,10 +3107,13 @@ app.on("before-quit", async (event) => {
   event.preventDefault();
   if (shutdownInProgress) return;
   shutdownInProgress = true;
+  // The next launch reads this session as one that quit (or relaunched into an update).
+  const marked = sessionQuits();
   // Every later Cmd+Q returns above, so this exit must be reached whatever a step does.
   try {
     await runShutdown(quitSteps(), { log: studioLog.write });
   } finally {
+    await marked;
     studioLog.close();
     app.exit(0);
   }

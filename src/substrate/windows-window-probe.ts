@@ -2,20 +2,22 @@
  * What Windows itself says about the desktop, for computer control on a PC: the app that holds the
  * keyboard and whether its focused field is a password field (UI Automation's `IsPassword`, or a
  * Win32 edit control's own password style, which .NET's UI Automation does not read), and the app
- * a click at a screen point reaches (UI Automation's element at that point, up to its top-level
- * window, as the click lands in that window). cua's window list cannot say either: it lists windows
+ * a click at a screen point reaches (Windows' own hit test, up to the top-level window, as the
+ * click lands in that window; UI Automation's element there when user32 could not be declared). cua's window list cannot say either: it lists windows
  * on other virtual desktops and transparent overlays (a game overlay over the whole screen) as on
  * screen, and its app listing rescans every installed app.
  *
  * A host helper like the driver: Windows PowerShell (Microsoft's, on every Windows 10 and 11) runs a
- * fixed script, handed over as `-EncodedCommand` (no file, so no execution policy applies), outside
- * the ProcessSandbox, using only .NET's own UI Automation, Windows Forms, process reads and user32's
- * `GetWindowLongW` declared in memory: nothing is compiled and no cmdlet runs, so no generated DLL,
+ * fixed script, handed over in an environment variable that a short `-EncodedCommand` runs (no file,
+ * so no execution policy applies; a command line holds at most 32,767 characters), outside
+ * the ProcessSandbox, using only .NET's own UI Automation, Windows Forms, process reads and a few
+ * user32 calls declared in memory: nothing is compiled and no cmdlet runs, so no generated DLL,
  * no compiler and no first-use preparation of PowerShell's modules stand between it and its first
  * answer. It reports its start in stages, says it is ready with the primary screen's size as
  * it sees it (Windows may scale a process's points), then answers one JSON line for each request
  * line on its stdin: `front`, `at <x> <y>` (in its own points: the caller scales the driver's
- * physical pixels to them) or `pid <n>`. An app is its executable's name and its file description
+ * physical pixels to them), `pid <n>` or `raise <exe>` (bring that app's newest responding window
+ * forward, as the Mac driver's bring_to_front does). An app is its executable's name and its file description
  * (the name the person knows it by); a window no process can be read for answers pid 0, which the
  * caller refuses. A request that does not answer in time ends the helper, and the next request
  * starts a fresh one.
@@ -37,6 +39,12 @@ const EXIT_WAIT_MS = 2 * SECOND_MS;
 const MAX_STDERR_CHARS = 2_000;
 /** How long the helper waits before asking again for focus that is on no text field. */
 const FOCUS_SETTLE_MS = 250;
+/** How long UI Automation has to say whether the focused field is a password field; past it, the caller reads the window's tree. */
+const FOCUS_ASK_MS = 2 * SECOND_MS;
+/** How long a raised window has to take the foreground: a busy app (Roblox Studio) takes it late. */
+const RAISE_WAIT_MS = 2 * SECOND_MS;
+/** How often the helper looks whether a raised window is in front yet. */
+const RAISE_POLL_MS = 100;
 
 const MESSAGE = {
   notStarted: (why: string) => `the Windows window probe did not start: ${why}`,
@@ -98,17 +106,35 @@ $Edit = [System.Windows.Automation.ControlType]::Edit
 $EditClass = '^(Edit|RichEdit\w*|WindowsForms10\.(EDIT|RichEdit\w*)\..*)$'
 $PasswordStyle = 0x20
 
-# user32's GetWindowLongW, declared in memory (Reflection.Emit): nothing is compiled. .NET's UI
-# Automation names a Windows Forms text box a Pane with no password flag, so a Win32 edit's own
-# style is read instead. Without it the caller reads the window's tree.
+# user32 calls, declared in memory (Reflection.Emit): nothing is compiled. .NET's UI Automation
+# names a Windows Forms text box a Pane with no password flag, so a Win32 edit's own style is read
+# instead (GetWindowLongW); the rest bring a window forward. Without them the caller reads the
+# window's tree, and nothing is raised.
 $User32 = $null
+$Imports = @(
+  @('GetWindowLongW', [int], @([IntPtr], [int])),
+  @('IsIconic', [bool], @([IntPtr])),
+  @('ShowWindow', [bool], @([IntPtr], [int])),
+  @('SetForegroundWindow', [bool], @([IntPtr])),
+  @('GetForegroundWindow', [IntPtr], @()),
+  @('GetWindowThreadProcessId', [uint32], @([IntPtr], [uint32].MakeByRefType())),
+  @('WindowFromPoint', [IntPtr], @([long])),
+  @('GetAncestor', [IntPtr], @([IntPtr], [int])),
+  @('keybd_event', [void], @([byte], [byte], [uint32], [UIntPtr]))
+)
 try {
   $assembly = [System.AppDomain]::CurrentDomain.DefineDynamicAssembly([System.Reflection.AssemblyName]::new('GenexWindowProbe'), [System.Reflection.Emit.AssemblyBuilderAccess]::Run)
   $type = $assembly.DefineDynamicModule('GenexWindowProbe').DefineType('User32', 'Public, Class')
-  $method = $type.DefinePInvokeMethod('GetWindowLongW', 'user32.dll', 'Public, Static, PinvokeImpl', 'Standard', [int], [Type[]]@([IntPtr], [int]), 'Winapi', 'Unicode')
-  $method.SetImplementationFlags('PreserveSig')
+  foreach ($import in $Imports) {
+    $method = $type.DefinePInvokeMethod($import[0], 'user32.dll', 'Public, Static, PinvokeImpl', 'Standard', $import[1], [Type[]]$import[2], 'Winapi', 'Unicode')
+    $method.SetImplementationFlags('PreserveSig')
+  }
   $User32 = $type.CreateType()
 } catch { }
+$RestoreWindow = 9
+$RootWindow = 2
+$AltKey = 0x12
+$KeyUp = 2
 
 # The primary screen in UI Automation's own points: Windows Forms' view of it, scaled by how the two
 # see the whole desktop (both are scaled alike unless Windows treats them differently).
@@ -132,6 +158,29 @@ function TopOf($node) {
   return $current
 }
 
+function AppOfProcess([int]$id) {
+  if ($id -le 0) { return @{ pid = 0 } }
+  try { $process = [System.Diagnostics.Process]::GetProcessById($id) } catch { return @{ pid = 0 } }
+  $name = ''
+  try { $name = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($process.MainModule.FileName).FileDescription } catch { }
+  return [ordered]@{ pid = $id; exe = $process.ProcessName + '.exe'; name = ([string]$name).Trim() }
+}
+
+function AppOfElement($node, [bool]$focus) {
+  if ($null -eq $node) { return @{ pid = 0 } }
+  $top = TopOf $node
+  $app = AppOfProcess ([int]$top.Current.ProcessId)
+  if ($app.pid -le 0) { return $app }
+  $app.window = [long]$top.Current.NativeWindowHandle
+  if ($focus) { $app.secure = SecureOf $node }
+  return $app
+}
+
+# What reads the focused field. It is defined here and again on a runspace of its own, where the
+# app in front is asked: UI Automation waits on that app, and a busy one (Roblox Studio with its
+# Publish dialog open) can keep it waiting for seconds.
+$FocusCode = @'
+$PSModuleAutoLoadingPreference = 'None'
 # Whether an element is a Win32 edit control, by its class.
 function IsWin32Edit($node) {
   try { return [string]$node.Current.ClassName -match $EditClass } catch { return $false }
@@ -165,24 +214,6 @@ function IsTextField($node) {
   return IsWin32Edit $node
 }
 
-function AppOfProcess([int]$id) {
-  if ($id -le 0) { return @{ pid = 0 } }
-  try { $process = [System.Diagnostics.Process]::GetProcessById($id) } catch { return @{ pid = 0 } }
-  $name = ''
-  try { $name = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($process.MainModule.FileName).FileDescription } catch { }
-  return [ordered]@{ pid = $id; exe = $process.ProcessName + '.exe'; name = ([string]$name).Trim() }
-}
-
-function AppOfElement($node, [bool]$focus) {
-  if ($null -eq $node) { return @{ pid = 0 } }
-  $top = TopOf $node
-  $app = AppOfProcess ([int]$top.Current.ProcessId)
-  if ($app.pid -le 0) { return $app }
-  $app.window = [long]$top.Current.NativeWindowHandle
-  if ($focus) { $app.secure = SecureOf $node }
-  return $app
-}
-
 # The focused element. An app whose accessibility wakes on first asking (Chromium, Electron) says its
 # window before its field: focus that is on no text field is asked for once more, a moment later.
 function Focused() {
@@ -193,15 +224,159 @@ function Focused() {
   if ($null -eq $again) { return $node }
   return $again
 }
+'@
+. ([scriptblock]::Create($FocusCode))
+
+# The runspace the focused field is read on, with what its functions use.
+function FocusRunspace() {
+  $runspace = [runspacefactory]::CreateRunspace()
+  $runspace.Open()
+  foreach ($name in 'Element', 'Edit', 'EditClass', 'PasswordStyle', 'User32') {
+    $runspace.SessionStateProxy.SetVariable($name, $ExecutionContext.SessionState.PSVariable.GetValue($name))
+  }
+  $shell = [powershell]::Create()
+  $shell.Runspace = $runspace
+  [void]$shell.AddScript($FocusCode).Invoke()
+  $shell.Dispose()
+  return $runspace
+}
+$FocusReader = $null
+# The ask still waiting on a busy app, if any: a table, so the functions change it without a scope.
+$Focus = @{ Asked = $null }
+if ($null -ne $User32) { try { $FocusReader = FocusRunspace } catch { } }
+
+# Whether the focused field of a process is a password field, as UI Automation says within
+# ${FOCUS_ASK_MS} ms; null when it can't say in time, or focus is in another process. An ask still
+# waiting on a busy app is not asked again until it has answered.
+function FocusSecure([int]$id) {
+  if ($null -ne $Focus.Asked) {
+    if (-not $Focus.Asked.Handle.IsCompleted) { return $null }
+    $Focus.Asked.Shell.Dispose()
+    $Focus.Asked = $null
+  }
+  $shell = [powershell]::Create()
+  $shell.Runspace = $FocusReader
+  [void]$shell.AddScript('$node = Focused; $secure = SecureOf $node; $owner = 0; try { $owner = [int]$node.Current.ProcessId } catch { }; "$owner $secure"')
+  $handle = $shell.BeginInvoke()
+  if (-not $handle.AsyncWaitHandle.WaitOne(${FOCUS_ASK_MS})) {
+    $Focus.Asked = @{ Shell = $shell; Handle = $handle }
+    return $null
+  }
+  $said = ''
+  try {
+    $out = $shell.EndInvoke($handle)
+    if ($out.Count -gt 0) { $said = [string]$out[0] }
+  } catch { }
+  $shell.Dispose()
+  $parts = $said.Split(' ')
+  if ($parts.Length -ne 2 -or $parts[0] -ne [string]$id) { return $null }
+  if ($parts[1] -eq 'True') { return $true }
+  if ($parts[1] -eq 'False') { return $false }
+  return $null
+}
+
+# The app that holds the keyboard: the foreground window, as Windows itself says without asking its
+# app, and its focused field's password flag when UI Automation says it in time.
+function FrontApp() {
+  if ($null -eq $FocusReader) { return AppOfElement (Focused) $true }
+  $window = $User32::GetForegroundWindow()
+  if ($window -eq [IntPtr]::Zero) { return @{ pid = 0 } }
+  $owner = [uint32]0
+  [void]$User32::GetWindowThreadProcessId($window, [ref]$owner)
+  $app = AppOfProcess ([int]$owner)
+  if ($app.pid -le 0) { return $app }
+  $app.window = [long]$window
+  $app.secure = FocusSecure $app.pid
+  return $app
+}
+
+# The app a click at a point reaches, as Windows itself hit-tests it: the window there (click-through
+# overlays pass the point on), up to its top-level window. Nothing is asked of that window's app, so
+# a busy one (Roblox Studio with a menu open) cannot stall the answer as UI Automation's FromPoint
+# does. The point is in UI Automation's points, Windows Forms' scaled; POINT goes by value as one
+# 64-bit value, x in its low half.
+function AppAtPoint([int]$x, [int]$y) {
+  $wx = [long][math]::Round($x / $scaleX)
+  $wy = [long][math]::Round($y / $scaleY)
+  $window = $User32::WindowFromPoint(($wy -shl 32) -bor ($wx -band [long]4294967295))
+  if ($window -eq [IntPtr]::Zero) { return @{ pid = 0 } }
+  $top = $User32::GetAncestor($window, $RootWindow)
+  $owner = [uint32]0
+  [void]$User32::GetWindowThreadProcessId($top, [ref]$owner)
+  $app = AppOfProcess ([int]$owner)
+  if ($app.pid -gt 0) { $app.window = [long]$top }
+  return $app
+}
+
+# The newest responding process of an executable that has a window, or null.
+function WindowedProcess([string]$exe) {
+  if ($exe -notmatch '^[\w.-]{1,124}\.exe$') { return $null }
+  $best = $null
+  foreach ($process in [System.Diagnostics.Process]::GetProcessesByName($exe.Substring(0, $exe.Length - 4))) {
+    try {
+      $shown = $process.MainWindowHandle -ne [IntPtr]::Zero -and $process.Responding
+      if ($shown -and ($null -eq $best -or $process.StartTime -gt $best.StartTime)) { $best = $process }
+    } catch { }
+  }
+  return $best
+}
+
+# The newest process of an executable, with a window or not (a Studio whose windows are all hidden), as
+# an app; pid 0 when none runs.
+function Running([string]$exe) {
+  if ($exe -notmatch '^[\w.-]{1,124}\.exe$') { return @{ pid = 0 } }
+  $newest = $null
+  foreach ($process in [System.Diagnostics.Process]::GetProcessesByName($exe.Substring(0, $exe.Length - 4))) {
+    try {
+      if ($null -eq $newest -or $process.StartTime -gt $newest.StartTime) { $newest = $process }
+    } catch { }
+  }
+  if ($null -eq $newest) { return @{ pid = 0 } }
+  return AppOfProcess $newest.Id
+}
+
+# Whether a process's window is in front, waiting a moment for one that takes the foreground late.
+function InFront([int]$id) {
+  for ($waited = 0; $waited -le ${RAISE_WAIT_MS}; $waited += ${RAISE_POLL_MS}) {
+    $owner = [uint32]0
+    [void]$User32::GetWindowThreadProcessId($User32::GetForegroundWindow(), [ref]$owner)
+    if ($owner -eq $id) { return $true }
+    [System.Threading.Thread]::Sleep(${RAISE_POLL_MS})
+  }
+  return $false
+}
+
+# Bring an executable's window forward, restoring it if minimized. Windows lets a process take the
+# foreground only just after input, so a refused first try is followed by an Alt tap and a second.
+function Raise([string]$exe) {
+  $process = WindowedProcess $exe
+  if ($null -eq $process -or $null -eq $User32) { return @{ pid = 0 } }
+  $window = $process.MainWindowHandle
+  if ($User32::IsIconic($window)) { [void]$User32::ShowWindow($window, $RestoreWindow) }
+  if (-not $User32::SetForegroundWindow($window)) {
+    $User32::keybd_event($AltKey, 0, 0, [UIntPtr]::Zero)
+    $User32::keybd_event($AltKey, 0, $KeyUp, [UIntPtr]::Zero)
+    [void]$User32::SetForegroundWindow($window)
+  }
+  if (-not (InFront $process.Id)) { return @{ pid = 0 } }
+  $app = AppOfProcess $process.Id
+  if ($app.pid -gt 0) { $app.window = [long]$window }
+  return $app
+}
 
 function Ask([string]$line) {
   $parts = $line.Trim().Split(' ')
-  if ($parts[0] -eq 'front' -and $parts.Length -eq 1) { return AppOfElement (Focused) $true }
+  if ($parts[0] -eq 'front' -and $parts.Length -eq 1) { return FrontApp }
+  if ($parts[0] -eq 'at' -and $parts.Length -eq 3 -and $null -ne $User32) {
+    return AppAtPoint ([int]::Parse($parts[1], $Culture)) ([int]::Parse($parts[2], $Culture))
+  }
   if ($parts[0] -eq 'at' -and $parts.Length -eq 3) {
     $point = [System.Windows.Point]::new([int]::Parse($parts[1], $Culture), [int]::Parse($parts[2], $Culture))
     return AppOfElement ($Element::FromPoint($point)) $false
   }
   if ($parts[0] -eq 'pid' -and $parts.Length -eq 2) { return AppOfProcess ([int]::Parse($parts[1], $Culture)) }
+  if ($parts[0] -eq 'raise' -and $parts.Length -eq 2) { return Raise $parts[1] }
+  if ($parts[0] -eq 'running' -and $parts.Length -eq 2) { return Running $parts[1] }
   return @{ error = 'unknown request' }
 }
 
@@ -238,6 +413,17 @@ export interface WindowsProbe {
   at(x: number, y: number, screen: ScreenSize): Promise<ProbedApp | null>;
   /** A running process as an app; null when it cannot be read. */
   process(pid: number): Promise<ProbedApp | null>;
+  /**
+   * Bring an app (its executable's name, such as `robloxstudiobeta.exe`) forward; the app when its
+   * window is in front, null when it has none or Windows refused. A name that is not a plain
+   * executable's is never sent.
+   */
+  raise(exe: string): Promise<ProbedApp | null>;
+  /**
+   * The newest running process of an executable (its name, such as `robloxstudiobeta.exe`), with a
+   * window or not; null when none runs. A name that is not a plain executable's is never sent.
+   */
+  running(exe: string): Promise<ProbedApp | null>;
   /** Stop the helper. */
   close(): Promise<void>;
 }
@@ -254,13 +440,18 @@ export function windowsPowerShell(env: Record<string, string | undefined>): Prob
   return path.win32.join(env.SystemRoot || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
 }
 
-/** The helper as Windows PowerShell runs it: no profile, no prompt, the script as an encoded command. */
+/** The variable that carries the helper's script: a command line holds at most 32,767 characters. */
+const SCRIPT_ENV = "GENEX_WINDOW_PROBE_SCRIPT";
+/** The encoded command: run the script {@link SCRIPT_ENV} carries, with no cmdlet (no module loads). */
+const SCRIPT_LOADER = `. ([scriptblock]::Create([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:${SCRIPT_ENV}))))`;
+
+/** The helper as Windows PowerShell runs it: no profile, no prompt, a loader as the encoded command. */
 export function probeCommand(env: Record<string, string>): ProbeCommand {
-  const script = Buffer.from(WINDOW_PROBE_SCRIPT, "utf16le").toString("base64");
+  const loader = Buffer.from(SCRIPT_LOADER, "utf16le").toString("base64");
   return {
     command: windowsPowerShell(env),
-    args: ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", script],
-    env,
+    args: ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", loader],
+    env: { ...env, [SCRIPT_ENV]: Buffer.from(WINDOW_PROBE_SCRIPT, "utf8").toString("base64") },
   };
 }
 
@@ -409,6 +600,9 @@ async function stopProbe(running: Running): Promise<void> {
 /** A request line, made once the helper is live from its view of the screen. */
 type Request = (view: ScreenSize | null) => string;
 
+/** An executable's plain name: no path, space or line break can reach the helper's request line. */
+const EXECUTABLE_NAME = /^[\w.-]{1,124}\.exe$/i;
+
 /**
  * The helper, started on its first request (or by `ready`) and kept for the next ones. Requests
  * go one at a time; one that fails or does not answer in `requestMs` stops the helper, so a hung
@@ -480,6 +674,8 @@ export function windowsProbe(
         return `at ${px} ${py}`;
       }),
     process: (pid) => ask(() => `pid ${Math.trunc(pid)}`),
+    raise: (exe) => (EXECUTABLE_NAME.test(exe) ? ask(() => `raise ${exe}`) : Promise.resolve(null)),
+    running: (exe) => (EXECUTABLE_NAME.test(exe) ? ask(() => `running ${exe}`) : Promise.resolve(null)),
     close: async () => {
       closed = true;
       await drop();

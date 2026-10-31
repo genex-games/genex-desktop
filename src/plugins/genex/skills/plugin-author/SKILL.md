@@ -6,7 +6,7 @@ Read this when the person wants Genex to work with an engine or tool it has no p
 A Genex plugin is a folder: `plugin.json` (the manifest: what the plugin adds), `backend.mjs` (a
 Node module whose functions answer its tools) and the skill files it teaches agents with. It can
 add tools, know a kind of project by its files, run at Genex's moments (a run's start and end, a
-save point, a restore, a health check), capture pictures as evidence for a reviewer, name the kinds
+save point, a restore, a health check), capture pictures of the game, name the kinds
 of worker a lead may start, and keep an engine's scratch out of the project's history.
 
 ## The rules

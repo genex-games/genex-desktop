@@ -13,6 +13,7 @@ import {
   pluginSkillLine,
 } from "../../../shared/plugins.ts";
 import type { ProjectSkill, ProjectSkillInventory, ProviderSkillInventory } from "../../../shared/provider-skills.ts";
+import { isOwnPlugin } from "../../analytics/plugins-ref.ts";
 import { SKILLS_WORDS } from "../../words.ts";
 
 /** Each section's `data-skills-section` value. Read by smoke checks: never rename a value. */
@@ -56,6 +57,8 @@ export interface SkillRow {
   /** What the search looks through besides the name. */
   search: string[];
   skill: ShownSkill;
+  /** The person's own (this game's, or a local or GitHub plugin's): kept out of usage recordings. */
+  own?: boolean;
 }
 
 /** A section of the tab: its hook, title and intro, and its rows. */
@@ -101,6 +104,7 @@ export function gameSkillsSection(inventory: ProjectSkillInventory): SkillsSecti
       line: s.description || s.path,
       tag: engineWords(s),
       search: [s.description, s.path],
+      own: true,
       skill: {
         plugin: "",
         provider: title,
@@ -135,6 +139,7 @@ export function pluginSkillRows(plugins: readonly PluginInfo[]): SkillRow[] {
           enabled: p.enabled,
           search: [pluginSkillLine(s), p.manifest.name],
           skill: shownPluginSkill(p.manifest.id, s),
+          own: isOwnPlugin(p),
         }),
       ),
     );

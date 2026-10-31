@@ -16,7 +16,8 @@ export interface AppShortcuts {
   newGame(): void;
   returnToGame(): void;
   enterStudio(): void;
-  focusComposer(): void;
+  /** ⌘I: back to the game, then the cursor in its composer. */
+  focusGame(): void;
   /** Alt-↑/↓: the conversation `step` places away along the rail. */
   stepRail(step: 1 | -1): void;
 }
@@ -32,10 +33,7 @@ function shortcutAction(event: KeyboardEvent, on: AppShortcuts): (() => void) | 
     n: on.newGame,
     "1": on.returnToGame,
     "2": on.enterStudio,
-    i: () => {
-      on.returnToGame();
-      requestAnimationFrame(on.focusComposer);
-    },
+    i: on.focusGame,
   };
   const key = event.key.toLowerCase();
   const command = event.metaKey || event.ctrlKey;

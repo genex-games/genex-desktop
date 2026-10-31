@@ -1,7 +1,6 @@
 {
   "3D models, characters, sound and art for your games, made in chat with Genex credits. Coding stays on your own provider.": "3D-Modelle, Figuren, Sound und Art für deine Spiele, im Chat mit Genex-Credits gemacht. Das Coden bleibt bei deinem eigenen Anbieter.",
   "Account and jobs": "Konto und Jobs",
-  "Add the listed pinned Genex packages. Multiplayer includes its player-identity dependency. A template game gets Studio's built-in copies in its import map; any other game installs them with its own package manager, with the npm registry open for that command only.": "Die aufgeführten Genex-Pakete in festen Versionen hinzufügen. Mehrspieler bringt seine Abhängigkeit für die Spieleridentität mit. Ein Spiel aus der Vorlage bekommt die eingebauten Kopien von Studio in seine Import Map; jedes andere Spiel installiert sie mit seinem eigenen Paketmanager, und die npm-Registry ist nur für diesen Befehl offen.",
   "Approve character workflow": "Figuren-Ablauf freigeben",
   "Asset setup state": "Asset-Einrichtungsstatus",
   "Blender server address": "Blender-Serveradresse",
@@ -24,7 +23,7 @@
   "Remove Studio’s saved Genex credential and stop new asset submissions.": "Die in Studio gespeicherten Genex-Zugangsdaten entfernen und keine neuen Assets mehr einreichen.",
   "Review Genex terms": "Genex-Bedingungen ansehen",
   "Review character candidates in Studio before approving paid generation.": "Sieh dir die Figuren-Varianten in Studio an, bevor du die kostenpflichtige Generierung freigibst.",
-  "Run a Genex CLI command that spends coin or credits or changes what this game sells, with your saved Genex account.": "Einen Genex-CLI-Befehl mit deinem gespeicherten Genex-Konto ausführen, der Coins oder Credits ausgibt oder ändert, was dieses Spiel verkauft.",
+  "Run a Genex CLI command that spends Nex or credits or changes what this game sells, with your saved Genex account.": "Einen Genex-CLI-Befehl mit deinem gespeicherten Genex-Konto ausführen, der Nex oder Credits ausgibt oder ändert, was dieses Spiel verkauft.",
   "Take this game's cover": "Cover für dieses Spiel aufnehmen",
   "Unlock saved account": "Gespeichertes Konto entsperren",
   "Upload Studio's exported copy of this game to its Genex draft page and make it the public version in the gallery. Everyone can find and play it. The first time, a hosted Genex project is created for this game under your account. Its cover shot also becomes its picture on Genex, unless you chose one there.": "Die von Studio exportierte Kopie dieses Spiels auf seine Genex-Entwurfsseite hochladen und sie zur öffentlichen Version in der Galerie machen. Alle können es finden und spielen. Beim ersten Mal wird für dieses Spiel ein gehostetes Genex-Projekt in deinem Konto angelegt. Sein Cover-Bild wird außerdem sein Bild auf Genex, außer du hast dort eins gewählt.",

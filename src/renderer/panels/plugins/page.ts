@@ -30,14 +30,19 @@ export interface PluginsPage {
   matches: (...values: string[]) => boolean;
 }
 
-/** One plugin action at a time: busy while it runs, its error kept for the page, the plugin list re-read after. */
+/**
+ * One plugin action at a time: busy while it runs, its error kept for the page, the plugin list
+ * re-read after. `actions` counts the ones run since the page came up, for usage analytics.
+ */
 export function useBusyAction(onPluginsRefresh: () => void) {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const acting = useRef(false);
+  const actions = useRef(0);
   const act = async (fn: () => Promise<unknown>): Promise<void> => {
     if (acting.current) return;
     acting.current = true;
+    actions.current += 1;
     setBusy(true);
     setError("");
     try {
@@ -50,7 +55,7 @@ export function useBusyAction(onPluginsRefresh: () => void) {
       onPluginsRefresh();
     }
   };
-  return { error, setError, busy, act };
+  return { error, setError, busy, act, actions };
 }
 
 /** A catalog entry as the page lists it. */

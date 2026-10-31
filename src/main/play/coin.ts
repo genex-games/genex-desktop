@@ -6,7 +6,7 @@
  * purchase is named only by the id genex.games gave it, and what genex.games answers is read as
  * hostile input. Electron-free: the request, the token and the refused-token report come in as deps.
  */
-import { isIntentId, withoutBidiControls } from "../../shared/play-purchase.ts";
+import { isIntentId, type PurchaseHeld, withoutBidiControls } from "../../shared/play-purchase.ts";
 import {
   type GalleryAnswer,
   type GalleryDeps,
@@ -126,6 +126,13 @@ export interface CoinIntent {
   expiresAt: number;
   /** Why genex.games ended it, when it says. */
   failure: CoinFailure | null;
+}
+
+/** The account's coin as the sheet reads it: what it may spend, and what it earned that is still on hold. */
+export interface CoinWallet {
+  spendable: number;
+  /** Null with none on hold, or when genex.games does not say when it is ready (an older API). */
+  held: PurchaseHeld | null;
 }
 
 /** genex.games refused a call for a reason it named: `code` says which, `status` is the HTTP status. */
@@ -268,6 +275,17 @@ async function write(request: GalleryRequest, route: string, auth: string, body?
   throw failed(route, answer);
 }
 
+/**
+ * Earned coin on hold, as the balance names it (`earnedHeld`, `nextReleaseAt`): a whole count above
+ * nothing and the time the first of it is ready; null for none, or for either it cannot trust.
+ */
+function heldOf(body: Record<string, unknown>): PurchaseHeld | null {
+  const { earnedHeld, nextReleaseAt } = body;
+  const releaseAt = typeof nextReleaseAt === "string" ? Date.parse(nextReleaseAt) : Number.NaN;
+  if (!wholeIn(earnedHeld, 1, Number.MAX_SAFE_INTEGER) || !Number.isFinite(releaseAt)) return null;
+  return { coins: earnedHeld, releaseAt };
+}
+
 /** The coin client over `deps`. Only reads end the sign-in when genex.games refuses the token. */
 export function playCoin(deps: CoinDeps) {
   const local = deps.localImages === true;
@@ -282,13 +300,23 @@ export function playCoin(deps: CoinDeps) {
     return found;
   };
 
-  /** The coin the account may spend. */
-  const balance = async (): Promise<number> => {
+  /** The coin the account may spend, and its earned coin still on hold. */
+  const wallet = async (): Promise<CoinWallet> => {
     const body = await read(reads, CoinRoute.Balance, await accountToken(deps));
     const spendable = isRecord(body) ? body.spendable : undefined;
-    if (!wholeIn(spendable, 0, Number.MAX_SAFE_INTEGER)) throw new GalleryError(CoinRoute.Balance, BAD_GATEWAY);
-    return spendable;
+    if (!isRecord(body) || !wholeIn(spendable, 0, Number.MAX_SAFE_INTEGER))
+      throw new GalleryError(CoinRoute.Balance, BAD_GATEWAY);
+    return { spendable, held: heldOf(body) };
   };
+
+  /** The coin the account may spend. */
+  const balance = async (): Promise<number> => (await wallet()).spendable;
+
+  /**
+   * The coin the account may spend, as the account plate shows it in Play: none while signed out,
+   * with coin off on genex.games, during an outage or for an answer that is no balance.
+   */
+  const spendableOrNone = (): Promise<number | null> => balance().catch(() => null);
 
   /** Pay for `purchase` from Studio's sheet; a game-priced payment acknowledges the terms the sheet showed. */
   const confirm = async (purchase: CoinIntent): Promise<void> => {
@@ -309,7 +337,7 @@ export function playCoin(deps: CoinDeps) {
     return isStatus(status) ? status : null;
   };
 
-  return { intent, balance, confirm, cancel };
+  return { intent, balance, spendableOrNone, wallet, confirm, cancel };
 }
 
 /** The coin client as `playCoin` makes it. */

@@ -30,6 +30,16 @@ function namedBuilds(root: string): Set<string> {
 }
 
 /**
+ * Keeps a dev build's manifest open for as long as this process runs, so `lsof +D` and the like
+ * show the build in use: the app reads its build's files and closes them again, and loads lazy
+ * renderer chunks only when first opened, so a disk cleanup asking who has the folder open found
+ * no one and removed the build under the running app. The process's exit releases it.
+ */
+export function holdBuild(buildRoot: string): number {
+  return fs.openSync(safeChild(buildRoot, "build.json"), "r");
+}
+
+/**
  * Removes the dev builds in a `.studio-dev` folder that no profile names, once they are an hour
  * old, and returns their ids. Every launch makes a new build, so without this each start keeps
  * another copy of the app. Nothing is removed when a profile's record cannot be read.

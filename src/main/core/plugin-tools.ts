@@ -1,4 +1,4 @@
-import { consentAudience, priorConsentDecline } from "./consent-audience.ts";
+import { allowedInChat, consentAudience, priorConsentDecline } from "./consent-audience.ts";
 import { STUDIO_CONSENT_NAMES, type StudioConsentSource } from "../../shared/plugins.ts";
 /**
  * Plugin and connector tools as agents call them: the consent a confirmed tool waits for, the
@@ -242,6 +242,11 @@ export interface PluginCallContext {
    */
   lead?: boolean;
   /**
+   * A run's own call (its lead's or a worker's): its consent card outlives the chat's turns, as a
+   * run worker's tool permission cards do, so a lead's turn ending never withdraws it.
+   */
+  outlivesTurn?: boolean;
+  /**
    * Ends the call's wait for its locks, never its run, once the person writes in the chat its session
    * answers (`engine.steer`, `PersonWrote`): it is answered `person_wrote`, to read the message first.
    */
@@ -340,7 +345,7 @@ export class PluginToolService {
    */
   async requestConsent(
     pluginId: string,
-    tool: PluginTool & Pick<PluginManifestTool, "confirmationInput">,
+    tool: PluginTool & Pick<PluginManifestTool, "confirmationInput" | "onAccount">,
     args: Record<string, unknown>,
     binding: PluginBinding,
     signal?: AbortSignal,
@@ -348,6 +353,8 @@ export class PluginToolService {
     options: {
       offerAlways?: boolean;
       displayName?: string;
+      /** One line the card shows under its question (the studio's own cards). */
+      note?: string;
       modeAnswers?: PluginConsentRequest["modeAnswers"];
       /**
        * Asked for the person's own act (a press, or a card they just approved): an earlier no to the
@@ -360,8 +367,6 @@ export class PluginToolService {
     const attribution = this.#x.pluginCallAttribution.get(binding);
     const threadId = await consentAudience(this.#core, binding, attribution?.runId);
     const name = `${pluginId}__${tool.name}`;
-    const declined = options.afresh ? null : await this.#declinedBefore(attribution, threadId, name, args);
-    if (declined) return declined;
     const card = await this.#shownCard(pluginId, tool);
     const base = {
       consentId,
@@ -372,10 +377,17 @@ export class PluginToolService {
       project: binding.project,
       ...consentThreads(binding.threadId, threadId, attribution),
       prompt: card.tool.confirmation ?? "",
-      ...(exportReview ? { exportReview } : {}),
-      ...(options.offerAlways ? { alwaysOffered: true } : {}),
+      ...cardOffers(exportReview, options, tool),
     };
     const field = cardField(card.tool, args);
+    const ownAct = options.afresh === true || exportReview !== undefined;
+    const modeAnswers = this.#modeAnswers(pluginId, threadId, options, ownAct || tool.onAccount === true);
+    const afresh = options.afresh === true;
+    const settled = await this.#settledBefore({ attribution, threadId, name, args, afresh, modeAnswers, tool });
+    if (settled) {
+      if (settled.by !== "user") await this.#recordAnswer({ ...base, ...field }, settled, 0, threadId);
+      return settled;
+    }
     const asked: PluginConsentEvent = {
       ...base,
       ...field,
@@ -390,9 +402,9 @@ export class PluginToolService {
       project: binding.project,
       ...(binding.threadId ? { threadId: binding.threadId } : {}),
       ...(signal ? { signal } : {}),
-      // A build's lead is not the chat's turn: another turn ending leaves its question waiting.
-      ...(attribution?.lead ? { outlivesTurn: true } : {}),
-      ...(options.modeAnswers ? { modeAnswers: options.modeAnswers } : {}),
+      // A build's lead or a run's worker is not the chat's turn: another turn ending leaves its question waiting.
+      ...(attribution?.lead || attribution?.outlivesTurn ? { outlivesTurn: true } : {}),
+      ...(modeAnswers ? { modeAnswers } : {}),
     });
     try {
       await this.#core.append([customEventData(CustomEvent.PluginConsent, { ...asked })], threadId);
@@ -411,6 +423,51 @@ export class PluginToolService {
     const { edited, shown } = cardEdit(field, result, sent);
     await this.#recordAnswer({ ...base, ...shown }, result, performance.now() - waitStarted, threadId);
     return edited ? { ...result, input: edited } : result;
+  }
+
+  /**
+   * The chat modes that answer a card with no question: a connector's own, else, as Bypass asks
+   * nothing, Bypass for every card but one that stays the person's own (`personal`: their press,
+   * an export's review, a tool acting on their account elsewhere) or a plugin's from a folder.
+   */
+  #modeAnswers(
+    pluginId: string,
+    threadId: string,
+    options: { modeAnswers?: PluginConsentRequest["modeAnswers"] },
+    personal: boolean,
+  ): PluginConsentRequest["modeAnswers"] | null {
+    if (options.modeAnswers) return options.modeAnswers;
+    if (personal || this.#fromFolder(pluginId)) return null;
+    return { threadId, modes: [PermissionMode.Bypass] };
+  }
+
+  /**
+   * A card's answer given before it is shown, or null to ask: the person's earlier no to the same
+   * call (`user`, not logged again), their Allow in this chat for an `onAccount` tool (`chat`), or
+   * the chat's Bypass (`mode`). Bypass asks nothing: an agent's card in a Bypass chat goes on, and
+   * one asked in another mode is answered by the person's switch (`modeAnswers`).
+   */
+  async #settledBefore(asked: {
+    attribution: { runId?: string; lead?: boolean } | undefined;
+    threadId: string;
+    name: string;
+    args: Record<string, unknown>;
+    afresh: boolean;
+    modeAnswers: PluginConsentRequest["modeAnswers"] | null;
+    tool: Pick<PluginManifestTool, "onAccount">;
+  }): Promise<{ approved: boolean; by: PluginConsentBy } | null> {
+    const { attribution, threadId, name, args } = asked;
+    const declined = asked.afresh ? null : await this.#declinedBefore(attribution, threadId, name, args);
+    if (declined) return declined;
+    if (asked.tool.onAccount && (await allowedInChat(this.#core, threadId, name)))
+      return { approved: true, by: "chat" };
+    return (await this.#bypassed(asked.modeAnswers, threadId)) ? { approved: true, by: "mode" } : null;
+  }
+
+  /** Whether chat `threadId` is in Bypass now and Bypass answers this card. */
+  async #bypassed(modeAnswers: PluginConsentRequest["modeAnswers"] | null, threadId: string): Promise<boolean> {
+    if (!modeAnswers?.modes.includes(PermissionMode.Bypass)) return false;
+    return (await this.#x.chatMode(threadId)) === PermissionMode.Bypass;
   }
 
   /** A card's answer, logged beside its question and announced to the chat. */
@@ -988,6 +1045,15 @@ export class PluginToolService {
     return modes;
   }
 
+  /**
+   * Whether `id` is a plugin loaded from a folder on this Mac, or one of its connectors: its code runs
+   * with the person's access, so its cards stay theirs to answer, Bypass included.
+   */
+  #fromFolder(id: string): boolean {
+    const local = this.#core.plugins.list().some((p) => p.manifest.id === id && p.source === PluginSourceKind.Local);
+    return local || this.#localOwner(id);
+  }
+
   /** Whether connector `id` is a server of a plugin loaded from a folder on this Mac. */
   #localOwner(id: string): boolean {
     const owner = this.#core.mcp.ownerOf(id);
@@ -1224,8 +1290,8 @@ export class PluginToolService {
         ...(attributed ? { attribution: attributed } : {}),
       }),
     });
-    if (asked || ctx.lead)
-      this.#x.pluginCallAttribution.set(binding, { ...asked, ...(ctx.lead ? { lead: true } : {}) });
+    const attribution = callAttribution(asked, ctx);
+    if (attribution) this.#x.pluginCallAttribution.set(binding, attribution);
     // Bookkeeping never fails a tool call: a log that cannot be written loses the record, not the work.
     await this.#core
       .append([customEventData(CustomEvent.PluginToolStarted, { ...payload })], binding.threadId)
@@ -1334,6 +1400,20 @@ export function consentArgsDigest(args: Record<string, unknown>): Record<string,
   return digest;
 }
 
+/** What a card offers beyond its question: an export's review, a lasting yes, and its line under the question. */
+function cardOffers(
+  exportReview: PluginConsentEvent["exportReview"],
+  options: { offerAlways?: boolean; note?: string },
+  tool: Pick<PluginManifestTool, "onAccount">,
+): Pick<PluginConsentEvent, "exportReview" | "alwaysOffered" | "chatOffered" | "note"> {
+  return {
+    ...(exportReview ? { exportReview } : {}),
+    ...(options.offerAlways ? { alwaysOffered: true } : {}),
+    ...(tool.onAccount ? { chatOffered: true } : {}),
+    ...(options.note ? { note: options.note } : {}),
+  };
+}
+
 /** A card's field as its event carries it: none, or its label and the value it holds. */
 type CardField = Pick<PluginConsentEvent, "input">;
 
@@ -1375,6 +1455,23 @@ function callRun(ctx: PluginCallContext): CallRun | null {
   const attributed = ctx.attribution ? { runId: ctx.attribution.runId, facetId: ctx.attribution.agentId } : null;
   const sources = [attributed, ctx.selfCapture, ctx.director].filter((s): s is CallRun => !!s);
   return sources.find((s) => typeof s.runId === "string" && s.runId) ?? null;
+}
+
+/**
+ * Who asked a plugin call, as its consent reads it (`pluginCallAttribution`): its run, and whether
+ * it is a lead's (asked as the chat's own session) or a run's own call whose card outlives the
+ * chat's turns. Null when none of these holds.
+ */
+function callAttribution(
+  asked: CallRun | null,
+  ctx: Pick<PluginCallContext, "lead" | "outlivesTurn">,
+): (CallRun & { lead?: boolean; outlivesTurn?: boolean }) | null {
+  if (!asked && !ctx.lead && !ctx.outlivesTurn) return null;
+  return {
+    ...asked,
+    ...(ctx.lead ? { lead: true } : {}),
+    ...(ctx.outlivesTurn ? { outlivesTurn: true } : {}),
+  };
 }
 
 /**
@@ -1434,6 +1531,7 @@ export const CONSENT_DECLINED_MESSAGES: Record<PluginConsentBy, string> = {
   restart: "The studio restarted before the user answered. Ask again before trying this action.",
   // A mode answers only with a yes; listed so every ending has its words.
   mode: "The chat's mode answered this request.",
+  chat: "The user's Allow in this chat answered this request.",
 };
 
 export const requireFromHere = createRequire(import.meta.url);
