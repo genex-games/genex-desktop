@@ -780,8 +780,10 @@ export function LeadNode({
 }): JSX.Element {
   // Only the lead at work shows its screen; waiting, it is the workers' screens that move.
   const shown = face === LeadFace.Working ? frame : null;
-  const saved = useSavePointShot(rest?.save.shown ?? null, rest?.save.earlier);
-  const settled = saved ? { run: saved.path, maxPx: LEAD_PICTURE_PX } : null;
+  const save = rest && "save" in rest ? rest.save : null;
+  const saved = useSavePointShot(save?.shown ?? null, save?.earlier);
+  const restPath = rest && "build" in rest ? rest.build : (saved?.path ?? null);
+  const settled = restPath ? { run: restPath, maxPx: LEAD_PICTURE_PX } : null;
   const screen = useFrameSrc(shown);
   const savedSrc = useStill(settled);
   const src = screen ?? savedSrc;

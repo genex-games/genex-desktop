@@ -18,6 +18,7 @@ import {
   FinishCheckState,
   type FinishRound,
   GraphNodeKind,
+  healthPicture,
   type LeadNode,
   type RunGraph,
   runIdOf,
@@ -132,17 +133,20 @@ export function leadFace(graph: RunGraph, summary: RunSummary | null, rows: Part
 /** The lead's faces whose work stands where they left it: done, or paused with the Loop. */
 const AT_REST: ReadonlySet<LeadFace> = new Set([LeadFace.Done, LeadFace.Paused]);
 
-/** What a lead at rest wears: the run's last save point, whose card picks its picture. */
-export type LeadRest = { save: Step };
+/** What a lead at rest wears: the run's last save point, whose card picks its picture, or a build's screenshot. */
+export type LeadRest = { save: Step } | { build: string };
 
 /**
  * What the lead wears once it is done or paused: its work is where the run's last save point left
- * it. Null while it works, waits or after a stop, and in a run without one.
+ * it, or in a Loop without save points where its newest build stands (the newest screenshot a
+ * health check kept). Null while it works, waits or after a stop, and in a run with neither.
  */
-export function leadRest(rows: PartRow[], face: LeadFace): LeadRest | null {
+export function leadRest(graph: RunGraph, rows: PartRow[], face: LeadFace): LeadRest | null {
   if (!AT_REST.has(face)) return null;
   const save = lastSavePoint(rows);
-  return save ? { save } : null;
+  if (save) return { save };
+  const build = healthPicture(graph, null)?.path;
+  return build ? { build } : null;
 }
 
 /** Whole minutes a job has run by `now`, 0 when its start is unknown or ahead of the clock. */
