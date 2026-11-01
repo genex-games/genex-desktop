@@ -418,6 +418,9 @@ export class PiEngine implements Engine {
       "--mode",
       "json",
       "--no-extensions",
+      // A game folder's own Pi files (`.pi/settings.json`, `.agents/skills`) are never trusted: Pi
+      // then neither loads them nor locks `~/.pi/agent/trust.json`, which the sandbox keeps read-only.
+      "--no-approve",
       ...(ctx.oneshot ? ["--no-tools", "--no-session"] : ["--session-id", ctx.sessionId ?? ""]),
       ...(model ? ["--model", model] : []),
       ...(request.effort ? ["--thinking", request.effort] : []),

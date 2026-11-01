@@ -215,6 +215,10 @@ describe("Pi's sessions", () => {
     assert.ok(first);
     assert.deepEqual(first.argv.slice(0, 2), ["--mode", "json"]);
     assert.ok(first.argv.includes("--no-extensions"));
+    assert.ok(
+      first.argv.includes("--no-approve"),
+      "a game's own Pi files stay untrusted, so Pi never locks trust.json, which the sandbox cannot write",
+    );
     assert.ok(!first.argv.includes("--offline"), "a session still needs the model host");
     assert.ok(first.argv.includes("--session-id"));
     assert.ok(first.argv.includes("--model"));

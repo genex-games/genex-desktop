@@ -223,7 +223,8 @@ signed in the picker starts OpenCode's GPT models with the ones Codex lists (`ru
 **Pi** ([pi.ts](../src/substrate/engines/pi.ts)) is the Pi coding agent (`pi --mode json`, resume
 `--session-id`), not the `pi-ai` HTTP client. Sign in and `--list-models` run with
 `--no-extensions --offline`; studio never reads `~/.pi`. Ready once `--list-models` lists a model.
-Sessions run in `ProcessSandbox` (`readableHome`: `~/.pi`) with `--no-extensions`. Pi's home
+Sessions run in `ProcessSandbox` (`readableHome`: `~/.pi`) with `--no-extensions --no-approve`: a game
+folder's own `.pi` settings and `.agents/skills` stay untrusted, so Pi never locks `agent/trust.json`. Pi's home
 is a read exemption, not a write grant: `~/.pi` stays read-only except `agent/sessions` and
 `agent/auth.json.lock`, so `agent/bin`, `agent/tools`, `agent/prompts` and `AGENTS.md` — which a
 sign-in runs outside the sandbox — are never a session's to write. A provider status is read at the
