@@ -1833,6 +1833,8 @@ export default {
   "Install OpenCode": "OpenCodeをインストール",
   "Install OpenCode from Settings › Model Providers.":
     "設定 › モデルプロバイダーからOpenCodeをインストールしてください。",
+  "Install Pi, then sign in with /login to run its models.":
+    "Piをインストールしてから、/loginでサインインするとモデルを使えます。",
   "Install Unity 6": "Unity 6をインストール",
   "Install Unreal {version}": "Unreal {version}をインストール",
   "Install Xcode": "Xcodeをインストール",
@@ -2548,6 +2550,7 @@ export default {
   "Open Apple's downloads": "Appleのダウンロードを開く",
   "Open Model providers to reconnect, then try again.":
     "「モデルプロバイダー」を開いて再接続し、もう一度試してください。",
+  "Open Pi and type /login to connect a provider.": "Piを開いて/loginと入力し、プロバイダーを接続してください。",
   "Open Plugins": "プラグインを開く",
   "Open Privacy settings": "プライバシー設定を開く",
   "Open Studio": "Studioを開く",
@@ -2635,6 +2638,9 @@ export default {
   "OpenCode keeps each sign-in": "サインイン情報はそれぞれOpenCodeが保持します",
   "OpenCode ready": "OpenCodeの準備ができました",
   "OpenCode ready · free models": "OpenCode準備完了 · 無料モデル",
+  "Pi didn't answer. Check the installation, then try again.":
+    "Piから応答がありません。インストールを確認して、もう一度試してください。",
+  "Pi keeps each sign-in": "サインイン情報はそれぞれPiが保持します",
   "Pi sign-in": "Piへのサインイン",
   "OpenCode sign-in": "OpenCodeへのサインイン",
   "OpenCode {version}, {count, plural, other {# model(s)}}": "OpenCode {version}、モデル{count, plural, other {#個}}",
@@ -4271,6 +4277,8 @@ export default {
     "Unrealエディターが2つ開いています。終了したいほうを、そのウィンドウから終了してください。",
   "Two open Studios have a place named {name}, so Genex can't tell them apart. Save one under another name in Studio, then choose it again.":
     "開いている2つのStudioに{name}という名前のプレイスがあり、Genexには区別できません。Studioで片方を別の名前で保存してから、もう一度選んでください。",
+  "Type /login below and finish signing in. Pi keeps the sign-in.":
+    "下で/loginと入力してサインインを完了してください。サインイン情報はPiが保持します。",
   "Type a name.": "名前を入力してください。",
   "Type your email and password in the Unity Hub window and add a Unity license (Personal is free if Unity's terms allow it for you). Genex goes on by itself once you're in.":
     "Unity Hubのウィンドウでメールアドレスとパスワードを入力し、Unityのライセンスを追加してください（Unityの規約で認められていれば、Personalは無料です）。サインインできたら、Genexが自動で続けます。",
@@ -4384,6 +4392,7 @@ export default {
   "Update Claude Code": "Claude Codeをアップデート",
   "Update Codex": "Codexをアップデート",
   "Update OpenCode": "OpenCodeをアップデート",
+  "Update Pi": "Piをアップデート",
   "Update Xcode": "Xcodeをアップデート",
   "Update Xcode (this Mac has {version})": "Xcodeをアップデート（このMacは{version}）",
   "Update all": "すべてアップデート",
