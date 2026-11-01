@@ -1,10 +1,10 @@
 /**
  * The first-launch art, in the empty states' wireframe language (see ui/wire-art.ts).
  *
- * Welcome: the sent prompt streams letter by letter onto the Planner's sheet, where a pen writes it
- * down with three tasks and ticks them off; the Workers' crane stacks blocks; the Reviewers' screen
- * plays the prompt's game (a space shooter), a scan passes and a stamp lands. Every second round the
- * stamp is a ✕: the screen glitches, redraws, is scanned again and passes.
+ * Welcome: the sent prompt streams letter by letter onto the lead's sheet, where a pen writes it
+ * down with three tasks and ticks them off; the workers' crane stacks blocks; the second opinion's
+ * screen plays the prompt's game (a space shooter), a scan passes and a speech bubble lands: an
+ * opinion the lead asked for, not a verdict that gates anything.
  * Connect: the Claude Code and Codex marks, extruded, rocking over their buttons; OpenRouter's and
  * OpenCode's screens each show their own mark the same way, alone.
  * Local: a chip whose pins and layers fill while a model downloads.
@@ -551,7 +551,7 @@ function pen(S: Scene, sheet: Sheet, tip: Vec3, k: number, writing: boolean) {
 const plannerSheet = (time: number) => sheetAt(0.035 * Math.sin(1.3 * time));
 
 /**
- * Planner: a sheet in midair that a pen writes the plan on, once, `p` seconds in: the idea as a
+ * Lead: a sheet in midair that a pen writes the plan on, once, `p` seconds in: the idea as a
  * title, three tasks (a box, the piece, a few words) and an arrow, in about a second and a half;
  * then the boxes tick one by one, a light leaves each row towards the workers, and the page stays.
  */
@@ -820,65 +820,29 @@ function clipEdge(p: number, q: number, span: { t0: number; t1: number }): boole
   return true;
 }
 
-/** A stamp on the Judges' screen: when it lands and leaves, in seconds of its round, and whether it passes. */
-interface Stamp {
-  at: number;
-  out: number;
-  ok: boolean;
-}
-const PASSING_ROUND: readonly Stamp[] = [{ at: 2.3, out: 5.2, ok: true }];
-const FAILING_ROUND: readonly Stamp[] = [
-  { at: 2.3, out: 3.3, ok: false },
-  { at: 5.5, out: 7.2, ok: true },
-];
+/** Seconds into one round of the second opinion's screen: the scan sweeps, the answer lands, then it rests. */
+const OPINION_CYCLE = 6;
+const OPINION_SCAN = { from: 0.6, to: 2.2 } as const;
+const OPINION_ANSWER = { at: 2.3, out: 5.2 } as const;
 
-/** Where a round of the Judges' screen is. */
-interface JudgeBeat {
+/** Where a round of the second opinion's screen is. */
+interface OpinionBeat {
   /** Seconds into the round. */
   f: number;
-  stamps: readonly Stamp[];
   /** The scan line's height on the screen (0 to 1), or -1 with no scan. */
   scanV: number;
-  glitch: boolean;
-  /** How much of the game is drawn, left to right (0 to 1). */
-  reveal: number;
-  /** The screen frame's tone: accent, green on a pass, orange while it fails. */
-  frameC: Tone;
 }
 
-/** A failing round after its first scan: the glitch, the redraw, a second scan and the green frame. */
-function failingBeat(beat: JudgeBeat): void {
-  const { f } = beat;
-  if (f >= 2.3 && f < 3.3) {
-    beat.glitch = true;
-    beat.frameC = 4;
-  }
-  if (f >= 3.3 && f < 4.1) beat.reveal = ease((f - 3.3) / 0.8);
-  if (f >= 4.2 && f < 5.4) beat.scanV = 1 - (f - 4.2) / 1.2;
-  if (f >= 5.5 && f < 6.1) beat.frameC = 3;
-}
-
-/** The round `t` falls in: 14 s cycles of a passing round (6 s) and a failing one (8 s). */
-function judgeBeat(t: number): JudgeBeat {
-  const cyc = ((t % 14) + 14) % 14,
-    fail = cyc >= 6,
-    f = fail ? cyc - 6 : cyc;
-  const beat: JudgeBeat = {
-    f,
-    stamps: fail ? FAILING_ROUND : PASSING_ROUND,
-    scanV: -1,
-    glitch: false,
-    reveal: 1,
-    frameC: 0,
-  };
-  if (f >= 0.6 && f < 2.2) beat.scanV = 1 - (f - 0.6) / 1.6;
-  if (fail) failingBeat(beat);
-  else if (f >= 2.3 && f < 2.9) beat.frameC = 3;
-  return beat;
+/** The round `t` falls in: a scan down the picture, then the answer. */
+function opinionBeat(t: number): OpinionBeat {
+  const f = ((t % OPINION_CYCLE) + OPINION_CYCLE) % OPINION_CYCLE;
+  const scanning = f >= OPINION_SCAN.from && f < OPINION_SCAN.to;
+  const progress = (f - OPINION_SCAN.from) / (OPINION_SCAN.to - OPINION_SCAN.from);
+  return { f, scanV: scanning ? 1 - progress : -1 };
 }
 
 /** The monitor: its glass, the front and back frames and the edges between them, and its stand. */
-function monitor(S: Scene, frameC: Tone) {
+function monitor(S: Scene) {
   const X0 = -1.7,
     X1 = 1.7,
     Y0 = 0.45,
@@ -896,7 +860,7 @@ function monitor(S: Scene, frameC: Tone) {
     [X0, Y1, -0.04],
   ];
   S.F.push({ c: 0, a: 0.05, p: front });
-  S.L.push({ c: frameC, k: 0.95, p: [...front, front[0]!] }, { c: 2, k: 0.5, p: [...back, back[0]!] });
+  S.L.push({ c: 0, k: 0.95, p: [...front, front[0]!] }, { c: 2, k: 0.5, p: [...back, back[0]!] });
   for (let i = 0; i < 4; i++) S.L.push({ c: 2, k: 0.5, p: [front[i]!, back[i]!] });
   S.L.push({
     c: 2,
@@ -916,21 +880,19 @@ const PICTURE = { middle: 1.5, halfWidth: 1.57, halfHeight: 0.92 } as const;
 /** A point of the game's projected picture, placed on the screen. */
 const inPicture = (x: number, y: number): Vec3 => [x, PICTURE.middle - y, 0.045];
 
-/** One of the game's lines, projected, jittered while it glitches and clipped to the picture drawn so far. */
-function gameLine(S: Scene, ln: Line, idx: number, cam: Camera, t: number, glitch: boolean, right: number) {
+/** One of the game's lines, projected and clipped to the picture. */
+function gameLine(S: Scene, ln: Line, cam: Camera) {
   const { halfWidth: HX, halfHeight: HY } = PICTURE;
-  const jit = glitch ? 0.14 * Math.sin(idx * 12.9 + t * 47) : 0,
-    col = glitch ? 4 : ln.c;
   let prev: [number, number] | null = null,
     pz = 0;
   for (const point of ln.p) {
     const q = project(point, cam),
-      cur: [number, number] = [q[0] + jit, q[1]];
-    const cl = prev ? clipSeg(prev, cur, -HX, right, -HY, HY) : null;
+      cur: [number, number] = [q[0], q[1]];
+    const cl = prev ? clipSeg(prev, cur, -HX, HX, -HY, HY) : null;
     if (cl) {
       const d = clamp(((q[2] + pz) / 2 + cam.R) / (2 * cam.R));
       S.L.push({
-        c: col,
+        c: ln.c,
         k: ln.k * (0.45 + 0.55 * d),
         p: [inPicture(cl[0][0], cl[0][1]), inPicture(cl[1][0], cl[1][1])],
         flat: true,
@@ -941,22 +903,20 @@ function gameLine(S: Scene, ln: Line, idx: number, cam: Camera, t: number, glitc
   }
 }
 
-/** The game, played with its own camera on the screen: glitched while it fails, redrawn left to right after. */
-function gameOnScreen(S: Scene, t: number, beat: JudgeBeat) {
+/** The game, played with its own camera on the screen. */
+function gameOnScreen(S: Scene, t: number) {
   const { halfWidth: HX, halfHeight: HY } = PICTURE;
-  const right = -HX + 2 * HX * beat.reveal;
   const G = space(t),
     cam = G.cam;
-  const inside = (q: Vec3) => q[0] > -HX && q[0] < right && q[1] > -HY && q[1] < HY;
-  G.L.forEach((ln, idx) => gameLine(S, ln, idx, cam, t, beat.glitch, right));
-  if (!beat.glitch)
-    for (const fl of G.F) {
-      const q = fl.p.map((p) => project(p, cam));
-      if (q.every(inside)) S.F.push({ c: fl.c, a: fl.a, p: q.map((v) => inPicture(v[0], v[1])) });
-    }
+  const inside = (q: Vec3) => q[0] > -HX && q[0] < HX && q[1] > -HY && q[1] < HY;
+  for (const ln of G.L) gameLine(S, ln, cam);
+  for (const fl of G.F) {
+    const q = fl.p.map((p) => project(p, cam));
+    if (q.every(inside)) S.F.push({ c: fl.c, a: fl.a, p: q.map((v) => inPicture(v[0], v[1])) });
+  }
   for (const dd of G.D) {
     const q = project(dd.p, cam);
-    if (inside(q)) S.D.push({ c: beat.glitch ? 4 : dd.c, a: dd.a, p: inPicture(q[0], q[1]), r: dd.r });
+    if (inside(q)) S.D.push({ c: dd.c, a: dd.a, p: inPicture(q[0], q[1]), r: dd.r });
   }
 }
 
@@ -967,50 +927,55 @@ function scanLine(S: Scene, scanV: number) {
   if (scanV + 0.04 <= 1) S.L.push({ c: 0, k: 0.35, p: [onScreen(0, scanV + 0.04), onScreen(1, scanV + 0.04)] });
 }
 
-/** A stamp landing on the screen, `f` seconds into its round: a ring with a tick or a cross, fading as it leaves. */
-function stamp(S: Scene, f: number, ev: Stamp) {
-  if (f < ev.at) return;
-  const p = clamp((f - ev.at) / 0.25);
-  const fo = f > ev.out ? clamp(1 - (f - ev.out) / 0.5) : 1;
+/** The answer landing on the screen, `f` seconds into its round: a speech bubble with three dots, fading as it leaves. */
+function answer(S: Scene, f: number) {
+  if (f < OPINION_ANSWER.at) return;
+  const p = clamp((f - OPINION_ANSWER.at) / 0.25);
+  const fo = f > OPINION_ANSWER.out ? clamp(1 - (f - OPINION_ANSWER.out) / 0.5) : 1;
   const al = Math.min(1, p * 1.4) * fo;
   if (al < 0.01) return;
   const sc = 1 + 0.7 * (1 - easeOut(p)),
     cx = 1.18,
     cy = 0.95,
-    cz = 0.12,
-    r = 0.26 * sc,
-    c: Tone = ev.ok ? 3 : 4;
-  const ring: Vec3[] = [];
-  for (let m = 0; m <= 32; m++) {
-    const an = (m / 32) * TAU;
-    ring.push([cx + r * Math.cos(an), cy + r * Math.sin(an), cz]);
-  }
-  S.L.push({ c, k: al, p: ring });
-  S.F.push({ c: 0, a: 0.5 * al, p: ring.slice(0, 32) }, { c, a: 0.2 * al, p: ring.slice(0, 32) });
+    cz = 0.12;
   const P = (x: number, y: number): Vec3 => [cx + x * sc, cy + y * sc, cz];
-  if (ev.ok) S.L.push({ c, k: al, p: [P(-0.11, 0), P(-0.03, -0.08), P(0.12, 0.09)] });
-  else S.L.push({ c, k: al, p: [P(-0.09, -0.09), P(0.09, 0.09)] }, { c, k: al, p: [P(-0.09, 0.09), P(0.09, -0.09)] });
+  const outline = [
+    P(-0.3, 0.17),
+    P(0.3, 0.17),
+    P(0.3, -0.13),
+    P(-0.08, -0.13),
+    P(-0.2, -0.27),
+    P(-0.18, -0.13),
+    P(-0.3, -0.13),
+    P(-0.3, 0.17),
+  ];
+  S.L.push({ c: 0, k: al, p: outline });
+  S.F.push({ c: 0, a: 0.5 * al, p: outline.slice(0, 7) }, { c: 0, a: 0.2 * al, p: outline.slice(0, 7) });
+  for (const [i, x] of [-0.15, 0, 0.15].entries()) {
+    const wave = Math.sin((f - OPINION_ANSWER.at) * 6 - i * 0.9);
+    S.D.push({ c: 0, a: al * (0.7 + 0.3 * wave), p: P(x, 0.02), r: 1.6 });
+  }
 }
 
 /**
- * Judges: the screen plays the build, a scan sweeps it and a stamp lands. Every second round the
- * stamp is a ✕: the screen glitches, redraws, is scanned again and passes. The game is its own
- * 3D scene, projected with its own camera onto the screen.
+ * Second opinion: the screen plays the build, a scan sweeps it and an answer lands in a speech
+ * bubble: what a second reader said when the lead asked. The game is its own 3D scene, projected
+ * with its own camera onto the screen.
  */
-function judges(t: number): Scene {
+function opinion(t: number): Scene {
   const S = scene();
-  const beat = judgeBeat(t);
-  monitor(S, beat.frameC);
+  const beat = opinionBeat(t);
+  monitor(S);
   S.L.push({ c: 2, k: 0.3, p: [onScreen(0, 0), onScreen(1, 0), onScreen(1, 1), onScreen(0, 1), onScreen(0, 0)] });
-  gameOnScreen(S, t, beat);
+  gameOnScreen(S, t);
   scanLine(S, beat.scanV);
-  for (const ev of beat.stamps) stamp(S, beat.f, ev);
+  answer(S, beat.f);
   return S;
 }
 
 /** The letters' flight runs 12% slower than the first cut (the owner asked for 10–15%). */
 const FLIGHT = 1.12;
-/** Where the letters land: the title line of the Planner's sheet, as drawn. */
+/** Where the letters land: the title line of the lead's sheet, as drawn. */
 const INBOX = { x: 115, y: 147 };
 const centres = new Map<string, number[]>();
 /** Each letter's centre along the prompt, measured the way the composer lays the text out. */
@@ -1029,7 +994,7 @@ function letterCentres(ctx: CanvasRenderingContext2D, text: string, style: TextS
   centres.set(key, out);
   return out;
 }
-/** The sent prompt leaves the composer letter by letter and lands on the Planner's sheet. */
+/** The sent prompt leaves the composer letter by letter and lands on the lead's sheet. */
 function streamText(ctx: CanvasRenderingContext2D, text: string, time: number, style: TextStyle, P: Palette) {
   const t = time / FLIGHT;
   if (!text || t > 1.3) return;
@@ -1186,7 +1151,7 @@ function faded(S: Scene, m: number): Scene {
  */
 const GROUND_Y = 222;
 const PITCH = 0.34;
-const ROLE_X = { planner: 127, workers: 380, reviewers: 633 } as const;
+const ROLE_X = { lead: 127, workers: 380, opinion: 633 } as const;
 const floorCam = (cx: number): Camera => ({
   yaw: 0.5,
   pitch: PITCH,
@@ -1218,7 +1183,7 @@ const CAM_O: Camera = {
   yaw: 0.55,
   pitch: PITCH,
   scale: 45,
-  cx: ROLE_X.planner,
+  cx: ROLE_X.lead,
   cy: GROUND_Y,
   dist: 12,
   tx: 0,
@@ -1242,7 +1207,7 @@ const CAM_J: Camera = {
   yaw: -0.38,
   pitch: PITCH,
   scale: 34.2,
-  cx: ROLE_X.reviewers,
+  cx: ROLE_X.opinion,
   cy: GROUND_Y,
   dist: 12,
   tx: 0,
@@ -1251,11 +1216,11 @@ const CAM_J: Camera = {
   R: 1.8,
 };
 /** When each role arrives in the second state, in seconds; its label follows. */
-export const ROLE_AT = { planner: 0.4, workers: 2.5, reviewers: 4.2 } as const;
+export const ROLE_AT = { lead: 0.4, workers: 2.5, opinion: 4.2 } as const;
 /** Each role's art fades in over half a second, a little before its label. */
-const ARRIVE = { planner: 0, workers: 2.2, reviewers: 3.9 } as const;
+const ARRIVE = { lead: 0, workers: 2.2, opinion: 3.9 } as const;
 
-/** The Planner's page starts as the letters leave, and plays once. */
+/** The lead's page starts as the letters leave, and plays once. */
 const PLANNER_START = 0.35;
 
 /** The welcome's second state, `t` seconds after the prompt was sent; a still frame shows it finished. */
@@ -1268,35 +1233,35 @@ export function drawWelcome(
   still = false,
 ) {
   const shown = {
-    planner: clamp(t / 0.35),
+    lead: clamp(t / 0.35),
     workers: clamp((t - ARRIVE.workers) / 0.5),
-    reviewers: clamp((t - ARRIVE.reviewers) / 0.5),
+    opinion: clamp((t - ARRIVE.opinion) / 0.5),
   };
   const p = still ? PLANNER_REST : Math.max(0, t - PLANNER_START);
-  roleFloor(ctx, ROLE_X.planner, shown.planner, P);
+  roleFloor(ctx, ROLE_X.lead, shown.lead, P);
   roleFloor(ctx, ROLE_X.workers, shown.workers, P);
-  roleFloor(ctx, ROLE_X.reviewers, shown.reviewers, P);
-  standing(ctx, planner(p, t), CAM_O, shown.planner, P);
+  roleFloor(ctx, ROLE_X.opinion, shown.opinion, P);
+  standing(ctx, planner(p, t), CAM_O, shown.lead, P);
   standing(ctx, workers(t), CAM_C, shown.workers, P);
-  standing(ctx, judges(Math.max(0, t - ROLE_AT.reviewers)), CAM_J, shown.reviewers, P);
+  standing(ctx, opinion(Math.max(0, t - ROLE_AT.opinion)), CAM_J, shown.opinion, P);
   streamText(ctx, prompt, t, style, P);
 }
 
 /**
- * The Planner and its floor, cut out of the welcome stage: where it sits there, in CSS pixels,
+ * The lead's plan sheet and its floor, cut out of the welcome stage: where it sits there, in CSS pixels,
  * with room for the pen above the page and the floor's faded edges (tests/conformance/onboarding.test.ts).
  */
 export const PLANNER_VIEW = { x: 44, y: 92, width: 176, height: 168 } as const;
 
 /**
- * The Planner on its own, `t` seconds after it appeared: its floor fades in, the pen writes the
+ * The lead's plan sheet on its own, `t` seconds after it appeared: its floor fades in, the pen writes the
  * page once, and then the page floats where it is. A still frame shows the page finished.
  * Drawn in the welcome stage's coordinates; the caller crops it to `PLANNER_VIEW`.
  */
 export function drawPlanner(ctx: CanvasRenderingContext2D, t: number, P: Palette, still = false) {
   const shown = still ? 1 : clamp(t / 0.35);
   const p = still ? PLANNER_REST : Math.max(0, t - PLANNER_START);
-  roleFloor(ctx, ROLE_X.planner, shown, P);
+  roleFloor(ctx, ROLE_X.lead, shown, P);
   standing(ctx, planner(p, still ? 0 : t), CAM_O, shown, P);
 }
 

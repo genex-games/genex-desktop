@@ -1,18 +1,11 @@
 {
   "about": "Frozen list of tests that read studio source (src/**/*.ts|tsx|mjs|js) as text; enforced by scripts/check-test-style.ts. Entries may only be removed, never added: rewrite a listed test to check behaviour (import the module, use a helper in tests/helpers/, or drive the app), then delete its line. The check fails when a listed file stops reading source, and when a file is added compared with the merge base.",
   "files": [
-    "tests/conformance/autopilot-run.test.ts",
     "tests/conformance/door.test.ts",
     "tests/conformance/engines.test.ts",
-    "tests/conformance/evidence.test.ts",
-    "tests/conformance/judge-rubrics.test.ts",
     "tests/conformance/project-shape.test.ts",
     "tests/conformance/run-controls.test.ts",
-    "tests/conformance/scoreboard.test.ts",
-    "tests/conformance/shapes-fixtures.test.ts",
     "tests/conformance/sidebar.test.ts",
-    "tests/conformance/stopped-round.test.ts",
-    "tests/conformance/verdict.test.ts",
     "tests/conformance/words.test.ts"
   ]
 }

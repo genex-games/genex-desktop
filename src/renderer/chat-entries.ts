@@ -28,6 +28,8 @@ import {
   customRecord,
   DELEGATED_PREFIX,
   delegatedPayload,
+  type LoopRefusal,
+  loopRefusalOf,
 } from "../shared/custom-events.ts";
 import { isHandoffNarration } from "../shared/chat-presentation.ts";
 import { isCoordinatorTool } from "../shared/coordinator.ts";
@@ -42,7 +44,6 @@ import {
 } from "../shared/game-assets.ts";
 import { GENEX_COVER_TOOL, GENEX_PLUGIN_ID, GenexCoverOperation } from "../shared/genex.ts";
 import { SteerDelivery } from "../shared/message-queue.ts";
-import { engineLabel, roleName } from "../shared/model-roles.ts";
 import { ExecutionStatus, RoundOutcome, roundOutcome } from "../shared/run-state.ts";
 import { skillUpdatedWords } from "../shared/skill-words.ts";
 import { MINUTE_MS } from "../shared/duration.ts";
@@ -290,6 +291,8 @@ export type Entry =
       landed: boolean | null;
       /** how the Loop worked on its project (`run_finished.profile`): an `open` Loop kept its work in place */
       profile: LoopProfile | null;
+      /** why the Loop did not run at all (`run_finished.refusal`), when it didn't */
+      refusal: LoopRefusal | null;
       project: string | null;
       commit: string | null;
       /** the first and last frames the run recorded, as saved-run stills */
@@ -1520,26 +1523,12 @@ function narrateSkillAccepted(chat: ChatDraft, event: EventEnvelope): void {
   chat.entries.push({ id: event.id, kind: EntryKind.Learning, text, link: TRANSCRIPT_WORDS.seeInHarness });
 }
 
-/** An engine's name as a person says it: the provider table's, else the role table's. */
-function providerName(engine: string): string {
-  return providerInfo(engine)?.label ?? engineLabel(engine);
-}
-
 /** An unattended run narrates itself in the game's own chat: start, verdicts, ending, lessons. */
 function narrateRunStart(chat: ChatDraft, event: EventEnvelope): void {
   const started = customPayload(event.data, CustomEvent.RunStarted);
   if (!started) return;
-  // Which model judges this run, by name: a stale saved preference can put the judging on the
-  // orchestrator's model, and nothing else on screen says which model is answering. And on
-  // which subscription, when the judges are not on the run's own (cross-provider roles).
-  const judge = started.judgeModel ?? started.roles?.judge;
-  const judgeEngine = started.judgeEngine ?? started.engine ?? "";
-  const judgeName = judge ? roleName(judgeEngine, judge) : null;
-  const crossProvider = Boolean(judgeName && started.engine && judgeEngine !== started.engine);
-  const judgeWords = crossProvider
-    ? t("{model} on {provider}", { model: judgeName ?? "", provider: providerName(judgeEngine) })
-    : judgeName;
-  say(chat, event.id, SystemTag.Run, runStartWords(started.reference ?? null, judgeWords));
+  const words = runStartWords(started.reference ?? null);
+  if (words) say(chat, event.id, SystemTag.Run, words);
 }
 
 function narrateAutopilotStart(chat: ChatDraft, event: EventEnvelope): void {
@@ -1643,18 +1632,30 @@ function makingIds(payload: { callId?: string; jobId?: string; generationId?: st
 }
 
 /**
- * A finished `genex__cover` shoot that kept a new shot: Genex's own tool asked to shoot, and its
- * answer carried the shot's preview (a shot the host could not take answers none, and the last
- * shot stays kept). The tool is read however the record names it (`cover`, `genex__cover`,
- * `mcp__studio__genex__cover`).
+ * A finished `genex__cover` call that kept a new cover: the agent handed over its picture as a file
+ * (`{ image, clip? }`, the call the tool takes now; the caller passes only one that succeeded), or
+ * an older record's shoot whose answer carried the shot's preview (a shot the host could not take
+ * answers none, and the last shot stays kept). The tool is read however the record names it
+ * (`cover`, `genex__cover`, `mcp__studio__genex__cover`).
  */
 function keptGenexCover(payload: PluginCallPayload): boolean {
   const named = pluginToolKey(String(payload.tool ?? payload.toolName ?? ""));
   const tool = named.startsWith(`${GENEX_PLUGIN_ID}__`) ? named.slice(GENEX_PLUGIN_ID.length + 2) : named;
-  const genexCover = payload.pluginId === GENEX_PLUGIN_ID && tool === GENEX_COVER_TOOL;
-  const shoot = digestOperation(payload.args) === GenexCoverOperation.Shoot;
-  return genexCover && shoot && Number(payload.images ?? 0) > 0;
+  if (payload.pluginId !== GENEX_PLUGIN_ID || tool !== GENEX_COVER_TOOL) return false;
+  const operation = digestOperation(payload.args);
+  if (operation === null) return handsOverImage(payload.args);
+  return operation === GenexCoverOperation.Shoot && Number(payload.images ?? 0) > 0;
 }
+
+/** Whether a call's arguments digest names the image file it hands over (`image=<path>`). */
+function handsOverImage(args: string | undefined): boolean {
+  return (args ?? "")
+    .split(" ")
+    .some((part) => part.startsWith(COVER_IMAGE_ARG) && part.length > COVER_IMAGE_ARG.length);
+}
+
+/** How the host's arguments digest names the cover picture a `genex__cover` call hands over. */
+const COVER_IMAGE_ARG = "image=";
 
 /**
  * This shoot's shot is the one Genex's storage holds now, so the card is its: an earlier card comes
@@ -2139,6 +2140,7 @@ function morningCard(chat: ChatDraft, id: string, finished: FinishedPayload): Mo
     undone: rounds.undone,
     landed: finished.landed ?? null,
     profile: profileOf(finished),
+    refusal: loopRefusalOf(finished.refusal),
     project: finished.project ?? null,
     commit: unlandedHead && finished.project ? unlandedHead : null,
     before: rounds.firstShot,

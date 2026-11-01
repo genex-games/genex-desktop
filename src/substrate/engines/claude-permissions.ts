@@ -893,10 +893,13 @@ export function workerReadOnly(seat: WorkerSeat, reader: boolean): boolean {
 }
 
 /**
- * A worker's box: whether sandboxed commands run unasked, whether one may leave the box (asking),
- * whether it writes, and whether it writes the home folder as well as its roots.
+ * A worker's box: whether it has one at all, whether sandboxed commands run unasked, whether one
+ * may leave the box (asking), whether it writes, and whether it writes the home folder as well as
+ * its roots.
  */
 export interface WorkerBox {
+  /** False in Bypass: the worker runs as the person, as Claude Code's own Bypass does. */
+  boxed: boolean;
   autoAllow: boolean;
   unsandboxed: boolean;
   writes: boolean;
@@ -904,25 +907,24 @@ export interface WorkerBox {
 }
 
 /**
- * Each mode a worker that asks runs in: the session's mode and its box. Bypass's box writes the
- * home folder too, runs every command unasked and never lets one leave it, so the never-touch list
- * holds at the OS boundary in Bypass as in every other mode.
+ * Each mode a worker that asks runs in: the session's mode and its box. Bypass has none: the person
+ * chose it for their chat, so its workers run as Claude Code's own Bypass does, reaching the
+ * network and the GPU (Blender, an engine's editor); the never-touch hook still screens each call.
  */
 const WORKER_MODES: Record<Exclude<PermissionMode, typeof PermissionMode.Plan>, WorkerBox> = {
-  [PermissionMode.Bypass]: { autoAllow: true, unsandboxed: false, writes: true, home: true },
-  [PermissionMode.Auto]: { autoAllow: true, unsandboxed: true, writes: true, home: false },
-  [PermissionMode.AcceptEdits]: { autoAllow: false, unsandboxed: true, writes: true, home: false },
-  [PermissionMode.Manual]: { autoAllow: false, unsandboxed: true, writes: true, home: false },
+  [PermissionMode.Bypass]: { boxed: false, autoAllow: true, unsandboxed: true, writes: true, home: true },
+  [PermissionMode.Auto]: { boxed: true, autoAllow: true, unsandboxed: true, writes: true, home: false },
+  [PermissionMode.AcceptEdits]: { boxed: true, autoAllow: false, unsandboxed: true, writes: true, home: false },
+  [PermissionMode.Manual]: { boxed: true, autoAllow: false, unsandboxed: true, writes: true, home: false },
 };
 /** A worker that cannot ask, or a read-only one: the unattended box, writing only its roots (if any). */
-const UNASKED_BOX = { autoAllow: true, unsandboxed: false, home: false } as const;
+const UNASKED_BOX = { boxed: true, autoAllow: true, unsandboxed: false, home: false } as const;
 
 /**
- * A worker's box, in every mode: Bypass's writes the home folder and runs every command in it
- * unasked; Auto runs its sandboxed commands unasked, Accept edits and Manual ask about each; those
- * three may run one outside the box once the mode approves it (Auto's classifier, the person
- * otherwise), held then by the never-touch hook alone. A read-only worker, or one whose engine
- * cannot ask, keeps the unattended box: nothing leaves it.
+ * A worker's box: none in Bypass; Auto runs its sandboxed commands unasked, Accept edits and Manual
+ * ask about each; those three may run one outside the box once the mode approves it (Auto's
+ * classifier, the person otherwise), held then by the never-touch hook alone. A read-only worker,
+ * or one whose engine cannot ask, keeps the unattended box: nothing leaves it.
  */
 export function workerBox(seat: WorkerSeat, reader: boolean): WorkerBox {
   if (workerReadOnly(seat, reader)) return { ...UNASKED_BOX, writes: false };

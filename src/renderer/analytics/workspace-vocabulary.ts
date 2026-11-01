@@ -226,7 +226,6 @@ export type StageSwitchVia = (typeof StageSwitchVia)[keyof typeof StageSwitchVia
 
 /** A setting Settings changes, by its own key. */
 export const SettingKey = {
-  SelfImproving: "selfImproving",
   BuildersMax: "buildersMax",
   AutoResume: "autoResume",
   ComputerControl: "computerControl",

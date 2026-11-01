@@ -9,12 +9,14 @@ import { EventEmitter } from "node:events";
 import {
   createReloadPolicy,
   installProcessHandlers,
+  installQuitSignals,
   pageRecovery,
   QuitQuestion,
   quitQuestion,
   runShutdown,
   settleWithin,
   type ShutdownTimers,
+  stopThenExit,
   WindowClose,
   windowClose,
 } from "../../src/main/app-lifecycle.ts";
@@ -220,6 +222,87 @@ describe("the quit sequence", () => {
     };
     await runShutdown([{ name: "a", timeoutMs: 100, run: async () => {} }], { log: () => {}, timers });
     assert.equal(cleared, 1);
+  });
+});
+
+// Chromium quits on SIGTERM and SIGINT by itself, but a Node listener takes a signal from it, and
+// the process sandbox's runtime adds one for each, for its own clean-up. A SIGTERM then only
+// cleaned the sandbox up: the app kept running, its main thread idle, Chromium's shutdown thread
+// still waiting for a signal that never came.
+describe("a quit signal", () => {
+  for (const signal of ["SIGTERM", "SIGINT"] as const) {
+    it(`${signal} asks for the app's own quit, and a second one exits at once`, () => {
+      const target = new EventEmitter();
+      // The sandbox runtime's own listener, as it registers it.
+      target.once(signal, () => {});
+      const heard: string[] = [];
+      installQuitSignals(target, { quit: () => heard.push("quit"), exit: () => heard.push("exit") });
+      target.emit(signal);
+      assert.deepEqual(heard, ["quit"]);
+      target.emit(signal);
+      assert.deepEqual(heard, ["quit", "exit"]);
+    });
+  }
+});
+
+// A developer launch's stop (the channel's `stop`, and every quit while the channel is open, a
+// SIGTERM's included) once ended in `app.exit` only if every quit step finished: one that did not
+// threw past the exit, and the app stayed up, its window gone from the channel, until killed.
+describe("a developer launch's stop", () => {
+  const options = (timers: ShutdownTimers) => ({ diagnosticsMs: 5_000, closeMs: 2_000, timers });
+
+  it("exits after a quit step that did not finish, and hands the failure to its records", async () => {
+    const timers = manualTimers();
+    const order: string[] = [];
+    await stopThenExit(
+      {
+        diagnostics: async () => void order.push("diagnostics"),
+        shutdown: async () => {
+          order.push("shutdown");
+          throw new Error("shutdown did not finish: stop the studio core");
+        },
+        close: async (failure) => void order.push(`close: ${failure}`),
+        exit: () => void order.push("exit"),
+      },
+      options(timers),
+    );
+    assert.deepEqual(order, [
+      "diagnostics",
+      "shutdown",
+      "close: shutdown did not finish: stop the studio core",
+      "exit",
+    ]);
+  });
+
+  it("leaves a diagnostic that never answers at its deadline, and a close that hangs or throws, and still exits", async () => {
+    for (const close of [() => new Promise<void>(() => {}), async () => Promise.reject(new Error("socket gone"))]) {
+      const timers = manualTimers();
+      const order: string[] = [];
+      let stopped = false;
+      const stopping = stopThenExit(
+        {
+          // A CPU profile of a page whose script never yields: the debugger never answers its stop.
+          diagnostics: () => new Promise<void>(() => {}),
+          shutdown: async () => void order.push("shutdown"),
+          close: async (failure) => {
+            order.push(`close: ${failure}`);
+            return close();
+          },
+          exit: () => void order.push("exit"),
+        },
+        options(timers),
+      ).then(() => {
+        stopped = true;
+      });
+      // Each deadline is armed only once the step before it is over: run out every armed clock in turn.
+      for (let turn = 0; turn < 20 && !stopped; turn++) {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        timers.fireAll();
+      }
+      await stopping;
+      assert.deepEqual(order, ["shutdown", "close: null", "exit"]);
+      assert.ok(timers.delays.includes(5_000) && timers.delays.includes(2_000), JSON.stringify(timers.delays));
+    }
   });
 });
 

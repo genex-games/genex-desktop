@@ -4,6 +4,7 @@
  * each worker reads in plain words, and a graph with no worker and no job keeps today's layout.
  */
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import { seedBuildGraph } from "../../src/main/dev/fixture-build-graph.ts";
 import { seedLeadGraph } from "../../src/main/dev/fixture-lead-graph.ts";
@@ -12,6 +13,7 @@ import type { JobInfo } from "../../src/renderer/run-graph-workers.ts";
 import {
   layoutSteps,
   leadWorking,
+  PictureSource,
   partRows,
   resultGate,
   STEPS,
@@ -26,11 +28,14 @@ import {
   jobsTileStatus,
   LeadFace,
   leadFace,
+  type LeadRest,
+  leadRest,
   readingNodes,
   readingOrder,
 } from "../../src/renderer/run-tree.ts";
 import { CustomEvent } from "../../src/shared/custom-events.ts";
 import { type EventData, type EventEnvelope, EventKind } from "../../src/shared/event-log.ts";
+import { FinishCheckStep } from "../../src/shared/finish-check.ts";
 import { GameEngine } from "../../src/shared/game-engine.ts";
 import { turnGraphKey } from "../../src/shared/run-graph-events.ts";
 import { JobRole, JobState, JobStopper } from "../../src/shared/jobs.ts";
@@ -98,6 +103,10 @@ const TRACK = poolWorkerId("w3");
 const SOUND = "agent-sound-1";
 
 /** A Loop's lead with three workers: one studied, one added to the game, one still building in Unreal. */
+/** The lead asked a reviewer whether the run is done: the run's finish check is drawn from then. */
+const reviewAsked = (): EventEnvelope =>
+  inRun(CustomEvent.FinishCheck, { round: 1, step: FinishCheckStep.Checking, claim: "The race runs." });
+
 function loopWithWorkers(extra: EventEnvelope[] = []): EventEnvelope[] {
   seq = 0;
   return [
@@ -121,6 +130,13 @@ function fold(events: EventEnvelope[], key?: string) {
   if (summary) graph.summary = summary;
   return { graph, summary, rows: partRows(graph, summary) };
 }
+
+/** The save point a resting lead wears, by its id. */
+const savedAt = (rest: LeadRest | null): string | null => (rest && "save" in rest ? rest.save.id : null);
+
+/** A trimmed run's log in `fixtures/`. */
+const readLog = (name: string): EventEnvelope[] =>
+  JSON.parse(readFileSync(new URL(`../fixtures/${name}`, import.meta.url), "utf8")) as EventEnvelope[];
 
 /** Every drawn box but the row labels. */
 const boxes = (rects: Record<string, { x: number; y: number; w: number; h: number }>) =>
@@ -152,10 +168,7 @@ describe("a graph without workers or jobs keeps today's layout", () => {
     const lead = leadWorking(graph, summary, rows);
     assert.equal(lead, true);
     const layout = buildsLayout(graph, rows, summary);
-    assert.deepEqual(
-      layout,
-      layoutSteps(rows, { assets: false, optimization: false, resultGate: resultGate(graph), lead }),
-    );
+    assert.deepEqual(layout, layoutSteps(rows, { assets: false, resultGate: resultGate(graph), lead }));
     assert.equal(layout.rects["session:sword"]?.x, STEPS.pad + STEPS.startW + 2 * STEPS.busGap);
     assert.ok(layout.rects.lead && layout.rects.final);
     assert.equal(layout.rects.lead.x, layout.rects.final.x + STEPS.resultW + STEPS.leadGap, "after the result");
@@ -172,7 +185,6 @@ describe("a graph without workers or jobs keeps today's layout", () => {
       const assets = graph.nodes.some(
         (node) => node.kind === GraphNodeKind.Assets || node.kind === GraphNodeKind.Blender,
       );
-      const optimization = graph.nodes.some((node) => node.kind === GraphNodeKind.Optimization);
       // The running run answers a message sent with pictures: its start keeps a strip for its words.
       const startWords = graph.nodes.some((node) => node.kind === GraphNodeKind.Run && node.asked !== null);
       assert.equal(startWords, runId === "fixture-graph-live", runId);
@@ -181,7 +193,6 @@ describe("a graph without workers or jobs keeps today's layout", () => {
         layoutSteps(rows, {
           assets,
           startWords,
-          optimization,
           resultGate: resultGate(graph),
           lead: leadWorking(graph, summary, rows),
         }),
@@ -207,39 +218,12 @@ describe("a graph with its assets or its optimisation keeps today's layout and o
       assert.deepEqual(readingOrder(rows, readingNodes(graph, rows, summary)), steps, runId);
       const layout = buildsLayout(graph, rows, summary);
       const lead = leadWorking(graph, summary, rows);
-      const today = layoutSteps(rows, { assets: true, optimization: false, resultGate: resultGate(graph), lead });
+      const today = layoutSteps(rows, { assets: true, resultGate: resultGate(graph), lead });
       assert.deepEqual(layout, today, runId);
       assert.ok(layout.rects.assets && layout.rects.start, runId);
       assert.equal(layout.rects.assets.x, layout.rects.start.x, "the assets card stands under the start");
       assert.ok(layout.rects.assets.y > layout.rects.start.y);
     }
-  });
-
-  it("a run in its optimisation: the card between the last step and the result, stepped before the result", async () => {
-    const { emptyOptimization } = await import("../../src/harness-seed/loop/optimization.ts");
-    seq = 0;
-    const optimizing = { ...emptyOptimization({ runId: RUN, project: "game" }), phase: "profiling_candidate" };
-    const { graph, summary, rows } = fold([
-      inRun(CustomEvent.RunStarted, { goal: "A river" }),
-      inRun(CustomEvent.AutopilotStarted, { facets: [{ id: "river", title: "River", budgetShare: 1 }] }),
-      inRun(CustomEvent.AutopilotBase, { ok: true }),
-      inRun(CustomEvent.OptimizationUpdated, optimizing),
-    ]);
-    assert.deepEqual(readingOrder(rows, readingNodes(graph, rows, summary)), [
-      "start",
-      "session:river",
-      "optimization",
-      "final",
-      "lead",
-    ]);
-    const layout = buildsLayout(graph, rows, summary);
-    const lead = leadWorking(graph, summary, rows);
-    const today = layoutSteps(rows, { assets: false, optimization: true, resultGate: resultGate(graph), lead });
-    assert.deepEqual(layout, today);
-    const { optimization, final } = layout.rects;
-    assert.ok(optimization && final);
-    assert.equal(optimization.y, final.y);
-    assert.ok(optimization.x < final.x, "the optimisation card comes before the result");
   });
 });
 
@@ -376,7 +360,7 @@ describe("what hangs on the tree", () => {
   });
 
   it("the finish check is the last node, after the result, on a dotted line", () => {
-    const { graph, summary, rows } = fold(loopWithWorkers());
+    const { graph, summary, rows } = fold(loopWithWorkers([reviewAsked()]));
     const layout = buildsLayout(graph, rows, summary);
     const { final } = layout.rects;
     const check = layout.rects[GraphNodeKind.FinishCheck];
@@ -399,6 +383,12 @@ describe("what hangs on the tree", () => {
       buildsLayout(over.graph, over.rows, over.summary).rects[GraphNodeKind.FinishCheck],
       undefined,
       "a finished run with no check has none",
+    );
+    // Flipped: a running Loop whose lead asked no reviewer has no check waiting at its end.
+    const unasked = fold(loopWithWorkers());
+    assert.equal(
+      buildsLayout(unasked.graph, unasked.rows, unasked.summary).rects[GraphNodeKind.FinishCheck],
+      undefined,
     );
   });
 
@@ -452,6 +442,39 @@ describe("the lead says what it is doing", () => {
       ["failed", LeadFace.Stopped],
       ["cancelled", LeadFace.Stopped],
     ]);
+  });
+
+  it("done or paused, the lead wears the run's last save point; at work, waiting or stopped, nothing of its own", () => {
+    const { graph, rows } = fold(readLog("lead-in-place-run.json"));
+    const rests = Object.values(LeadFace).map((face) => [face, savedAt(leadRest(graph, rows, face))]);
+    assert.deepEqual(rests, [
+      [LeadFace.Working, null],
+      [LeadFace.Waiting, null],
+      [LeadFace.Paused, "step:lead:11"],
+      [LeadFace.Done, "step:lead:11"],
+      [LeadFace.Stopped, null],
+    ]);
+  });
+
+  it("done in a Loop without save points, the lead wears its newest build's screenshot", () => {
+    // Two turns of one Loop: the first's checks were recorded before checks named their pictures.
+    const { graph, summary, rows } = fold(readLog("loop-two-turns-run.json"));
+    const face = leadFace(graph, summary, rows);
+    assert.equal(face, LeadFace.Done);
+    assert.deepEqual(leadRest(graph, rows, face), { build: "/runs/run_mvv2cixs406k/director/finish_d3f19a7f4e.jpg" });
+    assert.equal(leadRest(graph, rows, LeadFace.Stopped), null, "a stopped lead's work is not where its build is");
+    const pictures = rows.map((row) => [row.facet.title, row.steps[0]?.picture ?? null]);
+    assert.deepEqual(
+      pictures,
+      [
+        ["Boat sound effects", null],
+        [
+          "Rock explosion sound",
+          { source: PictureSource.Build, path: "/runs/run_mvv2cixs406k/director/merge_w2_d3f19a7f4e.jpg" },
+        ],
+      ],
+      "a worker whose merge check named no picture (an older record) wears none",
+    );
   });
 
   it("says how many workers are on it while they work", () => {
@@ -581,21 +604,14 @@ describe("Previous and Next", () => {
       const { graph, summary, rows } = fold(events, runId);
       const nodes = readingNodes(graph, rows, summary);
       const steps = rows.flatMap((row) => row.steps.map((step) => step.id));
-      const before = [
-        "start",
-        ...(nodes.assets ? ["assets"] : []),
-        ...steps,
-        ...(nodes.optimization ? ["optimization"] : []),
-        "final",
-        ...(nodes.lead ? ["lead"] : []),
-      ];
+      const before = ["start", ...(nodes.assets ? ["assets"] : []), ...steps, "final", ...(nodes.lead ? ["lead"] : [])];
       assert.equal(nodes.tree, false, runId);
       assert.deepEqual(readingOrder(rows, nodes), before, runId);
     }
   });
 
   it("a Loop's tree steps from the start to the lead and its background work, every worker, the result, then the finish check", () => {
-    assert.deepEqual(order(loopWithWorkers()), [
+    assert.deepEqual(order(loopWithWorkers([reviewAsked()])), [
       "start",
       "lead",
       "jobs",

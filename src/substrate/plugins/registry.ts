@@ -79,7 +79,6 @@ import {
   validateManifest,
 } from "./manifest.ts";
 import { fileSkillIndexLine } from "./skill-prompts.ts";
-import { readJudgeBrief } from "./judge-manifest.ts";
 import { pluginWorkspaces } from "./workspace-manifest.ts";
 import { pluginFolderPaths, pluginWorkerTypes, workerTypeOffered } from "./worker-manifest.ts";
 import type { WorkerType } from "../../shared/workers.ts";
@@ -269,7 +268,6 @@ const MESSAGE = {
   SandboxUnavailable: "Sandbox jobs unavailable",
   UnknownTool: "Unknown plugin tool",
   UnknownSkill: (id: string, name: string) => `Plugin ${id} has no skill named ${JSON.stringify(name)}`,
-  UnknownJudge: (id: string, judge: string) => `Plugin ${id} has no judge named ${JSON.stringify(judge)}`,
   UndeclaredSkillFile: "Read a skill's own file or one of the references it lists, exactly as listed",
   InvalidSkillOffset: "offset must be a whole number within the file: the nextOffset of the previous read",
   HostToolBundledOnly: "A host tool runs only for a bundled plugin that ships with Studio",
@@ -2315,17 +2313,6 @@ export class PluginRegistry {
     if (isFileSkill(skill)) return (await readSkillFile(p.directory, declaredSkillFile(skill, file))).toString("utf8");
     if (file !== undefined) throw new Error(MESSAGE.UndeclaredSkillFile);
     return skill.text;
-  }
-  /**
-   * A judge's brief (`PluginJudge.brief`), read from the plugin's package through a checked handle:
-   * any installed plugin's, as a judge's session is briefed. Refused for a judge it does not declare.
-   */
-  async judgeBrief(id: string, judgeId: string): Promise<string> {
-    const p = this.#installed.get(id);
-    if (!p || p.removed) throw new Error(MESSAGE.UnknownPlugin);
-    const judge = p.manifest.judges?.find((entry) => entry.id === judgeId);
-    if (!judge) throw new Error(MESSAGE.UnknownJudge(id, judgeId));
-    return readJudgeBrief(p.directory, judge.brief);
   }
   #connecting = new Map<string, Promise<any>>();
   async action(id: string, name: string, args: unknown, binding?: PluginBinding) {

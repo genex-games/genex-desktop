@@ -253,9 +253,9 @@ async function completionFailed(
   const fallbacks: string[] = err?.fallbacks ?? [];
   const kind: string = err?.kind ?? EngineFailure.Other;
   const fallbackReady = canFallBack(kind, fallbacks);
-  // A run's build turn (runId set) answers to the gauntlet, which has its own richer
-  // policies — strike counting, throttle waits, usage_limit stops that preserve the
-  // worktree. Swallowing the error here would blind all of them: rethrow instead.
+  // A run's build turn (runId set) answers to the run, which has its own richer
+  // policies — throttle waits, usage_limit stops that preserve the worktree. Swallowing the
+  // error here would blind all of them: rethrow instead.
   const inRun = Boolean(options.runId);
   if (inRun && !fallbackReady) throw err;
   // A weekly/monthly cap outlives any wait, and a run on the wrong model is not the

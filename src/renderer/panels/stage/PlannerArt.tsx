@@ -1,5 +1,5 @@
 /**
- * The welcome's Planner on the stage: a pen writes the plan on a sheet once, then the page floats
+ * The welcome's lead plan sheet on the stage: a pen writes the plan on a sheet once, then the page floats
  * where it is. Smaller than in the welcome, and drawn at the empty states' frame rate.
  */
 import { useState, type JSX } from "react";
@@ -15,7 +15,7 @@ const WIDTH = Math.round(PLANNER_VIEW.width * SCALE);
 const HEIGHT = Math.round(PLANNER_VIEW.height * SCALE);
 
 /**
- * The Planner writing its page from `since` (a wall-clock time, so a stage that is drawn again
+ * The lead writing its plan page from `since` (a wall-clock time, so a stage that is drawn again
  * picks the page up where it was), else from the moment it mounts.
  */
 export function PlannerArt({ since }: { since?: number }): JSX.Element {

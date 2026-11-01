@@ -101,39 +101,26 @@ export interface HarnessCtx {
 
 /**
  * A run as the loop carries it: the spec the host dispatched (`run_start`), and what the loop
- * stamps on it at launch — its roles, the game it declared, the state its judges look at.
+ * stamps on it at launch — its roles.
  */
 export interface Run extends RunSpec {
   /** The knobs the spec names, plus the ones only tests and operations set (`outageDelays`, …). */
   budgets: RunSpec["budgets"] & AnyRecord;
-  /** The state every judge looks at when the game does not boot into it (scout.ts). */
-  setup?: AnyRecord | null;
-  /** The declared kind of game, its traits and play script (kinds.ts). */
-  game?: AnyRecord | null;
-  genres?: string[];
   /** The folder brought its own game (not the studio's template). */
   ownShape?: boolean;
   preferences?: ModelPreferences;
   effort?: string;
   /** What `game.validate` said about the folder when the run was asked for. */
   readiness?: AnyRecord | null;
-  /** What earlier runs on this game cost (ledger.ts), one sentence each. */
-  gameLessons?: string[];
-  /** The generation of an edited, older `src/hud.js` the game keeps (held-hud.ts); absent when it holds the template's. */
-  heldHudGeneration?: number;
-  blender?: unknown;
-  optimizationDeadline?: number;
-  optimizationThreadId?: string;
   [field: string]: unknown;
 }
 
 /**
  * The ctx a tool runs with: the turn's ctx plus the turn's own options — the game the chat is
- * pinned to, the candidate it may only read, the commission an interview carries.
+ * pinned to, the commission an interview carries.
  */
 export interface ToolCtx extends HarnessCtx {
   project?: string | null;
-  candidateId?: string;
   turnId?: string;
   engine?: string;
   model?: string;

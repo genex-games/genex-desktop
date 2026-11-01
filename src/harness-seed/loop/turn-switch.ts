@@ -77,7 +77,7 @@ function startsNextLoop(current: TurnSettings, item: AnyRecord): boolean {
 /**
  * The commission a switch keeps: none for words the chat wrote itself, none after a run that may not
  * be reopened (reopen-run.ts `keepsCommission`), the message's otherwise — and a Loop that brings no
- * mood board keeps the one the turn had.
+ * attached pictures keeps the ones the turn had.
  */
 function keptCommission(current: TurnSettings, item: AnyRecord): ReturnType<typeof commissionOf> {
   const taken = chatWrote(item) ? null : commissionOf(item);
@@ -164,14 +164,14 @@ export function switchNotes(before: TurnSettings, after: TurnSettings, context: 
   return notes;
 }
 
-/** What changed about the Loop: on, off, its hours, roles, plan review, or a new mood board. */
+/** What changed about the Loop: on, off, its hours, roles, or newly attached pictures. */
 function commissionNotes(before: AnyRecord | null, after: AnyRecord | null, context: SwitchContext): string[] {
   if (!after) return before ? [SWITCH_NOTES.loopOff] : [];
   const notes: string[] = [];
   if (!before) notes.push(...loopOnNotes(after, context));
   else notes.push(...loopChangedNotes(before, after));
   const frames = Array.isArray(after.frames) ? after.frames.length : 0;
-  if (frames && after.frames !== before?.frames) notes.push(SWITCH_NOTES.moodBoard(frames));
+  if (frames && after.frames !== before?.frames) notes.push(SWITCH_NOTES.pictures(frames));
   return notes;
 }
 
@@ -187,12 +187,10 @@ function loopOnNotes(after: AnyRecord, context: SwitchContext): string[] {
   return notes;
 }
 
-/** A Loop that stayed on but changed: its hours, its roles, or its plan review. */
+/** A Loop that stayed on but changed: its hours or its roles. */
 function loopChangedNotes(before: AnyRecord, after: AnyRecord): string[] {
   const notes: string[] = [];
   if (commissionHours(before) !== commissionHours(after)) notes.push(SWITCH_NOTES.loopHours(commissionHours(after)));
   if (JSON.stringify(before.roles ?? null) !== JSON.stringify(after.roles ?? null)) notes.push(SWITCH_NOTES.loopRoles);
-  if (Boolean(before.reviewPlan) !== Boolean(after.reviewPlan))
-    notes.push(SWITCH_NOTES.planReview(Boolean(after.reviewPlan)));
   return notes;
 }

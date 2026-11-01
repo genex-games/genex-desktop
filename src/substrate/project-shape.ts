@@ -63,9 +63,6 @@ export function isBuiltShape(shape: ProjectShape): boolean {
   return shape.own;
 }
 
-/** The import map only the studio writes: `three` resolved to the copy vendored with the app. */
-const STUDIO_IMPORT_MAP = "/vendor/three.module.js";
-
 /** The query a Genex game reads to skip its authorization redirect in a local test run. */
 const GENEX_LOCAL_TEST_QUERY = "?genex_local_test=1";
 
@@ -172,23 +169,23 @@ export async function templateLoadsGenexSdk(dir: string): Promise<boolean> {
 /**
  * Read a folder's own shape from the evidence in it: every script the page loads, the package's
  * build script and dependencies, the bundler's output folder, the engine's runtime files.
- * `null` means the studio's own template — recognised only by the two things the studio itself
- * writes, the `contractVersion` in studio.json and the vendored-three import map. Everything
- * else in the world is somebody's own game.
+ * `null` means the studio's own template — recognised by the one thing the studio itself records,
+ * the starter's `contractVersion` in studio.json, while the folder has no build script. What the
+ * page's text says never decides it. Everything else in the world is somebody's own game.
  */
 export async function detectProjectShape(dir: string): Promise<ProjectShape | null> {
   const html = await readFile(path.join(dir, "index.html"), "utf8").catch(() => null);
   if (html === null) return null;
   const meta = await readJsonIfExists<{ contractVersion?: unknown }>(path.join(dir, "studio.json")).catch(() => null);
-  if (typeof meta?.contractVersion === "number" && html.includes(STUDIO_IMPORT_MAP)) return null;
+  const pkg = await readPackageManifest(dir);
+  const hasBuild = typeof pkg?.scripts?.build === "string" && pkg.scripts.build.trim().length > 0;
+  if (typeof meta?.contractVersion === "number" && !hasBuild) return null;
 
   const srcs = pageScripts(html);
   const [firstLocal] = srcs.filter((src) => !isRemoteSrc(src));
   // A page whose scripts are all inline or all CDN tags still has an entry: itself. Naming
   // index.html keeps `main` a file the owner can open, and keeps the ownership rules honest.
   const main = firstLocal === undefined ? "index.html" : projectRelative(firstLocal);
-  const pkg = await readPackageManifest(dir);
-  const hasBuild = typeof pkg?.scripts?.build === "string" && pkg.scripts.build.trim().length > 0;
   const names = (await readdir(dir, { withFileTypes: true }).catch(() => [])).map((entry) => entry.name);
   const entryText = main === "index.html" ? null : await readFile(path.join(dir, main), "utf8").catch(() => null);
   const kind = kindOf({ html, srcs, names, pkg, entryText, build: hasBuild });
@@ -341,11 +338,11 @@ async function recordedShape(dir: string, meta: ShapeMeta): Promise<ProjectShape
   // (See `recordedInstall` for why only a package manager's own install is read from here.)
   const declaresInstall = meta.install === null || isInstallCommand(meta.install);
   // studio.json written before shapes carried own/kind/serve/install: the folder is still there
-  // to read, so those are detected once rather than guessed from the entry filename. A recorded
-  // shape always meant "the game's own" — that is exactly what the old flag computed.
+  // to read, so those are detected once. A shape recorded without the flag always meant "the
+  // game's own": adoption is the only writer of one, and it records only a game of its own.
   const detected = isProjectKind(meta.kind) && declaresInstall ? null : await detectProjectShape(dir);
   const kind = isProjectKind(meta.kind) ? meta.kind : (detected?.kind ?? null);
-  const own = typeof meta.own === "boolean" ? meta.own : build !== null || main !== TEMPLATE_SHAPE.main;
+  const own = typeof meta.own === "boolean" ? meta.own : true;
   return {
     entry,
     main,

@@ -120,21 +120,6 @@ describe("the computer on a game played in its engine's editor", () => {
     );
   });
 
-  it("asks for a fresh play when its session judges the game, and joins one otherwise", async () => {
-    for (const fresh of [true, false]) {
-      const calls: Array<Record<string, unknown>> = [];
-      const source = editorPlaySource({
-        call: async (tool, args) => {
-          if (tool === EnginePlayTool.Open) calls.push(args);
-          return tool === EnginePlayTool.Open ? { ...ENGINE_PLAY_VIEW, joined: false } : {};
-        },
-        fresh,
-      });
-      await source.load("/game", false);
-      assert.deepEqual(calls, [fresh ? { fresh: true } : {}], String(fresh));
-    }
-  });
-
   it("carries each key verb as holds on the game's own time", async () => {
     const { source, inputs } = standInEngine();
     const session = computerSession(source, "/game", { pacing: "running", frameDir: await tmpDir("editor-play-") });
@@ -233,21 +218,6 @@ describe("the computer on a game played in its engine's editor", () => {
     assert.match(text(await session.run("computer", { action: "screenshot" })), /playing a build for the Loop/);
     await source.release();
     assert.equal(calls.filter(([tool]) => tool === EnginePlayTool.Close).length, 0);
-  });
-
-  it("verifies a goal it reads in the player's state, as on any target", async () => {
-    const { source } = standInEngine();
-    const reached: string[] = [];
-    const session = computerSession(source, "/game", {
-      pacing: "running",
-      frameDir: await tmpDir("editor-play-"),
-      quest: { id: "reach-the-end", until: { path: "phase", equals: "won" } },
-      onReached: (trace) => reached.push(trace),
-    });
-    await session.run("computer", { action: "screenshot" });
-    const held = text(await session.run("computer", { action: "hold_key", text: "w", duration: 2 }));
-    assert.match(held, /GOAL REACHED \(studio-verified\): reach-the-end/);
-    assert.equal(reached.length, 1);
   });
 });
 

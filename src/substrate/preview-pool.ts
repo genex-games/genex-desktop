@@ -12,7 +12,8 @@
  * has only the live view.
  */
 import { shortId } from "./ids.ts";
-import { DEFAULT_BUILDERS, LEAD_WINDOWS, MAX_BUILDERS } from "../shared/builders.ts";
+import { DEFAULT_BUILDERS, LEAD_WINDOWS } from "../shared/builders.ts";
+import { MAX_WORKERS_AT_ONCE } from "../shared/workers.ts";
 import type { PreviewPort } from "./preview-port.ts";
 
 export const LIVE_HANDLE = "live";
@@ -48,7 +49,7 @@ export interface PreviewLease {
 export interface PreviewPoolOptions {
   live: PreviewPort;
   /** Absent = this build has no headless capability; `acquire` then refuses loudly. */
-  createHeadless?: (options?: { purpose?: "optimization" }) => Promise<PreviewPort>;
+  createHeadless?: () => Promise<PreviewPort>;
   /** Max concurrent headless leases (the live view is not counted). */
   max?: number;
 }
@@ -62,13 +63,13 @@ export interface PreviewPoolOptions {
 export const OVERFLOW_WINDOWS_MAX = 2;
 
 /** The most leases at once: past this the provider's rate limit, not the machine, decides. */
-export const MAX_POOL_MAX = MAX_BUILDERS + LEAD_WINDOWS;
+export const MAX_POOL_MAX = MAX_WORKERS_AT_ONCE + LEAD_WINDOWS;
 /** Headless leases at once by default: every builder the setting allows, plus the lead's windows. */
 export const DEFAULT_POOL_MAX = DEFAULT_BUILDERS + LEAD_WINDOWS;
 
 export class PreviewPool {
   readonly #live: PreviewPort;
-  readonly #createHeadless: ((options?: { purpose?: "optimization" }) => Promise<PreviewPort>) | undefined;
+  readonly #createHeadless: (() => Promise<PreviewPort>) | undefined;
   #max: number;
   /** Hidden windows held, opening or still closing: what the ceiling (and the overflow past it) counts. */
   #reserved = 0;
@@ -123,7 +124,6 @@ export class PreviewPool {
    */
   async acquire(options: {
     label: string;
-    purpose?: "optimization";
     owner?: string;
     overflow?: boolean;
     signal?: AbortSignal;
@@ -138,7 +138,7 @@ export class PreviewPool {
     if (options.overflow) await this.#overflowRoom(options.signal);
     else this.#reserved++;
     let port: PreviewPort;
-    const creation = Promise.resolve().then(() => create({ purpose: options.purpose }));
+    const creation = Promise.resolve().then(() => create());
     this.#creating.add(creation);
     try {
       port = await creation;

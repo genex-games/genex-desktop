@@ -9,7 +9,7 @@
  * fails never costs the run.
  */
 import type { AnyRecord } from "../../types/harness.d.ts";
-import { Side } from "../judge.ts";
+import { Side } from "../verdict.ts";
 import { WorkerMode, WorkerState } from "../outcomes.ts";
 import { appendRun, RunEvent } from "../run-events.ts";
 import { WorkerEnd, WorkerIsolation, type WorkerStopCode } from "../workers/contract.ts";
@@ -274,8 +274,6 @@ export async function criticAdvice(lead: Lead, advice: CriticAdvice): Promise<vo
     iteration: advice.round,
     at: new Date(advice.at).toISOString(),
     defects: advice.defects,
-    boldMove: advice.boldMove,
-    gates: advice.gates,
     shots: advice.shots,
   };
   await append(lead, RunEvent.DirectorVerdict, payload);

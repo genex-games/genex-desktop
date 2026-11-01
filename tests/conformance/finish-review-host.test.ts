@@ -140,7 +140,9 @@ describe("the reviewer's verdict is the app's", () => {
     assert.equal((await checks(chat)).length, recorded + 1, "one record for the one settle");
   });
 
-  it("three no's in a row stop the Loop by the app's own count", { timeout: CASE_TIMEOUT_MS }, async () => {
+  it("counts the no's in a row and never stops the Loop on them: a reviewer's no is advice", {
+    timeout: CASE_TIMEOUT_MS,
+  }, async () => {
     const chat = await workerChat();
     reviewerSays(chat, [
       reviewerAnswer("no", NO_REASONS),
@@ -159,18 +161,19 @@ describe("the reviewer's verdict is the app's", () => {
       const settled = await settle(chat, { round, ...(unanswered ? { unanswered } : {}) });
       counts.push([settled.rejections, settled.stopped]);
     }
+    // Flipped from "three no's in a row stop the Loop by the app's own count" (phase 5).
     assert.deepEqual(counts, [
       [1, false],
       [1, false],
       [2, false],
-      [MAX_FINISH_REJECTIONS, true],
+      [3, false],
     ]);
     const last = (await checks(chat)).at(-1);
-    assert.equal(last?.stopped, true);
-    assert.equal(last?.rejections, MAX_FINISH_REJECTIONS);
+    assert.equal(last?.stopped, undefined);
+    assert.equal(last?.rejections, 3);
   });
 
-  it("a timed Loop with time left goes on past three no's in a row; with little left the next no stops it", {
+  it("a timed Loop goes on past any row of no's, with time left or without", {
     timeout: CASE_TIMEOUT_MS,
   }, async () => {
     const chat = await workerChat();
@@ -192,11 +195,12 @@ describe("the reviewer's verdict is the app's", () => {
       const settled = await settle(chat, { round, timeLeftMs });
       counts.push([settled.rejections, settled.stopped, settled.timeLeft === true]);
     }
+    // Flipped: the fourth no, with little time left, used to stop the Loop.
     assert.deepEqual(counts, [
       [1, false, true],
       [2, false, true],
-      [MAX_FINISH_REJECTIONS, false, true],
-      [MAX_FINISH_REJECTIONS + 1, true, false],
+      [3, false, true],
+      [4, false, false],
     ]);
     const ends = (await checks(chat)).filter((check) => check.step === FinishCheckStep.Rejected);
     assert.deepEqual(
@@ -205,7 +209,7 @@ describe("the reviewer's verdict is the app's", () => {
         [false, true],
         [false, true],
         [false, true],
-        [true, false],
+        [false, false],
       ],
       "each no records whether the Loop had time left",
     );

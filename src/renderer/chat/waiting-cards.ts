@@ -33,3 +33,32 @@ export function waitingHead(cards: readonly WaitingCard[], shown: string | null)
   if (current && (!current.blocked || !answerable)) return current.key;
   return (answerable ?? cards[0])?.key ?? null;
 }
+
+/** A plugin's or the studio's permission request, as the dock keys its card. */
+export const consentCardKey = (consentId: string): string => `consent:${consentId}`;
+
+/** Claude's own permission request, as the dock keys its card. */
+export const permissionCardKey = (requestId: string): string => `permission:${requestId}`;
+
+/** The cards still waiting: an answered card goes at the press, not once the host settles it. */
+export function unansweredCards<T extends WaitingCard>(cards: readonly T[], answered: ReadonlySet<string>): T[] {
+  return cards.filter((card) => !answered.has(card.key));
+}
+
+/**
+ * Sends a card's answer with the card already gone: `mark` takes it away at the press and brings
+ * it back should the answer fail, so it can say why; the failure still reaches the caller.
+ */
+export async function answerAtPress(
+  key: string,
+  send: () => Promise<void>,
+  mark: (key: string, answered: boolean) => void,
+): Promise<void> {
+  mark(key, true);
+  try {
+    await send();
+  } catch (error) {
+    mark(key, false);
+    throw error;
+  }
+}

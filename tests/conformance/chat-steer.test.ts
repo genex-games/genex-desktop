@@ -344,7 +344,7 @@ describe("steered session: an engine without input mid-turn is interrupted and r
     const studio = {
       host,
       cancels: new Set(),
-      moodBoards: new Map(),
+      attachedPictures: new Map(),
       activeRuns: new Map(),
       startingRuns: new Map(),
       orphanRuns: new Map(),

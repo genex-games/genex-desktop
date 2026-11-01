@@ -10,7 +10,7 @@ import type { CompleteRequest } from "../../src/substrate/engines/types.ts";
 import { coreLite } from "../helpers/core-lite.ts";
 
 const SYSTEM_PROMPT =
-  "Write a concise implementation plan for the requested game or change in the existing conversation. Preserve the previous plan, decisions and completed work; revise only what the latest request changes. This is a planning-only step before explicit user approval. Do not execute work or call tools. State assumptions briefly, list concrete build steps and how to check the result. Do not claim to have inspected files. Return only the plan.";
+  "Write a concise implementation plan for the requested game or change in the existing conversation. Preserve the previous plan, decisions and completed work; revise only what the latest request changes. This is a planning-only step before explicit user approval. Do not execute work or call tools. Write a concise plan the person can approve or change. Do not claim to have inspected files. Return only the plan.";
 
 async function fixtureCore() {
   const { core } = await coreLite({ engines: fixtureEngines() });

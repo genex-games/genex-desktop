@@ -16,6 +16,7 @@ import { WebBuildLoad } from "../../src/shared/live-behind.ts";
 import { coreLite, type CoreLite } from "../helpers/core-lite.ts";
 import { gitFile } from "../helpers/git.ts";
 import { makeFakePreview } from "../helpers/studio-rig.ts";
+import type { DelegateRequest } from "../../src/substrate/engines/types.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 /** A preview port that records what it served and answers the ready probe as a settled page. */
@@ -626,14 +627,24 @@ describe("the harness's other doors into Live", () => {
     });
     const project = await lite.core.games.scaffold("pong");
     await lite.core.loadPreview({ project: "pong" });
+    lite.core.engines.register({
+      id: "codex",
+      label: "codex",
+      kind: "delegated",
+      status: async () => ({ code: "ready", detail: "" }),
+      models: async () => [],
+      delegate: async (request: DelegateRequest) => {
+        await request.onLiveTool?.("computer", { action: "screenshot" });
+        return { ok: true, engine: "codex", turns: 1, usage: {}, sessionId: "s", summary: "looked" };
+      },
+    } as never);
     for (const handle of ["live", "stand-in"]) {
-      const tools = await lite.core._playtestToolsFor(
-        { project: "pong", root: project.dir, runId: "run_p", facetId: "p", iteration: 0, handle },
-        project.dir,
-        path.join(lite.core.layout.runs, "run_p"),
-      );
-      await tools.onLiveTool("computer", { action: "screenshot" });
-      await tools.release();
+      await lite.core.api()["engine.delegate"]!({
+        engine: "codex",
+        prompt: "look",
+        project: "pong",
+        selfCapture: { project: "pong", root: project.dir, runId: "run_p", facetId: "p", iteration: 0, handle },
+      } as never);
     }
     assert.deepEqual(live.loads, ["pong"], "only the person's own load reached Live");
     assert.equal(hidden.length, 2, "each session opened a window of its own");

@@ -146,7 +146,9 @@ async function mergeNow(state: PoolState, record: WorkerRecord, commit: string):
     listConflicts: true,
   });
   if (merge.ok) {
-    const text = [POOL_WORDS.merged(record.id), picturesToLookAt(record)].filter(Boolean).join(" ");
+    // The scope's check of the merged build (a web game's health check) is said with the merge.
+    const checked = (await state.scope.afterMerge?.(record).catch(() => null)) ?? null;
+    const text = [POOL_WORDS.merged(record.id), checked, picturesToLookAt(record)].filter(Boolean).join(" ");
     return { text, settled: true, merged: true };
   }
   const text = merge.conflicts.length

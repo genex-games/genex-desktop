@@ -129,11 +129,7 @@ const NO_GESTURE = { needed: false, done: false, reasons: [] as string[] };
  * PROMISE and nothing here reads fields off it — a thenable is explicitly rejected as a
  * snapshot source, so a version skew degrades to the fallback instead of polling a promise
  * object for ever.
- *
- * The fallback for a page the shim never reached tests a REAL contract: `window.__studio`
- * present, `__shim !== true`, and a `state()` that answers something other than `{__missing}`.
- * The shim's own merging facade must never be mistaken for a game's contract, or every page
- * would report itself attached and the whole premise would collapse.
+ * A page the shim never reached reports no readiness signal: the game is never asked.
  */
 export const READY_PROBE = `(() => {
   var noGesture = { needed: false, done: false, reasons: [] };
@@ -168,26 +164,6 @@ export const READY_PROBE = `(() => {
         timedOut: snap.timedOut === true,
         reason: typeof snap.reason === "string" && snap.reason ? snap.reason.slice(0, ${MAX_REASON_CHARS}) : null,
         gesture: readGesture(snap.gesture)
-      };
-    }
-    var contract = window.__studio;
-    if (contract && contract.__shim !== true && typeof contract.state === "function") {
-      var state = null;
-      var threw = null;
-      try { state = contract.state(); } catch (err) { threw = String((err && err.message) || err).slice(0, ${MAX_REASON_CHARS}); }
-      if (state && typeof state.then === "function") state = null;
-      var has = !threw && !!state && typeof state === "object" && state.__missing !== true;
-      return {
-        via: "contract",
-        ready: has,
-        phase: has ? "ready" : "boot",
-        attached: has,
-        frames: has && isFinite(Number(state.frame)) ? Number(state.frame) : 0,
-        drawCalls: 0,
-        pageMs: null,
-        timedOut: false,
-        reason: threw ? "the game's state() threw: " + threw : has ? null : "the game's state() reports nothing yet",
-        gesture: noGesture
       };
     }
     return fail("the page reports no readiness signal");

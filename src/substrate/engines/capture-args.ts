@@ -5,12 +5,8 @@
  * forwarded as a bench page the studio would refuse.
  */
 
-/** The `onCapture` arguments from a capture call's raw arguments: the cameras and the bench page it named. */
-export function captureArgs(args: Record<string, unknown> | null | undefined): { cameras?: string; page?: string } {
-  const cameras = args?.cameras;
+/** The `onCapture` arguments from a capture call's raw arguments: the page it named, if any. */
+export function captureArgs(args: Record<string, unknown> | null | undefined): { page?: string } {
   const page = args?.page;
-  return {
-    ...(cameras ? { cameras: String(cameras) } : {}),
-    ...(typeof page === "string" && page.trim() ? { page } : {}),
-  };
+  return typeof page === "string" && page.trim() ? { page } : {};
 }

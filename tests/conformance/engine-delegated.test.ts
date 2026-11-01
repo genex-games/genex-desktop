@@ -734,17 +734,14 @@ describe("claude code delegated engine", () => {
     assert.deepEqual(result.studioToolCalls, [{ name: "ask_user", args: { question: "Plan or build?" } }]);
   });
 
-  it("keeps read-only sessions and performance-optimization candidates off the web", async () => {
-    const requests = [{ readOnly: true }, { optimization: { denyWrites: ["/tmp/x"] } }];
-    for (const request of requests) {
-      const { fn, seen } = fakeQuery(successRun);
-      const engine = await engineWithLogin(fn);
-      await engine.delegate({ prompt: "look", cwd: "/tmp/game-workspace", ...request } as never);
-      const call = seen[0] as Record<string, unknown>;
-      assert.equal((call.allowedTools as string[]).includes("WebSearch"), false, JSON.stringify(request));
-      const banned = call.disallowedTools as string[];
-      assert.ok(banned.includes("WebSearch") && banned.includes("WebFetch"), JSON.stringify(request));
-    }
+  it("keeps read-only sessions off the web", async () => {
+    const { fn, seen } = fakeQuery(successRun);
+    const engine = await engineWithLogin(fn);
+    await engine.delegate({ prompt: "look", cwd: "/tmp/game-workspace", readOnly: true } as never);
+    const call = seen[0] as Record<string, unknown>;
+    assert.equal((call.allowedTools as string[]).includes("WebSearch"), false);
+    const banned = call.disallowedTools as string[];
+    assert.ok(banned.includes("WebSearch") && banned.includes("WebFetch"));
   });
 
   /**
@@ -909,6 +906,30 @@ describe("claude code delegated engine", () => {
       message: { content: [{ type: "text", text: "x".repeat(5_000) }] },
     }) as { parts: Array<{ text: string }> };
     assert.equal(compacted.parts[0]!.text, "x".repeat(5_000));
+  });
+
+  // The Agent SDK sends an EMPTY system prompt unless it is asked for Claude Code's: every Genex
+  // session ran without the coding guidance, environment and tool habits plain Claude Code has.
+  it("runs every session on Claude Code's own system prompt, the session's context appended", async () => {
+    const root = await tmpDir("studio-engine-");
+    const { fn, seen } = fakeQuery(successRun);
+    const engine = new ClaudeCodeEngine({
+      resolveCli: fixtureCodingCli,
+      engineHome: path.join(root, "claude-home"),
+      systemHome: path.join(root, "no-system-login"),
+      queryFn: fn,
+      platform: "darwin",
+    });
+    await engine.delegate({ prompt: "make a snake game", system: "You are working inside Genex.", cwd: root });
+    await engine.delegate({ prompt: "make it faster", cwd: root });
+
+    assert.deepEqual(seen[0]!.systemPrompt, {
+      type: "preset",
+      preset: "claude_code",
+      append: "You are working inside Genex.",
+    });
+    assert.equal(seen[0]!.prompt, "make a snake game", "the session's context is not repeated in the message");
+    assert.deepEqual(seen[1]!.systemPrompt, { type: "preset", preset: "claude_code" });
   });
 
   it("confines the contractor: no user config, no cross-session tools, sandboxed shell", async () => {

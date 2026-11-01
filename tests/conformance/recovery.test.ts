@@ -7,7 +7,7 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { coreLite } from "../helpers/core-lite.ts";
 
@@ -102,6 +102,8 @@ describe("self-edit recovery", () => {
     assert.equal(core.snapshotIndex.get(code.snapshot_id)?.healthy, true, "a booted self is a healthy self");
 
     // A later skill edit is measured against it, not held back by it.
+    // The seed ships no skills folder now: the agent makes one for its own skill.
+    await mkdir(path.join(ws, "skills"), { recursive: true });
     await writeFile(path.join(ws, "skills", "a-lesson.md"), "- Keep ownership explicit.\n");
     const skill = (await api["snapshot.create"]!({
       scope: "harness",

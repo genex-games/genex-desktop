@@ -9,7 +9,6 @@ import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { before, describe, it } from "node:test";
-import { DIRECTOR_TOOLS } from "../../src/harness-seed/loop/director/tool-specs.ts";
 import { LoopProfile } from "../../src/harness-seed/loop/folder-facts.ts";
 import { chooseRunner } from "../../src/harness-seed/loop/run-dispatch.ts";
 import { RunMode } from "../../src/harness-seed/loop/run-events.ts";
@@ -49,7 +48,7 @@ const shortRun = (minutes: number) => ({ ...RUN, budgets: { ...RUN.budgets, wall
 /**
  * The run's engine as `engine.describe` lists it: a delegated engine that says it keeps sessions,
  * says it doesn't, or doesn't say (its kind decides), a direct engine that doesn't say, and a direct
- * engine that keeps sessions (Bonsai, OpenRouter): the host seats it nowhere in place.
+ * engine that keeps sessions (Bonsai, OpenRouter): Genex runs its session, and seats it in place.
  */
 const SESSIONS = {
   yes: { id: "claude-code", kind: "delegated", supportsSessions: true },
@@ -59,60 +58,46 @@ const SESSIONS = {
   directSessions: { id: "claude-code", kind: "direct", supportsSessions: true },
 } as const;
 
+/** Whether each engine, as `engine.describe` lists it, leads a Loop: it keeps a session of its own. */
+const LEADS: Record<keyof typeof SESSIONS, boolean> = {
+  yes: true,
+  no: false,
+  unsaid: true,
+  unsaidDirect: false,
+  directSessions: true,
+};
+
 /**
  * Mode × the engine's session support × classic × the folder's Loop profile → the runner, as wire
- * values. A Loop on a project that isn't a web game is led in place by the chat's own session, so it
- * needs an agent engine the host seats there that keeps one; classic is a web game's internal only.
+ * values. Flipped (phase 5): neither the mode nor classic chooses any more — the classic pipeline and
+ * the gauntlet are gone. Every Loop is its lead's session, on any project, and an engine that keeps
+ * none is refused with its typed reason (`needs_session`).
  */
-const RUNNER_MATRIX: Array<[RunMode, keyof typeof SESSIONS, boolean, LoopProfile, string]> = [
-  ["autopilot", "yes", false, "web", "director"],
-  ["autopilot", "yes", false, "open", "director"],
-  ["autopilot", "yes", true, "web", "autopilot"],
-  ["autopilot", "yes", true, "open", "director"],
-  ["autopilot", "no", false, "web", "autopilot"],
-  ["autopilot", "no", false, "open", "needs_session"],
-  ["autopilot", "no", true, "web", "autopilot"],
-  ["autopilot", "no", true, "open", "needs_session"],
-  ["autopilot", "unsaid", false, "web", "director"],
-  ["autopilot", "unsaid", false, "open", "director"],
-  ["autopilot", "unsaid", true, "web", "autopilot"],
-  ["autopilot", "unsaid", true, "open", "director"],
-  ["autopilot", "unsaidDirect", false, "web", "autopilot"],
-  ["autopilot", "unsaidDirect", false, "open", "needs_session"],
-  ["autopilot", "unsaidDirect", true, "web", "autopilot"],
-  ["autopilot", "unsaidDirect", true, "open", "needs_session"],
-  ["autopilot", "directSessions", false, "web", "director"],
-  ["autopilot", "directSessions", false, "open", "needs_session"],
-  ["autopilot", "directSessions", true, "web", "autopilot"],
-  ["autopilot", "directSessions", true, "open", "needs_session"],
-  ["director", "yes", false, "web", "gauntlet"],
-  ["director", "yes", false, "open", "web_only"],
-  ["director", "yes", true, "web", "gauntlet"],
-  ["director", "yes", true, "open", "web_only"],
-  ["director", "no", false, "web", "gauntlet"],
-  ["director", "no", false, "open", "web_only"],
-  ["director", "no", true, "web", "gauntlet"],
-  ["director", "no", true, "open", "web_only"],
-  ["director", "unsaid", false, "web", "gauntlet"],
-  ["director", "unsaid", false, "open", "web_only"],
-  ["director", "unsaid", true, "web", "gauntlet"],
-  ["director", "unsaid", true, "open", "web_only"],
-  ["director", "unsaidDirect", false, "web", "gauntlet"],
-  ["director", "unsaidDirect", false, "open", "web_only"],
-  ["director", "unsaidDirect", true, "web", "gauntlet"],
-  ["director", "unsaidDirect", true, "open", "web_only"],
-  ["director", "directSessions", false, "web", "gauntlet"],
-  ["director", "directSessions", false, "open", "web_only"],
-  ["director", "directSessions", true, "web", "gauntlet"],
-  ["director", "directSessions", true, "open", "web_only"],
-];
+const RUNNER_MATRIX: Array<[RunMode, keyof typeof SESSIONS, boolean, LoopProfile, string]> = Object.values(
+  RunMode,
+).flatMap((mode) =>
+  (Object.keys(SESSIONS) as Array<keyof typeof SESSIONS>).flatMap((sessions) =>
+    [false, true].flatMap((classic) =>
+      Object.values(LoopProfile).map((profile): [RunMode, keyof typeof SESSIONS, boolean, LoopProfile, string] => [
+        mode,
+        sessions,
+        classic,
+        profile,
+        LEADS[sessions] ? "director" : "needs_session",
+      ]),
+    ),
+  ),
+);
 
-/** The internal switch on: an open Loop goes to the Unreal runner whatever its engine says. */
+/**
+ * The internal switch on: an open Loop goes to the Unreal runner when its engine keeps a session
+ * (flipped in phase 5: one that keeps none is refused like any other Loop).
+ */
 const SWITCH_ROWS: Array<[keyof typeof SESSIONS, string]> = [
   ["yes", "unreal"],
-  ["no", "unreal"],
+  ["no", "needs_session"],
   ["unsaid", "unreal"],
-  ["unsaidDirect", "unreal"],
+  ["unsaidDirect", "needs_session"],
   ["directSessions", "unreal"],
 ];
 
@@ -150,35 +135,13 @@ describe("which loop conducts a run", () => {
 });
 
 describe("the run tools each lead is offered", () => {
-  it("the director offers exactly these tools", () => {
-    assert.deepEqual(DIRECTOR_TOOLS.map((tool) => tool.name).sort(), [
-      "finish",
-      "goal_update",
-      "integrate",
-      "judge",
-      "note",
-      "plan",
-      "playtest",
-      "run_status",
-      "show",
-      "worker_mark",
-      "worker_start",
-      "worker_status",
-      "worker_steer",
-      "worker_stop",
-      "worker_wait",
-      // Flipped: the user's ask to finish is recorded by the lead, quoting them.
-      "wrap_up",
-    ]);
-  });
-
   it("the Unreal lead offers exactly these tools, and its workers come in these kinds", () => {
     assert.deepEqual(LEAD_TOOLS.map((tool) => tool.name).sort(), [
+      // A second opinion on captures the lead names.
       "critic",
-      // Flipped: the lead claims the goal through finish, which a reviewer checks.
+      // Flipped (phase 5): the lead's word closes the Loop; review=yes asks a reviewer's second opinion.
       "finish",
-      // Flipped: a blind judge plays the game for the lead (lead-judge.ts).
-      "judge_play",
+      // Flipped (phase 5): no judge plays the game for the lead (judge_play is gone).
       "milestone",
       "note",
       "rebuild_unreal",
@@ -451,8 +414,7 @@ const ONE_LOOP_TRAIL = [
   "tool:unreal__log-errors",
   "snapshot.create",
   "tool:unreal__hero-shots",
-  "finish.review",
-  "finish.settle",
+  // Flipped (Loop phase 4): the claim closes on the lead's word, with no review (finish.review, finish.settle).
   "tool:unreal__save-all",
   "tool:unreal__log-errors",
   "snapshot.create",
@@ -460,7 +422,8 @@ const ONE_LOOP_TRAIL = [
 ];
 
 /** The fields of the open Loop's record in its journal, sorted. */
-const OPEN_JOURNAL_KEYS = ["between", "carried", "crashes", "lastReaderAt", "savePoints", "version"];
+// Flipped (phase 5): no fresh-eyes reminder, so no last reader is kept.
+const OPEN_JOURNAL_KEYS = ["between", "carried", "crashes", "savePoints", "version"];
 
 describe("a canonical Unreal Loop on the one Loop, as Genex sees it", () => {
   let host: LoopHost;
@@ -518,7 +481,7 @@ describe("a canonical Unreal Loop on the one Loop, as Genex sees it", () => {
         "facet_iteration",
         "integration_merge",
         "director_continued",
-        "finish_check",
+        // Flipped (Loop phase 4): no finish_check, as no reviewer reads a claim the lead asked none for.
         "run_finished",
       ],
     );
@@ -531,7 +494,8 @@ describe("a canonical Unreal Loop on the one Loop, as Genex sees it", () => {
     assert.ok(graph);
     assert.deepEqual(
       graph.nodes.map((node) => node.kind),
-      ["run", "base", "lead", "facet", "iteration", "iteration", "iteration", "integration", "final", "finish_check"],
+      // Flipped (Loop phase 4): no finish_check node.
+      ["run", "base", "lead", "facet", "iteration", "iteration", "iteration", "integration", "final"],
     );
     const final = graph.nodes.find((node) => node.kind === GraphNodeKind.Final);
     assert.ok(final?.kind === GraphNodeKind.Final);

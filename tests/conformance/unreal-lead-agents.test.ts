@@ -6,7 +6,7 @@
  * it; and the close stops the ones at work and keeps every delivered file.
  */
 import assert from "node:assert/strict";
-import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { mkdir, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
@@ -294,8 +294,13 @@ describe("a lead's sub-agent, started", () => {
     assert.deepEqual(delegation.attribution, { runId: "run-lead", agentId: "agent-blender_model-1" });
     assert.equal(delegation.creditCap, 600, "the run's Genex credit cap, which the host holds its paid jobs to");
     const prompt = String(delegation.prompt);
-    for (const said of [`${FOLDER}/manifest.json`, "+X", "pivot", "30,000 triangles", "metres", "import_model", "Weld"])
+    for (const said of [`${FOLDER}/manifest.json`, "+X", "pivot", "triangles", "metres", "import_model"])
       assert.ok(prompt.includes(said), `the brief says ${said}`);
+    assert.doesNotMatch(
+      prompt,
+      /30,000|hero piece|Weld|material slots|until they look right/,
+      "no budget or craft advice",
+    );
     assert.match(prompt, /never open, call or script the Unreal Editor/);
   });
 
@@ -596,28 +601,19 @@ describe("a sub-agent's delivery on its way into the game", () => {
     assert.match(String(agent.error), /200 files, more than the 64/);
   });
 
-  it("keeps a file holding several meshes out, with the reason, unless its brief asked for several", async () => {
-    const asked = await leadOn();
-    asked.host.manifest = manifest([katanaFile({ meshes: 3, meshesAsked: true })]);
-    assert.ok((await deliver(asked.lead)).landed.includes(MODEL), "asked for: it lands");
+  // Flipped (phase 5 audit): a file holding several meshes was kept out of the game folder unless its
+  // brief asked for several, and a prop over 30,000 triangles was named in the news. Budgets are the
+  // lead's to give in a brief; Genex lands what a worker delivered and says what it measured.
+  it("lands a file holding several meshes and a heavy prop as delivered, with what was measured in the news", async () => {
     const { lead, host, rec } = await leadOn();
-    host.manifest = manifest([katanaFile({ meshes: 3 })]);
+    host.manifest = manifest([katanaFile({ meshes: 3, triangles: 148_000 })]);
     const agent = await deliver(lead);
-    assert.ok(!checkedOut(rec).includes("katana.glb"), "not asked for: it stays out");
-    assert.ok(agent.landed.includes(RENDER), "the rest lands");
-    const [news] = agentNews(lead);
-    assert.match(
-      news?.text ?? "",
-      /katana\.glb holds 3 meshes, and one file holds one mesh unless the brief asked for more/,
-    );
-  });
-
-  it("names a prop over its triangle budget in the news, and still lands it", async () => {
-    const { lead, host } = await leadOn();
-    host.manifest = manifest([katanaFile({ triangles: 148_000 })]);
-    const agent = await deliver(lead);
+    assert.ok(checkedOut(rec).includes("katana.glb"), "it lands");
     assert.ok(agent.landed.includes(MODEL));
-    assert.match(agentNews(lead)[0]?.text ?? "", /148,000 triangles; a prop is at most 30,000/);
+    const text = agentNews(lead)[0]?.text ?? "";
+    assert.match(text, /katana\.glb: mesh, 148,000 triangles/);
+    assert.match(text, /3 meshes/);
+    assert.doesNotMatch(text, /Left out|a prop is at most/);
   });
 
   it("lands a delivery without a manifest, and tells the lead to look at the files itself", async () => {
@@ -707,99 +703,27 @@ describe("a sub-agent's delivery on its way into the game", () => {
   });
 });
 
-describe("the critic's look at a delivered model", () => {
+describe("a delivered model", () => {
   const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4]);
-  const BARE_GRIP = { defect: "The grip is bare steel, not wrapped in red", fix: "Wrap the grip in a red cord" };
-  /** The landing checks the render out into the game folder. */
-  const renderLands = (host: Host, dir: string) => {
+
+  // Flipped (phase 5): the critic is a second opinion the lead asks for; nothing looks at a delivery on its own.
+  it("reaches the lead with its renders and no critic's verdict: the lead decides what it imports", async () => {
+    const { lead, host, rec, dir } = await leadOn({ critic: { ready: false, defects: [] } });
     host.onCheckout = () => {
       mkdirSync(path.join(dir, FOLDER), { recursive: true });
       writeFileSync(path.join(dir, RENDER), PNG);
     };
-  };
-
-  it("looks at a delivered model's renders against its brief, and tells the lead not to import one that isn't ready", async () => {
-    const { lead, host, rec, dir } = await leadOn({ critic: { ready: false, defects: [BARE_GRIP] } });
-    renderLands(host, dir);
     const agent = await deliver(lead);
-    const calls = rec.paramsOf("engine.complete");
-    assert.equal(calls.length, 1);
-    const [message] = (calls[0]?.messages ?? []) as Array<{ content: string; images: Array<{ label: string }> }>;
-    assert.deepEqual(
-      message?.images.map((image) => image.label),
-      ["render.png"],
-    );
-    assert.match(String(message?.content), /A katana, 96 cm long, the grip wrapped in red\./);
-    assert.deepEqual(agent.look, { verdict: "not-ready", defects: [BARE_GRIP] });
+    assert.equal(agent.state, AgentState.Done);
+    assert.deepEqual(rec.paramsOf("engine.complete"), [], "no model was asked about it");
     const text = agentNews(lead)[0]?.text ?? "";
-    assert.match(
-      text,
-      /The critic looked at its renders: not ready\.\n- The grip is bare steel[^\n]*fix: Wrap the grip/,
-    );
-    assert.match(text, /Don't put it in the game as it is/);
+    assert.match(text, /Render:/);
+    assert.doesNotMatch(text, /critic/i);
   });
-
-  it("says a model the critic finds ready is ready", async () => {
-    const { lead, host, dir } = await leadOn({ critic: { ready: true, defects: [] } });
-    renderLands(host, dir);
-    const agent = await deliver(lead);
-    assert.deepEqual(agent.look, { verdict: "ready", defects: [] });
-    assert.match(agentNews(lead)[0]?.text ?? "", /The critic looked at its renders: ready/);
-  });
-
-  it("asks nothing about a delivery without renders", async () => {
-    const { lead, host, rec, dir } = await leadOn({ critic: { ready: true, defects: [] } });
-    renderLands(host, dir);
-    host.manifest = manifest([katanaFile()], { renders: [] });
-    const agent = await deliver(lead);
-    assert.deepEqual(rec.paramsOf("engine.complete"), []);
-    assert.equal(agent.look, undefined);
-  });
-
-  const UNSEEN: Array<[string, (dir: string, outside: string) => void, unknown]> = [
-    [
-      "a render that leads out of the game",
-      (dir, outside) => {
-        mkdirSync(path.join(dir, FOLDER), { recursive: true });
-        writeFileSync(path.join(outside, "x.png"), PNG);
-        symlinkSync(path.join(outside, "x.png"), path.join(dir, RENDER));
-      },
-      { ready: true, defects: [] },
-    ],
-    [
-      "a render that is not a picture",
-      (dir) => {
-        mkdirSync(path.join(dir, FOLDER), { recursive: true });
-        writeFileSync(path.join(dir, RENDER), "not a picture");
-      },
-      { ready: true, defects: [] },
-    ],
-    ["a critic that can't answer", pngRender, new Error("the judge engine is not signed in")],
-    ["an answer without a yes or no", pngRender, { defects: [BARE_GRIP] }],
-  ];
-  for (const [what, lands, critic] of UNSEEN)
-    it(`tells the lead to look at the renders itself after ${what}`, async () => {
-      const { lead, host, dir } = await leadOn({ critic });
-      const outside = await tmpDir("lead-agents-outside-");
-      host.onCheckout = () => lands(dir, outside);
-      const agent = await deliver(lead);
-      assert.equal(agent.state, AgentState.Done, "still delivered");
-      assert.ok(agent.look && "error" in agent.look);
-      assert.match(
-        agentNews(lead)[0]?.text ?? "",
-        /The critic couldn't look at its renders[^\n]*look at them yourself/,
-      );
-    });
 });
 
-/** A PNG render checked out into the game folder (for the table above). */
-function pngRender(dir: string): void {
-  mkdirSync(path.join(dir, FOLDER), { recursive: true });
-  writeFileSync(path.join(dir, RENDER), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4]));
-}
-
 describe("the lead's news of its sub-agents", () => {
-  it("repeats a delivery's news, with its files, hero render and import call, until the lead marks it", async () => {
+  it("repeats a delivery's news, with its files, render and import call, until the lead marks it", async () => {
     const { lead } = await leadOn();
     await deliver(lead);
     const first = agentNews(lead);
@@ -807,7 +731,7 @@ describe("the lead's news of its sub-agents", () => {
     const text = first[0]?.text ?? "";
     assert.match(text, /Worker blender_model-1 \(Blender: Katana\) delivered/);
     assert.match(text, /katana\.glb: mesh, 12,400 triangles, 96 × 4 × 12 cm, pivot grip/);
-    assert.match(text, new RegExp(`Hero render: ${RENDER}`));
+    assert.match(text, new RegExp(`Render: ${RENDER}`));
     assert.match(text, /import_model \{"file": "assets\/agents\/blender_model-1\/katana\.glb"/);
     assert.match(text, /mcp__studio__worker_mark with id=blender_model-1/);
     assert.equal(agentNews(lead).length, 1, "again, while unmarked");

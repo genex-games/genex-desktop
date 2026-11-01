@@ -381,7 +381,8 @@ test("whether a connector reaches a game is the one rule its listing, capability
   // page falls back to the template's, and must not make an empty or Godot game claim it.
   const TEMPLATE_CLAIM = /This project uses the Studio template/;
   assert.deepEqual(await core.games.factsOf(kite.name).then((facts) => facts.map((f) => f.id)), [CoreFact.WebGame]);
-  assert.match(await describe(web), TEMPLATE_CLAIM, "a web game at its root");
+  // Flipped (phase 5): no game is told about the template, a web game at its root included.
+  assert.doesNotMatch(await describe(web), TEMPLATE_CLAIM, "a web game at its root");
   await api["game.scaffold"]?.({ name: "empty-describe" });
   assert.doesNotMatch(await describe("empty-describe"), TEMPLATE_CLAIM, "a new empty game");
   const godot = await core.games.scaffold("godot-describe");

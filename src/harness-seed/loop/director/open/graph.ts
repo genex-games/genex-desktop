@@ -9,7 +9,7 @@
 import type { AnyRecord } from "../../../types/harness.d.ts";
 import type { HookImage } from "../../../types/host-api.d.ts";
 import { HostMethod } from "../../host-methods.ts";
-import { Side } from "../../judge.ts";
+import { Side } from "../../verdict.ts";
 import { WorkerMode, WorkerState } from "../../outcomes.ts";
 import { RunEvent } from "../../run-events.ts";
 import type { LoopRun } from "../loop-run.ts";

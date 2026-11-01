@@ -82,7 +82,6 @@ interface Props {
   onPlayMode: (play: boolean, via?: PlayModeVia) => void;
   /** A row or button of the sidebar was pressed, before it does what it does (usage analytics). */
   onNav: (item: NavItem) => void;
-  stagedCount: number;
   onNewGame: () => void;
   onSelectThread: (threadId: string) => void;
   onSelectGame: (project: string) => void;
@@ -217,8 +216,8 @@ export function Sidebar(props: Props): JSX.Element {
           </div>
           <span className="sidebar-fade" aria-hidden="true" />
         </div>
-        <SidebarFooter {...props} />
         <SidebarFriends onPlayMode={(play) => props.onPlayMode(play, PlayModeVia.Friends)} />
+        <SidebarFooter {...props} />
       </div>
       {/* Shown once, until the first sign-in: the account plate stays under it. */}
       {playOpen && <PlayPromo />}
@@ -278,8 +277,9 @@ function LaunchRow({ title }: { title: string | null }): JSX.Element {
 }
 
 /**
- * What waits for the person, over the foot of the game list: agents that didn't start, Genex's
- * updated terms to review, the plugin updates line, then the app's own Relaunch to update or Download.
+ * What waits for the person, under the friends and over the account plate: agents that didn't
+ * start, Genex's updated terms to review, the plugin updates row, then the app's own Relaunch to
+ * update or Download, in the plugin line's height, icon and words.
  */
 function SidebarFooter({
   update,
@@ -335,8 +335,8 @@ function SidebarUpdate({ update, onRestart }: { update: ReadyUpdate; onRestart: 
         disabled={restarting}
         onClick={restart}
       >
-        <span>{restarting ? UPDATE_WORDS.restarting : UPDATE_WORDS.restart}</span>
         <Icon name="reload" size={16} />
+        <span>{restarting ? UPDATE_WORDS.restarting : UPDATE_WORDS.restart}</span>
       </button>
     </Hint>
   );
@@ -347,8 +347,8 @@ function SidebarDownload({ update, onDownload }: { update: ReadyUpdate; onDownlo
   return (
     <Hint label={UPDATE_WORDS.downloadHint} side="top">
       <button type="button" className="sidebar-update" data-update-download onClick={onDownload}>
+        <Icon name="download" size={16} />
         <span>{UPDATE_WORDS.download(update.version)}</span>
-        <Icon name="arrow-up-right" size={16} />
       </button>
     </Hint>
   );
@@ -473,7 +473,6 @@ function SidebarTop(props: Props & { studio: ConversationRecord | undefined; har
     onPlugins,
     itemsOpen,
     onItems,
-    stagedCount,
     onNewGame: newGame,
     onSelectThread,
     atHome,
@@ -545,17 +544,6 @@ function SidebarTop(props: Props & { studio: ConversationRecord | undefined; har
                 })}
               >
                 <span className="min-w-0 flex-1 truncate">Harness</span>
-                {stagedCount > 0 && (
-                  <span
-                    className="sidebar-badge"
-                    aria-label={t(
-                      "{count, plural, one {# skill improvement to review} other {# skill improvements to review}}",
-                      { count: stagedCount },
-                    )}
-                  >
-                    {stagedCount}
-                  </span>
-                )}
                 {studioBusy && studioStatus && <span className="sr-only">{statusWords(studioStatus).short}</span>}
               </NavRow>
             </Hint>

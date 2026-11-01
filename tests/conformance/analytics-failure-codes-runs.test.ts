@@ -358,7 +358,7 @@ function memoryHost(game: Record<string, unknown>, missing: unknown = undefined)
   const studio = {
     host,
     cancels: new Set<string>(),
-    moodBoards: new Map(),
+    attachedPictures: new Map(),
     activeRuns: new Map(),
     startingRuns: new Map(),
     orphanRuns: new Map(),

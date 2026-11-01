@@ -239,16 +239,14 @@ function askedCapabilities(declared: TargetCapabilities, asked: number): TargetC
  * The editor target's source. `call` reaches the plugin's play tools (each under the editor lock);
  * `caps` is what the engine's plugin declares its play can do (the editor's own when absent), and
  * `players` how many players to open (one when absent, never more than declared); `frame` puts a
- * picture on the agent's screen; `fresh` asks for a play started over, never one joined mid-level
- * (a judge's or a playtester's, who judge the game from its start); `afterOpen` runs once, with the
- * open's answer, right after the session's play first opens and before any move (a judge's probe).
+ * picture on the agent's screen; `afterOpen` runs once, with the open's answer, right after the
+ * session's play first opens and before any move.
  */
 export function editorPlaySource(options: {
   call: EnginePlayCall;
   caps?: TargetCapabilities;
   players?: number;
   frame?: (target: EditorPlayTarget, jpeg: Buffer | null, caption: string, act: ScreenAct) => Promise<void>;
-  fresh?: boolean;
   afterOpen?: (opened: unknown) => Promise<void>;
 }): EditorPlaySource {
   const caps = askedCapabilities(options.caps ?? EDITOR_CAPABILITIES, options.players ?? 1);
@@ -265,7 +263,7 @@ export function editorPlaySource(options: {
   const load = async (_root: string, force: boolean): Promise<TargetLoad<EditorPlayTarget> & { fresh: boolean }> => {
     if (open && !force) return { target: open, problem: null, note: null, fresh: false };
     try {
-      const asked = { ...(players > 1 ? { players } : {}), ...(options.fresh ? { fresh: true } : {}) };
+      const asked = players > 1 ? { players } : {};
       const opened = await answered(call, EnginePlayTool.Open, asked);
       const view = { width: sizeOf(opened, "width"), height: sizeOf(opened, "height") };
       // The play's own word on what it can do, and how many players joined: it only ever narrows.

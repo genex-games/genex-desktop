@@ -1,5 +1,5 @@
 import type { ComponentProps, JSX } from "react";
-import { memo, useCallback } from "react";
+import { memo } from "react";
 import { t } from "../../shared/i18n.ts";
 import { BootstrapGate } from "../panels/BootstrapGate.tsx";
 import { ReviewPanel } from "../panels/ReviewPanel.tsx";
@@ -11,7 +11,6 @@ import {
   useStageLibrary,
   useStageThreads,
 } from "../state/hooks.ts";
-import { stagedCounted } from "../state/library.ts";
 import { Room } from "../state/threads.ts";
 import { notifyProblem } from "../state/toasts.ts";
 import { useCoveredByHome } from "./HomeScreen.tsx";
@@ -39,7 +38,6 @@ export const WorkspaceStage = memo(function WorkspaceStage({
   const covered = underHome || underRemix;
   const stageVisible = room === Room.Build && !chrome.workspaceCovered && !welcoming && !covered;
   const { beside } = views;
-  const countStaged = useCallback((count: number) => app.library.setState((s) => stagedCounted(s, count), true), [app]);
   return (
     <div className="relative min-h-0 min-w-0">
       <div
@@ -72,7 +70,6 @@ export const WorkspaceStage = memo(function WorkspaceStage({
         <div className="absolute inset-0 flex">
           <StudioReview
             games={games}
-            onStagedCount={countStaged}
             onOpenGame={navigation.selectGame}
             onNewGame={navigation.newGame}
             onStartBuilding={() => navigation.returnToGame(true)}

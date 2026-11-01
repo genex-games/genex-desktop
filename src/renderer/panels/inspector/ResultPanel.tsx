@@ -202,23 +202,26 @@ function resultSub(graph: RunGraphModel, run: RunNode, outcome: RunSummary | nul
 }
 
 /**
- * The build's picture: before and now side by side, or now alone. A build still being tried has
- * no picture of its own yet, and says so rather than wear a part's.
+ * The build's picture: before and now side by side when both were captured the same way, or now
+ * alone. A build still being tried has no picture of its own yet, and says so rather than wear a part's.
  */
 function ResultMedia({
   baseSrc,
   resultSrc,
   borrowed,
+  pairs,
   onOpen,
 }: {
   baseSrc: string | null;
   resultSrc: string | null;
   borrowed: boolean;
+  /** the two pictures show the same frame: the starting capture and the final one */
+  pairs: boolean;
   onOpen: () => void;
 }): JSX.Element {
   if (borrowed)
     return <Single src={null} label={t("Now")} empty={t("Checking the new build starts. Its picture comes next.")} />;
-  if (baseSrc && resultSrc)
+  if (baseSrc && resultSrc && pairs)
     return <Compare left={baseSrc} right={resultSrc} leftLabel={t("Before")} rightLabel={t("Now")} onOpen={onOpen} />;
   return <Single src={resultSrc} label={t("Now")} onOpen={onOpen} />;
 }
@@ -257,7 +260,15 @@ export function ResultPanel(props: InspectorProps): JSX.Element {
       reply={{ label: title, placeholder: t("Ask for a change to this build") }}
       onReply={props.onReply}
       actions={<BuildActions build={unlandedBuild(graph, final, run)} onNotice={onNotice} />}
-      media={<ResultMedia baseSrc={baseSrc} resultSrc={resultSrc} borrowed={resultBorrowed} onOpen={open} />}
+      media={
+        <ResultMedia
+          baseSrc={baseSrc}
+          resultSrc={resultSrc}
+          borrowed={resultBorrowed}
+          pairs={props.resultPairsWithBase}
+          onOpen={open}
+        />
+      }
     >
       <LastLook graph={graph} />
       <LeadSummary final={final} />

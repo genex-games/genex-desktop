@@ -5,6 +5,9 @@
  */
 export const PLUGIN_ID = /^[a-z][a-z0-9-]{0,47}$/;
 
+/** The bundled plugin that holds Genex's optional craft advice as skills read on demand; Studio ships it off. */
+export const GENEX_RECOMMENDATIONS_PLUGIN_ID = "genex-recommendations";
+
 export function isPluginId(value: unknown): value is string {
   return typeof value === "string" && PLUGIN_ID.test(value);
 }

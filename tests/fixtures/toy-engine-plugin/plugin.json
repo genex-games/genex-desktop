@@ -239,23 +239,6 @@
         "type": "object",
         "properties": {}
       }
-    },
-    {
-      "name": "toy-probe",
-      "audience": "harness",
-      "needs": [
-        "toy-editor"
-      ],
-      "description": "Measure the open toy play for a judge. Answers {note, images}.",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "players": {
-            "type": "number",
-            "description": "How many players the play opened, 1 to 3; absent is one."
-          }
-        }
-      }
     }
   ],
   "skills": [
@@ -326,23 +309,6 @@
         "toy-project"
       ],
       "tool": "capture"
-    }
-  ],
-  "judges": [
-    {
-      "id": "crowd",
-      "label": "Crowd",
-      "facts": [
-        "toy-project"
-      ],
-      "brief": "judges/crowd.md",
-      "players": 3,
-      "probe": "toy-probe"
-    },
-    {
-      "id": "plain",
-      "label": "Plain",
-      "brief": "judges/plain.md"
     }
   ],
   "workspace": {

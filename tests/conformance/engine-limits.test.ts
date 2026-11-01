@@ -8,7 +8,6 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { limitKind, limitResetMs } from "../../src/substrate/engines/claude-code.ts";
 import { classifyHttpFailure } from "../../src/substrate/engines/types.ts";
-import { consoleProblems } from "../../src/harness-seed/loop/gauntlet.ts";
 import { DAY_MS, HOUR_MS, MINUTE_MS, SECOND_MS } from "../../src/shared/duration.ts";
 
 describe("engine limits", () => {
@@ -89,27 +88,5 @@ describe("HTTP failures of an API engine", () => {
     for (const [status, body, kind] of rows)
       assert.equal(classifyHttpFailure("openrouter", status, body).kind, kind, `${status}`);
     assert.equal(classifyHttpFailure("openrouter", 429, "retry-after: 7").retryAfterMs, 7000);
-  });
-});
-
-describe("console errors as evidence", () => {
-  it("voids a build only for the errors it introduced; inherited ones become a warning", () => {
-    const shader = "THREE.WebGLProgram: shader error: vColor vec3 vs vec4";
-    const errors = [
-      { level: "error", message: shader },
-      { level: "error", message: "ReferenceError: foo is not defined" },
-    ];
-    const fresh = consoleProblems(errors, []);
-    assert.deepEqual(fresh.problems, ["2 console error(s)"]);
-    assert.deepEqual(fresh.warnings, []);
-    const inherited = consoleProblems(errors, [shader]);
-    assert.deepEqual(inherited.problems, ["1 console error(s)"]);
-    assert.equal(inherited.warnings.length, 1);
-    assert.match(inherited.warnings[0]!, /1 console error\(s\) inherited/);
-    assert.match(inherited.warnings[0]!, /vColor/);
-    const all = consoleProblems([errors[0]], [shader]);
-    assert.deepEqual(all.problems, [], "a build that only carries the base's error is judgeable");
-    assert.equal(all.warnings.length, 1);
-    assert.deepEqual(consoleProblems([], [shader]), { problems: [], warnings: [] });
   });
 });

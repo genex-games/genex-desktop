@@ -87,13 +87,58 @@ describe("isInside, isBelow and samePath on Windows: names are case-blind, as NT
         forbidden: [path.join(dir, "secret")],
         deniedWrites: [],
         readonly: false,
-        ownership: undefined,
       });
       assert.equal(await resolve(path.join(dir.toLowerCase(), "a.js"), true), path.join(dir, "a.js"));
       await assert.rejects(resolve(path.join(dir.toUpperCase(), "SECRET", "b.js"), true));
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("a local session's writes: its own folder, and the build a lead leads", () => {
+  it("writes inside the build it leads by real path, and refuses every hostile spelling of a way out", async (t) => {
+    const top = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), "paths-lead-")));
+    t.after(() => rmSync(top, { recursive: true, force: true }));
+    const game = path.join(top, "game");
+    const build = path.join(top, "scratch", "run", "integration");
+    mkdirSync(path.join(game, "src"), { recursive: true });
+    mkdirSync(path.join(build, "src"), { recursive: true });
+    mkdirSync(path.join(build, ".git"), { recursive: true });
+    mkdirSync(path.join(top, "scratch", "run", "worker"), { recursive: true });
+    symlinkSync(path.join(top, "scratch", "run", "worker"), path.join(build, "to-worker"));
+    const resolve = sessionFileResolver({
+      cwd: game,
+      readRoots: [game, build],
+      writeRoots: [build],
+      forbidden: [],
+      deniedWrites: [],
+      readonly: false,
+    });
+    const table: Array<[label: string, target: string, writes: boolean]> = [
+      ["a file in its own folder", path.join(game, "src", "main.js"), true],
+      ["a file in the build it leads", path.join(build, "src", "main.js"), true],
+      ["a new folder in the build it leads", path.join(build, "src", "new", "a.js"), true],
+      ["the build's Git metadata", path.join(build, ".git", "config"), false],
+      ["a sibling that shares the build's prefix", `${build}-2/a.js`, false],
+      ["a `..` that climbs out of the build", path.join(build, "..", "worker", "a.js"), false],
+      ["a link in the build to another worktree", path.join(build, "to-worker", "a.js"), false],
+      ["the run's folder above the build", path.join(top, "scratch", "run", "a.js"), false],
+    ];
+    const seen: Array<[string, boolean]> = [];
+    for (const [label, target] of table)
+      seen.push([
+        label,
+        await resolve(target, true).then(
+          () => true,
+          () => false,
+        ),
+      ]);
+    assert.deepEqual(
+      seen,
+      table.map(([label, , writes]) => [label, writes]),
+    );
+    assert.deepEqual(readdirSync(path.join(top, "scratch", "run", "worker")), [], "a refused write touched nothing");
   });
 });
 

@@ -46,7 +46,7 @@ import type { FinishedBuildRef } from "./run-sharing.ts";
 
 /** The names M4's two events are read under; null reads nothing (a test seam). */
 export interface FieldEventNames {
-  /** `completion_call` (M4.5): one in-app completion (judges, playtester, gates) with its `usage`. */
+  /** `completion_call` (M4.5): one in-app completion (a second opinion) with its `usage`. */
   completionCall: string | null;
   /** `preview_ready` (M4.4): `{ project, runId?, ms, via }`. */
   previewReady: string | null;

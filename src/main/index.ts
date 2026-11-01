@@ -58,6 +58,7 @@ import { scanPackage } from "../substrate/plugins/scan.ts";
 import {
   createReloadPolicy,
   installProcessHandlers,
+  installQuitSignals,
   PageRecovery,
   pageRecovery,
   QuitQuestion,
@@ -128,6 +129,7 @@ import { registerCliInstallIpc } from "./ipc/cli-install.ts";
 import { createCliInstalls } from "./cli-install.ts";
 import { registerMcpIpc } from "./ipc/mcp.ts";
 import { registerModelsIpc } from "./ipc/models.ts";
+import { hardwareReport } from "./core/hardware-report.ts";
 import { registerNotificationsIpc } from "./ipc/notifications.ts";
 import { registerPermissionsIpc } from "./ipc/permissions.ts";
 import { registerPluginsIpc } from "./ipc/plugins.ts";
@@ -529,6 +531,9 @@ installProcessHandlers(
   },
   (kind, reason) => appDiagnostics.fault(kind, reason),
 );
+// SIGTERM and SIGINT quit through `before-quit`, as Chromium's own handler would have, had the
+// process sandbox's runtime not taken both for its clean-up (`installQuitSignals`).
+installQuitSignals(process, { quit: () => app.quit(), exit: () => app.exit(0) });
 // Native crash dumps stay on this Mac, beside the log in this launch's own data; nothing is uploaded.
 app.setPath("crashDumps", path.join(userDataRoot, "Crashpad"));
 crashReporter.start({ uploadToServer: false });
@@ -883,10 +888,7 @@ function launchCoreOptions(): Partial<ConstructorParameters<typeof StudioCore>[0
     const chatFixture = isChatFixture(dev.fixture);
     return {
       gamesRoot: dev.games,
-      executionPolicy: {
-        allowedProjectRoot: dev.games,
-        ...(fixtureProviders ? { runBackgroundImprovement: false } : {}),
-      },
+      executionPolicy: { allowedProjectRoot: dev.games },
       ...(fixtureProviders
         ? {
             engines: fixtureEngines(
@@ -905,7 +907,6 @@ function launchCoreOptions(): Partial<ConstructorParameters<typeof StudioCore>[0
         new OllamaEngine({ ...(ollamaHost ? { host: ollamaHost } : {}) }),
         ...fixtureEngines().filter((e) => e.id !== EngineId.Ollama),
       ],
-      executionPolicy: { runBackgroundImprovement: false },
     };
   // Games live in a plain visible folder, not buried in Library — Finder should show them.
   return { gamesRoot: normalGamesFolder(app.getPath("home")) };
@@ -1086,6 +1087,8 @@ function studioWindowOptions(): Electron.BrowserWindowConstructorOptions {
     show: false,
     // Fixed-size acceptance must not depend on the current display's work-area height.
     ...(isSmoke ? { enableLargerThanScreen: true } : {}),
+    // Windows mismeasures the resize frame offscreen; fixture viewports need exact client bounds.
+    ...(isSmoke && process.platform === StudioPlatform.Windows ? { thickFrame: false } : {}),
     ...parkedWindowOptions(),
     ...windowTitle(),
     webPreferences: {
@@ -1165,7 +1168,7 @@ function attachPreviews(studio: StudioCore, win: BrowserWindow): void {
   preview = view;
   studio.options.preview = view;
   // Pooled observation ports for parallel Autopilot facets. Captures are page-side
-  // (__studio.capture() renders straight from the canvas), so the window needs no compositor
+  // (the shim's __studioCapture reads straight from the canvas), so the window needs no compositor
   // surface and stays genuinely hidden. The previous shown-but-parked windows (x=-4400)
   // resurfaced whenever macOS reshuffled displays or Mission Control ran — four ghost windows
   // on the user's desktop mid-run. Rendering is offscreen: a hidden window with a
@@ -1744,7 +1747,7 @@ function createFacetPreview(studio: StudioCore, index: number, released: () => v
     vendorDir: path.join(resources, "vendor"),
     partition: `game-preview-facet-${index}`,
     offscreen: true,
-    // Builders, playtesters, reviewers and the lead all play the game here; only Live is heard.
+    // Workers, reviewers and the lead all play the game here; only Live is heard.
     muted: true,
     resolveRoot: (name) => studio.games.dirFor(name),
   });
@@ -2176,7 +2179,14 @@ function registerIpc(studio: StudioCore, engines: EngineBoot): void {
   registerGamesIpc(handle, { core: studio, runSummaryReader, pushUiEvent });
   registerStorageIpc(handle, { core: studio });
   registerJobsIpc(handle, { core: studio, openExternal: (url) => shell.openExternal(url) });
-  registerModelsIpc(handle, { core: studio, subscription, pushUiEvent, openRouterLogin, usage: providerUsage });
+  registerModelsIpc(handle, {
+    core: studio,
+    subscription,
+    pushUiEvent,
+    openRouterLogin,
+    usage: providerUsage,
+    readHardware: isSmoke ? async () => smokeReads.hardware ?? hardwareReport() : undefined,
+  });
   registerPreviewIpc(handle, {
     core: studio,
     preview: () => preview,
@@ -2184,11 +2194,7 @@ function registerIpc(studio: StudioCore, engines: EngineBoot): void {
     fullScreen: { enter: () => gameScreen?.enter(), active: () => gameScreen?.active() ?? false },
   });
   registerRunsIpc(handle, { core: studio, runSummaryReader, keepAwake, pushUiEvent, appendErrorDurably });
-  registerLearningIpc(handle, {
-    core: studio,
-    scriptedImprovementPass: fixtureProviders && dev?.fixture === FixtureName.StudioActivity,
-    pushUiEvent,
-  });
+  registerLearningIpc(handle, { core: studio });
   registerSettingsIpc(handle, {
     core: studio,
     diagnostics: () => diagnosticsReport(studio),

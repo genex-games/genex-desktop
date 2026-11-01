@@ -1,6 +1,6 @@
 /**
- * The sidebar's plugin updates: one line over the foot of the game list while installed plugins
- * have newer versions waiting. Hovering it lists them, each with its versions and a box to leave it
+ * The sidebar's plugin updates: one line under the friends while installed plugins have newer
+ * versions waiting. Hovering it lists them, each with its versions and a box to leave it
  * out; the line and the list install what is ticked, one update after another.
  */
 import type { JSX } from "react";
@@ -157,7 +157,7 @@ export function SidebarPluginUpdates({ updates, updating, onUpdate, onOpenPlugin
           disabled={chosen === 0}
           onClick={update(UpdatesRunSurface.SidebarButton)}
         >
-          {PLUGIN_UPDATE_WORDS.update(chosen, total)}
+          {PLUGIN_UPDATE_WORDS.updateLine(chosen, total)}
         </button>
       )}
     </div>

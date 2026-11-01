@@ -79,8 +79,9 @@ stops recording, opts out and resets the id.
   `failed` and `declined` apart and `plugin_failed` says how a running plugin failed
   (`PluginChange.failure`, a `PluginFailure`).
   Live's status (`previewLive`) names why its page did not load (`loadFailure`, a
-  `LiveLoadFailure`: Chromium's error by kind, or the game's own build that failed or fell back to
-  the last one that worked) and why its renderer went away (`gone`); a load Electron refused
+  `LiveLoadFailure`: Chromium's error by kind, a page still loading after a minute, or the game's own
+  build that failed or fell back to the last one that worked) and why its renderer went away
+  (`gone`); a load Electron refused
   crosses IPC with its kind, and `live_game_shown` says both as `load_failure` and `crash_reason`.
   The harness writes `refusal` (`RunStartRefusal`) beside `run_start_blocked`'s words for
   `run_start_refused`, and a refused Resume throws a `ResumeRefusal`.

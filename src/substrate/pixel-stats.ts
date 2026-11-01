@@ -389,6 +389,18 @@ export function isEffectivelyBlack(stats: PixelStats): boolean {
   return stats.litFraction < 0.005;
 }
 
+/** Luma standard deviation (0–255) under which a frame is one flat colour: nothing is drawn on it. */
+export const BLANK_CONTRAST = 1;
+
+/**
+ * A blank frame: one flat colour, black, white or any other. Judged by its contrast where the
+ * capture measured it, and by its light alone where it did not.
+ */
+export function isBlankFrame(stats: PixelStats): boolean {
+  if (typeof stats.contrast === "number") return stats.contrast < BLANK_CONTRAST;
+  return isEffectivelyBlack(stats);
+}
+
 /** Fraction of pixels whose luma (0–1) is above `t`, from the histogram; null without one. */
 export function fractionAbove(stats: PixelStats, t: number): number | null {
   if (!stats.histogram) return null;

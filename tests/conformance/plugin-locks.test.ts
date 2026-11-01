@@ -34,7 +34,7 @@ import { CoreFact, type GameKind } from "../../src/shared/project-facts.ts";
 import { UiEvent, type UiEvent as UiEventEnvelope } from "../../src/shared/ui-events.ts";
 import { BRIDGE_TOOL_DEADLINE_MS } from "../../src/substrate/engines/studio-bridge.ts";
 import { type CoreLite, coreLite } from "../helpers/core-lite.ts";
-import { closeWorkerChats, LOCAL, RUN_ID, workerChat } from "../helpers/worker-chat.ts";
+import { closeWorkerChats, RUN_ID, SEATLESS, workerChat } from "../helpers/worker-chat.ts";
 import { personAllowsLocalTools } from "../helpers/plugins.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
@@ -2226,7 +2226,7 @@ describe("a worker's own session passes the locks its pool holds for it", () => 
         const call = request.onLiveTool;
         if (call) answers.push(JSON.stringify(await call(`${PLUGIN_ID}__paint`, {})));
       });
-      await delegate(runWorker("w1", gameDir), LOCAL);
+      await delegate(runWorker("w1", gameDir), SEATLESS);
       assert.equal(answers.length, 1, "the local session called the tool");
       assert.match(String(answers[0]), /painted/, "its own call passed the lock it holds for its life");
     } finally {
@@ -2269,7 +2269,7 @@ describe("a worker's own session passes the locks its pool holds for it", () => 
       holdersWhileStopping.push([...new Set(core.locks.holders().map((held) => held.holder))]);
       await lettingGo;
     });
-    const session = delegate(runWorker("w1", gameDir), LOCAL).catch(() => {});
+    const session = delegate(runWorker("w1", gameDir), SEATLESS).catch(() => {});
     await working;
     const seen: number[] = [];
     const { restart, healthcheck } = core.host;
@@ -2332,7 +2332,7 @@ describe("a worker's own session passes the locks its pool holds for it", () => 
       begun();
       await hung;
     });
-    const session = delegate(runWorker("w1", gameDir), LOCAL).catch(() => {});
+    const session = delegate(runWorker("w1", gameDir), SEATLESS).catch(() => {});
     await working;
     const seen: number[] = [];
     const { restart, healthcheck } = core.host;
@@ -2389,7 +2389,7 @@ describe("a worker's own session passes the locks its pool holds for it", () => 
       ];
       for (const [name, params] of sessions) {
         answers.length = 0;
-        await delegate(params, LOCAL);
+        await delegate(params, SEATLESS);
         assert.equal(answers.length, 1, `${name}: the local session called the tool`);
         for (const answer of answers) {
           assert.match(answer, new RegExp(PluginCallBlocker.Lock), `${name}: its call waited, then was told why`);

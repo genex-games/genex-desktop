@@ -53,6 +53,27 @@ export function withRecent(list: readonly PlayRecentEntry[], game: PlayRecentEnt
   return [game, ...list.filter((entry) => entry.slug !== game.slug)].slice(0, RECENT_MAX);
 }
 
+/**
+ * Recent with each game's title and cover as `games` (cards or pages just read) show them, so a game
+ * played before it had a cover gets it; a read with no cover keeps the one Recent has. The same list
+ * when nothing changes.
+ */
+export function withReadCovers(
+  list: PlayRecentEntry[],
+  games: readonly Pick<PlayRecentEntry, "slug" | "title" | "coverUrl">[],
+): PlayRecentEntry[] {
+  const read = new Map(games.map((game) => [game.slug, game]));
+  let changed = false;
+  const next = list.map((entry) => {
+    const game = read.get(entry.slug);
+    const coverUrl = game?.coverUrl ?? entry.coverUrl;
+    if (!game || (game.title === entry.title && coverUrl === entry.coverUrl)) return entry;
+    changed = true;
+    return { ...entry, title: game.title, coverUrl };
+  });
+  return changed ? next : list;
+}
+
 const isRecentEntry = (value: unknown): value is PlayRecentEntry => {
   if (typeof value !== "object" || value === null) return false;
   const entry = value as Record<string, unknown>;

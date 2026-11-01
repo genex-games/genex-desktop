@@ -1,10 +1,8 @@
 /**
  * What a game's page loads, read from its HTML: the scripts it names, the bare specifiers its
- * own import map resolves, the hosts it fetches code from, and how the studio's instrumentation
+ * own import map resolves, and how the studio's instrumentation
  * would reach its `three`. Pure text reading; nothing here touches the disk.
  */
-import { isPreviewCdnHost } from "./preview-network.ts";
-
 /**
  * How the studio's own instrumentation would reach the page's `three` when the game installs
  * nothing itself: through the page's own import map, through the five-key map the studio
@@ -60,72 +58,6 @@ export function moduleSpecifiers(text: string): string[] {
     ...[...text.matchAll(/\bimport\s*\(\s*["']([^"']+)["']/g)].map(([, specifier = ""]) => specifier),
     ...[...text.matchAll(/\bimport\s+["']([^"']+)["']/g)].map(([, specifier = ""]) => specifier),
   ];
-}
-
-/** A URL the browser fetches from another machine: `https://host/…`, `http://…` or `//host/…`. */
-function remoteHost(url: string): string | null {
-  const [, host] = /^(?:https?:)?\/\/([^/?#\s"'`]+)/i.exec(url.trim()) ?? [];
-  return host === undefined ? null : host.toLowerCase();
-}
-
-/** The `src` of every script tag and the `href` of every stylesheet/preload link. */
-function tagLoads(html: string): string[] {
-  const urls: string[] = [];
-  for (const [tag] of html.matchAll(/<script\b[^>]*>/gi)) {
-    const src = /\bsrc\s*=\s*["']([^"']+)["']/i.exec(tag)?.[1];
-    if (src) urls.push(src);
-  }
-  for (const [tag] of html.matchAll(/<link\b[^>]*>/gi)) {
-    if (!/\brel\s*=\s*["'][^"']*\b(?:stylesheet|modulepreload|preload)\b/i.test(tag)) continue;
-    const href = /\bhref\s*=\s*["']([^"']+)["']/i.exec(tag)?.[1];
-    if (href) urls.push(href);
-  }
-  return urls;
-}
-
-/** Every string an import map's `imports` and `scopes` point at; a broken map is its own problem. */
-function importMapTargets(body: string): string[] {
-  try {
-    const map = JSON.parse(body) as {
-      imports?: Record<string, unknown>;
-      scopes?: Record<string, Record<string, unknown>>;
-    };
-    const values = [
-      ...Object.values(map.imports ?? {}),
-      ...Object.values(map.scopes ?? {}).flatMap((scope) => Object.values(scope ?? {})),
-    ];
-    return values.filter((value): value is string => typeof value === "string");
-  } catch {
-    return [];
-  }
-}
-
-/** The import maps' targets and the inline modules' specifiers, block by block. */
-function inlineLoads(html: string): string[] {
-  const urls: string[] = [];
-  for (const [, attrs = "", body = ""] of html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)) {
-    if (/\btype\s*=\s*["']importmap["']/i.test(attrs)) {
-      urls.push(...importMapTargets(body));
-      continue;
-    }
-    for (const [, spec = ""] of body.matchAll(/(?:\bfrom\s*|\bimport\s*\(?\s*)["']([^"'\n]+)["']/g)) urls.push(spec);
-  }
-  return urls;
-}
-
-/**
- * The hosts a page loads code or styles from (R6): script and stylesheet/preload tags, import map
- * entries and inline module imports. A plain link the player clicks is not a load. The studio's
- * preview runs games offline, so every one of these fails there.
- */
-export function networkLoads(html: string): string[] {
-  const urls = [...tagLoads(html), ...inlineLoads(html)];
-  return [...new Set(urls.map(remoteHost).filter((host): host is string => host !== null))];
-}
-
-/** The hosts in {@link networkLoads} the preview cannot reach: everything but the public CDNs. */
-export function unreachableLoads(html: string): string[] {
-  return networkLoads(html).filter((host) => !isPreviewCdnHost(host));
 }
 
 /** Every specifier an inline `<script type="module">` block imports — the page's own code. */

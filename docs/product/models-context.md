@@ -15,7 +15,8 @@ Tabs switch [accounts](../connections-and-context.md#several-accounts-per-subscr
 Unavailable picks block sends; without models, Connect AI model replaces the pill. A
 listing proves no access.
 
-Each chat keeps its model, effort and Loop; fresh games inherit the last picks. One effort, on the
+Each chat keeps its model, effort and Loop; fresh games inherit the last picks (Loop starts
+off). One effort, on the
 main agent's levels, serves every role (Workers and Reviewers at most high).
 Workers and Reviewers run only in Loop,
 surviving a main-agent change. Each Ollama job takes its own model; Reviewers must see images and
@@ -46,12 +47,12 @@ or logs.
 ## Permissions
 
 Every chat's pill after Mode picks **Auto** (Recommended; stops dangerous actions),
-**Manual**, **Accept edits**, **Plan** or **Bypass permissions** (confirmed; Rewind restores
-only the game); modes the engine cannot honour are greyed with why
+**Manual**, **Accept edits**, **Plan** or **Bypass permissions** (confirmed; Rewind
+restores only the game); modes an engine cannot honour are greyed
 ([by engine](../tool-permissions.md#other-engines)). Chats keep their mode; new ones inherit the
-last Auto, Manual or Accept edits. Claude's chat and build lead work anywhere on your Mac with
-your access, workers in your mode but never in sign-ins, Genex's data or other games; a Loop
-worker's question lapses after five minutes ([details](../tool-permissions.md)).
+last Auto, Manual or Accept edits. Chats and leads work anywhere on your Mac with your access,
+workers with the lead's tools in your mode but never in sign-ins, Genex's data or other games; a
+question lapses unanswered after five minutes ([details](../tool-permissions.md)).
 
 Read denials cover sensitive system/account locations; Codex's are advisory, not whole-disk
 isolation.

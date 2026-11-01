@@ -6,7 +6,13 @@ import { useEffect, useMemo, useState } from "react";
 import { SECOND_MS } from "../../shared/duration.ts";
 import type { ProjectAsset } from "../../shared/game-assets.ts";
 import { type IterationNode, type RunGraph, runIdOf, type Shot } from "../run-graph.ts";
-import { type CameraPair, camerasToCompare, frameDifference, savePointShot } from "../run-graph-pictures.ts";
+import {
+  type CameraPair,
+  camerasToCompare,
+  changedShare,
+  frameDifference,
+  savePointShot,
+} from "../run-graph-pictures.ts";
 import { PictureSource, type WorkerPicture } from "../run-steps.ts";
 import { loadStill, type StillSource, useStill } from "../stills.ts";
 
@@ -17,6 +23,9 @@ const COMPARE_W = 32;
 const COMPARE_H = 18;
 /** The largest side of the stills read for a comparison. */
 const COMPARE_PX = 64;
+/** The size two pictures of one frame are measured at for a visible change: a small sprite still shows. */
+const CHANGE_W = 160;
+const CHANGE_H = 90;
 /** A node's picture: the largest side read for it. */
 const NODE_PICTURE_PX = 640;
 
@@ -163,20 +172,59 @@ export function useReferenceFrames(project: string | null, runId: string): Refer
 /** Each pair of frames measured so far, by its two paths: a save point's frames never change. */
 const measured = new Map<string, Promise<number | null>>();
 
-/** A still's pixels at the comparison size, or null when it cannot be read or drawn. */
-async function pixelsOf(path: string): Promise<Uint8ClampedArray | null> {
-  const src = await loadStill({ run: path, maxPx: COMPARE_PX });
+/** A still's pixels at a size (the save points' comparison size by default), or null when it cannot be read or drawn. */
+async function pixelsOf(
+  path: string,
+  size = { width: COMPARE_W, height: COMPARE_H, maxPx: COMPARE_PX },
+): Promise<Uint8ClampedArray | null> {
+  const src = await loadStill({ run: path, maxPx: size.maxPx });
   if (!src || typeof document === "undefined") return null;
   const image = new Image();
   image.src = src;
   await image.decode();
   const canvas = document.createElement("canvas");
-  canvas.width = COMPARE_W;
-  canvas.height = COMPARE_H;
+  canvas.width = size.width;
+  canvas.height = size.height;
   const context = canvas.getContext("2d", { willReadFrequently: true });
   if (!context) return null;
-  context.drawImage(image, 0, 0, COMPARE_W, COMPARE_H);
-  return context.getImageData(0, 0, COMPARE_W, COMPARE_H).data;
+  context.drawImage(image, 0, 0, size.width, size.height);
+  return context.getImageData(0, 0, size.width, size.height).data;
+}
+
+/** Each pair of pictures measured for a visible change, by their two paths: a kept picture never changes. */
+const shares = new Map<string, Promise<number | null>>();
+
+/** The share of pixels that changed between two pictures under the run folder, once; null when either can't be read. */
+function shareOf(before: string, now: string): Promise<number | null> {
+  const key = `${before}\n${now}`;
+  const known = shares.get(key);
+  if (known) return known;
+  const size = { width: CHANGE_W, height: CHANGE_H, maxPx: CHANGE_W };
+  const pending = Promise.all([pixelsOf(before, size), pixelsOf(now, size)])
+    .then(([a, b]) => (a && b ? changedShare(a, b) : null))
+    .catch(() => null);
+  shares.set(key, pending);
+  return pending;
+}
+
+/**
+ * How much `now` changed from `before`, two pictures of the same frame under the run folder
+ * (`changedShare`): undefined while it is measured, null when either could not be read.
+ */
+export function usePictureChange(before: string | null, now: string | null): number | null | undefined {
+  const [share, setShare] = useState<{ key: string; value: number | null } | null>(null);
+  const key = before && now ? `${before}\n${now}` : "";
+  useEffect(() => {
+    if (!before || !now) return;
+    let cancelled = false;
+    void shareOf(before, now).then((value) => {
+      if (!cancelled) setShare({ key: `${before}\n${now}`, value });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [before, now]);
+  return share?.key === key ? share.value : undefined;
 }
 
 /** How much one camera's frame changed between two save points, once; null when either frame is missing. */
@@ -232,7 +280,8 @@ function workerStillSource(
 ): StillSource | null {
   if (picture?.source === PictureSource.File)
     return project ? { project, asset: picture.file, maxPx: NODE_PICTURE_PX } : null;
-  if (picture?.source === PictureSource.Render) return { run: picture.path, maxPx: NODE_PICTURE_PX };
+  // A render, a kept copy and the merged build are files under the run's folder.
+  if (picture && "path" in picture) return { run: picture.path, maxPx: NODE_PICTURE_PX };
   return reviewed ? { run: reviewed.path, maxPx: NODE_PICTURE_PX } : null;
 }
 

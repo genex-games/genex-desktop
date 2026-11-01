@@ -1,10 +1,10 @@
 /**
  * Substrate additions for Autopilot: preview pool, worktree RPC,
- * per-directory delegation lock, budget ledger, and the judge/ freeze. All behavior-preserving
+ * per-directory delegation lock and budget ledger. All behavior-preserving
  * for existing callers — these tests assert the new seams and the old defaults side by side.
  */
 import assert from "node:assert/strict";
-import { readFile, stat, writeFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { after, describe, it } from "node:test";
 import { BudgetLedger, usageTokens, workClassOf } from "../../src/substrate/budget.ts";
@@ -12,7 +12,6 @@ import { EngineId } from "../../src/shared/providers.ts";
 import { PreviewPool } from "../../src/substrate/preview-pool.ts";
 import type { PreviewPort } from "../../src/substrate/preview-port.ts";
 import type { DelegateResult } from "../../src/substrate/engines/types.ts";
-import { tools as selfTools } from "../../src/harness-seed/tools/self-tools.ts";
 import { makeFakePreview, startRig, type Rig } from "../helpers/studio-rig.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
@@ -164,28 +163,9 @@ describe("budget ledger", () => {
   });
 });
 
-describe("judge freeze (seed guard)", () => {
-  it("write_own_file refuses judge/ before touching anything", async () => {
-    const write = selfTools.find((tool: { name: string }) => tool.name === "write_own_file") as {
-      execute: (args: Record<string, unknown>, ctx: unknown) => Promise<unknown>;
-    };
-    const ctx = {
-      workspace: "/nowhere",
-      call: async () => {
-        throw new Error("must refuse before any substrate call");
-      },
-      notify: () => {},
-    };
-    await assert.rejects(
-      write.execute({ file: "judge/blind-compare.md", contents: "x", reason: "test" }, ctx),
-      /judge\/ is frozen/,
-    );
-    await assert.rejects(write.execute({ file: "judge", contents: "x", reason: "test" }, ctx), /frozen/);
-  });
-});
-
 describe("autopilot substrate over the real rig", () => {
-  it("worktree RPC, per-cwd delegation lock, cwd jail, and the sandboxed judge/ denial", async () => {
+  // Flipped (phase 5): the seed ships no judge rubrics, so there is no judge/ folder to deny or read.
+  it("worktree RPC, per-cwd delegation lock and cwd jail", async () => {
     const rig = await startRig();
     rigs.push(rig);
     const api = apiOf(rig);
@@ -215,26 +195,14 @@ describe("autopilot substrate over the real rig", () => {
     assert.equal(exec.code, 0);
     assert.equal((await readFile(path.join(wt1.path, "facet-note.txt"), "utf8")).trim(), "facet-work");
 
-    // — the sandbox denies writes into judge/ even via raw shell —
-    const judgeFiles = await api["run.exec"]!({ command: "ls judge" }).then((r) => (r as { stdout: string }).stdout);
-    assert.ok(judgeFiles.trim().length > 0, "the seed ships judge rubrics");
-    const denied = (await api["run.exec"]!({
-      command: "echo bent-yardstick >> judge/$(ls judge | head -1)",
-    })) as { code: number | null };
-    assert.notEqual(denied.code, 0, "a judge/ write must be denied by the sandbox");
-    const readsFine = (await api["run.exec"]!({
-      command: "cat judge/$(ls judge | head -1) > /dev/null && echo ok",
-    })) as { code: number | null; stdout: string };
-    assert.equal(readsFine.stdout.trim(), "ok", "judge/ stays readable — frozen, not hidden");
-
-    // — nor into the harness's own code, from its folder or any other: that goes through the
+    // — the sandbox denies writes into the harness's own code, from its folder or any other: that goes through the
     //   self-edit gate (write_own_file), never around it —
     const harnessWs = rig.core.layout.harnessWs;
     for (const [command, cwd] of [
       ["echo 'export const x = 1;' > tools/x.ts", undefined],
       ["echo '// bent' >> loop/main.ts", undefined],
       ["echo '{}' > tsconfig.json", undefined],
-      // B7: prompts and skills change only through guardian.write_self, like the judge never does.
+      // B7: prompts and skills change only through guardian.write_self.
       ["echo note > skills/.probe", undefined],
       ["echo note > prompts/.probe", undefined],
       [`echo 'export const y = 1;' > ${JSON.stringify(path.join(harnessWs, "memory", "y.ts"))}`, wt1.path],
@@ -248,7 +216,8 @@ describe("autopilot substrate over the real rig", () => {
     await assert.rejects(stat(path.join(harnessWs, "prompts", ".probe")), { code: "ENOENT" });
     assert.doesNotMatch(await readFile(path.join(harnessWs, "loop", "main.ts"), "utf8"), /\/\/ bent/);
     const notes = (await api["run.exec"]!({
-      command: "echo note > library/.probe && cat library/.probe && rm library/.probe",
+      // The seed ships no library/ folder now; a folder of the harness's own is as writable.
+      command: "mkdir -p library && echo note > library/.probe && cat library/.probe && rm library/.probe",
     })) as { code: number | null };
     assert.equal(notes.code, 0, "the rest of the harness folder stays writable");
 
@@ -302,50 +271,6 @@ describe("autopilot substrate over the real rig", () => {
     await assert.rejects(
       api["snapshot.removeWorktree"]!({ project, path: rig.core.games.dirFor(project) }),
       /outside scratch/,
-    );
-  });
-});
-
-describe("v2 contract upgrade", () => {
-  it("replaces a pre-v2 studio.js with the template's and keeps the old copy", async () => {
-    const rig = await startRig();
-    rigs.push(rig);
-    const api = rig.core.api() as Record<string, (p: never) => Promise<unknown>>;
-    await api["game.scaffold"]!({ name: "oldgame", title: "Old", kind: "web" } as never);
-    const dir = path.join(rig.core.layout.gamesRoot, "oldgame");
-    // A fresh scaffold already carries v2: nothing to do.
-    // A fresh scaffold already carries v2 and the material library: nothing to do.
-    assert.deepEqual(await api["game.upgradeContract"]!({ project: "oldgame" } as never), {
-      upgraded: false,
-      materialsAdded: false,
-    });
-    // A v1 contract (no inspect()) the studio shipped is upgraded, the old file kept beside it.
-    await writeFile(
-      path.join(dir, "src", "studio.js"),
-      await readFile(path.join(import.meta.dirname, "..", "fixtures", "shipped", "studio-generation-1.js.txt"), "utf8"),
-    );
-    const before = (await api["game.validate"]!({ project: "oldgame" } as never)) as { warnings: string[] };
-    assert.ok(
-      before.warnings.some((w) => /predates the v2 contract/.test(w)),
-      "validate names the old contract",
-    );
-    const result = (await api["game.upgradeContract"]!({ project: "oldgame" } as never)) as {
-      upgraded: boolean;
-      backup: string;
-    };
-    assert.equal(result.upgraded, true);
-    assert.equal(result.backup, "src/studio.v1.js");
-    assert.match(await readFile(path.join(dir, "src", "studio.js"), "utf8"), /inspect/);
-    assert.match(await readFile(path.join(dir, "src", "studio.v1.js"), "utf8"), /version: 1/);
-    // A v1 main.js on the v2 studio.js: the contract exists, the game does not feed it yet.
-    await writeFile(
-      path.join(dir, "src", "main.js"),
-      'import { installStudio } from "./studio.js";\ninstallStudio({ update() {}, render() {} });\n',
-    );
-    const validation = (await api["game.validate"]!({ project: "oldgame" } as never)) as { warnings: string[] };
-    assert.ok(
-      validation.warnings.some((w) => /without scene\/camera\/player/.test(w)),
-      "validate now asks main.js to pass the v2 config",
     );
   });
 });

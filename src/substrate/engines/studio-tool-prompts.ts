@@ -46,11 +46,11 @@ export const SHELL_THIS_TURN = {
   Bash: `This turn your shell is Bash (Git Bash): ${STUDIO_SHELL_TOOL} is not here this turn, whatever this session used before.`,
 } as const;
 
-/** `checkpoint`: the contractor decides which moments are worth showing. */
+/** `checkpoint`: an optional save point the session may make. */
 export const CHECKPOINT_TOOL = {
   description:
-    "Tell the studio the game just reached a moment worth seeing (it first runs end-to-end, a feature became playable). The studio lights the user's Reload with your note, so they see it the moment they press it.",
-  note: "One short sentence: what just became visible or playable.",
+    "Save a checkpoint of the game folder with a short note. Genex lights the person's Reload with the note.",
+  note: "One short sentence: what changed.",
   reply: "Shown to the user.",
   /** The studio's own checkpoint (`DelegateRequest.onCheckpoint`) threw: the session reads why and goes on. */
   failed: (why: string) => `The checkpoint failed: ${why}`,
@@ -59,19 +59,15 @@ export const CHECKPOINT_TOOL = {
 /** `capture` as Claude Code reads it: an MCP tool whose answer is a list of frame files. */
 export const CLAUDE_CAPTURE_TOOL = {
   description:
-    "LOOK at your own build: renders THIS workspace (your uncommitted edits included) in a hidden preview and saves fresh screenshots to files. Returns the file paths — Read them to actually see the frames. Use it after every meaningful change; a defect you catch here is an iteration you do not lose.",
-  cameras:
-    "Comma-separated camera names to capture (as registered in the studio contract). Omit for your part's own cameras, or every registered camera when it has none.",
-  page: "A bench page to capture instead of the game: a .html file in this workspace that mounts just your module (for example bench/<part>.html). It loads in seconds; omit it to capture the game, and capture the game before you finish.",
+    "Renders this workspace (your uncommitted edits included) in a hidden preview and saves a screenshot of the page to a file. Returns the file path and the page's console errors.",
+  page: "Optional: a .html file in this workspace to capture instead of the game.",
 } as const;
 
 /** `capture` as Codex reads it: a bridge command that prints the frame files. */
 export const CODEX_CAPTURE_TOOL = {
   description:
-    "LOOK at your own build: renders THIS workspace (your uncommitted edits included) in a hidden preview and saves fresh screenshots to files. Prints the file paths — read them to actually see the frames. Use it after every meaningful change.",
-  cameras:
-    "Comma-separated camera names as registered in the studio contract. Omit for your part's own cameras, or every camera when it has none.",
-  page: "A bench page to capture instead of the game: a .html file in this workspace that mounts just your module (for example bench/<part>.html). Omit it to capture the game, and capture the game before you finish.",
+    "Renders this workspace (your uncommitted edits included) in a hidden preview and saves a screenshot of the page to a file. Prints the file path and the page's console errors.",
+  page: "Optional: a .html file in this workspace to capture instead of the game.",
 } as const;
 
 /** What a Loop chat's bridged tool answers: it only records; the harness runs the real thing once the reply ends. */

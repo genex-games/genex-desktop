@@ -94,7 +94,6 @@ function recordingLive(): PreviewPort & { muted: boolean[] } {
     muted,
     setAudioMuted: (value: boolean) => void muted.push(value),
     setVisible: () => {},
-    setObserved: () => {},
   } as unknown as PreviewPort & { muted: boolean[] };
 }
 

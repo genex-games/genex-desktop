@@ -26,7 +26,6 @@ import { type EventEnvelope, EventKind } from "../shared/event-log.ts";
 import type { MakingPhase } from "../shared/asset-making.ts";
 import type { ProjectAsset, ProjectAssets } from "../shared/game-assets.ts";
 import { messageQueueState, QueueState, type QueueView } from "../shared/message-queue.ts";
-import { normalizeOptimization, type OptimizationResultV1 } from "../shared/optimization.ts";
 import {
   executionStep,
   isExecutionEvent,
@@ -38,6 +37,7 @@ import {
 } from "../shared/run-state.ts";
 import type { RunSummary } from "../shared/run-summary.ts";
 import { LoopProfile } from "../shared/project-facts.ts";
+import { type HealthFinding, isHealthFinding } from "../shared/preview-contract.ts";
 import { isWorkerStopCode, poolWorkerId, type WorkerStopCode } from "../shared/workers.ts";
 import {
   type AssetLedger,
@@ -107,7 +107,6 @@ export const GraphNodeKind = {
   Facet: "facet",
   Iteration: "iteration",
   Integration: "integration",
-  Optimization: "optimization",
   Final: "final",
   Blender: "blender",
   Assets: "assets",
@@ -511,6 +510,11 @@ export interface AssetInfo {
   bytes: number;
   /** absolute path of the render PNG under the run folder, readable via `readRunStill` */
   render: string | null;
+  /**
+   * The copy the host kept of a picture it delivered, under the run folder (`readRunStill`): there
+   * while its files are only in a build workspace. Absent on records written before it.
+   */
+  picture?: string;
   /** the second view (front), beside the first; null for events written before it existed */
   renderFront: string | null;
   facetId: string | null;
@@ -568,12 +572,6 @@ export interface BlenderNode {
   assets: AssetInfo[];
 }
 
-export interface OptimizationNode {
-  kind: "optimization";
-  id: "optimization";
-  result: OptimizationResultV1;
-}
-
 /** The lead of a tree, carrying the background work (jobs) of its run or chat turn, oldest first. */
 export interface LeadNode {
   kind: "lead";
@@ -583,8 +581,8 @@ export interface LeadNode {
 
 /**
  * The reviewer's check of the lead's claim that the run is done, by a reviewer that did none of the
- * work: where its newest round stands, and every round (`run-graph-finish.ts`). Before any claim it
- * is `not_yet` with no round, the place the check waits in.
+ * work, when the lead asked for one: where its newest round stands, and every round
+ * (`run-graph-finish.ts`).
  */
 export interface FinishCheckNode extends FinishCheckFields {
   kind: "finish_check";
@@ -597,7 +595,6 @@ export type GraphNode =
   | FacetNode
   | IterationNode
   | IntegrationNode
-  | OptimizationNode
   | FinalNode
   | BlenderNode
   | AssetsNode
@@ -615,6 +612,22 @@ export interface GraphEdge {
   kind: EdgeKind;
   /** how many routed defects / flags this edge stands for */
   count: number;
+}
+
+/** One health check of the run's build (`integration_health`): its head, whether it ran, and its picture. */
+export interface HealthLook {
+  head: string | null;
+  ok: boolean;
+  /** the screenshot the check kept, under the run folder; null on records written before it */
+  picture: string | null;
+  /** the part whose worker's merge it checked; null for any other check */
+  worker: string | null;
+  /** what it found wrong, in the host's words */
+  problems: string[];
+  /** the host's code for each problem; null on records written before them */
+  findings: HealthFinding[] | null;
+  /** its record's place in the log */
+  seq: number;
 }
 
 export interface RunGraph {
@@ -647,6 +660,8 @@ export interface RunGraph {
   tree: boolean;
   /** The pictures the run's observers kept (`observer_capture`), oldest first: what Live shows of a run. */
   captures: CaptureInfo[];
+  /** Every health check of the run's build, oldest first: the pictures of its build as it grew. */
+  health: HealthLook[];
   /** The chat turn (its message id) this graph is, when it is a turn's and no run's. */
   turn?: string;
 }
@@ -708,7 +723,6 @@ interface GraphDraft {
   baseStarted: boolean;
   integration: IntegrationNode;
   final: FinalNode;
-  optimization: OptimizationNode | null;
   blender: BlenderNode | null;
   assets: AssetLedger;
   facets: Map<string, FacetDraft>;
@@ -725,6 +739,7 @@ interface GraphDraft {
   runDir: string | null;
   lastMerged: RunGraph["lastMerged"];
   mergedHead: RunGraph["mergedHead"];
+  health: HealthLook[];
   /** Running, paused or finished: the one execution rule, fed this run's lifecycle records. */
   execution: RunExecution | null;
   /** the moment of the record being read — a round first seen in it started then */
@@ -910,7 +925,6 @@ function newGraphDraft(runId: string, turn: string | null): GraphDraft {
       ledger: null,
     },
     final: newFinalNode(),
-    optimization: null,
     blender: null,
     assets: newAssetLedger(),
     facets: new Map(),
@@ -921,6 +935,7 @@ function newGraphDraft(runId: string, turn: string | null): GraphDraft {
     runDir: null,
     lastMerged: null,
     mergedHead: null,
+    health: [],
     execution: null,
     eventAt: null,
     seq: 0,
@@ -1176,9 +1191,6 @@ function applyRunEvent(graph: GraphDraft, custom: { event_type: string }, entry:
       break;
     case CustomEvent.IntegrationLedger:
       onLedger(graph.integration, payload);
-      break;
-    case CustomEvent.OptimizationUpdated:
-      updateOptimization(graph, payload);
       break;
     case CustomEvent.RunFinished:
       onRunFinished(graph, entry);
@@ -1586,11 +1598,24 @@ function onAdvice(graph: GraphDraft, entry: RunEntry): void {
   if (round) round.advice = advice;
 }
 
-/** Did the merged build run? Only a head that did is worth offering the user mid-run. */
+/**
+ * Did the merged build run? Only a head that did is worth offering the user mid-run. Each check
+ * is kept with its picture and the worker whose merge it checked, named as the graph names its part.
+ */
 function onHealth(graph: GraphDraft, payload: Payload): void {
   const head = strOrNull(payload.head);
   const { mergedHead } = graph;
   if (head && mergedHead?.head === head) mergedHead.healthy = payload.ok === true;
+  const worker = strOrNull(payload.worker);
+  graph.health.push({
+    head,
+    ok: payload.ok === true,
+    picture: strOrNull(payload.picture),
+    worker: worker ? partOfAsset(graph, restartOf(graph, worker).id) : null,
+    problems: strings(payload.problems),
+    findings: Array.isArray(payload.findings) ? payload.findings.filter(isHealthFinding) : null,
+    seq: graph.seq,
+  });
 }
 
 function onLedger(integration: IntegrationNode, payload: Payload): void {
@@ -1601,19 +1626,9 @@ function onLedger(integration: IntegrationNode, payload: Payload): void {
   };
 }
 
-/** The newest optimisation result of this run wins; one for another run, or an older one, is ignored. */
-function updateOptimization(graph: GraphDraft, raw: unknown): void {
-  const result = normalizeOptimization(raw);
-  if (result?.runId !== graph.runId) return;
-  const current = graph.optimization;
-  if (!current || result.sequence > current.result.sequence)
-    graph.optimization = { kind: GraphNodeKind.Optimization, id: GraphNodeKind.Optimization, result };
-}
-
 function onRunFinished(graph: GraphDraft, entry: RunEntry): void {
   const { run, final } = graph;
   const { payload } = entry;
-  updateOptimization(graph, payload.optimization);
   run.finishedAt = entry.event.created_at;
   run.victory = bool(payload.victory);
   run.stoppedBecause = strOrNull(payload.stoppedBecause);
@@ -1711,6 +1726,7 @@ function assembleGraph(graph: GraphDraft): RunGraph {
     verdicts: graph.verdicts,
     tree,
     captures: graph.captures,
+    health: graph.health,
     ...(graph.turn ? { turn: graph.turn } : {}),
   };
 }
@@ -1725,15 +1741,17 @@ const isTree = (graph: GraphDraft): boolean =>
   graph.leadsWorkers || graph.workers.placed || graph.jobs.size > 0 || graph.finish.size > 0;
 
 /**
- * A run draws its finish check while it waits for one, and once its lead made a claim for the ask it
- * is on, finished or not: a reopened run that finished again without a claim of its own draws none.
+ * A run draws its finish check once its lead asked a reviewer about a claim for the ask it is on,
+ * finished or not. A Loop asks one only when its lead does (`review=yes`), so nothing waits to run
+ * at the end: a run whose lead asked none, a reopened one's new ask included, draws none.
  */
 const drawsFinishCheck = (graph: GraphDraft): boolean =>
-  awaitsFinishCheck(graph) || [...graph.finish.keys()].some((round) => round >= graph.finishFrom);
+  [...graph.finish.keys()].some((round) => round >= graph.finishFrom);
 
 /**
- * A run's tree waits for its finish check until the run finishes; a chat turn's never has one. A
- * paused run is not over, though the director closes a pause with a `run_finished` that says so.
+ * A run's tree may still get a round of its finish check until the run finishes; a chat turn's never
+ * has one. A paused run is not over, though the director closes a pause with a `run_finished` that
+ * says so.
  */
 function awaitsFinishCheck(graph: GraphDraft): boolean {
   if (graph.turn) return false;
@@ -1821,19 +1839,14 @@ function settleAssets(graph: GraphDraft): AssetInfo[] {
   return keptAssetJobs(graph.assets);
 }
 
-/** The integration, the optimisation when there was one, the final card, and the modeller and asset nodes. */
+/** The integration, the final card, and the modeller and asset nodes. */
 function drawClose(graph: GraphDraft, nodes: GraphNode[], edges: GraphEdge[]): void {
-  const { optimization, blender } = graph;
-  nodes.push(graph.integration, ...(optimization ? [optimization] : []), graph.final);
+  const { blender } = graph;
+  nodes.push(graph.integration, graph.final);
   if (blender) nodes.push(blender);
   const jobs = settleAssets(graph);
   if (jobs.length) nodes.push({ kind: GraphNodeKind.Assets, id: GraphNodeKind.Assets, jobs });
-  if (!optimization) {
-    edges.push(flowEdge(GraphNodeKind.Integration, GraphNodeKind.Final));
-    return;
-  }
-  edges.push(flowEdge(GraphNodeKind.Integration, GraphNodeKind.Optimization));
-  edges.push(flowEdge(GraphNodeKind.Optimization, GraphNodeKind.Final));
+  edges.push(flowEdge(GraphNodeKind.Integration, GraphNodeKind.Final));
 }
 
 /** Cross edges resolve to iteration nodes where they exist, otherwise the facet header; repeats are counted. */
@@ -1949,6 +1962,19 @@ export function headVerdict(graph: RunGraph): VerdictRecord | null {
   const head = graph.mergedHead?.head ?? null;
   const forHead = head ? graph.verdicts.filter((verdict) => verdict.build.head === head) : [];
   return forHead.at(-1) ?? graph.verdicts.at(-1) ?? null;
+}
+
+/**
+ * The newest health check's screenshot of the build the run stands on: the newest of `head` when a
+ * check looked at it, else the newest any check kept, `borrowed` when it shows an earlier head
+ * than `head` (the lead committed since). Null while no check kept a picture.
+ */
+export function healthPicture(graph: RunGraph, head: string | null): { path: string; borrowed: boolean } | null {
+  const pictured = graph.health.filter((look): look is HealthLook & { picture: string } => look.picture !== null);
+  const ofHead = head ? pictured.findLast((look) => look.head === head) : undefined;
+  if (ofHead) return { path: ofHead.picture, borrowed: false };
+  const newest = pictured.at(-1);
+  return newest ? { path: newest.picture, borrowed: head !== null } : null;
 }
 
 /** `…/runs/run_x/facet_a/iter_001/screenshots/cam.jpg` → `…/runs/run_x`. */
@@ -2173,10 +2199,7 @@ export function joinBuildsView(
   summary: RunSummary | null,
   inventory: ProjectAssets | null,
 ): RunGraph {
-  const nodes = joinAssetInventory(
-    restored.nodes.filter((node) => node.kind !== GraphNodeKind.Optimization || node.result.outcome !== "skipped"),
-    inventory,
-  );
+  const nodes = joinAssetInventory(restored.nodes, inventory);
   return { ...restored, nodes, runDir: summary?.runDirectory ?? restored.runDir, summary: summary ?? undefined };
 }
 

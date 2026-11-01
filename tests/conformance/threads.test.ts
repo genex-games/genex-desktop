@@ -701,7 +701,7 @@ describe("context management", () => {
     assert.equal(prompt.messages.length, 3, "nothing else is dropped");
   });
 
-  it("a local model's identity names no engine and says where it runs and what the game holds; a web game's adds three.js and the web rules", async () => {
+  it("a local model's identity names no engine and says where it runs and what the game holds; a web game's adds the web rules", async () => {
     const seed = new URL("../../src/harness-seed", import.meta.url).pathname;
     const systemFor = async (game: Record<string, unknown> | null, kinds: unknown[] = []) => {
       const ctx = {
@@ -715,34 +715,39 @@ describe("context management", () => {
       };
       return (await materializePrompt(ctx as never, { threadId: "t1", project: "g" } as never)).systemPrompt;
     };
+    // Flipped (Loop phase 5): a web game's rules name no library (no three.js) and no page contract
+    // (no window.__studio or game_state()); they are the "Building a web game" section.
+    const WEB_RULES = /## Building a web game/;
     const neutral = await systemFor({ name: "g", web: false });
     assert.match(neutral, /You build games on this computer/, "the shipped identity was read");
-    assert.doesNotMatch(neutral, /three\.js/i);
-    assert.match(await systemFor({ name: "g", web: true }), /three\.js/);
-    assert.match(await systemFor({ name: "g" }), /three\.js/, "a descriptor without the flag is a web game");
+    assert.doesNotMatch(neutral, WEB_RULES);
+    assert.match(await systemFor({ name: "g", web: true }), WEB_RULES);
+    assert.match(await systemFor({ name: "g" }), WEB_RULES, "a descriptor without the flag is a web game");
     assert.doesNotMatch(
       await systemFor({ name: "g", web: true, engine: { kind: GameEngine.Unreal } }),
-      /three\.js/i,
+      WEB_RULES,
       "a game linked to Unreal is no web page",
     );
     const godot = await systemFor({ name: "g", dir: "/AI Games/g", facts: [{ id: "godot-project", path: "." }] });
     assert.match(godot, /inside Genex[^\n]*the folder `AI Games\/g`; it holds a Godot project at its root/);
-    assert.doesNotMatch(godot, /window\.__studio|game_state\(\)/, "a Godot game gets no web page rules");
+    assert.doesNotMatch(godot, WEB_RULES, "a Godot game gets no web page rules");
     const web = await systemFor({ name: "g", dir: "/AI Games/g", facts: [{ id: "web-game", path: "." }] });
     assert.match(web, /it holds a web game at its root/);
-    assert.match(web, /window\.__studio/);
-    assert.match(web, /game_state\(\)/);
-    // A new game with no kind yet starts as a web game through start_web_game, by its bare name.
+    assert.match(web, WEB_RULES);
+    assert.doesNotMatch(web, /three\.js|window\.__studio|game_state\(\)/);
+    // A new game with no kind yet may start as a web page through start_web_game, by its bare name.
+    // Flipped (Loop phase 5): web is one option, not the default the core recommends.
+    const WEB_STARTER = /start_web_game writes a starter page; it is one option, not a requirement/;
     for (const holds of [undefined, "nothing", "notes"]) {
       const pending = await systemFor({ name: "g", dir: "/AI Games/g", facts: [], ...(holds ? { holds } : {}) });
-      assert.match(pending, /call start_web_game first/, `${holds}: web is the default`);
+      assert.match(pending, WEB_STARTER, `${holds}: the web starter is offered`);
       assert.match(pending, /call plugins_find/, `${holds}: an engine goes through plugins_find`);
     }
     // An engine plugin that is on names its kind tool, as a chat's brief does.
     const unrealKind = { plugin: "unreal", name: "Unreal Engine", tool: "unreal__new-game", makes: ["unreal-project"] };
     const offered = await systemFor({ name: "g", dir: "/AI Games/g", facts: [] }, [unrealKind]);
     assert.match(offered, /When the request names Unreal Engine, call unreal__new-game/);
-    assert.match(offered, /call start_web_game first/, "web is still the default");
+    assert.match(offered, WEB_STARTER, "the web starter is still offered");
     const own = await systemFor({ name: "g", dir: "/AI Games/g", facts: [], holds: "own-files" });
     assert.doesNotMatch(own, /start_web_game/, "a folder of its own files takes no starter");
     assert.match(own, /look through them first/);

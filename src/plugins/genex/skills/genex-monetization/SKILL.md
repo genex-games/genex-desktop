@@ -1,15 +1,16 @@
 # Genex payments in AI Game Studio
 
 You are building inside AI Game Studio. Below the upstream marker is Genex's monetization card,
-unchanged. Where it disagrees with this preface, this preface wins.
+with the passages of advice Studio does not ship taken out. Where it disagrees with this preface,
+this preface wins.
 
 - Genex's currency is Nex; the card below calls it coin. Anything with a fixed price in Nex (a
   class or level unlock, a skin, an item), or anything the person wants to sell for real money
-  without naming a currency, is a Genex store item: follow the `genex-items` skill
-  (`genex__skill {"name":"genex-items"}`) and list it with `shop add` and its picture by default,
-  at any time, so its card shows in the chat. That is the default in Studio, whatever the card below says about catalogs. A price
+  without naming a currency, is a Genex store item, listed with `shop add` and its picture at any
+  time (the `genex-items` skill, `genex__skill {"name":"genex-items"}`), whatever the card below
+  says about catalogs. A price
   in coins, gold or gems is the game's own currency, unless the person says it is for real money:
-  then ask once whether they mean Nex.
+  then it may be Nex.
 - The card's dynamic payment requests (`requestPayment`, `getPayment`, `getPayments`) are only for
   an amount decided while playing, such as a player-approved action. They need no CLI call.
 - Studio's `@genex-ai/embed-sdk` already exports them. Add the package with
@@ -20,7 +21,7 @@ unchanged. Where it disagrees with this preface, this preface wins.
 - Studio's preview runs in local test mode, which has no wallet: a payment there never opens the
   platform sheet. Check the buttons, layout and delivery code with the game's own test fixtures.
   A real payment needs a build published on Genex (`genex__publish`), a signed-in player and that
-  player's confirmation: tell the user where to try it rather than claiming it works.
+  player's confirmation.
 - Store items (a picture, a description, a draft the person puts on sale, items other games can
   use, another creator's item) follow the `genex-items` skill, which says how Studio runs
   `genex shop add … --json` and `genex items add`.
@@ -34,7 +35,7 @@ unchanged. Where it disagrees with this preface, this preface wins.
 - Other commands map onto Studio tools as the `genex` skill describes
   (`genex__skill {"name":"genex"}`).
 
-<!-- upstream @genex-ai/cli-demo/templates/skills/genex-monetization/SKILL.md v1.36.17 sha256 a48accb99d8c08bc245b961438ddceed6831dca55fb81f5b58fb0fc70f2ea80c -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-monetization/SKILL.md v1.36.17 sha256 3e89008e7300adfc479b4fc43af0d20cab618ee0a30fe915392e93c821b6df99 -->
 ---
 name: genex-monetization
 description: Sell things in a Genex game for Nex, the currency players buy with real money — fixed-price Genex store items (`genex shop add`) by default, dynamic payment requests only for amounts decided while playing. Use when the player asks to sell things, add a shop, monetize, or make the game earn. Carries the hard rules: no paid randomness, no gambling, no donation mechanics, and a real-money price beside every Nex price.
@@ -47,13 +48,12 @@ the Genex store. Spending it inside a game is a ledger movement the game never
 touches. You design what is for sale; the platform owns the wallet, the
 confirmation, and the money. Nex is a name: "1,200 Nex", never "Nexes".
 
-Load this when the user asks to sell something or add payments. Build the game
-loop before adding commerce.
+Load this when the user asks to sell something or add payments.
 
 ## Which currency the person means
 
-- **A price in Nex means a Genex store item.** Build the thing into the game,
-  then list it with `npx genex shop add … --json` without asking, before or
+- **A price in Nex means a Genex store item.** It is listed with
+  `npx genex shop add … --json`, before or
   after the first publish (a folder with no linked game keeps a local draft).
   Price it from the store's grid: `npx genex shop list` prints it, and a price
   off the grid is refused with `price_off_grid`. The person puts it on sale.
@@ -111,71 +111,9 @@ odds table, an age gate, or a per-country check.
 
 ### When a request crosses a line
 
-Answer in exactly three parts, then build:
+Name the rule it crosses and build a compliant version. Never build the banned
+version "as an option" or a partial one. There is no escalation path.
 
-1. **Name it.** "A loot crate is paid randomness — the player pays before
-   knowing what they get."
-2. **Why.** One sentence. "Genex doesn't sell chance; it's a purchase the player
-   can't price, and it's what regulators fine studios over."
-3. **Offer the alternative,** concretely enough to start on, and build that.
-
-Never build the banned version "as an option", never build a partial one, and
-never ask the user to confirm they want it. If they insist, restate the rule
-once and build the compliant version. There is no escalation path.
-
-**What to build instead:**
-
-| They asked for | Build |
-| --- | --- |
-| Loot box, crate, mystery box, card pack | A direct-purchase shop: every item listed at a fixed price, contents visible. For the collecting feel, add a **visible catalog with a completion track** — any purchase advances a meter to a stated milestone reward. |
-| Gacha, banner, pull, summon | A **deterministic unlock**: the character costs a fixed price, or unlocks at a stated number of runs. Nex may buy a stated, visible number of those points. |
-| Prize wheel, spin-to-win, slot machine | A **free spin earned by finishing a run** (never bought), or a **"pick one of three"** screen where all three are visible and the player chooses. Keeps the moment, drops the wager. |
-| Casino game, blackjack, poker, roulette | The same game with **chips that are granted free each session, reset on restart, cannot be bought and cannot become Nex**. It becomes a card game. Sell cosmetics — table felt, card backs — for Nex. |
-| Coinflip, double-or-nothing, wager my Nex | A **skill-based risk/reward inside the run**: a harder route with a bigger payout, staking the run's own score, which was never purchasable. |
-| Betting on matches, PvP wagers | **Leaderboards with a fixed cosmetic reward for placement**, paid by the game. Nobody's balance goes down. |
-| Donate button, tip jar, "pls donate" | A **gift that is a purchase**: they buy a specific item at a stated price and give it. Or a **supporter cosmetic** — a badge or aura at a normal price, where what's delivered is visible. |
-| Pay to remove a wait / energy gate | **Delete the gate** and sell a permanent upgrade or a cosmetic. Pace with difficulty, not with a timer. |
-| Limited-time offer, flash sale | A **permanent tiered ladder** — the value comes from volume, not from a clock. |
-| Pay-to-win stat boost in a competitive game | **Cosmetics**, or a boost that only applies in single-player content. |
-
-## Designing a shop worth buying from
-
-Nine checks. Each one is answerable about your actual design.
-
-1. **The shop attaches to a progression that already exists.** Name the screen
-   it opens from and the meter a purchase moves. Build the loop first; a shop in
-   a game with nothing to want is furniture.
-2. **A boost shortens a grind the player has already felt.** State it in one
-   sentence: "this skips the ore-gathering they've done four times." If you
-   can't, it isn't a boost, it's a number.
-3. **Nothing sold invalidates the core loop.** If a paying and a non-paying
-   player both reach the end, the payer must not have skipped the part that IS
-   the game.
-4. **No manufactured friction.** If the annoyance wouldn't exist without the
-   shop, remove the annoyance instead of selling the cure.
-5. **Everything sold is reachable free.** Spending is a shortcut or a
-   decoration, never the only path.
-6. **A purchase has one clear price and promised result.** A store item's
-   price is on the server's grid (`genex shop list`), or Free. A dynamic
-   payment's `amountCoins` is a positive whole number of Nex from 1 to 100000,
-   further bounded by the platform surface, and needs no grid.
-7. **Every price shows real money next to it.** The platform confirmation
-   shows the server-frozen `priceDisplayUsdCents`. If rendering a receipt or
-   store price in the game, render that value too; never invent an exchange
-   rate. A button can simply say “Unlock” and let Genex show the price.
-8. **One currency layer between money and goods.** Nex buys items. A per-game
-   earned currency (coins, gold, gems) buys per-game upgrades. They never
-   convert into each other.
-9. **Paid ownership survives a reinstall.** Receipts live on the server; the
-   game recovers them on every boot and restores the promised state. A
-   confirmation can expire; a paid receipt does not expire with it.
-
-For a per-game earned currency (coins, gold, gems: earned by playing, never
-bought), the load-bearing number is **minutes of play per unit earned**. Set
-it, then price the cheapest meaningful item at one to three sessions of
-earning. Everything else follows. Spend sinks come in three kinds — permanent
-upgrades, refills, cosmetics — and cosmetics are what absorbs late-game
-currency without touching balance.
 
 ## Store items (the default)
 
@@ -190,7 +128,7 @@ npx genex shop add "Iron Key" --price 100 --type durable --json
 npx genex shop test <sku-id>  # owner-only free entitlement; no Nex moves
 ```
 
-List the item once it works in the game, without asking. When the Genex
+When the Genex
 store is on, `genex shop add` makes a draft: `getShop()` leaves it out of the
 live game and `buy()` cannot sell it until the person puts it on sale. `--json`
 makes the Genex app show its **Put on sale** card; never put it on sale
@@ -202,8 +140,7 @@ tell the person so.
 `getShop()` reads store items even for guests and preview builds;
 `buy({ skuId })` requests their platform confirmation. Prices follow the grid
 printed by `genex shop list`. Render `name`, `iconUrl`, `priceCoins` (the price
-in Nex) and `priceDisplayUsdCents`; use an image of the actual item for its
-icon. `genex shop set` edits a listing and `genex shop remove` retires it
+in Nex) and `priceDisplayUsdCents`. `genex shop set` edits a listing and `genex shop remove` retires it
 without removing a buyer's ownership.
 
 Re-list `getEntitlements({ excludeConsumed: true })` on boot. Branch on
@@ -221,12 +158,7 @@ sets, a top-up of a size the player picks. A fixed price is a store item
 (above).
 
 Requires `@genex-ai/embed-sdk` **>= 0.33.0**. Earlier versions, including
-`^0.32.0`, do not export these payment helpers. Update the game's dependency
-before wiring them, then rebuild and publish the game:
-
-```bash
-npm install @genex-ai/embed-sdk@latest
-```
+`^0.32.0`, do not export these payment helpers.
 
 After `initEmbed()` and player identity are ready:
 
@@ -288,8 +220,8 @@ and `pending`. A timeout or uncertain response is `pending`: it is not proof of
 failure and not permission to apply the action or charge again. `canceled` is
 ordinary player choice; do not show an error for it.
 
-**Your game cannot read the player's Nex balance, and no HUD should show one.**
-The wallet spans the platform; let Genex show the balance and handle consent.
+**Your game cannot read the player's Nex balance.**
+The wallet spans the platform; Genex shows the balance and handles consent.
 Only fulfil a payment whose authoritative receipt says `succeeded`.
 
 The surface depends on the shell (`$genex-threejs-embed-auth`,
@@ -297,8 +229,8 @@ The surface depends on the shell (`$genex-threejs-embed-auth`,
 
 - **On the game's Genex page the sheet is drawn above the game.** To show it,
   the page leaves fullscreen first, and the SDK lets go of the
-  pointer lock before it asks. Treat payment like a pause; re-enter fullscreen
-  and pointer lock from the player's next Resume click.
+  pointer lock before it asks. Fullscreen and pointer lock come back only from
+  a later click or key press.
 - **The Genex app has no purchase surface yet.** `requestPayment()` fails
   without opening a sheet, and `buy()` resolves
   `failed` without opening anything too. When `getShell()` from `@genex-ai/embed-sdk` is `"app"`,
@@ -347,8 +279,7 @@ Do not make a real-money purchase automatically to test the feature.
 
 ## Checklist
 
-- [ ] The game has a worthwhile loop before commerce
-- [ ] Every fixed Nex price is a store item: built first, listed with
+- [ ] Every fixed Nex price is a store item, listed with
       `genex shop add … --json` at a grid price, left for the person to put on sale
 - [ ] A dynamic payment carries only an amount decided in play; its saved order
       binds one stable id, exact terms and promised action
@@ -391,5 +322,4 @@ surface. Do not split it into smaller hidden charges to bypass the limit.
 prints it (so does `genex shop list`); pick a price from it, or 0 for Free.
 Dynamic payments accept whole amounts subject to their own caps.
 
-**Everything Nex-related 404s** — Nex commerce is off on this stand. Build
-the rest and report the unavailable lane.
+**Everything Nex-related 404s** — Nex commerce is off on this stand.

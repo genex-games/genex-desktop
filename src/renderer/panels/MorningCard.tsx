@@ -24,6 +24,7 @@ import { FileText } from "../ui/FileText.tsx";
 import { AssetResults } from "../chat/AssetResults.tsx";
 import type { AssetDeliveredPayload } from "../../shared/game-assets.ts";
 import type { LoopProfile } from "../../shared/project-facts.ts";
+import type { LoopRefusal } from "../../shared/custom-events.ts";
 import { Presence, type PresenceChild } from "../ui/Presence.tsx";
 import { webBuildShown } from "../web-build-shown.ts";
 import { type StillToFix, stopWhyLine } from "../chat-entries.ts";
@@ -99,6 +100,8 @@ export interface MorningCardProps {
   learned?: string | null;
   /** how the Loop worked on its project (`run_finished.profile`), until its run summary says so too */
   profile?: LoopProfile | null;
+  /** why the Loop did not run at all (`run_finished.refusal`), when it didn't */
+  refusal?: LoopRefusal | null;
   project: string | null;
   /** the merged build, when the run left one that is not the live game */
   commit: string | null;
@@ -166,6 +169,7 @@ export function MorningCard({
   landingLine,
   learned,
   profile = null,
+  refusal = null,
   project,
   commit,
   after,
@@ -197,6 +201,7 @@ export function MorningCard({
     learned: learned ?? null,
     // The close says how the Loop worked before its summary loads: an in-place Loop never promises Live meanwhile.
     profile: outcome?.profile ?? profile,
+    refusal,
   });
   const outcomeHasPlayback = Boolean(project && outcome?.head && outcome.head !== outcome.base);
   const actions = handedOff

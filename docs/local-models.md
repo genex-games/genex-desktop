@@ -101,14 +101,11 @@ its workers and reviewers to a session provider; a session main agent may hand i
 Ollama, never its workers, because the director hires every worker as a session. Reviewers look
 at screenshots, so an Ollama model without vision is listed but disabled in their menu, and a pick
 that cannot see leaves reviewing to the first installed model that can (or to itself when none
-can). The playtester plays on the reviewers' model when it calls tools and sees, else on the main
-agent's engine with that engine's own model, holding the same `computer` tool as a session engine
-through `preview.computer` on its leased window (an older host keeps its shorthand tools); the
-scout is skipped under an Ollama main agent. A
+can). A
 build turn on a model that cannot see receives a note instead of the turn's pictures
 (`unseen-pictures-prompts.ts`). A send that crosses a job to or from Ollama needs the
-`local-roles` harness capability, which `main.ts` claims only when `model-roles.ts`,
-`playtester.ts` and `scout.ts` all export `SERVES_LOCAL_ROLES` (`local-roles-served.ts`): an
+`local-roles` harness capability, which `main.ts` claims only when `model-roles.ts` exports
+`SERVES_LOCAL_ROLES` (`local-roles-served.ts`): an
 agent-edited older copy would put an Ollama model id on a subscription, so main refuses the send
 instead.
 
@@ -126,7 +123,7 @@ the kind tool of an engine plugin on offer, from `plugins.tools`' `kinds`, or `p
 engine), and a folder of its own files of a kind no rule knows that it is
 looked through first. A web game's (`holdsWebGame`: `web-game` at its root, a game with no
 kind yet not included) adds `prompts/identity-web.md` (three.js, the preview window), and its rules
-add `prompts/operating-rules-web.md` (the preview's controls, `window.__studio`, determinism) to
+add `prompts/operating-rules-web.md` (the preview's controls, `window.__studio`) to
 `prompts/operating-rules.md`, which every turn reads.
 Interrupted tool calls receive an explicit unknown-result marker and are never replayed
 blindly. History is checkpointed atomically between tool actions. Before inference the pinned
@@ -151,11 +148,9 @@ limits the number of active workers/windows.
 Local text reads report their selected line range and total lines, including an explicit end-of-file
 response for out-of-range offsets. Sessions receive their turn/time budget up front.
 Local file tools resolve real paths, respect host read grants and deny lists, restrict writes
-to the session workspace and enforce worker ownership on writes. Shell commands use
+to the session workspace. Shell commands use
 ProcessSandbox, with workspace and Git metadata write roots, credential deny lists, no
-outbound domains, time/output ceilings and cancellation. Shell ownership additionally uses
-the same filesystem locks as Codex; as with Codex, those locks are advisory rather than an
-unbreakable edit boundary. Review and integration remain necessary. Read-only and coordinator
+outbound domains, time/output ceilings and cancellation. Read-only and coordinator
 sessions have no file-write or shell tool; a Loop chat that may launch a build keeps them, and
 its idle-round nudge asks it to finish or launch rather than implement. The host remains authoritative for
 which computer, capture, Blender, plugin, connector and director tools a role receives.
@@ -210,7 +205,7 @@ the instrumentation implementation. Existing imported projects retain their own 
 and contract-wiring path. Detailed quality work can follow the first captured, working scene.
 
 Writable local sessions offer an exact, unique-block `edit_file` tool for small corrections,
-with the same path and worker-ownership checks as full-file writes. Ambiguous matches fail
+with the same path checks as full-file writes. Ambiguous matches fail
 without changing the file.
 
 Unchanged duplicate file-section reads return guidance to use the existing information. Six

@@ -10,8 +10,9 @@
  *
  * The action vocabulary is Anthropic's `computer_toolset_20260801` (screenshot, zoom,
  * left_click …, key, type, scroll, wait) so both models already know how to hold it, plus the
- * studio verbs a game needs: `camera` (a named studio viewpoint), `state` (the game's own
- * numbers), `reload` (rebuild + reload after edits), `console` (errors since load).
+ * studio verbs a target may have: `state` (what it reports about itself), `reload` (rebuild +
+ * reload after edits), `console` (errors since load), and `camera` (a named viewpoint; no target
+ * offers one today).
  *
  * Electron-free: this file parses the flat arguments the bridge shim and the MCP schema
  * deliver and maps an action onto {@link PreviewInputAction}s. The port that executes them
@@ -45,7 +46,6 @@ import {
   COMPUTER_PARAMETER_TEXT,
   computerToolDescription,
   type ComputerToolRole,
-  knownCamerasLine,
 } from "./computer-tool-prompts.ts";
 
 export const COMPUTER_TOOL_NAME = "computer";
@@ -135,8 +135,7 @@ export type ScrollDirection = "up" | "down" | "left" | "right";
 
 /**
  * What an input action brings back with its answer: a picture of the whole screen, of only the
- * canvas, or nothing. Absent lets the session decide by role (a playtester and a judge look after
- * every move; a builder does not).
+ * canvas, or nothing. Absent lets the session decide (`observeByDefault`).
  */
 export const ComputerObserve = { Screenshot: "screenshot", Canvas: "canvas", None: "none" } as const;
 export type ComputerObserve = (typeof ComputerObserve)[keyof typeof ComputerObserve];
@@ -191,8 +190,6 @@ export const COMPUTER_VIEW = { width: 960, height: 600 } as const;
 const DEFAULT_SCROLL_NOTCHES = 3;
 /** Seconds a wait or a held key lasts when it names none. */
 const DEFAULT_DURATION_S = 1;
-/** How many camera names the tool description lists. */
-const MAX_LISTED_CAMERAS = 12;
 /** How much of an unknown surface word the note quotes back. */
 const MAX_QUOTED_SURFACE_CHARS = 40;
 /** How much of typed text a caption quotes. */
@@ -653,7 +650,6 @@ export interface ComputerToolSchema {
 export function computerToolDefinition(
   options: {
     role?: ComputerToolRole;
-    cameras?: string[];
     capabilities?: TargetCapabilities;
     view?: { width: number; height: number };
     observeByDefault?: boolean;
@@ -662,7 +658,6 @@ export function computerToolDefinition(
   } = {},
 ): ComputerToolSchema {
   const capabilities = options.capabilities ?? BROWSER_CAPABILITIES;
-  const cameras = knownCamerasLine((options.cameras ?? []).slice(0, MAX_LISTED_CAMERAS));
   const text = COMPUTER_PARAMETER_TEXT;
   const view = options.view ?? COMPUTER_VIEW;
   return {
@@ -670,7 +665,6 @@ export function computerToolDefinition(
     description: computerToolDescription({
       role: options.role ?? "builder",
       view,
-      cameras,
       capabilities,
       ...(options.observeByDefault ? { observeByDefault: true } : {}),
     }),
@@ -842,8 +836,6 @@ function describeWebAction(request: ComputerRequest): string {
 export type { PreviewSetup };
 
 const MAX_SETUP_ACTIONS = 24;
-/** The longest demo name a setup keeps. */
-const MAX_DEMO_CHARS = 80;
 /** The longest settle a setup may ask for. */
 const MAX_SETTLE_MS = 10 * SECOND_MS;
 /** The longest note a setup keeps. */
@@ -869,25 +861,12 @@ function normalizeGesture(raw: unknown): PreviewSetup["gesture"] | undefined {
   };
 }
 
-/** A setup's verify: a plain dotted state path, and what it should hold. */
-function normalizeVerify(raw: unknown): PreviewSetup["verify"] | undefined {
-  if (!raw || typeof raw !== "object") return undefined;
-  const v = raw as Record<string, unknown>;
-  if (typeof v.path !== "string" || !/^[a-zA-Z_$][\w$]*(\.[a-zA-Z_$][\w$]*)*$/.test(v.path)) return undefined;
-  if (v.path.split(".").some((key) => MACHINERY_KEYS.has(key))) return undefined;
-  return {
-    path: v.path,
-    ...("equals" in v ? { equals: v.equals } : {}),
-    ...(v.truthy === true ? { truthy: true } : {}),
-  };
-}
-
 /** A non-blank string, trimmed and cut to \`max\`; undefined for anything else. */
 function trimmedText(value: unknown, max: number): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim().slice(0, max) : undefined;
 }
 
-/** Untrusted JSON (a scout's answer, a journal) → a setup the studio will run, or null. */
+/** Untrusted JSON (a harness's setup, a journal) → a setup the studio will run, or null. */
 export function normalizeSetup(raw: unknown): PreviewSetup | null {
   if (!raw || typeof raw !== "object") return null;
   const o = raw as Record<string, unknown>;
@@ -899,51 +878,9 @@ export function normalizeSetup(raw: unknown): PreviewSetup | null {
     const actions = capActions(o.actions).slice(0, MAX_SETUP_ACTIONS);
     if (actions.length) setup.actions = actions;
   }
-  const demo = trimmedText(o.demo, MAX_DEMO_CHARS);
-  if (demo) setup.demo = demo;
   const settle = Number(o.settleMs);
   if (Number.isFinite(settle) && settle > 0) setup.settleMs = Math.min(MAX_SETTLE_MS, Math.round(settle));
-  const verify = normalizeVerify(o.verify);
-  if (verify) setup.verify = verify;
   const note = trimmedText(o.note, MAX_SETUP_NOTE_CHARS);
   if (note) setup.note = note;
-  return setup.actions || setup.demo || setup.verify || setup.gesture ? setup : null;
-}
-
-/** Path segments that would read the object machinery rather than the game's own state. */
-const MACHINERY_KEYS: ReadonlySet<string> = new Set(["__proto__", "prototype", "constructor"]);
-
-/** A dotted path read through own fields only: never the prototype chain, never its machinery. */
-function lookupPath(state: unknown, path: string): unknown {
-  let current: unknown = state;
-  for (const key of path.split(".")) {
-    if (typeof current !== "object" || current === null || MACHINERY_KEYS.has(key)) return undefined;
-    if (!Object.hasOwn(current, key)) return undefined;
-    current = (current as Record<string, unknown>)[key];
-  }
-  return current;
-}
-
-/** Did the state land? `null` when the state itself is unreadable (no contract, no answer). */
-export function setupReached(verify: PreviewSetup["verify"], state: unknown): boolean | null {
-  if (!verify) return null;
-  const readable = typeof state === "object" && state !== null && !(state as { __missing?: boolean }).__missing;
-  if (!readable) return null;
-  const value = lookupPath(state, verify.path);
-  if ("equals" in verify)
-    return value !== undefined && (value === verify.equals || String(value) === String(verify.equals));
-  if (verify.truthy) return Boolean(value);
-  return value !== undefined;
-}
-
-/** The same test as a harness probe expression, so the board can carry it as a check. */
-export function setupVerifyExpr(verify: PreviewSetup["verify"]): string | null {
-  if (!verify) return null;
-  if ("equals" in verify) {
-    const v = verify.equals;
-    const literal = typeof v === "number" || typeof v === "boolean" ? String(v) : JSON.stringify(String(v));
-    return `has(${JSON.stringify(verify.path)}) && ${verify.path} == ${literal}`;
-  }
-  if (verify.truthy) return `has(${JSON.stringify(verify.path)}) && ${verify.path}`;
-  return `has(${JSON.stringify(verify.path)})`;
+  return setup.actions || setup.gesture ? setup : null;
 }

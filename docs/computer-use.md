@@ -6,9 +6,9 @@ How agents play and look at what they build: one tool, one referee, swappable ta
 
 | Layer | What | Code |
 | --- | --- | --- |
-| 0 · delivery | How a provider's CLI receives the tool: Claude Code as an in-process MCP tool (deferred behind its tool search, like every live and connector tool, while the studio's `checkpoint`, `capture`, `run_command` and a chat's interview tools load with the prompt), OpenCode as a local MCP server relayed over the file bridge (`studio-mcp-shim.ts`, pictures inline), Codex through the file bridge (`studio-bridge.ts`, the fallback) or app-server dynamic tools where enabled, Bonsai and OpenRouter in `LocalSessions`, Ollama through `preview.computer` | `src/substrate/engines/*` |
+| 0 · delivery | How a provider's CLI receives the tool: Claude Code as an in-process MCP tool (deferred behind its tool search, like every live and connector tool, while the studio's `checkpoint`, `capture`, `run_command` and a chat's interview tools load with the prompt), OpenCode as a local MCP server relayed over the file bridge (`studio-mcp-shim.ts`, pictures inline), Codex through the file bridge (`studio-bridge.ts`, the fallback) or app-server dynamic tools where enabled, Bonsai and OpenRouter in `LocalSessions`; Ollama's plain chat holds no game `computer` tool | `src/substrate/engines/*` |
 | 1 · tool | One `computer` tool: Anthropic's `computer_toolset_20260801` actions, the studio verbs (`camera`, `state`, `reload`, `console`), `batch` and `observe`. Its description and action list are built from the target's capabilities, so a verb the target lacks is never offered and calling it gets a sentence, not a silent no-op | `src/substrate/computer-tool.ts`, `computer-tool-prompts.ts`, `computer-vocabulary.ts` |
-| 2 · session | The referee: parse, refuse what the target cannot do, keep the action budget, pace the clock, answer, check a goal, write the trace | `src/main/core/computer-session.ts`, `src/substrate/computer-trace.ts` |
+| 2 · session | The referee: parse, refuse what the target cannot do, keep the action budget, answer, write the trace | `src/main/core/computer-session.ts`, `src/substrate/computer-trace.ts` |
 | 3 · targets | A `ComputerTarget` with graded capabilities: the browser preview, a game speaking the Genex Play Protocol, and the person's desktop or a VM (cua-driver) | `src/substrate/computer-target.ts`, `src/shared/computer-target.ts`, `src/main/core/browser-preview-target.ts` |
 
 A new target is a new `ComputerTarget` and a `TargetSource` (how it loads, where its frames go).
@@ -26,86 +26,46 @@ than evidence from inside it.
 ## The session's rules
 
 - **Observe.** Input actions, `wait` and `batch` take `observe=screenshot|canvas|none`; the picture
-  comes back with the answer. It is on by default for the roles that play to judge (playtester,
-  judge) and off for builders. A picture that cannot be taken is said in the answer; the move
+  comes back with the answer. It is off by default for a game's computer and on for the person's
+  desktop (`observeByDefault`). A picture that cannot be taken is said in the answer; the move
   still counts.
 - **Batch.** Up to `MAX_BATCH_STEPS` (8) input actions and waits in one call, at most
   `MAX_INPUT_ACTIONS` (24) input events, stopping at the first that fails with its step named.
 - **Look and act.** `look dx dy` turns the view (mouse-look) on any target with a pointer;
   `act text [duration]` presses or holds a game's own named action on a target that declares them
-  (a Play Protocol game), for that much game time on a stepped clock.
+  (a Play Protocol game) for that long.
 - **Aliases.** cua's and OpenAI's action names (`click{button}`, `type_text`, `hotkey`,
   `keypress{keys}`, `drag{path}`, `scroll{scroll_x,scroll_y}` …) are read as the studio's own and
   never advertised.
 - **Budget.** `maxActions` counts moves (input actions, waits, batch steps) on the host; looking is
   free. A spent budget is a refusal sentence.
-- **Pacing.** `running` (builders, scouts, the lead), `paced` (the clock runs only during a move, on
-  wall time: playtesters), `stepped` (seeded on load, then exact game time: judges). What the target
-  can do is read on every load from the loaded target, so a Play Protocol game is paced by what its
-  `hello` declares. On a stepped clock every key stroke is its down, a few frames of game time and
-  its up (`computer-steps.ts`), a held key holds for that much game time, and a long wait is stepped
-  in chunks. The first time the target cannot step, the session paces on wall time and its trace
-  says `deterministic:false`; a target with no seed is never called replayable. A clock that cannot
-  be held is never paused, and its paced role is told so.
+- **Pacing.** Every session's game runs between its actions (`running`: workers, the lead, the
+  chat's own session); the tool says so. What the target can do is read on every load from the
+  loaded target, so a Play Protocol game is described by what its `hello` declares.
 - **Refusals and partial moves.** An action the target cannot do — or any step of a batch — is
   refused in a sentence, before the load against what such a target may do and after it against
   what the loaded one says. A move the target took only in part says `PARTLY` with the count; a
   batch stops where the game refused everything. An action that throws is answered as an error and
   still written to the trace.
-- **Quest.** A grant may carry `quest {id, until}`, read by the host (`normalizeSetup`: a plain
-  dotted path, own fields only, never `__proto__`/`constructor`). After every move the session
-  checks the game's own state; the first time it holds, the answer says `GOAL REACHED
-  (studio-verified)` and the trace row is marked `reached`. A goal that already held before the first
-  move never counts until it has stopped holding and holds again.
 - **Trace.** `trace.jsonl` beside the session's frames (a second session in the same folder writes
   `trace-2.jsonl`, and frames are numbered on past what the folder already holds, even after a
 restart, so none overwrites another's): one row per action with
   its arguments, route, frame, cursor, simulated milliseconds, input taken of planned, and
-  `refused`/`failed`/`reached` marks. The delegation's result carries the summary
-  (`DelegateResult.trace`), including every input route used.
-- **Studio-verified is the host's word.** A session that reaches its goal registers the trace and
-  the goal (`verified-traces.ts`); when the harness records an interaction as `studio-verified`,
-  `events.append` keeps that word for one record per registered trace, stamps it with the goal
-  (`quest`), and records anything else as `model-said` (`harness-events.ts` `vouchedInteractions`).
+  `refused`/`failed` marks.
+- **Interaction evidence is the host's only.** Nothing in the studio verifies an interaction, so a
+  `run_interaction_evidence` record, like a `chat_judge_result`, is written by the host alone
+  (`harness-events.ts` `HOST_CUSTOM_EVENTS`): `events.append` refuses a harness batch holding one.
+  Older logs still show both.
 
 ## Who holds it
 
-Builders (unless `computer: false`), the director, playtesters and scouts hold `computer` on a
-pooled window of their own, never Live. A **judge** (`DelegatePlaytestGrant.role: "judge"`) holds
-`computer` alone, is never offered the game's `state` or `console` and reads no state in its
-answers (the builder wrote both), plays on a stepped clock, and meets the game at its first screen.
-It is blind (`DelegateRequest.blind`), enforced where the engine can enforce it: Claude Code is
-offered no built-in but tool search (`tools`, an allowlist, so a built-in it adds later never
-arrives) and disallows every file, shell, edit and question tool; OpenCode denies every file tool; local
-sessions get no file tool. Codex reads the whole disk, so a Codex judge is only told to judge by
-playing (`BLIND_JUDGE_NOTE`) — the studio's goal check does not rest on that, but its other
-answers do. Every engine starts in the empty `scratch/blind-judge` folder and is never told the
-build's path. Its interaction evidence carries `source: hands-on-judge` and
-`objective: studio-verified` only when the quest held; a model's "yes" without it is incomplete.
+Workers (a capture grant, unless `computer: false`) and the director hold `computer` on a pooled
+window of their own, never Live; the chat's own session holds it on a game played in its engine's
+editor. A judge is a second opinion the lead asks for with `judge`: it reads the pictures it is
+given and holds no computer.
 
-**A judge for the chat (`judge_play`).** The chat's own session on a game the studio plays in a
-window is offered `judge_play` where the harness claims `chat-judge` (`judge-play-tool.ts`,
-`#offerJudge` in delegation; the harness's own loop calls `judge.play`, which answers only for a
-chat of that game). It takes one yes/no `ask`
-and an optional `goal_state`, and the host dispatches `chat_judge` to the harness, which runs the
-same `runHandsOnJudge` a build uses (`loop/chat-judge.ts`) on a leased hidden window, never Live or
-the desktop, so it needs no consent card. The judge plays the folder as it is: a blind, read-only
-judge takes its own folder lock (`judgeLockKey`), so it plays beside the session that holds the
-folder, while a playtester or any other session is still refused. The harness writes no evidence;
-the host keeps "verified by the studio" only when `takeVerified` vouches for the returned trace,
-and records one `chat_judge_result` row (host-only), drawn as one chat line in the checks list's
-words. Nothing changes unless the tool is called; an older kept seed without `SERVES_CHAT_JUDGE`
-claims no capability and the tool is not offered.
-
-`preview.computer` runs the same session on a window the harness leased, for engines whose tool loop
-is the harness's own (Ollama). It refuses Live and the stand-in, and accepts only the game's folder
-or a build under this game's run folder: the run id is a plain name, its folder is checked by real
-path, and the host's own records must say the run is this game's. One session per leased window and
-round (run, part, iteration, role, goal, entry, setup); a `describe` or `fresh` starts a new one, so
-the next player on a window never inherits a spent budget; calls on one window build one session at
-a time, and a replaced or released session stops what it started. A harness that ends (a crash or a
-restart) never sends its `preview.release`, so the host forgets the sessions on the windows it gives
-back for it (`releaseHarnessLeases`): a Play Protocol game's process stops and an editor's play is let go.
+A chat's earlier `chat_judge_result` rows (from before Genex dropped the chat's `judge_play`) still
+read as one chat line in the checks list's words.
 
 Codex's own computer use and browsers (`computer_use`, `in_app_browser`, `browser_use`,
 `browser_use_external`) are disabled on every launch: they would drive the person's real screen past
@@ -123,7 +83,7 @@ native-job sandbox with the GPU, as Godot needs to draw); the delegation then gi
 ([`src/main/core/game-bridge-target.ts`](../src/main/core/game-bridge-target.ts)) whose game runs in
 the `ProcessSandbox`. Handing a session its computer starts nothing (every chat turn is handed one):
 the game starts on the session's first move and stops at its release, and until it runs the tool
-offers what a conforming game may do. The playtest shorthands are not offered there; its moves are drawn on the
+offers what a conforming game may do. Its moves are drawn on the
 worker's agent screen like a browser game's (`targetFramePort`). Every plugin is held to the shared
 conformance suite (`tests/conformance/play-protocol.test.ts`, run against
 `tests/fixtures/fake-play-game.mjs`; `PLAY_GAME_COMMAND` points it at another game).
@@ -148,13 +108,12 @@ session whose plugin restarted takes over the play that mark still claims. While
 still has a part or a play-check of the game, a session is refused (`busy`). Capabilities
 (`EDITOR_CAPABILITIES`): a relative pointer (`look`, the clicks pressing where the view is aimed —
 `aimedClicks` — and the wheel; no point, drag or cursor), a clock the studio can stand still but not
-step (`Freeze`: the play's own pause, held between a judge's or playtester's moves, so a run never
-claims to replay), game state, input route `editor`. Who holds it: any session the studio hands a
-computer for a game whose enabled engine plugin provides every play tool and matches its link or facts —
-the chat's own ([`editor-play-session.ts`](../src/main/core/editor-play-session.ts)), and a judge's or
-playtester's through `_computerToolsFor`; `judge_play` is offered to such a chat, and the Unreal
-Loop's lead has its own (`loop/unreal/lead-judge.ts`). Nothing starts until the agent first uses it,
-and the session's end ends the play it started, never leaving a game paused. On a Mac, Unreal's
+step (`Freeze`: the play's own pause), game state, input route `editor`. Who holds it: any session
+the studio hands a computer for a game whose enabled engine plugin provides every play tool and
+matches its link or facts — the chat's own
+([`editor-play-session.ts`](../src/main/core/editor-play-session.ts)), and a worker's through
+`_computerToolsFor`. Nothing starts until the agent first uses it, and the session's end ends the
+play it started, never leaving a game paused. On a Mac, Unreal's
 background throttle is lifted only for an editor without hardware ray tracing (UE 5.8 hangs the GPU
 rendering a ray-traced level at full speed behind another app); see [plugins](plugins.md).
 
@@ -163,16 +122,15 @@ by `editorCapabilities`): `players` 1–8, `clock` (at most `freeze`: the play t
 step), `pointer` and `state`. Unreal declares none and keeps `EDITOR_CAPABILITIES`, as does Unity,
 which declares no engine. The declaration is known before play opens, so the tool is described
 from it; `play-open`'s answer (`players` joined,
-`capabilities` in the declaration's shape) can only narrow it. A session opens the players its grant
-asks for (`players` on a playtest or judge grant; one when absent, never more than declared). With
-more than one the tool offers `player=<n>`, which addresses that player's view, keys and state from
+`capabilities` in the declaration's shape) can only narrow it. A session opens one player. A play
+of more than one (the target's `players` option, never more than declared) has the tool offer `player=<n>`, which addresses that player's view, keys and state from
 then on (`selectPlayer`), and the target sends `player` to `play-input`, `play-shot` and
 `play-state` only above 1, so a one-player engine sees the wire it always did. `play-shot` answers
 base64 `data` with its `mime` (`image/jpeg` or `image/png`; anything else is read as PNG, and `png`
 is still read), refused in plain words over `MAX_PLAY_SHOT_BYTES` (1 MB). An engine refuses what it
 cannot do at all with `unsupported`: a pause is then asked once and the clock is known to run on;
 Unreal answers it for more than one player. The toy engine fixture (`tests/fixtures/toy-engine-plugin`)
-plays three players this way.
+plays three players this way (`editor-play-target.test.ts`).
 
 Roblox Studio declares `players` 8, `clock` `none`, `pointer` and `state`, and its play tools
 ([`plugins/roblox/computer-play.ts`](../src/plugins/roblox/computer-play.ts)) go through Studio's own
@@ -201,26 +159,19 @@ Unity provides the same six play tools through its Pipeline package
 the game's folder: no engine link is needed. Without an engine binding, the host
 selects a single enabled plugin whose six harness play tools each explicitly match the game's
 facts (`unity-project` for Unity); missing or ambiguous matches expose no editor computer.
-The chat, judges and playtesters then use the same editor target and `judge_play` path.
+The chat and a worker then use the same editor target.
 Unity captures the Game view, including its HUD, and waits for Play mode to finish starting before
 playing. Keyboard and mouse input require the installed, active Unity Input System; legacy
 `UnityEngine.Input` is unsupported, and this integration installs no packages. Fixed host-owned
 Pipeline code supplies relative mouse input and reads the game clock and player state. Pausing is
 idempotent, input is released after each move, and closing a session ends only agent-owned play.
-A fresh judge play never restarts a game the person started. A judge's or a playtester's play is
-asked for `fresh` only where the plugin's `play-open` declares that parameter (Unreal, Unity); an
-engine whose `play-open` does not (Roblox) is joined as it runs.
+A session never restarts a game the person started: a play that runs is joined as it runs.
 
-A judge's grant may name one of the judges the engine plugin declares (`judge`;
-[plugins](plugins.md#judges)): its session opens that judge's players, and `play-open`'s source runs
-one step right after the play first opens (`afterOpen`), the judge's probe, through the plugin's
-tool call under the play's locks. The first answer after that carries the probe's note and pictures,
-and a play that reaches the live game's saved data (`liveData: true` on `play-open`) says so there;
-later answers carry neither. A judge named for a game no engine plugin plays in its editor is
-refused.
+A play that reaches the live game's saved data (`liveData: true` on `play-open`) says so in the
+first answer after it opens (`afterOpen`); later answers do not.
 
-Roblox Studio's three judges ([plugins](plugins.md#judges)) open with these probes, each a harness
-tool under the `studio` lock that reads the play the play tools hold (`plugins/roblox/probes.ts`).
+The Roblox plugin also ships three probes, each a harness tool under the `studio` lock that reads
+the play the play tools hold (`plugins/roblox/probes.ts`).
 `players-state` takes a picture from each player and compares what each client sees of every
 player (who is there, leaderstats, attributes) with the server. `cheat-remotes` runs the package's
 `cheat-remotes.luau` in the player's Client data model: it lists every RemoteEvent,
@@ -414,7 +365,7 @@ app reopened behind Genex), since
   (a crash or a restart) stops its `desktop.computer` sessions, and the next harness's first call asks
   again.
 - **What it cannot do.** No clock, seed or replay; `state` is the accessibility tree of the app in
-  front. A judge's "studio-verified" is never claimed on it.
+  front.
 - **Web pages** (`dom` capability, [`desktop-web.ts`](../src/main/core/desktop-web.ts),
   [`cua-web.ts`](../src/substrate/cua-web.ts)). `web_open`, `web_read`, `web_click` and `web_type` drive
   pages by their structure:

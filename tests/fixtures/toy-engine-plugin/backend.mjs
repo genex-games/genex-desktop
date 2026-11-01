@@ -1,6 +1,6 @@
 // The toy engine does nothing: every tool answers which tool ran, for which project (its editor
 // with nobody at it). Its play tools stand in for a play of up to three players, each with its own
-// picture and state, and its judges' probe measures the play that is open. A game folder holding
+// picture and state. A game folder holding
 // `live-data.txt` stands in for a game whose play reaches the live game's saved data. A test's copy
 // that declares the Do it for me action and tools below gets the host's answer to
 // `game.engine.assist` (a setup click handed to the game's chat) back from each, and its answer to
@@ -15,8 +15,6 @@ const SHOT = "/9j/2Q==";
 const VIEW = { width: 1280, height: 720 };
 /** The file that marks a game whose play reaches its live saved data. */
 const LIVE_DATA_MARK = "live-data.txt";
-/** A stand-in JPEG long enough to be read as one (start of image, an APP0 marker, end of image), base64. */
-const PROBE_PICTURE = "/9j/4AAAAAAAAAAA/9k=";
 
 /** The setup tasks the toy hands to the chat, by the action or tool that asks. */
 const ASSIST_TASKS = {
@@ -32,7 +30,6 @@ const playerOf = (args) => (typeof args?.player === "number" ? args.player : 1);
 /** The toy play: how many players it opened, and what each one has held. */
 function toyPlay() {
   let players = 0;
-  let probes = 0;
   const held = new Map();
   const tools = {
     "play-open": (args, ctx) => {
@@ -51,17 +48,6 @@ function toyPlay() {
     "play-shot": () => ({ data: SHOT, mime: "image/jpeg", ...VIEW }),
     "play-state": (args) => ({ player: playerOf(args), players, held: held.get(playerOf(args)) ?? [] }),
     "play-pause": () => ({ refused: "unsupported", message: "The toy play cannot pause." }),
-    // A judge's probe: what it measured of the play that is open, and one picture per player.
-    "toy-probe": () => {
-      probes += 1;
-      const note = players > 0 ? `${players} players in the play; probe ${probes}` : "no play is open";
-      const images = Array.from({ length: players }, (_, i) => ({
-        mimeType: "image/jpeg",
-        data: PROBE_PICTURE,
-        label: `player ${i + 1}`,
-      }));
-      return { note, images };
-    },
     "play-close": () => {
       const closed = players > 0;
       players = 0;

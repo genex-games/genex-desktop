@@ -588,7 +588,8 @@ describe("Genex event log", () => {
           9000,
           3,
           customEventData(CustomEvent.CompletionCall, {
-            role: CompletionRole.Playtester,
+            // An older record's role, which no caller names any more: still read as a judge's.
+            role: "playtester" as never,
             runId: "run_a",
             engine: EngineId.Codex,
             model: "gpt-6.1-sol",

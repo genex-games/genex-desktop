@@ -6,7 +6,9 @@ import { clamp } from "../../canvas-view.ts";
 import { type IterationNode, type RunGraph as RunGraphModel, roundShot } from "../../run-graph.ts";
 import { TRY_GLYPH, tryWord } from "../../round-status.ts";
 import { Icon } from "../../ui/icons.tsx";
-import { useRoundStill } from "../run-stills.ts";
+import { PairView, pairView } from "../../run-graph-pictures.ts";
+import { useStill } from "../../stills.ts";
+import { usePictureChange, useRoundStill } from "../run-stills.ts";
 
 /** Where the compare handle starts, how far it may go toward either edge, and one arrow key's step. */
 const SPLIT_START = 0.5;
@@ -117,6 +119,47 @@ export function Compare({
       </button>
       <Chip side="left">{leftLabel}</Chip>
       <Chip side="right">{rightLabel}</Chip>
+    </div>
+  );
+}
+
+/** The largest side of a picture a card shows. */
+const CARD_PICTURE_PX = 640;
+
+/**
+ * Two pictures of the same frame under the run folder — a build's screenshot and the build's before
+ * it, or two versions of one asset from one view — measured: the compare when they visibly differ,
+ * else the newer alone, saying so when it did not visibly change. Never give it unrelated pictures.
+ */
+export function PictureChange({
+  before,
+  now,
+  beforeLabel,
+  nowLabel,
+  unchanged,
+  onOpen,
+}: {
+  before: string | null;
+  now: string | null;
+  beforeLabel: string;
+  nowLabel: string;
+  /** what the card says when the picture did not visibly change */
+  unchanged: string;
+  onOpen?: () => void;
+}): JSX.Element {
+  const beforeSrc = useStill(before ? { run: before, maxPx: CARD_PICTURE_PX } : null);
+  const nowSrc = useStill(now ? { run: now, maxPx: CARD_PICTURE_PX } : null);
+  const view = pairView(before, now, usePictureChange(before, now));
+  if (view === PairView.Compare)
+    return <Compare left={beforeSrc} right={nowSrc} leftLabel={beforeLabel} rightLabel={nowLabel} onOpen={onOpen} />;
+  return (
+    <div className="flex flex-col gap-2">
+      <Single src={nowSrc} label={nowLabel} {...(onOpen ? { onOpen } : {})} />
+      {view === PairView.Unchanged ? (
+        <p data-picture-unchanged className="text-body-sm text-ink-3">
+          {unchanged}
+        </p>
+      ) : null}
     </div>
   );
 }

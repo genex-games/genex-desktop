@@ -6,14 +6,12 @@
  * its own, read through namespace imports, so a kept copy without the marker still links.
  */
 import * as modelRoles from "./model-roles.ts";
-import * as playtester from "./playtester.ts";
-import * as scout from "./scout.ts";
 
 /** The capability main.ts claims for it: the app's `HarnessCapability.LocalRoles`. */
 export const LOCAL_ROLES_CAPABILITY = "local-roles";
 
 /** The parts a run whose jobs cross to or from a local engine depends on. */
-const LOCAL_ROLES_PARTS: readonly Readonly<Record<string, unknown>>[] = [modelRoles, playtester, scout];
+const LOCAL_ROLES_PARTS: readonly Readonly<Record<string, unknown>>[] = [modelRoles];
 
 /** Does every part a local-roles run depends on serve it? */
 export function servesLocalRoles(parts: readonly Readonly<Record<string, unknown>>[] = LOCAL_ROLES_PARTS): boolean {

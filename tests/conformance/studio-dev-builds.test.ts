@@ -1,5 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { spawn, spawnSync } from "node:child_process";
+import { once } from "node:events";
 import fs from "node:fs";
 import path from "node:path";
 import { pruneUnusedBuilds } from "../../scripts/studio-dev/builds.ts";
@@ -63,4 +65,41 @@ test("a link named like a build is never followed, and an unreadable profile rec
       );
       assert.deepEqual(fs.readdirSync(outside), ["keep"]);
     });
+});
+
+/** The pids `lsof` finds with a file open anywhere under `dir`: what a disk cleanup asks before it removes a build. */
+function holders(dir: string): string[] {
+  const lsof = spawnSync("lsof", ["-t", "+D", dir], { encoding: "utf8" });
+  if (lsof.error) throw lsof.error;
+  return lsof.stdout.split("\n").filter(Boolean);
+}
+
+const NO_LSOF = spawnSync("lsof", ["-v"]).error ? "this machine has no lsof to ask" : false;
+
+test("a running app's build shows as in use to lsof, and stops once the app exits", { skip: NO_LSOF }, async () => {
+  const root = await devFolder({ [id(6)]: OLD });
+  const build = path.join(root, "builds", id(6));
+  fs.writeFileSync(path.join(build, "build.json"), "{}");
+  const holdBuild = new URL("../../scripts/studio-dev/builds.ts", import.meta.url).href;
+  // The app reads its build's files once and closes them, so before the hold nothing showed it in use.
+  const app = spawn(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `const { holdBuild } = await import(${JSON.stringify(holdBuild)}); holdBuild(process.argv[1]); console.log("held"); setInterval(() => {}, 1000);`,
+      build,
+    ],
+    { stdio: ["ignore", "pipe", "inherit"] },
+  );
+  const exited = once(app, "exit");
+  try {
+    const first = await Promise.race([once(app.stdout, "data").then(() => "held"), exited.then(() => "exited")]);
+    assert.equal(first, "held", "the app exited before it held its build");
+    assert.deepEqual(holders(build), [String(app.pid)]);
+  } finally {
+    app.kill();
+  }
+  await exited;
+  assert.deepEqual(holders(build), []);
 });

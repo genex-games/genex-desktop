@@ -14,7 +14,7 @@ import { PermissionMode } from "../../src/shared/permissions.ts";
 import { PluginCallBlocker, PluginToolAudience } from "../../src/shared/plugins.ts";
 import { UnrealLivePluginTool, UnrealLoopTool } from "../../src/harness-seed/loop/unreal/live-contract.ts";
 import { heldInPlan, unrealTool, unrealWrite } from "../../src/harness-seed/loop/unreal/lead-steps.ts";
-import { LeadPluginTool } from "../../src/harness-seed/loop/unreal/save-point.ts";
+import { LeadLoopToolName } from "../../src/plugins/unreal/loop-tools.ts";
 import { PluginRegistry } from "../../src/substrate/plugins/registry.ts";
 import { type CoreLite, coreLite } from "../helpers/core-lite.ts";
 import { copyOfExample, PLUGIN_SDK_BACKEND } from "../helpers/plugins.ts";
@@ -57,7 +57,7 @@ describe("the harness's plugins.invoke", () => {
   it("in Plan mode a chat checkpoint's steps change nothing", async () => {
     await lite.core.setPermissionMode(threadId, PermissionMode.Plan);
     try {
-      for (const name of [LeadPluginTool.EditorActivity, UnrealLivePluginTool.SaveAll]) {
+      for (const name of [`unreal__${LeadLoopToolName.EditorActivity}`, UnrealLivePluginTool.SaveAll]) {
         const answer = (await invoke({ name, step: true, checkpoint: true })) as { blocker?: unknown };
         assert.equal(answer?.blocker, PluginCallBlocker.PlanMode, name);
       }

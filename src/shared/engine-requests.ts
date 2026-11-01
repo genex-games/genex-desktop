@@ -5,7 +5,6 @@
  * travel — callbacks, abort signals and the host-injected tool handlers.
  */
 import type { Message, Usage } from "./event-log.ts";
-import type { ComputerTraceSummary } from "./computer-target.ts";
 import type { PreviewSetup } from "./preview-contract.ts";
 
 export interface ToolDefinition {
@@ -83,40 +82,6 @@ export interface DelegateCaptureGrant {
   entry?: string;
   setup?: PreviewSetup | null;
   label?: string;
-  /** The worker's own cameras: what a capture that names none photographs (every registered camera when absent). */
-  cameras?: string[];
-}
-
-/** Playtester hands: the serializable half of the live preview tools over the build under test. */
-export interface DelegatePlaytestGrant {
-  project: string;
-  root: string;
-  runId?: string;
-  facetId?: string;
-  iteration?: number;
-  handle?: string;
-  entry?: string;
-  setup?: PreviewSetup | null;
-  /** A `judge` plays blind (no files, no shell) on a stepped clock, with only the `computer` tool. */
-  role?: "playtester" | "scout" | "judge";
-  label?: string;
-  /** A goal the studio checks after every move; the first time it holds is studio-verified. */
-  quest?: { id: string; until: NonNullable<PreviewSetup["verify"]> };
-  /** The most moves (input actions, waits, batch steps) the session may make, counted by the host. */
-  maxActions?: number;
-  /** How the build's clock is held between moves: wall-time pacing, or seeded exact steps. */
-  pacing?: "paced" | "stepped";
-  /**
-   * How many players a game played in its engine's editor opens for this session (1 to
-   * `MAX_PLAY_PLAYERS`, never more than its engine declares); absent is one.
-   */
-  players?: number;
-  /**
-   * A judge the game's engine plugin declares (`PluginJudge.id`), for a `judge` role on a game played
-   * in its editor: the host appends its brief to the session's rubric, opens its players and runs
-   * its probe once the play opens. A judge the game does not have is refused.
-   */
-  judge?: string;
 }
 
 /**
@@ -157,20 +122,6 @@ export interface SteerMessage {
   id: string;
   text: string;
   images?: DelegateImage[];
-}
-
-/**
- * Edit-time file ownership: the engine blocks Write/Edit outside `owns` (plus the facet's notes
- * and the wiring line of src/main.js) before the edit lands. See `DelegateRequest.ownership`.
- */
-export interface DelegateOwnership {
-  facetId: string;
-  owns: string[];
-  ownsMain: boolean;
-  main?: string;
-  studio?: string;
-  template?: boolean;
-  neverLock?: string[];
 }
 
 /**
@@ -292,8 +243,6 @@ export interface DelegateResult {
   contextTokens?: number;
   /** A `compact` delegation compacted the session, which goes on under the same id. */
   compacted?: boolean;
-  /** A playtest's or judge's computer trace: where it was written, and whether its goal was verified. */
-  trace?: ComputerTraceSummary;
   /**
    * Genex tool calls the session made after its turn ended (a background task woke it), which no
    * answer could reach: by the name the agent called it by, without the server's prefix, and its

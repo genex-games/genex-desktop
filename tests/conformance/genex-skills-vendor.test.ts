@@ -1,8 +1,9 @@
 /**
  * The Genex skills Studio vendors: each `SKILL.md` is a Studio preface, a fixed upstream marker and
- * the upstream bytes unchanged. The upstream part must match what `vendor.json` recorded and, for the
- * CLI's cards, the pinned `@genex-ai/cli-demo` Studio ships, so a pin bump without a refresh fails
- * here (`npm run genex:skills` refreshes). A card vendored ahead of the pin, from a CLI release not
+ * the upstream bytes with only Studio's cuts (`cuts.json`) taken out. The upstream part must match
+ * what `vendor.json` recorded and, for the CLI's cards, the pinned `@genex-ai/cli-demo` Studio ships
+ * with those cuts applied, so a pin bump without a refresh fails here (`npm run genex:skills`
+ * refreshes). A card vendored ahead of the pin, from a CLI release not
  * on npm yet, names that newer version and says to re-vendor it; once the pin reaches that version,
  * it fails here until the refresh takes it from the published CLI.
  */
@@ -14,13 +15,18 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { buildPlugins } from "../../scripts/build-plugins.mjs";
 import {
+  applyCuts,
   CARDS_LICENSE,
+  cutsFor,
   GENEX_CARDS,
   GENEX_SKILL,
+  type GenexCut,
   declareVendoredReferences,
+  isDropped,
   type GenexSkillsVendor,
   isAheadOf,
   manifestDisagreements,
+  readCuts,
   splitVendoredSkill,
   writeManifest,
 } from "../../scripts/refresh-genex-skills.ts";
@@ -70,13 +76,17 @@ test("the vendored skills track the Genex CLI Studio pins and ships", async () =
 const aheadCard = (recorded: GenexSkillsVendor, card: string): boolean =>
   recorded.files[`${card}/SKILL.md`]?.version !== undefined;
 
-test("each vendored file's upstream part is what vendor.json recorded, and each card is the pinned CLI's", async () => {
+test("each vendored file's upstream part is what vendor.json recorded, and each card is the pinned CLI's, cut", async () => {
   const recorded = await vendor();
+  const cuts = await readCuts(SKILLS);
   const expected = [`${GENEX_SKILL}/SKILL.md`];
   for (const card of GENEX_CARDS) {
     if (aheadCard(recorded, card))
       expected.push(...Object.keys(recorded.files).filter((file) => file.startsWith(`${card}/`)));
-    else expected.push(...(await markdown(path.join(CARDS, card))).map((f) => `${card}/${f}`));
+    else
+      expected.push(
+        ...(await markdown(path.join(CARDS, card))).map((f) => `${card}/${f}`).filter((f) => !isDropped(cuts, f)),
+      );
   }
   assert.deepEqual(Object.keys(recorded.files).sort(), expected.sort(), "every card file is vendored, and only those");
   for (const [file, entry] of Object.entries(recorded.files)) {
@@ -85,7 +95,8 @@ test("each vendored file's upstream part is what vendor.json recorded, and each 
     assert.equal(Buffer.byteLength(upstream), entry.bytes, file);
     if (file.startsWith(`${GENEX_SKILL}/`)) continue;
     if (entry.version !== undefined) continue;
-    assert.equal(upstream, await readFile(path.join(CARDS, file), "utf8"), `${file} matches the pinned CLI`);
+    const pinned = applyCuts(await readFile(path.join(CARDS, file), "utf8"), cutsFor(cuts, file));
+    assert.equal(upstream, pinned, `${file} matches the pinned CLI with Studio's cuts out`);
   }
 });
 
@@ -102,6 +113,53 @@ test("a card vendored ahead of the pin names a newer CLI, and says to take it fr
     for (const [other, sibling] of Object.entries(recorded.files))
       if (other.startsWith(`${card}/`))
         assert.equal(sibling.version, entry.version, `${other} comes from the same CLI`);
+  }
+});
+
+test("a cut takes out exactly the passage it names, and refuses one it cannot find once", () => {
+  const card = [
+    "# Card",
+    "Intro line.",
+    "## Keep",
+    "Fact one.",
+    "## Advice",
+    "Do it this way.",
+    "```",
+    "## not a heading inside a fence",
+    "```",
+    "### Deeper advice",
+    "More advice.",
+    "## Also kept",
+    "Fact two.",
+    "Shared line.",
+    "Shared line.",
+  ].join("\n");
+  const rows: Array<[string, GenexCut[], string[] | RegExp]> = [
+    ["no cut", [], card.split("\n")],
+    [
+      "a section, its subsections and fenced lines with it",
+      [{ section: "## Advice" }],
+      ["# Card", "Intro line.", "## Keep", "Fact one.", "## Also kept", "Fact two.", "Shared line.", "Shared line."],
+    ],
+    [
+      "a run of lines",
+      [{ from: "Intro line.", to: "Fact one." }],
+      ["# Card", "## Advice", ...card.split("\n").slice(5)],
+    ],
+    [
+      "a replaced sentence",
+      [{ replace: "Fact two.", with: "A fact." }],
+      card.replace("Fact two.", "A fact.").split("\n"),
+    ],
+    ["a section that is not there", [{ section: "## Missing" }], /not in/],
+    ["a line that is no heading", [{ section: "Intro line." }], /no heading/],
+    ["a line twice", [{ from: "Shared line.", to: "Shared line." }], /more than once/],
+    ["a text twice", [{ replace: "Shared line.", with: "" }], /more than once/],
+    ["a run that ends first", [{ from: "Fact two.", to: "Intro line." }], /ends before it starts/],
+  ];
+  for (const [name, cuts, expected] of rows) {
+    if (expected instanceof RegExp) assert.throws(() => applyCuts(card, cuts), expected, name);
+    else assert.deepEqual(applyCuts(card, cuts).split("\n"), expected, name);
   }
 });
 

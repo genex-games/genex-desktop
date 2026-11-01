@@ -14,6 +14,7 @@ import { realpath } from "node:fs/promises";
 import { after } from "node:test";
 import { GenexTools } from "../../src/plugins/genex/adapter.ts";
 import { saveClip } from "../../src/plugins/genex/clip.ts";
+import { saveShot } from "../../src/plugins/genex/cover.ts";
 import { GENEX_COVERS_DIR } from "../../src/shared/genex.ts";
 import { type GenexFixtureApi, startGenexFixtureApi } from "../helpers/genex-fixture-api.ts";
 import {
@@ -38,16 +39,19 @@ const cover = (() => {
   const signature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
   return Buffer.concat([signature, length, Buffer.from("IHDR"), header, Buffer.alloc(4)]);
 })();
-/** The host's still of an engine game's cover reel, as `observe` answers it. */
-const COVER_STILL_ANSWER = {
-  mimeType: "image/png",
-  width: 1920,
-  height: 1080,
-  source: "compositor",
-  view: { demo: "genex-cover" },
-  stats: { lumaMean: 0.45, lumaStdDev: 0.21, nearBlackFraction: 0.08, litFraction: 0.97 },
-  preview: Buffer.from("jpeg preview"),
-};
+/** The cover the engine game's agent kept, as genex__cover writes it into the plugin's storage. */
+const keepCover = (genex: GenexTools) =>
+  saveShot(
+    path.join(genex.root, GENEX_COVERS_DIR, "dust"),
+    {
+      image: cover,
+      mimeType: "image/png",
+      width: 1920,
+      height: 1080,
+      stats: { lumaMean: 0.45, lumaStdDev: 0.21, nearBlackFraction: 0.08, litFraction: 0.97 },
+    },
+    new Date().toISOString(),
+  );
 
 /** How `genex cover --clip --json` answers a clip Genex took, and one of a build it does not know. */
 const CLIP_APPLIED = { kind: "applied", clipUrl: "https://cdn.genex.technology/clips/dust.mp4", clipSource: "agent" };
@@ -600,18 +604,10 @@ describe("a game with only apps, published", () => {
     assert.notEqual(state.status, "published", "its page is not found until Genex approves it");
   });
 
-  it("takes the cover again as it starts and sends it once the apps are on Genex", async () => {
+  it("sends the agent's kept cover once the apps are on Genex", async () => {
     const { genex, runs } = await toolsWithStandIn(true, await fixtureApi());
-    let shots = 0;
-    const lens = {
-      invokedAt: Date.now(),
-      shoot: async () => {
-        shots++;
-        return { still: { ...COVER_STILL_ANSWER, image: cover } };
-      },
-    };
-    await genex.publishAppsOnly("dust", [app("Dust Runners")], "Dust Runners", lens);
-    assert.equal(shots, 1, "the cover is taken inside the press's own call");
+    await keepCover(genex);
+    await genex.publishAppsOnly("dust", [app("Dust Runners")], "Dust Runners");
     await genex.publishWait("dust");
     // The cover goes on its own after the job is recorded: wait for its send to be written.
     const sentCover = async () => (await runs()).some((call) => call.args[0] === "cover" && call.args[1] !== "--json");
@@ -628,11 +624,14 @@ describe("a game with only apps, published", () => {
   /** Publish a game with only apps that kept a clip, with the stand-in answering its clip `clipAnswer`. */
   async function publishWithClip(clipAnswer: typeof CLIP_APPLIED | typeof CLIP_STALE) {
     const { genex, runs } = await toolsWithStandIn(true, await fixtureApi(), clipAnswer);
-    const take = { video: Buffer.from("mp4 bytes"), mimeType: "video/mp4" as const, width: 960, height: 540 };
-    const clip = { ...take, durationMs: 5000, poster: cover, motion: 0.4 };
-    await saveClip(path.join(genex.root, GENEX_COVERS_DIR, "dust"), clip, new Date().toISOString());
-    const lens = { invokedAt: Date.now(), shoot: async () => ({ still: { ...COVER_STILL_ANSWER, image: cover } }) };
-    await genex.publishAppsOnly("dust", [app("Dust Runners")], "Dust Runners", lens);
+    const clip = { video: Buffer.from("mp4 bytes"), mimeType: "video/mp4" as const, width: 960, height: 540 };
+    await saveClip(
+      path.join(genex.root, GENEX_COVERS_DIR, "dust"),
+      { ...clip, durationMs: 5500 },
+      new Date().toISOString(),
+    );
+    await keepCover(genex);
+    await genex.publishAppsOnly("dust", [app("Dust Runners")], "Dust Runners");
     const clipSend = async () => (await runs()).find((call) => call.args[0] === "cover" && call.args[1] === "--clip");
     for (let tries = 0; tries < 100 && !(await clipSend()); tries++) await sleep(50);
     for (let tries = 0; tries < 100 && !(await genex.publishWait("dust")).cover?.clipLast; tries++) await sleep(50);
@@ -655,13 +654,9 @@ describe("a game with only apps, published", () => {
     assert.equal(state.cover?.clipLast?.kind, "failed", "not settled: the next publish sends it again");
   });
 
-  it("publishes its apps with no cover sent when there is none to take", async () => {
+  it("publishes its apps with no cover sent when the agent kept none", async () => {
     const { genex, runs } = await toolsWithStandIn(true, await fixtureApi());
-    const lens = {
-      invokedAt: Date.now(),
-      shoot: async () => ({ stillProblem: { code: "view_unknown", available: [] } }),
-    };
-    await genex.publishAppsOnly("dust", [app("Dust Runners")], "Dust Runners", lens);
+    await genex.publishAppsOnly("dust", [app("Dust Runners")], "Dust Runners");
     const state = await genex.publishWait("dust");
     assert.equal(state.job?.state, "done", JSON.stringify(state.job));
     assert.equal(state.cover?.shot, null);

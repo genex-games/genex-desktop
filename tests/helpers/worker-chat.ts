@@ -24,8 +24,10 @@ import { tmpDir } from "./tmp.ts";
 
 export const CLAUDE = "claude-code";
 export const CODEX = "codex";
-/** A local model's engine: it runs sessions, but carries no worker's seat. */
+/** A local model's engine: it runs sessions Genex drives itself, and carries a worker's seat as every engine with sessions does. */
 export const LOCAL = "local-model";
+/** An engine Genex drives that keeps no session of its own: the one kind that carries no worker's seat. */
+export const SEATLESS = "seatless-model";
 /** The run every worker chat starts in its chat, running until the test finishes it. */
 export const RUN_ID = "run_workers";
 /** How often a test looks for something it cannot be told of, and how many times. */
@@ -75,16 +77,16 @@ export type FakeKind = "delegated" | "direct";
 
 /** A fake engine that records each request, tells `seen` of it, and does what the test says while its turn runs. */
 function fakeEngine(
-  engine: { id: string; kind: FakeKind; permissionPrompts: boolean },
+  engine: { id: string; kind: FakeKind; permissionPrompts: boolean; supportsSessions?: boolean },
   seen: DelegateRequest[],
   saw: Changes,
   during: () => During,
   reply: () => Reply,
 ) {
   return {
+    supportsSessions: true,
     ...engine,
     label: engine.id,
-    supportsSessions: true,
     // A chat's own session takes steered messages mid-turn when its turn says so (`request.steer`).
     steersMidTurn: true,
     status: async () => ({ code: "ready", detail: "fixture" }),
@@ -157,6 +159,7 @@ export async function workerChat(
     { id: CLAUDE, kind: "delegated", permissionPrompts: true },
     { id: CODEX, kind: "delegated", permissionPrompts: false },
     { id: LOCAL, kind: "direct", permissionPrompts: false },
+    { id: SEATLESS, kind: "direct", permissionPrompts: false, supportsSessions: false },
   ] as const;
   for (const engine of engines)
     core.engines.register(

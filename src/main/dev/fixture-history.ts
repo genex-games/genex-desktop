@@ -79,8 +79,8 @@ export async function seedLandedLoopRun(core: StudioCore, project: string, threa
     waitMinutes: 0,
     summary: "This run: crash damage you can feel, and dirt that lands where the hits do.",
     facets: [
-      { id: "crumple", title: "Crash damage", identity: [], cameras: [], checks: [] },
-      { id: "dirt", title: "Dirt", identity: [], cameras: [], checks: [] },
+      { id: "crumple", title: "Crash damage", identity: [], checks: [] },
+      { id: "dirt", title: "Dirt", identity: [], checks: [] },
     ],
   });
   await append(CustomEvent.DirectorWorker, { ...RIVER_WORKER, mode: "loop", state: "running" });

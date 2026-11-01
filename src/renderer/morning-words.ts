@@ -10,6 +10,7 @@
  */
 import { loopRunWords, withoutIds } from "./words.ts";
 import { t } from "../shared/i18n.ts";
+import type { LoopRefusal } from "../shared/custom-events.ts";
 
 export interface MorningLoopRun {
   /** rounds a judge saw */
@@ -32,6 +33,8 @@ export interface MorningLoopRun {
   learned?: string | null;
   /** how the Loop worked on its project (`run_finished.profile`): `open` kept its work in the project's own folder */
   profile?: string | null;
+  /** why the Loop did not run at all (`run_finished.refusal`), when it didn't */
+  refusal?: LoopRefusal | null;
 }
 
 /** The card's buttons, in the order they are shown; the first is the primary one. */
@@ -59,6 +62,8 @@ export interface MorningWords {
 }
 
 function actionsFor(loopRun: MorningLoopRun): MorningAction[] {
+  // A Loop that never ran has nothing to play or resume.
+  if (loopRun.refusal) return [];
   const build: MorningAction[] = loopRun.hasBuild ? [MorningAction.PlayBuild] : [];
   if (loopRun.paused) return [MorningAction.Resume, ...build];
   if (loopRun.landed === false) return build;
@@ -78,6 +83,7 @@ export function morningWords(loopRun: MorningLoopRun): MorningWords {
     // pill and the Builds drawer cannot say it three ways.
     landing: loopRun.landingLine ?? null,
     profile: loopRun.profile ?? null,
+    refusal: loopRun.refusal ?? null,
   });
   const summary = (loopRun.summary ?? "").trim();
   const learned = (loopRun.learned ?? "").trim();

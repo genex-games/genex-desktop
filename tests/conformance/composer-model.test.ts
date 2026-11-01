@@ -557,6 +557,15 @@ describe("what a chat's Loop is", () => {
     assert.deepEqual(storedChatLoop(store, "B"), halfHour, "pinning never overwrites a chat's own pick");
   });
 
+  // A one-line idea in a fresh install asked a style question, then ran a multi-agent build with a
+  // 24-hour ceiling: twenty minutes in, nothing had landed, where the plain agent had finished the
+  // game. The first chat is the plain agent; Loop is one tap, or the person's words, away.
+  it("a fresh install's first chat starts with Loop off", () => {
+    const store = storage();
+    assert.equal(storedChatLoop(store, "A").on, false);
+    assert.equal(sendFrom(store, "A").autopilot, undefined, "a message builds in the chat, no Loop commissioned");
+  });
+
   it("Off keeps the saved time", () => {
     const store = storage();
     rememberChatLoop(store, "A", { on: false, hours: 2 });

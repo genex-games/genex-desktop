@@ -232,13 +232,13 @@ describe("a worker's questions and calls", () => {
   it("a run worker's connector call answers to the chat the run was started in", {
     timeout: CASE_TIMEOUT_MS,
   }, async () => {
-    const { core, api, game, threadId, delegate, runWorker, whileRunning } = await workerChat({
+    const { core, game, threadId, delegate, runWorker, whileRunning } = await workerChat({
       consentTimeoutMs: 500,
     });
     await core.mcp.save(echo(), {}, { trust: true });
     await core.mcp.toolsFor(game);
     // The run's own thread, as the harness names it on its workers' delegations.
-    const runThread = String(await api["thread.create"]!({ title: "Run" }));
+    const runThread = await core.store.createThread({ title: "Run" });
     let said = "";
     whileRunning(async (request) => {
       said = await Promise.resolve(request.onLiveTool?.("echo__echo", { text: "hi" })).then(

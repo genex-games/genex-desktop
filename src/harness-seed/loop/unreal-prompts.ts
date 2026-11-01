@@ -1,9 +1,9 @@
 /**
  * What a chat build of a game with an Unreal project is told (chat-session.ts `buildContractorBrief`).
  * The game lives in the user's open Unreal Editor and its project, and is built through the Unreal
- * tools: never as a web page (no page contract, no seeded randomness), and never through file or exec
- * bridges between the folder and the editor. It also holds the question a new project's brief asks first while an
- * engine plugin is on: the web or that engine (`engineChoiceRule`).
+ * tools: never as a web page, and never through file or exec bridges between the folder and the
+ * editor. It also holds what a new project's brief says while an engine plugin is on: the web or
+ * that engine, and how each is made (`engineChoiceRule`).
  */
 import type { PluginKindOffer } from "../types/host-api.d.ts";
 import { ProjectTool } from "./folder-facts.ts";
@@ -15,8 +15,7 @@ const UNREAL_CONNECTOR = "the Unreal editor connector's tools, as the Unreal plu
 
 /**
  * The Unreal plugin's tool that makes a game's Unreal project inside its folder, as the host serves
- * it (`<plugin>__<tool>`). Kept for an older copy of a module that imports it: no current module
- * offers Unreal by this name, since every kind on offer comes from the host's `kinds`.
+ * it (`<plugin>__<tool>`). A name only: every kind on offer comes from the host's `kinds`.
  */
 export const UNREAL_NEW_GAME_TOOL = "unreal__new-game";
 
@@ -77,9 +76,9 @@ function kindLine(engine: string | undefined, kind: PluginKindOffer, laterKind =
 }
 
 /**
- * The first rule of a new game's brief while engine plugins offer kinds: which kind it builds is the
- * user's one question before the first build, unless the ask already names it (one it doesn't
- * offer goes through `plugins_find` instead); each kind is named
+ * The engine rule of a new game's brief while engine plugins offer kinds: which kind it builds may be
+ * asked of the user when the ask doesn't name it (one it doesn't offer goes through `plugins_find`
+ * instead); each kind is named
  * by its scaffold's label when its plugin declares scaffolds ("Unreal game"). The web answer starts
  * Genex's web starter (`start_web_game`); each kind on offer (`kinds`, from the host, each with its
  * plugin's readiness) through its own kind tool, as its line says. A kind that makes no game (`game:
@@ -102,7 +101,7 @@ export function engineChoiceRule(
   // A request for an engine none of these options covers is looked for, never asked web or these.
   const find = `When the request names another engine or tool, don't ask this question: call ${toolCall(engine, ProjectTool.PluginsFind)} with what it names and follow its answer, and never turn a plugin on yourself.`;
   return [
-    `FIRST, THE ENGINE: the user has engine plugins on, so this new game can be built for the web, here, or with ${names.join(" or ")}. ${find} Unless the request already names one of these, ask the user that one question with ${ask} before you build anything, with the options "Web: plays right here in Genex" and ${names.join(", ")} (each worded as its line below says), and end your reply.`,
+    `THE ENGINE: the user has engine plugins on, so this new game can be built for the web, here, or with ${names.join(" or ")}. ${find} When the request does not name one of these, you may ask the user which with ${ask}, with the options "Web: plays right here in Genex" and ${names.join(", ")} (each worded as its line below says), and end your reply; or choose the one the request fits.`,
     ...games.map((kind, at) => kindLine(engine, kind, later(kind, at))),
     web,
     ...others,
@@ -127,7 +126,7 @@ function projectWords(project: string | null | undefined, found?: string): strin
  * The rules that describe an Unreal game, in place of the web template's: where it is built,
  * where its changes land, how Blueprint text is written, and the bridges never to build. It names
  * no tool, so `_engine` (kept for its callers) changes nothing. A session that also writes files of its own in the
- * game folder (the Unreal Loop's lead: ART.md, build scripts, deliveries) is told `ownFiles`, and
+ * game folder (the Unreal Loop's lead: build scripts, deliveries) is told `ownFiles`, and
  * never that the folder holds only notes. A project found in the folder but not linked (`found`, the
  * folder it was found in) is not built through the Unreal tools at all: until the plugin links it
  * (its skill names the tool, which sets the project up when it isn't), those tools work on the
@@ -138,13 +137,11 @@ export function unrealRules(
   project: string | null | undefined,
   { ownFiles = false, found }: { ownFiles?: boolean; found?: string } = {},
 ): string[] {
-  const notes = ownFiles
-    ? "Keep NOTES.md in this game folder current with what you built in Unreal and why."
-    : "This Genex game folder holds only the game's notes: keep NOTES.md in it current with what you built in Unreal and why.";
+  const notes = ownFiles ? "" : "This Genex game folder holds only the game's notes (NOTES.md).";
   if (!project && found !== undefined) return unlinkedUnrealRules(found, notes);
   return [
     `This game is built in Unreal Engine, in the user's open Unreal Editor, through ${UNREAL_CONNECTOR}: find a toolset, read its tools and input schemas, then run them.`,
-    `Your changes land in the Unreal project ${projectWords(project, found)}. ${notes}`,
+    `Your changes land in the Unreal project ${projectWords(project, found)}. ${notes}`.trim(),
     "Before you write Blueprint text, look up every node it uses through the Unreal tools — its exact name and pins — and never write a node from memory.",
     "Never build file watchers, polling scripts or exec bridges between this folder and Unreal: the Unreal tools are the way in.",
   ];
@@ -161,7 +158,7 @@ function unlinkedUnrealRules(found: string, notes: string): string[] {
     `This folder holds an Unreal Engine project ${projectWords(null, found)} that is not linked to this game yet. Until it is, the Unreal tools (${UNREAL_CONNECTOR}) work on the project chosen in Genex's Unreal panel, which can be another game's: never call them before this folder's project is linked to this game (the Unreal plugin's skill names the tool that links it, and that tool sets the project up for Genex when it isn't). Until then, work with the project's files.`,
     notes,
     "Never build file watchers, polling scripts or exec bridges between this folder and Unreal: the Unreal tools are the way in once the project is linked.",
-  ];
+  ].filter(Boolean);
 }
 
 /** Where an Unreal game's work happens, in place of the web brief's "this workspace" rule. */

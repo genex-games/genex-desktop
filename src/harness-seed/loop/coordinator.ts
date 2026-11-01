@@ -2,8 +2,8 @@
  * The run's coordinator: a read-only session of its own, in a scratch home per chat, that answers
  * the chat for a run with the coordinator's tools (run-inbox.ts `coordinatorTools`). After a run a
  * lead of the chat's own led, the chat's own session answers instead (after-loop-run.ts); this stays
- * the fallback — the long turn, the classic pipeline, a kept older seed, a lead that was a session
- * of its own, a model without sessions — for one release (docs/harness-runtime.md). After a
+ * the fallback — the long turn, a kept older seed, a lead that was a session of its own, a model
+ * without sessions — for one release (docs/harness-runtime.md). After a
  * finished build that seated a lead, when a message came with Loop on and this coordinator answers
  * in a session, its continue_build reopens that run with the Loop's time and the build's models
  * (reopen-run.ts `finishedLoopRun`), if its parts serve it (chat-dispatch.ts `coordinatorReopens`).
@@ -131,7 +131,7 @@ function sessionKeyOf(engine: string): string {
   return `coordinator_${engine}`;
 }
 
-/** The plan the run is building: the director's, the classic journal's, or the last reviewed one. */
+/** The plan the person reviewed before the build, when there is one: the journal's, or the last reviewed one. */
 function savedPlanOf(events: readonly HarnessEvent[], journal: AnyRecord | null): unknown {
   const reviews = events.filter((e) => e.data?.event_type === RunEvent.PlanReview && e.data.payload?.plan);
   return journal?.director?.plan ?? journal?.plan ?? reviews.at(-1)?.data.payload?.plan ?? null;

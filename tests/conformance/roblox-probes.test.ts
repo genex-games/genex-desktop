@@ -7,7 +7,7 @@
  * the three judges as the manifest declares them and as the built package carries them.
  */
 import assert from "node:assert/strict";
-import { readFile, stat } from "node:fs/promises";
+import { stat } from "node:fs/promises";
 import path from "node:path";
 import { before, describe, it } from "node:test";
 import type { PlayGame } from "../../src/plugins/roblox/computer-play.ts";
@@ -28,9 +28,6 @@ import {
 } from "../../src/plugins/roblox/probes.ts";
 import { PLAY_LUAU } from "../../src/plugins/roblox/play-luau.ts";
 import type { StudioToolResult } from "../../src/plugins/roblox/studio-client.ts";
-import { MAX_PLAY_PLAYERS } from "../../src/shared/engine-play.ts";
-import type { PluginManifest } from "../../src/shared/plugins.ts";
-import { inspectPackage } from "../../src/substrate/plugins/manifest.ts";
 import { makeResources } from "../helpers/resources.ts";
 
 /** A stand-in for a probe's Luau file: the stand-in Studio reads only the step's arguments. */
@@ -503,39 +500,10 @@ describe("Roblox probes: the multiplayer check", () => {
   });
 });
 
-describe("Roblox judges in the built package", () => {
+describe("Roblox probes in the built package", () => {
   let roblox = "";
-  let manifest: PluginManifest;
   before(async () => {
     roblox = path.join(await makeResources({ tsc: false }), "plugins", "roblox");
-    manifest = await inspectPackage(roblox);
-  });
-
-  it("declares the multiplayer, cheater and phone judges, each within the players the engine plays", () => {
-    assert.deepEqual(
-      manifest.judges?.map(({ id, label, players, probe, facts }) => ({ id, label, players, probe, facts })),
-      [
-        { id: "multiplayer", label: "Multiplayer", players: 3, probe: "players-state", facts: ["roblox-project"] },
-        { id: "cheater", label: "Cheater", players: 1, probe: "cheat-remotes", facts: ["roblox-project"] },
-        { id: "phone", label: "Phone", players: 1, probe: "phone-check", facts: ["roblox-project"] },
-      ],
-    );
-    for (const judge of manifest.judges ?? [])
-      assert.ok(
-        (judge.players ?? 1) <= (manifest.engine?.play?.players ?? 1) && (judge.players ?? 1) <= MAX_PLAY_PLAYERS,
-      );
-  });
-
-  it("gives each judge a brief in the player's words: no code", async () => {
-    for (const judge of manifest.judges ?? []) {
-      const brief = await readFile(path.join(roblox, judge.brief), "utf8");
-      assert.doesNotMatch(
-        brief,
-        /\b(code|script|scripts|Luau|function|execute_luau|RemoteEvent|RemoteFunction|source)\b/i,
-        judge.id,
-      );
-      assert.doesNotMatch(brief, /\b(overnight|night|morning|tonight)\b/i, judge.id);
-    }
   });
 
   it("ships the probes' Luau beside the backend, where the backend reads it", async () => {

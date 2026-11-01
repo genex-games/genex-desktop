@@ -10,10 +10,11 @@
  */
 import type { JSX } from "react";
 import { AssetsPanel } from "./inspector/AssetsPanel.tsx";
+import { BuildPanel } from "./inspector/BuildPanel.tsx";
+import { isBuildSelection } from "../run-graph-builds.ts";
 import { FinishCheckPanel } from "./inspector/FinishCheckPanel.tsx";
 import { JobsPanel } from "./inspector/JobsPanel.tsx";
 import { LeadPanel } from "./inspector/LeadPanel.tsx";
-import { OptimizationPanel } from "./inspector/OptimizationPanel.tsx";
 import { PartPanel } from "./inspector/PartPanel.tsx";
 import { ResultPanel } from "./inspector/ResultPanel.tsx";
 import { GraphSelection, isPartSelection, partSelection } from "./inspector/selection.ts";
@@ -23,7 +24,6 @@ import { StepPanel } from "./inspector/StepPanel.tsx";
 import type { InspectorProps } from "./inspector/types.ts";
 
 export { Lightbox } from "./inspector/Lightbox.tsx";
-export { optimizationStatus } from "./inspector/OptimizationPanel.tsx";
 export { StateGlyph, TONE } from "./inspector/tone.tsx";
 export type { InspectorProps, LightItem, Reply } from "./inspector/types.ts";
 
@@ -36,8 +36,10 @@ export function Inspector(props: InspectorProps): JSX.Element | null {
   if (selection === GraphSelection.Jobs) return <JobsPanel {...props} />;
   if (selection === GraphSelection.FinishCheck) return <FinishCheckPanel {...props} />;
   if (selection === GraphSelection.Assets) return <AssetsPanel {...props} />;
-  if (selection === GraphSelection.Optimization && props.optimization)
-    return <OptimizationPanel {...props} node={props.optimization} />;
+  if (isBuildSelection(selection)) {
+    const build = props.timeline?.builds.find((item) => item.id === selection);
+    return build ? <BuildPanel {...props} build={build} /> : null;
+  }
   if (isPartSelection(selection)) {
     const row = rows.find((item) => partSelection(item.facet.facetId) === selection);
     return row ? <PartPanel {...props} row={row} /> : null;

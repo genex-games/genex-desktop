@@ -7,6 +7,7 @@
 import type { JSX, ReactNode, RefObject } from "react";
 import { useEffect, useRef, useState } from "react";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "../ui/dropdown-menu.tsx";
+import { Button } from "../ui/Button.tsx";
 import { Icon, type IconName } from "../ui/icons.tsx";
 import { Shortcut } from "../ui/Shortcut.tsx";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip.tsx";
@@ -21,7 +22,7 @@ import { t } from "../../shared/i18n.ts";
 import { FreeSpaceSheet } from "./FreeSpaceSheet.tsx";
 import { HarnessGuideButton } from "../chat/HarnessGuide.tsx";
 import { SidebarToggle } from "../shell/use-shell-chrome.ts";
-import { setEngineSlot } from "./engine-slot.ts";
+import { HEADER_BUTTON, setEngineSlot } from "./engine-slot.ts";
 import { StorageSurface } from "../analytics/workspace-vocabulary.ts";
 
 interface Props {
@@ -221,17 +222,16 @@ function FreeSpaceButton({ storage, game }: { storage: GameStorage; game: string
       )}
       <Tooltip>
         <TooltipTrigger asChild>
-          <button
-            type="button"
+          <Button
+            variant="pill"
             data-free-space
-            data-label
             disabled={storage.freeing}
             onClick={() => setConfirming(true)}
-            className="no-drag header-control"
+            className={`no-drag me-1 ${HEADER_BUTTON}`}
           >
             <Icon name="drive" />
             {freeGameWords(space)}
-          </button>
+          </Button>
         </TooltipTrigger>
         <TooltipContent className="max-w-64">{freeSpaceWords(space, game)}</TooltipContent>
       </Tooltip>

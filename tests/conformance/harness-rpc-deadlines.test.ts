@@ -21,7 +21,7 @@ import { tmpDir } from "../helpers/tmp.ts";
 const BOOTSTRAP = fileURLToPath(new URL("../../src/harness-boot/bootstrap.mjs", import.meta.url));
 const FIXTURE_OK = fileURLToPath(new URL("../fixtures/harness-ok", import.meta.url));
 
-/** The harness asks for the page's state, and logs how the call ended. */
+/** The harness asks for the page's console, and logs how the call ended. */
 const ASKS_THE_PAGE = `export async function createStudio(host) {
   return {
     status: () => "idle",
@@ -30,7 +30,7 @@ const ASKS_THE_PAGE = `export async function createStudio(host) {
       if (action.type !== "user_message") return;
       let outcome;
       try {
-        outcome = { value: await host.call("preview.state", {}) };
+        outcome = { value: await host.call("preview.console", {}) };
       } catch (err) {
         outcome = { name: err.name, code: err.code, method: err.method };
       }
@@ -42,7 +42,7 @@ const ASKS_THE_PAGE = `export async function createStudio(host) {
   };
 }`;
 
-/** A harness over a page that answers `preview.state` only when told to, with a deadline for page calls. */
+/** A harness over a page that answers `preview.console` only when told to, with a deadline for page calls. */
 async function hungPage(deadlineMs: number | null = 800) {
   const root = await tmpDir("studio-rpc-deadline-");
   const workspace = path.join(root, "workspaces", "harness");
@@ -68,14 +68,14 @@ async function hungPage(deadlineMs: number | null = 800) {
       "events.head": async (params: { threadId: string }) => store.head(params.threadId),
       "events.append": async (params: { threadId: string; batch: never }) =>
         (await store.appendEvents(params.threadId, params.batch)).latestEventId,
-      "preview.state": () =>
+      "preview.console": () =>
         new Promise<unknown>((resolve) => {
           waiting.push(resolve);
         }),
     },
-    rpcDeadlineMs: (method) => (method === HostMethod.PreviewState ? deadlineMs : null),
+    rpcDeadlineMs: (method) => (method === HostMethod.PreviewConsole ? deadlineMs : null),
   });
-  /** Answer the oldest `preview.state` call still waiting. */
+  /** Answer the oldest `preview.console` call still waiting. */
   const release = (value: unknown) => waiting.shift()?.(value);
   const answers = async () =>
     (await store.listEvents(thread)).flatMap((event) =>
@@ -92,12 +92,12 @@ describe("harness call deadlines (B4)", () => {
     await sleep(300);
     assert.deepEqual(
       r.host.pendingRpcs().map((call) => call.method),
-      [HostMethod.PreviewState],
+      [HostMethod.PreviewConsole],
       "the host names the call it is still servicing",
     );
     await asked;
     assert.deepEqual(await r.answers(), [
-      { name: "RpcDeadline", code: "rpc_deadline", method: HostMethod.PreviewState },
+      { name: "RpcDeadline", code: "rpc_deadline", method: HostMethod.PreviewConsole },
     ]);
     assert.deepEqual(r.host.pendingRpcs(), [], "a timed-out call no longer counts as in flight");
     r.release({ late: true });
@@ -124,7 +124,7 @@ describe("harness call deadlines (B4)", () => {
   });
 
   it("page and record calls have deadlines; engine work, runs and snapshots bound themselves", () => {
-    for (const method of [HostMethod.PreviewState, HostMethod.PreviewEvaluate, HostMethod.PreviewCall]) {
+    for (const method of [HostMethod.PreviewConsole, HostMethod.PreviewScreenshot, HostMethod.PreviewStatus]) {
       assert.equal(RPC_CLASSES[method], RpcClass.Page, method);
       assert.ok((rpcDeadlineMs(method) ?? 0) > 0, method);
     }
@@ -135,7 +135,7 @@ describe("harness call deadlines (B4)", () => {
       assert.equal(rpcDeadlineMs(method), null, method);
     }
     assert.ok(
-      (rpcDeadlineMs(HostMethod.PreviewReady) ?? 0) > (rpcDeadlineMs(HostMethod.PreviewState) ?? 0),
+      (rpcDeadlineMs(HostMethod.PreviewReady) ?? 0) > (rpcDeadlineMs(HostMethod.PreviewConsole) ?? 0),
       "loading a page may take longer than asking it something",
     );
   });

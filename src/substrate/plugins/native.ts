@@ -26,6 +26,7 @@ import {
   PluginService,
   RuntimeArchive,
   runtimePinFor,
+  runtimeCandidatesFor,
   type PluginManifest,
   type PluginBinding,
   type PluginNativeJob,
@@ -541,7 +542,7 @@ export interface WindowsNativeHost {
 export interface NativeServiceOptions {
   settings?: (pluginId: string) => Promise<Record<string, unknown>>;
   windows?: WindowsNativeHost;
-  /** This computer as a pin names it (`win32-x64`); the host's own when left out. */
+  /** This computer as candidates and pins name it (`win32-x64`); the host's own when left out. */
   platform?: string;
 }
 
@@ -612,7 +613,8 @@ export class PluginNativeServices {
   /** Every path to probe for `runtime`, in order: its declared candidates, then Genex's own pinned copy. */
   async #candidates(runtime: PluginNativeRuntime, root: string, owner: RuntimeOwner): Promise<string[]> {
     const deps = hostCandidateDeps({ studio: this.studioData, storage: root, settings: owner.settings ?? {} });
-    const declared = await Promise.all(runtime.candidates.map((c) => candidatePaths(c, deps)));
+    const candidates = runtimeCandidatesFor(runtime, this.#platform);
+    const declared = await Promise.all(candidates.map((c) => candidatePaths(c, deps)));
     const pin = runtimePinFor(runtime, this.#platform);
     const pinned = pin ? [path.join(this.#runtimesFolder(root, owner.pluginId), runtime.id, pin.executable)] : [];
     return [...declared.flat(), ...pinned];

@@ -71,8 +71,6 @@ const CONTEXT_ROLE: Readonly<Record<string, ServedModelRole>> = {
 /** Who asked for a direct model call, as a served role: every caller today is a judge of some kind. */
 const COMPLETION_ROLE: Readonly<Record<CompletionRole, ServedModelRole>> = {
   [CompletionRole.Judge]: ServedModelRole.Judge,
-  [CompletionRole.Playtester]: ServedModelRole.Judge,
-  [CompletionRole.SkilloptGate]: ServedModelRole.Judge,
 };
 
 const STOP_CODES: ReadonlySet<unknown> = new Set(Object.values(StopCode));

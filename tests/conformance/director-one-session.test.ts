@@ -1,17 +1,19 @@
 /**
  * One session through the real core and harness (loop/director/lead-session.ts): a waking run
  * launched from a chat is led by that chat's own contractor session — resumed in the game folder,
- * read-only, leading the integration worktree it reads — and the chat goes on in the same session
+ * building in the integration worktree it leads, never read-only — and the chat goes on in the same session
  * once the run closes, with its hands back and the run's controls (loop/after-loop-run.ts); with Loop
  * on it reopens a finished build — the same run, led by the same session (loop/reopen-run.ts). A
  * session that cannot be resumed is replaced by a fresh one told the brief, the chat so far and the
- * digest, and a merge conflict goes to a worker instead of the lead.
+ * digest, and a worker's work that conflicts comes back to the lead, the merge undone.
  */
 import assert from "node:assert/strict";
-import { chmod, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
+import { GENEX_PLUGIN_ID } from "../../src/shared/genex.ts";
+import { MessageOrigin } from "../../src/shared/protocol.ts";
 import type { DelegateRequest, DelegateResult, LiveToolResult } from "../../src/substrate/engines/types.ts";
 import { customEvents, makeFakePreview, startRig, waitForLog, type Rig } from "../helpers/studio-rig.ts";
 import { gitFile } from "../helpers/git.ts";
@@ -39,23 +41,17 @@ const FRAMES = [
   { data: Buffer.from("frame-two").toString("base64"), mimeType: "image/png", label: "dusk 2" },
 ];
 
-/** The plan every scripted lead writes before its first worker, as a real one must. */
-const plan = (ids: string[]) => ({
-  summary: "This run: a dusk sky over the plaza.",
-  workers: JSON.stringify(
-    ids.map((id) => ({ id, title: id, seam: `the ${id}`, owns: "src/", done: [`${id} is there`], minutes: 5 })),
-  ),
-  base: "the integration branch as it stands",
-  risks: "one window at a time on this machine",
-});
-const single = (id: string, owns: string) => ({
-  id,
-  title: id,
-  brief: `Build the ${id}`,
-  mode: "single",
-  minutes: "5",
-  owns,
-});
+/** A worker in its own copy of the integration branch, as a lead starts one: a title and its task. */
+const copyWorker = (title: string) => ({ title, task: `Build the ${title}`, isolation: "copy" });
+
+/** The id of the worker a start named (`Started w1 (copy).`). */
+const startedId = (answer: string): string => /\bw\d+\b/.exec(answer)?.[0] ?? "";
+
+/** Whether `run_status` says the worker `id` is still at work. */
+const stillRunning = (status: Record<string, any>, id: string): boolean =>
+  (status.workers as Array<{ id: string; state: string }>).some(
+    (worker) => worker.id === id && worker.state === "running",
+  );
 
 /** What one delegation was for, read off the request the way the host hands it to an engine. */
 const Kind = {
@@ -63,7 +59,6 @@ const Kind = {
   Lead: "lead",
   Worker: "worker",
   Coordinator: "coordinator",
-  Playtester: "playtester",
   FollowUp: "follow-up",
   /** The chat's own session after its run: the run's controls ride on its turn. */
   After: "after",
@@ -72,8 +67,7 @@ type Kind = (typeof Kind)[keyof typeof Kind];
 function kindOf(request: DelegateRequest): Kind {
   if (request.director) return Kind.Lead;
   if (request.coordinator) return Kind.Coordinator;
-  if (request.playtest) return Kind.Playtester;
-  if (request.selfCapture?.runId) return Kind.Worker;
+  if (request.worker) return Kind.Worker;
   if (request.liveTools?.some((tool) => tool.name === "run_status")) return Kind.After;
   return request.interviewTools?.length ? Kind.Chat : Kind.FollowUp;
 }
@@ -111,7 +105,7 @@ function sessionEngine(
       const extra = (await script(request, kind)) ?? {};
       const sessionId = request.resume ?? `${kind}-${++minted}`;
       asked.sessionId = sessionId;
-      const own = kind === Kind.Worker || kind === Kind.Coordinator || kind === Kind.Playtester;
+      const own = kind === Kind.Worker || kind === Kind.Coordinator;
       if (!own) histories.set(sessionId, [...(histories.get(sessionId) ?? []), kind]);
       return {
         ok: true,
@@ -130,13 +124,18 @@ function sessionEngine(
   return { histories, requests };
 }
 
-/** A game with its chat, on a rig with windows to lend: two are the lead's, the rest its workers'. */
-async function gameChat(name: string, windows = 3) {
+/**
+ * A game with its chat, on a rig with windows to lend: two are the lead's, the rest its workers'.
+ * The Genex plugin is off unless `cover` asks for it: with it on, every landed run is followed by
+ * the cover step's turn (core/cover-step.ts), which only the cover's own row is about.
+ */
+async function gameChat(name: string, windows = 3, { cover = false } = {}) {
   const rig = await startRig(
     { replies: [] },
     { previewPoolMax: windows, createHeadlessPreview: async () => makeFakePreview() },
   );
   rigs.push(rig);
+  await rig.core.plugins.setEnabled(GENEX_PLUGIN_ID, cover);
   const project = await rig.core.games.scaffold(name, { title: name });
   const threadId = await rig.core.threadForGame(project.name);
   return { rig, project, threadId };
@@ -239,18 +238,12 @@ for (const engine of ["claude-code", "codex"]) {
               () => true,
               () => false,
             );
-            await call("plan", plan(["sky"]));
-            results.started = json(await call("worker_start", single("sky", "src/sky.js")));
+            results.started = text(await call("worker_start", copyWorker("sky")));
             return;
           }
-          const status = json(await call("run_status", {}));
-          if (
-            status.workers.some(
-              (worker: { id: string; state: string }) => worker.id === "sky" && worker.state === "running",
-            )
-          )
-            return;
-          results.integrated = json(await call("integrate", { worker: "sky" }));
+          const id = startedId(results.started);
+          if (stillRunning(json(await call("run_status", {})), id)) return;
+          results.integrated = text(await call("worker_mark", { id, verdict: "used" }));
           results.finished = text(await call("finish", { summary: "a dusk sky", land: "yes" }));
           return;
         }
@@ -278,7 +271,9 @@ for (const engine of ["claude-code", "codex"]) {
       assert.equal(lead[0]!.resume, chatSession, "the lead resumes the chat's own session");
       for (const turn of lead) {
         assert.equal(await realpath(turn.cwd), await realpath(project.dir), "the lead sits in the game folder");
-        assert.equal(turn.readOnly, true, "and writes nothing while the build runs");
+        // Flipped (Loop phase 3): the lead was read-only while the build ran; it builds in it now.
+        assert.notEqual(turn.readOnly, true, "never read-only");
+        assert.equal(turn.leadBuilds, turn.director?.root, "its box writes the build it leads");
         assert.equal(turn.resume, chatSession, "every turn is that one session");
       }
       assert.equal(await realpath(chat.cwd), await realpath(project.dir), "where the chat's session lives");
@@ -293,9 +288,11 @@ for (const engine of ["claude-code", "codex"]) {
         (lead[0]!.liveTools ?? []).some((t) => t.name === "look"),
         "with its window on that build",
       );
-      assert.equal(results.integrated.merged, true, JSON.stringify(results.integrated));
+      // Flipped (Loop phase 5): the lead merges a worker's copy with worker_mark used, no integrate.
+      assert.match(results.integrated, /^Merged w1's work into your folder\. Health check: /, results.integrated);
       assert.ok(!/DIRECTOR\.md/.test(lead[0]!.prompt), "no memory file in its brief");
-      assert.match(lead[0]!.prompt, /still this chat's own session/);
+      // Flipped (Loop phase 5): the brief opens YOU LEAD THIS LOOP and says whose session it is.
+      assert.match(lead[0]!.prompt, /You are this chat's own session, leading a Loop/);
       assert.equal(await chatBookmark(rig, threadId), chatSession, "the chat's bookmark is still its session");
 
       // The chat goes on after the close in that same session: a question is answered there, with
@@ -327,6 +324,54 @@ for (const engine of ["claude-code", "codex"]) {
       assert.equal(await chatBookmark(rig, threadId), chatSession, "and the chat's bookmark stays on it");
     });
 
+    it("S1c. with Genex on, the landed build's cover is asked of the same session right after the close, before the person's next message", {
+      timeout: RIG_TIMEOUT_MS,
+    }, async () => {
+      const { rig, threadId } = await gameChat(`one-session-cover-${engine}`, 3, { cover: true });
+      let leadTurns = 0;
+      const { histories, requests } = sessionEngine(rig, engine, async (request, kind) => {
+        const call = (name: string, args: Record<string, unknown>) => request.onLiveTool!(name, args);
+        if (kind === Kind.Lead) {
+          leadTurns += 1;
+          if (leadTurns === 1) {
+            await call("worker_start", copyWorker("sky"));
+            return;
+          }
+          if (stillRunning(json(await call("run_status", {})), "w1")) return;
+          await call("worker_mark", { id: "w1", verdict: "used" });
+          await call("finish", { summary: "a dusk sky", land: "yes" });
+          return;
+        }
+        if (kind === Kind.Worker) {
+          await mkdir(path.join(request.cwd, "src"), { recursive: true });
+          await writeFile(path.join(request.cwd, "src", "sky.js"), "export const sky = 'dusk';\n");
+        }
+      });
+
+      await rig.core.sendUserMessage("make a dusk plaza", { thread: threadId, engine, autopilot: { frames: FRAMES } });
+      const finished = await loopRunClosed(rig, "the launched run's close");
+      assert.equal(finished.landed, true, String(finished.stoppedBecause));
+      const log = await handledUpTo(rig, threadId, 2, "the cover step");
+      const asks = customEvents(
+        log.filter((e) => e.thread_id === threadId),
+        "coordinator_message_queued",
+      )
+        .map((payload) => payload.action as { origin?: string; autopilot?: unknown } | undefined)
+        .filter((action) => action?.origin === MessageOrigin.CoverStep);
+      assert.equal(asks.length, 1, "one cover ask for the landed run");
+      assert.equal(asks[0]?.autopilot, undefined, "sent without the person's Loop: it starts no build");
+
+      await answered(rig, threadId, "why dusk?", engine, 3);
+      const chatSession = requests.find((r) => r.kind === Kind.Chat)!.sessionId!;
+      const afterClose = requests.filter((r) => r.kind === Kind.After);
+      assert.equal(afterClose.length, 2, afterClose.map((r) => r.request.prompt.slice(0, 60)).join(" | "));
+      assert.match(afterClose[0]!.request.prompt, /genex__skill \{"name":"cover"\}/, "the cover comes first");
+      assert.match(afterClose[1]!.request.prompt, /why dusk\?/, "then the person's message");
+      for (const turn of afterClose) assert.equal(turn.request.resume, chatSession, "both in the chat's own session");
+      assert.equal(customEvents(log, "run_started").length, 1, "the cover step started no build");
+      assert.equal(histories.size, 1, `no other session of the chat: ${JSON.stringify([...histories.keys()])}`);
+    });
+
     it("S1b. the lead builds with its own hands: it commits a split in the integration worktree, a worker builds on that commit, and both land", {
       timeout: RIG_TIMEOUT_MS,
     }, async () => {
@@ -345,18 +390,12 @@ for (const engine of ["claude-code", "codex"]) {
             await git(root, ["add", "-A"]);
             await git(root, ["commit", "-q", "-m", "lead: split the parts"]);
             results.leadCommit = await git(root, ["rev-parse", "HEAD"]);
-            await call("plan", plan(["sky"]));
-            results.started = json(await call("worker_start", single("sky", "src/sky.js")));
+            results.started = text(await call("worker_start", copyWorker("sky")));
             return;
           }
-          const status = json(await call("run_status", {}));
-          if (
-            status.workers.some(
-              (worker: { id: string; state: string }) => worker.id === "sky" && worker.state === "running",
-            )
-          )
-            return;
-          results.integrated = json(await call("integrate", { worker: "sky" }));
+          const id = startedId(results.started);
+          if (stillRunning(json(await call("run_status", {})), id)) return;
+          results.integrated = text(await call("worker_mark", { id, verdict: "used" }));
           results.finished = text(await call("finish", { summary: "a dusk sky on the lead's parts", land: "yes" }));
           return;
         }
@@ -377,9 +416,9 @@ for (const engine of ["claude-code", "codex"]) {
         requests.some((r) => r.kind === Kind.Lead),
         "a lead led it",
       );
-      assert.equal(results.started.started, "sky", JSON.stringify(results.started));
+      assert.match(results.started, /^Started w1 \(copy\)/, results.started);
       assert.equal(results.workerSawSplit, true, "the worker forked from the lead's commit");
-      assert.equal(results.integrated.merged, true, JSON.stringify(results.integrated));
+      assert.match(results.integrated, /^Merged w1's work into your folder/, results.integrated);
       const landed = await git(project.dir, ["rev-parse", "HEAD"]);
       await git(project.dir, ["merge-base", "--is-ancestor", results.leadCommit, landed]);
       assert.equal(
@@ -426,12 +465,10 @@ describe("a lead whose chat session cannot be resumed", () => {
     assert.equal(lead[1]!.resume, undefined, "then a fresh one");
     assert.equal(await realpath(lead[1]!.cwd), await realpath(project.dir), "in the game folder too");
     const fresh = prompts[1]!;
-    const at = [
-      "THE CHAT SO FAR",
-      "make a dusk plaza with a fountain",
-      "You are the DIRECTOR of run",
-      "HOW THIS RUN WORKS",
-    ].map((mark) => fresh.indexOf(mark));
+    // Flipped (Loop phase 5): the brief says YOU LEAD THIS LOOP and THE GOAL, no DIRECTOR or HOW THIS RUN WORKS.
+    const at = ["THE CHAT SO FAR", "make a dusk plaza with a fountain", "YOU LEAD THIS LOOP", "THE GOAL:"].map((mark) =>
+      fresh.indexOf(mark),
+    );
     assert.ok(
       at.every((i, n) => i >= 0 && (n === 0 || i > at[n - 1]!)),
       `in order: ${JSON.stringify(at)}\n${fresh.slice(0, 2_000)}`,
@@ -454,48 +491,44 @@ describe("a lead whose chat session cannot be resumed", () => {
   });
 });
 
-describe("a merge conflict goes to a worker", () => {
-  it("S3. integrate starts a worker from the integration branch with the merge open; the lead integrates it and lands both sides", {
+describe("a merge conflict comes back to the lead", () => {
+  it("S3. worker_mark used on a copy that conflicts undoes the merge and names the files; the lead resolves it in its own folder and both sides land", {
     timeout: RIG_TIMEOUT_MS,
   }, async () => {
+    // Flipped (Loop phase 5): no conflict worker is started from the merge; the lead hears the
+    // conflict, the merge is undone, and it resolves the files itself (S4, the conflict worker that
+    // left markers, went with it).
     const engine = "codex";
     const { rig, project } = await gameChat("one-session-conflict", 4);
     const results: Record<string, any> = {};
     let leadTurns = 0;
-    const { requests } = sessionEngine(rig, engine, async (request, kind) => {
+    sessionEngine(rig, engine, async (request, kind) => {
       const call = (name: string, args: Record<string, unknown>) => request.onLiveTool!(name, args);
       if (kind === Kind.Lead) {
         leadTurns += 1;
         if (leadTurns === 1) {
-          await call("plan", plan(["left", "right"]));
-          await call("worker_start", single("left", "src/sign.js"));
-          await call("worker_start", single("right", "src/sign.js"));
+          await call("worker_start", copyWorker("left"));
+          await call("worker_start", copyWorker("right"));
           return;
         }
-        const status = JSON.parse(text(await call("worker_status", {}))) as Array<{ id: string; state: string }>;
-        const ended = (id: string) => status.some((w) => w.id === id && w.state !== "running");
-        if (!results.conflict && ended("left") && ended("right")) {
-          results.left = json(await call("integrate", { worker: "left" }));
-          results.conflict = json(await call("integrate", { worker: "right" }));
-          return;
-        }
-        if (results.conflict && ended(results.conflict.resolving)) {
-          results.resolved = json(await call("integrate", { worker: results.conflict.resolving }));
-          results.finished = text(await call("finish", { summary: "both signs", land: "yes" }));
-        }
+        const status = json(await call("run_status", {}));
+        if (results.finished || stillRunning(status, "w1") || stillRunning(status, "w2")) return;
+        results.left = text(await call("worker_mark", { id: "w1", verdict: "used" }));
+        results.conflict = text(await call("worker_mark", { id: "w2", verdict: "used" }));
+        const root = request.director!.root;
+        results.mergeHead = await git(root, ["rev-parse", "-q", "--verify", "MERGE_HEAD"]).catch(() => "");
+        results.statusAfter = await git(root, ["status", "--porcelain"]);
+        // The lead fits both in with its own hands, commits, and sets the copy aside.
+        await writeFile(path.join(root, "src", "sign.js"), "export const sign = ['left', 'right'];\n");
+        await git(root, ["commit", "-qam", "lead: both signs"]);
+        results.rejected = text(await call("worker_mark", { id: "w2", verdict: "rejected" }));
+        results.finished = text(await call("finish", { summary: "both signs", land: "yes" }));
         return;
       }
       if (kind !== Kind.Worker) return;
-      const facet = request.selfCapture!.facetId!;
       const sign = path.join(request.cwd, "src", "sign.js");
-      if (facet.startsWith("merge-")) {
-        results.markers = await readFile(sign, "utf8");
-        results.mergeHead = await git(request.cwd, ["rev-parse", "-q", "--verify", "MERGE_HEAD"]).catch(() => "");
-        await writeFile(sign, "export const sign = ['left', 'right'];\n");
-        return;
-      }
       await mkdir(path.dirname(sign), { recursive: true });
-      await writeFile(sign, `export const sign = '${facet}';\n`);
+      await writeFile(sign, `export const sign = '${request.worker!.title}';\n`);
     });
 
     const runId = rig.core.newRunId();
@@ -512,107 +545,30 @@ describe("a merge conflict goes to a worker", () => {
       .catch(() => {});
     const finished = await loopRunClosed(rig, "the conflicted run's close");
 
-    assert.equal(results.left.merged, true, JSON.stringify(results.left));
-    assert.equal(results.conflict.merged, false, JSON.stringify(results.conflict));
-    assert.deepEqual(results.conflict.conflict, ["src/sign.js"]);
-    assert.equal(results.conflict.resolving, "merge-right", JSON.stringify(results.conflict));
-    assert.match(results.markers, /<<<<<<<[\s\S]*=======[\s\S]*>>>>>>>/, "the merge is open in its worktree");
-    assert.match(results.mergeHead, /^[0-9a-f]{40}$/, "mid-merge, not a fresh fork");
-    const briefed = requests.find((r) => r.request.selfCapture?.facetId === "merge-right")!.request;
-    assert.match(briefed.prompt, /MERGE CONFLICT TO RESOLVE/);
-    assert.equal(results.resolved.merged, true, JSON.stringify(results.resolved));
+    assert.match(results.left, /^Merged w1's work into your folder/, results.left);
+    assert.match(
+      results.conflict,
+      /^Not merged: w2's work conflicts with yours in src\/sign\.js\. The merge was undone\./,
+      results.conflict,
+    );
+    assert.equal(results.mergeHead, "", "no merge is left open in the lead's folder");
+    assert.equal(results.statusAfter, "", "and nothing of it is left behind");
+    assert.match(results.rejected, /^Rejected w2/, results.rejected);
     assert.equal(finished.landed, true, String(finished.stoppedBecause));
     assert.equal(
       await readFile(path.join(project.dir, "src", "sign.js"), "utf8"),
       "export const sign = ['left', 'right'];\n",
     );
-    const mergeCommit = (await git(project.dir, ["log", "--all", "--format=%P %s"]))
-      .split("\n")
-      .find((line) => line.includes("worker merge-right: Merge right"));
-    assert.equal(mergeCommit?.split(" ").filter((part) => /^[0-9a-f]{40}$/.test(part)).length, 2, "a merge commit");
-    for (const turn of requests.filter((r) => r.kind === Kind.Lead))
-      assert.equal(turn.request.readOnly, true, "the lead's own hands never touched it");
   });
 });
 
-describe("a conflict worker that leaves conflict markers", () => {
-  it("S4. commits nothing: the merge is aborted, the worker failed naming the files, and integrate refuses it", {
+describe("the studio's hands beside a lead that builds", () => {
+  it("S5. what the lead leaves uncommitted in the build it leads is committed as its work before a worker forks, merged with the worker's, and lands with the run", {
     timeout: RIG_TIMEOUT_MS,
   }, async () => {
-    const engine = "codex";
-    const { rig, project } = await gameChat("one-session-markers", 4);
-    const results: Record<string, any> = {};
-    let leadTurns = 0;
-    sessionEngine(rig, engine, async (request, kind) => {
-      const call = (name: string, args: Record<string, unknown>) => request.onLiveTool!(name, args);
-      if (kind === Kind.Lead) {
-        leadTurns += 1;
-        if (leadTurns === 1) {
-          await call("plan", plan(["left", "right"]));
-          await call("worker_start", single("left", "src/sign.js"));
-          await call("worker_start", single("right", "src/sign.js"));
-          return;
-        }
-        const status = JSON.parse(text(await call("worker_status", {}))) as Array<Record<string, any>>;
-        const ended = (id: string) => status.some((w) => w.id === id && w.state !== "running");
-        if (!results.conflict && ended("left") && ended("right")) {
-          results.left = json(await call("integrate", { worker: "left" }));
-          results.conflict = json(await call("integrate", { worker: "right" }));
-          return;
-        }
-        if (results.conflict && ended(results.conflict.resolving)) {
-          results.merger = status.find((w) => w.id === results.conflict.resolving);
-          results.mergeHead = await git(results.mergerCwd, ["rev-parse", "-q", "--verify", "MERGE_HEAD"]).catch(
-            () => "",
-          );
-          results.refused = text(await call("integrate", { worker: results.conflict.resolving }));
-          results.finished = text(await call("finish", { summary: "the left sign", land: "yes" }));
-        }
-        return;
-      }
-      if (kind !== Kind.Worker) return;
-      const facet = request.selfCapture!.facetId!;
-      const sign = path.join(request.cwd, "src", "sign.js");
-      // The conflict worker stops without resolving anything: the markers stay in the file.
-      if (facet.startsWith("merge-")) {
-        results.mergerCwd = request.cwd;
-        return;
-      }
-      await mkdir(path.dirname(sign), { recursive: true });
-      await writeFile(sign, `export const sign = '${facet}';\n`);
-    });
-
-    const runId = rig.core.newRunId();
-    void rig.core
-      .dispatchRun({
-        runId,
-        goal: "two signs",
-        project: project.name,
-        mode: "autopilot",
-        engine,
-        reference: { name: "signs", shots: [] },
-        budgets: { wallClockMs: 15 * 60_000 },
-      } as never)
-      .catch(() => {});
-    const finished = await loopRunClosed(rig, "the run whose conflict worker left markers");
-
-    assert.equal(results.conflict.resolving, "merge-right", JSON.stringify(results.conflict));
-    assert.equal(results.merger?.state, "failed", JSON.stringify(results.merger));
-    assert.match(String(results.merger?.stoppedBecause ?? results.merger?.error), /src\/sign\.js/);
-    assert.equal(results.mergeHead, "", "the merge in its worktree was aborted");
-    assert.doesNotMatch(results.refused, /"merged":\s*true/, results.refused);
-    assert.match(results.refused, /src\/sign\.js/, results.refused);
-    const subjects = await git(project.dir, ["log", "--all", "--format=%s"]);
-    assert.ok(!subjects.includes("worker merge-right"), `nothing of the conflict worker was committed:\n${subjects}`);
-    assert.equal(finished.landed, true, String(finished.stoppedBecause));
-    assert.equal(await readFile(path.join(project.dir, "src", "sign.js"), "utf8"), "export const sign = 'left';\n");
-  });
-});
-
-describe("the studio's hands for a lead that writes nothing", () => {
-  it("S5. what no worker made in the build it leads is set aside on a ref, a playtest of the game folder plays a copy of its commit, and each answer speaks to a lead", {
-    timeout: RIG_TIMEOUT_MS,
-  }, async () => {
+    // Flipped (Loop phase 5): no playtest of the game folder (the playtest tool is gone), and a
+    // merge no longer commits the lead's leftovers first or says it could not: worker_mark merges
+    // over what the lead left, and the health check commits it as the lead's work.
     const engine = "codex";
     const { rig, project } = await gameChat("one-session-hands", 4);
     const results: Record<string, any> = {};
@@ -623,37 +579,21 @@ describe("the studio's hands for a lead that writes nothing", () => {
         leadTurns += 1;
         const root = request.director!.root;
         if (leadTurns === 1) {
-          await call("plan", plan(["sky"]));
-          results.gameHead = await git(project.dir, ["rev-parse", "HEAD"]);
-          results.playedLive = text(await call("playtest", { target: "live", ask: "does the plaza load?" }));
-          // The user edits the game folder mid-build: a copy of its commit would not be what they see.
-          await writeFile(path.join(project.dir, "mine.txt"), "the user's own edit\n");
-          results.liveDirty = text(await call("playtest", { target: "live", ask: "does the plaza load?" }));
-          await rm(path.join(project.dir, "mine.txt"));
           // A game that builds in place leaves files no worker made in the build the lead leads.
           await writeFile(path.join(root, "built.txt"), "made by a build\n");
-          results.started = json(await call("worker_start", single("sky", "src/sky.js")));
+          results.started = text(await call("worker_start", copyWorker("sky")));
+          results.cleanAtStart = await git(root, ["status", "--porcelain"]);
           return;
         }
-        const status = JSON.parse(text(await call("worker_status", {}))) as Array<{ id: string; state: string }>;
-        if (results.merged || !status.some((w) => w.id === "sky" && w.state !== "running")) return;
-        // A stray git cannot read: the studio cannot set it aside, and says so.
-        const locked = path.join(root, "locked.txt");
-        await writeFile(locked, "unreadable\n");
-        await chmod(locked, 0o000);
-        results.stuck = text(await call("integrate", { worker: "sky" }));
-        await chmod(locked, 0o644);
-        results.merged = json(await call("integrate", { worker: "sky" }));
+        if (results.merged || stillRunning(json(await call("run_status", {})), "w1")) return;
+        await writeFile(path.join(root, "haze.txt"), "the lead's own edit\n");
+        results.merged = text(await call("worker_mark", { id: "w1", verdict: "used" }));
         results.cleanAfter = await git(root, ["status", "--porcelain"]);
         results.finished = text(await call("finish", { summary: "a dusk sky", land: "yes" }));
         return;
       }
-      if (kind === Kind.Playtester) {
-        results.playCwd = await realpath(request.cwd);
-        results.playHead = await git(request.cwd, ["rev-parse", "HEAD"]);
-        return;
-      }
       if (kind !== Kind.Worker) return;
+      results.workerSawBuilt = await readFile(path.join(request.cwd, "built.txt"), "utf8").catch(() => null);
       await mkdir(path.join(request.cwd, "src"), { recursive: true });
       await writeFile(path.join(request.cwd, "src", "sky.js"), "export const sky = 'dusk';\n");
     });
@@ -672,31 +612,16 @@ describe("the studio's hands for a lead that writes nothing", () => {
       .catch(() => {});
     const finished = await loopRunClosed(rig, "the run whose lead the studio lent its hands");
 
-    // The game folder is played from a worktree of its commit, never in place.
-    assert.doesNotMatch(results.playedLive, /does not run|uncommitted/, results.playedLive);
-    assert.ok(
-      results.playCwd.includes(path.join("autopilot", runId, "play-")),
-      `the playtester sat in a worktree of the run: ${results.playCwd}`,
-    );
-    assert.notEqual(results.playCwd, await realpath(project.dir));
-    assert.equal(results.playHead, results.gameHead, "at the game folder's commit");
-    assert.match(results.liveDirty, /the game folder has uncommitted changes/, results.liveDirty);
-    assert.match(results.liveDirty, /playtest integration or a worker instead/);
-    // What no worker made: told at worker_start in a lead's words, kept aside at integrate.
-    assert.equal(results.started.started, "sky", JSON.stringify(results.started));
-    assert.match(results.started.note, /no worker made/, results.started.note);
-    assert.doesNotMatch(results.started.note, /commit first/);
-    assert.match(results.stuck, /could not set them aside/, results.stuck);
-    assert.doesNotMatch(results.stuck, /do not try to clear/);
-    assert.equal(results.merged.merged, true, JSON.stringify(results.merged));
-    const ref = /refs\/studio\/runs\/[^ ]+\/set-aside\/\d+/.exec(results.merged.setAside)?.[0];
-    assert.ok(ref, results.merged.setAside);
-    assert.match(results.merged.setAside, /built\.txt/);
-    assert.equal(await git(project.dir, ["show", `${ref}:built.txt`]), "made by a build", "kept on the ref");
-    assert.equal(results.cleanAfter, "", "and the worktree reset to the integration head");
+    assert.match(results.started, /^Started w1 \(copy\)/, results.started);
+    assert.equal(results.cleanAtStart, "", "the lead's work was committed before the fork");
+    assert.equal(results.workerSawBuilt, "made by a build\n", "and the worker started from it");
+    assert.match(results.merged, /^Merged w1's work into your folder/, results.merged);
+    assert.equal(results.cleanAfter, "", "the health check committed the lead's own edit as its work");
     assert.equal(finished.landed, true, String(finished.stoppedBecause));
     assert.equal(await readFile(path.join(project.dir, "src", "sky.js"), "utf8"), "export const sky = 'dusk';\n");
-    await assert.rejects(readFile(path.join(project.dir, "built.txt")), "what was set aside never landed");
+    const landedWithIt = { "built.txt": "made by a build\n", "haze.txt": "the lead's own edit\n" };
+    for (const [file, contents] of Object.entries(landedWithIt))
+      assert.equal(await readFile(path.join(project.dir, file), "utf8"), contents, `${file} landed with the run`);
   });
 });
 
@@ -713,13 +638,11 @@ describe("the same agent after the build", () => {
       if (kind === Kind.Lead) {
         leadTurns += 1;
         if (leadTurns === 1) {
-          await call("plan", plan(["sky"]));
-          await call("worker_start", single("sky", "src/sky.js"));
+          await call("worker_start", copyWorker("sky"));
           return;
         }
-        const status = JSON.parse(text(await call("worker_status", {}))) as Array<{ id: string; state: string }>;
-        if (results.integrated || !status.some((w) => w.id === "sky" && w.state !== "running")) return;
-        results.integrated = json(await call("integrate", { worker: "sky" }));
+        if (results.integrated || stillRunning(json(await call("run_status", {})), "w1")) return;
+        results.integrated = text(await call("worker_mark", { id: "w1", verdict: "used" }));
         // Left beside the game folder: the user lands it from the chat.
         results.finished = text(await call("finish", { summary: "a dusk sky", land: "no" }));
         return;
@@ -817,8 +740,7 @@ describe("the same agent after the build", () => {
       if (kind === Kind.Lead) {
         leadPrompts.push(request.prompt);
         if (leadPrompts.length === 1) {
-          await call("plan", plan(["moon"]));
-          await call("worker_start", single("moon", "src/moon.js"));
+          await call("worker_start", copyWorker("moon"));
           return;
         }
         results.resumedFinish = text(await call("finish", { summary: "a red moon", land: "no" }));
@@ -900,8 +822,7 @@ function pausedLoopRun(leadPrompts: string[], started: { worker: boolean }) {
     if (kind === Kind.Lead) {
       leadPrompts.push(request.prompt);
       if (leadPrompts.length === 1) {
-        await call("plan", plan(["moon"]));
-        await call("worker_start", single("moon", "src/moon.js"));
+        await call("worker_start", copyWorker("moon"));
         return;
       }
       await call("finish", { summary: "a red moon", land: "no" });
@@ -940,25 +861,26 @@ function liveCall(request: DelegateRequest) {
 }
 
 /**
- * A run that builds `id` with one worker and lands it, as S1 scripts it: its lead plans (on its
- * first run) and starts the worker, then integrates and finishes once the worker is done.
+ * A run that builds `part` with one worker and lands it, as S1 scripts it: its lead starts the
+ * worker, then merges its copy and finishes once the worker is done.
  */
-function landingLoopRun(id: string, planned: boolean) {
+function landingLoopRun(part: string, onStatus: (status: Record<string, any>) => void = () => {}) {
   let turns = 0;
   let finished = false;
+  let worker = "";
   return async (request: DelegateRequest): Promise<void> => {
     const call = liveCall(request);
     turns += 1;
     if (turns === 1) {
-      if (!planned) await call("plan", plan([id]));
-      await call("worker_start", single(id, `src/${id}.js`));
+      worker = startedId(text(await call("worker_start", copyWorker(part))));
       return;
     }
-    const status = JSON.parse(text(await call("worker_status", {}))) as Array<{ id: string; state: string }>;
-    if (finished || !status.some((w) => w.id === id && w.state !== "running")) return;
+    const status = json(await call("run_status", {}));
+    if (finished || stillRunning(status, worker)) return;
+    onStatus(status);
     finished = true;
-    await call("integrate", { worker: id });
-    await call("finish", { summary: `the ${id}`, land: "yes" });
+    await call("worker_mark", { id: worker, verdict: "used" });
+    await call("finish", { summary: `the ${part}`, land: "yes" });
   };
 }
 
@@ -1169,11 +1091,11 @@ describe("the same agent after the build: the resume it asks for, and the sessio
       if (kind === Kind.Lead) {
         leadTurns += 1;
         if (leadTurns === 1) {
-          await call("plan", plan(["sky"]));
-          await call("worker_start", single("sky", "src/sky.js"));
+          await call("worker_start", copyWorker("sky"));
           return;
         }
-        await call("integrate", { worker: "sky" });
+        if (stillRunning(json(await call("run_status", {})), "w1")) return;
+        await call("worker_mark", { id: "w1", verdict: "used" });
         await call("finish", { summary: "a dusk sky", land: "yes" });
         return;
       }
@@ -1220,7 +1142,7 @@ describe("the same agent after the build: the resume it asks for, and the sessio
   }, async () => {
     const engine = "codex";
     const { rig, threadId } = await gameChat("after-run-engines-on-loop");
-    const first = landingLoopRun("sky", false);
+    const first = landingLoopRun("sky");
     const { requests } = sessionEngine(rig, engine, async (request, kind) => {
       if (kind === Kind.Lead) return first(request);
       if (kind === Kind.Worker) return writePart(request, "sky");
@@ -1250,7 +1172,7 @@ describe("the same agent after the build: the resume it asks for, and the sessio
   }, async () => {
     const engine = "codex";
     const { rig, threadId } = await gameChat("after-run-coordinator-reopens");
-    let loopRun = landingLoopRun("sky", false);
+    let loopRun = landingLoopRun("sky");
     let part = "sky";
     const { requests } = sessionEngine(rig, engine, async (request, kind) => {
       if (kind === Kind.Lead) return loopRun(request);
@@ -1262,8 +1184,8 @@ describe("the same agent after the build: the resume it asks for, and the sessio
     await launchedAndClosed(rig, threadId, engine);
     const chatSession = requests.find((r) => r.kind === Kind.Chat)?.sessionId;
     const leadsBefore = requests.filter((r) => r.kind === Kind.Lead).length;
-    // The reopened run works to its ask (a goal commission): its lead plans for it first.
-    loopRun = landingLoopRun("enemies", false);
+    // The reopened run works to its ask: its lead starts a worker for it.
+    loopRun = landingLoopRun("enemies");
     part = "enemies";
 
     await answeredOnLoop(rig, threadId, "add enemies", "claude-code", { hours: 2 }, 2);
@@ -1314,6 +1236,8 @@ interface ReopenSeen {
   workerSky?: string;
   /** Every prompt the reopened run's lead was given. */
   reopenedPrompts: string[];
+  /** The workers the reopened run's lead read in its status before it finished. */
+  reopenedWorkers?: string[];
 }
 
 /** The reopened run's lead, seen: every prompt it is given, and the game folder's HEAD when it first wakes. */
@@ -1334,8 +1258,13 @@ async function seeReopenedWorker(request: DelegateRequest, seen: ReopenSeen): Pr
  * then records the reopen for enemies; and the run reopened, which builds them.
  */
 function reopenedLoopRuns(gameDir: string, seen: ReopenSeen) {
-  // The reopened run works to its ask (a goal commission, golden-boot-glory): its lead plans for it first.
-  const loopRuns = [landingLoopRun("sky", false), landingLoopRun("enemies", false)];
+  // The reopened run works to its ask: its lead starts a worker for it.
+  const loopRuns = [
+    landingLoopRun("sky"),
+    landingLoopRun("enemies", (status) => {
+      seen.reopenedWorkers = (status.workers as Array<{ title: string }>).map((worker) => worker.title);
+    }),
+  ];
   let loopRun = 0;
   const chatAfter = async (request: DelegateRequest) => {
     if (request.prompt.includes("add enemies")) {
@@ -1403,7 +1332,8 @@ describe("the same agent after the build: a finished build reopened with Loop on
     const leads = requests.filter((r) => r.kind === Kind.Lead);
     assert.equal(leads.at(-1)?.request.resume, chatSession, "the reopened run's lead is the chat's own session");
     const [opening = ""] = seen.reopenedPrompts;
-    assert.match(opening, /THE BUILD GOES ON AT/);
+    // Flipped (Loop phase 5): the reopen is said in the brief, no THE BUILD GOES ON AT heading.
+    assert.match(opening, /the same run goes on with a fresh working budget from the game folder as it is now/);
     assert.match(opening, /THE USER SAYS[\s\S]*add enemies/);
     assert.ok(!seen.reopenedPrompts.some((p) => p.includes("old note")), "a steer from before the ask is not told");
     assert.equal(seen.workerHead, seen.folderHead, "the new worker forks from the game folder as it is now");
@@ -1411,8 +1341,9 @@ describe("the same agent after the build: a finished build reopened with Loop on
 
     const second = customEvents(log, "run_finished")[1] ?? {};
     assert.equal(second.landed, true, String(second.stoppedBecause));
+    // Flipped (Loop phase 5): the run's workers are its pool's records, read in run_status, not the report's.
     assert.deepEqual(
-      Object.keys(second.workers ?? {}).sort(),
+      [...(seen.reopenedWorkers ?? [])].sort(),
       ["enemies", "sky"],
       "the reopened run's record keeps the finished run's workers",
     );
@@ -1445,7 +1376,7 @@ describe("the same agent after the build: a start over or a question with Loop o
   }, async () => {
     const engine = "codex";
     const { rig, threadId } = await gameChat("after-run-start-over");
-    const first = landingLoopRun("sky", false);
+    const first = landingLoopRun("sky");
     let offered: string[] | null = null;
     const { requests } = sessionEngine(rig, engine, async (request, kind) => {
       if (kind === Kind.Lead && offered) {
@@ -1481,7 +1412,7 @@ describe("the same agent after the build: a start over or a question with Loop o
   }, async () => {
     const engine = "codex";
     const { rig, threadId } = await gameChat("after-run-question-on-loop");
-    const first = landingLoopRun("sky", false);
+    const first = landingLoopRun("sky");
     let offered: string[] | null = null;
     const { requests } = sessionEngine(rig, engine, async (request, kind) => {
       if (kind === Kind.Lead) return first(request);

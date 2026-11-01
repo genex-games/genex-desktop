@@ -12,7 +12,6 @@ import {
   HOOK_TAG,
   MAX_REWRITE_BYTES,
   SHIM_TAG,
-  confinePreviewContents,
   cspNote,
   findMetaCsp,
   gameRequestAllowed,
@@ -139,14 +138,16 @@ describe("the served page", () => {
   it("bakes this load's shim options into the tag, and nothing when there are none", () => {
     assert.equal(shimTag(null), SHIM_TAG);
     assert.equal(shimTag({}), SHIM_TAG);
-    const tag = shimTag({ readyMs: 30_000, seed: null });
+    const tag = shimTag({ readyMs: 30_000, clock: "studio" });
     assert.match(tag, /data-studio-shim data-studio-options="/);
     const encoded = /data-studio-options="([^"]*)"/.exec(tag)?.[1] ?? "";
     assert.deepEqual(JSON.parse(encoded.replace(/&quot;/g, '"').replace(/&amp;/g, "&")), {
       readyMs: 30_000,
-      seed: null,
+      clock: "studio",
     });
-    assert.ok(rewriteGameHtml(read("template.html"), { shim: { readyMs: 30_000, seed: null } }).html.includes(tag));
+    assert.ok(
+      rewriteGameHtml(read("template.html"), { shim: { readyMs: 30_000, clock: "studio" } }).html.includes(tag),
+    );
   });
 });
 
@@ -390,8 +391,9 @@ describe("which http requests are the studio's", () => {
     });
   });
 
-  it("denies every other http request instead of fetching it from the main process (SECUI-3)", () => {
-    // Flipped from the Stage 0 pin "passes every other http request through (current behaviour)".
+  it("sends every other http request to the network, never to a game's folder", () => {
+    // Flipped from "denies every other http request (SECUI-3)": the preview's network is open
+    // like a normal web page's (phase 5, decision 6); only the registered port is a game's files.
     for (const url of [
       "http://localhost:41235/",
       "http://localhost/",
@@ -399,15 +401,18 @@ describe("which http requests are the studio's", () => {
       "http://example.com:41234/",
       "http://localhost.evil:41234/",
       "http://example.com/",
+      "http://localhost:41234@attacker.example/",
+      "http://localhost.:41234/",
+      "http://0.0.0.0:41234/",
+      "http://a.localhost:41234/",
+      "http://[::ffff:127.0.0.1]:41234/",
     ]) {
-      assert.deepEqual(routeHttp(url, ports), { route: "deny" }, url);
+      assert.deepEqual(routeHttp(url, ports), { route: "pass" }, url);
     }
   });
 });
 
-describe("what the game partition may request (SECUI-3)", () => {
-  const ports = new Map([[41234, "pond-life"]]);
-
+describe("what the game partition may request", () => {
   it("allows the studio's own schemes and the game's registered loopback port", () => {
     for (const url of [
       "game://pond-life/index.html",
@@ -417,76 +422,38 @@ describe("what the game partition may request (SECUI-3)", () => {
       "devtools://devtools/bundled/devtools_app.html",
       "http://localhost:41234/index.html",
       "http://127.0.0.1:41234/assets/a.png",
+      "http://LOCALHOST:41234/",
     ])
-      assert.equal(gameRequestAllowed(url, ports), true, url);
+      assert.equal(gameRequestAllowed(url), true, url);
   });
 
-  it("refuses the network: remote hosts, unregistered loopback ports and every other scheme", () => {
-    for (const url of [
-      "https://attacker.example/x",
-      "http://attacker.example/x",
-      "wss://attacker.example/socket",
-      "ws://localhost:41234/",
-      "https://localhost:41234/",
-      "http://localhost:41235/",
-      "http://localhost/",
-      "http://[::1]:41234/",
-      "http://localhost:41234@attacker.example/",
-      "http://localhost.attacker.example:41234/",
-      "file:///etc/passwd",
-      "ftp://example.com/",
-      "chrome-extension://abc/x.js",
-      "not a url",
-      "",
-      // L2: other spellings of "this machine", which reach a server the game did not get.
-      "http://localhost.:41234/",
-      "http://0.0.0.0:41234/",
-      "http://a.localhost:41234/",
-      "http://[::ffff:127.0.0.1]:41234/",
-      "filesystem:game://pond-life/temporary/x",
-      "chrome://gpu",
-    ])
-      assert.equal(gameRequestAllowed(url, ports), false, url);
-    // The URL parser lowercases the host: this is the registered origin, not another one.
-    assert.equal(gameRequestAllowed("http://LOCALHOST:41234/", ports), true);
-  });
-
-  it("lets a game read its libraries and fonts from the well-known public CDNs, and nothing else there", () => {
+  it("reaches the network like a normal web page: any host, any port, sockets", () => {
     for (const url of [
       "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
-      "https://unpkg.com/three@0.170.0/build/three.module.js",
-      "https://esm.sh/three@0.170.0",
-      "https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js",
-      "https://fonts.googleapis.com/css2?family=Inter",
       "https://fonts.gstatic.com/s/inter/v13/abc.woff2",
-    ]) {
-      assert.equal(gameRequestAllowed(url, ports, "GET"), true, url);
-      assert.equal(gameRequestAllowed(url, ports, "HEAD"), true, url);
-      assert.equal(gameRequestAllowed(url, ports), true, `${url} (method unknown means a read)`);
-    }
-    for (const [url, method] of [
-      ["https://cdn.jsdelivr.net/npm/three/x.js", "POST"],
-      ["https://unpkg.com/x", "PUT"],
-      ["http://cdn.jsdelivr.net/npm/three/x.js", "GET"],
-      ["wss://esm.sh/socket", "GET"],
-      ["https://cdn.jsdelivr.net.attacker.example/x.js", "GET"],
-      ["https://evil.cdn.jsdelivr.net/x.js", "GET"],
-      ["https://cdn.jsdelivr.net@attacker.example/x.js", "GET"],
-      ["https://attacker.example/?host=cdn.jsdelivr.net", "GET"],
-      ["https://unpkg.com:8443/x.js", "GET"],
-      // A punycode lookalike: Cyrillic "е" in jsdelivr.
-      ["https://cdn.jsdеlivr.net/npm/three/x.js", "GET"],
-      ["https://cdn.jsdelivr.net./npm/three/x.js", "GET"],
-    ] as const)
-      assert.equal(gameRequestAllowed(url, ports, method), false, `${method} ${url}`);
+      "https://api.example.com/scores",
+      "http://example.com/",
+      "http://localhost:8080/api/state",
+      "http://127.0.0.1:3000/",
+      "https://localhost:41234/",
+      "ws://localhost:8787/room",
+      "wss://game-server.example/socket",
+    ])
+      assert.equal(gameRequestAllowed(url), true, url);
   });
-});
 
-describe("traffic the request filter never sees (M7)", () => {
-  it("sends no WebRTC UDP around the proxy: ICE candidates would leave the machine unfiltered", () => {
-    const policies: string[] = [];
-    confinePreviewContents({ setWebRTCIPHandlingPolicy: (policy: string) => void policies.push(policy) });
-    assert.deepEqual(policies, ["disable_non_proxied_udp"]);
+  it("refuses what a web page never reaches: the disk, the browser's own pages and other schemes", () => {
+    for (const url of [
+      "file:///etc/passwd",
+      "filesystem:game://pond-life/temporary/x",
+      "ftp://example.com/",
+      "chrome-extension://abc/x.js",
+      "chrome://gpu",
+      "javascript:alert(1)",
+      "not a url",
+      "",
+    ])
+      assert.equal(gameRequestAllowed(url), false, url);
   });
 });
 
@@ -504,18 +471,29 @@ describe("where a game page may navigate (SECUI-3)", () => {
     }
   });
 
-  it("refuses a remote page in the preview, top level or embedded", () => {
+  it("never puts a remote page at the top level of the preview", () => {
     for (const url of [
       "https://attacker.example/sign-in",
       "http://attacker.example/",
       "http://localhost:41235/",
-      "file:///etc/passwd",
-      "javascript:alert(1)",
-      "not a url",
       "http://localhost.:41234/",
       "http://0.0.0.0:41234/",
       "http://a.localhost:41234/",
       "http://[::ffff:127.0.0.1]:41234/",
+    ])
+      assert.equal(previewNavigationAllowed(url, ports, { mainFrame: true }), false, url);
+  });
+
+  it("lets an embedded frame hold a web page, as any page may", () => {
+    for (const url of ["https://www.example.com/embed/1", "http://localhost:8080/lobby"])
+      assert.equal(previewNavigationAllowed(url, ports, { mainFrame: false }), true, url);
+  });
+
+  it("refuses the disk, script URLs and the browser's own pages in any frame", () => {
+    for (const url of [
+      "file:///etc/passwd",
+      "javascript:alert(1)",
+      "not a url",
       "filesystem:game://pond-life/temporary/x",
       "chrome://gpu",
     ]) {

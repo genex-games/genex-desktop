@@ -68,6 +68,7 @@ import {
   feedFailed,
   feedOf,
   feedRequested,
+  gameChanged,
   gameOpened,
   initialPlay,
   installAnswered,
@@ -1450,6 +1451,135 @@ describe("Play store: a native game's own page", () => {
     ];
     store.setState((state) => sessionsReported(state, sessions), true);
     assert.equal(store.getState().sessions, sessions);
+  });
+
+  it("puts a native game first in Recent when it is played, opening its page from there", async () => {
+    const storage = memory({ [STORAGE_KEYS.playRecent]: JSON.stringify([entry("x")]) });
+    const { api } = fakeApi({ playGame: async (slug) => detail(slug) });
+    const store = createPlayStore(api, storage);
+    await store.loadGame("dust-runners");
+    await store.launch("dust-runners");
+    assert.deepEqual(slugsOf(store.getState().recent), ["dust-runners", "x"]);
+    assert.equal(store.getState().recent[0]?.page, true);
+    assert.deepEqual(slugsOf(readRecent(storage)), ["dust-runners", "x"], "remembered");
+  });
+
+  it("keeps a played game with a web build opening the viewer from Recent, as its card does", async () => {
+    const both = (slug: string): PlayGameDetail => ({
+      ...detail(slug),
+      native: { web: true, engine: "godot", builds: [] },
+    });
+    const store = createPlayStore(fakeApi({ playGame: async (slug) => both(slug) }).api, memory());
+    await store.loadGame("skate");
+    await store.launch("skate");
+    assert.deepEqual(store.getState().recent, [{ slug: "skate", title: "SKATE", coverUrl: null }]);
+  });
+
+  it("puts a native-only game in Recent once its page shows, however it was reached (a link, a notice)", async () => {
+    const page = deferred<PlayGameDetail>();
+    const store = createPlayStore(fakeApi({ playGame: () => page.promise }).api, memory());
+    store.showGame("dust-runners");
+    assert.deepEqual(store.getState().recent, [], "nothing to name it by before its page is read");
+    page.resolve(detail("dust-runners"));
+    await store.loadGame("dust-runners");
+    assert.deepEqual(slugsOf(store.getState().recent), ["dust-runners"]);
+    assert.equal(store.getState().recent[0]?.page, true);
+  });
+
+  it("leaves Recent's order alone when a native page read lands after another game was opened", async () => {
+    const page = deferred<PlayGameDetail>();
+    const store = createPlayStore(fakeApi({ playGame: () => page.promise }).api, memory());
+    await store.open({ ...entry("dust-runners"), page: true });
+    await store.open(entry("skate"));
+    page.resolve(detail("dust-runners"));
+    await store.loadGame("dust-runners");
+    assert.deepEqual(slugsOf(store.getState().recent), ["skate", "dust-runners"], "the game being played stays first");
+    assert.equal(store.getState().recent[1]?.page, true);
+  });
+
+  it("does not put a native game in Recent when its page was left before it was read", async () => {
+    const page = deferred<PlayGameDetail>();
+    const store = createPlayStore(fakeApi({ playGame: () => page.promise }).api, memory());
+    store.showFriends();
+    store.showGame("dust-runners");
+    store.back();
+    page.resolve(detail("dust-runners"));
+    await store.loadGame("dust-runners");
+    assert.deepEqual(store.getState().recent, []);
+  });
+
+  it("keeps a native game opening its page from Recent after its card changes", () => {
+    const kept = { ...entry("dust-runners"), page: true as const };
+    const state = gameChanged({ ...initialPlay([kept]) }, nativeOnly("dust-runners"), {
+      ...nativeOnly("dust-runners"),
+      title: "Dust Runners 2",
+    });
+    assert.deepEqual(state.recent, [{ ...kept, title: "Dust Runners 2" }]);
+  });
+
+  it("leaves Recent alone when a web game's page shows: it joins Recent when it is played", async () => {
+    const web = (slug: string): PlayGameDetail => ({ ...detail(slug), native: undefined });
+    const store = createPlayStore(fakeApi({ playGame: async (slug) => web(slug) }).api, memory());
+    store.showGame("lost-cathedral");
+    await store.loadGame("lost-cathedral");
+    assert.deepEqual(store.getState().recent, []);
+  });
+});
+
+describe("Play store: Recent's covers", () => {
+  const cover = "https://cdn.genex.technology/covers/golf.webp";
+  const page1 = (slug: string, overrides: Partial<PlayGame> = {}): PlayGameDetail => ({
+    ...game(slug, overrides),
+    likes: 0,
+    liked: false,
+    comments: 0,
+    shots: [],
+    updatedAt: null,
+  });
+  const stored = (...entries: PlayRecentEntry[]) => memory({ [STORAGE_KEYS.playRecent]: JSON.stringify(entries) });
+
+  it("takes a game's cover from the cards Play reads, so a game played before it had one gets it", async () => {
+    const storage = stored(entry("other"), entry("arcade-golf"));
+    const { api } = fakeApi({ playFeed: async () => page([game("arcade-golf", { coverUrl: cover })]) });
+    const store = createPlayStore(api, storage, manualClock().now);
+    await store.loadFeed(PlayCategory.Featured);
+    assert.deepEqual(store.getState().recent, [entry("other"), { ...entry("arcade-golf"), coverUrl: cover }]);
+    assert.equal(readRecent(storage)[1]?.coverUrl, cover, "remembered");
+  });
+
+  it("keeps the cover it has when a card shows none, and a page's flag either way", async () => {
+    const kept = { ...entry("dust-runners"), coverUrl: cover, page: true as const };
+    const { api } = fakeApi({ playFeed: async () => page([game("dust-runners")]) });
+    const store = createPlayStore(api, stored(kept), manualClock().now);
+    await store.loadFeed(PlayCategory.Featured);
+    assert.deepEqual(store.getState().recent, [kept]);
+  });
+
+  it("reads the page of a game still without a cover once, and takes the cover from it", async () => {
+    const { api, calls } = fakeApi({ playGame: async (slug) => page1(slug, { coverUrl: cover }) });
+    const store = createPlayStore(api, stored(entry("arcade-golf")), manualClock().now);
+    await store.findCover("arcade-golf");
+    await store.findCover("arcade-golf");
+    assert.deepEqual(calls.game, ["arcade-golf"], "one read a window");
+    assert.equal(store.getState().recent[0]?.coverUrl, cover);
+  });
+
+  it("does not read again in the same window when the page could not be read", async () => {
+    const { api, calls } = fakeApi();
+    const store = createPlayStore(api, stored(entry("arcade-golf")), manualClock().now);
+    await store.findCover("arcade-golf");
+    await store.findCover("arcade-golf");
+    assert.deepEqual(calls.game, ["arcade-golf"]);
+    assert.equal(store.getState().recent[0]?.coverUrl, null);
+  });
+
+  it("gives a game joined from a friend the cover its card showed, in Recent and the viewer", async () => {
+    const { api } = fakeApi({ playFeed: async () => page([game("skate", { coverUrl: cover })]) });
+    const store = createPlayStore(api, memory(), manualClock().now);
+    await store.loadFeed(PlayCategory.Featured);
+    await store.open({ slug: "skate", title: "Skate", coverUrl: null });
+    assert.equal(store.getState().recent[0]?.coverUrl, cover);
+    assert.equal(store.getState().viewer?.coverUrl, cover);
   });
 });
 

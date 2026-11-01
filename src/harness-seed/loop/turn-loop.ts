@@ -75,7 +75,6 @@ export interface TurnOptions {
   contextWindow?: number | null;
   extraSystem?: string;
   engineLabel?: string;
-  candidateId?: string;
   /** The queue's door into this turn for what the person sends while it works (chat-steer.ts). */
   steer?: SteerHandle;
   /** The run this chat's own session led is over: it answers with the run's controls (after-loop-run.ts). */

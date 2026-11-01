@@ -124,8 +124,8 @@ function ReopenButton({
 
 /**
  * The answers in one row from the card's left edge, the recommended one first, showing the answer
- * keys where they press it. While one sends, only a filled "Sending…" stays: the others can do
- * nothing until it settles.
+ * keys where they press it. While one sends the row looks as it did when pressed, so nothing in it
+ * changes size; the pressed one is marked busy, and no answer takes a press until it settles.
  */
 function Answers({
   choices,
@@ -136,20 +136,13 @@ function Answers({
   onAnswer,
 }: {
   choices: ChatChoice[];
-  sending: boolean;
+  /** The answer on its way, if one is. */
+  sending: string | null;
   disabled: boolean;
   keys: boolean;
   first: RefObject<HTMLButtonElement | null>;
   onAnswer: (id: string) => void;
 }) {
-  if (sending)
-    return (
-      <div data-question-answers className="chat-answers">
-        <button type="button" data-primary="" aria-busy="true" disabled className="chat-answer chat-answer-primary">
-          {t("Sending…")}
-        </button>
-      </div>
-    );
   if (choices.length === 0) return null;
   return (
     <div data-question-answers className="chat-answers">
@@ -162,6 +155,8 @@ function Answers({
             type="button"
             data-answer={choice.id}
             data-primary={index === 0 ? "" : undefined}
+            aria-busy={choice.id === sending || undefined}
+            aria-disabled={sending !== null || undefined}
             aria-keyshortcuts={shortcut ? answerKeys(hostPlatform()).aria : undefined}
             title={choice.description}
             disabled={disabled}
@@ -308,8 +303,8 @@ export function ChatQuestion({
       </div>
       <Answers
         choices={choices}
-        sending={sending !== null}
-        disabled={blocked}
+        sending={sending}
+        disabled={disabled}
         keys={keys}
         first={first}
         onAnswer={(choice) => void submit(choice)}

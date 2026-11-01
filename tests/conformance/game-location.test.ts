@@ -350,7 +350,7 @@ describe("the studio checks a chosen folder before the library writes anything",
       process.env.HOME = previous;
     });
     // A launch without the development policy, as the normal profile runs.
-    const { core } = await coreLite({ executionPolicy: { runBackgroundImprovement: false } });
+    const { core } = await coreLite({ executionPolicy: {} });
     await mkdir(path.join(home, "dotfiles", "genex", "inner"), { recursive: true });
     await symlink(path.join(home, "dotfiles", "genex"), path.join(home, ".genex"));
     for (const parent of [path.join(home, ".genex"), path.join(home, "dotfiles", "genex", "inner")]) {

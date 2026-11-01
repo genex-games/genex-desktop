@@ -93,7 +93,7 @@ test("contract: every literal name passed to emit, notify or pushUiEvent in src 
   // A scan that found nothing would pass vacuously; the producers name about eighty events.
   assert.ok(produced.size >= 60, `only ${produced.size} names found — has the scan stopped matching?`);
   // One name from each producer: the core, main's pushUiEvent, the harness seed, the dev fixtures.
-  for (const known of ["preview.frame", "studio.ready", "judge.verdict", "coordinator.queued"])
+  for (const known of ["preview.frame", "studio.ready", "run.failed", "coordinator.queued"])
     assert.ok(produced.has(known), known);
   const unknown = [...produced]
     .filter(([name]) => !isUiEventType(name))

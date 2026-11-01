@@ -10,13 +10,10 @@ import { readdir } from "node:fs/promises";
 import path from "node:path";
 import { CoreFact } from "../../folder-facts.ts";
 import { HookEvent, hooksOn } from "../../hooks.ts";
-import { workingGoal } from "../../goal-prompts.ts";
 import { loopSkills } from "../../loop-skills.ts";
 import { folderLabelOf } from "../../workers/identity.ts";
-import { durationCommission } from "../commission.ts";
 import type { LoopRun } from "../loop-run.ts";
 import { restartsApp } from "./contract.ts";
-import { judgedInEditor, loopJudges } from "./judge-rounds.ts";
 import { openBrief, type OpenBriefFacts } from "./prompts.ts";
 
 /** The folder in a project where the person leaves references for its Loop. */
@@ -31,13 +28,13 @@ async function referencesIn(projectDir: string): Promise<string[]> {
     .sort();
 }
 
-/** The bodies of the workspace's skills that reach a Loop on this folder; none when the workspace can't be read. */
+/** The names of the workspace's skills that reach a Loop on this folder, read on demand; none when the workspace can't be read. */
 async function skillsFor(loopRun: LoopRun): Promise<string[]> {
   const workspace = loopRun.ctx.workspace;
   if (typeof workspace !== "string" || !workspace) return [];
   const game = { facts: loopRun.gameFacts ?? [], holds: loopRun.open?.holds ?? null };
   const skills = await loopSkills(workspace, game).catch(() => []);
-  return skills.map((skill) => skill.text.trim()).filter(Boolean);
+  return skills.map((skill) => skill.slug);
 }
 
 /** What the brief does not read from the clock, gathered once as the Loop opens. */
@@ -47,7 +44,7 @@ type OpenBriefBase = Omit<OpenBriefFacts, "now" | "softDeadline" | "finalDeadlin
 async function briefBase(loopRun: LoopRun, startNotes: readonly string[]): Promise<OpenBriefBase> {
   const { game, gameFacts, open, projectDir, run } = loopRun;
   return {
-    goal: workingGoal(run),
+    goal: run.goal,
     folder: projectDir,
     folderLabel: folderLabelOf(projectDir, run.project),
     facts: gameFacts ?? [],
@@ -59,10 +56,8 @@ async function briefBase(loopRun: LoopRun, startNotes: readonly string[]): Promi
     appSaved: hooksOn(game, HookEvent.CheckpointBefore),
     restart: restartsApp(game),
     cppRestart: (gameFacts ?? []).some((fact) => fact.id === CoreFact.UnrealProject),
-    judge: judgedInEditor(loopRun),
-    judges: loopJudges(loopRun),
     savePoints: open?.journal.savePoints ?? [],
-    untilFinish: !durationCommission(run),
+    untilFinish: run.budgets?.untilSatisfied === true,
     skills: await skillsFor(loopRun),
   };
 }

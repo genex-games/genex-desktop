@@ -16,5 +16,5 @@
     "noFallthroughCasesInSwitch": true,
     "types": ["node"]
   },
-  "include": ["loop", "tools", "memory", "types"]
+  "include": ["loop", "tools", "types"]
 }

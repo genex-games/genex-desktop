@@ -1235,34 +1235,6 @@ describe("the plugins' asset jobs in the run graph", () => {
   });
 });
 
-it("replays Optimization once, ignores stale/unknown updates, and keeps its result on compact boot closure", () => {
-  const result = {
-    schemaVersion: 1,
-    runId: "run_x",
-    project: "game",
-    stageId: "optimization",
-    sequence: 2,
-    phase: "terminal",
-    outcome: "no_improvement",
-    summary: "No safe gain",
-    scenarios: [],
-    changedFiles: [],
-  };
-  const graph = buildRunGraph([
-    event("run_started", {}),
-    event("optimization_updated", result),
-    event("optimization_updated", { ...result, sequence: 1, summary: "stale" }),
-    event("optimization_updated", { ...result, schemaVersion: 9, sequence: 3 }),
-    event("run_finished", { stoppedBecause: "restart" }),
-  ])!;
-  const nodes = graph.nodes.filter((n) => n.kind === "optimization");
-  assert.equal(nodes.length, 1);
-  assert.equal(nodes[0]!.result.summary, "No safe gain");
-  assert.ok(graph.nodes.findIndex((n) => n.kind === "optimization") < graph.nodes.findIndex((n) => n.kind === "final"));
-  const layout = layoutSteps(partRows(graph), { optimization: graph.nodes.some((n) => n.kind === "optimization") });
-  assert.ok(layout.rects.optimization);
-});
-
 /**
  * A synthetic director run with restarted builders, 21 rounds and twelve merges.
  * It preserves the historical graph regressions without retaining a private run journal.

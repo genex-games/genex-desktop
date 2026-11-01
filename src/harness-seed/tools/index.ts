@@ -39,7 +39,6 @@ type RegisteredTool = HarnessTool & { source: string };
 
 /** The turn's options a registry is built for; every one reaches each tool's ctx. */
 export interface RegistryOptions {
-  candidateId?: string;
   project?: string | null;
   [option: string]: unknown;
 }
@@ -48,10 +47,6 @@ export interface RegistryOptions {
 const TOOL_MODULE = /\.(?:ts|mjs)$/;
 /** The registry's own module, never a tool module. */
 const REGISTRY_MODULES = new Set(["index.ts", "index.mjs"]);
-/** The module a candidate's tools come from… */
-const CANDIDATE_MODULE = "game-tools";
-/** …and the only tools of it a candidate may use: it reads and writes its own files, and checks them. */
-const CANDIDATE_TOOLS = new Set(["list_files", "read_file", "write_file", "check_game"]);
 
 /** Where a registered tool came from, when it is not one of the workspace's own modules. */
 const ToolSource = {
@@ -92,18 +87,12 @@ export async function loadToolModules(workspace: string): Promise<{ modules: Too
   return { modules, broken };
 }
 
-/** May a candidate's turn use this tool? Only its own file tools, from the game tools module. */
-function candidateMayUse(tool: HarnessTool, module: ToolModule): boolean {
-  return CANDIDATE_TOOLS.has(tool.name) && module.name.replace(TOOL_MODULE, "") === CANDIDATE_MODULE;
-}
-
-/** The workspace's own tools, by name; a candidate's turn gets only its file tools. */
-function moduleTools(modules: readonly ToolModule[], options: RegistryOptions): Map<string, RegisteredTool> {
+/** The workspace's own tools, by name. */
+function moduleTools(modules: readonly ToolModule[]): Map<string, RegisteredTool> {
   const byName = new Map<string, RegisteredTool>();
   for (const module of modules) {
     for (const tool of module.tools) {
       if (!tool?.name || typeof tool.execute !== "function") continue;
-      if (options.candidateId && !candidateMayUse(tool, module)) continue;
       byName.set(tool.name, { ...tool, source: module.name });
     }
   }
@@ -201,10 +190,8 @@ function toolAnswer(result: ToolOutcome | string): ToolOutcome & { ok: boolean; 
 
 export async function createToolRegistry(ctx: HarnessCtx, options: RegistryOptions = {}) {
   const { modules, broken } = await loadToolModules(ctx.workspace);
-  const byName = moduleTools(modules, options);
-  const host: HostTools = options.candidateId
-    ? { pluginGuidance: "", connectorGuidance: "", toolRegistryRevision: undefined }
-    : await addHostTools(ctx, byName, options);
+  const byName = moduleTools(modules);
+  const host: HostTools = await addHostTools(ctx, byName, options);
 
   return {
     broken,

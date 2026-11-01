@@ -16,9 +16,10 @@ import { makeResources } from "../helpers/resources.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 test("fixtures lists the one exported fixture list without a profile or app", async () => {
-  // Flipped from 33: items-store joined the list (from 31: data-folder and data-missing, 30: native-games, 29: agents-start-failed, 28: asset-library, 27: genex-terms, 26: roblox-game, 25: building-card, 24: paused-build, 23: plugin-updates, 22: open-projects, 21: stills-game).
-  assert.equal(FIXTURE_NAMES.length, 34);
+  // Flipped from 34: build-timeline joined the list (from 33: items-store, 31: data-folder and data-missing, 30: native-games, 29: agents-start-failed, 28: asset-library, 27: genex-terms, 26: roblox-game, 25: building-card, 24: paused-build, 23: plugin-updates, 22: open-projects, 21: stills-game).
+  assert.equal(FIXTURE_NAMES.length, 35);
   for (const added of [
+    "build-timeline",
     "first-launch",
     "notifications",
     "build-graph",
@@ -58,7 +59,15 @@ test("the plugin-updates fixture leaves every bundled plugin one version behind 
     fs.readdirSync(seeds).map((name) => fs.readFileSync(path.join(seeds, name, "plugin.json"), "utf8"));
   const shipped = shippedManifests();
   const versions = new Map(shipped.map((text) => [JSON.parse(text).id as string, JSON.parse(text).version as string]));
-  assert.deepEqual([...versions.keys()].sort(), ["blender", "genex", "godot", "roblox", "unity", "unreal"]);
+  assert.deepEqual([...versions.keys()].sort(), [
+    "blender",
+    "genex",
+    "genex-recommendations",
+    "godot",
+    "roblox",
+    "unity",
+    "unreal",
+  ]);
   /** What the app's own registry says of the profile's plugins, as the core starts it. */
   const installed = async () => {
     const registry = new PluginRegistry(

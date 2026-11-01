@@ -28,9 +28,9 @@ import {
 } from "./run-steps.ts";
 
 /** How far apart two hanging lanes are, top to top. */
-const LANE_PITCH = STEPS.nodeH + STEPS.hangGap;
+export const LANE_PITCH = STEPS.nodeH + STEPS.hangGap;
 /** Where a column's trunk runs: in the middle of the gap left of its node. */
-const TRUNK_INSET = (STEPS.pitch - STEPS.nodeW) / 2;
+export const TRUNK_INSET = (STEPS.pitch - STEPS.nodeW) / 2;
 
 /** A worker's row: its one node, built in one session. */
 const isWorkerRow = (row: PartRow): boolean =>
@@ -94,7 +94,7 @@ function spineOf(rows: PartRow[]): Spine {
 }
 
 /** A hanger's lane: the first below, the second above, then further out on each side in turn. */
-const laneOf = (index: number): { below: boolean; lane: number } => ({
+export const laneOf = (index: number): { below: boolean; lane: number } => ({
   below: index % 2 === 0,
   lane: Math.floor(index / 2),
 });
@@ -111,7 +111,7 @@ function hangKind(step: Step): StepEdgeKind {
 }
 
 /** A column's left edge: column 0 is the lead, column `c` the spine's `c`th place. */
-const columnX = (column: number): number => treeLeadX() + column * STEPS.pitch;
+export const columnX = (column: number): number => treeLeadX() + column * STEPS.pitch;
 
 /** The workers of one gap, under or over the column right of it, each on its own line from the spine. */
 function placeGap(draft: LayoutDraft, steps: Step[], column: number, midY: number): void {
@@ -173,7 +173,7 @@ export function layoutComb(rows: PartRow[], options: LayoutOptions = {}): StepsL
   placeSaves(draft, spine.saves, midY);
   for (const [gap, steps] of spine.gaps) placeGap(draft, steps, gap + 1, midY);
   const into = columnX(columns);
-  const final = placeResult(draft, into, midY, options.optimization === true);
+  const final = placeResult(draft, into, midY);
   placeEnd(draft, final, midY, options);
   const lastNode: Rect | undefined = draft.rects[spine.saves.at(-1)?.id ?? "lead"];
   const from = lastNode ? lastNode.x + lastNode.w : columnX(0) + S.nodeW;

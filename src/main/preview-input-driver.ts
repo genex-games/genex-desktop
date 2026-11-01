@@ -1,6 +1,6 @@
 /**
  * Preview input, applied: how one {@link PreviewInputAction} becomes Chromium input events plus
- * the page-side copies (`__studio.injectInput` and synthetic DOM events), so a paused `step()`
+ * the page-side copies (synthetic DOM events), so a paused `step()`
  * playthrough still sees WASD. `substrate/preview-input.ts` owns the mapping and the caps; this
  * module owns the order of events a player's hands would produce. {@link GamePreview} supplies
  * the target: its view's `sendInputEvent`, its page dispatch, its clock and its pointer.

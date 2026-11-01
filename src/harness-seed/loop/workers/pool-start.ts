@@ -136,14 +136,21 @@ function newRecord(state: PoolState, ask: StartAsk): WorkerRecord {
   };
 }
 
-/** The copy a writer works in: a snapshot of the game first, so the copy holds the lead's work so far. */
+/** The commit a copy forks from: the scope's own fork point (the lead's folder's head), else a snapshot of the game folder. */
+async function forkCommit(state: PoolState, record: WorkerRecord): Promise<string | null> {
+  const { ctx, project, forkFrom } = state.scope;
+  if (forkFrom) return forkFrom();
+  const reason = POOL_WORDS.snapshotReason(record.id);
+  const snapshot = await ctx.call(HostMethod.SnapshotCreate, { scope: "game", reason, project });
+  return snapshot?.git?.game ?? null;
+}
+
+/** The copy a writer works in: made from the lead's work so far (a snapshot of the game folder, or the head of the folder the lead builds in). */
 async function makeCopy(state: PoolState, record: WorkerRecord): Promise<void> {
   const { ctx, project, runId, threadId } = state.scope;
-  const reason = POOL_WORDS.snapshotReason(record.id);
-  // The snapshot commits in the game folder, and the copy is made from it: one write, after the lead's.
+  // The fork point is committed first, and the copy is made from it: one write, after the lead's.
   const copy = await gameGitWrite(state, async () => {
-    const snapshot = await ctx.call(HostMethod.SnapshotCreate, { scope: "game", reason, project });
-    const commit = snapshot?.git?.game;
+    const commit = await forkCommit(state, record);
     return ctx.call(HostMethod.SnapshotWorktree, {
       project,
       ...(commit ? { commit } : {}),
@@ -169,6 +176,8 @@ export async function startWorker(state: PoolState, args: AnyRecord): Promise<st
   if (unboxed) return refusedStart(state.scope.ctx, unboxed);
   const ask = askOf(state, args);
   if ("refused" in ask) return ask.refused;
+  const isolationRefused = state.scope.refusesIsolation?.(ask.isolation) ?? null;
+  if (isolationRefused) return isolationRefused;
   const room = roomProblem(state);
   if (room) return room;
   const record = newRecord(state, ask);
@@ -194,7 +203,7 @@ export async function startWorker(state: PoolState, args: AnyRecord): Promise<st
   });
   // Written before its session starts, so its start always comes before its end in the log.
   await recordStart(state, record);
-  const work = runWorker(state, record, ask, prompt)
+  const work = runWorker(state, record, prompt)
     .catch((err: unknown) => ended(state, record, WorkerState.Failed, failureWords(err), null, failureCode(err)))
     .finally(() => state.runs.delete(record.id));
   state.runs.set(record.id, work);
@@ -280,11 +289,20 @@ function failureWords(err: unknown): string {
 const failureCode = (err: unknown): WorkerStopCode =>
   hostRefused(err) ? WorkerStopCode.HostRefused : WorkerStopCode.Error;
 
+/**
+ * Where a worker's session sits: its copy, or — a reader, when the lead builds in a folder of its own
+ * (a web game's integration worktree) — that folder; otherwise the host seats it in the game folder.
+ */
+function workplaceOf(state: PoolState, record: WorkerRecord): { cwd?: string } {
+  if (record.worktree) return { cwd: record.worktree };
+  const { leadFolder } = state.scope;
+  return record.isolation === WorkerIsolation.Read && typeof leadFolder === "string" ? { cwd: leadFolder } : {};
+}
+
 /** One leg of a worker's session: its brief or what the lead steered, in a new session or `resume`d. */
 function delegateLeg(
   state: PoolState,
   record: WorkerRecord,
-  ask: StartAsk,
   leg: { prompt: string; resume: string | null },
 ): Promise<DelegateResult> {
   const { ctx, engine, model, effort, project, threadId, runId, turn, creditCap } = state.scope;
@@ -298,21 +316,22 @@ function delegateLeg(
     ...(effort ? { effort } : {}),
     ...(creditCap === undefined ? {} : { creditCap }),
     ...(leg.resume ? { resume: leg.resume } : {}),
-    ...(record.worktree ? { cwd: record.worktree } : {}),
+    ...workplaceOf(state, record),
     ...(record.isolation === WorkerIsolation.Read ? { readOnly: true } : {}),
-    ...(ask.type ? { toolAllow: [...ask.type.tools] } : {}),
+    // No tool allowlist: a worker has every plugin tool and connector its lead has; its type is
+    // the kind of work (its brief's know-how and default isolation), never a fence.
     worker: { id: record.id, title: record.title, ...belongs, research: record.research },
   });
 }
 
 /** A worker's sessions: its brief, then each steer the lead queued while it worked, in the same session. */
-async function runWorker(state: PoolState, record: WorkerRecord, ask: StartAsk, prompt: string): Promise<void> {
+async function runWorker(state: PoolState, record: WorkerRecord, prompt: string): Promise<void> {
   if (state.closing) return ended(state, record, WorkerState.Stopped, POOL_WORDS.turnEnded, null, scopeEnd(state));
   // Stopped while its copy was being made: no session starts.
   if (!isWorking(record)) return ended(state, record, record.state, record.error);
-  let result = await delegateLeg(state, record, ask, { prompt, resume: null });
+  let result = await delegateLeg(state, record, { prompt, resume: null });
   for (let steer = takeSteer(state, record); steer && result.sessionId; steer = takeSteer(state, record))
-    result = await delegateLeg(state, record, ask, { prompt: steer, resume: result.sessionId });
+    result = await delegateLeg(state, record, { prompt: steer, resume: result.sessionId });
   if (record.isolation === WorkerIsolation.Copy) {
     await commitCopy(state, record);
     record.changed = await changedFiles(state, record);

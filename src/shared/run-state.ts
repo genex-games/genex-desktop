@@ -35,6 +35,8 @@ export type VerdictPass = (typeof VerdictPass)[keyof typeof VerdictPass];
 export const VerdictRule = {
   ChecksFlipped: "checks-flipped",
   JudgePreferred: "judge-preferred",
+  /** Kept: nothing regressed and no regression was named. */
+  NoRegression: "no-regression",
   Satisfied: "satisfied",
   ChecksRegressed: "checks-regressed",
   Vetoed: "vetoed",

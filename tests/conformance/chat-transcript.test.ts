@@ -615,4 +615,15 @@ describe("transcriptEntries: which Genex cover shot gets the card", () => {
       assert.deepEqual(coverCards(entries({ threadEvents: coverCall(1, "c", over) })), [], name);
     assert.deepEqual(coverCards(entries({ threadEvents: coverCall(1, "c").slice(0, 1) })), [], "a shot still running");
   });
+
+  it("shows the card for a cover the agent handed over as files, the call genex__cover takes now", () => {
+    const handed = coverCall(1, "handed", { args: "image=.genex/cover.png clip=.genex/clip.webm" }, { images: 0 });
+    assert.deepEqual(coverCards(entries({ threadEvents: handed })), [{ callId: "handed", project: "harbor-run" }]);
+    const imageOnly = coverCall(1, "image", { args: "image=cover.jpg" }, { images: 0 });
+    assert.deepEqual(coverCards(entries({ threadEvents: imageOnly })), [{ callId: "image", project: "harbor-run" }]);
+    const refused = coverCall(1, "refused", { args: "image=tiny.png" }, { ok: false, error: "smaller than 1280×720" });
+    assert.deepEqual(coverCards(entries({ threadEvents: refused })), [], "a refused file keeps nothing");
+    for (const args of ["clip=clip.webm", "image=", "operation=status image=cover.png"])
+      assert.deepEqual(coverCards(entries({ threadEvents: coverCall(1, "c", { args }, { images: 0 }) })), [], args);
+  });
 });

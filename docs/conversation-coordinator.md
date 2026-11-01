@@ -40,7 +40,7 @@ project, and graph: a request to wait for the remaining workers could start a se
 - The chat's bookmark is its own session: worker and coordinator sessions never overwrite it. A
   delegation that names a run, coordinator, director or build worktree `cwd` never writes metadata
   `contractor`, and the harness view always drops the session ids run sessions mirror into the
-  chat (`payload.runId`), so a follow-up never resumes a director, scout or builder that carries
+  chat (`payload.runId`), so a follow-up never resumes a director or builder that carries
   such a marker. Two run delegations carry none and are still recorded as the chat's session: the
   classic integrator without an integration worktree and a base build with no project folder. One
   run delegation is the chat's on purpose: a waking run's lead whose director grant says
@@ -102,8 +102,7 @@ Steering that reaches a classic build after its last round stays with that build
 and handed over only if it goes on, never written into the game's NOTES.md, which every later chat
 reads. The chat removes the "Steering backlog" section older builds left there before it answers
 (`loop/steering-backlog.ts`), and prompts built from NOTES.md leave it out.
-Its director's first message (its first `worker_wait` on the long turn, `directorLoop: "turn"`) still says
-every earlier steer once, since the run may have opened a fresh session that never heard them —
+Its lead's first message still says every earlier steer once, since the run may have opened a fresh session that never heard them —
 all but the chat's messages a run's lead heard or gave back ([live chat](#live-chat-during-a-build));
 on the wake loop they open that message's digest, read from the journal (THE USER SAYS: the newest
 20, each cut at 2,000 characters, with a count of those left out).
@@ -210,7 +209,7 @@ chat turn; messages go to the run's lead ([live chat](#live-chat-during-a-build)
   never starts a session returns what joined to the queue.
 - **Read mid-turn.** `engine.steer {threadId, into, messages}` (`main/core/chat-steer.ts`) finds the
   delegation whose `chatTurn` is `into`, waiting up to `FIND_SESSION_MS` for it to register — never
-  a build worktree, the director, a playtester or a candidate. An engine with `steersMidTurn` takes
+  a build worktree or the director. An engine with `steersMidTurn` takes
   words: Claude Code keeps the SDK input open (an async-iterable prompt,
   `substrate/engines/claude-steer.ts`) and pushes the message with `priority: "next"`,
   `origin: {kind: "human"}` and a uuid; the LocalSessions engines (Bonsai, OpenRouter, a local
@@ -291,9 +290,8 @@ queue takes no switches, and a switch then waits for a turn of its own as before
 ## Live chat during a build
 
 While a director run is going on the wake loop, its lead is the chat: a message sent meanwhile is
-handed to it at once, and it answers in the chat. The long turn (`directorLoop: "turn"`,
-`STUDIO_DIRECTOR_LOOP=turn`), the classic pipeline and a kept `director.ts` from before live chat
-open no line, and their messages wait for the run to close as before. While a waking run prepares
+handed to it at once, and it answers in the chat. A kept `director.ts` from before live chat
+opens no line, and its messages wait for the run to close as before. While a waking run prepares
 its start — its first look at the game, before its lead's line opens (`director/lead-line.ts`
 `expectLeadLine`) — the run's coordinator answers what is sent at once instead (`live-chat.ts`
 `chatWaitsFor`): a question gets an answer, and a stop reaches the run. A waking run's start
@@ -346,12 +344,12 @@ it builds…" instead of "Sends when the build finishes…" (renderer `chat/live
   merge when it stops, and the lead integrates that worker. A session that leaves a conflict hunk
   in any file it was to resolve (`markersLeft`) — done, unfinished or stopped — commits nothing:
   the merge is aborted, the worker fails naming the files, and `integrate` refuses it
-  (`unresolvedOf`). Changes no worker made in the integration worktree (a game that builds in
-  place) are set aside for a lead before a merge or a playtest of integration (`setAsideStrays`: a
-  commit over the integration head on `refs/studio/runs/<runId>/set-aside/<stamp>`, then a reset),
-  and the answer says what was kept where. For a lead a single worker starts on a fork that does
-  not run (its repair; a loop worker is still refused), a playtest of the game folder plays a
-  worktree at its commit, and a merged build that does not run is answered in the lead's words.
+  (`unresolvedOf`). The lead builds in the integration worktree with its own hands, never
+  read-only: what is uncommitted there (its edits, a game that builds in place) is committed on the
+  integration branch as its work before a merge or a worker's fork (`commitLeadEdits`), and the
+  answer says so. For a lead a single worker starts on a fork that does not run (its repair; a loop
+  worker ends at once, its fork gate run in the background), and a merged build that does not run is
+  answered in the lead's words.
   After the close the chat goes on in it with its hands back
   ([after the build](#after-the-build-the-same-session)), and a Resume leads in it again.
 
@@ -460,7 +458,7 @@ message on another engine is another session's; it and anything else are
   new run. With Loop on it goes to the same run, reopened (below).
 - **The run's controls, live.** The delegation carries `runControls {runId, messageId}`; the host
   honours it only for the chat's own session (`honouredRunControls`: never a director, builder,
-  scout, playtester, coordinator, read-only session or build worktree) and adds `run_status`,
+  coordinator, read-only session or build worktree) and adds `run_status`,
   `show_build` and `land_build` (`RunControl`, `runControlTools`) to its host tools, answered by
   `conversation.runControl` as the coordinator's are, for the run named — one that is not the
   chat's latest is refused ("The run changed"). The session asking is not one of the run's workers
@@ -502,7 +500,7 @@ message on another engine is another session's; it and anything else are
   the Loop's time as a launch gives it, never the finished build's, always as a `goal` commission
   (`reopenBudgets`: the hours held to the run limits, or ∞ the day's ceiling until satisfied): it
   works until the ask is checked and the lead may finish then. The ask goes on the run as `asks`,
-  the latest first, and the lead, judges and playtester read it ahead of the commission, winning
+  the latest first, and the lead and its judges read it ahead of the commission, winning
   where they conflict (`goal-prompts.ts` `workingGoal`); `goal` stays what the Builds graph shows.
   It takes the message's picks as a launch from it takes them (`reopenedRun`): the
   finished run's stamps (`model`, `roles`, `rolesApplied`, `builderEngine`, `judgeEngine`,
@@ -563,12 +561,10 @@ message on another engine is another session's; it and anything else are
 ## The coordinator, a fallback
 
 The coordinator (`loop/coordinator.ts`, words in `coordinator-prompts.ts`) answers a message about
-a run no lead of the chat's own led, once that run has closed: the long turn
-(`directorLoop: "turn"`), the classic pipeline, a kept older seed whose run seats no lead, a lead
+a run no lead of the chat's own led, once that run has closed: a kept older seed whose run seats no lead, a lead
 that was a session of its own (the chat's bookmark on another engine or model), a message to a model
 without sessions, a message on another engine than the lead's, and a kept runner, chat turn or brief
-that does not serve the same session. The long turn's removal does not take it
-([harness runtime](harness-runtime.md)).
+that does not serve the same session ([harness runtime](harness-runtime.md)).
 
 Codex and Claude coordinators use a stable scratch directory and a separate persisted native
 session per chat/provider (`coordinator_<engine>`). They read project context and call every
@@ -739,10 +735,10 @@ before the close — each answered after by the chat's own session — and Stop 
 tool-call guard, owed words, the wake cap, the release races, a picture among messages and a
 first turn cut for the words (LC12–LC14).
 `director-one-session.test.ts` (S1–S13) covers one session: the chat's session leading its run
-read-only in the game folder and answering after the close in the same session with the run's
+from the game folder, building in the worktree it leads, and answering after the close in the same session with the run's
 controls and no coordinator (Claude and Codex), a chat session that cannot be resumed, a merge
 conflict given to a worker, a conflict worker that leaves markers, the studio's hands for a lead
-(strays set aside, the game folder played from a worktree), showing, landing and changing the game
+(its uncommitted edits committed as its work, the game folder played from a worktree), showing, landing and changing the game
 after a finished run, a paused run a question leaves alone and an instruction resumes with
 the same lead, a message sent during that resuming reply held for the resumed run, Stop in that
 window keeping it paused, and a message naming no engine or another engine (S7b, S10b: with Loop
@@ -766,7 +762,7 @@ command's result's Loop (`reportCommissions`); `chat-feedback.test.ts` one row p
 `lead-sessions-host.test.ts` covers the lead's grant, lock and bookmark on the host, hostile roots
 and links too, and the run's controls (only for the chat's own session, the asker's own hold, a
 dirty folder, another run); `harness-incidents.test.ts`
-OS1–OS6 the markers a conflict worker leaves, strays set aside, a first turn refused while the
+OS1–OS6 the markers a conflict worker leaves, a lead's uncommitted edits committed as its work, a first turn refused while the
 lead's lock is held, and a landing over the game folder's uncommitted changes (named, blamed on
 nobody, a merge of the user's own under way never undone), and a run started again after a close of its own (a crashed reopen still
 closes, and a loop crash under it too, RO3; its inbox from the ask on, RO2 after a replay and

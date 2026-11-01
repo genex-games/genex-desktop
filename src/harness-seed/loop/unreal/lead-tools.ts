@@ -8,13 +8,10 @@
  */
 import type { AnyRecord } from "../../types/harness.d.ts";
 import type { LiveToolSpec } from "../../types/host-api.d.ts";
-import { stopRuleWords } from "../finish-check-prompts.ts";
 import { hasText } from "../text.ts";
 import { minutes } from "../time.ts";
 import { agentStatus } from "./agents.ts";
 import { askCritic } from "./critic.ts";
-import { askJudge, JUDGE_PLAY_SPEC } from "../judge-play.ts";
-import { requiredText } from "./critic-prompts.ts";
 import {
   AGENT_PART_PREFIX,
   AgentVerdict,
@@ -25,7 +22,7 @@ import {
   MAX_RUNNING_AGENTS,
 } from "./lead-contract.ts";
 import { milestoneColumn, tellUser } from "./lead-graph.ts";
-import { type Lead, milestoneNow, requiredNow, saveLead } from "./lead-journal.ts";
+import { type Lead, milestoneNow, saveLead } from "./lead-journal.ts";
 import { LEAD_TOOL_WORDS, RUN_STATUS } from "./lead-prompts.ts";
 import { type FinishingLead, leadFinish } from "./lead-finish.ts";
 import { workerTools } from "./lead-workers.ts";
@@ -50,11 +47,11 @@ export const LEAD_TOOLS: LiveToolSpec[] = [
   {
     name: LeadTool.SavePoint,
     description:
-      "Save after you have looked: Genex saves all in the editor, reads Unreal's new log errors, snapshots the game under this label and captures the hero cameras as thumbnails. Refused while the game plays. Answers the snapshot, the log errors and the thumbnails' tone numbers.",
+      "Genex saves all in the editor, reads Unreal's new log errors and snapshots the game under this label. Refused while the game plays. Answers the snapshot and the log errors.",
     parameters: {
       type: "object",
       properties: {
-        label: text("A short name for this save point, e.g. 'Atmosphere pass'."),
+        label: text("A short name for this save point."),
         summary: text("What the game holds now, in one line."),
       },
       required: ["label", "summary"],
@@ -148,17 +145,16 @@ export const LEAD_TOOLS: LiveToolSpec[] = [
   {
     name: LeadTool.Critic,
     description:
-      "Fresh eyes: a critic looks at your captures beside the references and ART.md and answers defects with fixes and one bold move. It advises; it never decides.",
+      "A second opinion: a model that did none of the work looks at the captures you name and answers your question. It decides nothing.",
     parameters: {
       type: "object",
       properties: {
         shots: text("Capture file names, comma-separated."),
-        question: text("What you want judged (optional)."),
+        question: text("Your question (optional)."),
       },
       required: ["shots"],
     },
   },
-  JUDGE_PLAY_SPEC,
   {
     name: LeadTool.RebuildUnreal,
     description:
@@ -167,11 +163,13 @@ export const LEAD_TOOLS: LiveToolSpec[] = [
   },
   {
     name: LeadTool.Finish,
-    description: `Claim the game meets the request. A reviewer who did none of the work checks your proof: a yes closes the run, a no comes back with reasons, and ${stopRuleWords(null)}`,
+    description:
+      "Close the run with your summary: your word closes it. With review=yes a reviewer who did none of the work reads your proof first: its yes closes the run, its no comes back with its reasons and decides nothing.",
     parameters: {
       type: "object",
       properties: {
-        summary: text("What the game holds now and what you verified, for the person."),
+        summary: text("What the game holds now, for the person."),
+        review: text("yes asks a reviewer for a second opinion before the run closes (default no)."),
         proof: text(
           "Comma-separated paths that prove it, relative to the game folder or full paths inside it: pictures, logs, test reports.",
         ),
@@ -204,7 +202,6 @@ export function runStatusText(lead: Lead): string {
     RUN_STATUS.SavePoints(labels),
     agentStatus(lead),
     RUN_STATUS.Credits(journal.credits.spent, journal.credits.cap),
-    requiredText(requiredNow(journal)),
   ]
     .filter(Boolean)
     .join("\n");
@@ -282,8 +279,6 @@ function tools(lead: FinishingLead): Record<LeadTool, (args: AnyRecord) => Promi
     [LeadTool.WorkerStop]: workers[LeadTool.WorkerStop],
     [LeadTool.WorkerMark]: workers[LeadTool.WorkerMark],
     [LeadTool.Critic]: (args) => askCritic(lead, args),
-    [LeadTool.JudgePlay]: (args) =>
-      askJudge({ ctx: lead.ctx, run: lead.run, root: lead.game.dir, now: () => lead.clock.now() }, args),
     [LeadTool.RebuildUnreal]: (args) => askRebuild(lead, args),
     [LeadTool.Note]: (args) => leaveNote(lead, args),
     [LeadTool.Finish]: (args) => leadFinish(lead, args),

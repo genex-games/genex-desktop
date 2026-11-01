@@ -94,14 +94,15 @@ async function firstOffered(request: Record<string, unknown>): Promise<string[]>
 const LIVE_TOOLS = [spec("press_key"), spec("connector__search")];
 
 describe("a Claude session sees the studio tools it is expected to call from its first turn", () => {
-  it("a builder's checkpoint, and its capture where granted, load with the prompt", async () => {
-    const granted = await session({ onCapture: async () => "captured" });
+  it("a builder's capture where granted, and its checkpoint where the game has checkpoint hooks, load with the prompt", async () => {
+    const granted = await session({ onCapture: async () => "captured", onCheckpoint: async () => "saved" });
     for (const tool of ["checkpoint", "capture"]) {
       assert.ok(granted.tools.includes(tool), `${tool} is registered`);
       assert.equal(alwaysLoaded(granted, tool), true, `${tool} is never deferred behind tool search`);
     }
     const plain = await session({});
-    assert.equal(alwaysLoaded(plain, "checkpoint"), true, "checkpoint loads without capture too");
+    assert.ok(plain.tools.includes("checkpoint"), "the checkpoint is still there for a game with no hooks");
+    assert.equal(alwaysLoaded(plain, "checkpoint"), false, "but it waits for tool search");
     assert.equal(plain.tools.includes("capture"), false, "no capture where none was granted");
   });
 
@@ -114,20 +115,19 @@ describe("a Claude session sees the studio tools it is expected to call from its
     }
   });
 
-  it("live and connector tools stay deferred, for a builder and for a blind judge", async () => {
+  it("live and connector tools stay deferred, for a builder and for a read-only session", async () => {
     const live = { liveTools: LIVE_TOOLS, onLiveTool: async () => "ok" };
     const builder = await session(live);
-    const judge = await session({ ...live, readOnly: true, blind: true });
+    const reader = await session({ ...live, readOnly: true });
     for (const [label, record] of [
       ["builder", builder],
-      ["blind judge", judge],
+      ["read-only", reader],
     ] as const) {
       for (const { name } of LIVE_TOOLS) {
         assert.ok(record.tools.includes(name), `${label}: ${name} is registered`);
         assert.equal(alwaysLoaded(record, name), false, `${label}: ${name} waits for tool search`);
       }
     }
-    assert.deepEqual(judge.options?.tools, ["ToolSearch"], "the blind judge loads them through tool search alone");
   });
 });
 

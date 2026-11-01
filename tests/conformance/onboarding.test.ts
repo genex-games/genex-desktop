@@ -445,7 +445,7 @@ describe("first-launch art", () => {
       addPath() {}
     };
     globals.DOMMatrix ??= class {};
-    for (const t of [0, 0.5, 1.1, 2.5, 4.8, 9, 14.5, 16])
+    for (const t of [0, 0.5, 1.1, 2.5, 4.8, 6.7, 7.5, 9, 10.4, 14.5, 16, 30])
       drawWelcome(
         recorder().ctx,
         t,

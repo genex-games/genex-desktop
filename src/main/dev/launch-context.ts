@@ -4,6 +4,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { validateProfile } from "../../../scripts/studio-dev/ownership.mjs";
 import { safeChild, readVersion, fingerprints, filesBelow, digest } from "../../../scripts/studio-dev/files.mjs";
+import { holdBuild } from "../../../scripts/studio-dev/builds.ts";
 
 /** Why a developer launch is refused; `already-running:` is the prefix the studio-dev scripts read. */
 const MESSAGE = {
@@ -74,7 +75,8 @@ export function initializeLaunch(build: LaunchBuild, configPath: string) {
   app.setPath("sessionData", owner.session);
   app.setName(`Genex Dev ${owner.profileId}`);
   if (!app.requestSingleInstanceLock()) throw new Error(MESSAGE.alreadyRunning);
-  return { ...owner, instanceId, startedAt, manifest, buildRoot };
+  const buildHandle = holdBuild(buildRoot);
+  return { ...owner, instanceId, startedAt, manifest, buildRoot, buildHandle };
 }
 
 /** What a claimed developer launch knows about its profile, build and instance. */

@@ -1,13 +1,14 @@
 /** The panel of the run's assets: every job a plugin was asked for, grouped by where it got to, and the modeller's work. */
 import type { JSX } from "react";
+import { useState } from "react";
 import { t, tc } from "../../../shared/i18n.ts";
 import type { AssetInfo, BlenderNode, RunGraph as RunGraphModel } from "../../run-graph.ts";
 import { runIdOf, truncate } from "../../run-graph.ts";
-import { AssetCardState } from "../../run-graph-assets.ts";
+import { AssetCardState, earlierVersion } from "../../run-graph-assets.ts";
 import { useStill } from "../../stills.ts";
 import { BlenderLogo } from "../../ui/brand.tsx";
 import { Icon } from "../../ui/icons.tsx";
-import { ASSET_JOB_WORDS, kilobyteWords } from "../../words.ts";
+import { ASSET_JOB_WORDS, ASSET_VERSION_WORDS, kilobyteWords } from "../../words.ts";
 import { AssetThumbnail } from "../AssetThumbnail.tsx";
 import {
   ASSET_THUMB_PX,
@@ -21,7 +22,7 @@ import {
 } from "./asset-jobs.ts";
 import { Details, Panel, PanelRow, Row, Rows, Section } from "./chrome.tsx";
 import { joinDots } from "./format.ts";
-import { IMAGE_OUTLINE } from "./pictures.tsx";
+import { IMAGE_OUTLINE, PictureChange } from "./pictures.tsx";
 import { GraphSelection } from "./selection.ts";
 import type { InspectorProps } from "./types.ts";
 
@@ -30,14 +31,19 @@ const PICTURE_FRAME = { width: 92, height: 58, boxShadow: IMAGE_OUTLINE };
 /** How much of a modeller's error the panel prints. */
 const BLENDER_ERROR_CHARS = 140;
 
-/** A job's picture once delivered: its Assets-stage thumbnail, a still of it, or its kind in words. */
+/**
+ * A job's picture once delivered: the copy Genex kept of the picture this delivery made (its own,
+ * when the same file was delivered again since), its Assets-stage thumbnail, the modeller's render,
+ * a still of it in the game, or its kind in words (a sound has no picture).
+ */
 function DeliveredPicture({ job, project }: { job: AssetInfo; project: string | null }): JSX.Element {
-  const picture = !job.preview ? firstImage(job) : null;
+  const kept = useStill(job.picture ? { run: job.picture, maxPx: ASSET_THUMB_PX } : null);
+  const drawn = job.picture || job.preview?.kind === "audio" ? null : (job.preview ?? null);
+  const picture = !job.preview && !job.picture ? firstImage(job) : null;
   const still = useStill(project && picture ? { project, asset: picture, maxPx: ASSET_THUMB_PX } : null);
   const render = useStill(blenderRender(job));
-  const src = render ?? still;
-  if (project && job.preview)
-    return <AssetThumbnail project={project} asset={job.preview} companions={[]} fallback={null} quiet />;
+  const src = kept ?? render ?? still;
+  if (project && drawn) return <AssetThumbnail project={project} asset={drawn} companions={[]} fallback={null} quiet />;
   if (src) return <img src={src} alt="" className="h-full w-full object-cover" draggable={false} />;
   return <span className="absolute inset-0 grid place-items-center text-micro">{kindWord(job) ?? t("File")}</span>;
 }
@@ -114,7 +120,60 @@ function derivedLine(step: DerivedStep): string {
   ]);
 }
 
+/**
+ * An asset delivered again: its picture against the earlier version's, both from the same view, as
+ * a compare when they visibly differ, else the new one saying it did not visibly change.
+ */
+function VersionCompare({ job, earlier }: { job: AssetInfo; earlier: AssetInfo }): JSX.Element {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="flex flex-col gap-2">
+      <button
+        type="button"
+        data-asset-compare={job.jobId ?? job.at}
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+        className="self-start cursor-pointer text-xs text-ink-3 underline-offset-2 hover:text-control-text-hover hover:underline focus-visible:outline-2 focus-visible:outline-accent"
+      >
+        {ASSET_VERSION_WORDS.compare}
+      </button>
+      {open ? (
+        <PictureChange
+          before={earlier.picture ?? null}
+          now={job.picture ?? null}
+          beforeLabel={ASSET_VERSION_WORDS.earlier}
+          nowLabel={ASSET_VERSION_WORDS.now}
+          unchanged={ASSET_VERSION_WORDS.unchanged}
+        />
+      ) : null}
+    </div>
+  );
+}
+
 function JobRow({
+  job,
+  earlier,
+  project,
+  partNumber,
+  onOpen,
+}: {
+  job: AssetInfo;
+  /** the version of this asset delivered before it, seen from the same view */
+  earlier: AssetInfo | null;
+  project: string | null;
+  partNumber: (facetId: string | null) => string;
+  onOpen: (job: AssetInfo) => void;
+}): JSX.Element {
+  return (
+    <div className="flex flex-col gap-2">
+      <JobLine job={job} project={project} partNumber={partNumber} onOpen={onOpen} />
+      {earlier ? <VersionCompare job={job} earlier={earlier} /> : null}
+    </div>
+  );
+}
+
+/** One job's line: its picture, its name, what it is and who asked, and what was done to it since. */
+function JobLine({
   job,
   project,
   partNumber,
@@ -295,6 +354,7 @@ export function AssetsPanel(props: InspectorProps): JSX.Element {
               <JobRow
                 key={job.callId ?? job.jobId ?? job.at}
                 job={job}
+                earlier={earlierVersion(jobs, job)}
                 project={project}
                 partNumber={partNumber}
                 onOpen={props.onOpenJob}

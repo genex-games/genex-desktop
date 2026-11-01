@@ -8,15 +8,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { JobRole, JobState, JobStopper } from "../../src/harness-seed/loop/jobs/contract.ts";
-import { jobEndLine } from "../../src/harness-seed/loop/jobs/prompts.ts";
 import { JOB_POLL_MS, jobEnds } from "../../src/harness-seed/loop/jobs/watch.ts";
-import {
-  NoteKind,
-  nextWake,
-  WAKE_DEBOUNCE_MS,
-  type WakeView,
-} from "../../src/harness-seed/loop/director/wake-schedule.ts";
-import { HOUR_MS, MINUTE_MS, SECOND_MS } from "../../src/harness-seed/loop/time.ts";
+import { MINUTE_MS, SECOND_MS } from "../../src/harness-seed/loop/time.ts";
 import type { JobView } from "../../src/shared/jobs.ts";
 import { ctxRecorder } from "../helpers/ctx-recorder.ts";
 
@@ -41,57 +34,7 @@ const ended = (over: Partial<JobView> = {}): JobView => ({
   ...over,
 });
 
-/** A lead asleep since T0 with one worker running and nothing unread: override what the row is about. */
-const view = (over: Partial<WakeView> = {}): WakeView => ({
-  now: T0,
-  unread: [],
-  asleepFromSeq: 10,
-  asleepSince: T0,
-  userWaiting: false,
-  finishNew: false,
-  running: 1,
-  planWindowEndsAt: null,
-  workersLimitLiftsAt: null,
-  softDeadline: T0 + HOUR_MS,
-  wrapping: false,
-  idleDue: false,
-  idleAsked: false,
-  wakesAt: [],
-  ...over,
-});
-
 describe("a job's end wakes the lead", () => {
-  it("a job of the run that ends wakes a resting director soon, with a line that names it", () => {
-    const line = { at: T0, seq: 11, kind: NoteKind.JobEnded };
-    assert.deepEqual(nextWake(view({ unread: [line] })), {
-      at: T0 + WAKE_DEBOUNCE_MS,
-      reasons: [NoteKind.JobEnded],
-    });
-    const said = jobEndLine(ended());
-    assert.match(said, /^Unreal build \(`make build`, started by worker Scene builder\) failed \(exit 2\) after 4 min/);
-    assert.match(said, new RegExp(`read it with job_tail ${BUILD_ID}\\.$`));
-    const finished = jobEndLine(
-      ended({ role: JobRole.Lead, worker: undefined, state: JobState.Succeeded, exitCode: 0 }),
-    );
-    assert.match(finished, /^Unreal build \(`make build`, started by you\) finished \(exit 0\) after 4 min; read it/);
-    const timedOut = jobEndLine(ended({ state: JobState.TimedOut, exitCode: null, durationMs: 2 * HOUR_MS }));
-    assert.match(timedOut, /was stopped at its time limit after 120 min/);
-    const byPerson = jobEndLine(ended({ state: JobState.Stopped, exitCode: null, stoppedBy: JobStopper.Person }));
-    assert.match(
-      byPerson,
-      /^Unreal build \(`make build`, started by worker Scene builder\) was stopped by the person after 4 min/,
-    );
-    assert.match(
-      byPerson,
-      /; read it with job_tail [^.]+\. Do not start it again unless the person asks\.$/,
-      "the person's stop is not undone",
-    );
-    const byAgent = jobEndLine(ended({ state: JobState.Stopped, exitCode: null, stoppedBy: JobStopper.Agent }));
-    assert.doesNotMatch(byAgent, /by the person|start it again/, "only the person's stop says so");
-    const long = jobEndLine(ended({ command: `run ${"x".repeat(1_000)}` }));
-    assert.ok(long.length < 400, `a long command is clipped: ${long.length} chars`);
-  });
-
   it("the watcher reads ends after its cursor, once, and skips the lead's own stops", async () => {
     const answers = [
       {

@@ -58,9 +58,7 @@ function callIdentity(value: unknown): Pick<OperationSpan, "model" | "effort" | 
   if (!value || typeof value !== "object") return {};
   const args = value as Record<string, unknown>;
   const capture = args.selfCapture as { facetId?: unknown } | undefined;
-  let role = args.class;
-  if (args.director) role = "planner";
-  else if (args.playtest) role = "judge";
+  const role = args.director ? "planner" : args.class;
   return {
     model: typeof args.model === "string" ? args.model : null,
     effort: typeof args.effort === "string" ? args.effort : null,

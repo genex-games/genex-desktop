@@ -3,7 +3,7 @@
  * delegation carries `computer` beside `capture`; both load the workspace through the served
  * entry (a game with its own build is built first, or every worker frame shows `src/main.ts`
  * served as text); the window stays loaded between actions; every
- * action updates the coalesced agent screen; the playtester gets the same tool.
+ * action updates the coalesced agent screen.
  */
 import assert from "node:assert/strict";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
@@ -11,7 +11,6 @@ import path from "node:path";
 import { after, describe, it } from "node:test";
 import type { DelegateRequest, DelegateResult, LiveToolResult } from "../../src/substrate/engines/types.ts";
 import type { PreviewPort } from "../../src/substrate/preview-port.ts";
-import type { PreviewSetup } from "../../src/shared/preview-contract.ts";
 import { PreviewService } from "../../src/main/core/previews.ts";
 import { unservedPreviews, type CoreInternals } from "../../src/main/core/internals.ts";
 import type { StudioCore } from "../../src/main/studio-core.ts";
@@ -155,7 +154,7 @@ function scriptedPort(answers: Array<unknown>, options: { loadError?: string | n
 }
 
 describe("booted means booted", () => {
-  it("reads the shim's snapshot, and never mistakes the shim's own facade for a game's contract", () => {
+  it("reads the shim's snapshot, and never asks the game", () => {
     // The shim answers first, and it is the only signal that measures the PAGE's own boot.
     const shim = probe({
       __studioClock: {
@@ -175,31 +174,16 @@ describe("booted means booted", () => {
     assert.equal(shim.ready, true);
     assert.equal(shim.pageMs, 1_200);
     assert.equal(shim.attached, true);
-    // `window.__studioReady` stays a PROMISE and nothing reads fields off it; a page that has
-    // one but no boot() takes the CONTRACT fallback, never the shim branch.
-    const promised = probe({
-      __studioReady: Promise.resolve({ ready: true }),
-      __studio: { state: () => ({ frame: 3 }) },
-    });
-    assert.equal(promised.via, "contract");
-    assert.equal(promised.ready, true);
-    assert.equal(promised.pageMs, null, "a contract says nothing about when the page came up");
-    // A boot() that hands back a thenable is rejected as a snapshot source: a version skew
-    // degrades to the fallback instead of polling a promise object for ever.
-    const thenable = probe({
-      __studioClock: { boot: () => Promise.resolve({ ready: true }) },
-      __studio: { state: () => ({ frame: 1 }) },
-    });
-    assert.equal(thenable.via, "contract");
-    // The shim installs a facade on every page it reaches. If that counted as a contract every
-    // page would report itself attached and the whole premise would collapse.
-    const facade = probe({ __studio: { __shim: true, state: () => ({ frame: 0 }) } });
-    assert.equal(facade.via, "none");
-    assert.equal(facade.ready, false);
-    // A game whose state() is not there yet is booting, not attached.
-    const missing = probe({ __studio: { state: () => ({ __missing: true }) } });
-    assert.equal(missing.via, "contract");
-    assert.equal(missing.ready, false);
+    // `window.__studioReady` stays a PROMISE and nothing reads fields off it, and a boot() that
+    // hands back a thenable is rejected as a snapshot source.
+    const promised = probe({ __studioReady: Promise.resolve({ ready: true }) });
+    assert.equal(promised.via, "none");
+    const thenable = probe({ __studioClock: { boot: () => Promise.resolve({ ready: true }) } });
+    assert.equal(thenable.via, "none");
+    // Flipped from a "contract" fallback: the game's own window.__studio is never read.
+    const game = probe({ __studio: { state: () => ({ frame: 3 }) } });
+    assert.equal(game.via, "none");
+    assert.equal(game.ready, false);
     assert.equal(probe({}).via, "none");
   });
 
@@ -356,7 +340,8 @@ describe("the computer tool's host", () => {
     assert.match(shot.text, /s1_screen\.jpg/);
     assert.equal(shot.images?.[0]?.mimeType, "image/jpeg", "a screenshot comes back as a picture");
     assert.ok(await stat(shot.text.split(" — ")[0]!), "and is saved beside the facet's captures");
-    assert.match(text(answers.state!), /"activeId":"street"/);
+    // Flipped (phase 5): the browser window reads no state off the game.
+    assert.match(text(answers.state!), /state is not available/);
     assert.match(text(answers.key!), /OK — key i/);
     assert.match(text(answers.click!), /left click at 480,300/);
     assert.match(text(answers.bad!), /no action "fly"/);
@@ -404,16 +389,15 @@ describe("the computer tool's host", () => {
     assert.equal(rig.core.agentScreens().length, 0, "nothing is left on screen after the session");
   });
 
-  it("replays the requested-state setup before the first look and says when it did not land", async () => {
+  it("replays the requested setup's input before the first look", async () => {
     const rig = await startRig({ replies: [] });
     rigs.push(rig);
     const project = await rig.core.games.scaffold("setup-smoke", { title: "setup" });
     const dir = project.dir;
-    rig.preview.next = { version: 1, frame: 0, phase: "playing", maps: { activeId: "street" } };
     const api = rig.core.api() as unknown as Record<string, (p: unknown) => Promise<unknown>>;
     let first: LiveToolResult = "";
     fakeEngine(rig, "codex", async (request) => {
-      first = await request.onLiveTool!("computer", { action: "state" });
+      first = await request.onLiveTool!("computer", { action: "screenshot" });
       return { ok: true, engine: "codex", turns: 1, usage: {}, sessionId: "s2", summary: "done" };
     });
     const setup = {
@@ -421,7 +405,6 @@ describe("the computer tool's host", () => {
         { type: "tap", keys: ["i"] },
         { type: "click", x: 480, y: 300, px: true },
       ],
-      verify: { path: "maps.activeId", equals: "macba" },
       note: "I opens the picker",
     };
     await api["engine.delegate"]!({
@@ -436,51 +419,8 @@ describe("the computer tool's host", () => {
       ["tap", "click"],
       "the setup ran before the agent's first action",
     );
-    assert.match(text(first), /REQUESTED STATE NOT REACHED: maps\.activeId is not "macba"/);
-    // A game that lands on the state gets no note.
-    rig.preview.next = { version: 1, frame: 0, phase: "playing", maps: { activeId: "macba" } };
-    rig.preview.inputs.length = 0;
-    await api["engine.delegate"]!({
-      engine: "codex",
-      prompt: "build",
-      project: project.name,
-      selfCapture: { project: project.name, root: dir, runId: "run_s", facetId: "build", iteration: 2, setup },
-    });
-    assert.ok(!/NOT REACHED/.test(text(first)), text(first));
-  });
-
-  it("a capture says which cameras it proved, and which camera a dead debugCamera left on screen", async () => {
-    const rig = await startRig({ replies: [] });
-    rigs.push(rig);
-    const project = await rig.core.games.scaffold("camera-smoke", { title: "camera" });
-    rig.preview.cameraNames = ["default", "top"];
-    // The page never switches: whatever debugCamera is asked, state().camera stays "default".
-    rig.preview.next = { version: 1, frame: 0, phase: "playing", camera: "default" };
-    const api = rig.core.api() as unknown as Record<string, (p: unknown) => Promise<unknown>>;
-    let answer = "";
-    fakeEngine(rig, "codex", async (request) => {
-      answer = text(await request.onCapture!({ cameras: "default, top,,unlisted" }));
-      return { ok: true, engine: "codex", turns: 1, usage: {}, sessionId: "s-cam", summary: "done" };
-    });
-    await api["engine.delegate"]!({
-      engine: "codex",
-      prompt: "build",
-      project: project.name,
-      selfCapture: { project: project.name, root: project.dir, runId: "run_cam", facetId: "build", iteration: 4 },
-    });
-    const lines = answer.split("\n");
-    assert.equal(lines[0], `Captured your CURRENT build (workspace ${path.basename(project.dir)}):`);
-    assert.match(lines[1]!, /^- default → .*iter_004[/\\]c1_default\.jpg.* \[camera verified\]$/);
-    assert.match(
-      lines[2]!,
-      /^- top → .*c1_top\.jpg.* — WARNING: the build rendered camera "default" instead; your debugCamera\("top"\) does not switch$/,
-    );
-    assert.doesNotMatch(lines[3]!, /camera verified|WARNING/, "an unlisted camera is shot as it is, never placed");
-    assert.match(lines[3]!, /^- unlisted → .*c1_unlisted\.jpg/);
-    assert.equal(lines[4], "console errors since load: none");
-    assert.match(lines.at(-1)!, /^Read the image files above to actually look at them\./);
-    const placed = rig.preview.calls.filter((call) => call.method === "debugCamera").map((call) => call.arg);
-    assert.deepEqual(placed, ["default", "top", "top", "top"], "a camera that does not switch is retried three times");
+    // Flipped from a REQUESTED STATE NOT REACHED note: the game's state is never read.
+    assert.doesNotMatch(text(first), /NOT REACHED/);
   });
 
   it("photographs the surface the worker asked for, and names it in the answer (M4.5)", async () => {
@@ -545,76 +485,11 @@ describe("the computer tool's host", () => {
       /^surface "true" is not screen or canvas — the studio picked the surface itself\n/,
     );
     assert.ok(typeof answers.odd !== "string" && answers.odd!.images?.length, "and the picture still comes back");
-    // The capture tool asks for `auto`: a builder must see the DOM menu it just built.
-    assert.equal(rig.preview.captureOpts.at(-1)?.surface, "auto");
+    // The capture tool photographs the page as the player sees it, DOM included.
+    assert.equal(rig.preview.captureOpts.at(-1)?.surface, "page");
     assert.match(text(answers.capture!), /c1_default\.jpg/);
   });
 
-  it("answers preview.pageUi, and the null-ish shape for a preview that cannot see outside the canvas", async () => {
-    const rig = await startRig({ replies: [] });
-    rigs.push(rig);
-    const api = rig.core.api() as unknown as Record<string, (p: unknown) => Promise<unknown>>;
-    assert.ok(api["preview.pageUi"], "preview.pageUi resolves through core.api()");
-    // The probe answered nothing: one shape to read, never null, so the evidence pass and the
-    // check that reads it need no branch of their own.
-    assert.deepEqual(await api["preview.pageUi"]!({}), {
-      entries: [],
-      coverage: 0,
-      canvas: null,
-      viewport: null,
-      uiPrimary: false,
-    });
-    rig.preview.pageUiNext = {
-      entries: ["nav.menu"],
-      coverage: 0.42,
-      canvas: { width: 960, height: 600 },
-      viewport: { width: 960, height: 600 },
-      uiPrimary: true,
-    };
-    assert.deepEqual(await api["preview.pageUi"]!({}), rig.preview.pageUiNext);
-    // A port that never heard of the probe answers the same null-ish shape, not an error.
-    const probe = rig.preview.pageUi;
-    delete (rig.preview as { pageUi?: unknown }).pageUi;
-    assert.deepEqual(await api["preview.pageUi"]!({}), {
-      entries: [],
-      coverage: 0,
-      canvas: null,
-      viewport: null,
-      uiPrimary: false,
-    });
-    (rig.preview as { pageUi?: unknown }).pageUi = probe;
-  });
-
-  it("hands preview.state's keep paths to the window only after validating them, and ignores a hostile keep", async () => {
-    const rig = await startRig({ replies: [] });
-    rigs.push(rig);
-    const api = rig.core.api() as unknown as Record<string, (p: unknown) => Promise<unknown>>;
-    const before = Object.getOwnPropertyNames(Object.prototype).sort();
-    const cases: Array<[unknown, { keep?: readonly string[] } | undefined]> = [
-      [{}, undefined],
-      [undefined, undefined],
-      [{ keep: ["race.cars", "player.x"] }, { keep: ["race.cars", "player.x"] }],
-      [{ keep: "race.cars" }, undefined],
-      [{ keep: [1, null, {}, ["race"]] }, undefined],
-      [{ keep: ["__proto__.polluted", "a.constructor", "prototype", "race.cars"] }, { keep: ["race.cars"] }],
-      [
-        { keep: Array.from({ length: 10_000 }, (_, i) => `p${i}`) },
-        { keep: Array.from({ length: 64 }, (_, i) => `p${i}`) },
-      ],
-    ];
-    for (const [params, handed] of cases) {
-      rig.preview.stateOpts.length = 0;
-      assert.deepEqual(await api["preview.state"]!(params), rig.preview.next, JSON.stringify(params)?.slice(0, 80));
-      assert.deepEqual(rig.preview.stateOpts, [handed], JSON.stringify(params)?.slice(0, 80));
-    }
-    assert.deepEqual(Object.getOwnPropertyNames(Object.prototype).sort(), before);
-    assert.equal(({} as Record<string, unknown>).polluted, undefined);
-  });
-
-  // Flipped: with every pooled window leased, the director's session used to fall
-  // back to the live view — the person's own window, for the whole run — and say so on the
-  // run's thread. Live is the person's alone now: the session gets a window past the pool's
-  // ceiling for its own length, and there is no borrow to announce.
   it("never lends the director's session the window the user is watching, even with the pool full", async () => {
     const rig = await startRig(
       { replies: [] },
@@ -642,103 +517,6 @@ describe("the computer tool's host", () => {
     assert.notEqual(handles[0], "live", "a window of its own, not the user's");
     assert.equal(rig.preview.loads.length, liveLoads, "nothing was loaded into the user's window");
     assert.deepEqual(customEvents(await rig.core.listAllEvents(), "director_window"), []);
-  });
-
-  it("hands the playtester the same tool beside its shorthands, and the scout a read-only one", async () => {
-    const rig = await startRig({ replies: [] });
-    rigs.push(rig);
-    const project = await rig.core.games.scaffold("play-smoke", { title: "play" });
-    const api = rig.core.api() as unknown as Record<string, (p: unknown) => Promise<unknown>>;
-    const names: string[][] = [];
-    const readOnly: boolean[] = [];
-    fakeEngine(rig, "codex", async (request) => {
-      names.push((request.liveTools ?? []).map((t) => t.name));
-      readOnly.push(request.readOnly === true);
-      const shot = await request.onLiveTool!("computer", { action: "screenshot" });
-      assert.ok(typeof shot !== "string" && shot.images?.length, "the playtester sees the picture");
-      const legacy = await request.onLiveTool!("game_state", {});
-      assert.match(text(legacy), /^state:/);
-      return { ok: true, engine: "codex", turns: 1, usage: {}, sessionId: "p", summary: "{}" };
-    });
-    await api["engine.delegate"]!({
-      engine: "codex",
-      prompt: "play",
-      project: project.name,
-      playtest: { project: project.name, root: project.dir, runId: "run_p", facetId: "integration", iteration: 1 },
-      readOnly: true,
-    });
-    await api["engine.delegate"]!({
-      engine: "codex",
-      prompt: "scout",
-      project: project.name,
-      playtest: {
-        project: project.name,
-        root: project.dir,
-        runId: "run_p",
-        facetId: "scout",
-        iteration: 0,
-        role: "scout",
-        label: "scout",
-      },
-      readOnly: true,
-    });
-    assert.deepEqual(readOnly, [true, true]);
-    assert.ok(names[0]!.includes("computer") && names[0]!.includes("press_keys") && names[0]!.includes("screenshot"));
-    const roles = rig.events
-      .filter((e) => e.type === "preview.frame")
-      .map((e) => (e.payload as { role: string; label: string }).role);
-    assert.ok(roles.includes("playtester") && roles.includes("scout"), roles.join(","));
-    const shots = path.join(rig.core.layout.runs, "run_p", "facet_scout", "playtest", "iter_000");
-    assert.ok(
-      (await readFile(path.join(shots, "s1_screen.jpg"))).length > 0,
-      "the scout's frames are filed with the run",
-    );
-  });
-});
-
-describe("a judge that plays", () => {
-  it("holds the computer alone, blind in an empty folder, steps its clock, and hands back a verified trace", async () => {
-    const rig = await startRig({ replies: [] });
-    rigs.push(rig);
-    const project = await rig.core.games.scaffold("judge-smoke", { title: "judge" });
-    const api = rig.core.api() as unknown as Record<string, (p: unknown) => Promise<unknown>>;
-    const seen: DelegateRequest[] = [];
-    fakeEngine(rig, "codex", async (request) => {
-      seen.push(request);
-      const moved = await request.onLiveTool!("computer", { action: "key", text: "Return" });
-      assert.ok(typeof moved !== "string" && moved.images?.length, "the judge sees the result of its move");
-      const shorthand = await request.onLiveTool!("press_keys", { keys: "w" });
-      assert.doesNotMatch(text(shorthand), /^OK/, "the playtester's shorthands are not a judge's");
-      return { ok: true, engine: "codex", turns: 1, usage: {}, sessionId: "j", summary: "{}" };
-    });
-    const result = (await api["engine.delegate"]!({
-      engine: "codex",
-      prompt: "play and judge",
-      project: project.name,
-      playtest: {
-        project: project.name,
-        root: project.dir,
-        runId: "run_j",
-        facetId: "integration",
-        iteration: 1,
-        role: "judge",
-        label: "judge",
-        maxActions: 4,
-        quest: { id: "booted", until: { path: "ready", truthy: true } },
-      },
-      readOnly: true,
-    })) as { trace?: { steps: number; path: string | null } };
-    const request = seen[0]!;
-    assert.deepEqual(
-      (request.liveTools ?? []).map((t) => t.name),
-      ["computer"],
-    );
-    assert.equal(request.blind, true);
-    assert.equal(request.readOnly, true);
-    assert.notEqual(path.resolve(request.cwd), path.resolve(project.dir), "the judge does not start in the build");
-    assert.ok(!(request.extraReads ?? []).some((dir) => path.resolve(dir) === path.resolve(project.dir)));
-    assert.equal(result.trace?.steps, 1, "the refused shorthand never reached the computer");
-    assert.ok(result.trace?.path && (await readFile(result.trace.path, "utf8")).includes('"action":"key"'));
   });
 });
 
@@ -781,13 +559,12 @@ describe("what a load waits for", () => {
     assert.ok(screens.includes("opened"), "the worker's screen was opened all the same");
   });
 
-  it("answers preview.ready and preview.gesture over the substrate RPC — host calls, not agent tools", async () => {
+  it("answers preview.ready over the substrate RPC — a host call, not an agent tool", async () => {
     const rig = await startRig({ replies: [] });
     rigs.push(rig);
     const game = await bootGame(rig, "ready-rpc", 1_000);
     const api = rig.core.api() as unknown as Record<string, (p: unknown) => Promise<unknown>>;
     assert.ok(api["preview.ready"], "preview.ready resolves through core.api()");
-    assert.ok(api["preview.gesture"], "preview.gesture resolves through core.api()");
     await api["preview.load"]!({ project: game.name });
     rig.preview.evaluations.push({
       match: "__studioClock",
@@ -803,78 +580,6 @@ describe("what a load waits for", () => {
       { ready: ready.ready, pageMs: ready.pageMs, via: ready.via, polls: ready.polls },
       { ready: true, pageMs: 240, via: "shim", polls: 1 },
     );
-    rig.preview.inputs.length = 0;
-    const knock = (await api["preview.gesture"]!({ x: 100, y: 200, keys: ["Return"] })) as {
-      knocked: boolean;
-      trusted: boolean | null;
-    };
-    assert.equal(knock.knocked, true);
-    assert.equal(knock.trusted, null, "a port that does not say whether its input was trusted says null");
-    assert.deepEqual(
-      (rig.preview.inputs as Array<{ type: string }>).map((a) => a.type),
-      ["move", "click", "tap"],
-    );
-  });
-
-  it("answers game.attached from the page it just served — the live half of game.validate", async () => {
-    const rig = await startRig({ replies: [] });
-    rigs.push(rig);
-    const game = await bootGame(rig, "attach-rpc", 1_000);
-    const api = rig.core.api() as unknown as Record<string, (p: unknown) => Promise<unknown>>;
-    assert.ok(api["game.attached"], "game.attached resolves through core.api()");
-    rig.preview.evaluations.push({
-      match: "__studioClock",
-      value: booting({ ready: true, phase: "ready", attached: true }),
-    });
-    type Report = {
-      ok: boolean;
-      contract: string;
-      reach: string | null;
-      renderer: string | null;
-      renders: number;
-      reason: string | null;
-      consoleErrors: number;
-    };
-    const port = rig.preview as unknown as { attachReport?: () => Promise<Record<string, unknown> | null> };
-
-    // A port that cannot answer the question does not get to imply the page was reached.
-    const blind = (await api["game.attached"]!({ project: game.name })) as Report;
-    assert.equal(blind.ok, false);
-    assert.equal(blind.contract, "none");
-    assert.equal(blind.renders, 0);
-
-    port.attachReport = async () => ({
-      contract: "attached",
-      reach: "import-map",
-      renderer: "WebGLRenderer",
-      scene: "Scene",
-      camera: "PerspectiveCamera",
-      cameras: ["default"],
-      eyes: [],
-      player: false,
-      renders: 3,
-      frames: 12,
-      three: ["/vendor/three.module.js"],
-      reason: null,
-    });
-    try {
-      const attached = (await api["game.attached"]!({ project: game.name, root: game.dir })) as Report;
-      assert.equal(attached.ok, true, "a page the hook attached to is judgeable without the two lines");
-      assert.equal(attached.contract, "attached");
-      assert.equal(attached.reach, "import-map");
-      assert.equal(attached.renderer, "WebGLRenderer");
-      assert.equal(attached.renders, 3);
-      assert.equal(attached.consoleErrors, 0);
-
-      // A page nothing reached at all: the word, not a guess.
-      port.attachReport = async () => ({ contract: "none", reason: "no renderer has drawn since the page loaded" });
-      const nothing = (await api["game.attached"]!({ project: game.name })) as Report;
-      assert.equal(nothing.ok, false);
-      assert.equal(nothing.contract, "none");
-      assert.equal(nothing.reason, "no renderer has drawn since the page loaded");
-    } finally {
-      delete port.attachReport;
-    }
   });
 
   it("refuses a page that says it failed to boot, and one that has left the address the studio serves", async () => {
@@ -925,128 +630,34 @@ describe("what a load waits for", () => {
   });
 });
 
-describe("a game with a front-end, as builders and the computer tool first see it", () => {
-  /**
-   * A page with a title → race front-end, the calls it was asked, the waits it cost and the paths
-   * each state read asked to keep. An input that lands in play picks the map (`picked`); one that
-   * lands on the menu does nothing, as the scout's recorded clicks would.
-   */
-  function frontEndPort(
-    options: { flow?: boolean; playing?: boolean; begin?: boolean; reaches?: boolean; state?: () => unknown } = {},
-  ) {
-    const { flow = true, begin = true, reaches = true } = options;
-    let playing = options.playing ?? false;
-    let picked = false;
+describe("a setup, as builders and the computer tool first see it", () => {
+  it("replays the setup's input and asks the game nothing: no begin, no state", async () => {
     const calls: string[] = [];
-    const slept: number[] = [];
-    const kept: unknown[] = [];
     const port = {
-      async studioState(read?: { keep?: readonly string[] }) {
-        kept.push(read?.keep ?? null);
-        if (options.state) return options.state();
-        return flow
-          ? { version: 2, flow: { phase: playing ? "playing" : "menu", playing }, picked }
-          : { version: 2, picked };
+      async studioState() {
+        calls.push("state");
+        return {};
       },
       async studioCall(method: string) {
         calls.push(method);
-        if (method !== "begin") return { ok: true };
-        if (!begin) return { ok: false, reason: "this page declares no begin()" };
-        if (reaches) playing = true;
         return { ok: true };
       },
       async input() {
         calls.push("input");
-        if (playing || !flow) picked = true;
-        return { ok: true, applied: 0, width: 960, height: 600 };
+        return { ok: true, applied: 1, width: 960, height: 600 };
       },
-      pointer: () => ({ x: 480, y: 300 }),
-      viewSize: () => ({ width: 960, height: 600 }),
       consoleEntries: () => [],
     } as unknown as PreviewPort;
     const service = new PreviewService(
       { emit: () => {} } as unknown as StudioCore,
       unservedPreviews() as CoreInternals,
     );
-    const apply = (setup: PreviewSetup | null) =>
-      service.applySetup(port, setup, {
-        sleep: async (ms: number) => {
-          slept.push(ms);
-        },
-      });
-    return { apply, calls, slept, kept, port, service };
-  }
-
-  it("begins a game that reports it is not in play, even with no setup at all, and keeps it running", async () => {
-    const page = frontEndPort();
-    assert.equal(await page.apply(null), null);
-    assert.deepEqual(page.calls, ["start", "begin", "start"], "begin() leaves the game paused; the window runs it");
-    assert.deepEqual(page.slept, [], "play came at once: nothing waited");
-  });
-
-  it("never begins for the worker that owns the front-end, a game already in play, or one with no flow", async () => {
-    const cases: Array<[string, ReturnType<typeof frontEndPort>, PreviewSetup | null]> = [
-      ["begin:false", frontEndPort(), { begin: false }],
-      ["in play", frontEndPort({ playing: true }), null],
-      ["no flow", frontEndPort({ flow: false }), null],
-    ];
-    for (const [label, page, setup] of cases) {
-      await page.apply(setup);
-      assert.ok(!page.calls.includes("begin"), `${label}: ${page.calls.join(",")}`);
-      assert.deepEqual(page.slept, [], `${label}: a begin-only setup replays nothing to settle after`);
-    }
-  });
-
-  it("says so when begin() does not reach play, and when the game has no begin() to call", async () => {
-    const stuck = frontEndPort({ reaches: false });
-    assert.match(String(await stuck.apply(null)), /did not reach play/);
-    assert.ok(stuck.slept.length > 0, "the countdown was given its time, on the injected clock");
-    const none = frontEndPort({ begin: false });
-    assert.match(String(await none.apply(null)), /no __studio\.begin\(\)/);
-  });
-
-  it("replays a setup in play, from where begin() left the game, the way the scout recorded it", async () => {
-    const page = frontEndPort();
-    const setup: PreviewSetup = { actions: [{ type: "tap", keys: ["m"] }], verify: { path: "picked", truthy: true } };
-    assert.equal(await page.apply(setup), null, "the map the scout picked in play is picked again");
-    assert.deepEqual(page.calls, ["start", "begin", "start", "input"]);
-  });
-
-  it("never begins for the playtester, whose grant says nothing of begin: it meets the real menu", async () => {
-    const { computerTools } = await import("../../src/main/core/computer-tools.ts");
-    for (const [role, begins] of [
-      ["playtester", false],
-      ["builder", true],
-    ] as const) {
-      const page = frontEndPort();
-      const previews = {
-        loadServed: async () => ({ problem: null, note: null }),
-        applySetup: (port: PreviewPort, setup: PreviewSetup | null, options: Record<string, unknown> = {}) =>
-          page.service.applySetup(port, setup, { ...options, sleep: async () => {} }),
-        openScreen: () => {},
-        frame: async () => {},
-      };
-      const sessionPort = { get: async () => page.port, handle: () => null, loaded: null };
-      const tools = computerTools(
-        previews as never,
-        { project: "apex", role } as never,
-        "/nonexistent/build",
-        await tmpDir("front-end-role-"),
-        sessionPort as never,
-      );
-      await tools.onLiveTool("computer", { action: "key", text: "d" });
-      assert.equal(page.calls.includes("begin"), begins, `${role}: ${page.calls.join(",")}`);
-    }
-  });
-
-  it("keeps the verified path when it reads the state, and calls a cut one unmeasured, not unreached", async () => {
-    const cut = () => ({
-      maps: { __elided: "object", length: 900, chars: 60_000 },
-      __cut: { chars: 90_000, paths: ["maps"] },
-    });
-    const page = frontEndPort({ state: cut });
-    const note = await page.apply({ verify: { path: "maps.activeId", equals: "macba" } });
-    assert.equal(note, null, String(note));
-    assert.deepEqual(page.kept.at(-1), ["maps.activeId"]);
+    const sleep = async () => {};
+    assert.equal(await service.applySetup(port, null, { sleep }), null);
+    assert.deepEqual(calls, ["start"], "only the studio's own clock is started");
+    calls.length = 0;
+    const note = await service.applySetup(port, { actions: [{ type: "tap", keys: ["i"] }] }, { sleep });
+    assert.equal(note, null);
+    assert.deepEqual(calls, ["start", "input"]);
   });
 });

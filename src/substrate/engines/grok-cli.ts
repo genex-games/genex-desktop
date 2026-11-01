@@ -2,23 +2,25 @@
  * What the studio reads from the `grok` CLI (Grok Build) outside a session, and how it starts one.
  *
  * Grok Build keeps its own sign-in (`grok login`, a Grok account in the browser) in its home,
- * which the studio never reads. Whether it is signed in, and the models it can run, the studio
- * asks the CLI itself: `grok agent stdio` speaks the Agent Client Protocol (JSON-RPC on stdin and
- * stdout), and its `_x.ai/auth/info` and `_x.ai/models/list` methods answer in typed fields
- * without opening a session or calling a model (`probeGrok`). Sessions run through its headless
- * mode instead (`grok.ts`): one `grok --prompt-file … --output-format streaming-json` per turn,
- * resumed by its session id.
+ * which the studio only copies for a session on Windows (`copySessionSignIn`). Whether it is
+ * signed in, and the models it can run, the studio asks the CLI itself: `grok agent stdio` speaks
+ * the Agent Client Protocol (JSON-RPC on stdin and stdout), and its `_x.ai/auth/info` and
+ * `_x.ai/models/list` methods answer in typed fields without opening a session or calling a model
+ * (`probeGrok`). Sessions run through its headless mode instead (`grok.ts`): one `grok
+ * --prompt-file … --output-format streaming-json` per turn, resumed by its session id.
  * Recorded answers: `tests/fixtures/transcripts/grok-probe-*.jsonl` (Grok Build 1.0.70).
  */
+import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { createInterface } from "node:readline";
+import { setTimeout as sleep } from "node:timers/promises";
 import { picturesNote } from "./grok-prompts.ts";
 import { CatalogError } from "./model-catalog.ts";
 import { ModelContextSource, type EngineModel } from "./types.ts";
 import { spawnCommand } from "../command-launch.ts";
 import { stopChild } from "../process-tree.ts";
 import type { SandboxOptions } from "../spawn.ts";
-import { SECOND_MS } from "../../shared/duration.ts";
+import { HOUR_MS, MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 import { ModelCatalogProblemCode } from "../../shared/model-catalog.ts";
 import { ReasoningEffort } from "../../shared/model-preferences.ts";
 import { t } from "../../shared/i18n.ts";
@@ -35,6 +37,37 @@ const ACP_PROTOCOL_VERSION = 1;
 export const GROK_MIN_VERSION = "1.0.13";
 /** The HTTP status xAI refuses an outdated CLI with. */
 export const GROK_OUTDATED_STATUS = 426;
+/** Grok Build's sign-in, one entry per account, in its home. */
+const AUTH_FILE = "auth.json";
+/** What an account's entry renews its access token with. Grok's own spelling: never rename it. */
+const REFRESH_TOKEN = "refresh_token";
+/** When an account's access token stops working (RFC 3339). Grok's own spelling. */
+const EXPIRES_AT = "expires_at";
+/** When an account's access token was minted (RFC 3339). Grok's own spelling. */
+const CREATE_TIME = "create_time";
+/**
+ * How many seconds before its expiry Grok counts a sign-in due for renewal. Grok's own variable, meant
+ * for its tests; its default is `GROK_EARLY_RENEWAL_SECONDS`.
+ */
+const EARLY_RENEWAL_VARIABLE = "GROK_AUTH_EARLY_INVALIDATION_SECS";
+/** Grok's own lead: it renews a sign-in five minutes before it expires. */
+const GROK_EARLY_RENEWAL_SECONDS = 300;
+/** How far past the token's expiry the lead reaches, so Grok counts it due however late it starts. */
+const RENEWAL_LEAD_MARGIN_SECONDS = 60;
+/**
+ * How long a session's copy of the sign-in should still work, as it renews nothing: a token is
+ * renewed with this long left, or half its life when that is less, so the lead that makes it due
+ * always stays short of a new token's life and Grok never counts the new one due too.
+ */
+export const SESSION_SIGN_IN_HOLD_MS = 2 * HOUR_MS;
+/** How long a run waits on the renewal before it gets what is there; the renewal goes on without it. */
+const RENEWAL_WAIT_MS = 20 * SECOND_MS;
+/** How long the person's own Grok gets to renew before its input closes: a run's wait never cuts it. */
+const RENEWAL_CAP_MS = 2 * MINUTE_MS;
+/** How often the sign-in is looked at while Grok renews it. */
+const RENEWAL_POLL_MS = 250;
+/** How long Grok gets to exit on its own once its input closes, before it is stopped. */
+const RENEWAL_EXIT_GRACE_MS = 3 * SECOND_MS;
 
 /** The probe's JSON-RPC requests, by id: `initialize` first, then the two questions. */
 const ProbeRequest = {
@@ -68,15 +101,11 @@ export const GrokAccess = {
   Build: "build",
   /** A read-only session (a judge, a lead while its build runs, Plan): reads, and runs only the studio bridge. */
   ReadOnly: "read-only",
-  /** A judge that plays: reads no file at all, and reaches the build only through the studio's tools. */
-  Blind: "blind",
   /** A one-shot answer (`complete`): no tool at all. */
   Answer: "answer",
 } as const;
 export type GrokAccess = (typeof GrokAccess)[keyof typeof GrokAccess];
 
-/** The studio bridge's command, as Grok's `Bash(…)` permission rule matches it. */
-const BRIDGE_RULE = "Bash(node .studio/bridge/tool.mjs *)";
 /**
  * Tools no studio session runs: a question nobody is there to answer, Grok's own plan mode (the
  * studio's Plan is a read-only session) and goal (no turn sets one, so marking it done only fails),
@@ -104,14 +133,11 @@ const ANSWER_TOOLS = [
   "image_to_video",
   "reference_to_video",
 ] as const;
-/** A blind judge's only tool: the shell, which runs nothing but the studio bridge. */
-const BLIND_TOOLS = "run_terminal_command";
 
 /** The tools each kind of session goes without, beyond those none runs. */
 const REMOVED_TOOLS: Record<GrokAccess, readonly string[]> = {
   build: [],
   "read-only": EDIT_TOOLS,
-  blind: EDIT_TOOLS,
   answer: [...EDIT_TOOLS, ...ANSWER_TOOLS],
 };
 
@@ -139,8 +165,10 @@ export interface GrokProbe {
 
 type Record_ = Record<string, unknown>;
 
-const record = (value: unknown): Record_ =>
-  value && typeof value === "object" && !Array.isArray(value) ? (value as Record_) : {};
+const isRecord = (value: unknown): value is Record_ =>
+  Boolean(value) && typeof value === "object" && !Array.isArray(value);
+
+const record = (value: unknown): Record_ => (isRecord(value) ? value : {});
 
 const text = (value: unknown): string | null => (typeof value === "string" && value ? value : null);
 
@@ -312,21 +340,18 @@ export interface GrokTurn {
   /** An effort the model lists; none is passed for a model without a dial. */
   effort?: string | null | undefined;
   resume?: string | undefined;
-  /** The session reaches the studio's tools through the file bridge. */
-  bridge: boolean;
 }
 
 /**
- * `grok`'s arguments for one turn. Grok's own sandbox stays off: the studio's holds every session.
+ * `grok`'s arguments for one turn. Grok's own sandbox stays off: the studio's holds every session
+ * but a Bypass chat's, which the person chose to run unboxed.
  * A build approves every call; so does a read-only session, whose sandbox lets it write only its
- * own folder (as a Codex reviewer's does), with the file-editing tools gone. A blind judge and a
- * one-shot answer run in Grok's ask mode, where a headless run refuses every call nobody approved
- * and ends the turn there: a blind judge has the shell alone, approved for the studio bridge only.
- * Background work never outlives the turn.
+ * own folder (as a Codex reviewer's does), with the file-editing tools gone. A one-shot answer
+ * runs in Grok's ask mode, where a headless run refuses every call nobody approved and ends the
+ * turn there. Background work never outlives the turn.
  */
 export function grokTurnArgv(turn: GrokTurn): string[] {
-  const asks = turn.access === GrokAccess.Blind || turn.access === GrokAccess.Answer;
-  const blind = turn.access === GrokAccess.Blind;
+  const asks = turn.access === GrokAccess.Answer;
   const removed = [...NEVER_TOOLS, ...REMOVED_TOOLS[turn.access]];
   return [
     "--prompt-file",
@@ -338,8 +363,7 @@ export function grokTurnArgv(turn: GrokTurn): string[] {
     "--sandbox",
     "off",
     "--no-wait-for-background",
-    ...(asks ? bridgeRule(blind && turn.bridge) : ["--always-approve"]),
-    ...(blind ? ["--tools", BLIND_TOOLS] : []),
+    ...(asks ? [] : ["--always-approve"]),
     "--disallowed-tools",
     removed.join(","),
     ...(asks ? ["--disable-web-search"] : []),
@@ -347,11 +371,6 @@ export function grokTurnArgv(turn: GrokTurn): string[] {
     ...(turn.effort ? ["--reasoning-effort", turn.effort] : []),
     ...(turn.resume ? ["--resume", turn.resume] : []),
   ];
-}
-
-/** A blind judge approves the studio bridge alone, when it has one. */
-function bridgeRule(bridge: boolean): string[] {
-  return bridge ? ["--allow", BRIDGE_RULE] : [];
 }
 
 /** `grok`'s arguments for Compact Now: its own `/compact` on the resumed session, and no turn. */
@@ -374,7 +393,8 @@ export function grokCompactArgv(resume: string, cwd: string): string[] {
 /**
  * The variables every `grok` run starts with, over the contractor's environment (which never
  * carries an xAI key: a session runs on the person's own Grok sign-in). Its home is named outright,
- * so the sign-in is found whoever the sandbox runs it as (on Windows, the sandbox's own user). It
+ * so its sessions and settings are found whoever the sandbox runs it as (on Windows, the sandbox's
+ * own user, which reads a copy of the sign-in instead: `copySessionSignIn`). It
  * never updates itself, keeps no memory between games, and loads none of the person's Claude or
  * Cursor MCP servers, hooks or skills; its error log names the HTTP status of a failed call.
  */
@@ -395,18 +415,172 @@ export function grokEnv(home: string): Record<string, string> {
   };
 }
 
+/** Grok's sign-in file read as its accounts by scope, or null when it is no JSON object. */
+function signInStore(text: string): Record_ | null {
+  try {
+    const store: unknown = JSON.parse(text);
+    return isRecord(store) ? store : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Grok Build's sign-in (`auth.json`) as a session run as another user holds it: every account's
+ * entry without its refresh token, so the session calls xAI with the access token it finds and can
+ * never renew it. xAI takes each refresh token once, and a renewal kept in the session's copy
+ * would leave the person's own sign-in holding a spent one. Null for a file that is no such sign-in.
+ */
+export function sessionSignIn(text: string): string | null {
+  const store = signInStore(text);
+  if (!store) return null;
+  const accounts = Object.entries(store);
+  if (!accounts.every(([, entry]) => isRecord(entry))) return null;
+  const kept = accounts.map(([scope, entry]) => [
+    scope,
+    Object.fromEntries(Object.entries(record(entry)).filter(([field]) => field !== REFRESH_TOKEN)),
+  ]);
+  return JSON.stringify(Object.fromEntries(kept));
+}
+
+/**
+ * Grok's sign-in in `home`, copied into `folder` for a session the Windows sandbox runs as its own
+ * user (`sessionSignIn`): Grok gives its file to the Windows user who signed in alone, on every
+ * read and write, so that user never opens the original. The session reads the copy through
+ * `GROK_AUTH_PATH`. Null, and nothing written, when there is no sign-in to copy.
+ */
+export async function copySessionSignIn(home: string, folder: string): Promise<string | null> {
+  const text = await readSignIn(home);
+  const store = text === null ? null : sessionSignIn(text);
+  if (store === null) return null;
+  const copy = path.join(folder, AUTH_FILE);
+  await writeFile(copy, store, { encoding: "utf8", flag: "wx" });
+  return copy;
+}
+
+/** Which account of Grok's sign-in to renew, and how early Grok must count it due to renew it now. */
+export interface SignInRenewal {
+  scope: string;
+  leadSeconds: number;
+}
+
+/**
+ * The renewal Grok's sign-in needs before a session copies it: the account with a refresh token
+ * that expires first, when it has less than `SESSION_SIGN_IN_HOLD_MS` (or half its life) left, with
+ * a lead that reaches past its expiry. Null when every such account holds, or none can be renewed.
+ */
+export function signInRenewal(text: string, now: number): SignInRenewal | null {
+  const store = signInStore(text);
+  if (!store) return null;
+  const due = Object.entries(store)
+    .flatMap(([scope, entry]) => {
+      const left = dueLeft(entry, now);
+      return left === null ? [] : [{ scope, left }];
+    })
+    .sort((a, b) => a.left - b.left)[0];
+  if (!due) return null;
+  const leadSeconds = Math.max(
+    GROK_EARLY_RENEWAL_SECONDS,
+    Math.ceil(due.left / SECOND_MS) + RENEWAL_LEAD_MARGIN_SECONDS,
+  );
+  return { scope: due.scope, leadSeconds };
+}
+
+/** How long a renewable account's token has left when it is due for renewal; null when it holds or can't be renewed. */
+function dueLeft(entry: unknown, now: number): number | null {
+  if (!isRecord(entry) || typeof entry[REFRESH_TOKEN] !== "string") return null;
+  const expires = Date.parse(String(entry[EXPIRES_AT]));
+  const created = Date.parse(String(entry[CREATE_TIME]));
+  if (Number.isNaN(expires) || Number.isNaN(created)) return null;
+  const left = expires - now;
+  return left < Math.min(SESSION_SIGN_IN_HOLD_MS, (expires - created) / 2) ? left : null;
+}
+
+/** When an account's access token in Grok's sign-in expires, or null when the file does not say. */
+function accountExpiry(text: string | null, scope: string): number | null {
+  const entry = text === null ? undefined : signInStore(text)?.[scope];
+  const expires = isRecord(entry) ? Date.parse(String(entry[EXPIRES_AT])) : Number.NaN;
+  return Number.isNaN(expires) ? null : expires;
+}
+
+/** Grok's sign-in in `home` as text, or null when there is none to read. */
+export async function readSignIn(home: string): Promise<string | null> {
+  return readFile(path.join(home, AUTH_FILE), "utf8").catch(() => null);
+}
+
+/**
+ * Has the person's own Grok renew one account of its sign-in in `home`, run on the host as the
+ * person's terminal would: `grok agent stdio` renews a due sign-in within a second of starting,
+ * writing Grok's own file under Grok's own lock, and the renewal's lead makes the account about to
+ * expire due. No session opens and no model is called. Resolves once that account's token was
+ * renewed, or after `waitMs` with the file as it is; Grok keeps renewing until `capMs`, since
+ * stopping it between xAI's answer and its write would leave a spent refresh token, and its input
+ * then closes, the process stopped only if it does not exit on its own.
+ */
+export async function renewGrokSignIn(
+  binary: string,
+  options: {
+    env: Record<string, string>;
+    cwd: string;
+    home: string;
+    renewal: SignInRenewal;
+    waitMs?: number;
+    capMs?: number;
+  },
+): Promise<void> {
+  const { scope, leadSeconds } = options.renewal;
+  const before = accountExpiry(await readSignIn(options.home), scope);
+  const child = spawnCommand(binary, ["agent", "stdio"], {
+    cwd: options.cwd,
+    env: { ...options.env, [EARLY_RENEWAL_VARIABLE]: String(leadSeconds) },
+    stdio: ["pipe", "ignore", "ignore"],
+  });
+  let exited = false;
+  const closed = new Promise<void>((resolve) => {
+    child.once("error", () => resolve());
+    child.once("close", () => resolve());
+  }).then(() => {
+    exited = true;
+  });
+  const renewed = async (): Promise<void> => {
+    const cap = Date.now() + (options.capMs ?? RENEWAL_CAP_MS);
+    while (!exited && Date.now() < cap) {
+      await sleep(RENEWAL_POLL_MS);
+      const after = accountExpiry(await readSignIn(options.home), scope);
+      if (after !== null && (before === null || after > before)) return;
+    }
+  };
+  const done = renewed()
+    .finally(async () => {
+      child.stdin?.end();
+      await within(closed, RENEWAL_EXIT_GRACE_MS);
+      await stopChild(child, { signal: "SIGTERM" }).catch(() => {});
+    })
+    .catch(() => {});
+  await within(done, options.waitMs ?? RENEWAL_WAIT_MS);
+}
+
+/** Waits for `work`, or `ms` if that comes first; the timer goes either way. */
+async function within(work: Promise<void>, ms: number): Promise<void> {
+  const timer = new AbortController();
+  await Promise.race([work, sleep(ms, undefined, { signal: timer.signal }).catch(() => {})]);
+  timer.abort();
+}
+
 /** The sandbox a session runs in: the folder it works in, Grok's own home, and nothing it must not read. */
 export function grokSandbox(input: {
   runDir: string;
   gameDir: string;
   gitDirs: string[];
+  /** The build a lead leads and its Git metadata (`leadBuildWrites`). */
+  leadBuilds?: string[];
   scratchDir: string;
   secretPaths: string[];
   home: string;
   toolPath?: () => Promise<string>;
 }): SandboxOptions {
   return {
-    writableRoots: [input.runDir, ...input.gitDirs],
+    writableRoots: [input.runDir, ...input.gitDirs, ...(input.leadBuilds ?? [])],
     scratchDir: input.scratchDir,
     secretPaths: input.secretPaths,
     ownHome: [input.home],

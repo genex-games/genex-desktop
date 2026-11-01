@@ -46,9 +46,9 @@ export const ENGINE_LABELS: Readonly<Record<string, string>> = {
 
 /** The three jobs, in the order the roles page shows them. */
 export const ROLES: readonly RoleRow[] = [
-  { key: "planner", label: "Orchestrator", detail: "interviews you, plans the facets, re-points checks" },
-  { key: "builder", label: "Workers", detail: "build the base, every facet, the spikes and the merge" },
-  { key: "judge", label: "Judges", detail: "vision checks, taste, code review, the playtester, the panel" },
+  { key: "planner", label: "Orchestrator", detail: "leads the Loop" },
+  { key: "builder", label: "Workers", detail: "the workers the lead starts" },
+  { key: "judge", label: "Judges", detail: "second opinions the lead asks for" },
 ];
 
 /** The jobs the composer may send to another engine. Never the orchestrator. */

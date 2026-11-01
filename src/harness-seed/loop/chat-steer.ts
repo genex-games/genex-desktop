@@ -60,7 +60,7 @@ export interface TurnSwitches {
   /** Can this turn go on with it at all? One it cannot (another runner's engine) gets a turn of its own. */
   takes(item: QueueAction): boolean;
   /**
-   * Does it change the Loop itself (on or off, hours, roles, plan review, a mood board)? Only that
+   * Does it change the Loop itself (on or off, hours, roles, attached pictures)? Only that
    * outranks a launch or a question the session already recorded; without it, every change does.
    */
   changesLoop?(item: QueueAction): boolean;

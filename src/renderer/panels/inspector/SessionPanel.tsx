@@ -3,6 +3,7 @@
  * A worker's card says what the lead asked it, its own report and the lead's note, never how it
  * works in the game.
  */
+import { placedWord } from "../../run-graph-builds.ts";
 import type { JSX } from "react";
 import type { ProjectAsset } from "../../../shared/game-assets.ts";
 import { t } from "../../../shared/i18n.ts";
@@ -127,6 +128,12 @@ function StillMedia({ props, src, asset }: { props: StepPanelProps; src: string 
   );
 }
 
+/** The card's status: on a Loop's build line, a merged worker's work is in that build, not yet the game. */
+function sessionPill({ step, graph, timeline }: StepPanelProps): string {
+  const place = timeline?.places.get(step.id);
+  return place?.merged ? placedWord(step, place, graph.active) : stepPill(step, graph.active);
+}
+
 /** The card of a part built in one session. */
 export function SessionPanel(props: StepPanelProps): JSX.Element {
   const { graph, step } = props;
@@ -139,7 +146,7 @@ export function SessionPanel(props: StepPanelProps): JSX.Element {
       id={step.id}
       label={t("Selected part")}
       title={step.name}
-      status={<Status tone={STATE_TONE[step.state]}>{stepPill(step, graph.active)}</Status>}
+      status={<Status tone={STATE_TONE[step.state]}>{sessionPill(props)}</Status>}
       onPrev={props.onPrev}
       onNext={props.onNext}
       onClose={props.onClose}

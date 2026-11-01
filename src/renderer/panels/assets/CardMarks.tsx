@@ -41,6 +41,16 @@ export function CardTagMark({ tag }: { tag: CardTag }): JSX.Element {
   );
 }
 
+/** A card's tag for a file only in the build of a run still going: not in the game until the run lands. */
+export function BuildingMark(): JSX.Element {
+  return (
+    <span data-asset-building className="asset-tag asset-glass" title={WORDS.buildingTip}>
+      <Icon name="layers" size={12} strokeWidth={2} />
+      {WORDS.building}
+    </span>
+  );
+}
+
 /** The circle over a card's top right while several are being picked: filled with a check when picked. */
 export function PickCircle({
   picked,

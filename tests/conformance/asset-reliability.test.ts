@@ -67,35 +67,12 @@ test("Blender declares its model input and one consistent 100 MiB output boundar
 });
 
 import { AssetCheckpoints } from "../../src/main/asset-checkpoints.ts";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-import { GIT_ENV } from "../../src/substrate/snapshots.ts";
 import { markDeployment, verifyDeployment } from "../../src/plugins/genex/deployment.ts";
-const exec = promisify(execFile);
-test("host checkpoint preserves unrelated staged and unstaged changes and refuses edited deliveries", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "asset-checkpoint-"));
-  const git = async (...args: string[]) =>
-    (await exec("git", args, { cwd: root, env: { ...process.env, ...GIT_ENV } })).stdout.trim();
+test("a delivery record names only delivered asset files", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "asset-record-"));
   try {
-    await git("init");
     await writeFile(path.join(root, "index.html"), "initial");
-    await git("add", ".");
-    await git("commit", "-m", "initial");
-    await mkdir(path.join(root, "assets"));
-    await writeFile(path.join(root, "assets/trout.glb"), Buffer.alloc(6 * 1024 ** 2, 7));
-    const checkpoints = new AssetCheckpoints(path.join(root, ".git/host-deliveries.json"));
-    await checkpoints.record("game", root, "genex", "job", ["assets/trout.glb"]);
-    await writeFile(path.join(root, "notes.txt"), "staged user work");
-    await git("add", "notes.txt");
-    await writeFile(path.join(root, "index.html"), "unstaged user work");
-    const result = await checkpoints.checkpoint("game", root);
-    assert.deepEqual(result.files, ["assets/trout.glb"]);
-    assert.equal(await git("diff", "--cached", "--name-only"), "notes.txt");
-    assert.equal(await git("show", "HEAD:index.html"), "initial");
-    assert.equal(await readFile(path.join(root, "index.html"), "utf8"), "unstaged user work");
-    assert.deepEqual((await checkpoints.checkpoint("game", root)).files, []);
-    await writeFile(path.join(root, "assets/trout.glb"), "user replacement");
-    await assert.rejects(checkpoints.checkpoint("game", root), /was modified/);
+    const checkpoints = new AssetCheckpoints(path.join(root, "host-deliveries.json"));
     await assert.rejects(checkpoints.record("game", root, "genex", "job", ["index.html"]), /Only delivered/);
   } finally {
     await rm(root, { recursive: true, force: true });

@@ -186,7 +186,20 @@
   outline-offset: -1px;
 }
 .play-thumb-blank {
+  overflow: hidden;
   background: var(--play-placeholder);
+  color: var(--ink-3);
+}
+/* A game with no cover (`NoCover`): a still wire floor filling the cover's box. */
+.play-no-cover {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.play-card-cover > .play-no-cover {
+  position: absolute;
+  inset: 0;
+  color: var(--ink-3);
 }
 
 /* The Genex card at the sidebar's foot. */

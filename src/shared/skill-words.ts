@@ -33,11 +33,6 @@ export function skillUpdatedWords(skill: string | undefined): string {
   return named ? named() : t("Harness updated {skill}.", { skill: skillWords(skill) });
 }
 
-/** A proposal's own plain title when the proposer wrote one; older proposals name what they change. */
-export function proposalTitle(proposal: { title?: string; skill?: string }): string {
-  return proposal.title?.trim() || t("Change {skill}", { skill: skillWords(proposal.skill) });
-}
-
 export function changeTitle(change: { title?: string; skill?: string; file?: string }): string {
   return change.title?.trim() || t("Changed {skill}", { skill: skillWords(change.skill || change.file) });
 }

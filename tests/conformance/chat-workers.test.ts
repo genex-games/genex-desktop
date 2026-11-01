@@ -1,7 +1,7 @@
 /**
  * Workers in a chat: the chat's own session, answering a turn on an engine that carries a worker's
- * seat, is offered the worker tools (never a worker, a run's builder or lead, the coordinator or a
- * local model's session); the seed's chat turn hands its session the tools and the brief's line and
+ * seat (every engine that keeps a session, a local model's included), is offered the worker tools
+ * (never a worker, a run's builder or lead, or the coordinator); the seed's chat turn hands its session the tools and the brief's line and
  * closes the pool however the turn ends; a worker tool call reaches the harness's pool of the live
  * turn only; Plan holds writers and merges (no snapshot, no copy, no delegation, no merge) while a
  * reader runs; and a worker the pool starts carries the turn's grant, on the Workers role's engine,
@@ -222,12 +222,14 @@ describe("workers in a chat", () => {
         },
       ],
       ["the run's coordinator", { coordinator: { runId: RUN_ID, messageId: turn }, readOnly: true }],
-      ["a local model's own session", { chatTurn: { messageId: await personSays() } }, LOCAL],
     ];
     for (const [label, extra, engine] of notOffered) {
       await delegate({ ...extra, ...grant }, engine);
       assert.deepEqual(workerToolsOf(seen.at(-1)), [], label);
     }
+    // Flipped (Loop phase 3): a local model's own session orchestrates as any engine with sessions does.
+    await delegate({ chatTurn: { messageId: await personSays() }, ...grant }, LOCAL);
+    assert.deepEqual(workerToolsOf(seen.at(-1)).sort(), WORKER_TOOL_NAMES, "a local model's own session");
   });
 
   it("the seed's chat turn hands its own session the worker tools and the brief's line; a run's turn, a local model and a turn with no message none", {
@@ -243,7 +245,6 @@ describe("workers in a chat", () => {
     assert.deepEqual(own.chatTurn, { messageId: turn });
     const none: Array<[string, Parameters<typeof seedTurn>[1]]> = [
       ["a run's turn", { steer: turn, runId: RUN_ID }],
-      ["a local model's turn", { steer: turn, engine: "bonsai" }],
       ["a turn with no message", {}],
     ];
     for (const [label, options] of none) {
@@ -251,6 +252,10 @@ describe("workers in a chat", () => {
       assert.equal(params.workers, undefined, label);
       assert.ok(!String(params.prompt).includes(WORKERS_BRIEF_LINE), `${label}: no line`);
     }
+    // Flipped (Loop phase 3): a local model's session (Bonsai's) is handed the worker tools too.
+    const local = asked(await seedTurn(chat, { steer: await chat.personSays(), engine: "bonsai" }));
+    const localTools = (local.workers as { tools?: Array<{ name: string }> } | undefined)?.tools ?? [];
+    assert.deepEqual(localTools.map((tool) => tool.name).sort(), WORKER_TOOL_NAMES, "a local model's turn");
   });
 
   it("a chat turn that fails or is stopped still stops its running worker, and a copy's work is kept on the chat's ref", {

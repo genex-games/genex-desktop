@@ -31,18 +31,9 @@ import { waitingWorkers } from "../workers/questions.ts";
 import { withWorkerRoom } from "../workers/room.ts";
 import type { WorkerState } from "../workers/records.ts";
 import { closeRunPool } from "../workers/run-pool.ts";
-import {
-  AGENT_WORDS,
-  agentBrief,
-  agentTitle,
-  DELIVERY_WORDS,
-  deliveredNews,
-  deliversMesh,
-  PROP_TRIANGLES,
-} from "./agent-prompts.ts";
+import { AGENT_WORDS, agentBrief, agentTitle, DELIVERY_WORDS, deliveredNews } from "./agent-prompts.ts";
 import { cppFolder } from "./cpp.ts";
 import { takePoolNews } from "./pool-news.ts";
-import { lookAtDelivery } from "./critic.ts";
 import { pathShapeProblem, realInside } from "./game-paths.ts";
 import {
   AGENT_DELIVERY_ROOT,
@@ -58,7 +49,6 @@ import {
   type AgentRecord,
   AgentState,
   AgentVerdict,
-  type AssetLook,
   type LeadCredits,
   MAX_AGENT_WAIT_S,
   MAX_RUNNING_AGENTS,
@@ -468,26 +458,14 @@ function stopCodeOf(askedStop: boolean, stopped: boolean): WorkerStopCode {
 
 /**
  * A delivery made: the agent is done, its credits counted, its C++ in the game marked for a rebuild,
- * and a model's renders looked at by the critic before the lead hears of it.
+ * and the lead told.
  */
 async function deliveredNow(lead: Lead, agent: AgentRecord): Promise<void> {
   const { journal } = lead;
   agent.credits = agent.manifest?.credits ?? 0;
   journal.credits.spent += agent.credits;
   if (agent.kind === AgentKind.Cpp && agent.landed.length) journal.between.rebuild = true;
-  const look = await lookIfModel(lead, agent);
-  if (look) agent.look = look;
   await ended(lead, agent, AgentState.Done, null, null);
-}
-
-/**
- * The critic's look at a delivered model's renders in the game folder, or null: not a model, no
- * render landed, or the run is closing (a look takes minutes the close doesn't have).
- */
-async function lookIfModel(lead: Lead, agent: AgentRecord): Promise<AssetLook | null> {
-  const renders = (agent.manifest?.renders ?? []).filter((render) => agent.landed.includes(render));
-  if (!deliversMesh(agent.kind) || !renders.length || settling.has(lead) || lead.ctx.cancelled) return null;
-  return lookAtDelivery(lead, { title: agent.title, brief: agent.brief, folder: agentFolder(agent.id), renders });
 }
 
 /** A sub-agent's end: its state and why, on its part and in the journal; its copy goes. */
@@ -643,7 +621,6 @@ function measuredOf(raw: AnyRecord): Omit<AgentManifestFile, "path" | "role"> {
   if (hasText(raw.pivot)) measured.pivot = clip(raw.pivot.trim(), CLIP_DETAIL);
   if (materials.length) measured.materials = materials;
   if (meshes !== undefined) measured.meshes = Math.round(meshes);
-  if (raw.meshesAsked === true) measured.meshesAsked = true;
   return measured;
 }
 
@@ -654,32 +631,17 @@ function manifestFile(raw: unknown, folder: string): AgentManifestFile | null {
   return file ? { path: file, role: raw.role as AgentFileRole, ...measuredOf(raw) } : null;
 }
 
-/** A checked delivery: its manifest as the lead reads it, the files kept out, and what the lead should know. */
-type CheckedDelivery = { manifest: AgentManifest | null; keptOut: Set<string>; problems: string[] };
-
-/** Why one manifest file stays out (several meshes nobody asked for), or a warning, or nothing. */
-function fileFindings(file: AgentManifestFile): { keepOut: boolean; problem: string | null } {
-  if (file.role !== AgentFileRole.Mesh) return { keepOut: false, problem: null };
-  const meshes = file.meshes ?? 1;
-  if (meshes > 1 && file.meshesAsked !== true)
-    return { keepOut: true, problem: DELIVERY_WORDS.MultiMesh(file.path, meshes) };
-  const triangles = file.triangles ?? 0;
-  return {
-    keepOut: false,
-    problem: triangles > PROP_TRIANGLES ? DELIVERY_WORDS.OverBudget(file.path, triangles) : null,
-  };
-}
+/** A checked delivery: its manifest as the lead reads it, and what the lead should know. */
+type CheckedDelivery = { manifest: AgentManifest | null; problems: string[] };
 
 /**
- * A delivery held to its contract: the manifest's files are ones it delivered, a mesh file holds
- * one mesh unless its brief asked for more (else it stays out, with the reason), and a prop over
- * its triangle budget is named. The manifest's kind and title are the agent's own.
+ * A delivery held to its contract: the manifest's files are ones it delivered. The manifest's
+ * kind and title are the agent's own.
  */
 function checkDelivery(agent: AgentRecord, read: ManifestRead, delivered: ReadonlySet<string>): CheckedDelivery {
-  if ("problem" in read) return { manifest: null, keptOut: new Set(), problems: [read.problem] };
+  if ("problem" in read) return { manifest: null, problems: [read.problem] };
   const { raw } = read;
   const folder = agentFolder(agent.id);
-  const keptOut = new Set<string>();
   const problems: string[] = [];
   const files: AgentManifestFile[] = [];
   for (const listed of Array.isArray(raw.files) ? raw.files : []) {
@@ -689,10 +651,7 @@ function checkDelivery(agent: AgentRecord, read: ManifestRead, delivered: Readon
       problems.push(DELIVERY_WORDS.NotDelivered(file.path));
       continue;
     }
-    const found = fileFindings(file);
-    if (found.problem) problems.push(found.problem);
-    if (found.keepOut) keptOut.add(file.path);
-    else files.push(file);
+    files.push(file);
   }
   const renders = rendersOf(raw.renders, files, folder, delivered);
   const manifest: AgentManifest = {
@@ -704,7 +663,7 @@ function checkDelivery(agent: AgentRecord, read: ManifestRead, delivered: Readon
     notes: hasText(raw.notes) ? clip(raw.notes.trim(), MANIFEST_NOTES_CHARS) : "",
     credits: Math.round(measure(raw.credits) ?? 0),
   };
-  return { manifest, keptOut, problems };
+  return { manifest, problems };
 }
 
 /** The renders a manifest names and delivered, then every delivered file whose role is render. */
@@ -741,7 +700,7 @@ export async function landAgent(
   if (needsManifest && !manifestEntry) return [];
   const delivered = new Set(found.files.map((entry) => entry.path));
   const checked = checkDelivery(agent, await readManifest(lead, commit, manifestEntry), delivered);
-  const files = [...delivered].filter((file) => !checked.keptOut.has(file));
+  const files = [...delivered];
   agent.refused = [...found.refused, ...checked.problems];
   agent.manifest = checked.manifest;
   const checkedOut = await checkoutInGame(lead, commit, files, `land ${agent.id}`);
@@ -812,7 +771,6 @@ function newsOf(lead: Lead, agent: AgentRecord): string {
     landed: agent.landed,
     pending: agent.pending ?? [],
     refused: refusedOf(agent),
-    ...(agent.look ? { look: agent.look } : {}),
     engine: leadEngineId(lead),
   });
 }

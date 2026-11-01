@@ -19,11 +19,11 @@ import { StudioCore } from "../studio-core.ts";
 import type { EventEnvelope } from "../../substrate/types.ts";
 import { CustomEvent, type CustomEventType } from "../../shared/custom-events.ts";
 import { EventKind } from "../../shared/event-log.ts";
-import { UiEvent, type UiEventOf } from "../../shared/ui-events.ts";
+import { EngineId } from "../../shared/providers.ts";
+import type { UiEvent } from "../../shared/ui-events.ts";
 import { HarnessState } from "../../shared/protocol.ts";
 import { randomUUID } from "node:crypto";
 import { sleep, waitFor } from "./wait.ts";
-import { errorMessage } from "../../shared/errors.ts";
 import { SECOND_MS } from "../../shared/duration.ts";
 import { flagValue, hasFlag, StudioFlag } from "../dev/launch-flags.ts";
 import { checkClaudeWorker } from "./claude-worker-check.ts";
@@ -36,10 +36,10 @@ const DEFAULT_OLLAMA_HOST = "http://127.0.0.1:11434";
 const TURN_TIMEOUT_MS = 90 * SECOND_MS;
 const RESTART_TIMEOUT_MS = 45 * SECOND_MS;
 const RESTART_LOG_TIMEOUT_MS = 5 * SECOND_MS;
-const RUN_START_TIMEOUT_MS = 60 * SECOND_MS;
-const RUN_FINISH_TIMEOUT_MS = 180 * SECOND_MS;
-const RUN_SETTLE_TIMEOUT_MS = 60 * SECOND_MS;
-const AUTOPILOT_FINISH_TIMEOUT_MS = 240 * SECOND_MS;
+/** How long a Loop asked of the local engine has to be refused. */
+const LOOP_REFUSAL_TIMEOUT_MS = 60 * SECOND_MS;
+/** The wall clock a refused Loop would have had. */
+const LOOP_WALL_CLOCK_MS = 30 * 60 * SECOND_MS;
 /** A scaffolded game must draw a new frame on its own within this long. */
 const ANIMATION_DEADLINE_MS = 5 * SECOND_MS;
 const POLL_MS = 200;
@@ -47,16 +47,8 @@ const POLL_MS = 200;
 const MIN_SHOT_BYTES = 5_000;
 /** The vendored three.js is at least this big: an export that carries it is self-contained. */
 const MIN_THREE_BYTES = 100_000;
-
-/**
- * Two stills make a commission kind="reference", and the blind-panel victory that unlocks is the
- * only fast honest exit — hours clamp to >=0.5h, so a wall-clock exit cannot fit here.
- */
-const STILL = Buffer.from([0xff, 0xd8, 0xff, 0xd9]).toString("base64");
-const LOOP_FRAMES = [
-  { label: "night", mimeType: "image/jpeg", data: STILL },
-  { label: "rings", mimeType: "image/jpeg", data: STILL },
-];
+/** Why a Loop on an engine that keeps no session is refused, as its close types it (the seed's `LoopRefusal`). */
+const NEEDS_SESSION = "needs_session";
 
 interface Check {
   name: string;
@@ -120,13 +112,12 @@ export async function runSelfTest(options: { resources: string; userData?: strin
   return failed.length === 0 ? 0 : 1;
 }
 
-/** Every stage, in order: each proves one part, and the last two prove the product. */
+/** Every stage, in order: each proves one part, and the last says a local model leads no Loop. */
 const STAGES: Array<(t: SelfTest) => Promise<void>> = [
   checkFullTurn,
-  checkPreviewContract,
+  checkPreviewPage,
   checkAssetUse,
   checkSpeechProbe,
-  checkGlbAsset,
   checkHeldInput,
   checkContainment,
   // Before the open-game sheet: on Windows opening a folder outside the grants queues a sandbox
@@ -136,8 +127,7 @@ const STAGES: Array<(t: SelfTest) => Promise<void>> = [
   checkWatchdog,
   checkOpenGameSheet,
   checkExport,
-  checkLoopCommission,
-  checkAutopilot,
+  checkLoopRefusedLocally,
 ];
 
 /**
@@ -181,7 +171,6 @@ async function bootStudio(resources: string, userData: string, uiEvents: UiEvent
     runAsNode: true,
     ollamaHost,
     engines: [new OllamaEngine({ host: ollamaHost })],
-    executionPolicy: { runBackgroundImprovement: false },
     onUiEvent: (event) => uiEvents.push(event),
   });
   owned.core = core;
@@ -212,18 +201,18 @@ async function checkFullTurn({ core, check }: SelfTest): Promise<void> {
   check("the agent wrote a game file", wroteFile);
 }
 
-/** The preview: protocol, contract, determinism, screenshots. */
-async function checkPreviewContract({ preview, check }: SelfTest): Promise<void> {
+/** The preview: protocol, the studio's own clock and error record, screenshots. The game is never asked. */
+async function checkPreviewPage({ preview, check }: SelfTest): Promise<void> {
   await preview.load("selftest");
   await sleep(1_500);
   const state = (await preview.studioState()) as Record<string, unknown>;
-  // The v2 contract reports version 2; a v1 game (an older folder) still boots and is judged.
   check(
-    "game://  serves the project and the game boots",
-    state?.version === 1 || state?.version === 2,
+    "game://  serves the project and the studio's clock runs on its page",
+    !preview.status().loadError && typeof state?.frame === "number",
     JSON.stringify(state)?.slice(0, 160),
   );
-  check("no runtime error in the game", !state?.error, JSON.stringify(state?.error ?? null));
+  const uncaught = (await preview.studioCall("errors")) as { count?: unknown; messages?: unknown } | null;
+  check("no uncaught error in the game", uncaught?.count === 0, JSON.stringify(uncaught));
   await checkAnimatesUnstarted({ preview, check }, state);
   // A contractor rewrites these files while the preview watches — a cached copy once hid a
   // finished game behind the scaffold template for 20 minutes.
@@ -231,19 +220,6 @@ async function checkPreviewContract({ preview, check }: SelfTest): Promise<void>
     `fetch("studio.json").then((r) => r.headers.get("cache-control"))`,
   )) as string | null;
   check("game://  responses are never cached", cacheHeader === "no-store", String(cacheHeader));
-
-  const runA = await deterministicRun(preview, 42);
-  const runB = await deterministicRun(preview, 42);
-  check(
-    "identical seeds produce identical runs (comparability)",
-    JSON.stringify(runA) === JSON.stringify(runB),
-    `${JSON.stringify(runA)} vs ${JSON.stringify(runB)}`,
-  );
-  const runC = await deterministicRun(preview, 99);
-  check("different seeds diverge", JSON.stringify(runA) !== JSON.stringify(runC));
-
-  const cameras = (await preview.evaluate("window.__studio.cameras()")) as string[];
-  check("named debug cameras exist", Array.isArray(cameras) && cameras.length >= 3, String(cameras));
 
   const shot = await preview.screenshot(80);
   const isJpeg = shot.length > 3 && shot[0] === 0xff && shot[1] === 0xd8;
@@ -442,33 +418,15 @@ async function checkSpeechProbe({ preview, userData, check }: SelfTest): Promise
   await preview.load("selftest");
 }
 
-/** Assets (AG-930): a .glb in assets/ loads through src/assets.js and is tagged for checks. */
-async function checkGlbAsset({ core, preview, check }: SelfTest): Promise<void> {
-  const assetsDir = path.join(core.games.dirFor("selftest"), "assets");
-  await mkdir(assetsDir, { recursive: true });
-  await writeFile(path.join(assetsDir, "tri.glb"), minimalGlb());
-  const loaded = (await preview.evaluate(
-    `import("/src/assets.js").then((m) => m.loadAsset("tri", { tag: "tri" })).then((g) => { let meshes = 0; g.traverse((o) => { if (o.isMesh && o.userData.asset === "tri") meshes++; }); return { tag: g.userData.tag, asset: g.userData.asset, meshes }; }).catch((err) => ({ error: String(err && err.message || err) }))`,
-  )) as { tag?: string; asset?: string; meshes?: number; error?: string };
-  check(
-    "a .glb in assets/ loads through src/assets.js, tagged and stamped for scene checks",
-    loaded?.tag === "tri" && loaded?.asset === "tri" && (loaded?.meshes ?? 0) >= 1,
-    JSON.stringify(loaded),
-  );
-}
-
+/** Real input reaches the page: a listener the self test adds sees the key the preview holds down. */
 async function checkHeldInput({ preview, check }: SelfTest): Promise<void> {
-  await preview.studioCall("seed", 1);
-  await preview.input([{ type: "down", keys: ["w"] }]);
-  const held = (await preview.evaluate(
-    "window.__studio && window.__studio.state ? window.__studio.state().held : null",
-  )) as unknown;
-  const heldList = Array.isArray(held) ? held.map(String) : [];
-  check(
-    "preview input reaches the game (held keys)",
-    heldList.some((key) => /^(KeyW|w|W)$/.test(key)),
-    `held=${JSON.stringify(heldList)}`,
+  await preview.evaluate(
+    "(window.__selftestKeys = [], addEventListener('keydown', (e) => window.__selftestKeys.push(e.code)), true)",
   );
+  await preview.input([{ type: "down", keys: ["w"] }]);
+  const seen = (await preview.evaluate("window.__selftestKeys")) as unknown;
+  const keys = Array.isArray(seen) ? seen.map(String) : [];
+  check("preview input reaches the page (a held key)", keys.includes("KeyW"), `keys=${JSON.stringify(keys)}`);
   await preview.input([{ type: "up", keys: ["w"] }]);
 }
 
@@ -591,7 +549,8 @@ async function checkOpenedPages({ check }: SelfTest, inner: string): Promise<voi
     !/starts empty/.test(openedRules) &&
     // `npm run build`: the command the shape recorded for this folder's own build script.
     /npm run build/.test(openedRules) &&
-    /src\/studio\.d\.ts/.test(openedRules);
+    // Facts only: the page asks nothing of the game, so it names no studio module to keep.
+    !/studio\.d\.ts|__studio/.test(openedRules);
   check(
     "no page in the opened game claims the game is empty",
     rulesDescribeTheGame && !/Empty project/.test(openedNotes) && contractPage === null,
@@ -670,164 +629,36 @@ async function checkExport({ core, userData, check }: SelfTest): Promise<void> {
 }
 
 /**
- * The decisive one: a Loop commission through the real app. Everything above proves the parts;
- * this proves the product — composer Loop in, real run, real screenshots, real blind verdicts,
- * artifacts on disk, and the app told when to sleep.
+ * A Loop asked of the local engine: Ollama's tool loop keeps no session of its own, so the Loop is
+ * refused with its typed reason on the run's close and the chat stays plain chat. Nothing lands.
  */
-async function checkLoopCommission(t: SelfTest): Promise<void> {
-  const { core, uiEvents, check } = t;
-  const loopThread = await core.createGameThread();
-  // Phrasing matters: a continue-ask ("keep going…") resumes the dialogue instead of
-  // commissioning a run, even with Loop on.
-  await core.sendUserMessage("I want a neon ring game over dark water", {
-    thread: loopThread,
-    loop: { hours: 2, frames: LOOP_FRAMES },
+async function checkLoopRefusedLocally({ core, check }: SelfTest): Promise<void> {
+  const runId = core.newRunId();
+  await core.dispatchRun({
+    runId,
+    goal: "a neon ring game over dark water",
+    project: "selftest",
+    mode: "autopilot",
+    engine: EngineId.Ollama,
+    reference: { name: "neon rings", shots: [] },
+    budgets: { wallClockMs: LOOP_WALL_CLOCK_MS },
   });
-
-  const startedLog = await waitForAll(
+  const finishedLog = await waitForAll(
     core,
-    (log) => customEvents(log, CustomEvent.RunStarted).length > 0,
-    RUN_START_TIMEOUT_MS,
-    "run_started",
+    (log) => customEvents(log, CustomEvent.RunFinished).some((finished) => finished.runId === runId),
+    LOOP_REFUSAL_TIMEOUT_MS,
+    "run_finished",
   );
-  const runId = String(customEvents(startedLog ?? [], CustomEvent.RunStarted)[0]?.runId ?? "");
-  check("a Loop commission starts a real run", runId !== "", runId || "no run_started within 60s");
-
-  // run.settled is the true end of the run — report.json and the self-improvement pass both
-  // land before it — so wait for it once, then everything below only has to look.
-  const finishedLog = runId
-    ? await waitForAll(
-        core,
-        (log) => customEvents(log, CustomEvent.RunFinished).length > 0,
-        RUN_FINISH_TIMEOUT_MS,
-        "run_finished",
-      )
-    : null;
-  if (runId)
-    await waitFor(() => uiEvents.some((event) => event.type === UiEvent.RunSettled), {
-      timeoutMs: RUN_SETTLE_TIMEOUT_MS,
-      intervalMs: POLL_MS,
-    });
-  const afterRun = finishedLog ?? (await core.listAllEvents());
-
-  const iterations = customEvents(afterRun, CustomEvent.RunIteration);
+  const finished = customEvents(finishedLog ?? [], CustomEvent.RunFinished).find((close) => close.runId === runId);
   check(
-    "the run iterates and judges blind",
-    iterations.some((iteration) => iteration.winner === "challenger"),
-    `winners=${iterations.map((iteration) => String(iteration.winner)).join(",") || "none"}`,
-  );
-  const artifacts = runId ? await runArtifacts(path.join(t.userData, "runs", runId)) : null;
-  check("run artifacts land under userData/runs", artifacts?.ok ?? false, artifacts?.detail ?? "no run to inspect");
-  check("run_finished lands in the log", customEvents(afterRun, CustomEvent.RunFinished).length > 0);
-
-  const settledPayload = uiEvents.find(
-    (event): event is UiEventOf<typeof UiEvent.RunSettled> => event.type === UiEvent.RunSettled,
-  )?.payload;
-  check(
-    "run.finished and run.settled notify the app",
-    uiEvents.some((event) => event.type === UiEvent.RunFinished) && settledPayload?.runId === runId,
-    `settled runId=${String(settledPayload?.runId ?? "none")}`,
-  );
-}
-
-/** The first round's verdict and screenshots, and a report that says the run won. */
-async function runArtifacts(runDir: string): Promise<{ ok: boolean; detail: string }> {
-  try {
-    await stat(path.join(runDir, "iter_001", "verdict.json"));
-    const shots = (await readdir(path.join(runDir, "iter_001", "screenshots"))).filter((name) => name.endsWith(".jpg"));
-    const runReport = JSON.parse(await readFile(path.join(runDir, "report.json"), "utf8")) as {
-      victory?: boolean;
-    };
-    return {
-      ok: shots.length >= 1 && runReport.victory === true,
-      detail: `${shots.length} screenshot(s), victory=${String(runReport.victory)}`,
-    };
-  } catch (err) {
-    return { ok: false, detail: errorMessage(err) };
-  }
-}
-
-/** Autopilot through the real app: interview → facets → integrate → global verdict. */
-async function checkAutopilot({ core, check }: SelfTest): Promise<void> {
-  const autopilotThread = await core.createGameThread();
-  await core.sendUserMessage("I want a misty harbor scene at dawn", {
-    thread: autopilotThread,
-    // Two stills = the mood board and a "reference" bar; no hours = run until satisfied.
-    autopilot: { frames: LOOP_FRAMES },
-  });
-  const apStarted = await waitForAll(
-    core,
-    (log) => customEvents(log, CustomEvent.AutopilotStarted).length > 0,
-    RUN_START_TIMEOUT_MS,
-    "autopilot_started",
-  );
-  const apPlan = customEvents(apStarted ?? [], CustomEvent.AutopilotStarted)[0];
-  const apRunId = String(apPlan?.runId ?? "");
-  check(
-    "an Autopilot commission decomposes into facets",
-    (apPlan?.facets as unknown[] | undefined)?.length === 2,
-    JSON.stringify(apPlan?.facets ?? null),
-  );
-  const apFinished = apRunId
-    ? await waitForAll(
-        core,
-        (log) => customEvents(log, CustomEvent.RunFinished).some((r) => r.runId === apRunId),
-        AUTOPILOT_FINISH_TIMEOUT_MS,
-        "autopilot run_finished",
-      )
-    : null;
-  const apLog = apFinished ?? (await core.listAllEvents());
-  checkAutopilotOutcome(check, apLog, apRunId);
-}
-
-function checkAutopilotOutcome(check: SelfTest["check"], apLog: EventEnvelope[], apRunId: string): void {
-  const facetIterations = customEvents(apLog, CustomEvent.FacetIteration);
-  const facetIds = new Set(facetIterations.map((i) => String(i.facetId)));
-  check(
-    "both facets iterate under their own verifiers",
-    facetIds.has("water") && facetIds.has("mist"),
-    `facets=${[...facetIds].join(",")}`,
-  );
-  // v2: the shared base is built first, and the merged build gets its own integration facet.
-  check(
-    "the shared base commit is built before the facets fork",
-    customEvents(apLog, CustomEvent.AutopilotBase).length === 1,
+    "a Loop on the local engine is refused with its typed reason, and lands nothing",
+    finished?.refusal === NEEDS_SESSION && finished?.landed !== true,
+    JSON.stringify(finished ?? null).slice(0, 300),
   );
   check(
-    "the merged build gets an integration facet with a playtested scoreboard",
-    facetIds.has("integration"),
-    `facets=${[...facetIds].join(",")}`,
+    "a refused Loop starts no lead of its own",
+    !customEvents(finishedLog ?? [], CustomEvent.AutopilotStarted).some((started) => started.runId === runId),
   );
-  check("an assumption becomes a decision card", customEvents(apLog, CustomEvent.AutopilotDecision).length >= 1);
-  const apReport = customEvents(apLog, CustomEvent.RunFinished).find((r) => r.runId === apRunId);
-  check(
-    "the autopilot run closes with a global verdict",
-    Boolean(apReport && (apReport.globalVerdict as { pick?: string } | undefined)?.pick === "challenger"),
-    JSON.stringify(apReport?.globalVerdict ?? null),
-  );
-  const optimization = customEvents(apLog, CustomEvent.OptimizationUpdated).filter((r) => r.runId === apRunId);
-  check(
-    "Autopilot publishes a durable Optimization outcome before its final result",
-    optimization.length > 0 && Boolean((apReport?.optimization as { outcome?: string } | undefined)?.outcome),
-    JSON.stringify(apReport?.optimization ?? null),
-  );
-  check(
-    "the autopilot run wins its reference panel",
-    apReport?.victory === true,
-    String(apReport?.stoppedBecause ?? ""),
-  );
-}
-
-async function deterministicRun(preview: GamePreview, seed: number): Promise<unknown> {
-  await preview.studioCall("seed", seed);
-  // seed() pauses in the current template, but a game scaffolded before that hardening runs
-  // live — and one wall-clock RAF between step() calls makes identical seeds diverge.
-  await preview.studioCall("pause");
-  for (let i = 0; i < 5; i++) await preview.studioCall("step", 960);
-  const state = (await preview.studioState()) as Record<string, unknown>;
-  // fps depends on wall clock; the simulation itself must not.
-  const { fps: _fps, ...deterministic } = state ?? {};
-  return deterministic;
 }
 
 async function fetchThroughPreview(preview: GamePreview, url: string): Promise<{ status: number }> {
@@ -888,38 +719,3 @@ function waitForEvent(
 }
 
 export { app };
-
-/**
- * The smallest valid GLB: one triangle, one node, no materials — enough for `GLTFLoader` to
- * parse and for `src/assets.js` to tag (AG-930). Built by hand so the e2e needs no Blender.
- */
-function minimalGlb(): Buffer {
-  const positions = Buffer.alloc(36);
-  for (const [i, v] of [0, 0, 0, 1, 0, 0, 0, 1, 0].entries()) positions.writeFloatLE(v, i * 4);
-  const bin = positions;
-  const json = JSON.stringify({
-    asset: { version: "2.0", generator: "ai-game-studio selftest" },
-    scene: 0,
-    scenes: [{ nodes: [0] }],
-    nodes: [{ mesh: 0, name: "tri" }],
-    meshes: [{ primitives: [{ attributes: { POSITION: 0 } }] }],
-    accessors: [{ bufferView: 0, componentType: 5126, count: 3, type: "VEC3", min: [0, 0, 0], max: [1, 1, 0] }],
-    bufferViews: [{ buffer: 0, byteOffset: 0, byteLength: bin.length }],
-    buffers: [{ byteLength: bin.length }],
-  });
-  const pad = (b: Buffer, fill: number): Buffer =>
-    b.length % 4 === 0 ? b : Buffer.concat([b, Buffer.alloc(4 - (b.length % 4), fill)]);
-  const jsonChunk = pad(Buffer.from(json, "utf8"), 0x20);
-  const binChunk = pad(bin, 0);
-  const header = Buffer.alloc(12);
-  header.write("glTF", 0, "latin1");
-  header.writeUInt32LE(2, 4);
-  header.writeUInt32LE(12 + 8 + jsonChunk.length + 8 + binChunk.length, 8);
-  const chunk = (body: Buffer, type: string): Buffer => {
-    const head = Buffer.alloc(8);
-    head.writeUInt32LE(body.length, 0);
-    head.write(type, 4, "latin1");
-    return Buffer.concat([head, body]);
-  };
-  return Buffer.concat([header, chunk(jsonChunk, "JSON"), chunk(binChunk, "BIN\0")]);
-}

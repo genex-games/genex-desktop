@@ -88,8 +88,7 @@ export function leadFrameOf(
 }
 
 /**
- * The newest frame of the agent working on one part of a run — its builder, or the playtester
- * checking it — or undefined. The graph joins a step to its screen on the run and the part.
+ * The newest frame of the agent working on one part of a run — its worker — or undefined. The graph joins a step to its screen on the run and the part.
  */
 export function partFrameOf(
   state: AgentScreensState,

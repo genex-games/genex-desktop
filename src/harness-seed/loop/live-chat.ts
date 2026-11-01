@@ -2,14 +2,13 @@
  * The chat while a build of it is open (live chat). A message the person sends goes to the lead of
  * the run that owns the chat, when that lead takes the chat (director/lead-line.ts): recorded
  * delivered to the run, with a `run_steering` the lead's inbox reads, and answered by the lead in
- * the chat. Anything else waits for the build to close — the run itself, not the self-improvement
- * pass that follows it, which never holds the chat. That pass has a Stop of its own (`stopRun`):
- * the chat's next message clears the chat's, never the pass's.
+ * the chat. Anything else waits for the build to close. A run has a Stop of its own (`stopRun`):
+ * the chat's next message clears the chat's, never the run's.
  *
  * A module of its own: the loop's dispatch (main.ts), a chat turn (chat-dispatch.ts) and a run's
  * start (run-dispatch.ts) read it, and a seed upgrade keeps an older copy of any of those the agent
- * edited, which never exported these names. A run that opened no line — the long turn, the
- * classic pipeline, a kept director.ts from before live chat — keeps its messages waiting.
+ * edited, which never exported these names. A run that opened no line — the long turn, a kept
+ * director.ts from before live chat — keeps its messages waiting.
  */
 import { leadLineOf, leadLinesChanged, type LeadLine } from "./director/lead-line.ts";
 import * as leadLines from "./director/lead-line.ts";
@@ -19,7 +18,6 @@ import { RunEvent } from "./run-events.ts";
 import { SteerDelivery } from "./steer-delivery.ts";
 import { type ActiveRun, type Studio, heldRuns } from "./studio-state.ts";
 import type { LeadDoor, QueueAction } from "./message-queue.ts";
-import type { HarnessCtx } from "../types/harness.d.ts";
 
 /** A message's words, trimmed; anything else reads as none. */
 const wordsOf = (action: QueueAction): string => String(action.text ?? "").trim();
@@ -142,7 +140,7 @@ const LINES_CHANGED = Symbol("lines changed");
  * it, the lead's door, which the queue hands it through. When a line opens or shuts and the lead
  * still does not take it, null: the queue looks again, and may hand the lead what waits behind it
  * (message-queue.ts). Without the message (a queue from before live chat), only the close. Stop
- * closes the build early; its self-improvement pass never waits.
+ * closes the build early.
  */
 export async function chatWaitsFor(
   studio: Studio,
@@ -178,8 +176,8 @@ export function buildHolds(studio: Studio, threadId: string, project?: string | 
 }
 
 /**
- * The run under way on this chat or game, once any run that has closed there is past its
- * self-improvement pass: a new build waits that pass out instead of being refused.
+ * The run under way on this chat or game, once any run that has closed there has settled: a new
+ * build waits that out instead of being refused.
  */
 export async function runUnderWay(studio: Studio, threadId: string, project: string): Promise<ActiveRun | undefined> {
   for (;;) {
@@ -190,9 +188,9 @@ export async function runUnderWay(studio: Studio, threadId: string, project: str
 }
 
 /**
- * Stop reached this run: its self-improvement pass stops, and stays stopped whatever the chat does
- * next — a message clears the chat's own Stop (`studio.cancels`), never this one — and a build that
- * waited for that pass to end does not start (run-dispatch.ts).
+ * Stop reached this run: it stays stopped whatever the chat does next — a message clears the chat's
+ * own Stop (`studio.cancels`), never this one — and a build that waited for it to end does not
+ * start (run-dispatch.ts).
  */
 export function stopRun(active: ActiveRun): void {
   active.stopped = true;
@@ -202,15 +200,4 @@ export function stopRun(active: ActiveRun): void {
 /** The composer's Stop: it reaches every run of this chat — or of every chat, when none is named. */
 export function stopRunsOf(studio: Studio, threadId?: string): void {
   for (const active of heldRuns(studio)) if (!threadId || active.threadId === threadId) stopRun(active);
-}
-
-/**
- * The ctx a run's self-improvement pass works with: the run's, stopped by the run's own Stop
- * (`stopRun`) as well as the chat's, so a message sent after Stop never sets the pass going again.
- */
-export function passCtx(ctx: HarnessCtx, active: ActiveRun): HarnessCtx {
-  const pass: HarnessCtx = { ...ctx };
-  // A getter, like the ctx it copies: an object spread would freeze cancellation now.
-  Object.defineProperty(pass, "cancelled", { get: () => active.stopped === true || ctx.cancelled });
-  return pass;
 }

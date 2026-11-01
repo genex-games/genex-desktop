@@ -398,14 +398,14 @@ export type EvalCoreOptions = Pick<StudioCoreOptions, "engines" | "gamesRoot" | 
 /**
  * Real Claude Code and Codex engines (Codex with host skills suppressed when the spec asks, and
  * both CLIs pinned when it names them), or the scripted fixture engines; games in the spec's
- * root, which is the only root a build may use; no background improvement.
+ * root, which is the only root a build may use.
  */
 export function evalCoreOptions(launch: EvalLaunch, userData: string): EvalCoreOptions {
   const { spec } = launch;
   return {
     engines: spec.fixture ? fixtureEngines() : evalEngines(launch, userData),
     gamesRoot: spec.gamesRoot,
-    executionPolicy: { allowedProjectRoot: spec.gamesRoot, runBackgroundImprovement: false },
+    executionPolicy: { allowedProjectRoot: spec.gamesRoot },
   };
 }
 

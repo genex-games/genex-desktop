@@ -1,9 +1,10 @@
 /**
- * The `observe` host service, and its `still` (API 3, additive): one named view of the bound game
- * (a demo run to its end, or a camera) photographed on a hidden window of its own, at the size the
- * plugin asks for. Every input a plugin controls is checked before anything runs; the window is the
- * still's alone and is given back however the still ends; Live, the person's own window, is never
- * touched.
+ * The `observe` host service, and its `still` (API 3, additive): a plain frame of the bound game's
+ * page photographed on a hidden window of its own, at the size the plugin asks for. The game is
+ * asked nothing: no demo is run and no camera placed, so a request naming a demo is refused and a
+ * view other than `default` is answered `view_unknown`. Every input a plugin controls is checked
+ * before anything runs; the window is the still's alone and is given back however the still ends;
+ * Live, the person's own window, is never touched. `observe` records no clip.
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
@@ -18,7 +19,6 @@ import {
   lateAnswer,
   lateLoad,
   observeHost,
-  type PageScript,
   settle,
   usedAfterRelease,
 } from "../helpers/observe-windows.ts";
@@ -26,7 +26,7 @@ import { tmpDir } from "../helpers/tmp.ts";
 import { STILL_RETAKE_GAP_MS, STILL_RETAKES, STILL_TIMEOUT_MS } from "../../src/main/core/view-still.ts";
 
 const MIB = 1024 * 1024;
-const STILL = { demo: "hero-shot", width: 1920, height: 1080 } as const;
+const STILL = { width: 1920, height: 1080 } as const;
 const DEFAULT_MAX_BYTES = 8 * MIB;
 
 /**
@@ -118,14 +118,10 @@ function stillRows(): Array<[label: string, still: unknown, files?: unknown[]]> 
     ["a still that is null", null],
     ["a still that is a number", 1920],
     ["a still that is a list", [STILL]],
-    ["both a demo and a camera", { ...STILL, camera: "close" }],
-    ["neither a demo nor a camera", { width: 1920, height: 1080 }],
-    ["neither, spelled as undefined", { demo: undefined, camera: undefined, width: 1920, height: 1080 }],
+    ["a demo", { ...STILL, demo: "hero-shot" }],
+    ["a demo beside the default camera", { ...STILL, demo: "hero-shot", camera: "default" }],
     ...NAMES.map(([label, name]): [string, unknown] => [`a demo name that is ${label}`, { ...STILL, demo: name }]),
-    ...NAMES.map(([label, name]): [string, unknown] => [
-      `a camera name that is ${label}`,
-      { camera: name, width: 1920, height: 1080 },
-    ]),
+    ...NAMES.map(([label, name]): [string, unknown] => [`a camera name that is ${label}`, { ...STILL, camera: name }]),
     ...SIDES.map(([label, width]): [string, unknown] => [`a width that is ${label}`, { ...STILL, width }]),
     ...SIDES.map(([label, height]): [string, unknown] => [`a height that is ${label}`, { ...STILL, height }]),
     ["a width below a window's least", { ...STILL, width: 319 }],
@@ -168,18 +164,18 @@ describe("observe refuses what a plugin may not ask, before anything runs", () =
   it("hands the host a still in its canonical shape, the byte limit filled in", async () => {
     const { game, services, binding, seen } = await observeServices();
     const accepted: Array<[asked: Record<string, unknown>, handed: Record<string, unknown>]> = [
-      [{ ...STILL }, { ...STILL, maxBytes: DEFAULT_MAX_BYTES }],
+      [{ ...STILL }, { ...STILL, camera: "default", maxBytes: DEFAULT_MAX_BYTES }],
       [
-        { camera: "eye:down", width: 320, height: 240, maxBytes: 64 * 1024 },
-        { camera: "eye:down", width: 320, height: 240, maxBytes: 64 * 1024 },
+        { camera: "default", width: 320, height: 240, maxBytes: 64 * 1024 },
+        { camera: "default", width: 320, height: 240, maxBytes: 64 * 1024 },
       ],
       [
-        { demo: "a".repeat(64), camera: undefined, width: 1920, height: 1200, maxBytes: 16 * MIB },
-        { demo: "a".repeat(64), width: 1920, height: 1200, maxBytes: 16 * MIB },
+        { camera: undefined, width: 1920, height: 1200, maxBytes: 16 * MIB },
+        { camera: "default", width: 1920, height: 1200, maxBytes: 16 * MIB },
       ],
       [
-        { demo: "Boss_Fight:2", width: 1280, height: 720, maxBytes: undefined },
-        { demo: "Boss_Fight:2", width: 1280, height: 720, maxBytes: DEFAULT_MAX_BYTES },
+        { camera: "eye:down", width: 1280, height: 720, maxBytes: undefined },
+        { camera: "eye:down", width: 1280, height: 720, maxBytes: DEFAULT_MAX_BYTES },
       ],
     ];
     for (const [asked, handed] of accepted) {
@@ -223,7 +219,7 @@ describe("observe refuses what a plugin may not ask, before anything runs", () =
       await writeFile(path.join(dir, "plugin.json"), JSON.stringify(manifest));
       await f.registry.installLocal(dir, "local", manifest.capabilities);
       assert.deepEqual(await f.registry.tool("example__greet", { name: "Ada" }, f.binding), { still: null });
-      assert.deepEqual(seen, [[f.binding, [], { ...STILL, maxBytes: DEFAULT_MAX_BYTES }]]);
+      assert.deepEqual(seen, [[f.binding, [], { ...STILL, camera: "default", maxBytes: DEFAULT_MAX_BYTES }]]);
     } finally {
       await f.close();
     }
@@ -233,35 +229,46 @@ describe("observe refuses what a plugin may not ask, before anything runs", () =
 /** The pooled window's whole life when a still of the default size ends before the picture. */
 const UNTIL_VIEW = ["acquire", "resize:1920x1080", "load", "call:start"];
 
-describe("a plugin's still of one named view", () => {
-  it("leases a window, sizes it, loads the game, plays it, runs the demo, photographs it and gives the window back", async () => {
+describe("a plugin's still of the page", () => {
+  it("leases a window, sizes it, loads the game, plays it, photographs it and gives the window back", async () => {
     const host = await observeHost();
     const answer = await host.still(STILL);
-    assert.deepEqual(host.log, [...UNTIL_VIEW, "call:demos", "call:demo:hero-shot", "still", "restore", "release"]);
+    assert.deepEqual(host.log, [...UNTIL_VIEW, "still", "restore", "release"]);
     assert.deepEqual(host.made[0]?.asked, [
       { width: 1920, height: 1080, maxBytes: DEFAULT_MAX_BYTES, previewMaxPx: 1280 },
     ]);
-    assert.deepEqual(answer, { still: { ...FRAME, view: { demo: "hero-shot" } } });
+    assert.deepEqual(answer, { still: { ...FRAME } });
     assert.deepEqual(host.live.log, [], "Live was never touched");
   });
 
-  it("places a camera instead of running a demo when the still names one", async () => {
+  it("asks the page for nothing but its clock: no demo is run and no camera placed", async () => {
     const host = await observeHost();
-    const answer = await host.still({ camera: "eye:down", width: 1280, height: 720, maxBytes: MIB });
-    assert.deepEqual(host.log, [
-      "acquire",
-      "resize:1280x720",
-      "load",
-      "call:start",
-      "call:cameras",
-      "call:eyes",
-      "call:debugCamera:eye:down",
-      "still",
-      "restore",
-      "release",
-    ]);
+    await host.still({ camera: "default", width: 1280, height: 720, maxBytes: MIB });
+    assert.deepEqual(host.log, ["acquire", "resize:1280x720", "load", "call:start", "still", "restore", "release"]);
     assert.deepEqual(host.made[0]?.asked, [{ width: 1280, height: 720, maxBytes: MIB, previewMaxPx: 1280 }]);
-    assert.deepEqual(answer.still?.view, { camera: "eye:down" });
+    assert.deepEqual(host.live.log, []);
+  });
+
+  it("answers view_unknown for any view but the default, naming the one there is, before a window is leased", async () => {
+    for (const camera of ["eye:down", "close", "constructor", "toString"]) {
+      const host = await observeHost();
+      const answer = await host.still({ camera, width: 1920, height: 1080 });
+      assert.deepEqual(answer, {
+        stillProblem: { code: PluginStillProblemCode.ViewUnknown, available: ["default"] },
+      });
+      assert.deepEqual(host.log, [], `${camera}: no window was leased and no picture taken`);
+      assert.deepEqual(host.live.log, []);
+    }
+  });
+
+  it("refuses a demo, and a clip, through the real host before any window is opened", async () => {
+    const host = await observeHost();
+    await assert.rejects(host.still({ ...STILL, demo: "hero-shot" }), /there are no demos to name/);
+    await assert.rejects(
+      host.observe({ clip: { demo: "hero-shot", width: 1280, height: 720 } }),
+      /observe records no clip/,
+    );
+    assert.deepEqual(host.log, [], "no window was leased");
     assert.deepEqual(host.live.log, []);
   });
 
@@ -281,78 +288,6 @@ describe("a plugin's still of one named view", () => {
     assert.equal((await host.still(STILL)).stillProblem?.code, PluginStillProblemCode.Unavailable);
     assert.deepEqual(host.log, ["acquire", "release"]);
   });
-});
-
-describe("a plugin's still of a view the game cannot put on screen", () => {
-  it("names the demos the game has when it has none by that name, at most 32 and only names a still could ask for", async () => {
-    const extras = Array.from({ length: 40 }, (_, i) => `extra-${i}`);
-    const host = await observeHost({ demos: ["intro", "boss", 7, "../x", "a b", "boss", ...extras] });
-    const answer = await host.still(STILL);
-    assert.equal(answer.stillProblem?.code, PluginStillProblemCode.ViewUnknown);
-    assert.deepEqual(answer.stillProblem?.available, ["intro", "boss", ...extras.slice(0, 30)]);
-    assert.deepEqual(
-      host.log,
-      [...UNTIL_VIEW, "call:demos", "restore", "release"],
-      "no demo ran and no picture was taken",
-    );
-  });
-
-  it("answers view_unknown for a page with no demo contract", async () => {
-    const host = await observeHost({ demos: { __missing: true } });
-    const answer = await host.still(STILL);
-    assert.deepEqual(answer, { stillProblem: { code: PluginStillProblemCode.ViewUnknown, available: [] } });
-  });
-
-  it("names the cameras the game has when it has none by that name, and never asks the page to place it", async () => {
-    // A page that would place anything it is asked to: the template looks a name up on a plain
-    // object, so an inherited `constructor` or `toString` would "place" a camera it never declared.
-    const page = { cameras: ["default", "close", "close", 7], eyes: ["eye:down"], debugCamera: { ok: true } };
-    for (const name of ["wide", "constructor", "toString", "hasOwnProperty"]) {
-      const host = await observeHost(page);
-      const answer = await host.still({ camera: name, width: 1920, height: 1080 });
-      assert.equal(answer.stillProblem?.code, PluginStillProblemCode.ViewUnknown, name);
-      assert.deepEqual(answer.stillProblem?.available, ["default", "close", "eye:down"], name);
-      assert.deepEqual(
-        host.log,
-        [...UNTIL_VIEW, "call:cameras", "call:eyes", "restore", "release"],
-        `${name}: no camera was placed and no picture taken`,
-      );
-    }
-  });
-
-  it("places the game's own view by `default` even when the game names its cameras otherwise", async () => {
-    const host = await observeHost({ cameras: ["close"], eyes: [] });
-    const answer = await host.still({ camera: "default", width: 1920, height: 1080 });
-    assert.deepEqual(answer.still?.view, { camera: "default" });
-    assert.ok(host.log.includes("call:debugCamera:default"));
-  });
-
-  it("answers view_unknown for a camera on a page with no camera contract", async () => {
-    const host = await observeHost({ cameras: { __missing: true }, eyes: { __missing: true } });
-    const answer = await host.still({ camera: "close", width: 1920, height: 1080 });
-    assert.deepEqual(answer, { stillProblem: { code: PluginStillProblemCode.ViewUnknown, available: [] } });
-    assert.ok(!host.log.some((entry) => entry.startsWith("call:debugCamera")));
-  });
-
-  const FAILED_VIEWS: Array<[label: string, page: PageScript, still: Record<string, unknown>]> = [
-    ["a demo that throws in the page", { demo: { __error: "TypeError: boom" } }, STILL],
-    ["a demo that refuses with a reason", { demo: { ok: false, reason: "the hero is not loaded" } }, STILL],
-    [
-      "a camera the game cannot place",
-      { debugCamera: { ok: false, reason: "pass `camera` and `player()` to installStudio" } },
-      { camera: "eye:down", width: 1920, height: 1080 },
-    ],
-  ];
-  for (const [label, page, still] of FAILED_VIEWS) {
-    it(`answers view_failed for ${label}, and gives the window back`, async () => {
-      const host = await observeHost(page);
-      const answer = await host.still(still);
-      assert.equal(answer.stillProblem?.code, PluginStillProblemCode.ViewFailed);
-      assert.equal(typeof answer.stillProblem?.reason, "string");
-      assert.deepEqual(host.log.slice(-2), ["restore", "release"]);
-      assert.ok(!host.log.includes("still"));
-    });
-  }
 });
 
 describe("a plugin's still that ends before its picture", () => {
@@ -419,35 +354,24 @@ describe("a plugin's still that ends before its picture", () => {
     );
   });
 
-  const SLOW_ANSWERS: Array<[method: string, still: Record<string, unknown>, until: string[]]> = [
-    ["start", STILL, UNTIL_VIEW],
-    ["demos", STILL, [...UNTIL_VIEW, "call:demos"]],
-    ["demo", STILL, [...UNTIL_VIEW, "call:demos", "call:demo:hero-shot"]],
-  ];
-  for (const [method, still, until] of SLOW_ANSWERS) {
-    it(`never touches its window again once its budget gave up during __studio.${method}()`, async () => {
-      const clock = heldClock();
-      const page = lateAnswer(method);
-      const host = await observeHost(page.script, { wait: clock.wait });
-      const answer = host.still(still);
-      await page.started;
-      clock.fire();
-      assert.equal((await answer).stillProblem?.code, PluginStillProblemCode.Timeout);
-      page.arrive();
-      await settle();
-      assert.deepEqual(usedAfterRelease(host.made), [], "the page's late answer led to no call on the closed window");
-      assert.deepEqual(
-        host.log,
-        [...until, "restore", "release"],
-        "nothing ran, was placed or photographed after release",
-      );
-    });
-  }
+  it("never touches its window again once its budget gave up during the page's start", async () => {
+    const clock = heldClock();
+    const page = lateAnswer("start");
+    const host = await observeHost(page.script, { wait: clock.wait });
+    const answer = host.still(STILL);
+    await page.started;
+    clock.fire();
+    assert.equal((await answer).stillProblem?.code, PluginStillProblemCode.Timeout);
+    page.arrive();
+    await settle();
+    assert.deepEqual(usedAfterRelease(host.made), [], "the page's late answer led to no call on the closed window");
+    assert.deepEqual(host.log, [...UNTIL_VIEW, "restore", "release"], "nothing was photographed after release");
+  });
 
   it("refuses a malformed still through the real host before any window is opened", async () => {
     const host = await observeHost();
     await assert.rejects(host.still({ ...STILL, width: 1921 }), refused);
-    await assert.rejects(host.still({ ...STILL, demo: "../escape" }), refused);
+    await assert.rejects(host.still({ ...STILL, camera: "../escape" }), refused);
     assert.deepEqual(host.log, [], "no window was leased");
     assert.deepEqual(host.live.log, []);
   });
@@ -477,17 +401,8 @@ describe("a plugin's still that comes back blank", () => {
       { wait: clock.wait },
     );
     const answer = await host.still(STILL);
-    assert.deepEqual(answer, { still: { ...FRAME, view: { demo: "hero-shot" } } });
-    assert.deepEqual(host.log, [
-      ...UNTIL_VIEW,
-      "call:demos",
-      "call:demo:hero-shot",
-      "still",
-      "still",
-      "still",
-      "restore",
-      "release",
-    ]);
+    assert.deepEqual(answer, { still: { ...FRAME } });
+    assert.deepEqual(host.log, [...UNTIL_VIEW, "still", "still", "still", "restore", "release"]);
     assert.deepEqual(clock.asked, [STILL_RETAKE_GAP_MS, STILL_RETAKE_GAP_MS]);
   });
 

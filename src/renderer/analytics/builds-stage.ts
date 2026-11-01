@@ -12,6 +12,7 @@ import { PluginSourceKind } from "../../shared/plugins.ts";
 import { LiveLoadFailure, PreviewGone } from "../../shared/preview-contract.ts";
 import type { StepRow, StepsCard } from "../chat/engine-steps.ts";
 import { GraphSelection, isPartSelection } from "../panels/inspector/selection.ts";
+import { isBuildSelection } from "../run-graph-builds.ts";
 import {
   type BuildsEventProperties,
   type BuildsEvent,
@@ -164,10 +165,11 @@ export function planningEnded(
 
 // ── Builds ──────────────────────────────────────────────────────────────────────────────────
 
-/** What a Builds graph selection is: one of its fixed nodes, a part's row, or a step. */
+/** What a Builds graph selection is: one of its fixed nodes, a part's row, a build of a Loop's line, or a step. */
 export function nodeKindOf(id: string): GraphSelection | NodeKind {
   const fixed = oneOf(GraphSelection, id);
   if (fixed) return fixed;
+  if (isBuildSelection(id)) return NodeKind.Build;
   return isPartSelection(id) ? NodeKind.Part : NodeKind.Step;
 }
 

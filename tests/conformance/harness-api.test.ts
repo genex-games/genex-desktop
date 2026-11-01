@@ -116,7 +116,7 @@ test("malformed params for a path-bearing method are refused with a clear error 
         "selfCapture.root",
       ],
       ["engine.delegate", { project: "pong", prompt: "go", extraReads: ["/refs", 3] }, "extraReads.1"],
-      ["preview.pair", { runId: "r1", left: { path: 9 }, right: {} }, "left.path"],
+      ["preview.crop", { runId: "r1", path: 9 }, "path"],
       ["run.artifact", { runId: "r1", name: null, base64: "" }, "name"],
       ["game.scaffold", undefined, "params"],
       ["game.start", { project: "pong", starter: "Web" }, "starter"],
@@ -188,26 +188,18 @@ test("malformed params for a path-bearing method are refused with a clear error 
 });
 
 test("a well-formed call reaches its handler with the params exactly as the harness sent them", async () => {
-  const harness = await pipe([...PATH_BEARING, "preview.state", "engine.abort"]);
+  const harness = await pipe([...PATH_BEARING, "preview.status", "engine.abort"]);
   try {
     // Shapes the seed sends today, including fields the schema does not check and the nulls a
     // handler reads as "not given".
     const accepted: Array<[string, unknown]> = [
       ["game.read", { project: "pong", file: "NOTES.md" }],
-      ["game.export", { project: "pong", candidateId: "opt-1" }],
+      ["game.export", { project: "pong" }],
       ["mcp.tools", { project: null }],
       ["snapshot.worktree", { project: "pong", commit: null, name: "integration", runId: "run-1" }],
       ["preview.load", { project: "pong", root: null, entry: "index.html", handle: "stage-1" }],
-      [
-        "preview.pair",
-        {
-          runId: "r1",
-          left: { base64: "AAAA", mimeType: "image/png" },
-          right: { path: "/runs/r1/a.jpg" },
-          label: "pair",
-        },
-      ],
-      ["preview.statsOf", undefined],
+      ["preview.crop", { runId: "r1", path: "/runs/r1/a.jpg", crop: { x: 0, y: 0, w: 1, h: 1 }, label: "crop" }],
+      ["preview.crop", undefined],
       [
         "engine.delegate",
         {
@@ -233,7 +225,7 @@ test("a well-formed call reaches its handler with the params exactly as the harn
       ["jobs.list", { project: "pong", runId: "r1", endedAfter: 3 }],
       ["jobs.list", { project: "pong", runId: null }],
       // Not path-bearing: nothing is checked, whatever arrives.
-      ["preview.state", 5],
+      ["preview.status", 5],
       // Stop is never refused on its params.
       ["engine.abort", { cwd: 42 }],
     ];

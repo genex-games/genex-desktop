@@ -360,7 +360,7 @@ describe("the engine question, told how each kind stands", () => {
 
   it("a host that lists no kinds offers no Unreal kind", async () => {
     const none = await engineQuestion([]);
-    assert.doesNotMatch(none.prompt, /FIRST, THE ENGINE|unreal__new-game/);
+    assert.doesNotMatch(none.prompt, /THE ENGINE:|unreal__new-game/);
   });
 });
 

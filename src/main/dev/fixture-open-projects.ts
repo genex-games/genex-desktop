@@ -150,7 +150,7 @@ const LEAD_DONE = "done";
 /** The verdict source a save point's round carries (the seed's `SAVE_POINT_VERDICT_SOURCE`). */
 const SAVE_POINT_SOURCE = "lead";
 /** The in-place Loop's close when its time ran out with no reviewer's yes (the seed's `OPEN_END.timeUpNoClaim`). */
-const OPEN_TIME_UP = "the Loop's time ran out before a reviewer accepted the goal; here is where it stands";
+const OPEN_TIME_UP = "the Loop's time ran out; here is where it stands";
 /** How long the earlier timed Loop was given. */
 const EARLIER_LOOP_MS = 60 * MINUTE_MS;
 
@@ -362,7 +362,7 @@ function earlierGodotLoop(project: string): EventData[] {
   const run = fixtureRun({ runId: GODOT_CLOSED_RUN, project });
   const label = "Walls and door";
   const summary = "the walls stand and the door opens";
-  const notChecked = "The time ran out before a final look at your game.";
+  const notChecked = "The time ran out.";
   return [
     ...openStart(run, GODOT_EARLIER_ASK, { budgets: { wallClockMs: EARLIER_LOOP_MS } }),
     ...savePoint(run, project, 1, label, summary),

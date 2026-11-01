@@ -1649,14 +1649,6 @@ button.chat-header-title:hover {
     background-color var(--duration-quick),
     color var(--duration-quick);
 }
-/* A header control that says something beside its icon: the Free button. */
-.header-control[data-label] {
-  display: flex;
-  gap: 6px;
-  width: auto;
-  padding-inline: 8px;
-  font: 12px / 1 var(--font-family-code);
-}
 .header-control:hover,
 .header-control[aria-expanded="true"] {
   background: var(--control-hover, var(--hover));
@@ -2148,8 +2140,8 @@ button.chat-header-title:hover {
   width: 28px;
   height: 28px;
 }
-/* The game list takes the room and scrolls, what waits to be installed stands at its foot, and the
- * friends stand on the account plate, scrolling on their own. The list is their container: open,
+/* The game list takes the room and scrolls, the friends stand under it, scrolling on their own, and
+ * what waits to be installed stands on the account plate. The list is their container: open,
  * they take at most half of it. Each thumb is 3px, 2px from the border, shown while the sidebar is
  * hovered or scrolling. */
 .sidebar-list {
@@ -2217,9 +2209,9 @@ button.chat-header-title:hover {
   background: linear-gradient(transparent, var(--sidebar));
   pointer-events: none;
 }
-/* What waits for the person, at the foot of the list: Genex's updated terms while they wait to be
- * accepted, the plugin updates line while plugin releases wait, Relaunch to update while a downloaded
- * version does. */
+/* What waits for the person, under the friends and over the account plate: Genex's updated terms
+ * while they wait to be accepted, the plugin updates row while plugin releases wait, Relaunch to
+ * update while a downloaded version does. */
 .sidebar-footer {
   display: flex;
   flex-direction: column;
@@ -2703,33 +2695,42 @@ button.chat-header-title:hover {
   left: 0;
   pointer-events: none;
 }
-/* A secondary button in the field colour: the light palette's own secondary fill is one step from the
- * sidebar and would vanish here. The label and the reload glyph share the ink, never the accent. */
+/* Relaunch to update or Download (`Sidebar.tsx`), in the plugin updates line's dress: the field colour
+ * (the light palette's own secondary fill is one step from the sidebar and would vanish here), a
+ * light-blue icon, then the words; the whole row is the press. */
 .sidebar-update {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 7px;
   width: 100%;
-  height: 36px;
-  padding-inline: 12px 10px;
+  height: 32px;
+  padding-inline: 9px 8px;
   border-radius: var(--radius-control);
   background: var(--field);
   color: var(--ink);
-  font-size: 14px;
-  line-height: 20px;
-  font-weight: 500;
+  font-size: 13px;
+  line-height: 18px;
   text-align: start;
+  cursor: pointer;
   transition: background-color var(--duration-quick);
 }
 .sidebar-update > span {
   flex: 1;
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The icon in a lighter blue than the accent fill, which reads too dark on the dark field. */
+.sidebar-update .gi {
+  color: color-mix(in oklab, var(--accent-primary) 55%, var(--ink));
 }
 .sidebar-update:enabled:hover {
   background: color-mix(in oklab, var(--ink) 5%, var(--field));
 }
 .sidebar-update:disabled {
   opacity: 0.6;
+  cursor: default;
 }
 .sidebar-update[aria-busy="true"] .gi .a-spin {
   animation: gi-spin 1.5s cubic-bezier(0.22, 1, 0.36, 1) infinite;
@@ -5101,8 +5102,12 @@ button.chat-header-title:hover {
   opacity: 0.5;
   cursor: default;
 }
+/* An answer on its way looks as it did when pressed: only the pointer says it is working. */
 .chat-answer[aria-busy="true"] {
-  opacity: 1;
+  cursor: progress;
+}
+.chat-answer[aria-disabled="true"]:not([aria-busy="true"]) {
+  cursor: default;
 }
 .chat-answer-primary {
   background: var(--ink);

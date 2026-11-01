@@ -122,15 +122,13 @@ export function parseCursorStatus(stdout: string): { signedIn: boolean } {
 }
 
 /**
- * What a session's tools may do. A build edits its folder; a read-only session (a playtester, a
- * reviewer, a lead while its build runs, a chat in Plan) runs from a scratch folder the studio's
- * sandbox lets it write, and only reads the game; a blind judge cannot read the game at all; an
- * answer (a judge's verdict) asks Cursor's own read-only mode for a reply.
+ * What a session's tools may do. A build edits its folder; a read-only session (a reviewer, a
+ * lead while its build runs, a chat in Plan) runs from a scratch folder the studio's sandbox lets
+ * it write, and only reads the game; an answer (a judge's verdict) asks Cursor's own read-only mode for a reply.
  */
 export const CursorAccess = {
   Build: "build",
   ReadOnly: "read-only",
-  Blind: "blind",
   Answer: "answer",
 } as const;
 export type CursorAccess = (typeof CursorAccess)[keyof typeof CursorAccess];

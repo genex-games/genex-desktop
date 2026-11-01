@@ -8,7 +8,7 @@ import { readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { computerSession, type TargetSource } from "../../src/main/core/computer-session.ts";
-import { BROWSER_CAPABILITIES, ClockLevel, InputRoute, StateLevel } from "../../src/shared/computer-target.ts";
+import { BROWSER_CAPABILITIES, ClockLevel, InputRoute } from "../../src/shared/computer-target.ts";
 import type { ComputerTarget } from "../../src/substrate/computer-target.ts";
 import type { LiveToolResult } from "../../src/substrate/engines/types.ts";
 import { tmpDir } from "../helpers/tmp.ts";
@@ -232,59 +232,6 @@ describe("computer session — the clock", () => {
   });
 });
 
-describe("computer session — a goal the studio checks", () => {
-  it("announces the goal once, the first time the game's own state reaches it, and marks the trace", async () => {
-    let hp = 3;
-    const { target } = fakeTarget();
-    const watched: ComputerTarget = {
-      ...target,
-      state: async () => ({ flow: { phase: hp > 1 ? "menu" : "playing" } }),
-    };
-    const { s, frameDir } = await session({
-      target: watched,
-      quest: { id: "reach-play", until: { path: "flow.phase", equals: "playing" } },
-    });
-    assert.doesNotMatch(text(await s.run("computer", { action: "key", text: "Return" })), /GOAL REACHED/);
-    hp = 1;
-    assert.match(
-      text(await s.run("computer", { action: "key", text: "Return" })),
-      /GOAL REACHED \(studio-verified\): reach-play/,
-    );
-    assert.doesNotMatch(text(await s.run("computer", { action: "key", text: "Return" })), /GOAL REACHED/, "said once");
-    assert.equal(s.trace().reachedAt, 2);
-    const rows = (await readFile(path.join(frameDir, "trace.jsonl"), "utf8"))
-      .trim()
-      .split("\n")
-      .map((l) => JSON.parse(l));
-    assert.equal(rows[1].reached, true);
-  });
-
-  it("tells the host which goal it saw reached, with the trace that shows it", async () => {
-    const { target } = fakeTarget();
-    let won = false;
-    const told: Array<[string, string]> = [];
-    const { s, frameDir } = await session({
-      target: { ...target, state: async () => ({ won }) },
-      quest: { id: "win", until: { path: "won", equals: true } },
-      onReached: (trace, quest) => told.push([trace, quest]),
-    });
-    await s.run("computer", { action: "key", text: "w" });
-    won = true;
-    await s.run("computer", { action: "key", text: "w" });
-    assert.deepEqual(told, [[path.join(frameDir, "trace.jsonl"), "win"]]);
-  });
-
-  it("a state the studio cannot read never reaches the goal", async () => {
-    const { target } = fakeTarget();
-    const { s } = await session({
-      target: { ...target, state: undefined },
-      quest: { id: "x", until: { path: "flow.phase", equals: "playing" } },
-    });
-    assert.doesNotMatch(text(await s.run("computer", { action: "key", text: "Return" })), /GOAL REACHED/);
-    assert.equal(s.trace().reachedAt, null);
-  });
-});
-
 describe("computer session — review findings", () => {
   it("a held key on a stepped clock is held for that much game time, not wall time", async () => {
     const { s, calls } = await session({ pacing: "stepped", seed: 3 });
@@ -315,22 +262,6 @@ describe("computer session — review findings", () => {
     assert.ok(!calls.some((call) => call.startsWith("step")), "nothing stepped");
     assert.ok(!calls.includes("pause"), "a clock that cannot be held is not paused");
     assert.equal(s.trace().deterministic, false);
-  });
-
-  it("a goal that already held before the first move never counts; one that comes back after it stopped does", async () => {
-    let phase = "playing";
-    const { target } = fakeTarget();
-    const watched: ComputerTarget = { ...target, state: async () => ({ flow: { phase } }) };
-    const { s } = await session({
-      target: watched,
-      quest: { id: "play", until: { path: "flow.phase", equals: "playing" } },
-    });
-    assert.doesNotMatch(text(await s.run("computer", { action: "wait", duration: 0.01 })), /GOAL REACHED/);
-    phase = "menu";
-    await s.run("computer", { action: "key", text: "Escape" });
-    phase = "playing";
-    assert.match(text(await s.run("computer", { action: "key", text: "Return" })), /GOAL REACHED/);
-    assert.equal(s.trace().reachedAt, 3);
   });
 
   it("says when the game took only part of a move, and a batch stops where the game refused everything", async () => {
@@ -384,27 +315,6 @@ describe("computer session — review findings", () => {
     assert.notEqual(a.trace().path, b.trace().path);
     const frames = (await readdir(frameDir)).filter((f) => f.endsWith(".jpg"));
     assert.equal(frames.length, 2, frames.join(","));
-  });
-
-  it("tells the host the trace that shows the goal, once; and a judge is offered no state, and reads none", async () => {
-    const reached: string[] = [];
-    const { target } = fakeTarget();
-    const { s } = await session({
-      target: { ...target, state: async () => ({ won: true, hp: 7 }) },
-      quest: { id: "win", until: { path: "won", truthy: true } },
-      onReached: (file) => reached.push(file),
-      showState: false,
-      offer: (caps) => ({ ...caps, state: StateLevel.None, console: false }),
-    });
-    // Held before moving, so it never counts; the judge sees no state either way.
-    const moved = text(await s.run("computer", { action: "key", text: "w" }));
-    assert.doesNotMatch(moved, /hp/);
-    assert.match(text(await s.run("computer", { action: "state" })), /not available/);
-    assert.match(
-      text(await s.run("computer", { action: "batch", actions: [{ action: "key", text: "w" }, { action: "wait" }] })),
-      /OK/,
-    );
-    assert.deepEqual(reached, []);
   });
 });
 

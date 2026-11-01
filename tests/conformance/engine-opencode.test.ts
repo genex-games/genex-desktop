@@ -8,7 +8,6 @@
 import assert from "node:assert/strict";
 import { constants } from "node:fs";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { setImmediate } from "node:timers/promises";
@@ -488,30 +487,6 @@ describe("OpenCode sessions", () => {
     }
   });
 
-  it("a blind judge reads nothing: no file tool, nothing outside its folder, only its live tools", async () => {
-    const { engine, seen } = await engineWith(async function* () {
-      yield* replay([]);
-    });
-    const cwd = await game();
-    const computer = {
-      name: "computer",
-      description: "hands",
-      parameters: { type: "object" as const, properties: {} },
-    };
-    await engine.delegate({
-      cwd,
-      prompt: "Judge by playing",
-      readOnly: true,
-      blind: true,
-      liveTools: [computer],
-      onLiveTool: async () => "ok",
-    });
-    const config = JSON.parse(seen[0]?.env.OPENCODE_CONFIG_CONTENT ?? "{}");
-    for (const tool of ["read", "glob", "grep", "list", "edit", "external_directory"])
-      assert.equal(config.permission[tool], "deny", `${tool} is not a blind judge's`);
-    assert.equal(config.permission["studio_*"], "allow");
-  });
-
   it("tells a Loop's reviewer the build it tests is the folder it reads, never its own empty home", async () => {
     const { engine, seen, root } = await engineWith(async function* () {
       yield* replay([]);
@@ -716,28 +691,6 @@ describe("OpenCode sessions", () => {
     assert.equal(late.stopReason, "deadline");
   });
 
-  it("keeps a worker to its seam while it runs, and gives the files back after", async () => {
-    const cwd = await game();
-    await mkdir(path.join(cwd, "src"), { recursive: true });
-    await writeFile(path.join(cwd, "src", "sword.js"), "// mine\n");
-    let lockedDuring = false;
-    const { engine } = await engineWith(async function* () {
-      lockedDuring = await access(path.join(cwd, "main.js"), constants.W_OK).then(
-        () => false,
-        () => true,
-      );
-      yield* replay([]);
-    });
-    await engine.delegate({
-      cwd,
-      prompt: "build the sword",
-      ownership: { facetId: "sword", owns: ["src/sword.js"], ownsMain: false },
-    });
-    if (os.platform() !== "win32" && process.getuid?.() !== 0)
-      assert.equal(lockedDuring, true, "an unowned file is read-only while it runs");
-    await access(path.join(cwd, "main.js"), constants.W_OK);
-  });
-
   it("refuses Compact now: OpenCode compacts its own sessions", async () => {
     const { engine } = await engineWith(() => replay([]));
     await assert.rejects(
@@ -899,13 +852,6 @@ describe("OpenCode 2.x and the studio's MCP tools", () => {
     const none = JSON.parse(openCodeConfigV2(OpenCodeAccess.ReadOnly, true));
     assert.equal(none.mcp, undefined);
     assert.equal(decideWild(none.permissions as Rule[], "studio_computer"), "deny");
-  });
-
-  it("a blind judge on 2.x reads no file either", () => {
-    const rules = JSON.parse(openCodeConfigV2(OpenCodeAccess.Blind, true, ["node", "x"])).permissions as Rule[];
-    for (const action of ["read", "glob", "grep", "external_directory", "edit"])
-      assert.equal(decideWild(rules, action), "deny", action);
-    assert.equal(decideWild(rules, "studio_computer"), "allow");
   });
 });
 

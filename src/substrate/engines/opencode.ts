@@ -24,10 +24,11 @@ import { promisify } from "node:util";
 import { CATALOG_DEADLINE_MS, ModelCatalog } from "./model-catalog.ts";
 import { cliVersion, resolveCodingCli } from "./external-cli.ts";
 import { runCommand } from "./claude-cli.ts";
-import { lockUnowned, ownershipBriefing, releaseLocks, releaseStaleLocks, type LockRecord } from "./ownership-locks.ts";
+import { releaseStaleLocks } from "./ownership-locks.ts";
 import { StudioBridge, answerBridgeCall, bridgeTools } from "./studio-bridge.ts";
 import { writeDelegateStills } from "./codex.ts";
 import { JUDGE_RULES, mcpToolsNote, offLimitsNote, planModeNote, readOnlyNote } from "./codex-prompts.ts";
+import { leadBuildWrites } from "./session-commands.ts";
 import {
   OPENCODE_AGENT,
   builtInHosts,
@@ -319,14 +320,11 @@ export class OpenCodeEngine implements Engine {
     const run = newRun(this.id, request.resume);
     const controller = abortControllerFor(request.signal);
     await releaseStaleLocks(cwd, this.#lockRecovery).catch(() => {});
-    const locks = request.ownership
-      ? await lockUnowned(cwd, request.ownership, this.#lockRecovery).catch(() => null)
-      : null;
     const access = sessionAccess(request);
     const scratch = access === OpenCodeAccess.Build ? null : await this.#scratch("run-");
     const runDir = scratch ?? cwd;
     const bridge = await this.#openBridge(request, runDir).catch(async (err) => {
-      await this.#cleanUp(cwd, locks, scratch, null);
+      await this.#cleanUp(cwd, scratch, null);
       throw err;
     });
     const stills = await writeDelegateStills(request.images ?? []);
@@ -344,7 +342,7 @@ export class OpenCodeEngine implements Engine {
         runDir,
         bridge: Boolean(bridge),
         mcpCommand: bridge?.mcpCommand() ?? null,
-        prompt: this.#brief(request, { access, cwd, scratch, locks, bridge }),
+        prompt: this.#brief(request, { access, cwd, scratch, bridge }),
         files: stills.paths,
         signal: controller.signal,
       });
@@ -354,7 +352,7 @@ export class OpenCodeEngine implements Engine {
     } finally {
       if (deadline) clearTimeout(deadline);
       if (stills.dir) await rm(stills.dir, { recursive: true, force: true }).catch(() => {});
-      await this.#cleanUp(cwd, locks, scratch, bridge);
+      await this.#cleanUp(cwd, scratch, bridge);
     }
     if (request.signal?.aborted || run.deadlineHit)
       return metered(partialDelegateResult(this.id, interruption(request.signal?.aborted), partial()));
@@ -452,42 +450,32 @@ export class OpenCodeEngine implements Engine {
     });
   }
 
-  async #cleanUp(
-    cwd: string,
-    locks: LockRecord | null,
-    scratch: string | null,
-    bridge: StudioBridge | null,
-  ): Promise<void> {
+  async #cleanUp(cwd: string, scratch: string | null, bridge: StudioBridge | null): Promise<void> {
     await bridge?.close().catch(() => {});
-    await releaseLocks(cwd, locks, this.#lockRecovery).catch(() => {});
     if (scratch) await rm(scratch, { recursive: true, force: true }).catch(() => {});
   }
 
-  /** The brief, plus what OpenCode can only be told: its tools, its seam, its folder, what is off limits. */
+  /** The brief, plus what OpenCode can only be told: its tools, its folder, what is off limits. */
   #brief(
     request: DelegateRequest,
     ctx: {
       access: OpenCodeAccess;
       cwd: string;
       scratch: string | null;
-      locks: LockRecord | null;
       bridge: StudioBridge | null;
     },
   ): string {
-    const hasSeam = request.ownership && (request.ownership.owns.length || ctx.locks?.files.length);
     const plan = chatMode(request) === PermissionMode.Plan && ctx.scratch;
     return [
       request.prompt,
       ctx.bridge?.instructions() ?? "",
       ctx.bridge?.mcpCommand() ? mcpToolsNote((request.liveTools ?? []).map((tool) => tool.name)) : "",
-      hasSeam && request.ownership ? ownershipBriefing(request.ownership) : "",
       plan
         ? planModeNote(ctx.cwd, ctx.scratch ?? "")
         : readOnlyNote(
             // A reviewer's cwd is its own empty home: the build it tests is the folder it reads.
             request.reviewer?.reads ?? ctx.cwd,
             ctx.scratch,
-            request.director ? path.resolve(request.director.root) : null,
           ),
       offLimitsNote([...this.#protectedPaths, ...credentialHomes(), ...(request.denyReads ?? [])]),
     ]
@@ -497,7 +485,7 @@ export class OpenCodeEngine implements Engine {
 
   /** The command, environment and sandbox of one session. */
   async #invocation(
-    request: Pick<DelegateRequest, "model" | "effort" | "resume" | "denyReads" | "cwd" | "prompt">,
+    request: Pick<DelegateRequest, "model" | "effort" | "resume" | "denyReads" | "cwd" | "prompt" | "leadBuilds">,
     ctx: {
       access: OpenCodeAccess;
       cwd: string;
@@ -516,7 +504,7 @@ export class OpenCodeEngine implements Engine {
     const home = path.join(this.#scratchRoot, "home");
     await mkdir(home, { recursive: true });
     const env = sessionEnv(dialect, { ...ctx, home });
-    const sandbox = await this.#sandboxOptions(ctx, request.denyReads ?? []);
+    const sandbox = await this.#sandboxOptions(ctx, request.denyReads ?? [], request.leadBuilds);
     return {
       argv,
       cwd: ctx.runDir,
@@ -545,14 +533,18 @@ export class OpenCodeEngine implements Engine {
     return [...new Set([...hosts, ...CATALOG_HOSTS])];
   }
 
+  /** The session's box; a building lead's also writes the build it leads (`leadBuilds`). */
   async #sandboxOptions(
     ctx: { access: OpenCodeAccess; cwd: string; runDir: string },
     denyReads: string[],
+    leadBuilds?: string,
   ): Promise<SandboxOptions> {
+    const builds = ctx.access === OpenCodeAccess.Build;
     return openCodeSandbox({
       runDir: ctx.runDir,
       gameDir: ctx.cwd,
-      gitDirs: ctx.access === OpenCodeAccess.Build ? await gitMetadata(ctx.cwd) : [],
+      gitDirs: builds ? await gitMetadata(ctx.cwd) : [],
+      leadBuilds: builds ? await leadBuildWrites(leadBuilds) : [],
       scratchDir: path.join(this.#scratchRoot, "tmp"),
       secretPaths: [...this.#protectedPaths, ...denyReads],
       ...(this.#toolPath ? { toolPath: this.#toolPath } : {}),
@@ -640,6 +632,8 @@ export function openCodeSandbox(input: {
   runDir: string;
   gameDir: string;
   gitDirs: string[];
+  /** The build a lead leads and its Git metadata (`leadBuildWrites`). */
+  leadBuilds?: string[];
   scratchDir: string;
   secretPaths: string[];
   toolPath?: () => Promise<string>;
@@ -652,7 +646,7 @@ export function openCodeSandbox(input: {
   const state = path.join(folders.XDG_STATE_HOME, "opencode");
   const cache = path.join(folders.XDG_CACHE_HOME, "opencode");
   return {
-    writableRoots: [input.runDir, ...input.gitDirs, state, cache],
+    writableRoots: [input.runDir, ...input.gitDirs, ...(input.leadBuilds ?? []), state, cache],
     scratchDir: input.scratchDir,
     secretPaths: input.secretPaths,
     ownHome: [openCodeDataHome(env, home)],
@@ -765,7 +759,6 @@ function sessionEnv(
 
 /** What a session's tools may do: a build edits; a read-only session, a lead while its build runs and Plan only look. */
 function sessionAccess(request: DelegateRequest): OpenCodeAccess {
-  if (request.blind) return OpenCodeAccess.Blind;
   const readOnly = Boolean(request.readOnly) && !request.coordinator;
   return readOnly || chatMode(request) === PermissionMode.Plan ? OpenCodeAccess.ReadOnly : OpenCodeAccess.Build;
 }

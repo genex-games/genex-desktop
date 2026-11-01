@@ -258,6 +258,9 @@ export class DevError extends Error {
 
 /** Operations that answer in any state of the launch: they read its identity or its records, or stop it. */
 const UNGATED: ReadonlySet<DevMethod> = new Set([DevMethod.Status, DevMethod.Runs, DevMethod.Stop]);
+
+/** Whether `method` answers in any state of the launch, another operation still running included. */
+export const answersInAnyState = (method: DevMethod): boolean => UNGATED.has(method);
 /** Operations that still answer on a stale build: they collect what an earlier call started. */
 const STALE_SAFE: ReadonlySet<DevMethod> = new Set([
   DevMethod.Logs,

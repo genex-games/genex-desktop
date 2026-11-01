@@ -45,6 +45,20 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..
  * worse than an honest gap.
  */
 export const ROLE_LITERALS = [
+  ["loop:worker", "You are a worker: the lead of this chat started you for one task"],
+  ["loop:reviewer", "You are the reviewer of a Loop"],
+  ["judge:second-opinion", "You give a second opinion on a project someone else is building"],
+  ["unreal:lead", "You lead this Unreal Loop on the game"],
+  ["unreal:worker", "You are a worker of the Unreal Loop"],
+  ["unreal:critic", "You give a second opinion on captures of a game being built in Unreal Engine"],
+] as const satisfies readonly (readonly [string, string])[];
+
+/**
+ * Roles whose briefs the seed no longer writes (phase 5 removed the classic pipeline, its judges and
+ * the self-improvement stack). Past transcripts on disk still open with them, so the census still
+ * names them; the census test holds that none is written by the seed any more.
+ */
+export const RETIRED_ROLE_LITERALS = [
   ["director", "You are the DIRECTOR of run"],
   ["worker:base", "You are the BASE BUILDER for"],
   ["worker:facet", "You are building ONE FACET"],
@@ -77,6 +91,8 @@ export const ROLE_LITERALS = [
  * filter used to tell. These cells print `—` instead, and the table says why.
  */
 export const COMPLETION_ROLES: readonly string[] = [
+  "judge:second-opinion",
+  "unreal:critic",
   "planner:replan",
   "judge:blind-compare",
   "judge:facet-compare",
@@ -92,15 +108,20 @@ export const COMPLETION_ROLES: readonly string[] = [
   "ledger:lessons",
 ];
 
-export type ClassifiedRole = (typeof ROLE_LITERALS)[number][0];
+export type ClassifiedRole = (typeof ROLE_LITERALS)[number][0] | (typeof RETIRED_ROLE_LITERALS)[number][0];
 export type Role = ClassifiedRole | "other";
-export const ROLE_NAMES: readonly Role[] = [...ROLE_LITERALS.map(([role]) => role), "other"];
+/** Every role a brief can classify as: the seed's own, then the retired ones. */
+const ALL_ROLE_LITERALS: ReadonlyArray<readonly [ClassifiedRole, string]> = [
+  ...ROLE_LITERALS,
+  ...RETIRED_ROLE_LITERALS,
+];
+export const ROLE_NAMES: readonly Role[] = [...ALL_ROLE_LITERALS.map(([role]) => role), "other"];
 
 /** The role of a brief, from its opening sentence. Anything unrecognised is `other`. */
 export function classifyBrief(brief: string | null | undefined): Role {
   const head = (brief ?? "").trimStart().slice(0, 400);
   if (!head) return "other";
-  for (const [role, literal] of ROLE_LITERALS) if (head.startsWith(literal)) return role;
+  for (const [role, literal] of ALL_ROLE_LITERALS) if (head.startsWith(literal)) return role;
   return "other";
 }
 

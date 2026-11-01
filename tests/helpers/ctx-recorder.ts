@@ -62,7 +62,6 @@ function defaultHandlers(): Record<string, CtxHandler> {
   return {
     "events.list": () => [],
     "events.head": () => null,
-    "learning.enabled": () => false,
     "ui.notify": () => true,
     "snapshot.list": () => [],
     "snapshot.markHealthy": () => true,

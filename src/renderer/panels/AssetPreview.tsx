@@ -344,7 +344,8 @@ export function AssetPreview({
   /** Save and Share, left of Reveal. */
   library?: ReactNode;
   onClose: () => void;
-  onReveal: () => void;
+  /** Show the file in the file manager; null when it is not in the game folder. */
+  onReveal: (() => void) | null;
 }): JSX.Element {
   const [host, setHost] = useState<HTMLDivElement | null>(null);
   const source = useAssetSource(project, asset, assets, clips, host);
@@ -363,9 +364,11 @@ export function AssetPreview({
       actions={
         <>
           {library}
-          <button type="button" className="lightbox-button" onClick={onReveal}>
-            {fileManagerWords(hostPlatform()).reveal}
-          </button>
+          {onReveal ? (
+            <button type="button" className="lightbox-button" onClick={onReveal}>
+              {fileManagerWords(hostPlatform()).reveal}
+            </button>
+          ) : null}
         </>
       }
     >

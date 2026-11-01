@@ -18,13 +18,14 @@ import {
   createFrameCapture,
 } from "../../src/page/capture.ts";
 import {
+  chooseCapture,
   PAGE_UI_MAX_ENTRIES,
   PAGE_UI_PRIMARY_COVERAGE,
   PAGE_UI_PROBE,
   probePageUi,
   readPageUi,
+  resolveSurface,
 } from "../../src/substrate/page-ui.ts";
-import { installStudio } from "../../src/game-template/src/studio.js";
 
 type Descriptor = {
   index: number;
@@ -712,139 +713,51 @@ describe("reading what the page answered", () => {
   });
 });
 
-// ── M4.9a/M4.2a: the template's own photograph ───────────────────────────────
-
+// ── which surface a capture photographs ──────────────────────────────────────
 /**
- * A page just real enough to install the contract on: a camera whose pose the game rewrites at
- * the top of every frame (every first-person game does), a renderer that records which pose it
- * drew, and the studio's own capture standing in for the page-side one.
+ * The surface ladder, without a window. `chooseCapture` is the whole of `#capture`'s decision: the
+ * studio photographs the page as the player sees it (the compositor frame, DOM included) unless a
+ * caller names the canvas, and a page frame that cannot be had falls back to the canvas — a
+ * picture beats none.
  */
-function templatePage() {
-  const globals = globalThis as unknown as Record<string, unknown>;
-  const before = {
-    window: globals.window,
-    document: globals.document,
-    requestAnimationFrame: globals.requestAnimationFrame,
-    __studioClock: globals.__studioClock,
-    __studioDraw: globals.__studioDraw,
-    __studioCapture: globals.__studioCapture,
-  };
-  const vector = (x = 0, y = 0, z = 0) => ({
-    x,
-    y,
-    z,
-    set(a: number, b: number, c: number) {
-      this.x = a;
-      this.y = b;
-      this.z = c;
-      return this;
-    },
-    clone() {
-      return vector(this.x, this.y, this.z);
-    },
-    copy(other: { x: number; y: number; z: number }) {
-      this.x = other.x;
-      this.y = other.y;
-      this.z = other.z;
-      return this;
-    },
-  });
-  const camera = {
-    position: vector(0, 0, 0),
-    quaternion: null,
-    pitch: 0,
-    lookAt(_x: number, y: number) {
-      this.pitch = Math.round((y - this.position.y) * 100) / 100;
-    },
-    updateProjectionMatrix() {},
-  };
-  let shown = "nothing";
-  const pose = () => `y${camera.position.y}/pitch${camera.pitch}`;
-  const canvas = {
-    width: 320,
-    height: 240,
-    getBoundingClientRect: () => ({ width: 320, height: 240, left: 0, top: 0 }),
-    toDataURL: () => `data:image/png;base64,${shown}`,
-  };
-  const scene = { name: "scene" };
-  const renderer = {
-    domElement: canvas,
-    render: () => {
-      shown = pose();
-    },
-  };
-  /** The game's own animation frame: it owns its camera and puts its own pose back every frame. */
-  const gameFrame = () => {
-    camera.position.set(0, 0, 0);
-    camera.pitch = 0;
-    renderer.render();
-  };
-  const noted: Array<Record<string, unknown>> = [];
-  globals.window = { addEventListener: () => {}, __studio_error: null };
-  globals.document = { addEventListener: () => {}, pointerLockElement: null, querySelector: () => canvas, body: null };
-  globals.requestAnimationFrame = () => 0;
-  globals.__studioClock = {
-    stats: () => ({ backend: "webgl2" }),
-    canvases: () => ({
-      elements: [canvas],
-      descriptors: [{ kind: "webgl2", visible: true, cssWidth: 320, cssHeight: 240 }],
-    }),
-  };
-  globals.__studioDraw = { totals: () => ({ drawCalls: 1 }) };
-  // The studio's page-side capture drives one more of the GAME's frames before it reads.
-  globals.__studioCapture = {
-    capture: () => {
-      gameFrame();
-      return canvas.toDataURL();
-    },
-    captureInfo: () => ({ count: 0 }),
-    note: (patch: Record<string, unknown>) => void noted.push(patch),
-    paint: (url: string, patch: Record<string, unknown>) => {
-      noted.push(patch);
-      return url;
-    },
+/** A ladder whose callbacks are declared per case and whose calls are recorded. */
+function ladder(spec: { canvas?: string | Error; page?: string | Error }) {
+  const calls: string[] = [];
+  const give = (what: string | Error | undefined, name: string) => async () => {
+    calls.push(name);
+    if (what instanceof Error) throw what;
+    return what ?? name;
   };
   return {
-    camera,
-    noted,
-    pose,
-    api: installStudio({ renderer, camera, scene, player: () => ({ x: 0, y: 0, z: 0, yaw: 0 }) } as never),
-    restore: () => Object.assign(globals, before),
+    calls,
+    deps: { canvas: give(spec.canvas, "canvas-frame"), page: give(spec.page, "page-frame") },
   };
 }
 
-describe("the template photographs the viewpoint the harness placed", () => {
-  it("does not let the page's next frame put the game's own camera back", async () => {
-    const page = templatePage();
-    try {
-      assert.deepEqual(page.api.eyes(), ["eye:spawn", "eye:here", "eye:down", "eye:back"]);
-      const placed = page.api.eye("eye:down");
-      assert.equal(placed.ok, true);
-      const shot = await page.api.capture();
-      // Before the placement survived the photograph, the picture came back as `y0/pitch0` —
-      // the game's own view — so all four eye frames were the same frame and `eye:down` never
-      // saw the floor.
-      assert.equal(shot, `data:image/png;base64,${page.pose()}`);
-      assert.ok(page.pose().startsWith("y1.6/"), `the eye was not placed: ${page.pose()}`);
-      assert.ok(page.pose().endsWith("pitch-0.87"), `the eye was not pitched down: ${page.pose()}`);
-    } finally {
-      page.restore();
-    }
-  });
+it("photographs the page, DOM included, unless the canvas is named", async () => {
+  // Flipped from "neither means the canvas" and an `auto` that probed the page first: every
+  // capture the app takes is the page as the player sees it.
+  assert.equal(resolveSurface({}), "page");
+  assert.equal(resolveSurface({ page: true }), "page");
+  assert.equal(resolveSurface({ page: true, surface: "canvas" }), "canvas");
+  for (const asked of ["page", "auto"] as const) {
+    const rig = ladder({});
+    assert.deepEqual(await chooseCapture(asked, rig.deps), { shot: "page-frame", surface: "page" });
+    assert.deepEqual(rig.calls, ["page-frame"], `${asked} asks the page nothing first`);
+  }
+  const canvasOnly = ladder({});
+  assert.deepEqual(await chooseCapture("canvas", canvasOnly.deps), { shot: "canvas-frame", surface: "canvas" });
+  assert.deepEqual(canvasOnly.calls, ["canvas-frame"]);
+});
 
-  it("records what its own capture did, where the studio reads it", async () => {
-    const page = templatePage();
-    try {
-      page.api.eye("eye:spawn");
-      await page.api.capture();
-      assert.equal(page.noted.length, 1, "a picture the template took itself must be recorded");
-      assert.deepEqual(page.noted[0].ladder, ["render"]);
-      assert.equal(page.noted[0].reason, null);
-      // Through the studio's own capture, so the picture is composited over the page background
-      // and the record is of a photograph that actually happened.
-      assert.equal(page.noted[0].drawCalls, 0);
-    } finally {
-      page.restore();
-    }
+it("falls back to the canvas when the page frame cannot be had, and fails only when neither can", async () => {
+  const noCompositor = ladder({ page: new Error("display surface not available") });
+  const fell = await chooseCapture("page", noCompositor.deps);
+  assert.equal(fell.shot, "canvas-frame");
+  assert.equal(fell.surface, "canvas");
+  const both = ladder({
+    page: new Error("display surface not available"),
+    canvas: new Error("the page never answered"),
   });
+  await assert.rejects(chooseCapture("auto", both.deps), /display surface not available/);
 });

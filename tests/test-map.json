@@ -7,6 +7,7 @@
       "tests/conformance/sandbox-windows-start.test.ts"
     ],
     ".github/workflows/check.yml": ["tests/conformance/ci-test-plan.test.ts"],
+    ".github/workflows/closed-pr.yml": ["tests/conformance/cancel-closed-pr-runs.test.ts"],
     "scripts/canary/**": ["tests/conformance/release-canary.test.ts"],
     "src/main/preview.ts": ["tests/conformance/page-shim.test.ts", "tests/conformance/page-serve.test.ts"],
     "src/page/**": ["tests/conformance/page-shim.test.ts", "tests/conformance/page-serve.test.ts"],

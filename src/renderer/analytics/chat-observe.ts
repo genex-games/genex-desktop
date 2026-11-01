@@ -214,7 +214,7 @@ function recordTime(record: EventEnvelope, now: number): number {
 
 function turnStarted(hearing: Hearing, thread: string, metadata: Record<string, unknown> | undefined, at: number) {
   const engine = text(metadata?.engine);
-  // A build's or an optimization's turn names its run; only a chat's turn is the person's wait.
+  // A build's turn names its run; only a chat's turn is the person's wait.
   if (!engine || metadata?.runId !== undefined) return;
   hearing.memory.turns.set(thread, { at, engine, streamed: false, streamFailed: false });
 }

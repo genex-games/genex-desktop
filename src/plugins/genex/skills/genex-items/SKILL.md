@@ -1,41 +1,37 @@
 # Genex items in AI Game Studio
 
-You are building inside AI Game Studio. Below the upstream marker is Genex's items card, unchanged.
-Where it disagrees with this preface, this preface wins.
+You are building inside AI Game Studio. Below the upstream marker is Genex's items card, with the
+passages of advice Studio does not ship taken out. Where it disagrees with this preface, this
+preface wins.
 
 - **Nex is Genex's currency.** Players buy Nex with real money and spend it in the Genex store.
   The card below still calls it coin.
-- **A price in Nex is a store item, listed by default.** When the person prices something in Nex
-  (a class, a skin, a weapon, a power-up), or asks to sell something for real money without naming
-  a currency, each priced thing is a store item. Draw its picture first (the last bullets say
-  how), then list it with `shop add` and without asking, so its card shows in the chat: before the
-  SDK, the purchase flow or multiplayer, and before or after the game is published. Every item has
-  its picture: `shop add` without `image` is refused. Then build it in and wire `buy()` and
-  `getEntitlements()`. Store items never wait on a launch or a build: add, change (`shop set`) or
-  remove one whenever the person asks, in the chat or in any build. In a Loop, the run's GENEX
-  STORE line names the items the launch sold; list each unless `shop list` shows it already.
-  Store items never wait on a multiplayer part. A free thing needs no item. Take each price from the store's grid:
+- **A price in Nex is a store item.** When the person prices something in Nex (a class, a skin,
+  a weapon, a power-up), or asks to sell something for real money without naming a currency, each
+  priced thing is a store item: `shop add` makes its draft, before or after the game is published,
+  and its card shows in the chat. Every item has its picture: `shop add` without `image` is
+  refused. `buy()` sells it and `getEntitlements()` delivers it. A store item can be added, changed
+  (`shop set`) or removed at any time, in the chat or in any build. A free thing needs no item.
+  Prices come from the store's grid:
   `genex__cli {"command":"shop list"}` prints it once the game is on Genex, and the default grid is
   100, 300, 800, 1,200, 5,000, 20,000 and 50,000 Nex (0 is Free). Use the grid price nearest the
-  one the person named and say which.
+  one the person named.
 - **Coins, gold or gems are the game's own.** A price in coins or any other name is a currency the
   game keeps itself, earned by playing: build it with no store item. Only when the person also says
-  that currency is for real money, ask once whether they mean Nex, and write the answer in NOTES.md.
+  that currency is for real money is it Nex.
 - Studio runs the Genex CLI for you; never run `npx genex`. `genex shop add "<name>" … --json` is
   `genex__cli {"command":"shop add","args":"<name>","options":{…}}` with the flags by name:
   `price` (0 is Free), `type`, `description`, `tag` (a list), `shared` (true or false), and
   `image`, `model` and `package`, each a path inside this game, such as
-  `".genex/scratch/frost-axe.png"`. Studio copies those files in itself and adds `--json`. It asks
+  `".genex/scratch/axe.png"`. Studio copies those files in itself and adds `--json`. It asks
   the person nothing, because a draft spends nothing and sells nothing until the game is
   published. `genex shop set <id>` takes the same options plus `rename`: on a local draft (`local_…`)
   through `genex__cli`, asking nobody, and on an item in the store through `genex__cli-paid`,
   which the person approves.
-- Never ask the person whether an item is shared with other games, resellable, consumable or
-  which picture it gets before listing it: draw the picture yourself and list it with what you know (`shared` only when they
-  said so). When the draft comes back, Studio draws its card in the chat after your reply, with
-  "Other games can use it", which is theirs, and shows it on the game's Shop tab. Studio puts every
-  item on sale itself when the game is published; `genex shop publish` and `unpublish` are not
-  available. Say it is listed, goes on sale with the next publish, and that they can ask for changes.
+- When the draft comes back, Studio draws its card in the chat after your reply, with "Other games
+  can use it", which is the person's to set (`shared` is true only when they said so), and shows it
+  on the game's Shop tab. Studio puts every item on sale itself when the game is published;
+  `genex shop publish` and `unpublish` are not available.
 - In a game that is not on Genex yet, `shop add` keeps the item as a local draft in
   `.genex/items/` (its id starts `local_`; `genex__cli` `shop set|remove <local id>` change it). Leave those
   files to the CLI: Studio carries them. After the game's publish Studio uploads the drafts
@@ -46,20 +42,19 @@ Where it disagrees with this preface, this preface wins.
   `genex items add <id>` and `genex items remove <id>` are `genex__cli-paid` with the id in `args`:
   the person approves them, because they change what this game sells. After `items add`, Studio
   writes `genex-items/<id>/` into this game; read it from there.
-- Render the picture with the game's own code: a square PNG of 1024 × 1024 (at least 768 × 768;
-  Studio refuses a smaller or non-square one) that the item fills edge to edge, lit in the game's
-  own scene, never on an empty black or flat background, because its card shows it edge to edge.
-  Save it under `.genex/scratch/`, which Studio never publishes.
+- The picture is a square PNG of 1024 × 1024 (at least 768 × 768; Studio refuses a smaller or
+  non-square one) that the item fills edge to edge, because its card shows it edge to edge. Save it
+  under `.genex/scratch/`, which Studio never publishes.
 - Studio's `@genex-ai/embed-sdk` may not export `ItemState` or report `already_owned` yet: compare
   `item.state === "draft"`, and read `getEntitlements()` again after any `buy()`, whatever it said.
 - Studio's preview runs in local test mode with no store: check the cards and the delivery code
   there, then try buying on the published draft (`genex__publish {"operation":"draft"}`). An added
   item reaches this game's store with its next publish (`genex__publish {"operation":"gallery"}`).
 
-<!-- upstream @genex-ai/cli-demo/templates/skills/genex-items/SKILL.md v1.36.17 sha256 e093be967a4e217bf7c6a699615f7a8048e777f96e31ee54faaab90b405708f2 -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-items/SKILL.md v1.36.17 sha256 ea0cb40fbcdc8f534fe561e5421138b26edfce15949f653feb66cdda5434a005 -->
 ---
 name: genex-items
-description: Make game items for the Genex store, priced in Nex, and add other creators' shared items to this game. Build the item into the game first, list it as a draft with `genex shop add … --json` (before the game is published it waits as a local draft), apply owned items from getEntitlements() at boot, and integrate a shared item with `genex items add`. Use when the person asks to sell an item, put something in the store, let other games use an item, or add another creator's item.
+description: Make game items for the Genex store, priced in Nex, and add other creators' shared items to this game. List an item as a draft with `genex shop add … --json` (before the game is published it waits as a local draft), apply owned items from getEntitlements() at boot, and integrate a shared item with `genex items add`. Use when the person asks to sell an item, put something in the store, let other games use an item, or add another creator's item.
 ---
 
 # Genex Items
@@ -78,8 +73,8 @@ mechanics, no pressure, and a real-money price beside every Nex price.
 Genex's own currency is **Nex**: players buy it with real money and spend it in
 the Genex store. It is a name, written "1,200 Nex", never "Nexes".
 
-- **A price in Nex means a Genex store item.** Build the thing into the game,
-  then list it with `npx genex shop add … --json` without asking, before or
+- **A price in Nex means a Genex store item.** It is listed with
+  `npx genex shop add … --json`, before or
   after the first publish (a folder with no linked game keeps a local draft,
   below). Price it from the store's grid: `npx genex shop list` prints it, and
   a price off the grid is refused with `price_off_grid`. The person puts it on
@@ -114,30 +109,24 @@ the Genex store. It is a name, written "1,200 Nex", never "Nexes".
 
 ## Making an item for sale
 
-1. **Build it into the game first.** The Frost Axe really freezes an enemy
-   for a second on hit before it is listed. An item that does nothing is a
-   refund request.
-2. **Render its picture.** Capture the item's own in-game model on a
-   transparent background to a PNG under `.genex/scratch/` (never elsewhere in
-   the game folder: a deploy ships everything else). Square, at least 512 px,
-   the item alone. A GLB of the same model is optional and gives the purchase
+1. **Its picture.** A square PNG under `.genex/scratch/` (never
+   elsewhere in the game folder: a deploy ships everything else), at the size
+   the preface gives. A GLB of the same model is optional and gives the purchase
    sheet "Drag to turn".
-3. **Ask once, only if the person did not say:** "Can other games use it too?"
-   Only a durable item can be shared.
-4. **List it as a draft, without asking:**
+2. **Shared or not:** only a durable item can be shared with other games.
+3. **List it as a draft:**
 
 ```bash
-npx genex shop add "Frost Axe" --price 1200 --type durable \
-  --description "Ice-blue head. Freezes an enemy for a second on hit." \
-  --tag axe --tag ice \
-  --image .genex/scratch/frost-axe.png --model assets/frost-axe.glb \
+npx genex shop add "Axe" --price 1200 --type durable \
+  --description "A two-handed axe." \
+  --tag axe --tag weapon \
+  --image .genex/scratch/axe.png --model assets/axe.glb \
   --shared --json
 ```
 
 `--json` prints one document: the draft, with its `id` and `"state": "draft"`.
 In the Genex app it becomes a Listing draft card with the name, description,
-price, the "Other games can use it" toggle and **Put on sale**. Tell the person
-it is ready and that they can ask for changes. If it says `"state": "on_sale"`
+price, the "Other games can use it" toggle and **Put on sale**. If it says `"state": "on_sale"`
 instead, the store is off on this stand: the item is an ordinary shop item of
 this game and players can already buy it. Tell the person so. Change it with
 `genex shop set <id>` and the same flags; `--description ""` clears the
@@ -150,8 +139,7 @@ them in their own folder. `.git`, `node_modules`, `.genex/`, secrets such as
 every link stay out, and the command lists what it left out.
 
 A draft shows in this game's store only on its preview build, to its owner,
-with `state: "draft"`. Badge it "New" there (`ItemState.Draft` from
-`@genex-ai/embed-sdk`).
+with `state: "draft"` (`ItemState.Draft` from `@genex-ai/embed-sdk`).
 
 ### Before the game is published
 
@@ -250,8 +238,7 @@ own it keep it.
 
 ## Checklist
 
-- [ ] The item works in the game before it is listed
-- [ ] Its picture is the item itself, on a transparent background
+- [ ] Its picture is a square PNG under `.genex/scratch/`
 - [ ] It was listed with `genex shop add … --json` and left as a draft (a
       local draft before the game is published)
 - [ ] Owned items are applied from `getEntitlements()` at every boot

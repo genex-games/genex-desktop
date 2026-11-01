@@ -96,17 +96,6 @@ describe("editor play plugin discovery", () => {
     assert.equal(await f.discover(), null);
   });
 
-  it("starts a play over only for a plugin whose play-open declares fresh", async () => {
-    const joins = await fixture([plugin()]);
-    assert.equal((await editorPlayPlugin(joins.core, "game"))?.restarts, false);
-    const manifest = plugin();
-    const open = manifest.tools.find((tool) => tool.name === EnginePlayTool.Open);
-    assert.ok(open);
-    open.parameters = { type: "object", properties: { fresh: { type: "boolean" } } };
-    const restarts = await fixture([manifest]);
-    assert.equal((await editorPlayPlugin(restarts.core, "game"))?.restarts, true);
-  });
-
   it("refuses incomplete, agent-facing, unscoped and unrelated play tools", async () => {
     const cases: Array<[string, (manifest: PlayManifest) => void]> = [
       ["missing tool", (manifest) => manifest.tools.pop()],

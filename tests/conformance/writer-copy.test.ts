@@ -60,7 +60,7 @@ describe("a worker's copy", () => {
     await mkdir(cases);
     lite = await coreLite({
       gamesRoot: path.join(root, "games"),
-      executionPolicy: { allowedProjectRoot: root, runBackgroundImprovement: false },
+      executionPolicy: { allowedProjectRoot: root },
       writerCopyMaxBytes: 256 * KB,
     });
     await lite.core.plugins.installLocal(TOY_PLUGIN, PluginSourceKind.Local, []);
@@ -176,7 +176,7 @@ describe("a worker's copy", () => {
   it("copies the same game when the cap allows it", async () => {
     const roomy = await coreLite({
       gamesRoot: path.join(cases, "roomy-games"),
-      executionPolicy: { allowedProjectRoot: cases, runBackgroundImprovement: false },
+      executionPolicy: { allowedProjectRoot: cases },
       writerCopyMaxBytes: 1024 * KB,
     });
     const into = path.join(cases, "roomy");

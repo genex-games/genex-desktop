@@ -322,7 +322,6 @@ function studioCalls(bridge: BridgeCalls) {
     engines: () => invoke("studio:engines"),
     providerUsage: () => invoke("studio:provider-usage"),
     hardware: () => invoke("studio:hardware"),
-    staged: () => invoke("studio:staged"),
     settings: () => invoke("studio:settings"),
     setSettings: (patch) => invoke("studio:settings.set", patch),
     diagnostics: () => invoke("studio:diagnostics"),
@@ -339,9 +338,6 @@ function studioCalls(bridge: BridgeCalls) {
     contextSettings: (engine, model, threadId) => invoke("studio:context.get", { engine, model, threadId }),
     setContextPolicy: (engine, model, policy, threadId) =>
       invoke("studio:context.set", { engine, model, policy, threadId }),
-    startSkillOpt: () => invoke("studio:skillopt.start"),
-    acceptProposal: (index, key) => invoke("studio:skillopt.accept", { index, ...key }),
-    discardProposal: (index, reason, key) => invoke("studio:skillopt.discard", { index, reason, ...key }),
     cancelModelDownload: () => invoke("studio:cancel-model-download", {}),
     modelInstallStatus: () => invoke("studio:model-install.status"),
     refreshModels: (provider) => invoke("studio:models.refresh", { provider }),

@@ -332,7 +332,8 @@ it("the builder picks a recipe once; it stays bound to its game and never replac
           const tool = request.liveTools?.find((tool) => tool.name === COVER_TOOL.name);
           if (mode === "create") {
             assert.ok(tool);
-            assert.match(request.prompt, /set_game_cover once/);
+            // Flipped (phase 5): the tool is offered with no standing nudge to pick a look.
+            assert.doesNotMatch(request.prompt, /set_game_cover once/);
             await assert.rejects(
               request.onLiveTool!(COVER_TOOL.name, { family: "clouds", palette: "lava" }),
               /Unknown cover look/,
@@ -389,16 +390,6 @@ it("the builder picks a recipe once; it stays bound to its game and never replac
     await rig.core.updateGame(other.name, { cover: { kind: "image", dataUrl: poster } });
     assert.match(await api["game.setCover"]!({ project: other.name, family: "clouds", palette: "day" }), /kept/);
     assert.deepEqual((await rig.core.games.presentation(other.name)).cover, { kind: "image", dataUrl: poster });
-    const candidate = await createToolRegistry(
-      {
-        workspace: rig.core.layout.harnessWs,
-        call: () => {
-          throw Error("unexpected");
-        },
-      } as never,
-      { candidateId: "fixture" },
-    );
-    assert.ok(!candidate.names().includes(COVER_TOOL.name));
   } finally {
     await rig.stop();
   }

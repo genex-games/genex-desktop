@@ -25,7 +25,6 @@ import { summarizeLocalCheckpoint } from "../../src/substrate/engines/local-chec
 import { download, DownloadStatus, type DownloadProgress } from "../../src/substrate/bonsai/download.ts";
 import { createHash } from "node:crypto";
 import { EngineError, DelegateEventType, type DelegateEvent } from "../../src/substrate/engines/types.ts";
-import { baseBrief } from "../../src/harness-seed/loop/autopilot.ts";
 import type { CompleteRequest, CompleteResponse } from "../../src/substrate/engines/types.ts";
 import { withRoles } from "../../src/harness-seed/loop/model-roles.ts";
 import { running } from "../helpers/processes.ts";
@@ -520,7 +519,8 @@ it("a download that cannot get its bytes stops without losing or publishing any 
     });
   }
 });
-it("local worker writes obey ownership and shell execution stays inside the sandbox", async () => {
+// Flipped (phase 5): no write is refused for ownership any more; a part owns no files.
+it("local worker shell execution stays inside the sandbox", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "bonsai-worker-"));
   const cwd = path.join(root, "game");
   await mkdir(cwd);
@@ -535,7 +535,6 @@ it("local worker writes obey ownership and shell execution stays inside the sand
       const last = request.messages.at(-1);
       if (last?.role === "tool") seen.push(last.content);
       const steps = [
-        { name: "write_file", arguments: { path: "src/other.js", content: "wrong" } },
         { name: "write_file", arguments: { path: "src/owned.js", content: "export const ok = true;" } },
         { name: "run_command", arguments: { command: "cat src/owned.js" } },
         { name: "run_command", arguments: { command: `echo denied > '${path.join(root, "outside.txt")}'` } },
@@ -549,17 +548,14 @@ it("local worker writes obey ownership and shell execution stays inside the sand
       {
         cwd,
         prompt: "Build owned part",
-        ownership: { facetId: "owned", owns: ["src/owned.js"], ownsMain: false, template: false },
       },
       model,
     );
     assert.equal(result.ok, true);
-    assert.match(seen[0]!, /outside worker/);
-    assert.equal(seen[1], "Written");
-    assert.match(seen[2]!, /export const ok/);
-    assert.match(seen[2]!, /"sandboxed":true/);
+    assert.equal(seen[0], "Written");
+    assert.match(seen[1]!, /export const ok/);
+    assert.match(seen[1]!, /"sandboxed":true/);
     await assert.rejects(readFile(path.join(root, "outside.txt")));
-    await assert.rejects(readFile(path.join(cwd, "src/other.js")));
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -748,7 +744,7 @@ it("an output-limited checkpoint never replaces the last complete checkpoint", a
   assert.deepEqual(previous, before);
 });
 
-it("local builder detects repeated inspection, warns, and stops without modifying the workspace", async () => {
+it("local builder that keeps reading is nudged, never stopped for it: only its turns end it", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "bonsai-stall-"));
   const cwd = path.join(root, "game");
   await mkdir(cwd);
@@ -765,10 +761,12 @@ it("local builder detects repeated inspection, warns, and stops without modifyin
     },
   });
   try {
-    const result = await session.run({ cwd, prompt: "Implement a scene" }, model);
-    assert.equal(result.stopReason, "no_progress");
-    assert.equal(turns, 16);
+    // Flipped from a stop after 16 idle rounds (phase 5): reading is the model's call.
+    const result = await session.run({ cwd, prompt: "Implement a scene", maxTurns: 24 }, model);
+    assert.equal(result.stopReason, "max_turns");
+    assert.equal(turns, 24);
     assert.ok(seen.some((s) => s.includes("Progress check: 6")));
+    assert.doesNotMatch(seen.join("\n"), /inspect its rendered result|kept inspecting/);
     assert.ok(seen.some((s) => s.includes("unchanged section was already read")));
     assert.equal(await readFile(path.join(cwd, "main.js"), "utf8"), "// existing");
   } finally {
@@ -824,25 +822,6 @@ it("two compactions never replay completed host actions and retain the checkpoin
   } finally {
     await rm(root, { recursive: true, force: true });
   }
-});
-it("Bonsai new-project base gets an actionable public API brief; imported projects keep their architecture", () => {
-  const local = baseBrief({
-    run: { engine: "bonsai", goal: "sword in ice" },
-    plan: { facets: [] },
-    projectLabel: "scene",
-  } as never);
-  assert.match(local, /visible, working first version/);
-  assert.match(local, /do not study or rewrite/);
-  assert.doesNotMatch(local, /Empty facet groups and empty renders are valid/);
-  const own = baseBrief({
-    run: { engine: "bonsai", goal: "improve existing" },
-    plan: { facets: [] },
-    projectLabel: "existing",
-    ownShape: true,
-    shape: { main: "app.ts", entry: "index.html" } as any,
-  } as never);
-  assert.match(own, /THIS GAME HAS ITS OWN SHAPE/);
-  assert.doesNotMatch(own, /Read src.main.js first/);
 });
 it("native preflight counts chat template and tools and reserves output before generation", async () => {
   let generated = 0,
@@ -1361,8 +1340,9 @@ it("a local Loop chat that keeps reading is told to finish or launch, not to imp
   try {
     await sessions.run({ cwd, prompt: "What engine should this use?", interviewTools: [launchTool] }, model);
     const nudge = seen.find((s) => s.includes("Progress check: 6")) ?? "";
-    assert.match(nudge, /Finish now: answer, make the change, or launch the build with start_autopilot/);
-    assert.doesNotMatch(nudge, /Implement the next concrete change/);
+    // Flipped (phase 5): no "Finish now" hurry; the chat is told which tool starts the build, as a fact.
+    assert.match(nudge, /go on, or reply with what you found or what you need\. start_autopilot starts the build\./);
+    assert.doesNotMatch(nudge, /Finish now/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -1388,7 +1368,7 @@ it("a local Auto chat that keeps reading is never nudged to start the Loop it ma
     const autoLaunch = { ...launchTool, onlyWhenAsked: true };
     await sessions.run({ cwd, prompt: "Make the sky darker", interviewTools: [autoLaunch] }, model);
     const nudge = seen.find((s) => s.includes("Progress check: 6")) ?? "";
-    assert.match(nudge, /Implement the next concrete change/);
+    assert.match(nudge, /go on, or reply with what you found or what you need/);
     assert.doesNotMatch(nudge, /start_autopilot/);
   } finally {
     await rm(root, { recursive: true, force: true });

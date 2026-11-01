@@ -137,68 +137,36 @@ Rules that keep it correct:
   clients fighting over the ball. You don't need to check "am I owner" before drawing, only before
   simulating.
 - **Transient objects** (bullets, pickups): the owner awaits `room.objects.removeConfirmed(id)`
-  when they expire, so destruction is acknowledged and idempotent across reconnects. **Always cap
-  them**: every spawned id counts against the room's 128-object limit until removed, and each live
-  projectile publishing at 30 Hz spends 30/s of your bulk budget. Keep a small per-player cap
-  (2–3, netcode-park ships 2) and remove the OLDEST before spawning past it:
-
-  ```ts
-  const live = new Map<string, Projectile>(); // insertion order = age
-  function spawnProjectile(id: string, state: Record<string, unknown>) {
-    while (live.size >= MAX_LIVE_PROJECTILES) {
-      const oldest = live.keys().next().value!;
-      live.delete(oldest);
-      void room.objects.removeConfirmed(oldest); // acknowledged — no ghost debris for late joiners
-    }
-    room.objects.claim(id);
-    room.objects.set(id, state);
-    live.set(id, makeProjectile(id));
-  }
-  ```
+  when they expire, so destruction is acknowledged and idempotent across reconnects. Every
+  spawned id counts against the room's 128-object limit until removed, and each live
+  projectile publishing at 30 Hz spends 30/s of your bulk budget.
 
 ## Host authority (scores, rounds, world)
 
 One client is `room.host` — the earliest **signed-in** player (guests host only while no account
 is present), and the host can change on **join** as well as leave: the first account entering a
 guest-hosted room takes over. Always react to `on('host')` / read `isHost` in your loop, never
-once at startup. Let only the host write agreed state, so there's a single source of truth — no
-"who increments the score" races:
-
-```ts
-function updateHud() {
-  scoreEl.textContent = String(room.shared.get("score") ?? 0);   // everyone reads
-}
-function goal(team: "a" | "b") {
-  if (!room.isHost) return;                                       // only the host writes
-  const key = `score_${team}`;
-  room.shared.set(key, (Number(room.shared.get(key)) || 0) + 1);
-}
-room.on("host", () => {/* host migrated — the new host takes over writing */});
-```
+once at startup.
 
 `room.on('shared', …)` fires on every **distinct** change of a key (a set to the same value is
-de-duped) — but for a value you render every frame, read `room.shared.get(...)` in your loop (as
-`updateHud` does) rather than wiring render state through the event.
+de-duped) — but for a value you render every frame, read `room.shared.get(...)` in your loop rather than wiring render state through the event.
 
 ## Custom events (shots, emotes)
 
 For one-off actions that aren't continuous state, use `send`. (Text chat is NOT one of these —
-it has its own channel, `room.chat`; see below.) The shooter judges the hit **locally**
-against what it sees (favor-the-shooter) and announces it; the victim applies its own damage.
+it has its own channel, `room.chat`; see below.)
 
 **`send` reaches only OTHER clients — it never echoes back to you.** So apply your own action's
 visible effect *directly* at fire time; use `on(...)` only to render everyone else's:
 
 ```ts
 function fire() {
-  const hit = raycastAgainstWhatISee();       // favor-the-shooter: judge locally
   spawnTracer(me.x, me.z, myQuat());          // MY tracer — right here, not via on("shot")
-  room.send("shot", { from: room.id, x: me.x, z: me.z, q: myQuat(), hit: hit ?? null });
+  room.send("shot", { from: room.id, x: me.x, z: me.z, q: myQuat() });
 }
 
 room.on("shot", (m: any) => {
   spawnTracer(m.x, m.z, m.q);                 // OTHER players' tracers
-  if (m.hit === room.id) me.hp -= 10;         // I was hit → my next me.set publishes the new hp
 });
 ```
 
@@ -217,23 +185,8 @@ Chat has its own channel — **never build it on `send`**. The relay stamps the 
 verified session, sanitizes the text, and replays the recent history to late joiners; `send` gives
 you none of that and lets a client post under any name it likes.
 
-Install the overlay with `npx genex controller chat` (writes `src/controllers/chat/chat-overlay.ts`),
-then wire it:
 
-```ts
-import { ChatOverlay } from "./controllers/chat/chat-overlay.ts";
-
-const chat = new ChatOverlay({
-  room,
-  onTypingChange: (typing) => { keyboard.enabled = !typing; },   // ← REQUIRED, see below
-});
-```
-
-**The one bug everybody ships: the game reads the keyboard while the player types.** Someone
-types "was that a wall?" and their character walks, reverses and jumps. Either pass
-`onTypingChange` (above) or check `chat.isTyping` in your input code. There is no third option.
-
-Rolling your own UI instead? Three rules:
+The API's three behaviours:
 
 ```ts
 room.chat.send("on my way");            // your OWN line comes back via on() — don't also append it

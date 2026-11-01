@@ -149,13 +149,13 @@ describe("Copy diagnostics", () => {
       await gatherDiagnostics(
         sources({
           harnessCalls: [
-            { method: "preview.state", ageMs: 125_000 },
+            { method: "preview.console", ageMs: 125_000 },
             { method: "engine.delegate", ageMs: 4_000 },
           ],
         }),
       ),
     );
-    assert.match(text, /Harness calls in flight\n {2}preview\.state for 125 s\n {2}engine\.delegate for 4 s/);
+    assert.match(text, /Harness calls in flight\n {2}preview\.console for 125 s\n {2}engine\.delegate for 4 s/);
     const idle = diagnosticsText(await gatherDiagnostics(sources({ harnessCalls: [] })));
     assert.match(idle, /Harness calls in flight\n {2}none/);
   });

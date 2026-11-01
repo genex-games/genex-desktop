@@ -38,11 +38,7 @@ import {
   ageBucket,
   changeUndoneProperties,
   HarnessOpenedVia,
-  ImprovementResult,
-  improvementCheckProperties,
   noteHarnessOpening,
-  SuggestionDecision,
-  suggestionsDecidedProperties,
   takeHarnessOpening,
 } from "../../src/renderer/analytics/plugins-harness.ts";
 import {
@@ -539,56 +535,21 @@ describe("the Harness room", () => {
     assert.equal(ageBucket(undefined, NOW), AgeBucket.UnderHour);
   });
 
-  it("decides suggestions by counts and the oldest's age", () => {
-    const decided = suggestionsDecidedProperties({
-      decision: SuggestionDecision.Apply,
-      chosen: [{ at: "2026-10-27T11:00:00Z" }, { at: "2026-10-20T11:00:00Z" }, {}],
-      waiting: 5,
-      openedDetails: true,
-      ok: false,
-      now: NOW,
-    });
-    assert.deepEqual(decided, {
-      decision: "apply",
-      count: 3,
-      excluded: 2,
-      opened_details: true,
-      outcome: "failed",
-      oldest_age_bucket: AgeBucket.Older,
-    });
+  it("reports an undone change by its age and how it went", () => {
     assert.deepEqual(changeUndoneProperties("2026-10-27T11:59:00Z", true, NOW), {
       age_bucket: AgeBucket.UnderHour,
       outcome: "ok",
     });
   });
 
-  it("reads Look for improvements' result from the counts around it", () => {
-    const before = { staged: 1, learned: 4 };
-    const check = (after: typeof before | null) =>
-      improvementCheckProperties({ before, after, startedAt: 1_000, now: 9_000 });
-    assert.deepEqual(check({ staged: 3, learned: 4 }), {
-      result: ImprovementResult.Found,
-      found: 2,
-      applied: 0,
-      duration_ms: 8_000,
-    });
-    assert.equal(check({ staged: 1, learned: 5 }).result, ImprovementResult.Added);
-    assert.equal(check(before).result, ImprovementResult.None);
-    assert.equal(check(null).result, ImprovementResult.Failed);
-  });
-
   it("measures a feed load, and counts nothing for a failed one", () => {
-    assert.deepEqual(
-      activityLoadedProperties({ tally: { runs: 7, staged: 2, learned: 1 }, startedAt: 0, now: 250, attempt: 1 }),
-      {
-        outcome: "ok",
-        load_ms: 250,
-        attempt: 1,
-        runs_bucket: CountBucket.Several,
-        staged: 2,
-        learned: 1,
-      },
-    );
+    assert.deepEqual(activityLoadedProperties({ tally: { runs: 7, learned: 1 }, startedAt: 0, now: 250, attempt: 1 }), {
+      outcome: "ok",
+      load_ms: 250,
+      attempt: 1,
+      runs_bucket: CountBucket.Several,
+      learned: 1,
+    });
     assert.equal(activityLoadedProperties({ tally: null, startedAt: 0, now: 1, attempt: 2 }).outcome, "failed");
   });
 });
@@ -912,16 +873,10 @@ describe("what leaves", () => {
       }),
     );
     observers.ui?.({ type: UiEvent.PluginsChanged, payload: { id: "mine", reason: "failed" } });
-    observers.ui?.({ type: UiEvent.SkilloptAutoApplyFailed, payload: { error: SECRETS[0] } });
     stop?.();
     assert.deepEqual(
       sent.map((s) => s.event),
-      [
-        AnalyticsEvent.PluginSuggestionShown,
-        AnalyticsEvent.ConsentCardShown,
-        AnalyticsEvent.PluginFailed,
-        AnalyticsEvent.SuggestionAutoApplyFailed,
-      ],
+      [AnalyticsEvent.PluginSuggestionShown, AnalyticsEvent.ConsentCardShown, AnalyticsEvent.PluginFailed],
     );
     assertClean(sent, "observed events");
   });

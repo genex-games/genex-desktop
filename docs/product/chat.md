@@ -19,7 +19,7 @@ and Studio. A build that taught nothing adds no learned line. Exact values:
 
 ## Questions and plans
 
-Replies get current plugin, account, MCP and template facts; asking about plugins never
+Replies get current plugin, account and MCP facts; asking about plugins never
 resumes a build. A reply may start workers in the chat's mode (Plan holds writers), stopping
 with it; each is one line opening its work on Builds. Background work is one line with Stop until Genex
 quits; agents may [look at apps](projects-engines.md#plugins-on-or-off) in any mode.

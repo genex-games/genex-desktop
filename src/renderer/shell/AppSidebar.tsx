@@ -77,7 +77,7 @@ export function AppSidebar({
   const { records: threads, status: threadStatus, activeThreadId, activeThread, project, room } = useThreadsView();
   const launch = useLaunch((s) => s.launch);
   const atHome = room === Room.Home && !launch;
-  const { games, building, stagedCount } = useSidebarLibrary();
+  const { games, building } = useSidebarLibrary();
   // A game home is starting has one row: a placeholder until it is made and listed, then its own.
   const launching = useMemo(() => launchInSidebar(launch, games), [launch, games]);
   const update = useUpdate((s) => s.ready);
@@ -131,7 +131,6 @@ export function AppSidebar({
           onPlayMode={chrome.setPlayOpen}
           onNav={(item) => trackNavClicked(app, item, { play: chrome.playOpen, compact: chrome.compactWindow })}
           onSettings={() => dialogs.openSettings(undefined, null, SettingsOpenedFrom.Sidebar)}
-          stagedCount={stagedCount}
           threads={threads}
           games={games}
           activeThreadId={unselected ? null : activeThreadId}

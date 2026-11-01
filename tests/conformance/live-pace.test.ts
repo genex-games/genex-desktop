@@ -23,7 +23,6 @@ describe("Live's pace", () => {
       setMaxFps: (fps: number) => void paces.push(fps),
       setAudioMuted: () => {},
       setVisible: () => {},
-      setObserved: () => {},
     } as unknown as PreviewPort;
     const { core, close } = await coreLite({ preview: live });
     try {

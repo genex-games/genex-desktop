@@ -1,9 +1,10 @@
 /**
  * The questions workers wait on the person with, read from the chat's log: each one's
  * `tool_permission` row names the worker (`worker.id`), and a pending row stays pending until the
- * person answers (a worker's card has no timeout). The shared pool reads its own workers' rows;
- * a run's own workers (the director's builders, the Unreal lead's typed workers) are read here, so
- * their lead is told one waits on the person and can stop it or work around it.
+ * person answers or the card's own wait ends (a run worker's, as a lead's: then its call hears that
+ * nobody answered, which is not a no). The shared pool reads its own workers' rows; a run's own
+ * workers (the director's builders, the Unreal lead's typed workers) are read here, so their lead is
+ * told one waits on the person while it and the other workers go on.
  */
 import type { AnyRecord, HarnessCtx } from "../../types/harness.d.ts";
 import type { EventEnvelope } from "../../types/host-api.d.ts";

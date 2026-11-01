@@ -191,7 +191,7 @@ await import(${JSON.stringify(STUDIO_PRELOAD)});
   /** Publish the game with Allow remixing `remix` (undefined: no one chose, as an agent's publish). */
   const publish = async (remix?: boolean) => {
     const choice = { gameDir: game, ...(remix === undefined ? {} : { allowed: remix }) };
-    const started = await genex.publishGallery(PROJECT, exportStage, "Racing Demo", undefined, [], choice);
+    const started = await genex.publishGallery(PROJECT, exportStage, "Racing Demo", [], choice);
     return genex.publishWait(PROJECT, started.job?.id);
   };
   /** Put the game on its draft page only, as an agent's draft does: no one chose about remixing. */
@@ -372,7 +372,7 @@ process.exit(0);
       .map((line) => JSON.parse(line) as CliRun);
   const app = { target: path.join(game, "unity", "Builds", "Mac", "Megastructure.app"), platform: "mac" as const };
   const publish = async (remix: boolean) => {
-    const started = await genex.publishAppsOnly(PROJECT, [app], "Megastructure", undefined, {
+    const started = await genex.publishAppsOnly(PROJECT, [app], "Megastructure", {
       allowed: remix,
       gameDir: game,
     });

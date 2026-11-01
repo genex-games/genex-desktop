@@ -106,8 +106,11 @@ app.whenReady().then(async()=>{
  check('Tab moves from the recommended answer to the next',await evalJS('document.activeElement===' + answers + '[1]'));
  await evalJS('document.activeElement.blur()');await key('Enter',[await evalJS('document.documentElement.dataset.platform==="darwin"')?'meta':'control']);await wait(200);
  check('the answer keys press the recommended answer with nothing focused',await evalJS('document.querySelector("#question-answer").textContent==="approve"'),await evalJS('document.querySelector("#question-answer").textContent'));
+ const answerBoxes='JSON.stringify('+answers+'.map(e=>{const r=e.getBoundingClientRect();return [r.left,r.top,r.width,r.height]}))';
+ const beforeSend=await evalJS(answerBoxes);
  await evalJS(answers+'[1].click()');
- check('while an answer sends, the card shows only that it is sending',await evalJS('(()=>{const b='+answers+';return b.length===1 && b[0].textContent.includes("Sending")})()'),await evalJS('document.querySelector("#question-specimen").textContent'));
+ check('while an answer sends, every answer keeps its words, place and size',await evalJS(answerBoxes)===beforeSend && await evalJS(answers+'.map('+label+').join("|")')==='Approve|Decline',[beforeSend,await evalJS(answerBoxes)]);
+ check('while an answer sends, the pressed one is busy and the rest take no press',await evalJS('(()=>{const b='+answers+';b[0].click();return b[1].getAttribute("aria-busy")==="true" && !b[0].hasAttribute("aria-busy") && b.every(e=>e.getAttribute("aria-disabled")==="true")})()'),await evalJS('document.querySelector("#question-specimen").innerHTML'));
  await wait(400);
  check('clicking an answer sends it at once',await evalJS('document.querySelector("#question-answer").textContent==="decline"'));
  await evalJS(answers+'[0].focus()');await key('Escape');

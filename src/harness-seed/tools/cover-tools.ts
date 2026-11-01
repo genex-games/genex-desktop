@@ -25,8 +25,7 @@ const ORBS = [
   "galaxy",
   "thermal",
 ];
-const HINTS =
-  "Clouds suit cozy/casual/adventure; aurora night/sci-fi/magic; bands space/arcade; marble puzzle/strategy; ember action/horror/fantasy; ocean open world/survival; orbital science/physics; bricks building/sandbox/kids; plasma sci-fi/energy; pixel retro/platformer; caustic water/fishing/beach; tempest action/weather/racing; nimbus calm/zen; terminal hacking/text/coding; voxel crafting/survival; meadow exploration/dreamlike; galaxy space/exploration; thermal stealth/horror/detective.";
+("Clouds suit cozy/casual/adventure; aurora night/sci-fi/magic; bands space/arcade; marble puzzle/strategy; ember action/horror/fantasy; ocean open world/survival; orbital science/physics; bricks building/sandbox/kids; plasma sci-fi/energy; pixel retro/platformer; caustic water/fishing/beach; tempest action/weather/racing; nimbus calm/zen; terminal hacking/text/coding; voxel crafting/survival; meadow exploration/dreamlike; galaxy space/exploration; thermal stealth/horror/detective.");
 export const tools: HarnessTool[] = [
   {
     name: "set_game_cover",
@@ -34,7 +33,7 @@ export const tools: HarnessTool[] = [
       .map(([family, palettes]) => `${family}: ${palettes.join("|")}`)
       .join(
         "; ",
-      )}. Families whose colour the host picks: ${ORBS.join(", ")}. ${HINTS} Genre is only a hint; choose the family that will look best for this game. The host keeps every game's cover different, so it may use another palette or colour than the one named. The host draws it; an unknown look keeps the current cover. Uploaded or already chosen covers are kept.`,
+      )}. Families whose colour the host picks: ${ORBS.join(", ")}. The host keeps every game's cover different, so it may use another palette or colour than the one named. The host draws it; an unknown look keeps the current cover. Uploaded or already chosen covers are kept.`,
     parameters: {
       type: "object",
       properties: {
@@ -50,7 +49,7 @@ export const tools: HarnessTool[] = [
       required: ["family"],
     },
     async execute(args, ctx) {
-      if (!ctx.project || ctx.candidateId) return { ok: false, content: "Open a writable game first." };
+      if (!ctx.project) return { ok: false, content: "Open a writable game first." };
       const { family, palette, seed, motion } = args;
       return {
         ok: true,

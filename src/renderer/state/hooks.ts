@@ -103,17 +103,15 @@ export const useRailView = () => {
 };
 
 /**
- * The library as the sidebar reads it: the store's own `games` array and `building` set, and a
- * number. Nothing is built by the selector, so a change of `rootLabel`, `runsRoot` or the asset
- * inventories never re-renders the sidebar.
+ * The library as the sidebar reads it: the store's own `games` array and `building` set. Nothing is
+ * built by the selector, so a change of `rootLabel`, `runsRoot` or the asset inventories never
+ * re-renders the sidebar.
  */
-export const useSidebarLibrary = () =>
-  useLibrary(useShallow((s) => ({ games: s.games, building: s.building, stagedCount: s.stagedCount })));
+export const useSidebarLibrary = () => useLibrary(useShallow((s) => ({ games: s.games, building: s.building })));
 
 /**
  * The library as the stage reads it: the store's own `games` array and two strings (or null).
- * Nothing is built by the selector, so a builder starting or the staged count moving never
- * re-renders the stage.
+ * Nothing is built by the selector, so a builder starting never re-renders the stage.
  */
 export const useStageLibrary = () =>
   useLibrary(useShallow((s) => ({ games: s.games, rootLabel: s.rootLabel, runsRoot: s.runsRoot })));

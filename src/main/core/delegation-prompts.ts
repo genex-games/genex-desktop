@@ -237,6 +237,16 @@ export function mainAgentReachNote(platform: NodeJS.Platform = process.platform)
 }
 
 /**
+ * How the session answering the person talks with them. A finished tower defense came back as a
+ * report on draw calls and frame rates; and words sent while it worked, which Claude Code hands
+ * over at the next tool result asking only that they be addressed as the turn goes on, were
+ * answered in the wrap-up while the person watched a silent chat.
+ */
+export function personSessionNote(): string {
+  return "The person in this chat may not be a programmer. When they write to you while you work, answer them in the chat at once, then carry on, or change course when they asked you to.";
+}
+
+/**
  * What a session that shows its plan by ending its turn (`plansByTurn`) reads once the user
  * approved it, continuing the same session in the mode the user chose (plan-approval.ts).
  */
