@@ -14,10 +14,11 @@ import path from "node:path";
 import { CATALOG_DEADLINE_MS, ModelCatalog } from "./model-catalog.ts";
 import { resolveCodingCli } from "./external-cli.ts";
 import { runCommand } from "./claude-cli.ts";
-import { lockUnowned, ownershipBriefing, releaseLocks, releaseStaleLocks, type LockRecord } from "./ownership-locks.ts";
+import { releaseStaleLocks } from "./ownership-locks.ts";
 import { StudioBridge, answerBridgeCall, bridgeTools } from "./studio-bridge.ts";
 import { writeDelegateStills } from "./codex.ts";
 import { JUDGE_RULES, offLimitsNote, planModeNote, readOnlyNote } from "./codex-prompts.ts";
+import { leadBuildWrites } from "./session-commands.ts";
 import { parsePiModels, PI_LIST_MODELS_ARGS, readPiProviderHosts } from "./pi-cli.ts";
 import { parsePiLine, translatePiEvent, type Translated } from "./pi-events.ts";
 import {
@@ -123,6 +124,8 @@ export function piSandbox(input: {
   runDir: string;
   gameDir: string;
   gitDirs: string[];
+  /** The build a lead leads and its Git metadata (`leadBuildWrites`). */
+  leadBuilds?: string[];
   scratchDir: string;
   secretPaths: string[];
   toolPath?: () => Promise<string>;
@@ -132,7 +135,13 @@ export function piSandbox(input: {
   const piHome = path.join(home, ".pi");
   const agent = path.join(piHome, "agent");
   return {
-    writableRoots: [input.runDir, ...input.gitDirs, path.join(agent, "sessions"), path.join(agent, "auth.json.lock")],
+    writableRoots: [
+      input.runDir,
+      ...input.gitDirs,
+      ...(input.leadBuilds ?? []),
+      path.join(agent, "sessions"),
+      path.join(agent, "auth.json.lock"),
+    ],
     scratchDir: input.scratchDir,
     secretPaths: input.secretPaths,
     readableHome: [piHome],
@@ -238,14 +247,11 @@ export class PiEngine implements Engine {
     if (request.signal?.aborted)
       return metered(partialDelegateResult(this.id, interruption(true), partialState(run, startedAt, request.model)));
     await releaseStaleLocks(cwd, this.#lockRecovery).catch(() => {});
-    const locks = request.ownership
-      ? await lockUnowned(cwd, request.ownership, this.#lockRecovery).catch(() => null)
-      : null;
     const readOnly = isReadOnly(request);
     const scratch = readOnly ? await this.#scratch("run-") : null;
     const runDir = scratch ?? cwd;
     const bridge = await this.#openBridge(request, runDir).catch(async (err) => {
-      await this.#cleanUp(cwd, locks, scratch, null);
+      await this.#cleanUp(cwd, scratch, null);
       throw err;
     });
     const stills = await writeDelegateStills(request.images ?? []);
@@ -262,7 +268,7 @@ export class PiEngine implements Engine {
         runDir,
         sessionId,
         readOnly,
-        prompt: this.#brief(request, { cwd, scratch, locks, bridge }),
+        prompt: this.#brief(request, { cwd, scratch, bridge }),
         signal: controller.signal,
       });
       await this.#readEvents(request, run, invocation);
@@ -271,7 +277,7 @@ export class PiEngine implements Engine {
     } finally {
       if (deadline) clearTimeout(deadline);
       if (stills.dir) await rm(stills.dir, { recursive: true, force: true }).catch(() => {});
-      await this.#cleanUp(cwd, locks, scratch, bridge);
+      await this.#cleanUp(cwd, scratch, bridge);
     }
     if (request.signal?.aborted || run.deadlineHit)
       return metered(partialDelegateResult(this.id, interruption(request.signal?.aborted), partial()));
@@ -372,30 +378,23 @@ export class PiEngine implements Engine {
     });
   }
 
-  async #cleanUp(
-    cwd: string,
-    locks: LockRecord | null,
-    scratch: string | null,
-    bridge: StudioBridge | null,
-  ): Promise<void> {
+  async #cleanUp(cwd: string, scratch: string | null, bridge: StudioBridge | null): Promise<void> {
     await bridge?.close().catch(() => {});
-    await releaseLocks(cwd, locks, this.#lockRecovery).catch(() => {});
     if (scratch) await rm(scratch, { recursive: true, force: true }).catch(() => {});
   }
 
-  #brief(
-    request: DelegateRequest,
-    ctx: { cwd: string; scratch: string | null; locks: LockRecord | null; bridge: StudioBridge | null },
-  ): string {
-    const hasSeam = request.ownership && (request.ownership.owns.length || ctx.locks?.files.length);
+  #brief(request: DelegateRequest, ctx: { cwd: string; scratch: string | null; bridge: StudioBridge | null }): string {
     const plan = chatMode(request) === PermissionMode.Plan && ctx.scratch;
     return [
       request.prompt,
       ctx.bridge?.instructions() ?? "",
-      hasSeam && request.ownership ? ownershipBriefing(request.ownership) : "",
       plan
         ? planModeNote(ctx.cwd, ctx.scratch ?? "")
-        : readOnlyNote(ctx.cwd, ctx.scratch, request.director ? path.resolve(request.director.root) : null),
+        : readOnlyNote(
+            // A reviewer's cwd is its own empty home: the build it tests is the folder it reads.
+            request.reviewer?.reads ?? ctx.cwd,
+            ctx.scratch,
+          ),
       offLimitsNote([...this.#protectedPaths, ...credentialHomes(), ...(request.denyReads ?? [])]),
     ]
       .filter((part) => part.trim())
@@ -403,7 +402,7 @@ export class PiEngine implements Engine {
   }
 
   async #invocation(
-    request: Pick<DelegateRequest, "model" | "effort" | "denyReads">,
+    request: Pick<DelegateRequest, "model" | "effort" | "denyReads" | "leadBuilds">,
     ctx: {
       cwd: string;
       runDir: string;
@@ -434,6 +433,8 @@ export class PiEngine implements Engine {
         runDir: ctx.runDir,
         gameDir: ctx.cwd,
         gitDirs: [],
+        // A building lead also writes the build it leads.
+        leadBuilds: ctx.readOnly ? [] : await leadBuildWrites(request.leadBuilds),
         scratchDir: path.join(this.#scratchRoot, "tmp"),
         secretPaths: [...this.#protectedPaths, ...(request.denyReads ?? [])],
         ...(this.#toolPath ? { toolPath: this.#toolPath } : {}),

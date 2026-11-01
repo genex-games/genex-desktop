@@ -22,10 +22,9 @@ describe("the modes each engine honours", () => {
   it("lists every engine's modes in the composer's order, Auto always among them", () => {
     assert.deepEqual(PERMISSION_MODES, ALL);
     const table = Object.fromEntries(
-      ["claude-code", "codex", "bonsai", "ollama", "openrouter", "opencode", "pi", "grok", "a-new-engine"].map((engine) => [
-        engine,
-        permissionModesFor(engine),
-      ]),
+      ["claude-code", "codex", "bonsai", "ollama", "openrouter", "opencode", "pi", "grok", "a-new-engine"].map(
+        (engine) => [engine, permissionModesFor(engine)],
+      ),
     );
     assert.deepEqual(table, {
       "claude-code": ALL,

@@ -328,6 +328,17 @@ describe("Pi's sandbox", () => {
     assert.ok(!box.policy.denyRead.includes(piHome), "the CLI reads its own sign-ins");
     assert.ok(!box.policy.denyWrite.includes(piHome), "a deny on the whole store would cut those two write grants");
   });
+  it("a building lead's box also writes the build it leads; a read-only session's does not", async () => {
+    const cwd = await game();
+    const build = await tmpDir("pi-lead-build-");
+    const stream = await events("pi-stream.jsonl");
+    const { engine, seen } = await engineWith(() => replay(stream));
+    await engine.delegate({ cwd, prompt: "lead the run", leadBuilds: build, onEvent: () => {} });
+    await engine.delegate({ cwd, prompt: "look", readOnly: true, leadBuilds: build, onEvent: () => {} });
+    const [lead, reader] = seen;
+    assert.ok(lead?.sandbox.writableRoots.includes(path.resolve(build)), "the lead edits and commits there");
+    assert.ok(!reader?.sandbox.writableRoots.includes(path.resolve(build)), "a read-only session writes no build");
+  });
 });
 
 describe("Pi's JSON stream", () => {
