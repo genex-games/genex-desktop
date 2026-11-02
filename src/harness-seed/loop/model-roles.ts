@@ -41,6 +41,7 @@ export const EngineId = {
   Ollama: "ollama",
   OpenCode: "opencode",
   OpenRouter: "openrouter",
+  Pi: "pi",
   LocalServer: "local-server",
   Grok: "grok",
   Cursor: "cursor",
@@ -64,6 +65,7 @@ const SESSION_ENGINES: readonly string[] = [
   EngineId.Bonsai,
   EngineId.OpenCode,
   EngineId.OpenRouter,
+  EngineId.Pi,
   EngineId.LocalServer,
   EngineId.Grok,
   EngineId.Cursor,
@@ -352,7 +354,13 @@ export function plannerModel(run: RoleRun | null | undefined): string | undefine
 export const BRIDGE_TOOL_CMD = "node .studio/bridge/tool.mjs";
 
 /** The engines whose sessions reach the studio's tools through the bridge command. */
-const BRIDGE_ENGINES: readonly string[] = [EngineId.Codex, EngineId.OpenCode, EngineId.Grok, EngineId.Cursor];
+const BRIDGE_ENGINES: readonly string[] = [
+  EngineId.Codex,
+  EngineId.OpenCode,
+  EngineId.Grok,
+  EngineId.Cursor,
+  EngineId.Pi,
+];
 
 /** One studio tool, spelled the way this engine's session must write it. */
 export function toolCall(engine: string | null | undefined, name: unknown): string {

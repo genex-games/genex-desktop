@@ -13,7 +13,7 @@ import {
   INTERRUPTED_EXIT_CODE,
   type TerminalLaunch,
 } from "./terminal-service.ts";
-import { TerminalKind, terminalSize, TERMINAL_LIMITS } from "../shared/terminal.ts";
+import { settingsSignIn, TerminalKind, terminalSize, TERMINAL_LIMITS } from "../shared/terminal.ts";
 import { setTimeout as sleep } from "node:timers/promises";
 import { StudioPlatform } from "../shared/boot.ts";
 import { killProcessTree } from "../substrate/process-tree.ts";
@@ -175,12 +175,7 @@ function startShell(launch: TerminalLaunch): void {
   started = true;
   if (launch.kind === TerminalKind.ClaudeLogin)
     filter = new LoginTerminalOutput((url) => send({ type: HostEventType.Link, url }));
-  if (
-    launch.kind === TerminalKind.OpenCodeLogin ||
-    launch.kind === TerminalKind.GrokLogin ||
-    launch.kind === TerminalKind.CursorLogin
-  )
-    links = new LinkScanner((url) => send({ type: HostEventType.Link, url }));
+  if (settingsSignIn(launch.kind)) links = new LinkScanner((url) => send({ type: HostEventType.Link, url }));
   const shell = pty.spawn(launch.file, launch.args, {
     name: "xterm-256color",
     ...size,

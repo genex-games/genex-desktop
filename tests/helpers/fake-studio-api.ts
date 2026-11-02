@@ -124,6 +124,7 @@ const METHODS = [
   "claudeLoginOpenBrowser",
   "claudeLoginCancel",
   "openCodeSignIn",
+  "piSignIn",
   "grokSignIn",
   "cursorSignIn",
   "cursorSignOut",

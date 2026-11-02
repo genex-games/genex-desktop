@@ -1886,6 +1886,8 @@ export default {
   "Install Ollama": "Instalar Ollama",
   "Install OpenCode": "Instalar OpenCode",
   "Install OpenCode from Settings › Model Providers.": "Instala OpenCode desde Ajustes › Proveedores de modelos.",
+  "Install Pi, then sign in with /login to run its models.":
+    "Instala Pi y luego inicia sesión con /login para usar sus modelos.",
   "Install Unity 6": "Instalar Unity 6",
   "Install Unreal {version}": "Instalar Unreal {version}",
   "Install Xcode": "Instalar Xcode",
@@ -2597,6 +2599,7 @@ export default {
   "Open Apple's downloads": "Abrir descargas de Apple",
   "Open Model providers to reconnect, then try again.":
     "Abre Proveedores de modelos para volver a conectarte y luego reintenta.",
+  "Open Pi and type /login to connect a provider.": "Abre Pi y escribe /login para conectar un proveedor.",
   "Open Plugins": "Abrir Plugins",
   "Open Privacy settings": "Abrir ajustes de Privacidad",
   "Open Studio": "Abrir Studio",
@@ -2684,6 +2687,10 @@ export default {
   "OpenCode keeps each sign-in": "OpenCode guarda cada sesión",
   "OpenCode ready": "OpenCode listo",
   "OpenCode ready · free models": "OpenCode listo · modelos gratis",
+  "Pi didn't answer. Check the installation, then try again.":
+    "Pi no respondió. Revisa la instalación y vuelve a intentarlo.",
+  "Pi keeps each sign-in": "Pi guarda cada sesión",
+  "Pi sign-in": "Inicio de sesión de Pi",
   "OpenCode sign-in": "Inicio de sesión de OpenCode",
   "OpenCode {version}, {count, plural, other {# model(s)}}":
     "OpenCode {version}, {count, plural, one {# modelo} other {# modelos}}",
@@ -4324,6 +4331,8 @@ export default {
     "Hay dos editores de Unreal abiertos. Cierra el que quieras desde su propia ventana.",
   "Two open Studios have a place named {name}, so Genex can't tell them apart. Save one under another name in Studio, then choose it again.":
     "Dos Studios abiertos tienen un lugar llamado {name}, así que Genex no puede distinguirlos. Guarda uno con otro nombre en Studio y vuelve a elegirlo.",
+  "Type /login below and finish signing in. Pi keeps the sign-in.":
+    "Escribe /login abajo y termina de iniciar sesión. Pi guarda la sesión.",
   "Type a name.": "Escribe un nombre.",
   "Type your email and password in the Unity Hub window and add a Unity license (Personal is free if Unity's terms allow it for you). Genex goes on by itself once you're in.":
     "Escribe tu correo y tu contraseña en la ventana de Unity Hub y añade una licencia de Unity (Personal es gratis si los términos de Unity te lo permiten). Genex sigue solo en cuanto entres.",
@@ -4435,6 +4444,7 @@ export default {
   "Update Claude Code": "Actualizar Claude Code",
   "Update Codex": "Actualizar Codex",
   "Update OpenCode": "Actualizar OpenCode",
+  "Update Pi": "Actualizar Pi",
   "Update Xcode": "Actualizar Xcode",
   "Update Xcode (this Mac has {version})": "Actualizar Xcode (este Mac tiene {version})",
   "Update all": "Actualizar todo",

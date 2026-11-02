@@ -318,6 +318,7 @@ const CONTRACTOR_VENDOR = {
   [EngineId.ClaudeCode]: "claude",
   [EngineId.Codex]: "codex",
   [EngineId.OpenCode]: "opencode",
+  [EngineId.Pi]: "pi",
   [EngineId.Grok]: "grok",
   [EngineId.Cursor]: "cursor",
 } as const satisfies Record<CodingProvider, string>;

@@ -77,6 +77,7 @@ describe("provider table", () => {
     assert.equal(loginKind("codex"), "console");
     assert.equal(loginKind("ollama"), "none");
     assert.equal(loginKind("opencode"), "cli", "OpenCode runs its own sign-in in the terminal");
+    assert.equal(loginKind("pi"), "cli", "Pi's TUI /login runs in the terminal");
     assert.equal(loginKind("grok"), "cli", "Grok Build runs its own `grok login` in the terminal");
     assert.equal(loginKind("openrouter"), "none", "OpenRouter's key is pasted in Settings");
     assert.equal(loginKind("local-server"), "none", "a local server's address and key are typed in Settings");
@@ -97,13 +98,14 @@ describe("provider table", () => {
       // like OpenCode, it is never picked on the person's behalf.
       grok: "metered",
       openrouter: "metered",
+      pi: "metered",
       // Flipped (a local server): a server the person runs is local, never metered.
       "local-server": "local",
       // Flipped (Cursor): third-party models in Cursor, and Cursor's own past the plan's pool, are paid
       // from the account's credit, so the app never picks it by itself.
       cursor: "metered",
     });
-    for (const id of ["openrouter", "opencode", "grok", "cursor"]) assert.equal(isMetered(id), true, id);
+    for (const id of ["openrouter", "opencode", "pi", "grok", "cursor"]) assert.equal(isMetered(id), true, id);
     for (const id of ["bonsai", "ollama", "local-server"]) assert.equal(isLocalEngine(id), true, id);
     for (const id of ["claude-code", "codex", "gemini-cli", "constructor", null, undefined]) {
       assert.equal(isMetered(id), false, String(id));

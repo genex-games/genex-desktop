@@ -1,0 +1,17 @@
+{"type":"session","version":3,"id":"01a183b1-0ffa-707d-9a4e-8c92fb844521","timestamp":"2026-10-28T18:06:21.691Z","cwd":"/game"}
+{"type":"agent_start"}
+{"type":"turn_start"}
+{"type":"message_start","message":{"role":"system","content":"","sections":"<elided: Pi system prompt>","timestamp":1793210781745}}
+{"type":"message_end","message":{"role":"system","content":"","sections":"<elided: Pi system prompt>","timestamp":1793210781745}}
+{"type":"message_start","message":{"role":"user","content":[{"type":"text","text":"Say hello"}],"timestamp":1793210781744}}
+{"type":"message_end","message":{"role":"user","content":[{"type":"text","text":"Say hello"}],"timestamp":1793210781744}}
+{"type":"message_start","message":{"role":"assistant","content":[],"api":"openai-completions","provider":"stub","model":"stub-ok","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"stopReason":"pending","timestamp":1793210781768}}
+{"type":"message_update","usage":{"input":120,"output":7,"cacheRead":0,"cacheWrite":0,"reasoning":0,"totalTokens":127,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"assistantMessageEvent":{"type":"text_start","contentIndex":0}}
+{"type":"message_update","usage":{"input":120,"output":7,"cacheRead":0,"cacheWrite":0,"reasoning":0,"totalTokens":127,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"Hello "}}
+{"type":"message_update","usage":{"input":120,"output":7,"cacheRead":0,"cacheWrite":0,"reasoning":0,"totalTokens":127,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"from "}}
+{"type":"message_update","usage":{"input":120,"output":7,"cacheRead":0,"cacheWrite":0,"reasoning":0,"totalTokens":127,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"Pi."}}
+{"type":"message_update","usage":{"input":120,"output":7,"cacheRead":0,"cacheWrite":0,"reasoning":0,"totalTokens":127,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"assistantMessageEvent":{"type":"text_end","contentIndex":0,"content":"Hello from Pi."}}
+{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Hello from Pi."}],"api":"openai-completions","provider":"stub","model":"stub-ok","usage":{"input":120,"output":7,"cacheRead":0,"cacheWrite":0,"reasoning":0,"totalTokens":127,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"stopReason":"stop","timestamp":1793210781768,"responseId":"chatcmpl-stub","rawStopReason":"stop","durationMs":38,"thinkingLevel":"off"}}
+{"type":"turn_end","message":{"role":"assistant","content":[{"type":"text","text":"Hello from Pi."}],"api":"openai-completions","provider":"stub","model":"stub-ok","usage":{"input":120,"output":7,"cacheRead":0,"cacheWrite":0,"reasoning":0,"totalTokens":127,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"stopReason":"stop","timestamp":1793210781768,"responseId":"chatcmpl-stub","rawStopReason":"stop","durationMs":38,"thinkingLevel":"off"},"toolResults":[]}
+{"type":"agent_end","messages":"<elided>","willRetry":false}
+{"type":"agent_settled","aborted":false}

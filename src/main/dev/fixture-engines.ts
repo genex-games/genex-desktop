@@ -1,6 +1,7 @@
 /**
  * The scripted engines of a fixture session: Ollama, Claude Code, Codex, OpenCode, Grok Build, Cursor,
- * OpenRouter and local server stand-ins that answer from fixed text, never reach an account, a key, a server or the
+ * Pi, OpenRouter and local server stand-ins that answer from fixed text, never reach an account, a
+ * key, a server or the
  * network, and start no vendor worker. Markers in
  * the user's words (`fixture:pending`, `fixture:stream`, `fixture:plan`, …) choose the script.
  */
@@ -33,6 +34,7 @@ const FIXTURE_ENGINES = [
   EngineId.ClaudeCode,
   EngineId.Codex,
   EngineId.OpenCode,
+  EngineId.Pi,
   EngineId.Grok,
   EngineId.Cursor,
   EngineId.OpenRouter,
@@ -146,6 +148,7 @@ export const FIRST_LAUNCH_STATUS: Record<string, EngineStatus> = {
   },
   [EngineId.Codex]: { code: EngineStatusCode.NotInstalled, detail: "AG-933 fixture; no Codex app" },
   [EngineId.OpenCode]: { code: EngineStatusCode.NotInstalled, detail: "AG-933 fixture; no OpenCode CLI" },
+  [EngineId.Pi]: { code: EngineStatusCode.NotInstalled, detail: "AG-933 fixture; no Pi CLI" },
   [EngineId.Grok]: { code: EngineStatusCode.NotInstalled, detail: "AG-933 fixture; no Grok Build CLI" },
   [EngineId.Cursor]: NO_CURSOR,
   [EngineId.OpenRouter]: { code: EngineStatusCode.NeedsLogin, detail: "AG-933 fixture; no OpenRouter key" },

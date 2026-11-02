@@ -38,7 +38,7 @@ export type ChildEnvRequest =
        * The CLI's vendor: the other vendors' variables are dropped wholesale. `none` is a tool that
        * is no coding CLI (the Ollama server): every vendor's variables stay behind.
        */
-      vendor: "claude" | "codex" | "opencode" | "grok" | "cursor" | "none";
+      vendor: "claude" | "codex" | "opencode" | "grok" | "cursor" | "pi" | "none";
       /** Credential variables this child is meant to use — its own sign-in, never a metered key. */
       keep?: readonly string[];
       set?: Record<string, string | undefined>;
@@ -93,6 +93,7 @@ const VENDOR = {
   opencode: /^OPENCODE_/i,
   grok: /^(?:XAI|GROK)_/i,
   cursor: /^(?:CURSOR|AGENT_CLI)_/i,
+  pi: /^PI_/i,
 } as const;
 
 export function isCredentialVariable(name: string, value?: string): boolean {
@@ -106,12 +107,13 @@ export function isCredentialVariable(name: string, value?: string): boolean {
 
 /** The other vendor's variables a coding CLI's child never sees; a tool of neither vendor sees neither's. */
 const FOREIGN_VENDORS: Record<ContractorRequest["vendor"], readonly RegExp[]> = {
-  claude: [VENDOR.codex, VENDOR.opencode, VENDOR.grok, VENDOR.cursor],
-  codex: [VENDOR.claude, VENDOR.opencode, VENDOR.grok, VENDOR.cursor],
-  opencode: [VENDOR.claude, VENDOR.codex, VENDOR.grok, VENDOR.cursor],
-  grok: [VENDOR.claude, VENDOR.codex, VENDOR.opencode, VENDOR.cursor],
-  cursor: [VENDOR.claude, VENDOR.codex, VENDOR.opencode, VENDOR.grok],
-  none: [VENDOR.claude, VENDOR.codex, VENDOR.opencode, VENDOR.grok, VENDOR.cursor],
+  claude: [VENDOR.codex, VENDOR.opencode, VENDOR.grok, VENDOR.cursor, VENDOR.pi],
+  codex: [VENDOR.claude, VENDOR.opencode, VENDOR.grok, VENDOR.cursor, VENDOR.pi],
+  opencode: [VENDOR.claude, VENDOR.codex, VENDOR.grok, VENDOR.cursor, VENDOR.pi],
+  grok: [VENDOR.claude, VENDOR.codex, VENDOR.opencode, VENDOR.cursor, VENDOR.pi],
+  cursor: [VENDOR.claude, VENDOR.codex, VENDOR.opencode, VENDOR.grok, VENDOR.pi],
+  pi: [VENDOR.claude, VENDOR.codex, VENDOR.opencode, VENDOR.grok, VENDOR.cursor],
+  none: [VENDOR.claude, VENDOR.codex, VENDOR.opencode, VENDOR.grok, VENDOR.cursor, VENDOR.pi],
 };
 
 type ContractorRequest = Extract<ChildEnvRequest, { base: "contractor" }>;

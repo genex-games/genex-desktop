@@ -1,4 +1,6 @@
-export type CodingProvider = "codex" | "claude-code" | "opencode" | "grok" | "cursor";
+export type CodingProvider = "codex" | "claude-code" | "opencode" | "grok" | "cursor" | "pi";
+/** CLIs Studio can fetch and run an installer for. Pi has no vendor HTTPS installer. */
+export type InstallableCodingProvider = Exclude<CodingProvider, "pi">;
 export interface CodingCliStatus {
   provider: CodingProvider;
   state: "ready" | "missing" | "invalid_path" | "missing_runtime" | "incompatible";

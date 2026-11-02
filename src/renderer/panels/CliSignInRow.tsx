@@ -1,5 +1,5 @@
 /**
- * Settings → Model Providers: the rows of the CLIs that sign in in their own terminal, OpenCode,
+ * Settings → Model Providers: the rows of the CLIs that sign in in their own terminal, OpenCode, Pi,
  * Grok Build and Cursor. One row, each CLI's words and sign-in: install, sign in (the terminal opens inside
  * the row, so Settings stays open), the Account menu once connected, and the picker's models.
  * Loaded when Settings shows it (`MeteredProviders.tsx`): it is not on the first screen.
@@ -61,7 +61,6 @@ interface CliRowWords {
   card: ProviderWords;
   install: string;
   installLine: string;
-  installingLine: string;
   signIn: string;
   signInLine: string;
   signingIn: string;
@@ -70,12 +69,19 @@ interface CliRowWords {
   update: string;
   connectedLine: string;
   unreachable: string;
+  /** The line the row shows while its installer runs; a guide-only row never shows it. */
+  installingLine?: string;
   /** The Account menu's item that signs in again: OpenCode adds a provider, Grok switches accounts. */
   again: { title: string; line: string };
   /** OpenCode's own free models running with no provider signed in; Grok Build has none. */
   freeOnly?: { status: string; line: string };
   /** Why an installed CLI too old to run needs its update; a row without one says it could not check. */
   outdatedLine?: string;
+  /**
+   * The CLI has no vendor HTTPS installer (Pi): its install action opens the guide and it is never
+   * installed from here, so its Installing state is unreachable.
+   */
+  guideOnly?: boolean;
   /** The Account menu's item that signs the CLI out (Cursor). */
   signOut?: { title: string; line: string };
 }
@@ -121,6 +127,23 @@ const CURSOR_WORDS = {
   unreachable: t("Cursor didn't answer. Check the installation, then try again."),
 } as const;
 
+/** Pi's row: it has no in-app installer, so Install guide opens the page and Sign in is Pi's `/login`. */
+const PI_ROW: CliRowWords = {
+  card: { name: WORDS.pi.name, plans: "", guide: WORDS.pi.guide },
+  install: WORDS.pi.install,
+  installLine: WORDS.pi.installLine,
+  guideOnly: true,
+  signIn: WORDS.pi.signIn,
+  signInLine: WORDS.pi.signInLine,
+  signingIn: WORDS.pi.signingIn,
+  cancelSignIn: WORDS.pi.cancelSignIn,
+  openSignInPage: WORDS.pi.openSignInPage,
+  update: WORDS.pi.update,
+  connectedLine: WORDS.pi.connectedLine,
+  unreachable: WORDS.pi.unreachable,
+  again: { title: WORDS.pi.addProvider, line: WORDS.pi.addProviderLine },
+};
+
 const OPEN_CODE_ROW: CliRowWords = {
   ...WORDS.openCode,
   card: { name: WORDS.openCode.name, plans: "", guide: WORDS.openCode.guide },
@@ -145,7 +168,12 @@ const CURSOR_ROW: CliRowWords = {
 function cliRowView(state: OpenCodeRowState, act: CliRowActions, words: CliRowWords): RowView {
   switch (state) {
     case OpenCodeRowState.Installing:
-      return { tone: RowTone.Busy, status: WORDS.installing, line: words.installingLine, actions: null };
+      return {
+        tone: RowTone.Busy,
+        status: WORDS.installing,
+        line: words.installingLine ?? words.installLine,
+        actions: null,
+      };
     case OpenCodeRowState.NotInstalled:
       return {
         tone: RowTone.Off,
@@ -305,6 +333,7 @@ function connectedView(act: CliRowActions, words: CliRowWords): RowView {
 /** Each CLI's words. */
 const CLI_WORDS: Record<CliProvider, CliRowWords> = {
   [EngineId.OpenCode]: OPEN_CODE_ROW,
+  [EngineId.Pi]: PI_ROW,
   [EngineId.Grok]: GROK_ROW,
   [EngineId.Cursor]: CURSOR_ROW,
 };
@@ -351,7 +380,8 @@ export default function CliSignInRow({
     {
       install: () => {
         press(cliInstallAction(state));
-        void install.install();
+        if (words.guideOnly) void window.studio.openUrl(words.card.guide);
+        else void install.install();
       },
       recheck: () => {
         press(cliRecheckAction(state));

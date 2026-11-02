@@ -1,0 +1,7 @@
+{"type":"session","version":3,"id":"sess-pi-refuse","timestamp":"2024-12-03T14:00:00.000Z","cwd":"/game"}
+{"type":"agent_start"}
+{"type":"turn_start"}
+{"type":"message_update","assistantMessageEvent":{"type":"error","reason":"error","error":"Bad Request: model not found"}}
+{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"error"}}
+{"type":"agent_end","messages":[],"willRetry":false}
+{"type":"agent_settled"}

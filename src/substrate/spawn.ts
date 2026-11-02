@@ -186,6 +186,13 @@ export interface SandboxOptions {
    * denies it and a secret path or another CLI's home named here stays denied.
    */
   ownHome?: readonly string[];
+  /**
+   * The sign-in home of the one CLI that runs inside this sandbox but only reads it (Pi, whose
+   * `auth.json` a session needs and must never rewrite): out of the credential read and write
+   * denies, and never a write grant — what a session writes there it must name in
+   * `writableRoots`.
+   */
+  readableHome?: readonly string[];
   /** Set false only in unit tests that assert the fallback path. */
   enabled?: boolean;
   /**
@@ -558,6 +565,29 @@ function ownCredentialHomes(named: readonly string[], secretPaths: readonly stri
     .filter((dir) => homes.includes(dir) && !secretPaths.includes(dir));
 }
 
+/**
+ * The policy a sandbox starts with: its write grants, its named denies, and the credential homes it
+ * exempts — the ones a CLI writes (`ownHome`) or only reads (`readableHome`).
+ */
+function sandboxPolicy(options: SandboxOptions, scratchDir: string, platform: NodeJS.Platform): SandboxPolicy {
+  const own = ownCredentialHomes(options.ownHome ?? [], options.secretPaths);
+  const readable = ownCredentialHomes(options.readableHome ?? [], options.secretPaths);
+  const exempt = [...own, ...readable];
+  const notExempt = (dir: string) => !exempt.includes(dir);
+  return {
+    allowedDomains: [],
+    allowLocalBinding: true,
+    allowWrite: [...options.writableRoots, scratchDir, ...own],
+    allowRead: options.readableRoots ?? [],
+    denyRead: [...baseDenyRead(os.homedir(), platform).filter(notExempt), ...options.secretPaths],
+    denyWrite: [
+      ...baseDenyWrite(os.homedir(), platform).filter(notExempt),
+      ...options.secretPaths,
+      ...(options.denyWrite ?? []),
+    ],
+  };
+}
+
 export class ProcessSandbox {
   readonly policy: SandboxPolicy;
   readonly enabled: boolean;
@@ -592,20 +622,7 @@ export class ProcessSandbox {
     await mkdir(options.scratchDir, { recursive: true });
     // Windows: the long path, since srt-win and Git Credential Manager trip over 8.3 short names.
     const scratchDir = longPath(options.scratchDir, platform);
-    const own = ownCredentialHomes(options.ownHome ?? [], options.secretPaths);
-    const notOwn = (dir: string) => !own.includes(dir);
-    const policy: SandboxPolicy = {
-      allowedDomains: [],
-      allowLocalBinding: true,
-      allowWrite: [...options.writableRoots, scratchDir, ...own],
-      allowRead: options.readableRoots ?? [],
-      denyRead: [...baseDenyRead(os.homedir(), platform).filter(notOwn), ...options.secretPaths],
-      denyWrite: [
-        ...baseDenyWrite(os.homedir(), platform).filter(notOwn),
-        ...options.secretPaths,
-        ...(options.denyWrite ?? []),
-      ],
-    };
+    const policy = sandboxPolicy(options, scratchDir, platform);
     const sandbox = new ProcessSandbox(policy, options.enabled ?? true, scratchDir, platform);
     sandbox.#toolPath = options.toolPath ?? null;
     sandbox.#runtime = options.runtime ?? null;

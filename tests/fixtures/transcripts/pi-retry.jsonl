@@ -1,0 +1,13 @@
+{"type":"session","version":3,"id":"sess-pi-retry","timestamp":"2024-12-03T14:00:00.000Z","cwd":"/game"}
+{"type":"agent_start"}
+{"type":"turn_start"}
+{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"error","errorMessage":"529 overloaded"}}
+{"type":"auto_retry_start","attempt":1,"maxAttempts":3,"delayMs":1,"errorMessage":"529 overloaded"}
+{"type":"auto_retry_end","success":true,"attempt":2}
+{"type":"agent_end","messages":[],"willRetry":true}
+{"type":"agent_start"}
+{"type":"turn_start"}
+{"type":"message_update","usage":{"input":8,"output":4,"cacheRead":0,"cacheWrite":0,"totalTokens":12,"cost":{"total":0.01}},"assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"Hello after retry."}}
+{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Hello after retry."}],"stopReason":"stop","usage":{"input":8,"output":4,"cacheRead":0,"cacheWrite":0,"totalTokens":12,"cost":{"total":0.01}}}}
+{"type":"agent_end","messages":[],"willRetry":false}
+{"type":"agent_settled"}
