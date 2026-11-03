@@ -7,7 +7,7 @@
     </picture>
   </a>
 </p>
-<p align="center">Desktop app for game dev with AI.</p>
+<p align="center">Desktop app for game dev with AI: make games in Unreal Engine, Unity, Godot or the browser.<br>The agent sets up the engine, builds your game and play-tests it by itself.</p>
 <p align="center">
   <a href="https://github.com/genex-games/genex-desktop/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/genex-games/genex-desktop?style=flat-square" /></a>
   <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/github/license/genex-games/genex-desktop?style=flat-square" /></a>
@@ -37,7 +37,7 @@ Genex is early: expect rough edges, and tell us about them in
 → Make 3D assets locally with the Blender plugin\
 → Meshy, Tripo, ElevenLabs and more through the Genex tools router\
 → Export anywhere, or publish to the web\
-→ Build in Unreal or Godot on your Mac with their plugins\
+→ Build in Unreal Engine, Unity, Godot or Roblox Studio: the agent sets up the engine and play-tests the game\
 → Native C++ games soon
 
 > [!TIP]
