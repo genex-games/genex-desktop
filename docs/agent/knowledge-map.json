@@ -462,7 +462,8 @@
         "test:affected",
         "test:fast",
         "test:rig",
-        "test:coverage"
+        "test:coverage",
+        "test:playwright"
       ]
     },
     {

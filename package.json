@@ -38,6 +38,7 @@
     "test:coverage": "node scripts/check-node.mjs && mkdir -p .studio-dev/coverage && node --test --test-concurrency=1 --experimental-test-coverage --test-coverage-include='src/**' --test-reporter=spec --test-reporter-destination=stdout --test-reporter=lcov --test-reporter-destination=.studio-dev/coverage/lcov.info 'tests/**/*.test.ts'",
     "test:ui": "node tests/e2e/run-ui.mjs",
     "test:e2e": "node scripts/build.mjs && node tests/e2e/run-electron-e2e.mjs",
+    "test:playwright": "bash scripts/run-playwright-e2e.sh",
     "verify": "node scripts/check-node.mjs && npm run verify:context && npm run verify:architecture && npm run typecheck && npm test && npm run build && node tests/e2e/run-electron-e2e.mjs && node tests/e2e/run-build-smoke.mjs && node tests/e2e/run-shapes-e2e.mjs && npm run test:agentic-readiness",
     "package": "node scripts/build.mjs --release && electron-forge package",
     "make": "node scripts/build.mjs --release && electron-forge make",

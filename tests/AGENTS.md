@@ -168,6 +168,10 @@ fixtures small and synthetic.
 `run-bonsai-live.mjs` and `run-clean-provider-profiles.mjs` touch live providers or accounts:
 run them only with explicit permission. Evidence goes to `.studio-dev/evidence/`.
 
+Playwright `_electron` journeys (`tests/playwright/`, `npm run test:playwright`) drive the built
+app on disposable fixture profiles, including headless Linux through `xvfb-run`. They are not
+part of `npm test`. Env vars and the four covered journeys are in `tests/playwright/README.md`.
+
 ## Windows suite
 
 `tests/windows-suite.json` is the Windows CI's required suite
