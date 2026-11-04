@@ -92,6 +92,22 @@ export function usePublishRecord(plugin: PluginInfo, project: string | null) {
     act: (name: string, args: Record<string, unknown> = {}): Promise<void> =>
       run(Pressing.Action, () => runPluginAction({ plugin, name, args, project, review: setReview })),
     listFiles: (): Promise<void> => run(Pressing.Files, currentFiles),
+    /**
+     * Move the game to a new link: answers why Genex refused, for the line under the link's field,
+     * or null once it moved. The record is read again either way.
+     */
+    changeLink: async (link: string): Promise<string | null> => {
+      setPressing(Pressing.Name);
+      try {
+        await runPluginAction({ plugin, name: GenexAction.PublishLink, args: { link }, project, review: setReview });
+        return null;
+      } catch (e) {
+        return words(e);
+      } finally {
+        setPressing(Pressing.None);
+        await refresh();
+      }
+    },
     /** Save the game's new name: on Genex at once when the game is there, else for its first publish. */
     rename: (title: string): Promise<void> =>
       run(Pressing.Name, () =>

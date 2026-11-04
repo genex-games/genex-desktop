@@ -57,6 +57,14 @@ export const MESSAGE = {
   RevisionMismatch: "Hosted staging revision does not match this upload yet",
   NotInGallery: () => t("This game is not in the gallery yet"),
   NothingOnline: () => t("Nothing is online for this game yet"),
+  /** A link with no letter or digit in it. */
+  LinkEmpty: () => t("Give the link a letter or a number."),
+  /** Genex gives the link to another game already (or keeps it for one). */
+  LinkTaken: () => t("Another game already has this link. Try another one."),
+  /** The game used every link change Genex allows it. */
+  LinkLimit: () => t("This game has used all its link changes."),
+  /** Genex keeps this word for itself. */
+  LinkReserved: () => t("Genex keeps this link for itself. Try another one."),
   /** A name with no letter or digit left once cleaned: nothing to list the game under. */
   NoName: () => t("Give the game a name with a letter or a number in it."),
   UnrecognizedLink: () => t("Unrecognized Genex page link"),

@@ -352,9 +352,12 @@ export function publishReport(project: string, title: string, view: PublishView)
   return { text: text.slice(0, FEEDBACK_TEXT_MAX_CHARS), screen: FeedbackScreen.Chat, appLogs: true, chatId: null };
 }
 
-/** The name the dialog offers: the one the game is listed under, else Studio's title for it, else its folder. */
+/**
+ * The name the dialog offers: the one Genex lists the game under (renamed on its page too), else the
+ * one Studio listed it under, else Studio's title for it, else its folder.
+ */
 export function offeredTitle(state: GenexPublishState | null, gameTitle: string | undefined, project: string): string {
-  return state?.title ?? cleanGenexTitle(gameTitle) ?? defaultGenexTitle(project);
+  return state?.hostedTitle ?? state?.title ?? cleanGenexTitle(gameTitle) ?? defaultGenexTitle(project);
 }
 
 /** What Publish asks for before it can publish: a Genex account, or nothing. */

@@ -15,7 +15,9 @@ import type { FeedbackDraft } from "../../../../shared/feedback.ts";
 import { gameCoverUrl } from "../../../../shared/game-cover.ts";
 import {
   GENEX_PLUGIN_ID,
+  GENEX_SLUG_MAX_CHARS,
   GENEX_TITLE_MAX_CHARS,
+  genexSlug,
   GenexAction,
   type GenexNativeRecord,
   type GenexPublishState,
@@ -83,6 +85,8 @@ const ACCOUNT = GENEX_WORDS.account;
 const LinkTarget = { Gallery: "gallery" } as const;
 /** The celebration's canvas: 4 px a cell, drawn at half that on screen for sharp pixels. */
 const ROCKET_CANVAS_PX = 128;
+/** How long the link's pencil shows a ✓ once the link moved. */
+const LINK_SAVED_MS = 1.5 * SECOND_MS;
 /** The longest edge the banner's picture is read at: twice the dialog's width, for sharp pixels. */
 const BANNER_PICTURE_PX = 960;
 
@@ -318,14 +322,70 @@ function Banner({
   );
 }
 
-/** The link anyone can play, labelled beside the globe, with Copy and Open. */
-function LinkField({ link, onOpen, opening }: { link: string; onOpen: () => void; opening: boolean }): JSX.Element {
+/** How the public link's pencil changes it: the changes left (null: no limit) and the move itself. */
+interface LinkChange {
+  left: number | null | undefined;
+  /** Move the game to `link`: why Genex refused, or null once it moved. */
+  save: (link: string) => Promise<string | null>;
+}
+
+/**
+ * The link anyone can play, labelled beside the globe, with Copy and Open. With `change`, the link
+ * and its pencil are one press that opens its field, like the name's on the banner; the pencil turns
+ * into a ✓ for a moment once the link moved. A game out of link changes shows no pencil.
+ */
+function LinkField({
+  link,
+  onOpen,
+  opening,
+  change,
+}: {
+  link: string;
+  onOpen: () => void;
+  opening: boolean;
+  change?: LinkChange;
+}): JSX.Element {
   const [copied, copy] = useCopy();
+  const [editing, setEditing] = useState(false);
+  const [moved, setMoved] = useState(false);
+  useEffect(() => {
+    if (!moved) return;
+    const timer = window.setTimeout(() => setMoved(false), LINK_SAVED_MS);
+    return () => window.clearTimeout(timer);
+  }, [moved]);
+  if (editing && change)
+    return (
+      <LinkEditor
+        link={link}
+        change={change}
+        onDone={(done) => {
+          setEditing(false);
+          setMoved(done);
+        }}
+      />
+    );
+  const shown = link.replace(/^https?:\/\//, "");
+  const changeable = change !== undefined && change.left !== 0;
   return (
     <div className="genex-publish-link-field" data-public>
       <Icon name="globe" size={15} />
       <span className="genex-publish-link-label">{WORDS.publicLink}</span>
-      <span title={link}>{link.replace(/^https?:\/\//, "")}</span>
+      {changeable ? (
+        <span className="genex-publish-link-address">
+          <button
+            type="button"
+            className="genex-publish-link-edit"
+            title={link}
+            aria-label={WORDS.changeLink}
+            onClick={() => setEditing(true)}
+          >
+            <span>{shown}</span>
+            <Icon name={moved ? "check" : "rename"} size={14} />
+          </button>
+        </span>
+      ) : (
+        <span title={link}>{shown}</span>
+      )}
       <Button aria-label={WORDS.copyLinkLabel} onClick={() => copy(link)}>
         <Icon name={copied ? "check" : "copy"} size={14} className={copied ? "text-green" : undefined} />
         {copied ? WORDS.copied : WORDS.copyLink}
@@ -337,6 +397,85 @@ function LinkField({ link, onOpen, opening }: { link: string; onOpen: () => void
     </div>
   );
 }
+
+/**
+ * The public link's field: the site fixed before it, the game's part typed as Genex spells links,
+ * Save inside it once it differs, and one line under it, the old link's promise and the changes
+ * left, or why Genex refused. Enter saves; Escape, or leaving it unchanged, closes it.
+ */
+function LinkEditor({
+  link,
+  change,
+  onDone,
+}: {
+  link: string;
+  change: LinkChange;
+  onDone: (moved: boolean) => void;
+}): JSX.Element {
+  const base = link.slice(0, link.lastIndexOf("/") + 1);
+  const current = link.slice(base.length);
+  const [value, setValue] = useState(current);
+  const [refused, setRefused] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const slug = genexSlug(value);
+  const changed = slug !== "" && slug !== current;
+  const save = async () => {
+    if (busy) return;
+    if (!changed) return onDone(false);
+    setBusy(true);
+    const why = await change.save(slug);
+    setBusy(false);
+    if (why) return setRefused(why);
+    onDone(true);
+  };
+  const left = typeof change.left === "number" ? ` · ${WORDS.changesLeft(change.left)}` : "";
+  return (
+    <div className="genex-publish-link-change">
+      <div className="genex-publish-link-field" data-public data-editing data-refused={refused ? true : undefined}>
+        <Icon name="globe" size={15} />
+        <label htmlFor="genex-publish-new-link" className="genex-publish-link-base">
+          {base.replace(/^https?:\/\//, "")}
+        </label>
+        <input
+          id="genex-publish-new-link"
+          className="genex-publish-link-input"
+          aria-label={WORDS.newLink}
+          value={value}
+          maxLength={GENEX_SLUG_MAX_CHARS}
+          spellCheck={false}
+          // biome-ignore lint/a11y/noAutofocus: the field replaces the link the person just pressed.
+          autoFocus
+          onChange={(e) => {
+            setValue(linkTyped(e.target.value));
+            setRefused(null);
+          }}
+          onBlur={() => {
+            if (!changed && !busy) onDone(false);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") void save();
+            if (e.key === "Escape") {
+              // Escape closes the field; it does not close the dialog around it.
+              e.stopPropagation();
+              onDone(false);
+            }
+          }}
+        />
+        {changed && (
+          <Button variant="default" aria-label={WORDS.saveLink} busy={busy} onClick={() => void save()}>
+            {WORDS.saveLink}
+          </Button>
+        )}
+      </div>
+      <p className={refused ? "genex-publish-link-refused" : "genex-publish-hint"} role={refused ? "alert" : undefined}>
+        {refused ?? `${WORDS.oldLinkWorks}${left}`}
+      </p>
+    </div>
+  );
+}
+
+/** What the link's field shows as it is typed: lower case, a dash for anything a link can't hold. */
+const linkTyped = (value: string): string => value.toLowerCase().replace(/[^a-z0-9-]+/g, "-");
 
 /**
  * The tested draft players do not have yet, read-only with Copy, and one line under it: who can play
@@ -897,6 +1036,7 @@ function PublishBody({
   const share = useShareWhenLive(project, celebrate);
   const failure = record.error ? { text: record.error, details: record.error } : view.failure;
   const open = () => void record.act(GenexAction.PublishOpen, { target: LinkTarget.Gallery });
+  const change = { left: record.state?.renamesLeft, save: record.changeLink };
   const opening = record.pressing === Pressing.Action;
   const pressShown = !celebrate;
   const pressNeeded = pressHasWork(pressShown, view, publishing, { upToDate, inReview });
@@ -942,7 +1082,7 @@ function PublishBody({
           project={project}
           shown={pressShown && saysWhoPlays(view, publishing, Boolean(cover.making), Boolean(view.testLink))}
         />
-        {!publishing && <Links view={view} project={project} onOpen={open} opening={opening} />}
+        {!publishing && <Links view={view} project={project} onOpen={open} opening={opening} change={change} />}
         {pressNeeded && (
           <Presses
             view={view}
@@ -1002,16 +1142,19 @@ function Links({
   project,
   onOpen,
   opening,
+  change,
 }: {
   view: PublishView;
   project: string;
   onOpen: () => void;
   opening: boolean;
+  /** The public link's pencil, for a game on Genex while nothing runs. */
+  change?: LinkChange;
 }): JSX.Element {
   const multiplayer = useLibrary((s) => s.games.find((g) => g.name === project)?.multiplayer === true);
   return (
     <>
-      {view.link && <LinkField link={view.link} onOpen={onOpen} opening={opening} />}
+      {view.link && <LinkField link={view.link} onOpen={onOpen} opening={opening} change={change} />}
       {view.testLink && (
         <TestLinkField link={view.testLink} listed={view.stage === PublishStage.Public} multiplayer={multiplayer} />
       )}

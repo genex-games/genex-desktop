@@ -2420,6 +2420,12 @@ export default {
   "Nothing is failing.": "失敗しているものはありません。",
   "Nothing is installing.": "インストール中のものはありません。",
   "Nothing is online for this game yet": "このゲームはまだ何もオンラインにありません",
+  "Give the link a letter or a number.": "リンクに文字か数字を入れてください。",
+  "Another game already has this link. Try another one.":
+    "このリンクは別のゲームが使っています。別のものを試してください。",
+  "This game has used all its link changes.": "このゲームはリンクの変更回数を使い切りました。",
+  "Genex keeps this link for itself. Try another one.":
+    "このリンクは Genex が使うため使えません。別のものを試してください。",
   "Give the game a name with a letter or a number in it.": "文字か数字を含む名前をゲームに付けてください。",
   "Nothing kept yet": "まだ採用なし",
   "Nothing made": "成果なし",

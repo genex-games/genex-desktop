@@ -1444,6 +1444,73 @@ button.genex-publish-banner-name:hover {
 .genex-publish-link-field[data-public] > button:hover {
   background: color-mix(in srgb, var(--accent) 36%, var(--hover));
 }
+/* The public link and its pencil: one press, like the name's on the banner, on its own soft fill. */
+.genex-publish-link-field > .genex-publish-link-address {
+  display: flex;
+}
+.genex-publish-link-edit {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+  height: 28px;
+  margin-inline-start: -8px;
+  padding-inline: 8px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+  color: var(--ink);
+  font: 13px / 20px var(--font-family-mono);
+  cursor: pointer;
+  transition: background var(--duration-quick);
+}
+.genex-publish-link-edit:hover {
+  background: color-mix(in srgb, var(--ink) 11%, transparent);
+}
+.genex-publish-link-edit > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.genex-publish-link-edit > svg {
+  flex: none;
+  opacity: 0.75;
+}
+/* Changing the link: the site fixed before the typed part, Save inside the field, one line under it. */
+.genex-publish-link-change {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  min-width: 0;
+}
+.genex-publish-link-field[data-editing] {
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 85%, var(--ink));
+}
+.genex-publish-link-field[data-refused] {
+  box-shadow: inset 0 0 0 2px var(--orange);
+}
+.genex-publish-link-base {
+  flex: none;
+  color: var(--ink-3);
+  font: 13px / 20px var(--font-family-mono);
+}
+.genex-publish-link-input {
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+  margin-inline-start: -8px;
+  background: transparent;
+  color: var(--ink);
+  font: 13px / 20px var(--font-family-mono);
+  outline: none;
+}
+.genex-publish-link-refused {
+  color: var(--orange);
+  font-size: 13px;
+  line-height: 20px;
+  text-align: center;
+}
 /* The field's label before its address, in the quiet ink. */
 .genex-publish-link-field > .genex-publish-link-label {
   flex: none;

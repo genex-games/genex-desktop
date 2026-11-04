@@ -15,6 +15,7 @@ import { writeFile } from "node:fs/promises";
 import {
   cleanGenexTitle,
   defaultGenexTitle,
+  genexSlug,
   GENEX_COVERS_DIR,
   GenexCoverOrigin,
   GenexBlocked,
@@ -247,6 +248,40 @@ const REMOVE_WEB_REFUSAL: Readonly<Record<string, () => string>> = {
   [GenexWebRefusal.GameTakenDown]: PUBLISH_MESSAGE.TakenDownRefusal,
   [GenexWebRefusal.RemovalIncomplete]: PUBLISH_MESSAGE.RemovalIncomplete,
 };
+/** What Genex's owner read of a game adds to the publish view; each field only when Genex said it. */
+type HostedOwnerRead = Pick<GenexPublishState, "hostedWeb" | "hostedTitle" | "renamesLeft">;
+
+/**
+ * The owner read's answer as the publish view keeps it: whether Genex plays a web version (its
+ * public build), the name it lists the game under, and the link changes left (null: no limit).
+ * Nothing at all from an answer that names no build: such an answer is evidence of nothing.
+ */
+function ownerRead(project: unknown): HostedOwnerRead {
+  if (!project || typeof project !== "object" || !("commitSha" in project)) return {};
+  const answer = project as { commitSha?: unknown; title?: unknown; renamesLeft?: unknown };
+  const left = answer.renamesLeft;
+  const knownLeft = left === null || (typeof left === "number" && Number.isInteger(left) && left >= 0);
+  return {
+    hostedWeb: typeof answer.commitSha === "string" && answer.commitSha !== "",
+    ...(typeof answer.title === "string" && answer.title.trim() ? { hostedTitle: answer.title.trim() } : {}),
+    ...(knownLeft ? { renamesLeft: left as number | null } : {}),
+  };
+}
+
+/** Genex's refusal codes for a link change that the person can act on. */
+const LinkRefusalCode = { LimitReached: "rename_limit_reached" } as const;
+/** HTTP 400 and 409: a link Genex keeps, or one another game holds. */
+const HTTP_BAD_REQUEST = 400;
+const HTTP_CONFLICT = 409;
+
+/** The words for a link change Genex refused, when it is one the person can act on. */
+function linkRefusal(error: unknown): string | undefined {
+  if (codeOf(error) === LinkRefusalCode.LimitReached) return PUBLISH_MESSAGE.LinkLimit();
+  if (statusOf(error) === HTTP_CONFLICT) return PUBLISH_MESSAGE.LinkTaken();
+  if (statusOf(error) === HTTP_BAD_REQUEST) return PUBLISH_MESSAGE.LinkReserved();
+  return undefined;
+}
+
 /**
  * How long a status read reuses a game's allowance before starting the CLI's `budget` again. The
  * page reads status every 5 s while a generation runs, and each `budget` is a whole Node process;
@@ -523,7 +558,7 @@ export class GenexTools {
   /** Which generation each generic reservation became, by reservation id, as Genex named it. */
   #foundGenerations = new Map<string, FoundGeneration>();
   /** Genex's last word on whether each game's page plays a web version, and when it said it. */
-  #hostedWebs = new Map<string, { web: boolean; at: number }>();
+  #hostedWebs = new Map<string, { hosted: HostedOwnerRead; at: number }>();
   /** How long a publish's new draft has to pass its test before the publish gives up on going public. */
   readonly #draftTestMs: number;
   readonly #coverTimeouts: CoverTimeouts;
@@ -1625,15 +1660,8 @@ export class GenexTools {
     const cover = { shot, last, sending: this.#coverSteps.has(project), candidates, clip, clipLast, agentTook };
     const native = await this.#nativeRecord(project);
     const remix = { ...(await this.#remixRecord(project)), sending: this.#remixSends.has(project) };
-    const hostedWeb = await this.#hostedWebOf(project, state);
-    return {
-      ...state,
-      ...(warnings.length ? { warnings } : {}),
-      cover,
-      native,
-      remix,
-      ...(hostedWeb === undefined ? {} : { hostedWeb }),
-    };
+    const hosted = await this.#hostedOf(project, state);
+    return { ...state, ...(warnings.length ? { warnings } : {}), cover, native, remix, ...hosted };
   }
   /**
    * Whether Genex's page for the game plays a web version (its owner read names a public build),
@@ -1641,16 +1669,56 @@ export class GenexTools {
    * is changing then, and the publish reads Genex's record itself); undefined while the game is not
    * on Genex, the sign-in is gone or Genex can't be asked: no answer is evidence of nothing.
    */
-  async #hostedWebOf(project: string, state: GenexPublishState): Promise<boolean | undefined> {
-    if (!state.connected || !state.slug) return undefined;
+  async #hostedOf(project: string, state: GenexPublishState): Promise<HostedOwnerRead> {
+    if (!state.connected || !state.slug) return {};
     const kept = this.#hostedWebs.get(project);
-    if (this.#publishJobs.has(project)) return kept?.web;
-    if (kept && this.#now() - kept.at < HOSTED_WEB_FRESH_MS) return kept.web;
-    const hosted = (await this.#fetch(GenexRoute.projectBySlug(state.slug)).catch(() => null))?.project;
-    if (!hosted || typeof hosted !== "object" || !("commitSha" in hosted)) return undefined;
-    const web = typeof hosted.commitSha === "string" && hosted.commitSha !== "";
-    this.#hostedWebs.set(project, { web, at: this.#now() });
-    return web;
+    if (this.#publishJobs.has(project)) return kept?.hosted ?? {};
+    if (kept && this.#now() - kept.at < HOSTED_WEB_FRESH_MS) return kept.hosted;
+    const answer = (await this.#fetch(GenexRoute.projectBySlug(state.slug)).catch(() => null))?.project;
+    const hosted = ownerRead(answer);
+    if (hosted.hostedWeb !== undefined) this.#hostedWebs.set(project, { hosted, at: this.#now() });
+    return hosted;
+  }
+  /**
+   * Move the game to a new link on Genex, spelled from `link` as Genex spells links. Its old link
+   * keeps opening the game, so this is no new game: the publish record and the game's link follow
+   * Genex's answer. Refused before anything is sent while a publish runs, before the game is on
+   * Genex, or signed out; Genex refuses a link another game has, one it keeps, or a game out of changes.
+   */
+  async publishLink(project: string, link: unknown): Promise<GenexPublishState> {
+    return this.#account(async () => {
+      const slug = typeof link === "string" ? genexSlug(link) : "";
+      if (!slug) throw new Error(PUBLISH_MESSAGE.LinkEmpty());
+      if (this.#publishJobs.has(project)) throw new Error(PUBLISH_MESSAGE.StillRunning());
+      const state = await this.publishStatus(project);
+      if (!state.projectId) throw new Error(PUBLISH_MESSAGE.NothingOnline());
+      if (!state.connected) throw new Error(PUBLISH_MESSAGE.ConnectFirstRefusal());
+      if (slug === state.slug) return this.publishView(project);
+      const answer = await this.#fetch(GenexRoute.rename(state.projectId), {
+        method: "POST",
+        body: JSON.stringify({ name: slug }),
+      }).catch((error: unknown) => {
+        throw new Error(linkRefusal(error) ?? errorMessage(error));
+      });
+      const moved = answer?.project;
+      if (typeof moved?.slug !== "string" || !moved.slug) throw new Error(PUBLISH_MESSAGE.NothingOnline());
+      await this.#followLink(project, moved);
+      return this.publishView(project);
+    });
+  }
+  /** Point Studio's link to the game and its publish record at the game's new link on Genex. */
+  async #followLink(project: string, moved: { slug: string; playUrl?: unknown }): Promise<void> {
+    const file = metaFile(this.#publishDir(project));
+    const meta = await readJsonOr<HostedMeta>(file, {});
+    const linked: HostedMeta = {
+      ...meta,
+      slug: moved.slug,
+      ...(isGenexLink(moved.playUrl) ? { playUrl: moved.playUrl } : {}),
+    };
+    await atomicWriteJson(file, linked);
+    const record = await this.#publishState(project);
+    mergeMeta(record, linked);
+    await this.#savePublishState(project, record);
   }
   /**
    * Publish's Remove on a web version Genex holds and the game folder has none of (confirmed in the

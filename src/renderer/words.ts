@@ -4828,6 +4828,13 @@ export const GENEX_WORDS = {
     copied: t("Copied"),
     /** The public link's label in the dialog, beside the globe. */
     publicLink: t("Public:"),
+    /** The public link's own press, its pencil: the field it opens, its Save and the line under it. */
+    changeLink: t("Change the link"),
+    newLink: t("New link"),
+    saveLink: t("Save"),
+    linkSaved: t("Link saved"),
+    oldLinkWorks: t("The old link will still open the game"),
+    changesLeft: (count: number) => t("{count, plural, one {# change left} other {# changes left}}", { count }),
     /** The tested draft, while players do not have it yet: its label, its Copy, and the line under it. */
     testLink: t("Test link:"),
     copyTestLinkLabel: t("Copy the test link"),

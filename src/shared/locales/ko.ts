@@ -2363,6 +2363,11 @@ export default {
   "Nothing is failing.": "실패하는 게 없어요.",
   "Nothing is installing.": "설치 중인 게 없어요.",
   "Nothing is online for this game yet": "이 게임은 아직 온라인에 올라간 게 없어요",
+  "Give the link a letter or a number.": "링크에 글자나 숫자를 넣어 주세요.",
+  "Another game already has this link. Try another one.":
+    "다른 게임이 이미 이 링크를 쓰고 있어요. 다른 링크로 해 보세요.",
+  "This game has used all its link changes.": "이 게임은 링크 변경 횟수를 모두 썼어요.",
+  "Genex keeps this link for itself. Try another one.": "이 링크는 Genex가 쓰는 링크예요. 다른 링크로 해 보세요.",
   "Give the game a name with a letter or a number in it.": "글자나 숫자가 들어간 이름을 게임에 붙여 주세요.",
   "Nothing kept yet": "아직 유지된 라운드 없음",
   "Nothing made": "만든 것 없음",

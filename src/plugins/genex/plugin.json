@@ -370,6 +370,10 @@
       "label": "Rename the game"
     },
     {
+      "name": "publish-link",
+      "label": "Change the game's link"
+    },
+    {
       "name": "publish-allow-upload",
       "label": "Publish again"
     },

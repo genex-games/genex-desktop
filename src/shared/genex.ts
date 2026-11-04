@@ -32,6 +32,8 @@ export const GenexAction = {
   PublishRemoveWeb: "publish-remove-web",
   /** Rename the game: on Genex at once when it is there, else kept for its first publish. */
   PublishName: "publish-name",
+  /** Change the game's link on Genex; its old link keeps opening the game. */
+  PublishLink: "publish-link",
   PublishAllowUpload: "publish-allow-upload",
   PublishOpen: "publish-open",
   PublishBadge: "publish-badge",
@@ -60,6 +62,7 @@ export const GENEX_ACCOUNT_ACTIONS: readonly GenexAction[] = [
   GenexAction.CloudBuild,
   GenexAction.PublishRemoveWeb,
   GenexAction.PublishName,
+  GenexAction.PublishLink,
   GenexAction.PublishAllowUpload,
   GenexAction.PublishOpen,
   GenexAction.PublishBadge,
@@ -152,6 +155,24 @@ export interface GenexGameManifest {
 
 /** The longest name a game is listed under on Genex. */
 export const GENEX_TITLE_MAX_CHARS = 60;
+
+/** The longest game link Genex gives: one DNS label. */
+export const GENEX_SLUG_MAX_CHARS = 63;
+
+/**
+ * A game's link as Genex spells it from what was typed (Genex's own `slugify`): lower case, each run
+ * of anything but a-z and 0-9 one dash, none at either end, at most {@link GENEX_SLUG_MAX_CHARS};
+ * "" when nothing is left.
+ */
+export function genexSlug(value: string): string {
+  return value
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, GENEX_SLUG_MAX_CHARS)
+    .replace(/-+$/, "");
+}
 
 /** A name to list a game under: one line, trimmed, no leading dashes, at most the cap; null when nothing is left. */
 export function cleanGenexTitle(value: unknown): string | null {
@@ -618,6 +639,13 @@ export interface GenexPublishState {
    * and a web version shows the web version, so its page shows the apps only once this is false.
    */
   hostedWeb?: boolean;
+  /** The name Genex lists the game under, from the same owner read; absent while unknown. */
+  hostedTitle?: string;
+  /**
+   * How many more times the owner may change the game's link, from the same owner read: null when
+   * Genex sets no limit for them, absent while unknown (or from a Genex that does not say).
+   */
+  renamesLeft?: number | null;
   /** The game's project as remixers get it, answered beside the record like the cover. */
   remix?: GenexRemixRecord;
 }

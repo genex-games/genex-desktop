@@ -6,6 +6,7 @@
   "Blender server address": "Blenderサーバーのアドレス",
   "Build an app on Genex": "Genexでアプリをつくる",
   "Cancel sign-in": "サインインをキャンセル",
+  "Change the game's link": "ゲームのリンクを変更",
   "Connect Genex": "Genexを接続",
   "Developer ID to sign with (empty: the only one in your keychain)": "署名に使うDeveloper ID（空欄：キーチェーン内の唯一のもの）",
   "Disconnect Genex": "Genexの接続を解除",

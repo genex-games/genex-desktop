@@ -2477,7 +2477,12 @@ export default {
   "Nothing is failing.": "Rien n’échoue.",
   "Nothing is installing.": "Rien n’est en cours d’installation.",
   "Nothing is online for this game yet": "Rien n’est encore en ligne pour ce jeu",
-  "Give the game a name with a letter or a number in it.": "Donne au jeu un nom avec au moins une lettre ou un chiffre.",
+  "Give the link a letter or a number.": "Mets au moins une lettre ou un chiffre dans le lien.",
+  "Another game already has this link. Try another one.": "Un autre jeu a déjà ce lien. Essaie-en un autre.",
+  "This game has used all its link changes.": "Ce jeu a utilisé tous ses changements de lien.",
+  "Genex keeps this link for itself. Try another one.": "Genex garde ce lien pour lui. Essaie-en un autre.",
+  "Give the game a name with a letter or a number in it.":
+    "Donne au jeu un nom avec au moins une lettre ou un chiffre.",
   "Nothing kept yet": "Rien de gardé pour l’instant",
   "Nothing made": "Rien de produit",
   "Nothing made yet": "Rien de créé pour l’instant",

@@ -96,6 +96,8 @@ export const GenexRoute = {
   Lanes: "/api/generations/lanes",
   /** A game's own record on Genex: `PATCH { title }` renames it, moving no link. */
   project: (id: string) => `/api/projects/${encodeURIComponent(id)}`,
+  /** Move a game to a new link (`POST { name }`): its old link keeps opening it. */
+  rename: (id: string) => `/api/projects/${encodeURIComponent(id)}/rename`,
   projectBySlug: (slug: string) => `/api/projects/by-slug/${encodeURIComponent(slug)}`,
   /** Whether a published game is open to remixers (`{ private }`), as its owner sets it on genex.games. */
   visibility: (id: string) => `/api/projects/${encodeURIComponent(id)}/visibility`,
