@@ -393,7 +393,25 @@ export function gameChanged(state: PlayState, game: Pick<PlayGame, "id" | "slug"
         entry.slug === game.slug ? { ...entry, slug: next.slug, title: next.title, coverUrl: next.coverUrl } : entry,
       )
     : state.recent.filter((entry) => entry.slug !== game.slug);
-  return { ...state, feeds, recent };
+  return { ...state, feeds, recent, ...pageFollows(state, game, next) };
+}
+
+/**
+ * A changed game's own page: what Play read of it shows the change, kept under its new link once it
+ * moved, and the page shown follows it there.
+ */
+function pageFollows(
+  state: PlayState,
+  game: Pick<PlayGame, "id" | "slug">,
+  next: PlayGame | null,
+): Pick<PlayState, "games" | "view"> {
+  const read = state.games[game.slug];
+  if (!next || !read?.game || read.game.id !== game.id) return { games: state.games, view: state.view };
+  const { [game.slug]: _old, ...others } = state.games;
+  const games = { ...others, [next.slug]: { ...read, game: { ...read.game, ...next } } };
+  const { view } = state;
+  const shown = view.page === PlayPage.Game && view.slug === game.slug;
+  return { games, view: shown ? { ...view, slug: next.slug } : view };
 }
 
 /**

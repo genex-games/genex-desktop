@@ -2,10 +2,11 @@
  * Newer builds of installed games: each installed game's page is read from the catalog, and a build
  * for this computer newer than the installed one is told once per version (a notice: "New version ·
  * 120 MB. It updates when you play."). What was told is kept beside the installs, so a restart does
- * not ring again. Nothing is downloaded here: the game updates when it is next played.
+ * not ring again. Nothing is downloaded here: the game updates when it is next played. A game whose
+ * page answers under another link (its owner changed it) moves to that link first.
  */
 import path from "node:path";
-import type { PlayGameDetail } from "../../shared/play.ts";
+import { isPlaySlug, type PlayGameDetail } from "../../shared/play.ts";
 import { buildFor, type InstalledGame, type NativeHost } from "../../shared/play-native.ts";
 import { atomicWriteJson, readJsonIfExists } from "../../substrate/fsx.ts";
 
@@ -31,6 +32,38 @@ export interface NativeUpdateDeps {
   game(slug: string): Promise<PlayGameDetail>;
   /** Tell one update. */
   tell(update: NativeUpdate): unknown;
+  /** Move an installed game to its new link (`NativeInstaller.follow`); true once it moved. */
+  follow?(from: string, to: string): Promise<boolean>;
+}
+
+/** What following games to new links works with. */
+export type LinkFollowDeps = Pick<NativeUpdateDeps, "installed" | "game"> & {
+  follow(from: string, to: string): Promise<boolean>;
+};
+
+/** The link an installed game is at after following its page there: the page's when it moved, else its own. */
+async function followed(
+  deps: Pick<NativeUpdateDeps, "follow">,
+  game: InstalledGame,
+  page: PlayGameDetail | null,
+): Promise<string> {
+  const moved = page && isPlaySlug(page.slug) && page.slug !== game.slug;
+  if (!moved || !deps.follow) return game.slug;
+  return (await deps.follow(game.slug, page.slug).catch(() => false)) ? page.slug : game.slug;
+}
+
+/**
+ * Move every installed game whose page answers under another link to that link: what an owner's
+ * Change link sets off at once, so their own copy keeps playing. Answers the links moved to.
+ */
+export async function followMovedLinks(deps: LinkFollowDeps): Promise<string[]> {
+  const moved: string[] = [];
+  for (const game of await deps.installed()) {
+    const page = await deps.game(game.slug).catch(() => null);
+    const slug = await followed(deps, game, page);
+    if (slug !== game.slug) moved.push(slug);
+  }
+  return moved;
 }
 
 /** The versions told so far, by slug; anything unreadable reads as none. */
@@ -51,17 +84,18 @@ export async function checkNativeUpdates(deps: NativeUpdateDeps): Promise<Native
   const updates: NativeUpdate[] = [];
   for (const game of await deps.installed()) {
     const page = await deps.game(game.slug).catch(() => null);
+    const slug = await followed(deps, game, page);
     const build = page ? buildFor(page.native?.builds ?? [], deps.host) : null;
     if (!build || build.version === game.version) continue;
-    if (already[game.slug] === build.version) continue;
+    if ((already[slug] ?? already[game.slug]) === build.version) continue;
     const update = {
-      slug: game.slug,
+      slug,
       title: page?.title ?? game.title,
       version: build.version,
       sizeBytes: build.sizeBytes,
     };
     await deps.tell(update);
-    already[game.slug] = build.version;
+    already[slug] = build.version;
     updates.push(update);
   }
   if (updates.length > 0) await atomicWriteJson(path.join(deps.root, TOLD), already);

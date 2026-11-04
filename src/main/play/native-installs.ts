@@ -3,7 +3,8 @@
  * own folder, never the person's games and never a folder an agent writes. One install runs at a
  * time and the rest wait; leaving the page does not stop one. Each game keeps
  * `<root>/<slug>/<version>/` (the app, read-only to the game) beside `<root>/<slug>/saves/` (its
- * home), and `<root>/index.json` lists what is installed. Removing a game keeps its saves.
+ * home), and `<root>/index.json` lists what is installed. Removing a game keeps its saves; a game
+ * whose owner changed its link moves to the new one, saves and all.
  * Electron-free: the catalog read, the fetch, the tools and the push to the window are deps.
  */
 import { lstat, mkdir, mkdtemp, readdir, rename, rm, statfs } from "node:fs/promises";
@@ -415,6 +416,32 @@ export class NativeInstaller {
     });
     await this.sweep(slug);
     await this.#push();
+  }
+
+  /** Whether `slug` is installing or waiting to. */
+  #installing(slug: string): boolean {
+    return this.#running?.slug === slug || this.#queue.some((job) => job.slug === slug);
+  }
+
+  /**
+   * Move an installed game to the link its page answers under now (its owner changed it): its
+   * folder, versions and saves together, and its record, so it plays and updates as before. Nothing
+   * moves while it runs or installs, or when something is at the new link already; false then.
+   */
+  async follow(from: string, to: string): Promise<boolean> {
+    if (!isPlaySlug(from) || !isPlaySlug(to) || from === to) return false;
+    if (this.#deps.inUse?.(from) || this.#installing(from) || this.#installing(to)) return false;
+    const games = (await this.#indexNow()).games;
+    const record = games[from];
+    if (!record || games[to]) return false;
+    if (await lstat(path.join(this.folder, to)).catch(() => null)) return false;
+    await rename(path.join(this.folder, from), path.join(this.folder, to));
+    await this.#changeIndex((all) => {
+      delete all[from];
+      all[to] = { ...record, slug: to };
+    });
+    await this.#push();
+    return true;
   }
 
   /** Where an installed game's app is, or null. */

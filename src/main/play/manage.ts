@@ -1,6 +1,6 @@
 /**
  * Managing a published game from its Play card against the genex.games API: the owner's remixing,
- * cover, Unpublish and Delete, and the mobile flag and tags an admin sets. genex.games decides who
+ * name, link, Players fact, cover, Unpublish and Delete, and the mobile flag and tags an admin sets. genex.games decides who
  * may (its admin list never leaves it); a refusal throws with its status. Every id, change and
  * picture is checked here before anything is sent. Electron-free, like the gallery: the request, the
  * token and the cover upload come in as deps.
@@ -9,6 +9,7 @@ import {
   isPlayCoverType,
   isPlayGameChange,
   isPlayGameId,
+  isPlayLink,
   PLAY_COVER_MAX_BYTES,
   type PlayChangeResult,
   PlayChangeKind,
@@ -21,6 +22,7 @@ import {
 import { GalleryError, type GalleryRequest, imageUrl, isRecord, SignInNeeded } from "./gallery.ts";
 
 /** HTTP statuses a change reads apart. */
+const HTTP_BAD_REQUEST = 400;
 const HTTP_UNAUTHORIZED = 401;
 const HTTP_CONFLICT = 409;
 const HTTP_UNPROCESSABLE = 422;
@@ -32,6 +34,7 @@ export const ManageRoute = {
   visibility: (id: string) => `/api/projects/${encodeURIComponent(id)}/visibility`,
   unpublish: (id: string) => `/api/projects/${encodeURIComponent(id)}/unpublish`,
   project: (id: string) => `/api/projects/${encodeURIComponent(id)}`,
+  rename: (id: string) => `/api/projects/${encodeURIComponent(id)}/rename`,
   coverUpload: (id: string) => `/api/projects/${encodeURIComponent(id)}/cover/upload-url`,
   coverCommit: (id: string) => `/api/projects/${encodeURIComponent(id)}/cover/commit`,
 } as const;
@@ -42,6 +45,8 @@ export const ManageError = {
   ExternalRepo: "external_repo",
   /** The cover was refused; its `reason` says why. */
   CoverRejected: "cover_rejected",
+  /** The game has used every link change genex.games gives it. */
+  RenameLimit: "rename_limit_reached",
 } as const;
 export type ManageError = (typeof ManageError)[keyof typeof ManageError];
 
@@ -113,13 +118,41 @@ function changeCall(
       return { method: "POST", route: ManageRoute.unpublish(id) };
     case PlayChangeKind.Delete:
       return { method: "DELETE", route: ManageRoute.project(id) };
+    case PlayChangeKind.Rename:
+      return { method: "PATCH", route: ManageRoute.project(id), body: { title: change.title } };
+    case PlayChangeKind.Players:
+      return { method: "PATCH", route: ManageRoute.project(id), body: { multiplayer: change.multiplayer } };
+    case PlayChangeKind.Link:
+      return { method: "POST", route: ManageRoute.rename(id), body: { name: change.slug } };
   }
 }
 
-/** What a change that went through answers: Tags what was stored. */
+/**
+ * Why genex.games kept a game's old link, read from its refusal, or null for a refusal of another
+ * kind: the cap on link changes, a link another game has (409), one genex.games keeps (400).
+ */
+function linkKept(answer: { status: number; body: unknown }): PlayChangeResult | null {
+  if (answer.status === HTTP_CONFLICT)
+    return {
+      outcome:
+        errorOf(answer.body) === ManageError.RenameLimit ? PlayChangeOutcome.LinkLimit : PlayChangeOutcome.LinkTaken,
+    };
+  return answer.status === HTTP_BAD_REQUEST ? { outcome: PlayChangeOutcome.LinkReserved } : null;
+}
+
+/** What genex.games kept back of a change instead of throwing: remixing for an own repository, a link. */
+function keptOf(asked: PlayGameChange, answer: { status: number; body: unknown }): PlayChangeResult | null {
+  if (asked.kind === PlayChangeKind.Link) return linkKept(answer);
+  const ownRepo = answer.status === HTTP_CONFLICT && errorOf(answer.body) === ManageError.ExternalRepo;
+  return asked.kind === PlayChangeKind.Remixing && ownRepo ? { outcome: PlayChangeOutcome.OwnRepo } : null;
+}
+
+/** What a change that went through answers: Tags what was stored, Link the link the game has now. */
 function changeResult(change: PlayGameChange, body: unknown): PlayChangeResult {
-  if (change.kind !== PlayChangeKind.Tags) return { outcome: PlayChangeOutcome.Done };
   const project = isRecord(body) && isRecord(body.project) ? body.project : {};
+  if (change.kind === PlayChangeKind.Link)
+    return { outcome: PlayChangeOutcome.Done, slug: isPlayLink(project.slug) ? project.slug : change.slug };
+  if (change.kind !== PlayChangeKind.Tags) return { outcome: PlayChangeOutcome.Done };
   const stored = Array.isArray(project.categories) ? project.categories : change.categories;
   return { outcome: PlayChangeOutcome.Done, categories: stored.filter((tag) => typeof tag === "string") };
 }
@@ -170,8 +203,8 @@ export function createPlayManage(deps: PlayManageDeps) {
     if (!isPlayGameChange(asked)) throw new Error(MESSAGE.BadChange);
     const { method, route, body } = changeCall(gameId, asked);
     const answer = await request(route, { method, token: await auth(), ...(body === undefined ? {} : { body }) });
-    const ownRepo = answer.status === HTTP_CONFLICT && errorOf(answer.body) === ManageError.ExternalRepo;
-    if (asked.kind === PlayChangeKind.Remixing && ownRepo) return { outcome: PlayChangeOutcome.OwnRepo };
+    const kept = keptOf(asked, answer);
+    if (kept) return kept;
     const result = changeResult(asked, checked(route, answer));
     changed();
     return result;

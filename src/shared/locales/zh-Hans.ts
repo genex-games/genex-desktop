@@ -5821,4 +5821,20 @@ export default {
   "This game was taken down, so Genex keeps its web version for now.":
     "这款游戏已被下架，所以 Genex 暂时保留它的网页版。",
   "Genex couldn’t finish removing the web version. Press Remove again.": "Genex 没能完成移除网页版。请再按一次“移除”。",
+  "Change link": "更改链接",
+  "Change the link": "更改链接",
+  "Change the link of {title}": "更改 {title} 的链接",
+  "Couldn’t change Players.": "无法更改玩家人数。",
+  "Couldn’t change the link.": "无法更改链接。",
+  "Couldn’t rename the game.": "无法重命名游戏。",
+  "Link saved": "链接已保存",
+  "New link": "新链接",
+  "Rename {title}": "重命名 {title}",
+  "Renamed to {title}": "已重命名为 {title}",
+  "The game is at {address} now": "游戏现在位于 {address}",
+  "The name players see on Play and genex.games.": "玩家在 Play 和 genex.games 上看到的名称。",
+  "The old link will still open the game": "旧链接仍会打开这个游戏",
+  "The old link will still open the game, for players who already have it too.":
+    "旧链接仍会打开这个游戏，已经有这个链接的玩家也一样。",
+  "{count, plural, one {# change left} other {# changes left}}": "{count, plural, other {还可更改 # 次}}",
 } satisfies LocaleCatalog;

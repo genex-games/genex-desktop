@@ -39,6 +39,13 @@ export function changedGame(game: PlayGame, change: PlayGameChange, result: Play
       // Off hides Remix at once; whether it shows again is the gallery's to say (a game for sale never
       // offers it), on the next read.
       return { ...curated(game, { remixOff: !change.allowed }), remixable: change.allowed && game.remixable };
+    case PlayChangeKind.Rename:
+      return { ...game, title: change.title };
+    case PlayChangeKind.Link:
+      return { ...game, slug: ("slug" in result ? result.slug : undefined) ?? change.slug };
+    case PlayChangeKind.Players:
+      // A single-player game counts nobody online; a multiplayer one's count is the next read's to say.
+      return { ...game, multiplayer: change.multiplayer, online: change.multiplayer ? game.online : null };
   }
 }
 

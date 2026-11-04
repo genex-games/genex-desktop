@@ -5,7 +5,10 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { checkNativeUpdates, type NativeUpdate } from "../../src/main/play/native-updates.ts";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
+import { nativeInstalls, SAVES } from "../../src/main/play/native-installs.ts";
+import { checkNativeUpdates, followMovedLinks, type NativeUpdate } from "../../src/main/play/native-updates.ts";
 import type { PlayGameDetail } from "../../src/shared/play.ts";
 import {
   type InstalledGame,
@@ -103,5 +106,92 @@ describe("newer builds of installed games", () => {
       tell: (update) => void told.push(update),
     });
     assert.deepEqual(told, []);
+  });
+});
+
+/** An installer over `root` with `games` installed (each version folder and its saves on disk), pages as `pages` says. */
+async function installedHere(games: InstalledGame[], pages: (slug: string) => PlayGameDetail, inUse = () => false) {
+  const root = await tmpDir("native-follow-");
+  const records = Object.fromEntries(
+    games.map((game) => [
+      game.slug,
+      { ...game, entry: "X.app", executable: "X", bundleId: "x", bundleName: "X", engine: null, windowed: false },
+    ]),
+  );
+  for (const game of games) {
+    await mkdir(path.join(root, game.slug, game.version), { recursive: true });
+    await mkdir(path.join(root, game.slug, SAVES), { recursive: true });
+    await writeFile(path.join(root, game.slug, SAVES, "slot1.sav"), `${game.slug} level 3`);
+  }
+  await writeFile(path.join(root, "index.json"), JSON.stringify({ version: 1, games: records }));
+  const installs = nativeInstalls({
+    root,
+    host: HOST,
+    hosts: new Set(),
+    game: async (slug) => pages(slug),
+    fetch: (async () => new Response(null, { status: 404 })) as typeof fetch,
+    run: async () => ({ code: 0, stdout: "", stderr: "" }),
+    now: Date.now,
+    publish: () => undefined,
+    inUse,
+  });
+  const deps = {
+    installed: async () => (await installs.state()).installed,
+    game: async (slug: string) => pages(slug),
+    follow: (from: string, to: string) => installs.follow(from, to),
+  };
+  return { root, installs, deps };
+}
+
+describe("an installed game whose owner changed its link", () => {
+  const moved = (slug: string) => (slug === "bodycam-game" ? "street-patrol" : slug);
+
+  it("moves to the new link with its versions and saves, and plays from there", async () => {
+    const { root, installs, deps } = await installedHere(
+      [installed("bodycam-game", "1.0"), installed("frigate", "1.1")],
+      (slug) => page(moved(slug), "1.0"),
+    );
+    assert.deepEqual(await followMovedLinks(deps), ["street-patrol"]);
+    assert.deepEqual((await installs.state()).installed.map((game) => game.slug).sort(), ["frigate", "street-patrol"]);
+    assert.equal((await installs.record("street-patrol"))?.version, "1.0");
+    assert.equal(await installs.record("bodycam-game"), null);
+    assert.equal(await installs.appOf("street-patrol"), path.join(root, "street-patrol", "1.0", "X.app"));
+    assert.equal(await readFile(path.join(root, "street-patrol", SAVES, "slot1.sav"), "utf8"), "bodycam-game level 3");
+    assert.deepEqual((await readdir(root)).sort(), ["frigate", "index.json", "street-patrol"]);
+    assert.deepEqual(await followMovedLinks(deps), [], "once is enough");
+  });
+
+  it("stays where it is while it runs, when something is at the new link, or for a link of the wrong shape", async () => {
+    const running = await installedHere(
+      [installed("bodycam-game", "1.0")],
+      (slug) => page(moved(slug), "1.0"),
+      () => true,
+    );
+    assert.deepEqual(await followMovedLinks(running.deps), []);
+    assert.ok(await running.installs.record("bodycam-game"), "kept while it runs");
+    const taken = await installedHere([installed("bodycam-game", "1.0")], (slug) => page(moved(slug), "1.0"));
+    await mkdir(path.join(taken.root, "street-patrol", SAVES), { recursive: true });
+    assert.deepEqual(await followMovedLinks(taken.deps), [], "another game's saves are never mixed in");
+    for (const hostile of ["../escape", "Street Patrol", "", "a/b"]) {
+      const odd = await installedHere([installed("bodycam-game", "1.0")], (slug) => ({
+        ...page(slug, "1.0"),
+        slug: hostile,
+      }));
+      assert.deepEqual(await followMovedLinks(odd.deps), [], JSON.stringify(hostile));
+      assert.deepEqual((await readdir(odd.root)).sort(), ["bodycam-game", "index.json"]);
+    }
+  });
+
+  it("is followed by the update check, which then tells its update under the new link", async () => {
+    const { root, installs, deps } = await installedHere([installed("bodycam-game", "1.0")], (slug) =>
+      page(moved(slug), "1.1"),
+    );
+    const told: NativeUpdate[] = [];
+    await checkNativeUpdates({ root, host: HOST, ...deps, tell: (update) => void told.push(update) });
+    assert.deepEqual(
+      told.map((update) => update.slug),
+      ["street-patrol"],
+    );
+    assert.ok(await installs.record("street-patrol"));
   });
 });

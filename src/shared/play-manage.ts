@@ -1,11 +1,12 @@
 /**
  * Managing a published game from its Play card, as genex.games' card menu does: the owner's items
- * (copy its link, turn remixing off or on, change its cover, unpublish, delete) and, for an account
+ * (copy its link, turn remixing off or on, rename it, change its link, change its cover, set its
+ * Players fact on the game's page, unpublish, delete) and, for an account
  * genex.games names an admin, mobile support and tags on any game. genex.games' server checks every
  * one of these calls again (its admin list never leaves it), so what this module decides is only
  * what a card offers.
  */
-import { GENEX_COVER_MAX_BYTES } from "./genex.ts";
+import { cleanGenexTitle, GENEX_COVER_MAX_BYTES, genexSlug } from "./genex.ts";
 import { PLAY_SHELF_TABS, PlayCategory, type PlayGame, PlayShelf } from "./play.ts";
 
 /** A game's mobile flag, as an admin sets it. Wire values: never rename one. */
@@ -35,6 +36,10 @@ export const PlayChangeKind = {
   Remixing: "remixing",
   Unpublish: "unpublish",
   Delete: "delete",
+  Rename: "rename",
+  Link: "link",
+  /** Whether an apps-only game is multiplayer: its owner says, since no web build tells genex.games. */
+  Players: "players",
 } as const;
 export type PlayChangeKind = (typeof PlayChangeKind)[keyof typeof PlayChangeKind];
 
@@ -44,20 +49,32 @@ export type PlayGameChange =
   | { kind: typeof PlayChangeKind.Tags; categories: string[] }
   | { kind: typeof PlayChangeKind.Remixing; allowed: boolean }
   | { kind: typeof PlayChangeKind.Unpublish }
-  | { kind: typeof PlayChangeKind.Delete };
+  | { kind: typeof PlayChangeKind.Delete }
+  | { kind: typeof PlayChangeKind.Rename; title: string }
+  | { kind: typeof PlayChangeKind.Link; slug: string }
+  | { kind: typeof PlayChangeKind.Players; multiplayer: boolean };
 
 /** How a change went. Values are the app's own. */
 export const PlayChangeOutcome = {
   Done: "done",
   /** Remixing cannot be turned on from here: the game's source is the owner's own repository. */
   OwnRepo: "own-repo",
+  /** The new link is another game's. */
+  LinkTaken: "link-taken",
+  /** The game has used every link change genex.games gives it. */
+  LinkLimit: "link-limit",
+  /** genex.games keeps the new link for itself. */
+  LinkReserved: "link-reserved",
 } as const;
 export type PlayChangeOutcome = (typeof PlayChangeOutcome)[keyof typeof PlayChangeOutcome];
 
-/** What a change answers: Tags what was stored. */
+/** Why a change kept the game as it was, as a dialog reads it apart from a failure. */
+type PlayChangeKept = Exclude<PlayChangeOutcome, typeof PlayChangeOutcome.Done>;
+
+/** What a change answers: Tags what was stored, Link the link the game has now. */
 export type PlayChangeResult =
-  | { outcome: typeof PlayChangeOutcome.Done; categories?: string[] }
-  | { outcome: typeof PlayChangeOutcome.OwnRepo };
+  | { outcome: typeof PlayChangeOutcome.Done; categories?: string[]; slug?: string }
+  | { outcome: PlayChangeKept };
 
 /** Why genex.games kept the old cover. Wire values: never rename one. */
 export const PlayCoverRefusal = {
@@ -141,6 +158,14 @@ export function isTaggedCategories(categories: unknown): categories is string[] 
   );
 }
 
+/** Whether a value is a name Rename sends: already as genex.games' name rules leave it. */
+export const isPlayTitle = (value: unknown): value is string =>
+  typeof value === "string" && cleanGenexTitle(value) === value;
+
+/** Whether a value is a link Change link sends: already as genex.games spells a link. */
+export const isPlayLink = (value: unknown): value is string =>
+  typeof value === "string" && value !== "" && genexSlug(value) === value;
+
 /** A gallery id the app will put in an address: letters, digits, dashes and underscores. */
 export const isPlayGameId = (value: unknown): value is string =>
   typeof value === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(value);
@@ -162,6 +187,12 @@ export function isPlayGameChange(value: unknown): value is PlayGameChange {
     case PlayChangeKind.Unpublish:
     case PlayChangeKind.Delete:
       return true;
+    case PlayChangeKind.Rename:
+      return isPlayTitle(change.title);
+    case PlayChangeKind.Link:
+      return isPlayLink(change.slug);
+    case PlayChangeKind.Players:
+      return typeof change.multiplayer === "boolean";
     default:
       return false;
   }
@@ -171,6 +202,8 @@ export function isPlayGameChange(value: unknown): value is PlayGameChange {
 export const PlayCardAction = {
   CopyLink: "copy-link",
   Remixing: "remixing",
+  Rename: "rename",
+  Link: "link",
   Cover: "cover",
   Mobile: "mobile",
   Tags: "tags",
@@ -192,6 +225,19 @@ export interface PlayCardMenu {
   end: PlayCardAction[];
 }
 
+/** The owner's own items, Rename and Change link above Change cover. */
+const OWNER_ITEMS: readonly PlayCardAction[] = [
+  PlayCardAction.CopyLink,
+  PlayCardAction.Remixing,
+  PlayCardAction.Rename,
+  PlayCardAction.Link,
+  PlayCardAction.Cover,
+];
+
+/** Whether the viewer made the game: its owner's items and its Players switch are theirs. */
+export const ownsPlayGame = (game: Pick<PlayGame, "author">, viewer: PlayViewerRights | null): boolean =>
+  viewer !== null && game.author.id !== null && game.author.id === viewer.accountId;
+
 /**
  * The card menu a viewer gets on a published game, by genex.games' own rules: the owner gets their
  * items, an admin mobile support and tags on any game, and both Change cover, Unpublish and Delete.
@@ -199,10 +245,10 @@ export interface PlayCardMenu {
  */
 export function playCardMenu(game: Pick<PlayGame, "author">, viewer: PlayViewerRights | null): PlayCardMenu | null {
   if (!viewer) return null;
-  const own = game.author.id !== null && game.author.id === viewer.accountId;
+  const own = ownsPlayGame(game, viewer);
   if (!own && !viewer.isAdmin) return null;
   return {
-    game: own ? [PlayCardAction.CopyLink, PlayCardAction.Remixing, PlayCardAction.Cover] : [PlayCardAction.Cover],
+    game: own ? [...OWNER_ITEMS] : [PlayCardAction.Cover],
     admin: viewer.isAdmin ? [PlayCardAction.Mobile, PlayCardAction.Tags] : [],
     end: [PlayCardAction.Unpublish, PlayCardAction.Delete],
   };

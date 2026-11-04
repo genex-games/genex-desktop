@@ -6168,4 +6168,20 @@ export default {
     "このゲームは公開停止中のため、Genex はウェブ版をしばらく残します。",
   "Genex couldn’t finish removing the web version. Press Remove again.":
     "Genex はウェブ版を最後まで削除できませんでした。もう一度「削除」を押してください。",
+  "Change link": "リンクを変更",
+  "Change the link": "リンクを変更",
+  "Change the link of {title}": "{title}のリンクを変更",
+  "Couldn’t change Players.": "プレイヤー設定を変更できませんでした。",
+  "Couldn’t change the link.": "リンクを変更できませんでした。",
+  "Couldn’t rename the game.": "ゲーム名を変更できませんでした。",
+  "Link saved": "リンクを保存しました",
+  "New link": "新しいリンク",
+  "Rename {title}": "{title}の名前を変更",
+  "Renamed to {title}": "{title}に名前を変更しました",
+  "The game is at {address} now": "ゲームは{address}に移りました",
+  "The name players see on Play and genex.games.": "プレイヤーがPlayとgenex.gamesで見る名前です。",
+  "The old link will still open the game": "古いリンクでも引き続きゲームが開きます",
+  "The old link will still open the game, for players who already have it too.":
+    "古いリンクでも引き続きゲームが開きます。すでに持っているプレイヤーも同じです。",
+  "{count, plural, one {# change left} other {# changes left}}": "{count, plural, other {あと#回変更できます}}",
 } satisfies LocaleCatalog;

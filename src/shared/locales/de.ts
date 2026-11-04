@@ -6317,4 +6317,21 @@ export default {
     "Dieses Spiel wurde entfernt, deshalb behält Genex seine Web-Version vorerst.",
   "Genex couldn’t finish removing the web version. Press Remove again.":
     "Genex konnte die Web-Version nicht ganz entfernen. Drück noch mal auf Entfernen.",
+  "Change link": "Link ändern",
+  "Change the link": "Link ändern",
+  "Change the link of {title}": "Link von {title} ändern",
+  "Couldn’t change Players.": "Spieler konnte nicht geändert werden.",
+  "Couldn’t change the link.": "Der Link konnte nicht geändert werden.",
+  "Couldn’t rename the game.": "Das Spiel konnte nicht umbenannt werden.",
+  "Link saved": "Link gespeichert",
+  "New link": "Neuer Link",
+  "Rename {title}": "{title} umbenennen",
+  "Renamed to {title}": "Heißt jetzt {title}",
+  "The game is at {address} now": "Das Spiel ist jetzt unter {address}",
+  "The name players see on Play and genex.games.": "Der Name, den Spieler in Play und auf genex.games sehen.",
+  "The old link will still open the game": "Der alte Link öffnet das Spiel weiterhin",
+  "The old link will still open the game, for players who already have it too.":
+    "Der alte Link öffnet das Spiel weiterhin, auch bei allen, die ihn schon haben.",
+  "{count, plural, one {# change left} other {# changes left}}":
+    "{count, plural, one {noch # Änderung} other {noch # Änderungen}}",
 } satisfies LocaleCatalog;

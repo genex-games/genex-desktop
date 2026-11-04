@@ -3,7 +3,7 @@
  * game's clip or pictures to the window's edge, with its title, maker and counts, one primary block
  * that carries the whole life of the game on this computer (install, installing, play, playing,
  * update, elsewhere, failed), and Like, Comments and Share over them; under it four facts (the
- * systems it runs on, its size, its players, its engine), its shots once it has two pictures or
+ * systems it runs on, its size, its players, which its owner sets for an app-only game, its engine), its shots once it has two pictures or
  * more, About, and the game's Store (`GameStore.tsx`), once it sells something. A native game opens
  * here from its card; any game opens here from a link or the profile's item shelf, and one with a
  * web build that is not installed here plays in the viewer, as its card does. Installing goes on
@@ -41,6 +41,7 @@ import { NATIVE_WORDS, nativeHereWords, notHereWords, PLAY_CARD_MENU_WORDS, PLAY
 import { formatCount, type LikeShown, likeFlipped } from "./play-model.ts";
 import { GamePhase, type GameStanding, gameStanding, installPercent, minutesSince } from "./native-model.ts";
 import { PlayPageFrame } from "./PlayPageFrame.tsx";
+import { PlayersValue } from "./PlayersFact.tsx";
 import { PlatformMarks, platformNames } from "./NativeBadge.tsx";
 import { GameStore } from "./GameStore.tsx";
 import { GameHero, HeroPause, useHeroMoves, useReducedMotion, useSlideshow } from "./GameHero.tsx";
@@ -423,7 +424,8 @@ function Fact({
 }: {
   mark: JSX.Element;
   label: string;
-  value: string;
+  /** Its words, or a value that draws itself (the owner's Players menu). */
+  value: string | JSX.Element;
   hook: string;
 }): JSX.Element {
   return (
@@ -431,7 +433,7 @@ function Fact({
       <span className="game-fact-mark">{mark}</span>
       <span className="game-fact-words">
         <span className="game-fact-label">{label}</span>
-        <span className="game-fact-value">{value}</span>
+        {typeof value === "string" ? <span className="game-fact-value">{value}</span> : value}
       </span>
     </div>
   );
@@ -462,7 +464,7 @@ function Facts({ game, standing }: { game: PlayGameDetail; standing: GameStandin
         hook="players"
         mark={<Icon name={game.multiplayer ? "users" : "character"} size={24} />}
         label={facts.players}
-        value={game.multiplayer ? WORDS.multiplayer : WORDS.singlePlayer}
+        value={<PlayersValue game={game} />}
       />
       {engine && (
         <Fact

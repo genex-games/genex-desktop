@@ -8,7 +8,7 @@ import { describe, it } from "node:test";
 import { changedGame, curationOf, MobileShown, mobileShown } from "../../src/renderer/play/card-menu/manage-model.ts";
 import { EMPTY_FEED, FeedStatus } from "../../src/renderer/play/play-model.ts";
 import { initialPeople, LoadStatus, profileGameChanged } from "../../src/renderer/state/people.ts";
-import { createPlayStore, gameChanged, initialPlay } from "../../src/renderer/state/play.ts";
+import { createPlayStore, gameChanged, initialPlay, PlayPage, type PlayState } from "../../src/renderer/state/play.ts";
 import {
   type PlayChangeResult,
   PlayChangeKind,
@@ -103,6 +103,44 @@ describe("Play card menu: a change on the cards", () => {
       renamed.feeds[PlayCategory.Featured]?.games.map((g) => g.title),
       ["NEW", "B"],
     );
+  });
+
+  it("renames a game, moves it to its new link and sets its Players fact", () => {
+    const renamed = changedGame(game("skate"), { kind: PlayChangeKind.Rename, title: "Street Patrol" }, DONE);
+    assert.equal(renamed?.title, "Street Patrol");
+    const link = { kind: PlayChangeKind.Link, slug: "street-patrol" } as const;
+    assert.equal(changedGame(game("skate"), link, { ...DONE, slug: "street-patrol-2" })?.slug, "street-patrol-2");
+    assert.equal(changedGame(game("skate"), link, DONE)?.slug, "street-patrol", "the asked link when none is named");
+    const team = changedGame(game("skate"), { kind: PlayChangeKind.Players, multiplayer: true }, DONE);
+    assert.equal(team?.multiplayer, true);
+    const alone = changedGame(
+      { ...game("skate"), multiplayer: true, online: 4 },
+      {
+        kind: PlayChangeKind.Players,
+        multiplayer: false,
+      },
+      DONE,
+    );
+    assert.deepEqual([alone?.multiplayer, alone?.online], [false, null], "a single-player game counts nobody online");
+  });
+
+  it("follows a game's new link on its page, in Recent and in what Play read of its page", () => {
+    const detail = { ...game("skate"), likes: 1, liked: false, comments: 0, shots: [], updatedAt: null };
+    const state = {
+      ...initialPlay([{ slug: "skate", title: "SKATE", coverUrl: null }]),
+      view: { page: PlayPage.Game, slug: "skate", back: { page: PlayPage.Shelf } },
+      games: { skate: { status: FeedStatus.Ready, game: detail }, other: { status: FeedStatus.Ready, game: null } },
+    } as PlayState;
+    const next = gameChanged(state, detail, { ...detail, slug: "street-patrol", title: "Street Patrol" });
+    assert.deepEqual(next.view, { page: PlayPage.Game, slug: "street-patrol", back: { page: PlayPage.Shelf } });
+    assert.deepEqual(Object.keys(next.games).sort(), ["other", "street-patrol"]);
+    assert.equal(next.games["street-patrol"]?.game?.title, "Street Patrol");
+    assert.equal(next.games["street-patrol"]?.game?.likes, 1, "what the page read stays");
+    assert.deepEqual(next.recent[0], { slug: "street-patrol", title: "Street Patrol", coverUrl: null });
+    const elsewhere = { ...state, view: { page: PlayPage.Shelf } } as PlayState;
+    assert.deepEqual(gameChanged(elsewhere, detail, { ...detail, slug: "street-patrol" }).view, {
+      page: PlayPage.Shelf,
+    });
   });
 
   it("drops a game that left the catalog from Recent and shows a new cover there", () => {

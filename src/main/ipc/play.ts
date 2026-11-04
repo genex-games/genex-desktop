@@ -4,12 +4,19 @@ import { t } from "../../shared/i18n.ts";
 import { isPlayShelf, isPlaySlug, PlayShelf, type PlayPoint, readPlayPoint } from "../../shared/play.ts";
 import { isAccountId, isAvatarStyle, isFriendAction, isPresenceVisibility } from "../../shared/play-people.ts";
 import { isStatsPeriod } from "../../shared/play-stats.ts";
-import { isPlayCoverType, isPlayGameChange, isPlayGameId } from "../../shared/play-manage.ts";
+import {
+  isPlayCoverType,
+  isPlayGameChange,
+  isPlayGameId,
+  PlayChangeKind,
+  PlayChangeOutcome,
+} from "../../shared/play-manage.ts";
 import type { CreatorStats } from "../play/creator-stats.ts";
 import type { GameLinks } from "../play/game-links.ts";
 import type { GenexCredits } from "../play/credits.ts";
 import type { PlayGallery, PlayWorld } from "../play/gallery.ts";
 import type { PlayManage } from "../play/manage.ts";
+import { followMovedLinks } from "../play/native-updates.ts";
 import type { NativeInstaller } from "../play/native-installs.ts";
 import { isSessionAction, NO_INSTALLS, type NativeHost, SessionAction } from "../../shared/play-native.ts";
 import type { NativeSessions } from "../play/native-launch.ts";
@@ -76,7 +83,7 @@ export interface PlayIpcDeps {
 export function registerPlayIpc(handle: IpcHandle, deps: PlayIpcDeps): void {
   const { gallery, remix, viewer, people, creators, credits, web, share } = deps;
   registerPeopleIpc(handle, people);
-  registerManageIpc(handle, deps.manage);
+  registerManageIpc(handle, deps);
   // Share… hands the Mac's share menu a page of Play's website and nothing else.
   handle("studio:play.share", async (payload) => {
     const url = String(payload?.url ?? "");
@@ -209,12 +216,29 @@ function registerCommentsIpc(handle: IpcHandle, viewer: PlayIpcDeps["viewer"]): 
   handle("studio:play.uncomment", (payload) => shown().uncomment(payload?.commentId));
 }
 
+/**
+ * Move each game installed here whose link its owner just changed to the new link, in the
+ * background: the window hears it through the installs' own news.
+ */
+function followLinks(deps: Pick<PlayIpcDeps, "installs" | "gallery">): void {
+  const installs = deps.installs();
+  if (!installs) return;
+  void followMovedLinks({
+    installed: async () => (await installs.state()).installed,
+    game: (slug) => deps.gallery.game(slug),
+    follow: (from, to) => installs.follow(from, to),
+  }).catch(() => undefined);
+}
+
 /** A game's card menu: every id, change and picture type is checked here, a picture's bytes again in `manage`. */
-function registerManageIpc(handle: IpcHandle, manage: PlayManage): void {
-  handle("studio:play.manage", (payload) => {
+function registerManageIpc(handle: IpcHandle, deps: PlayIpcDeps): void {
+  const { manage } = deps;
+  handle("studio:play.manage", async (payload) => {
     if (!isPlayGameId(payload?.gameId)) throw new Error(MESSAGE.badGame);
     if (!isPlayGameChange(payload.change)) throw new Error(MESSAGE.badChange);
-    return manage.change(payload.gameId, payload.change);
+    const result = await manage.change(payload.gameId, payload.change);
+    if (payload.change.kind === PlayChangeKind.Link && result.outcome === PlayChangeOutcome.Done) followLinks(deps);
+    return result;
   });
   handle("studio:play.cover", (payload) => {
     if (!isPlayGameId(payload?.gameId)) throw new Error(MESSAGE.badGame);

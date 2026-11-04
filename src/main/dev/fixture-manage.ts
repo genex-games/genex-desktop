@@ -1,6 +1,6 @@
 /**
  * A published game's card menu in a fixture profile: genex.games' answers to turning remixing off or
- * on, Unpublish, Delete, a new cover, the mobile flag and tags, made here in the API's shapes, so the
+ * on, a new name, link or Players fact, Unpublish, Delete, a new cover, the mobile flag and tags, made here in the API's shapes, so the
  * menu and its dialogs can be checked with no socket. The game's own author (the fixture account) and
  * the `admin` fixture account may change a game; the mobile flag answers the admin alone. One of the
  * account's games ("claude-of-duty") lives in its own repository, so turning its remixing on is
@@ -9,9 +9,11 @@
  */
 import type { GalleryAnswer } from "../play/gallery.ts";
 import { ManageError, ManageRoute } from "../play/manage.ts";
+import { genexSlug } from "../../shared/genex.ts";
 import {
   isPlayCoverType,
   isPlayMobileSupport,
+  isPlayTitle,
   isTaggedCategories,
   PLAY_COVER_MAX_BYTES,
   type PlayMobileSupport,
@@ -29,6 +31,8 @@ export interface FixtureListing {
 
 /** The fixture game whose source is its owner's own repository: genex.games cannot open it to remixes. */
 const OWN_REPO_SLUG = "claude-of-duty";
+/** The link changes genex.games gives a game, as its own default. */
+const FIXTURE_LINK_CHANGES = 2;
 /** Where a fixture cover "upload" goes: nowhere, since the fixture's upload never opens a socket. */
 const FIXTURE_UPLOAD_URL = "https://fixture.invalid/cover";
 
@@ -49,6 +53,11 @@ interface ListingEdit {
   categories?: string[];
   private?: boolean;
   thumbnailUrl?: string;
+  title?: string;
+  slug?: string;
+  multiplayer?: boolean;
+  /** How many times its link changed. */
+  moves?: number;
 }
 
 /** The launch's changes to the catalog: each game's edits, and what was taken down. */
@@ -93,6 +102,35 @@ const takeDown: Run = (state, listing) => {
   return ok({ project: { id: listing.id, published: false } });
 };
 
+/** A new name or Players fact, as genex.games' PATCH of a game takes either. */
+const setProject: Run = (state, listing, body) => {
+  const { title, multiplayer } = body;
+  if (title !== undefined && !isPlayTitle(title)) return BAD_REQUEST;
+  if (multiplayer !== undefined && typeof multiplayer !== "boolean") return BAD_REQUEST;
+  edit(state, listing.id, {
+    ...(title === undefined ? {} : { title }),
+    ...(multiplayer === undefined ? {} : { multiplayer }),
+  });
+  return ok({ project: { id: listing.id, ...state.edits.get(listing.id) } });
+};
+
+/** The link a game has now, after the launch's changes. */
+const slugNow = (state: LaunchState, listing: FixtureListing): string =>
+  state.edits.get(listing.id)?.slug ?? listing.slug;
+
+/** A new link: genex.games' spelling of what was sent, refused when another game has it or the game used its changes. */
+const moveLink: Run = (state, listing, { name }) => {
+  const slug = typeof name === "string" ? genexSlug(name) : "";
+  if (!slug) return BAD_REQUEST;
+  if (slug === slugNow(state, listing)) return ok({ project: { id: listing.id, slug }, renamed: false });
+  if (state.listings.some((other) => other.id !== listing.id && slugNow(state, other) === slug))
+    return { status: 409, body: { error: "slug already taken" } };
+  const moves = state.edits.get(listing.id)?.moves ?? 0;
+  if (moves >= FIXTURE_LINK_CHANGES) return { status: 409, body: { error: ManageError.RenameLimit } };
+  edit(state, listing.id, { slug, moves: moves + 1 });
+  return ok({ project: { id: listing.id, slug }, renamed: true });
+};
+
 const coverSlot: Run = (_state, listing, { bytes, contentType }) => {
   const sized = typeof bytes === "number" && Number.isInteger(bytes) && bytes >= 1 && bytes <= PLAY_COVER_MAX_BYTES;
   if (!sized || !isPlayCoverType(contentType)) return BAD_REQUEST;
@@ -113,6 +151,8 @@ const ACTIONS: ReadonlyArray<{ route: (id: string) => string; method: string; ad
   { route: ManageRoute.visibility, method: "PATCH", admin: false, run: setVisibility },
   { route: ManageRoute.unpublish, method: "POST", admin: false, run: takeDown },
   { route: ManageRoute.project, method: "DELETE", admin: false, run: takeDown },
+  { route: ManageRoute.project, method: "PATCH", admin: false, run: setProject },
+  { route: ManageRoute.rename, method: "POST", admin: false, run: moveLink },
   { route: ManageRoute.coverUpload, method: "POST", admin: false, run: coverSlot },
   { route: ManageRoute.coverCommit, method: "POST", admin: false, run: commitCover },
 ];
@@ -151,13 +191,24 @@ function answerFor(
 /**
  * The card menu's routes over a fixture catalog's `listings` (as the catalog draws them before any
  * change), `newCover` drawing the picture a cover "upload" leaves for a game: `answer` for a call,
- * `shown` for the games still published, each as the launch shows it.
+ * `current` for the link an old one opens, `shown` for the games still published, each as the launch
+ * shows it.
  */
 export function createFixtureManage(listings: readonly FixtureListing[], newCover: (id: string) => string) {
   const state: LaunchState = { listings, newCover, edits: new Map(), removed: new Set() };
   return {
     answer: (route: string, init: { method?: string; body?: unknown; token?: string }) => answerFor(state, route, init),
+    /** The link a game has now when `slug` is one it had, as genex.games keeps an old link opening the game. */
+    current: (slug: string): string => {
+      const moved = listings.find((listing) => listing.slug === slug);
+      return moved ? slugNow(state, moved) : slug;
+    },
     shown: <T extends FixtureListing>(items: readonly T[]): T[] =>
-      items.filter((item) => !state.removed.has(item.id)).map((item) => ({ ...item, ...state.edits.get(item.id) })),
+      items
+        .filter((item) => !state.removed.has(item.id))
+        .map((item) => {
+          const { moves: _moves, ...edits } = state.edits.get(item.id) ?? {};
+          return { ...item, ...edits };
+        }),
   };
 }

@@ -1297,6 +1297,7 @@ function watchNativeUpdates(studio: StudioCore): void {
       game: (slug) => playCatalogFor(studio).game(slug),
       tell: (update) =>
         studio.append([customEventData(CustomEvent.PlayUpdateAvailable, { ...update, platform: host.platform })]),
+      follow: (from, to) => installs.follow(from, to),
     }).catch((error: unknown) => studioLog.write("main", `play updates: ${error}`));
   setTimeout(check, UPDATE_CHECK_FIRST_MS).unref();
   setInterval(check, UPDATE_CHECK_EVERY_MS).unref();

@@ -110,6 +110,10 @@ describe("the changes the card menu may ask for", () => {
       { kind: "remixing", allowed: false },
       { kind: "unpublish" },
       { kind: "delete" },
+      { kind: "rename", title: "Street Patrol" },
+      { kind: "link", slug: "street-patrol" },
+      { kind: "players", multiplayer: true },
+      { kind: "players", multiplayer: false },
     ];
     for (const change of valid) assert.equal(isPlayGameChange(change), true, JSON.stringify(change));
   });
@@ -128,6 +132,23 @@ describe("the changes the card menu may ask for", () => {
       { kind: "remixing", allowed: "yes" },
       { kind: "remixing", allowed: 1 },
       { kind: "remixing" },
+      { kind: "rename" },
+      { kind: "rename", title: "" },
+      { kind: "rename", title: "   " },
+      { kind: "rename", title: "---" },
+      { kind: "rename", title: "  Street Patrol " },
+      { kind: "rename", title: "Street\u0000Patrol" },
+      { kind: "rename", title: "x".repeat(61) },
+      { kind: "rename", title: 7 },
+      { kind: "link", slug: "Street Patrol" },
+      { kind: "link", slug: "-street" },
+      { kind: "link", slug: "street--patrol" },
+      { kind: "link", slug: "../etc" },
+      { kind: "link", slug: "" },
+      { kind: "link", slug: "x".repeat(64) },
+      { kind: "link", slug: null },
+      { kind: "players", multiplayer: "yes" },
+      { kind: "players" },
     ];
     for (const change of invalid) assert.equal(isPlayGameChange(change), false, JSON.stringify(change));
   });
@@ -164,7 +185,13 @@ describe("the changes the card menu may ask for", () => {
 describe("the card menu a viewer gets", () => {
   it("follows genex.games' own rules: owner, admin, both, someone else, signed out, author unknown", () => {
     const game = (authorId: string | null) => ({ author: { id: authorId, name: "Ann", imageUrl: null } });
-    const ownItems = [PlayCardAction.CopyLink, PlayCardAction.Remixing, PlayCardAction.Cover];
+    const ownItems = [
+      PlayCardAction.CopyLink,
+      PlayCardAction.Remixing,
+      PlayCardAction.Rename,
+      PlayCardAction.Link,
+      PlayCardAction.Cover,
+    ];
     const adminItems = [PlayCardAction.Mobile, PlayCardAction.Tags];
     const end = [PlayCardAction.Unpublish, PlayCardAction.Delete];
     const viewer = (isAdmin: boolean) => ({ accountId: "u1", isAdmin });
@@ -227,6 +254,27 @@ describe("a change reaching genex.games", () => {
     ],
     [{ kind: PlayChangeKind.Unpublish }, "POST", "/api/projects/cm1/unpublish", undefined, { project: {} }],
     [{ kind: PlayChangeKind.Delete }, "DELETE", "/api/projects/cm1", undefined, null],
+    [
+      { kind: PlayChangeKind.Rename, title: "Street Patrol" },
+      "PATCH",
+      "/api/projects/cm1",
+      { title: "Street Patrol" },
+      { project: { title: "Street Patrol" } },
+    ],
+    [
+      { kind: PlayChangeKind.Players, multiplayer: true },
+      "PATCH",
+      "/api/projects/cm1",
+      { multiplayer: true },
+      { project: { multiplayer: true } },
+    ],
+    [
+      { kind: PlayChangeKind.Link, slug: "street-patrol" },
+      "POST",
+      "/api/projects/cm1/rename",
+      { name: "street-patrol" },
+      { project: { slug: "street-patrol" }, renamed: true },
+    ],
   ];
 
   it("goes as genex.games' website sends it, with the account's token, and only the fields it names", async () => {
@@ -250,6 +298,39 @@ describe("a change reaching genex.games", () => {
       categories: ["arcade", "sports"],
     });
     assert.deepEqual(tags, { outcome: PlayChangeOutcome.Done, categories: ["arcade"] });
+  });
+
+  it("answers a new link with the one genex.games stored", async () => {
+    const moved = await rig(() => ok({ project: { slug: "street-patrol" }, renamed: true })).manage.change(GAME, {
+      kind: PlayChangeKind.Link,
+      slug: "street-patrol",
+    });
+    assert.deepEqual(moved, { outcome: PlayChangeOutcome.Done, slug: "street-patrol" });
+    const odd = await rig(() => ok({ project: { slug: "../x" } })).manage.change(GAME, {
+      kind: PlayChangeKind.Link,
+      slug: "street-patrol",
+    });
+    assert.deepEqual(
+      odd,
+      { outcome: PlayChangeOutcome.Done, slug: "street-patrol" },
+      "a slug of the wrong shape is not taken",
+    );
+  });
+
+  it("reads why genex.games kept the old link apart, and changes nothing", async () => {
+    const cases: Array<[number, unknown, PlayChangeOutcome]> = [
+      [409, { error: "slug already taken" }, PlayChangeOutcome.LinkTaken],
+      [409, { error: "rename_limit_reached", limit: 2 }, PlayChangeOutcome.LinkLimit],
+      [400, { error: "slug is reserved" }, PlayChangeOutcome.LinkReserved],
+    ];
+    for (const [status, body, outcome] of cases) {
+      const { manage, changes } = rig(() => answered(status, body));
+      assert.deepEqual(await manage.change(GAME, { kind: PlayChangeKind.Link, slug: "street-patrol" }), { outcome });
+      assert.equal(changes(), 0, outcome);
+    }
+    // A rename's refusals are refusals: a name genex.games turned down is no link question.
+    const refused = rig(() => answered(400, { error: "bad title" }));
+    await assert.rejects(refused.manage.change(GAME, { kind: PlayChangeKind.Rename, title: "Street Patrol" }));
   });
 
   it("reads a game whose source is its owner's own repository apart, and changes nothing", async () => {
@@ -540,7 +621,7 @@ describe("the fixture launch's genex.games", () => {
     assert.ok(account);
     const viewer = { accountId: account.id, isAdmin: false };
     for (const slug of ["snowball", "claude-of-duty"])
-      assert.deepEqual(playCardMenu(await bySlug(slug), viewer)?.game.length, 3, `${slug} is the account's own`);
+      assert.deepEqual(playCardMenu(await bySlug(slug), viewer)?.game.length, 5, `${slug} is the account's own`);
     const cathedral = await bySlug("lost-cathedral");
     assert.equal(playCardMenu(cathedral, viewer), null);
     assert.deepEqual(playCardMenu(cathedral, { ...viewer, isAdmin: true })?.admin, [
@@ -605,6 +686,32 @@ describe("the fixture launch's genex.games", () => {
       SignInNeeded,
     );
     assert.ok(await bySlug("lost-cathedral"), "still published");
+  });
+
+  it("renames the account's own game, moves its link with the old one still opening it, and sets its Players", async () => {
+    const owner = as(FULL);
+    const patrol = await bySlug("night-patrol");
+    assert.equal(patrol.native?.web, false, "an app-only game");
+    await owner.change(patrol.id, { kind: PlayChangeKind.Rename, title: "Street Patrol" });
+    await owner.change(patrol.id, { kind: PlayChangeKind.Players, multiplayer: true });
+    const moved = await owner.change(patrol.id, { kind: PlayChangeKind.Link, slug: "street-patrol" });
+    assert.deepEqual(moved, { outcome: PlayChangeOutcome.Done, slug: "street-patrol" });
+    const after = await gallery.game("street-patrol");
+    assert.deepEqual([after.title, after.multiplayer, after.id], ["Street Patrol", true, patrol.id]);
+    assert.equal((await gallery.game("night-patrol")).slug, "street-patrol", "the old link opens the game");
+    assert.deepEqual(await owner.change(patrol.id, { kind: PlayChangeKind.Link, slug: "snowball" }), {
+      outcome: PlayChangeOutcome.LinkTaken,
+    });
+    await owner.change(patrol.id, { kind: PlayChangeKind.Link, slug: "street-patrol-2" });
+    assert.deepEqual(await owner.change(patrol.id, { kind: PlayChangeKind.Link, slug: "street-patrol-3" }), {
+      outcome: PlayChangeOutcome.LinkLimit,
+    });
+    const cathedral = await bySlug("lost-cathedral");
+    await assert.rejects(
+      owner.change(cathedral.id, { kind: PlayChangeKind.Rename, title: "Mine now" }),
+      (error) => error instanceof GalleryError && error.status === 403,
+      "someone else's game keeps its name",
+    );
   });
 
   it("takes a new cover for the launch with no socket", async () => {

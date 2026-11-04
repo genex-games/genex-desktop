@@ -6028,4 +6028,20 @@ export default {
     "이 게임은 내려진 상태라서, Genex가 웹 버전을 당분간 남겨 둬요.",
   "Genex couldn’t finish removing the web version. Press Remove again.":
     "Genex가 웹 버전을 끝까지 지우지 못했어요. 삭제를 다시 눌러 주세요.",
+  "Change link": "링크 변경",
+  "Change the link": "링크 변경",
+  "Change the link of {title}": "{title} 링크 변경",
+  "Couldn’t change Players.": "플레이어 설정을 바꾸지 못했어요.",
+  "Couldn’t change the link.": "링크를 바꾸지 못했어요.",
+  "Couldn’t rename the game.": "게임 이름을 바꾸지 못했어요.",
+  "Link saved": "링크를 저장했어요",
+  "New link": "새 링크",
+  "Rename {title}": "{title} 이름 변경",
+  "Renamed to {title}": "{title}(으)로 이름을 바꿨어요",
+  "The game is at {address} now": "이제 게임 주소는 {address}예요",
+  "The name players see on Play and genex.games.": "플레이어가 Play와 genex.games에서 보는 이름이에요.",
+  "The old link will still open the game": "예전 링크로도 계속 게임이 열려요",
+  "The old link will still open the game, for players who already have it too.":
+    "예전 링크로도 계속 게임이 열려요. 이미 가진 플레이어도 마찬가지예요.",
+  "{count, plural, one {# change left} other {# changes left}}": "{count, plural, other {#번 더 바꿀 수 있어요}}",
 } satisfies LocaleCatalog;

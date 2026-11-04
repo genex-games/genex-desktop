@@ -6209,4 +6209,21 @@ export default {
     "Эту игру сняли с публикации, поэтому Genex пока оставляет её веб-версию.",
   "Genex couldn’t finish removing the web version. Press Remove again.":
     "Genex не смог до конца убрать веб-версию. Нажми «Удалить» ещё раз.",
+  "Change link": "Сменить ссылку",
+  "Change the link": "Сменить ссылку",
+  "Change the link of {title}": "Сменить ссылку на {title}",
+  "Couldn’t change Players.": "Не получилось изменить «Игроки».",
+  "Couldn’t change the link.": "Не получилось сменить ссылку.",
+  "Couldn’t rename the game.": "Не получилось переименовать игру.",
+  "Link saved": "Ссылка сохранена",
+  "New link": "Новая ссылка",
+  "Rename {title}": "Переименовать {title}",
+  "Renamed to {title}": "Теперь игра называется {title}",
+  "The game is at {address} now": "Теперь игра на {address}",
+  "The name players see on Play and genex.games.": "Название, которое игроки видят в Play и на genex.games.",
+  "The old link will still open the game": "Старая ссылка тоже будет открывать игру",
+  "The old link will still open the game, for players who already have it too.":
+    "Старая ссылка тоже будет открывать игру, и у тех, у кого она уже есть.",
+  "{count, plural, one {# change left} other {# changes left}}":
+    "{count, plural, one {осталась # смена} few {осталось # смены} many {осталось # смен} other {осталось # смены}}",
 } satisfies LocaleCatalog;

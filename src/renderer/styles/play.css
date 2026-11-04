@@ -808,6 +808,51 @@
   line-height: 18px;
 }
 
+/* Rename and Change link: one labelled field. */
+.play-dialog-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.play-dialog-field input {
+  color: var(--ink);
+}
+.play-dialog-label {
+  color: var(--ink-2);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+/* Change link: the site's own part of the address, then the game's, in one field. */
+.play-link-input {
+  display: flex;
+  align-items: center;
+  height: 36px;
+  padding-inline: 12px;
+  border-radius: 8px;
+  background: var(--field);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+  font: 13px / 20px var(--font-family-mono);
+}
+.play-link-input:focus-within {
+  box-shadow: inset 0 0 0 1.5px var(--play-blue);
+}
+.play-link-input[data-refused] {
+  box-shadow: inset 0 0 0 1.5px var(--orange);
+}
+.play-link-base {
+  flex: none;
+  color: var(--ink-3);
+}
+.play-link-input input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+}
+
 /* Mobile support: three rows to pick one from, the picked one lit. */
 .play-dialog-choices {
   display: flex;

@@ -136,6 +136,20 @@ const GAMES: FixtureGame[] = [
     coverOnly: true,
     native: { web: false, engine: "godot", builds: [macApp("Puck Rush", "1.3", SMALL)] },
   },
+  // The fixture account's own app-only game: its page offers its owner Rename, Change link and the Players switch.
+  {
+    slug: "night-patrol",
+    title: "Night Patrol",
+    author: "Rab Neba",
+    plays: 3,
+    categories: ["games", "shooter"],
+    hue: 222,
+    native: {
+      web: false,
+      engine: "unreal",
+      builds: [macApp("Night Patrol", "0.3", LARGE), windowsApp("Night Patrol", "0.3", LARGE)],
+    },
+  },
   // Only a Windows build: a Mac's tabs leave it out, and its maker's profile says so.
   {
     slug: "harbor-lights",
@@ -385,7 +399,8 @@ function counts(): GalleryAnswer {
 }
 
 /** A game's page facts, with this launch's like. */
-function world(slug: string): GalleryAnswer {
+function world(asked: string): GalleryAnswer {
+  const slug = manage.current(asked);
   const game = listed().find((candidate) => candidate.slug === slug);
   if (!game) return NOT_FOUND;
   const liked = likes.get(slug) === true;

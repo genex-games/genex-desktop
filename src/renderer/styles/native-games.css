@@ -687,6 +687,31 @@
   line-height: 22px;
   overflow-wrap: break-word;
 }
+/* The owner's Players: the value itself opens its menu, a chevron after it. */
+.game-fact-choice {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: calc(100% + 12px);
+  margin-inline: -6px;
+  padding: 2px 6px;
+  border-radius: 8px;
+  color: var(--ink);
+  text-align: start;
+  cursor: pointer;
+}
+.game-fact-choice:hover,
+.game-fact-choice[data-state="open"] {
+  background: var(--control-hover);
+}
+.game-fact-choice > span {
+  min-width: 0;
+  overflow-wrap: break-word;
+}
+.game-fact-choice > svg {
+  flex: none;
+  color: var(--ink-3);
+}
 .game-section-title {
   margin: 0;
   font-size: 20px;
