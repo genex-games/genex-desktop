@@ -1,7 +1,7 @@
 {
   "apiVersion": 3,
   "id": "genex",
-  "version": "1.13.3",
+  "version": "1.14.0",
   "name": "Genex plugin",
   "publisher": "Genex",
   "description": "3D models, characters, sound and art for your games, made in chat with Genex credits. Coding stays on your own provider.",
@@ -364,6 +364,10 @@
       "name": "publish-remove-web",
       "label": "Remove web version",
       "confirmation": "Take this game's web version off Genex. Its page shows its Mac, Windows and Linux apps again, and the apps stay as they are. You can publish a web version again later."
+    },
+    {
+      "name": "publish-name",
+      "label": "Rename the game"
     },
     {
       "name": "publish-allow-upload",

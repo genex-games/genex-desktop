@@ -94,6 +94,8 @@ export const GenexRoute = {
   /** The public price list: the cheapest price of each kind of generation. */
   Prices: "/api/credits/prices",
   Lanes: "/api/generations/lanes",
+  /** A game's own record on Genex: `PATCH { title }` renames it, moving no link. */
+  project: (id: string) => `/api/projects/${encodeURIComponent(id)}`,
   projectBySlug: (slug: string) => `/api/projects/by-slug/${encodeURIComponent(slug)}`,
   /** Whether a published game is open to remixers (`{ private }`), as its owner sets it on genex.games. */
   visibility: (id: string) => `/api/projects/${encodeURIComponent(id)}/visibility`,

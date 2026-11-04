@@ -20,8 +20,8 @@ const FILES_FRESH_MS = 60 * SECOND_MS;
 const CANCELLED = /Cancelled/;
 const words = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
-/** What is being pressed right now: Publish (listing files, then starting the upload), or another action. */
-export const Pressing = { None: "none", Publish: "publish", Files: "files", Action: "action" } as const;
+/** What is being pressed right now: Publish (listing files, then starting the upload), a rename, or another action. */
+export const Pressing = { None: "none", Publish: "publish", Files: "files", Action: "action", Name: "name" } as const;
 export type Pressing = (typeof Pressing)[keyof typeof Pressing];
 
 /** The game's publish record, the press under way and the files Publish uploads. */
@@ -92,6 +92,11 @@ export function usePublishRecord(plugin: PluginInfo, project: string | null) {
     act: (name: string, args: Record<string, unknown> = {}): Promise<void> =>
       run(Pressing.Action, () => runPluginAction({ plugin, name, args, project, review: setReview })),
     listFiles: (): Promise<void> => run(Pressing.Files, currentFiles),
+    /** Save the game's new name: on Genex at once when the game is there, else for its first publish. */
+    rename: (title: string): Promise<void> =>
+      run(Pressing.Name, () =>
+        runPluginAction({ plugin, name: GenexAction.PublishName, args: { title }, project, review: setReview }),
+      ),
     /**
      * Publish under `title`: the press is the consent to exactly the listed files, to the game's
      * project when `remix` (Allow remixing) is ticked, and to the web build taking the place of a page

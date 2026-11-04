@@ -1675,6 +1675,30 @@ export class GenexTools {
     });
   }
   /**
+   * Rename the game from the Publish dialog, the moment the person finishes typing the name. A game
+   * already on Genex is renamed there at once: its title alone, so nothing is uploaded and its link
+   * stays. The publish record keeps the name either way, so the dialog shows it after it closes and
+   * the next publish lists the game under it. Refused, it keeps the old name.
+   */
+  async publishName(project: string, title: unknown): Promise<GenexPublishState> {
+    return this.#account(async () => {
+      const name = cleanGenexTitle(title);
+      if (!name) throw new Error(PUBLISH_MESSAGE.NoName());
+      const state = await this.publishStatus(project);
+      if (state.projectId) {
+        if (!state.connected) throw new Error(PUBLISH_MESSAGE.ConnectFirstRefusal());
+        await this.#fetch(GenexRoute.project(state.projectId), {
+          method: "PATCH",
+          body: JSON.stringify({ title: name }),
+        });
+      }
+      const record = await this.#publishState(project);
+      record.title = name;
+      await this.#savePublishState(project, record);
+      return this.publishView(project);
+    });
+  }
+  /**
    * genex__cover: keep the picture (and the clip) the agent made, from the game folder `directory`,
    * as the game's cover. Both are read and checked whole first: a refusal throws and keeps nothing.
    * Answers what was kept, what its numbers suggest, and who holds the cover or when it goes.

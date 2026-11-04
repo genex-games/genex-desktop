@@ -25,6 +25,7 @@
   "Put a draft online": "Mettre un brouillon en ligne",
   "Remove Studio’s saved Genex credential and stop new asset submissions.": "Supprimer l’identifiant Genex enregistré dans Studio et arrêter l’envoi de nouvelles ressources.",
   "Remove web version": "Retirer la version web",
+  "Rename the game": "Renommer le jeu",
   "Review Genex terms": "Voir les conditions de Genex",
   "Review character candidates in Studio before approving paid generation.": "Regarde les propositions de personnage dans Studio avant d’approuver la génération payante.",
   "Run a Genex CLI command that spends Nex or credits or changes what this game sells, with your saved Genex account.": "Lancer une commande de la CLI Genex qui dépense des Nex ou des crédits, ou qui change ce que ce jeu vend, avec ton compte Genex enregistré.",

@@ -4841,8 +4841,6 @@ export const GENEX_WORDS = {
     slow: t("Taking longer than usual."),
     /** The banner's name, the one moment an attempt the dialog watched goes live: `<name>` is the name's own press. */
     isLive: t("<name>{title}</name> <live>is live!</live>"),
-    /** The press that lists a game renamed right after it went live under its new name. */
-    saveName: t("Save name"),
     replay: t("Play the celebration again"),
     /** The banner's cover controls: ask for another, say what it should show, flip through the recent ones. */
     anotherCover: t("Another cover"),

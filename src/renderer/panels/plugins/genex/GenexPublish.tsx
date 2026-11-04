@@ -163,20 +163,38 @@ function BannerLine({ name, live }: { name: JSX.Element; live: boolean }): JSX.E
   );
 }
 
-/** The name on the banner: a press to rename it, its field while renaming, plain words while publishing. */
+/**
+ * The name on the banner: a press to rename it, its field while renaming, plain words while publishing.
+ * Enter or leaving the field saves the name; Escape puts the saved one back.
+ */
 function BannerName({
   title,
   onTitle,
+  onDone,
   editable,
   live,
 }: {
   title: string;
   onTitle: (title: string) => void;
+  /** The field closed: `save` when Enter or leaving it, not after Escape. */
+  onDone: (save: boolean) => void;
   editable: boolean;
   /** It just went live: the banner says "<name> is live!". */
   live: boolean;
 }): JSX.Element {
   const [editing, setEditing] = useState(false);
+  // Enter closes the field, which can blur it as it goes: the name is saved once.
+  const open = useRef(false);
+  const start = () => {
+    open.current = true;
+    setEditing(true);
+  };
+  const finish = (save: boolean) => {
+    if (!open.current) return;
+    open.current = false;
+    setEditing(false);
+    onDone(save);
+  };
   if (!editable)
     return (
       <BannerLine
@@ -199,9 +217,14 @@ function BannerName({
         // biome-ignore lint/a11y/noAutofocus: the field replaces the name the person just pressed.
         autoFocus
         onChange={(e) => onTitle(e.target.value)}
-        onBlur={() => setEditing(false)}
+        onBlur={() => finish(true)}
         onKeyDown={(e) => {
-          if (e.key === "Enter") setEditing(false);
+          if (e.key === "Enter") finish(true);
+          if (e.key === "Escape") {
+            // Escape puts the name back; it does not close the dialog around it.
+            e.stopPropagation();
+            finish(false);
+          }
         }}
       />
     );
@@ -214,7 +237,7 @@ function BannerName({
           className="genex-publish-banner-name"
           title={title}
           aria-label={WORDS.rename}
-          onClick={() => setEditing(true)}
+          onClick={start}
         >
           <span>{title}</span>
           <Icon name="rename" size={14} />
@@ -232,6 +255,7 @@ function Banner({
   project,
   title,
   onTitle,
+  onTitleDone,
   view,
   publishing,
   celebrate,
@@ -243,6 +267,8 @@ function Banner({
   project: string;
   title: string;
   onTitle: (title: string) => void;
+  /** The name's field closed: save the typed name, or put the saved one back. */
+  onTitleDone: (save: boolean) => void;
   view: PublishView;
   publishing: boolean;
   celebrate: boolean;
@@ -276,7 +302,9 @@ function Banner({
       )}
       {celebrate && <PublishRocket />}
       <div className="genex-publish-banner-foot">
-        {!asking && <BannerName title={title} onTitle={onTitle} editable={!publishing} live={celebrate} />}
+        {!asking && (
+          <BannerName title={title} onTitle={onTitle} onDone={onTitleDone} editable={!publishing} live={celebrate} />
+        )}
         <CoverTool
           cover={cover}
           show={show}
@@ -775,10 +803,6 @@ function useAppsPublish(
 const remixLineShown = (pressShown: boolean, publishing: boolean, view: PublishView, waiting: boolean): boolean =>
   pressShown && !publishing && !view.terms && !waiting;
 
-/** The main press's own words: Save name while it celebrates, a game's apps, else the view's. */
-const pressLabel = (celebrate: boolean, apps: string | null): string | undefined =>
-  celebrate ? WORDS.saveName : (apps ?? undefined);
-
 /**
  * Whether the dialog celebrates: an attempt it watched just went live; a new press ends it. A game
  * whose apps Genex still reviews has not reached players, so it is not celebrated.
@@ -826,6 +850,26 @@ function PublishOrRights(props: PublishBodyProps): JSX.Element {
 }
 
 /**
+ * The banner's name: the one being typed until it is saved (or put back), then the record's again.
+ * Saved, the record names it; refused, the old name returns and the failure line says why.
+ */
+function useBannerTitle(
+  record: ReturnType<typeof usePublishRecord>,
+  saved: string,
+): { name: string; setTitle: (title: string) => void; onTitleDone: (save: boolean) => void } {
+  const [title, setTitle] = useState<string | null>(null);
+  const onTitleDone = (save: boolean) => {
+    const typed = title?.trim() ?? "";
+    if (!save || typed === "" || typed === saved) {
+      setTitle(null);
+      return;
+    }
+    void record.rename(typed).then(() => setTitle(null));
+  };
+  return { name: title ?? saved, setTitle, onTitleDone };
+}
+
+/**
  * The read record: the banner with the game's name and where it is, then what the moment needs:
  * the platforms a game with an app is built for, the running attempt's progress, the celebration
  * and link once it just went live, the link of a live game, or a failed attempt's line, and the presses.
@@ -842,8 +886,7 @@ function PublishBody({
   remix: { allowed: boolean; onAllowed: (allowed: boolean) => void; onRights: () => void };
 }): JSX.Element {
   const gameTitle = useLibrary((s) => s.games.find((g) => g.name === project)?.title);
-  const [title, setTitle] = useState<string | null>(null);
-  const name = title ?? offeredTitle(record.state, gameTitle, project);
+  const { name, setTitle, onTitleDone } = useBannerTitle(record, offeredTitle(record.state, gameTitle, project));
   const publishing = record.pressing === Pressing.Publish || view.running;
   const { platforms, apps, waiting, upToDate, inReview, replacesApps } = useAppsPublish(
     project,
@@ -852,13 +895,11 @@ function PublishBody({
   );
   const celebrate = useCelebration(view, publishing, inReview);
   const share = useShareWhenLive(project, celebrate);
-  // A name changed after it went live is listed again by Publish update ("Save name" while celebrating).
-  const renamed = title !== null && title.trim() !== (record.state?.title ?? "") && view.stage === PublishStage.Public;
   const failure = record.error ? { text: record.error, details: record.error } : view.failure;
   const open = () => void record.act(GenexAction.PublishOpen, { target: LinkTarget.Gallery });
   const opening = record.pressing === Pressing.Action;
-  const pressShown = !celebrate || renamed;
-  const pressNeeded = pressHasWork(pressShown, view, publishing, { upToDate, renamed, inReview });
+  const pressShown = !celebrate;
+  const pressNeeded = pressHasWork(pressShown, view, publishing, { upToDate, inReview });
   return (
     <div
       className="genex-publish-body"
@@ -870,6 +911,7 @@ function PublishBody({
         project={project}
         title={name}
         onTitle={setTitle}
+        onTitleDone={onTitleDone}
         view={view}
         publishing={publishing}
         celebrate={celebrate}
@@ -908,7 +950,7 @@ function PublishBody({
             name={name}
             publishing={publishing}
             project={project}
-            label={pressLabel(celebrate, apps)}
+            label={apps ?? undefined}
             apps={apps !== null}
             waiting={waiting}
             remix={remix.allowed}
@@ -938,14 +980,14 @@ function PublishBody({
 
 /**
  * Whether the press shows and has anything to do: not on a live game whose apps are all on Genex already,
- * where its link takes the press's place, unless a new name waits to be saved.
+ * where its link takes the press's place. A new name never needs it: the name saves itself.
  */
 const pressHasWork = (
   shown: boolean,
   view: PublishView,
   publishing: boolean,
-  { upToDate, renamed, inReview }: { upToDate: boolean; renamed: boolean; inReview: boolean },
-): boolean => shown && (renamed || !upToDate || !settled(view, publishing, inReview));
+  { upToDate, inReview }: { upToDate: boolean; inReview: boolean },
+): boolean => shown && (!upToDate || !settled(view, publishing, inReview));
 
 /**
  * Whether what went is where it stays for now: live, or with Genex for review, with nothing going on
@@ -1062,7 +1104,7 @@ function Presses({
   project: string;
   /** Whether the press sends the game's project too, so others can remix it (Allow remixing). */
   remix: boolean;
-  /** The main press's words in place of the view's (Save name, for a rename right after it went live). */
+  /** The main press's words in place of the view's (a game with only apps names them). */
   label?: string;
   /** The game has only apps: the press publishes them instead of a web build. */
   apps?: boolean;

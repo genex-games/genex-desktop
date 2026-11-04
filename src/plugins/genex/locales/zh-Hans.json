@@ -25,6 +25,7 @@
   "Put a draft online": "上线草稿",
   "Remove Studio’s saved Genex credential and stop new asset submissions.": "移除 Studio 保存的 Genex 凭据，并停止提交新的素材。",
   "Remove web version": "移除网页版",
+  "Rename the game": "重命名游戏",
   "Review Genex terms": "查看 Genex 条款",
   "Review character candidates in Studio before approving paid generation.": "批准付费生成前，请先在 Studio 中查看角色候选。",
   "Run a Genex CLI command that spends Nex or credits or changes what this game sells, with your saved Genex account.": "用你保存的 Genex 账号运行一条会花费 Nex 或积分、或会更改此游戏所售内容的 Genex CLI 命令。",

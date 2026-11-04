@@ -25,6 +25,7 @@
   "Put a draft online": "下書きをオンラインに",
   "Remove Studio’s saved Genex credential and stop new asset submissions.": "Studioに保存したGenexの認証情報を削除し、新しいアセットの送信を止めます。",
   "Remove web version": "ウェブ版を削除",
+  "Rename the game": "ゲーム名を変更",
   "Review Genex terms": "Genexの規約を確認",
   "Review character candidates in Studio before approving paid generation.": "有料の生成を承認する前に、Studioでキャラクターの候補を確認してください。",
   "Run a Genex CLI command that spends Nex or credits or changes what this game sells, with your saved Genex account.": "保存したGenexアカウントで、Nexやクレジットを使う、またはこのゲームの販売内容を変えるGenex CLIコマンドを実行します。",

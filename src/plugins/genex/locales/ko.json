@@ -25,6 +25,7 @@
   "Put a draft online": "초안 올리기",
   "Remove Studio’s saved Genex credential and stop new asset submissions.": "Studio에 저장된 Genex 로그인 정보를 지우고 새 에셋 요청을 멈춰요.",
   "Remove web version": "웹 버전 지우기",
+  "Rename the game": "게임 이름 바꾸기",
   "Review Genex terms": "Genex 약관 확인",
   "Review character candidates in Studio before approving paid generation.": "유료 생성을 승인하기 전에 Studio에서 캐릭터 후보를 확인하세요.",
   "Run a Genex CLI command that spends Nex or credits or changes what this game sells, with your saved Genex account.": "저장된 Genex 계정으로 Nex나 크레딧을 쓰거나 이 게임의 판매 항목을 바꾸는 Genex CLI 명령을 실행해요.",

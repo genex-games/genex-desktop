@@ -57,6 +57,8 @@ export const MESSAGE = {
   RevisionMismatch: "Hosted staging revision does not match this upload yet",
   NotInGallery: () => t("This game is not in the gallery yet"),
   NothingOnline: () => t("Nothing is online for this game yet"),
+  /** A name with no letter or digit left once cleaned: nothing to list the game under. */
+  NoName: () => t("Give the game a name with a letter or a number in it."),
   UnrecognizedLink: () => t("Unrecognized Genex page link"),
   InvalidProject: "Invalid project",
   NeedsGit: () =>
