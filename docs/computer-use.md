@@ -303,9 +303,10 @@ environment, outside the ProcessSandbox, which would deny it the screen.
   app and its grants are Electron's, not those of the terminal or agent that ran the script.
   Moving to a newer driver: change both pins and the notices, then verify the web and desktop
   scenarios live on both systems.
-- **The setting.** Settings → Permissions → **Let agents use your computer** ("They ask before each app."; `computerControl`
-  in the studio's `settings.json`) is off for every install, new or existing; only an explicit on
-  turns it on, and only macOS and Windows offer it (`computerControlOffered`,
+- **The setting.** Settings → Permissions → **Let agents use your computer** ("They ask before each app, except in Auto and Bypass."; `computerControl`
+  in the studio's `settings.json`) is on by default. A `settings.json` saved before that default
+  (no `computerControlDefaultOn`) turns it on once, since it cannot tell an off someone chose from
+  one never touched; from then on the person's choice is kept. Only macOS and Windows offer it (`computerControlOffered`,
   [`shared/computer-control.ts`](../src/shared/computer-control.ts)). Off, no session is handed the `desktop` tool, no consent card
   shows, the driver is never looked for or started, and `desktop.computer` answers that computer
   control is off in Settings (an answer, never an error). Turning it off stops every running driver
@@ -313,13 +314,19 @@ environment, outside the ProcessSandbox, which would deny it the screen.
   call; turned on, the next call or session works as below.
 - **Who holds it.** With the setting on, the chat's own session on every engine is handed a `desktop`
   tool (the computer vocabulary under its own name, so it sits beside a game's `computer`), where a
-  driver is found (`desktop-session.ts`). The harness's own loop (Ollama) gets the same tool through
-  `desktop.computer` and the seed's `tools/desktop-tools.ts`. Unattended sessions never hold it.
+  driver is found (`desktop-session.ts`), and so is its Loop's lead seated in the game folder
+  answering that chat, so the Loop keeps the person's computer (and an editor game's play) while it
+  runs. The harness's own loop (Ollama) gets the same tool through
+  `desktop.computer` and the seed's `tools/desktop-tools.ts`. Workers, reviewers and other
+  unattended sessions never hold it. The tool's description and the chat's own rules tell the agent
+  to do steps on the computer itself (launchers, stores, installers, an engine's editor), leaving the
+  person only passwords, the system's permission prompts, payments and choices about their work.
 - **Consent.** Nothing moves before the person answers a consent card in the chat (the studio's own,
   `studio-desktop`): once for the chat, then once for each app the agent reaches. The yes lasts the
   chat's later turns (and a harness restart) until the person presses Stop, uses the stop shortcut
-  or turns computer control off (`stopsAll`); then the next turn asks again. A chat in Bypass asks
-  neither. On a PC a named app is checked against what runs (`running <exe>` in the window probe):
+  or turns computer control off (`stopsAll`); then the next turn asks again. A chat in Auto or
+  Bypass asks neither (`DESKTOP_UNASKED_MODES`): the setting being on is the person's yes there, and
+  a card waiting when the person switches to one of them is approved. On a PC a named app is checked against what runs (`running <exe>` in the window probe):
   a name no process has (a guessed `robloxstudio.exe`) is refused before any card. Inside a VM the
   session's yes covers every app. The turn answering an assist the person pressed (or approved on its
   card) asks neither: that press was their yes, and the grant keeps the turn to the plugin's apps. A yes stands while the driver fails to connect (missing grants, no
@@ -354,13 +361,12 @@ environment, outside the ProcessSandbox, which would deny it the screen.
   a grant's turn ends, Genex brings its own window back to the front, so the person sees the
   publish is done. `app_look`, which only looks and so needs no setting ([tool permissions](tool-permissions.md#looking-at-apps)),
   never looks at these apps or Genex's own windows either.
-- **Never building or play-testing.** The apps an enabled engine plugin declares for this system
-  (`engine.apps.mac` or `engine.apps.windows`, its editor) are refused in plain words ("use the engine's own tools", and a
-  setup click or a publish goes through its plugin's tool) before
-  the person is asked about them, unless the chat holds that plugin's setup assist; the tool's own
-  description says so too. While an assist holds the chat, every app outside its grant is refused,
-  except that an assist whose engine declares pages (`engine.pages`, Roblox's Creator Hub) asks for
-  any app that is no engine's editor (the person's browser) on its card, as the press covered only
+- **An engine's apps.** Outside a setup assist, an engine's editor and launcher are apps like any
+  other: the agent does steps there itself (Epic's launcher, Fab, a dialog) and the tool's
+  description tells it to prefer the engine's own tools to build and play-test. While an assist
+  holds the chat, every app outside its grant (`engine.apps.mac` or `engine.apps.windows`) is
+  refused, except that an assist whose engine declares pages (`engine.pages`, Roblox's Creator Hub)
+  asks for any app no engine declares (the person's browser) on its card, as the press covered only
   the grant's apps; Unreal's install assist, which declares none, reaches only Epic's launcher.
   The apps the studio never drives stay refused whatever a grant names (`engineAppRefusal`), and so
   do the apps an enabled engine's games are played in (`engine.playerApps`, such as Roblox's

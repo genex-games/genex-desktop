@@ -2028,12 +2028,27 @@ export class DelegationService {
     if (session.hostTools) await this.#offerConnectors(p, session, tools);
     if (session.hostTools) await this.#applyPlugins(session, engineId, tools);
     await this.#prepareWindowTools(p, cwd, grants, windows, tools);
-    if (session.hostTools && isChatsOwnSession(p)) await this.#offerChatScreens(p, target, grants, session, tools);
+    if (session.hostTools && (await this.#holdsChatScreens(p, grants, session)))
+      await this.#offerChatScreens(p, target, grants, session, tools);
   }
 
   /**
-   * The chat's own session's screen tools: the person's computer, behind consent, and on a game
-   * played in its engine's editor (an Unreal game) the computer on that editor's play.
+   * Whether the session works the person's screens for its chat: the chat's own session, and a
+   * Loop's lead seated in its game folder answering that chat (`#answersChat`), so the person's
+   * computer and the editor's play stay with the chat while its Loop runs. Never a worker, a
+   * reviewer or a lead of another chat.
+   */
+  async #holdsChatScreens(p: DelegateParams, grants: DelegationGrants, session: DelegationSession): Promise<boolean> {
+    if (isChatsOwnSession(p)) return true;
+    const threadId = p.threadId;
+    if (!session.leads || typeof threadId !== "string") return false;
+    return this.#answersChat(p, grants, session, threadId);
+  }
+
+  /**
+   * The chat's screen tools (its own session's, or its Loop's lead's): the person's computer, behind
+   * consent, and on a game played in its engine's editor (an Unreal game) the computer on that
+   * editor's play.
    */
   async #offerChatScreens(
     p: DelegateParams,
@@ -2054,7 +2069,7 @@ export class DelegationService {
     }
   }
 
-  /** The person's computer for the chat's own session (`desktop-session.ts`), behind their consent. */
+  /** The person's computer for the chat's session or its Loop's lead (`desktop-session.ts`), behind their consent. */
   #desktopTools(p: DelegateParams, target: DelegationTarget, session: DelegationSession): Promise<DesktopTools | null> {
     const binding = { project: p.project, directory: target.cwd, ...(p.threadId ? { threadId: p.threadId } : {}) };
     return desktopSessionTools(this.#core, this.#x, {

@@ -482,6 +482,8 @@ describe("the agent's card and the assist turn, through a real core with a fake 
     });
     const { core } = lite;
     await core.plugins.setEnabled("roblox", true);
+    // On by default: this case starts with it turned off, so the setting's own card asks.
+    await core.updateSettings({ computerControl: false });
     const dir = (await core.games.scaffold("obby")).dir;
     await writeFile(path.join(dir, "obby.rbxlx"), "<roblox/>");
     threadId = await core.threadForGame("obby");

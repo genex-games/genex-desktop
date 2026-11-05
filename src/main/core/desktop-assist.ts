@@ -2,10 +2,9 @@
  * Do it for me (`game.engine.assist`): an engine plugin hands a setup task to its game's chat, and
  * that chat's own session clicks it with the person's computer control (`desktop-session.ts`).
  *
- * Computer use here is only for setup clicks and publishing the person approved: a switch or a
- * dialog that only the engine's own window offers. It never builds or play-tests a game; the
- * engine's own tools do that, and the engine-app guard (`desktop-target.ts`) refuses its editor to
- * every other turn.
+ * An assist is for setup clicks and publishing the person approved: a switch or a dialog that only
+ * the engine's own window offers. Its turn drives only the apps its plugin declares; any other turn
+ * may use an engine's apps as it uses any app (`desktop-target.ts`).
  *
  * - **Who may ask.** The person: a plugin action they pressed, or a tool call whose own card they
  *   approved (`asked`). A plugin that came with Genex may also start one from its own tools, for the

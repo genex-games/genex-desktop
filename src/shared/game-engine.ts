@@ -66,7 +66,7 @@ function ownEntry(file: string, entries: readonly string[]): string | undefined 
   return extensions.sort((a, b) => b.length - a.length)[0];
 }
 
-/** The apps an engine's editor runs as, which computer use never drives to build or play: Mac bundle ids, Windows `.exe` names. */
+/** The apps an engine's setup assist drives (its editor, or the launcher that installs it): Mac bundle ids, Windows `.exe` names. */
 export interface EngineApps {
   mac?: string[];
   windows?: string[];
@@ -77,7 +77,7 @@ export interface EngineApps {
  * plugin's own), the name the person reads, the project files a game links, the fact a linked
  * game holds, whether the Loop needs the project inside the game folder (its save points hold it),
  * whether its agents change the project as files, what its editor can do in play, the apps its
- * editor runs as, and the apps its published games are played in.
+ * setup assist drives, and the apps its published games are played in.
  */
 export interface EngineDeclaration {
   id: EngineId;

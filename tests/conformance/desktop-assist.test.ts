@@ -633,14 +633,15 @@ describe("the apps engines declare", () => {
     );
   });
 
-  it("Unreal's Do it for me may drive Epic's launcher, only in the turn answering its task, never Unreal's editor", async () => {
+  // Flipped (agents act by themselves): outside its assist Epic's launcher is the agent's like any app.
+  it("Unreal's Do it for me drives only Epic's launcher; outside it the launcher is the agent's like any app", async () => {
     const manifest = validateManifest(JSON.parse(await readFile("src/plugins/unreal/plugin.json", "utf8")));
     const unreal = [{ enabled: true, removed: false, manifest }];
     const declared = declaredEngineApps(unreal, "win32");
     assert.deepEqual([...declared], ["epicgameslauncher.exe", "epicwebhelper.exe"]);
     assert.deepEqual([...declaredEngineApps(unreal, "darwin")], ["com.epicgames.EpicGamesLauncher"]);
     const launcher: DesktopApp = { name: "Epic Games Launcher", bundleId: "epicgameslauncher.exe", pid: 7 };
-    assert.match(String(engineAppRefusal(launcher, { declared, granted: null })), /engine/, "outside its assist");
+    assert.equal(engineAppRefusal(launcher, { declared, granted: null }), null, "outside its assist");
     assert.equal(engineAppRefusal(launcher, { declared, granted: declared }), null, "the turn answering its task");
     const editor: DesktopApp = { name: "Unreal Editor", bundleId: "unrealeditor.exe", pid: 8 };
     assert.match(String(engineAppRefusal(editor, { declared, granted: declared })), /not one of the apps/);
@@ -674,6 +675,8 @@ describe("the toy engine's Do it for me, through a real core", () => {
     const { core } = lite;
     await core.plugins.installLocal(await toyWithAssist(), PluginSourceKind.Local, []);
     await core.plugins.setEnabled(TOY_PLUGIN_ID, true);
+    // On by default: these cases start with it turned off, so the setting's own card asks.
+    await core.updateSettings({ computerControl: false });
     const dir = (await core.games.scaffold("garden")).dir;
     threadId = await core.threadForGame("garden");
     binding = { project: "garden", directory: dir, threadId };
@@ -820,6 +823,8 @@ describe("a plugin that came with Genex starts its setup from its own tool, thro
     const { core } = lite;
     await core.plugins.installLocal(await toyWithAssist(), PluginSourceKind.Bundled, []);
     await core.plugins.setEnabled(TOY_PLUGIN_ID, true);
+    // On by default: these cases start with it turned off, so the setting's own card asks.
+    await core.updateSettings({ computerControl: false });
     const dir = (await core.games.scaffold("orchard")).dir;
     threadId = await core.threadForGame("orchard");
     binding = { project: "orchard", directory: dir, threadId };

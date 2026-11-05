@@ -243,7 +243,7 @@ const MESSAGE = {
   NothingToUndo:
     "Genex added nothing to this project's manifest that is still as it wrote it, so nothing was taken back.",
   LoadsWhenForward:
-    "Unity has this project open: bring Unity to the front so it loads the package (ask the user to), then call unity-editor__list_commands.",
+    "Unity has this project open: bring Unity to the front so it loads the package (the desktop tool's bring_to_front; without it, ask the user to), then call unity-editor__list_commands.",
   NotEnded:
     "Unity could not be ended, so it was not opened again: ask the user to quit Unity, then call unity__open-editor.",
   OpenedForManifest: (version: string) =>
@@ -302,7 +302,7 @@ const PANEL_MESSAGE = {
 const OPENING: Record<Opened, (opening: Opening) => string> = {
   [Opened.Answers]: () => "It is already open in Unity and answers.",
   [Opened.SeemsOpen]: () =>
-    "Unity has this project open, but its Pipeline server does not answer yet: it is still starting, or it has not loaded the package. Call again in a moment; if it stays so, ask the user to bring Unity to the front.",
+    "Unity has this project open, but its Pipeline server does not answer yet: it is still starting, or it has not loaded the package. Call again in a moment; if it stays so, bring Unity to the front with the desktop tool's bring_to_front (without it, ask the user to).",
   [Opened.Ready]: () => "the editor answers now. Build through the unity-editor tools, list_commands first.",
   [Opened.NotYet]: () =>
     "Unity is not ready yet (a first start imports the project and downloads its packages): when a unity-editor call says the project is not open or Unity is busy, call again in a moment.",

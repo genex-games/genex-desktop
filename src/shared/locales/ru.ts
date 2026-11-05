@@ -6074,7 +6074,8 @@ export default {
   "Let the agent see your screen in this chat?": "Разрешить агенту видеть экран в этом чате?",
   "Let the agent use this app?": "Разрешить агенту работать в этом приложении?",
   "Let the agent use {app}?": "Разрешить агенту работать в {app}?",
-  "They ask before each app.": "Они спрашивают перед каждым приложением.",
+  "They ask before each app, except in Auto and Bypass.":
+    "Они спрашивают перед каждым приложением, кроме режимов Auto и Bypass.",
   "Turn on computer control?": "Включить управление компьютером?",
   "{plugin} asks: {task}": "{plugin} просит: {task}",
   "Add an icon and a thumbnail, or Roblox shows a grey square.":

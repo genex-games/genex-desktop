@@ -1207,7 +1207,7 @@ describe("Settings → Permissions: Let agents control your computer", () => {
 
   it("says in one line that agents ask before each app, and never names the stop shortcut", () => {
     for (const platform of [StudioPlatform.Mac, StudioPlatform.Windows])
-      assert.equal(computerControlDetail(platform), "They ask before each app.");
+      assert.equal(computerControlDetail(platform), "They ask before each app, except in Auto and Bypass.");
     assert.equal(computerControlDetail(StudioPlatform.Linux), "macOS and Windows only.");
   });
 

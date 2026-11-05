@@ -6033,7 +6033,8 @@ export default {
   "Let the agent see your screen in this chat?": "このチャットでエージェントに画面を見せますか？",
   "Let the agent use this app?": "エージェントにこのアプリを使わせますか？",
   "Let the agent use {app}?": "エージェントに{app}を使わせますか？",
-  "They ask before each app.": "エージェントはアプリごとに先に確認します。",
+  "They ask before each app, except in Auto and Bypass.":
+    "エージェントはアプリごとに先に確認します（Auto と Bypass では確認しません）。",
   "Turn on computer control?": "コンピューター操作をオンにしますか？",
   "{plugin} asks: {task}": "{plugin}からの依頼：{task}",
   "Add an icon and a thumbnail, or Roblox shows a grey square.":

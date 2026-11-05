@@ -292,7 +292,7 @@ const MESSAGE = {
     `The Unreal setup card is in the chat, and the Unreal button is above the game: its Do it for me gets Epic's launcher and installs Unreal ${version} in it with computer control (only the user signs in to Epic). Call unreal__install-unreal to start that yourself, or tell them in one line; then end your reply. The chat tells you when Unreal is installed.`,
   /** The task Do it for me hands the game's chat: one plain line, at most 300 characters. */
   InstallTask: (version: string) =>
-    `Install Unreal Engine ${version} in the Epic Games Launcher Genex opened: Unreal Engine › Library › + beside Engine Versions › ${version} (not a newer one) › Install, default folder. If Epic asks to sign in or anything else, stop and ask the person.`,
+    `Install Unreal Engine ${version} in the Epic Games Launcher Genex opened: Unreal Engine › Library › + beside Engine Versions › ${version} (not a newer one) › Install, default folder. Ask the person only for Epic's password or a two-step code; click the rest yourself.`,
   ForMeLauncher: (version: string) =>
     `Genex is downloading Epic's launcher from Epic and installing it (Windows asks the person for permission); the setup card shows where it stands. End your reply now. Once the card says the launcher is installed, call unreal__install-unreal again to install Unreal ${version} in it.`,
   ForMeDownloadPage:
@@ -300,7 +300,7 @@ const MESSAGE = {
   ForMeEngine: (version: string) =>
     `Genex opened the Epic Games Launcher and handed the install to this chat: the message "Unreal Engine asks: Install Unreal Engine ${version}…" is done by the turn that answers it, with the desktop tool on the launcher. End your reply now. Unreal is about 45 GB; the chat tells you when it is installed.`,
   ForMeEngineRefused: (version: string, reason: string) =>
-    `Genex couldn't hand the install to this chat (${reason}). The Epic Games Launcher is open: tell the person in one line to install Unreal ${version} there (Library, + beside Engine Versions, ${version}, Install), then end your reply; the chat tells you when it is installed.`,
+    `Genex couldn't hand the install to this chat (${reason}). The Epic Games Launcher is open: with the desktop tool, install Unreal ${version} there yourself (Library, + beside Engine Versions, ${version}, Install); without it, tell the person in one line to. Then end your reply; the chat tells you when it is installed.`,
   ForMeRuntime:
     "Genex is installing Microsoft's Visual C++ runtime, which Unreal's editor needs, from Unreal's own copy (Windows asks the person for permission). End your reply now; the chat tells you when it is done.",
   ForMeRuntimeYourself:

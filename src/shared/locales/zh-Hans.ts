@@ -5699,7 +5699,7 @@ export default {
   "Let the agent see your screen in this chat?": "允许智能体在这个对话里查看你的屏幕吗？",
   "Let the agent use this app?": "允许智能体使用这个应用吗？",
   "Let the agent use {app}?": "允许智能体使用 {app} 吗？",
-  "They ask before each app.": "它们会在每个应用前先问你。",
+  "They ask before each app, except in Auto and Bypass.": "它们会在每个应用前先问你，Auto 和 Bypass 模式除外。",
   "Turn on computer control?": "要开启电脑控制吗？",
   "{plugin} asks: {task}": "{plugin} 请求：{task}",
   "Add an icon and a thumbnail, or Roblox shows a grey square.": "添加图标和缩略图，否则 Roblox 会显示灰色方块。",

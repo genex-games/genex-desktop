@@ -1,7 +1,7 @@
 {
   "apiVersion": 3,
   "id": "unity",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "icon": "icon.svg",
   "name": "Unity",
   "publisher": "Genex",

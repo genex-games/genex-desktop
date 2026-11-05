@@ -3584,7 +3584,7 @@ export const MESSAGES = [
   "These aren't Roblox Studio's settings: Studio keeps one JSON object.",
   "These files were too large to save, so the rewind left them as they are: {files}.",
   "These surfaces need different text colors. Use similar background brightness, or reset this theme.",
-  "They ask before each app.",
+  "They ask before each app, except in Auto and Bypass.",
   "They can",
   "They get the Genex download page with a card from you.",
   "They get the Genex download page with a card from you. You get {count} credits when they make their first game.",

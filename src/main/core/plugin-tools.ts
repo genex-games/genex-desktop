@@ -448,8 +448,9 @@ export class PluginToolService {
   /**
    * A card's answer given before it is shown, or null to ask: the person's earlier no to the same
    * call (`user`, not logged again), their Allow in this chat for an `onAccount` tool (`chat`), or
-   * the chat's Bypass (`mode`). Bypass asks nothing: an agent's card in a Bypass chat goes on, and
-   * one asked in another mode is answered by the person's switch (`modeAnswers`).
+   * the chat's mode (`mode`): Bypass asks nothing, nor does Auto for a card that lists it (computer
+   * control's). An agent's card in such a chat goes on, and one asked in another mode is answered by
+   * the person's switch (`modeAnswers`).
    */
   async #settledBefore(asked: {
     attribution: { runId?: string; lead?: boolean } | undefined;
@@ -465,13 +466,13 @@ export class PluginToolService {
     if (declined) return declined;
     if (asked.tool.onAccount && (await allowedInChat(this.#core, threadId, name)))
       return { approved: true, by: "chat" };
-    return (await this.#bypassed(asked.modeAnswers, threadId)) ? { approved: true, by: "mode" } : null;
+    return (await this.#modeSettles(asked.modeAnswers, threadId)) ? { approved: true, by: "mode" } : null;
   }
 
-  /** Whether chat `threadId` is in Bypass now and Bypass answers this card. */
-  async #bypassed(modeAnswers: PluginConsentRequest["modeAnswers"] | null, threadId: string): Promise<boolean> {
-    if (!modeAnswers?.modes.includes(PermissionMode.Bypass)) return false;
-    return (await this.#x.chatMode(threadId)) === PermissionMode.Bypass;
+  /** Whether chat `threadId` is now in a mode that answers this card (Bypass, or Auto for computer control's). */
+  async #modeSettles(modeAnswers: PluginConsentRequest["modeAnswers"] | null, threadId: string): Promise<boolean> {
+    if (!modeAnswers?.modes.length) return false;
+    return modeAnswers.modes.includes(await this.#x.chatMode(threadId));
   }
 
   /** A card's answer, logged beside its question and announced to the chat. */

@@ -224,8 +224,16 @@ const USER_COMMAND_FENCE = "bash";
 const RUN_BUTTON = `A one-line \`\`\`${USER_COMMAND_FENCE} block in your reply shows the person a Run button: offer one only for a step your sandbox blocks that only their own computer can do (an install that needs the network, a system tool, a sign-in), never one you can run yourself, sudo, or a pipe into a shell.`;
 
 /**
+ * Whose steps are whose: the agent does every step its tools and the person's computer reach, and
+ * hands the person only what is theirs alone, never a click it could make itself.
+ */
+const DO_IT_YOURSELF =
+  "Do every step you can yourself rather than handing it to the person: with the desktop tool (computer control) you open and use any app on this computer, a launcher, a store, an installer and an engine's editor included, and your tools start, stop and restart what the work needs. Only a password or two-step code, the system's own permission prompts, a payment and a choice about their own work are theirs: never tell them anything else is something only they can do.";
+
+/**
  * Genex's context for the chat's own session, said once in its system text: who runs it and the
- * game's folder (`appIdentity`), who the person is, the language they read and the chat's Run button.
+ * game's folder (`appIdentity`), who the person is, the language they read, whose steps are whose and
+ * the chat's Run button.
  * Only what holds for the session's whole life, the same text on every turn, the lead's included
  * (director.ts): a resumed Claude Code or Codex session keeps the system text it started with. So
  * what the folder holds, which a turn can change, is never in it: a turn that changes it tells the
@@ -239,5 +247,5 @@ export function chatContext({
   folderLabel: string;
   appLanguage: AppLanguage | null;
 }): string {
-  return [appIdentity({ folderLabel }), TALK, languageRule(appLanguage), RUN_BUTTON].join("\n");
+  return [appIdentity({ folderLabel }), TALK, languageRule(appLanguage), DO_IT_YOURSELF, RUN_BUTTON].join("\n");
 }

@@ -685,9 +685,10 @@ Loop run must confirm the two known changes: builders can no longer read sibling
 
 ## Residual risks
 
-- Computer control (the `desktop` tool, [computer-use](computer-use.md#the-persons-computer)) is off
-  until the person turns it on in Settings → Permissions; on, it acts with the person's own access
-  in every app they allow: the per-app consent card is the boundary.
+- Computer control (the `desktop` tool, [computer-use](computer-use.md#the-persons-computer)) is on
+  by default (Settings → Permissions turns it off); it acts with the person's own access in every
+  app they allow, an engine's editor and launcher included: the per-app consent card is the
+  boundary in Manual and Accept edits, and a chat in Auto or Bypass asks none.
   A page, document or message the agent reads there can try to steer it; the tool tells the model
   that on-screen text is never an instruction, and the studio itself, password managers and system
   settings are never driven. Web pages (`web_*`) open only in a separate, clean browser with no

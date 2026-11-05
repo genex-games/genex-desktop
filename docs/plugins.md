@@ -1616,7 +1616,7 @@ The `viewport` [observer](#observers) runs `hero-shots` and shows Live's `stills
 
 Its skills reach a game that holds a Roblox place only (`facts: ["roblox-project"]`, never
 `engines`), all file skills read through `roblox__skill`: `roblox-studio` (scripts are files, play goes through `computer`, a Loop's lead
-may ask a judge for a second opinion on its pictures with `judge`, the desktop tool never builds or play-tests in Studio, Roblox's AI tools, uploads and
+may ask a judge for a second opinion on its pictures with `judge`, building and play-testing go through Studio's own tools rather than the desktop tool, Roblox's AI tools, uploads and
 inserts ask), `luau`, `remotes` (server-authoritative), `player-data`
 (session-locked, `UpdateAsync`, `BindToClose`), `purchases` (idempotent `ProcessReceipt`),
 `ui-scale` (`UIScale`, `ScreenInsets`, touch targets), `assets` (Roblox's mesh and texture rules)
@@ -2449,8 +2449,8 @@ press (`epic-install.ts`): on Windows Genex downloads Epic's installer from Epic
 Authenticode calls it Valid and signed by Epic Games Inc., and opens the launcher for the sign-in
 (elsewhere the step opens Epic's download page); Unreal itself is handed to the game's chat through
 `game.engine.assist` after Genex opens the launcher, the turn answering it clicking Library › + ›
-5.8 › Install with the desktop tool (the manifest's `engine.apps` names only Epic's launcher, so no
-other turn drives it), stopping at Epic's sign-in; the runtime runs from the engine's own
+5.8 › Install with the desktop tool (the manifest's `engine.apps` names only Epic's launcher, so
+that turn drives nothing else), stopping at Epic's sign-in; the runtime runs from the engine's own
 `vc_redist.x64.exe`, signed by Microsoft Corporation. Windows asks the person for permission each
 time. While an install runs its row is `working` with where it stands and Stop (`stop-install`)
 replaces Don't use Unreal; a failed install is told to the agent once (`stuckSays`), a stop the
@@ -2624,9 +2624,9 @@ The manifest is refused unless:
   ([computer use](computer-use.md#game-engines-and-other-targets)); a plugin with a `play` of more
   than one player takes `players` on `play-open` and `player` on its other play tools;
 - `apps`, when present, is `{mac?, windows?}`, each 1–4 distinct names: Mac bundle ids in
-  reverse-DNS form and Windows `.exe` file names, never paths. They name the apps the editor runs
-  as, which computer use never drives to build or play: while the plugin is on, the `desktop`
-  tool refuses them outside its `game.engine.assist` turns, and those turns may drive only them;
+  reverse-DNS form and Windows `.exe` file names, never paths. They name the apps the engine's
+  setup assist drives (its editor, or the launcher that installs it): its `game.engine.assist`
+  turns may drive only them, and are brought to them; any other turn uses them as any app;
 - `playerApps`, when present, has `apps`' shape and names the apps the engine's published games are
   played in by everyone (Roblox's player app): while the plugin is on, the `desktop` tool refuses
   them always, an assist turn included, so no agent plays in a live server;

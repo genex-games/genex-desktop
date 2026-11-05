@@ -8,7 +8,7 @@
  * screen and use the computer this session, and each app it then reaches is asked for once
  * (`desktop-target.ts`). A no is the answer the model reads, never a failure. The driver starts
  * on the first call and stops with the session. Computer control is a setting (Settings →
- * Permissions, off by default): while it is off, every call answers so and nothing starts.
+ * Permissions, on by default): while it is off, every call answers so and nothing starts.
  */
 import type { ScreenAct } from "../../shared/agent-screen.ts";
 import { ScreenRole } from "../../shared/agent-screen.ts";
@@ -63,7 +63,7 @@ export interface DesktopToolsDeps {
   ask: (question: DesktopQuestion, app?: DesktopApp) => Promise<DesktopAnswer>;
   /** Whether an app is the studio itself, which no agent ever drives. */
   ownApp: (app: DesktopApp) => boolean;
-  /** The engine-app guard: why this app is refused now (an engine's editor outside its assist), or null. */
+  /** The engine-app guard: why this app is refused now (a game's player app, or one outside a setup assist's grant), or null. */
   engineApps?: (app: DesktopApp) => string | null;
   /** The folder the session's frames and trace go into. */
   frameDir: string;

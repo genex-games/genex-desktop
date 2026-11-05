@@ -1,6 +1,6 @@
 /**
  * Settings → Permissions' "Let agents control your computer": the studio setting that lets an
- * agent ask for the person's computer (`computerControl`, off by default). Main owns it; this is a
+ * agent ask for the person's computer (`computerControl`, on by default). Main owns it; this is a
  * view that loads it once, follows `settings.changed`, and changes only this one setting. Where it
  * is offered is `computerControlOffered` (`shared/computer-control.ts`).
  */

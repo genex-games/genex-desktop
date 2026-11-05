@@ -1,7 +1,7 @@
 {
   "apiVersion": 3,
   "id": "unreal",
-  "version": "0.49.0",
+  "version": "0.50.0",
   "icon": "icon.svg",
   "name": "Unreal Engine",
   "publisher": "Genex",
@@ -243,7 +243,7 @@
     {
       "name": "motion-status",
       "facts": ["unreal-project"],
-      "description": "Whether the Game Animation Sample (Epic's Motion Matching characters) is among this Mac's Unreal projects, whether this game holds its content, and how adding it goes.",
+      "description": "Whether the Game Animation Sample (Epic's Motion Matching characters) is among this computer's Unreal projects, whether this game holds its content, and how adding it goes. When it isn't, make it yourself with the desktop tool in the Epic Games Launcher (Fab Library or Samples › Game Animation Sample › Create Project, 5.8).",
       "parameters": {
         "type": "object",
         "properties": {}
@@ -254,7 +254,7 @@
       "jobStatus": "motion-status",
       "facts": ["unreal-project"],
       "needs": ["editor"],
-      "description": "Add the Game Animation Sample's Motion Matching content to this game, once the user confirms: Genex saves their open work in Unreal, quits it, clones the sample's character, clips and pose databases into the game (kept out of its checkpoints), merges the sample's settings and plugins, and opens Unreal again; its first open takes about ten minutes. Needs the sample from Fab or the Epic Games Launcher among the user's Unreal projects. Answers {started} at once, or {already}; Genex starts this chat's next turn once it has ended, so you may end your turn meanwhile; motion-status says how it went. Then motion_character gives a character the sample's Motion Matching.",
+      "description": "Add the Game Animation Sample's Motion Matching content to this game, once the user confirms: Genex saves their open work in Unreal, quits it, clones the sample's character, clips and pose databases into the game (kept out of its checkpoints), merges the sample's settings and plugins, and opens Unreal again; its first open takes about ten minutes. Needs the sample among the user's Unreal projects: when it isn't, make it yourself with the desktop tool in the Epic Games Launcher (Fab Library or Samples › Game Animation Sample › Create Project, 5.8). Answers {started} at once, or {already}; Genex starts this chat's next turn once it has ended, so you may end your turn meanwhile; motion-status says how it went. Then motion_character gives a character the sample's Motion Matching.",
       "parameters": {
         "type": "object",
         "properties": {}

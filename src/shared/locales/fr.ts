@@ -6140,7 +6140,7 @@ export default {
   "Let the agent see your screen in this chat?": "Laisser l’agent voir ton écran dans ce chat ?",
   "Let the agent use this app?": "Laisser l’agent utiliser cette app ?",
   "Let the agent use {app}?": "Laisser l’agent utiliser {app} ?",
-  "They ask before each app.": "Ils demandent avant chaque app.",
+  "They ask before each app, except in Auto and Bypass.": "Ils demandent avant chaque app, sauf en Auto et Bypass.",
   "Turn on computer control?": "Activer le contrôle de l’ordinateur ?",
   "{plugin} asks: {task}": "{plugin} demande : {task}",
   "Add an icon and a thumbnail, or Roblox shows a grey square.":

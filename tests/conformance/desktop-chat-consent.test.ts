@@ -2,12 +2,14 @@
  * Computer control's yes lasts the chat, as its card says ("during this session"): the person
  * answers the session's card and each app's once, and the chat's next turns use the computer with no
  * further card. Their Stop, the stop shortcut or turning computer control off ends that yes, and the
- * next turn asks again. Real delegation over a fake driver.
+ * next turn asks again. A chat in Auto or Bypass asks no card at all. Real delegation over a fake
+ * driver.
  */
 import assert from "node:assert/strict";
 import { it } from "node:test";
 import { desktopControl } from "../../src/main/core/desktop-control.ts";
 import { HostMethod } from "../../src/shared/harness-api.ts";
+import { PermissionMode } from "../../src/shared/permissions.ts";
 import { UiEvent, type UiEvent as UiEventData } from "../../src/shared/ui-events.ts";
 import type { DesktopDriver } from "../../src/substrate/desktop-driver.ts";
 import type { DelegateRequest } from "../../src/substrate/engines/types.ts";
@@ -61,6 +63,8 @@ it("one yes covers the chat's later turns; Stop, the shortcut and turning contro
     const project = "desk-chat";
     await core.games.scaffold(project);
     const threadId = await core.createGameThread(project);
+    // Manual asks: Auto and Bypass ask no computer-control card.
+    await core.setPermissionMode(threadId, PermissionMode.Manual);
     core.engines.register({
       id: "fixture-delegate",
       label: "Fixture",
@@ -100,6 +104,65 @@ it("one yes covers the chat's later turns; Stop, the shortcut and turning contro
   }
 });
 
+it("a chat in Auto or Bypass uses the computer with no card; Manual and Accept edits ask", async () => {
+  const clicks: string[] = [];
+  const desktop = desktopControl({
+    findDriver: async () => "/fake/cua-driver",
+    connect: async () => ({ ...quietDriver(), click: async (x, y) => void clicks.push(`${x},${y}`) }),
+    ownApp: () => false,
+  });
+  let asked = 0;
+  let answer: (consentId: string) => void = () => {};
+  const lite = await coreLite({
+    desktop,
+    onUiEvent: (event: UiEventData) => {
+      if (event.type !== UiEvent.PluginConsent) return;
+      const payload = event.payload as { consentId: string; state: string };
+      if (payload.state !== "pending") return;
+      asked += 1;
+      answer(payload.consentId);
+    },
+  });
+  try {
+    const { core } = lite;
+    answer = (consentId) => void Promise.resolve().then(() => core.resolveConsent(consentId, true));
+    assert.equal(core.settings.computerControl, true, "on by default");
+    core.engines.register({
+      id: "fixture-delegate",
+      label: "Fixture",
+      kind: "delegated",
+      status: async () => ({ code: "ready", detail: "Fixture" }),
+      models: async () => [],
+      delegate: async (request: DelegateRequest) => {
+        await request.onLiveTool!("desktop", { action: "left_click", coordinate: "10,20" });
+        return { ok: true, engine: "fixture-delegate", summary: "done", turns: 1, usage: {} };
+      },
+    } as never);
+    const api = core.api() as unknown as Record<string, (input: unknown) => Promise<unknown>>;
+    const rows: Array<[PermissionMode | null, number]> = [
+      [null, 0],
+      [PermissionMode.Auto, 0],
+      [PermissionMode.Bypass, 0],
+      [PermissionMode.Manual, 2],
+      [PermissionMode.AcceptEdits, 2],
+    ];
+    for (const [mode, cards] of rows) {
+      // A game of its own per row: each chat's yes is its own.
+      const project = `desk-${mode ?? "unchosen"}`.toLowerCase();
+      await core.games.scaffold(project);
+      const threadId = await core.createGameThread(project);
+      if (mode) await core.setPermissionMode(threadId, mode);
+      const before = { asked, clicks: clicks.length };
+      await api[HostMethod.EngineDelegate]!({ engine: "fixture-delegate", project, threadId, prompt: "click" });
+      const label = mode ?? "a chat that never chose (Auto)";
+      assert.equal(asked - before.asked, cards, `${label}: cards asked`);
+      assert.equal(clicks.length - before.clicks, 1, `${label}: the click went through`);
+    }
+  } finally {
+    await lite.close();
+  }
+});
+
 it("a session's card nobody answers expires as unanswered, never as a no: the model reads so and the next call asks again", async () => {
   // The owner's Unreal chat: the card waited nine minutes with nobody at the computer, and the model
   // read "the person did not allow computer control", so it told them control was off.
@@ -123,6 +186,8 @@ it("a session's card nobody answers expires as unanswered, never as a no: the mo
     const project = "desk-unanswered";
     await core.games.scaffold(project);
     const threadId = await core.createGameThread(project);
+    // Manual asks: Auto and Bypass ask no computer-control card.
+    await core.setPermissionMode(threadId, PermissionMode.Manual);
     const answers: string[] = [];
     core.engines.register({
       id: "fixture-delegate",

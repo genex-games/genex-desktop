@@ -315,11 +315,22 @@ type SavedSettings = Partial<StudioSettings> & {
   buildersDefault?: number;
   /** Written since self-improvement was stopped; a file without it was saved while learning started on. */
   learningStopped?: boolean;
+  /** Written since computer control is on by default; a file without it was saved while it started off. */
+  computerControlDefaultOn?: boolean;
 };
 
 /** Migration: self-improvement is stopped, so a file saved before the stop turns learning off once. */
 function savedLearning(saved: SavedSettings): boolean {
   return saved.learningStopped === true && saved.learning === true;
+}
+
+/**
+ * Migration: computer control is on by default, and a file saved while it started off (no
+ * `computerControlDefaultOn`) cannot tell an off someone chose from one never touched, so it turns
+ * on once; a file saved since keeps the person's choice.
+ */
+function savedComputerControl(saved: SavedSettings): boolean {
+  return saved.computerControlDefaultOn === true ? saved.computerControl === true : true;
 }
 
 /** The worker default in force when `saved` was written: the file's own record, else the older builds' default. */
@@ -594,7 +605,7 @@ export class StudioCore {
     agentsMax: DEFAULT_POOL_MAX,
     blender: true,
     autoResume: true,
-    computerControl: false,
+    computerControl: true,
     language: SYSTEM_LANGUAGE,
   };
   #assetCheckpointStore?: AssetCheckpoints;
@@ -2087,7 +2098,12 @@ export class StudioCore {
     if (computerOff) await this.options.desktop?.stopAll();
     // Atomic (CQ-3): a torn write would read back as defaults at the next start. The default goes
     // beside the settings so the next start can tell a worker count someone chose from one never touched.
-    const saved: SavedSettings = { ...this.#settings, buildersDefault: DEFAULT_BUILDERS, learningStopped: true };
+    const saved: SavedSettings = {
+      ...this.#settings,
+      buildersDefault: DEFAULT_BUILDERS,
+      learningStopped: true,
+      computerControlDefaultOn: true,
+    };
     await atomicWriteJson(this.#settingsFile(), saved);
     // The pool follows the setting at once; a run already going sizes its next round to it.
     if (this.#x.previewPool && this.options.previewPoolMax === undefined)
@@ -2110,8 +2126,7 @@ export class StudioCore {
         agentsMax: buildersMax + LEAD_WINDOWS,
         blender: parsed.blender !== false,
         autoResume: parsed.autoResume !== false,
-        // Off unless the person turned it on: a file from before the switch reads as off.
-        computerControl: parsed.computerControl === true,
+        computerControl: savedComputerControl(parsed),
         language: savedLanguage(parsed.language),
       };
     } catch {

@@ -5896,7 +5896,8 @@ export default {
   "Let the agent see your screen in this chat?": "이 채팅에서 에이전트가 화면을 보게 할까요?",
   "Let the agent use this app?": "에이전트가 이 앱을 쓰게 할까요?",
   "Let the agent use {app}?": "에이전트가 {app} 앱을 쓰게 할까요?",
-  "They ask before each app.": "에이전트는 앱마다 먼저 물어봐요.",
+  "They ask before each app, except in Auto and Bypass.":
+    "에이전트는 앱마다 먼저 물어봐요. Auto와 Bypass에서는 묻지 않아요.",
   "Turn on computer control?": "컴퓨터 제어를 켤까요?",
   "{plugin} asks: {task}": "{plugin}의 요청: {task}",
   "Add an icon and a thumbnail, or Roblox shows a grey square.":

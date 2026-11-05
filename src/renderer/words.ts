@@ -1831,10 +1831,10 @@ export const COMPUTER_CONTROL_SETTING_WORDS = {
   label: t("Let agents use your computer"),
 } as const;
 
-/** What the switch says on `platform`, in one line: agents ask first, or where it runs. */
+/** What the switch says on `platform`, in one line: agents ask first outside Auto and Bypass, or where it runs. */
 export function computerControlDetail(platform: string): string {
   if (!computerControlOffered(platform)) return t("macOS and Windows only.");
-  return t("They ask before each app.");
+  return t("They ask before each app, except in Auto and Bypass.");
 }
 
 /** What computer control never touches on `platform`, under a computer-control card's Details. */

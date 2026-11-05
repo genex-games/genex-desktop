@@ -1,12 +1,13 @@
 /**
  * Computer control through a real delegation: the chat's own session — on any engine — is handed
- * the `desktop` tool when the person turned computer control on in Settings (off by default) and a
+ * the `desktop` tool when computer control is on in Settings (on by default) and a
  * desktop driver is installed, and nothing moves before the person answers the consent card the
- * studio puts in the chat. Sessions nobody answers (a playtester, a read-only lead) never get it,
+ * studio puts in the chat. A Loop's lead answering the chat holds it too; sessions nobody answers
+ * (a playtester, a read-only lead, a lead the host did not seat) never get it,
  * and the driver stops with the session or when the setting is turned off.
  */
 import assert from "node:assert/strict";
-import { cp, readFile, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { it } from "node:test";
@@ -14,7 +15,9 @@ import { fileURLToPath } from "node:url";
 import { assistGrants } from "../../src/main/core/desktop-assist.ts";
 import { desktopControl } from "../../src/main/core/desktop-control.ts";
 import { engineAppRefusal } from "../../src/main/core/desktop-target.ts";
+import { CustomEvent } from "../../src/shared/custom-events.ts";
 import { HostMethod } from "../../src/shared/harness-api.ts";
+import { PermissionMode } from "../../src/shared/permissions.ts";
 import { PluginSourceKind } from "../../src/shared/plugins.ts";
 import { UiEvent, type UiEvent as UiEventData } from "../../src/shared/ui-events.ts";
 import type { DelegateRequest, LiveToolResult } from "../../src/substrate/engines/types.ts";
@@ -23,7 +26,7 @@ import { connectCuaDriver, driverEnv, GrantHolder } from "../../src/substrate/cu
 import { embeddedCuaDriver, HOST_BUNDLE_ID } from "../../src/substrate/cua-embedded.ts";
 import { running } from "../helpers/processes.ts";
 import { coreLite } from "../helpers/core-lite.ts";
-import { TOY_PLUGIN, TOY_PLUGIN_ID } from "../helpers/project-fixtures.ts";
+import { copyProject, Project, TOY_PLUGIN, TOY_PLUGIN_ID } from "../helpers/project-fixtures.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 const text = (result: LiveToolResult): string => (typeof result === "string" ? result : result.text);
@@ -80,6 +83,8 @@ it("the chat's own session gets the desktop tool behind the person's consent; ot
     const project = "desk";
     await core.games.scaffold(project);
     const threadId = await core.createGameThread(project);
+    // Manual asks: Auto and Bypass ask no computer-control card.
+    await core.setPermissionMode(threadId, PermissionMode.Manual);
     const seen: Array<{ tools: string[]; answers: string[] }> = [];
     core.engines.register({
       id: "fixture-delegate",
@@ -136,6 +141,83 @@ it("the chat's own session gets the desktop tool behind the person's consent; ot
       cwd: undefined,
     });
     assert.equal(seen[1]?.tools.includes("desktop"), false, "a read-only session is never handed the computer");
+  } finally {
+    await lite.close();
+  }
+});
+
+it("a Loop's lead answering its chat holds the desktop tool as the chat's own session does; an unseated lead never does", async () => {
+  const root = await realpath(await tmpDir("desktop-lead-"));
+  const places = path.join(root, "places");
+  await mkdir(places);
+  const desktop = desktopControl({
+    findDriver: async () => "/fake/cua-driver",
+    connect: async () => fakeDriver([]),
+    ownApp: () => false,
+  });
+  const lite = await coreLite({
+    desktop,
+    gamesRoot: path.join(root, "games"),
+    executionPolicy: { allowedProjectRoot: root },
+  });
+  try {
+    const { core } = lite;
+    // No harness in a lite core: a dispatch reaches nothing.
+    core.host.dispatch = async () => undefined;
+    const seen: string[][] = [];
+    core.engines.register({
+      id: "fixture-delegate",
+      label: "Fixture",
+      kind: "delegated",
+      supportsSessions: true,
+      status: async () => ({ code: "ready", detail: "Fixture" }),
+      models: async () => [],
+      delegate: async (request: DelegateRequest) => {
+        seen.push((request.liveTools ?? []).map((tool) => tool.name));
+        return { ok: true, engine: "fixture-delegate", summary: "done", turns: 1, usage: {} };
+      },
+    } as never);
+    const game = await core.adoptProject(await copyProject(Project.GodotGame, await mkdtemp(path.join(places, "p-"))));
+    const threadId = await core.threadForGame(game.name);
+    const runId = "run_desktop_lead";
+    const director = {
+      runId,
+      threadId,
+      project: game.name,
+      root: game.dir,
+      setup: null,
+      tools: [],
+      chatSession: true,
+      inPlace: true,
+    };
+    const api = core.api() as unknown as Record<string, (input: unknown) => Promise<unknown>>;
+    const lead = () =>
+      api[HostMethod.EngineDelegate]!({
+        engine: "fixture-delegate",
+        project: game.name,
+        threadId,
+        prompt: "lead the Loop",
+        chatTurn: { messageId: runId },
+        director,
+      });
+
+    await lead();
+    assert.equal(
+      seen[0]?.includes("desktop"),
+      false,
+      "with no run of the chat going, the lead is unseated and unattended",
+    );
+
+    const payload = { runId, project: game.name, mode: "director" };
+    await core.append(
+      [
+        { type: "custom", event_type: CustomEvent.RunRegistered, payload },
+        { type: "custom", event_type: CustomEvent.RunStarted, payload: { runId, project: game.name } },
+      ] as never,
+      threadId,
+    );
+    await lead();
+    assert.ok(seen[1]?.includes("desktop"), "the chat's Loop lead keeps the person's computer while the Loop runs");
   } finally {
     await lite.close();
   }
@@ -224,7 +306,8 @@ function desktopEngine(steps: (call: (args: Record<string, unknown>) => Promise<
   return { engine, seen };
 }
 
-it("computer control is off by default: no session is handed the computer, no card shows and no driver is looked for", async () => {
+// Flipped (computer control on by default): a fresh install starts with it on; turned off, nothing is offered.
+it("computer control turned off: no session is handed the computer, no card shows and no driver is looked for", async () => {
   let looked = 0;
   const desktop = desktopControl({
     findDriver: async () => {
@@ -239,7 +322,8 @@ it("computer control is off by default: no session is handed the computer, no ca
   const lite = await coreLite({ desktop });
   try {
     const { core } = lite;
-    assert.equal(core.settings.computerControl, false, "a fresh install starts with it off");
+    assert.equal(core.settings.computerControl, true, "a fresh install starts with it on");
+    await core.updateSettings({ computerControl: false });
     const project = "desk-off";
     await core.games.scaffold(project);
     const threadId = await core.createGameThread(project);
@@ -276,21 +360,35 @@ it("computer control is off by default: no session is handed the computer, no ca
   }
 });
 
-it("an existing install starts with computer control off; turning it on is remembered", async () => {
+// Flipped (computer control on by default): a file saved while it started off turns it on once.
+it("an existing install turns computer control on once; an off chosen since is remembered", async () => {
   const lite = await coreLite();
   try {
     const { core, userData } = lite;
     const settings = path.join(userData, "settings.json");
-    await writeFile(settings, JSON.stringify({ learning: true, buildersMax: 6, autoResume: true }));
+    for (const before of [
+      { learning: true, buildersMax: 6, autoResume: true },
+      { learning: true, buildersMax: 6, autoResume: true, computerControl: false },
+    ]) {
+      await writeFile(settings, JSON.stringify(before));
+      await core.stop();
+      await core.init();
+      assert.equal(
+        core.settings.computerControl,
+        true,
+        `a file saved while it started off reads as on: ${JSON.stringify(before)}`,
+      );
+    }
+    assert.equal((await core.updateSettings({ computerControl: false })).computerControl, false);
     await core.stop();
     await core.init();
-    assert.equal(core.settings.computerControl, false, "a settings file from before the switch reads as off");
+    assert.equal(core.settings.computerControl, false, "an off chosen since survives a restart");
+    const saved = JSON.parse(await readFile(settings, "utf8")) as { computerControl?: unknown };
+    assert.equal(saved.computerControl, false);
     assert.equal((await core.updateSettings({ computerControl: true })).computerControl, true);
     await core.stop();
     await core.init();
     assert.equal(core.settings.computerControl, true, "on survives a restart");
-    const saved = JSON.parse(await readFile(settings, "utf8")) as { computerControl?: unknown };
-    assert.equal(saved.computerControl, true);
   } finally {
     await lite.close();
   }
@@ -612,7 +710,8 @@ it("end to end: a chat's click goes through the app's own embedded daemon, which
   }
 });
 
-it("an assist's turn may drive the engine apps its grant names; the next turn and the plain chat may not", async () => {
+// Flipped (agents act by themselves): the plain chat and the turn after an assist drive the engine's editor too.
+it("an assist's turn drives the engine apps its grant names, and the plain chat drives them as any app", async () => {
   const calls: string[] = [];
   const toyEditor = { name: "Toy Editor", bundleId: "com.example.toy", pid: 7 };
   const desktop = desktopControl({
@@ -658,7 +757,7 @@ it("an assist's turn may drive the engine apps its grant names; the next turn an
 
     await delegate("msg_plain");
     assert.ok(seen[0]?.tools.includes("desktop"), "with computer control on, the chat is handed the desktop");
-    assert.match(said[0]!, /Toy Editor is a game engine's editor/, "an engine's editor is refused outside an assist");
+    assert.match(said[0]!, /OK — left click at 10,20/, "outside an assist an engine's editor is used as any app");
 
     assistGrants(core).record(threadId, {
       pluginId: TOY_PLUGIN_ID,
@@ -671,11 +770,11 @@ it("an assist's turn may drive the engine apps its grant names; the next turn an
     assert.equal(assistGrants(core).live(threadId), null, "the grant ended with its turn");
 
     await delegate("msg_after");
-    assert.match(said[2]!, /Toy Editor is a game engine's editor/);
+    assert.match(said[2]!, /OK — left click at 10,20/);
     assert.deepEqual(
       calls.filter((call) => call.startsWith("click")),
-      ["click 10,20"],
-      "only the assist's click reached the driver",
+      ["click 10,20", "click 10,20", "click 10,20"],
+      "every turn's click reached the driver",
     );
   } finally {
     await lite.close();
@@ -787,6 +886,8 @@ it("an assist the person pressed asks no further card and brings its app forward
     const project = "desk-pressed";
     await core.games.scaffold(project);
     const threadId = await core.createGameThread(project);
+    // Manual asks: Auto and Bypass ask no computer-control card.
+    await core.setPermissionMode(threadId, PermissionMode.Manual);
     const said: string[] = [];
     const { engine } = desktopEngine(async (call) => {
       said.push(await call({ action: "left_click", coordinate: "10,20" }));
@@ -870,6 +971,8 @@ it("a pressed assist whose engine opens pages asks the person, on a card, for an
     const project = "desk-pressed-browser";
     await core.games.scaffold(project);
     const threadId = await core.createGameThread(project);
+    // Manual asks: Auto and Bypass ask no computer-control card.
+    await core.setPermissionMode(threadId, PermissionMode.Manual);
     const said: string[] = [];
     const { engine } = desktopEngine(async (call) => {
       said.push(await call({ action: "left_click", coordinate: "10,20" }));

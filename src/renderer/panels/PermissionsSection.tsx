@@ -107,7 +107,7 @@ function StartingMode({
   );
 }
 
-/** "Let agents control your computer": off by default, and offered only where a desktop driver runs (macOS, Windows). */
+/** "Let agents control your computer": on by default, and offered only where a desktop driver runs (macOS, Windows). */
 function ComputerControl(): JSX.Element | null {
   const { on, busy, error, change } = useComputerControl();
   if (on === null && !error) return null;

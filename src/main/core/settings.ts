@@ -61,10 +61,11 @@ export interface StudioSettings {
    */
   autoResume: boolean;
   /**
-   * Let agents control your computer (Settings → Permissions, default OFF for every install, new
-   * or existing; macOS and Windows). Off, no session is handed the `desktop` tool, no consent card shows,
-   * cua-driver never starts and `desktop.computer` answers that it is off; turning it off stops a
-   * running driver. On, each chat session and each app still asks first (`core/desktop-tools.ts`).
+   * Let agents control your computer (Settings → Permissions, default ON; an install whose settings
+   * were saved while it started off turns it on once; macOS and Windows). Off, no session is handed
+   * the `desktop` tool, no consent card shows, cua-driver never starts and `desktop.computer` answers
+   * that it is off; turning it off stops a running driver. On, each chat session and each app asks
+   * first in the modes that ask (`core/desktop-tools.ts`).
    */
   computerControl: boolean;
   /**

@@ -7,9 +7,9 @@
  *   waits for their answer, and a no ends the action;
  * - some apps are never driven, whatever is allowed: the studio itself (an agent must never answer
  *   its own consent card), password managers, System Settings and the system's password prompts;
- * - computer use never builds or play-tests: a game engine's editor (the apps an enabled engine
- *   plugin declares) is driven only in that plugin's setup assist (Do it for me), and an assist
- *   drives only the apps it was granted;
+ * - an app an engine's games are played in by everyone (a live server) is never driven, and a
+ *   setup assist (Do it for me) drives only the apps it was granted; any other app, an engine's
+ *   editor or launcher included, is the agent's to use once allowed;
  * - nothing is ever typed into a secure (password) field.
  *
  * A click is checked against the app whose window is under the point when the driver can say (a
@@ -125,8 +125,6 @@ const MESSAGE = {
   secureField: "the focused field is a password field: the studio never types into one",
   noApp: "no app could be found under that point or in front",
   noWindow: "no app's window is under that point — click inside the window of an app the person allowed",
-  engineApp: (app: string) =>
-    `${app} is a game engine's editor: computer use never builds or play-tests there — use the engine's own tools. A setup click or a publish there goes through its plugin's tool (such as Do it for me or Publish), and only the turn that answers the task it posts may click it`,
   playerApp: (app: string) =>
     `${app} is where an engine's games are played by everyone: computer use never plays there, not even for setup`,
   outsideAssist: (app: string) => `${app} is not one of the apps this setup step may use`,
@@ -205,9 +203,9 @@ async function openPageWith(options: Pick<DesktopTargetOptions, "openPage" | "fr
   return null;
 }
 
-/** What the engine-app guard reads: the editors engines declare, and the chat's live assist grant. */
+/** What the engine-app guard reads: the apps engines declare, and the chat's live assist grant. */
 export interface EngineAppRule {
-  /** The editor apps every enabled engine plugin declares for this system (`engine.apps`, `engineAppIds`). */
+  /** The apps every enabled engine plugin's setup assist drives on this system (`engine.apps`, `engineAppIds`). */
   declared: ReadonlySet<string>;
   /** The apps the chat's live setup assist was granted; null outside an assist. */
   granted: ReadonlySet<string> | null;
@@ -223,15 +221,15 @@ export interface EngineAppRule {
 /**
  * Why the engine-app guard refuses an app, or null: an app an engine's games are played in always;
  * during an assist every app outside its grant, except that an assist whose engine opens pages
- * (`others`) leaves an app that is no engine's editor to the person's card (its step needs their
- * browser, for a game's page); outside one, every engine's editor. The apps the studio never drives
- * are refused before this.
+ * (`others`) leaves an app no engine declares to the person's card (its step needs their browser,
+ * for a game's page). Outside an assist an engine's apps are like any other: the agent prefers the
+ * engine's own tools to build and play-test, and does the rest (a launcher, a store, a dialog) on
+ * the desktop itself. The apps the studio never drives are refused before this.
  */
 export function engineAppRefusal(app: DesktopApp, rule: EngineAppRule): string | null {
   const id = app.bundleId;
   if (id !== null && rule.players?.has(id)) return MESSAGE.playerApp(appName(app));
-  if (rule.granted) return assistAppRefusal(app, rule);
-  return id !== null && rule.declared.has(id) ? MESSAGE.engineApp(appName(app)) : null;
+  return rule.granted ? assistAppRefusal(app, rule) : null;
 }
 
 /** During an assist: its granted apps go ahead, and the person's card decides only where `others` lets it. */

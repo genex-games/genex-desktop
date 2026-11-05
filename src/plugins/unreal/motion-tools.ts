@@ -1,7 +1,8 @@
 /**
  * The Game Animation Sample's Motion Matching in a game. Epic's sample can't ship with Genex (it is
- * Fab content for Unreal projects, not Genex's to hand on), so the person gets it once from Fab or
- * the Epic Games Launcher and Genex finds it among their Unreal projects. `motion-status` says where
+ * Fab content for Unreal projects, not Genex's to hand on), so the agent creates it once in the Epic
+ * Games Launcher with the desktop tool (or the person does) and Genex finds it among their Unreal
+ * projects. `motion-status` says where
  * the sample is and whether the game has its content; `add-motion-matching` adds that content in the
  * background, one job per project at a time, once the person confirms: it saves the editor's work
  * and quits Unreal, clones the folders the sample's Motion Matching character needs into the game's
@@ -98,7 +99,7 @@ const GB = 1024 ** 3;
 const MESSAGE = {
   NoProject: "This game isn't linked to an Unreal project, so there is no project to add Motion Matching to.",
   NoSample:
-    "The Game Animation Sample isn't among this Mac's Unreal projects. Get it once from Fab or the Epic Games Launcher (Samples), create a project from it, then try again.",
+    "The Game Animation Sample isn't among this computer's Unreal projects. Make it yourself with the desktop tool: in the Epic Games Launcher (Unreal's Fab › View in Launcher opens it), Fab Library or Unreal Engine › Samples › Game Animation Sample › Create Project, Unreal 5.8, default folder; wait for its download, then try again.",
   NoFolder: "The game's folder isn't known, so Genex can't keep the sample's content out of its checkpoints.",
   Collides: (files: string) =>
     `The game already has files where the sample's content goes (${files}), so Genex added nothing. Move or rename them first.`,
