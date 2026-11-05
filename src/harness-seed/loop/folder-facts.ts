@@ -177,14 +177,18 @@ export function servedAsWeb(game: FactsOfDescriptor): boolean {
   return hasFact(servedFactsOf(game), CoreFact.WebGame, ROOT);
 }
 
-/** The facts of an engine's own project: a game that holds one is built and played in that engine. */
+/** The kinds of project a game engine's editor works on: a game that holds one is built and played in that engine. */
 const ENGINE_PROJECTS: ReadonlySet<string> = new Set<string>([
   CoreFact.UnrealProject,
-  CoreFact.UnrealPlugin,
-  CoreFact.GodotProject,
   CoreFact.UnityProject,
+  CoreFact.GodotProject,
   CoreFact.RobloxProject,
 ]);
+
+/** Whether the facts hold a game engine's project (`ENGINE_PROJECTS`), anywhere in the game's folder. */
+export function holdsEngineProject(facts: readonly FactRef[]): boolean {
+  return facts.some((fact) => ENGINE_PROJECTS.has(fact.id));
+}
 
 /**
  * Whether the game is an engine's game: it is linked to an engine's project, or its folder holds
@@ -192,8 +196,7 @@ const ENGINE_PROJECTS: ReadonlySet<string> = new Set<string>([
  * before the engine was picked).
  */
 export function engineGame(game: FactsOfDescriptor): boolean {
-  if (isEngineGame(engineOfGame(game))) return true;
-  return factsOfGame(game).some((fact) => ENGINE_PROJECTS.has(fact.id));
+  return isEngineGame(engineOfGame(game)) || holdsEngineProject(factsOfGame(game));
 }
 
 /**

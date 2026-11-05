@@ -290,9 +290,8 @@ async function afterDelegation(ctx: HarnessCtx, seat: Seat, delegation: Delegati
  */
 async function kindsBeforeLaunch(ctx: HarnessCtx, seat: Seat, result: DelegateResult): Promise<PluginKindOffer[]> {
   const { options, handoff } = seat;
+  if (!handoff.questionCard || !launchRecorded(handoff, result) || !goesOnFrom(result)) return [];
   const recorded = result.studioToolCalls ?? [];
-  const launches = handoff.launches && recorded.some((call) => call.name === startAutopilot.name);
-  if (!launches || !handoff.questionCard || !result.ok || !result.sessionId) return [];
   if (recorded.some((call) => call.name === askUser.name)) return [];
   if (options.afterLoopRun && resumeAsked(options.afterLoopRun, recorded)) return [];
   if (!kindPending(await gameAtTurnEnd(ctx, handoff))) return [];
@@ -300,6 +299,13 @@ async function kindsBeforeLaunch(ctx: HarnessCtx, seat: Seat, result: DelegateRe
   const kinds = Array.isArray(plugins?.kinds) ? plugins.kinds : [];
   return kinds.filter((kind) => kind.game !== false);
 }
+
+/** Whether the session's answer records the Loop's start it was handed. */
+const launchRecorded = (handoff: Handoff, result: DelegateResult): boolean =>
+  handoff.launches && (result.studioToolCalls ?? []).some((call) => call.name === startAutopilot.name);
+
+/** Whether the session answered as it should, with a session to go on in. */
+const goesOnFrom = (result: DelegateResult): boolean => result.ok && Boolean(result.sessionId);
 
 /** What a held launch carries on with: the kinds on offer, and the checkpoint's line when the turn saved one. */
 interface HeldLaunch {

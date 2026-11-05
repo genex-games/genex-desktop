@@ -1530,6 +1530,9 @@ describe("a build started before its game had a kind (web-scaffold-unreal)", () 
     const none = await chatTurn([{ calls: [LAUNCH] }], []);
     assert.equal(none.legs.length, 1, "no kind to pick: no hold");
     assert.equal(none.outcome.stopped, "launch_run");
+    const asked = await chatTurn([{ calls: [{ name: "ask_user", args: { question: "Web or Unreal?" } }, LAUNCH] }]);
+    assert.equal(asked.legs.length, 1, "a question beside the launch is asked: its answer comes first");
+    assert.notEqual(asked.outcome.stopped, "launch_run", "and nothing starts");
   });
 
   it("web-scaffold-unreal. a game ported from the web starter to Unreal in unreal/ (its index.html and src/ left as the reference) is an engine's game: no web page check", async (t) => {

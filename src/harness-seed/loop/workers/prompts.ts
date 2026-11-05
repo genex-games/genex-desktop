@@ -2,7 +2,7 @@
  * The words of Genex's worker pool: the brief a worker starts from (Genex's identity first), and
  * every answer the six worker tools give the lead.
  */
-import { CoreFact, type FactRef, type FolderHolds, ProjectTool } from "../folder-facts.ts";
+import { type FactRef, type FolderHolds, holdsEngineProject, ProjectTool } from "../folder-facts.ts";
 import { appIdentity } from "../project-prompts.ts";
 import { MAX_WORKERS_AT_ONCE, WorkerIsolation, WorkerTool } from "./contract.ts";
 
@@ -15,17 +15,6 @@ const WORKER_PLUGIN_SEARCH = `To look for a Genex plugin, call ${ProjectTool.Plu
  */
 const WORKER_EDITOR_ELSEWHERE =
   "The game engine's editor works on the game folder the lead works in, not on your copy: change your copy through its files, and use the editor's tools for what only it can do (start or restart it, play, look, check) or for changes the lead asked you to make there.";
-
-/** The kinds of project a game engine's editor works on. */
-const ENGINE_PROJECTS: ReadonlySet<string> = new Set([
-  CoreFact.UnrealProject,
-  CoreFact.UnityProject,
-  CoreFact.GodotProject,
-  CoreFact.RobloxProject,
-]);
-
-/** Whether a project holds a game engine's project, whose editor works on the game folder. */
-const holdsEngine = (facts: readonly FactRef[]): boolean => facts.some((fact) => ENGINE_PROJECTS.has(fact.id));
 
 /** What a worker's brief is made from. */
 export interface WorkerBriefParts {
@@ -68,7 +57,9 @@ export function workerBrief(parts: WorkerBriefParts): string {
     `Your task:\n${parts.task}`,
     "",
     WHERE[parts.isolation],
-    ...(holdsEngine(parts.identity.facts) && parts.isolation === WorkerIsolation.Copy ? [WORKER_EDITOR_ELSEWHERE] : []),
+    ...(holdsEngineProject(parts.identity.facts) && parts.isolation === WorkerIsolation.Copy
+      ? [WORKER_EDITOR_ELSEWHERE]
+      : []),
     ...(parts.inputs.length ? [`Start from these files: ${parts.inputs.join(", ")}.`] : []),
     parts.research
       ? "You may search and read the web for this task."
