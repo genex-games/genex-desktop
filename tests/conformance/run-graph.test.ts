@@ -945,6 +945,63 @@ describe("the plugins' asset jobs in the run graph", () => {
     assert.equal(node.jobs[0]!.iteration, 2);
   });
 
+  it("lists a call only when its tool makes something, or once it delivers: a lookup that failed is no failed asset", () => {
+    counter = 0;
+    const lookup = {
+      pluginId: "unreal",
+      pluginName: "Unreal Engine",
+      tool: "find-nodes",
+      toolName: "unreal__find-nodes",
+      args: "query=set intensity",
+    };
+    const refusal = "There is no node reference for this engine yet.";
+    const lookups = buildRunGraph([
+      event("run_started", { goal: "a farm", project: "farm" }),
+      started("call-1", lookup),
+      finished("call-1", { ...lookup, ok: false, error: refusal, result: "" }),
+      started("call-2", lookup),
+    ])!;
+    assert.equal(
+      lookups.nodes.some((n) => n.kind === "assets"),
+      false,
+      "a tool that never said it makes anything is not an asset, whether it failed or is still out",
+    );
+
+    counter = 0;
+    const painter = { pluginId: "painter", pluginName: "Painter", toolName: "painter__paint" };
+    const paint = {
+      ...painter,
+      tool: "paint",
+      args: "prompt=a red barn",
+      making: { kind: "image", prompt: "a red barn" },
+    };
+    const exported = { ...painter, tool: "export", toolName: "painter__export", args: "name=barn" };
+    const graph = buildRunGraph([
+      event("run_started", { goal: "a farm", project: "farm" }),
+      started("call-3", paint),
+      finished("call-3", { ...paint, ok: false, error: "out of paint", result: "" }),
+      started("call-4", exported),
+      finished("call-4", {
+        ...exported,
+        result: '{"id":"job-4","files":["assets/barn.png"]}',
+        jobId: "job-4",
+        files: ["assets/barn.png"],
+      }),
+      started("call-5", lookup),
+      finished("call-5", { ...lookup, ok: false, error: refusal, result: "" }),
+    ])!;
+    const node = graph.nodes.find((n) => n.kind === "assets");
+    assert.ok(node && node.kind === "assets");
+    assert.deepEqual(
+      node.jobs.map((job) => [job.callId, job.state, job.error]),
+      [
+        ["call-3", "failed", "out of paint"],
+        ["call-4", "delivered", null],
+      ],
+      "a tool that says what it makes keeps its failure, and any call that delivered files is an asset",
+    );
+  });
+
   it("drops a Genex request refused before a generation started, and fails a generation that did", () => {
     counter = 0;
     // Genex answers a refused request as a job that failed with no generation, not as an error.
@@ -1096,7 +1153,10 @@ describe("the plugins' asset jobs in the run graph", () => {
       started("call-4", {
         pluginId: "blender",
         pluginName: "Local Blender",
+        tool: "model",
+        toolName: "blender__model",
         args: "operation=model name=hero-tank script=assets/src/hero.py",
+        making: { kind: "model" },
       }),
     ])!;
     const node = graph.nodes.find((n) => n.kind === "assets");
@@ -1124,6 +1184,7 @@ describe("the plugins' asset jobs in the run graph", () => {
         tool: "paint",
         toolName: "sprite-forge__paint",
         args: "prompt=a shop sign that reads operation=status",
+        making: { kind: "image", prompt: "a shop sign that reads operation=status" },
       }),
     ])!;
     const node = graph.nodes.find((n) => n.kind === "assets");

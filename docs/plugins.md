@@ -723,7 +723,8 @@ and `export_python_names` do what their names say. The plugin's own tools sit on
 the other parts' and the template's exported Blueprints, `apply.py` parsed by Unreal's Python with
 its `genex.` and `unreal.` names checked, the test), `run-part` (queues a part that passes and answers at once),
 `part-result` (its state, then its shots, checks and `probes`), `rollback-part`, `reload-level`,
-`find-nodes` (the reference's nodes and the template Blueprints' casts and members) and
+`find-nodes` (the reference's nodes and the template Blueprints' casts and members; with no
+reference kept yet it has the game's open Unreal export one first, as a Loop's start does) and
 `export-reference` (keeps the node reference and Python names per engine in the plugin's storage,
 then asks for `project.json`; that call failing fails nothing). The harness's tools
 (`run-part`, `part-result`, `rollback-part`, `reload-level`, `export-reference`, `reopen-editor`,
@@ -1639,10 +1640,13 @@ harness, a delegated builder, the lead's own session and the `plugins.invoke` RP
 
 Neither payload can carry image bytes, data URLs or credential-shaped keys: the digests drop them
 before the event is written. The chat folds the pair by `callId` into one row of its work group,
-and the Builds graph draws one asset job per call (asked for → making → delivered or failed),
-joined to the `asset_delivered` record on `jobId`. Both are host-owned: a plugin cannot forge
-them, and cannot suppress them by staying quiet. A run's sub-agent's calls carry its run and its
-agent id (`attribution`) as `runId` and `facetId`, so they land on its own node. A tool only the
+and the Builds graph draws one asset job per call that makes something (asked for → making →
+delivered or failed), joined to the `asset_delivered` record on `jobId`: a call stamped with what
+it makes (`making`) or of Genex's `asset` tool from the start, any other call only once it
+delivers files or takes on a job, so a lookup that failed (`find-nodes`) is never a failed asset.
+Both are host-owned: a plugin cannot forge them, and cannot suppress them by staying quiet. A
+run's sub-agent's calls carry its run and its agent id (`attribution`) as `runId` and `facetId`,
+so they land on its own node. A tool only the
 harness calls (`"audience": "harness"`, such as the Unreal Loop's editor polls) is a step of the
 harness's loop, not an agent's work: it runs only as the harness's own step (`plugins.invoke` with
 `step: true`; an agent's call is refused), with no pair, or a run's polls would bury the calls the

@@ -4,7 +4,7 @@
  */
 import { GENEX_LOOKUPS, genexEndedUnmade, genexRefused, isGenexSource } from "../shared/asset-making.ts";
 import { assetFormat, digestOperation } from "../shared/game-assets.ts";
-import { GenexOperation } from "../shared/genex.ts";
+import { GENEX_ASSET_TOOL, GenexOperation } from "../shared/genex.ts";
 import { t } from "../shared/i18n.ts";
 import type { AssetInfo, AssetState } from "./run-graph.ts";
 import {
@@ -55,7 +55,8 @@ export interface AssetPlace {
  * (`asset_delivered`) knows only the job, and lands before the call returns — and by the remote
  * `generationId`, which is all that joins a create to the wait that finishes it. A job that
  * finished having delivered nothing is dropped: a status or wait call is not an asset, and the
- * graph stays about what was made.
+ * graph stays about what was made. A call whose tool never said it makes anything (a lookup) is
+ * kept off the page until it delivers files or takes on a job, so its failure is no failed asset.
  */
 export interface AssetLedger {
   jobs: AssetInfo[];
@@ -67,6 +68,8 @@ export interface AssetLedger {
   /** An open in-game check, by call, naming the Studio job it checks. */
   checkByCall: Map<string, string>;
   foldedInto: Map<AssetInfo, AssetInfo>;
+  /** The calls whose tool never said it makes anything: assets only once they make something. */
+  unannounced: Set<AssetInfo>;
   /**
    * The copy the host kept of a delivery's picture (`asset_delivered.picture`), by each file the
    * delivery listed: a call's card (Blender's names no job) is joined to it by the files it holds.
@@ -84,9 +87,14 @@ export function newAssetLedger(): AssetLedger {
     dropped: new Set(),
     checkByCall: new Map(),
     foldedInto: new Map(),
+    unannounced: new Set(),
     pictures: new Map(),
   };
 }
+
+/** Whether a call that never said it makes anything has made nothing yet: no files, no job. */
+const madeNothing = (ledger: AssetLedger, job: AssetInfo): boolean =>
+  ledger.unannounced.has(job) && job.state !== AssetCardState.Delivered && !job.files.length && job.jobId === null;
 
 /** The jobs that stay on the page: everything asked for, less what delivered nothing or was folded away. */
 export function keptAssetJobs(ledger: AssetLedger): AssetInfo[] {
@@ -132,12 +140,14 @@ const sameAsset = (failed: AssetInfo, later: AssetInfo): boolean =>
   later.name === failed.name;
 
 /**
- * The ledger once its log is read. A failure the same worker retried successfully under the same
- * name folds into that success, whether the success kept a card of its own or was folded as work
- * on another asset. Once the run or chat turn that asked is over (`over`), a job still open is
+ * The ledger once its log is read. A call that never said it makes anything and made nothing (a
+ * lookup, failed or still out) is no asset. A failure the same worker retried successfully under
+ * the same name folds into that success, whether the success kept a card of its own or was folded
+ * as work on another asset. Once the run or chat turn that asked is over (`over`), a job still open is
  * not finished: nothing will deliver it now, so it is never "making" after the end.
  */
 export function settleAssetJobs(ledger: AssetLedger, over: boolean): void {
+  for (const job of ledger.jobs) if (madeNothing(ledger, job)) ledger.dropped.add(job);
   for (const job of ledger.jobs) job.picture ??= keptPictureOf(ledger, job);
   ledger.jobs.forEach((job, index) => {
     if (job.state !== AssetCardState.Failed || job.facetId === null) return;
@@ -300,6 +310,17 @@ export function assetRequested(ledger: AssetLedger, payload: Payload, place: Ass
   const job: AssetInfo = { ...blankAsset(place, identity), args, prompt, operation, tool };
   ledger.jobs.push(job);
   ledger.byCall.set(callId, job);
+  if (!announcesMaking(payload, identity.source, tool)) ledger.unannounced.add(job);
+}
+
+/**
+ * Whether a call said it makes something when it went out: the host stamped what it makes
+ * (`making`, from its tool's declaration), or it is Genex's asset tool, whose records from before
+ * that stamp say it by their operation alone.
+ */
+function announcesMaking(payload: Payload, source: string, tool: string | null): boolean {
+  if (record(payload.making)) return true;
+  return isGenexSource(source) && tool === GENEX_ASSET_TOOL;
 }
 
 /**
