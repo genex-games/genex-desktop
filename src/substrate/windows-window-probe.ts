@@ -16,8 +16,10 @@
  * answer. It reports its start in stages, says it is ready with the primary screen's size as
  * it sees it (Windows may scale a process's points), then answers one JSON line for each request
  * line on its stdin: `front`, `at <x> <y>` (in its own points: the caller scales the driver's
- * physical pixels to them), `pid <n>` or `raise <exe>` (bring that app's newest responding window
- * forward, as the Mac driver's bring_to_front does). An app is its executable's name and its file description
+ * physical pixels to them), `pid <n>`, `raise <exe>` (bring that app's newest responding window
+ * forward, as the Mac driver's bring_to_front does), `windows <exe>` (that app's windows, front first,
+ * with the titles Windows keeps for them, read without asking the app) or `raise <exe> <window>` (one
+ * of them, by its handle). An app is its executable's name and its file description
  * (the name the person knows it by); a window no process can be read for answers pid 0, which the
  * caller refuses. A request that does not answer in time ends the helper, and the next request
  * starts a fresh one.
@@ -45,6 +47,10 @@ const FOCUS_ASK_MS = 2 * SECOND_MS;
 const RAISE_WAIT_MS = 2 * SECOND_MS;
 /** How often the helper looks whether a raised window is in front yet. */
 const RAISE_POLL_MS = 100;
+/** The most top-level windows the helper walks for one app's list: the walk ends even if z-order churns. */
+const MAX_WALKED_WINDOWS = 4_096;
+/** The longest window title the helper reads, in UTF-16 units. */
+const MAX_TITLE_CHARS = 512;
 
 const MESSAGE = {
   notStarted: (why: string) => `the Windows window probe did not start: ${why}`,
@@ -85,6 +91,10 @@ function Json($value) {
     $fields = foreach ($key in $value.Keys) { (Quote $key) + ':' + (Json $value[$key]) }
     return '{' + ($fields -join ',') + '}'
   }
+  if ($value -is [System.Collections.IList]) {
+    $items = foreach ($item in $value) { Json $item }
+    return '[' + ($items -join ',') + ']'
+  }
   return Quote ([string]$value)
 }
 function Say($value) {
@@ -108,8 +118,9 @@ $PasswordStyle = 0x20
 
 # user32 calls, declared in memory (Reflection.Emit): nothing is compiled. .NET's UI Automation
 # names a Windows Forms text box a Pane with no password flag, so a Win32 edit's own style is read
-# instead (GetWindowLongW); the rest bring a window forward. Without them the caller reads the
-# window's tree, and nothing is raised.
+# instead (GetWindowLongW); the rest list an app's windows and bring one forward, and DWM says which
+# windows are cloaked (on another virtual desktop, or a packaged app's hidden frame). Without them the
+# caller reads the window's tree, and nothing is listed or raised.
 $User32 = $null
 $Imports = @(
   @('GetWindowLongW', [int], @([IntPtr], [int])),
@@ -120,19 +131,28 @@ $Imports = @(
   @('GetWindowThreadProcessId', [uint32], @([IntPtr], [uint32].MakeByRefType())),
   @('WindowFromPoint', [IntPtr], @([long])),
   @('GetAncestor', [IntPtr], @([IntPtr], [int])),
-  @('keybd_event', [void], @([byte], [byte], [uint32], [UIntPtr]))
+  @('keybd_event', [void], @([byte], [byte], [uint32], [UIntPtr])),
+  @('GetTopWindow', [IntPtr], @([IntPtr])),
+  @('GetWindow', [IntPtr], @([IntPtr], [uint32])),
+  @('IsWindowVisible', [bool], @([IntPtr])),
+  @('GetWindowTextW', [int], @([IntPtr], [System.Text.StringBuilder], [int])),
+  @('DwmGetWindowAttribute', [int], @([IntPtr], [int], [int].MakeByRefType(), [int]), 'dwmapi.dll')
 )
 try {
   $assembly = [System.AppDomain]::CurrentDomain.DefineDynamicAssembly([System.Reflection.AssemblyName]::new('GenexWindowProbe'), [System.Reflection.Emit.AssemblyBuilderAccess]::Run)
   $type = $assembly.DefineDynamicModule('GenexWindowProbe').DefineType('User32', 'Public, Class')
   foreach ($import in $Imports) {
-    $method = $type.DefinePInvokeMethod($import[0], 'user32.dll', 'Public, Static, PinvokeImpl', 'Standard', $import[1], [Type[]]$import[2], 'Winapi', 'Unicode')
+    $library = 'user32.dll'
+    if ($import.Count -gt 3) { $library = $import[3] }
+    $method = $type.DefinePInvokeMethod($import[0], $library, 'Public, Static, PinvokeImpl', 'Standard', $import[1], [Type[]]$import[2], 'Winapi', 'Unicode')
     $method.SetImplementationFlags('PreserveSig')
   }
   $User32 = $type.CreateType()
 } catch { }
 $RestoreWindow = 9
 $RootWindow = 2
+$NextWindow = 2
+$Cloaked = 14
 $AltKey = 0x12
 $KeyUp = 2
 
@@ -346,21 +366,91 @@ function InFront([int]$id) {
   return $false
 }
 
-# Bring an executable's window forward, restoring it if minimized. Windows lets a process take the
-# foreground only just after input, so a refused first try is followed by an Alt tap and a second.
-function Raise([string]$exe) {
-  $process = WindowedProcess $exe
-  if ($null -eq $process -or $null -eq $User32) { return @{ pid = 0 } }
-  $window = $process.MainWindowHandle
+# Whether a window is the foreground window, waiting a moment for one that takes it late.
+function WindowInFront([IntPtr]$window) {
+  for ($waited = 0; $waited -le ${RAISE_WAIT_MS}; $waited += ${RAISE_POLL_MS}) {
+    if ($User32::GetForegroundWindow() -eq $window) { return $true }
+    [System.Threading.Thread]::Sleep(${RAISE_POLL_MS})
+  }
+  return $false
+}
+
+# Bring a window forward, restoring it if minimized. Windows lets a process take the foreground only
+# just after input, so a refused first try is followed by an Alt tap and a second.
+function Forward([IntPtr]$window) {
   if ($User32::IsIconic($window)) { [void]$User32::ShowWindow($window, $RestoreWindow) }
   if (-not $User32::SetForegroundWindow($window)) {
     $User32::keybd_event($AltKey, 0, 0, [UIntPtr]::Zero)
     $User32::keybd_event($AltKey, 0, $KeyUp, [UIntPtr]::Zero)
     [void]$User32::SetForegroundWindow($window)
   }
+}
+
+# Bring an executable's newest responding window forward.
+function Raise([string]$exe) {
+  $process = WindowedProcess $exe
+  if ($null -eq $process -or $null -eq $User32) { return @{ pid = 0 } }
+  $window = $process.MainWindowHandle
+  Forward $window
   if (-not (InFront $process.Id)) { return @{ pid = 0 } }
   $app = AppOfProcess $process.Id
   if ($app.pid -gt 0) { $app.window = [long]$window }
+  return $app
+}
+
+# The process that owns a window, as an int (0 for none): the key the windows of an app are kept by.
+function OwnerOf([IntPtr]$window) {
+  $owner = [uint32]0
+  [void]$User32::GetWindowThreadProcessId($window, [ref]$owner)
+  return [int]$owner
+}
+
+# Whether DWM hides a window though it is visible: on another virtual desktop, or a packaged app's
+# frame that shows nothing. A window DWM cannot say for is taken as shown.
+function IsCloaked([IntPtr]$window) {
+  $cloaked = 0
+  try { [void]$User32::DwmGetWindowAttribute($window, $Cloaked, [ref]$cloaked, 4) } catch { return $false }
+  return $cloaked -ne 0
+}
+
+# A window's title as Windows keeps it: for another process's window it is read without asking that
+# process, so an app that does not answer (Unreal Editor's UI Automation) still says its titles.
+function TitleOf([IntPtr]$window) {
+  $text = [System.Text.StringBuilder]::new(${MAX_TITLE_CHARS} + 1)
+  [void]$User32::GetWindowTextW($window, $text, $text.Capacity)
+  return $text.ToString()
+}
+
+# An executable's shown top-level windows, front first (Windows' z-order), each with its process, its
+# handle and its title: Unreal Editor's Fab is a window of its own beside the editor's main one.
+function WindowsOf([string]$exe) {
+  $found = [System.Collections.ArrayList]::new()
+  if ($exe -notmatch '^[\w.-]{1,124}\.exe$' -or $null -eq $User32) { return @{ windows = $found } }
+  $owners = @{}
+  foreach ($process in [System.Diagnostics.Process]::GetProcessesByName($exe.Substring(0, $exe.Length - 4))) {
+    $owners[[int]$process.Id] = $true
+  }
+  if ($owners.Count -eq 0) { return @{ windows = $found } }
+  $window = $User32::GetTopWindow([IntPtr]::Zero)
+  for ($walked = 0; $window -ne [IntPtr]::Zero -and $walked -lt ${MAX_WALKED_WINDOWS}; $walked++) {
+    $owner = OwnerOf $window
+    $shown = $owners.ContainsKey($owner) -and $User32::IsWindowVisible($window) -and -not (IsCloaked $window)
+    if ($shown) { [void]$found.Add([ordered]@{ pid = $owner; window = [long]$window; title = (TitleOf $window) }) }
+    $window = $User32::GetWindow($window, $NextWindow)
+  }
+  return @{ windows = $found }
+}
+
+# Bring one shown window of an executable forward, by its handle: a handle of another app's window,
+# or of none, raises nothing.
+function RaiseWindow([string]$exe, [long]$handle) {
+  if ($exe -notmatch '^[\w.-]{1,124}\.exe$' -or $null -eq $User32 -or $handle -le 0) { return @{ pid = 0 } }
+  $window = [IntPtr]$handle
+  $app = AppOfProcess (OwnerOf $window)
+  if ($app.pid -le 0 -or $app.exe -ne $exe -or -not $User32::IsWindowVisible($window)) { return @{ pid = 0 } }
+  Forward $window
+  if (-not (WindowInFront $window)) { return @{ pid = 0 } }
+  $app.window = $handle
   return $app
 }
 
@@ -376,6 +466,8 @@ function Ask([string]$line) {
   }
   if ($parts[0] -eq 'pid' -and $parts.Length -eq 2) { return AppOfProcess ([int]::Parse($parts[1], $Culture)) }
   if ($parts[0] -eq 'raise' -and $parts.Length -eq 2) { return Raise $parts[1] }
+  if ($parts[0] -eq 'raise' -and $parts.Length -eq 3) { return RaiseWindow $parts[1] ([long]::Parse($parts[2], $Culture)) }
+  if ($parts[0] -eq 'windows' -and $parts.Length -eq 2) { return WindowsOf $parts[1] }
   if ($parts[0] -eq 'running' -and $parts.Length -eq 2) { return Running $parts[1] }
   return @{ error = 'unknown request' }
 }
@@ -396,6 +488,13 @@ export interface ProbedApp {
   window: number | null;
 }
 
+/** One shown top-level window of an app, as Windows lists it: its process, its handle and its title. */
+export interface ProbedWindow {
+  pid: number;
+  window: number;
+  title: string;
+}
+
 /** A screen's size in pixels or points. */
 export interface ScreenSize {
   width: number;
@@ -414,11 +513,17 @@ export interface WindowsProbe {
   /** A running process as an app; null when it cannot be read. */
   process(pid: number): Promise<ProbedApp | null>;
   /**
-   * Bring an app (its executable's name, such as `robloxstudiobeta.exe`) forward; the app when its
-   * window is in front, null when it has none or Windows refused. A name that is not a plain
-   * executable's is never sent.
+   * Bring an app (its executable's name, such as `robloxstudiobeta.exe`) forward: its newest
+   * responding window, or `window` (one of {@link windows}' handles) when given. The app when that
+   * window is in front, null when there is none or Windows refused. A name that is not a plain
+   * executable's, or a handle that is not a whole positive number, is never sent.
    */
-  raise(exe: string): Promise<ProbedApp | null>;
+  raise(exe: string, window?: number | null): Promise<ProbedApp | null>;
+  /**
+   * An app's shown windows (its executable's name), front first, with the titles Windows keeps for
+   * them; none for a name that is not a plain executable's, which is never sent.
+   */
+  windows(exe: string): Promise<ProbedWindow[]>;
   /**
    * The newest running process of an executable (its name, such as `robloxstudiobeta.exe`), with a
    * window or not; null when none runs. A name that is not a plain executable's is never sent.
@@ -457,25 +562,56 @@ export function probeCommand(env: Record<string, string>): ProbeCommand {
 
 /** One answer line as an app, or null for none; throws on an answer that is neither. */
 export function parseProbeAnswer(line: string): ProbedApp | null {
+  const answer = answerBody(line);
+  const pid = typeof answer.pid === "number" && Number.isSafeInteger(answer.pid) ? answer.pid : null;
+  if (pid === null) throw new Error(MESSAGE.badAnswer(line));
+  const exe = typeof answer.exe === "string" ? answer.exe : "";
+  if (pid === 0 || !exe) return null;
+  const secure = typeof answer.secure === "boolean" ? answer.secure : null;
+  return {
+    pid,
+    exe,
+    name: typeof answer.name === "string" ? answer.name : "",
+    secure,
+    window: positiveId(answer.window),
+  };
+}
+
+/** One answer line as an object, or the helper's own error; throws on anything else. */
+function answerBody(line: string): Record<string, unknown> {
   let body: unknown;
   try {
     body = JSON.parse(line);
   } catch {
     throw new Error(MESSAGE.badAnswer(line));
   }
-  if (!body || typeof body !== "object") throw new Error(MESSAGE.badAnswer(line));
+  if (!body || typeof body !== "object" || Array.isArray(body)) throw new Error(MESSAGE.badAnswer(line));
   const answer = body as Record<string, unknown>;
   if (typeof answer.error === "string") throw new Error(answer.error);
-  const pid = typeof answer.pid === "number" && Number.isSafeInteger(answer.pid) ? answer.pid : null;
-  if (pid === null) throw new Error(MESSAGE.badAnswer(line));
-  const exe = typeof answer.exe === "string" ? answer.exe : "";
-  if (pid === 0 || !exe) return null;
-  const secure = typeof answer.secure === "boolean" ? answer.secure : null;
-  const window =
-    typeof answer.window === "number" && Number.isSafeInteger(answer.window) && answer.window > 0
-      ? answer.window
-      : null;
-  return { pid, exe, name: typeof answer.name === "string" ? answer.name : "", secure, window };
+  return answer;
+}
+
+/** A whole positive number, as a process id or a window handle is; null otherwise. */
+function positiveId(value: unknown): number | null {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : null;
+}
+
+/** One listed window, or null for a row with no process, no handle or a title that is not text. */
+function probedWindow(row: unknown): ProbedWindow | null {
+  if (!row || typeof row !== "object") return null;
+  const { pid, window, title } = row as Record<string, unknown>;
+  const owner = positiveId(pid);
+  const handle = positiveId(window);
+  const titled = title === undefined || typeof title === "string";
+  if (owner === null || handle === null || !titled) return null;
+  return { pid: owner, window: handle, title: title ?? "" };
+}
+
+/** One `windows` answer as the app's windows, front first; throws on an answer that lists none. */
+export function parseProbeWindows(line: string): ProbedWindow[] {
+  const listed = answerBody(line).windows;
+  if (!Array.isArray(listed)) throw new Error(MESSAGE.badAnswer(line));
+  return listed.flatMap((row) => probedWindow(row) ?? []);
 }
 
 /** A started helper: its process, its answers in order, why it ended if it did, and its screen. */
@@ -631,14 +767,15 @@ export function windowsProbe(
     if (current) await stopProbe(current);
   };
   /** One request to the live helper; a failed one ends it, so a late answer never meets a later request. */
-  const askOnce = async (
+  const askOnce = async <T>(
     requestOf: Request,
-  ): Promise<{ answer: ProbedApp | null } | { error: unknown; died: boolean }> => {
+    parse: (line: string) => T,
+  ): Promise<{ answer: T } | { error: unknown; died: boolean }> => {
     const probe = await live();
     const request = requestOf(probe.view);
     try {
       probe.child.stdin?.write(`${request}\n`);
-      return { answer: parseProbeAnswer(await nextLine(probe, requestMs, MESSAGE.timedOut(request))) };
+      return { answer: parse(await nextLine(probe, requestMs, MESSAGE.timedOut(request))) };
     } catch (error) {
       const died = probe.ended() !== null;
       await drop();
@@ -647,35 +784,43 @@ export function windowsProbe(
   };
   // A helper that ended while idle (its end not yet seen) fails the request it is sent: that request
   // is asked once more of a fresh helper. One that is alive but late is not asked again.
-  const answerOf = async (request: Request): Promise<ProbedApp | null> => {
-    const first = await askOnce(request);
+  const answerOf = async <T>(request: Request, parse: (line: string) => T): Promise<T> => {
+    const first = await askOnce(request, parse);
     if ("answer" in first) return first.answer;
     if (!first.died) throw first.error;
-    const second = await askOnce(request);
+    const second = await askOnce(request, parse);
     if ("answer" in second) return second.answer;
     throw second.error;
   };
-  const ask = (request: Request): Promise<ProbedApp | null> => {
-    const answer = queue.then(() => answerOf(request));
+  const ask = <T>(request: Request, parse: (line: string) => T): Promise<T> => {
+    const answer = queue.then(() => answerOf(request, parse));
     queue = answer.catch(() => {});
     return answer;
   };
+  const askApp = (request: Request) => ask(request, parseProbeAnswer);
   return {
     ready: async () => {
       await live();
     },
-    front: () => ask(() => "front"),
+    front: () => askApp(() => "front"),
     at: (x, y, screen) =>
-      ask((seen) => {
+      askApp((seen) => {
         // Windows may scale the helper's points: a physical pixel is a point of its own screen size.
         const view = seen ?? screen;
         const px = Math.round((x * view.width) / Math.max(1, screen.width));
         const py = Math.round((y * view.height) / Math.max(1, screen.height));
         return `at ${px} ${py}`;
       }),
-    process: (pid) => ask(() => `pid ${Math.trunc(pid)}`),
-    raise: (exe) => (EXECUTABLE_NAME.test(exe) ? ask(() => `raise ${exe}`) : Promise.resolve(null)),
-    running: (exe) => (EXECUTABLE_NAME.test(exe) ? ask(() => `running ${exe}`) : Promise.resolve(null)),
+    process: (pid) => askApp(() => `pid ${Math.trunc(pid)}`),
+    raise: (exe, window) => {
+      if (!EXECUTABLE_NAME.test(exe)) return Promise.resolve(null);
+      if (window === undefined || window === null) return askApp(() => `raise ${exe}`);
+      const handle = positiveId(window);
+      return handle === null ? Promise.resolve(null) : askApp(() => `raise ${exe} ${handle}`);
+    },
+    windows: (exe) =>
+      EXECUTABLE_NAME.test(exe) ? ask(() => `windows ${exe}`, parseProbeWindows) : Promise.resolve([]),
+    running: (exe) => (EXECUTABLE_NAME.test(exe) ? askApp(() => `running ${exe}`) : Promise.resolve(null)),
     close: async () => {
       closed = true;
       await drop();

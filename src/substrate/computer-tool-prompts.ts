@@ -67,7 +67,7 @@ const WEB_LINES =
 
 /** The app sentence, for a desktop where the app the agent needs can sit behind a full-screen one. */
 const APPS_LINE =
-  "bring_to_front text=<app>: bring a running app's window in front of the others when it is covered and no part of it can be clicked (the taskbar and Dock are never driven) — its executable on Windows (msedge.exe, chrome.exe, firefox.exe), its bundle id on a Mac (com.apple.Safari, com.google.Chrome); it opens nothing, and the app is asked for like any other. Add window=<part of a title> to raise one of the app's windows when it has several (a Mac runs one Roblox Studio per open place); a title no window has is answered with the titles it has. " +
+  "bring_to_front text=<app>: bring a running app's window in front of the others when it is covered and no part of it can be clicked (the taskbar and Dock are never driven) — its executable on Windows (msedge.exe, chrome.exe, firefox.exe), its bundle id on a Mac (com.apple.Safari, com.google.Chrome); it opens nothing, and the app is asked for like any other. Add window=<part of a title> to raise one of the app's windows when it has several (a Mac runs one Roblox Studio per open place; Unreal Editor opens Fab in a window of its own); a title no window has is answered with the titles it has. " +
   "open_page text=<https:// address>: open a page of the task you answer in the person's own default browser, where they are signed in (Roblox's Creator Hub for a publish), when no browser is running; then take a screenshot and bring_to_front the browser if it is not in front. ";
 
 /** The batch sentence: several moves in one call. */

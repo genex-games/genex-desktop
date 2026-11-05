@@ -164,9 +164,17 @@ async function titledWindow(
   return { why: MESSAGE.noTitled(name, window, windows.map((w) => w.title).filter(Boolean)) };
 }
 
-/** Whether the app (and its process `pid`, when one was picked) has the keyboard now. */
-function inFront(focus: DesktopFocus, id: string, pid: number | undefined): boolean {
-  return focus.app?.bundleId === id && (pid === undefined || focus.app.pid === pid);
+/**
+ * Whether the app has the keyboard now, and, when one of its windows was picked, that window: its
+ * process, and the window itself where the driver says which is in front (one process may own
+ * several, as Unreal Editor's Fab window and main window on Windows).
+ */
+function inFront(focus: DesktopFocus, id: string, picked: DesktopWindow | undefined): boolean {
+  if (focus.app?.bundleId !== id) return false;
+  if (!picked) return true;
+  if (focus.app.pid !== picked.pid) return false;
+  const told = picked.windowId !== null && focus.window !== undefined && focus.window !== null;
+  return !told || focus.window === picked.windowId;
 }
 
 /** An app's name as `bring_to_front` takes it: an executable or a bundle id, never a path. */
@@ -541,7 +549,8 @@ export function desktopTarget(options: DesktopTargetOptions): DesktopTarget {
   };
   /**
    * A named app brought in front, held to a click's rules first; with `window`, the app's window
-   * whose title holds it (a Mac runs one Roblox Studio per place); null once it is in front.
+   * whose title holds it (a Mac runs one Roblox Studio per place, and Unreal Editor shows Fab in a
+   * window of its own); null once it is in front.
    */
   const front = async (raw: string, window?: string): Promise<string | null> => {
     const named = namedApp(raw);
@@ -556,7 +565,7 @@ export function desktopTarget(options: DesktopTargetOptions): DesktopTarget {
     // The driver may doubt a raise that worked (macOS moves focus late): what is in front decides.
     const failed = await driver.bringToFront(app.bundleId, pick.window).then(() => null, errorMessage);
     await sleep(options.frontSettleMs ?? FRONT_SETTLE_MS);
-    if (inFront(await driver.focus(), app.bundleId, pick.window?.pid)) return null;
+    if (inFront(await driver.focus(), app.bundleId, pick.window)) return null;
     return failed ?? MESSAGE.notInFront(appName(app));
   };
   /** Whether an action may go ahead: every point and keyboard it aims at is cleared, before any input. */

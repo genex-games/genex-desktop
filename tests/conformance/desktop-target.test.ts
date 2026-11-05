@@ -604,6 +604,37 @@ describe("bringing an app to the front", () => {
     });
   });
 
+  describe("on Windows, picking one of an app's windows by its title", () => {
+    const UNREAL: DesktopApp = { name: "Unreal Editor", bundleId: "unrealeditor.exe", pid: 70 };
+    const MAIN = { pid: 70, windowId: 7001, title: "MyGame - Unreal Editor" };
+    const FAB = { pid: 70, windowId: 7002, title: "Fab" };
+
+    /** Unreal Editor's main window in front of its separate Fab window, both of one process. */
+    function editorWindows(raises = true) {
+      const fake = raisingDriver([]);
+      let window = MAIN.windowId;
+      fake.driver.focus = async () => ({ app: UNREAL, secure: false, window });
+      fake.driver.appWindows = async () => [MAIN, FAB];
+      fake.driver.bringToFront = async (id, picked) => {
+        fake.calls.push(`raise ${id} ${picked?.windowId}`);
+        if (raises && picked?.windowId) window = picked.windowId;
+      };
+      const target = desktopTarget({ driver: fake.driver, allowApp: async () => true, frontSettleMs: 0 });
+      return { target, calls: fake.calls };
+    }
+
+    it("raises the Fab window though the editor's main window, of the same process, is in front", async () => {
+      const { target, calls } = editorWindows();
+      assert.equal(await target.front?.("UnrealEditor.exe", "fab"), null);
+      assert.deepEqual(calls, ["raise unrealeditor.exe 7002"]);
+    });
+
+    it("says so when the main window stayed in front: the same process is not the window asked for", async () => {
+      const { target } = editorWindows(false);
+      assert.match(String(await target.front?.("unrealeditor.exe", "Fab")), /did not come to the front/);
+    });
+  });
+
   it("brings an engine's editor forward inside an assist that was granted it", async () => {
     const { target, calls } = await fronting([ROBLOX_STUDIO], new Set([ROBLOX_STUDIO]));
     assert.match(String(await target.front?.(ROBLOX_STUDIO)), /did not come to the front/);

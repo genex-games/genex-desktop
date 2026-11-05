@@ -272,9 +272,14 @@ Chromium's accessibility wakes on first asking), and which
 app a click at a point reaches (Windows' own hit test, `WindowFromPoint` up to the top-level window,
 which asks nothing of that app, so a busy one such as Roblox Studio with a menu open cannot stall it
 as UI Automation's `FromPoint` did), with its window's handle so the tree fallback skips cua's slow
-window list. It also brings an app forward by its
+window list. A window whose UI Automation never answers (Unreal Editor's `UnrealWindow`: cua's walk
+times out before its first element) is asked for its tree once in 30 s, and its answer then stands
+in, so acting by pixel in it waits on nothing. It also brings an app forward by its
 executable (`raise`, the PC's `bring_to_front`: the newest responding window, restored if minimized,
-with an Alt tap when Windows refuses a background process the foreground). It says its view of the primary screen
+with an Alt tap when Windows refuses a background process the foreground), lists an app's shown
+windows front first with the titles Windows keeps for them (`windows <exe>`: z-order, cloaked ones
+left out, titles read without asking the app) and raises one of them by its handle
+(`raise <exe> <window>`, only a window of that executable). It says its view of the primary screen
 when ready, and click points are scaled to it, whatever DPI awareness PowerShell has. An app is its
 executable in lower case (`windowsAppId`: `notepad.exe`), shown by its file description (Notepad); a
 window no process can be read for is no app, which is refused. A probe that cannot start (PowerShell
@@ -345,7 +350,9 @@ environment, outside the ProcessSandbox, which would deny it the screen.
   (`list_apps`, bundle id in any case or app name), so every check sees the app's own id. A Mac runs
   some apps as one process per document (Roblox Studio per place), so `window=<part of a title>`
   raises the process owning the window whose title holds it (`list_windows`), and a title no window
-  has is answered with the titles there are; Windows takes no `window`. When no
+  has is answered with the titles there are. On Windows one process may show several (Unreal
+  Editor's Fab beside its main window): the probe's `windows` lists them, the one picked is raised by
+  its handle, and only that window in front counts as raised. When no
   browser runs, `open_page text=<https address>` opens a page in the person's default browser
   (`shell.openExternal`), only in the turn holding an assist's grant and only on a host the grant's
   engine declares (`engine.pages`, exactly); credentials, ports and other schemes are refused.
