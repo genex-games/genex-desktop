@@ -146,25 +146,36 @@ it("the chat's own session gets the desktop tool behind the person's consent; ot
   }
 });
 
-it("a Loop's lead answering its chat holds the desktop tool as the chat's own session does; an unseated lead never does", async () => {
+it("a Loop's lead answering its chat holds the desktop tool, its card outliving the chat's turns; an unseated lead never does", async () => {
   const root = await realpath(await tmpDir("desktop-lead-"));
   const places = path.join(root, "places");
   await mkdir(places);
+  const calls: string[] = [];
   const desktop = desktopControl({
     findDriver: async () => "/fake/cua-driver",
-    connect: async () => fakeDriver([]),
+    connect: async () => fakeDriver(calls),
     ownApp: () => false,
   });
+  /** What the test does when a card waits; each card is answered yes after it. */
+  let onCard: (threadId: string) => Promise<void> = async () => {};
+  let chat = "";
   const lite = await coreLite({
     desktop,
     gamesRoot: path.join(root, "games"),
     executionPolicy: { allowedProjectRoot: root },
+    onUiEvent: (event: UiEventData) => {
+      if (event.type !== UiEvent.PluginConsent) return;
+      const payload = event.payload as { consentId: string; state: string };
+      if (payload.state !== "pending") return;
+      void onCard(chat).then(() => lite.core.resolveConsent(payload.consentId, true));
+    },
   });
   try {
     const { core } = lite;
     // No harness in a lite core: a dispatch reaches nothing.
     core.host.dispatch = async () => undefined;
     const seen: string[][] = [];
+    const said: string[] = [];
     core.engines.register({
       id: "fixture-delegate",
       label: "Fixture",
@@ -173,12 +184,18 @@ it("a Loop's lead answering its chat holds the desktop tool as the chat's own se
       status: async () => ({ code: "ready", detail: "Fixture" }),
       models: async () => [],
       delegate: async (request: DelegateRequest) => {
-        seen.push((request.liveTools ?? []).map((tool) => tool.name));
+        const tools = (request.liveTools ?? []).map((tool) => tool.name);
+        seen.push(tools);
+        if (tools.includes("desktop"))
+          said.push(text(await request.onLiveTool!("desktop", { action: "left_click", coordinate: "10,20" })));
         return { ok: true, engine: "fixture-delegate", summary: "done", turns: 1, usage: {} };
       },
     } as never);
     const game = await core.adoptProject(await copyProject(Project.GodotGame, await mkdtemp(path.join(places, "p-"))));
     const threadId = await core.threadForGame(game.name);
+    chat = threadId;
+    // Manual asks, so the lead's card waits for the person.
+    await core.setPermissionMode(threadId, PermissionMode.Manual);
     const runId = "run_desktop_lead";
     const director = {
       runId,
@@ -216,8 +233,21 @@ it("a Loop's lead answering its chat holds the desktop tool as the chat's own se
       ] as never,
       threadId,
     );
+    // While the lead's card waits, a turn of the chat ends (the person wrote meanwhile): the card stays.
+    onCard = async (thread) => {
+      await core.append([{ type: "turn_ended", status: "ok" }] as never, thread);
+    };
     await lead();
     assert.ok(seen[1]?.includes("desktop"), "the chat's Loop lead keeps the person's computer while the Loop runs");
+    assert.match(
+      said[0] ?? "",
+      /OK — left click at 10,20/,
+      "the person's yes reached the lead after the chat's turn ended",
+    );
+    assert.deepEqual(
+      calls.filter((call) => call.startsWith("click")),
+      ["click 10,20"],
+    );
   } finally {
     await lite.close();
   }

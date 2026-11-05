@@ -99,7 +99,7 @@ const GB = 1024 ** 3;
 const MESSAGE = {
   NoProject: "This game isn't linked to an Unreal project, so there is no project to add Motion Matching to.",
   NoSample:
-    "The Game Animation Sample isn't among this computer's Unreal projects. Make it yourself with the desktop tool: in the Epic Games Launcher (Unreal's Fab › View in Launcher opens it), Fab Library or Unreal Engine › Samples › Game Animation Sample › Create Project, Unreal 5.8, default folder; wait for its download, then try again.",
+    "The Game Animation Sample isn't among this computer's Unreal projects. Make it yourself with the desktop tool: in the Epic Games Launcher (Unreal's Fab › View in Launcher opens it), Fab Library or Unreal Engine › Samples › Game Animation Sample › Create Project, Unreal 5.8, default folder (without the desktop tool, ask the person to); wait for its download, then try again.",
   NoFolder: "The game's folder isn't known, so Genex can't keep the sample's content out of its checkpoints.",
   Collides: (files: string) =>
     `The game already has files where the sample's content goes (${files}), so Genex added nothing. Move or rename them first.`,

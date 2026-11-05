@@ -82,7 +82,7 @@ const RESTART: LiveToolSpec = {
 const PAUSE: LiveToolSpec = {
   name: OpenTool.Pause,
   description:
-    "Pause the Loop when the goal needs what only the person can do: a tool, editor or app the work needs is gone or can't run here and nothing you can call brings it back, or it needs their password, a system permission prompt or a payment. An install or a click in a launcher, a store or an installer is yours with the desktop tool, never a reason to pause. Never for a card waiting for their answer: only the call that asked waits. Genex pauses the Loop when this turn ends, with your words as the reason the person reads; their Resume wakes you. Don't spend the Loop on work that can't reach the project while such a block lasts.",
+    "Pause the Loop when the goal needs what only the person can do: a tool, editor or app the work needs is gone or can't run here and nothing you can call brings it back, or it needs their password, a system permission prompt or a payment. When you have the desktop tool, an install or a click in a launcher, a store or an installer is yours, never a reason to pause. Never for a card waiting for their answer: only the call that asked waits. Genex pauses the Loop when this turn ends, with your words as the reason the person reads; their Resume wakes you. Don't spend the Loop on work that can't reach the project while such a block lasts.",
   parameters: {
     type: "object",
     properties: {

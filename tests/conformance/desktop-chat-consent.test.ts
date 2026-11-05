@@ -104,7 +104,7 @@ it("one yes covers the chat's later turns; Stop, the shortcut and turning contro
   }
 });
 
-it("a chat in Auto or Bypass uses the computer with no card; Manual and Accept edits ask", async () => {
+it("a chat in Auto or Bypass uses the computer with no card, never kept for a later Manual; Manual and Accept edits ask", async () => {
   const clicks: string[] = [];
   const desktop = desktopControl({
     findDriver: async () => "/fake/cua-driver",
@@ -157,6 +157,12 @@ it("a chat in Auto or Bypass uses the computer with no card; Manual and Accept e
       const label = mode ?? "a chat that never chose (Auto)";
       assert.equal(asked - before.asked, cards, `${label}: cards asked`);
       assert.equal(clicks.length - before.clicks, 1, `${label}: the click went through`);
+      if (mode !== PermissionMode.Auto && mode !== PermissionMode.Bypass) continue;
+      // What Auto or Bypass let through was never the chat's yes: switched to Manual, it asks.
+      await core.setPermissionMode(threadId, PermissionMode.Manual);
+      const switched = asked;
+      await api[HostMethod.EngineDelegate]!({ engine: "fixture-delegate", project, threadId, prompt: "click" });
+      assert.equal(asked - switched, 2, `${label}, then Manual: the session and the app are asked`);
     }
   } finally {
     await lite.close();

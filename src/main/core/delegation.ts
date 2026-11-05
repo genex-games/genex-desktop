@@ -2072,6 +2072,8 @@ export class DelegationService {
   /** The person's computer for the chat's session or its Loop's lead (`desktop-session.ts`), behind their consent. */
   #desktopTools(p: DelegateParams, target: DelegationTarget, session: DelegationSession): Promise<DesktopTools | null> {
     const binding = { project: p.project, directory: target.cwd, ...(p.threadId ? { threadId: p.threadId } : {}) };
+    // A Loop's lead is not the chat's turn: its card waits through the chat's turns, as its plugin calls' do.
+    if (session.leads !== null) this.#x.pluginCallAttribution.set(binding, { lead: true });
     return desktopSessionTools(this.#core, this.#x, {
       binding,
       threadId: session.threadId,

@@ -139,7 +139,7 @@ export function computerControlOn(core: Pick<StudioCore, "settings">): boolean {
  */
 export async function desktopSessionTools(
   core: StudioCore,
-  x: Pick<CoreInternals, "pluginTools" | "previews">,
+  x: Pick<CoreInternals, "pluginTools" | "previews" | "chatMode">,
   place: DesktopSessionPlace,
 ): Promise<DesktopTools | null> {
   const desktop = core.options.desktop;
@@ -155,6 +155,8 @@ export async function desktopSessionTools(
   };
   const grants = assistGrants(core);
   const yes = chatYes(core, place.threadId, () => desktop.stopsAll());
+  /** The chat whose mode decides whether a card is asked, and whose switch answers one. */
+  const chatThread = place.binding.threadId ?? place.threadId;
   const ask = async (question: DesktopQuestion, app?: DesktopApp): Promise<DesktopAnswer> => {
     if (yes.covers(question, app)) return DesktopAnswer.Yes;
     // The person's press (or the card they approved) for this turn's assist already said yes to the
@@ -162,6 +164,9 @@ export async function desktopSessionTools(
     const grant = grants.forTurn(place.threadId, place.turn);
     const covered = !app || (app.bundleId !== null && grant?.apps.has(app.bundleId) === true);
     if (grant?.asked && covered) return DesktopAnswer.Yes;
+    // Auto and Bypass ask no card, call by call and never kept as the chat's yes: a switch to a mode
+    // that asks puts the cards back.
+    if (DESKTOP_UNASKED_MODES.includes(await x.chatMode(chatThread))) return DesktopAnswer.Yes;
     const { prompt, note } = consentWords(question, app);
     const tool = { ...DESKTOP_CONSENT_TOOL, confirmation: prompt };
     const asked = app ? { app: app.name, bundleId: app.bundleId } : {};
@@ -172,10 +177,11 @@ export async function desktopSessionTools(
       place.binding,
       place.signal,
       undefined,
-      { note, modeAnswers: { threadId: place.binding.threadId ?? place.threadId, modes: DESKTOP_UNASKED_MODES } },
+      { note, modeAnswers: { threadId: chatThread, modes: DESKTOP_UNASKED_MODES } },
     );
     if (answer.approved) {
-      yes.keep(question, app);
+      // The person's own yes lasts the chat; a switch to Auto or Bypass answered only this card.
+      if (answer.by !== "mode") yes.keep(question, app);
       return DesktopAnswer.Yes;
     }
     return answer.by === "timeout" ? DesktopAnswer.Unanswered : DesktopAnswer.No;

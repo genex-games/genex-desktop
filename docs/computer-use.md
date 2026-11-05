@@ -316,7 +316,7 @@ environment, outside the ProcessSandbox, which would deny it the screen.
   tool (the computer vocabulary under its own name, so it sits beside a game's `computer`), where a
   driver is found (`desktop-session.ts`), and so is its Loop's lead seated in the game folder
   answering that chat, so the Loop keeps the person's computer (and an editor game's play) while it
-  runs. The harness's own loop (Ollama) gets the same tool through
+  runs; the lead's card waits through the chat's own turns, as its plugin calls' do. The harness's own loop (Ollama) gets the same tool through
   `desktop.computer` and the seed's `tools/desktop-tools.ts`. Workers, reviewers and other
   unattended sessions never hold it. The tool's description and the chat's own rules tell the agent
   to do steps on the computer itself (launchers, stores, installers, an engine's editor), leaving the
@@ -325,8 +325,9 @@ environment, outside the ProcessSandbox, which would deny it the screen.
   `studio-desktop`): once for the chat, then once for each app the agent reaches. The yes lasts the
   chat's later turns (and a harness restart) until the person presses Stop, uses the stop shortcut
   or turns computer control off (`stopsAll`); then the next turn asks again. A chat in Auto or
-  Bypass asks neither (`DESKTOP_UNASKED_MODES`): the setting being on is the person's yes there, and
-  a card waiting when the person switches to one of them is approved. On a PC a named app is checked against what runs (`running <exe>` in the window probe):
+  Bypass asks neither (`DESKTOP_UNASKED_MODES`): the setting being on is the person's yes there, call
+  by call and never kept as the chat's yes, so a switch to Manual asks again; a card waiting when the
+  person switches to Auto or Bypass is approved. On a PC a named app is checked against what runs (`running <exe>` in the window probe):
   a name no process has (a guessed `robloxstudio.exe`) is refused before any card. Inside a VM the
   session's yes covers every app. The turn answering an assist the person pressed (or approved on its
   card) asks neither: that press was their yes, and the grant keeps the turn to the plugin's apps. A yes stands while the driver fails to connect (missing grants, no
