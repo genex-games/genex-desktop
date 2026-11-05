@@ -368,9 +368,7 @@ describe("a game's .claude folder under Seatbelt", {
  * own scratch. Everything else the sandbox lets an agent write — other games, the games folder,
  * other builds' scratch — is out of reach for that run, however the command spells the path.
  */
-describe("a run confined to its own game", {
-  skip: process.platform === "win32" && "srt-win grants writes for the whole session, not per command",
-}, () => {
+describe("a run confined to its own game", () => {
   let base: string;
   let mine: string;
   let theirs: string;
@@ -402,7 +400,8 @@ describe("a run confined to its own game", {
     });
     assert.equal(result.code, 0, result.stderr);
     assert.equal(result.sandboxed, true);
-    assert.equal(result.stdout.trim(), path.join(shadow, "tmp"));
+    // Resolved: Git Bash on Windows spells it C:/Users/….
+    assert.equal(path.resolve(result.stdout.trim()), path.join(shadow, "tmp"));
     assert.equal(await readFile(path.join(mine, "made.txt"), "utf8"), "a");
     assert.equal(await readFile(path.join(shadow, "out.txt"), "utf8"), "b");
     assert.equal(await readFile(path.join(shadow, "tmp", "t.txt"), "utf8"), "c");
@@ -453,7 +452,11 @@ describe("a run confined to its own game", {
   ];
 
   for (const row of HOSTILE)
-    it(`cannot write ${row.name}`, async () => {
+    it(`cannot write ${row.name}`, {
+      // Every sandboxed process runs as the one srt-sandbox user, whose write grants are the
+      // session's: an entry for one command would hold for every other command running then.
+      skip: process.platform === "win32" && "srt-win grants writes for the whole session, not per command",
+    }, async () => {
       const result = await confined.run({
         command: `printf x > ${JSON.stringify(row.target())}`,
         cwd: mine,
