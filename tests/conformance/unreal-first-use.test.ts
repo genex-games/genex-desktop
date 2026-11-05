@@ -63,7 +63,7 @@ async function computer(
     /** Whether Windows has the runtime Unreal's editor loads, asked each time. */
     runtime?: () => boolean;
     /** Whether the host can hand a setup task to the chat, and how it answers one. */
-    assist?: { can: boolean; answer: { started: boolean; reason?: string } };
+    assist?: { can: boolean; answer: { started: boolean; reason?: string } | Promise<never> };
     /** Where Microsoft's C++ tools stand, asked each time; none: this computer can't tell. */
     visualStudio?: () => VisualStudioStatus;
   } = {},
@@ -749,6 +749,14 @@ describe("Do it for me on the Unreal setup card", () => {
     await settle(async () => (await card(d)).stuckSays !== undefined);
     assert.match(String((await card(d)).stuckSays), /^Do it for me stopped; the card says: The installer isn't signed/);
     assert.deepEqual(unsigned.ran, ["powershell.exe"], "an unsigned installer never runs");
+  });
+
+  it("lets another press go on while the chat's install of Unreal waits on the person", async () => {
+    const c = await computer({ engines: [], assist: { can: true, answer: new Promise<never>(() => {}) } });
+    await c.addLauncher();
+    void c.act("install-for-me");
+    void c.actFor("harbor-run", "install-for-me");
+    await settle(async () => c.assisted.length === 2);
   });
 
   it("starts one install for two presses at once: the card's and the agent's", async () => {

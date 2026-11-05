@@ -1431,10 +1431,10 @@ type ForMeJob = {
 };
 /**
  * The one install this backend runs at a time; the last one stays, so its card can say how it ended.
- * `pressing` is the press of Do it for me being answered: presses are answered one after another, so
- * two can never start two installs.
+ * `deciding` is the press of Do it for me still choosing its step: presses choose one after another,
+ * so two can never start two installs.
  */
-type ForMeSlot = { job?: ForMeJob; pressing?: Promise<unknown> };
+type ForMeSlot = { job?: ForMeJob; deciding?: Promise<void> };
 /** What a press of Do it for me did: the step it ran, whether that started, why not, in the person's words. */
 type ForMeAnswer = {
   step: ForMeStep;
@@ -1528,7 +1528,9 @@ async function launcherForMe(deps: UnrealBackendDeps, slot: ForMeSlot): Promise<
  * Unreal itself: the launcher opened, then the install handed to the game's chat, whose answering
  * turn clicks it with the person's computer control. Refused, the launcher stays open for the person.
  */
-async function engineForMe(deps: UnrealBackendDeps, context: PluginContext): Promise<ForMeAnswer> {
+async function engineForMe(deps: UnrealBackendDeps, context: PluginContext, decided: () => void): Promise<ForMeAnswer> {
+  // The chat's answer can wait on the person's consent: other presses go on meanwhile.
+  decided();
   const version = installEngineVersion();
   await getUnreal(deps.env, deps.launch).catch(() => undefined);
   const answer = await context.host(HostService.EngineAssist, { task: MESSAGE.InstallTask(version) });
@@ -1582,23 +1584,35 @@ async function buildToolsForMe(deps: UnrealBackendDeps, slot: ForMeSlot): Promis
 
 /**
  * Do it for me, on the setup card and as the agent's `install-unreal`: the next step Genex can do
- * now, each as its own press, answered after any press before it. An install already running is
- * answered in words, not run again.
+ * now, each as its own press, chosen once any press before it has chosen (or started) its own. An
+ * install already running is answered in words, not run again.
  */
-function doItForMe(deps: UnrealBackendDeps, context: PluginContext, slot: ForMeSlot): Promise<ForMeAnswer> {
-  const before = slot.pressing ?? Promise.resolve();
-  const press = before.catch(() => undefined).then(() => pressForMe(deps, context, slot));
-  slot.pressing = press;
-  return press;
+async function doItForMe(deps: UnrealBackendDeps, context: PluginContext, slot: ForMeSlot): Promise<ForMeAnswer> {
+  const before = slot.deciding ?? Promise.resolve();
+  let decided = () => {};
+  slot.deciding = new Promise<void>((resolve) => {
+    decided = resolve;
+  });
+  try {
+    await before;
+    return await pressForMe(deps, context, slot, decided);
+  } finally {
+    decided();
+  }
 }
 
-/** One press of Do it for me: the next step, read now. */
-async function pressForMe(deps: UnrealBackendDeps, context: PluginContext, slot: ForMeSlot): Promise<ForMeAnswer> {
+/** One press of Do it for me: the next step, read now; `decided` lets the next press choose once this one has. */
+async function pressForMe(
+  deps: UnrealBackendDeps,
+  context: PluginContext,
+  slot: ForMeSlot,
+  decided: () => void,
+): Promise<ForMeAnswer> {
   if (isRunning(slot.job))
     return { step: ForMeStep.Done, started: false, message: slot.job.message, reason: ForMeMiss.Running };
   const step = await nextForMe(deps, Boolean(await gameProject(deps, context)));
   if (step === ForMeStep.Launcher) return launcherForMe(deps, slot);
-  if (step === ForMeStep.Engine) return engineForMe(deps, context);
+  if (step === ForMeStep.Engine) return engineForMe(deps, context, decided);
   if (step === ForMeStep.Runtime) return runtimeForMe(deps, slot);
   if (step === ForMeStep.BuildTools) return buildToolsForMe(deps, slot);
   return { step, started: false, message: FOR_ME_WORDS.AllThere(installEngineVersion()) };
