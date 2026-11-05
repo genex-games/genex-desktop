@@ -188,6 +188,16 @@ describe("where Microsoft's C++ tools stand", () => {
     );
   });
 
+  it("adds a compiler to Build Tools that have none, when the refused one is another product's, on their own channel", () => {
+    const ltsc = { ...BUILD_TOOLS, channelId: "VisualStudio.17.Release.LTSC.17.12" };
+    const toolsets = { [BUILD_TOOLS_PATH]: [], [COMMUNITY_PATH]: ["14.40.33807"] };
+    const status = visualStudioStatus(facts([ltsc, COMMUNITY], toolsets, ["10.0.22621.0"]));
+    assert.deepEqual(
+      [status.state, status.plan, status.installPath, status.channelId],
+      [VisualStudioState.Outdated, BuildToolsPlan.Modify, BUILD_TOOLS_PATH, "VisualStudio.17.Release.LTSC.17.12"],
+    );
+  });
+
   it("installs new Build Tools beside Build Tools of another release", () => {
     const old = { ...BUILD_TOOLS, installationVersion: "16.11.35208.52" };
     const status = visualStudioStatus(facts([old], { [BUILD_TOOLS_PATH]: [] }, []));
@@ -270,6 +280,13 @@ describe("what this PC has, as the probes read it", () => {
     ["a relative path", JSON.stringify([{ ...BUILD_TOOLS, installationPath: "..\\..\\Users\\me" }])],
     ["a missing product id", JSON.stringify([{ installationPath: "C:\\VS", installationVersion: "17.14" }])],
   ];
+
+  it("keeps an instance's channel only when it is a Visual Studio 2022 channel's name", () => {
+    const listed = (channelId: string) => parseInstances(JSON.stringify([{ ...BUILD_TOOLS, channelId }]))[0]?.channelId;
+    assert.equal(listed("VisualStudio.17.Release"), "VisualStudio.17.Release");
+    for (const hostile of ["VisualStudio.17.Release --remove x", "VisualStudio.18.Stable", "x"])
+      assert.equal(listed(hostile), undefined, hostile);
+  });
   for (const [shape, stdout] of listings)
     it(`lists no instance from ${shape}`, () => {
       assert.deepEqual(parseInstances(stdout), []);

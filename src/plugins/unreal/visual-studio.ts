@@ -51,10 +51,17 @@ export type VisualStudioStatus = {
   plan?: BuildToolsPlan;
   /** The Build Tools install the plan changes (Modify, Update); absent for a new install. */
   installPath?: string;
+  /** That install's release channel, which Modify names; absent when vswhere didn't say. */
+  channelId?: string;
 };
 
-/** One installed Visual Studio product, as vswhere lists it. */
-export type VisualStudioInstance = { installationPath: string; productId: string; installationVersion: string };
+/** One installed Visual Studio product, as vswhere lists it; `channelId` when it names one Genex can pass on. */
+export type VisualStudioInstance = {
+  installationPath: string;
+  productId: string;
+  installationVersion: string;
+  channelId?: string;
+};
 
 /** The compiler and SDK versions an engine builds with; versions are dotted numbers. */
 export type MsvcRules = {
@@ -113,6 +120,8 @@ const SDK_INCLUDE = ["Windows Kits", "10", "Include"] as const;
 /** The headers an SDK version's Include folder holds once installed (a leftover folder has none). */
 const SDK_HEADERS = "um";
 const TOOLSET_VERSION = /^\d+\.\d+\.\d+$/;
+/** A Visual Studio 2022 release channel as vswhere names it: VisualStudio.17.Release, or an LTSC one. */
+const CHANNEL_ID = /^VisualStudio\.17\.[A-Za-z0-9.]+$/;
 const SDK_VERSION = /^\d+\.\d+\.\d+\.\d+$/;
 const VERSION = /^\d+(\.\d+)*$/;
 /** A banned range as Windows_SDK.json writes it: "14.40.0-14.43.99999". */
@@ -196,13 +205,15 @@ export function parseInstances(stdout: string): VisualStudioInstance[] {
     if (!Array.isArray(json)) return [];
     return json.flatMap((entry: unknown) => {
       if (!isJsonObject(entry)) return [];
-      const { installationPath, productId, installationVersion } = entry;
+      const { installationPath, productId, installationVersion, channelId } = entry;
       const usable =
         typeof installationPath === "string" &&
         path.win32.isAbsolute(installationPath) &&
         typeof productId === "string" &&
         typeof installationVersion === "string";
-      return usable ? [{ installationPath, productId, installationVersion }] : [];
+      if (!usable) return [];
+      const channel = typeof channelId === "string" && CHANNEL_ID.test(channelId) ? { channelId } : {};
+      return [{ installationPath, productId, installationVersion, ...channel }];
     });
   } catch {
     return [];
@@ -267,12 +278,22 @@ export type VisualStudioFacts = {
   rules: MsvcRules | null;
 };
 
-/** The plan that makes the tools ready: change the Build Tools install when there is one, else install them. */
-function planOf(facts: VisualStudioFacts, state: VisualStudioState): Pick<VisualStudioStatus, "plan" | "installPath"> {
+/**
+ * The plan that makes the tools ready: change the Build Tools install when there is one, else install
+ * them. Update only when that install's own compilers are the refused ones (another product's are
+ * left to it); otherwise Modify adds the compiler and SDK it lacks.
+ */
+function planOf(
+  facts: VisualStudioFacts,
+  state: VisualStudioState,
+): Pick<VisualStudioStatus, "plan" | "installPath" | "channelId"> {
   const buildTools = buildToolsOf(facts.instances);
   if (!buildTools) return { plan: BuildToolsPlan.Install };
-  const plan = state === VisualStudioState.Outdated ? BuildToolsPlan.Update : BuildToolsPlan.Modify;
-  return { plan, installPath: buildTools.installationPath };
+  const own = facts.toolsets.get(buildTools.installationPath) ?? [];
+  const outdated = state === VisualStudioState.Outdated && own.length > 0;
+  const plan = outdated ? BuildToolsPlan.Update : BuildToolsPlan.Modify;
+  const channel = buildTools.channelId ? { channelId: buildTools.channelId } : {};
+  return { plan, installPath: buildTools.installationPath, ...channel };
 }
 
 /**
@@ -317,3 +338,7 @@ export const systemVisualStudioCheck = (platform: NodeJS.Platform, folders: Visu
 /** Whether Unreal can build C++ with Microsoft's tools here; off Windows, nothing to judge. */
 export const visualStudioReady = (status: Pick<VisualStudioStatus, "state">) =>
   status.state === VisualStudioState.Ready;
+
+/** Whether Microsoft's tools are known to be missing or refused here: never off Windows, or where nothing could tell. */
+export const visualStudioLacking = (status: Pick<VisualStudioStatus, "state">) =>
+  status.state === VisualStudioState.Missing || status.state === VisualStudioState.Outdated;

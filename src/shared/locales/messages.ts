@@ -1987,6 +1987,7 @@ export const MESSAGES = [
   "Microsoft's download was far bigger than its installer, so Genex stopped.",
   "Microsoft's installer couldn't download the Build Tools. Check your internet connection and try again.",
   "Microsoft's installer didn't download. Check your internet connection and try again.",
+  "Microsoft's installer finished, but Unreal still can't build C++ with what it installed. Install Visual Studio Build Tools 2022 with Desktop development with C++ yourself.",
   "Mine",
   "Minimize",
   "Mobile support",

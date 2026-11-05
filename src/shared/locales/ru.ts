@@ -568,6 +568,8 @@ export default {
     "Установщик Microsoft не смог скачать Build Tools. Проверь интернет и попробуй ещё раз.",
   "Microsoft's installer didn't download. Check your internet connection and try again.":
     "Установщик Microsoft не скачался. Проверь интернет и попробуй ещё раз.",
+  "Microsoft's installer finished, but Unreal still can't build C++ with what it installed. Install Visual Studio Build Tools 2022 with Desktop development with C++ yourself.":
+    "Установщик Microsoft закончил, но Unreal всё ещё не может собирать C++ с тем, что он поставил. Установи Visual Studio Build Tools 2022 с набором «Разработка классических приложений на C++» сам.",
   "Recommended. Microsoft's free C++ tools: Unreal needs them to package a game or plugin with C++. About 7 GB. Do it for me installs them: choose Yes when Windows asks.":
     "Рекомендуем. Бесплатные инструменты C++ от Microsoft: без них Unreal не соберёт игру или плагин с C++. Около 7 ГБ. «Сделать за меня» установит их: нажми «Да», когда Windows спросит.",
   "Recommended. Microsoft's free C++ tools: Unreal needs them to package a game or plugin with C++. Install Visual Studio Build Tools with Desktop development with C++.":

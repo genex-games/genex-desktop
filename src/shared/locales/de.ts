@@ -604,6 +604,8 @@ export default {
     "Microsofts Installationsprogramm konnte die Build Tools nicht herunterladen. Prüf deine Internetverbindung und versuch es noch mal.",
   "Microsoft's installer didn't download. Check your internet connection and try again.":
     "Microsofts Installationsprogramm wurde nicht heruntergeladen. Prüf deine Internetverbindung und versuch es noch mal.",
+  "Microsoft's installer finished, but Unreal still can't build C++ with what it installed. Install Visual Studio Build Tools 2022 with Desktop development with C++ yourself.":
+    "Microsofts Installationsprogramm ist fertig, aber Unreal kann mit dem Installierten immer noch kein C++ bauen. Installiere die Visual Studio Build Tools 2022 mit „Desktopentwicklung mit C++“ selbst.",
   "Recommended. Microsoft's free C++ tools: Unreal needs them to package a game or plugin with C++. About 7 GB. Do it for me installs them: choose Yes when Windows asks.":
     "Empfohlen. Microsofts kostenlose C++-Werkzeuge: Unreal braucht sie, um ein Spiel oder Plugin mit C++ zu packen. Etwa 7 GB. „Mach das für mich“ installiert sie: Wähle Ja, wenn Windows fragt.",
   "Recommended. Microsoft's free C++ tools: Unreal needs them to package a game or plugin with C++. Install Visual Studio Build Tools with Desktop development with C++.":

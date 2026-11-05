@@ -542,6 +542,8 @@ export default {
     "Microsoft 설치 프로그램이 Build Tools를 내려받지 못했어요. 인터넷 연결을 확인하고 다시 시도하세요.",
   "Microsoft's installer didn't download. Check your internet connection and try again.":
     "Microsoft 설치 프로그램을 내려받지 못했어요. 인터넷 연결을 확인하고 다시 시도하세요.",
+  "Microsoft's installer finished, but Unreal still can't build C++ with what it installed. Install Visual Studio Build Tools 2022 with Desktop development with C++ yourself.":
+    "Microsoft 설치 프로그램은 끝났지만, 설치된 것으로는 Unreal이 아직 C++를 빌드할 수 없어요. Visual Studio Build Tools 2022를 'C++를 사용한 데스크톱 개발'과 함께 직접 설치하세요.",
   "Recommended. Microsoft's free C++ tools: Unreal needs them to package a game or plugin with C++. About 7 GB. Do it for me installs them: choose Yes when Windows asks.":
     "추천해요. Microsoft의 무료 C++ 도구예요. C++가 들어간 게임이나 플러그인을 Unreal로 패키징하려면 필요해요. 약 7GB예요. '대신 해 주기'로 설치할 수 있어요. Windows가 물어보면 '예'를 고르세요.",
   "Recommended. Microsoft's free C++ tools: Unreal needs them to package a game or plugin with C++. Install Visual Studio Build Tools with Desktop development with C++.":

@@ -703,9 +703,11 @@ describe("plugin-package on Windows", () => {
       assert.deepEqual(h.runs(), [], "no job handed to the sandbox");
       assert.equal(existsSync(packageDir), false, "no package folder made");
     }
-    const h = sandboxHost();
-    const ready = await shipWorld({ platform: "win32", host: h.host, visualStudio: VisualStudioState.Ready });
-    assert.deepEqual(await ready.call(ShipToolName.PluginPackage), { started: true });
+    for (const visualStudio of [VisualStudioState.Ready, VisualStudioState.NotApplicable]) {
+      const h = sandboxHost();
+      const w = await shipWorld({ platform: "win32", host: h.host, visualStudio });
+      assert.deepEqual(await w.call(ShipToolName.PluginPackage), { started: true }, `${visualStudio} lets it through`);
+    }
   });
 
   it("while the host's job runs the project's other jobs wait, and start once it has ended", async () => {

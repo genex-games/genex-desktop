@@ -75,7 +75,7 @@ import {
   projectPluginDirs,
   type RunCommand,
 } from "./ubt.ts";
-import { type VisualStudioStatus, visualStudioReady } from "./visual-studio.ts";
+import { type VisualStudioStatus, visualStudioLacking } from "./visual-studio.ts";
 import type { XcodeStatus } from "./xcode.ts";
 
 /** The four tools, by their names after `unreal__`. */
@@ -765,7 +765,7 @@ async function startPackage(deps: ShipToolsDeps, jobs: Jobs, call: ShipCall) {
 /** Refuses a Windows package while Microsoft's C++ tools aren't ready; a computer that can't tell is let through. */
 async function assertBuildTools(deps: ShipToolsDeps, engine: EngineTarget): Promise<void> {
   const tools = await deps.visualStudio?.(engine.engine.directory).catch(() => undefined);
-  if (tools && !visualStudioReady(tools)) throw new Error(MESSAGE.NeedsBuildTools(tools.state));
+  if (tools && visualStudioLacking(tools)) throw new Error(MESSAGE.NeedsBuildTools(tools.state));
 }
 
 /** Whether a plain file is at `file` (never a link). */

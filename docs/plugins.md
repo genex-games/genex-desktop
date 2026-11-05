@@ -2479,8 +2479,11 @@ Tools, or Update for Build Tools whose only compilers the engine refuses, is don
 Microsoft's VS 2022 Build Tools installer from `aka.ms` (redirects only to Microsoft's download
 host, HTTPS, capped), runs it only once Authenticode calls it Valid and signed by Microsoft
 Corporation, and installs the C++ workload, its x64 compiler and the Windows 11 SDK with
-`--passive --wait` (`modify` or `update` on Build Tools already there); Windows asks the person for
-permission, and the card tells the agent once they are in. Genex doesn't compile a game's C++ on
+`--passive --wait` (`modify` on Build Tools already there, on their own channel, or `update` when their
+own compilers are the refused ones); Windows asks the person for permission, and the card tells the
+agent once they are in. An install that ends well but leaves the tools still missing stops with
+that reason and leaves the row to the person; presses of Do it for me are answered one after
+another, so a card press and the agent's never start two installs. Genex doesn't compile a game's C++ on
 Windows yet (`cpp-status` names the tools' state, `canCompile` stays false), so the row alone
 never brings the card out after `new-game` (`opensByItself`); `plugin-package`, and `package-game`
 for a game with a C++ module, refuse on Windows while the tools aren't ready and name

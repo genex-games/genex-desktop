@@ -751,6 +751,29 @@ describe("Do it for me on the Unreal setup card", () => {
     assert.deepEqual(unsigned.ran, ["powershell.exe"], "an unsigned installer never runs");
   });
 
+  it("starts one install for two presses at once: the card's and the agent's", async () => {
+    const held = await fakeInstall({ gate: new Promise<void>(() => {}) });
+    const c = await computer({ platform: "win32", install: held.install, visualStudio: () => NO_BUILD_TOOLS });
+    await c.linkLantern();
+    const [first, second] = (await Promise.all([c.act("install-for-me"), c.act("install-for-me")])) as Answer[];
+    assert.deepEqual([first?.started, second?.started, second?.reason], [true, false, "running"]);
+    await c.act("stop-install");
+  });
+
+  it("leaves the Build Tools to the person once an install that ended well still left them missing", async () => {
+    const { install, ran } = await fakeInstall();
+    const c = await computer({ platform: "win32", install, visualStudio: () => NO_BUILD_TOOLS });
+    await c.linkLantern();
+    await c.act("install-for-me");
+    await settle(async () => (await card(c)).stuckSays !== undefined);
+    const after = await card(c);
+    assert.match(String(after.stuckSays), /Unreal still can't build C\+\+ with what it installed/);
+    assert.equal(after.primary, undefined, "no Do it for me to press again");
+    assert.match(step(after, "install-build-tools")?.detail ?? "", /Desktop development with C\+\+/);
+    assert.match(String(await c.tool("install-unreal")), /Genex can't install them here/);
+    assert.deepEqual(ran, ["powershell.exe", "vs_BuildTools.exe"], "the installer ran once");
+  });
+
   it("leaves the Build Tools to the person where Genex can't install them, and installs none before a game has a project", async () => {
     const c = await computer({ platform: "win32", visualStudio: () => NO_BUILD_TOOLS });
     const before = (await c.act("install-for-me")) as Answer;

@@ -36,7 +36,7 @@ import { editorCmdPath, type ProgramOutcome, programEnv } from "./automation-tes
 import { projectModule } from "./cpp-module.ts";
 import { LINUX_TOOLCHAIN_VARIABLE } from "./setup.ts";
 import { canCompileCpp, outputCollector, pathScrubber } from "./ubt.ts";
-import { type VisualStudioStatus, visualStudioReady } from "./visual-studio.ts";
+import { type VisualStudioStatus, visualStudioLacking } from "./visual-studio.ts";
 import type { XcodeStatus } from "./xcode.ts";
 
 /** The two tools, by their names after `unreal__`. */
@@ -414,7 +414,7 @@ async function assertRunnable(deps: GamePackageDeps, target: Target): Promise<Re
 async function assertBuildTools(deps: GamePackageDeps, target: Target): Promise<Record<string, string>> {
   if (!(await projectModule(target.projectFile).catch(() => undefined))) return {};
   const tools = await deps.visualStudio?.(target.engineDir).catch(() => undefined);
-  if (tools && !visualStudioReady(tools)) throw new Error(MESSAGE.NeedsBuildTools(tools.state));
+  if (tools && visualStudioLacking(tools)) throw new Error(MESSAGE.NeedsBuildTools(tools.state));
   return {};
 }
 

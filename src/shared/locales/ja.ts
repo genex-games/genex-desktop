@@ -547,6 +547,8 @@ export default {
     "MicrosoftのインストーラーがBuild Toolsをダウンロードできませんでした。インターネット接続を確認して、もう一度試してください。",
   "Microsoft's installer didn't download. Check your internet connection and try again.":
     "Microsoftのインストーラーをダウンロードできませんでした。インターネット接続を確認して、もう一度試してください。",
+  "Microsoft's installer finished, but Unreal still can't build C++ with what it installed. Install Visual Studio Build Tools 2022 with Desktop development with C++ yourself.":
+    "Microsoftのインストーラーは終わりましたが、インストールされたものではまだUnrealがC++をビルドできません。Visual Studio Build Tools 2022を「C++ によるデスクトップ開発」付きでご自身でインストールしてください。",
   "Recommended. Microsoft's free C++ tools: Unreal needs them to package a game or plugin with C++. About 7 GB. Do it for me installs them: choose Yes when Windows asks.":
     "おすすめ。Microsoftの無料のC++ツールです。C++を使うゲームやプラグインをUnrealでパッケージするのに必要です。約7 GB。「おまかせ」でインストールできます。Windowsに聞かれたら「はい」を選んでください。",
   "Recommended. Microsoft's free C++ tools: Unreal needs them to package a game or plugin with C++. Install Visual Studio Build Tools with Desktop development with C++.":

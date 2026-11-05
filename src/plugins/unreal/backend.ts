@@ -95,6 +95,7 @@ import {
   type EpicInstallDeps,
   EpicInstallError,
   EpicInstallKind,
+  EpicInstallRefusal,
   EpicInstallPhase,
   hasUnrealRuntime,
   installBuildTools,
@@ -112,7 +113,7 @@ import {
   undoGameProjectFolder,
 } from "./game-folder.ts";
 import { isProjectPath, UPROJECT_EXTENSION } from "./project-file.ts";
-import { VisualStudioState, type VisualStudioStatus, visualStudioReady } from "./visual-studio.ts";
+import { VisualStudioState, type VisualStudioStatus, visualStudioLacking } from "./visual-studio.ts";
 import { xcodeDownloadsLaunch } from "./xcode.ts";
 import { EditorWait, EngineReadiness, engineReadiness, waitForEditor } from "./editor-wait.ts";
 import { readinessAnswer } from "./hook-answers.ts";
@@ -1425,9 +1426,15 @@ type ForMeJob = {
   message: string;
   controller: AbortController;
   stopped?: boolean;
+  /** Why it stopped on its own, when Genex could tell. */
+  refusal?: EpicInstallRefusal;
 };
-/** The one install this backend runs at a time; the last one stays, so its card can say how it ended. */
-type ForMeSlot = { job?: ForMeJob };
+/**
+ * The one install this backend runs at a time; the last one stays, so its card can say how it ended.
+ * `pressing` is the press of Do it for me being answered: presses are answered one after another, so
+ * two can never start two installs.
+ */
+type ForMeSlot = { job?: ForMeJob; pressing?: Promise<unknown> };
 /** What a press of Do it for me did: the step it ran, whether that started, why not, in the person's words. */
 type ForMeAnswer = {
   step: ForMeStep;
@@ -1447,12 +1454,16 @@ const installsHere = (deps: UnrealBackendDeps): deps is UnrealBackendDeps & { in
 const runtimeReady = async (deps: UnrealBackendDeps): Promise<boolean> =>
   deps.env.platform !== "win32" || !deps.runtime || (await deps.runtime());
 
+/** Where Microsoft's C++ tools stand against the supported engine, and that engine's folder. */
+async function buildToolsNow(deps: UnrealBackendDeps) {
+  const engine = (await findEngines(deps.env)).find((e) => e.supported);
+  return { engineDir: engine?.directory, status: await visualStudioOf(deps.env, engine?.directory) };
+}
+
 /** Whether Microsoft's C++ tools are still to install here: Windows, judged by the supported engine. */
 async function buildToolsMissing(deps: UnrealBackendDeps): Promise<boolean> {
   if (deps.env.platform !== "win32") return false;
-  const engine = (await findEngines(deps.env)).find((e) => e.supported);
-  const status = await visualStudioOf(deps.env, engine?.directory);
-  return status.state !== VisualStudioState.NotApplicable && !visualStudioReady(status);
+  return visualStudioLacking((await buildToolsNow(deps)).status);
 }
 
 /**
@@ -1490,9 +1501,10 @@ function startInstall(
       if (kind === EpicInstallKind.Launcher) await getUnreal(deps.env, deps.launch).catch(() => undefined);
       note(EpicInstallPhase.Done);
     })
-    .catch((error: unknown) =>
-      note(EpicInstallPhase.Failed, error instanceof EpicInstallError ? error.message : FOR_ME_WORDS.Failed()),
-    );
+    .catch((error: unknown) => {
+      if (error instanceof EpicInstallError) job.refusal = error.code;
+      note(EpicInstallPhase.Failed, error instanceof EpicInstallError ? error.message : FOR_ME_WORDS.Failed());
+    });
   return job;
 }
 
@@ -1548,27 +1560,40 @@ async function runtimeForMe(deps: UnrealBackendDeps, slot: ForMeSlot): Promise<F
  * given what they lack, or updated by Microsoft's own installer.
  */
 async function buildToolsForMe(deps: UnrealBackendDeps, slot: ForMeSlot): Promise<ForMeAnswer> {
-  if (!installsHere(deps))
+  if (!installsHere(deps) || leftToPerson(slot.job))
     return {
       step: ForMeStep.BuildTools,
       started: false,
       message: FOR_ME_WORDS.BuildToolsYourself(),
       reason: ForMeMiss.Yourself,
     };
-  const engine = (await findEngines(deps.env)).find((e) => e.supported);
-  const status = await visualStudioOf(deps.env, engine?.directory);
+  const { engineDir, status } = await buildToolsNow(deps);
+  if (!visualStudioLacking(status))
+    return { step: ForMeStep.Done, started: false, message: FOR_ME_WORDS.AllThere(installEngineVersion()) };
   const { install } = deps;
-  const job = startInstall(deps, slot, EpicInstallKind.BuildTools, (options) =>
-    installBuildTools(install, status, options),
-  );
+  const job = startInstall(deps, slot, EpicInstallKind.BuildTools, async (options) => {
+    await installBuildTools(install, status, options);
+    // An installer can end well and still leave a compiler the engine refuses (an LTSC channel's).
+    if (visualStudioLacking(await visualStudioOf(deps.env, engineDir)))
+      throw new EpicInstallError(EpicInstallRefusal.StillMissing);
+  });
   return { step: ForMeStep.BuildTools, started: true, message: job.message };
 }
 
 /**
  * Do it for me, on the setup card and as the agent's `install-unreal`: the next step Genex can do
- * now, each as its own press. An install already running is answered in words, not run again.
+ * now, each as its own press, answered after any press before it. An install already running is
+ * answered in words, not run again.
  */
-async function doItForMe(deps: UnrealBackendDeps, context: PluginContext, slot: ForMeSlot): Promise<ForMeAnswer> {
+function doItForMe(deps: UnrealBackendDeps, context: PluginContext, slot: ForMeSlot): Promise<ForMeAnswer> {
+  const before = slot.pressing ?? Promise.resolve();
+  const press = before.catch(() => undefined).then(() => pressForMe(deps, context, slot));
+  slot.pressing = press;
+  return press;
+}
+
+/** One press of Do it for me: the next step, read now. */
+async function pressForMe(deps: UnrealBackendDeps, context: PluginContext, slot: ForMeSlot): Promise<ForMeAnswer> {
   if (isRunning(slot.job))
     return { step: ForMeStep.Done, started: false, message: slot.job.message, reason: ForMeMiss.Running };
   const step = await nextForMe(deps, Boolean(await gameProject(deps, context)));
@@ -1614,16 +1639,21 @@ const workOf = (job: ForMeJob): ForMeWork => ({ step: ROW_OF[job.kind], message:
 /** Whether the last install stopped on its own (not at the person's Stop), so the agent is told once. */
 const stuckJob = (job: ForMeJob | undefined): job is ForMeJob => job?.phase === EpicInstallPhase.Failed && !job.stopped;
 
+/** Whether Genex installed the Build Tools to the end and Unreal still can't build with them: the person's now. */
+const leftToPerson = (job: ForMeJob | undefined) =>
+  job?.kind === EpicInstallKind.BuildTools && job.refusal === EpicInstallRefusal.StillMissing;
+
 /**
- * The steps card with what Do it for me does for Microsoft's C++ tools: their install under way, and,
- * once it stopped on its own, what the agent is told.
+ * The steps card with what Do it for me does: the install under way (any, since its press may run the
+ * runtime first) with Stop, and, once one stopped on its own, what the agent is told. After an
+ * install that left the Build Tools still missing, the row is the person's.
  */
 async function stepsCard(deps: UnrealBackendDeps, project: ProjectState | undefined, slot: ForMeSlot) {
   const { job } = slot;
-  const ours = job?.kind === EpicInstallKind.BuildTools ? job : undefined;
-  const working = isRunning(ours) ? { working: workOf(ours) } : {};
-  const card = await stepsFor(deps.env, project, { forMe: installsHere(deps), ...working });
-  return stuckJob(ours) ? { ...card, stuckSays: MESSAGE.ForMeStuck(ours.message) } : card;
+  const working = isRunning(job) ? { working: workOf(job) } : {};
+  const forMe = installsHere(deps) && !leftToPerson(job);
+  const card = await stepsFor(deps.env, project, { forMe, ...working });
+  return stuckJob(job) ? { ...card, stuckSays: MESSAGE.ForMeStuck(job.message) } : card;
 }
 
 /**

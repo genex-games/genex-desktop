@@ -521,6 +521,8 @@ export default {
     "Microsoft 的安装程序没能下载 Build Tools。请检查网络连接后再试一次。",
   "Microsoft's installer didn't download. Check your internet connection and try again.":
     "没能下载 Microsoft 的安装程序。请检查网络连接后再试一次。",
+  "Microsoft's installer finished, but Unreal still can't build C++ with what it installed. Install Visual Studio Build Tools 2022 with Desktop development with C++ yourself.":
+    "Microsoft 的安装程序已完成，但 Unreal 仍无法用它安装的内容编译 C++。请自行安装 Visual Studio Build Tools 2022，并勾选“使用 C++ 的桌面开发”。",
   "Recommended. Microsoft's free C++ tools: Unreal needs them to package a game or plugin with C++. About 7 GB. Do it for me installs them: choose Yes when Windows asks.":
     "推荐。Microsoft 免费的 C++ 工具：Unreal 打包含 C++ 的游戏或插件时需要它们。约 7 GB。“帮我完成”会自动安装：Windows 询问时请选“是”。",
   "Recommended. Microsoft's free C++ tools: Unreal needs them to package a game or plugin with C++. Install Visual Studio Build Tools with Desktop development with C++.":

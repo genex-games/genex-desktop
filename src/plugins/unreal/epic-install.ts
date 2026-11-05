@@ -132,6 +132,8 @@ export const EpicInstallRefusal = {
   InstallerBusy: "installer-busy",
   /** The installer couldn't download what it installs. */
   Offline: "offline",
+  /** The installer finished, but what Unreal needs still isn't there. */
+  StillMissing: "still-missing",
   Cancelled: "cancelled",
 } as const;
 export type EpicInstallRefusal = (typeof EpicInstallRefusal)[keyof typeof EpicInstallRefusal];
@@ -155,6 +157,10 @@ const REFUSED: Record<EpicInstallRefusal, () => string> = {
     t("Another installer or Visual Studio is running. Close it, then press Do it for me again."),
   [EpicInstallRefusal.Offline]: () =>
     t("Microsoft's installer couldn't download the Build Tools. Check your internet connection and try again."),
+  [EpicInstallRefusal.StillMissing]: () =>
+    t(
+      "Microsoft's installer finished, but Unreal still can't build C++ with what it installed. Install Visual Studio Build Tools 2022 with Desktop development with C++ yourself.",
+    ),
   [EpicInstallRefusal.Cancelled]: () => t("Stopped."),
 };
 
@@ -379,8 +385,13 @@ async function checkSigned(deps: EpicInstallDeps, file: string, signer: string):
   if (!signedBy(signature.subject, signer)) throw new EpicInstallError(EpicInstallRefusal.WrongSigner);
 }
 
-/** The refusal an installer's exit code means, or undefined when it installed. */
-function installerRefusal(code: number, codes: InstallerCodes): EpicInstallRefusal | undefined {
+/**
+ * The refusal an installer's exit code means, or undefined when it installed. Windows reports an
+ * exit code as unsigned (Microsoft's -1073720687 arrives as 3221246609), so it is read as the
+ * signed 32-bit number installers document.
+ */
+function installerRefusal(exitCode: number, codes: InstallerCodes): EpicInstallRefusal | undefined {
+  const code = exitCode | 0;
   if (codes.installed.has(code)) return undefined;
   if (codes.cancelled.has(code)) return EpicInstallRefusal.NoPermission;
   if (codes.busy?.has(code)) return EpicInstallRefusal.InstallerBusy;
@@ -476,8 +487,8 @@ export async function installUnrealRuntime(
   });
 }
 
-/** What Do it for me hands the Build Tools' installer: the plan, and the install a change acts on. */
-export type BuildToolsJob = Pick<VisualStudioStatus, "plan" | "installPath">;
+/** What Do it for me hands the Build Tools' installer: the plan, and the install (and its channel) a change acts on. */
+export type BuildToolsJob = Pick<VisualStudioStatus, "plan" | "installPath" | "channelId">;
 
 /** Each component the installer adds, as its own `--add`. */
 const addComponents = () => BUILD_TOOLS_COMPONENTS.flatMap((component) => ["--add", component]);
@@ -486,17 +497,19 @@ const PASSIVE = ["--passive", "--norestart", "--wait"] as const;
 
 /**
  * The installer's arguments for a plan: a new install (its cache removed after); the C++ tools and
- * SDK added to the Build Tools install at `installPath`; or that install updated. A change without
- * a plain absolute path to act on is refused.
+ * SDK added to the Build Tools install at `installPath`, on its own channel; or that install
+ * updated. No plan, or a change without a plain absolute path to act on, is refused.
  */
 export function buildToolsArgs(job: BuildToolsJob): string[] {
-  const plan = job.plan ?? BuildToolsPlan.Install;
+  const { plan } = job;
+  if (!plan) throw new EpicInstallError(EpicInstallRefusal.InstallerFailed);
   if (plan === BuildToolsPlan.Install) return [...PASSIVE, "--nocache", ...addComponents()];
   const installPath = job.installPath ?? "";
   if (!path.win32.isAbsolute(installPath) || installPath.includes('"'))
     throw new EpicInstallError(EpicInstallRefusal.InstallerFailed);
   if (plan === BuildToolsPlan.Update) return ["update", "--installPath", installPath, ...PASSIVE];
-  return ["modify", "--installPath", installPath, "--channelId", BUILD_TOOLS_CHANNEL, ...addComponents(), ...PASSIVE];
+  const channel = job.channelId ?? BUILD_TOOLS_CHANNEL;
+  return ["modify", "--installPath", installPath, "--channelId", channel, ...addComponents(), ...PASSIVE];
 }
 
 /**

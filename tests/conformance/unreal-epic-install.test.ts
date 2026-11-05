@@ -347,6 +347,16 @@ describe("Microsoft's Visual Studio Build Tools, installed for the person on Win
     ]);
   });
 
+  it("adds them on the Build Tools install's own channel, and refuses a job with no plan", () => {
+    const ltsc = {
+      plan: BuildToolsPlan.Modify,
+      installPath: BUILD_TOOLS_PATH,
+      channelId: "VisualStudio.17.Release.LTSC.17.12",
+    };
+    assert.deepEqual(buildToolsArgs(ltsc).slice(3, 5), ["--channelId", "VisualStudio.17.Release.LTSC.17.12"]);
+    assert.throws(() => buildToolsArgs({ installPath: BUILD_TOOLS_PATH }), EpicInstallError);
+  });
+
   const installPaths: Array<[string, string | undefined]> = [
     ["no install to change", undefined],
     ["a relative path", "..\\Users\\me"],
@@ -374,6 +384,7 @@ describe("Microsoft's Visual Studio Build Tools, installed for the person on Win
     [8006, EpicInstallRefusal.InstallerBusy],
     [5003, EpicInstallRefusal.Offline],
     [-1073720687, EpicInstallRefusal.Offline],
+    [3221246609, EpicInstallRefusal.Offline],
     [1, EpicInstallRefusal.InstallerFailed],
   ];
   for (const [code, outcome] of codes)
