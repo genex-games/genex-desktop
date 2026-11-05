@@ -393,6 +393,8 @@ export default {
   "Another clip": "Другой клип",
   "Another cover": "Другая обложка",
   "Another folder…": "Другая папка…",
+  "Another installer or Visual Studio is running. Close it, then press Do it for me again.":
+    "Сейчас работает другой установщик или Visual Studio. Закрой его и снова нажми «Сделать за меня».",
   "Another model installation is running.": "Уже идёт установка другой модели.",
   Answer: "Ответить",
   "Answer question": "Ответить на вопрос",
@@ -548,8 +550,36 @@ export default {
   "Build with the Grok account you already have.": "Собирай на аккаунте Grok, который у тебя уже есть.",
   "Changes Harness made to its own instructions. Undo any of them.":
     "Изменения, которые Harness внёс в свои инструкции. Любое можно отменить.",
+  "Checking that Microsoft signed the installer…": "Проверяем, что установщик подписан Microsoft…",
+  "Downloading the Visual Studio Build Tools installer from Microsoft…":
+    "Скачиваем установщик Visual Studio Build Tools с сайта Microsoft…",
+  "Install Visual Studio Build Tools": "Установить Visual Studio Build Tools",
+  "Install Visual Studio Build Tools 2022 from Microsoft with Desktop development with C++.":
+    "Установи Visual Studio Build Tools 2022 от Microsoft с набором «Разработка классических приложений на C++».",
+  "Installing Visual Studio Build Tools. Choose Yes when Windows asks; Microsoft's installer shows its progress.":
+    "Устанавливаем Visual Studio Build Tools. Нажми «Да», когда Windows спросит; установщик Microsoft покажет, как идёт установка.",
+  "Microsoft's download led somewhere other than Microsoft, so Genex stopped.":
+    "Загрузка Microsoft вела не на сайт Microsoft, поэтому Genex остановился.",
+  "Microsoft's download link wasn't secure, so Genex didn't download it.":
+    "Ссылка Microsoft на загрузку была небезопасной, поэтому Genex ничего не скачал.",
+  "Microsoft's download was far bigger than its installer, so Genex stopped.":
+    "Загрузка Microsoft оказалась намного больше установщика, поэтому Genex остановился.",
+  "Microsoft's installer couldn't download the Build Tools. Check your internet connection and try again.":
+    "Установщик Microsoft не смог скачать Build Tools. Проверь интернет и попробуй ещё раз.",
+  "Microsoft's installer didn't download. Check your internet connection and try again.":
+    "Установщик Microsoft не скачался. Проверь интернет и попробуй ещё раз.",
+  "Recommended. Microsoft's free C++ tools: Unreal needs them to package a game or plugin with C++. About 7 GB. Do it for me installs them: choose Yes when Windows asks.":
+    "Рекомендуем. Бесплатные инструменты C++ от Microsoft: без них Unreal не соберёт игру или плагин с C++. Около 7 ГБ. «Сделать за меня» установит их: нажми «Да», когда Windows спросит.",
+  "Recommended. Microsoft's free C++ tools: Unreal needs them to package a game or plugin with C++. Install Visual Studio Build Tools with Desktop development with C++.":
+    "Рекомендуем. Бесплатные инструменты C++ от Microsoft: без них Unreal не соберёт игру или плагин с C++. Установи Visual Studio Build Tools с набором «Разработка классических приложений на C++».",
   "Self-improvement is off. Harness keeps its own instructions as they are.":
     "Самоулучшение выключено. Harness не меняет свои инструкции.",
+  "Unreal can build C++ on this PC.": "Unreal может собирать C++ на этом ПК.",
+  "Unreal {engine} doesn't build with the C++ tools on this PC. Do it for me updates them: choose Yes when Windows asks.":
+    "Unreal {engine} не работает с инструментами C++ на этом ПК. «Сделать за меня» обновит их: нажми «Да», когда Windows спросит.",
+  "Update Visual Studio Build Tools": "Обновить Visual Studio Build Tools",
+  "Visual Studio Build Tools are installed.": "Visual Studio Build Tools установлены.",
+  "Visual Studio's C++ tools are ready": "Инструменты C++ из Visual Studio готовы",
   "When off, Harness doesn’t change its own instructions. Changes it already made stay until you undo them.":
     "Когда выключено, Harness не меняет свои инструкции. Уже сделанные изменения остаются, пока ты их не отменишь.",
   "Workers pitch in": "Помощники подключаются",
@@ -5616,6 +5646,8 @@ export default {
   "{name}: {status}, {count, plural, other {# tries}}":
     "{name}: {status}, {count, plural, one {# попытка} few {# попытки} many {# попыток} other {# попытки}}",
   "{name}’s friends": "Друзья {name}",
+  "{open, plural, =1 {One step left so Unreal can build C++ on this PC.} other {# steps left so Unreal can build C++ on this PC.}}":
+    "{open, plural, =1 {Остался один шаг, и Unreal сможет собирать C++ на этом ПК.} one {Остался # шаг, и Unreal сможет собирать C++ на этом ПК.} few {Осталось # шага, и Unreal сможет собирать C++ на этом ПК.} many {Осталось # шагов, и Unreal сможет собирать C++ на этом ПК.} other {Осталось # шага, и Unreal сможет собирать C++ на этом ПК.}}",
   "{open, plural, =1 {One step left so the agent can add C++ to this game.} =2 {Two steps left so the agent can add C++ to this game.} =3 {Three steps left so the agent can add C++ to this game.} other {# steps left so the agent can add C++ to this game.}}":
     "{open, plural, =1 {Остался один шаг, и агент сможет добавлять C++ в эту игру.} =2 {Осталось два шага, и агент сможет добавлять C++ в эту игру.} =3 {Осталось три шага, и агент сможет добавлять C++ в эту игру.} one {Остался # шаг, и агент сможет добавлять C++ в эту игру.} few {Осталось # шага, и агент сможет добавлять C++ в эту игру.} many {Осталось # шагов, и агент сможет добавлять C++ в эту игру.} other {Осталось # шага, и агент сможет добавлять C++ в эту игру.}}",
   "{owners} came with setup scripts written by their authors. Genex skipped them when it made your copy, and the game may need them to build. Run them only if you trust this game.":

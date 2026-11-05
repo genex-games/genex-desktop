@@ -2469,7 +2469,22 @@ next offer. A card read for one game never shows in another game's chat. Unreal'
 Open Xcode once, or the one Terminal line for another developer folder, or Update Xcode for one too
 old for the engine, or Add Xcode N for one too new (Apple's developer downloads page; a second
 installed Xcode in range is the one to select instead). `get-xcode` opens only the App Store page,
-Apple's downloads page (`{step: downloads}`) or the Xcode app the probes found. The agent shows it again with `unreal__show-steps` when C++ would
+Apple's downloads page (`{step: downloads}`) or the Xcode app the probes found. On Windows a game
+with a project has one row instead, Microsoft's C++ tools (`visual-studio.ts`): Microsoft's
+`vswhere.exe` lists Visual Studio's installs, a compiler counts with its x64 `cl.exe` and a Windows
+SDK with its headers, each judged by the engine's own `Engine/Config/Windows/Windows_SDK.json`
+(`MinimumVisualCppVersion`, `BannedVisualCppVersions`, the SDK range). Install Visual Studio Build
+Tools, or Update for Build Tools whose only compilers the engine refuses, is done by the card's
+**Do it for me** (and `unreal__install-unreal` in a game with a project): Genex downloads
+Microsoft's VS 2022 Build Tools installer from `aka.ms` (redirects only to Microsoft's download
+host, HTTPS, capped), runs it only once Authenticode calls it Valid and signed by Microsoft
+Corporation, and installs the C++ workload, its x64 compiler and the Windows 11 SDK with
+`--passive --wait` (`modify` or `update` on Build Tools already there); Windows asks the person for
+permission, and the card tells the agent once they are in. Genex doesn't compile a game's C++ on
+Windows yet (`cpp-status` names the tools' state, `canCompile` stays false), so the row alone
+never brings the card out after `new-game` (`opensByItself`); `plugin-package`, and `package-game`
+for a game with a C++ module, refuse on Windows while the tools aren't ready and name
+`install-unreal`. The agent shows it again with `unreal__show-steps` when C++ would
 help, links a game to a project with `unreal__use-project` (a set-up project by name, any by its
 `.uproject` path: one not set up yet is set up first, unasked, and linked with `setUp`; while Unreal
 has it open, or when setup would switch a project from an older Unreal to the supported one (the

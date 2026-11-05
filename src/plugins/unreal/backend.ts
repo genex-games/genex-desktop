@@ -80,9 +80,11 @@ import { pollUntil } from "./editor-queue.ts";
 import { QUIT_WAIT_MS, RESTART_POLL_MS } from "./editor-restart.ts";
 import { type AnyLoopTool, createLoopTools, type LoopToolsDeps, TOOLSET_OF } from "./loop-tools.ts";
 import {
+  type BuildToolsCard,
   type ForMeWork,
   InstallCardAction,
   launcherInstallPath,
+  opensByItself,
   UnrealStepId,
   type UnrealSteps,
   unrealInstallCard,
@@ -95,6 +97,7 @@ import {
   EpicInstallKind,
   EpicInstallPhase,
   hasUnrealRuntime,
+  installBuildTools,
   installEpicLauncher,
   installUnrealRuntime,
   systemEpicRun,
@@ -109,6 +112,7 @@ import {
   undoGameProjectFolder,
 } from "./game-folder.ts";
 import { isProjectPath, UPROJECT_EXTENSION } from "./project-file.ts";
+import { VisualStudioState, type VisualStudioStatus, visualStudioReady } from "./visual-studio.ts";
 import { xcodeDownloadsLaunch } from "./xcode.ts";
 import { EditorWait, EngineReadiness, engineReadiness, waitForEditor } from "./editor-wait.ts";
 import { readinessAnswer } from "./hook-answers.ts";
@@ -305,6 +309,10 @@ const MESSAGE = {
     "Genex is installing Microsoft's Visual C++ runtime, which Unreal's editor needs, from Unreal's own copy (Windows asks the person for permission). End your reply now; the chat tells you when it is done.",
   ForMeRuntimeYourself:
     "Unreal's editor needs Microsoft's Visual C++ runtime, which isn't on this computer, and Genex can't install it here. Ask the person to run vc_redist.x64.exe from Unreal's Engine/Extras/Redist/en-us folder.",
+  ForMeBuildTools:
+    "Genex is downloading Microsoft's Visual Studio Build Tools installer, checking Microsoft signed it, and installing the C++ tools and Windows SDK Unreal builds C++ with: several GB, and Windows asks the person for permission. End your reply now; the chat tells you when they are installed.",
+  ForMeBuildToolsYourself:
+    "Unreal needs Microsoft's Visual Studio Build Tools to build C++ on this PC, and Genex can't install them here. Ask the person to install Visual Studio Build Tools 2022 with Desktop development with C++.",
   ForMeRunning: (words: string) => `Do it for me is already installing; the card says: ${words} End your reply now.`,
   ForMeDone: (version: string) =>
     `Unreal ${version} and everything it needs are on this computer: call unreal__new-game if this game has no Unreal project yet.`,
@@ -407,6 +415,15 @@ const PHASE_WORDS: Record<EpicInstallKind, Partial<Record<EpicInstallPhase, () =
     [EpicInstallPhase.Installing]: () => t("Installing Microsoft's Visual C++ runtime. Choose Yes when Windows asks."),
     [EpicInstallPhase.Done]: () => t("Microsoft's Visual C++ runtime is installed."),
   },
+  [EpicInstallKind.BuildTools]: {
+    [EpicInstallPhase.Downloading]: () => t("Downloading the Visual Studio Build Tools installer from Microsoft…"),
+    [EpicInstallPhase.Checking]: () => t("Checking that Microsoft signed the installer…"),
+    [EpicInstallPhase.Installing]: () =>
+      t(
+        "Installing Visual Studio Build Tools. Choose Yes when Windows asks; Microsoft's installer shows its progress.",
+      ),
+    [EpicInstallPhase.Done]: () => t("Visual Studio Build Tools are installed."),
+  },
 };
 
 /** What Do it for me says to the person about each press. */
@@ -438,6 +455,8 @@ const FOR_ME_WORDS = {
     t(
       "Run vc_redist.x64.exe from Unreal's Engine › Extras › Redist › en-us folder to install Microsoft's Visual C++ runtime.",
     ),
+  BuildToolsYourself: () =>
+    t("Install Visual Studio Build Tools 2022 from Microsoft with Desktop development with C++."),
   AllThere: (version: string) => t("Unreal {version} and everything it needs are on this computer.", { version }),
   Stopped: () => t("Stopped."),
   NothingToStop: () => t("Nothing is installing."),
@@ -1085,6 +1104,7 @@ function loopTools(deps: UnrealBackendDeps) {
     engine: async () => (await findEngines(deps.env)).find((e) => e.supported),
     project: (storage, game) => linkedProject(storage, game),
     xcode: (engineDir) => deps.env.xcode(engineDir),
+    visualStudio: (engineDir) => visualStudioOf(deps.env, engineDir),
     linuxToolchain: async () => deps.env.linuxToolchain?.(),
     editorCall: async (storage, game, tool: AnyLoopTool, args, timeoutMs, signal) => {
       const call = { toolset: TOOLSET_OF[tool], tool, args, ...(timeoutMs === undefined ? {} : { timeoutMs }) };
@@ -1122,10 +1142,27 @@ async function engineAndXcode(env: SetupEnv) {
   return { engine, xcode: await env.xcode(engine?.directory) };
 }
 
-/** The steps card for a game using `state` (none yet when undefined), read now. */
-async function stepsFor(env: SetupEnv, state: ProjectState | undefined): Promise<UnrealSteps> {
+const NOT_WINDOWS: VisualStudioStatus = { state: VisualStudioState.NotApplicable, toolset: null, windowsSdk: false };
+
+/** Where Microsoft's C++ tools stand against the engine in `engineDir`; nothing judged where `env` can't tell. */
+const visualStudioOf = async (env: SetupEnv, engineDir: string | undefined): Promise<VisualStudioStatus> =>
+  (await env.visualStudio?.(engineDir).catch(() => undefined)) ?? NOT_WINDOWS;
+
+/** What Do it for me can do for the Build Tools row: install them itself, and the install under way. */
+type BuildToolsReach = Omit<BuildToolsCard, "status">;
+
+/**
+ * The steps card for a game using `state` (none yet when undefined), read now. On Windows a game
+ * with a project has Microsoft's C++ tools' row, with what Do it for me can do for it (`reach`).
+ */
+async function stepsFor(
+  env: SetupEnv,
+  state: ProjectState | undefined,
+  reach: BuildToolsReach = { forMe: false },
+): Promise<UnrealSteps> {
   const { engine, xcode } = await engineAndXcode(env);
-  return unrealSteps(state?.name ?? null, engine?.version ?? "", xcode);
+  const buildTools = state ? { ...reach, status: await visualStudioOf(env, engine?.directory) } : undefined;
+  return unrealSteps(state?.name ?? null, engine?.version ?? "", xcode, buildTools);
 }
 
 /** A set-up project's state, or why it can't be linked. */
@@ -1357,7 +1394,13 @@ async function skipFile(deps: UnrealBackendDeps, context: PluginContext): Promis
 }
 
 /** What Do it for me runs next. Never leaves the backend. */
-const ForMeStep = { Launcher: "launcher", Engine: "engine", Runtime: "runtime", Done: "done" } as const;
+const ForMeStep = {
+  Launcher: "launcher",
+  Engine: "engine",
+  Runtime: "runtime",
+  BuildTools: "build-tools",
+  Done: "done",
+} as const;
 type ForMeStep = (typeof ForMeStep)[keyof typeof ForMeStep];
 /**
  * Why a press of Do it for me started nothing of its own: the person's to do here (Epic's download
@@ -1404,10 +1447,23 @@ const installsHere = (deps: UnrealBackendDeps): deps is UnrealBackendDeps & { in
 const runtimeReady = async (deps: UnrealBackendDeps): Promise<boolean> =>
   deps.env.platform !== "win32" || !deps.runtime || (await deps.runtime());
 
-/** The step Do it for me runs next, read now. */
-async function nextForMe(deps: UnrealBackendDeps): Promise<ForMeStep> {
-  if (await canMakeGames(deps)) return (await runtimeReady(deps)) ? ForMeStep.Done : ForMeStep.Runtime;
-  return (await findLauncher(deps.env.platform, deps.launch)) ? ForMeStep.Engine : ForMeStep.Launcher;
+/** Whether Microsoft's C++ tools are still to install here: Windows, judged by the supported engine. */
+async function buildToolsMissing(deps: UnrealBackendDeps): Promise<boolean> {
+  if (deps.env.platform !== "win32") return false;
+  const engine = (await findEngines(deps.env)).find((e) => e.supported);
+  const status = await visualStudioOf(deps.env, engine?.directory);
+  return status.state !== VisualStudioState.NotApplicable && !visualStudioReady(status);
+}
+
+/**
+ * The step Do it for me runs next, read now. Microsoft's C++ tools come last, and only in a game
+ * with an Unreal project, where the steps card shows them: a new game in Blueprints needs none.
+ */
+async function nextForMe(deps: UnrealBackendDeps, inProject: boolean): Promise<ForMeStep> {
+  if (!(await canMakeGames(deps)))
+    return (await findLauncher(deps.env.platform, deps.launch)) ? ForMeStep.Engine : ForMeStep.Launcher;
+  if (!(await runtimeReady(deps))) return ForMeStep.Runtime;
+  return inProject && (await buildToolsMissing(deps)) ? ForMeStep.BuildTools : ForMeStep.Done;
 }
 
 /**
@@ -1420,7 +1476,8 @@ function startInstall(
   kind: EpicInstallKind,
   install: (options: { signal: AbortSignal; onPhase: (phase: EpicInstallPhase) => void }) => Promise<void>,
 ): ForMeJob {
-  const phase = kind === EpicInstallKind.Launcher ? EpicInstallPhase.Downloading : EpicInstallPhase.Checking;
+  // Only the runtime, the engine's own copy, has nothing to download first.
+  const phase = kind === EpicInstallKind.Runtime ? EpicInstallPhase.Checking : EpicInstallPhase.Downloading;
   const job: ForMeJob = { kind, phase, message: PHASE_WORDS[kind][phase]?.() ?? "", controller: new AbortController() };
   const note = (next: EpicInstallPhase, message = PHASE_WORDS[kind][next]?.() ?? job.message) => {
     job.phase = next;
@@ -1487,16 +1544,38 @@ async function runtimeForMe(deps: UnrealBackendDeps, slot: ForMeSlot): Promise<F
 }
 
 /**
- * Do it for me, on the install card and as the agent's `install-unreal`: the next step Genex can do
+ * Microsoft's Visual Studio Build Tools on Windows, for the plan where they stand says: installed,
+ * given what they lack, or updated by Microsoft's own installer.
+ */
+async function buildToolsForMe(deps: UnrealBackendDeps, slot: ForMeSlot): Promise<ForMeAnswer> {
+  if (!installsHere(deps))
+    return {
+      step: ForMeStep.BuildTools,
+      started: false,
+      message: FOR_ME_WORDS.BuildToolsYourself(),
+      reason: ForMeMiss.Yourself,
+    };
+  const engine = (await findEngines(deps.env)).find((e) => e.supported);
+  const status = await visualStudioOf(deps.env, engine?.directory);
+  const { install } = deps;
+  const job = startInstall(deps, slot, EpicInstallKind.BuildTools, (options) =>
+    installBuildTools(install, status, options),
+  );
+  return { step: ForMeStep.BuildTools, started: true, message: job.message };
+}
+
+/**
+ * Do it for me, on the setup card and as the agent's `install-unreal`: the next step Genex can do
  * now, each as its own press. An install already running is answered in words, not run again.
  */
 async function doItForMe(deps: UnrealBackendDeps, context: PluginContext, slot: ForMeSlot): Promise<ForMeAnswer> {
   if (isRunning(slot.job))
     return { step: ForMeStep.Done, started: false, message: slot.job.message, reason: ForMeMiss.Running };
-  const step = await nextForMe(deps);
+  const step = await nextForMe(deps, Boolean(await gameProject(deps, context)));
   if (step === ForMeStep.Launcher) return launcherForMe(deps, slot);
   if (step === ForMeStep.Engine) return engineForMe(deps, context);
   if (step === ForMeStep.Runtime) return runtimeForMe(deps, slot);
+  if (step === ForMeStep.BuildTools) return buildToolsForMe(deps, slot);
   return { step, started: false, message: FOR_ME_WORDS.AllThere(installEngineVersion()) };
 }
 
@@ -1517,14 +1596,35 @@ function forMeSays(answer: ForMeAnswer): string {
   if (answer.step === ForMeStep.Engine)
     return answer.started ? MESSAGE.ForMeEngine(version) : MESSAGE.ForMeEngineRefused(version, answer.reason ?? "");
   if (answer.step === ForMeStep.Runtime) return answer.started ? MESSAGE.ForMeRuntime : MESSAGE.ForMeRuntimeYourself;
+  if (answer.step === ForMeStep.BuildTools)
+    return answer.started ? MESSAGE.ForMeBuildTools : MESSAGE.ForMeBuildToolsYourself;
   return MESSAGE.ForMeDone(version);
 }
 
+/** The card's row of each install Do it for me runs. */
+const ROW_OF = {
+  [EpicInstallKind.Launcher]: UnrealStepId.GetLauncher,
+  [EpicInstallKind.Runtime]: UnrealStepId.InstallRuntime,
+  [EpicInstallKind.BuildTools]: UnrealStepId.InstallBuildTools,
+} as const satisfies Record<EpicInstallKind, ForMeWork["step"]>;
+
 /** The step a running install shows on the card. */
-const workOf = (job: ForMeJob): ForMeWork => ({
-  step: job.kind === EpicInstallKind.Launcher ? UnrealStepId.GetLauncher : UnrealStepId.InstallRuntime,
-  message: job.message,
-});
+const workOf = (job: ForMeJob): ForMeWork => ({ step: ROW_OF[job.kind], message: job.message });
+
+/** Whether the last install stopped on its own (not at the person's Stop), so the agent is told once. */
+const stuckJob = (job: ForMeJob | undefined): job is ForMeJob => job?.phase === EpicInstallPhase.Failed && !job.stopped;
+
+/**
+ * The steps card with what Do it for me does for Microsoft's C++ tools: their install under way, and,
+ * once it stopped on its own, what the agent is told.
+ */
+async function stepsCard(deps: UnrealBackendDeps, project: ProjectState | undefined, slot: ForMeSlot) {
+  const { job } = slot;
+  const ours = job?.kind === EpicInstallKind.BuildTools ? job : undefined;
+  const working = isRunning(ours) ? { working: workOf(ours) } : {};
+  const card = await stepsFor(deps.env, project, { forMe: installsHere(deps), ...working });
+  return stuckJob(ours) ? { ...card, stuckSays: MESSAGE.ForMeStuck(ours.message) } : card;
+}
 
 /**
  * The card the chat reads: in a game with no Unreal project, the install card while no Unreal that
@@ -1534,10 +1634,10 @@ const workOf = (job: ForMeJob): ForMeWork => ({
  */
 async function cardFor(deps: UnrealBackendDeps, context: PluginContext, slot: ForMeSlot): Promise<UnrealSteps> {
   const project = await gameProject(deps, context);
-  if (project || !context.project) return stepsFor(deps.env, project);
+  if (project || !context.project) return stepsCard(deps, project, slot);
   const installed = await canMakeGames(deps);
   const { storage } = await setupOptions(deps, context);
-  if (installed && !(await wantsUnreal(storage, context.project))) return stepsFor(deps.env, project);
+  if (installed && !(await wantsUnreal(storage, context.project))) return stepsCard(deps, project, slot);
   const launcher = Boolean(await findLauncher(deps.env.platform, deps.launch));
   const skipped = await stat(await skipFile(deps, context)).then(
     () => true,
@@ -1555,8 +1655,7 @@ async function cardFor(deps: UnrealBackendDeps, context: PluginContext, slot: Fo
     forMe,
     ...(isRunning(job) ? { working: workOf(job) } : {}),
   });
-  const stuck = job?.phase === EpicInstallPhase.Failed && !job.stopped;
-  return stuck ? { ...card, stuckSays: MESSAGE.ForMeStuck(job.message) } : card;
+  return stuckJob(job) ? { ...card, stuckSays: MESSAGE.ForMeStuck(job.message) } : card;
 }
 
 /** Whether a new game made here opens: an Unreal that makes games, with the Windows runtime its editor loads. */
@@ -1799,7 +1898,7 @@ async function newGame(deps: UnrealBackendDeps, args: Record<string, unknown>, c
     (error: unknown) => errorMessage(error),
   );
   // The setup card in the chat while a step (Xcode, for C++) is still open.
-  if ((await stepsFor(deps.env, made.state)).open) await context.host(HostService.EngineSteps);
+  if (opensByItself(await stepsFor(deps.env, made.state))) await context.host(HostService.EngineSteps);
   const project = realProjectFile(made.state);
   return opened === undefined ? MESSAGE.NewGame(project) : MESSAGE.NewGameNotOpened(project, opened);
 }
@@ -1822,7 +1921,7 @@ async function newPlugin(deps: UnrealBackendDeps, args: Record<string, unknown>,
   await assertGameFolderFree(game);
   const host = `${name}${HOST_SUFFIX}`;
   const state = await makePluginHost(deps, context, { game, engine, name, host, template });
-  // The setup card in the chat while a step (Xcode, which builds the plugin) is still open.
+  // The setup card in the chat while a step (Xcode, or on Windows the Build Tools, which build the plugin) is open.
   if ((await stepsFor(deps.env, state)).open) await context.host(HostService.EngineSteps);
   return MESSAGE.NewPlugin(name, host);
 }

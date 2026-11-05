@@ -128,6 +128,7 @@ import {
   type PrepareSandbox,
   type RunCommand,
 } from "./ubt.ts";
+import type { VisualStudioStatus } from "./visual-studio.ts";
 import type { XcodeStatus } from "./xcode.ts";
 
 /** The editor tools the Loop uses beyond the queue's own. */
@@ -352,6 +353,8 @@ export type LoopToolsDeps = {
   project(storage: string, game: string): Promise<string | undefined>;
   /** Where Xcode stands against the engine in `engineDir` (C++ compiles only when Ready on a Mac), and its app. */
   xcode(engineDir: string | undefined): Promise<Pick<XcodeStatus, "state"> & Partial<Pick<XcodeStatus, "app">>>;
+  /** Where Microsoft's C++ tools stand on Windows against the engine in `engineDir`; none off Windows. */
+  visualStudio?(engineDir: string | undefined): Promise<Pick<VisualStudioStatus, "state">>;
   /** Windows: `LINUX_MULTIARCH_ROOT` as Epic's Linux toolchain installer set it, for a Linux package. */
   linuxToolchain?(): Promise<string | undefined>;
   /** Compiles a game copy's editor target; UnrealBuildTool's own unless a test stands in. */

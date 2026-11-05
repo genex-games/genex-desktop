@@ -24,7 +24,14 @@ import path from "node:path";
 import { describe, it } from "node:test";
 import { createUnrealBackend, PanelStep } from "../../src/plugins/unreal/backend.ts";
 import { type Launch, type LaunchEnv, systemLaunchEnv } from "../../src/plugins/unreal/editor-launch.ts";
-import { UnrealStepId, unrealInstallCard, unrealSteps, XcodeStep } from "../../src/plugins/unreal/engine-steps.ts";
+import {
+  opensByItself,
+  UnrealStepId,
+  unrealInstallCard,
+  unrealSteps,
+  XcodeStep,
+} from "../../src/plugins/unreal/engine-steps.ts";
+import { BuildToolsPlan, VisualStudioState } from "../../src/plugins/unreal/visual-studio.ts";
 import type { PluginEngineLink, PluginEngineRun } from "../../src/plugin-sdk/index.d.ts";
 import { pluginBackendEnv } from "../../src/substrate/plugins/process.ts";
 import { editorLogPath, readEditorLog } from "../../src/plugins/unreal/editor-log.ts";
@@ -1648,6 +1655,59 @@ describe("a game's own Unreal project and the steps card", () => {
     assert.equal(unrealSteps("Valley", "5.8", READY_XCODE).open, false);
     const windows = unrealSteps("Valley", "5.8", { ...NO_XCODE, state: XcodeState.NotApplicable });
     assert.deepEqual([windows.open, windows.steps.length], [false, 1]);
+  });
+
+  it("on Windows, the steps card offers Microsoft's Build Tools with Do it for me, and follows their install", () => {
+    const windows = { ...NO_XCODE, state: XcodeState.NotApplicable };
+    const missing = {
+      state: VisualStudioState.Missing,
+      toolset: null,
+      windowsSdk: false,
+      plan: BuildToolsPlan.Install,
+    };
+    const offered = unrealSteps("Valley", "5.8", windows, { status: missing, forMe: true });
+    assert.deepEqual(
+      [offered.open, offered.intro, offered.primary?.name, offered.secondary],
+      [true, "One step left so Unreal can build C++ on this PC.", "install-for-me", undefined],
+    );
+    const row = offered.steps.find((s) => s.id === UnrealStepId.InstallBuildTools);
+    assert.deepEqual([row?.label, row?.done], ["Install Visual Studio Build Tools", false]);
+    assert.equal(
+      opensByItself(offered),
+      false,
+      "a game in Blueprints packages without them: the card waits to be shown",
+    );
+    const working = { step: UnrealStepId.InstallBuildTools, message: "Installing Visual Studio Build Tools." };
+    const going = unrealSteps("Valley", "5.8", windows, { status: missing, forMe: true, working });
+    assert.deepEqual([going.primary, going.secondary?.name], [undefined, "stop-install"]);
+    assert.deepEqual(
+      going.steps.filter((s) => s.working).map((s) => s.detail),
+      ["Installing Visual Studio Build Tools."],
+    );
+    const yourself = unrealSteps("Valley", "5.8", windows, { status: missing, forMe: false });
+    assert.equal(yourself.primary, undefined);
+    const outdated = {
+      ...missing,
+      state: VisualStudioState.Outdated,
+      plan: BuildToolsPlan.Update,
+      installPath: "C:\\BT",
+    };
+    const update = unrealSteps("Valley", "5.8", windows, { status: outdated, forMe: true });
+    assert.equal(update.steps.find((s) => !s.done)?.label, "Update Visual Studio Build Tools");
+    const ready = { state: VisualStudioState.Ready, toolset: "14.44.35211", windowsSdk: true };
+    const done = unrealSteps("Valley", "5.8", windows, { status: ready, forMe: true });
+    assert.deepEqual([done.open, done.primary], [false, undefined]);
+    assert.match(String(done.doneSays), /^Visual Studio's C\+\+ tools are installed on this PC/);
+  });
+
+  it("on a Mac, the steps card has no Build Tools row and still shows itself while Xcode is missing", () => {
+    const mac = { state: VisualStudioState.NotApplicable, toolset: null, windowsSdk: false };
+    const card = unrealSteps("Valley", "5.8", NO_XCODE, { status: mac, forMe: true });
+    assert.equal(
+      card.steps.some((s) => s.id === UnrealStepId.InstallBuildTools),
+      false,
+    );
+    assert.deepEqual([card.primary, card.doneSays, opensByItself(card)], [undefined, undefined, true]);
   });
 
   it("an Xcode too new for the engine points to Apple's downloads, one too old to the App Store", () => {

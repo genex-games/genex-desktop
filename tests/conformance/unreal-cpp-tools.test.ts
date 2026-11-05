@@ -26,6 +26,7 @@ import {
   LoopToolName,
 } from "../../src/plugins/unreal/loop-tools.ts";
 import { CompileFailure, type CompileOptions, type CompileResult } from "../../src/plugins/unreal/ubt.ts";
+import { VisualStudioState } from "../../src/plugins/unreal/visual-studio.ts";
 import { XcodeState } from "../../src/plugins/unreal/xcode.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
@@ -272,6 +273,8 @@ type Editor = {
 type Options = {
   platform?: NodeJS.Platform;
   xcode?: XcodeState;
+  /** Where Microsoft's C++ tools stand; none: the computer can't tell (not Windows). */
+  visualStudio?: VisualStudioState;
   /** The project's own module, or none (a Blueprint project). */
   module?: boolean;
   /** Whether Unreal is open on this game when the test starts (default), or closed. */
@@ -289,6 +292,10 @@ type Options = {
   /** UBT's build goes on until this settles. */
   building?: Promise<unknown>;
 };
+
+/** Microsoft's C++ tools where `state` says, or no answer at all (a computer that isn't Windows). */
+const visualStudioOf = (state: VisualStudioState | undefined) =>
+  state ? { visualStudio: async () => ({ state }) } : {};
 
 /** A Blueprint game (or one with its module) open in a stand-in Unreal, through the Loop's tools. */
 async function cppWorld(options: Options = {}) {
@@ -332,6 +339,7 @@ async function cppWorld(options: Options = {}) {
     engine: async () => ({ version: "5.8", directory: engineDir }),
     project: async () => (options.unlinked ? undefined : projectFile),
     xcode: async () => ({ state: options.xcode ?? XcodeState.Ready, app: XCODE_APP }),
+    ...visualStudioOf(options.visualStudio),
     compile: async (compile) => {
       events.push("compile");
       compiles.push(compile);
@@ -380,6 +388,7 @@ async function cppWorld(options: Options = {}) {
     (await tools.call(LoopToolName.CppStatus, {}, context, storage)) as {
       canCompile: boolean;
       xcode: string;
+      visualStudio: string;
       platform: string;
       module: string | null;
       adding: { state: string; error?: string; seconds?: number };
@@ -404,6 +413,7 @@ describe("cpp-status", () => {
     assert.deepEqual(answer, {
       canCompile: true,
       xcode: XcodeState.Ready,
+      visualStudio: VisualStudioState.NotApplicable,
       platform: "darwin",
       module: null,
       adding: { state: CppAddState.Idle },
@@ -431,6 +441,14 @@ describe("cpp-status", () => {
 
   it("names no module for a game without a linked project", async () => {
     assert.equal((await (await cppWorld({ unlinked: true })).status()).module, null);
+  });
+
+  it("names where Microsoft's C++ tools stand on Windows, where Genex doesn't compile a game's C++ yet", async () => {
+    for (const visualStudio of [VisualStudioState.Missing, VisualStudioState.Ready]) {
+      const w = await cppWorld({ platform: "win32", xcode: XcodeState.NotApplicable, visualStudio });
+      const answer = await w.status();
+      assert.deepEqual([answer.visualStudio, answer.canCompile], [visualStudio, false]);
+    }
   });
 });
 

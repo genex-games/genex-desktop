@@ -370,6 +370,8 @@ export default {
   "Another clip": "別のクリップ",
   "Another cover": "別のカバー",
   "Another folder…": "別のフォルダー…",
+  "Another installer or Visual Studio is running. Close it, then press Do it for me again.":
+    "別のインストーラーかVisual Studioが動いています。閉じてから、もう一度「おまかせ」を押してください。",
   "Another model installation is running.": "別のモデルをインストール中です。",
   Answer: "回答する",
   "Answer question": "質問に答える",
@@ -527,8 +529,36 @@ export default {
   "Build with the Grok account you already have.": "すでに持っているGrokアカウントでつくります。",
   "Changes Harness made to its own instructions. Undo any of them.":
     "Harnessが自分の指示に加えた変更です。どれでも元に戻せます。",
+  "Checking that Microsoft signed the installer…": "インストーラーにMicrosoftの署名があるか確認しています…",
+  "Downloading the Visual Studio Build Tools installer from Microsoft…":
+    "MicrosoftからVisual Studio Build Toolsのインストーラーをダウンロードしています…",
+  "Install Visual Studio Build Tools": "Visual Studio Build Toolsをインストール",
+  "Install Visual Studio Build Tools 2022 from Microsoft with Desktop development with C++.":
+    "MicrosoftのVisual Studio Build Tools 2022を「C++ によるデスクトップ開発」付きでインストールしてください。",
+  "Installing Visual Studio Build Tools. Choose Yes when Windows asks; Microsoft's installer shows its progress.":
+    "Visual Studio Build Toolsをインストールしています。Windowsに聞かれたら「はい」を選んでください。進み具合はMicrosoftのインストーラーに表示されます。",
+  "Microsoft's download led somewhere other than Microsoft, so Genex stopped.":
+    "Microsoftのダウンロードが Microsoft 以外の場所につながっていたため、Genexは中止しました。",
+  "Microsoft's download link wasn't secure, so Genex didn't download it.":
+    "Microsoftのダウンロードリンクが安全ではなかったため、Genexはダウンロードしませんでした。",
+  "Microsoft's download was far bigger than its installer, so Genex stopped.":
+    "Microsoftのダウンロードがインストーラーよりはるかに大きかったため、Genexは中止しました。",
+  "Microsoft's installer couldn't download the Build Tools. Check your internet connection and try again.":
+    "MicrosoftのインストーラーがBuild Toolsをダウンロードできませんでした。インターネット接続を確認して、もう一度試してください。",
+  "Microsoft's installer didn't download. Check your internet connection and try again.":
+    "Microsoftのインストーラーをダウンロードできませんでした。インターネット接続を確認して、もう一度試してください。",
+  "Recommended. Microsoft's free C++ tools: Unreal needs them to package a game or plugin with C++. About 7 GB. Do it for me installs them: choose Yes when Windows asks.":
+    "おすすめ。Microsoftの無料のC++ツールです。C++を使うゲームやプラグインをUnrealでパッケージするのに必要です。約7 GB。「おまかせ」でインストールできます。Windowsに聞かれたら「はい」を選んでください。",
+  "Recommended. Microsoft's free C++ tools: Unreal needs them to package a game or plugin with C++. Install Visual Studio Build Tools with Desktop development with C++.":
+    "おすすめ。Microsoftの無料のC++ツールです。C++を使うゲームやプラグインをUnrealでパッケージするのに必要です。Visual Studio Build Toolsを「C++ によるデスクトップ開発」付きでインストールしてください。",
   "Self-improvement is off. Harness keeps its own instructions as they are.":
     "自己改善はオフです。Harnessは自分の指示をそのままにします。",
+  "Unreal can build C++ on this PC.": "このPCでUnrealがC++をビルドできます。",
+  "Unreal {engine} doesn't build with the C++ tools on this PC. Do it for me updates them: choose Yes when Windows asks.":
+    "Unreal {engine}はこのPCのC++ツールではビルドできません。「おまかせ」で更新できます。Windowsに聞かれたら「はい」を選んでください。",
+  "Update Visual Studio Build Tools": "Visual Studio Build Toolsを更新",
+  "Visual Studio Build Tools are installed.": "Visual Studio Build Toolsをインストールしました。",
+  "Visual Studio's C++ tools are ready": "Visual StudioのC++ツールの準備ができました",
   "When off, Harness doesn’t change its own instructions. Changes it already made stay until you undo them.":
     "オフにすると、Harnessは自分の指示を変えません。すでに加えた変更は、元に戻すまで残ります。",
   "Workers pitch in": "ワーカーが手伝う",
@@ -5579,6 +5609,8 @@ export default {
   "{name}: {status}": "{name}：{status}",
   "{name}: {status}, {count, plural, other {# tries}}": "{name}：{status}、{count, plural, other {#回試行}}",
   "{name}’s friends": "{name}のフレンド",
+  "{open, plural, =1 {One step left so Unreal can build C++ on this PC.} other {# steps left so Unreal can build C++ on this PC.}}":
+    "{open, plural, =1 {あと1ステップで、このPCでUnrealがC++をビルドできるようになります。} other {あと#ステップで、このPCでUnrealがC++をビルドできるようになります。}}",
   "{open, plural, =1 {One step left so the agent can add C++ to this game.} =2 {Two steps left so the agent can add C++ to this game.} =3 {Three steps left so the agent can add C++ to this game.} other {# steps left so the agent can add C++ to this game.}}":
     "{open, plural, =1 {あと1ステップで、エージェントがこのゲームにC++を追加できるようになります。} =2 {あと2ステップで、エージェントがこのゲームにC++を追加できるようになります。} =3 {あと3ステップで、エージェントがこのゲームにC++を追加できるようになります。} other {あと#ステップで、エージェントがこのゲームにC++を追加できるようになります。}}",
   "{owners} came with setup scripts written by their authors. Genex skipped them when it made your copy, and the game may need them to build. Run them only if you trust this game.":
