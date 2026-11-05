@@ -157,16 +157,20 @@ export async function desktopSessionTools(
   const yes = chatYes(core, place.threadId, () => desktop.stopsAll());
   /** The chat whose mode decides whether a card is asked, and whose switch answers one. */
   const chatThread = place.binding.threadId ?? place.threadId;
-  const ask = async (question: DesktopQuestion, app?: DesktopApp): Promise<DesktopAnswer> => {
-    if (yes.covers(question, app)) return DesktopAnswer.Yes;
+  /** Whether this question goes ahead with no card: the chat's yes, the turn's pressed assist, or its mode. */
+  const unasked = async (question: DesktopQuestion, app?: DesktopApp): Promise<boolean> => {
+    if (yes.covers(question, app)) return true;
     // The person's press (or the card they approved) for this turn's assist already said yes to the
     // session and the grant's apps; any other app (their browser, for the game's page) is asked.
     const grant = grants.forTurn(place.threadId, place.turn);
     const covered = !app || (app.bundleId !== null && grant?.apps.has(app.bundleId) === true);
-    if (grant?.asked && covered) return DesktopAnswer.Yes;
+    if (grant?.asked && covered) return true;
     // Auto and Bypass ask no card, call by call and never kept as the chat's yes: a switch to a mode
     // that asks puts the cards back.
-    if (DESKTOP_UNASKED_MODES.includes(await x.chatMode(chatThread))) return DesktopAnswer.Yes;
+    return DESKTOP_UNASKED_MODES.includes(await x.chatMode(chatThread));
+  };
+  const ask = async (question: DesktopQuestion, app?: DesktopApp): Promise<DesktopAnswer> => {
+    if (await unasked(question, app)) return DesktopAnswer.Yes;
     const { prompt, note } = consentWords(question, app);
     const tool = { ...DESKTOP_CONSENT_TOOL, confirmation: prompt };
     const asked = app ? { app: app.name, bundleId: app.bundleId } : {};
