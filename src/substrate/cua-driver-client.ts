@@ -479,19 +479,25 @@ function silentTree(answer: CuaAnswer): boolean {
 }
 
 /**
- * Tree reads that ask a silent window ({@link silentTree}) once in {@link SILENT_TREE_MS}, and
- * otherwise answer with what it said then, so acting by pixel in it waits on nothing.
+ * Two reads of a window's tree that remember which windows are silent ({@link silentTree}): `fresh`
+ * always asks (the password check, as a silent window may answer the next moment with a sign-in
+ * form), and `quiet` asks a silent window once in {@link SILENT_TREE_MS}, otherwise answering with
+ * what it said last, so what the agent is shown while it acts by pixel waits on nothing.
  */
-function quietTreeReads(read: TreeRead, now: () => number): TreeRead {
+function treeMemory(read: TreeRead, now: () => number): { fresh: TreeRead; quiet: TreeRead } {
   const silent = new Map<number, { at: number; answer: CuaAnswer }>();
-  return async (pid, windowId) => {
-    const kept = silent.get(windowId);
-    if (kept && now() - kept.at < SILENT_TREE_MS) return kept.answer;
+  const fresh: TreeRead = async (pid, windowId) => {
     const answer = await read(pid, windowId);
     if (silentTree(answer)) silent.set(windowId, { at: now(), answer });
     else silent.delete(windowId);
     return answer;
   };
+  const quiet: TreeRead = async (pid, windowId) => {
+    const kept = silent.get(windowId);
+    if (kept && now() - kept.at < SILENT_TREE_MS) return kept.answer;
+    return fresh(pid, windowId);
+  };
+  return { fresh, quiet };
 }
 
 /**
@@ -581,22 +587,26 @@ function windowsAppWindows(probe: WindowsProbe) {
  * What Windows says about its desktop, through the window probe: the app in front, its window and
  * its focused field, the app a click at a point reaches, a process's app. An app the probe cannot
  * read (no process, no executable) is no app, which the target refuses. Only the front window's tree
- * comes from cua; it stands in for UI Automation's password flag when that could not be read, and a
- * window whose UI Automation did not answer is not waited on again for a while ({@link quietTreeReads}).
+ * comes from cua: read afresh, it stands in for UI Automation's password flag when that could not be
+ * read; shown to the agent, a window whose UI Automation did not answer is not waited on again for a
+ * while ({@link treeMemory}).
  */
 function windowsReads(call: CuaCall, probe: WindowsProbe, screen: () => ScreenSize, now: () => number): DesktopReads {
   const windows = async (pid?: number): Promise<CuaWindow[]> =>
     (await listedWindows(call, pid)).filter((window) => !isDriverWindow(window));
-  const read = quietTreeReads(readTree(call), now);
+  const { fresh, quiet } = treeMemory(readTree(call), now);
   // The front window as the probe last named it: its tree is read by its handle, without cua's
   // window list (a second or more on Windows).
   let front: ProbedApp | null = null;
-  const frontTree = (app: DesktopApp | null): Promise<CuaAnswer | null> => {
-    const probed = front;
-    const known = probed !== null && app?.pid === probed.pid ? probed.window : null;
-    if (probed === null || known === null) return frontTreeOf(read, windows, app);
-    return read(probed.pid, known);
-  };
+  const treeWith =
+    (read: TreeRead) =>
+    (app: DesktopApp | null): Promise<CuaAnswer | null> => {
+      const probed = front;
+      const known = probed !== null && app?.pid === probed.pid ? probed.window : null;
+      if (probed === null || known === null) return frontTreeOf(read, windows, app);
+      return read(probed.pid, known);
+    };
+  const passwordTree = treeWith(fresh);
   const probeFront = async (): Promise<ProbedApp | null> => {
     front = await probe.front();
     return front;
@@ -610,10 +620,10 @@ function windowsReads(call: CuaCall, probe: WindowsProbe, screen: () => ScreenSi
       const app = probedApp(probed);
       const window = app ? (probed?.window ?? null) : null;
       if (probed?.secure !== null && probed?.secure !== undefined) return { app, secure: probed.secure, window };
-      const tree = await frontTree(app).catch(() => null);
+      const tree = await passwordTree(app).catch(() => null);
       return { app, secure: tree !== null && hasPasswordField(tree), window };
     },
-    frontTree,
+    frontTree: treeWith(quiet),
   };
 }
 
@@ -667,6 +677,7 @@ export function cuaDriver(
       };
     },
     focus: () => reads.focus(),
+    frontApp: () => reads.frontApp(),
     appAt: (x, y) => reads.appAt((x * screen.width) / picture.width, (y * screen.height) / picture.height),
     ...(options.windows
       ? { runningApp: windowsRunningApp(options.windows), appWindows: windowsAppWindows(options.windows) }

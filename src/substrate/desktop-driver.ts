@@ -102,6 +102,11 @@ export interface DesktopWindow {
 export interface DesktopDriver {
   screenshot(): Promise<DesktopShot>;
   focus(): Promise<DesktopFocus>;
+  /**
+   * The app in front alone, without asking whether its focused field is a password field: for a read
+   * that needs only the app (the target's state), so it never waits on that check.
+   */
+  frontApp?(): Promise<DesktopApp | null>;
   /** The app under a screen point, so a click is checked against the app it lands in. */
   appAt?(x: number, y: number): Promise<DesktopApp | null>;
   /**

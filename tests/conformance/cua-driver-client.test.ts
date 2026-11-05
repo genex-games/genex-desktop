@@ -411,7 +411,7 @@ describe("cua-driver on Windows", () => {
     raise?: (exe: string, window?: number | null) => ProbedApp | null;
     running?: (exe: string) => ProbedApp | null;
     windows?: (exe: string) => ProbedWindow[];
-    tree?: CuaAnswer;
+    tree?: CuaAnswer | (() => CuaAnswer);
     now?: () => number;
   }) {
     const windows = [
@@ -441,7 +441,11 @@ describe("cua-driver on Windows", () => {
         if (tool === "list_windows")
           return json({ windows: windows.filter((w) => args.pid === undefined || w.pid === args.pid) });
         if (tool === "get_window_state")
-          return probed.tree ?? { content: [{ type: "text", text: '- [1] Window "Notepad"' }] };
+          return (
+            (typeof probed.tree === "function" ? probed.tree() : probed.tree) ?? {
+              content: [{ type: "text", text: '- [1] Window "Notepad"' }],
+            }
+          );
         return json({ ok: true });
       },
       close: async () => {},
@@ -633,25 +637,40 @@ describe("cua-driver on Windows", () => {
     const treeReads = (calls: Array<{ tool: string; args: Record<string, unknown> }>) =>
       calls.filter((call) => call.tool === "get_window_state").map((call) => call.args.window_id);
 
-    it("is asked for its tree once, and every later action goes by pixel without waiting on it", async () => {
+    it("is asked for its tree once, and every later state read goes by pixel without waiting on it", async () => {
       let clock = 1_000_000;
       const fake = windowsDriver({ front: () => UNREAL, tree: SILENT, now: () => clock });
-      assert.equal((await fake.driver.focus()).secure, false, "no password field shows in a tree that never came");
       const said = String(await fake.driver.accessibility());
       assert.match(said, /did not answer/, "the agent reads why it has only the picture");
       for (let action = 0; action < 5; action++) {
         clock += 1_000;
-        await fake.driver.focus();
-        await fake.driver.accessibility();
+        assert.equal(String(await fake.driver.accessibility()), said);
       }
       assert.deepEqual(treeReads(fake.calls), [7001], "one wait on the silent window, not one per action");
       clock += 60_000;
-      await fake.driver.focus();
+      await fake.driver.accessibility();
       assert.deepEqual(
         treeReads(fake.calls),
         [7001, 7001],
         "asked again once a while has passed: it may only have been busy",
       );
+    });
+
+    it("is still read afresh for every password check, so a field that shows up later is caught", async () => {
+      let tree = SILENT;
+      const fake = windowsDriver({ front: () => UNREAL, tree: () => tree, now: () => 0 });
+      assert.equal((await fake.driver.focus()).secure, false, "no password field shows in a tree that never came");
+      await fake.driver.accessibility();
+      tree = { content: [{ type: "text", text: '- [1] Window "Sign in"\n  - [3] Edit "Password"' }] };
+      assert.equal((await fake.driver.focus()).secure, true, "the window answered, with a password field");
+      assert.deepEqual(treeReads(fake.calls), [7001, 7001], "the state read alone was answered from memory");
+    });
+
+    it("says the app in front without its tree, for reads that need only the app", async () => {
+      const fake = windowsDriver({ front: () => UNREAL, tree: SILENT, now: () => 0 });
+      assert.ok(fake.driver.frontApp, "the driver names the app in front on its own");
+      assert.deepEqual(await fake.driver.frontApp(), { name: "Unreal Editor", bundleId: "unrealeditor.exe", pid: 70 });
+      assert.deepEqual(treeReads(fake.calls), [], "no tree read, no wait on a silent window");
     });
 
     it("is told apart from a window whose tree answers, which is read every time", async () => {
@@ -661,8 +680,8 @@ describe("cua-driver on Windows", () => {
       };
       for (const tree of [partial, { content: [{ type: "text", text: '- [1] Window "Notepad"' }] }]) {
         const fake = windowsDriver({ front: () => ({ ...NOTEPAD, secure: null }), tree, now: () => 0 });
-        await fake.driver.focus();
-        await fake.driver.focus();
+        await fake.driver.accessibility();
+        await fake.driver.accessibility();
         assert.deepEqual(treeReads(fake.calls), [4001, 4001], JSON.stringify(tree.structuredContent ?? null));
       }
     });
@@ -670,10 +689,10 @@ describe("cua-driver on Windows", () => {
     it("keeps each window apart: the app's other window is asked on its own", async () => {
       let front: ProbedApp = UNREAL;
       const fake = windowsDriver({ front: () => front, tree: SILENT, now: () => 0 });
-      await fake.driver.focus();
+      await fake.driver.accessibility();
       front = { ...UNREAL, window: 7002 };
-      await fake.driver.focus();
-      await fake.driver.focus();
+      await fake.driver.accessibility();
+      await fake.driver.accessibility();
       assert.deepEqual(treeReads(fake.calls), [7001, 7002]);
     });
   });

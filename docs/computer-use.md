@@ -273,8 +273,9 @@ app a click at a point reaches (Windows' own hit test, `WindowFromPoint` up to t
 which asks nothing of that app, so a busy one such as Roblox Studio with a menu open cannot stall it
 as UI Automation's `FromPoint` did), with its window's handle so the tree fallback skips cua's slow
 window list. A window whose UI Automation never answers (Unreal Editor's `UnrealWindow`: cua's walk
-times out before its first element) is asked for its tree once in 30 s, and its answer then stands
-in, so acting by pixel in it waits on nothing. It also brings an app forward by its
+times out before its first element) is asked for the tree the agent is shown once in 30 s, and its
+answer then stands in, so acting by pixel in it waits on nothing; the password check before typing
+still asks afresh, and the state after an action names the app in front without that check. It also brings an app forward by its
 executable (`raise`, the PC's `bring_to_front`: the newest responding window, restored if minimized,
 with an Alt tap when Windows refuses a background process the foreground), lists an app's shown
 windows front first with the titles Windows keeps for them (`windows <exe>`: z-order, cloaked ones

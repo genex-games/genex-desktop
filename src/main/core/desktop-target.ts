@@ -604,10 +604,10 @@ export function desktopTarget(options: DesktopTargetOptions): DesktopTarget {
       return { applied, route: InputRoute.OsForeground };
     },
     state: async () => {
-      const focus = await driver.focus();
-      if (focus.app && neverDriven(focus.app))
-        return { app: appName(focus.app), refused: MESSAGE.neverDriven(appName(focus.app)) };
-      return { app: focus.app ? appName(focus.app) : null, tree: await driver.accessibility() };
+      // Only the app is needed here: a driver that can name it alone spares the password check.
+      const app = driver.frontApp ? await driver.frontApp() : (await driver.focus()).app;
+      if (app && neverDriven(app)) return { app: appName(app), refused: MESSAGE.neverDriven(appName(app)) };
+      return { app: app ? appName(app) : null, tree: await driver.accessibility() };
     },
     refusals: () => state.refused.splice(0),
     front,

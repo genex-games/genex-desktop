@@ -236,6 +236,24 @@ describe("desktop target", () => {
     assert.equal(focused, 1);
   });
 
+  it("reads its state by the app in front alone where the driver can say it, never waiting on the password check", async () => {
+    const fake = fakeDriver();
+    const asked: string[] = [];
+    fake.driver.focus = async () => {
+      asked.push("focus");
+      return { app: EDITOR, secure: false };
+    };
+    fake.driver.frontApp = async () => {
+      asked.push("front app");
+      return EDITOR;
+    };
+    const { target } = await targetOver(fake);
+    assert.deepEqual(await target.state?.(), { app: "TextEdit", tree: { role: "AXWindow", title: "Untitled" } });
+    assert.deepEqual(asked, ["front app"]);
+    fake.driver.frontApp = async () => STUDIO;
+    assert.match(JSON.stringify(await target.state?.()), /never driven/, "a refused app in front is still refused");
+  });
+
   it("refuses a click over a point no window covers, never the app in front in its place", async () => {
     const fake = fakeDriver({ focus: { app: EDITOR, secure: false }, under: null });
     const { target, asked } = await targetOver(fake);
