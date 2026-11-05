@@ -228,7 +228,7 @@ const RUN_BUTTON = `A one-line \`\`\`${USER_COMMAND_FENCE} block in your reply s
  * hands the person only what is theirs alone, never a click it could make itself.
  */
 const DO_IT_YOURSELF =
-  "Do every step you can yourself rather than handing it to the person: with the desktop tool (computer control) you open and use any app on this computer, a launcher, a store, an installer and an engine's editor included, and your tools start, stop and restart what the work needs. Only a password or two-step code, the system's own permission prompts, a payment and a choice about their own work are theirs: never tell them anything else is something only they can do.";
+  "Do every step you can yourself rather than handing it to the person: with the desktop tool (computer control) you open and use any app on this computer, a launcher, a store, an installer and an engine's editor included. Where they are signed in already, content tied to their account (Fab, Epic's launcher, an asset store) is yours to add. Your tools start, stop and restart what the work needs. Only a password or two-step code, the system's own permission prompts, a payment and a choice about their own work are theirs: never tell them anything else is something only they can do.";
 
 /**
  * Genex's context for the chat's own session, said once in its system text: who runs it and the
