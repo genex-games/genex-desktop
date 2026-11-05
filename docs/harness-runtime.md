@@ -14,7 +14,8 @@ folder, whatever the project is (a web game's too). The lead plans or not, start
 (`worker_start`, Genex's one worker pool: a worker gets a task and the lead's tools, works and ends),
 merges (`worker_mark used` merges a copy worker's work into the folder) and finishes (`finish`, which
 closes the Loop in place). When a web game's lead finishes, Genex runs one health check of its page
-(`loop/health-check.ts`, from `director/open/finish.ts`): it serves the game folder in a window of
+(`loop/health-check.ts`, from `director/open/finish.ts`), by what the folder holds then and never on
+an engine's game (`folder-facts.ts` `pageChecked`: one linked to or holding an engine's project): it serves the game folder in a window of
 its own, loaded once with `?genex-shot=1` on its address (`preview.load` `shot`; a game may read
 it), and asks the host's own check, `preview.observe` — the page loads, it throws no uncaught error,
 its frame is not blank; nothing is asked of the game's code. A failing check answers the finish with

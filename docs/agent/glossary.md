@@ -74,7 +74,7 @@ is product copy, not this glossary.
   `tool-specs.ts`.
 - **Health check**: the one check of a web game's page when its Loop's lead finishes — the page
   loads, no uncaught error, a frame that is not blank — the host's `preview.observe` in a window of
-  the Loop's own (`loop/health-check.ts`, from `director/open/finish.ts`).
+  the Loop's own (`loop/health-check.ts`, from `director/open/finish.ts`); never an engine's game's.
 - **Second opinion**: a model that did none of the work, asked by the lead about pictures and a
   question it chooses (`judge`, `loop/second-opinion.ts`), or a reviewer asked with `finish
   review=yes` (`loop/finish-check.ts`); it decides nothing.

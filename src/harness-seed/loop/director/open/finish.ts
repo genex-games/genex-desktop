@@ -1,8 +1,9 @@
 /**
  * The lead's `finish`: its claim that the project meets the request. Genex's finish moment runs
  * first (a plugin may hold the finish back: the lead hears why and keeps working), and a web game's
- * page gets one health check in the game folder (it loads, throws nothing uncaught, its frame is not
- * blank: a failing one comes back to the lead, and the Loop goes on); then the claim closes the Loop
+ * page (never an engine's game's, by what its folder holds then) gets one health check in the game
+ * folder (it loads, throws nothing uncaught, its frame is not blank: a failing one comes back to the
+ * lead, and the Loop goes on); then the claim closes the Loop
  * in place on the lead's word (Loop phase 4). With `review=yes` the lead asks a
  * reviewer that did none of the work for a second opinion first (`../../finish-check.ts`), reading
  * the game folder, the lead's proof and the observers' captures: a yes closes the Loop as reviewed,
@@ -32,8 +33,9 @@ import { fireHooks, HookEvent, runScope } from "../../hooks.ts";
 import { HOOK_PROMPTS } from "../../hooks-prompts.ts";
 import { CLIP_REASON, clipMarked, hasText } from "../../text.ts";
 import { SECOND_MS } from "../../time.ts";
-import { servedAsWeb } from "../../folder-facts.ts";
+import { type FactsOfDescriptor, pageChecked } from "../../folder-facts.ts";
 import { checkHealth, healthLine } from "../../health-check.ts";
+import { HostMethod } from "../../host-methods.ts";
 import { yes } from "../args.ts";
 import { closeUnderWay, holdFinish, releaseFinish } from "../close-latch.ts";
 import { CLAIM_WORDS } from "../second-opinion-prompts.ts";
@@ -192,12 +194,24 @@ async function checked(loopRun: LoopRun, claim: FinishClaim, started: number): P
 }
 
 /**
+ * The game as the host lists it as the lead finishes: the Loop may have changed what its folder holds
+ * (an engine's project made in it). The Loop's start's reading when the host can't list it.
+ */
+async function gameAtFinish(loopRun: LoopRun): Promise<FactsOfDescriptor> {
+  const { ctx, gameFacts, open, run } = loopRun;
+  const games = await ctx.call(HostMethod.GameList).catch(() => null);
+  const listed = Array.isArray(games) ? games.find((game) => game.name === run.project) : undefined;
+  return listed ?? { facts: gameFacts, holds: open.holds };
+}
+
+/**
  * A web game's page, checked once in the game folder before its Loop closes: what is wrong with it,
- * or null when it is healthy, the project is no web game, or no check could be made.
+ * or null when it is healthy, the project is no web game or an engine's game as the lead finishes
+ * (`pageChecked`), or no check could be made.
  */
 async function pageProblems(loopRun: LoopRun): Promise<string | null> {
-  const { ctx, gameFacts, open, run } = loopRun;
-  if (!servedAsWeb({ facts: gameFacts, holds: open.holds })) return null;
+  const { ctx, run } = loopRun;
+  if (!pageChecked(await gameAtFinish(loopRun))) return null;
   const target = { project: run.project, runId: run.runId, label: "director/finish" };
   const check = await checkHealth(ctx, target, { sleep: loopRun.open.clock.sleep });
   return check.ok || check.unchecked ? null : OPEN_WORDS.unhealthy(healthLine(check));

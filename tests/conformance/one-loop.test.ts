@@ -3689,6 +3689,33 @@ describe("a web game's Loop", () => {
     },
   );
 
+  it(
+    "its finish checks no page on an engine's game: one that took an engine's project during the Loop, or holds one beside its web page",
+    TEST_TIMEOUT,
+    async () => {
+      const unreal = [{ id: "unreal-project", path: "unreal" }];
+      for (const [label, start, atFinish] of [
+        ["took an Unreal project during the Loop", WEB, unreal],
+        ["an Unreal project beside the web starter", [...WEB, ...unreal], [...WEB, ...unreal]],
+      ] as const) {
+        const host = await hostOn(Project.WebFolder, {
+          facts: [...start],
+          turns: [
+            async ({ tool, host }) => {
+              host.game.facts = [...atFinish];
+              await tool("finish", { summary: "The duel is in Unreal." });
+              return undefined;
+            },
+          ],
+        });
+        pageAnswers(host, { threw: "the page's frame is blank: one flat colour, nothing drawn" });
+        await host.dispatch();
+        assert.deepEqual(host.rec.paramsOf("preview.load"), [], `${label}: no page loaded for a web check`);
+        assert.equal(host.appended("run_finished")[0]?.victory, true, `${label}: the lead's word closes it`);
+      }
+    },
+  );
+
   it("every game's lead gets one tool list, each name once", TEST_TIMEOUT, async () => {
     for (const [project, facts] of [
       [Project.WebFolder, WEB],

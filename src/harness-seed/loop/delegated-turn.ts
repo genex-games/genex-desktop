@@ -22,7 +22,7 @@ import { WorkersEnd } from "./workers/carry.ts";
 import { holdsWebGame } from "./web-game.ts";
 import { factsOfGame, kindPending, seenInWindow, servedAsWeb, servedFactsOf } from "./folder-facts.ts";
 import { kindKey } from "./web-build.ts";
-import { factsReadyNotice } from "./project-prompts.ts";
+import { factsReadyNotice, kindFirstNotice } from "./project-prompts.ts";
 import { effortCap } from "./effort-cap.ts";
 import {
   endOfTurnCheckpoint,
@@ -58,6 +58,7 @@ import type {
   DelegateImage,
   DelegateResult,
   MessageOrigin,
+  PluginKindOffer,
   StudioToolSpec,
 } from "../types/host-api.d.ts";
 
@@ -269,11 +270,58 @@ async function afterDelegation(ctx: HarnessCtx, seat: Seat, delegation: Delegati
   // Anything at all refreshes the chat's view of the game; a read-only setup or status turn
   // changed nothing and keeps the current preview.
   if (change.any) ctx.notify("game.changed", { project: handoff.project });
+  // A build started before the project has a kind waits for it: the same session makes it first.
+  const kinds = await kindsBeforeLaunch(ctx, seat, result);
+  if (kinds.length > 0) return kindFirst(ctx, seat, result, { kinds, saved });
   const outcome = await finishTurn(ctx, options, handoff, `${callId}_intake`, result, change);
   // Said after the builder's own report, which it follows from.
   if (saved) await sayInTurn(ctx, turnId, saved);
   // A turn that changed what the project is goes on by itself, with the tools for its new kind.
   return continueOnNewFacts(ctx, seat, { result, outcome });
+}
+
+/**
+ * The kinds a launch the session recorded waits for, or none when it starts as recorded. It waits on
+ * the chat's own turn (the question card's case: a folder with no kind yet while a plugin on offers a
+ * kind that makes a game) when the session answered with a session to go on in and recorded no
+ * question or resume, which the turn answers first, and the game still has no kind as the turn ends
+ * (the session may have made it before its launch). A launch that starts on a game with no kind
+ * takes the web starter, which no later call of the build can change.
+ */
+async function kindsBeforeLaunch(ctx: HarnessCtx, seat: Seat, result: DelegateResult): Promise<PluginKindOffer[]> {
+  const { options, handoff } = seat;
+  const recorded = result.studioToolCalls ?? [];
+  const launches = handoff.launches && recorded.some((call) => call.name === startAutopilot.name);
+  if (!launches || !handoff.questionCard || !result.ok || !result.sessionId) return [];
+  if (recorded.some((call) => call.name === askUser.name)) return [];
+  if (options.afterLoopRun && resumeAsked(options.afterLoopRun, recorded)) return [];
+  if (!kindPending(await gameAtTurnEnd(ctx, handoff))) return [];
+  const plugins = await ctx.call(HostMethod.PluginsTools, { project: handoff.project }).catch(() => null);
+  const kinds = Array.isArray(plugins?.kinds) ? plugins.kinds : [];
+  return kinds.filter((kind) => kind.game !== false);
+}
+
+/** What a held launch carries on with: the kinds on offer, and the checkpoint's line when the turn saved one. */
+interface HeldLaunch {
+  kinds: PluginKindOffer[];
+  saved: string | null;
+}
+
+/**
+ * The launch held for the project's kind (`kindsBeforeLaunch`): the session's reply is said, then the
+ * same session goes on, told to make the kind first and start the build again. Once it has (a new
+ * kind), it goes on with that kind's tools (`continueOnNewFacts`), where its launch starts the build.
+ * A launch recorded again while the game still has no kind starts as recorded: it is held once.
+ */
+async function kindFirst(ctx: HarnessCtx, seat: Seat, result: DelegateResult, held: HeldLaunch): Promise<TurnOutcome> {
+  const { turnId, engine } = seat.options;
+  const summary = result.summary?.trim();
+  if (summary) await sayInTurn(ctx, turnId, summary);
+  if (held.saved) await sayInTurn(ctx, turnId, held.saved);
+  const tools = { launch: startAutopilot.name, ask: askUser.name };
+  const waiting: FinishedTurn = { result, outcome: { stopped: TurnStop.Done, round: 0, engine } };
+  const leg = await legInSession(ctx, seat, waiting, kindFirstNotice(engine, held.kinds, tools));
+  return leg.result ? continueOnNewFacts(ctx, seat, { result: leg.result, outcome: leg.outcome }) : leg.outcome;
 }
 
 // ── switch: a message sent while the turn works may change how it runs ──
@@ -550,6 +598,16 @@ async function withFactsNow(ctx: HarnessCtx, handoff: Handoff, game: Handoff["de
  * with the same line and the chat so far.
  */
 async function goOnInSession(ctx: HarnessCtx, seat: Seat, turn: FinishedTurn, prompt: string): Promise<TurnOutcome> {
+  return (await legInSession(ctx, seat, turn, prompt)).outcome;
+}
+
+/** One more leg of the same session (`goOnInSession`): its outcome, and its session's answer when it gave one. */
+async function legInSession(
+  ctx: HarnessCtx,
+  seat: Seat,
+  turn: FinishedTurn,
+  prompt: string,
+): Promise<{ outcome: TurnOutcome; result?: DelegateResult }> {
   const callId = await recordDelegateRequest(ctx, seat.options, seat.handoff);
   const before = await contentStamps(ctx, seat.handoff.project);
   const switches = turnSwitches(ctx, seat);
@@ -565,7 +623,7 @@ async function goOnInSession(ctx: HarnessCtx, seat: Seat, turn: FinishedTurn, pr
       ...(switches ? { switches } : {}),
     });
   } catch (err: any) {
-    return handleDelegateFailure(ctx, seat.options, seat.handoff.project, callId, err);
+    return { outcome: await handleDelegateFailure(ctx, seat.options, seat.handoff.project, callId, err) };
   }
   const { options, handoff } = seat;
   const { turnId, engine } = options;
@@ -573,7 +631,7 @@ async function goOnInSession(ctx: HarnessCtx, seat: Seat, turn: FinishedTurn, pr
   await bookmarkSession(ctx, sessionOptions(seat), handoff.project, result);
   if (result.stopReason === StopReason.Stopped) {
     await sayInTurn(ctx, turnId, MESSAGE.stopped);
-    return { stopped: TurnStop.Aborted, round: 0, engine };
+    return { outcome: { stopped: TurnStop.Aborted, round: 0, engine }, result };
   }
   // The leg that built in the new kind's app is the one most likely to leave its work there unsaved.
   const saved = await turnCheckpoint(ctx, options, handoff);
@@ -581,7 +639,7 @@ async function goOnInSession(ctx: HarnessCtx, seat: Seat, turn: FinishedTurn, pr
   if (change.any) ctx.notify("game.changed", { project: handoff.project });
   const outcome = await finishTurn(ctx, options, handoff, `${callId}_intake`, result, change);
   if (saved) await sayInTurn(ctx, turnId, saved);
-  return outcome;
+  return { outcome, result };
 }
 
 /** Stamps nobody took: every check that compares them runs. */

@@ -177,3 +177,30 @@ export function factsReadyNotice(facts: readonly FactRef[], notReady?: string): 
   const holds = `This project now holds ${holdsWords(facts)}; your tools changed to fit it.`;
   return notReady ? `${holds} Its app isn't ready yet: ${notReady}` : holds;
 }
+
+/** The chat's own tools a kind-first line names, as the session is handed them: the build's start and the question card. */
+export interface KindFirstTools {
+  launch: string;
+  ask: string;
+}
+
+/**
+ * Genex's line to the chat's own session when it started a build on a project with no kind yet
+ * while a plugin on offers one (`kinds`): the build waits for the kind, which the person's request
+ * picks (each kind by the tool that makes it, a web page by `start_web_game`, the question card when
+ * the request doesn't say), and is then started again.
+ */
+export function kindFirstNotice(
+  engine: string | undefined,
+  kinds: readonly PluginKindOffer[],
+  tools: KindFirstTools,
+): string {
+  const offered = kinds.map((kind) => `${offerName(kind)}: ${toolCall(engine, kind.tool)}`);
+  const web = `a game that plays in Genex as a web page: ${toolCall(engine, ProjectTool.StartWebGame)}`;
+  return [
+    "The build did not start: this project has no kind yet, and a build runs on the kind it is made in.",
+    `Make it first, as the person's request says: ${[...offered, web].join("; ")}.`,
+    `When their words don't say which, ask them with ${toolCall(engine, tools.ask)} and end your reply.`,
+    `Once it has its kind, call ${toolCall(engine, tools.launch)} again.`,
+  ].join(" ");
+}

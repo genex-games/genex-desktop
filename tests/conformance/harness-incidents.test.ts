@@ -1456,6 +1456,105 @@ describe("the chat's agent decides when a Loop starts (always-launch)", () => {
 });
 
 /**
+ * A new game's chat asked for Unreal, and its session started a build before the game had a kind: the
+ * build's start wrote the web starter, so the Loop ran on a web page, Unreal's new-game was refused
+ * while that Loop ran, and its finish failed the web check ("the page's frame is blank") on what was
+ * meant to be an Unreal game; only the person's pause got it out. Now the kind comes before the
+ * build: Genex holds the launch, and the same session makes the kind and then starts the build. A
+ * finish checks no page on an engine's game, by what its folder holds as the lead finishes.
+ */
+describe("a build started before its game had a kind (web-scaffold-unreal)", () => {
+  const NAME = "sword-duel";
+  const UNREAL_KIND = { plugin: "unreal", name: "Unreal Editor", tool: "unreal__new-game", makes: ["unreal-project"] };
+  const PENDING = { name: NAME, title: NAME, dir: `/games/${NAME}`, facts: [], holds: "nothing" };
+  const UNREAL = { ...PENDING, facts: [{ id: "unreal-project", path: "unreal", source: "core" }], holds: undefined };
+  const LAUNCH = { name: "start_autopilot", args: { goal: "An Unreal sword duel" } };
+
+  /**
+   * One chat turn on the new game: each leg of the session answers the next of `legs` (its recorded
+   * calls, and whether it made the Unreal project), with the Unreal plugin's kind on offer or not.
+   */
+  async function chatTurn(legs: Array<{ calls?: unknown[]; makesUnreal?: boolean }>, kinds: unknown[] = [UNREAL_KIND]) {
+    const { runDelegatedTurn } = await import("../../src/harness-seed/loop/delegated-turn.ts");
+    let unreal = false;
+    let leg = 0;
+    const recorder = ctxRecorder({
+      unknown: { value: null },
+      handlers: {
+        "events.messages": () => [{ role: "user", content: "make an Unreal sword duel" }],
+        "game.contentStamp": () => ({ all: "a", source: "a" }),
+        "game.list": () => [unreal ? UNREAL : PENDING],
+        "plugins.tools": () => ({ tools: [], guidance: "", revision: 1, kinds }),
+        "engine.describe": () => [],
+        "preview.ready": () => ({ ready: false }),
+        "engine.delegate": () => {
+          const answer = legs[leg] ?? {};
+          leg += 1;
+          if (answer.makesUnreal) unreal = true;
+          return {
+            ok: true,
+            engine: "claude-code",
+            turns: 1,
+            usage: {},
+            sessionId: "s1",
+            summary: "Working on it.",
+            ...(answer.calls ? { studioToolCalls: answer.calls } : {}),
+          };
+        },
+      },
+    });
+    const turn = { threadId: "t1", turnId: "turn-1", engine: "claude-code", engineLabel: "Claude Code", project: NAME };
+    const outcome = await runDelegatedTurn(
+      recorder.ctx as never,
+      { ...turn, text: "make an Unreal sword duel" } as never,
+    );
+    return { outcome, legs: recorder.paramsOf("engine.delegate") };
+  }
+
+  it("web-scaffold-unreal. a launch on a game with no kind while a plugin offers one waits: the same session makes the kind, then its launch starts the build on it", async () => {
+    const turn = await chatTurn([{ calls: [LAUNCH] }, { makesUnreal: true }, { calls: [LAUNCH] }]);
+    assert.equal(turn.legs.length, 3, "the launch, the kind, the launch again");
+    for (const later of turn.legs.slice(1)) assert.equal(later.resume, "s1", "the same session goes on");
+    const kindFirst = String(turn.legs[1]?.prompt);
+    assert.match(kindFirst, /mcp__studio__unreal__new-game/, "the kind on offer, by the tool that makes it");
+    assert.match(kindFirst, /mcp__studio__start_web_game/, "and the web page");
+    assert.match(kindFirst, /mcp__studio__start_autopilot/, "then the build again");
+    assert.equal(turn.outcome.stopped, "launch_run", "the build starts once the game has its kind");
+    assert.equal((turn.outcome.details as { run?: { project?: string } })?.run?.project, NAME);
+  });
+
+  it("web-scaffold-unreal. a launch recorded again with still no kind starts as before, and one with no kind on offer starts at once", async () => {
+    const again = await chatTurn([{ calls: [LAUNCH] }, { calls: [LAUNCH] }]);
+    assert.equal(again.legs.length, 2, "held once, never twice");
+    assert.equal(again.outcome.stopped, "launch_run");
+    const none = await chatTurn([{ calls: [LAUNCH] }], []);
+    assert.equal(none.legs.length, 1, "no kind to pick: no hold");
+    assert.equal(none.outcome.stopped, "launch_run");
+  });
+
+  it("web-scaffold-unreal. a game ported from the web starter to Unreal in unreal/ (its index.html and src/ left as the reference) is an engine's game: no web page check", async (t) => {
+    const { pageChecked } = await import("../../src/harness-seed/loop/folder-facts.ts");
+    const { core, close } = await coreLite();
+    t.after(close);
+    const game = await core.games.scaffold("asian-sword-duel");
+    await mkdir(path.join(game.dir, "unreal"));
+    await writeFile(path.join(game.dir, "unreal", "SwordDuel.uproject"), "{}\n");
+    const meta = JSON.parse(await readFile(path.join(game.dir, "studio.json"), "utf8")) as object;
+    const portedFrom = [{ id: "web-game", path: ".", source: "core" }];
+    await writeFile(path.join(game.dir, "studio.json"), `${JSON.stringify({ ...meta, portedFrom }, null, 2)}\n`);
+    const listed = (await core.games.list()).find((row) => row.name === game.name);
+    assert.deepEqual(
+      listed?.facts.map((fact) => `${fact.id}@${fact.path}`),
+      ["unreal-project@unreal"],
+      "the web files stay as the reference only",
+    );
+    assert.equal(pageChecked(listed as never), false, "a finish checks no page");
+    assert.equal(pageChecked({ ...listed, facts: [...(listed?.facts ?? []), ...portedFrom] } as never), false);
+    assert.equal(pageChecked({ facts: portedFrom } as never), true, "a web game's page is still checked");
+  });
+});
+
+/**
  * A resumed run read its inbox from the whole log as if it were new: a wrap-up the user asked
  * of the session before the Resume told it to skip every builder and integrate having built
  * nothing (the host only narrowed this by refusing a finish on a run that was not running), and

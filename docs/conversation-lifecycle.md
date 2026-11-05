@@ -607,7 +607,11 @@ guidance and connectors go by the game's facts ([scope by facts](plugins.md#scop
 editor's tools only for a game that holds an Unreal project. A game with no kind yet, while an
 engine plugin offers a kind (`plugins.tools`'s `kinds`), is handed `ask_user` beside the kind tools;
 a recorded question is asked, and the next turn resumes the same session, which calls
-`unreal__new-game` for Unreal. A chat turn whose game's served facts changed (a port, or files it
+`unreal__new-game` for Unreal. A build it starts there before the game has its kind
+(`start_autopilot` recorded, no question) waits once (`kindsBeforeLaunch`): the same session is told
+to make the kind first (`kindFirstNotice`), goes on with that kind's tools, and its launch then
+starts the build; started on a game with no kind, a build takes the web starter, which no call of
+its own can change. A chat turn whose game's served facts changed (a port, or files it
 wrote) goes on by itself in the same session, with the tools for the new kind
 (`continueOnNewFacts`, [plugins](plugins.md#scope-by-facts)), told Genex's one line of the
 project's new kind (`factsReadyNotice`); when the new kind's plugins hook
