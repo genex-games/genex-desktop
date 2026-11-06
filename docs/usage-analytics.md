@@ -85,6 +85,11 @@ stops recording, opts out and resets the id.
   `plugin_action_finished` and the sidebar's update toasts, while `plugin_updates_run` counts
   `failed` and `declined` apart and `plugin_failed` says how a running plugin failed
   (`PluginChange.failure`, a `PluginFailure`).
+  A game's asset inventory that could not be read crosses with the file system's why
+  (`AssetInventoryFailure`: a held file, access refused, a missing file, too many open files);
+  `assets_inventory_failed` says it as `code`, at the 1st, 2nd, 4th… failure in a row of its
+  ten-second poll and at once when the why changes. One file Unity or a scanner holds open is left
+  out of the read instead of failing it.
   Live's status (`previewLive`) names why its page did not load (`loadFailure`, a
   `LiveLoadFailure`: Chromium's error by kind, a page still loading after a minute, or the game's own
   build that failed or fell back to the last one that worked) and why its renderer went away

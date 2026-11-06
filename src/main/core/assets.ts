@@ -13,6 +13,7 @@ import { assertRelativePath, isBelow } from "../../substrate/paths.ts";
 import {
   type AssetWorkspace,
   genexJobDir,
+  inventoryFailure,
   reconcileGeneratedAssets,
   joinProjectAssets,
   readGenexJobs,
@@ -256,6 +257,15 @@ export class AssetService {
    * reads that, and the join ignores every event belonging to another project.
    */
   async projectAssets(project: string, ledger: readonly EventEnvelope[] = []): Promise<ProjectAssets> {
+    try {
+      return await this.#readProjectAssets(project, ledger);
+    } catch (error) {
+      throw inventoryFailure(error);
+    }
+  }
+
+  /** The inventory read itself; `projectAssets` names why it failed. */
+  async #readProjectAssets(project: string, ledger: readonly EventEnvelope[]): Promise<ProjectAssets> {
     const dir = this.#core.games.dirFor(project);
     // Independent reads, side by side: the Assets stage polls this every ten seconds.
     const folders = await this.#readFolders(project);

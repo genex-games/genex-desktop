@@ -45,7 +45,7 @@ import {
   VerdictRule,
   workedMs,
 } from "../../../shared/run-state.ts";
-import type { AssetKind, AssetPreviewMode } from "../../../shared/game-assets.ts";
+import type { AssetInventoryFailure, AssetKind, AssetPreviewMode } from "../../../shared/game-assets.ts";
 import type { LiveBehindReason } from "../../../shared/live-behind.ts";
 import type { GameProject } from "../../../shared/studio-api.ts";
 import { UiEvent } from "../../../shared/ui-events.ts";
@@ -471,7 +471,7 @@ export type BuildsEventProperties = {
   [BuildsEvent.AssetCandidateApproved]: { ok: boolean; cancelled: boolean; picked: boolean };
   [BuildsEvent.AssetPreviewOpened]: { mode: AssetPreviewMode; kind: AssetKind; from: AssetOpenedFrom };
   [BuildsEvent.AssetPreviewFailed]: { mode: AssetPreviewMode; stage: PreviewFailure };
-  [BuildsEvent.AssetsInventoryFailed]: { failures_in_row: number };
+  [BuildsEvent.AssetsInventoryFailed]: { failures_in_row: number; code: AssetInventoryFailure | null };
   [BuildsEvent.AssetSearchAdded]: { from: FoundIn; ok: boolean };
   [BuildsEvent.UnrealStageStepChanged]: {
     from: UnrealStageStep;
@@ -1165,11 +1165,21 @@ export function jobPhaseChanges(
   return found;
 }
 
-/** Inventories whose read just failed, with how many reads in a row failed. */
+/** Each game's inventory reads failing in a row right now: how many, and why the last one did. */
+export type InventoryStreaks = Map<string, { inRow: number; code: AssetInventoryFailure | null }>;
+
+/** Whether a count is 1, 2, 4, 8…: a streak is told at each doubling, not at every poll. */
+const isDoubling = (count: number): boolean => (count & (count - 1)) === 0;
+
+/**
+ * Inventories whose read just failed, with how many reads in a row failed and why. A watched game
+ * is read every ten seconds, so a streak is sent at its 1st, 2nd, 4th, 8th… failure, and at once
+ * when the why changes; a read that works ends it.
+ */
 export function inventoryFailures(
-  before: Readonly<Record<string, Pick<AssetInventory, "error">>>,
-  after: Readonly<Record<string, Pick<AssetInventory, "error">>>,
-  failures: Map<string, number>,
+  before: Readonly<Record<string, Pick<AssetInventory, "error" | "code">>>,
+  after: Readonly<Record<string, Pick<AssetInventory, "error" | "code">>>,
+  failures: InventoryStreaks,
 ): BuildsTracked[] {
   const found: BuildsTracked[] = [];
   for (const [project, inventory] of Object.entries(after)) {
@@ -1178,9 +1188,12 @@ export function inventoryFailures(
       failures.delete(project);
       continue;
     }
-    const inRow = (failures.get(project) ?? 0) + 1;
-    failures.set(project, inRow);
-    found.push({ event: BuildsEvent.AssetsInventoryFailed, properties: { failures_in_row: inRow } });
+    const last = failures.get(project);
+    const inRow = (last?.inRow ?? 0) + 1;
+    const code = inventory.code ?? null;
+    failures.set(project, { inRow, code });
+    if (!isDoubling(inRow) && last?.code === code) continue;
+    found.push({ event: BuildsEvent.AssetsInventoryFailed, properties: { failures_in_row: inRow, code } });
   }
   return found;
 }
@@ -1219,7 +1232,7 @@ function assetJobChanges(before: LibraryState, after: LibraryState, seen: JobPha
 /** What the library's changes mean, watched from its store. */
 function watchLibrary(app: Studio, now: () => number, ref: (name: string) => string | null): () => void {
   const seen: JobPhases = new Map();
-  const failures = new Map<string, number>();
+  const failures: InventoryStreaks = new Map();
   return app.library.subscribe(
     guarded((after, before) => {
       const at = now();

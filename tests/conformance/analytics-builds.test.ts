@@ -40,6 +40,7 @@ import {
   buildsUiEvents,
   firstBuildsMade,
   inventoryFailures,
+  type InventoryStreaks,
   type JobPhases,
   jobPhaseChanges,
   LiveOutcome,
@@ -57,6 +58,7 @@ import {
 import type { StepsCard } from "../../src/renderer/chat/engine-steps.ts";
 import { GraphSelection } from "../../src/renderer/panels/inspector/selection.ts";
 import { MakingKind, MakingPhase } from "../../src/shared/asset-making.ts";
+import { AssetInventoryFailure } from "../../src/shared/game-assets.ts";
 import {
   AutoResumeCause,
   CustomEvent,
@@ -541,19 +543,38 @@ describe("the library", () => {
     ]);
   });
 
-  it("counts inventory reads that fail in a row", () => {
-    const failures = new Map<string, number>();
-    const ok = { error: null };
-    const first = { error: "EACCES /Users/alice" };
-    const second = { error: "EACCES /Users/alice" };
-    assert.deepEqual(inventoryFailures({ pong: ok }, { pong: first }, failures), [
-      { event: BuildsEvent.AssetsInventoryFailed, properties: { failures_in_row: 1 } },
+  it("counts inventory reads that fail in a row, with why, sending each streak's doublings and each new why", () => {
+    const failures: InventoryStreaks = new Map();
+    const ok = { error: null, code: null };
+    const busy = () => ({ error: "EBUSY C:\\Users\\alice", code: AssetInventoryFailure.FileBusy });
+    const missing = { error: "ENOENT", code: AssetInventoryFailure.Missing };
+    let shown: Parameters<typeof inventoryFailures>[0][string] = ok;
+    const sent = [...Array.from({ length: 9 }, busy), missing].flatMap((read) => {
+      const found = inventoryFailures({ pong: shown }, { pong: read }, failures);
+      shown = read;
+      return found;
+    });
+    assert.deepEqual(
+      sent.map((tracked) => tracked.properties),
+      [
+        { failures_in_row: 1, code: AssetInventoryFailure.FileBusy },
+        { failures_in_row: 2, code: AssetInventoryFailure.FileBusy },
+        { failures_in_row: 4, code: AssetInventoryFailure.FileBusy },
+        { failures_in_row: 8, code: AssetInventoryFailure.FileBusy },
+        { failures_in_row: 10, code: AssetInventoryFailure.Missing },
+      ],
+      "a poll failing every ten seconds sends log-many events, and a new why at once",
+    );
+    assert.ok(sent.every((tracked) => tracked.event === BuildsEvent.AssetsInventoryFailed));
+    const older = { error: "walk failed", code: null };
+    assert.deepEqual(inventoryFailures({ pong: missing }, { pong: ok }, failures), []);
+    assert.equal(failures.size, 0, "a read that works ends the streak");
+    assert.deepEqual(inventoryFailures({ pong: ok }, { pong: older }, failures), [
+      {
+        event: BuildsEvent.AssetsInventoryFailed,
+        properties: { failures_in_row: 1, code: null },
+      },
     ]);
-    assert.deepEqual(inventoryFailures({ pong: first }, { pong: second }, failures), [
-      { event: BuildsEvent.AssetsInventoryFailed, properties: { failures_in_row: 2 } },
-    ]);
-    assert.deepEqual(inventoryFailures({ pong: second }, { pong: ok }, failures), []);
-    assert.equal(failures.size, 0);
   });
 });
 
