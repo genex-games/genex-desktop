@@ -28,9 +28,8 @@ function continues(all: EventEnvelope[], cursor: GraphCursor | null | undefined)
 
 /**
  * The graph events from the last one `cursor` holds on, and the index they start at. The held
- * last event is sent again: the compacted graph stamps its last event with the time of the run's
- * latest trace (`graphLastAt`, shared/run-graph-events.ts), which moves as traces arrive. When the
- * held prefix no longer matches — an event sorted in before the cursor, or no cursor at all — the
+ * last event is sent again, so a copy of it that changed replaces the held one. When the held
+ * prefix no longer matches — an event sorted in before the cursor, or no cursor at all — the
  * whole list, from 0.
  */
 export function graphEventsSince<E extends EventEnvelope>(
@@ -55,6 +54,16 @@ function continueGraph(held: EventEnvelope[], from: number, added: EventEnvelope
   if (from === 0) return added;
   const repeats = added.length === held.length - from && added.every((event, i) => sameEvent(held[from + i], event));
   return repeats ? held : [...held.slice(0, from), ...added];
+}
+
+/**
+ * A reply that repeats the summary a feed holds: the same revision (main keeps it while the run's
+ * drawn records and facts stay the same), graph and preview. Handing it on would copy the whole
+ * graph across the bridge to every view for nothing, once per builder trace.
+ */
+function saysNothingNew(latest: RunSummary | null, next: RunSummary): boolean {
+  if (!latest || latest.revision === undefined || latest.revision !== next.revision) return false;
+  return latest.graphEvents === next.graphEvents && JSON.stringify(latest.preview) === JSON.stringify(next.preview);
 }
 
 export interface RunSummaryFeedOptions {
@@ -181,7 +190,9 @@ export class RunSummaryFeed {
     }
     this.#graph = continueGraph(held, from, reply.graphEvents ?? []);
     const pushed = this.#pushedPreview;
-    this.#latest = { ...summary, ...(pushed ? { preview: pushed.preview } : {}), graphEvents: this.#graph };
+    const next = { ...summary, ...(pushed ? { preview: pushed.preview } : {}), graphEvents: this.#graph };
+    if (saysNothingNew(this.#latest, next)) return;
+    this.#latest = next;
     this.#notify();
   }
 }

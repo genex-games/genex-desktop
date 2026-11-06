@@ -31,6 +31,8 @@ import {
   type HistoryEntry,
   projectBuildGraph,
   replyTarget,
+  type StageLog,
+  stageLogOf,
   stageRunGraph,
   workerThreadsOf,
 } from "../build-progress.ts";
@@ -207,6 +209,15 @@ function StageBanners({ trouble }: { trouble: ReturnType<typeof useBuildProblem>
   );
 }
 
+/** The records of a thread's log the stage reads (`stageLogOf`): the same array while a batch adds none of them. */
+function useStageLog(source: EventEnvelope[]): EventEnvelope[] {
+  const kept = useRef<StageLog | null>(null);
+  return useMemo(() => {
+    kept.current = stageLogOf(kept.current, source);
+    return kept.current.events;
+  }, [source]);
+}
+
 /** The conversation's builds: its whole log and its current run's workers' logs, folded into the graph and its history. */
 function useStageGraph({
   project,
@@ -223,7 +234,7 @@ function useStageGraph({
 }) {
   // The stage draws a thread's whole story, not the bounded all-threads tail: its log, and each of
   // the current run's workers' logs, are read in full once and then kept live.
-  const events = useDeferredValue(useEventLog((s) => threadLog(s, threadId)));
+  const events = useStageLog(useDeferredValue(useEventLog((s) => threadLog(s, threadId))));
   useEffect(() => {
     if (threadId) return studio().eventLog.watchThread(threadId);
   }, [threadId]);

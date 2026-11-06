@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import {
   buildHistory,
@@ -8,6 +9,7 @@ import {
   isNewestBuild,
   projectBuildGraph,
   replyTarget,
+  stageLogOf,
   stageRunGraph,
 } from "../../src/renderer/build-progress.ts";
 import { lastGraphKey, type RunGraph, runBuilding, runIdOf } from "../../src/renderer/run-graph.ts";
@@ -804,4 +806,113 @@ test("a later close that names no profile is not read as an earlier close's open
   )!;
   const final = graph.nodes.find((node) => node.kind === "final") as { profile?: string } | undefined;
   assert.equal(final?.profile, undefined);
+});
+
+/** A fixture log, re-threaded and re-numbered, with a builder's trace and tool traffic after every record. */
+function withTraces(fixture: string, thread: string): EventEnvelope[] {
+  const log = JSON.parse(readFileSync(new URL(`../fixtures/${fixture}`, import.meta.url), "utf8")) as EventEnvelope[];
+  const out: EventEnvelope[] = [];
+  const push = (data: EventEnvelope["data"], at: string) =>
+    out.push({
+      id: String(out.length).padStart(6, "0"),
+      thread_id: thread,
+      session_id: null,
+      turn_id: null,
+      created_at: at,
+      data,
+    });
+  for (const record of log) {
+    push(record.data, record.created_at);
+    const payload = record.data.type === "custom" ? (record.data.payload as Record<string, unknown>) : {};
+    const scope = { runId: payload.runId, facetId: payload.facetId };
+    const at = record.created_at;
+    push(
+      { type: "custom", event_type: "delegated.claude-code", payload: { ...scope, kind: "assistant", data: {} } },
+      at,
+    );
+    push({ type: "tool_requested", tool_call_id: `call-${out.length}`, request: { name: "Read", arguments: {} } }, at);
+    push({ type: "tool_result", tool_call_id: `call-${out.length - 1}`, result: { ok: true, content: "ok" } }, at);
+    push({ type: "custom", event_type: CustomEvent.SessionActivity, payload: { ...scope, phase: "working" } }, at);
+    push({ type: "custom", event_type: CustomEvent.ContextUsage, payload: { used: out.length } }, at);
+  }
+  return out;
+}
+
+/** A graph with each place in the log (`seq`, `startedSeq`…) replaced by its rank: only their order is meaningful. */
+function ranked(graph: RunGraph | null): unknown {
+  const places = new Set<number>();
+  const isPlace = (key: string) => key === "seq" || key.endsWith("Seq");
+  const collect = (value: unknown): void => {
+    if (Array.isArray(value)) value.forEach(collect);
+    else if (value && typeof value === "object")
+      for (const [key, item] of Object.entries(value)) {
+        if (isPlace(key) && typeof item === "number") places.add(item);
+        else collect(item);
+      }
+  };
+  collect(graph);
+  const rank = new Map([...places].sort((a, b) => a - b).map((place, index) => [place, index]));
+  const replace = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(replace);
+    if (!value || typeof value !== "object") return value;
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [
+        key,
+        isPlace(key) && typeof item === "number" ? rank.get(item) : replace(item),
+      ]),
+    );
+  };
+  return replace(graph);
+}
+
+test("the stage's records fold to the same builds and graphs as the whole log", () => {
+  for (const [fixture, thread] of [
+    ["director-loop-run.json", "fixture-thread"],
+    ["lead-in-place-run.json", "t"],
+    ["loop-two-turns-run.json", "t"],
+    ["village-outcome.json", "fixture-thread"],
+  ] as const) {
+    const full = withTraces(fixture, thread);
+    const stage = stageLogOf(null, full).events;
+    assert.ok(stage.length * 5 <= full.length + 5, `${fixture}: the traces are left out`);
+    const history = buildHistory(full, thread);
+    assert.deepEqual(buildHistory(stage, thread), history, fixture);
+    for (const run of [null, ...history.map((entry) => entry.runId)]) {
+      const project = (log: EventEnvelope[]) => projectBuildGraph(log, thread, [], "/runs", run);
+      assert.deepEqual(ranked(project(stage)), ranked(project(full)), `${fixture} ${run}`);
+    }
+  }
+});
+
+test("a queued message keeps the record before it on the stage, which names its words", () => {
+  const record = (id: number, data: EventEnvelope["data"]): EventEnvelope => ({
+    id: String(id).padStart(3, "0"),
+    thread_id: "parent",
+    session_id: null,
+    turn_id: null,
+    created_at: `2026-09-04T21:00:0${id}Z`,
+    data,
+  });
+  const queued = (id: number, messageId: string) =>
+    record(id, { type: "custom", event_type: CustomEvent.CoordinatorMessageQueued, payload: { messageId } });
+  const said = record(1, { type: "messages", messages: [{ role: "user", content: "Add rain" }] });
+  const trace = record(3, { type: "tool_result", tool_call_id: "c", result: { ok: true, content: "ok" } });
+  const log = [said, queued(2, "m1"), trace, queued(4, "m2")];
+  assert.deepEqual(stageLogOf(null, log).events, log, "the trace before a queued message stays");
+  const first = stageLogOf(null, log.slice(0, 3));
+  assert.deepEqual(stageLogOf(first, log).events, log, "also when it came in an earlier batch");
+});
+
+test("a batch of a builder's trace leaves the stage's records as they were; a drawn record adds to them", () => {
+  const trace = (id: number): EventEnvelope => ({
+    ...event(id, "delegated.codex", { kind: "assistant" }),
+  });
+  const first = stageLogOf(null, start);
+  const traced = stageLogOf(first, [...start, trace(3), trace(4)]);
+  assert.equal(traced.events, first.events, "the same array: nothing on the stage recomputes");
+  const round = event(5, "facet_build_started", { facetId: "river", facetTitle: "River", iteration: 1 });
+  const drawn = stageLogOf(traced, [...traced.source, round]);
+  assert.deepEqual(drawn.events, [...start, round]);
+  const reread = start.map((record) => ({ ...record }));
+  assert.deepEqual(stageLogOf(drawn, reread).events, reread, "a log read again from disk is read whole");
 });

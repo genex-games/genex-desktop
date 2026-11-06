@@ -26,7 +26,7 @@ const flush = () => new Promise((resolve) => setImmediate(resolve));
 
 test("graph events from a matching cursor are the held last one and the tail; any mismatch sends everything", () => {
   const all = ["a", "b", "c", "d"].map(event);
-  // The held last event comes again: its compaction tail (`graphLastAt`) moves as traces arrive.
+  // The held last event comes again, so a changed copy of it replaces the held one.
   assert.deepEqual(graphEventsSince(all, { count: 2, lastId: "b" }), { from: 1, events: all.slice(1) });
   assert.deepEqual(graphEventsSince(all, { count: 4, lastId: "d" }), { from: 3, events: all.slice(3) });
   for (const cursor of [
@@ -333,4 +333,33 @@ test("a run's view that mounts again starts from the newest summary it was sent,
   assert.equal(keptSummary(null, "r"), null);
   for (let i = 0; i < 20; i++) keepSummary({ ...first, runId: `run-${i}` } as RunSummary);
   assert.equal(keptSummary("p", "r"), null, "only the most recent runs are kept");
+});
+
+test("a reply that repeats the held revision reaches no view; a new revision does", async () => {
+  const server = ["a", "b"].map(event);
+  let revision = 1;
+  const feed = new RunSummaryFeed({
+    fetch: async (cursor) => {
+      const { from, events } = graphEventsSince(server, cursor);
+      return { ...summary(events, from), revision };
+    },
+  });
+  const seen: RunSummary[] = [];
+  feed.subscribe((value) => seen.push(value));
+  await flush();
+  // A builder's trace: main keeps the summary and its revision.
+  feed.invalidate();
+  await flush();
+  assert.equal(seen.length, 1, "the same summary again is not handed on");
+  server.push(event("c"));
+  revision = 2;
+  feed.invalidate();
+  await flush();
+  assert.deepEqual(
+    seen.map((s) => [s.revision, ids(s.graphEvents)]),
+    [
+      [1, ["a", "b"]],
+      [2, ["a", "b", "c"]],
+    ],
+  );
 });

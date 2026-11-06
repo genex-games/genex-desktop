@@ -279,7 +279,8 @@ export function ComposerPermissionMenu({
           side="top"
           align="start"
           sideOffset={8}
-          collisionBoundary={chatSide(trigger.current)}
+          // Measured only while open: reading the bar's box forced a layout on every render of the chat.
+          collisionBoundary={open ? chatSide(trigger.current) : undefined}
           collisionAvoidance={{ side: "none", align: "shift" }}
           className="picker-panel w-[360px] max-w-(--available-width) p-1.5"
           aria-label={WORDS.panel}

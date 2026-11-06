@@ -593,6 +593,13 @@ interface ChatDraft {
   /** What the run adds up to, gathered as the log is walked so the morning card can say it. */
   rounds: { kept: number; undone: number; firstShot: string | null; lastShot: string | null };
   rowByCall: Map<string, ToolChipRow>;
+  /**
+   * The `rowByCall` rows that may still be running, by the same key. A row that stops running
+   * never runs again, so the passes that settle running rows (a turn's end, a delegation's
+   * result, a run's close) read only these and drop the settled ones as they go: reading every
+   * row ever made at each of them made a long Loop's chat quadratic in its log.
+   */
+  openCalls: Map<string, ToolChipRow>;
   directTurns: Map<string, string | null>;
   runByCall: Map<string, string>;
   /** Rows a build's worker (a facet) called: never the chat's own session, whatever run it answers for. */
@@ -708,6 +715,7 @@ function newChatDraft(events: EventEnvelope[], queueIds: ReadonlyMap<string, str
     latestResult: null,
     rounds: { kept: 0, undone: 0, firstShot: null, lastShot: null },
     rowByCall: new Map(),
+    openCalls: new Map(),
     directTurns: new Map(),
     runByCall: new Map(),
     workerCalls: new Set(),
@@ -779,11 +787,10 @@ function trackTurn(chat: ChatDraft, event: EventEnvelope): void {
 function endTurn(chat: ChatDraft, event: EventEnvelope, status: string | undefined): void {
   chat.activeTurns.delete(event.thread_id);
   const ended: ToolState = status === "cancelled" ? ToolState.Stopped : ToolState.Unknown;
-  for (const [id, row] of chat.rowByCall) {
+  for (const [id, row] of runningCalls(chat)) {
     const ownTurn = chat.directTurns.get(id) === event.turn_id;
     const unowned = !chat.directTurns.has(id) && !chat.runByCall.has(id);
-    const endsWithTurn = ownTurn || unowned;
-    if (row.state === ToolState.Running && endsWithTurn) row.state = ended;
+    if (ownTurn || unowned) row.state = ended;
   }
   for (const [id, row] of chat.pluginCalls)
     if (row.state === ToolState.Running && !chat.runByCall.has(id)) row.state = ended;
@@ -982,7 +989,7 @@ function requestTool(
     ...(chip ? { chip } : {}),
   };
   group.rows.push(row);
-  chat.rowByCall.set(data.tool_call_id, row);
+  keepCallRow(chat, data.tool_call_id, row);
   chat.directTurns.set(data.tool_call_id, event.turn_id);
 }
 
@@ -1005,13 +1012,30 @@ function settleTool(chat: ChatDraft, eventId: string, data: Extract<EventData, {
 function orphanResultRow(chat: ChatDraft, eventId: string, callId: string): ToolChipRow {
   const row: ToolChipRow = { key: callId, icon: "run", label: TRANSCRIPT_WORDS.toolResult };
   toolGroup(chat, eventId).rows.push(row);
-  chat.rowByCall.set(callId, row);
+  keepCallRow(chat, callId, row);
   return row;
 }
 
 function resultState(ok: boolean, stopped: boolean): ToolState {
   if (ok) return ToolState.Succeeded;
   return stopped ? ToolState.Stopped : ToolState.Failed;
+}
+
+/** File a tool call's row under its call id, among the open calls while it runs. */
+function keepCallRow(chat: ChatDraft, callId: string, row: ToolChipRow): void {
+  chat.rowByCall.set(callId, row);
+  if (row.state === ToolState.Running) chat.openCalls.set(callId, row);
+  else chat.openCalls.delete(callId);
+}
+
+/** The call rows still running, by call id; the ones that stopped since the last look are dropped first. */
+function runningCalls(chat: ChatDraft): Array<[string, ToolChipRow]> {
+  const running: Array<[string, ToolChipRow]> = [];
+  for (const [id, row] of chat.openCalls) {
+    if (row.state === ToolState.Running) running.push([id, row]);
+    else chat.openCalls.delete(id);
+  }
+  return running;
 }
 
 type Delegated = NonNullable<ReturnType<typeof delegatedPayload>>;
@@ -1026,8 +1050,7 @@ function readDelegated(chat: ChatDraft, event: EventEnvelope, { engineId, payloa
   const scope = `${payload.delegationId ?? `${DELEGATED_PREFIX}${engineId}:${payload.runId ?? ""}:${payload.facetId ?? ""}`}:`;
   switch (payload.kind) {
     case "result":
-      for (const [id, row] of chat.rowByCall)
-        if (id.startsWith(scope) && row.state === ToolState.Running) row.state = ToolState.Unknown;
+      for (const [id, row] of runningCalls(chat)) if (id.startsWith(scope)) row.state = ToolState.Unknown;
       break;
     case "system":
       readDelegatedSystem(chat, event, engineId, payload);
@@ -1172,7 +1195,7 @@ function addDelegatedToolRow(
     ...inputChip(part.name ?? "", part.input),
   };
   toolGroup(chat, eventId).rows.push(row);
-  chat.rowByCall.set(row.key, row);
+  keepCallRow(chat, row.key, row);
   trackCaller(chat, row.key, payload);
 }
 
@@ -1231,9 +1254,9 @@ function readQuiet(chat: ChatDraft, data: EventData): boolean {
  * calls and build workers' rows are left alone.
  */
 function stopInterruptedLeg(chat: ChatDraft): void {
-  for (const [id, row] of chat.rowByCall) {
+  for (const [id, row] of runningCalls(chat)) {
     const chatLeg = !chat.directTurns.has(id) && !chat.workerCalls.has(id);
-    if (row.state === ToolState.Running && chatLeg) row.state = ToolState.Stopped;
+    if (chatLeg) row.state = ToolState.Stopped;
   }
 }
 
@@ -2203,7 +2226,7 @@ function narrateFinished(chat: ChatDraft, event: EventEnvelope): void {
 /** The run's own tool rows still out when it closed: stopped when the user stopped it, else unknown. */
 function settleRunTools(chat: ChatDraft, finished: FinishedPayload): void {
   const cancelled = finished.executionStatus === ExecutionStatus.Cancelled || wasCancelled(finished.stoppedBecause);
-  for (const [id, row] of [...chat.rowByCall, ...chat.pluginCalls]) {
+  for (const [id, row] of [...runningCalls(chat), ...chat.pluginCalls]) {
     const ownRow = Boolean(finished.runId) && chat.runByCall.get(id) === finished.runId;
     if (row.state === ToolState.Running && ownRow) row.state = cancelled ? ToolState.Stopped : ToolState.Unknown;
   }

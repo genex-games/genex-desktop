@@ -16,11 +16,15 @@ import { elapsedMs } from "./analytics/properties.ts";
 import { track } from "./analytics/client.ts";
 import { AnalyticsEvent } from "./analytics/events.ts";
 
-/** A live event of this thread that arrived after the loaded tail. */
-const freshFor =
-  (threadId: string | null, tail: string | undefined) =>
-  (event: EventEnvelope): boolean =>
-    event.thread_id === threadId && (!tail || event.id > tail);
+/**
+ * The events of this thread in `log` (in log order) that come after the loaded tail. They are the
+ * log's end, so it is read from the back: a long chat's whole log was read on every batch.
+ */
+function freshFor(log: readonly EventEnvelope[], threadId: string | null, tail: string | undefined): EventEnvelope[] {
+  let start = log.length;
+  while (start > 0 && (!tail || (log[start - 1]?.id ?? "") > tail)) start--;
+  return log.slice(start).filter((event) => event.thread_id === threadId);
+}
 
 /**
  * The loaded page plus the live events of this thread that arrived after it. Every notification
@@ -32,7 +36,7 @@ export function withLiveTail(
   live: readonly EventEnvelope[],
   threadId: string | null,
 ): EventEnvelope[] {
-  const fresh = live.filter(freshFor(threadId, events.at(-1)?.id));
+  const fresh = freshFor(live, threadId, events.at(-1)?.id);
   return fresh.length ? mergeChatEvents(events, fresh) : events;
 }
 
@@ -184,7 +188,7 @@ export function useChatHistory(threadId: string | null, live: EventEnvelope[], a
   }, [current.events, current.loading, live, threadId]);
   useEffect(() => {
     if (current.loading || current.events === renderedEvents) return;
-    const fresh = renderedEvents.filter(freshFor(threadId, current.events.at(-1)?.id));
+    const fresh = freshFor(renderedEvents, threadId, current.events.at(-1)?.id);
     setHistory((previous) =>
       previous === history
         ? {

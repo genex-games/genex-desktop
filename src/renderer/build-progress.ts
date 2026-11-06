@@ -3,7 +3,7 @@ import { CustomEvent, customEvent, customRecord, DELEGATED_PREFIX } from "../sha
 import { type ConversationRecord, type EventEnvelope, EventKind } from "../shared/event-log.ts";
 import { intlLocale, t } from "../shared/i18n.ts";
 import { messageQueueState, type QueueView } from "../shared/message-queue.ts";
-import { graphKeyOf, turnOfGraphKey } from "../shared/run-graph-events.ts";
+import { graphKeyOf, isGraphTrace, turnOfGraphKey } from "../shared/run-graph-events.ts";
 import { type RunExecution, RunState, runExecutions, workStart } from "../shared/run-state.ts";
 import { summaryCounts, summaryOutcome } from "../shared/run-summary.ts";
 import {
@@ -54,6 +54,65 @@ export function workerThreadFor(
   partTitle: string,
 ): Pick<ConversationRecord, "id" | "title"> | undefined {
   return threads.find((thread) => thread.title === `${workerTitlePrefix(runId)}${partTitle}`);
+}
+
+/**
+ * Records the stage's readers (the history, the graph, the run Live answers to) never fold: a
+ * builder's mirrored trace, session activity, context use and tool traffic. They are most of a
+ * long Loop's log, and each one reached the stage as its own batch.
+ */
+const STAGE_SKIPS: ReadonlySet<string> = new Set([EventKind.ToolRequested, EventKind.ToolResult]);
+
+/** Whether a record can change what the stage draws: not tool traffic, nor a trace the graph never draws. */
+function stageReads(event: EventEnvelope): boolean {
+  const { data } = event;
+  if (data.type !== EventKind.Custom) return !STAGE_SKIPS.has(data.type);
+  return !isGraphTrace(data.event_type);
+}
+
+/** A queued message names its words by the record just before it (`messageQueueState`), so that one stays. */
+const namesPrevious = (event: EventEnvelope): boolean =>
+  event.data.type === EventKind.Custom && event.data.event_type === CustomEvent.CoordinatorMessageQueued;
+
+/** A thread's log as the stage reads it, and the log it was taken from. */
+export interface StageLog {
+  source: readonly EventEnvelope[];
+  events: EventEnvelope[];
+}
+
+/** Add the records of `events` from `start` on that the stage reads to `kept`. */
+function keepStageRecords(events: readonly EventEnvelope[], start: number, kept: EventEnvelope[]): void {
+  for (let index = start; index < events.length; index++) {
+    const event = events[index];
+    if (!event || !stageReads(event)) continue;
+    const before = events[index - 1];
+    if (namesPrevious(event) && before && !stageReads(before)) kept.push(before);
+    kept.push(event);
+  }
+}
+
+/** Whether `events` begins with every record of `source`, the very same objects in the same places. */
+function growsFrom(events: readonly EventEnvelope[], source: readonly EventEnvelope[]): boolean {
+  if (events.length < source.length) return false;
+  for (let index = 0; index < source.length; index++) if (events[index] !== source[index]) return false;
+  return true;
+}
+
+/**
+ * The records of a thread's log the stage reads, without the ones it never folds (`stageReads`).
+ * A log that only grew reads just its new records, and keeps `previous.events` itself when none of
+ * them matters, so a batch of a builder's trace recomputes nothing on the stage: the Builds tab of
+ * a long Loop read its whole log several times over for every one of them.
+ */
+export function stageLogOf(previous: StageLog | null, source: readonly EventEnvelope[]): StageLog {
+  if (previous && growsFrom(source, previous.source)) {
+    const fresh: EventEnvelope[] = [];
+    keepStageRecords(source, previous.source.length, fresh);
+    return { source, events: fresh.length ? [...previous.events, ...fresh] : previous.events };
+  }
+  const events: EventEnvelope[] = [];
+  keepStageRecords(source, 0, events);
+  return { source, events };
 }
 
 /** The `director_worker.mode` of a builder that works in one session, with no rounds. */

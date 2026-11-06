@@ -82,23 +82,32 @@ const customPayloadOf = (event: EventEnvelope): Record<string, unknown> | null =
   event.data.type === EventKind.Custom ? (event.data.payload as Record<string, unknown>) : null;
 
 /** Graph-only transport offsets preserve chronology when bulky trace events are omitted. */
-export type RunGraphEvent = EventEnvelope & { graphSequence?: number; graphLastAt?: string };
+export type RunGraphEvent = EventEnvelope & { graphSequence?: number };
 
-/** Remove non-drawing traces while preserving the original custom-event positions and last timestamp. */
+/**
+ * A custom record the run graph never draws: a builder's mirrored trace, session activity, context
+ * use. They are most of a long run's records.
+ */
+export function isGraphTrace(eventType: string): boolean {
+  return (
+    eventType.startsWith(DELEGATED_PREFIX) ||
+    eventType === CustomEvent.SessionActivity ||
+    eventType === CustomEvent.ContextUsage
+  );
+}
+
+/**
+ * Remove non-drawing traces while preserving the original custom-event positions. Nothing is
+ * stamped with the latest trace's time: a summary whose drawn records did not change stays the
+ * same summary, so a builder's trace does not make every view of the run fold it again.
+ */
 export function compactGraphEvents(events: EventEnvelope[]): RunGraphEvent[] {
   const compact: RunGraphEvent[] = [];
   let sequence = 0;
-  let lastAt: string | undefined;
   for (const event of events) {
     if (event.data.type !== EventKind.Custom) continue;
     sequence++;
-    lastAt = event.created_at;
-    const kind = event.data.event_type;
-    const noise =
-      kind.startsWith(DELEGATED_PREFIX) || kind === CustomEvent.SessionActivity || kind === CustomEvent.ContextUsage;
-    if (!noise) compact.push({ ...event, graphSequence: sequence });
+    if (!isGraphTrace(event.data.event_type)) compact.push({ ...event, graphSequence: sequence });
   }
-  const last = compact.at(-1);
-  if (last && lastAt !== undefined) last.graphLastAt = lastAt;
   return compact;
 }
