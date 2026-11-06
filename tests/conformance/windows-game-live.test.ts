@@ -31,10 +31,10 @@ let games: WindowsGames;
 let loopback: Server;
 let loopbackHits = 0;
 
-/** What the game did: the host's exit code (curl's own), what it wrote, and the host's errors. */
+/** What the game did: the host's exit code (curl's own), whether an answer came, and the host's errors. */
 interface Played {
   code: number | null;
-  headers: string | null;
+  answered: boolean;
   errors: string;
 }
 
@@ -63,7 +63,9 @@ async function play(url: string, genex?: GameGenexEnv): Promise<Played> {
     errors += text;
   });
   const [code] = (await once(child, "exit")) as [number | null];
-  return { code, headers: existsSync(headers) ? await readFile(headers, "utf8") : null, errors };
+  // curl makes the headers file before it connects: an answer is one that wrote a status line there.
+  const written = existsSync(headers) ? await readFile(headers, "utf8") : "";
+  return { code, answered: /^HTTP\//.test(written), errors };
 }
 
 describe("a Windows game's network, for real", { skip: SKIP }, () => {
@@ -84,20 +86,20 @@ describe("a Windows game's network, for real", { skip: SKIP }, () => {
   it("reaches nothing with no way to Genex", async () => {
     const played = await play(`${PLAY_ORIGIN.api}/`);
     assert.notEqual(played.code, 0, played.errors);
-    assert.equal(played.headers, null, "nothing answered, nothing written");
+    assert.equal(played.answered, false);
   });
 
   it("reaches Genex's API with a way to Genex, its profile made without the internet", async () => {
     const played = await play(`${PLAY_ORIGIN.api}/`, { GENEX_API_URL: PLAY_ORIGIN.api });
     assert.equal(played.code, 0, played.errors);
-    assert.match(played.headers ?? "", /^HTTP\//);
+    assert.equal(played.answered, true);
   });
 
   it("still reaches no port on this computer's loopback with a way to Genex", async () => {
     const { port } = loopback.address() as AddressInfo;
     const played = await play(`http://127.0.0.1:${port}/`, { GENEX_API_URL: PLAY_ORIGIN.api });
     assert.notEqual(played.code, 0, played.errors);
-    assert.equal(played.headers, null);
+    assert.equal(played.answered, false);
     assert.equal(loopbackHits, 0, "the loopback server saw no request");
   });
 });
