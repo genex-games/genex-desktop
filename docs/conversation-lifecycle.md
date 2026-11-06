@@ -552,7 +552,7 @@ sends, Stop's hand-over to queued input, a stale Plan flag). `chat-steer.test.ts
 read mid-turn and recorded where, the Codex interrupt-and-resume fallback, the first-prompt path,
 Stop, Rewind and restart replay; engine conformance covers the Claude input and Codex resume.
 `director-wake-loop-run.test.ts` (L1–L10) covers live chat: answered by the lead within one wake while
-the run is going, steered into a turn natively and by interrupt (the first turn of a lead continuing
+the run is going, a turn cut for the person's words on every engine, one that reads input mid-turn too (the first turn of a lead continuing
 the chat's session too, told a stop is `wrap_up`), Stop's hand-over, the long turn's
 queue, the chat freed before the learning pass, a crash's hand-back
 before the close — each answered after by the chat's own session — and Stop during the pass; `harness-incidents.test.ts` (LC rows) covers what a resumed lead is told, the

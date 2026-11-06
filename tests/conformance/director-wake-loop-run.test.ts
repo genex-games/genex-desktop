@@ -483,7 +483,11 @@ describe("live chat during a build", () => {
     assert.match(String(resumed?.prompt), /(^|\n\n)stop the build(\n\n|$)/);
   });
 
-  it("L3. an engine that reads input mid-turn takes the message in the running turn, and it is not said again", {
+  /*
+   * castle-artillery: a Claude Code lead read "How is it going?" mid-turn, beside a tool's result,
+   * and built on with no word back. The person's words now cut its turn as they cut any engine's.
+   */
+  it("L3. the person's message cuts the running turn of an engine that reads input mid-turn too, and the next turn opens with it alone", {
     timeout: RIG_TIMEOUT_MS,
   }, async () => {
     const { rig, project, runId, dispatch, finished } = await loopRun("live-native", { engine: "claude-code" });
@@ -491,10 +495,6 @@ describe("live chat during a build", () => {
     const handed: string[] = [];
     let rested = false;
     let listening = false;
-    let heard = () => {};
-    const heardOne = new Promise<void>((resolve) => {
-      heard = resolve;
-    });
     rig.core.engines.register({
       id: "claude-code",
       label: "Claude",
@@ -511,20 +511,19 @@ describe("live chat during a build", () => {
           rested = true;
           return turnResult("lead-1", "the sky is building");
         }
-        if (lead.length > 2) return turnResult("lead-1", "nothing new");
+        if (lead.length > 2) {
+          speak(request, "Fog too, then.");
+          return turnResult("lead-1", "fog too");
+        }
         assert.ok(request.steer, "the lead's turn is open to the chat");
-        let id = "";
+        // The session's own input mid-turn is open: the person's words must not come in through it.
         request.steer.ready((message) => {
           handed.push(message.text);
-          id = message.id;
-          heard();
           return true;
         });
         listening = true;
-        await heardOne;
-        request.onEvent?.({ type: "steer_delivered", payload: { id } });
-        speak(request, "Fog too, then.");
-        return { ...turnResult("lead-1", "fog too"), steered: [id] };
+        await aborted(request);
+        return stopped("lead-1");
       },
     } as never);
     const running = dispatch();
@@ -532,16 +531,20 @@ describe("live chat during a build", () => {
     await say(rig, project.name, "how is it going?", { engine: "claude-code" });
     await until(() => listening, "the lead's second turn to start");
     await say(rig, project.name, "add some fog", { engine: "claude-code" });
-    await until(() => handed.length === 1, "the message to reach the running turn");
+    await until(() => lead.length === 3, "the turn to be cut and its session resumed with the message");
     // Long enough for a poll of the resting lead's inbox to have woken it again, had it not heard.
     await new Promise((resolve) => setTimeout(resolve, 3_000));
     await rig.core.host.dispatch({ type: "run_stop", runId }, 30_000);
     await finished();
     await running;
 
-    assert.equal(lead.length, 2, "read in the running turn: no interrupt, no second wake");
-    assert.equal(handed[0], "add some fog", "flipped: the person's words as they wrote them");
-    assert.doesNotMatch(handed[0]!, /how is it going/, "what the lead was woken with is not said again");
+    // Flipped (castle-artillery): read in the running turn, with no cut and no second turn. Now cut.
+    assert.deepEqual(handed, [], "never read mid-turn, beside a tool's result");
+    assert.equal(lead.length, 3, "cut once and resumed once: no wake after it");
+    const resumed = lead[2];
+    assert.equal(resumed?.resume, "lead-1", "the same session, resumed");
+    // Alone: neither what woke the cut turn ("how is it going?") nor that the turn failed is said again.
+    assert.equal(resumed?.prompt, "add some fog", "the person's words alone, as they wrote them");
   });
 
   it("L4. Stop mid-build still hands over to the oldest queued message: a slash command waits for the chat", {
