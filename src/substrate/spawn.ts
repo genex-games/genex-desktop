@@ -104,10 +104,16 @@ export function packagedVendorFile(
 function sandboxPackageDir(): string | undefined {
   try {
     return path.dirname(createRequire(import.meta.url).resolve("@anthropic-ai/sandbox-runtime/package.json"));
-  } catch {
+  } catch (error) {
+    // Only a package Node can't find: one that stops exposing its package.json still fails loudly.
+    if (!isModuleNotFound(error)) throw error;
     return undefined;
   }
 }
+
+/** Node's answer for a module it can't find from where it looked. */
+const isModuleNotFound = (error: unknown): boolean =>
+  error instanceof Error && "code" in error && error.code === "MODULE_NOT_FOUND";
 
 const sandboxPackage = sandboxPackageDir();
 const packagedSeccomp =
