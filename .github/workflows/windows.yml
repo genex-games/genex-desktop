@@ -29,6 +29,10 @@ on:
         description: Install the real Grok Build CLI first, for its opt-in tests (name them in files)
         type: boolean
         default: false
+      network:
+        description: Let opt-in tests reach the network (STUDIO_NETWORK_TESTS, such as Local Blender's live test; name them in files)
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -75,6 +79,7 @@ jobs:
         env:
           FILES: ${{ inputs.files }}
           BACKLOG: ${{ inputs.backlog }}
+          STUDIO_NETWORK_TESTS: ${{ inputs.network && '1' || '' }}
         run: |
           # Windows minutes are billed: a dispatch can name files (a probe, a fix's own tests), and
           # the informational pass runs only when asked for.
