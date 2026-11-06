@@ -327,14 +327,16 @@ it was told>" (`[data-told-line]`), never a row folded among the turn's tool cal
   calls `engine.steer {threadId, into: <runId>}` — the director's delegation carries `chatTurn:
   {messageId: <runId>}` on a waking run, which the host honours only for that run's director grant.
   Each message is a steer of its own, as written, with its pictures and its sender (Genex's `from:
-  genex`); Claude Code reads them at its next step. Any other engine, on a turn with a session to
-  resume — the first too, so a Codex lead is never deaf for a whole turn — not the wrap-up and not
-  inside a director tool call (`toolsInFlight`, whose answer a cut would lose), is interrupted and
-  resumed in the same session with those words alone (and, when it was cut before it read its own
-  message, Genex's lines of that message beside them, never crashing the run); otherwise
-  `interrupt: false` leaves the turn alone, as for a fresh lead's first turn, which has no session to
-  resume yet. Words a turn did not read, or that a turn failed before working on, stay unheard on the
-  line and open its next message. A cut is never a failed turn. A message is heard once a turn works
+  genex`). On a turn with a session to resume — the first too, so a Codex lead is never deaf for a
+  whole turn — not the wrap-up and not inside a director tool call (`toolsInFlight`, whose answer a
+  cut would lose), the person's words cut the turn at its next step on every engine (`native:
+  false`: read beside a tool's result, a Claude Code lead built on past them), and it is resumed in
+  the same session with those words alone (and, when it was cut before it read its own message,
+  Genex's lines of that message beside them, never crashing the run); a message Genex wrote in the
+  chat cuts only an engine that reads no input mid-turn. Otherwise Claude Code reads them at its next
+  step, and `interrupt: false` leaves any other engine's turn alone, as for a fresh lead's first turn,
+  which has no session to resume yet. Words a turn did not read, or that a turn failed before
+  working on, stay unheard on the line and open its next message. A cut is never a failed turn. A message is heard once a turn works
   on (or answers) the message that carried it, or reads it mid-turn (`LeadLine.heardThrough`), and is
   recorded heard (`run_steering_delivered {sourceMessageId, how: "lead"}`). That an ask to stop or
   finish is `wrap_up`, quoting their words, is said once: in `wrap_up`'s own description

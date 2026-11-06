@@ -881,11 +881,14 @@ waiting, by Genex's untold lines alone, `from: genex`: an app that stopped at on
 job's end `WAKE_DEBOUNCE_MS` after the first of them, a folder line never (`wake-schedule.ts`
 `nextWake`). No hourly cap, no digest, no reasons record: the lead calls `run_status` for where the
 run stands. While a turn works, one watch (`watchTurn`) says each new line into it (`engine.steer`,
-`interrupt: false`, `from: genex`) and hands it each message the person sends as written
-(`interrupt` when the turn may be cut: an engine that takes no input mid-turn, its first turn
-included, outside a tool call); the lines its own message carries, and a line or a message the
-session took, count as heard while it works, and what it never read (`DelegateResult.steered`) is
-told again with its next message. A line it did not take (no session takes input yet: the call waits
+`interrupt: false`, `from: genex`) and hands it each message the person sends as written. When the
+turn may be cut (a session to resume, its first turn included, outside a tool call, not the wrap-up)
+the person's message cuts it at its next step on every engine (`interrupt`, `native: false`), and
+the same session goes on with it as its own turn: read mid-turn beside a tool's result, a Claude
+Code lead could build on past it with no word back. Otherwise it is read mid-turn, as a message
+Genex wrote in the chat is, which cuts only an engine that takes no input mid-turn. The lines its
+own message carries, and a line or a message the session took, count as heard while it works, and
+what it never read (`DelegateResult.steered`) is told again with its next message. A line it did not take (no session takes input yet: the call waits
 for the folder, or out an outage) goes in again with the next one, before it. A turn the
 person's words cut short resumes at once with those words, and Genex's own lines of a message no turn
 worked on (its start, its wrap-up) go beside them. What the lead heard is kept in two places only:

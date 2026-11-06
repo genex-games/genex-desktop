@@ -2159,6 +2159,8 @@ function liveChat() {
 
 /** The lead's turn that worked on its message: a session, and a turn taken. */
 const worked = { ok: true, sessionId: "lead-1", turns: 1 };
+/** The lead's turn the chat's words cut short: its session stopped at its next step, to be resumed with them. */
+const cutShort = { ok: false, stopReason: "stopped", sessionId: "lead-1", turns: 1 };
 
 /**
  * Live chat during a build, reviewed before it shipped: every chat message is now a steer of the
@@ -2743,17 +2745,24 @@ describe("live chat during a build, reviewed", () => {
     chat.hooks.native = true;
     const one = chat.loopRun();
     const sky = { data: "iVBORw0KGgo=", mimeType: "image/png", label: "sky" };
-    await one.run(async () => {
+    await one.run(async (turn) => {
+      if (turn === 2) {
+        one.state.finished = true;
+        return worked;
+      }
       void chat.say("hdrp или urp?", { stills: [sky] });
       await settleOn(() => chat.steers.length > 0);
-      one.state.finished = true;
-      return { ...worked, steered: chat.steers.map((steer) => steer.messages[0].id) };
+      return cutShort;
     });
     assert.equal(chat.steers.length, 1);
     const said = chat.steers[0]!.messages.map(({ id: _id, ...message }: Record<string, unknown>) => message);
     // Flipped: a steer marks only Genex's; the person's carries no sender.
     assert.deepEqual(said, [{ text: "hdrp или urp?", images: [sky] }]);
-    assert.deepEqual(chat.requeued(), [], "read mid-turn: heard");
+    // Flipped (castle-artillery): read mid-turn on an engine that takes input as it works; their words
+    // now cut the turn, and the turn after it opens with them and their picture.
+    assert.equal(one.calls[1]?.prompt, "hdrp или urp?");
+    assert.deepEqual(one.calls[1]?.said?.images, [sky]);
+    assert.deepEqual(chat.requeued(), [], "heard in the turn they opened");
   });
 
   it("LM3. a message Genex wrote, sent during a build, reaches the lead as Genex's, never as the person's", async () => {
@@ -2777,16 +2786,21 @@ describe("live chat during a build, reviewed", () => {
     chat.hooks.native = true;
     const one = chat.loopRun();
     const sky = { data: "iVBORw0KGgo=", mimeType: "image/png", label: "sky" };
-    await one.run(async () => {
+    await one.run(async (turn) => {
+      if (turn === 2) {
+        one.state.finished = true;
+        return worked;
+      }
       void chat.say("", { stills: [sky] });
       await settleOn(() => chat.steers.length > 0);
-      one.state.finished = true;
-      return { ...worked, steered: chat.steers.map((steer) => steer.messages[0].id) };
+      return cutShort;
     });
     const said = chat.steers[0]!.messages.map(({ id: _id, ...message }: Record<string, unknown>) => message);
     assert.deepEqual(said, [{ text: "", images: [sky] }]);
     assert.deepEqual(standing(chat), { "": `delivered ${chat.RUN}` });
-    assert.deepEqual(chat.requeued(), [], "read mid-turn: heard");
+    // Flipped (castle-artillery): read mid-turn; the person's picture now cuts the turn, and the next opens with it.
+    assert.deepEqual(one.calls[1]?.said?.images, [sky]);
+    assert.deepEqual(chat.requeued(), [], "heard in the turn it opened");
   });
 
   it("LM2. a worker's end said into the lead's turn is Genex's, and Claude Code takes it as not the person's", async () => {
@@ -2821,6 +2835,77 @@ describe("live chat during a build, reviewed", () => {
     assert.equal(frame.isSynthetic, true);
     assert.equal("origin" in frame, false, "never the person's: no human origin");
     feed.dispose();
+  });
+});
+
+/**
+ * A Claude Code lead building an Unreal game was asked "How is it going?", then "Man you hear me? Can
+ * you answer please": both reached its turn mid-turn, beside a tool's result, and it went on writing
+ * code with no word back (its turn had started with Genex's "The Loop started" half an hour before).
+ * The person's words now cut the turn at its next step on an engine that reads input mid-turn too,
+ * and the same session goes on with them as the person's own message. Genex's words go in mid-turn
+ * and cut nothing, and inside a tool call the person's do too, as before.
+ */
+describe("the lead built on past the person's words (castle-artillery)", () => {
+  /** How each steer asked to be delivered: whether it may cut the turn, and whether it may be read mid-turn. */
+  const asked = (chat: ReturnType<typeof liveChat>) => chat.steers.map((steer) => [steer.interrupt, steer.native]);
+  /** The ids a steer carried, as the session reports what it read mid-turn. */
+  const idsOf = (steer: { messages?: SteerMessage[] } | undefined): string[] =>
+    (steer?.messages ?? []).map((m) => m.id);
+
+  it("CA1. the person's words while a Claude Code lead works cut its turn, and the next turn opens with them as they wrote them", async () => {
+    const chat = liveChat();
+    chat.hooks.native = true;
+    const one = chat.loopRun();
+    // The run ends ten minutes on, its worker still at work, whether or not a turn came for the words.
+    chat.ticks.push((now) => {
+      if (now >= chat.T0 + 10 * MINUTE_MS) one.state.finished = true;
+    });
+    await one.run(async (turn) => {
+      if (turn === 2) {
+        one.state.finished = true;
+        return worked;
+      }
+      void chat.say("How is it going?");
+      await settleOn(() => chat.steers.length > 0);
+      // Read mid-turn, the turn goes on and ends without a word to them; cut, it stops at its next step.
+      return chat.steers[0]?.native === false ? cutShort : { ...worked, steered: idsOf(chat.steers[0]) };
+    });
+    assert.deepEqual(asked(chat), [[true, false]], "never read beside a tool's result: the turn is cut for them");
+    assert.equal(one.calls.length, 2, one.calls.map((c) => c.prompt.slice(0, 60)).join(" | "));
+    assert.equal(one.calls[1]?.prompt, "How is it going?", "the same session goes on with their message, as written");
+    assert.equal(one.calls[1]?.said?.from, MessageFrom.Person);
+    assert.deepEqual(chat.requeued(), [], "heard by the lead: never given back");
+  });
+
+  it("CA2. inside a tool call the person's words still reach a Claude Code lead's turn mid-turn, and never cut it there", async () => {
+    const chat = liveChat();
+    chat.hooks.native = true;
+    const one = chat.loopRun();
+    await one.run(async () => {
+      one.n.toolsInFlight = 1;
+      void chat.say("is the door done?");
+      await settleOn(() => chat.steers.length > 0);
+      one.state.finished = true;
+      return { ...worked, steered: idsOf(chat.steers[0]) };
+    });
+    assert.deepEqual(asked(chat), [[false, undefined]], "read at the session's next step, as before");
+    assert.equal(one.calls.length, 1);
+    assert.deepEqual(chat.requeued(), []);
+  });
+
+  it("CA3. a message Genex wrote in the chat during a build goes into a Claude Code lead's turn mid-turn, never cutting it", async () => {
+    const chat = liveChat();
+    chat.hooks.native = true;
+    const one = chat.loopRun();
+    await one.run(async () => {
+      void chat.say("You turned on the Blender plugin.", { origin: "plugin-turned-on", from: "genex" });
+      await settleOn(() => chat.steers.length > 0);
+      one.state.finished = true;
+      return { ...worked, steered: idsOf(chat.steers[0]) };
+    });
+    assert.notEqual(chat.steers[0]?.native, false, "Genex's own words are read mid-turn");
+    assert.equal(one.calls.length, 1, "no turn cut for them");
   });
 });
 
@@ -2861,17 +2946,27 @@ describe("a person's words woke the lead inside a digest (digest-wake)", () => {
     assert.deepEqual(chat.steers, [], "nothing said again into the turn they woke");
   });
 
-  it("DW2. the person's message sent while the lead works reaches that turn as they wrote it, and the turn answers it", async () => {
+  // Flipped (castle-artillery): the message was read by the turn it reached, mid-turn, and that turn
+  // was taken to answer it; a Claude Code lead built on past it. It now cuts that turn, and the same
+  // session's next turn opens with it.
+  it("DW2. the person's message sent while the lead works cuts that turn, and the next opens with it as they wrote it", async () => {
     const chat = liveChat();
     chat.hooks.native = true;
     const one = chat.loopRun();
-    await one.run(async () => {
+    await one.run(async (turn) => {
+      if (turn === 2) {
+        one.state.finished = true;
+        return worked;
+      }
       void chat.say("is the door done?");
       await settleOn(() => chat.steers.length > 0);
-      one.state.finished = true;
-      return { ...worked, steered: chat.steers.flatMap((steer) => steer.messages.map((m: SteerMessage) => m.id)) };
+      return cutShort;
     });
-    assert.equal(one.calls.length, 1, "no wake after it: the turn it reached answered it");
+    assert.deepEqual(
+      one.calls.map((c) => c.prompt),
+      [LOOP_WORDS.started("a dusk plaza"), "is the door done?"],
+      "its own turn, nothing of Genex's around it",
+    );
     const said = chat.steers.flatMap((steer) => steer.messages.map(({ id: _id, ...m }: SteerMessage) => m));
     assert.deepEqual(said, [{ text: "is the door done?" }], "verbatim, the person's");
     const heard = chat.log
