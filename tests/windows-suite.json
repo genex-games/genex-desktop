@@ -347,6 +347,7 @@
   "tests/conformance/window-chrome.test.ts",
   "tests/conformance/window-ready.test.ts",
   "tests/conformance/windows-acl-cleanup.test.ts",
+  "tests/conformance/windows-game-live.test.ts",
   "tests/conformance/windows-install.test.ts",
   "tests/conformance/windows-labels.test.ts",
   "tests/conformance/windows-live-input.test.ts",
