@@ -2640,7 +2640,12 @@ describe("live chat during a build, reviewed", () => {
     });
     assert.equal(one.calls.length, 2, one.calls.map((c) => c.prompt.slice(0, 60)).join(" | "));
     assert.equal(one.calls[1]!.prompt, "stop building");
-    assert.deepEqual(one.calls[1]!.said?.notices, [LOOP_WORDS.started("a dusk plaza")], "the start it never read");
+    // Flipped (CA4): the start it never read is now followed by Genex's line that the person waits.
+    assert.deepEqual(
+      one.calls[1]!.said?.notices,
+      [LOOP_WORDS.started("a dusk plaza"), LOOP_WORDS.personWaits],
+      "the start it never read, then that they wait for an answer",
+    );
   });
 
   it("LC14. a first turn with no session to resume yet is left alone: the words open the next message", async () => {
@@ -2839,6 +2844,45 @@ describe("live chat during a build, reviewed", () => {
 });
 
 /**
+ * CA4's case on one kind of engine: a turn the person's words open carries Genex's line that they
+ * wait for an answer, said last before their words, and a turn Genex's own line opens does not.
+ */
+async function personWaitsCase(native: boolean): Promise<void> {
+  const chat = liveChat();
+  chat.hooks.native = native;
+  const one = chat.loopRun();
+  chat.ticks.push((now) => {
+    if (now >= chat.T0 + 10 * MINUTE_MS) one.state.finished = true;
+  });
+  await one.run(async (turn) => {
+    if (turn === 2) {
+      one.state.finished = true;
+      return worked;
+    }
+    void chat.say("You have all tools you need? You use blender if needed?");
+    await settleOn(() => chat.steers.length > 0);
+    // Not cut, the turn ends as worked and no second turn comes: the count below says so.
+    return chat.steers[0]?.native === false ? cutShort : worked;
+  });
+  assert.equal(one.calls.length, 2, one.calls.map((c) => c.prompt.slice(0, 60)).join(" | "));
+  const [opened, theirs] = one.calls;
+  /** The notices a call carried: the recorded `said` keeps them untyped. */
+  const noticesOf = (call: typeof opened): string[] => {
+    const notices = call?.said?.notices;
+    return Array.isArray(notices) ? notices.filter((notice): notice is string => typeof notice === "string") : [];
+  };
+  assert.equal(theirs?.prompt, "You have all tools you need? You use blender if needed?", "their words, as written");
+  assert.equal(theirs?.said?.from, MessageFrom.Person);
+  assert.ok(
+    noticesOf(theirs).includes(LOOP_WORDS.personWaits),
+    `the lead is told they wait for its answer: ${JSON.stringify(noticesOf(theirs))}`,
+  );
+  assert.equal(noticesOf(theirs).at(-1), LOOP_WORDS.personWaits, "said last, right before their words");
+  assert.ok(!noticesOf(opened).includes(LOOP_WORDS.personWaits), "Genex's own opening line asks for no answer");
+  assert.ok(!opened?.prompt.includes(String(LOOP_WORDS.personWaits)), "nor does its prompt");
+}
+
+/**
  * A Claude Code lead building an Unreal game was asked "How is it going?", then "Man you hear me? Can
  * you answer please": both reached its turn mid-turn, beside a tool's result, and it went on writing
  * code with no word back (its turn had started with Genex's "The Loop started" half an hour before).
@@ -2907,6 +2951,16 @@ describe("the lead built on past the person's words (castle-artillery)", () => {
     assert.notEqual(chat.steers[0]?.native, false, "Genex's own words are read mid-turn");
     assert.equal(one.calls.length, 1, "no turn cut for them");
   });
+
+  // castle-artillery, after CA1: the person's question opened the lead's next turn as they wrote it,
+  // and the lead looked into it, then saved and went on to the next asset without a word to them.
+  // Claude Code reads input mid-turn; Codex, Cursor, Grok Build, OpenCode and the local sessions take
+  // none, so the person's words always open their next turn: both are told the person waits.
+  it("CA4. on an engine that reads input mid-turn (Claude Code), a turn the person's words open tells the lead they wait for its answer; a turn Genex opens does not", () =>
+    personWaitsCase(true));
+
+  it("CA4b. on an engine that takes no input mid-turn (Codex and the rest), a turn the person's words open tells the lead they wait for its answer; a turn Genex opens does not", () =>
+    personWaitsCase(false));
 });
 
 /**
@@ -2942,7 +2996,12 @@ describe("a person's words woke the lead inside a digest (digest-wake)", () => {
     assert.equal(one.calls.length, 2, one.calls.map((c) => c.prompt.slice(0, 60)).join(" | "));
     assert.equal(one.calls[1]!.prompt, "hdrp или urp?", "the person's words, as they wrote them");
     assert.equal(one.calls[1]!.said?.from, MessageFrom.Person);
-    assert.deepEqual(one.calls[1]!.said?.notices, [`${SKY_DONE}\n${SEA_DONE}`], "Genex's lines beside them, marked");
+    // Flipped (CA4): Genex's lines beside them are now followed by its line that the person waits.
+    assert.deepEqual(
+      one.calls[1]!.said?.notices,
+      [`${SKY_DONE}\n${SEA_DONE}`, LOOP_WORDS.personWaits],
+      "Genex's lines beside them, marked, then that they wait for an answer",
+    );
     assert.deepEqual(chat.steers, [], "nothing said again into the turn they woke");
   });
 

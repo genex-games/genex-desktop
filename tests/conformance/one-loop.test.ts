@@ -13,6 +13,7 @@ import { directorTool } from "../../src/harness-seed/loop/director/tool-specs.ts
 import { folderChanged } from "../../src/harness-seed/loop/director/open/close.ts";
 import { MESSAGE as OPEN_END } from "../../src/harness-seed/loop/director/open/finish.ts";
 import { BUSY_RETRY_MS } from "../../src/harness-seed/loop/director/wake.ts";
+import { LOOP_WORDS } from "../../src/harness-seed/loop/director/wake-prompts.ts";
 import { OPEN_NEWS, OPEN_WORDS } from "../../src/harness-seed/loop/director/open/prompts.ts";
 import { APP_NEWS } from "../../src/harness-seed/loop/director/open/app-prompts.ts";
 import {
@@ -818,8 +819,10 @@ describe("the one Loop's autosaves", () => {
       assert.equal(journalOf(changed).director.open.savePoints[0]?.auto, true);
       // Flipped: it rode the next digest under FROM GENEX; it is Genex's line beside the person's words.
       assert.equal(changed.prompts()[1], "Go on.");
+      // Flipped (CA4): the person's words that open the turn now come after Genex's line that they wait.
       assert.deepEqual(changed.leadCalls()[1]?.notices, [
         'Your turn ended with unsaved work, so Genex saved it as save point "Autosave".',
+        LOOP_WORDS.personWaits,
       ]);
 
       const clean = await hostOn(Project.GodotGame, { facts: GODOT, turns: [async () => undefined, finishes] });

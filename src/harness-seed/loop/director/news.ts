@@ -18,6 +18,7 @@ import { closeUnderWay } from "./close-latch.ts";
 import type { LeadLine } from "./lead-line.ts";
 import type { LoopRun, LoopRunLogEntry } from "./loop-run.ts";
 import { abortLead } from "./open/app-look.ts";
+import { LOOP_WORDS } from "./wake-prompts.ts";
 import type { NoteKind } from "./wake-schedule.ts";
 
 /** How often a turn under way is looked at for Genex's lines. */
@@ -78,8 +79,9 @@ function leadingWords(line: LeadLine | null): QueueAction[] {
 
 /**
  * The lead's next message: the chat's unheard messages as they were written, Genex's lines beside
- * them (`lead`, then the log's untold ones) as a notice — or, with no message waiting, Genex's lines
- * alone, as Genex's.
+ * them (`lead`, then the log's untold ones) as a notice, and when the person's words open it, Genex's
+ * line that they wait for an answer (`LOOP_WORDS.personWaits`) last — or, with no message waiting,
+ * Genex's lines alone, as Genex's.
  */
 export async function askOf(loopRun: LoopRun, line: LeadLine | null, lead: readonly string[]): Promise<TurnAsk> {
   const words = leadingWords(line);
@@ -91,7 +93,10 @@ export async function askOf(loopRun: LoopRun, line: LeadLine | null, lead: reado
   const said = words.map(steerMessageOf);
   const images = said.flatMap((one) => one.images ?? []);
   const from = fromThePerson(first) ? MessageFrom.Person : MessageFrom.Genex;
-  const beside = { ...(images.length ? { images } : {}), ...(genex ? { notices: [genex] } : {}) };
+  // The person's words that open the turn come last, right after Genex's line that they wait for an answer.
+  const waits = from === MessageFrom.Person ? [LOOP_WORDS.personWaits] : [];
+  const notices = [...(genex ? [genex] : []), ...waits];
+  const beside = { ...(images.length ? { images } : {}), ...(notices.length ? { notices } : {}) };
   return { prompt: textsOf(said).join(WORDS_APART), said: { from, ...beside }, ...carried };
 }
 
