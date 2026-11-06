@@ -65,14 +65,13 @@ import {
   unfitName,
 } from "./publish.ts";
 import { PUBLISH_PROMPTS } from "./publish-prompts.ts";
-import { crashAnswer, probeAnswer } from "./hook-answers.ts";
+import { probeAnswer } from "./hook-answers.ts";
 import {
   createStudioWatch,
   heroShotsAt,
   FLUSH_MAX_MS,
   loadPlaceAt,
   type MomentOps,
-  openForRun,
   personActive,
   savePlaceAt,
   studioStateAt,
@@ -153,7 +152,7 @@ import { MCP_SWITCH_CLICK_PATH, MESSAGE } from "./words.ts";
  * a prompt that only the person's own press may raise. Once Studio is set up it also serves the
  * helper link (`helper-link.ts`), which tells each game's connection which Studio is the game's,
  * and Genex's moments (`studio-moments.ts`): the place saved and loaded around checkpoints and
- * restores, health, the crash note, Team Create notes and the viewport's picture.
+ * restores, health, Team Create notes and the viewport's picture.
  */
 
 export { RobloxAction, RobloxTool };
@@ -1381,11 +1380,9 @@ export function createRobloxBackend(deps: RobloxDeps): PluginActivation {
     [RobloxTool.ShowSteps]: async (_args, context) => showSteps(context, (await steps(deps, context, slot.job)).open),
     [RobloxTool.NewGame]: (_args, context) => newGameSetUp(deps, context, () => newGameTool(deps, context)),
     [RobloxTool.EngineStatus]: () => engineStatus(deps),
-    [RobloxTool.OpenForRun]: atMoment((ops) => openForRun(ops)),
     [RobloxTool.SavePlace]: atMoment(savePlaceAt),
     [RobloxTool.LoadPlace]: atMoment((ops) => loadPlaceAt(ops)),
     [RobloxTool.StudioState]: atMoment((ops) => studioStateAt(ops)),
-    [RobloxTool.StudioCrashNote]: async (_args, context) => (context.hook ? crashAnswer() : {}),
     [RobloxTool.TeamNote]: atMoment((ops) => teamNoteAt(ops)),
     [RobloxTool.CloseAfterPublish]: async (_args, context) => (context.hook ? closeAfterPublish(deps, context) : {}),
     ...playHandlers(deps, services),

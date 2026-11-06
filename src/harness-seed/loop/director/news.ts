@@ -17,7 +17,7 @@ import { SECOND_MS } from "../time.ts";
 import { closeUnderWay } from "./close-latch.ts";
 import type { LeadLine } from "./lead-line.ts";
 import type { LoopRun, LoopRunLogEntry } from "./loop-run.ts";
-import { abortLead } from "./open/health.ts";
+import { abortLead } from "./open/app-look.ts";
 import type { NoteKind } from "./wake-schedule.ts";
 
 /** How often a turn under way is looked at for Genex's lines. */
@@ -47,7 +47,7 @@ type GenexLine = LoopRunLogEntry & { kind: NoteKind };
 
 /**
  * The run is over for the lead: it finished, the user stopped it, or it failed on its own; or its
- * close has started; or, an open Loop, it pauses because the project's app couldn't be brought back.
+ * close has started; or, an open Loop, its lead paused it for the person.
  */
 export const runOver = (loopRun: LoopRun): boolean =>
   loopRun.state.finished ||
@@ -255,7 +255,7 @@ export const startedASession = (result: Partial<DelegateResult> | undefined): bo
 /**
  * Watches one session call of the lead's until it ends (the module's header): each look reads the
  * run's job ends and the project's app first (`poll`), then hands the turn what came since its own
- * message. A Loop Genex paused, or one the person stopped, ends an open Loop's session again instead
+ * message. A Loop its lead paused, or one the person stopped, ends an open Loop's session again instead
  * (one its first abort missed: the host had not seated it yet); a run that is over hears nothing more.
  */
 export function watchTurn(loopRun: LoopRun, kit: WatchKit): TurnWatch {

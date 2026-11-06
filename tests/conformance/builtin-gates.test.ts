@@ -1,5 +1,7 @@
 /**
- * Genex's own gate for web games, run at the moment it guards and only where a web game is served.
+ * Genex's own gate for web games, run at the moment it guards and only where a web game is served:
+ * what it finds is a fact the Loop's lead reads as it starts, never a refusal of the launch. Only a
+ * compiled engine export is refused, since no lead can build in it.
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
@@ -7,6 +9,7 @@ import { BuiltinGate, fireGates, gatesOn } from "../../src/harness-seed/loop/bui
 import { launchFromIntake } from "../../src/harness-seed/loop/chat-dispatch.ts";
 import { GENEX, HookEvent } from "../../src/harness-seed/loop/hooks.ts";
 import { loopRunRefusal } from "../../src/harness-seed/loop/main.ts";
+import { gateLines } from "../../src/harness-seed/loop/moment-lines.ts";
 import { HostMethod } from "../../src/shared/harness-api.ts";
 import { ctxRecorder } from "../helpers/ctx-recorder.ts";
 
@@ -25,9 +28,8 @@ const UNREAL_WITH_SITE = [
   { id: "web-game", path: "site" },
 ];
 
-/** The words a web game missing its page and its entry was refused with before the gate was a hook. */
-const NOT_READY =
-  "moth is not ready for a run: index.html is missing; src/main.js is missing. Fix that first (a chat build can), then start again.";
+/** The line a Loop's lead reads first on a web game missing its page and its entry. */
+const PAGE_MISSING = "moth's page is missing index.html, src/main.js.";
 /** What a launch that passed every refusal says when the Stop the recorder raises is read. */
 const STOPPED = /stopped before it started/;
 
@@ -83,13 +85,21 @@ const MISSING_PAGE: Readiness = {
   missing: ["index.html", "src/main.js"],
 };
 
+/** The lines the gate gives a Loop's lead at its start, for a game named moth with these facts. */
+const linesOn = (facts: readonly object[] | undefined, missing: unknown) =>
+  gateLines(HookEvent.RunPrepare, { game: { name: "moth", ...(facts ? { facts } : {}) } as never, missing });
+
 describe("Genex's own web gate", () => {
-  it("a web game missing its page is not ready for a Loop, in the same words as before", async () => {
+  // Flipped: the launch was refused ("moth is not ready for a run: index.html is missing; src/main.js
+  // is missing. Fix that first (a chat build can), then start again."); the lead builds in that folder.
+  it("a web game missing its page is a fact its Loop's lead reads first, never a refusal of its launch", async () => {
     const { launched } = launchOn(WEB, MISSING_PAGE);
-    assert.equal(await refusalOf(launched), NOT_READY);
-    assert.equal(loopRunRefusal({ name: "moth", facts: WEB }, MISSING_PAGE.problems, MISSING_PAGE.missing), NOT_READY);
+    assert.match(await refusalOf(launched), STOPPED, "past every refusal");
+    assert.equal(loopRunRefusal({ name: "moth", facts: WEB }, MISSING_PAGE.problems, MISSING_PAGE.missing), null);
+    assert.deepEqual(linesOn(WEB, MISSING_PAGE.missing), [PAGE_MISSING]);
     // A descriptor from a host that predates facts is a web game, as it always was.
-    assert.equal(loopRunRefusal({ name: "moth" }, MISSING_PAGE.problems, MISSING_PAGE.missing), NOT_READY);
+    assert.equal(loopRunRefusal({ name: "moth" }, MISSING_PAGE.problems, MISSING_PAGE.missing), null);
+    assert.deepEqual(linesOn(undefined, MISSING_PAGE.missing), [PAGE_MISSING]);
     // The gate runs at the Loop's start, and its block names Genex and the gate, never a plugin.
     const gated = fireGates(HookEvent.RunPrepare, { game: { name: "moth", facts: WEB }, missing: ["index.html"] });
     assert.deepEqual(gated.blocked && { plugin: gated.blocked.plugin, tool: gated.blocked.tool }, {
@@ -104,9 +114,13 @@ describe("Genex's own web gate", () => {
 
   // Flipped (one Loop): a Godot project still serving a web game at its root was never checked, its
   // Loop being in place; every Loop is in place now, and the gate reaches a game by its facts alone.
+  // Flipped again: what it finds is its lead's line, never a refusal.
   it("a folder that serves a web game at its root is checked whatever else it holds", () => {
-    const refused = loopRunRefusal({ name: "moth", facts: GODOT_OVER_WEB }, ["index.html is missing"], ["index.html"]);
-    assert.match(refused ?? "", /^moth is not ready for a run: index\.html is missing/);
+    assert.deepEqual(linesOn(GODOT_OVER_WEB, ["index.html"]), ["moth's page is missing index.html."]);
+    assert.equal(
+      loopRunRefusal({ name: "moth", facts: GODOT_OVER_WEB }, ["index.html is missing"], ["index.html"]),
+      null,
+    );
     assert.deepEqual(gatesOn(HookEvent.RunPrepare, { facts: GODOT_OVER_WEB }), [BuiltinGate.WebReady]);
   });
 
@@ -141,19 +155,20 @@ describe("Genex's own web gate", () => {
     assert.match(await refusalOf(launched), /exported from a game engine/);
   });
 
+  // Flipped: the typed names refused the launch; they are the lead's line now.
   it("a gate decides by typed fields, never by the words of a problem", async () => {
     const worded: Readiness = { problems: ["src/main.js is missing"], missing: [] };
     const { launched } = launchOn(WEB, worded);
     assert.match(await refusalOf(launched), STOPPED, "a sentence that ends in 'is missing' refuses nothing");
-    assert.equal(loopRunRefusal({ name: "moth", facts: WEB }, worded.problems, worded.missing), null);
-    // A caller that hands no typed list (an older copy of the launch) is refused nothing either.
-    assert.equal(loopRunRefusal({ name: "moth", facts: WEB }, worded.problems), null);
+    assert.deepEqual(linesOn(WEB, worded.missing), [], "and says nothing to the lead");
+    // A caller that hands no typed list says nothing either.
+    assert.deepEqual(linesOn(WEB, undefined), []);
     // The names decide, whatever the sentences say.
-    const named = loopRunRefusal({ name: "moth", facts: WEB }, [], ["index.html", "src/main.js"]);
-    assert.equal(named, NOT_READY);
+    assert.deepEqual(linesOn(WEB, ["index.html", "src/main.js"]), [PAGE_MISSING]);
   });
 
-  it("a missing list that is not a list of names refuses nothing and starts nothing", async () => {
+  // Flipped: it read the launch's refusal, which no missing list makes now; no line is built from such a list either.
+  it("a missing list that is not a list of names refuses nothing, starts nothing and says nothing", async () => {
     const hostile: unknown[] = [
       "index.html",
       [1, 2],
@@ -174,6 +189,7 @@ describe("Genex's own web gate", () => {
         `${row}: nothing started`,
       );
       assert.equal(loopRunRefusal({ name: "moth", facts: WEB }, [], missing), null, row);
+      assert.deepEqual(linesOn(WEB, missing), [], `${row}: no line built from it`);
     }
   });
 });

@@ -737,9 +737,10 @@ export type CheckpointSkip = 'cant_tell' | 'nothing_unsaved';
 // ↑ src/shared/plugin-hooks.ts
 
 /**
- * What a checkpoint answers: the snapshot it took with its handlers' notes and pictures; why a
- * handler, a lock or Plan mode stopped it (no snapshot; `hold` when it was Genex's); or why one
- * asked only if something is unsaved was skipped.
+ * What a checkpoint answers: the snapshot it took with its handlers' notes and pictures (or, when
+ * a lock was not given, with no step run and Genex's note carrying its hold); why Plan mode held it
+ * back or the snapshot failed (no snapshot; `hold` when it was Genex's); or why one asked only if
+ * something is unsaved was skipped.
  */
 export type CheckpointAnswer =
   | { snapshot: SnapshotRecord; notes: HookReport["notes"]; images: HookImage[] }

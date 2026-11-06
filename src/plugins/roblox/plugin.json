@@ -1,7 +1,7 @@
 {
   "apiVersion": 3,
   "id": "roblox",
-  "version": "0.1.33",
+  "version": "0.1.34",
   "icon": "icon.svg",
   "name": "Roblox Studio",
   "publisher": "Genex",
@@ -502,15 +502,6 @@
       }
     },
     {
-      "name": "open-for-run",
-      "audience": "harness",
-      "description": "For Genex only: at a Loop's start, Roblox Studio connected for this game's place, the place opened in Studio when it isn't; blocks with the setup step when Studio can't be.",
-      "parameters": {
-        "type": "object",
-        "properties": {}
-      }
-    },
-    {
       "name": "save-place",
       "audience": "harness",
       "description": "For Genex only: before a checkpoint (each chat message's too) and before a restore, sends the scripts still on their way to Studio, then has the Genex helper export what changed of the place into the game folder, beside the scripts.",
@@ -542,15 +533,6 @@
       "name": "studio-state",
       "audience": "harness",
       "description": "For Genex only: whether Roblox Studio is connected for this game and answers (a dialog may be open when it doesn't), and its MCP server lists it.",
-      "parameters": {
-        "type": "object",
-        "properties": {}
-      }
-    },
-    {
-      "name": "studio-crash-note",
-      "audience": "harness",
-      "description": "For Genex only: when Roblox Studio closed under a run, asks the person to reopen it. Genex never closes or force-quits Studio.",
       "parameters": {
         "type": "object",
         "properties": {}
@@ -882,7 +864,6 @@
   ],
   "locks": [{ "id": "studio", "label": "Roblox Studio", "per": "project", "personFirst": "studio-activity" }],
   "hooks": [
-    { "on": "run.prepare", "tool": "open-for-run", "facts": ["roblox-project"] },
     { "on": "turn.start", "tool": "team-note", "facts": ["roblox-project"] },
     { "on": "turn.end", "tool": "close-after-publish", "facts": ["roblox-project"] },
     { "on": "checkpoint.before", "tool": "save-place", "facts": ["roblox-project"], "messages": true },
@@ -890,7 +871,6 @@
     { "on": "restore.before", "tool": "save-place", "facts": ["roblox-project"] },
     { "on": "restore.after", "tool": "load-place", "facts": ["roblox-project"] },
     { "on": "health", "tool": "studio-state", "facts": ["roblox-project"] },
-    { "on": "crash", "tool": "studio-crash-note", "facts": ["roblox-project"] },
     { "on": "worker.end", "tool": "luau-note", "facts": ["roblox-project"] },
     { "on": "finish", "tool": "luau-finish", "facts": ["roblox-project"] }
   ],

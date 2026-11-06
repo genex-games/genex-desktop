@@ -12,16 +12,14 @@
  * - `studio-state` (`health`): the helper is connected and answers a ping within
  *   {@link STUDIO_PING_MS}, and Studio's MCP server lists that Studio. No answer: a dialog may be
  *   open in Studio.
- * - `studio-crash-note` (`crash`): asks the person to reopen Studio; never closes or kills it.
  * - `team-note` (`turn.start`): who else is in the place, when that changed.
  * - `hero-shots` (`checkpoint.after`, the viewport observer): Studio's viewport picture.
- * - `open-for-run` (`run.prepare`): Studio connected for the place, opening the place when it isn't.
  * - `studio-activity` (the lock's probe): the person's activity the helper reported in the last
  *   {@link PERSON_ACTIVE_MS}, the agent's own work (`agent-marks.ts`) discounted.
  *
- * Answers and their words are `hook-answers.ts`'s. Git stays Genex's: nothing here snapshots or
- * restores files. Deadlines are never lengthened: each step's longest path is a constant below
- * Genex's ceiling for its moment.
+ * Answers and their words are `hook-answers.ts`'s. Nothing here opens Studio: a run's lead opens it
+ * with `open-studio`. Git stays Genex's: nothing here snapshots or restores files. Deadlines are
+ * never lengthened: each step's longest path is a constant below Genex's ceiling for its moment.
  */
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 import { errorMessage } from "../../shared/errors.ts";
@@ -35,12 +33,9 @@ import {
   loadAnswer,
   PlaceLoad,
   PlaceSave,
-  RunStart,
   type SaveRead,
-  type StartRead,
   StudioHealth,
   saveAnswer,
-  startAnswer,
   healthAnswer,
   shotsAnswer,
   teamAnswer,
@@ -82,11 +77,6 @@ export const REAPPLY_WAIT_MS = MINUTE_MS;
 export const HERO_SHOT_MS = 15 * SECOND_MS;
 /** What an observer's call keeps free after the picture: keeping it and the answer's trip. */
 const OBSERVE_MARGIN_MS = 3 * SECOND_MS;
-/** How long a run's start waits for the place it opened to connect, asking this often. */
-export const OPEN_WAIT_MS = 3 * MINUTE_MS;
-export const OPEN_POLL_MS = 2 * SECOND_MS;
-/** How long opening the place may take (the command line, or bringing Studio forward). */
-const OPEN_CALL_MS = 30 * SECOND_MS;
 
 /** The longest `save-place` before a chat message's checkpoint: the flush, then the incremental export. */
 export const SAVE_PLACE_CHAT_MAX_MS = FLUSH_MAX_MS + PLACE_EXPORT_MAX_MS;
@@ -98,8 +88,6 @@ export const SAVE_PLACE_RESTORE_MAX_MS = TEAM_ASK_MS + FLUSH_MAX_MS + RUN_EXPORT
 export const LOAD_PLACE_MAX_MS = PLACE_LOAD_MAX_MS + REAPPLY_WAIT_MS;
 /** The longest `studio-state`: whether Studio runs, the ping, then the listing. */
 export const STUDIO_STATE_MAX_MS = RUNNING_CHECK_MS + STUDIO_PING_MS + STUDIO_LIST_MS;
-/** The longest `open-for-run`: Studio opened, the wait for the connection and its last ask, the ping. */
-export const OPEN_FOR_RUN_MAX_MS = RUNNING_CHECK_MS + OPEN_CALL_MS + OPEN_WAIT_MS + OPEN_POLL_MS + STUDIO_PING_MS;
 /** The longest `team-note`. */
 export const TEAM_NOTE_MAX_MS = TEAM_ASK_MS;
 /** The longest `hero-shots`. */
@@ -176,10 +164,6 @@ export interface MomentOps {
   flush(timeoutMs: number): Promise<void>;
   /** Reconciles Studio's scripts with the folder's `src/` (after a restore the restored files win); whether it ran to its end. */
   reapply(options?: ReconcileOptions): Promise<boolean>;
-  /** Opens the game's place in Studio, or brings it forward. */
-  open(): Promise<{ opened: boolean; message: string }>;
-  /** The game's place as the chat names it. */
-  placeName(): Promise<string>;
   /** Studio's viewport picture, base64; null when it couldn't be taken. */
   shot(timeoutMs: number): Promise<{ data: string } | null>;
   /** The agent's own marks, as believed now. */
@@ -187,13 +171,6 @@ export interface MomentOps {
   /** Runs Genex's own changes in Studio with the agent's busy mark around them, so they never read as the person's. */
   asAgent<T>(work: () => Promise<T>): Promise<T>;
   watch: StudioWatch;
-}
-
-/** Waits `ms` unless the call was stopped; whether it may go on. */
-async function paused(ops: MomentOps, ms: number): Promise<boolean> {
-  if (ops.signal.aborted) return false;
-  await ops.sleep(ms, ops.signal).catch(() => undefined);
-  return !ops.signal.aborted;
 }
 
 const MESSAGE = { Stopped: "Genex stopped waiting before the place was saved" } as const;
@@ -371,42 +348,6 @@ export async function heroShotsAt(ops: MomentOps, hook: HookContext): Promise<Ho
 /** `hero-shots` as the viewport observer: the picture within the time Genex gives, less what keeping it takes. */
 export async function viewportStill(ops: MomentOps, withinMs: number): Promise<HookAnswer> {
   return viewport(ops, withinMs - OBSERVE_MARGIN_MS);
-}
-
-/** Waits until the game's helper connects, up to {@link OPEN_WAIT_MS}; whether it did. */
-async function untilConnected(ops: MomentOps): Promise<boolean> {
-  const ends = ops.now() + OPEN_WAIT_MS;
-  while (!ops.bound()) {
-    if (ops.now() >= ends || !(await paused(ops, OPEN_POLL_MS))) return ops.bound();
-  }
-  return true;
-}
-
-/** A run's start, read: Studio connected for the place, opened now when it wasn't. */
-async function runStart(ops: MomentOps): Promise<StartRead> {
-  if (!(await ops.setUp())) return { outcome: RunStart.NotSetUp };
-  if (!(await ops.linked())) return { outcome: RunStart.NoPlace };
-  if (ops.bound()) return { outcome: (await pings(ops)) ? RunStart.Ready : RunStart.Silent };
-  if (ops.signal.aborted) return { outcome: RunStart.Stopped };
-  let opened: { opened: boolean; message: string };
-  try {
-    opened = await ops.open();
-  } catch (error) {
-    return { outcome: RunStart.OpenFailed, why: errorMessage(error) };
-  }
-  if (!(await untilConnected(ops))) {
-    if (ops.signal.aborted) return { outcome: RunStart.Stopped };
-    if (!opened.opened && !(await ops.running().catch(() => false)))
-      return { outcome: RunStart.OpenFailed, why: opened.message };
-    return { outcome: RunStart.NotConnected, minutes: OPEN_WAIT_MS / MINUTE_MS };
-  }
-  if (!(await pings(ops))) return { outcome: RunStart.Silent };
-  return { outcome: RunStart.Opened, place: await ops.placeName() };
-}
-
-/** `open-for-run` at a run's start. */
-export async function openForRun(ops: MomentOps): Promise<HookAnswer> {
-  return startAnswer(await runStart(ops), ops.mac);
 }
 
 /**

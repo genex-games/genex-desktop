@@ -1,7 +1,7 @@
 {
   "apiVersion": 3,
   "id": "unreal",
-  "version": "0.50.2",
+  "version": "0.51.0",
   "icon": "icon.svg",
   "name": "Unreal Engine",
   "publisher": "Genex",
@@ -368,7 +368,7 @@
       "name": "reopen-editor",
       "audience": "harness",
       "needs": ["editor"],
-      "description": "For Genex's Unreal Loop only: after Unreal crashed, reopen it in the background (end this game's hung editor and its crash reporter, build the game's C++ module, open the project and wait until it answers). Answers {started} at once, or {answering} when Unreal already answers; read editor-state.",
+      "description": "For Genex only: after a restore, reopen this game's Unreal in the background (end what is left of its editor and its crash reporter, update an outdated Genex editor helper, build the game's C++ module, open the project and wait until it answers). Answers {started} at once, or {answering} when Unreal already answers; read editor-state.",
       "parameters": {
         "type": "object",
         "properties": {}
@@ -378,13 +378,17 @@
       "name": "open-editor",
       "facts": ["unreal-project"],
       "needs": ["editor"],
-      "description": "Open this game's Unreal project in Unreal; it starts in the background. Use it whenever an Unreal call says the project isn't open or isn't answering, or that Unreal crashed: it first ends what is left of a crashed editor of this project and its crash reporter. Answers {answering} when Unreal already answers, {starting} while Unreal is already opening it, {started} once Genex began opening it (then call editor-status with seconds until it answers; a first start takes minutes), or {busy} when its editor runs without answering: wait with editor-status, and only if it still doesn't answer call this again with restart: true, which ends that editor (work not saved in it is lost) and opens the project again.",
+      "description": "Open this game's Unreal project in Unreal; it starts in the background. Use it whenever an Unreal call says the project isn't open or isn't answering, or that Unreal crashed: it first ends what is left of a crashed editor of this project and its crash reporter. Answers {answering} when Unreal already answers, {starting} while Unreal is already opening it, {started} once Genex began opening it (then call editor-status with seconds until it answers; a first start takes minutes), or {busy} when its editor runs without answering: wait with editor-status, and only if it still doesn't answer call this again with restart: true, which ends that editor (work not saved in it is lost) and opens the project again. After you change the game's C++ while Unreal is closed, call it with build: true, so Unreal opens on a module built from your code.",
       "parameters": {
         "type": "object",
         "properties": {
           "restart": {
             "type": "boolean",
             "description": "Optional. true ends this game's editor even while it runs without answering, then opens the project again; work not saved in it is lost."
+          },
+          "build": {
+            "type": "boolean",
+            "description": "Optional. true builds the game's C++ module before Unreal opens (on a Mac; elsewhere Unreal's own open builds it); a build that fails leaves Unreal closed, and editor-status names its errors."
           }
         }
       }
@@ -689,16 +693,6 @@
           "stop": { "type": "boolean", "description": "End the run now." }
         }
       }
-    },
-    {
-      "name": "open-for-run",
-      "audience": "harness",
-      "needs": ["editor"],
-      "description": "For Genex only: at a run's start, make sure this game's Unreal is open with the current Genex editor helper and its reference exported.",
-      "parameters": {
-        "type": "object",
-        "properties": {}
-      }
     }
   ],
   "skills": [
@@ -858,7 +852,6 @@
   ],
   "locks": [{ "id": "editor", "label": "Unreal", "per": "project", "personFirst": "editor-activity" }],
   "hooks": [
-    { "on": "run.prepare", "tool": "open-for-run", "facts": ["unreal-project"] },
     { "on": "run.prepare", "tool": "log-errors", "facts": ["unreal-project"] },
     { "on": "checkpoint.before", "tool": "save-all", "facts": ["unreal-project"] },
     { "on": "checkpoint.before", "tool": "log-errors", "facts": ["unreal-project"] },
@@ -866,8 +859,7 @@
     { "on": "restore.before", "tool": "save-all", "facts": ["unreal-project"] },
     { "on": "restore.before", "tool": "end-editor", "facts": ["unreal-project"] },
     { "on": "restore.after", "tool": "reopen-editor", "facts": ["unreal-project"] },
-    { "on": "health", "tool": "editor-state", "facts": ["unreal-project"] },
-    { "on": "crash", "tool": "reopen-editor", "facts": ["unreal-project"] }
+    { "on": "health", "tool": "editor-state", "facts": ["unreal-project"] }
   ],
   "folders": [
     { "path": "~/Library/Application Support/Epic/UnrealBuildTool", "why": "Unreal's build tool writes its log here" },

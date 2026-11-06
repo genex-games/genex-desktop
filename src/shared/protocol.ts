@@ -92,7 +92,10 @@ export const MessageOrigin = {
   SetupCard: "setup-card",
   /** A tag the person tried again, now attached: its line for the agent. */
   TagRetry: "tag-retry",
-  /** A Loop the chat started that a plugin held back before its first turn: why, for the agent to fix (`core/held-start.ts`). */
+  /**
+   * A Loop the chat started that a plugin held back before its first turn: why, for the agent to fix.
+   * Sent only by Genex from before a Loop's start became its lead's: old transcripts carry it.
+   */
   LoopHeld: "loop-held",
   /** A run landed its build: the agent is asked to make the game's Genex cover now (`core/cover-step.ts`). */
   CoverStep: "cover-step",

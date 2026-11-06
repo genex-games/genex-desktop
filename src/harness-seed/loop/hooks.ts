@@ -1,6 +1,6 @@
 /**
  * Genex's moments, as the harness announces them and asks for them. At a moment (a run starting,
- * a turn, a restart, a health check, a crash, the end) the plugins that are on run the steps they
+ * a turn, a restart, a health check, the end) the plugins that are on run the steps they
  * hook to it for this game (`hooks.fire`); a checkpoint (`checkpoint.take`) runs their steps around
  * Genex's own snapshot. The harness never names a plugin's steps: it reads only what they answer
  * (a block, a note, a pending reason, pictures). A game whose descriptor lists no moment
@@ -41,7 +41,8 @@ export type HookEvent = (typeof HookEvent)[keyof typeof HookEvent];
 
 /**
  * The moments the harness itself announces: every one but the checkpoint and tool moments, which
- * Genex fires around its own work. A restore the harness announces is a restart: no file changes.
+ * Genex fires around its own work, and `crash`, which nobody fires (Genex never reopens an app by
+ * itself: the lead does). A restore the harness announces is a restart: no file changes.
  */
 export const SEED_FIRED_HOOK_EVENTS: ReadonlySet<HookEvent> = new Set(
   Object.values(HookEvent).filter(
@@ -49,17 +50,17 @@ export const SEED_FIRED_HOOK_EVENTS: ReadonlySet<HookEvent> = new Set(
       on !== HookEvent.CheckpointBefore &&
       on !== HookEvent.CheckpointAfter &&
       on !== HookEvent.ToolBefore &&
-      on !== HookEvent.ToolAfter,
+      on !== HookEvent.ToolAfter &&
+      on !== HookEvent.Crash,
   ),
 );
 
-/** The moments a step's block holds back (the app's `BLOCKING_HOOK_EVENTS`): any other moment only notes it. */
+/**
+ * The moments whose block refuses the call that asked for them (the app's `BLOCKING_HOOK_EVENTS`):
+ * a restore, a plugin's own tool, the lead's finish. At any other moment a block is only a note.
+ */
 export const BLOCKING_HOOK_EVENTS: ReadonlySet<HookEvent> = new Set([
-  HookEvent.RunPrepare,
-  HookEvent.TurnStart,
-  HookEvent.CheckpointBefore,
   HookEvent.RestoreBefore,
-  HookEvent.WorkerStart,
   HookEvent.ToolBefore,
   HookEvent.Finish,
 ]);
@@ -101,7 +102,7 @@ const CONTROL_CHARS = /\p{Cc}/gu;
 
 /** How often a wait until the game's apps are ready asks `health` again. */
 export const READY_POLL_MS = 5 * SECOND_MS;
-/** How long an app a plugin reopens (after a restore, a restart or a crash) may take to answer again. */
+/** How long an app a plugin reopens (after a restore or a restart) may take to answer again. */
 export const REOPEN_WAIT_MS = 6 * MINUTE_MS;
 /** How long a chat waits for the game's apps after a turn changed what the project is (a first start can take long). */
 export const READY_WAIT_MS = 20 * MINUTE_MS;
@@ -121,6 +122,7 @@ const MESSAGE = {
     `This turn left unsaved work in ${app}, and it stays unsaved: Genex couldn't tell whether you were using ${app}. Save it there when you're done.`,
   TurnBusy: (app: string) =>
     `This turn left unsaved work in ${app}, and it stays unsaved: something else was working there. Save it in ${app}, or send a message to try again.`,
+  TurnDiskOnly: "Genex took a snapshot of the files on disk.",
   TheApp: "the game's app",
   Unnamed: "Checkpoint",
 } as const;
@@ -146,7 +148,9 @@ const TURN_HELD_WORDS = {
 
 /**
  * The chat's line for a message held back at its turn's start: Genex's own hold in the person's
- * words, a step's block with its reason.
+ * words, a step's block with its reason. Kept for a `delegated-turn.ts` an agent kept from before:
+ * the seed's own chat turn is never held, and what its `turn.start` steps said is a notice its
+ * session reads (`moment-lines.ts` `momentLines`).
  */
 export function turnHeldLine(blocked: { reason: string } & HookHeldBy): string {
   const held = holdOf(blocked);
@@ -213,10 +217,11 @@ function reportOf(answer: unknown): HookReport {
 /**
  * Announces one moment for a game: its plugins' steps run in order and their answers come back.
  * No call when the game's plugins hook no step there; a host without Genex's moments answers as
- * a moment no step ran at. Any other failure holds a blocking moment back with why (fail closed,
- * as the host does), and is a moment no step ran at elsewhere. A moment the chat's or the run's
- * Stop ended holds a blocking moment back as stopped, never as a plugin's failure: the caller reads
- * the Stop from `ctx.cancelled`.
+ * a moment no step ran at. Any other failure refuses a blocking moment's call with why (fail
+ * closed, as the host does), and is Genex's note at any other moment, which its reader decides on.
+ * A moment the chat's or the run's Stop ended refuses a blocking moment's call as stopped, never as
+ * a plugin's failure, and is a moment no step ran at elsewhere: the caller reads the Stop from
+ * `ctx.cancelled`.
  */
 export async function fireHooks(
   ctx: HarnessCtx,
@@ -228,11 +233,17 @@ export async function fireHooks(
   try {
     return reportOf(await ctx.call(HostMethod.HooksFire, { ...plainScope(scope), on }));
   } catch (err) {
-    if (olderHost(err) || !BLOCKING_HOOK_EVENTS.has(on)) return EMPTY_REPORT;
-    if (ctx.cancelled) return { ...EMPTY_REPORT, blocked: { plugin: GENEX, tool: "", reason: MESSAGE.MomentStopped } };
+    if (olderHost(err)) return EMPTY_REPORT;
+    const blocking = BLOCKING_HOOK_EVENTS.has(on);
+    if (ctx.cancelled) return blocking ? heldReport(MESSAGE.MomentStopped) : EMPTY_REPORT;
     const reason = MESSAGE.MomentFailed(err instanceof Error ? err.message : String(err));
-    return { ...EMPTY_REPORT, blocked: { plugin: GENEX, tool: "", reason } };
+    return blocking ? heldReport(reason) : { ...EMPTY_REPORT, notes: [{ plugin: GENEX, text: reason }] };
   }
+}
+
+/** A moment Genex itself held back, with why: no step ran. */
+function heldReport(reason: string): HookReport {
+  return { ...EMPTY_REPORT, blocked: { plugin: GENEX, tool: "", reason } };
 }
 
 /** What a checkpoint is asked for: its name, and whether only when something is unsaved. */
@@ -345,7 +356,8 @@ export type ChatTurnScope = { project: string; threadId: string; runId?: string 
 /**
  * Genex's rule for a chat's own turn (never a run's) on a game whose plugins hook the checkpoint:
  * it ends with a checkpoint taken only if something is unsaved. Answers the chat's line: what was
- * saved, with the steps' notes; why it stays unsaved; or null when nothing was taken or said.
+ * saved, with the steps' notes; why it stays unsaved (also when Genex skipped the steps and took
+ * the snapshot of the files on disk alone); or null when nothing was taken or said.
  */
 export async function endOfTurnCheckpoint(
   ctx: HarnessCtx,
@@ -358,6 +370,9 @@ export async function endOfTurnCheckpoint(
   const answer = await takeCheckpoint(ctx, ask);
   if ("skipped" in answer) return null;
   if ("blocked" in answer) return turnNotSaved(answer);
+  // A snapshot Genex took alone carries its hold as a note: the app's work stays unsaved.
+  const alone = answer.notes.map((note) => holdOf(note as HookHeldBy)).find(heldByApp);
+  if (alone) return `${unsavedWhileHeld(alone)} ${MESSAGE.TurnDiskOnly}`;
   return [MESSAGE.TurnSaved, ...notesText(answer)].join(" ");
 }
 
@@ -369,6 +384,19 @@ function turnNotSaved(answer: { blocked: string } & HookHeldBy): string | null {
   const held = holdOf(answer);
   if (!held) return MESSAGE.TurnNotSaved(answer.blocked);
   if (held.hold === HookHold.Plan) return null;
+  return unsavedWhileHeld(held);
+}
+
+/** Genex's own hold, read (`holdOf`): why, and the lock's label. */
+type HeldRead = { hold: HookHold; label: string | null };
+
+/** Whether Genex held a step back for its app (the person, Genex unsure, another holder), not for Plan mode. */
+function heldByApp(held: HeldRead | null): held is HeldRead {
+  return held !== null && held.hold !== HookHold.Plan;
+}
+
+/** Why a turn's work stays unsaved in the app while Genex held its steps back, in the person's words. */
+function unsavedWhileHeld(held: HeldRead): string {
   const app = held.label ?? MESSAGE.TheApp;
   if (held.hold === HookHold.CantTell) return MESSAGE.TurnCantTell(app);
   return held.hold === HookHold.Busy ? MESSAGE.TurnBusy(app) : MESSAGE.TurnWaitsForYou(app);
@@ -384,8 +412,9 @@ function workerOf(worker: HookWorker): HookScope["worker"] {
 }
 
 /**
- * Announces a worker's start before anything of it is written: why it may not start (a plugin's
- * step blocked it), or null when it may.
+ * Announces a worker's start before anything of it is written, and answers null: no step holds a
+ * worker back. Kept for a `workers/pool-start.ts` an agent kept from before, which read a reason
+ * here; the seed's own reads what the steps said (`moment-lines.ts` `workerMomentLines`).
  */
 export async function workerStartHooks(
   ctx: HarnessCtx,
@@ -393,8 +422,8 @@ export async function workerStartHooks(
   scope: HookScope,
   worker: HookWorker,
 ): Promise<string | null> {
-  const report = await fireHooks(ctx, game, HookEvent.WorkerStart, { ...scope, worker: workerOf(worker) });
-  return report.blocked?.reason ?? null;
+  await fireHooks(ctx, game, HookEvent.WorkerStart, { ...scope, worker: workerOf(worker) });
+  return null;
 }
 
 /** Announces a worker's end once its end is written; nothing a step answers changes it. */

@@ -484,18 +484,20 @@ describe("a web page missing its files, at the run's start", () => {
     },
   );
 
+  // Flipped: Genex's own gate refused the chat-launched web Loop ("is not ready for a run: index.html
+  // is missing"), and no run was registered; its lead builds in that very folder, so it reads why.
   it(
-    "a chat-launched web Loop is refused by Genex's own gate whichever launch asked, and a Loop in place is never validated",
+    "a chat-launched web Loop missing its page starts, its lead's first line naming what is missing, and a Loop the gate doesn't reach is never validated",
     TEST_TIMEOUT,
     async () => {
-      const web = await hostOn(Project.GodotGame, { facts: [{ id: "web-game", path: "." }] });
+      const web = await hostOn(Project.GodotGame, { facts: WEB });
       web.rec.handle("game.validate", () => ({ problems: ["index.html is missing"], missing: ["index.html"] }));
-      // An older launch hands the start no typed list: the start asks for it itself.
       const action = { type: "run_start", threadId: web.threadId, run: structuredClone(web.run) };
       await handleRunStart(studioOf(web) as never, action as never, { keepStop: true });
-      const [blocked] = web.appended("run_start_blocked");
-      assert.match(String(blocked?.reason), /is not ready for a run: index\.html is missing/);
-      assert.equal(web.appended("run_registered").length, 0, "no run was registered");
+      assert.deepEqual(web.appended("run_start_blocked"), [], "never refused");
+      assert.equal(web.appended("run_registered").length, 1, "the run started");
+      const [first] = web.prompts();
+      assert.ok(first?.includes(`${web.run.project}'s page is missing index.html.`), String(first));
 
       const godot = await hostOn(Project.GodotGame, { facts: GODOT, turns: [finishes] });
       const start = { type: "run_start", threadId: godot.threadId, run: structuredClone(godot.run) };

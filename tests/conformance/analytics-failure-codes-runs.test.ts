@@ -341,8 +341,8 @@ describe("phase 3 analytics: live_game_shown says why Live gave up", () => {
 /** One record a harness appends, as far as these tests read it. */
 type Appended = { event_type?: string; payload?: Record<string, unknown> };
 
-/** A harness host in memory: `game.list` and `game.validate` answer as given, every append is kept. */
-function memoryHost(game: Record<string, unknown>, missing: unknown = undefined) {
+/** A harness host in memory: `game.list` answers as given, every append is kept. */
+function memoryHost(game: Record<string, unknown>) {
   const appended: Appended[] = [];
   const host = {
     workspace: "/nonexistent",
@@ -351,7 +351,6 @@ function memoryHost(game: Record<string, unknown>, missing: unknown = undefined)
     call: async (method: string, params?: { batch?: Appended[] }): Promise<unknown> => {
       if (method === HostMethod.EventsAppend) appended.push(...(params?.batch ?? []));
       if (method === HostMethod.GameList) return [game];
-      if (method === HostMethod.GameValidate) return { problems: [], missing };
       return null;
     },
   };
@@ -400,12 +399,9 @@ describe("phase 3 analytics: a refused run start says why", () => {
     assert.equal(folder?.refusal, RunStartRefusal.EngineExport);
     assert.match(String(folder?.reason), /exported from a game engine/, "the words stay as they were");
     assert.equal(second?.refusal, RunStartRefusal.RunOwnsThread, JSON.stringify(exported.blocked()));
-
-    const web = memoryHost({ name: "orchard", facts: [{ id: "web-game", path: "." }] }, ["index.html"]);
-    await handleRunStart(web.studio as never, start("run-c", "orchard") as never, { keepStop: true });
-    const [notReady] = web.blocked();
-    assert.equal(notReady?.refusal, RunStartRefusal.WebNotReady);
-    assert.match(String(notReady?.reason), /is not ready for a run: index\.html is missing/);
+    // Flipped: a web game missing its page was refused too (`RunStartRefusal.WebNotReady`); its Loop's
+    // lead reads what is missing as it starts, and no start writes that refusal now
+    // (builtin-gates.test.ts, one-loop-dispatch.test.ts).
   });
 
   it("run_start_refused carries the refusal; a forged one, or none from an older harness, reads as none", () => {

@@ -1,12 +1,14 @@
 /**
- * The words for what Genex's moments held back in a Loop: its start, a lead's turn the run could not
- * wait for (its wrap-up, a Stop), a save point, restore or restart (for the lead), and a pause because
- * the project's app stopped and was held back from coming back, or neither Genex nor the lead could
- * bring it back (worded for the person, never with the app's own error, which only the lead reads).
- * Genex's own hold (Plan mode, the person using an app a lock guards, Genex unable to tell whether
- * they were, something else at work there) is worded for the person from its typed hold and the
- * lock's label, never from its reason, which is written for agents; a plugin's step's block keeps its
- * reason.
+ * The words for what Genex's moments held back in a Loop: a save point, restore or restart, for the
+ * lead (`heldForLead`). Genex's own hold (Plan mode, the person using an app a lock guards, Genex
+ * unable to tell whether they were, something else at work there) is worded from its typed hold and
+ * the lock's label, never from its reason, which is written for agents; a plugin's step's block keeps
+ * its reason.
+ *
+ * The rest is kept for copies of the Loop's modules an agent kept from before, which import it: the
+ * seed holds no start, turn, crash step or way back, and pauses no Loop, so it words none of them
+ * (a held start, a lead's turns held back, a crash step or a way back Genex held, an app that
+ * couldn't be brought back).
  */
 import { type HookHeldBy, HookHold, holdOf } from "../hooks.ts";
 
@@ -111,7 +113,8 @@ export function turnsHeldWords(held: HeldBack): string {
 /**
  * Why a Loop didn't start, for the person: Genex's own hold in their words (which say to start it
  * again, or for a resumed Loop, which stays paused, to press Resume), a plugin's block with its
- * reason and what to do next.
+ * reason and what to do next. Kept for a `director.ts` an agent kept from before: the seed holds no
+ * start back, and what its start found is its lead's first lines.
  */
 export function openStartHeld(blocked: HeldBack, resumed = false): string {
   return heldFor(blocked, resumed ? RESUME_HELD : START_HELD) ?? MESSAGE.StartHeld(blocked.reason, resumed);

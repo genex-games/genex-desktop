@@ -64,8 +64,11 @@ export interface WorkerScope {
   clock: PoolClock;
   /** The artifact its records persist in: a run's pool keeps its own (`runWorkersArtifact`); a chat's, `chat-workers`. */
   artifactId?: string;
-  /** Told when a worker ends, so a run's lead hears of it with the rest of its news. */
-  onEnded?: (record: WorkerRecord) => void;
+  /**
+   * Told when a worker ends, so a run's lead hears of it with the rest of its news: with what the
+   * game's plugins said at its end (`worker.end`), as lines (none from a kept `pool-start.ts`).
+   */
+  onEnded?: (record: WorkerRecord, lines?: readonly string[]) => void;
   /**
    * Chains a git write to the game folder after the lead's own there (an open Loop's save points,
    * restores and close): two at once fight over the game's one index. With none, it runs at once.

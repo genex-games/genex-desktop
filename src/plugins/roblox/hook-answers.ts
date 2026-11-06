@@ -1,22 +1,22 @@
 /**
  * How the Roblox plugin's handlers answer at Genex's moments (`context.hook`): the pure builders of
  * `{block, note, pending, images}` and their words, which the person and the lead read as written.
- * A run (`hook.runId`) and a chat answer by different policies:
+ * Only a restore's save may refuse what asked for it; every other answer informs. A run
+ * (`hook.runId`) and a chat answer by different policies:
  *
  * | Handler at its moment | In a run | In a chat |
  * |---|---|---|
- * | `save-place` at `checkpoint.before` | Studio not connected, or the export failed: block; saved: nothing | a note of what was saved or why not |
+ * | `save-place` at `checkpoint.before` | Studio not connected, or the export failed: a note (the save point holds the scripts only); saved: nothing | a note of what was saved or why not, and the parts left out for size |
  * | `save-place` at `restore.before` | the export failed: block (nothing goes back); others in the place: a note | same |
  * | `load-place` at `restore.after` | loaded: nothing; Studio closed, no export, or a failed load: a note | same |
  * | `studio-state` at `health` | answers: nothing; starting, connecting, silent (a dialog may be open) or unlisted: pending; gone, not open, no place or not set up: block | same |
- * | `studio-crash-note` at `crash` | a note asking the person to reopen Studio | same |
  * | `team-note` at `turn.start` | a note when the others in the place changed | same |
  * | `hero-shots` at `checkpoint.after` | the viewport's picture | nothing |
- * | `open-for-run` at `run.prepare` | Studio connected for the place: nothing (opened now: a note); otherwise block with the step | — |
  * | `studio-activity` as the lock's probe | the person's activity in Studio, the agent's own discounted | same |
  *
  * Helper refusals that say Studio has no way to export a place (`unsupported`) never block: the
- * save point then holds the scripts only, and the note says so.
+ * save point then holds the scripts only, and the note says so. A run's lead is never told of parts
+ * left out for size: no lead can change the host's checkpoint cap, and the host's own report names them.
  */
 import type { HookAnswer, HookContext } from "../../shared/plugin-hooks.ts";
 import { HookEvent } from "../../shared/plugin-hooks.ts";
@@ -88,46 +88,18 @@ export const StudioHealth = {
 } as const;
 export type StudioHealth = (typeof StudioHealth)[keyof typeof StudioHealth];
 
-/** How a run's start found Studio. Never rename a value. */
-export const RunStart = {
-  Ready: "ready",
-  /** Genex opened the place now, and its helper connected. */
-  Opened: "opened",
-  NotSetUp: "not-set-up",
-  NoPlace: "no-place",
-  /** The helper is connected but doesn't answer: a dialog may be open. */
-  Silent: "silent",
-  NotConnected: "not-connected",
-  OpenFailed: "open-failed",
-  Stopped: "stopped",
-} as const;
-export type RunStart = (typeof RunStart)[keyof typeof RunStart];
-
-/** A run's start, read. */
-export type StartRead =
-  | { outcome: Exclude<RunStart, typeof RunStart.Opened | typeof RunStart.OpenFailed | typeof RunStart.NotConnected> }
-  | { outcome: typeof RunStart.Opened; place: string }
-  | { outcome: typeof RunStart.NotConnected; minutes: number }
-  | { outcome: typeof RunStart.OpenFailed; why: string };
-
 /** Names as a note lists them: the first few, then how many more. */
 function names(list: readonly string[]): string {
   const shown = list.slice(0, NAMED).join(", ");
   return list.length > NAMED ? `${shown} and ${list.length - NAMED} more` : shown;
 }
 
-/** A failure's message, ending as a sentence does. */
-function sentence(why: string): string {
-  const text = why.trim();
-  return /[.!?]$/.test(text) ? text : `${text}.`;
-}
-
 /** The words of every answer. The person and the lead read them as written. */
 export const MOMENT_WORDS = {
-  // A run's save point (the lead's `save_point` says "No save point: <reason>").
-  NotConnectedRun:
-    "Roblox Studio isn't connected for this game, so its place couldn't be saved. Open the place in Studio, then save again.",
-  NotSavedRun: (why: string) => `Roblox Studio's place couldn't be saved: ${sentence(why)} Try again in a moment.`,
+  // A run's save point: taken with the scripts, the lead told what its place lacks.
+  NotConnectedRun: "Roblox Studio isn't connected for this game, so this save point holds the scripts only.",
+  NotSavedRun: (why: string) =>
+    `Roblox Studio's place wasn't saved (${why.trim()}), so this save point holds the scripts only.`,
   // A chat's checkpoint.
   NotConnectedChat: "Roblox Studio isn't connected for this game, so this checkpoint holds the scripts only.",
   NotSavedChat: (why: string) =>
@@ -157,18 +129,9 @@ export const MOMENT_WORDS = {
   NotOpen: "Roblox Studio is open, but not with this game's place.",
   NoPlace: "This game isn't linked to a Roblox place. Choose one in the Roblox Studio panel.",
   NotSetUp: "Roblox Studio isn't set up for Genex yet. Finish the steps in the Roblox Studio panel.",
-  // A crash.
-  Crash:
-    "Roblox Studio closed for this game. Reopen it with Open Studio in the Roblox Studio panel; Genex never closes or force-quits Studio.",
   // Team Create.
   Others: (others: readonly string[]) => `Also in this place in Team Create: ${names(others)}.`,
   Alone: "Nobody else is in this place in Team Create now.",
-  // A run's start.
-  Opened: (place: string) => `Opened ${place} in Roblox Studio for the Loop.`,
-  NotConnected: (minutes: number) =>
-    `Roblox Studio didn't connect for this game within ${minutes} minutes. Open its place in Studio, then start again.`,
-  OpenFailed: (why: string) => `Roblox Studio couldn't be opened: ${sentence(why)}`,
-  Stopped: "The run was stopped before Roblox Studio connected.",
 } as const;
 
 /** Whether a moment is part of a run (the runner's save points and restarts), not a chat's. */
@@ -183,17 +146,18 @@ function withNotes(answer: HookAnswer, ...notes: Array<string | undefined>): Hoo
 /** What large parts add to an answer. */
 const leftOut = (large: readonly string[]) => (large.length ? MOMENT_WORDS.LeftOut(large) : undefined);
 
-/** A run's save point: blocked unless the place was saved (or can't ever be exported here). */
+/**
+ * A run's save point: never blocked; a note when the place wasn't saved, so the lead knows the save
+ * point holds the scripts only. Parts left out for size are the host's report, not the lead's.
+ */
 function runSave(read: SaveRead): HookAnswer {
   switch (read.outcome) {
     case PlaceSave.NotConnected:
-      return { block: MOMENT_WORDS.NotConnectedRun };
+      return { note: MOMENT_WORDS.NotConnectedRun };
     case PlaceSave.Failed:
-      return { block: MOMENT_WORDS.NotSavedRun(read.why) };
+      return { note: MOMENT_WORDS.NotSavedRun(read.why) };
     case PlaceSave.Unsupported:
       return { note: MOMENT_WORDS.ScriptsOnly(read.why) };
-    case PlaceSave.Saved:
-      return withNotes({}, leftOut(read.large));
     default:
       return {};
   }
@@ -271,9 +235,6 @@ export function healthAnswer(health: StudioHealth, mac: boolean): HookAnswer {
   }
 }
 
-/** `studio-crash-note`'s answer: the person reopens Studio. Genex never closes or kills it. */
-export const crashAnswer = (): HookAnswer => ({ note: MOMENT_WORDS.Crash });
-
 /** Whether two lists of names hold the same people. */
 const samePeople = (a: readonly string[], b: readonly string[]) =>
   a.length === b.length && [...a].sort().every((name, index) => name === [...b].sort()[index]);
@@ -285,28 +246,6 @@ const samePeople = (a: readonly string[], b: readonly string[]) =>
 export function teamAnswer(others: readonly string[] | null, before: readonly string[] | undefined): HookAnswer {
   if (others === null || samePeople(others, before ?? [])) return {};
   return { note: others.length ? MOMENT_WORDS.Others(others) : MOMENT_WORDS.Alone };
-}
-
-/** `open-for-run`'s answer at a run's start. */
-export function startAnswer(read: StartRead, mac: boolean): HookAnswer {
-  switch (read.outcome) {
-    case RunStart.Ready:
-      return {};
-    case RunStart.Opened:
-      return { note: MOMENT_WORDS.Opened(read.place) };
-    case RunStart.NotSetUp:
-      return { block: MOMENT_WORDS.NotSetUp };
-    case RunStart.NoPlace:
-      return { block: MOMENT_WORDS.NoPlace };
-    case RunStart.Silent:
-      return { block: mac ? `${MOMENT_WORDS.DialogMayBeOpen} ${MOMENT_WORDS.LookHint}` : MOMENT_WORDS.DialogMayBeOpen };
-    case RunStart.NotConnected:
-      return { block: MOMENT_WORDS.NotConnected(read.minutes) };
-    case RunStart.OpenFailed:
-      return { block: MOMENT_WORDS.OpenFailed(read.why) };
-    default:
-      return { block: MOMENT_WORDS.Stopped };
-  }
 }
 
 /** The viewport's picture as a moment's image; nothing when none was taken. */

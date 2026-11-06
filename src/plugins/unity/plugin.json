@@ -1,7 +1,7 @@
 {
   "apiVersion": 3,
   "id": "unity",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "icon": "icon.svg",
   "name": "Unity",
   "publisher": "Genex",
@@ -86,7 +86,7 @@
     {
       "name": "restart-editor",
       "facts": ["unity-project"],
-      "description": "End this game's Unity editor and open its project again, once the user confirms. Use it only when unity-editor calls keep saying Unity's main thread ran nothing (a dialog nobody answered, or the editor hangs) and waiting did not help; to close Unity, call quit-editor instead. While Unity still answers, Genex stops its play and saves its scenes and assets first; a stalled editor can't save, and its unsaved work is lost, so say what will be lost first. In a run with nobody at the computer, Genex does this by itself.",
+      "description": "End this game's Unity editor and open its project again, once the user confirms. Use it only when unity-editor calls keep saying Unity's main thread ran nothing (a dialog nobody answered, or the editor hangs) and waiting did not help; to close Unity, call quit-editor instead. While Unity still answers, Genex stops its play and saves its scenes and assets first; a stalled editor can't save, and its unsaved work is lost, so say what will be lost first. Genex never restarts Unity by itself: the user confirms each restart.",
       "parameters": {
         "type": "object",
         "properties": {}
@@ -145,7 +145,7 @@
       "name": "reopen-editor",
       "audience": "harness",
       "needs": ["editor"],
-      "description": "For Genex only: opens this game's Unity project again after a restore that closed it, or after a failed health check, ending what is left of a stalled editor first.",
+      "description": "For Genex only: opens this game's Unity project again after a restore that closed it.",
       "parameters": {
         "type": "object",
         "properties": {}
@@ -161,19 +161,9 @@
       }
     },
     {
-      "name": "open-for-run",
-      "audience": "harness",
-      "needs": ["editor"],
-      "description": "For Genex only: at a run's start, makes sure this game's Unity project is set up, open and answering.",
-      "parameters": {
-        "type": "object",
-        "properties": {}
-      }
-    },
-    {
       "name": "after-run",
       "audience": "harness",
-      "description": "For Genex only: at a run's end, starts the idle time of a Unity editor Genex opened for the run, after which Genex may close it.",
+      "description": "For Genex only: at a run's end, starts the idle time of a Unity editor Genex's agent opened, after which Genex may close it.",
       "parameters": {
         "type": "object",
         "properties": {}
@@ -402,11 +392,6 @@
       "facts": ["unity-project"]
     },
     {
-      "on": "run.prepare",
-      "tool": "open-for-run",
-      "facts": ["unity-project"]
-    },
-    {
       "on": "run.end",
       "tool": "after-run",
       "facts": ["unity-project"]
@@ -439,11 +424,6 @@
     {
       "on": "health",
       "tool": "editor-state",
-      "facts": ["unity-project"]
-    },
-    {
-      "on": "crash",
-      "tool": "reopen-editor",
       "facts": ["unity-project"]
     }
   ],

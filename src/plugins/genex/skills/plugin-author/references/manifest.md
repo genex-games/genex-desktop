@@ -45,9 +45,11 @@ manifest requires may be empty). `plugin_check` names the first thing Genex refu
   (never the home folder, `~/Library` or `~/Documents` themselves).
 - `hooks` (API 3): harness tools Genex runs at its moments, `{on, tool}`: `run.prepare`, `run.end`,
   `turn.start`, `turn.end`, `checkpoint.before`, `checkpoint.after`, `restore.before`,
-  `restore.after`, `worker.start`, `worker.end`, `tool.before`, `tool.after`, `health`, `crash`,
-  `finish`. A handler answers `{}`, `{note}`, `{block}` (stops what blocks, a note elsewhere),
-  `{pending}` or `{images}`.
+  `restore.after`, `worker.start`, `worker.end`, `tool.before`, `tool.after`, `health` and
+  `finish` (a `crash` hook still loads, but Genex never runs it). A handler answers `{}`, `{note}`,
+  `{block}`, `{pending}` or `{images}`. A step only informs: a `{block}` refuses just the call that
+  asked for its moment (`restore.before`, `tool.before`, `finish`) and is a note the lead reads
+  anywhere else. No step opens or reopens the engine's app: the lead does, with an agent tool.
 - `observers` (API 3): pictures Genex captures of a game, `{id, facts, tool, live?, label?}`,
   the tool a harness tool answering `{images}` (base64 PNG); `"live": "stills"` shows them in Live,
   and `label` names that view's tab when a folder has more than one view (else the plugin's name).
@@ -118,9 +120,10 @@ Write `genex-plugins/sketch/plugin.json`:
     },
     {
       "name": "open-editor",
-      "audience": "harness",
-      "description": "Open this project in the running Sketch editor before a run; the run waits for the person when the editor is closed.",
-      "parameters": { "type": "object", "properties": {} }
+      "description": "Open this project in the running Sketch editor. When the editor isn't running, ask the person to start Sketch, then call this again.",
+      "parameters": { "type": "object", "properties": {} },
+      "facts": ["sketch-project"],
+      "needs": ["sketch-editor"]
     },
     {
       "name": "save-scenes",
@@ -145,12 +148,6 @@ Write `genex-plugins/sketch/plugin.json`:
       "audience": "harness",
       "description": "Whether the Sketch editor still answers.",
       "parameters": { "type": "object", "properties": {} }
-    },
-    {
-      "name": "reopen-editor",
-      "audience": "harness",
-      "description": "After a crash, open this project in the Sketch editor again if the editor still runs; else say the person must reopen it.",
-      "parameters": { "type": "object", "properties": {} }
     }
   ],
   "skills": [
@@ -168,12 +165,10 @@ Write `genex-plugins/sketch/plugin.json`:
   "locks": [{ "id": "sketch-editor", "label": "Sketch editor", "per": "project", "personFirst": "editor-state" }],
   "folders": [{ "path": "~/Library/Application Support/SketchEngine", "why": "Sketch's settings and caches" }],
   "hooks": [
-    { "on": "run.prepare", "tool": "open-editor" },
     { "on": "checkpoint.before", "tool": "save-scenes" },
     { "on": "checkpoint.after", "tool": "capture" },
     { "on": "restore.after", "tool": "reload-scenes" },
-    { "on": "health", "tool": "check-editor" },
-    { "on": "crash", "tool": "reopen-editor" }
+    { "on": "health", "tool": "check-editor" }
   ],
   "observers": [{ "id": "viewport", "facts": ["sketch-project"], "tool": "capture", "live": "stills" }],
   "workspace": { "ignore": ["Cache/"], "copySkip": ["Cache/", "Exports/"] },

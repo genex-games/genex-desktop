@@ -347,8 +347,9 @@ export async function launchFromIntake(
     });
   }
   await startWebIfPending(host, project, games);
-  // What the folder itself refuses (loopRunRefusal): a page that cannot load, a game that is
-  // already compiled. Said in chat now, instead of found out at 3am.
+  // What the folder itself refuses (loopRunRefusal): a game that is already compiled. Said in chat
+  // now, instead of found out at 3am. A page missing its files refuses nothing: the Loop's lead
+  // reads that as it starts, and builds them.
   const readiness = await host.call(HostMethod.GameValidate, { project }).catch(() => null);
   const refusal = loopRunRefusal(
     games.find((g) => g.name === project) ?? null,

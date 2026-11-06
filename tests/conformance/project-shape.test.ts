@@ -27,6 +27,8 @@ import { servedKey } from "../../src/main/core/page-report.ts";
 import { ensureRepo, git } from "../../src/substrate/snapshots.ts";
 import { engineExportRefusal, openOptions, openedWords, suggestedOption } from "../../src/shared/shape-words.ts";
 import { loopRunRefusal } from "../../src/harness-seed/loop/main.ts";
+import { HookEvent } from "../../src/harness-seed/loop/hooks.ts";
+import { gateLines } from "../../src/harness-seed/loop/moment-lines.ts";
 import { servedAfterBuild } from "../../src/main/game-build.ts";
 import { StudioBridge } from "../../src/substrate/engines/studio-bridge.ts";
 import { adoptPickedFolder, inspectPickedFolder } from "../../src/renderer/open-folder.ts";
@@ -1440,7 +1442,9 @@ describe("the Open Game sheet", () => {
     );
   });
 
-  it("refuses a run on a compiled export, and only on what the folder itself cannot do", async () => {
+  // Flipped: a page that couldn't load refused the run too ("is not ready for a run: src/main.ts is
+  // missing"); what it misses is now its Loop's lead's first line, and refuses nothing.
+  it("refuses a run on a compiled export only: a page that cannot load is what its Loop's lead reads first", async () => {
     const { games, base } = await workspaces();
     const godot = path.join(base, "godot-run");
     await mkdir(godot, { recursive: true });
@@ -1454,7 +1458,7 @@ describe("the Open Game sheet", () => {
     assert.match(refusal!, /play it and take screenshots/);
     assert.match(refusal!, /scenes and scripts/);
 
-    // A page that cannot load still refuses, naming what is missing (by the typed list
+    // A page that cannot load refuses nothing: its lead reads what is missing (by the typed list
     // `game.validate` answers).
     const own = await games.adopt(
       await viteFolder(path.join(base, "run-vite")).then(() => path.join(base, "run-vite")),
@@ -1466,10 +1470,9 @@ describe("the Open Game sheet", () => {
     assert.equal(loopRunRefusal(own, plain.problems, plain.missing), null);
     await rm(path.join(own.dir, "src", "main.ts"));
     const broken = await games.validateAt(own.dir);
-    assert.match(
-      loopRunRefusal(own, broken.problems, broken.missing)!,
-      /is not ready for a run: src\/main\.ts is missing/,
-    );
+    assert.equal(loopRunRefusal(own, broken.problems, broken.missing), null);
+    const [line] = gateLines(HookEvent.RunPrepare, { game: own, missing: broken.missing });
+    assert.match(line ?? "", /'s page is missing src\/main\.ts/);
     assert.match(openedWords(own.title, own.shape), /keeps it as it is/);
   });
 });

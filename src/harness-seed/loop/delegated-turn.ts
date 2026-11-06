@@ -34,9 +34,9 @@ import {
   READY_WAIT_MS,
   pendingLine,
   READY_WORDS,
-  turnHeldLine,
   waitReady,
 } from "./hooks.ts";
+import { momentLines } from "./moment-lines.ts";
 import { EngineFailure, StopReason } from "./outage.ts";
 import { HostMethod } from "./host-methods.ts";
 import { EventKind, RunEvent } from "./run-events.ts";
@@ -159,16 +159,15 @@ function stoppedBeforeWork(engine: string): DelegateResult {
 export async function runDelegatedTurn(ctx: HarnessCtx, options: DelegatedOptions): Promise<TurnOutcome> {
   const chat = await readChat(ctx, options);
   const handoff = await placeHandoff(ctx, options, chat);
-  // A plugin of the game may hold the turn back before any engine works on it.
-  const held = await turnStart(ctx, options, handoff);
-  if (held) return held;
+  // What the game's plugins say as the turn starts, its session reads first: nothing holds the turn back.
+  const startNotice = await turnStartNotice(ctx, options, handoff);
   // The chat's own session may run workers for this turn: they stop when it ends, however it ends —
   // unless it launched a Loop, which takes them over (workers/carry.ts).
   try {
     return await withChatWorkers(
       ctx,
       chatWorkersSeat(options, handoff),
-      () => handOver(ctx, options, handoff),
+      () => handOver(ctx, options, handoff, startNotice),
       workersEndOf,
     );
   } finally {
@@ -181,20 +180,27 @@ function workersEndOf(outcome: TurnOutcome): WorkersEnd {
   return outcome.stopped === TurnStop.LaunchRun ? WorkersEnd.Carry : WorkersEnd.Stop;
 }
 
-/** A chat turn's moment for the game as the turn found it: its chat, and the message it answers. Never a run's turn. */
-async function turnMoment(ctx: HarnessCtx, options: DelegatedOptions, handoff: Handoff, on: HookEvent) {
-  if (options.runId) return null;
+/** A chat turn's moment as its game's plugins are told it: its chat, and the message it answers. */
+function turnScope(options: DelegatedOptions, handoff: Handoff): HookScope {
   const turn = options.steer?.messageId ?? options.turnId;
-  const scope: HookScope = { project: handoff.project, threadId: options.threadId, turn };
-  return fireHooks(ctx, handoff.descriptor, on, scope);
+  return { project: handoff.project, threadId: options.threadId, turn };
 }
 
-/** The turn held back by a plugin before any engine worked on it: the chat says why; null when it goes on. */
-async function turnStart(ctx: HarnessCtx, options: DelegatedOptions, handoff: Handoff): Promise<TurnOutcome | null> {
-  const blocked = (await turnMoment(ctx, options, handoff, HookEvent.TurnStart))?.blocked;
-  if (!blocked) return null;
-  await sayInTurn(ctx, options.turnId, turnHeldLine(blocked));
-  return { stopped: TurnStop.Done, round: 0, engine: options.engine };
+/** A chat turn's moment for the game as the turn found it. Never a run's turn. */
+async function turnMoment(ctx: HarnessCtx, options: DelegatedOptions, handoff: Handoff, on: HookEvent) {
+  if (options.runId) return null;
+  return fireHooks(ctx, handoff.descriptor, on, turnScope(options, handoff));
+}
+
+/**
+ * The chat turn's start (`turn.start`), before any engine works on it: what the game's plugins said
+ * (a step's block, Genex's hold among it), as one notice for the turn's session; null when they said
+ * nothing, and for a run's turn. It never ends the turn: the session reads it and decides.
+ */
+async function turnStartNotice(ctx: HarnessCtx, options: DelegatedOptions, handoff: Handoff): Promise<string | null> {
+  if (options.runId) return null;
+  const lines = await momentLines(ctx, handoff.descriptor, HookEvent.TurnStart, turnScope(options, handoff));
+  return lines.length ? lines.join("\n") : null;
 }
 
 /**
@@ -223,8 +229,16 @@ function chatWorkersSeat(options: DelegatedOptions, handoff: Handoff): ChatWorke
   };
 }
 
-/** The turn's ask, handed to its contractor in the folder chosen for it, and what it did reported. */
-async function handOver(ctx: HarnessCtx, options: DelegatedOptions, handoff: Handoff): Promise<TurnOutcome> {
+/**
+ * The turn's ask, handed to its contractor in the folder chosen for it (with Genex's notice of what
+ * the game's plugins said as it started, `startNotice`), and what it did reported.
+ */
+async function handOver(
+  ctx: HarnessCtx,
+  options: DelegatedOptions,
+  handoff: Handoff,
+  startNotice: string | null,
+): Promise<TurnOutcome> {
   // Genex's context, the session's system text on every leg: the folder and the app's language, which
   // no turn changes (chat-session.ts `chatContext`).
   const context = chatContext({ folderLabel: handoff.folderLabel, appLanguage: await appLanguage(ctx) });
@@ -233,7 +247,7 @@ async function handOver(ctx: HarnessCtx, options: DelegatedOptions, handoff: Han
   // A read-only turn is told apart from a build by what it did to the folder's content.
   const before = options.runId ? UNKNOWN_STAMPS : await contentStamps(ctx, handoff.project);
   // How the turn runs: a message the person sends while it works may change it (steer-switch.ts).
-  const seat = await seatOf(ctx, options, handoff, context);
+  const seat = await seatOf(ctx, options, handoff, { context, startNotice });
   let result: DelegateResult;
   try {
     // A Stop while the turn prepared: no builder runs yet for it to abort, so none starts.
@@ -333,10 +347,10 @@ async function kindFirst(ctx: HarnessCtx, seat: Seat, result: DelegateResult, he
 // ── switch: a message sent while the turn works may change how it runs ──
 
 /**
- * How the chat's turn runs now: its options and handoff, Genex's context for its system text, and
- * the message whose settings it follows — the one it answers, or the last that changed them. A
- * switch replaces its options, handoff and message (steer-switch.ts); the legs and the turn's end
- * read them as they are then.
+ * How the chat's turn runs now: its options and handoff, Genex's context for its system text and
+ * its start's notice, and the message whose settings it follows — the one it answers, or the last
+ * that changed them. A switch replaces its options, handoff and message (steer-switch.ts); the legs
+ * and the turn's end read them as they are then.
  */
 interface Seat {
   options: DelegatedOptions;
@@ -354,6 +368,20 @@ interface Seat {
    * session it saves is still the one these made.
    */
   ran?: { engine: string; model?: string };
+  /**
+   * Genex's notice of what the game's plugins said as the turn started (`turnStartNotice`), told on
+   * its first leg a session answered and again to every new session, as the chat so far is; null
+   * when they said nothing.
+   */
+  startNotice: string | null;
+  /** A leg of the turn has answered: from then on only a new session is told the start's notice. */
+  startTold?: boolean;
+}
+
+/** What a turn's seat starts with besides its options and handoff: Genex's context and the start's notice. */
+interface SeatStart {
+  context: string;
+  startNotice: string | null;
 }
 
 /** The engine and model these options run a leg on. */
@@ -363,20 +391,30 @@ const ranOn = (options: DelegatedOptions): { engine: string; model?: string } =>
 });
 
 /**
- * The seat's call: one leg on its settings now, with Genex's context as its system text and, for a
- * leg that starts a new session in a chat that began before it, the chat so far as a notice;
- * remembered as the engine and model its session is on once it answered (a leg cut off before it
- * started made no session).
+ * The seat's call: one leg on its settings now, with Genex's context as its system text and its
+ * notices (`legNotices`); remembered as the engine and model its session is on once it answered (a
+ * leg cut off before it started made no session).
  */
 function seatCall(ctx: HarnessCtx, seat: Seat): SessionCall {
   return async (prompt, resume, images, from) => {
     const on = ranOn(seat.options);
-    const notices = !resume && seat.handoff.history ? [seat.handoff.history] : [];
-    const leg = { prompt, resume, images, from, system: seat.context, notices };
+    const leg = { prompt, resume, images, from, system: seat.context, notices: legNotices(seat, resume) };
     const result = await delegate(ctx, seat.options, seat.handoff, leg);
     seat.ran = on;
+    seat.startTold = true;
     return result;
   };
+}
+
+/**
+ * Genex's notices for one leg: for a leg that starts a new session in a chat that began before it,
+ * the chat so far; and the turn's start notice until a leg has answered, then again to a new session.
+ */
+function legNotices(seat: Seat, resume: string | null): string[] {
+  const newSession = !resume;
+  const history = newSession && seat.handoff.history ? [seat.handoff.history] : [];
+  const startUntold = newSession || !seat.startTold;
+  return seat.startNotice && startUntold ? [...history, seat.startNotice] : history;
 }
 
 /** The turn's options as its session was made: on the engine and model its last leg ran on. */
@@ -390,13 +428,13 @@ function sessionOptions(seat: Seat): DelegatedOptions {
  * The turn's first seat. It takes switches only as the chat's own turn answering a message the
  * dispatch named (`asked`, chat-dispatch.ts): never a run's builder.
  */
-async function seatOf(ctx: HarnessCtx, options: DelegatedOptions, handoff: Handoff, context: string): Promise<Seat> {
+async function seatOf(ctx: HarnessCtx, options: DelegatedOptions, handoff: Handoff, start: SeatStart): Promise<Seat> {
   const asked = options.asked ?? null;
   const switches = asked !== null && Boolean(options.steer) && !options.runId;
   const described = switches ? await ctx.call(HostMethod.EngineDescribe, {}).catch(() => []) : [];
   const taken = switches ? asked : null;
   const engines = Array.isArray(described) ? described : [];
-  return { options, handoff, context, asked: taken, described: engines, firstAsked: taken, ran: ranOn(options) };
+  return { options, handoff, ...start, asked: taken, described: engines, firstAsked: taken, ran: ranOn(options) };
 }
 
 /** The settings a seat runs on, as a switch weighs them. */
@@ -729,8 +767,9 @@ async function readChat(ctx: HarnessCtx, options: DelegatedOptions): Promise<Cha
 }
 
 /**
- * Genex's word after a Loop the person started was held back before its first turn (held-start): it
- * asks for the person's own Loop again, so it may launch one.
+ * Genex's word after a Loop the person started was held back before its first turn, which an older
+ * Genex sent (a message queued before this one may still carry it): it asks for the person's own
+ * Loop again, so it may launch one. No start is held back now: its lead reads what held it.
  */
 const RETRIES_PERSONS_LOOP: MessageOrigin = "loop-held";
 

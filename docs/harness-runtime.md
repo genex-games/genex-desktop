@@ -174,10 +174,11 @@ delegated chat's own session is handed.
 
 Genex's own gates (`loop/builtin-hooks.ts`, `BUILTIN_HOOKS`) run beside the plugins' hooks, each
 registered for a moment and the facts it guards, reading typed fields only. `web.ready` at
-`run.prepare` reaches a web game served at the root and refuses a Loop whose page lacks the files it
-needs to load, by `game.validate`'s `missing` names, in the words it always used (`loopRunRefusal`,
-which still refuses an engine export of any kind); a Godot, Unreal or plugin project is never refused
-for a missing `index.html`; a chat-launched web game's Loop's start asks `game.validate` itself.
+`run.prepare` reaches a web game served at the root: the files its page lacks to load, by
+`game.validate`'s `missing` names, are a line its Loop's lead reads first ("moth's page is missing
+index.html."), never a refusal of the launch (`moment-lines.ts` `gateLines`, which the director's
+start asks for); a Godot, Unreal or plugin project is never told of a missing `index.html`. Only an
+engine export of any kind is refused (`loopRunRefusal`).
 
 The chat's own session reads the person's words as they wrote them (`from: person`), on its first
 turn and every later one; pictures go as image blocks. What it knows of Genex is its system text,
@@ -336,26 +337,29 @@ or an ended boot end it as they end the moments ([Observers](plugins.md#observer
 own web preview (the health check of each served web folder, its page screenshot as the one still) into one `Capture` shape (`observeGame`, bounded by a deadline on
 the caller's clock, which the host is told as `withinMs`; `pickedImages` for a reviewer's prompt;
 `recordCaptures` records the preview's and the lead's proof, the host records the plugins'). The Unreal
-lead's save points and autosaves are checkpoints, its rewinds restores, its rebuilds and crash
-recoveries the restore and crash moments followed by `health` until it is quiet, and it fires
-`run.prepare`, `run.end` and the turn moments; it names no plugin step. A chat's own turn fires
-`turn.start` (a block ends it before any engine works) and `turn.end`, ends with
+lead's save points and autosaves are checkpoints, its rewinds restores, its rebuilds (its `restart`)
+the restore moments followed by `health` until it is quiet, its watch on the editor `health`, and it
+fires `run.prepare`, `run.end` and the turn moments; it names no plugin step and fires no `crash`. A chat's own turn fires
+`turn.start` (what its steps said, a block or Genex's hold among it, is one Genex notice on the
+turn's first leg, `moment-lines.ts` `momentLines`: nothing ends the turn) and `turn.end`, ends with
 `endOfTurnCheckpoint` (`checkpoint.take` only if unsaved) and, after a turn that linked the game to
 an engine project or switched its link, waits on `health` (`waitReady`, up to `READY_WAIT_MS`); any
 other kind change goes on at once. When the app never gets ready (a step blocks, or the cap passes)
 the chat says why once and the same session goes on, told Genex's line with the reason
 (`factsReadyNotice`'s `notReady`, a fact and nothing more): the agent opens, reopens or waits for the
 app itself. Only Genex's
-own hold for the person using the app keeps it from going on. Genex's own hold of that checkpoint or of `turn.start` is said
-in the person's words (`hold`), and Plan mode says nothing; so is Genex's hold of a run's start,
-its lead's turns, a crash's reopen and the way back after it (`loop/director/held-words.ts`). A host call of the moments that fails holds a blocking moment back
-with why (an older host's `UnknownMethod` is no moments at all), unless the chat's or the run's
-Stop ended it: that run ends as stopped, never as held. A crash moment Genex held back rolls
-nothing back (the run halts). A `locks.hold` that fails starts no writer in place. Workers fire `worker.start` before their
-start record (a block starts nothing; a worker refused after it still gets `worker.end`) and
-`worker.end` after their end record, in the pool and the
-director's builders; the director fires `run.prepare` (a block
-closes the run before its first turn), `run.end`, each wake turn's `turn.*` and the lead's own
+own hold for the person using the app keeps it from going on. Genex's own hold of that checkpoint, and in `turn.start`'s
+notice, is in the person's words (`hold`), and Plan mode says nothing of the checkpoint; Genex's hold of a save
+point, rewind or restart a Loop's lead asked for is worded for the lead from its hold too (`loop/director/held-words.ts`
+`heldForLead`). A host call of the moments that fails refuses a blocking moment's call
+with why and is Genex's note at any other moment (an older host's `UnknownMethod` is no moments at
+all), unless the chat's or the run's Stop ended it: a blocking moment's call is refused as stopped,
+any other moment is one no step ran at, and that run ends as stopped, never as held. No Loop fires `crash`. A `locks.hold` that fails starts no writer in place. Workers fire `worker.start` before their
+start record (what its steps said, a block among it, joins `worker_start`'s answer: no step holds a
+worker back; a worker refused after it still gets `worker.end`) and `worker.end` after their end
+record (what its steps said joins the end line a run's lead is woken with), in the pool and the
+director's builders; the director fires `run.prepare` (what its steps said, a block among it, is
+a line of the lead's first message), `run.end`, each wake turn's `turn.*` and the lead's own
 `finish` (a block is the tool's answer; the run goes on). Every one waits on `hooksOn`, so a web
 game's run and chat make no new call. See [Hooks](plugins.md#hooks-genexs-moments).
 
@@ -449,10 +453,13 @@ one git-write queue for its merges and the lead's saves, a worker's end a `worke
 scaffold, contract, preview, ledger or integration worktree: the host reads the game folder for the
 run's files, and after the Loop the chat's own session keeps `run_status` alone
 (`runControls.inPlace`), and starts a new Loop for more work.
-`run.prepare` fires as for any run; a plugin's block closes the Loop before any turn with its reason
-and "Then start the Loop again." (a resumed Loop stays paused, adding no worked time on the app's
-clock through the close's `workedUntil`, and Genex's own hold says to press Resume), keeping
-nothing; so does a Stop while it prepares, and a Stop before it fires no plugin's `run.prepare`. The lead is the chat's own session with `director.inPlace` and the
+Every start is its lead's, fresh or resumed: `run.prepare` fires as for any run, Genex's `web.ready`
+gate looks at the folder, and where a plugin watches the app Genex looks at it once (`health`,
+`director/open/app-look.ts`, the watch's baseline); what they found (a step's note or block, the
+page's missing files, an app that doesn't answer or isn't ready yet) is a line of the lead's first
+message, and nothing holds the start back. A Stop while it prepares keeps nothing (adding no worked
+time on the app's clock through the close's `workedUntil`), and a Stop before it fires no plugin's
+`run.prepare`. The lead is the chat's own session with `director.inPlace` and the
 game folder as `root` (no `cwd`, no `readOnly`; the host's in-place seat), every delegation carrying
 the run's credit cap; its first message is Genex's line that the Loop started, with its goal ([what
 wakes a Loop's lead](#what-wakes-a-loops-lead)). Its tools say the rest: `worker_start` names the
@@ -463,20 +470,19 @@ the director's `note` and `run_status` by name, the six worker tools through the
 `worker_mark used` merges into the game folder, refused over the lead's uncommitted edits of the same
 files) and its own `finish` (`summary`, `proof`): the finish moment, then `checkFinish` on the game
 folder, its review ending `OPEN_CLOSE_MS` before the call's end (no answer when the
-claim's turn ended or a recovery took the folder back meanwhile); a yes or the stopping no closes in
+claim's turn ended meanwhile); a yes or the stopping no closes in
 place inside the call, which answers that the Loop is closing should the close outlast it
 (`closeInPlace`: the pool closed, the last work kept in a checkpoint when the folder changed or a
 plugin saves the app, `run_finished` with `profile`, `landed` as any save point or that checkpoint
 once the Loop ends, never while it is paused, `report.json`), and a Stop or a lost provider pauses it
-as the director's close decides. A close first waits for a way back a recovery already queued, then,
-unless the lead already heard of it (`wentBackUnheard`), keeps nothing over the folder it took back
-and says so; a completed close names a rewind or restart it came before. The wake loop
+as the director's close decides. A close first waits for the git writes already queued (a worker's
+merge, a save point); a completed close names a rewind or restart it came before. The wake loop
 counts the pool's running workers and the run's running jobs for it (`open/active-work.ts`), and
 `run.end` stays the teardown's, which removes no worktree.
 
 The open Loop's turns, as every Loop's (see [What ends a Loop](#what-ends-a-loop)): a turn has no time
 limit, and an outage is waited out on the Loop's clock. A turn that ends with nothing at work (no
-worker's run, no running job, no recovery of the project's app: `hasWorkAtHand`) and nothing to wake
+worker's run, no running job: `hasWorkAtHand`) and nothing to wake
 the lead for pauses the Loop for the person's next word; with something at work the lead rests until it ends, the person speaks or
 asks to finish, or a rewind or restart it asked for has run at the turn's end (`NoteKind.AskDone`):
 nothing asks it what next. The person's finish reaching a resting lead opens its last turn. A lead whose game
@@ -485,7 +491,9 @@ folder another chat's turn holds waits for it until it is free, outside the outa
 session of this attempt worked keeps nothing. `save_point {label, summary, shows?}` is Genex's checkpoint on the git-write
 queue (the plugins' steps around the snapshot; their notes in the answer, their pictures the round's
 thumbnails on the "lead" part (its `facet_iteration` record) and `integration_merge`; the host keeps them as the
-observer's capture); a block or Genex's hold keeps nothing and says why. `shows` names the picture in
+observer's capture); a step's block is a note the save point keeps (the app saved nothing first,
+say), steps Genex skipped while the person used the app leave a snapshot of the files on disk alone,
+said in the answer (`APP_NEWS.notSavedFirst`), and Plan mode keeps nothing and says why. `shows` names the picture in
 the folder that shows the change (a PNG or JPEG really inside it, read before the snapshot): it is
 the round's `shown` picture, apart from the thumbnails; a save point without one is fine, and one naming no readable picture says why. `pause {why}` is for what only the person
 can do (a tool, editor or app the work needs is gone, an install, a permission): it sets
@@ -495,48 +503,35 @@ turn ends, and its acts are refused meanwhile, as below. `rewind {label}` and
 keeps the snapshot its label named when asked; a Stop leaves it unrun, and a line of Genex's tells the
 resumed lead so, `settledAcrossPause`):
 `LoopRun.afterTurn` (`open/between.ts`, which the wake loop awaits; a look at the app the turn started
-settles first, and no recovery starts during it) first autosaves a turn that kept no save point (the
+settles first, and no look starts during it) first autosaves a turn that kept no save point (the
 folder changed, or `onlyIfUnsaved` where a plugin saves the app; never while a writer in place works),
 then restores the save point (`snapshot.restore`, then `waitReady`; Plan mode holds it even where no
 plugin hooks `restore.*`) or fires `restore.before` and `restore.after` with no file changed, both
 waiting while a writer in place works; what came of the rewind or the restart is a line that wakes
-the lead (`NoteKind.AskDone`), and the autosave's, or why there was none, is one told with its next
+the lead (`NoteKind.AskDone`; a restart's with what its steps said, a hold at `restore.after` among
+it), and the autosave's, with what its steps said, or why there was none, is one told with its next
 message (`NoteKind.Folder`, which wakes no one). No judge plays between turns
 (Loop phase 4); no judge plays the game for the lead. `finish` waits for that turn's
 end and for a writer in place. The health
-watch (`open/health.ts`) rides the wake loop's rounds and a turn's, one look at a time beside them
-(never awaited): `health` every `HEALTH_POLL_MS` when hooked, never once the Loop closes or its
-finish is checked; a block says so at once (`NoteKind.AppStopping`, which wakes no one),
-fires `crash` and waits until the app answers (`MAX_REOPENS`), then goes back to the last save point
-there was when it saw the crash (its writers in place stopped first; the lead told as the restore lands;
-a close or a Stop before the restore's turn on the git-write queue takes nothing back; a merge of a
-worker's copy whose turn comes once the Loop pauses or closes lands nothing),
-else hands the app to the lead (`OpenLoop.appDown`): a line with the app's own reason (a C++ build
-error names its file and line) wakes or reaches it (`NoteKind.AppCrashed`), its turn is never cut, no
-recovery starts, `save_point` and `finish` are refused, and a turn's end that heard that line (never
-the wrap-up turn's) keeps nothing and runs the rewind the lead asked for (a restore Genex held pauses
-in its hold's words; one that brings the app back ends there, and says so), then, unless a rewind
-brought it back, Genex's try beside the wake loop (standing for its `restart`): a `health` look
-first, an app that answers or is only busy waited for and never reopened under it, else `crash` once
-more. A clean `health` answer meanwhile (the lead's own Open) gives the app back; a look no step
-answered says nothing. Past `MAX_HANDOFFS` such tries since the lead's last `save_point` (an app that
-answers only to stop again counts on) it pauses the Loop in the person's words, never the app's error,
-and never once the run's wrap-up started (`LoopRun.wrapping`: a try still under way never cuts it, and
-the close keeps the folder as it is)
-(`held-words.ts` `appLostWords`; `OpenLoop.halted`: the lead's own session under way aborted,
-`engine.abort {cwd, lead}`, again each watch round until it ends, as after a Stop; an outage wait ends
-at its next step; no session opens, and `save_point`, `rewind`, `restart`, `finish`, `worker_start` and
-`worker_mark` are refused, as once the Loop closes; the close paused; a Resume starts over). The
-journal keeps whether the app was closed (`OpenJournal.appLost`, from the crash until it is back, so a
-Stop or Genex's hold during the recovery keeps it too): a Resume whose `run.prepare` a plugin's step
-still blocks hands it to the lead again, its tries running `run.prepare` (even once the app answers,
-which alone doesn't give it back then), and one that opens it tells the lead; any other held Resume
-stays paused in its plugin's words. A crash step
-Genex held pauses in its hold's words and goes back nowhere. The recovery runs beside the wake loop (`open.recovering`), counted as work at
-hand (a lone lead rests until it is back): the person's words still wake the lead, `save_point` and
-`finish` are refused meanwhile, the turn's end keeps and restores nothing, and only the way back takes
-the git-write queue. Once the Loop begins to close it stops at its next step (its waits for the app
-too), says nothing and keeps no journal; the teardown waits for it a while (`settleRecovery`). A
+watch (`open/app-look.ts`, which `open/health.ts` passes on for an agent's kept modules) rides the
+wake loop's rounds and a turn's, one look at a time beside them (never awaited): `health` every
+`HEALTH_POLL_MS` when hooked, never while the Loop is paused or closes, its finish is checked or the
+between-turns work runs; the start's own look, and the wait after the lead's `rewind` or `restart`
+(whose line already says whether the app answers), are its baseline (`OpenLoop.appSeen`). It only informs, once per change: a block
+is one line with the plugin's reason (a C++ build error names its file and line), `APP_NEWS.notAnswering`
+as `NoteKind.AppCrashed`, which reaches a working lead at its next step, its turn never cut, and wakes
+a resting one at once, counted in `OpenJournal.crashes` (`run_status`'s `crashes`); an answer a step
+gave after that is `OPEN_NEWS.appAnswers` (`NoteKind.Folder`); a pending step, or a look the host
+failed to ask, says nothing. Genex fires no `crash`, reopens, restarts or compiles nothing by itself,
+takes the folder back only for the lead's `rewind` or the person's Rewind, and pauses no Loop:
+`save_point`, `finish` and the turn's end go on as ever, and what to do about the app is the lead's
+(its plugin's tools, `restart`, `rewind`, `pause`). A merge of a worker's copy whose turn on the
+git-write queue comes once the Loop pauses or closes lands nothing. `OpenLoop.halted` is set by the
+lead's `pause` alone: its session under way is aborted (`engine.abort {cwd, lead}`, again each watch
+round until it ends, as after a Stop), an outage wait ends at its next step, no session opens, and
+`save_point`, `rewind`, `restart`, `finish`, `worker_start` and `worker_mark` are refused, as once the
+Loop closes; the close is paused, and a Resume starts over. A look under way once the Loop begins to
+close says nothing; the teardown waits for it a while (`settleRecovery`). A
 closing Loop's lead hears no more news. What happens while a turn works reaches it at its next step,
 as for every Loop ([what wakes a Loop's lead](#what-wakes-a-loops-lead)).
 
@@ -845,7 +840,7 @@ Windows/Linux.
 A Loop has no clock, one rule for every Loop (`director/wake.ts`, `wake-schedule.ts` `afterTurn`):
 no time limit of Genex's own ends a turn, wakes the lead or closes the run, and a lead's turn is
 delegated with no `timeoutMs`. The lead's `finish` ends it. A lead turn that ends with nothing at work
-(no worker's run, no running job of the run, no recovery of the project's app: `hasWorkAtHand`) and
+(no worker's run, no running job of the run: `hasWorkAtHand`) and
 nothing to wake it for pauses it, as a bare agent's turn ends and waits for the person: a build is the
 whole making of the game, so their next word goes on with it (`director.ts` `closeLeftOpen`; the
 chat's own session holds `resume_run`). Its last message is the summary, with no wrap-up turn after
@@ -869,13 +864,15 @@ stamps the person's ask with it).
 
 One channel, for every Loop (`director/news.ts`): the person's messages on the lead's line, as they
 wrote them, and Genex's own lines of the run's log, each one fact typed by `NoteKind` (a worker or a
-job that ended, the project's app that stopped or came back, a rewind or restart the lead asked for
-that ran, what Genex did with the folder). A worker's line is `worker w1 "Sky" ended: done.`, a job's
+job that ended, a worker's with what the plugins' steps said at its end; the project's app that
+stopped answering, in its plugin's words, or answers again; what the plugins' steps found as a lead's
+turn starts (`turn.start`), which that turn's message carries; a rewind or restart the lead asked for
+that ran; what Genex did with the folder). A worker's line is `worker w1 "Sky" ended: done.`, a job's
 `job j1 "Light bake" (… started by you) failed (exit 3) after 4 min.`: what ended and how, no
 instruction after it. The lead's first message is Genex's line that the Loop started, with its goal
-as the chat's session wrote it into `start_autopilot`, and a line per note the plugins gave at
-`run.prepare`, `from: genex`: the chat's session already holds the person's words, and Genex's
-context is its system text. A resting lead is woken by the person's message at once — the leading unheard messages of one sender joined as written, pictures as
+as the chat's session wrote it into `start_autopilot`, and a line per thing its start found (a note
+or block the plugins gave at `run.prepare`, what `web.ready` found, the app's look), `from: genex`:
+the chat's session already holds the person's words, and Genex's context is its system text. A resting lead is woken by the person's message at once — the leading unheard messages of one sender joined as written, pictures as
 image blocks, `from: person`, Genex's untold lines beside them as a notice — or, with no message
 waiting, by Genex's untold lines alone, `from: genex`: an app that stopped at once, a worker's or a
 job's end `WAKE_DEBOUNCE_MS` after the first of them, a folder line never (`wake-schedule.ts`
@@ -1002,16 +999,6 @@ outage wait or rollback, its goal attempt given back), a pool worker ends with
 `WorkerStopCode.SandboxUnavailable`, and every later `worker_start` on that engine starts nothing and
 tells the lead to do the work itself, naming the other workers' engine when the host reports it
 signed in. A Loop's person is told once on a decision card, with that engine offered for Workers.
-
-### A Loop held back at its start
-
-A new open Loop a plugin's step held back before its first turn (Unreal wouldn't reopen, the
-game's code didn't build) closes with `run_finished.startHeld`; Genex's own holds (the person
-using the app, Plan mode) and a resumed Loop's never set it. The host (`main/core/held-start.ts`)
-then sends the chat's agent why, as the person's last message was sent (engine, model, effort,
-Loop) and marked `MessageOrigin.LoopHeld` so the transcript leaves it out: the agent fixes what
-stopped it and starts the Loop again. Once per message of the person's: a Loop it starts again that
-is held too, or one the person wrote after, waits for them.
 
 ### Automatic resume
 

@@ -1,10 +1,19 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readdir, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { PluginHookContext } from "../../src/plugin-sdk/index.d.ts";
 import { UnityTool } from "../../src/plugins/unity/backend.ts";
-import { closeIdleEditors, IDLE_CLOSE_MS, IDLE_LOOK_MS, IdleLook } from "../../src/plugins/unity/editor-idle.ts";
+import {
+  closeIdleEditors,
+  IDLE_CLOSE_MS,
+  IDLE_LOOK_MS,
+  IdleLook,
+  rememberLaunch,
+  runEnded,
+  runGoesOn,
+  runMarksOnce,
+} from "../../src/plugins/unity/editor-idle.ts";
 import { PIPELINE_VERSION } from "../../src/plugins/unity/pipeline.ts";
 import { HookEvent } from "../../src/shared/plugin-hooks.ts";
 import {
@@ -14,6 +23,7 @@ import {
   look,
   ok,
   ready,
+  realTmp,
   withProject,
 } from "../helpers/unity-backend.ts";
 import { json, type Reply } from "../helpers/unity-editor-stand-in.ts";
@@ -36,14 +46,16 @@ const closingLook = (undo = 5): Reply[] => [
 ];
 
 /**
- * A game with a set-up Unity project and no editor open, on a clock the test moves. `opened` says
- * whether the run's start opens it (Genex's own) or finds it already open (the person's); the
- * editor answers the run's start and then `replies`.
+ * A game with a set-up Unity project and no editor open, on a clock the test moves. The run starts
+ * (Genex's `find-project` at `run.prepare`) and its lead opens Unity with `open-editor`; with
+ * `inRun: false` a chat's agent opens it instead, no run under way (its turn's `find-project`).
+ * `opened` says whether that opens it (Genex's own) or finds it already open (the person's); the
+ * editor answers the open and then `replies`.
  */
-async function ranGame(replies: Reply[], options: { opened?: boolean } & BackendOptions = {}) {
+async function ranGame(replies: Reply[], options: { opened?: boolean; inRun?: boolean } & BackendOptions = {}) {
   const clock = { at: Date.parse("2026-10-21T09:00:00.000Z") };
   const opened = options.opened ?? true;
-  // The run's start: the editor's server ready, a look at its main thread, and it kept ticking.
+  // The lead's open: the editor's server ready, a look at its main thread, and it kept ticking.
   const atStart = [ready(), look(), ok()];
   const backend = await backendOn(["6000.3.10f1"], [...atStart, ...replies], {
     now: () => new Date(clock.at),
@@ -53,7 +65,9 @@ async function ranGame(replies: Reply[], options: { opened?: boolean } & Backend
   if (!opened) await backend.openIn(root);
   const at = (tool: string, hook: PluginHookContext) =>
     backend.call(tool, { project: "lantern", directory: backend.game, hook });
-  assert.deepEqual(await at(UnityTool.OpenForRun, run(HookEvent.RunPrepare)), {});
+  // Flipped: Genex's own open-for-run opened Unity at the run's start; now the run's lead does.
+  await at(UnityTool.FindProject, options.inRun === false ? { on: HookEvent.TurnStart } : run(HookEvent.RunPrepare));
+  await backend.call(UnityTool.OpenEditor);
   assert.equal(backend.launches.length, opened ? 1 : 0);
   const idleDeps = { pipeline: backend.deps, processes: backend.table.env, now: () => new Date(clock.at) };
   /** The backend's half-minute look, `minutes` after now. */
@@ -74,7 +88,7 @@ async function agentSent(storage: string, at: number): Promise<void> {
 }
 
 describe("closing a Unity editor Genex opened for a run", () => {
-  it("closes it once it sat unused for fifteen minutes after the run, saving its assets first", async () => {
+  it("an editor its lead opened is closed idle after the run like one Genex opened: once unused for fifteen minutes, its assets saved first", async () => {
     const game = await ranGame([...idleLook(), ...closingLook()]);
     assert.deepEqual(await game.at(UnityTool.AfterRun, run(HookEvent.RunEnd)), {});
     assert.equal(await game.lookAfter(1), IdleLook.Waits);
@@ -85,7 +99,7 @@ describe("closing a Unity editor Genex opened for a run", () => {
     assert.equal(await game.lookAfter(IDLE_LOOK_MS / MINUTE), undefined, "nothing is left to look at");
   });
 
-  it("never closes an editor that was already open when the run started: it is the person's", async () => {
+  it("never closes an editor that was already open when the run started, its lead's open notwithstanding: it is the person's", async () => {
     const game = await ranGame([], { opened: false });
     assert.deepEqual(await game.at(UnityTool.AfterRun, run(HookEvent.RunEnd)), {});
     assert.equal(await game.lookAfter(60), undefined);
@@ -152,11 +166,107 @@ describe("closing a Unity editor Genex opened for a run", () => {
     for (const pid of quit.table.running()) quit.table.end(pid);
     assert.equal(await quit.lookAfter(1), IdleLook.Forgotten);
 
-    const again = await ranGame([ready(), look(), ok()]);
+    const again = await ranGame(closingLook());
     await again.at(UnityTool.AfterRun, run(HookEvent.RunEnd));
-    assert.deepEqual(await again.at(UnityTool.OpenForRun, run(HookEvent.RunPrepare)), {});
-    assert.equal(again.launches.length, 1, "the second run found it open");
+    // Flipped: Genex's open-for-run found it open; now the second run's start alone says it is in use.
+    await again.at(UnityTool.FindProject, run(HookEvent.RunPrepare));
     assert.equal(await again.lookAfter(60), IdleLook.Waits, "its run goes on");
-    assert.deepEqual(again.sentInLooks(), ["set_autotick"], "only the second run's start asked anything");
+    assert.equal(again.table.running().length, 1);
+    assert.deepEqual(again.sentInLooks(), [], "nothing is asked of an editor a run uses");
+  });
+});
+
+describe("closing a Unity editor: which run it is Genex's for", () => {
+  it("an editor an agent opened with no run under way is the person's: a run that ends later never closes it", async () => {
+    const game = await ranGame([...idleLook(), ...closingLook()], { inRun: false });
+    assert.equal(game.table.running().length, 1, "the chat's agent opened it");
+    await game.at(UnityTool.FindProject, run(HookEvent.RunPrepare));
+    assert.deepEqual(await game.at(UnityTool.AfterRun, run(HookEvent.RunEnd)), {});
+    assert.equal(await game.lookAfter(1), undefined);
+    assert.equal(await game.lookAfter(IDLE_CLOSE_MS / MINUTE), undefined);
+    assert.equal(game.table.running().length, 1, "still open");
+    assert.deepEqual(game.sentInLooks(), [], "it is not even asked");
+  });
+
+  it("a run that never reached its end leaves nothing once Genex starts again: an agent's open with no run under way stays the person's", async () => {
+    const clock = { at: Date.parse("2026-10-21T09:00:00.000Z") };
+    const game = await backendOn(["6000.3.10f1"], [ready(), look(), ok(), ...idleLook(), ...closingLook()], {
+      now: () => new Date(clock.at),
+    });
+    await withProject(game.game, "6000.3.10f1", { "com.unity.pipeline": PIPELINE_VERSION });
+    const at = (tool: string, hook: PluginHookContext) =>
+      game.call(tool, { project: "lantern", directory: game.game, hook });
+    // A run's start marked it under way; Genex quit mid-run, so its run.end never came.
+    await at(UnityTool.FindProject, run(HookEvent.RunPrepare));
+    game.restart();
+    // Genex started again, and a chat's agent opens Unity: no run is under way on the game.
+    await at(UnityTool.FindProject, { on: HookEvent.TurnStart });
+    await game.call(UnityTool.OpenEditor);
+    assert.equal(game.launches.length, 1, "the chat's agent opened it");
+    await at(UnityTool.FindProject, run(HookEvent.RunPrepare));
+    assert.deepEqual(await at(UnityTool.AfterRun, run(HookEvent.RunEnd)), {});
+    const idleDeps = { pipeline: game.deps, processes: game.table.env, now: () => new Date(clock.at) };
+    clock.at += IDLE_CLOSE_MS + MINUTE;
+    assert.equal((await closeIdleEditors(game.storage, idleDeps)).lantern, undefined);
+    assert.equal(game.table.running().length, 1, "still open: it is the person's");
+  });
+
+  it("an editor a new run uses is in use again from its lead's first turn, though its start ran no step (Plan mode)", async () => {
+    const again = await ranGame(closingLook());
+    await again.at(UnityTool.AfterRun, run(HookEvent.RunEnd));
+    await again.at(UnityTool.FindProject, { on: HookEvent.TurnStart, runId: "run-8" });
+    assert.equal(await again.lookAfter(60), IdleLook.Waits, "its run goes on");
+    assert.equal(again.table.running().length, 1);
+    assert.deepEqual(again.sentInLooks(), [], "nothing is asked of an editor a run uses");
+  });
+});
+
+/** Every file and link under `dir`, relative to it, sorted. */
+async function everythingUnder(dir: string): Promise<string[]> {
+  const entries = await readdir(dir, { recursive: true, withFileTypes: true });
+  return entries
+    .filter((entry) => !entry.isDirectory())
+    .map((entry) => path.relative(dir, path.join(entry.parentPath, entry.name)))
+    .sort();
+}
+
+describe("closing a Unity editor: the marks it keeps per game", () => {
+  /** Game ids a call may carry that are no plain folder name: each writes and removes nothing anywhere. */
+  const HOSTILE_GAMES: ReadonlyArray<readonly [string, string]> = [
+    ["a parent folder", ".."],
+    ["a way out", "../outside"],
+    ["a folder in a folder", "a/b"],
+    ["a Windows separator", "a\\b"],
+    ["the folder itself", "."],
+    ["a dotted name", "lantern.json"],
+    ["nothing", ""],
+    ["a name past 100 characters", "x".repeat(101)],
+    ["a line break", "lantern\n"],
+  ];
+
+  it("a game id that is no plain folder name marks, remembers and removes nothing", async () => {
+    const storage = await realTmp("unity-marks-");
+    const outside = await realTmp("unity-marks-outside-");
+    await writeFile(path.join(outside, "keep.json"), "{}");
+    await mkdir(path.join(storage, "launched"), { recursive: true });
+    await writeFile(path.join(storage, "launched", "lantern.json"), JSON.stringify({ root: "/games/lantern/unity" }));
+    const before = await everythingUnder(storage);
+    for (const [why, game] of HOSTILE_GAMES) {
+      await runGoesOn(storage, game, "/games/x/unity");
+      await rememberLaunch(storage, game, "/games/x/unity");
+      await runEnded(storage, game, Date.now(), true);
+      assert.deepEqual(await everythingUnder(storage), before, `${why}: nothing written or removed`);
+    }
+    assert.deepEqual(await everythingUnder(outside), ["keep.json"], "nothing outside the storage");
+  });
+
+  it("forgetting an earlier backend's marks removes a linked runs folder's link, never what it points to", async () => {
+    const storage = await realTmp("unity-marks-");
+    const outside = await realTmp("unity-marks-outside-");
+    await writeFile(path.join(outside, "lantern.json"), "{}");
+    await symlink(outside, path.join(storage, "runs"));
+    await runMarksOnce()(storage);
+    assert.deepEqual(await everythingUnder(outside), ["lantern.json"], "what the link pointed to stays");
+    assert.deepEqual(await everythingUnder(storage), [], "the link is gone");
   });
 });

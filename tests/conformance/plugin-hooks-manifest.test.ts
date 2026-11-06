@@ -7,11 +7,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { HOOK_CALL_MS } from "../../src/main/core/plugin-hooks.ts";
-import {
-  CHECKPOINT_SAVE_MAX_MS,
-  OPEN_FOR_RUN_MAX_MS,
-  RESTORE_SAVE_MAX_MS,
-} from "../../src/plugins/unreal/editor-moments.ts";
+import { CHECKPOINT_SAVE_MAX_MS, RESTORE_SAVE_MAX_MS } from "../../src/plugins/unreal/editor-moments.ts";
 import { HERO_SHOTS_MAX_MS } from "../../src/plugins/unreal/loop-tools.ts";
 import * as robloxMoments from "../../src/plugins/roblox/studio-moments.ts";
 import { CHECK_MAX_MS } from "../../src/plugins/roblox/check-scripts.ts";
@@ -350,13 +346,15 @@ describe("a plugin's hooks, locks, needs and readiness", () => {
     const needing = unreal.tools.filter((t) => t.needs?.includes("editor")).map((t) => t.name);
     assert.deepEqual(needing.sort(), [...UNREAL_EDITOR_STEPS].sort());
     assert.deepEqual(unreal.mcpServers?.find((s) => s.id === "editor")?.needs, ["editor"]);
-    assert.equal(tool("open-for-run")?.audience, "harness");
+    // Flipped: open-for-run, Genex's step that opened Unreal at a run's start, was a harness tool.
+    assert.equal(tool("open-for-run"), undefined, "the lead opens and builds Unreal with open-editor");
     assert.equal(tool("new-game")?.ready, "engine-status");
     const UNREAL_PROJECT = ["unreal-project"];
     assert.deepEqual(
       unreal.hooks,
+      // Flipped: run.prepare opened Unreal (open-for-run) and crash reopened it (reopen-editor):
+      // Genex opens and rebuilds no app by itself; only the lead's rewind or restart reopens it.
       [
-        ["run.prepare", "open-for-run"],
         ["run.prepare", "log-errors"],
         ["checkpoint.before", "save-all"],
         ["checkpoint.before", "log-errors"],
@@ -365,7 +363,6 @@ describe("a plugin's hooks, locks, needs and readiness", () => {
         ["restore.before", "end-editor"],
         ["restore.after", "reopen-editor"],
         ["health", "editor-state"],
-        ["crash", "reopen-editor"],
       ].map(([on, tool]) => ({ on, tool, facts: UNREAL_PROJECT })),
       "its moments, each for Unreal projects only; nothing ends the person's editor when a run ends",
     );
@@ -416,8 +413,9 @@ describe("a plugin's hooks, locks, needs and readiness", () => {
     const ROBLOX_PROJECT = ["roblox-project"];
     assert.deepEqual(
       roblox.hooks,
+      // Flipped: run.prepare opened Studio (open-for-run) and crash asked the person to reopen it
+      // (studio-crash-note): Genex opens no app by itself, and the lead opens Studio with open-studio.
       [
-        { on: "run.prepare", tool: "open-for-run", facts: ROBLOX_PROJECT },
         { on: "turn.start", tool: "team-note", facts: ROBLOX_PROJECT },
         { on: "turn.end", tool: "close-after-publish", facts: ROBLOX_PROJECT },
         { on: "checkpoint.before", tool: "save-place", facts: ROBLOX_PROJECT, messages: true },
@@ -425,7 +423,6 @@ describe("a plugin's hooks, locks, needs and readiness", () => {
         { on: "restore.before", tool: "save-place", facts: ROBLOX_PROJECT },
         { on: "restore.after", tool: "load-place", facts: ROBLOX_PROJECT },
         { on: "health", tool: "studio-state", facts: ROBLOX_PROJECT },
-        { on: "crash", tool: "studio-crash-note", facts: ROBLOX_PROJECT },
         { on: "worker.end", tool: "luau-note", facts: ROBLOX_PROJECT },
         { on: "finish", tool: "luau-finish", facts: ROBLOX_PROJECT },
       ],
@@ -461,22 +458,26 @@ describe("a plugin's hooks, locks, needs and readiness", () => {
       "only what changes or plays the place waits on the person (Roblox's AI tools, inserts and model imports, the load, the play lane and the judges' probes in it); reading, exporting, checking models and sending pictures never do",
     );
     for (const name of [
-      "open-for-run",
       "save-place",
       "hero-shots",
       "load-place",
       "studio-state",
-      "studio-crash-note",
       "team-note",
       "luau-note",
       "luau-finish",
     ])
       assert.equal(roblox.tools.find((t) => t.name === name)?.audience, "harness", `${name} is Genex's only`);
+    // Flipped: both were Genex's own tools at a run's start and after a crash.
+    for (const name of ["open-for-run", "studio-crash-note"])
+      assert.equal(
+        roblox.tools.find((t) => t.name === name),
+        undefined,
+        `${name} is gone`,
+      );
   });
 
   it("gives each Roblox step longer than its slowest path, and the save before a chat message room within the message's wait", () => {
     const longest: Array<[HookEvent, number, string]> = [
-      [HookEvent.RunPrepare, robloxMoments.OPEN_FOR_RUN_MAX_MS, "open-for-run"],
       [HookEvent.TurnStart, robloxMoments.TEAM_NOTE_MAX_MS, "team-note"],
       [HookEvent.CheckpointBefore, robloxMoments.SAVE_PLACE_RUN_MAX_MS, "save-place at a run's save point"],
       [HookEvent.CheckpointAfter, robloxMoments.HERO_SHOTS_MAX_MS, "hero-shots"],
@@ -505,18 +506,10 @@ describe("a plugin's hooks, locks, needs and readiness", () => {
     assert.ok(HOOK_CALL_MS[HookEvent.CheckpointBefore] > CHECKPOINT_SAVE_MAX_MS, "the save answers in its own words");
     assert.ok(HOOK_CALL_MS[HookEvent.CheckpointAfter] > HERO_SHOTS_MAX_MS, "the hero shots answer in their own words");
   });
-
-  it("gives the Unreal plugin's open-for-run longer than its slowest start: a busy wait, a helper update and two opens", () => {
-    assert.ok(
-      HOOK_CALL_MS[HookEvent.RunPrepare] > OPEN_FOR_RUN_MAX_MS,
-      "the step answers in its own words before Genex's ceiling cuts it off",
-    );
-  });
 });
 
 /** The Unreal plugin's tools that work in the open editor, and so wait for its lock. */
 const UNREAL_EDITOR_STEPS = [
-  "open-for-run",
   "save-all",
   "end-editor",
   "reopen-editor",

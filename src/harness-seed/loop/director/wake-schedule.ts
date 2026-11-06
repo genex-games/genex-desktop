@@ -17,15 +17,19 @@ export const NoteKind = {
   WorkerEnded: "worker_ended",
   /** A job of the run (the lead's or a worker's) ended, and not by the agent's own stop. */
   JobEnded: "job_ended",
-  /** The project's app stopped under an open Loop, and what Genex did about it. */
+  /** The project's app stopped answering under an open Loop, in its plugin's words (`open/app-look.ts`): it wakes the lead. */
   AppCrashed: "app_crashed",
-  /** The project's app stopped answering under an open Loop, and Genex is bringing it back: said, never woken for. */
+  /**
+   * The project's app stopped answering and an earlier seed's Genex began to bring it back: said,
+   * never woken for. A journal from then keeps it; the seed writes none now.
+   */
   AppStopping: "app_stopping",
   /** What an open Loop's lead asked for at its turn's end (a rewind, a restart) has run, and how it went. */
   AskDone: "ask_done",
   /**
    * What Genex did with an open Loop's folder outside the lead's turn, or held back: an autosave or
-   * why none, an ask that waits, an ask a pause dropped. Said, never woken for.
+   * why none, an ask that waits, an ask a pause dropped; or what the project's plugins said at one of
+   * Genex's moments (a turn's start), or that the project's app answers again. Said, never woken for.
    */
   Folder: "folder",
 } as const;

@@ -3,8 +3,9 @@
  * as Epic's TemplateDefs.ini describes it, the three C++ plugin templates the New Plugin wizard copies
  * (`Engine/Plugins/Editor/PluginBrowser/Templates/{Advanced,Basic,Blank}`), one engine plugin and one
  * engine module by name, the launcher's install list and the editor app; and the plugin's backend on
- * it, in a Genex game open in the chat, with every launch and host call recorded instead of run.
- * Nothing here reads the real engine.
+ * it, in a Genex game open in the chat, with every launch and host call recorded instead of run,
+ * its tools called as an agent calls them or as Genex does at its moments. Nothing here reads the
+ * real engine.
  */
 import { createHash } from "node:crypto";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
@@ -13,6 +14,7 @@ import { createUnrealBackend, type UnrealBackendDeps } from "../../src/plugins/u
 import { GameEngine } from "../../src/shared/game-engine.ts";
 import { ENGINE_LINKS_FOLDER } from "../../src/shared/plugins.ts";
 import type { LaunchEnv } from "../../src/plugins/unreal/editor-launch.ts";
+import type { PluginHookContext } from "../../src/plugin-sdk/index.d.ts";
 import type { Engine, SetupEnv } from "../../src/plugins/unreal/setup.ts";
 import { type XcodeStatus, XcodeState } from "../../src/plugins/unreal/xcode.ts";
 import { tmpDir } from "./tmp.ts";
@@ -215,5 +217,8 @@ export async function unrealBackendFixture(options: UnrealFixtureOptions = {}) {
   /** Calls one of the backend's tools; a hostile call sends any JSON, whatever the SDK's scalar type says. */
   const call = (name: string, args: Record<string, unknown>) =>
     backend.tool?.(name, args as never, context) ?? Promise.reject(new Error("no tools"));
-  return { root, engine, parent, outside, storage, dir, linked, launches, call };
+  /** Calls one of the backend's harness tools as Genex does at one of its moments (`hook`). */
+  const atMoment = (name: string, hook: PluginHookContext) =>
+    backend.tool?.(name, {}, { ...context, hook }) ?? Promise.reject(new Error("no tools"));
+  return { root, engine, parent, outside, storage, dir, linked, launches, call, atMoment };
 }

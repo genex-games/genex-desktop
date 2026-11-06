@@ -30,7 +30,7 @@ import { studioActivity } from "../../src/shared/studio-activity.ts";
 import { toEntries } from "../../src/renderer/chat-entries.ts";
 import type { EventEnvelope } from "../../src/substrate/types.ts";
 import { SEED_GENERATED } from "../../scripts/gen-harness-types.ts";
-import { linkIsolated } from "../helpers/isolated-import.ts";
+import { callIsolated, linkIsolated } from "../helpers/isolated-import.ts";
 
 async function rig(): Promise<{ seed: string; ws: string; manifest: string; backup: string }> {
   const root = await tmpDir("seed-upgrade-");
@@ -655,5 +655,128 @@ describe("seed upgrade into the archive epoch, over an older install", () => {
         assert.equal(from[name], to[name], `${move.from} re-exports ${name} from ${move.to}`);
       }
     }
+  });
+});
+
+/**
+ * What a probe in an upgraded workspace runs against a kept `health.ts`: its recovery of an app that
+ * stopped, on a Loop with one save point, a host that answers `health` with a block, and no worker
+ * in place. It answers what that recovery did: whether it restored the folder, ended the lead's
+ * session or paused the Loop.
+ */
+const KEPT_RECOVERY_PROBE = `
+import { recoverApp } from "./loop/director/open/health.ts";
+export async function recover() {
+  const calls = [];
+  const stopped = { plugin: "unreal", tool: "editor-state", reason: "Unreal isn't running." };
+  const ctx = {
+    cancelled: false,
+    call: async (method, params) => {
+      calls.push(method);
+      return method === "hooks.fire" && params.on === "health"
+        ? { blocked: stopped, pending: null, notes: [], images: [], ran: ["unreal__editor-state"] }
+        : {};
+    },
+  };
+  const open = {
+    clock: { now: () => 0, sleep: async () => {} },
+    journal: { savePoints: [{ label: "One", summary: "the first room", snapshotId: "snap-1" }], crashes: 0 },
+    gitWrite: (write) => write(),
+    halted: null,
+  };
+  const loopRun = {
+    ctx, open, state: {}, game: { hookEvents: ["health"] }, run: { project: "castle", runId: "run-1" },
+    threadId: "chat-1", projectDir: "/castle", logSeq: 0, note: () => {}, saveJournal: async () => {},
+  };
+  await recoverApp(loopRun, open, stopped.reason);
+  return { restored: calls.includes("snapshot.restore"), aborted: calls.includes("engine.abort"), paused: Boolean(open.halted) };
+}
+`;
+
+/**
+ * An install whose agent edited Loop modules before the seed stopped holding starts, turns and the
+ * project's app back (`fixtures/kept-seed/`, those modules as that seed shipped them): an upgrade
+ * within the archive epoch keeps each, so the harness that boots runs them against this seed's other
+ * modules. It still links: this seed keeps every name they import. Kept apart, the director, its
+ * between-turns work and its wake loop import this seed's watch on the app (`health.ts` passes on
+ * `app-look.ts`'s), and a kept watch, which only a kept caller runs, imports this seed's contract,
+ * words and writers.
+ */
+describe("seed upgrade over Loop modules an agent kept from before", () => {
+  const shipped = path.resolve(fileURLToPath(new URL("../../src/harness-seed", import.meta.url)));
+  /** A hash no seed file has: the copy the earlier seed laid down, which the agent then edited. */
+  const EARLIER_SEED_HASH = "0".repeat(64);
+  const WATCH = "loop/director/open/health.ts";
+  const keptCopy = (rel: string) => readFile(new URL(`../fixtures/kept-seed/${rel}.txt`, import.meta.url), "utf8");
+  /** The agent's copies of `kept`, as the earlier seed shipped them. */
+  const keptCopies = async (kept: readonly string[]) =>
+    Object.fromEntries(await Promise.all(kept.map(async (rel) => [rel, await keptCopy(rel)] as const)));
+
+  /** The upgrade over a workspace whose agent edited the earlier seed's files (`edits`: each one's text). */
+  async function upgradeOver(edits: Record<string, string>): Promise<{ ws: string; report: SeedUpgradeReport }> {
+    const root = await tmpDir("seed-kept-");
+    const { ws, manifest } = await cloneSeededWorkspace(shipped, root);
+    const body = JSON.parse(await readFile(manifest, "utf8")) as { files: Record<string, string> };
+    for (const [rel, text] of Object.entries(edits)) {
+      body.files[rel] = EARLIER_SEED_HASH;
+      await writeFile(path.join(ws, rel), text);
+    }
+    await writeFile(manifest, JSON.stringify(body));
+    const report = await applySeed({
+      seedDir: shipped,
+      workspaceDir: ws,
+      manifestFile: manifest,
+      backupDir: path.join(root, "backup"),
+    });
+    const kept = Object.keys(edits).sort();
+    assert.deepEqual([...report.kept].sort(), kept, "the agent's copies are kept");
+    assert.equal(report.archive, undefined, "no archive within the epoch");
+    for (const rel of kept) assert.equal(await readFile(path.join(ws, rel), "utf8"), edits[rel], rel);
+    return { ws, report };
+  }
+
+  /** What the bootstrap does: import the workspace's own main.ts. */
+  const boot = (ws: string) => linkIsolated(path.join(ws, "loop", "main.ts"));
+
+  it("a harness whose agent kept director.ts, between.ts and wake.ts from before still loads against this seed", async () => {
+    const kept = ["loop/director.ts", "loop/director/open/between.ts", "loop/director/wake.ts"];
+    const main = await boot((await upgradeOver(await keptCopies(kept))).ws);
+    assert.equal(main.createStudio, "function");
+  });
+
+  // Flipped: "a harness whose agent kept the app's watch (health.ts) from before still loads against
+  // this seed": the seed's own modules ran the kept watch, whose recovery took the folder back.
+  it("a harness whose agent kept the app's watch (health.ts) from before boots without running it, and the upgrade says so", async () => {
+    // The agent's edit marks that its copy ran.
+    const edited = `${await keptCopy(WATCH)}\nglobalThis.keptWatchRan = true;\n`;
+    const { ws, report } = await upgradeOver({ [WATCH]: edited });
+    const probe = path.join(ws, "probe-boot.mjs");
+    await writeFile(
+      probe,
+      'export async function boot() { const main = await import("./loop/main.ts"); return { main: typeof main.createStudio, watch: globalThis.keptWatchRan === true }; }\n',
+    );
+    assert.deepEqual(
+      await callIsolated(probe, "boot"),
+      { main: "function", watch: false },
+      "the kept watch never runs",
+    );
+    const split = report.moved.find((move) => move.from === WATCH);
+    assert.deepEqual(
+      split && { to: split.to, names: [...split.names].sort(), callers: [...split.callers].sort() },
+      {
+        to: "loop/director/open/app-look.ts",
+        names: ["abortLead", "healthWatch", "settleRecovery"],
+        callers: ["loop/director.ts", "loop/director/news.ts", "loop/director/wake.ts"],
+      },
+      "the agent hears that its edit no longer runs",
+    );
+  });
+
+  it("a kept watch that a kept wake loop still runs links, and its recovery reopens nothing, takes nothing back and pauses nothing", async () => {
+    const { ws } = await upgradeOver(await keptCopies(["loop/director/wake.ts", WATCH]));
+    assert.equal((await boot(ws)).createStudio, "function");
+    const probe = path.join(ws, "probe-recovery.mjs");
+    await writeFile(probe, KEPT_RECOVERY_PROBE);
+    assert.deepEqual(await callIsolated(probe, "recover"), { restored: false, aborted: false, paused: false });
   });
 });

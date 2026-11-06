@@ -32,7 +32,7 @@ const PAUSE_CHARS = 600;
 const WORKER_TOOLS: readonly string[] = Object.values(WorkerTool);
 
 /**
- * The lead's acts on the folder and the Loop: none once Genex paused the Loop, or it is closing. The
+ * The lead's acts on the folder and the Loop: none once the lead paused the Loop, or it is closing. The
  * worker tools that change the folder (a start, a mark that merges) are among them; a worker's status,
  * its words and its stop are not.
  */

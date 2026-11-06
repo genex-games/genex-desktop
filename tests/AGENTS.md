@@ -153,8 +153,9 @@ suites and the source gates in the allowlisted tests.
 
 `harness-ok/` is a minimal harness, `games/` holds code-shape samples, `projects/` holds the
 kinds of project Genex opens, `toy-engine-plugin/` holds a made-up engine's plugin,
-`asset-previews/` holds format samples, `transcripts/` holds recorded provider streams. Keep
-fixtures small and synthetic.
+`asset-previews/` holds format samples, `transcripts/` holds recorded provider streams,
+`kept-seed/` holds Loop modules of an earlier seed as an agent may have kept them (`.txt`, so
+nothing checks them as this tree's code). Keep fixtures small and synthetic.
 
 ## Electron runners (`e2e/`)
 

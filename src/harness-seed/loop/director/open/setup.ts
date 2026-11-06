@@ -7,7 +7,6 @@
  */
 import type { AnyRecord, HarnessCtx, Run } from "../../../types/harness.d.ts";
 import { type FactRef, factsOfGame, type FolderHolds, seenInWindow } from "../../folder-facts.ts";
-import { HookEvent } from "../../hooks.ts";
 import { HostMethod } from "../../host-methods.ts";
 import { modelOn, RoleKey, roleEffort, roleEngine } from "../../model-roles.ts";
 import { folderLabelOf } from "../../workers/identity.ts";
@@ -107,17 +106,9 @@ export function openLoopOf(game: OpenedGame, journal: OpenJournal, clock: OpenCl
     pool: null,
     since: clock.now(),
     healthAt: clock.now(),
+    appSeen: null,
     inTurn: false,
-    recovering: null,
-    recoveries: 0,
-    restores: 0,
-    wentBack: null,
-    wentBackSeq: null,
     healthLook: null,
-    appDown: null,
-    handoffs: 0,
-    appDownSeq: 0,
-    reopenAt: HookEvent.Crash,
   };
 }
 
@@ -153,9 +144,11 @@ function poolSeat(loopRun: LoopRun, open: OpenLoop): RunPoolSeat {
     gitWrite: open.gitWrite,
     // A merge whose turn comes once the Loop closes, stops or pauses lands nothing after its close kept the folder.
     mergeRefused: () => mergeRefusedNow(loopRun),
-    // A worker's end is the lead's news: it wakes a resting lead with the rest.
-    onEnded: (record) => {
-      loopRun.note(RUN_POOL_WORDS.ended(record.id, record.title, record.state), NoteKind.WorkerEnded);
+    // A worker's end is the lead's news, with what the game's plugins said at it: it wakes a resting
+    // lead with the rest.
+    onEnded: (record, lines = []) => {
+      const ended = RUN_POOL_WORDS.ended(record.id, record.title, record.state);
+      loopRun.note([ended, ...lines].join(" "), NoteKind.WorkerEnded);
       tellIfRefused(loopRun, engine, record.stopCode);
     },
   };

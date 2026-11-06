@@ -1,17 +1,17 @@
 /**
  * What the Unity plugin's handlers do at Genex's moments (`context.hook`), over the editor of one
- * game. Git stays Genex's: nothing here snapshots or restores files.
+ * game. Git stays Genex's: nothing here snapshots or restores files, and nothing here opens or ends
+ * the editor by itself: a run's lead opens Unity with `open-editor`, and only a restore ends and
+ * reopens it.
  *
  * | Handler at its moment | In a run (`hook.runId`) | In a chat |
  * |---|---|---|
- * | `save-all` at `checkpoint.before` | Unity not open: nothing; the agent's own play, or the person's while agents may use Unity as they play: stopped, then saved; the person's play otherwise, an editor that can't be asked, a save that fails or an unsaved scene with no name: block | the agent's play: stopped; the person's play: block; anything else it can't save: a note |
- * | `save-all` at `restore.before` | as in a run, but a play is stopped first: the restore closes the editor anyway | same |
+ * | `save-all` at `checkpoint.before` | Unity not open: nothing; the agent's own play, or the person's while agents may use Unity as they play: stopped, then saved; the person's play otherwise, an editor that can't be asked, a save that fails or an unsaved scene with no name: a note that the save point holds the files on disk only | the agent's play: stopped; anything it can't save, the person's play among it: a note that the checkpoint holds the files on disk only |
+ * | `save-all` at `restore.before` | a play is stopped first (the restore closes the editor anyway); an editor that can't be asked, a save that fails or an unsaved scene with no name: block, which keeps the files | same |
  * | `end-editor` at `restore.before` | ends the editor and remembers it did; still running after that: block | same |
- * | `reopen-editor` at `restore.after` | reopens only when `end-editor` closed one for this restore | same |
- * | `reopen-editor` at `crash` | ends what is left of the editor, then opens the project again | same |
+ * | `reopen-editor` at `restore.after` | reopens only when `end-editor` closed one for this restore; at any other moment it does nothing | same |
  * | `editor-state` at `health` | answers: nothing; starting, reloading or busy: pending; not running: block; a main thread that ran nothing for two minutes: block when nobody is at the computer, pending while somebody is (the dialog may be theirs) | same |
- * | `open-for-run` at `run.prepare` | opens Unity and waits, remembering when Genex opened it; a project that is not set up, or an editor that does not answer: block | — |
- * | `after-run` at `run.end` | an editor Genex opened for the run starts its idle time, after which it may be closed (`editor-idle.ts`) | — |
+ * | `after-run` at `run.end` | an editor Genex's agent opened starts its idle time, after which it may be closed (`editor-idle.ts`) | — |
  * | `scene-shots` at `checkpoint.after`, and as the `viewport` observer | the main camera's still as an image; one flat colour (a scene built only when Play starts): no image, a note | nothing: no still taken |
  * | `editor-activity` as the lock's probe | no editor: nobody, nothing unsaved; a play counts only when the agent did not start it (its play kept while it starts and while it is seen running), and not while agents may use Unity as the person plays (said once per game: `wentAhead`); an editor that can't be asked: can't tell, but nobody when it is stalled and the computer was left alone | same |
  */
@@ -25,11 +25,10 @@ import { decodePng } from "../../substrate/png.ts";
 import { agentPlaying, agentPlayStarting, forgetAgentPlay, sawAgentPlay } from "./agent-play.ts";
 import { agentsSetting, firstWentAhead } from "../../substrate/engine-agents.ts";
 import { editorCommand, editorRuns, endEditor, isPlaying, openScenes, saveWork, stopPlaying } from "./editor-life.ts";
-import { runEnded, runGoesOn, rememberLaunch } from "./editor-idle.ts";
-import { launched, type OpenDeps, Opened, type Opening, openProject, usable } from "./editor-open.ts";
-import { editorStatus, PIPELINE_PACKAGE, PipelineProblem } from "./pipeline.ts";
+import { runEnded } from "./editor-idle.ts";
+import { type OpenDeps, Opened, type Opening, openProject, usable } from "./editor-open.ts";
+import { editorStatus, PipelineProblem } from "./pipeline.ts";
 import type { UnityProject } from "./project-folder.ts";
-import { pipelineVersionOf } from "./setup.ts";
 
 /** How long a main thread may run nothing before a health check fails: longer than any import a game's edits cause. */
 export const STALL_GRACE_MS = 2 * MINUTE_MS;
@@ -37,8 +36,6 @@ export const STALL_GRACE_MS = 2 * MINUTE_MS;
 export const AWAY_AFTER_MS = 5 * MINUTE_MS;
 /** How long a moment waits for an editor it reopened: a step is given about a minute. */
 const REOPEN_WAIT_MS = 45 * SECOND_MS;
-/** How long a run's start waits for the editor it opened. */
-const RUN_OPEN_WAIT_MS = 150 * SECOND_MS;
 /** The still a checkpoint and the reviewer get. */
 const STILL = { source: "camera", width: 1280, height: 720 } as const;
 const CAPTURE = "capture_game_view";
@@ -57,6 +54,9 @@ const WORDS = {
   SaveFailed: (why: string) => `Unity couldn't save its work: ${why}`,
   Untitled: (count: number) =>
     `${count === 1 ? "A scene" : `${count} scenes`} with unsaved work in Unity ${count === 1 ? "has" : "have"} never been saved, so Genex can't save ${count === 1 ? "it" : "them"}: save with save_scene and a path under Assets/.`,
+  // A checkpoint is taken either way: these follow the reason the editor's work wasn't saved.
+  SavePointDiskOnly: "This save point holds the files on disk only.",
+  CheckpointDiskOnly: "This checkpoint holds the files on disk only.",
   Saved: (count: number) => `Saved ${count === 1 ? "1 scene" : `${count} scenes`} in Unity.`,
   NotEnded: "Unity couldn't be closed for the restore, so the game's files stay as they are.",
   StillOpening: "Unity is opening the project again and is not ready yet.",
@@ -69,8 +69,6 @@ const WORDS = {
   StallFailed: (minutes: number) =>
     `Unity's main thread has run nothing for ${minutes} minutes: a dialog nobody answered, or the editor hangs.`,
   NoProject: "This game's folder holds no Unity project.",
-  NotSetUp: `This game's Unity project has no Pipeline package (${PIPELINE_PACKAGE}), so agents can't reach its editor: set it up with unity__setup first.`,
-  NotReady: "Unity didn't answer after it was opened, so the run can't work in it.",
   NoEditor: (version: string) => `Unity ${version}, which this project was saved with, isn't installed here.`,
   SetAside: (folder: string) =>
     `Unity's backups of the scenes that were unsaved when it last ended were moved to ${folder}, so that it opens without asking to recover them.`,
@@ -97,7 +95,7 @@ export interface MomentDeps extends OpenDeps {
 /**
  * Whether nobody is at the computer: it was left alone for {@link AWAY_AFTER_MS}. Where that can't
  * be read, somebody may be there. A stalled editor may be behind a dialog the person themselves has
- * open, so only an unattended one is Genex's to end.
+ * open, so only an unattended one fails the health check (its lead is told) or frees the lock.
  */
 async function nobodyThere(deps: MomentDeps): Promise<boolean> {
   const idle = await deps.idleMs().catch(() => undefined);
@@ -131,10 +129,13 @@ async function forgetRecord(moment: Moment, folder: string): Promise<void> {
   if (file) await rm(file, { force: true });
 }
 
-/** Work Genex could not save: a block where the moment must not go on without it, a note in a chat's checkpoint. */
+/**
+ * Work Genex could not save: before a restore a block, which keeps the files rather than lose that
+ * work; at a checkpoint, which is taken either way, a note that it holds the files on disk only.
+ */
 function unsaved(moment: Moment, reason: string): PluginHookAnswer {
-  const strict = inRun(moment) || at(moment, HookEvent.RestoreBefore);
-  return strict ? { block: reason } : { note: reason };
+  if (at(moment, HookEvent.RestoreBefore)) return { block: reason };
+  return { note: `${reason} ${inRun(moment) ? WORDS.SavePointDiskOnly : WORDS.CheckpointDiskOnly}` };
 }
 
 /** Whether a save may end the editor's play: a restore's, the agent's own play, or a run's while agents may use Unity as the person plays. */
@@ -159,8 +160,9 @@ export async function saveAll(moment: Moment, deps: MomentDeps): Promise<PluginH
   const playing = isPlaying(look.result);
   // A restore closes the editor anyway, the agent's own play is its to end, and a run's save point
   // may end the person's while agents may use Unity as they play: the play ends first, so what was
-  // edited before it is saved. Otherwise the person's play is theirs to stop.
-  if (playing && !(await playMayEnd(moment, deps))) return { block: WORDS.Playing };
+  // edited before it is saved. Otherwise the person's play is theirs to stop, and the checkpoint
+  // goes without the scenes.
+  if (playing && !(await playMayEnd(moment, deps))) return unsaved(moment, WORDS.Playing);
   if (playing) await stopPlay(moment, root, deps);
   const saved = await saveWork(root, deps, moment.signal);
   if (saved.trouble) return unsaved(moment, WORDS.SaveFailed(reasonOf(saved.trouble.detail ?? saved.trouble.problem)));
@@ -201,18 +203,15 @@ function reopened(opening: Opening): PluginHookAnswer {
 
 /**
  * `reopen-editor`: after a restore, the editor `end-editor` closed is opened again on the restored
- * files (a restore that closed none opens none); after a failed health check, what is left of the
- * editor is ended first, a stalled one included, and the project opened again.
+ * files (a restore that closed none opens none). At any other moment it does nothing: Genex never
+ * ends or opens the editor by itself, and a stalled one is its lead's to tell the person about.
  */
 export async function reopenEditor(moment: Moment, deps: MomentDeps): Promise<PluginHookAnswer> {
   const { project } = moment;
-  if (!project) return {};
-  if (at(moment, HookEvent.RestoreAfter)) {
-    const closed = await readRecord(moment, Records.Restore);
-    await forgetRecord(moment, Records.Restore);
-    if (closed?.root !== project.root) return {};
-  }
-  if (at(moment, HookEvent.Crash)) await endEditor(project.root, deps);
+  if (!project || !at(moment, HookEvent.RestoreAfter)) return {};
+  const closed = await readRecord(moment, Records.Restore);
+  await forgetRecord(moment, Records.Restore);
+  if (closed?.root !== project.root) return {};
   await forgetRecord(moment, Records.Health);
   return reopened(await openProject(deps, project, openingAt(moment, deps, REOPEN_WAIT_MS)));
 }
@@ -239,27 +238,12 @@ export async function editorState(moment: Moment, deps: MomentDeps): Promise<Plu
   const now = deps.now().getTime();
   const stalledFor = now - (await stalledSince(moment, now));
   if (stalledFor < STALL_GRACE_MS) return { pending: WORDS.StallPending };
-  // The dialog that holds the editor may be the person's own: only an unattended editor is ended.
+  // The dialog that holds the editor may be the person's own: only an unattended editor fails the check.
   if (!(await nobodyThere(deps))) return { pending: WORDS.StallAttended };
   return { block: WORDS.StallFailed(Math.round(stalledFor / MINUTE_MS)) };
 }
 
-/** `open-for-run`: the game's editor open and answering before a run's first turn, or the run told why not. */
-export async function openForRun(moment: Moment, deps: MomentDeps): Promise<PluginHookAnswer> {
-  const { project } = moment;
-  if (!project) return {};
-  if (!(await pipelineVersionOf(project.root).catch(() => undefined))) return { block: WORDS.NotSetUp };
-  const opening = await openProject(deps, project, openingAt(moment, deps, RUN_OPEN_WAIT_MS));
-  // Only an editor Genex opened for a run is ever closed after one (`editor-idle.ts`).
-  if (launched(opening)) await rememberLaunch(moment.storage, moment.game, project.root);
-  else await runGoesOn(moment.storage, moment.game, project.root);
-  if (usable(opening)) return opening.setAside ? { note: WORDS.SetAside(opening.setAside) } : {};
-  if (opening.opened === Opened.NoEditor) return { block: WORDS.NoEditor(opening.version) };
-  if (opening.opened === Opened.Failed) return { block: WORDS.NotReopened(reasonOf(opening.why)) };
-  return { block: WORDS.NotReady };
-}
-
-/** `after-run`: the editor Genex opened for this run starts its idle time, unless the person turned closing off. */
+/** `after-run`: an editor Genex's agent opened starts its idle time, unless the person turned closing off. */
 export async function afterRun(moment: Moment, deps: MomentDeps, closeIdle: boolean): Promise<PluginHookAnswer> {
   await runEnded(moment.storage, moment.game, deps.now().getTime(), closeIdle);
   return {};
@@ -281,7 +265,7 @@ export async function editorActivity(moment: Moment, deps: MomentDeps): Promise<
   const root = moment.project?.root;
   if (!root || !(await editorRuns(root, deps))) return { personActive: false, unsaved: 0 };
   const look = await editorStatus(root, deps.pipeline, { signal: moment.signal });
-  // A stalled editor nobody is at is Genex's to get back; with somebody there, the dialog may be theirs.
+  // A stalled editor nobody is at is nobody's work in hand; with somebody there, the dialog may be theirs.
   if (!look.ok && look.problem === PipelineProblem.Stalled && (await nobodyThere(deps)))
     return { personActive: false, unsaved: 0 };
   if (!look.ok) return {};

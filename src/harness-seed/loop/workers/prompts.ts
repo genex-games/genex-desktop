@@ -100,6 +100,7 @@ export const POOL_WORDS = {
   copyTooLarge: (host: string) =>
     `${host} Start it again with isolation lock (the one writer in place) or as a reader (isolation read).`,
   noCopy: (why: string) => `Not started: Genex could not make the worker's copy: ${why}`,
+  /** Kept for a `pool-start.ts` an agent kept from before: no step of a plugin holds a worker back. */
   startHeld: (why: string) => `Not started: ${why}`,
   unknown: (id: string) => `No worker ${id} in this chat.`,
   none: "No workers yet in this chat.",

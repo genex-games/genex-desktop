@@ -151,14 +151,10 @@ function standInOps(editor: StandInEditor): MomentOps {
       return { saved: saved?.saved !== false, dirty: Array.isArray(saved?.dirty) ? saved.dirty.map(String) : [] };
     },
     end: async () => ({ ended: 1 }),
-    setUp: async () => {},
     reopen: async () => ({ started: true }),
     state: async () => state,
     start: async () => null,
     projectName: async () => "RailYard",
-    updateHelper: async () => ({ from: "0", to: "0", kept: [] }),
-    exported: async () => true,
-    exportReference: async () => ({}),
     restoreClosed: { mark: () => {}, take: () => false },
     mayEndPlay: async () => false,
   };
@@ -269,10 +265,14 @@ describe("an Unreal game's checkpoint", () => {
     assert.match(done.answer, /Shown to the user\.$/);
   });
 
-  it("never saves during a play session, and takes no snapshot then", async () => {
+  // Flipped: a play blocked the checkpoint, and no snapshot was taken.
+  it("never saves during a play session: the snapshot holds the files on disk, and the answer says so", async () => {
     const done = await checkpointWith({ activity: { pie: true, dirty: 3 } });
-    assert.equal(done.snapshots, 0);
-    assert.match(done.answer, /playing/);
+    assert.equal(done.snapshots, 1);
+    assert.match(done.answer, /playing in the Unreal editor, so nothing was saved there/);
+    assert.match(done.answer, /this checkpoint holds the files on disk only/);
+    assert.match(done.answer, /Took snapshot \S+ of the game folder/);
+    assert.doesNotMatch(done.answer, /no snapshot/);
     // The same words end a chat turn's line for the person, so they name no tool.
     assert.match(done.answer, /Stop the play session, then save again\./);
     assert.doesNotMatch(done.answer, /call checkpoint/);
@@ -284,11 +284,15 @@ describe("an Unreal game's checkpoint", () => {
     assert.match(done.answer, /nothing unsaved/);
   });
 
-  it("never saves an editor that can't say what it is doing: the editor waits for a person Genex can't rule out", async () => {
+  // Flipped: no snapshot was taken, and the answer was the lock's refusal.
+  it("never saves an editor that can't say what it is doing, and snapshots the files on disk alone", async () => {
     const done = await checkpointWith({ activity: new Error("The Genex editor helper didn't answer editor_activity") });
     assert.ok(!done.ran.includes(`${UNREAL}__save-all`), done.ran.join(", "));
-    assert.equal(done.snapshots, 0);
-    assert.match(done.answer, /could not tell whether the person is using Unreal/);
+    assert.equal(done.snapshots, 1);
+    assert.match(
+      done.answer,
+      /steps were skipped, since Unreal was not free: its snapshot holds only the files on disk/,
+    );
   });
 
   it("still snapshots what is on disk when the save fails or leaves work unsaved, and says so", async () => {
@@ -318,11 +322,15 @@ describe("an Unreal game's checkpoint", () => {
     }
   });
 
-  it("waits for the person's own play, and saves nothing while they are in it", async () => {
+  // Flipped: nothing was kept while the person played.
+  it("waits for the person's own play, saves nothing in Unreal while they are in it, and snapshots the files on disk", async () => {
     const done = await checkpointWith({ activity: { pie: true, dirty: 3 }, personPlays: true });
     assert.ok(!done.ran.includes(`${UNREAL}__save-all`), done.ran.join(", "));
-    assert.equal(done.snapshots, 0);
-    assert.match(done.answer, /The person is using Unreal/);
+    assert.equal(done.snapshots, 1);
+    assert.match(
+      done.answer,
+      /steps were skipped, since Unreal was not free: its snapshot holds only the files on disk/,
+    );
   });
 });
 

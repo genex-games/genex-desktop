@@ -14,8 +14,8 @@ import path from "node:path";
 import { setImmediate as nextTurn } from "node:timers/promises";
 import { after, before, describe, it } from "node:test";
 import { ChatCheckpoints, CheckpointPhase } from "../../src/main/chat-checkpoints.ts";
-import { HOOK_CALL_MS } from "../../src/main/core/plugin-hooks.ts";
-import { PERSON_FIRST_FRESH_MS, workerHolder } from "../../src/main/core/plugin-locks.ts";
+import { HOOK_CALL_MS, HOOK_LOCK_WAIT_MS } from "../../src/main/core/plugin-hooks.ts";
+import { PERSON_FIRST_FRESH_MS, PERSON_FIRST_POLL_MS, workerHolder } from "../../src/main/core/plugin-locks.ts";
 import { PluginToolService } from "../../src/main/core/plugin-tools.ts";
 import { CustomEvent, customEventData } from "../../src/shared/custom-events.ts";
 import { EventKind, type EventData, SnapshotScope } from "../../src/shared/event-log.ts";
@@ -60,7 +60,7 @@ type Api = Record<string, (input: unknown) => Promise<unknown>>;
 /** What `checkpoint.take` answers. */
 type Checkpoint = {
   snapshot?: { snapshot_id: string; scope: string; git: { game?: string }; reason: string };
-  notes?: Array<{ plugin: string; text: string }>;
+  notes?: Array<{ plugin: string; text: string; hold?: string; label?: string }>;
   images?: Array<{ name: string }>;
   blocked?: string;
   hold?: string;
@@ -193,16 +193,25 @@ describe("Genex's moments in a real core", () => {
     assert.deepEqual(lite.core.locks.holders(), [], "the checkpoint let its locks go");
   });
 
-  it("a step's block stops the checkpoint: no snapshot, and the reason comes back", async () => {
-    const before = lite.core.snapshotIndex.all().length;
+  // Flipped: a checkpoint.before step's block, or a step that failed there, stopped the checkpoint
+  // and no snapshot was taken. A block refuses only a call that asked for its moment; a checkpoint's
+  // is a note, and the snapshot is taken.
+  it("a step's block before a checkpoint is a note: the snapshot is still taken, and the reason comes back", async () => {
     await hk.script({ "checkpoint.before:save": { block: "The desk is playing." } });
     const blocked = await take();
-    assert.equal(blocked.blocked, "The desk is playing.");
-    assert.deepEqual(await steps(), ["checkpoint.before:save"], "the steps after the block never ran");
+    assert.ok(blocked.snapshot, JSON.stringify(blocked));
+    assert.ok(lite.core.snapshotIndex.get(blocked.snapshot.snapshot_id));
+    assert.deepEqual(blocked.notes, [{ plugin: HOOK_PLUGIN, text: "The desk is playing." }]);
+    assert.deepEqual(
+      await steps(),
+      ["checkpoint.before:save", "checkpoint.before:flush", "checkpoint.after:shot"],
+      "every step ran",
+    );
     await hk.script({ "checkpoint.before:flush": { throws: "the drawer is stuck" } });
     const thrown = await take();
-    assert.match(String(thrown.blocked), /the drawer is stuck/, "a step that fails stops the checkpoint too");
-    assert.equal(lite.core.snapshotIndex.all().length, before, "no snapshot was taken");
+    assert.ok(thrown.snapshot, "a step that fails stops no checkpoint either");
+    assert.ok(lite.core.snapshotIndex.get(thrown.snapshot.snapshot_id));
+    assert.match(String(thrown.notes?.[0]?.text), /the drawer is stuck/);
     await hk.script({ "checkpoint.after:shot": { block: "Too dark to see." } });
     const late = await take();
     assert.ok(late.snapshot, "a block after the snapshot cannot undo it");
@@ -970,7 +979,8 @@ describe("Genex's moments in a real core", () => {
     }
   });
 
-  it("a chat's checkpoint passes the lock its own worker writing in place holds; one for no chat waits for it", async () => {
+  // Flipped: the checkpoint for no chat answered `blocked` with the hold, and took no snapshot.
+  it("a chat's checkpoint passes the lock its own worker writing in place holds; one for no chat waits for it, then takes the snapshot alone and says why", async () => {
     const writer = { project: DESK, threadId, holder: { id: "w2", title: "Polish" } };
     assert.deepEqual(await call(HostMethod.LocksHold, writer), { held: true, labels: [DESK_LABEL] });
     try {
@@ -979,9 +989,16 @@ describe("Genex's moments in a real core", () => {
       const own = await take();
       assert.ok(own.snapshot, JSON.stringify(own));
       assert.deepEqual(await steps(), ["checkpoint.before:save", "checkpoint.before:flush", "checkpoint.after:shot"]);
+      await hk.script({});
       const other = await take({ threadId: undefined });
-      assert.equal(other.hold, HookHold.Busy, "a checkpoint for no chat waits for the worker, then says why");
-      assert.match(String(other.blocked), /Polish/);
+      assert.ok(other.snapshot, JSON.stringify(other));
+      assert.ok(lite.core.snapshotIndex.get(other.snapshot.snapshot_id));
+      const [note, ...more] = other.notes ?? [];
+      assert.equal(note?.hold, HookHold.Busy, "a checkpoint for no chat waits for the worker, then says why");
+      assert.equal(note?.label, DESK_LABEL);
+      assert.match(String(note?.text), /files on disk/);
+      assert.deepEqual(more, []);
+      assert.deepEqual(await steps(), [], "no step ran for it");
     } finally {
       await call(HostMethod.LocksRelease, writer);
     }
@@ -1044,15 +1061,28 @@ describe("Genex's moments in a real core", () => {
     assert.deepEqual(before?.args, {});
   });
 
-  it("a planning chat's moments that write wait for the plan; reads and the person's Rewind do not", async () => {
+  // Flipped: a run's start in a planning chat was held back (`blocked`, Plan mode). It answers no
+  // call: its steps that write are skipped, with Genex's typed note, and the Loop's lead plans.
+  it("a planning chat's checkpoint and restart wait for the plan; its other moments that write run no step, with Genex's typed note; reads run", async () => {
     await lite.core.setPermissionMode(threadId, PermissionMode.Plan);
     try {
       await hk.script({});
       const before = lite.core.snapshotIndex.all().length;
       assert.match(String((await take()).blocked), /Plan mode/);
       assert.equal(lite.core.snapshotIndex.all().length, before);
-      const prepare = await fire({ on: HookEvent.RunPrepare });
-      assert.match(String(prepare.blocked?.reason), /Plan mode/);
+      const restart = await fire({ on: HookEvent.RestoreBefore });
+      assert.match(String(restart.blocked?.reason), /Plan mode/);
+      assert.equal(restart.blocked?.hold, HookHold.Plan, "the restart is refused, typed");
+      for (const on of [HookEvent.RunPrepare, HookEvent.RestoreAfter]) {
+        const skipped = await fire({ on });
+        assert.equal(skipped.blocked, null, `${on} is never held`);
+        assert.deepEqual(skipped.ran, [], `${on} ran no step`);
+        assert.deepEqual(
+          skipped.notes.map((note) => [note.plugin, note.hold]),
+          [["@genex", HookHold.Plan]],
+          `${on} says why, typed`,
+        );
+      }
       assert.deepEqual(await hk.trail(), [], "nothing that writes ran");
       const health = await fire({ on: HookEvent.Health });
       assert.deepEqual(health.ran, [`${HOOK_PLUGIN}__check`, `${HOOK_PLUGIN}__tidy`]);
@@ -1132,14 +1162,24 @@ describe("Genex's moments in a real core", () => {
     }
   });
 
-  it("a run's start waits minutes for the person to finish (Play, a click), says so in the chat, then runs its steps", async () => {
+  // Flipped: a run's start waited up to ten minutes for the person, then ran its steps. Its steps
+  // only inform the lead, whose first turn waits on them: it waits half a minute, then notes it.
+  it("a run's start waits half a minute for the person to finish (Play, a click), says so in the chat, then runs none of its steps, with Genex's typed note", async () => {
     skew += PERSON_FIRST_FRESH_MS;
     const busyForTwoMinutes = Array.from({ length: 24 }, () => ({ personActive: true }));
     await hk.script({ probe: [...busyForTwoMinutes, { personActive: false }] });
     const heard = uiEvents.length;
+    const from = skew;
     const prepare = await fire({ on: HookEvent.RunPrepare });
-    assert.equal(prepare.blocked, null, "the build starts once the person is done");
-    assert.deepEqual(await steps(), ["run.prepare:ready", "run.prepare:tidy"]);
+    const waited = skew - from;
+    assert.equal(prepare.blocked, null, "the build's start is never held");
+    assert.equal(prepare.notes[0]?.hold, HookHold.PersonFirst, "Genex's note carries its hold");
+    assert.equal(prepare.notes[0]?.label, DESK_LABEL);
+    assert.deepEqual(await steps(), [], "no step that needs the desk ran");
+    // The locks' clock also counts the real milliseconds the test took: the test's own share is within a poll.
+    const wait = HOOK_LOCK_WAIT_MS[HookEvent.RunPrepare];
+    assert.ok(waited > wait - PERSON_FIRST_POLL_MS, `it waited for the person: ${waited} ms`);
+    assert.ok(waited < 2 * 60_000, `it gave up before the person was done: ${waited} ms`);
     const waits = uiEvents.slice(heard).filter((event) => event.type === UiEvent.PersonFirst);
     assert.deepEqual(
       waits.map((event) => (event.payload as { waiting: boolean }).waiting),
@@ -1148,7 +1188,9 @@ describe("Genex's moments in a real core", () => {
     );
   });
 
-  it("while the person uses what a moment's steps need, health is pending, a blocking moment is held and any other notes it, each typed", async () => {
+  // Flipped: a run's start was the blocking moment held back here; it notes it now, and a restart's
+  // restore.before (which answers the lead's ask) is held. A checkpoint takes its snapshot alone.
+  it("while the person uses what a moment's steps need, health is pending, a moment that answers a call is held and any other notes it, each typed; a checkpoint takes its snapshot alone", async () => {
     const person = { probe: { personActive: true } };
     const fresh = async () => {
       skew += PERSON_FIRST_FRESH_MS;
@@ -1161,16 +1203,24 @@ describe("Genex's moments in a real core", () => {
     assert.equal(health.pending?.hold, HookHold.PersonFirst, "health's pending carries Genex's hold");
     assert.equal(health.pending?.label, DESK_LABEL);
     await fresh();
-    const prepare = await fire({ on: HookEvent.RunPrepare });
-    assert.equal(prepare.blocked?.hold, HookHold.PersonFirst);
-    assert.equal(prepare.blocked?.label, DESK_LABEL);
-    assert.match(String(prepare.blocked?.reason), /Desk/);
+    const restart = await fire({ on: HookEvent.RestoreBefore });
+    assert.equal(restart.blocked?.hold, HookHold.PersonFirst);
+    assert.equal(restart.blocked?.label, DESK_LABEL);
+    assert.match(String(restart.blocked?.reason), /Desk/);
+    for (const on of [HookEvent.RunPrepare, HookEvent.TurnEnd]) {
+      await fresh();
+      const noted = await fire({ on, turn: "t1" });
+      assert.equal(noted.blocked, null, `${on} is never held`);
+      assert.match(String(noted.notes[0]?.text), /Desk/);
+      assert.equal(noted.notes[0]?.hold, HookHold.PersonFirst, "Genex's note carries its hold");
+      assert.equal(noted.notes[0]?.label, DESK_LABEL);
+    }
     await fresh();
-    const turnEnd = await fire({ on: HookEvent.TurnEnd, turn: "t1" });
-    assert.equal(turnEnd.blocked, null, "a turn's end is never held");
-    assert.match(String(turnEnd.notes[0]?.text), /Desk/);
-    assert.equal(turnEnd.notes[0]?.hold, HookHold.PersonFirst, "Genex's note carries its hold");
-    assert.equal(turnEnd.notes[0]?.label, DESK_LABEL);
+    const alone = await take();
+    assert.ok(alone.snapshot, JSON.stringify(alone));
+    const [note] = alone.notes ?? [];
+    assert.equal(note?.hold, HookHold.PersonFirst, "the snapshot's note carries Genex's hold");
+    assert.equal(note?.label, DESK_LABEL);
     assert.deepEqual(await steps(), [], "no step that needs the desk ran");
 
     const file = path.join(deskDir, "desk.txt");
@@ -1227,6 +1277,8 @@ describe("Genex's moments in a real core", () => {
     const hostile: Array<[string, Record<string, unknown>]> = [
       ["a checkpoint the host takes", { on: HookEvent.CheckpointBefore }],
       ["a tool's moment", { on: HookEvent.ToolBefore }],
+      // Flipped: the harness fired `crash` after a failed health check, so a plugin reopened its app.
+      ["a crash, which nobody fires", { on: HookEvent.Crash }],
       ["an unknown moment", { on: "run.start" }],
       ["a prototype key", { on: "__proto__" }],
       ["a ten-kilobyte label", { on: HookEvent.Health, label: "x".repeat(10_240) }],
@@ -1236,6 +1288,7 @@ describe("Genex's moments in a real core", () => {
     ];
     for (const [name, params] of hostile) await assert.rejects(fire(params), name);
     assert.ok(harnessParamsProblem(HostMethod.HooksFire, { project: DESK, on: HookEvent.CheckpointAfter }));
+    assert.ok(harnessParamsProblem(HostMethod.HooksFire, { project: DESK, on: HookEvent.Crash }));
     assert.ok(
       harnessParamsProblem(HostMethod.HooksFire, {
         project: DESK,

@@ -2,12 +2,12 @@
  * What the Unreal plugin's handlers do at Genex's moments (`context.hook`), over the editor
  * operations `loop-tools.ts` hands them for one game: the editor-closing and opening know-how the
  * Unreal Loop's runner held, now the plugin's. A checkpoint saves the editor's work first (never
- * ending a play session); a restore saves unless Unreal is gone, waiting while a busy editor works,
- * then ends it and reopens it on the restored files; health tells a busy or reopening Unreal from a
- * gone one (gone only after {@link GONE_CHECKS} asks in a row); a run's start opens Unreal, brings
- * an outdated Genex editor helper up to the plugin's while Unreal is closed and has the editor
- * export the template's facts when the project has none. The answers and their words are
- * `hook-answers.ts`'s. Git stays Genex's: nothing here snapshots or restores files.
+ * ending a play session it may not end), and what it couldn't save is a note: the snapshot holds
+ * the files on disk; a restore saves unless Unreal is gone, waiting while a busy editor works, then
+ * ends it, and reopens it on the restored files after; health tells a busy or reopening Unreal from
+ * a gone one (gone only after {@link GONE_CHECKS} asks in a row). Nothing here opens Unreal at a
+ * run's start or after a crash: the lead opens and builds it itself (`open-editor`). The answers and
+ * their words are `hook-answers.ts`'s. Git stays Genex's: nothing here snapshots or restores files.
  */
 import { type HookAnswer, type HookContext, HookEvent } from "../../shared/plugin-hooks.ts";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
@@ -19,6 +19,7 @@ import {
   EditorHealth,
   type HealthRead,
   healthAnswer,
+  helperAnswer,
   inRun,
   MOMENT_WORDS,
   restoreBlock,
@@ -26,8 +27,6 @@ import {
   SaveOutcome,
   saveAnswer,
 } from "./hook-answers.ts";
-import type { HelperUpdate } from "./setup.ts";
-import { HelperState } from "./setup.ts";
 
 /** Unreal is gone only after this many asks in a row, this far apart, find no answer and no editor process. */
 const GONE_CHECKS = 3;
@@ -42,7 +41,7 @@ const BUSY_POLL_MS = 15 * SECOND_MS;
  * answers in its own words within its budget.
  */
 export const MOMENT_ASK_MS = 15 * SECOND_MS;
-/** The longest the editor's own save may take before a restore and at a run's start, where the busy wait leaves it less. */
+/** The longest the editor's own save may take before a restore, where the busy wait leaves it less. */
 export const MOMENT_SAVE_CALL_MS = MINUTE_MS;
 /** The longest the editor's own save may take at a checkpoint, within the checkpoint step's ceiling. */
 export const CHECKPOINT_SAVE_CALL_MS = 90 * SECOND_MS;
@@ -51,15 +50,13 @@ export const PLAY_STOP_WAIT_MS = 15 * SECOND_MS;
 export const PLAY_STOP_POLL_MS = 250;
 /** One ask of where Unreal stands: whether it answers (`ANSWER_CHECK_MS`), then whether its editor process runs (`ps`). */
 const CHECK_TAKES_MS = ANSWER_CHECK_MS + PS_TIMEOUT_MS;
-/** `editor-state`: one such ask, its reopen job and its helper (read from the project's folder). */
-const STATE_TAKES_MS = CHECK_TAKES_MS;
 /** Where Unreal stands (`lifeOf`): up to {@link GONE_CHECKS} asks and the gaps between them. */
 const LIFE_TAKES_MS = GONE_CHECKS * CHECK_TAKES_MS + (GONE_CHECKS - 1) * GONE_CHECK_GAP_MS;
 /** A busy editor waited for (`lifeAfterBusy`): its window, and the last look started within it. */
 const BUSY_TAKES_MS = BUSY_WAIT_MS + LIFE_TAKES_MS;
 /** How long each editor call of a save may take (`MOMENT_ASK_MS`, and the save's own). */
 type SaveLimits = { askMs: number; saveMs: number };
-/** The save's limits before a restore and at a run's start. */
+/** The save's limits before a restore. */
 export const MOMENT_SAVE: SaveLimits = { askMs: MOMENT_ASK_MS, saveMs: MOMENT_SAVE_CALL_MS };
 /** The save's limits at a checkpoint. */
 export const CHECKPOINT_SAVE: SaveLimits = { askMs: MOMENT_ASK_MS, saveMs: CHECKPOINT_SAVE_CALL_MS };
@@ -72,34 +69,8 @@ const saveTakes = ({ askMs, saveMs }: SaveLimits): number =>
 const SAVE_TAKES_MS = saveTakes(MOMENT_SAVE);
 /** The longest `save-all` at a checkpoint: whether Unreal answers, its activity, then the save. */
 export const CHECKPOINT_SAVE_MAX_MS = ANSWER_CHECK_MS + MOMENT_ASK_MS + saveTakes(CHECKPOINT_SAVE);
-/** The reference exports a run's start may ask for (the node reference, the Python names, the project file). */
-const EXPORT_CALLS = 3;
 /** The longest `save-all` before a restore runs: the busy wait, then the save. */
 export const RESTORE_SAVE_MAX_MS = BUSY_TAKES_MS + SAVE_TAKES_MS;
-/** How long a run's start waits for Unreal to open and answer, asking this often. */
-const OPEN_WAIT_MS = 6 * MINUTE_MS;
-const OPEN_POLL_MS = 5 * SECOND_MS;
-/** How long a helper update waits for a closed editor's process to exit, asking this often. */
-const EXIT_WAIT_MS = 60 * SECOND_MS;
-const EXIT_POLL_MS = 2 * SECOND_MS;
-/** The wait for a closed editor's process to exit (`processGone`): its window, a last `ps` and its gap. */
-const EXIT_TAKES_MS = EXIT_WAIT_MS + PS_TIMEOUT_MS + EXIT_POLL_MS;
-/** How long ending the editor or updating its helper may each take. */
-const STEP_TAKES_MS = MINUTE_MS;
-/** How long exporting the template's facts may take: each of its calls within `MOMENT_ASK_MS`. */
-const EXPORT_TAKES_MS = EXPORT_CALLS * MOMENT_ASK_MS;
-/** The wait for a reopened Unreal (`untilOpen`): its window, a last `editor-state` and its gap. */
-const OPEN_WAIT_TAKES_MS = OPEN_WAIT_MS + STATE_TAKES_MS + OPEN_POLL_MS;
-/** The longest wait for Unreal to answer at a run's start: a busy editor, then its reopen. */
-const OPEN_MAX_MS = BUSY_TAKES_MS + OPEN_WAIT_TAKES_MS;
-/**
- * The longest `open-for-run`: where Unreal and its helper stand, Unreal opened, its work saved, the
- * editor ended, its process gone, the helper updated, Unreal opened again and the template's facts
- * exported. Genex's ceiling for a run's start (`HOOK_CALL_MS`) stays above it, so the step always
- * answers in its own words.
- */
-export const OPEN_FOR_RUN_MAX_MS =
-  2 * STATE_TAKES_MS + 2 * OPEN_MAX_MS + SAVE_TAKES_MS + 2 * STEP_TAKES_MS + EXIT_TAKES_MS + EXPORT_TAKES_MS;
 
 /** What the editor's save answered: whether it saved, and what it left unsaved. */
 type Saved = { saved: boolean; dirty: string[] };
@@ -119,26 +90,16 @@ export type MomentOps = {
   mayEndPlay(): Promise<boolean>;
   /** Saves the editor's work (a play session ended first), each editor call within its moment's limit; throws its refusal. */
   save(): Promise<Saved>;
-  /**
-   * Sets the linked project up in this profile when it has no set-up record here (another profile
-   * set it up), quitting Unreal first when that changes its files; throws its refusal.
-   */
-  setUp(): Promise<void>;
   /** Ends the project's editor; throws when it couldn't. */
   end(): Promise<unknown>;
-  /** Starts reopening the game's Unreal in the background, updating an outdated helper while it is closed when asked. */
-  reopen(updateHelper: boolean): Promise<unknown>;
+  /** Starts reopening the game's Unreal in the background, an outdated helper updated while it is closed. */
+  reopen(): Promise<unknown>;
   /** `editor-state`: whether Unreal answers and runs, how reopening goes, and the project's helper. */
   state(): Promise<EditorStateAnswer>;
   /** Where Genex's own start of the project stands; null when no set-up project is linked. */
   start(): Promise<EditorStart | null>;
   /** The project's name, or null without a linked project. */
   projectName(): Promise<string | null>;
-  updateHelper(): Promise<HelperUpdate>;
-  /** Whether the editor exported the template's facts for the project. */
-  exported(): Promise<boolean>;
-  /** Has the editor export the template's facts, each call within `MOMENT_ASK_MS`. */
-  exportReference(): Promise<unknown>;
   /** This game's memory that a restore's `end-editor` closed a running Unreal: set, then taken once by its `reopen-editor`. */
   restoreClosed: { mark(): void; take(): boolean };
 };
@@ -274,22 +235,23 @@ export async function endAtMoment(ops: MomentOps): Promise<HookAnswer> {
 }
 
 /**
- * Whether `reopen-editor` reopens at this moment: always after a crash and after a run's restore
- * (the run works in Unreal), and after any other restore (the person's Rewind among them) only
- * when that restore closed a running Unreal: a closed one stays closed. A restore of a game with no
- * linked project closed nothing, so nothing reopens.
+ * Whether `reopen-editor` reopens at this moment: only after a restore. After a run's restore (the
+ * run works in Unreal) it always does; after any other (the person's Rewind among them) only when
+ * that restore closed a running Unreal: a closed one stays closed. A restore of a game with no
+ * linked project closed nothing, so nothing reopens. Nobody fires `crash` any more, and a step an
+ * older manifest hooks there reopens nothing: the lead opens its app.
  */
 async function reopensAt(ops: MomentOps, hook: HookContext): Promise<boolean> {
-  if (hook.on !== HookEvent.RestoreAfter) return true;
+  if (hook.on !== HookEvent.RestoreAfter) return false;
   const closed = ops.restoreClosed.take();
   return closed || (inRun(hook) && (await linked(ops)));
 }
 
-/** `reopen-editor` after a restore or a crash: starts reopening (health says how it goes); a refusal is a note. */
+/** `reopen-editor` after a restore: starts reopening (health says how it goes); a refusal is a note. */
 export async function reopenAtMoment(ops: MomentOps, hook: HookContext): Promise<HookAnswer> {
   if (!(await reopensAt(ops, hook))) return {};
   try {
-    await ops.reopen(true);
+    await ops.reopen();
     return {};
   } catch (failure) {
     return { note: MOMENT_WORDS.NotReopened(errorMessage(failure)) };
@@ -311,7 +273,7 @@ const OPENED_SINCE: ReadonlySet<EditorHealth> = new Set([EditorHealth.Starting, 
 /**
  * Where Unreal stands for a health check. After a reopen that failed, an editor of the game opened
  * since (by the person, the panel or the agent) that is starting or busy reads so, never as the old
- * failure: a crash step on it would end it while it loads.
+ * failure: the lead would hear that Unreal stopped while it loads.
  */
 async function healthOf(ops: MomentOps): Promise<HealthRead> {
   const state = await ops.state();
@@ -322,123 +284,12 @@ async function healthOf(ops: MomentOps): Promise<HealthRead> {
   return { health: EditorHealth.ReopenFailed, error: state.reopening.error ?? "" };
 }
 
+/** What a run's start tells its lead of the project's helper (`helperAnswer`); nothing when Unreal can't say. */
+export async function helperAtStart(ops: Pick<MomentOps, "state">): Promise<HookAnswer> {
+  return helperAnswer(await ops.state().catch(() => ({ answering: false, running: null, helper: null })));
+}
+
 /** `editor-state` at `health`: quiet while Unreal answers, pending while it may yet, blocked once it can't. */
 export async function healthAtMoment(ops: MomentOps, hook: HookContext): Promise<HookAnswer> {
   return healthAnswer(await healthOf(ops), hook);
-}
-
-/** Waits until Unreal answers (its reopen done), up to {@link OPEN_WAIT_MS}; why it didn't, or null once it does. */
-async function untilOpen(ops: MomentOps): Promise<string | null> {
-  const ends = ops.now() + OPEN_WAIT_MS;
-  while (ops.now() < ends) {
-    const state = await ops.state();
-    // The job's own reason: the step's words already say Unreal couldn't be reopened.
-    if (state.reopening.state === ReopenState.Failed) return state.reopening.error || MOMENT_WORDS.NoReason;
-    const reopened = state.reopening.state === ReopenState.Done || state.reopening.state === ReopenState.Idle;
-    if (state.answering && reopened) return null;
-    if (!(await paused(ops, OPEN_POLL_MS))) return MOMENT_WORDS.Stopped;
-  }
-  return MOMENT_WORDS.OpenTimedOut(OPEN_WAIT_MS / MINUTE_MS);
-}
-
-/**
- * Unreal answers before the run's first turn, or is reopened: a busy one is waited for (and left
- * open, its work unsaved, when it stays busy); one that is gone is reopened and waited for. The
- * reason it couldn't be opened, or null.
- */
-async function ensureOpen(ops: MomentOps): Promise<string | null> {
-  const life = await lifeAfterBusy(ops);
-  if (life === Life.Answers) return null;
-  if (life === Life.Busy) return MOMENT_WORDS.RestoreNotSaved(MOMENT_WORDS.StayedBusy);
-  // A Stop (or Genex's ceiling) ends the step here: nothing is opened after it.
-  if (ops.signal.aborted) return MOMENT_WORDS.StoppedBeforeOpen;
-  try {
-    await ops.reopen(false);
-  } catch (failure) {
-    return MOMENT_WORDS.NotOpened(errorMessage(failure));
-  }
-  const why = await untilOpen(ops);
-  return why === null ? null : MOMENT_WORDS.NotOpened(why);
-}
-
-/** Waits, up to {@link EXIT_WAIT_MS}, until the closed editor's process has exited: its files can't be updated while it runs. */
-async function processGone(ops: MomentOps): Promise<void> {
-  const ends = ops.now() + EXIT_WAIT_MS;
-  while (ops.now() < ends && (await ops.running().catch(() => null)) === true) {
-    if (!(await paused(ops, EXIT_POLL_MS))) return;
-  }
-}
-
-/**
- * The project's Genex editor helper brought up to the plugin's: Unreal saved (a save that fails
- * leaves it open and the helper as it was), closed, its process gone, the update, and Unreal
- * reopened. What the person is told, and why Unreal couldn't be reopened after, if it couldn't. A
- * Stop updates nothing after it, but an Unreal the step closed is still reopened, as a restore's
- * after steps reopen what its before steps closed: a run that ends leaves the editor open.
- */
-async function updateClosed(ops: MomentOps): Promise<{ note: string; reopenFailed: string | null }> {
-  const unsaved = await unsavedWork(ops);
-  const closed = unsaved
-    ? { note: MOMENT_WORDS.HelperNotUpdated(MOMENT_WORDS.KeptOpen(unsaved)), ended: false }
-    : await closedUpdate(ops);
-  if (!ops.signal.aborted) return { note: closed.note, reopenFailed: await ensureOpen(ops) };
-  return { note: closed.ended ? await reopenAfterStop(ops, closed.note) : closed.note, reopenFailed: null };
-}
-
-/** An Unreal the step closed, reopened after a Stop with no helper update and no wait: the note, or why it couldn't start. */
-async function reopenAfterStop(ops: MomentOps, note: string): Promise<string> {
-  try {
-    await ops.reopen(false);
-    return note;
-  } catch (failure) {
-    return MOMENT_WORDS.NotReopened(errorMessage(failure));
-  }
-}
-
-/** Ends Unreal, waits for its process to exit and updates the helper: what the person is told, and whether Unreal was ended. */
-async function closedUpdate(ops: MomentOps): Promise<{ note: string; ended: boolean }> {
-  // A Stop during the save before it: Unreal is neither closed nor updated.
-  if (ops.signal.aborted) return { note: MOMENT_WORDS.StoppedBeforeClose, ended: false };
-  try {
-    await ops.end();
-  } catch (failure) {
-    return { note: MOMENT_WORDS.HelperNotUpdated(errorMessage(failure)), ended: false };
-  }
-  try {
-    await processGone(ops);
-    // A Stop while Unreal closed or its process exited: the helper stays as it was, even if the process still runs.
-    if (ops.signal.aborted) return { note: MOMENT_WORDS.StoppedAfterClose, ended: true };
-    const updated = await ops.updateHelper();
-    return { note: MOMENT_WORDS.HelperUpdated(updated.to), ended: true };
-  } catch (failure) {
-    return { note: MOMENT_WORDS.HelperNotUpdated(errorMessage(failure)), ended: true };
-  }
-}
-
-/**
- * `open-for-run` at a run's start: the linked project set up in this profile (one another profile
- * set up is recorded as it is), Unreal open, with the plugin's Genex editor helper and the
- * template's facts exported. Blocked when Unreal can't be opened or the project has no helper (the
- * Loop can't save or capture it). No snapshot is taken before a helper update: the update replaces
- * only the helper's folder, which the game's history holds.
- */
-export async function openForRun(ops: MomentOps): Promise<HookAnswer> {
-  const notSetUp = await ops.setUp().then(
-    () => null,
-    (failure: unknown) => errorMessage(failure),
-  );
-  if (notSetUp !== null) return { block: MOMENT_WORDS.NotSetUp(notSetUp) };
-  // Unreal answers Genex only through its helper: a project without one is told so before any open.
-  const before = await ops.state().catch(() => null);
-  if (before?.helper === HelperState.Missing) return { block: MOMENT_WORDS.NoHelper };
-  const unopened = await ensureOpen(ops);
-  if (unopened) return { block: unopened };
-  const { helper } = await ops.state();
-  if (helper === HelperState.Missing) return { block: MOMENT_WORDS.NoHelper };
-  const update = helper === HelperState.Outdated ? await updateClosed(ops) : null;
-  if (update?.reopenFailed) return { block: update.reopenFailed, note: update.note };
-  if (update && ops.signal.aborted) return { note: update.note };
-  // A project that never exported its facts has the editor export them once; a failed export is the gate's to live with.
-  if (!(await ops.exported().catch(() => false))) await ops.exportReference().catch(() => undefined);
-  return update ? { note: update.note } : {};
 }

@@ -10,8 +10,9 @@
  * the game's own folder, whose module the open editor has loaded; `run-part` checks it without
  * compiling and hands the queue its code, which the queue copies into the game and hot-reloads.
  * `cpp-status` and `add-cpp-module` (`cpp-tools.ts`) tell the runner whether C++ compiles here and
- * add the game's C++ module. The queue watches the editor for a crash while a part is in it, and
- * after one the runner has `reopen-editor` and `editor-state` (`editor-reopen.ts`) reopen Unreal.
+ * add the game's C++ module. The queue watches the editor for a crash while a part is in it;
+ * `editor-state` (`editor-reopen.ts`) says where Unreal stands, and `reopen-editor` reopens it after
+ * a restore.
  *
  * The Unreal lead's save points and restarts have their own tools beside these
  * ({@link LiveLoopToolName}): `play-check` queues a play of the game with the board's checks (read
@@ -20,9 +21,11 @@
  * `end-editor` ends this project's editor for a cold restore, and `update-helper` updates the
  * project's Genex editor helper while Unreal is closed. And ({@link LeadLoopToolName})
  * `editor-activity` says whether a play session runs and how much is unsaved, before any save, and
- * `hero-shots` takes the level's hero cameras' stills for a save point's thumbnails. Agents in a
- * chat open and quit the game's Unreal themselves with `open-editor` and `quit-editor`
- * (`editor-control.ts`), over the same reopen jobs, and read `editor-status`.
+ * `hero-shots` takes the level's hero cameras' stills for a save point's thumbnails. Agents, a
+ * Loop's lead among them, open and quit the game's Unreal themselves with `open-editor` (which may
+ * build the C++ module first) and `quit-editor` (`editor-control.ts`), over the same reopen jobs,
+ * and read `editor-status`. A lookup (`find-nodes`) has the open editor export the template's facts
+ * a project never exported.
  */
 import { readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
@@ -59,10 +62,10 @@ import {
   CHECKPOINT_SAVE,
   endAtMoment,
   healthAtMoment,
+  helperAtStart,
   MOMENT_ASK_MS,
   MOMENT_SAVE,
   type MomentOps,
-  openForRun,
   PLAY_STOP_POLL_MS,
   PLAY_STOP_WAIT_MS,
   reopenAtMoment,
@@ -231,10 +234,6 @@ export const LeadLoopToolName = {
 } as const;
 export type LeadLoopToolName = (typeof LeadLoopToolName)[keyof typeof LeadLoopToolName];
 
-/** The Unreal plugin's harness tools for Genex's moments only, by their names after `unreal__`. */
-export const MomentToolName = { OpenForRun: "open-for-run" } as const;
-export type MomentToolName = (typeof MomentToolName)[keyof typeof MomentToolName];
-
 /** The most node types one lookup answers. */
 const MAX_FOUND_NODES = 40;
 const BASES: ReadonlySet<string> = new Set(Object.values(BaseClass));
@@ -380,10 +379,10 @@ export type LoopToolsDeps = {
   restart: EditorRestart;
   /**
    * Sets the game's linked project up in this profile when it has no set-up record here (another
-   * profile set it up): the backend's own, which quits Unreal first only when `mayQuit` (else it
-   * refuses while Unreal has the project open); without it nothing is set up.
+   * profile set it up): the backend's own, which quits Unreal first while it has the project open;
+   * without it nothing is set up.
    */
-  setUpLinked?(storage: string, game: string, mayQuit: boolean): Promise<void>;
+  setUpLinked?(storage: string, game: string): Promise<void>;
   /** Starts watching the game's editor for a crash (its log and its process); without it the queue sees none. */
   watchCrash?(storage: string, game: string): Promise<CrashCheck>;
   /** This computer's processes, for ending a crashed editor and its crash reporter; without them none is ended. */
@@ -765,7 +764,6 @@ export function createLoopTools(deps: LoopToolsDeps) {
     ...leadHandlers(set, moments),
     ...ship.handlers,
     ...packageHandlers(deps),
-    [MomentToolName.OpenForRun]: async (_args, context, storage) => openForRun(moments.ops(context, storage)),
     [MotionToolName.Status]: (_args, context, storage) => motion.status(storage, game(context)),
     [MotionToolName.Add]: (_args, context, storage) => motion.add(storage, game(context), context.directory),
     ...controlHandlers(deps, reopen),
@@ -785,12 +783,6 @@ const packageHandlers = (deps: LoopToolsDeps) =>
     save: (storage, game, timeoutMs) => saveAll(deps, storage, game, { saveMs: timeoutMs }),
   }).handlers;
 
-/** `open-editor`'s set-up of a project this profile has no record of: it holds the editor lock, so it may quit Unreal. */
-const setUpThenOpen =
-  (setUpLinked: NonNullable<LoopToolsDeps["setUpLinked"]>) =>
-  (storage: string, game: string): Promise<void> =>
-    setUpLinked(storage, game, true);
-
 /** The agent's own editor tools (`editor-control.ts`) over the reopen jobs: open, quit and where it stands. */
 function controlHandlers(
   deps: LoopToolsDeps,
@@ -800,7 +792,8 @@ function controlHandlers(
     project: deps.project,
     editorAnswers: deps.editorAnswers,
     ...(deps.starting ? { starting: deps.starting } : {}),
-    ...(deps.setUpLinked ? { setUp: setUpThenOpen(deps.setUpLinked) } : {}),
+    // Its set-up of a project this profile has no record of may quit Unreal: open-editor holds the editor lock.
+    ...(deps.setUpLinked ? { setUp: deps.setUpLinked } : {}),
     save: (storage, game) => saveAll(deps, storage, game),
     quit: deps.restart.quit,
     reopen,
@@ -815,12 +808,11 @@ function controlHandlers(
   };
 }
 
-/** Any of the Loop's tools: the part tools, the harness's, the lead's and the moments' own. */
+/** Any of the Loop's tools: the part tools, the harness's and the lead's. */
 export type AnyLoopToolName =
   | LoopToolName
   | LiveLoopToolName
   | LeadLoopToolName
-  | MomentToolName
   | EditorControlToolName
   | ShipToolName
   | GamePackageToolName
@@ -887,7 +879,7 @@ function liveHandlers(
         : saveAll(deps, storage, gameOf(context)),
     [LiveLoopToolName.LogErrors]: async (args, context, storage) =>
       context.hook
-        ? moments.log(storage, gameOf(context), context.hook)
+        ? moments.log(context, storage, context.hook)
         : moments.readLog(storage, gameOf(context), sinceOf(args)),
     [LiveLoopToolName.EndEditor]: async (_args, context, storage) =>
       context.hook ? endAtMoment(moments.ops(context, storage)) : reopen.end(storage, gameOf(context)),
@@ -932,13 +924,16 @@ function momentTools(
     if (!marks.has(game) && marks.size >= MAX_LOG_MARKS) marks.delete(marks.keys().next().value ?? "");
     marks.set(game, offset);
   };
-  const log = async (storage: string, game: string, hook: HookContext): Promise<HookAnswer> => {
+  // At a run's start it also tells the lead of an open Unreal's outdated helper (`helperAnswer`).
+  const log = async (context: PluginContext, storage: string, hook: HookContext): Promise<HookAnswer> => {
     if (hook.on !== HookEvent.RunPrepare && hook.on !== HookEvent.CheckpointBefore) return {};
+    const game = gameOf(context);
     const since = hook.on === HookEvent.CheckpointBefore ? marks.get(game) : undefined;
     const read = await readLog(storage, game, since).catch(() => null);
-    if (!read) return {};
-    mark(game, read.offset);
-    return since === undefined ? {} : logAnswer(read.lines.slice(0, MAX_MOMENT_LOG_LINES), hook);
+    if (read) mark(game, read.offset);
+    if (hook.on === HookEvent.RunPrepare)
+      return inRun(hook) ? helperAtStart(editorOps(deps, reopen, context, storage)) : {};
+    return read && since !== undefined ? logAnswer(read.lines.slice(0, MAX_MOMENT_LOG_LINES), hook) : {};
   };
   // The hero cameras' stills as pictures, nothing when Unreal doesn't answer; within `withinMs`
   // (an observer's call), the stills taken by then.
@@ -1013,22 +1008,17 @@ function editorOps(
     mayEndPlay: async () =>
       (await agentPlaying(storage, game, deps.now())) ||
       (inRun(context.hook) && (await agentsSetting(storage)).whilePlaying),
-    // A checkpoint's save has its step to itself; before a restore and at a run's start the busy wait leaves it less.
+    // A checkpoint's save has its step to itself; before a restore the busy wait leaves it less.
     save: () =>
       saveAll(deps, storage, game, context.hook?.on === HookEvent.CheckpointBefore ? CHECKPOINT_SAVE : MOMENT_SAVE),
     end: () => reopen.end(storage, game),
-    // At a Loop's start Unreal is never quit to set the project up: the agent links it itself.
-    setUp: async () => deps.setUpLinked?.(storage, game, false),
-    reopen: (helper) => reopen.reopen(storage, game, helper),
+    reopen: () => reopen.reopen(storage, game, true),
     state: () => reopen.state(storage, game),
     start: async () => (deps.starting ? deps.starting(storage, game) : null),
     projectName: async () => {
       const project = await linked();
       return project ? path.parse(project).name : null;
     },
-    updateHelper: () => updateGameHelper(deps, storage, game),
-    exported: async () => projectExported(await linked()),
-    exportReference: () => exportReference(deps, storage, game, MOMENT_ASK_MS),
   };
 }
 
@@ -1253,13 +1243,18 @@ async function findNodes(
   return { nodes, more: matches.length > MAX_FOUND_NODES };
 }
 
-/** The exports lookups started, by plugin storage and engine version, while each runs. */
+/**
+ * The exports lookups started while each runs: the engine's reference by plugin storage and engine
+ * version, a project's template facts by plugin storage and project.
+ */
 type LookupExports = Map<string, Promise<unknown>>;
 
 /**
- * The engine's node reference for a lookup: the one kept, or, when none is kept yet (only a Loop's
- * start exports it), the one the game's open Unreal exports now, each editor call on the Loop
- * start's budget. Throws what the agent can do about a missing one.
+ * The engine's node reference for a lookup: the one kept, or, when none is kept yet, the one the
+ * game's open Unreal exports now (with the template's facts), each editor call within
+ * `MOMENT_ASK_MS`. Throws what the agent can do about a missing one. With a reference kept, a game
+ * whose project never exported its template's facts (a second project on the same engine) has its
+ * open Unreal export them first: nothing else does.
  */
 async function lookupReference(
   deps: LoopToolsDeps,
@@ -1270,7 +1265,10 @@ async function lookupReference(
   const engine = await deps.engine();
   if (!engine) throw new Error(MESSAGE.NoEngine);
   const kept = await loadReference(storage, engine.version);
-  if (kept) return kept;
+  if (kept) {
+    await exportMissingFacts(deps, storage, context.project, exports);
+    return kept;
+  }
   const game = gameOf(context);
   if (!(await deps.editorAnswers(storage, game).catch(() => false))) throw new Error(MESSAGE.NoReference);
   const key = `${storage}\0${engine.version}`;
@@ -1286,6 +1284,32 @@ async function lookupReference(
   const exported = await loadReference(storage, engine.version);
   if (!exported) throw new Error(MESSAGE.BadReference);
   return exported;
+}
+
+/**
+ * Has the game's open Unreal write its project's template facts (`project.json`) when the project
+ * never exported them, one export per project at a time; a closed Unreal is never asked, and an
+ * export that fails leaves the lookup as it was (the gate checks against the parts alone).
+ */
+async function exportMissingFacts(
+  deps: LoopToolsDeps,
+  storage: string,
+  game: string | undefined,
+  exports: LookupExports,
+): Promise<void> {
+  if (!game) return;
+  const project = await linkedProject(deps, storage, game);
+  if (!project || (await projectExported(project))) return;
+  if (!(await deps.editorAnswers(storage, game).catch(() => false))) return;
+  const key = `${storage}\0${project}`;
+  const file = path.join(path.dirname(project), PROJECT_EXPORT);
+  const running = exports.get(key) ?? exportProject(deps, storage, game, file, MOMENT_ASK_MS);
+  exports.set(key, running);
+  try {
+    await running;
+  } finally {
+    if (exports.get(key) === running) exports.delete(key);
+  }
 }
 
 /** Throws the editor's refusal (`{error}`), so a file left from an earlier export is never read. */

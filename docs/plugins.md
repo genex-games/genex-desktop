@@ -725,28 +725,32 @@ the other parts' and the template's exported Blueprints, `apply.py` parsed by Un
 its `genex.` and `unreal.` names checked, the test), `run-part` (queues a part that passes and answers at once),
 `part-result` (its state, then its shots, checks and `probes`), `rollback-part`, `reload-level`,
 `find-nodes` (the reference's nodes and the template Blueprints' casts and members; with no
-reference kept yet it has the game's open Unreal export one first, as a Loop's start does) and
+reference kept yet it has the game's open Unreal export one first, and with one kept, a game whose
+project never exported its template's facts has its open Unreal write `project.json` first) and
 `export-reference` (keeps the node reference and Python names per engine in the plugin's storage,
 then asks for `project.json`; that call failing fails nothing). The harness's tools
 (`run-part`, `part-result`, `rollback-part`, `reload-level`, `export-reference`, `reopen-editor`,
 `editor-state`, `play-check`, `save-all`, `log-errors`, `end-editor`, `update-helper`,
-`editor-activity`, `hero-shots`, `open-for-run`, `wait-editor`, `engine-status`) are
+`editor-activity`, `hero-shots`, `wait-editor`, `engine-status`) are
 `"audience": "harness"`: no chat, builder or plan sees them, the harness calls them through
 `plugins.invoke` as its own steps (`step: true`), and they write no `plugin_tool` records. An agent
 that names one on any path is refused (`Unknown tool`) before anything runs, and the registry runs
 one only for the harness (`PluginRegistry.tool`'s `caller`). `cpp-status` and `add-cpp-module` are
 agent tools for an `unreal-project` (`facts`), which the one Loop's lead calls; `add-cpp-module`
 asks the person first (its `confirmation`) and holds the `editor` lock. While its job restarts
-Unreal, `editor-state` reads as reopening, so Genex's health watch waits and a crash step starts no
-second editor or build (`editor-reopen.ts` `createReopenTools`); a reopen that failed reads as failed
+Unreal, `editor-state` reads as reopening, so Genex's health watch reads it as pending and no reopen
+starts a second editor or build (`editor-reopen.ts` `createReopenTools`); a reopen that failed reads as failed
 only until an editor of the game runs again (one the agent opened, still loading, reads busy). Agents manage the game's editor
 themselves and never ask the person to open, quit or restart it (`editor-control.ts`): `open-editor`
 answers `{answering}`, `{starting}` while Genex is already opening it, or `{started}` once a reopen
-job (no C++ build: Unreal's own Open builds a hot-reloaded module; while the project's last module
-build failed, such as a Loop's reopen whose build broke, the job builds it first, so the agent's fix is
-what opens and a fix that still doesn't build fails with its errors; a reopen that failed for anything
-else, such as Xcode not ready, leaves the Open as it is) ended what was left of a crashed
-editor and its crash reporter and opened the project; an editor of the game that runs without
+job ended what was left of a crashed editor and its crash reporter, updated an outdated Genex editor
+helper while Unreal was closed (as the panel's Open does) and opened the project. It builds no C++
+unless asked: Unreal's own Open builds a hot-reloaded module. With `build: true` (on a Mac), or while
+the project's last module build failed, such as a restore's reopen whose build broke, the job builds
+it first, so the agent's fix is what opens and a fix that still doesn't build fails with its errors,
+Unreal left closed (`editor-status` names them); a reopen that failed for anything else, such as
+Xcode not ready, leaves the Open as asked. A Loop's lead opens and builds its Unreal this way
+itself: Genex opens it at no run's start and after no crash. An editor of the game that runs without
 answering is `{busy}` and ended only with `restart: true` (or at once when its log says the port is
 blocked). `quit-editor` saves through the helper's `save_all`, then sends Unreal's normal quit and waits
 up to 90 s, never a signal: an editor it can't save, or one still open after the wait, stays open
@@ -761,10 +765,9 @@ to quit while a run going now (`game.engine.runs`) has that project. A
 linked project with no set-up record in this profile (another profile set it up; its record stays in
 that profile's storage) is recorded as it is when its files are set up (`adoptSetUp`: plugins,
 toolsets, a port of Genex's block no other project here holds, a helper), touching nothing and
-quitting nothing; the editor queue's calls, `use-project`, `open-editor` and `open-for-run` all do
-this. `open-editor` sets up a project whose files aren't, as `use-project` does; `open-for-run`
-does so only while Unreal doesn't have it open, and otherwise blocks the Loop's start naming
-`use-project`, never quitting Unreal there. A step runs while the chat is in
+quitting nothing; the editor queue's calls, `use-project` and `open-editor` all do this.
+`open-editor` sets up a project whose files aren't, as `use-project` does, quitting Unreal first
+while it has the project open (it holds the `editor` lock). A step runs while the chat is in
 Plan mode unless it writes (`checkpoint: true`), which waits. A held write answers the Plan answer
 (`blocker: "plan_mode"`, `PluginCallBlocker`). The seed calls no Unreal tool by name: a
 chat turn's end save is Genex's checkpoint and its wait after a kind change Genex's `health`
@@ -795,7 +798,7 @@ banner, or no editor process on two looks in a row, ends the part at once, and n
 that editor: `part-result` answers `{state: "failed", crashed: true, error: "Unreal crashed while
 testing <Part>: <signal> in <frame>", crash: {signal, frames}}` (the top eight functions, no library,
 path or address; the frame named is the game module's first). `reopen-editor` (`editor-reopen.ts`,
-the `crash` hook's step, which a Loop's health watch fires) answers `{answering: true}` when Unreal
+the `restore.after` hook's step) answers `{answering: true}` when Unreal
 answers, else `{started: true}` and a job that
 ends this project's leftover editor and crash reporter only (normal quit when it is the only editor,
 then `SIGTERM`, then `SIGKILL`; on Windows only the editors are listed, by WMI with their command
@@ -848,7 +851,7 @@ level without hero cameras has none.
 
 **The editor lock and Genex's moments** (plugin 0.7.0). The plugin declares one lock, `editor`
 (label "Unreal", per game, probe `editor-activity`), which its editor connector and its harness
-tools that work in the open editor need (`open-for-run`, `save-all`, `end-editor`, `reopen-editor`,
+tools that work in the open editor need (`save-all`, `end-editor`, `reopen-editor`,
 `update-helper`, `open-editor`, `quit-editor`, `add-cpp-module`, `add-motion-matching`, `export-reference`, `hero-shots`, `play-check`, `run-part`,
 `rollback-part`, `reload-level`); lookups, the gate, the probe and the readers need none. While the
 person plays in the game's editor, the agents' and Genex's calls there wait. A play the agent
@@ -865,23 +868,24 @@ person's play, with `wentAhead` the first time for each game. `new-game.ready` n
 which also answers `{ready, note}`: whether a new Unreal game can be made here and the engine
 question's words for it. The handlers answer in hook terms when `context.hook` is set
 (`editor-moments.ts`, words in `hook-answers.ts`), and the manifest hooks them, each for games with
-the `unreal-project` fact: `run.prepare` → `open-for-run`, `log-errors`; `checkpoint.before` →
-`save-all`, `log-errors`; `checkpoint.after` → `hero-shots`; `restore.before` → `save-all`,
-`end-editor`; `restore.after` → `reopen-editor`; `health` → `editor-state`; `crash` →
-`reopen-editor`. Nothing hooks `run.end`: the person's editor stays open when a run ends. Since
+the `unreal-project` fact: `run.prepare` → `log-errors`; `checkpoint.before` → `save-all`,
+`log-errors`; `checkpoint.after` → `hero-shots`; `restore.before` → `save-all`, `end-editor`;
+`restore.after` → `reopen-editor`; `health` → `editor-state`. Nothing hooks `run.end`: the person's
+editor stays open when a run ends. Since 0.51.0 nothing hooks `crash` and no step opens Unreal at a
+run's start (`open-for-run` is gone): the lead opens and builds it with `open-editor`, and a
+lookup exports the template's facts that step used to. Since
 0.8.0 the manifest also declares its `viewport` [observer](#observers) (`hero-shots`, Live's Unreal
 card) for the same games.
 
 | Handler at its moment | In a run | In a chat |
 | --- | --- | --- |
-| `save-all` at `checkpoint.before` | blocks on a play, an editor that doesn't answer or can't tell, or a save that saved nothing | blocks on a play; otherwise notes what it saved or why not |
+| `save-all` at `checkpoint.before` | notes a play, an editor that doesn't answer or can't tell, or a save that saved nothing: the save point holds the files on disk only; never blocks | notes what it saved or why not, a play among them; never blocks |
 | `save-all` at `restore.before` | nothing for an editor that isn't running; waits up to 5 minutes for a busy one; blocks when it stays busy or the save fails or leaves work | same |
 | `end-editor` at `restore.before` | blocks when Unreal couldn't be closed; a game with no linked project has nothing to end (`save-all` and `reopen-editor` do nothing for it either) | same |
-| `reopen-editor` at `restore.after`, `crash` | starts reopening, updating an outdated helper while Unreal is closed | same, but after a restore (the person's Rewind among them) only when that restore closed a running Unreal |
+| `reopen-editor` at `restore.after` | starts reopening, updating an outdated helper while Unreal is closed | same, but only when that restore (the person's Rewind among them) closed a running Unreal |
 | `editor-state` at `health` | quiet while it answers; pending while reopening, opening, busy or can't tell; blocks once reopening failed, its port is blocked or it is gone three asks in a row | same, gone in the chat's words |
-| `log-errors` at `run.prepare`, `checkpoint.before` | marks the log's end per game; notes the new errors since | same |
+| `log-errors` at `run.prepare`, `checkpoint.before` | marks the log's end per game, and at the start notes an open Unreal whose Genex editor helper is older than the plugin's (only `quit-editor`, then `open-editor`, updates it); notes the new errors since | the new errors since |
 | `hero-shots` at `checkpoint.after` | the stills as images, their tone as measures | nothing: no stills are taken |
-| `open-for-run` at `run.prepare` | opens a closed Unreal and waits for it; updates an outdated helper once its process exits (saved first, no snapshot); exports missing template facts; blocks without a helper or when Unreal can't be opened; a Stop updates nothing after it, but an Unreal it closed for the update is still reopened (without the update), as a restore's after steps reopen what its before steps closed; its slowest path (`OPEN_FOR_RUN_MAX_MS`) stays under Genex's 33-minute ceiling for `run.prepare` | — |
 
 Each handler's editor calls have limits its own longest path counts, each call's session with the
 editor (connect, the helper's identity call and the session's end) held within its limit
@@ -896,7 +900,8 @@ moments above, its health watch asks `editor-state`, and `cpp-status` and `add-c
 tools for Unreal projects (`add-cpp-module` asks the person first, since it saves and restarts
 their editor; Plan's refusal in a planning chat as for any agent tool) that the lead calls itself;
 its brief says to call `restart` after C++ changes, which
-rebuilds through `reopen-editor`.
+rebuilds through `reopen-editor`, and a lead that finds Unreal closed opens it itself with
+`open-editor` (`build: true` builds the module first).
 
 C++: `cpp-status` answers `{canCompile, xcode, platform, module,
 adding: {state: idle|adding|done|failed, error?, seconds?}}` (`cpp-tools.ts`). `add-cpp-module`
@@ -1587,25 +1592,26 @@ game holds, or an old note link nothing.
 **Moments, the person first and pictures.** The handlers answer in hook terms when
 `context.hook` is set (`studio-moments.ts` over `MomentOps` from `moment-ops.ts`, words in
 `hook-answers.ts`), each hooked for games with the `roblox-project` fact; nothing hooks `run.end`,
-so the person's Studio stays open when a run ends.
+so the person's Studio stays open when a run ends. Since 0.1.34 no step opens Studio at a run's start
+and nothing hooks `crash`: a Loop's lead opens Studio with `open-studio`, and the health watch tells
+it when Studio stops answering.
 
 | Handler at its moment | In a run | In a chat |
 | --- | --- | --- |
-| `open-for-run` at `run.prepare` | quiet once the helper is connected and answers; opens the place (`open-studio`'s way) and waits up to `OPEN_WAIT_MS` (3 minutes) for its helper (a note names the place); blocks with the step when Studio isn't set up, the game has no place, the helper doesn't answer (a dialog may be open) or never connects | — |
 | `team-note` at `turn.start` | notes who else is in a Team Create place, only when that changed | same |
 | `close-after-publish` at `turn.end` | — | once per publish `publish-result` recorded on Roblox (within `CLOSE_MARK_MS`, 30 minutes), quits each Studio whose command line opened the game's place (its file or its published place id; `studio-close.ts`, a Mac only), as the person asked; another place's Studio stays open and Studio's save question stays theirs; quiet |
-| `save-place` at `checkpoint.before` (`messages: true`) | sends the script sync's pending file changes, then has the helper export what changed into `.genex/place/` (up to 2 minutes); blocks while Studio isn't connected or the export fails | the same within the message's wait (`SAVE_PLACE_CHAT_MAX_MS`: the flush and `PLACE_EXPORT_MAX_MS`); never blocks, notes what it saved or why the checkpoint holds the scripts only |
+| `save-place` at `checkpoint.before` (`messages: true`) | sends the script sync's pending file changes, then has the helper export what changed into `.genex/place/` (up to 2 minutes); never blocks: while Studio isn't connected or the export fails, the save point is taken with the scripts and its note says so | the same within the message's wait (`SAVE_PLACE_CHAT_MAX_MS`: the flush and `PLACE_EXPORT_MAX_MS`); never blocks, notes what it saved or why the checkpoint holds the scripts only |
 | `hero-shots` at `checkpoint.after` | Studio's `screen_capture` of the game's Studio as one `viewport` picture | nothing |
 | `save-place` at `restore.before` | the same export, so the newer state is saved first (Bring back newer version); blocks when it fails; notes that going back undoes the edits of others in Team Create | same |
 | `load-place` at `restore.after` | the helper loads the restored export, then the script sync reconciles `src/` with the restored files winning (git put back `src/` and the record together, so Studio's listing stands in for the record), whether the load ran, failed or found no export; with Studio not connected, `pending-load.json` and `pending-scripts.json` wait and the helper's next connection loads the export, then lets the restored scripts win; never blocks | same |
 | `studio-state` at `health` | quiet while the helper answers a ping within `STUDIO_PING_MS` (5 s) and Studio's MCP server lists the Studio; pending while Studio starts, its helper reconnects (`RECONNECT_WAIT_MS`), it doesn't answer ("a dialog may be open in Studio", with the hint to look with `app_look`, look only, on a Mac) or isn't listed; blocks when Studio is gone, open without the place past the reconnect wait, unlinked or not set up | same |
-| `studio-crash-note` at `crash` | asks the person to reopen Studio with Open Studio; Genex never closes or kills it | same |
 | `luau-note` at `worker.end` | the Luau checks over the scripts changed since they last passed, in the folder the call is bound to; a note of each finding, nothing when clean or not added | same |
 | `luau-finish` at `finish` | the Luau checks over every script; errors hold the finish back, naming the first; warnings, format differences and missing checks are notes | — |
 
 A helper that answers `unsupported` to an export (Studio with no way to serialize the place) never
 blocks: the note says save points hold the scripts only. A part larger than the host's 50 MB file
-cap is named in the note, and the host's checkpoint leaves it out and names it too. Only
+cap is named in a chat's checkpoint note and before a restore, never to a run's lead, who can't
+change the cap; the host's checkpoint leaves it out and names it in its own report. Only
 `load-place` needs the `studio` lock: exporting and pictures read the place, so a message's
 checkpoint never waits on the person. The lock's probe `studio-activity` answers `personActive`
 from the helper's `activity` reports in the last `PERSON_ACTIVE_MS` (15 s), leaving out what the
@@ -2067,15 +2073,15 @@ the one before its answer and the one after ([Before each chat message](#before-
 
 | Moment | When | A `block` |
 | --- | --- | --- |
-| `run.prepare` | before a run's first turn | closes the run with the reason |
+| `run.prepare` | before a run's first turn | is a line of the lead's first message (the run starts) |
 | `run.end` | after a run's last turn | is a note |
-| `turn.start`, `turn.end` | around a turn of the lead or the chat | at the start: the turn does not run |
-| `checkpoint.before`, `checkpoint.after` | around a snapshot Genex takes as a save point | before: no snapshot |
-| `restore.before`, `restore.after` | around a restore of the game's files (`forPerson` for the person's own Rewind) | before: no restore |
-| `worker.start`, `worker.end` | around a worker | at the start: the worker does not start |
+| `turn.start`, `turn.end` | around a turn of the lead or the chat | at the start: is a line of the lead's turn, a notice on a chat turn's first leg (the turn runs) |
+| `checkpoint.before`, `checkpoint.after` | around a snapshot Genex takes as a save point | is a note, and the snapshot is taken |
+| `restore.before`, `restore.after` | around a restore of the game's files (`forPerson` for the person's own Rewind) | before: no restore, answered to whoever asked (the lead's rewind or restart, the person's Rewind); after: a note |
+| `worker.start`, `worker.end` | around a worker | is a note: at the start in `worker_start`'s answer (the worker starts), at the end in the line a run's lead is woken with |
 | `tool.before`, `tool.after` | around an agent's call of one of the plugin's **own** tools | before: the call answers the reason |
-| `health` | while Genex watches what the plugin drives | a failed check |
-| `crash` | after a failed health check | is a note |
+| `health` | while Genex watches what the plugin drives | a failed check: one line for a Loop's lead, which wakes it (nothing reopens the app) |
+| `crash` | never: nobody fires it (a Loop's lead reopens its app with the plugin's tools) | — |
 | `finish` | when the lead says the work is done | the lead keeps working |
 
 A moment runs the enabled plugins' handlers in plugin list order, then declaration order
@@ -2085,23 +2091,33 @@ worker?, tool?, args?, forPerson?}`; `args` is a digest, never the arguments) an
 note?, pending?, images?}` (`hookAnswerOf`: reasons up to 300 characters, notes up to 2,000, at most
 8 base64 PNG images of 8 MiB): `pending` asks Genex to ask again, anything else is ignored. A
 handler never rewrites arguments and never gives instructions, and git stays Genex's: no handler
-takes or restores a snapshot. The moments that write (`run.prepare`, `checkpoint.*`, `restore.*`,
-`crash`) wait while the chat plans, except the person's own Rewind.
-In every Loop Genex asks `health` every 15 s while the Loop runs (only when a plugin hooks it), fires `crash` on a block, and fires `restore.*` around the lead's
-rewind and alone for its `restart` (offered only when a plugin hooks a restore moment), whatever the
-plugin's engine ([the open Loop's turns](harness-runtime.md)).
+takes or restores a snapshot. Only three moments answer a call, so only their block refuses
+anything: `tool.before` (the agent's call), `finish` (the lead's finish) and `restore.before` (the
+restore). Anywhere else a block, a step that throws and Genex's own hold are a note the lead reads,
+and nothing a plugin answers stops, pauses or holds back a Loop, a turn or a worker. While the chat
+plans, a checkpoint and a restore wait for the plan (the person's own Rewind never does); at a
+writing moment that answers no call (`run.prepare`, and `restore.after` alone for a restart) the
+steps are skipped with Genex's note: the run starts, and its lead plans under the chat's plan
+approval.
+In every Loop Genex asks `health` every 15 s while the Loop runs (only when a plugin hooks it) and
+tells the lead once when the app stops answering and once when it answers again, firing no `crash`
+and reopening nothing, and fires `restore.*` around the lead's rewind and alone for its `restart`
+(offered only when a plugin hooks a restore moment), whatever the plugin's engine ([the open Loop's
+turns](harness-runtime.md)).
 Genex's own gates run beside the plugins' hooks at the same moments (`loop/builtin-hooks.ts`):
-`web.ready` at `run.prepare`, chosen by the folder's facts alone, refuses a Loop whose page lacks the
-files it needs wherever a web game is served at the root, whatever else the folder holds (a Godot
-project over a web game too); a folder with no web game at its root is never refused for a missing
-`index.html`.
+`web.ready` at `run.prepare`, chosen by the folder's facts alone, tells a Loop's lead first which
+files its page lacks to load wherever a web game is served at the root, whatever else the folder
+holds (a Godot project over a web game too), and refuses nothing; a folder with no web game at its
+root is never told of a missing `index.html`. Where a plugin hooks `health`, a Loop's start also
+looks at the app once: an app that doesn't answer or isn't ready yet is a line of the lead's first
+message, and nothing reopens it.
 
 Genex runs them in `main/core/plugin-hooks.ts` (`HookService`), each step as a harness step through
 the registry, under the union of the steps' locks held for the whole moment (a checkpoint's before
 and after steps and its snapshot together); a run's moments pass the locks its own workers hold
-(`runHolders`), so its recovery never waits on its own writer in place. A run's start or resume
-(`run.prepare`) waits up to 10 minutes for the person to finish in the app (`HOOK_LOCK_WAIT_MS`), the
-chat's line saying so, then starts; a checkpoint waits a minute, a restore two, `health` not at all, the rest 30 s or less. The host fires `checkpoint.*` (`checkpoint.take`, and
+(`runHolders`), so its moments never wait on its own writer in place. A run's start or resume
+(`run.prepare`) waits up to 30 s for the person to finish in the app (`HOOK_LOCK_WAIT_MS`), the
+chat's line saying so, then runs none of that moment's steps (the moment holds its locks as one), says so in a note for the lead and starts; a checkpoint waits a minute, a restore two, `health` not at all, the rest 30 s or less. The host fires `checkpoint.*` (`checkpoint.take`, and
 the chat's `checkpoint` tool on a game whose plugins hook checkpoints, which then answers what was
 saved and the snapshot's id), `restore.*` around every restore of a game folder (the person's file
 Rewind with `forPerson`: no wait for the person or the plan) and `tool.*` around an agent's call of
@@ -2122,15 +2138,18 @@ the time it always had, so an approved call is never cut for a late card. A conn
 leaves the call its connector's own time. The harness announces
 the rest through `hooks.fire` ([harness runtime](harness-runtime.md)): a chat turn its `turn.*`,
 every worker pool and the director's builders `worker.*` (a
-`worker.start` block starts nothing and writes no record), the director `run.prepare`, `run.end`,
+`worker.start` block is a note in `worker_start`'s answer: the worker starts), the director `run.prepare`, `run.end`,
 each wake turn's `turn.*` and the lead's own `finish`. A step that fails blocks a
-blocking moment (fail closed), is `pending` at `health` (Genex can't tell is never a crash) and is a
-note elsewhere; a `block` at `health` is a failed check. Every note a moment's steps add is logged. A checkpoint asked only if unsaved is
+blocking moment (`restore.before`, `tool.before`, `finish`: fail closed), is `pending` at `health`
+(Genex can't tell is never a crash) and is a note elsewhere; a `block` at `health` is a failed
+check. Every note a moment's steps add is logged. A checkpoint asked only if unsaved is
 skipped when every probe of its steps' locks answers `unsaved: 0`, or one can't tell; it reads
-that before Plan mode holds it. When Genex itself holds a moment, a checkpoint or a restore back,
-the block carries `hold` (`HookHold`: `plan`, `person_first`, `cant_tell`, `busy`) and the lock's
-`label` beside its reason (on `HookBlockedError` too), at a writing moment (`crash`) as at a blocking
-one, and so do Genex's own `pending` at `health` and its note at any other moment; callers word the
+that before Plan mode holds it. When Genex itself holds a call back (a checkpoint or a restore in
+Plan mode, a blocking moment whose lock wasn't given), the block carries `hold` (`HookHold`: `plan`,
+`person_first`, `cant_tell`, `busy`) and the lock's `label` beside its reason (on
+`HookBlockedError` too); a checkpoint whose lock wasn't given takes its snapshot alone, its steps
+skipped, and its note carries them, and so do Genex's own `pending` at `health` and its note at any
+other moment; callers word the
 person's line from them, never from the reason, which is written for agents. After an agent's call
 that ran, a `tool.after` lock not given is only a note that the call ran and its after steps were
 skipped. A run's moments pass the whole-life locks its own workers writing in place hold, a chat's
@@ -2438,7 +2457,7 @@ The link follows the game. A game opened from another Genex (another profile) br
 `studio.json` mirror; when the plugin keeps no file for the game at all (an `{unlinkedAt}` from Undo
 or an unreadable record counts as one), the host adopts the mirror (`engineLinks.adopt`) on the
 game's first plugin binding (`StudioCore.pluginBinding`: every plugin action, harness plugin step
-such as `open-for-run`, hook and observer) and in `game.engine.read`. It writes `links/<game>.json`
+such as `save-all`, hook and observer) and in `game.engine.read`. It writes `links/<game>.json`
 from the mirror, without `setUp` and without a chat line (there is nothing to undo), and only for a
 mirror of the plugin's own engine whose project is a regular file at exactly its real path inside
 the game's own real folder; a link swapped in, a `..` path, a project outside the folder or gone
@@ -2612,17 +2631,19 @@ A chat keeps its apps' work. When a chat turn (never a run's or a stopped one) e
 plugins hook `checkpoint.*`, it takes Genex's checkpoint only if something is unsaved
 (`loop/hooks.ts` `endOfTurnCheckpoint`, `checkpoint.take {onlyIfUnsaved: true}`): on an Unreal game
 the plugin's steps save the editor's work and Genex snapshots the game folder, and one line after the
-reply says so with the steps' notes; a blocked checkpoint says why the work stays unsaved (a step's
-reason, or Genex's own hold in the person's words: they were using the app, Genex couldn't tell
-whether they were, or something else worked there; the chat's own workers writing in place never
-hold it), and nothing unsaved (or an editor that can't say) or Plan mode says nothing. A turn that went on after a kind change
-takes it when that leg ends. The chat turn also announces `turn.start` (a block ends the turn
-before any engine works, with the reason) and `turn.end`. The chat's own session's `checkpoint` tool on an Unreal game is Genex's checkpoint: the
-plugin's steps save the editor's work at once (a play blocks it; a save that fails or leaves work
-is a note), then the game folder is snapshotted under its note, and the tool answers what they did
-instead of only showing the note (`main/core/plugin-hooks.ts` `takeCheckpoint`,
-`DelegateRequest.onCheckpoint`; in Plan mode, while the person plays, or when Genex can't tell
-whether they do, it changes nothing). With the Unreal plugin off, a linked Unreal game's tool still
+reply says so with the steps' notes. When Genex skipped the steps (they were using the app, Genex
+couldn't tell whether they were, or something else worked there; the chat's own workers writing in
+place never hold it), the snapshot holds the files on disk alone, and the line says, in the person's
+words, why the app's work stays unsaved; a checkpoint Genex couldn't take says why, and nothing
+unsaved (or an editor that can't say) or Plan mode says nothing. A turn that went on after a kind change
+takes it when that leg ends. The chat turn also announces `turn.start` (what its steps said, a block
+among it, is one Genex notice on the turn's first leg: nothing ends the turn) and `turn.end`. The chat's own session's `checkpoint` tool on an Unreal game is Genex's checkpoint: the
+plugin's steps save the editor's work at once (a play, or a save that fails or leaves work, is a
+note: the snapshot holds the files on disk), then the game folder is snapshotted under its note, and
+the tool answers what they did instead of only showing the note (`main/core/plugin-hooks.ts`
+`takeCheckpoint`, `DelegateRequest.onCheckpoint`; in Plan mode it changes nothing, and while the
+person plays, or when Genex can't tell whether they do, it skips the steps and snapshots the files
+on disk alone). With the Unreal plugin off, a linked Unreal game's tool still
 snapshots the game folder, running no step: the session is told to save in the editor first.
 
 ### The engine declaration
@@ -2766,9 +2787,13 @@ The plugin makes, sets up and opens that project itself (`backend.ts`), with no 
   so the editor is the person's own app, not a child of Genex. The call then waits up to 150 s for
   the editor's `/api/status` to say `ready`, says which it was, and turns Pipeline's auto-tick on
   so the editor keeps running its loop while unfocused: the chat's own wait on `health` after a
-  kind change follows an engine link, which Unity has none of.
+  kind change follows an engine link, which Unity has none of. It is how a Loop's lead opens
+  Unity: since 0.8.0 no step opens it at a run's start. An editor it launched while a run was under
+  way on the game is Genex's own for the idle close below; one it launched with no run under way
+  (a chat's agent's) is the person's.
 - `restart-editor` (a `confirmation`, no lock) ends the game's editor and opens the project again,
-  for an editor that stopped answering while somebody is there to confirm it. An editor that still
+  for an editor that stopped answering while somebody is there to confirm it; Genex never does this
+  by itself, in a run either. An editor that still
   answers is saved first (its play stopped, then `saveWork`), so only a stalled one loses work; the
   confirmation keeps saying work may be lost, since a manifest's `confirmation` is one fixed text
   and can't depend on whether Unity answers. It waits 120 s for the new editor, not 150: ending the
@@ -2878,7 +2903,8 @@ real backend in headless Chrome (opt-in: `STUDIO_BROWSER_TESTS=1`).
 Unity's main thread runs nothing while a system dialog is up. A save of a scene that has no file
 yet opens one (the system save panel), and Pipeline does not see it: `/api/status` keeps saying
 `ready`, `/api/dialog` lists none, and every command waits a minute, then fails with "Main thread
-operation timed out". Three things keep an unattended agent out of it and get it back out:
+operation timed out". Three things keep an unattended agent out of it, and the lead learns when
+it is stuck:
 
 - **No such save is sent.** The connector lists the open scenes before a `save_all`, or a
   `save_scene` with no `path` (alone or in a `batch`), and refuses it while a scene has no file.
@@ -2890,17 +2916,18 @@ operation timed out". Three things keep an unattended agent out of it and get it
   `PipelineProblem.Stalled`, the command is not sent, and the agent is told to wait, then to call
   `restart-editor`. Pipeline's own "Main thread operation timed out" reads the same; neither is
   recorded as outcome unknown, since the command never ran.
-- **A run recovers by itself, when nobody is there.** `editor-state` at `health` is pending while
-  Unity starts, reloads or imports, and for the first two minutes of a stall (`STALL_GRACE_MS`, kept
-  between checks in `health/<game>.json`); after that it blocks only when nobody has touched the
+- **A stalled editor is the lead's.** `editor-state` at `health` is pending while Unity starts,
+  reloads or imports, and for the first two minutes of a stall (`STALL_GRACE_MS`, kept between
+  checks in `health/<game>.json`); after that it fails the check only when nobody has touched the
   computer's keyboard or pointer for five minutes (`AWAY_AFTER_MS`, read from the Mac's
   `HIDIdleTime`): with somebody there the dialog may be their own, so the check stays pending and
-  asks them to answer it, and their editor is never ended under them. Where the idle time can't be
-  read, somebody may be there. A block, like no editor having the project open at all, is followed
-  by `reopen-editor` at `crash`, which ends what is left of the editor and opens the project again. Ending is
-  a clean `EditorApplication.Exit(0)` when the main thread answers and a signal to the project's own
-  processes (TERM, then KILL) when it does not. Unsaved editor work is lost with a stalled editor,
-  which is why every checkpoint saves first.
+  asks them to answer it. Where the idle time can't be read, somebody may be there. A failed check,
+  like no editor having the project open at all, wakes the Loop's lead with the reason; since 0.8.0
+  nothing hooks `crash`, and Genex never ends or reopens the editor by itself. The lead may ask the
+  person to confirm `restart-editor`, whose end is a clean `EditorApplication.Exit(0)` when the
+  main thread answers and a signal to the project's own processes (TERM, then KILL) when it does
+  not, or `pause`. Unsaved editor work is lost with a stalled editor, which is why every checkpoint
+  saves first.
 - **The reopened editor has nothing to ask.** An editor that was killed or crashed leaves its scene
   backups in the project (`Temp/__Backupscenes`), and the next Unity to open it asks whether to
   recover them, in a dialog before the project loads. Before Genex opens a project no editor has
@@ -2912,13 +2939,13 @@ operation timed out". Three things keep an unattended agent out of it and get it
 
 | Handler at its moment | What it does (`editor-moments.ts`) |
 | --- | --- |
-| `open-for-run` at `run.prepare` | Opens the editor and waits, recording when Genex itself opened it (`launched/<game>.json`); a project with no Pipeline package, or an editor that does not answer, closes the run with the reason. |
-| `after-run` at `run.end` | An editor Genex opened for the run starts its idle time (below); with the **close-idle-editor** setting off, its record is dropped. |
-| `save-all` at `checkpoint.before` | Saves as above. Unity not open: nothing. In the agent's own play, or in a run in the person's play while agents may use Unity as they play: stops it, then saves. In the person's play otherwise: a block (scenes can't be saved in play). Work it can't save: a block in a run, a note in a chat. |
+| `find-project` at `run.prepare` (and `turn.start`) | Keeps the project for the connector; at a run's start and its lead's turns (a start whose steps Plan mode skipped too), the run is under way (`runs/<game>.json`, forgotten when Genex starts again, so a run that never ended makes no later open Genex's) and an editor Genex opened, idle since an earlier run, is in use again. |
+| `after-run` at `run.end` | The run is no longer under way; an editor Genex's agent opened for it starts its idle time (below); with the **close-idle-editor** setting off, its record is dropped. |
+| `save-all` at `checkpoint.before` | Saves as above. Unity not open: nothing. In the agent's own play, or in a run in the person's play while agents may use Unity as they play: stops it, then saves. In the person's play otherwise (scenes can't be saved in play), and for any work it can't save: a note that the save point or checkpoint holds the files on disk only; it never blocks. |
 | `scene-shots` at `checkpoint.after`, and as the `viewport` observer (`live: "stills"`) | The main camera's still (1280×720) as an image, in a run and for the reviewer; a chat's checkpoint takes none. A still of one flat colour (a scene that builds itself only when Play starts) is no image but a note saying so; the skill asks agents to build the level into the scene with an Editor script, saving the meshes, textures and materials it makes as assets. |
 | `save-all`, then `end-editor`, at `restore.before` | Stops a play, saves, ends the editor and records that it did (`restore/<game>.json`); work it can't save, or an editor that won't end, blocks the restore. |
-| `reopen-editor` at `restore.after` | Opens the project again only when `end-editor` closed it for this restore. |
-| `editor-state` at `health`, `reopen-editor` at `crash` | As above. |
+| `reopen-editor` at `restore.after` | Opens the project again only when `end-editor` closed it for this restore; at any other moment it does nothing. |
+| `editor-state` at `health` | As above. |
 
 The `editor` lock (`per: project`) has `editor-activity` as its `personFirst` probe: the person is
 using the editor while it plays a game the agent did not start, and `unsaved` is the open scenes
@@ -2935,8 +2962,8 @@ storage; actions `agents`, `agents-go-ahead`, `agents-wait`). While it is on, th
 nobody is at a play the agent did not start, saying `wentAhead` the first time for each game
 (`went-ahead/<game>.json`); while it is off, agents wait for the person's play to end. An editor that can't be asked answers nothing: Genex can't
 tell, and the agents' calls wait. A stalled one says nobody is there once the computer was left
-alone for five minutes, so that the recovery above can take the lock. `save-all`, `end-editor`,
-`reopen-editor`, `open-for-run`, `scene-shots` and `quit-editor` need the lock; the probe, `editor-state` and
+alone for five minutes, so that a restore or a quit can take the lock. `save-all`, `end-editor`,
+`reopen-editor`, `scene-shots` and `quit-editor` need the lock; the probe, `editor-state` and
 `restart-editor` do not: a restart is the person's own confirmed word, and must not wait on a probe
 a stalled editor can't answer.
 
@@ -2962,16 +2989,17 @@ stays in the agent's transcript. Each command the connector sends is noted in it
 
 #### An idle editor Genex opened
 
-Unity holds gigabytes of memory while it runs, so an editor Genex itself opened at a run's start is
-closed once nobody uses it (`editor-idle.ts`). After the first `after-run`, the backend looks every
+Unity holds gigabytes of memory while it runs, so an editor Genex itself opened for a run (its
+agent's `open-editor` launched it while a run was under way on the game, a Loop's lead's mostly;
+`launched/<game>.json`) is closed once that run ended and nobody uses it (`editor-idle.ts`). After the first `after-run`, the backend looks every
 30 s (`IDLE_LOOK_MS`) at each such editor and closes it with a clean exit, its assets saved first,
 once 15 minutes (`IDLE_CLOSE_MS`) passed since both the run's end and the connector's last command.
 It is never closed while another run uses it, while it plays, compiles or reloads, or while its
 main thread does not answer. The person taking it over drops its record for good, so it is never
 closed: Unity seen as the app in front (`InternalEditorUtility.isApplicationActive`), its undo
 group moving between two looks with no connector command between them, or an open scene with
-unsaved work. An editor already open at the run's start, or opened from the panel or by an agent's
-`open-editor`, is the person's and has no record. The plugin's **close-idle-editor** setting (on
+unsaved work. An editor already open when the agent asked, opened from the panel, or that an agent
+opened with no run under way, is the person's and has no record. The plugin's **close-idle-editor** setting (on
 unless turned off) is read at each run's end.
 
 Before a command is sent the gate (`pipeline-gate.ts`) checks it against the catalogue just read.

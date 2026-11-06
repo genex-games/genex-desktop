@@ -2,11 +2,9 @@
  * Starting a run: the refusals a run meets before it is registered, the loop that conducts it, and
  * the record a run that died still owes its chat.
  */
-import { type FactsOfDescriptor, kindPending, kindUnknown, servedAsWeb, startWebIfPending } from "./folder-facts.ts";
-import { BuiltinGate, fireGates } from "./builtin-hooks.ts";
+import { type FactsOfDescriptor, kindUnknown, startWebIfPending } from "./folder-facts.ts";
 import { leadsInPlace } from "./engine-seat.ts";
 import { OPEN_LOOP_REFUSAL } from "./open-loop-prompts.ts";
-import { HookEvent } from "./hooks.ts";
 import { EngineId, withRoles } from "./model-roles.ts";
 import { runDirector } from "./director.ts";
 import { createRunInbox } from "./run-inbox.ts";
@@ -31,7 +29,10 @@ export const RunStartRefusal = {
   RunOwnsThread: "run_owns_thread",
   /** The folder is an engine's export: compiled, with nothing a run could edit. */
   EngineExport: "engine_export",
-  /** Genex's `web.ready` gate: the web page lacks files it needs to load. */
+  /**
+   * Genex's `web.ready` gate: the web page lacked files it needs to load. Written only by seeds from
+   * before its finding became a line the Loop's lead reads at its start: old records carry it.
+   */
   WebNotReady: "web_not_ready",
 } as const;
 export type RunStartRefusal = (typeof RunStartRefusal)[keyof typeof RunStartRefusal];
@@ -331,7 +332,7 @@ export async function handleRunStart(
   // pressed since — while the folder was scaffolded and checked — and is for this build.
   if (!keepStop) studio.cancels.delete(action.threadId);
   try {
-    await startReservedRun(studio, action, settled, close, keepStop);
+    await startReservedRun(studio, action, settled, close);
   } finally {
     close.close();
     studio.startingRuns.delete(action.run.runId);
@@ -374,28 +375,21 @@ async function startReservedRun(
   action: RunStart,
   settled: Promise<unknown>,
   close: RunClose,
-  launched: boolean,
 ): Promise<void> {
   const { host } = studio;
   const { threadId } = action;
   // Whatever asked for this run — an interview, the run IPC, a resume — a folder the studio
-  // can never build on refuses here as well, before a run is registered. What is merely missing is
-  // the launch path's question: asked again here for a web game's Loop a chat launched, so the gate holds
-  // whichever copy of the launch an agent kept.
+  // can never build on refuses here as well, before a run is registered. What is merely missing (a
+  // web page's files) refuses nothing: the Loop's lead reads it as it starts, and builds there.
   const games = await host.call(HostMethod.GameList, {}).catch(() => []);
   const listed = games.find((g) => g.name === action.run.project) ?? null;
-  const missing = launched && action.resume !== true ? await missingFiles(host, listed) : undefined;
-  const refused = loopRunRefused(listed, missing);
+  const refused = loopRunRefused(listed);
   if (refused) {
     const { reason, refusal } = refused;
     await host.call(HostMethod.EventsAppend, {
       threadId,
       batch: [
-        customEvent(RunEvent.RunStartBlocked, {
-          requestedRunId: action.run.runId,
-          reason,
-          ...(refusal ? { refusal } : {}),
-        }),
+        customEvent(RunEvent.RunStartBlocked, { requestedRunId: action.run.runId, reason, refusal }),
         assistantSays(reason),
       ],
     });
@@ -430,16 +424,6 @@ async function startReservedRun(
     // Terminal, always: the run is over. The app holds the Mac awake until this.
     host.notify("run.settled", { runId: run.runId });
   }
-}
-
-/**
- * What a web game's folder misses now (`game.validate`'s typed list); nothing asked for any other
- * project, nor for a game with no kind yet: its run's start gives it the web starter first.
- */
-async function missingFiles(host: Host, game: GameProject | null): Promise<unknown> {
-  if (!game || kindPending(game) || !servedAsWeb(game)) return undefined;
-  const readiness = await host.call(HostMethod.GameValidate, { project: game.name }).catch(() => null);
-  return readiness?.missing;
 }
 
 /** The run as its conduct reaches it: its close, said as soon as the run is over. */
@@ -594,48 +578,30 @@ export async function resumeRun(studio: Studio, threadId: string, runId: string)
 /**
  * Why this folder cannot have a run spent on it — a sentence for the chat, or null to launch.
  *
- * Two refusals, and both are about the folder rather than the model. An engine export is already
- * compiled — there is no source to edit and no contract to read, so the run would photograph a page
- * nobody can change (Godot/Unity exports); the studio still opens it, plays it and screenshots it.
- * And a web page that cannot load has nothing for a Loop to work on: Genex's own `web.ready`
- * gate (builtin-hooks.ts) says what is missing now, from `game.validate`'s typed `missing`, and only
- * where a web game is served. `problems` are sentences and decide nothing; a caller that hands no
- * `missing` (an older copy of the launch) meets no missing-file refusal, and its run's base builder
- * still owes the page. A missing studio contract is *not* a refusal: installing it is the base
- * builder's first job.
+ * One refusal, about the folder rather than the model: an engine export is already compiled — there
+ * is no source to edit and no contract to read, so the run would photograph a page nobody can change
+ * (Godot/Unity exports); the studio still opens it, plays it and screenshots it. Nothing else
+ * refuses: a web page missing files it needs to load is what Genex's own `web.ready` gate tells the
+ * Loop's lead as it starts (builtin-hooks.ts, read in director.ts), and the lead builds in that very
+ * folder. `problems` and `missing` decide nothing here; the parameters stay for the callers that
+ * hand them (an agent may have kept one).
  */
 export function loopRunRefusal(
   descriptor: LoopRunFolder,
   _problems: readonly string[] | null | undefined,
-  missing?: unknown,
+  _missing?: unknown,
 ): string | null {
-  return loopRunRefused(descriptor, missing)?.reason ?? null;
+  return loopRunRefused(descriptor)?.reason ?? null;
 }
 
 /** The folder a run would be spent on, as `game.list` describes it. */
 type LoopRunFolder = (FactsOfDescriptor & { name?: string; shape?: { kind?: string } | null }) | null | undefined;
 
-/** The refusal each of Genex's own gates stands for when it blocks a run's start. */
-const GATE_REFUSALS: Readonly<Record<BuiltinGate, RunStartRefusal>> = {
-  [BuiltinGate.WebReady]: RunStartRefusal.WebNotReady,
-};
-
-/** The refusal a block by `step` stands for: one of Genex's gates, or null for any other step. */
-function gateRefusal(step: string): RunStartRefusal | null {
-  const gate = Object.values(BuiltinGate).find((value) => value === step);
-  return gate ? GATE_REFUSALS[gate] : null;
-}
-
 /**
  * {@link loopRunRefusal} with its code: the sentence for the chat and the `RunStartRefusal` the
  * start's `run_start_blocked` records beside it, or null to launch.
  */
-export function loopRunRefused(
-  descriptor: LoopRunFolder,
-  missing?: unknown,
-): { reason: string; refusal: RunStartRefusal | null } | null {
-  if (descriptor?.shape?.kind === "engine-export")
-    return { reason: MESSAGE.engineExport(descriptor.name), refusal: RunStartRefusal.EngineExport };
-  const blocked = fireGates(HookEvent.RunPrepare, { game: descriptor, missing }).blocked;
-  return blocked ? { reason: blocked.reason, refusal: gateRefusal(blocked.tool) } : null;
+export function loopRunRefused(descriptor: LoopRunFolder): { reason: string; refusal: RunStartRefusal } | null {
+  if (descriptor?.shape?.kind !== "engine-export") return null;
+  return { reason: MESSAGE.engineExport(descriptor.name), refusal: RunStartRefusal.EngineExport };
 }

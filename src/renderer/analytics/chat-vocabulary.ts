@@ -34,7 +34,7 @@ export const SendSource = {
   SetupCard: "setup_card",
   TagRetry: "tag_retry",
   PluginTurnedOn: "plugin_turned_on",
-  /** Genex telling the agent why the Loop it started didn't start (never sent from the renderer). */
+  /** Genex telling the agent why the Loop it started didn't start (never sent from the renderer; only an older Genex sent it). */
   LoopHeld: "loop_held",
   /** Genex asking the agent for the game's cover once a build landed (never sent from the renderer). */
   CoverStep: "cover_step",

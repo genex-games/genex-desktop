@@ -71,7 +71,7 @@ export async function backendOn(versions: string[], replies: Reply[] = [], optio
     table.start(editorRow(STAND_IN.pid, root));
     await writeDescriptor(root);
   };
-  const backend = createUnityBackend({
+  const deps: Parameters<typeof createUnityBackend>[0] = {
     now,
     multiplayerPackage: MULTIPLAYER_PACKAGE_SOURCE,
     editors: env,
@@ -85,14 +85,19 @@ export async function backendOn(versions: string[], replies: Reply[] = [], optio
       const root = flag < 0 ? undefined : launch.args[flag + 1];
       if (starts && root) await openIn(root);
     },
-  });
+  };
+  let backend = createUnityBackend(deps);
+  /** Genex started again: a new backend process over the same storage, game, editors and processes. */
+  const restart = () => {
+    backend = createUnityBackend(deps);
+  };
   const context = (binding: Partial<PluginContext> = { project: "lantern", directory: game }) =>
     pluginContext(storage, binding, settings);
   const call = (tool: string, binding?: Partial<PluginContext>) => backend.tool?.(tool, {}, context(binding));
   /** One of the panel's actions, with whatever arguments a panel sends. */
   const act = (action: string, args: Record<string, unknown> = {}, binding?: Partial<PluginContext>) =>
     backend.action?.(action, args, context(binding));
-  return { backend, call, act, context, env, game, storage, editors, launches, table, openIn, ...stand };
+  return { backend, call, act, restart, context, env, game, storage, editors, launches, table, openIn, ...stand };
 }
 
 /** A game whose folder holds an existing Unity project saved with `version`, with this manifest. */

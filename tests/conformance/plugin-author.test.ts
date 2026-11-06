@@ -297,10 +297,34 @@ describe("the plugin-author skill", () => {
     const context = { directory: dir, project: "sketch-closed", signal: new AbortController().signal };
     assert.deepEqual(await tools.tool("editor-state", {}, context), { personActive: false, unsaved: 0 });
   });
+
+  it("the skill's example says at a look at the app that a closed editor stopped, in words its lead reads", async () => {
+    const { dir, binding } = await project("sketch-stopped");
+    const { folder } = await writeSkillExample(registry, binding, dir);
+    const editor = await sketchEditor();
+    await editor.close();
+    await writeEditorPort(dir, editor.port);
+    const backend = (await import(pathToFileURL(path.join(dir, folder, "backend.mjs")).href)) as {
+      activate: () => Promise<{ tool: (name: string, args: object, context: object) => Promise<unknown> }>;
+    };
+    const tools = await backend.activate();
+    const context = { directory: dir, project: "sketch-stopped", signal: new AbortController().signal };
+    const look = (await tools.tool("check-editor", {}, { ...context, hook: { on: "health", runId: "run-1" } })) as {
+      block?: unknown;
+      pending?: unknown;
+    };
+    // Genex reads a step's `block` and `pending` only as words: `{pending: true}` read as nothing to
+    // say, so a closed editor looked like one that answers and the lead was never told.
+    assert.equal(typeof look.block, "string", `a block in words: ${JSON.stringify(look)}`);
+    assert.match(String(look.block), /isn't answering/);
+  });
 });
 
 describe("the skill's example across two Loops", () => {
-  it("what a run's end does never leaves the next run's prepare step refused", async () => {
+  // Flipped: "what a run's end does never leaves the next run's prepare step refused": the example
+  // opened the editor at `run.prepare` and reopened it at `crash`; a plugin's steps only inform, and
+  // the lead opens its app with the plugin's agent tools.
+  it("no step at a run's start, its looks at the app or its end opens or closes the editor, and none waits for a moment Genex never fires", async () => {
     const registry = await bundledRegistry();
     const { dir, binding } = await project("sketch-twice");
     const { folder } = await writeSkillExample(registry, binding, dir);
@@ -313,17 +337,19 @@ describe("the skill's example across two Loops", () => {
     try {
       await writeEditorPort(dir, editor.port);
       const context = { directory: dir, project: "sketch-twice", signal: new AbortController().signal };
-      /** Every hook the example runs at `moment`, with their answers. */
+      /** Runs every hook the example runs at `moment`. */
       const at = async (moment: string) => {
-        const answers: unknown[] = [];
         for (const hook of (manifest.hooks ?? []).filter((h) => h.on === moment))
-          answers.push(await tools.tool(hook.tool, {}, { ...context, hook: { on: moment } }));
-        return answers;
+          await tools.tool(hook.tool, {}, { ...context, hook: { on: moment, runId: "run-1" } });
       };
-      const blocked = (answers: unknown[]) => answers.filter((a) => (a as { block?: unknown }).block !== undefined);
-      assert.deepEqual(blocked(await at("run.prepare")), [], "the first Loop starts");
-      await at("run.end");
-      assert.deepEqual(blocked(await at("run.prepare")), [], "the next Loop starts too");
+      for (const moment of ["run.prepare", "health", "run.end", "run.prepare", "health"]) await at(moment);
+      const opensOrCloses = editor.routes.filter((route) => route === "/open" || route === "/close");
+      assert.deepEqual(opensOrCloses, [], "the person's editor stays as they left it");
+      assert.deepEqual(
+        (manifest.hooks ?? []).filter((hook) => hook.on === "crash"),
+        [],
+        "Genex never fires crash",
+      );
     } finally {
       await editor.close();
     }

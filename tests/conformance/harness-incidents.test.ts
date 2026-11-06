@@ -740,7 +740,7 @@ describe("a chat asked for research (corner-guy)", () => {
   });
 });
 
-import { gameRepo, loopHost } from "../helpers/loop-host.ts";
+import { gameRepo, type LoopHost, type LoopManifest, type LoopTurn, loopHost } from "../helpers/loop-host.ts";
 import { copyProject, Project } from "../helpers/project-fixtures.ts";
 
 /**
@@ -5330,36 +5330,180 @@ describe("the language of Genex's own turns", () => {
   });
 });
 
-describe("a new Loop a plugin held back before its first turn", () => {
-  it("HS1. the Loop's start was held back (Unreal wouldn't reopen) and nobody acted until the person asked the chat to reopen it: the close says startHeld and the chat's agent is told once", async () => {
-    const { heldStartAsk } = await import("../../src/main/core/held-start.ts");
-    const { MessageOrigin } = await import("../../src/shared/protocol.ts");
-    const record = (id: string, event_type: string, payload: Record<string, unknown>) => ({
-      id,
-      thread_id: "t1",
-      turn_id: null,
-      session_id: null,
-      created_at: "2026-10-27T18:58:00.000Z",
-      data: { type: "custom" as const, event_type, payload },
-    });
-    const person = { type: "user_message", threadId: "t1", text: "make it photoreal", engine: "claude-code" };
-    const because = "The Loop didn't start: a plugin of this project held it back: Unreal couldn't be reopened.";
-    const events = [
-      record("1", "coordinator_message_queued", { messageId: "m1", action: person }),
-      record("2", "run_finished", { runId: "r1", stoppedBecause: because, startHeld: true }),
-    ];
-    const ask = heldStartAsk("t1", events, "r1");
-    assert.equal(ask?.options.origin, MessageOrigin.LoopHeld);
-    assert.equal(ask?.options.engine, "claude-code");
-    assert.ok(ask?.text.includes(because));
-    const asked = { ...person, origin: MessageOrigin.LoopHeld };
-    const again = [
-      ...events,
-      record("3", "coordinator_message_queued", { messageId: "m2", action: asked }),
-      record("4", "run_finished", { runId: "r2", stoppedBecause: because, startHeld: true }),
-    ];
-    assert.equal(heldStartAsk("t1", again, "r2"), null, "held again: it waits for the person");
+/** The castle-artillery incident's words: the app's stop, a build that failed, a project never linked. */
+const CASTLE = {
+  stopped: "Unreal isn't running: it crashed or was quit.",
+  unbuilt: "The game's code didn't build: Source/Castle/Cannon.cpp(42): error",
+  unlinked: "This game isn't linked to an Unreal project.",
+} as const;
+/** No castle Loop may hang the suite: each is over in a few seconds when it works. */
+const CASTLE_TIMEOUT = { timeout: 60_000 };
+
+/** A turn that claims the goal is reached, naming the project's own file as proof. */
+const castleFinishes: LoopTurn = async ({ tool }) => {
+  await tool("finish", { review: "yes", summary: "The castle's cannon fires.", proof: "Garden.toyproj" });
+  return undefined;
+};
+
+/** A Loop's host on a copy of the toy project, its plugin hooking the start, health and crash moments. */
+async function castleHost(turns: LoopTurn[], runId: string): Promise<LoopHost> {
+  const manifest = (await import("../fixtures/toy-engine-plugin/plugin.json", { with: { type: "json" } })).default;
+  const dir = await gameRepo(await copyProject(Project.ToyProject, await tmpDir("castle-")));
+  const facts = [{ id: "toy-project", path: "." }];
+  return loopHost({ dir, facts, manifest: manifest as unknown as LoopManifest, turns, run: { runId } });
+}
+
+/** A castle Loop's start step blocks with the step's own words. */
+const startBlocks = (host: LoopHost, why: string) =>
+  host.stepAnswers.set("editor-state", (hook) => (hook.on === "run.prepare" ? { block: why } : {}));
+
+/** A castle Loop that kept save point "One" and was paused by the person's Stop: its journal never says the app was lost. */
+async function pausedCastle(runId: string): Promise<LoopHost> {
+  const stops: LoopTurn = async ({ host, tool }) => {
+    await tool("save_point", { label: "One", summary: "the castle's walls" });
+    host.rec.cancel();
+    return undefined;
+  };
+  const host = await castleHost([stops], runId);
+  const paused = await host.start();
+  assert.equal(paused.executionStatus, "paused");
+  host.rec.ctx.cancelled = false;
+  return host;
+}
+
+/**
+ * A castle Loop whose app stops once its lead's first turn kept save point "One": its health step
+ * blocks, and its crash step (which reopens and compiles it) counts its calls and fails to build.
+ * That turn works on until Genex did something about the stop (told the lead, or reopened the
+ * app); the next turn finishes.
+ */
+async function stoppingCastle() {
+  const state = { broken: false, reopens: 0, seen: false };
+  const stopsTheApp: LoopTurn = async ({ host, tool }) => {
+    await tool("save_point", { label: "One", summary: "the castle's walls" });
+    state.broken = true;
+    const told = () => host.steered.some((line) => line.text.includes("isn't running"));
+    state.seen = await host.until(() => state.reopens > 0 || told());
+    return undefined;
+  };
+  const host = await castleHost([stopsTheApp, castleFinishes], "run-castle-crash");
+  host.stepAnswers.set("editor-state", (hook) =>
+    hook.on === "health" && state.broken ? { block: CASTLE.stopped } : {},
+  );
+  host.stepAnswers.set("reopen-editor", () => {
+    state.reopens += 1;
+    return { block: CASTLE.unbuilt };
   });
+  return { host, state };
+}
+
+describe("a new Loop a plugin held back before its first turn", () => {
+  // Flipped: the start was held back and its close said `startHeld`, so Genex sent the chat's agent
+  // to fix it once (core/held-start.ts, gone): the start is its lead's, which reads why and decides.
+  it(
+    "HS1. the Loop's start was held back (Unreal wouldn't reopen) and nobody acted until the person asked the chat to reopen it: a new Loop whose start a plugin's step couldn't prepare runs, the step's words its lead's first line; the chat's agent is never sent to fix it",
+    CASTLE_TIMEOUT,
+    async () => {
+      const host = await castleHost([castleFinishes], "run-castle-held");
+      startBlocks(host, "Unreal couldn't be reopened (The game's code didn't build).");
+      const report = await host.start();
+      const [first, ...more] = host.prompts();
+      assert.ok(
+        first?.includes("Unreal couldn't be reopened"),
+        `the lead reads the step's words first: ${String(first)}`,
+      );
+      assert.equal(more.length, 0, "one turn, and it finished");
+      assert.equal(report.victory, true, String(report.stoppedBecause));
+      const [close] = host.appended("run_finished");
+      assert.equal(close?.startHeld, undefined, "no close asks the chat's agent to fix the start");
+    },
+  );
+});
+
+describe("a Loop on Unreal decides for itself (castle-artillery)", () => {
+  it(
+    "HL1. the lead ended its turn with C++ that didn't compile; Genex found Unreal closed, reopened and compiled it, failed, and paused the Loop without telling the lead: the lead is woken with the app's reason and decides; Genex reopens, compiles and restores nothing",
+    CASTLE_TIMEOUT,
+    async () => {
+      const { host, state } = await stoppingCastle();
+      const report = await host.start();
+      assert.ok(state.seen, "the stop was seen while the lead worked");
+      assert.equal(state.reopens, 0, "Genex never reopened or compiled the app");
+      const crashes = host.rec.paramsOf("hooks.fire").filter((params) => params.on === "crash");
+      assert.deepEqual(crashes, [], "no crash moment was fired");
+      assert.deepEqual(host.rec.paramsOf("snapshot.restore"), [], "the folder never went back");
+      assert.match(String(host.prompts()[1]), /isn't running/, "the lead was woken with the app's own reason");
+      assert.equal(report.victory, true, String(report.stoppedBecause));
+      assert.notEqual(report.executionStatus, "paused", "only the lead or the person pauses a Loop");
+    },
+  );
+
+  it(
+    "HL2. a Resume ran run.prepare, which opened and compiled first, the step failed, and the lead was never woken: the Resume's lead reads why and goes on",
+    CASTLE_TIMEOUT,
+    async () => {
+      const host = await pausedCastle("run-castle-resume");
+      startBlocks(host, CASTLE.unbuilt);
+      host.turns.push(castleFinishes);
+      const turns = host.leadCalls().length;
+      const pauses = host.appended("autopilot_paused").length;
+      const resumed = await host.start({ resume: true });
+      const [first, ...more] = host.prompts().slice(turns);
+      assert.ok(first?.includes(CASTLE.unbuilt), `the resumed lead's first message says why: ${String(first)}`);
+      assert.equal(more.length, 0, "one turn, and it finished");
+      assert.equal(resumed.victory, true, String(resumed.stoppedBecause));
+      assert.equal(host.appended("autopilot_paused").length, pauses, "never paused again");
+      assert.doesNotMatch(String(resumed.stoppedBecause), /Cannon\.cpp/, "the person never reads the step's error");
+    },
+  );
+
+  // Was a check that no start step is named open-for-run; it is the rule now: whatever its steps
+  // are called, nothing at a run's start opens Unreal, even on a project Genex could open.
+  it("HL3a. a project the lead made by hand mid-run wasn't linked, and open-for-run blocked every Resume: no start step of the Unreal plugin opens its editor, though its project is linked, set up and closed", async () => {
+    const { HookEvent, hookPlan } = await import("../../src/shared/plugin-hooks.ts");
+    const { unrealBackendFixture } = await import("../helpers/unreal-fake-engine.ts");
+    const unreal = (await import("../../src/plugins/unreal/plugin.json", { with: { type: "json" } })).default;
+    const plugins = [{ id: unreal.id, manifest: unreal as unknown as LoopManifest }];
+    const steps = hookPlan(plugins, HookEvent.RunPrepare, { facts: [{ id: "unreal-project", path: "." }] });
+    assert.ok(steps.length > 0, "the plugin has steps at a run's start");
+    // A linked, set-up project on a fake Unreal that is closed: the plugin's new-plugin makes one.
+    const f = await unrealBackendFixture();
+    await f.call("new-plugin", { name: "LevelTools", template: "window" });
+    for (const step of steps) await f.atMoment(step.tool, { on: HookEvent.RunPrepare, runId: "run-castle" });
+    // An opening a step only began has launched Unreal by the time it ends.
+    await f.call("editor-status", { seconds: 5 });
+    assert.deepEqual(f.launches, [], "the lead opens and builds its editor itself");
+  });
+
+  it(
+    "HL3b. a project the lead made by hand mid-run wasn't linked, and open-for-run blocked every Resume: no start step blocks a start, a Resume's or a new Loop's",
+    CASTLE_TIMEOUT,
+    async () => {
+      const host = await pausedCastle("run-castle-unlinked");
+      startBlocks(host, CASTLE.unlinked);
+      for (const resume of [1, 2]) {
+        const turns = host.leadCalls().length;
+        host.turns.push(async ({ host }) => {
+          host.rec.cancel();
+          return undefined;
+        });
+        const resumed = await host.start({ resume: true });
+        host.rec.ctx.cancelled = false;
+        const [first] = host.prompts().slice(turns);
+        assert.ok(
+          first?.includes(CASTLE.unlinked),
+          `Resume ${resume} reached the lead with the step's line: ${String(first)}`,
+        );
+        assert.equal(resumed.executionStatus, "paused", "the person's Stop paused it again");
+      }
+      const fresh = await castleHost([castleFinishes], "run-castle-unlinked-new");
+      startBlocks(fresh, CASTLE.unlinked);
+      const report = await fresh.start();
+      assert.ok(fresh.prompts()[0]?.includes(CASTLE.unlinked), "a new Loop's lead reads the step's line first");
+      assert.equal(report.startHeld, undefined, "the chat's agent is never sent to fix the start");
+      assert.equal(report.victory, true, String(report.stoppedBecause));
+    },
+  );
 });
 
 describe("the lead and its workers are free agents (Loop phase 3)", () => {

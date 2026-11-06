@@ -1,9 +1,8 @@
 /**
- * What a Loop's lead has at work while it rests: its pool's running workers, the run's running jobs,
- * and a recovery of the project's app under way. A lead with nothing at work
- * and nothing to be woken for is done: its Loop closes, as a bare agent's turn ends (wake.ts). The
- * run's jobs are read from the host at most every `JOB_POLL_MS`; a read the host could not answer
- * says nothing, so only one that says no job runs lets the Loop close.
+ * What a Loop's lead has at work while it rests: its pool's running workers and the run's running
+ * jobs. A lead with nothing at work and nothing to be woken for is done: its Loop closes, as a bare
+ * agent's turn ends (wake.ts). The run's jobs are read from the host at most every `JOB_POLL_MS`; a
+ * read the host could not answer says nothing, so only one that says no job runs lets the Loop close.
  */
 import type { HarnessCtx } from "../../../types/harness.d.ts";
 import type { JobView } from "../../../types/host-api.d.ts";
@@ -22,14 +21,9 @@ async function jobsNow(ctx: HarnessCtx, project: string, runId: string): Promise
   }
 }
 
-/**
- * What the lead has at work now, from the last read of the run's jobs (`activeWork` refreshes it): a
- * recovery of the project's app under way counts too, so a lone lead rests while Genex brings the
- * app back, and the recovery's outcome wakes it, never the question of what next.
- */
+/** What the lead has at work now, from the last read of the run's jobs (`activeWork` refreshes it). */
 export function workAtHand(loopRun: LoopRun): number {
-  const recovering = loopRun.open.recovering ? 1 : 0;
-  return loopRun.runningWorkers().length + (loopRun.jobsRunning ?? 0) + recovering;
+  return loopRun.runningWorkers().length + (loopRun.jobsRunning ?? 0);
 }
 
 /** What the lead has at work now, the run's jobs read again when the last read is `JOB_POLL_MS` old or forgotten. */

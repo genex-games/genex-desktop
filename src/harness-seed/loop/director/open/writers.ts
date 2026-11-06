@@ -1,8 +1,7 @@
 /**
  * The run's writers in place: its pool's workers with isolation lock, which write in the game folder
  * beside the lead (a worker in a copy or a reader writes nothing there). A claim waits for one, the
- * lead's rewind or restart waits for it to end, no autosave keeps its half-done files, and a way back
- * to a save point stops it first, saying so.
+ * lead's rewind or restart waits for it to end, and no autosave keeps its half-done files.
  */
 import { WorkerIsolation, WorkerTool } from "../../workers/contract.ts";
 import { runningRecords, type WorkerRecord } from "../../workers/records.ts";
@@ -15,9 +14,9 @@ export function writersInPlace(open: OpenLoop): WorkerRecord[] {
 }
 
 /**
- * Stops the run's writers in place before Genex takes the folder back (`worker_stop`, the reason on
- * each one's end record): their edits would otherwise land on files the restore replaced. Answers
- * the ids of those it stopped.
+ * Stops the run's writers in place (`worker_stop`, the reason on each one's end record) and answers
+ * the ids of those it stopped. Kept for a `health.ts` an agent kept from before, whose way back to a
+ * save point stopped them first: the seed never takes the folder back by itself.
  */
 export async function stopWritersInPlace(open: OpenLoop, why: string): Promise<string[]> {
   const ids = writersInPlace(open).map((record) => record.id);

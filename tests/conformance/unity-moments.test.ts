@@ -7,7 +7,7 @@ import { UnityAction, UnityTool } from "../../src/plugins/unity/backend.ts";
 import { PIPELINE_VERSION } from "../../src/plugins/unity/pipeline.ts";
 import { encodePng } from "../../src/substrate/png.ts";
 import { HookEvent } from "../../src/shared/plugin-hooks.ts";
-import { backendOn, commandsSent, look, ok, ready, withProject } from "../helpers/unity-backend.ts";
+import { backendOn, commandsSent, look, ok, withProject } from "../helpers/unity-backend.ts";
 import { editorRow, json, type Reply, STAND_IN } from "../helpers/unity-editor-stand-in.ts";
 
 const playing = () => json(200, { status: "playing", playMode: "playing" });
@@ -91,17 +91,23 @@ describe("save-all before a checkpoint", () => {
     assert.deepEqual(seen, []);
   });
 
-  it("holds the snapshot while the person plays and agents wait for them: scenes can't be saved in Play mode", async () => {
-    for (const hook of [chat(HookEvent.CheckpointBefore), run(HookEvent.CheckpointBefore)]) {
+  // Flipped: the person's play held the snapshot (a block) in a chat and in a run.
+  it("takes the snapshot while the person plays and agents wait for them, and says scenes can't be saved in Play mode", async () => {
+    const rows: Array<[PluginHookContext, RegExp]> = [
+      [chat(HookEvent.CheckpointBefore), /Unity is in Play mode.*This checkpoint holds the files on disk only\./],
+      [run(HookEvent.CheckpointBefore), /Unity is in Play mode.*This save point holds the files on disk only\./],
+    ];
+    for (const [hook, words] of rows) {
       const { at, act, seen } = await openGame([playing()]);
       await act(UnityAction.AgentsWait);
-      const answer = (await at(UnityTool.SaveAll, hook)) as { block?: string };
-      assert.match(String(answer.block), /Unity is in Play mode/);
+      const answer = (await at(UnityTool.SaveAll, hook)) as Record<string, string>;
+      assert.equal(answer.block, undefined, "nothing holds the snapshot");
+      assert.match(String(answer.note), words);
       assert.deepEqual(commandsSent(seen), [], "the person's play is theirs to stop");
     }
   });
 
-  it("stops the person's play in a run's save point while agents may use Unity as they play; a chat's still waits", async () => {
+  it("stops the person's play in a run's save point while agents may use Unity as they play; a chat's leaves it and says so", async () => {
     const inRun = await openGame([
       playing(),
       ok("Exited play mode"),
@@ -112,8 +118,10 @@ describe("save-all before a checkpoint", () => {
     assert.deepEqual(await inRun.at(UnityTool.SaveAll, run(HookEvent.CheckpointBefore)), {});
     assert.deepEqual(commandsSent(inRun.seen), ["editor_stop", "list_open_scenes", "save_scene", "eval"]);
     const inChat = await openGame([playing()]);
-    const answer = (await inChat.at(UnityTool.SaveAll, chat(HookEvent.CheckpointBefore))) as { block?: string };
-    assert.match(String(answer.block), /Unity is in Play mode/);
+    const answer = (await inChat.at(UnityTool.SaveAll, chat(HookEvent.CheckpointBefore))) as Record<string, string>;
+    // Flipped: a chat's checkpoint was held (a block) while the person played.
+    assert.equal(answer.block, undefined);
+    assert.match(String(answer.note), /Unity is in Play mode/);
     assert.deepEqual(commandsSent(inChat.seen), []);
   });
 
@@ -134,8 +142,11 @@ describe("save-all before a checkpoint", () => {
       await assert.rejects(access(marker), "the agent's play is over");
     }
   });
+});
 
-  it("says in a chat why work stays unsaved, and holds a run's save point for the same reasons", async () => {
+describe("save-all before a checkpoint, of work it can't save", () => {
+  // Flipped: a run's save point was held (a block) for the same reasons a chat's checkpoint notes.
+  it("says why work stays unsaved, at a chat's checkpoint and a run's save point alike, and holds neither", async () => {
     const reasons: Array<[string, () => Reply[], RegExp]> = [
       ["an unsaved scene with no name", () => [look(), scenes(["", true]), ok()], /never been saved.*save_scene/],
       [
@@ -149,19 +160,24 @@ describe("save-all before a checkpoint", () => {
         await openGame(replies())
       ).at(UnityTool.SaveAll, chat(HookEvent.CheckpointBefore))) as Record<string, string>;
       assert.match(String(inChat.note), words, what);
+      assert.match(String(inChat.note), /This checkpoint holds the files on disk only\./, what);
       assert.equal(inChat.block, undefined, `${what}: a chat's turn is not held`);
       const inRun = (await (
         await openGame(replies())
       ).at(UnityTool.SaveAll, run(HookEvent.CheckpointBefore))) as Record<string, string>;
-      assert.match(String(inRun.block), words, what);
+      assert.match(String(inRun.note), words, what);
+      assert.match(String(inRun.note), /This save point holds the files on disk only\./, what);
+      assert.equal(inRun.block, undefined, `${what}: a run's save point is kept, its lead told`);
     }
   });
 
   it("can't save past a main thread that runs nothing, and asks it nothing more", async () => {
     const game = await openGame([new Error("no answer")]);
     stall(game);
-    const answer = (await game.at(UnityTool.SaveAll, run(HookEvent.CheckpointBefore))) as { block?: string };
-    assert.match(String(answer.block), /main thread runs nothing \(a dialog nobody answered/);
+    const answer = (await game.at(UnityTool.SaveAll, run(HookEvent.CheckpointBefore))) as Record<string, string>;
+    // Flipped: a block, which held the run's save point.
+    assert.equal(answer.block, undefined);
+    assert.match(String(answer.note), /main thread runs nothing \(a dialog nobody answered/);
     assert.deepEqual(commandsSent(game.seen), []);
   });
 });
@@ -245,7 +261,7 @@ describe("the editor's health in a run", () => {
     assert.match(String(answer.pending), /starting, reloading its scripts or importing/);
   });
 
-  it("gives a stalled main thread two minutes, then fails the check so the editor is opened again", async () => {
+  it("gives a stalled main thread two minutes, then fails the check: the lead is told, and nothing opens the editor again", async () => {
     let now = Date.parse("2026-10-14T09:00:00.000Z");
     const backend = await backendOn(
       ["6000.3.10f1"],
@@ -269,6 +285,7 @@ describe("the editor's health in a run", () => {
     assert.match(String((await check()).pending), /main thread is not answering/, "still within its two minutes");
     now += 31_000;
     assert.match(String((await check()).block), /has run nothing for 2 minutes: a dialog nobody answered/);
+    assert.deepEqual([backend.table.sent, backend.launches], [[], []], "the check ends and opens nothing");
   });
 
   it("never fails the check, however long the stall, while someone is at the computer: the dialog may be theirs", async () => {
@@ -313,39 +330,12 @@ describe("the editor's health in a run", () => {
     assert.ok((await check(true)).pending, "a new stall gets its own two minutes");
   });
 
-  it("ends what is left of the editor after a failed check and opens the project again", async () => {
-    const game = await openGame([new Error("no answer"), ready()]);
+  // Flipped: after a failed check, the crash step ended what was left of the editor and opened it again.
+  it("reopen-editor anywhere but a restore's end ends nothing and opens nothing: Genex never brings the editor back by itself", async () => {
+    const game = await openGame([new Error("no answer")]);
     stall(game);
-    const answer = await game.at(UnityTool.ReopenEditor, run(HookEvent.Crash));
-    assert.deepEqual(game.table.sent, [[STAND_IN.pid, "SIGTERM"]]);
-    assert.equal(game.launches.length, 1);
-    assert.equal((answer as { block?: string }).block, undefined, "a crash's step is a note at most");
-  });
-});
-
-describe("a run's start", () => {
-  it("opens the game's editor and goes on once it answers", async () => {
-    const { at, launches } = await closedGame([ready(), look(), ok()]);
-    assert.deepEqual(await at(UnityTool.OpenForRun, run(HookEvent.RunPrepare)), {});
-    assert.equal(launches.length, 1);
-  });
-
-  it("closes the run with the reason when the project is not set up or its Unity is not installed", async () => {
-    const bare = await backendOn(["6000.3.10f1"]);
-    await withProject(bare.game, "6000.3.10f1");
-    const hook = run(HookEvent.RunPrepare);
-    const notSetUp = (await bare.call(UnityTool.OpenForRun, { project: "lantern", directory: bare.game, hook })) as {
-      block?: string;
-    };
-    assert.match(String(notSetUp.block), /no Pipeline package .* unity__setup/);
-
-    const other = await backendOn(["6000.3.10f1"]);
-    await withProject(other.game, "6000.0.26f1", { "com.unity.pipeline": PIPELINE_VERSION });
-    const missing = (await other.call(UnityTool.OpenForRun, { project: "lantern", directory: other.game, hook })) as {
-      block?: string;
-    };
-    assert.match(String(missing.block), /Unity 6000\.0\.26f1, which this project was saved with, isn't installed/);
-    assert.deepEqual([bare.launches, other.launches], [[], []]);
+    assert.deepEqual(await game.at(UnityTool.ReopenEditor, run(HookEvent.Crash)), {});
+    assert.deepEqual([game.table.sent, game.launches], [[], []]);
   });
 });
 

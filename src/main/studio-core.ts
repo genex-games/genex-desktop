@@ -203,7 +203,6 @@ import { ObserverService, type ObserverServiceOptions } from "./core/observers.t
 import { FinishReviews, finishHistory } from "./core/finish-review.ts";
 import { PreviewService } from "./core/previews.ts";
 import { AutoResumeService, type AutoResumeDeps } from "./core/auto-resume.ts";
-import { heldStartAsk, heldStartRuns } from "./core/held-start.ts";
 import { coverStepAsk, coverStepRuns } from "./core/cover-step.ts";
 import { type ReviewWatch, startReviewWatch } from "./core/genex-review-watch.ts";
 import {
@@ -1907,14 +1906,13 @@ export class StudioCore {
   }
 
   /**
-   * What a chat's appended events start once a run ends: a Resume, the agent told why a Loop did not
-   * start, the cover of a landed build, and the game list's view of the build. Off the append's
-   * path: reading the game's folder never holds up the log.
+   * What a chat's appended events start once a run ends: a Resume, the cover of a landed build, and
+   * the game list's view of the build. Off the append's path: reading the game's folder never holds
+   * up the log.
    */
   #afterRunEnds(threadId: string, events: readonly EventEnvelope[]): void {
     this.#autoResume.observe(threadId, events);
     if (events.some(endsWork)) void this.#afterFixWork(threadId);
-    for (const runId of heldStartRuns(events)) void this.#askAfterHeldStart(threadId, runId);
     for (const runId of coverStepRuns(events)) void this.#askForCover(threadId, runId);
     void noteBuildEnd(this.#buildEnds, threadId, events).catch(() => {});
   }
@@ -2022,19 +2020,6 @@ export class StudioCore {
     this.#fixSettles.set(project, next);
     await next;
     if (this.#fixSettles.get(project) === next) this.#fixSettles.delete(project);
-  }
-
-  /** A Loop a plugin held back at its start: the chat's agent is told why, to fix it (`core/held-start.ts`). */
-  async #askAfterHeldStart(threadId: string, runId: string): Promise<void> {
-    try {
-      const ask = heldStartAsk(threadId, await this.store.listEvents(threadId), runId);
-      if (ask) await this.sendUserMessage(ask.text, ask.options);
-    } catch (err) {
-      this.options.onLog?.(
-        `[core] the agent wasn't told why the Loop didn't start in ${threadId}: ${errorMessage(err)}`,
-        "stderr",
-      );
-    }
   }
 
   /**

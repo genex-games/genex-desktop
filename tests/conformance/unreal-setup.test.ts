@@ -1853,12 +1853,15 @@ describe("a game's own Unreal project and the steps card", () => {
     return { ...b, port: there.port };
   }
 
-  it("open-for-run records a linked project another profile set up, touching none of its files, then opens it", async () => {
+  // Was "open-for-run records a linked project another profile set up, …": the lead opens it now.
+  it("the agent's open-editor records a linked project another profile set up, touching none of its files, then opens it; an Unreal that has it open is never quit", async () => {
     const b = await linkedElsewhere({ running: false, answering: false });
     assert.deepEqual(await listSetUpProjects(b.storage), [], "no set-up record in this profile");
     const project = await tree(b.project.directory);
-    const answer = (await b.backend.tool?.("open-for-run", {}, b.context)) as { block?: string };
-    assert.equal(answer.block, undefined, answer.block);
+    const answer = (await b.backend.tool?.("open-editor", {}, b.context)) as { started?: boolean };
+    assert.equal(answer.started, true, JSON.stringify(answer));
+    const status = (await b.backend.tool?.("editor-status", { seconds: 30 }, b.context)) as { answering?: boolean };
+    assert.equal(status.answering, true, JSON.stringify(status));
     assert.deepEqual(await listSetUpProjects(b.storage), [{ project: b.real, name: "Drift", port: b.port }]);
     assert.deepEqual(await tree(b.project.directory), project, "the project's files as they were");
     assert.deepEqual(
@@ -1866,16 +1869,13 @@ describe("a game's own Unreal project and the steps card", () => {
       [b.real],
       "opened, never quit",
     );
-  });
 
-  it("open-for-run never quits Unreal to set up a linked project it can't adopt: it blocks, naming the tool that can", async () => {
-    const b = await linkedElsewhere({ running: true, answering: false }, false);
-    const before = await tree(b.root);
-    const answer = (await b.backend.tool?.("open-for-run", {}, b.context)) as { block?: string };
-    assert.match(answer.block ?? "", /Unreal has Drift open/);
-    assert.match(answer.block ?? "", /unreal__use-project/);
-    assert.deepEqual(b.launched, [], "Unreal is neither quit nor opened at the Loop's start");
-    assert.deepEqual(await tree(b.root), before, "nothing set up");
+    const open = await linkedElsewhere({ running: true, answering: true });
+    const files = await tree(open.project.directory);
+    assert.deepEqual(await open.backend.tool?.("open-editor", {}, open.context), { answering: true });
+    assert.deepEqual(await listSetUpProjects(open.storage), [{ project: open.real, name: "Drift", port: open.port }]);
+    assert.deepEqual(await tree(open.project.directory), files, "an open project's files as they were");
+    assert.deepEqual(open.launched, [], "an Unreal that has it open is neither quit nor opened again");
   });
 
   it("the agent's use-project links a project another profile set up while Unreal has it open, quitting nothing", async () => {

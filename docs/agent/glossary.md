@@ -118,9 +118,10 @@ Every project's Loop is the director's wake loop, in place, a web game's too.
   (`src/shared/project-facts.ts`, `src/substrate/project-facts.ts`). Facts pick the profile and
   scope a plugin's tools, hooks and observers; they suggest, the person decides.
 - **Hook**: a plugin's harness tool Genex runs at one of its moments (manifest `hooks`, `HookEvent`:
-  `run.prepare`, `checkpoint.before`, `worker.start`…) for the games its facts reach; it may block
-  with a reason, add a note or pictures, never rewrite arguments or take a snapshot
-  (`src/shared/plugin-hooks.ts`, `src/main/core/plugin-hooks.ts`).
+  `run.prepare`, `checkpoint.before`, `worker.start`…) for the games its facts reach; it may refuse
+  the call its moment answers (`tool.before`, `finish`, `restore.before`) with a reason, and is
+  otherwise a note the lead reads; it adds notes or pictures, never rewrites arguments or takes a
+  snapshot (`src/shared/plugin-hooks.ts`, `src/main/core/plugin-hooks.ts`).
 - **Lock**: one holder at a time for what a plugin guards, such as an editor (manifest `locks`
   `{id, label, per, personFirst?}`; tools say which they `need`). Its `personFirst` probe makes the
   agents wait while the person uses it ("Waiting for you to finish in <label>"); a lock grants

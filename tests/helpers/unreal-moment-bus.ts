@@ -2,10 +2,13 @@
  * A fake of Genex's hook bus for a harness test host: `hooks.fire`, `checkpoint.take` and
  * `snapshot.restore` answered as the host's `HookService` does, with the steps planned by the
  * shared `hookPlan` over a plugin manifest (the real one, or one a test hands it). Each step is
- * answered by the test host (`step`), a writing moment is held while the chat plans, the steps'
- * locks wait for the person (`probe`, asked every five seconds up to the moment's wait) and a
- * blocking moment stops at its first block (a step that throws blocks; at `health` it is pending).
- * Every step, probe, snapshot and restore is appended to the host's one ordered trail (`log`).
+ * answered by the test host (`step`). While the chat plans, a writing moment that answers a call
+ * (a checkpoint, a restore) waits for the plan and any other runs no step, with Genex's note. The
+ * steps' locks wait for the person (`probe`, asked every five seconds up to the moment's wait): one
+ * not given refuses only a call (a checkpoint then takes its snapshot alone, with Genex's note). A
+ * blocking moment stops at its first block (a step that throws blocks; at `health` it is pending);
+ * anywhere else a block is a note. Every step, probe, snapshot and restore is appended to the
+ * host's one ordered trail (`log`).
  */
 import { HOOK_LOCK_WAIT_MS } from "../../src/main/core/plugin-hooks.ts";
 import { PERSON_FIRST_POLL_MS } from "../../src/main/core/plugin-locks.ts";
@@ -34,6 +37,9 @@ import type { GameKind } from "../../src/shared/project-facts.ts";
 export const BUS_WORDS = {
   planning: "the chat is in Plan mode, so nothing changes until the plan is approved.",
   planHeld: "The chat is in Plan mode, so this waits until the plan is approved.",
+  planSkipped: "The chat is in Plan mode, so the plugins' steps that write were skipped.",
+  snapshotAlone: (label: string) =>
+    `The checkpoint's steps were skipped, since ${label} was not free: its snapshot holds only the files on disk.`,
   failed: (plugin: string, tool: string, why: string) => `${plugin}'s ${tool} step failed: ${why}`,
   noProbe: "Genex couldn't tell whether anything was unsaved, so no checkpoint was taken.",
   nothingUnsaved: (labels: string) => `Nothing was unsaved in ${labels}, so no checkpoint was taken.`,
@@ -71,6 +77,12 @@ const PLAN_HELD: HookHeld = { hold: HookHold.Plan };
 const held = ({ reason, held: by }: Refusal): HookReport => ({
   ...EMPTY_HOOK_REPORT,
   blocked: { plugin: "@genex", tool: "", reason, ...by },
+});
+
+/** A report of a moment Genex itself ran no step at, with its own note and typed hold. */
+const noted = (text: string, by: HookHeld): HookReport => ({
+  ...EMPTY_HOOK_REPORT,
+  notes: [{ plugin: "@genex", text, ...by }],
 });
 
 /** The error a restore a step (or Genex's hold) stopped fails with, as the harness receives it. */
@@ -183,12 +195,16 @@ export async function fire(bus: BusHost, params: Record<string, unknown>): Promi
   if (!isSeedFiredHookEvent(on)) throw new Error(`The harness may not announce the moment ${JSON.stringify(on)}`);
   const steps = planOf(bus, on);
   if (!steps.length) return EMPTY_HOOK_REPORT;
-  if (WRITING_HOOK_EVENTS.has(on) && bus.planning()) return held({ reason: BUS_WORDS.planHeld, held: PLAN_HELD });
+  const answersCall = BLOCKING_HOOK_EVENTS.has(on);
+  if (WRITING_HOOK_EVENTS.has(on) && bus.planning())
+    return answersCall
+      ? held({ reason: BUS_WORDS.planHeld, held: PLAN_HELD })
+      : noted(BUS_WORDS.planSkipped, PLAN_HELD);
   const refused = await hold(bus, steps, HOOK_LOCK_WAIT_MS[on]);
-  if (refused && (BLOCKING_HOOK_EVENTS.has(on) || WRITING_HOOK_EVENTS.has(on))) return held(refused);
+  if (refused && answersCall) return held(refused);
   if (refused && on === HookEvent.Health)
-    return { ...EMPTY_HOOK_REPORT, pending: { plugin: "@genex", reason: refused.reason } };
-  if (refused) return { ...EMPTY_HOOK_REPORT, notes: [{ plugin: "@genex", text: refused.reason }] };
+    return { ...EMPTY_HOOK_REPORT, pending: { plugin: "@genex", reason: refused.reason, ...refused.held } };
+  if (refused) return noted(refused.reason, refused.held);
   return run(bus, on, steps, contextOf(on, params));
 }
 
@@ -206,7 +222,16 @@ async function unsavedSkip(bus: BusHost, before: readonly HookStep[]) {
   return total === 0 ? { skipped: CheckpointSkip.NothingUnsaved, reason: BUS_WORDS.nothingUnsaved(labels) } : null;
 }
 
-/** `checkpoint.take`: what is unsaved read first when asked, then the before steps, the snapshot, the after steps. */
+/** The checkpoint's snapshot, appended to the trail where it is taken. */
+async function snapshotOf(bus: BusHost, params: Record<string, unknown>) {
+  bus.log("snapshot.create", "snapshot.create");
+  return bus.snapshot(String(params.label));
+}
+
+/**
+ * `checkpoint.take`: what is unsaved read first when asked, then the before steps (whose blocks are
+ * notes), the snapshot, the after steps; locks not given take the snapshot alone, with Genex's note.
+ */
 export async function checkpoint(bus: BusHost, params: Record<string, unknown>) {
   const before = planOf(bus, HookEvent.CheckpointBefore);
   const after = planOf(bus, HookEvent.CheckpointAfter);
@@ -216,11 +241,12 @@ export async function checkpoint(bus: BusHost, params: Record<string, unknown>) 
   }
   if (bus.planning()) return { blocked: BUS_WORDS.planning, ...PLAN_HELD };
   const refused = await hold(bus, [...before, ...after], HOOK_LOCK_WAIT_MS[HookEvent.CheckpointBefore]);
-  if (refused) return { blocked: refused.reason, ...refused.held };
+  if (refused) {
+    const alone = noted(BUS_WORDS.snapshotAlone(String(refused.held.label)), refused.held);
+    return { snapshot: await snapshotOf(bus, params), notes: alone.notes, images: [] };
+  }
   const opened = await run(bus, HookEvent.CheckpointBefore, before, contextOf(HookEvent.CheckpointBefore, params));
-  if (opened.blocked) return { blocked: opened.blocked.reason };
-  bus.log("snapshot.create", "snapshot.create");
-  const snapshot = await bus.snapshot(String(params.label));
+  const snapshot = await snapshotOf(bus, params);
   const closed = await run(bus, HookEvent.CheckpointAfter, after, contextOf(HookEvent.CheckpointAfter, params));
   return { snapshot, notes: [...opened.notes, ...closed.notes], images: [...opened.images, ...closed.images] };
 }

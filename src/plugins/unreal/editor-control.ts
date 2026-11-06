@@ -1,10 +1,12 @@
 /**
  * The agent's own hold on this game's Unreal Editor, so a chat never hands the person a step Genex
- * can take. `open-editor` opens the game's linked project, answering at once while it opens in the
- * background: what is left of a crashed editor of it and its crash reporter is ended first, and an
- * editor of it that runs without answering is ended only when the agent asks for a `restart` (it
- * may be busy, and its unsaved work is lost), or at once when its own log says Epic's server
- * couldn't listen on the game's port. `quit-editor` saves every unsaved level and asset in it, then
+ * can take, and a Loop's lead opens and builds its app itself. `open-editor` opens the game's
+ * linked project, answering at once while it opens in the background: what is left of a crashed
+ * editor of it and its crash reporter is ended first, an outdated Genex editor helper is updated
+ * while Unreal is closed, the game's C++ module is built first when the agent asks for a `build`,
+ * and an editor of it that runs without answering is ended only when the agent asks for a
+ * `restart` (it may be busy, and its unsaved work is lost), or at once when its own log says Epic's
+ * server couldn't listen on the game's port. `quit-editor` saves every unsaved level and asset in it, then
  * sends Unreal's own quit and waits for it to close; it never terminates or kills an editor, so
  * work made after the save, or a question Unreal asks before quitting, is never lost. `editor-status` answers what the
  * Loop's `editor-state` does (a hooked tool, the harness's alone), waiting up to `seconds` for an
@@ -66,7 +68,8 @@ export type EditorControlDeps = {
   /** Unreal's own quit for the project (the panel's Quit); refuses with two editors open. */
   quit(storage: string, project: string): Promise<unknown>;
   reopen: {
-    open(storage: string, game: string): Promise<ReopenAnswer>;
+    /** Opens the project in a reopen job, building the game's C++ module first with `build`. */
+    open(storage: string, game: string, build?: boolean): Promise<ReopenAnswer>;
     state(storage: string, game: string): Promise<EditorStateAnswer>;
     running(storage: string, game: string): Promise<boolean | null>;
   };
@@ -90,12 +93,16 @@ async function linkedProject(deps: EditorControlDeps, storage: string, game: str
   return project;
 }
 
+/** What `open-editor` is asked: to end an editor that runs without answering, and to build the C++ module first. */
+type OpenAsk = { restart: boolean; build: boolean };
+
 /**
  * `open-editor`: nothing when Unreal answers or is opening the project; an editor of it that runs
  * without answering is left alone unless `restart` (or its port is blocked); otherwise the reopen
- * job ends what is left of it and opens the project.
+ * job ends what is left of it and opens the project, building its C++ module first with `build`.
  */
-async function openEditor(deps: EditorControlDeps, storage: string, game: string, restart: boolean) {
+async function openEditor(deps: EditorControlDeps, storage: string, game: string, ask: OpenAsk) {
+  const { restart, build } = ask;
   await linkedProject(deps, storage, game);
   // A project another Genex profile set up is recorded here first, so Genex can reach it once open.
   await deps.setUp?.(storage, game);
@@ -107,7 +114,7 @@ async function openEditor(deps: EditorControlDeps, storage: string, game: string
   const running = await deps.reopen.running(storage, game);
   const mayEnd = restart || blocked || running === false;
   if (!mayEnd) return { busy: true, next: MESSAGE.Busy } as const;
-  return deps.reopen.open(storage, game);
+  return deps.reopen.open(storage, game, build);
 }
 
 /**
@@ -170,7 +177,7 @@ async function waitState(
 export function createEditorControl(deps: EditorControlDeps) {
   return {
     open: (storage: string, game: string, args: Record<string, unknown>): Promise<OpenEditorAnswer> =>
-      openEditor(deps, storage, game, args.restart === true),
+      openEditor(deps, storage, game, { restart: args.restart === true, build: args.build === true }),
     quit: (storage: string, game: string) => quitEditor(deps, storage, game),
     state: (storage: string, game: string, args: Record<string, unknown>, signal: AbortSignal) =>
       waitState(deps, storage, game, args, signal),

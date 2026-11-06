@@ -1,40 +1,39 @@
 /**
  * What waits for the end of an open Loop's turn before the next (`LoopRun.afterTurn`, which the wake
- * loop awaits): a look at the project's app the turn started settles first, then a recovery of the
- * app under way; then, when the turn kept no save point, Genex keeps what it left (always when the
- * folder changed; only what is unsaved where a plugin saves the project's app; nothing otherwise, nor
- * while a worker writes in the folder in place); then the rewind the lead asked for (Genex's restore
- * of the save point, the plugins' steps around it, then a wait until the app answers) and the restart
- * (the project's restore moments with no file changed, then the wait), both waiting while a worker
- * writes in place. While the project's app stays closed for the lead to fix (`open.appDown`), Genex
- * keeps nothing and tries to bring it back instead: the rewind the lead asked for, then, unless that
- * brought it back, its crash steps once more, beside the wake loop. No judge plays between turns: one is the lead's to ask for
- * (`judge_play`). Each outcome is one line of the run's log the lead is told with its next message (`NoteKind.Folder`);
- * what came of a rewind or a restart the lead asked for is one that wakes it (`NoteKind.AskDone`), as
- * a worker's end does.
- * Never under a running turn, never after the Loop closed, and no recovery starts while this runs.
+ * loop awaits): a look at the project's app the turn started settles first; then, when the turn kept
+ * no save point, Genex keeps what it left (always when the folder changed; only what is unsaved where
+ * a plugin saves the project's app; nothing otherwise, nor while a worker writes in the folder in
+ * place), with what the plugins' steps said of it; then the rewind the lead asked for (Genex's
+ * restore of the save point, the plugins' steps around it, then a wait until the app answers) and the
+ * restart (the project's restore moments with no file changed, then the wait), both waiting while a
+ * worker writes in place. Nothing here reopens the app or takes the folder back unless the lead asked
+ * for it. No judge plays between turns: one is the lead's to ask for (`judge_play`). Each outcome is
+ * one line of the run's log the lead is told with its next message (`NoteKind.Folder`); what came of
+ * a rewind or a restart the lead asked for is one that wakes it (`NoteKind.AskDone`), as a worker's
+ * end does, with what the plugins' steps said around it.
+ * Never under a running turn, never after the Loop closed, and no look at the app starts meanwhile.
  */
 import {
   CheckpointSkip,
   fireHooks,
   HookEvent,
-  type HookHeldBy,
   hookBlocked,
-  holdOf,
   hooksOn,
+  notesText,
   REOPEN_WAIT_MS,
   runScope,
   waitReady,
 } from "../../hooks.ts";
 import { HostMethod } from "../../host-methods.ts";
-import type { LoopRun, TurnEnds } from "../loop-run.ts";
+import { momentLines } from "../../moment-lines.ts";
+import type { LoopRun } from "../loop-run.ts";
 import { closeUnderWay } from "../close-latch.ts";
 import { NoteKind } from "../wake-schedule.ts";
+import { sawAfterAsk } from "./app-look.ts";
 import { folderChanged } from "./close.ts";
 import { asksPending, type OpenLoop, type OpenRewind } from "./contract.ts";
 import { heldForLead } from "../held-words.ts";
 import { OPEN_NEWS } from "./prompts.ts";
-import { afterRewindWhileDown, heardAppDown, type Rewound, reopenAfterTurn } from "./health.ts";
 import { checkpointNow, queued, recordSavePoint } from "./save-point.ts";
 import { writersInPlace } from "./writers.ts";
 
@@ -58,10 +57,14 @@ const carry = (loopRun: LoopRun, line: string): void => loopRun.note(line, NoteK
 /** What came of a rewind or a restart the lead asked for: a line that wakes it. */
 const tellDone = (loopRun: LoopRun, line: string): void => loopRun.note(line, NoteKind.AskDone);
 
+/** One line of the run's log: Genex's words, then what the plugins' steps said. */
+const withLines = (line: string, lines: readonly string[]): string => [line, ...lines].join(" ");
+
 /**
  * The turn's unsaved work, kept as an autosave: always when the folder changed (or git couldn't
- * say), only what is unsaved where a plugin saves the project's app, and nothing otherwise. A
- * checkpoint Genex held back or that failed is said; one that found nothing unsaved is not.
+ * say), only what is unsaved where a plugin saves the project's app, and nothing otherwise. A kept
+ * one is said with what the plugins' steps said of it; one Genex held back or that failed is said
+ * too; one that found nothing unsaved is not.
  */
 async function autosave(loopRun: LoopRun): Promise<void> {
   const changed = await folderChanged(loopRun);
@@ -72,7 +75,7 @@ async function autosave(loopRun: LoopRun): Promise<void> {
   if ("snapshot" in taken) {
     const ask = { label: MESSAGE.autosave, summary: MESSAGE.autosaveSummary, auto: true };
     const point = await recordSavePoint(loopRun, ask, taken);
-    carry(loopRun, OPEN_NEWS.autosaved(point.label));
+    carry(loopRun, withLines(OPEN_NEWS.autosaved(point.label), point.notes));
     return;
   }
   if ("skipped" in taken && taken.skipped === CheckpointSkip.NothingUnsaved) return;
@@ -87,28 +90,29 @@ async function autosaveUnlessWriting(loopRun: LoopRun, writers: readonly string[
   if ((await folderChanged(loopRun)) !== false) carry(loopRun, OPEN_NEWS.notAutosavedWriter(writers));
 }
 
-/** Waits until the project's app answers again, when a plugin says whether it does; why not, or null. */
+/**
+ * Waits until the project's app answers again, when a plugin says whether it does; why not, or null.
+ * What the wait saw is where the watch goes on from (`sawAfterAsk`): the lead hears it with its ask's line.
+ */
 async function answered(loopRun: LoopRun, open: OpenLoop): Promise<string | null> {
   if (!hooksOn(loopRun.game, HookEvent.Health)) return null;
   const until = open.clock.now() + REOPEN_WAIT_MS;
   const stopped = () => over(loopRun, open);
   const ready = await waitReady(loopRun.ctx, loopRun.game, runScope(loopRun), open.clock, until, stopped);
-  return ready.ok || loopRun.ctx.cancelled || stopped() ? null : ready.reason;
+  if (loopRun.ctx.cancelled || stopped()) return null;
+  sawAfterAsk(open, ready);
+  return ready.ok ? null : ready.reason;
 }
 
-/** Why a restore didn't happen, for the lead, and Genex's own hold when it held it back. */
-type NotRestored = { why: string; held: HookHeldBy | null };
-
-/** Genex's restore of a snapshot, after every git write before it; why it didn't happen, or null. */
-async function restoreSnapshot(loopRun: LoopRun, snapshotId: string, reason: string): Promise<NotRestored | null> {
+/** Genex's restore of a snapshot, after every git write before it; why it didn't happen (Genex's own hold worded for the lead), or null. */
+async function restoreSnapshot(loopRun: LoopRun, snapshotId: string, reason: string): Promise<string | null> {
   const params = { ...runScope(loopRun), snapshotId, reason };
   try {
     await queued(loopRun, () => loopRun.ctx.call(HostMethod.SnapshotRestore, params));
     return null;
   } catch (err) {
-    if (!hookBlocked(err)) return { why: MESSAGE.notRestored(errorText(err)), held: null };
-    const held = { reason: String(err.reason ?? err.message), hold: err.hold, label: err.label };
-    return { why: heldForLead(held), held: holdOf(held) ? held : null };
+    if (!hookBlocked(err)) return MESSAGE.notRestored(errorText(err));
+    return heldForLead({ reason: String(err.reason ?? err.message), hold: err.hold, label: err.label });
   }
 }
 
@@ -117,50 +121,44 @@ const errorText = (err: unknown): string => (err instanceof Error ? err.message 
 
 /**
  * The lead's rewind: back to the save point it named (the snapshot its label named when it asked),
- * then the app waited for: Genex's own hold that refused the restore, and whether the app answers after it.
+ * then the app waited for. A restore refused (a plugin's step, Genex's own hold) or failed is the
+ * lead's answer: nothing went back, and the Loop goes on.
  */
-async function rewind(loopRun: LoopRun, open: OpenLoop, { label, snapshotId }: OpenRewind): Promise<Rewound> {
+async function rewind(loopRun: LoopRun, open: OpenLoop, { label, snapshotId }: OpenRewind): Promise<void> {
   open.journal.between.rewind = null;
   const failed = await restoreSnapshot(loopRun, snapshotId, label);
   if (failed) {
-    tellDone(loopRun, OPEN_NEWS.noRewind(label, failed.why));
-    return { held: failed.held, restored: false, notBack: failed.why };
+    tellDone(loopRun, OPEN_NEWS.noRewind(label, failed));
+    return;
   }
   const notBack = await answered(loopRun, open);
   tellDone(loopRun, OPEN_NEWS.rewound(label));
   if (notBack) tellDone(loopRun, OPEN_NEWS.notAnswering(notBack));
-  return { held: null, restored: true, notBack };
 }
 
 /**
- * The project's restore moments with no file changed, on the git-write queue; whether the app was
- * restarted. A block before leaves the app as it is; Genex holding the reopen back is the outcome,
- * never read as an app that failed to reopen.
+ * The project's restore moments with no file changed, on the git-write queue: what the steps said
+ * after it, or null when a block before (a step's, Genex's own hold) left the app as it is, which the
+ * lead is told. A hold at the moment after the restart is only a note.
  */
-async function restartSteps(loopRun: LoopRun): Promise<boolean> {
+async function restartSteps(loopRun: LoopRun): Promise<string[] | null> {
   const scope = runScope(loopRun);
   const closing = await fireHooks(loopRun.ctx, loopRun.game, HookEvent.RestoreBefore, scope);
   if (closing.blocked) {
     tellDone(loopRun, OPEN_NEWS.noRestart(heldForLead(closing.blocked)));
-    return false;
+    return null;
   }
-  const reopening = await fireHooks(loopRun.ctx, loopRun.game, HookEvent.RestoreAfter, scope);
-  if (reopening.blocked && holdOf(reopening.blocked)) {
-    tellDone(loopRun, OPEN_NEWS.noRestart(heldForLead(reopening.blocked)));
-    return false;
-  }
-  return true;
+  const reopening = await momentLines(loopRun.ctx, loopRun.game, HookEvent.RestoreAfter, scope);
+  return [...notesText(closing), ...reopening];
 }
 
-/**
- * The lead's restart: its steps (`restartSteps`), then the app waited for outside the git-write
- * queue, so a recovery's way back never waits behind that wait.
- */
+/** The lead's restart: its steps (`restartSteps`), then the app waited for outside the git-write queue. */
 async function restart(loopRun: LoopRun, open: OpenLoop): Promise<void> {
   open.journal.between.restart = false;
-  if (!(await queued(loopRun, () => restartSteps(loopRun)))) return;
+  const lines = await queued(loopRun, () => restartSteps(loopRun));
+  if (!lines) return;
   const notBack = await answered(loopRun, open);
-  tellDone(loopRun, OPEN_NEWS.restarted);
+  tellDone(loopRun, withLines(OPEN_NEWS.restarted, lines));
   if (notBack) tellDone(loopRun, OPEN_NEWS.notAnswering(notBack));
 }
 
@@ -179,59 +177,27 @@ async function asksAtTurnEnd(loopRun: LoopRun, open: OpenLoop, writers: readonly
   if (between.restart && !over(loopRun, open)) await restart(loopRun, open);
 }
 
-/** A turn's end while Genex brings the project's app back: why nothing was kept or restored. */
-function whileRecovering(loopRun: LoopRun, open: OpenLoop, savedInTurn: boolean): void {
-  if (!savedInTurn) carry(loopRun, OPEN_NEWS.notAutosaved(OPEN_NEWS.bringingBack));
-  if (asksPending(open.journal)) carry(loopRun, OPEN_NEWS.askWaits);
-}
-
-/**
- * A turn's end while the project's app stays closed for the lead to fix: nothing is kept (its plugin
- * can save nothing of it; the next turn's end keeps the lead's fix once it is back). The rewind the
- * lead asked for runs first, and its restore steps may reopen the app; unless they did, Genex's crash
- * steps run once more on the folder as the lead (or the rewind) left it, beside the wake loop
- * (`reopenAfterTurn`), and stand for the restart it may have asked for. After the run's wrap-up turn
- * nothing runs: the close keeps the folder as it is, and no try would be heard.
- */
-async function whileAppDown(loopRun: LoopRun, open: OpenLoop, ends: TurnEnds): Promise<void> {
-  // A turn that never heard the app is closed (it failed, or was cut first) had no chance at it: the line wakes the next.
-  if (ends.last || !heardAppDown(loopRun, open)) return;
-  const { between } = open.journal;
-  between.restart = false;
-  const writers = writersInPlace(open).map((record) => record.id);
-  if (between.rewind && !writers.length) {
-    await afterRewindWhileDown(loopRun, open, await rewind(loopRun, open, between.rewind));
-    return;
-  }
-  if (between.rewind) carry(loopRun, OPEN_NEWS.askWaitsForWriter(writers));
-  void reopenAfterTurn(loopRun, open);
-}
-
-/** The between-turns work itself (the module's header), once no recovery can start beside it. */
-async function betweenTurns(loopRun: LoopRun, open: OpenLoop, ends: TurnEnds): Promise<void> {
+/** The between-turns work itself (the module's header). */
+async function betweenTurns(loopRun: LoopRun, open: OpenLoop): Promise<void> {
   const savedInTurn = open.journal.savePoints.length > open.turnSavedFrom;
-  if (open.recovering) whileRecovering(loopRun, open, savedInTurn);
-  else if (open.appDown) await whileAppDown(loopRun, open, ends);
-  else {
-    const writers = writersInPlace(open).map((record) => record.id);
-    // A turn that kept a save point left nothing for an autosave.
-    if (!savedInTurn) await autosaveUnlessWriting(loopRun, writers);
-    await asksAtTurnEnd(loopRun, open, writers);
-  }
+  const writers = writersInPlace(open).map((record) => record.id);
+  // A turn that kept a save point left nothing for an autosave.
+  if (!savedInTurn) await autosaveUnlessWriting(loopRun, writers);
+  await asksAtTurnEnd(loopRun, open, writers);
   // The next turn's save points count from here.
   open.turnSavedFrom = open.journal.savePoints.length;
   await loopRun.saveJournal().catch(() => {});
 }
 
 /** The between-turns work (the module's header), for an open Loop's run. */
-export async function openBetweenTurns(loopRun: LoopRun, ends: TurnEnds = { last: false }): Promise<void> {
+export async function openBetweenTurns(loopRun: LoopRun): Promise<void> {
   const open = loopRun.open;
   if (!open || over(loopRun, open)) return;
-  // A look the turn started settles first: a crash it saw starts its recovery now, never in the middle of what follows.
+  // A look the turn started settles first: what it saw is said before what follows, never in the middle of it.
   if (open.healthLook) await open.healthLook;
   open.betweenTurns = true;
   try {
-    await betweenTurns(loopRun, open, ends);
+    await betweenTurns(loopRun, open);
   } finally {
     open.betweenTurns = false;
   }

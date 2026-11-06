@@ -14,8 +14,7 @@
  */
 import { isResumeFailure } from "../chat-session.ts";
 import { fireHooks, HookEvent, type HookScope, runScope as runMoment } from "../hooks.ts";
-import { type HeldBack, heldTurnResult, turnsHeldWords } from "./held-words.ts";
-import { whileTurnHeld } from "./turn-hold.ts";
+import { momentLines } from "../moment-lines.ts";
 import { jobEndLine } from "../jobs/prompts.ts";
 import { JOB_POLL_MS, jobEnds } from "../jobs/watch.ts";
 import {
@@ -36,7 +35,7 @@ import { LEAD_FRESH_START, SESSION_LOST_WHY } from "./lead-session-prompts.ts";
 import { noteTurnEnds, noteTurnOver } from "./turn-ends.ts";
 import { activeWork, hasWorkAtHand } from "./open/active-work.ts";
 import { OPEN_WALL_CLOCK, type OpenClock } from "./open/contract.ts";
-import { healthWatch } from "./open/health.ts";
+import { healthWatch } from "./open/app-look.ts";
 import {
   askOf,
   handAgain,
@@ -314,7 +313,7 @@ function lostSessionWhy(talk: DirectorTalk, err: any): string | null {
  * is told, in Genex's words, that the earlier session was lost and how the Loop began.
  */
 function openFresh(loopRun: LoopRun, kit: TurnKit, ask: TurnAsk, why: string): Promise<Partial<DelegateResult>> {
-  // A Loop Genex paused (its app couldn't be brought back), or one the person stopped, opens no new session.
+  // A Loop its lead paused, or one the person stopped, opens no new session.
   const refused = openSessionRefused(loopRun);
   if (refused) return Promise.resolve(refused);
   const lost = [LEAD_FRESH_START(why), ...kit.start].join("\n");
@@ -351,7 +350,7 @@ async function freshSession(
 /**
  * Whether a lead the host refused because another session holds its lock (`folderBusy`: for an open
  * Loop's lead, another chat's turn in the game folder) waits once more: until the lock is free, never
- * under a Stop or a pause Genex made. Its turn has not begun: a claim of it speaks for the turn that
+ * under a Stop or the lead's pause. Its turn has not begun: a claim of it speaks for the turn that
  * may begin.
  */
 async function waitsForFolder(loopRun: LoopRun, kit: TurnKit): Promise<boolean> {
@@ -367,7 +366,7 @@ async function waitsForFolder(loopRun: LoopRun, kit: TurnKit): Promise<boolean> 
 /** The lead's session asked this turn's message; a turn that came back failed on an outage is thrown as one. */
 async function askSession(loopRun: LoopRun, kit: TurnKit, ask: TurnAsk): Promise<Partial<DelegateResult>> {
   const { talk } = kit;
-  // A Loop Genex paused (its app couldn't be brought back), or one the person stopped, opens no new session: a retry included.
+  // A Loop its lead paused, or one the person stopped, opens no new session: a retry included.
   const refused = openSessionRefused(loopRun);
   if (refused) return refused;
   const result = await talk.session(ask.prompt, talk.sessionId, ask.said);
@@ -376,8 +375,8 @@ async function askSession(loopRun: LoopRun, kit: TurnKit, ask: TurnAsk): Promise
 }
 
 /**
- * The run's ctx as the outage ladder reads it: its wait also ends once Genex pauses the Loop
- * (`open.halted`, its app couldn't be brought back), never after the rest of that wait.
+ * The run's ctx as the outage ladder reads it: its wait also ends once the Loop is paused
+ * (`open.halted`, its lead's `pause`), never after the rest of that wait.
  */
 function patienceCtx(loopRun: LoopRun): HarnessCtx {
   const { ctx, open } = loopRun;
@@ -447,7 +446,7 @@ async function sessionOrFresh(
   return freshSession(loopRun, wake, kit, ask, SESSION_LOST_WHY.contextOverflowed).catch(failed);
 }
 
-/** A turn Genex ended because the Loop paused: it never opened a session. */
+/** A turn Genex ended because the Loop is paused: it never opened a session. */
 const haltedTurn = (why: string): Partial<DelegateResult> => ({
   ok: false,
   stopReason: StopReason.Stopped,
@@ -458,9 +457,9 @@ const haltedTurn = (why: string): Partial<DelegateResult> => ({
 const STOPPED_BY_THE_USER = "stopped by the user";
 
 /**
- * The turn the lead gets in place of a new session: Genex paused the Loop (its app couldn't be
- * brought back), or the person pressed Stop (a session in the folder has Edit and Bash and would
- * work on under it); null while it may open one.
+ * The turn the lead gets in place of a new session: it paused the Loop for the person, or the person
+ * pressed Stop (a session in the folder has Edit and Bash and would work on under it); null while it
+ * may open one.
  */
 function openSessionRefused(loopRun: LoopRun): Partial<DelegateResult> | null {
   if (loopRun.open.halted) return haltedTurn(loopRun.open.halted);
@@ -533,7 +532,8 @@ async function oneTurn(
 /**
  * One turn of the lead's, and its resumptions: a turn the chat's words cut short is resumed at once
  * in the same session with those words, as they were written (and Genex's own lines a turn that never
- * read its message still owes). A cut is never a failed turn.
+ * read its message still owes). A cut is never a failed turn. What the game's plugins said as the turn
+ * starts (`turn.start`) is a line of the run's log its message carries; the turn always runs.
  */
 async function takeTurn(
   loopRun: LoopRun,
@@ -543,9 +543,10 @@ async function takeTurn(
 ): Promise<Partial<DelegateResult>> {
   // One turn to the game's plugins, its resumptions included: its start and its end name it alike.
   const moment = turnScope(loopRun, wake);
+  // What the plugins' steps found as the turn starts is the lead's to read in it: nothing holds the turn back.
+  const found = await momentLines(loopRun.ctx, loopRun.game, HookEvent.TurnStart, moment);
+  for (const line of found) loopRun.note(line, NoteKind.Folder);
   const ask = await askOf(loopRun, kit.line, [...wake.owedLead, ...lead]);
-  const held = await heldTurn(loopRun, wake, kit, ask, moment);
-  if (held) return held;
   let result = await oneTurn(loopRun, wake, kit, ask);
   while (wake.cut && !runOver(loopRun)) {
     wake.cut = false;
@@ -561,33 +562,6 @@ async function takeTurn(
 /** A lead's turn as Genex's moments name it: the run, and the turn's number. */
 function turnScope(loopRun: LoopRun, wake: WakeState): HookScope {
   return { ...runMoment(loopRun), turn: String(wake.turns + 1) };
-}
-
-/**
- * A lead's turn a plugin of the game holds back before it starts: asked again after a wait
- * (turn-hold.ts) for as long as the plugin holds it, never counted as an idle turn. Null once the
- * turn may start. A turn the run can't wait for (its wrap-up, a Stop) is a failed turn with the
- * hold's reason: the lead hears why, and what its message carried is said again then.
- */
-async function heldTurn(
-  loopRun: LoopRun,
-  wake: WakeState,
-  kit: TurnKit,
-  ask: TurnAsk,
-  moment: HookScope,
-): Promise<Partial<DelegateResult> | null> {
-  let held: HeldBack | null = null;
-  const holding = async () => {
-    const report = await fireHooks(loopRun.ctx, loopRun.game, HookEvent.TurnStart, moment);
-    held = report.blocked;
-    return report.blocked?.reason ?? null;
-  };
-  const cantWait = () => wake.wrapping || runOver(loopRun);
-  const reason = await whileTurnHeld(holding, kit.clock, cantWait);
-  if (reason === null) return null;
-  wake.owedLead = ask.lead;
-  // The failed turn's words reach the person: Genex's own hold in theirs, never the agents'.
-  return heldTurnResult(turnsHeldWords(held ?? { reason }));
 }
 
 /**

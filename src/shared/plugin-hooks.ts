@@ -3,8 +3,9 @@
  * starting, a checkpoint, a restore, a worker starting…) Genex runs the harness tools the enabled
  * plugins hook to it, in plugin order and then declaration order, for the games their `facts`
  * reach. A handler is told the moment (`HookContext`) and answers `HookAnswer`: it may block the
- * moment with a reason, add a note, say it is not ready yet or hand back pictures; it never
- * rewrites arguments and never gives instructions. Git stays Genex's: no hook takes or restores a
+ * call a moment answers (`BLOCKING_HOOK_EVENTS`) with a reason, add a note, say it is not ready yet
+ * or hand back pictures; anywhere else its block is a note the lead reads. It never rewrites
+ * arguments and never gives instructions. Git stays Genex's: no hook takes or restores a
  * snapshot. A lock serializes the tools and connectors that `need` it, and gives way to the person
  * while its `personFirst` probe says they are using what it guards.
  *
@@ -43,22 +44,23 @@ const HOOK_EVENT_SET: ReadonlySet<unknown> = new Set(HOOK_EVENTS);
 export const isHookEvent = (value: unknown): value is HookEvent => HOOK_EVENT_SET.has(value);
 
 /**
- * The moments a handler's `block` stops: a run that would start (`run.prepare`), a turn
- * (`turn.start`), a checkpoint or a restore before it changes anything, a worker before it starts,
- * a plugin's own tool before it runs, and a finish the lead asked for. At any other moment a
- * block is only a note.
+ * The moments whose block answers the call that asked for them: a restore before any file changes
+ * (the lead's rewind or restart, or the person's Rewind), a plugin's own tool before it runs, and a
+ * finish the lead asked for. That call is refused, and its caller reads why. At any other moment a
+ * block, a step that fails and Genex's own hold are only a note: no step stops a run's start, a
+ * turn, a worker or a checkpoint.
  */
 export const BLOCKING_HOOK_EVENTS: ReadonlySet<HookEvent> = new Set([
-  HookEvent.RunPrepare,
-  HookEvent.TurnStart,
-  HookEvent.CheckpointBefore,
   HookEvent.RestoreBefore,
-  HookEvent.WorkerStart,
   HookEvent.ToolBefore,
   HookEvent.Finish,
 ]);
 
-/** The moments whose handlers write (save, close or reopen an app): held while the chat plans. */
+/**
+ * The moments whose handlers write (save, close or reopen an app). While the chat plans, a call
+ * among them waits for the plan (a checkpoint, a restore), and the steps of a moment that answers
+ * no call are skipped, with Genex's note.
+ */
 export const WRITING_HOOK_EVENTS: ReadonlySet<HookEvent> = new Set([
   HookEvent.RunPrepare,
   HookEvent.CheckpointBefore,
@@ -86,7 +88,9 @@ export function outlivesHarness(hook: Pick<HookContext, "on" | "forPerson"> | un
 
 /**
  * The moments the harness itself announces. Genex fires the checkpoint and tool moments around
- * its own work; a restore the harness announces is a restart in which no file changes.
+ * its own work; a restore the harness announces is a restart in which no file changes. Nobody
+ * fires `crash`: Genex never reopens an app by itself, its lead does (the moment stays a
+ * `HookEvent`, so a manifest that hooks it still loads).
  */
 export const SEED_FIRED_HOOK_EVENTS: ReadonlySet<HookEvent> = new Set(
   HOOK_EVENTS.filter(
@@ -94,7 +98,8 @@ export const SEED_FIRED_HOOK_EVENTS: ReadonlySet<HookEvent> = new Set(
       on !== HookEvent.CheckpointBefore &&
       on !== HookEvent.CheckpointAfter &&
       on !== HookEvent.ToolBefore &&
-      on !== HookEvent.ToolAfter,
+      on !== HookEvent.ToolAfter &&
+      on !== HookEvent.Crash,
   ),
 );
 
@@ -163,9 +168,10 @@ export interface HookImage {
 }
 
 /**
- * A handler's answer: `block` stops a blocking moment with a reason, `note` adds a line to the
- * record, `pending` says it is not ready yet (Genex asks again), `images` hands back pictures, and
- * `recording` a short play recording as its frames in order (an observer's, beside its stills).
+ * A handler's answer: `block` refuses the call a blocking moment answers with a reason (elsewhere
+ * it is a note), `note` adds a line to the record, `pending` says it is not ready yet (Genex asks
+ * again), `images` hands back pictures, and `recording` a short play recording as its frames in
+ * order (an observer's, beside its stills).
  */
 export interface HookAnswer {
   block?: string;
@@ -395,9 +401,10 @@ export const HookRefusal = { Blocked: HOOK_BLOCKED } as const;
 export type HookRefusal = (typeof HookRefusal)[keyof typeof HookRefusal];
 
 /**
- * What a checkpoint answers: the snapshot it took with its handlers' notes and pictures; why a
- * handler, a lock or Plan mode stopped it (no snapshot; `hold` when it was Genex's); or why one
- * asked only if something is unsaved was skipped.
+ * What a checkpoint answers: the snapshot it took with its handlers' notes and pictures (or, when
+ * a lock was not given, with no step run and Genex's note carrying its hold); why Plan mode held it
+ * back or the snapshot failed (no snapshot; `hold` when it was Genex's); or why one asked only if
+ * something is unsaved was skipped.
  */
 export type CheckpointAnswer =
   | { snapshot: SnapshotRecord; notes: HookReport["notes"]; images: HookImage[] }
