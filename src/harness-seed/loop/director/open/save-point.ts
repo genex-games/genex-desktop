@@ -4,13 +4,15 @@
  * their steps around Genex's snapshot (an app saves its work before, its pictures are taken after),
  * and the save point keeps the snapshot, the steps' notes and the pictures as its round's thumbnails
  * on the graph (the host keeps them as the observer's capture too). It waits for every git write
- * queued before it (a worker's merge, a recovery of the project's app). A step's block or Genex's own
- * hold keeps nothing, and the lead hears why. `rewind` and `restart` only note what the turn's end
- * runs (`between.ts`): nothing is restored or restarted under a running turn.
+ * queued before it (a worker's merge). A step's block is a note the save point keeps (its app saved
+ * nothing first, say): the snapshot is taken, and the lead reads what the steps said. Steps Genex
+ * itself skipped (the person using the app) are said too: the snapshot holds the files on disk only.
+ * Plan mode keeps nothing, and the lead hears why. `rewind` and `restart` only note what the turn's
+ * end runs (`between.ts`): nothing is restored or restarted under a running turn.
  */
 import type { AnyRecord } from "../../../types/harness.d.ts";
 import type { CheckpointAnswer, HookImage } from "../../../types/host-api.d.ts";
-import { type CheckpointAsk, notesText, runScope, takeCheckpoint } from "../../hooks.ts";
+import { type CheckpointAsk, type HookHeldBy, holdOf, notesText, runScope, takeCheckpoint } from "../../hooks.ts";
 import { clip, hasText } from "../../text.ts";
 import type { LoopRun } from "../loop-run.ts";
 import { MAX_SAVE_POINT_LABEL, type OpenSavePoint } from "./contract.ts";
@@ -18,6 +20,7 @@ import { savePointRound } from "./graph.ts";
 import { SHOWS_WORDS } from "./evidence-prompts.ts";
 import { heldForLead } from "../held-words.ts";
 import { OPEN_WORDS } from "./prompts.ts";
+import { APP_NEWS } from "./app-prompts.ts";
 import { shownPicture } from "./shown-picture.ts";
 
 /** A taken checkpoint's answer. */
@@ -38,6 +41,15 @@ export function checkpointNow(loopRun: LoopRun, label: string, onlyIfUnsaved = f
 }
 
 /**
+ * What a taken checkpoint's steps said, as the save point keeps it: their notes, and that the app saved
+ * nothing first when Genex skipped its steps (the person was using it, or Genex couldn't tell).
+ */
+function savePointNotes(taken: Taken): string[] {
+  const skipped = taken.notes.some((note) => holdOf(note as HookHeldBy) !== null);
+  return [...notesText(taken), ...(skipped ? [APP_NEWS.notSavedFirst] : [])];
+}
+
+/**
  * The save point a taken checkpoint makes: the journal's record and its round on the graph, led by
  * the picture the lead named as showing the change, when it named one Genex could read.
  */
@@ -54,7 +66,7 @@ export async function recordSavePoint(
     snapshotId: taken.snapshot.snapshot_id,
     auto: ask.auto,
     at: loopRun.open.clock.now(),
-    notes: notesText(taken),
+    notes: savePointNotes(taken),
     ...(shown ? { shows: shown.rel } : {}),
   };
   journal.savePoints.push(point);
@@ -74,10 +86,6 @@ function notKept(answer: Exclude<CheckpointAnswer, Taken>): string {
 export async function savePointTool(loopRun: LoopRun, args: AnyRecord): Promise<string> {
   const label = hasText(args.label) ? clip(args.label.trim(), MAX_SAVE_POINT_LABEL) : "";
   if (!label) return OPEN_WORDS.needsLabel;
-  // A recovery may yet take the folder back: a save point now would name the wrong files.
-  if (loopRun.open.recovering) return OPEN_WORDS.recovering;
-  // The app is closed: its plugin could save nothing of it, and the lead's fix is kept once it is back.
-  if (loopRun.open.appDown) return OPEN_WORDS.appDown;
   const summary = hasText(args.summary) ? args.summary.trim() : "";
   // Read before the checkpoint: the picture is the one the lead looked at, as the save point keeps the folder.
   const rel = hasText(args.shows) ? args.shows.trim() : "";
@@ -86,8 +94,6 @@ export async function savePointTool(loopRun: LoopRun, args: AnyRecord): Promise<
   if (!("snapshot" in taken)) return OPEN_WORDS.notSaved(notKept(taken));
   const shown = picture && "image" in picture ? { rel, image: picture.image } : null;
   const point = await recordSavePoint(loopRun, { label, summary, auto: false }, taken, shown);
-  // The lead kept the app working: Genex's tries at an app it couldn't reopen count from zero again.
-  loopRun.open.handoffs = 0;
   return OPEN_WORDS.saved(point.label, point.notes, showsWords(rel, picture));
 }
 

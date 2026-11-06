@@ -1,4 +1,4 @@
-import { answeredRecords, compactGraphEvents } from "../shared/run-graph-events.ts";
+import { answeredRecords, compactGraphEvents, type RunGraphEvent } from "../shared/run-graph-events.ts";
 import path from "node:path";
 import { lstat, readdir, realpath } from "node:fs/promises";
 import { compareIds } from "../shared/compare-ids.ts";
@@ -55,6 +55,20 @@ interface CachedSummary {
   summary: RunSummary;
 }
 
+/** The drawn records of two summaries' graphs, by id and place in the run's log. */
+function sameGraphEvents(a: RunGraphEvent[] | undefined, b: RunGraphEvent[] | undefined): boolean {
+  if (a === undefined || b === undefined) return a === b;
+  if (a.length !== b.length) return false;
+  return a.every((event, index) => event.id === b[index]?.id && event.graphSequence === b[index]?.graphSequence);
+}
+
+/** Whether two folds of a run say the same: the same drawn records (immutable by id) and the same facts. */
+function sameSummary(previous: RunSummary, next: RunSummary): boolean {
+  const { graphEvents: previousGraph, revision: _previousRevision, ...previousFacts } = previous;
+  const { graphEvents: nextGraph, revision: _nextRevision, ...nextFacts } = next;
+  return sameGraphEvents(previousGraph, nextGraph) && JSON.stringify(previousFacts) === JSON.stringify(nextFacts);
+}
+
 /** Memoized run folds keyed by immutable history identity and current evidence-file metadata. */
 export class RunSummaryCache {
   readonly #cache = new Map<string, CachedSummary>();
@@ -87,7 +101,7 @@ export class RunSummaryCache {
     }
     const pending = this.#pending.get(key);
     if (pending && pending.events === events && pending.version === version) return pending.result;
-    const request = { events, version, result: this.#build(events, project, runId, runs) };
+    const request = { events, version, result: this.#build(events, { key, version, project, runId, runs }) };
     this.#pending.set(key, request);
     try {
       const summary = await request.result;
@@ -116,7 +130,16 @@ export class RunSummaryCache {
     }
   }
 
-  async #build(events: EventEnvelope[], project: string, runId: string, runs: string): Promise<RunSummary> {
+  async #build(
+    events: EventEnvelope[],
+    {
+      key,
+      version,
+      project,
+      runId,
+      runs,
+    }: { key: string; version: string; project: string; runId: string; runs: string },
+  ): Promise<RunSummary> {
     const summary = this.#fold(events, project, runId);
     if (RUN_ID.test(runId)) summary.runDirectory = path.join(runs, runId);
     summary.graphEvents = compactGraphEvents([
@@ -129,6 +152,10 @@ export class RunSummaryCache {
       }),
     ]);
     await this.#supplement(summary, runs);
+    // A new record that changes none of it (a builder's trace) keeps the summary and its revision,
+    // so the views of the run, which redraw on a new revision, do not fold it again.
+    const previous = this.#cache.get(key);
+    if (previous?.version === version && sameSummary(previous.summary, summary)) return previous.summary;
     summary.revision = ++this.#revision;
     return summary;
   }

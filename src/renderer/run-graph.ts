@@ -849,7 +849,7 @@ export function buildRunGraph(events: RunGraphEvent[], key: string | null = last
 function readRecord(graph: GraphDraft, event: RunGraphEvent): boolean {
   const custom = customOf(event);
   if (!custom) return false;
-  graph.eventAt = event.graphLastAt ?? event.created_at;
+  graph.eventAt = event.created_at;
   graph.seq = event.graphSequence ?? graph.seq + 1;
   if (custom.event_type === CustomEvent.UserFeedback) {
     if (!graph.turn) readNote(graph, event, custom.payload);

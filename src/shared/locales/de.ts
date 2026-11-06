@@ -426,6 +426,8 @@ export default {
   "Another clip": "Neuer Clip",
   "Another cover": "Neues Cover",
   "Another folder…": "Anderer Ordner…",
+  "Another installer or Visual Studio is running. Close it, then press Do it for me again.":
+    "Ein anderes Installationsprogramm oder Visual Studio läuft gerade. Schließ es und drück dann noch mal „Mach das für mich“.",
   "Another model installation is running.": "Eine andere Modellinstallation läuft gerade.",
   Answer: "Antworten",
   "Answer question": "Frage beantworten",
@@ -584,8 +586,38 @@ export default {
   "Build with the Grok account you already have.": "Bau mit dem Grok-Konto, das du schon hast.",
   "Changes Harness made to its own instructions. Undo any of them.":
     "Änderungen, die Harness an seinen eigenen Anweisungen gemacht hat. Du kannst jede rückgängig machen.",
+  "Checking that Microsoft signed the installer…": "Prüfe, ob Microsoft das Installationsprogramm signiert hat…",
+  "Downloading the Visual Studio Build Tools installer from Microsoft…":
+    "Lade das Installationsprogramm der Visual Studio Build Tools von Microsoft herunter…",
+  "Install Visual Studio Build Tools": "Visual Studio Build Tools installieren",
+  "Install Visual Studio Build Tools 2022 from Microsoft with Desktop development with C++.":
+    "Installiere die Visual Studio Build Tools 2022 von Microsoft mit „Desktopentwicklung mit C++“.",
+  "Installing Visual Studio Build Tools. Choose Yes when Windows asks; Microsoft's installer shows its progress.":
+    "Installiere die Visual Studio Build Tools. Wähle Ja, wenn Windows fragt; Microsofts Installationsprogramm zeigt den Fortschritt.",
+  "Microsoft's download led somewhere other than Microsoft, so Genex stopped.":
+    "Microsofts Download führte woandershin als zu Microsoft, deshalb hat Genex abgebrochen.",
+  "Microsoft's download link wasn't secure, so Genex didn't download it.":
+    "Microsofts Downloadlink war nicht sicher, deshalb hat Genex nichts heruntergeladen.",
+  "Microsoft's download was far bigger than its installer, so Genex stopped.":
+    "Microsofts Download war viel größer als das Installationsprogramm, deshalb hat Genex abgebrochen.",
+  "Microsoft's installer couldn't download the Build Tools. Check your internet connection and try again.":
+    "Microsofts Installationsprogramm konnte die Build Tools nicht herunterladen. Prüf deine Internetverbindung und versuch es noch mal.",
+  "Microsoft's installer didn't download. Check your internet connection and try again.":
+    "Microsofts Installationsprogramm wurde nicht heruntergeladen. Prüf deine Internetverbindung und versuch es noch mal.",
+  "Microsoft's installer finished, but Unreal still can't build C++ with what it installed. Install Visual Studio Build Tools 2022 with Desktop development with C++ yourself.":
+    "Microsofts Installationsprogramm ist fertig, aber Unreal kann mit dem Installierten immer noch kein C++ bauen. Installiere die Visual Studio Build Tools 2022 mit „Desktopentwicklung mit C++“ selbst.",
+  "Recommended. Microsoft's free C++ tools: Unreal needs them to package a game or plugin with C++. About 7 GB. Do it for me installs them: choose Yes when Windows asks.":
+    "Empfohlen. Microsofts kostenlose C++-Werkzeuge: Unreal braucht sie, um ein Spiel oder Plugin mit C++ zu packen. Etwa 7 GB. „Mach das für mich“ installiert sie: Wähle Ja, wenn Windows fragt.",
+  "Recommended. Microsoft's free C++ tools: Unreal needs them to package a game or plugin with C++. Install Visual Studio Build Tools with Desktop development with C++.":
+    "Empfohlen. Microsofts kostenlose C++-Werkzeuge: Unreal braucht sie, um ein Spiel oder Plugin mit C++ zu packen. Installiere die Visual Studio Build Tools mit „Desktopentwicklung mit C++“.",
   "Self-improvement is off. Harness keeps its own instructions as they are.":
     "Selbstverbesserung ist aus. Harness lässt seine Anweisungen, wie sie sind.",
+  "Unreal can build C++ on this PC.": "Unreal kann auf diesem PC C++ bauen.",
+  "Unreal {engine} doesn't build with the C++ tools on this PC. Do it for me updates them: choose Yes when Windows asks.":
+    "Unreal {engine} baut nicht mit den C++-Werkzeugen auf diesem PC. „Mach das für mich“ aktualisiert sie: Wähle Ja, wenn Windows fragt.",
+  "Update Visual Studio Build Tools": "Visual Studio Build Tools aktualisieren",
+  "Visual Studio Build Tools are installed.": "Die Visual Studio Build Tools sind installiert.",
+  "Visual Studio's C++ tools are ready": "Die C++-Werkzeuge von Visual Studio sind bereit",
   "When off, Harness doesn’t change its own instructions. Changes it already made stay until you undo them.":
     "Wenn aus, ändert Harness seine eigenen Anweisungen nicht. Bereits gemachte Änderungen bleiben, bis du sie rückgängig machst.",
   "Workers pitch in": "Helfer packen mit an",
@@ -5470,6 +5502,7 @@ export default {
   "{count, plural, one {# try} other {# tries}}": "{count, plural, one {# Versuch} other {# Versuche}}",
   "{count, plural, one {# update from your games} other {# updates from your games}}":
     "{count, plural, one {# Update aus deinen Spielen} other {# Updates aus deinen Spielen}}",
+  "{count, plural, one {# version} other {# versions}}": "{count, plural, one {# Version} other {# Versionen}}",
   "{count, plural, one {# worker didn't deliver} other {# workers didn't deliver}}":
     "{count, plural, one {# Helfer hat nicht geliefert} other {# Helfer haben nicht geliefert}}",
   "{count, plural, one {# worker} other {# workers}} on it":
@@ -5718,6 +5751,8 @@ export default {
   "{name}: {status}, {count, plural, other {# tries}}":
     "{name}: {status}, {count, plural, one {# Versuch} other {# Versuche}}",
   "{name}’s friends": "Freunde von {name}",
+  "{open, plural, =1 {One step left so Unreal can build C++ on this PC.} other {# steps left so Unreal can build C++ on this PC.}}":
+    "{open, plural, =1 {Noch ein Schritt, dann kann Unreal auf diesem PC C++ bauen.} one {Noch # Schritt, dann kann Unreal auf diesem PC C++ bauen.} other {Noch # Schritte, dann kann Unreal auf diesem PC C++ bauen.}}",
   "{open, plural, =1 {One step left so the agent can add C++ to this game.} =2 {Two steps left so the agent can add C++ to this game.} =3 {Three steps left so the agent can add C++ to this game.} other {# steps left so the agent can add C++ to this game.}}":
     "{open, plural, =1 {Noch ein Schritt, dann kann der Agent diesem Spiel C++ hinzufügen.} =2 {Noch zwei Schritte, dann kann der Agent diesem Spiel C++ hinzufügen.} =3 {Noch drei Schritte, dann kann der Agent diesem Spiel C++ hinzufügen.} one {Noch # Schritt, dann kann der Agent diesem Spiel C++ hinzufügen.} other {Noch # Schritte, dann kann der Agent diesem Spiel C++ hinzufügen.}}",
   "{owners} came with setup scripts written by their authors. Genex skipped them when it made your copy, and the game may need them to build. Run them only if you trust this game.":
@@ -6224,6 +6259,7 @@ export default {
     "Verbinde das Claude- oder ChatGPT-Abo, das du schon bezahlst, oder baue mit Genex-Credits.",
   "Continue in browser": "Im Browser fortfahren",
   "Continue on ChatGPT plan": "Mit ChatGPT-Abo fortfahren",
+  "Continue on {name}": "Mit {name} fortfahren",
   "Continue on Claude plan": "Mit Claude-Abo fortfahren",
   "Everything so far is saved.": "Alles bisher ist gespeichert.",
   "Finish on genex.games in your browser.": "Schließ es auf genex.games in deinem Browser ab.",
@@ -6498,4 +6534,6 @@ export default {
   "Ask the agent to fix these errors": "Den Agenten bitten, diese Fehler zu beheben",
   "Genex couldn’t build the {players} app of “{title}”. Fix these errors in the game’s code so it builds there, and keep the game working as it does on other systems. This computer can’t build for {players}, so check each fix carefully. Then tell me to press Build on Genex again.\n\n{errors}":
     "Genex konnte die {players}-App von „{title}“ nicht bauen. Behebe diese Fehler im Code des Spiels, damit es dort gebaut wird, und lass das Spiel auf anderen Systemen weiter so laufen wie bisher. Dieser Computer kann nicht für {players} bauen, also prüfe jede Korrektur genau. Sag mir dann, dass ich wieder Build on Genex drücken soll.\n\n{errors}",
+  "The same project fails the same way: change it first, then try again.":
+    "Dasselbe Projekt scheitert genauso: Ändere es zuerst und versuch es dann noch mal.",
 } satisfies LocaleCatalog;

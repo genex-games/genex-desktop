@@ -1359,9 +1359,13 @@ button.genex-publish-banner-name:hover {
   align-items: center;
   gap: 12px;
 }
-.genex-publish-cloud-errors .genex-publish-platform-failure {
+.genex-publish-cloud-words {
+  display: grid;
   flex: 1;
+  gap: 4px;
   min-width: 0;
+}
+.genex-publish-cloud-errors .genex-publish-platform-failure {
   display: -webkit-box;
   overflow: hidden;
   -webkit-box-orient: vertical;

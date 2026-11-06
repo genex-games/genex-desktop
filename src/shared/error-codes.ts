@@ -5,6 +5,7 @@
  */
 import { RewindBlock, RewindRefusal, UndoRewindRefusal } from "./chat-rewind.ts";
 import { CliInstallRefusal } from "./cli-install.ts";
+import { AssetInventoryFailure } from "./game-assets.ts";
 import { ExportRefusal, WorkspaceRefusal } from "./game-library.ts";
 import { ClaudeLoginRefusal } from "./claude-login.ts";
 import { SendFailure } from "./composer.ts";
@@ -35,7 +36,8 @@ export type StudioErrorCode =
   | LiveLoadFailure
   | ResumeRefusal
   | PluginInstallProblem
-  | PluginStateRefusal;
+  | PluginStateRefusal
+  | AssetInventoryFailure;
 
 /**
  * The vocabularies above, read when first asked for, so a vocabulary's module may itself import
@@ -58,6 +60,7 @@ export const studioErrorVocabularies = (): ReadonlyArray<Readonly<Record<string,
   ResumeRefusal,
   PluginInstallProblem,
   PluginStateRefusal,
+  AssetInventoryFailure,
 ];
 
 let known: ReadonlySet<string> | null = null;

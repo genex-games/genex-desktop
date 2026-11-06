@@ -34,6 +34,7 @@ import {
   runExecution,
   type Step,
   type StepsLayout,
+  stepAndAssetIds,
   Tone,
 } from "./run-steps.ts";
 import { backgroundCount, FINISH_CHECK_WORDS, jobStatusWords, LEAD_WORDS } from "./words.ts";
@@ -204,13 +205,14 @@ export function readingNodes(graph: RunGraph, rows: PartRow[], summary: RunSumma
 
 /**
  * The graph's reading order, left to right: what you asked and its assets, the lead and its
- * background work (in a tree), every step (row by row, or in the layout's own `steps` order), the
- * result, then the finish check (in a tree) or the lead while it has the run.
+ * background work (in a tree), every step and the asset cards under it (row by row, or in the
+ * layout's own `steps` order), the result, then the finish check (in a tree) or the lead while it
+ * has the run.
  */
 export function readingOrder(
   rows: PartRow[],
   nodes: ReadingNodes,
-  steps: string[] = rows.flatMap((row) => row.steps.map((step) => step.id)),
+  steps: string[] = rows.flatMap((row) => row.steps.flatMap(stepAndAssetIds)),
 ): string[] {
   const head = nodes.tree ? [GraphSelection.Lead, ...(nodes.jobs ? [GraphSelection.Jobs] : [])] : [];
   const last = nodes.tree ? nodes.finishCheck && GraphSelection.FinishCheck : nodes.lead && GraphSelection.Lead;

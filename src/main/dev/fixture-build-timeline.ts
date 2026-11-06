@@ -6,16 +6,20 @@
  * - Save point 1 after the shop sign merged, 2 after the engine sounds (no picture changed: its
  *   checkpoint's picture is 1's to the byte), 3 after a repainted sign (the same file delivered again,
  *   its kept picture from the same view), 4 the lead's own night street.
- * - Twelve workers: a reader that started before the first save point, the three merged ones, a
+ * - Thirteen workers: a reader that started before the first save point, the four merged ones, a
  *   track the lead did not use, five paint schemes off save point 2 (not used or stopped; three fold
  *   behind "+3 workers"), and two still at work off save point 4.
+ * - The shop's props worker made a paint can, a price tag, the paint can again and a lamp: three
+ *   asset cards under it, the paint can's with two versions. The unused track left its map in its
+ *   copy, a ghost card under it.
  * - The person asked with a picture of a street at dusk. After save point 2 nothing was at work, so the
  *   Loop paused, and the chat went on with it for the person's next message and its picture of a
  *   blue sign: You asked is that ask, with that picture alone, though the game keeps both in
  *   `references/`.
  * - The sign and the sounds are delivered into the game folder: the Assets tab lists them in the game.
  * - Before it, a finished web Loop an earlier Genex ran, in Build history: a horn worker merged into
- *   Build 1, the lead's own Build 2 checked at the finish, landed.
+ *   Build 1 (its horn made twice, one sound card with two versions), the lead's own Build 2 checked at
+ *   the finish, landed.
  *
  * Written after the app has started ({@link seedBuildTimeline}): the start closes every run an
  * earlier app left open, so a Loop written before it would read as stopped.
@@ -24,6 +28,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { CustomEvent, customEventData, customRecord } from "../../shared/custom-events.ts";
 import { type EventData, EventKind } from "../../shared/event-log.ts";
+import type { AssetDeliveredPayload } from "../../shared/game-assets.ts";
 import { LoopProfile } from "../../shared/project-facts.ts";
 import { EngineId } from "../../shared/providers.ts";
 import { ExecutionStatus } from "../../shared/run-state.ts";
@@ -41,6 +46,7 @@ const DONE_ASK = "Give the car a horn, and a garage to park it in.";
 const DONE_HEADS = ["e5", "f6"].map((seed) => seed.repeat(20));
 const SIGN = "assets/genex/shop-sign.png";
 const ENGINE = "assets/genex/engine-loop.wav";
+const HORN_FILE = "assets/genex/horn.wav";
 /** The lead's four save points, in order: their number and what each kept. */
 const SAVE_POINTS = [
   { n: 1, label: "Shop sign", summary: "the red sign hangs over the paint shop" },
@@ -57,6 +63,7 @@ const NIGHT: Rgb = [14, 14, 18];
 const RED: Rgb = [200, 60, 50];
 const BLUE: Rgb = [50, 110, 210];
 const CREAM: Rgb = [240, 226, 200];
+const GREEN: Rgb = [60, 150, 90];
 
 /** The sample rate and length of the engine loop the fixture writes. */
 const WAV_RATE = 8000;
@@ -79,6 +86,35 @@ const REPAINT = W("w9", "Repaint the shop sign");
 const DRIFT = W("w10", "Tune the drift");
 const SMOKE = W("w11", "Add tyre smoke");
 const HORN = W("w1", "Horn sound");
+const PROPS = W("w12", "Paint the shop's props");
+
+/** One asset a worker asked Genex for: its job, the file it landed as, what it was asked, and its picture's colours. */
+interface Made {
+  id: string;
+  file: string;
+  prompt: string;
+  colours?: readonly [Rgb, Rgb];
+}
+
+/** What the props worker made, in turn: a paint can, a price tag, the paint can again (green now), a lamp. */
+const PROP_JOBS: readonly Made[] = [
+  { id: "job-can-1", file: "assets/genex/paint-can.png", prompt: "Paint can", colours: [RED, CREAM] },
+  { id: "job-tag", file: "assets/genex/price-tag.png", prompt: "Price tag", colours: [CREAM, ROAD] },
+  { id: "job-can-2", file: "assets/genex/paint-can.png", prompt: "Paint can", colours: [GREEN, CREAM] },
+  { id: "job-lamp", file: "assets/genex/shop-lamp.png", prompt: "Shop lamp", colours: [DUSK, NIGHT] },
+];
+/** What the track worker the lead did not use left in its copy. */
+const TRACK_MAP: Made = {
+  id: "job-track-map",
+  file: "assets/genex/track-map.png",
+  prompt: "Track map",
+  colours: [ROAD, SKY],
+};
+/** The finished Loop's horn, made twice: one sound, two versions. */
+const HORN_JOBS: readonly Made[] = [
+  { id: "job-horn-1", file: HORN_FILE, prompt: "Two-tone horn" },
+  { id: "job-horn-2", file: HORN_FILE, prompt: "Two-tone horn" },
+];
 
 type Scoped = ReturnType<typeof fixtureRun>;
 
@@ -109,6 +145,8 @@ const verdict = (run: Scoped, worker: Worker, used: boolean, note: string | null
 interface Pictures {
   builds: string[];
   signs: string[];
+  /** the kept picture of each pictured job the workers asked for, by its job */
+  made: Map<string, string>;
 }
 
 /** The four save points' checkpoint pictures and the two signs' kept pictures, written under the run's folder. */
@@ -132,7 +170,14 @@ async function writePictures(runsRoot: string): Promise<Pictures> {
       return file;
     }),
   );
-  return { builds, signs };
+  const made = new Map<string, string>();
+  for (const job of [...PROP_JOBS, TRACK_MAP]) {
+    if (!job.colours) continue;
+    const file = path.join(runDir, "deliveries", `${job.id}.png`);
+    await fs.writeFile(file, gradientShot(...job.colours));
+    made.set(job.id, file);
+  }
+  return { builds, signs, made };
 }
 
 /** A second of a low engine hum: a real WAV, so the Assets tab draws its waveform. */
@@ -161,16 +206,31 @@ function engineLoop(): Buffer {
   return Buffer.concat([header, data]);
 }
 
-/** What the running Loop writes into the game folder itself: the sign and the sounds, delivered there. */
+/**
+ * What the Loops wrote into the game folder itself: the sign, the sounds and the props, each file
+ * as its newest delivery left it, and the finished Loop's horn.
+ */
 async function writeGameFiles(core: StudioCore, project: string): Promise<void> {
   const game = core.games.dirFor(project);
   await fs.mkdir(path.join(game, "assets", "genex"), { recursive: true });
   await fs.writeFile(path.join(game, SIGN), gradientShot(BLUE, CREAM));
   await fs.writeFile(path.join(game, ENGINE), engineLoop());
+  await fs.writeFile(path.join(game, HORN_FILE), engineLoop());
+  for (const job of PROP_JOBS)
+    if (job.colours) await fs.writeFile(path.join(game, job.file), gradientShot(...job.colours));
 }
 
-/** A delivery into the game folder, as the host records it: the files, and its kept picture. */
-function delivered(run: Scoped, project: string, worker: Worker, job: { id: string; file: string; picture?: string }) {
+/** Where a delivery landed: the game folder, or (a worker the lead did not use) only its own copy. */
+type Workspace = NonNullable<AssetDeliveredPayload["workspace"]>;
+
+/** A delivery, as the host records it: the files, where they landed, and its kept picture. */
+function delivered(
+  run: Scoped,
+  project: string,
+  worker: Worker,
+  job: { id: string; file: string; picture?: string },
+  workspace: Workspace = "game",
+) {
   const kind = job.file.endsWith(".wav") ? "audio" : "image";
   return run(CustomEvent.AssetDelivered, {
     project,
@@ -179,10 +239,33 @@ function delivered(run: Scoped, project: string, worker: Worker, job: { id: stri
     jobId: job.id,
     files: [{ file: job.file, bytes: 1, kind }],
     at: new Date().toISOString(),
-    workspace: "game",
+    workspace,
     facetId: worker.id,
     ...(job.picture ? { picture: job.picture } : {}),
   });
+}
+
+/** A worker asking Genex for one asset, as the host records the call: asked, delivered, come back. */
+function madeByCall(
+  run: Scoped,
+  project: string,
+  worker: Worker,
+  job: Made & { picture?: string },
+  workspace: Workspace = "game",
+): EventData[] {
+  const callId = `call-${job.id}`;
+  return [
+    run(CustomEvent.PluginToolStarted, {
+      callId,
+      pluginId: "genex",
+      pluginName: "Genex",
+      tool: "asset",
+      facetId: worker.id,
+      args: `operation=${job.file.endsWith(".wav") ? "sound" : "image"} prompt=${job.prompt}`,
+    }),
+    delivered(run, project, worker, job, workspace),
+    run(CustomEvent.PluginTool, { callId, facetId: worker.id, ok: true, jobId: job.id, files: [job.file] }),
+  ];
 }
 
 /** The lead's own row on the graph, as the Loop writes it (open/graph.ts). */
@@ -225,7 +308,11 @@ function savePoint(
   ];
 }
 
-/** The Loop up to its second save point: the reader, the sign and the sounds; a track the lead did not use. */
+/** The props worker's four jobs, each with its kept picture. */
+const propsMade = (run: Scoped, project: string, pictures: Pictures): EventData[] =>
+  PROP_JOBS.flatMap((job) => madeByCall(run, project, PROPS, { ...job, picture: pictures.made.get(job.id) }));
+
+/** The Loop up to its second save point: the reader, the sign, the sounds and the props; a track the lead did not use. */
 function firstBuilds(run: Scoped, project: string, pictures: Pictures): EventData[] {
   return [
     run(CustomEvent.RunStarted, { goal: ASK, engine: EngineId.ClaudeCode, model: FIXTURE_MODEL }),
@@ -247,10 +334,15 @@ function firstBuilds(run: Scoped, project: string, pictures: Pictures): EventDat
     ...savePoint(run, project, SHOP_SIGN, pictures),
     started(run, SOUNDS),
     started(run, TRACK),
+    started(run, PROPS),
     delivered(run, project, SOUNDS, { id: "job-engine", file: ENGINE }),
     ended(run, SOUNDS, WorkerEnd.Done, "Made an engine loop."),
     verdict(run, SOUNDS, true),
+    ...propsMade(run, project, pictures),
+    ended(run, PROPS, WorkerEnd.Done, "Painted a paint can, a price tag and a lamp."),
+    verdict(run, PROPS, true),
     ...savePoint(run, project, ENGINE_SOUNDS, pictures),
+    ...madeByCall(run, project, TRACK, { ...TRACK_MAP, picture: pictures.made.get(TRACK_MAP.id) }, "build"),
     ended(run, TRACK, WorkerEnd.Done, "Built a street track."),
     verdict(run, TRACK, false, "The track cut through the shop."),
   ];
@@ -369,6 +461,7 @@ function finishedLoop(project: string, pictures: string[]): EventData[] {
     run(CustomEvent.RunStarted, { goal: DONE_ASK, engine: EngineId.ClaudeCode, model: FIXTURE_MODEL }),
     run(CustomEvent.AutopilotStarted, { director: true, maxParallel: 8, facets: [], workerRecords: true }),
     started(run, HORN),
+    ...HORN_JOBS.flatMap((job) => madeByCall(run, project, HORN, job)),
     ended(run, HORN, WorkerEnd.Done, "Made a two-tone horn."),
     run(CustomEvent.DirectorProgress, { head: DONE_HEADS[0] }),
     check(1, { worker: poolWorkerId(HORN.id) }),

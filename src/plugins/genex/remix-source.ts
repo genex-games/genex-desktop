@@ -168,17 +168,27 @@ function isProjectFile(file: string, caches: readonly string[]): boolean {
   return !caches.some((cache) => file.startsWith(cache));
 }
 
-/** The game's own files as its git sees them: tracked, or new and not ignored, without history. */
-export async function gitListFiles(gameDir: string): Promise<string[]> {
-  const { stdout } = await exec(
-    "git",
-    [...HOST_GIT_CONFIG, "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
-    { cwd: gameDir, env: hostGitEnv(), windowsHide: true, maxBuffer: LIST_OUTPUT_MAX_BYTES, timeout: LIST_TIMEOUT_MS },
-  ).catch(() => {
+/** The files `git ls-files` lists with `flags` in the game's folder, without repeats. */
+async function gitFiles(gameDir: string, flags: readonly string[]): Promise<string[]> {
+  const { stdout } = await exec("git", [...HOST_GIT_CONFIG, "ls-files", "-z", ...flags], {
+    cwd: gameDir,
+    env: hostGitEnv(),
+    windowsHide: true,
+    maxBuffer: LIST_OUTPUT_MAX_BYTES,
+    timeout: LIST_TIMEOUT_MS,
+  }).catch(() => {
     throw new RemixSourceError(GenexRemixProblem.NoRepository);
   });
   return [...new Set(stdout.split("\0").filter(Boolean))];
 }
+
+/** The game's own files as its git sees them: tracked, or new and not ignored, without history. */
+export const gitListFiles = (gameDir: string): Promise<string[]> =>
+  gitFiles(gameDir, ["--cached", "--others", "--exclude-standard"]);
+
+/** The files the game's `.gitignore` keeps out of its checkpoints: Fab kits and the like. */
+export const gitListIgnored = (gameDir: string): Promise<string[]> =>
+  gitFiles(gameDir, ["--others", "--ignored", "--exclude-standard"]);
 
 /** A file of the game to copy: where it is, its size and mode, or null when it is not a real file inside the folder. */
 async function realFile(root: string, file: string): Promise<{ at: string; bytes: number; mode: number } | null> {
@@ -292,24 +302,44 @@ export async function unrealEngineOf(
   }
 }
 
+/** The folders of an Unreal project a cook reads, whatever the game's `.gitignore` keeps out of its checkpoints. */
+const BUILD_FOLDERS = ["Content", "Config", "Plugins"];
+
+/** The ignored files among `ignored` the cook of the project at `unreal` needs. Never another project. */
+const neededByBuild = (ignored: readonly string[], unreal: string): string[] =>
+  ignored.filter(
+    (file) => BUILD_FOLDERS.some((folder) => file.startsWith(under(unreal, folder))) && !file.endsWith(".uproject"),
+  );
+
+/** How a build lists the game: its own files, and those its `.gitignore` keeps out. */
+export interface BuildSourceDeps extends RemixSourceDeps {
+  listIgnored?(gameDir: string): Promise<string[]>;
+}
+
 /**
  * Copy what Genex needs to build the app of the game in `gameDir` into `dest`, made afresh: for a
  * game with one Unreal project, that project alone, its `.uproject` at the top (the game's other
  * files, its web build or notes, are no part of the app); for any other game, its project as
- * remixers get it. Caches, builds and what is never a game's own stay out as for remixing. No size
- * limit here: the build is Genex's to take or refuse, by the account's own limit, and its refusal
- * says the sizes. Refused, with nothing copied, when the folder has no repository or nothing of its own.
+ * remixers get it. Caches, builds and what is never a game's own stay out as for remixing. Unlike a
+ * remix, a build also takes what `.gitignore` keeps out of checkpoints under `BUILD_FOLDERS`: a Fab
+ * kit or Epic's sample stays out of what others get, but the game's Blueprints need it to cook, and
+ * this copy goes only to the build. No size limit here: the build is Genex's to take or refuse, by
+ * the account's own limit, and its refusal says the sizes. Refused, with nothing copied, when the
+ * folder has no repository or nothing of its own.
  */
 export async function stageBuildSource(
   gameDir: string,
   dest: string,
-  deps: RemixSourceDeps = { listFiles: gitListFiles },
+  deps: BuildSourceDeps = { listFiles: gitListFiles, listIgnored: gitListIgnored },
 ): Promise<StagedSource> {
   const root = await realpath(gameDir);
-  const own = await projectFiles(root, await deps.listFiles(root));
+  const listed = await deps.listFiles(root);
+  const tracked = await projectFiles(root, listed);
   // Counted among the game's own files: a `.uproject` in a cache or a package is no project of its.
-  const unreal = unrealProjectRoot(own.map((file) => file.file));
+  const unreal = unrealProjectRoot(tracked.map((file) => file.file));
   const inProject = (file: string): boolean => unreal === null || unreal === "" || file.startsWith(`${unreal}/`);
+  const ignored = unreal === null ? [] : neededByBuild((await deps.listIgnored?.(root)) ?? [], unreal);
+  const own = ignored.length > 0 ? await projectFiles(root, [...listed, ...ignored]) : tracked;
   const files = own
     .filter((file) => inProject(file.file))
     .map((file) => (unreal ? { ...file, file: file.file.slice(unreal.length + 1) } : file));

@@ -62,6 +62,12 @@ const DEFAULT_SCROLL_NOTCHES = 3;
 const APPS_TTL_MS = 1_500;
 /** How many accessibility elements a state read brings back. */
 const MAX_ELEMENTS = 250;
+/**
+ * How long a Windows window whose UI Automation did not answer is not asked again: each ask waits
+ * out cua's walk, and Unreal Editor's never answers. Past it, it is asked again, as an app that was
+ * only busy (loading) answers once it is not.
+ */
+const SILENT_TREE_MS = 30 * SECOND_MS;
 /** How long a press waits for the person to allow Genex in System Settings: inside a plugin call's 190 s. */
 const GRANT_WAIT_MS = 150 * SECOND_MS;
 /** How often the grants are read again while the person gives them. */
@@ -435,22 +441,63 @@ async function runningMacApp(call: CuaCall, name: string): Promise<DesktopApp | 
   return byId ?? apps.find((app) => app.bundleId !== null && app.name.toLowerCase() === wanted) ?? null;
 }
 
+/** A read of one window's accessibility tree, by its process and its id. */
+type TreeRead = (pid: number, windowId: number) => Promise<CuaAnswer>;
+
+/** The driver's read of a window's accessibility tree, without a picture. */
+function readTree(call: CuaCall): TreeRead {
+  return (pid, windowId) =>
+    call("get_window_state", {
+      pid,
+      window_id: windowId,
+      include_screenshot: false,
+      include_accessibility_tree: true,
+      max_elements: MAX_ELEMENTS,
+    });
+}
+
 /** The accessibility tree of an app's front window, or null when it has none on screen. */
 async function frontTreeOf(
-  call: CuaCall,
+  read: TreeRead,
   windows: (pid: number) => Promise<CuaWindow[]>,
   app: DesktopApp | null,
 ): Promise<CuaAnswer | null> {
   if (!app?.pid) return null;
   const [front] = await windows(app.pid);
   if (!front?.windowId) return null;
-  return call("get_window_state", {
-    pid: app.pid,
-    window_id: front.windowId,
-    include_screenshot: false,
-    include_accessibility_tree: true,
-    max_elements: MAX_ELEMENTS,
-  });
+  return read(app.pid, front.windowId);
+}
+
+/**
+ * Whether a tree read found nothing because the window's UI Automation never answered: cua's walk
+ * ran out of time before its first element (Unreal Editor's `UnrealWindow`). A walk cut short after
+ * some elements is a slow tree, not a silent one, and is read every time.
+ */
+function silentTree(answer: CuaAnswer): boolean {
+  const body = structured(answer);
+  return body.truncated === true && body.nodes_visited === 0;
+}
+
+/**
+ * Two reads of a window's tree that remember which windows are silent ({@link silentTree}): `fresh`
+ * always asks (the password check, as a silent window may answer the next moment with a sign-in
+ * form), and `quiet` asks a silent window once in {@link SILENT_TREE_MS}, otherwise answering with
+ * what it said last, so what the agent is shown while it acts by pixel waits on nothing.
+ */
+function treeMemory(read: TreeRead, now: () => number): { fresh: TreeRead; quiet: TreeRead } {
+  const silent = new Map<number, { at: number; answer: CuaAnswer }>();
+  const fresh: TreeRead = async (pid, windowId) => {
+    const answer = await read(pid, windowId);
+    if (silentTree(answer)) silent.set(windowId, { at: now(), answer });
+    else silent.delete(windowId);
+    return answer;
+  };
+  const quiet: TreeRead = async (pid, windowId) => {
+    const kept = silent.get(windowId);
+    if (kept && now() - kept.at < SILENT_TREE_MS) return kept.answer;
+    return fresh(pid, windowId);
+  };
+  return { fresh, quiet };
 }
 
 /**
@@ -483,7 +530,7 @@ function desktopReads(call: CuaCall, options: { mac?: MacApps; secureInput?: () 
     const front = (await appRows()).find((row) => row.active === true);
     return front ? appOf(front) : null;
   };
-  const frontTree = (app: DesktopApp | null) => frontTreeOf(call, windows, app);
+  const frontTree = (app: DesktopApp | null) => frontTreeOf(readTree(call), windows, app);
   return {
     appOfPid,
     appAt: async (x, y) => {
@@ -528,28 +575,38 @@ function windowsRunningApp(probe: WindowsProbe) {
 }
 
 /**
- * What Windows says about its desktop, through the window probe: the app in front and its focused
- * field, the app a click at a point reaches, a process's app. An app the probe cannot read (no
- * process, no executable) is no app, which the target refuses. Only the front window's tree comes
- * from cua; it stands in for UI Automation's password flag when that could not be read.
+ * An app's shown windows on a PC, front first, as Windows lists them with their titles: they are read
+ * without asking the app, so an editor whose UI Automation does not answer still names its windows.
  */
-function windowsReads(call: CuaCall, probe: WindowsProbe, screen: () => ScreenSize): DesktopReads {
+function windowsAppWindows(probe: WindowsProbe) {
+  return async (app: string): Promise<DesktopWindow[]> =>
+    (await probe.windows(app)).map((window) => ({ pid: window.pid, windowId: window.window, title: window.title }));
+}
+
+/**
+ * What Windows says about its desktop, through the window probe: the app in front, its window and
+ * its focused field, the app a click at a point reaches, a process's app. An app the probe cannot
+ * read (no process, no executable) is no app, which the target refuses. Only the front window's tree
+ * comes from cua: read afresh, it stands in for UI Automation's password flag when that could not be
+ * read; shown to the agent, a window whose UI Automation did not answer is not waited on again for a
+ * while ({@link treeMemory}).
+ */
+function windowsReads(call: CuaCall, probe: WindowsProbe, screen: () => ScreenSize, now: () => number): DesktopReads {
   const windows = async (pid?: number): Promise<CuaWindow[]> =>
     (await listedWindows(call, pid)).filter((window) => !isDriverWindow(window));
+  const { fresh, quiet } = treeMemory(readTree(call), now);
   // The front window as the probe last named it: its tree is read by its handle, without cua's
   // window list (a second or more on Windows).
   let front: ProbedApp | null = null;
-  const frontTree = (app: DesktopApp | null): Promise<CuaAnswer | null> => {
-    const known = front !== null && app?.pid === front.pid ? front.window : null;
-    if (known === null) return frontTreeOf(call, windows, app);
-    return call("get_window_state", {
-      pid: front?.pid,
-      window_id: known,
-      include_screenshot: false,
-      include_accessibility_tree: true,
-      max_elements: MAX_ELEMENTS,
-    });
-  };
+  const treeWith =
+    (read: TreeRead) =>
+    (app: DesktopApp | null): Promise<CuaAnswer | null> => {
+      const probed = front;
+      const known = probed !== null && app?.pid === probed.pid ? probed.window : null;
+      if (probed === null || known === null) return frontTreeOf(read, windows, app);
+      return read(probed.pid, known);
+    };
+  const passwordTree = treeWith(fresh);
   const probeFront = async (): Promise<ProbedApp | null> => {
     front = await probe.front();
     return front;
@@ -561,11 +618,12 @@ function windowsReads(call: CuaCall, probe: WindowsProbe, screen: () => ScreenSi
     focus: async () => {
       const probed = await probeFront();
       const app = probedApp(probed);
-      if (probed?.secure !== null && probed?.secure !== undefined) return { app, secure: probed.secure };
-      const tree = await frontTree(app).catch(() => null);
-      return { app, secure: tree !== null && hasPasswordField(tree) };
+      const window = app ? (probed?.window ?? null) : null;
+      if (probed?.secure !== null && probed?.secure !== undefined) return { app, secure: probed.secure, window };
+      const tree = await passwordTree(app).catch(() => null);
+      return { app, secure: tree !== null && hasPasswordField(tree), window };
     },
-    frontTree,
+    frontTree: treeWith(quiet),
   };
 }
 
@@ -578,7 +636,7 @@ function windowsReads(call: CuaCall, probe: WindowsProbe, screen: () => ScreenSi
  */
 export function cuaDriver(
   connection: CuaConnection,
-  options: { secureInput?: () => Promise<boolean>; mac?: MacApps; windows?: WindowsProbe } = {},
+  options: { secureInput?: () => Promise<boolean>; mac?: MacApps; windows?: WindowsProbe; now?: () => number } = {},
 ): DesktopDriver {
   let picture = { width: 1, height: 1 };
   let screen = { width: 1, height: 1 };
@@ -595,7 +653,8 @@ export function cuaDriver(
   const act = (tool: string, args: Record<string, unknown>) =>
     call(tool, { target: DESKTOP, delivery_mode: "foreground", ...args }).then(() => undefined);
   const keyName = (key: string): string => (options.windows ? windowsKey(key) : key);
-  const reads = options.windows ? windowsReads(call, options.windows, () => screen) : desktopReads(call, options);
+  const now = options.now ?? Date.now;
+  const reads = options.windows ? windowsReads(call, options.windows, () => screen, now) : desktopReads(call, options);
   return {
     screenshot: async (): Promise<DesktopShot> => {
       const answer = await call("get_desktop_state", { max_image_dimension: MAX_IMAGE_DIMENSION });
@@ -618,16 +677,18 @@ export function cuaDriver(
       };
     },
     focus: () => reads.focus(),
+    frontApp: () => reads.frontApp(),
     appAt: (x, y) => reads.appAt((x * screen.width) / picture.width, (y * screen.height) / picture.height),
     ...(options.windows
-      ? { runningApp: windowsRunningApp(options.windows) }
+      ? { runningApp: windowsRunningApp(options.windows), appWindows: windowsAppWindows(options.windows) }
       : {
           runningApp: (name: string) => runningMacApp(call, name),
           appWindows: (app: string) => appWindows(call, app),
         }),
     bringToFront: async (app: string, window?: DesktopWindow) => {
-      // Windows raises by executable through its own probe: the driver's bring_to_front is the Mac's.
-      if (options.windows) await options.windows.raise(app);
+      // Windows raises by executable, or one of its windows by handle, through its own probe: the
+      // driver's bring_to_front is the Mac's.
+      if (options.windows) await options.windows.raise(app, window?.windowId ?? null);
       else await bringAppToFront(call, app, window);
     },
     // move_cursor takes no delivery mode, and a desktop target is its own scope.

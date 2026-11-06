@@ -31,6 +31,11 @@ export function windowsAppId(exe: string): string {
 export interface DesktopFocus {
   app: DesktopApp | null;
   secure: boolean;
+  /**
+   * The window in front (a {@link DesktopWindow}'s `windowId`), where the driver can say: one app's
+   * process may own several (Unreal Editor's Fab window beside its main one on Windows).
+   */
+  window?: number | null;
 }
 
 /** A picture of the whole screen, and the screen's size in the driver's coordinate space. */
@@ -86,7 +91,6 @@ export interface DesktopWeb {
   type(ref: string, text: string, submit: boolean): Promise<void>;
 }
 
-/** The driver: one connection, held for a session and closed when it ends. */
 /** One window of a running app: the process that owns it, the window's own id and its title. */
 export interface DesktopWindow {
   pid: number;
@@ -94,9 +98,15 @@ export interface DesktopWindow {
   title: string;
 }
 
+/** The driver: one connection, held for a session and closed when it ends. */
 export interface DesktopDriver {
   screenshot(): Promise<DesktopShot>;
   focus(): Promise<DesktopFocus>;
+  /**
+   * The app in front alone, without asking whether its focused field is a password field: for a read
+   * that needs only the app (the target's state), so it never waits on that check.
+   */
+  frontApp?(): Promise<DesktopApp | null>;
   /** The app under a screen point, so a click is checked against the app it lands in. */
   appAt?(x: number, y: number): Promise<DesktopApp | null>;
   /**
@@ -106,7 +116,8 @@ export interface DesktopDriver {
   bringToFront?(app: string, window?: DesktopWindow): Promise<void>;
   /**
    * A running app's windows, front first, each with its process and the title it shows: a Mac runs
-   * some apps (Roblox Studio) as one process per open document under one bundle id.
+   * some apps (Roblox Studio) as one process per open document under one bundle id, and one process
+   * may show several windows (Unreal Editor's Fab window on Windows).
    */
   appWindows?(app: string): Promise<DesktopWindow[]>;
   /**

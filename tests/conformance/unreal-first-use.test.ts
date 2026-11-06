@@ -22,6 +22,7 @@ import {
 } from "../../src/plugins/unreal/editor-wait.ts";
 import type { EpicInstallDeps } from "../../src/plugins/unreal/epic-install.ts";
 import type { SetupEnv } from "../../src/plugins/unreal/setup.ts";
+import { type VisualStudioStatus, VisualStudioState } from "../../src/plugins/unreal/visual-studio.ts";
 import { XcodeState } from "../../src/plugins/unreal/xcode.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
@@ -29,6 +30,19 @@ const HELPER = path.resolve("src/plugins/unreal/GenexEditorHelper");
 const GIB = 1024 ** 3;
 const START = Date.UTC(2026, 9, 6, 9, 0, 0);
 const SECOND_MS = 1000;
+
+/** Microsoft's C++ tools as a PC without them, and with them, reads. */
+const NO_BUILD_TOOLS: VisualStudioStatus = {
+  state: VisualStudioState.Missing,
+  toolset: null,
+  windowsSdk: false,
+  plan: "install",
+};
+const BUILD_TOOLS_READY: VisualStudioStatus = {
+  state: VisualStudioState.Ready,
+  toolset: "14.44.35211",
+  windowsSdk: true,
+};
 
 /** Engines by version and build, as Epic's launcher lists them. */
 type Installed = Array<[string, string]>;
@@ -49,7 +63,9 @@ async function computer(
     /** Whether Windows has the runtime Unreal's editor loads, asked each time. */
     runtime?: () => boolean;
     /** Whether the host can hand a setup task to the chat, and how it answers one. */
-    assist?: { can: boolean; answer: { started: boolean; reason?: string } };
+    assist?: { can: boolean; answer: { started: boolean; reason?: string } | Promise<never> };
+    /** Where Microsoft's C++ tools stand, asked each time; none: this computer can't tell. */
+    visualStudio?: () => VisualStudioStatus;
   } = {},
 ) {
   const root = await realpath(await tmpDir("studio-unreal-first-use-"));
@@ -141,6 +157,7 @@ async function computer(
     }),
     freeBytes: async () => 200 * GIB,
     totalMemory: () => 32 * GIB,
+    ...(options.visualStudio ? { visualStudio: async () => options.visualStudio?.() ?? BUILD_TOOLS_READY } : {}),
   };
   const launched: Launch[] = [];
   const clock = { now: START };
@@ -679,6 +696,101 @@ describe("Do it for me on the Unreal setup card", () => {
     await settle(async () => !(await card(c)).open);
     assert.deepEqual(ran, ["powershell.exe", "vc_redist.x64.exe"]);
     assert.match(String((await card(c)).doneSays), /^Unreal 5\.8 is installed on this computer/);
+  });
+
+  it("installs Microsoft's Build Tools from a Windows game's steps card, and tells the agent once they are in", async () => {
+    const tools = { ready: false };
+    const { install, ran } = await fakeInstall({
+      onInstall: async () => {
+        tools.ready = true;
+      },
+    });
+    const c = await computer({
+      platform: "win32",
+      install,
+      runtime: () => true,
+      visualStudio: () => (tools.ready ? BUILD_TOOLS_READY : NO_BUILD_TOOLS),
+    });
+    await c.linkLantern();
+    const shown = await card(c);
+    assert.deepEqual(
+      [shown.open, step(shown, "install-build-tools")?.done, shown.primary?.name],
+      [true, false, "install-for-me"],
+    );
+    assert.match(step(shown, "install-build-tools")?.detail ?? "", /choose Yes when Windows asks/);
+    const answer = (await c.act("install-for-me")) as Answer;
+    assert.deepEqual([answer.step, answer.started], ["build-tools", true]);
+    await settle(async () => !(await card(c)).open);
+    assert.deepEqual(ran, ["powershell.exe", "vs_BuildTools.exe"], "Microsoft's signature checked before it ran");
+    const done = await card(c);
+    assert.equal(step(done, "install-build-tools")?.done, true);
+    assert.match(String(done.doneSays), /^Visual Studio's C\+\+ tools are installed on this PC/);
+    assert.equal(done.primary, undefined);
+  });
+
+  it("follows the Build Tools install on the card, and tells the agent once when it stops on its own", async () => {
+    const held = await fakeInstall({ gate: new Promise<void>(() => {}) });
+    const c = await computer({ platform: "win32", install: held.install, visualStudio: () => NO_BUILD_TOOLS });
+    await c.linkLantern();
+    assert.match(String(await c.tool("install-unreal")), /^Genex is downloading Microsoft's Visual Studio Build Tools/);
+    const working = await card(c);
+    assert.deepEqual(
+      [step(working, "install-build-tools")?.working, working.secondary?.name, working.primary],
+      [true, "stop-install", undefined],
+    );
+    assert.match(step(working, "install-build-tools")?.detail ?? "", /^Downloading the Visual Studio Build Tools/);
+    await c.act("stop-install");
+    await settle(async () => (await card(c)).secondary === undefined);
+    assert.equal((await card(c)).stuckSays, undefined, "the person's own Stop is not news to the agent");
+    const unsigned = await fakeInstall({ unsigned: true });
+    const d = await computer({ platform: "win32", install: unsigned.install, visualStudio: () => NO_BUILD_TOOLS });
+    await d.linkLantern();
+    await d.act("install-for-me");
+    await settle(async () => (await card(d)).stuckSays !== undefined);
+    assert.match(String((await card(d)).stuckSays), /^Do it for me stopped; the card says: The installer isn't signed/);
+    assert.deepEqual(unsigned.ran, ["powershell.exe"], "an unsigned installer never runs");
+  });
+
+  it("lets another press go on while the chat's install of Unreal waits on the person", async () => {
+    const c = await computer({ engines: [], assist: { can: true, answer: new Promise<never>(() => {}) } });
+    await c.addLauncher();
+    void c.act("install-for-me");
+    void c.actFor("harbor-run", "install-for-me");
+    await settle(async () => c.assisted.length === 2);
+  });
+
+  it("starts one install for two presses at once: the card's and the agent's", async () => {
+    const held = await fakeInstall({ gate: new Promise<void>(() => {}) });
+    const c = await computer({ platform: "win32", install: held.install, visualStudio: () => NO_BUILD_TOOLS });
+    await c.linkLantern();
+    const [first, second] = (await Promise.all([c.act("install-for-me"), c.act("install-for-me")])) as Answer[];
+    assert.deepEqual([first?.started, second?.started, second?.reason], [true, false, "running"]);
+    await c.act("stop-install");
+  });
+
+  it("leaves the Build Tools to the person once an install that ended well still left them missing", async () => {
+    const { install, ran } = await fakeInstall();
+    const c = await computer({ platform: "win32", install, visualStudio: () => NO_BUILD_TOOLS });
+    await c.linkLantern();
+    await c.act("install-for-me");
+    await settle(async () => (await card(c)).stuckSays !== undefined);
+    const after = await card(c);
+    assert.match(String(after.stuckSays), /Unreal still can't build C\+\+ with what it installed/);
+    assert.equal(after.primary, undefined, "no Do it for me to press again");
+    assert.match(step(after, "install-build-tools")?.detail ?? "", /Desktop development with C\+\+/);
+    assert.match(String(await c.tool("install-unreal")), /Genex can't install them here/);
+    assert.deepEqual(ran, ["powershell.exe", "vs_BuildTools.exe"], "the installer ran once");
+  });
+
+  it("leaves the Build Tools to the person where Genex can't install them, and installs none before a game has a project", async () => {
+    const c = await computer({ platform: "win32", visualStudio: () => NO_BUILD_TOOLS });
+    const before = (await c.act("install-for-me")) as Answer;
+    assert.deepEqual([before.step, before.started], ["done", false], "a new game in Blueprints needs none");
+    await c.linkLantern();
+    const shown = await card(c);
+    assert.equal(shown.primary, undefined);
+    assert.match(step(shown, "install-build-tools")?.detail ?? "", /Desktop development with C\+\+/);
+    assert.match(String(await c.tool("install-unreal")), /Genex can't install them here/);
   });
 
   it("answers what is left once everything is in", async () => {

@@ -1,7 +1,7 @@
 {
   "apiVersion": 3,
   "id": "unreal",
-  "version": "0.50.0",
+  "version": "0.51.1",
   "icon": "icon.svg",
   "name": "Unreal Engine",
   "publisher": "Genex",
@@ -29,7 +29,8 @@
       "name": "use-project",
       "facts": ["web-game", "unreal-project"],
       "makes": ["unreal-project"],
-      "description": "Link this game to an Unreal project: the one in this game's folder, or another the user asks for. Give its .uproject path, or the name the Unreal panel lists for a project already set up for Genex. A project that isn't set up yet is set up first, as the panel's Set up does, without asking: the chat shows the set-up and the link with one Undo that takes both back. When Unreal has that project open, Genex quits it first (Unreal asks about unsaved work itself), then opens it again. Later Unreal calls in this game go to that project. Switch to another project only when the user asks.",
+      "links": "project",
+      "description": "Link this game to an Unreal project: the one in this game's folder, or another the user asks for. Give its .uproject path, or the name the Unreal panel lists for a project already set up for Genex. A project that isn't set up yet is set up first, as the panel's Set up does, without asking: the chat shows the set-up and the link with one Undo that takes both back. When Unreal has that project open, Genex quits it first (Unreal asks about unsaved work itself), then opens it again. Later Unreal calls in this game go to that project. During a build it links only the project in this game's own folder, by its absolute .uproject path. Switch to another project only when the user asks.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -44,7 +45,7 @@
     {
       "name": "show-steps",
       "facts": ["web-game", "unreal-project"],
-      "description": "Show the user the Unreal setup card in this game's chat. On a computer without the Unreal Genex makes games with, it shows getting Epic's launcher and installing Unreal there (its Do it for me does both; the user signs in to Epic), and brings the Unreal button out; use it when the user wants an Unreal game and new-game refuses or the engine question says Unreal needs installing, then end your reply: the chat tells you when Unreal is installed. Otherwise it shows installing, updating or opening Xcode, which lets you write C++ for this game; use it then when C++ would clearly help. It does nothing when every step is done.",
+      "description": "Show the user the Unreal setup card in this game's chat. On a computer without the Unreal Genex makes games with, it shows getting Epic's launcher and installing Unreal there (its Do it for me does both; the user signs in to Epic), and brings the Unreal button out; use it when the user wants an Unreal game and new-game refuses or the engine question says Unreal needs installing, then end your reply: the chat tells you when Unreal is installed. Otherwise it shows installing, updating or opening Xcode on a Mac, which lets you write C++ for this game; use it then when C++ would clearly help. On Windows it shows installing Microsoft's Visual Studio Build Tools, which packaging a game or plugin with C++ needs. It does nothing when every step is done.",
       "parameters": {
         "type": "object",
         "properties": {}
@@ -53,7 +54,7 @@
     {
       "name": "install-unreal",
       "facts": ["web-game", "unreal-project"],
-      "description": "Install what Unreal needs on this computer, one step per call, as Do it for me on the Unreal setup card does: Epic's launcher (on Windows Genex downloads it from Epic, checks Epic signed it and installs it; Windows asks the user for permission), then Unreal 5.8 in the launcher (Genex opens the launcher and hands the install to this chat's next turn, which clicks it with the desktop tool), then, on Windows when it is missing, Microsoft's Visual C++ runtime the editor needs. Call it yourself when the user wants an Unreal game and Unreal isn't installed, instead of asking them to install it; only signing in to Epic is theirs. It answers at once with what it started; end your reply then, and call it again for the next step once the card shows the last one done.",
+      "description": "Install what Unreal needs on this computer, one step per call, as Do it for me on the Unreal setup card does: Epic's launcher (on Windows Genex downloads it from Epic, checks Epic signed it and installs it; Windows asks the user for permission), then Unreal 5.8 in the launcher (Genex opens the launcher and hands the install to this chat's next turn, which clicks it with the desktop tool), then, on Windows when it is missing, Microsoft's Visual C++ runtime the editor needs, and, in a game with an Unreal project on Windows, Microsoft's Visual Studio Build Tools, which packaging C++ needs (Genex downloads Microsoft's installer, checks Microsoft signed it and installs them; Windows asks the user for permission): call it for them when a package says so. Call it yourself when the user wants an Unreal game and Unreal isn't installed, instead of asking them to install it; only signing in to Epic is theirs. It answers at once with what it started; end your reply then, and call it again for the next step once the card shows the last one done.",
       "parameters": {
         "type": "object",
         "properties": {}
@@ -222,7 +223,7 @@
     {
       "name": "cpp-status",
       "facts": ["unreal-project"],
-      "description": "Whether this computer compiles Unreal C++ and whether the game has its C++ module.",
+      "description": "Whether this computer compiles Unreal C++, where Xcode (on a Mac) and Microsoft's C++ tools (on Windows) stand, and whether the game has its C++ module.",
       "parameters": {
         "type": "object",
         "properties": {}
@@ -367,7 +368,7 @@
       "name": "reopen-editor",
       "audience": "harness",
       "needs": ["editor"],
-      "description": "For Genex's Unreal Loop only: after Unreal crashed, reopen it in the background (end this game's hung editor and its crash reporter, build the game's C++ module, open the project and wait until it answers). Answers {started} at once, or {answering} when Unreal already answers; read editor-state.",
+      "description": "For Genex only: after a restore, reopen this game's Unreal in the background (end what is left of its editor and its crash reporter, update an outdated Genex editor helper, build the game's C++ module, open the project and wait until it answers). Answers {started} at once, or {answering} when Unreal already answers; read editor-state.",
       "parameters": {
         "type": "object",
         "properties": {}
@@ -377,13 +378,17 @@
       "name": "open-editor",
       "facts": ["unreal-project"],
       "needs": ["editor"],
-      "description": "Open this game's Unreal project in Unreal; it starts in the background. Use it whenever an Unreal call says the project isn't open or isn't answering, or that Unreal crashed: it first ends what is left of a crashed editor of this project and its crash reporter. Answers {answering} when Unreal already answers, {starting} while Unreal is already opening it, {started} once Genex began opening it (then call editor-status with seconds until it answers; a first start takes minutes), or {busy} when its editor runs without answering: wait with editor-status, and only if it still doesn't answer call this again with restart: true, which ends that editor (work not saved in it is lost) and opens the project again.",
+      "description": "Open this game's Unreal project in Unreal; it starts in the background. Use it whenever an Unreal call says the project isn't open or isn't answering, or that Unreal crashed: it first ends what is left of a crashed editor of this project and its crash reporter. Answers {answering} when Unreal already answers, {starting} while Unreal is already opening it, {started} once Genex began opening it (then call editor-status with seconds until it answers; a first start takes minutes), or {busy} when its editor runs without answering: wait with editor-status, and only if it still doesn't answer call this again with restart: true, which ends that editor (work not saved in it is lost) and opens the project again. After you change the game's C++ while Unreal is closed, call it with build: true, so Unreal opens on a module built from your code.",
       "parameters": {
         "type": "object",
         "properties": {
           "restart": {
             "type": "boolean",
             "description": "Optional. true ends this game's editor even while it runs without answering, then opens the project again; work not saved in it is lost."
+          },
+          "build": {
+            "type": "boolean",
+            "description": "Optional. true builds the game's C++ module before Unreal opens (on a Mac; elsewhere Unreal's own open builds it); a build that fails leaves Unreal closed, and editor-status names its errors."
           }
         }
       }
@@ -688,16 +693,6 @@
           "stop": { "type": "boolean", "description": "End the run now." }
         }
       }
-    },
-    {
-      "name": "open-for-run",
-      "audience": "harness",
-      "needs": ["editor"],
-      "description": "For Genex only: at a run's start, make sure this game's Unreal is open with the current Genex editor helper and its reference exported.",
-      "parameters": {
-        "type": "object",
-        "properties": {}
-      }
     }
   ],
   "skills": [
@@ -857,7 +852,6 @@
   ],
   "locks": [{ "id": "editor", "label": "Unreal", "per": "project", "personFirst": "editor-activity" }],
   "hooks": [
-    { "on": "run.prepare", "tool": "open-for-run", "facts": ["unreal-project"] },
     { "on": "run.prepare", "tool": "log-errors", "facts": ["unreal-project"] },
     { "on": "checkpoint.before", "tool": "save-all", "facts": ["unreal-project"] },
     { "on": "checkpoint.before", "tool": "log-errors", "facts": ["unreal-project"] },
@@ -865,8 +859,7 @@
     { "on": "restore.before", "tool": "save-all", "facts": ["unreal-project"] },
     { "on": "restore.before", "tool": "end-editor", "facts": ["unreal-project"] },
     { "on": "restore.after", "tool": "reopen-editor", "facts": ["unreal-project"] },
-    { "on": "health", "tool": "editor-state", "facts": ["unreal-project"] },
-    { "on": "crash", "tool": "reopen-editor", "facts": ["unreal-project"] }
+    { "on": "health", "tool": "editor-state", "facts": ["unreal-project"] }
   ],
   "folders": [
     { "path": "~/Library/Application Support/Epic/UnrealBuildTool", "why": "Unreal's build tool writes its log here" },

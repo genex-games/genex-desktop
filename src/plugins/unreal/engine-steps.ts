@@ -1,11 +1,13 @@
 /**
  * The steps card for Unreal: what the user can still do to make the agent's Unreal work better,
- * read live so the card notices a step done without being told. Xcode is recommended, never
- * required: without it Genex builds in Blueprints only. The card is quiet, not a
- * permission card; it appears in a game's chat when new-game makes its Unreal project while a step
- * is open, and the agent can show it again when C++ would clearly help.
+ * read live so the card notices a step done without being told. Xcode on a Mac, and Visual Studio's
+ * C++ tools on Windows, are recommended, never required: without them Genex builds in Blueprints
+ * only. The card is quiet, not a permission card; it appears in a game's chat when new-game makes
+ * its Unreal project while a Mac step is open, and the agent can show it again when C++ would
+ * clearly help. On Windows its Do it for me installs Microsoft's Build Tools (`backend.ts`).
  */
 import { t } from "../../shared/i18n.ts";
+import { BuildToolsPlan, type VisualStudioStatus, VisualStudioState } from "./visual-studio.ts";
 import { type XcodeRange, type XcodeStatus, XcodeState } from "./xcode.ts";
 
 /** Each step's id on the card. Wire values: the renderer keys its rows by them. */
@@ -21,6 +23,8 @@ export const UnrealStepId = {
   InstallEngine: "install-engine",
   /** Windows without the Visual C++ runtime Unreal's editor needs (Epic's launcher normally installs it). */
   InstallRuntime: "install-runtime",
+  /** Windows without Microsoft's C++ tools Unreal builds C++ with (Visual Studio Build Tools). */
+  InstallBuildTools: "install-build-tools",
 } as const;
 export type UnrealStepId = (typeof UnrealStepId)[keyof typeof UnrealStepId];
 
@@ -104,6 +108,29 @@ const WORDS = {
   AddButton: () => t("Open Apple's downloads"),
   XcodeReady: (version: string | null) => (version ? t("Xcode {version} is ready", { version }) : t("Xcode is ready")),
   ReadyDetail: () => t("The agent can add C++ to this game."),
+  /** On Windows, where Genex doesn't compile the agent's C++ yet: what Microsoft's tools are for. */
+  WindowsIntro: (open: number) =>
+    t(
+      "{open, plural, =1 {One step left so Unreal can build C++ on this PC.} other {# steps left so Unreal can build C++ on this PC.}}",
+      { open },
+    ),
+  InstallBuildTools: () => t("Install Visual Studio Build Tools"),
+  UpdateBuildTools: () => t("Update Visual Studio Build Tools"),
+  BuildToolsForMe: () =>
+    t(
+      "Recommended. Microsoft's free C++ tools: Unreal needs them to package a game or plugin with C++. About 7 GB. Do it for me installs them: choose Yes when Windows asks.",
+    ),
+  BuildToolsYourself: () =>
+    t(
+      "Recommended. Microsoft's free C++ tools: Unreal needs them to package a game or plugin with C++. Install Visual Studio Build Tools with Desktop development with C++.",
+    ),
+  UpdateBuildToolsDetail: (engine: string) =>
+    t(
+      "Unreal {engine} doesn't build with the C++ tools on this PC. Do it for me updates them: choose Yes when Windows asks.",
+      { engine },
+    ),
+  BuildToolsReady: () => t("Visual Studio's C++ tools are ready"),
+  BuildToolsReadyDetail: () => t("Unreal can build C++ on this PC."),
 } as const;
 
 const getXcode = (step: XcodeStep, label: string): StepAction => ({ name: GET_XCODE_ACTION, args: { step }, label });
@@ -182,17 +209,71 @@ function xcodeSteps(xcode: XcodeStatus, engine: string): UnrealStep[] {
 }
 
 /**
- * The card for a game whose Unreal project is `project` (its name; null before one is set up), on
- * an engine of version `engine`, with Xcode where `xcode` says.
+ * Microsoft's C++ tools on Windows, where they stand, and what Do it for me can do for them: install
+ * them itself (`forMe`), and the install under way (`working`).
  */
-export function unrealSteps(project: string | null, engine: string, xcode: XcodeStatus): UnrealSteps {
+export type BuildToolsCard = { status: VisualStudioStatus; forMe: boolean; working?: ForMeWork };
+
+/** The Build Tools row for where Microsoft's tools stand; none off Windows. */
+function buildToolsSteps(card: BuildToolsCard | undefined, engine: string): UnrealStep[] {
+  if (!card || card.status.state === VisualStudioState.NotApplicable) return [];
+  const { status } = card;
+  const id = UnrealStepId.InstallBuildTools;
+  if (status.state === VisualStudioState.Ready)
+    return [{ id, label: WORDS.BuildToolsReady(), detail: WORDS.BuildToolsReadyDetail(), done: true }];
+  const update = status.plan === BuildToolsPlan.Update;
+  const detail = card.forMe ? WORDS.BuildToolsForMe() : WORDS.BuildToolsYourself();
+  const step: UnrealStep = {
+    id,
+    label: update ? WORDS.UpdateBuildTools() : WORDS.InstallBuildTools(),
+    detail: update && card.forMe ? WORDS.UpdateBuildToolsDetail(engine) : detail,
+    done: false,
+  };
+  return [withWork(step, card.working)];
+}
+
+/** Do it for me, or Stop while it installs, for an open Build Tools row Genex can install. */
+function buildToolsButtons(card: BuildToolsCard | undefined, steps: readonly UnrealStep[]) {
+  const row = steps.find((step) => step.id === UnrealStepId.InstallBuildTools && !step.done);
+  if (!row || !card) return {};
+  if (card.working) return { secondary: button(InstallCardAction.StopForMe, INSTALL_WORDS.Stop()) };
+  return card.forMe ? { primary: button(InstallCardAction.ForMe, INSTALL_WORDS.ForMe()) } : {};
+}
+
+/**
+ * The card for a game whose Unreal project is `project` (its name; null before one is set up), on
+ * an engine of version `engine`, with Xcode where `xcode` says and, on Windows, Microsoft's C++
+ * tools where `buildTools` says.
+ */
+export function unrealSteps(
+  project: string | null,
+  engine: string,
+  xcode: XcodeStatus,
+  buildTools?: BuildToolsCard,
+): UnrealSteps {
   const setUp: UnrealStep[] = project
     ? [{ id: UnrealStepId.SetUp, label: WORDS.SetUp(engine, project), detail: WORDS.SetUpDetail(), done: true }]
     : [];
-  const steps = [...setUp, ...xcodeSteps(xcode, engine)];
+  const windowsRows = buildToolsSteps(buildTools, engine);
+  const steps = [...setUp, ...xcodeSteps(xcode, engine), ...windowsRows];
   const open = steps.filter((step) => !step.done).length;
-  return { title: WORDS.Title(), intro: open ? WORDS.Intro(open) : WORDS.AllDone(), steps, open: open > 0 };
+  const intro = windowsRows.length > 0 ? WORDS.WindowsIntro(open) : WORDS.Intro(open);
+  const card = { title: WORDS.Title(), intro: open ? intro : WORDS.AllDone(), steps, open: open > 0 };
+  const told = windowsRows.length > 0 && open === 0 ? { doneSays: BUILD_TOOLS_DONE } : {};
+  return { ...card, ...told, ...buildToolsButtons(buildTools, steps) };
 }
+
+/** What the agent is told once the Build Tools row is done and nothing else is open: English. */
+const BUILD_TOOLS_DONE =
+  "Visual Studio's C++ tools are installed on this PC, so Unreal can compile C++ here. If a package asked for them, package again.";
+
+/**
+ * Whether the card shows itself in a game's chat once new-game made the project: a Mac step is
+ * open. The Build Tools alone don't bring it out, since a game in Blueprints packages without them;
+ * the agent shows it when a package needs them.
+ */
+export const opensByItself = (card: UnrealSteps): boolean =>
+  card.steps.some((step) => !step.done && step.id !== UnrealStepId.InstallBuildTools);
 
 /** The plugin actions the install card's buttons run. Wire values: the manifest declares them. */
 export const InstallCardAction = {
@@ -216,7 +297,7 @@ export type ForMeReach = {
 
 /** The step Do it for me is installing now, and where it stands in the person's words. */
 export type ForMeWork = {
-  step: typeof UnrealStepId.GetLauncher | typeof UnrealStepId.InstallRuntime;
+  step: typeof UnrealStepId.GetLauncher | typeof UnrealStepId.InstallRuntime | typeof UnrealStepId.InstallBuildTools;
   message: string;
 };
 

@@ -828,10 +828,12 @@ describe("at Genex's moments", () => {
       "the closed Unreal stays closed",
     );
 
+    // Flipped: a crash reopened Unreal. Nobody fires the crash moment now, and a step an older
+    // manifest still hooks there reopens nothing: the lead opens its app with open-editor.
     const crashed = await reopenWorld();
     assert.deepEqual(await crashed.atMoment(LoopToolName.ReopenEditor, { on: HookEvent.Crash, runId: "run-7" }), {});
-    await crashed.reopened();
-    assert.ok(crashed.events.includes(`open ${NAME}.uproject`), "a crash still reopens Unreal");
+    assert.equal((await crashed.editorState()).reopening.state, ReopenState.Idle, "no reopen started at a crash");
+    assert.deepEqual(crashed.events, [], "nothing opened or built");
   });
 });
 
@@ -941,6 +943,27 @@ describe("the agent's open-editor", () => {
     await assert.rejects(w.agentCall(EditorControlToolName.OpenEditor), /unreal__use-project/);
     await assert.rejects(w.agentCall(EditorControlToolName.QuitEditor), /unreal__use-project/);
     assert.deepEqual([w.events, w.signals], [[], []]);
+  });
+});
+
+describe("the agent's open-editor: the helper and the build a Loop's lead opens Unreal with", () => {
+  it("updates an outdated helper while Unreal is closed, and with build: true builds the game's module first; a build that fails leaves Unreal closed with its errors", async () => {
+    const w = await reopenWorld({ outdatedHelper: true });
+    assert.deepEqual(await w.agentCall(EditorControlToolName.OpenEditor, { build: true }), { started: true });
+    const end = await w.reopened();
+    assert.equal(end.reopening.state, ReopenState.Done, end.reopening.error);
+    assert.deepEqual(
+      w.events,
+      ["update-helper", "compile", `forget ${NAME}.uproject`, `open ${NAME}.uproject`],
+      "the helper updated and the module built while Unreal was closed, then the project opened",
+    );
+
+    const broken = await reopenWorld({ compile: () => BROKEN });
+    assert.deepEqual(await broken.agentCall(EditorControlToolName.OpenEditor, { build: true }), { started: true });
+    const failed = (await broken.agentCall(EditorControlToolName.EditorStatus, { seconds: 170 })) as EditorState;
+    assert.equal(failed.reopening.state, ReopenState.Failed);
+    assert.match(failed.reopening.error ?? "", /BikeGameMode\.cpp:42/, "editor-status names what didn't build");
+    assert.deepEqual(broken.events, ["compile"], "Unreal stays closed");
   });
 });
 

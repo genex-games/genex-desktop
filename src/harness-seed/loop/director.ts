@@ -11,15 +11,17 @@
  */
 import { plannerModel, roleEffort, RoleKey } from "./model-roles.ts";
 import { closeSettled, closeUnderWay } from "./director/close-latch.ts";
-import { fireHooks, HookEvent, holdOf, hooksOn, notesText, runScope } from "./hooks.ts";
-import { type HeldBack, heldTurnEnding, openStartHeld } from "./director/held-words.ts";
-import { CoreFact } from "./folder-facts.ts";
+import { fireHooks, HookEvent, hooksOn, runScope } from "./hooks.ts";
+import { gatesOn } from "./builtin-hooks.ts";
+import { gateLines, momentLines } from "./moment-lines.ts";
+import { heldTurnEnding } from "./director/held-words.ts";
+import { CoreFact, kindPending } from "./folder-facts.ts";
 import { closeRunPool } from "./workers/run-pool.ts";
 import { closeInPlace } from "./director/open/close.ts";
 import { MESSAGE as END_WORDS, openEndWords } from "./director/open/finish.ts";
 import { openBetweenTurns } from "./director/open/between.ts";
 import { creditCapOf, OPEN_WALL_CLOCK, type OpenClock, restartsApp } from "./director/open/contract.ts";
-import { appDownAtStart, appUpAtStart, settleRecovery } from "./director/open/health.ts";
+import { appAtStart, settleRecovery } from "./director/open/app-look.ts";
 import { openTools } from "./director/open/tool-specs.ts";
 import { openHandler } from "./director/open/tools.ts";
 import { HostMethod } from "./host-methods.ts";
@@ -181,25 +183,43 @@ export function directorTalk(loopRun: LoopRun, images: DelegateImage[], tools: L
   return talk;
 }
 
-/** What the run stands on as its lead's first turn opens: why a plugin held the start back, and what the plugins said. */
+/** What the run stands on as its lead's first turn opens: what its start found, as lines. */
 interface StartOfRun {
-  blocked?: HeldBack;
   notes: string[];
 }
 
-/** The game's plugins prepare their apps first; one that can't holds the run back before any turn. */
+/**
+ * What Genex's own gates found at the start (`web.ready`: a web page's missing files, by
+ * `game.validate`'s typed list), asked only for a game a gate reaches; none for a game with no kind
+ * yet, whose kind its lead picks first.
+ */
+async function gatesAtStart(loopRun: LoopRun): Promise<string[]> {
+  const { ctx, open, run } = loopRun;
+  const game = { name: run.project, facts: open.facts, holds: open.holds };
+  if (kindPending(game) || gatesOn(HookEvent.RunPrepare, game).length === 0) return [];
+  const readiness = await ctx.call(HostMethod.GameValidate, { project: run.project }).catch(() => null);
+  return gateLines(HookEvent.RunPrepare, { game, missing: readiness?.missing });
+}
+
+/**
+ * Every start is its lead's, fresh or resumed: the game's plugins prepare their apps first
+ * (`run.prepare`), Genex's own gates look at the folder, and Genex looks once at the project's app
+ * (`health`). What they found is what the lead reads first; nothing here holds the start back. A
+ * Stop meanwhile says nothing: the caller reads it from `ctx.cancelled`.
+ */
 async function prepareTheStart(loopRun: LoopRun): Promise<StartOfRun> {
   const { ctx } = loopRun;
   if (ctx.cancelled) return { notes: [] };
-  const prepared = await fireHooks(ctx, loopRun.game, HookEvent.RunPrepare, runScope(loopRun));
-  if (prepared.blocked && ctx.cancelled) return { notes: [] };
-  if (prepared.blocked) return { blocked: prepared.blocked, notes: [] };
-  return { notes: notesText(prepared) };
+  const prepared = await momentLines(ctx, loopRun.game, HookEvent.RunPrepare, runScope(loopRun));
+  if (ctx.cancelled) return { notes: [] };
+  const gated = await gatesAtStart(loopRun);
+  const app = await appAtStart(loopRun);
+  return { notes: [...prepared, ...gated, ...app] };
 }
 
 /**
  * The Loop's first lines to its lead: that it started (or resumed), with its goal as the chat's
- * session wrote it; then what the project's plugins said as it prepared.
+ * session wrote it; then what its start found (the plugins' words, Genex's gates, the app's look).
  */
 function startLines(loopRun: LoopRun, start: StartOfRun): string[] {
   const { goal } = loopRun.run;
@@ -250,7 +270,7 @@ async function closeAfterCrash(loopRun: LoopRun, err: any): Promise<void> {
   return closeInPlace(loopRun, { victory: false, because: String(loopRun.report.stoppedBecause) });
 }
 
-/** The run is over: its pool settles, a recovery of the project's app under way ends, and the plugins hear it. */
+/** The run is over: its pool settles, a look at the project's app under way ends, and the plugins hear it. */
 async function tearDown(loopRun: LoopRun): Promise<void> {
   const { ctx, run } = loopRun;
   directors.delete(run.runId);
@@ -320,7 +340,7 @@ function keepTimings(loopRun: LoopRun, timings: HostTimings): void {
 /** The lead's tools, and the dispatch of them. */
 function seatTools(loopRun: LoopRun): LiveToolSpec[] {
   const types = loopRun.open.pool?.state.types ?? [];
-  loopRun.afterTurn = (ends) => openBetweenTurns(loopRun, ends);
+  loopRun.afterTurn = () => openBetweenTurns(loopRun);
   directors.set(loopRun.run.runId, openHandler(loopRun));
   return openTools(types, {
     restart: restartsApp(loopRun.game),
@@ -328,24 +348,6 @@ function seatTools(loopRun: LoopRun): LiveToolSpec[] {
     appSaved: hooksOn(loopRun.game, HookEvent.CheckpointBefore),
     cppRestart: (loopRun.gameFacts ?? []).some((fact) => fact.id === CoreFact.UnrealProject),
   });
-}
-
-/**
- * Whether the lead takes a held start: the Resume of a Loop that paused while its app was closed,
- * Genex bringing it back or the lead (`appLost`; a Resume lets the agent try again), held back by a
- * plugin's step (never Genex's own hold), where a plugin watches that app. Any other held start keeps
- * its plugin's words: a fresh one closes for the chat's agent to fix and start again
- * (core/held-start.ts), a resumed one stays paused for what only the person can do.
- */
-const leadTakesTheStart = (loopRun: LoopRun, blocked: HeldBack): boolean =>
-  loopRun.resume && loopRun.open.journal.appLost && !holdOf(blocked) && hooksOn(loopRun.game, HookEvent.Health);
-
-/** A start a plugin held back closes before any turn, saying why. */
-async function closeHeldStart(loopRun: LoopRun, blocked: HeldBack): Promise<void> {
-  const because = openStartHeld(blocked, loopRun.resume);
-  const startHeld = !loopRun.resume && !holdOf(blocked);
-  const end = { victory: false, because, keepNothing: true, unworked: true, paused: loopRun.resume, startHeld };
-  return closeInPlace(loopRun, end);
 }
 
 /** A run the person stopped before its first turn closes as their stop. */
@@ -358,19 +360,11 @@ async function closeStoppedStart(loopRun: LoopRun): Promise<void> {
 async function leadTheRun(loopRun: LoopRun, talk: DirectorTalk, line: LeadLine, clock: OpenClock): Promise<void> {
   try {
     const start = await prepareTheStart(loopRun);
-    if (start.blocked && !leadTakesTheStart(loopRun, start.blocked)) {
-      await line.release();
-      await closeHeldStart(loopRun, start.blocked);
-      return;
-    }
     if (loopRun.ctx.cancelled) {
       await line.release();
       await closeStoppedStart(loopRun);
       return;
     }
-    // Read only once the start went on: a Stop's start said nothing of the app, and its journal keeps it as it was.
-    if (start.blocked) await appDownAtStart(loopRun, start.blocked.reason);
-    else appUpAtStart(loopRun);
     await wakeLoopRun(loopRun, talk, startLines(loopRun, start), line, clock);
   } catch (err: any) {
     await line.release();

@@ -1,23 +1,21 @@
 /**
- * The Roblox plugin's answers at Genex's moments: their words, a run's blocks against a chat's
- * notes, the Team Create notes naming the others, and the health note when Studio stops answering.
+ * The Roblox plugin's answers at Genex's moments: their words, a run's save point and a chat's
+ * checkpoint that only note what wasn't saved, the Team Create notes naming the others, and the
+ * health note when Studio stops answering.
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
-  crashAnswer,
   healthAnswer,
   loadAnswer,
   MOMENT_WORDS,
   PlaceLoad,
   PlaceSave,
   probeAnswer,
-  RunStart,
   type SaveRead,
   StudioHealth,
   saveAnswer,
   shotsAnswer,
-  startAnswer,
   teamAnswer,
 } from "../../src/plugins/roblox/hook-answers.ts";
 import { type HookContext, HookEvent } from "../../src/shared/plugin-hooks.ts";
@@ -36,10 +34,12 @@ const UNSUPPORTED: SaveRead = { outcome: PlaceSave.Unsupported, why: "Serializat
 const NOT_CONNECTED: SaveRead = { outcome: PlaceSave.NotConnected };
 
 describe("save-place's answers", () => {
-  it("a run blocks a save point the place isn't in, a chat only notes it", () => {
+  // Flipped: a run's save point was blocked while Studio wasn't connected or the export failed.
+  // It is taken with the scripts, and its note tells the lead, who decides.
+  it("a run's save point and a chat's checkpoint only note a place they couldn't save: neither is ever blocked", () => {
     const rows: Array<[string, SaveRead, { run: "block" | "note" | "none"; chat: "block" | "note" | "none" }]> = [
-      ["Studio not connected", NOT_CONNECTED, { run: "block", chat: "note" }],
-      ["the export failed", FAILED, { run: "block", chat: "note" }],
+      ["Studio not connected", NOT_CONNECTED, { run: "note", chat: "note" }],
+      ["the export failed", FAILED, { run: "note", chat: "note" }],
       ["Studio can't export at all: the scripts only", UNSUPPORTED, { run: "note", chat: "note" }],
       ["saved", SAVED, { run: "none", chat: "note" }],
       ["not linked to a place", { outcome: PlaceSave.NotLinked }, { run: "none", chat: "none" }],
@@ -57,24 +57,32 @@ describe("save-place's answers", () => {
     assert.deepEqual(saveAnswer(UNSUPPORTED, RUN_CHECKPOINT), {
       note: "This Studio can't export its place (SerializationService isn't available), so save points hold the scripts only and Rewind brings back the scripts alone.",
     });
+    // Flipped: these two were blocks that asked the lead to save again.
     assert.deepEqual(saveAnswer(NOT_CONNECTED, RUN_CHECKPOINT), {
-      block:
-        "Roblox Studio isn't connected for this game, so its place couldn't be saved. Open the place in Studio, then save again.",
+      note: "Roblox Studio isn't connected for this game, so this save point holds the scripts only.",
+    });
+    assert.deepEqual(saveAnswer(FAILED, RUN_CHECKPOINT), {
+      note: "Roblox Studio's place wasn't saved (The Genex helper in Roblox Studio didn't answer place.export in time.), so this save point holds the scripts only.",
     });
     assert.deepEqual(saveAnswer(NOT_CONNECTED, CHAT_CHECKPOINT), {
       note: "Roblox Studio isn't connected for this game, so this checkpoint holds the scripts only.",
     });
   });
 
-  it("names the parts save points leave out, larger than 50 MB", () => {
+  // Flipped: a run's save point named them too, though no lead can change the host's cap.
+  it("names the parts save points leave out, larger than 50 MB, at a chat's checkpoint and before a restore, never to a run's lead", () => {
     const large = {
       outcome: PlaceSave.Saved,
       written: 1,
       large: [".genex/place/Workspace.split/Island.rbxm"],
     } as const;
-    assert.deepEqual(saveAnswer(large, RUN_CHECKPOINT), {
-      note: ".genex/place/Workspace.split/Island.rbxm is larger than 50 MB, so save points leave it out and Rewind can't bring it back.",
+    const leftOut =
+      ".genex/place/Workspace.split/Island.rbxm is larger than 50 MB, so save points leave it out and Rewind can't bring it back.";
+    assert.deepEqual(saveAnswer(large, RUN_CHECKPOINT), {}, "the host's own checkpoint report names it");
+    assert.deepEqual(saveAnswer(large, CHAT_CHECKPOINT), {
+      note: `Saved Roblox Studio's place (1 part changed). ${leftOut}`,
     });
+    assert.deepEqual(saveAnswer(large, RESTORE), { note: leftOut });
   });
 
   it("before a restore: a failed save blocks (nothing goes back) and others in Team Create are named", () => {
@@ -144,32 +152,12 @@ describe("studio-state's answers", () => {
 });
 
 describe("the other moments' answers", () => {
-  it("the crash note asks the person to reopen Studio and says Genex never closes it", () => {
-    assert.deepEqual(crashAnswer(), {
-      note: "Roblox Studio closed for this game. Reopen it with Open Studio in the Roblox Studio panel; Genex never closes or force-quits Studio.",
-    });
-  });
-
   it("the Team Create note names who else is in the place, once each time that changes", () => {
     assert.deepEqual(teamAnswer(["Ana", "Bo"], undefined), { note: "Also in this place in Team Create: Ana, Bo." });
     assert.deepEqual(teamAnswer(["Bo", "Ana"], ["Ana", "Bo"]), {}, "the same people say nothing again");
     assert.deepEqual(teamAnswer([], ["Ana"]), { note: "Nobody else is in this place in Team Create now." });
     assert.deepEqual(teamAnswer([], undefined), {}, "a place nobody shares says nothing");
     assert.deepEqual(teamAnswer(null, ["Ana"]), {}, "unknown says nothing");
-  });
-
-  it("a run's start: quiet when ready, a note when Genex opened the place, a block with the step otherwise", () => {
-    assert.deepEqual(startAnswer({ outcome: RunStart.Ready }, true), {});
-    assert.deepEqual(startAnswer({ outcome: RunStart.Opened, place: "sky-race" }, true), {
-      note: "Opened sky-race in Roblox Studio for the Loop.",
-    });
-    assert.equal(startAnswer({ outcome: RunStart.NotSetUp }, true).block, MOMENT_WORDS.NotSetUp);
-    assert.equal(startAnswer({ outcome: RunStart.NoPlace }, true).block, MOMENT_WORDS.NoPlace);
-    assert.equal(
-      startAnswer({ outcome: RunStart.NotConnected, minutes: 3 }, true).block,
-      "Roblox Studio didn't connect for this game within 3 minutes. Open its place in Studio, then start again.",
-    );
-    assert.match(String(startAnswer({ outcome: RunStart.Silent }, true).block), /dialog may be open.*app_look/);
   });
 
   it("the viewport is one picture, and the probe claims nothing unsaved", () => {

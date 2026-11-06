@@ -6,8 +6,9 @@
  */
 import type { AnyRecord } from "../../types/harness.d.ts";
 import type { DelegateResult, WorkerType } from "../../types/host-api.d.ts";
-import { type HookScope, workerEndHooks, workerStartHooks } from "../hooks.ts";
+import { HookEvent, type HookScope } from "../hooks.ts";
 import { HostMethod } from "../host-methods.ts";
+import { workerMomentLines } from "../moment-lines.ts";
 import { CLIP_DETAIL, clip, hasText } from "../text.ts";
 import {
   MAX_WORKERS_AT_ONCE,
@@ -168,7 +169,10 @@ function copyRefusal(err: unknown): string {
   return POOL_WORDS.noCopy(clip(why, CLIP_DETAIL));
 }
 
-/** `worker_start`: the worker's id once it runs in the background, or why it did not start. */
+/**
+ * `worker_start`: the worker's id once it runs in the background, or why it did not start, each with
+ * what the game's plugins said at its moments.
+ */
 export async function startWorker(state: PoolState, args: AnyRecord): Promise<string> {
   // An engine that refused a worker for a sandbox this computer cannot run refuses every one (sandbox-refusal.ts).
   const unboxed = sandboxRefusalOn(state.scope.engine, state.scope.clock.now());
@@ -180,18 +184,13 @@ export async function startWorker(state: PoolState, args: AnyRecord): Promise<st
   const record = newRecord(state, ask);
   // Its id and room are taken at once: a start in flight beside it numbers apart and counts.
   state.records.push(record);
-  // A plugin of the game may hold the worker back: nothing of it is made or written.
-  const blocked = await workerStartHooks(state.scope.ctx, state.scope.game, momentScope(state), workerOf(record));
-  if (blocked) {
-    unreserve(state, record);
-    return POOL_WORDS.startHeld(blocked);
-  }
+  // What the game's plugins say as it starts is the lead's to read with the answer: it never holds the worker back.
+  const told = await workerMoment(state, record, HookEvent.WorkerStart);
   const refused = await prepareWorkplace(state, record, ask.isolation);
   if (refused) {
     // Its start was announced: so is its end, though it never ran.
     unreserve(state, record);
-    await workerEndHooks(state.scope.ctx, state.scope.game, momentScope(state), workerOf(record));
-    return refused;
+    return withLines(refused, [...told, ...(await workerMoment(state, record, HookEvent.WorkerEnd))]);
   }
   const prompt = workerBrief({
     identity: state.scope.identity,
@@ -205,8 +204,11 @@ export async function startWorker(state: PoolState, args: AnyRecord): Promise<st
     .finally(() => state.runs.delete(record.id));
   state.runs.set(record.id, work);
   await persist(state);
-  return POOL_WORDS.started(record.id, record.isolation);
+  return withLines(POOL_WORDS.started(record.id, record.isolation), told);
 }
+
+/** An answer with what the game's plugins said at the worker's moments after it. */
+const withLines = (answer: string, lines: readonly string[]): string => [answer, ...lines].join(" ");
 
 /** A worker that did not start leaves the pool's records. */
 function unreserve(state: PoolState, record: WorkerRecord): void {
@@ -250,6 +252,11 @@ function momentScope(state: PoolState): HookScope {
 
 /** A worker as Genex's moments name it. */
 const workerOf = (record: WorkerRecord) => ({ id: record.id, title: record.title, type: record.type });
+
+/** Announces one of a worker's moments: what the game's plugins said there, as lines. */
+function workerMoment(state: PoolState, record: WorkerRecord, on: HookEvent): Promise<string[]> {
+  return workerMomentLines(state.scope.ctx, state.scope.game, momentScope(state), workerOf(record), on);
+}
 
 /** A worker's start on the chat's log, under its pool id: where it works in place, when it holds a plugin's lock. */
 function recordStart(state: PoolState, record: WorkerRecord): Promise<void> {
@@ -386,7 +393,7 @@ export async function ended(
   // The game folder is free for the next writer in place, in any pool of the game.
   await releaseInPlace(state, record);
   await recordEnd(state, record, summary);
-  if (END_OF[record.state])
-    await workerEndHooks(state.scope.ctx, state.scope.game, momentScope(state), workerOf(record));
-  state.scope.onEnded?.(record);
+  // What the game's plugins say at its end goes with the news of it.
+  const told = END_OF[record.state] ? await workerMoment(state, record, HookEvent.WorkerEnd) : [];
+  state.scope.onEnded?.(record, told);
 }

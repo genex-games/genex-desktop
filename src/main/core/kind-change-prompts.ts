@@ -12,10 +12,14 @@ function factsWords(facts: readonly FactRef[]): string {
     .join(", ");
 }
 
+/** What a refused tool that links a project (`links`) may still do during a run. */
+const LINKS_DURING_RUN =
+  " During a run it still links this game to the project already in its own folder: give that project file's absolute path.";
+
 /** What a kind-changing call answers, and the snapshot it takes first. */
 export const KIND_CHANGE_MESSAGE = {
-  runGoing: (tool: string) =>
-    `${tool} changes what this project is, and a run of this game is going, so it did not run: it would change the project under the run. Wait until the run ends, or tell the person to stop it first.`,
+  runGoing: (tool: string, links: boolean) =>
+    `${tool} changes what this project is, and a run of this game is going, so it did not run: it would change the project under the run.${links ? LINKS_DURING_RUN : ""} Wait until the run ends, or tell the person to stop it first.`,
   snapshotReason: (tool: string) => `before ${tool} changed what the project is`,
   changed: (facts: readonly FactRef[]) =>
     `The project now holds ${factsWords(facts)}. End your reply now: Genex continues this session with the tools for it.`,

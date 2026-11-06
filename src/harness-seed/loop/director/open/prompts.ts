@@ -16,9 +16,8 @@ export const OPEN_WORDS = {
   noted: "noted",
   finishUnderWay: "Your finish is already being checked; wait for its answer.",
   ending: "The Loop is already ending; end your turn.",
-  /** A save point, a rewind, a restart or a finish once the Loop is paused (its app couldn't be brought back, or the lead paused it). */
-  paused:
-    "The Loop is paused: Genex couldn't bring the project's app back, or you paused it for the person. Nothing was kept or checked; end your turn.",
+  /** A save point, a rewind, a restart or a finish once the lead paused the Loop. */
+  paused: "The Loop is paused: you paused it for the person. Nothing was kept or checked; end your turn.",
   needsWhy: `${OpenTool.Pause} needs why: what stops the goal and what the person should do.`,
   pausing:
     "The Loop pauses when this turn ends, with your words for the person. End your turn now with the same two sentences.",
@@ -41,12 +40,6 @@ export const OPEN_WORDS = {
   personFinished:
     "The person asked the Loop to finish: it is closed. End your turn with a one-paragraph summary for the person.",
   needsLabel: `${OpenTool.SavePoint} needs a label.`,
-  /** A save point or a finish while Genex brings the project's app back: nothing is kept or checked. */
-  recovering:
-    "Genex is bringing the project's app back; nothing was kept or checked. Try again once it says the app is back.",
-  /** A save point or a finish while the project's app stays closed for the lead to fix (`OPEN_NEWS.appDown`). */
-  appDown:
-    "The project's app is still closed, so nothing was kept or checked. Genex tries to reopen it when this turn ends; try again once it says the app is back.",
   saved: (label: string, notes: readonly string[], shows: string | null = null) =>
     [
       `Saved save point "${label}".`,
@@ -72,41 +65,16 @@ export const OPEN_NEWS = {
   restarted: "Genex restarted the project's app before this turn, as you asked; no file changed.",
   noRestart: (why: string) => `Genex couldn't restart the project's app: ${clause(why)}.`,
   notAnswering: (why: string) => `The project's app didn't answer again: ${clause(why)}.`,
-  /** Why nothing was kept or restored at a turn's end: a recovery under way. */
-  bringingBack: "Genex is bringing the project's app back",
-  askWaits:
-    "Genex is bringing the project's app back, so the rewind or restart you asked for waits until a turn ends after it is back.",
   /** A rewind or restart asked for while a worker writes in the folder in place: it waits for that worker. */
   askWaitsForWriter: (ids: readonly string[]) =>
     `A worker writes in the folder in place (${ids.join(", ")}), so the rewind or restart you asked for waits until a turn ends after it is done.`,
   /** No autosave while a worker writes in the folder in place: it would keep that worker's half-done files. */
   notAutosavedWriter: (ids: readonly string[]) =>
     `A worker writes in the folder in place (${ids.join(", ")}), so Genex kept no autosave of your turn.`,
-  /** The writers in place Genex stopped before it took the folder back to a save point. */
-  writersStopped: (ids: readonly string[]) =>
-    `Genex stopped ${ids.join(", ")} first: it wrote in the folder in place, and the folder went back under it.`,
-  /** Why a writer in place was stopped, as its end record says it. */
-  writerStoppedWhy: "Genex stopped it while it brought back the project's app, which had stopped answering",
   rewindDropped: (label: string) =>
     `Before the Loop paused you asked to go back to save point "${label}"; it paused first, so nothing went back.`,
   restartDropped:
     "Before the Loop paused you asked to restart the project's app; it paused first, so it wasn't restarted.",
-  /** Said the moment Genex sees the project's app has stopped answering, before its recovery. */
-  appStopping: "The project's app isn't answering: Genex is bringing it back now.",
-  appBack: (label: string | null) =>
-    label
-      ? `The project's app stopped, and Genex reopened it. Work since save point "${label}" may be lost.`
-      : "The project's app stopped, and Genex reopened it. Work not yet saved in it may be lost.",
-  wentBack: (label: string) =>
-    `The project's app stopped and wouldn't reopen on the folder as it was, so Genex went back to save point "${label}". Work since it is gone from the folder.`,
-  /**
-   * Genex couldn't bring the app back, and it stays closed for the lead (`health.ts` `handToLead`):
-   * the app's own reason, as its plugin wrote it for agents, and how many more times Genex tries.
-   */
-  appDown: (why: string, tries: number) =>
-    `The project's app is closed, and Genex couldn't open it again: ${clause(why)}. It stays closed until what stops it is fixed. When this turn ends, Genex tries again on the folder as you leave it (${tries === 1 ? "a last try" : `${tries} tries left`}); after that the Loop pauses for the person.`,
-  /** Genex's try at a turn's end brought the app back. */
-  appReopened: "Genex reopened the project's app on the folder as you left it.",
-  /** The app answers again while it was the lead's to bring back (the lead or the person opened it). */
+  /** The app answers again after Genex's watch saw it stop (`app-look.ts`): the lead or the person opened it. */
   appAnswers: "The project's app answers again.",
 } as const;

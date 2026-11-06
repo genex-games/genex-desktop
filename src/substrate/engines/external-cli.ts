@@ -20,7 +20,7 @@ import { childEnv } from "../child-env.ts";
 import { atomicWriteText } from "../fsx.ts";
 import type { CodingProvider, CodingCliStatus } from "../../shared/coding-cli.ts";
 import { errorMessage } from "../../shared/errors.ts";
-import { CodingCliState } from "../../shared/coding-cli.ts";
+import { CodingCliState, CodingCliUnavailable } from "../../shared/coding-cli.ts";
 import { SECOND_MS } from "../../shared/duration.ts";
 import { EngineId } from "../../shared/providers.ts";
 import { OpenCodeDialect, OpenCodeVersionProblem, openCodeRelease } from "./opencode-cli.ts";
@@ -895,6 +895,7 @@ export async function requireCodingCli(
   refresh = true,
 ): Promise<CliInstallation & { path: string }> {
   const result = await resolveCodingCli(provider, override, signal, refresh);
-  if (result.status.state !== CodingCliState.Ready || !result.status.path) throw new Error(result.status.detail);
+  if (result.status.state !== CodingCliState.Ready || !result.status.path)
+    throw new CodingCliUnavailable(result.status.state, result.status.detail);
   return { ...result, path: result.status.path };
 }

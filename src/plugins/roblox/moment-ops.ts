@@ -8,8 +8,7 @@ import type { PluginContext, PluginEngineLink } from "../../plugin-sdk/index.d.t
 import { PluginService } from "../../shared/plugins.ts";
 import { type AgentMarks, agentBusyMarker, agentFolder, readAgentMarks } from "./agent-marks.ts";
 import { type HelperAsk, HelperLinkError, HelperLinkFailure } from "./helper-link.ts";
-import { type OpenAnswer, openStudio, type PlaceActionDeps } from "./place-actions.ts";
-import { linkedPlace } from "./places.ts";
+import type { PlaceActionDeps } from "./place-actions.ts";
 import type { StudioClient } from "./studio-client.ts";
 import { startingNow } from "./studio-launch.ts";
 import { studioRunning } from "./studio-locate.ts";
@@ -112,13 +111,6 @@ export function momentOpsFor(
     },
     flush: (timeoutMs) => services.flush(game, timeoutMs),
     reapply: (options) => services.reapply(game, options),
-    open: (): Promise<OpenAnswer> => openStudio(deps, context),
-    async placeName() {
-      const linked = await link();
-      if (!linked) return game;
-      const directory = context.directory ? { directory: context.directory } : {};
-      return (await linkedPlace(place.storage, { project: game, ...directory }, linked)).name;
-    },
     shot: (timeoutMs) => shotFrom(deps.studio, services.bound(game), timeoutMs),
     marks: folder ? () => readAgentMarks(folder, deps.now()) : noMarks,
     asAgent: (work) => (folder ? agentBusyMarker(folder, deps.now).around(work) : work()),

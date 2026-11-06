@@ -33,6 +33,7 @@ import { genexRef } from "../shared/genex-ref.ts";
 import { isImageFile } from "../substrate/game-workspace.ts";
 import {
   type AssetAvailability,
+  AssetInventoryFailure,
   type AssetKind,
   type AssetSource,
   assetExtension,
@@ -46,6 +47,7 @@ import type { EventEnvelope } from "../substrate/types.ts";
 import { CustomEvent } from "../shared/custom-events.ts";
 import { EventKind } from "../shared/event-log.ts";
 import type { AssetDeliveryRecord } from "./asset-checkpoints.ts";
+import { CodedError, errorCodeIn, errorMessage } from "../shared/errors.ts";
 
 /** Blender scripts live in `assets/src`; they are inputs, not assets. */
 const EXCLUDED_PREFIX = "assets/src/";
@@ -758,6 +760,28 @@ export async function readContainedImage(
   return { mimeType: sniffed.mimeType, data: data.toString("base64") };
 }
 
+/** The file system's codes, by the inventory failure each one is. */
+const INVENTORY_FAILURE_BY_ERRNO: Readonly<Record<string, AssetInventoryFailure>> = {
+  EBUSY: AssetInventoryFailure.FileBusy,
+  EPERM: AssetInventoryFailure.AccessDenied,
+  EACCES: AssetInventoryFailure.AccessDenied,
+  ENOENT: AssetInventoryFailure.Missing,
+  ENOTDIR: AssetInventoryFailure.Missing,
+  EMFILE: AssetInventoryFailure.TooManyOpen,
+  ENFILE: AssetInventoryFailure.TooManyOpen,
+};
+
+/**
+ * A failed inventory read as it crosses IPC: its words, and why by the file system's code
+ * (`AssetInventoryFailure`), so analytics tell a held file from a missing one without a path.
+ */
+export function inventoryFailure(error: unknown): CodedError {
+  if (error instanceof CodedError && errorCodeIn(AssetInventoryFailure, error)) return error;
+  const errno = (error as NodeJS.ErrnoException | null)?.code;
+  const code = (typeof errno === "string" && INVENTORY_FAILURE_BY_ERRNO[errno]) || AssetInventoryFailure.Failed;
+  return new CodedError(code, errorMessage(error));
+}
+
 /** Re-exported so callers that only touch this module keep one import. */
 export type { AssetKind, ProjectAsset, ProjectAssets };
 
@@ -794,12 +818,20 @@ export interface AssetWorkspace {
 
 type AssetDelivery = AssetAvailability["deliveries"][number];
 
+/**
+ * A file's digest, or null when it cannot be read now: on Windows a file another program holds open
+ * (Unity importing it, a virus scanner) answers `EBUSY` or `EPERM`, and one file must not fail the
+ * whole inventory. It is left out of the hash join until a later read reaches it.
+ */
+const readableDigest = (file: string): Promise<string | null> => assetDigest(file).catch(() => null);
+
 /** Every asset copy in the run worktrees, by content hash. */
 async function workspaceCopiesByHash(workspaces: readonly AssetWorkspace[]): Promise<Map<string, AssetDelivery[]>> {
   const copies = new Map<string, AssetDelivery[]>();
   for (const workspace of workspaces) {
     for (const entry of (await walkGameAssets(workspace.root)).entries) {
-      const hash = await assetDigest(path.join(workspace.root, entry.file));
+      const hash = await readableDigest(path.join(workspace.root, entry.file));
+      if (!hash) continue;
       copies.set(hash, [
         ...(copies.get(hash) ?? []),
         {
@@ -825,7 +857,8 @@ async function projectCopiesByHash(
   for (const asset of assets) {
     const file = await realpath(path.join(root, asset.file)).catch(() => null);
     if (!file || !isBelow(resolvedRoot, file)) continue;
-    const hash = await assetDigest(file);
+    const hash = await readableDigest(file);
+    if (!hash) continue;
     hashes.set(hash, [...(hashes.get(hash) ?? []), asset]);
   }
   return hashes;

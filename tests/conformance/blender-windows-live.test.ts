@@ -1,6 +1,7 @@
 // Local Blender on Windows for real: its manifest's pinned zip (about 400 MB, downloaded) installs, and a
-// model job runs in the process sandbox through PluginNativeServices as the app wires it. Windows
-// only, and opt-in (`STUDIO_NETWORK_TESTS=1`): it reaches download.blender.org.
+// model job and a compose job run in the process sandbox through PluginNativeServices as the app wires
+// them. Windows only, and opt-in (`STUDIO_NETWORK_TESTS=1`, the Windows workflow's `network` input): it
+// reaches download.blender.org.
 import assert from "node:assert/strict";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -22,7 +23,27 @@ mat.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (0.4
 body.data.materials.append(mat)
 `;
 
-it("installs Blender and runs a model job sandboxed on Windows", {
+/** A module a compose job hands the script as an extra input: it imports it by name. */
+const PARTS_PY = `
+import bpy
+def post(height):
+    bpy.ops.mesh.primitive_cube_add(size=0.4, location=(0, 0, height / 2))
+    bpy.context.active_object.scale.z = height / 0.4
+`;
+
+/**
+ * A lantern from that module, which also makes temp folders as a script may: Python's mkdtemp on
+ * Windows asks for a folder only its owner opens, which the job's sandbox once refused every time.
+ */
+const LANTERN_PY = `
+import tempfile, parts
+parts.post(1.5)
+tempfile.mkdtemp(prefix="lantern-")
+with tempfile.TemporaryDirectory():
+    pass
+`;
+
+it("installs Blender and runs a model job and a compose job sandboxed on Windows", {
   skip:
     (process.platform !== "win32" || process.env.STUDIO_NETWORK_TESTS !== "1") &&
     "Windows with STUDIO_NETWORK_TESTS=1 only",
@@ -38,6 +59,8 @@ it("installs Blender and runs a model job sandboxed on Windows", {
     await mkdir(dir, { recursive: true });
   await writeFile(path.join(pkg, "wrapper.py"), BLENDER_WRAPPER_PY);
   await writeFile(path.join(game, "assets", "src", "tree.py"), TREE_PY);
+  await writeFile(path.join(game, "assets", "src", "parts.py"), PARTS_PY);
+  await writeFile(path.join(game, "assets", "src", "lantern.py"), LANTERN_PY);
   const manifest = validateManifest(
     JSON.parse(await readFile(new URL("../../src/plugins/blender/plugin.json", import.meta.url), "utf8")),
   );
@@ -90,6 +113,28 @@ it("installs Blender and runs a model job sandboxed on Windows", {
     for (const file of ["model.glb", "render.png", "render-front.png"])
       console.log(file, (await stat(path.join(job.output, file))).size);
     assert.match(job.stdout ?? "", /"renderer": "(workbench|cycles-cpu)"/);
+
+    // A compose job: the extra input is copied under its own name into a temp folder of the job's,
+    // and the script makes temp folders of its own.
+    const script = "assets/src/lantern.py";
+    const slots = Object.fromEntries(
+      Array.from({ length: 9 }, (_, slot) => [`input${slot + 1}`, slot === 0 ? "assets/src/parts.py" : script]),
+    );
+    const composed = (await call(
+      "native.run",
+      {
+        job: "compose",
+        inputs: { script, ...slots },
+        values: { name: "lantern", rig: "0", inputs: "assets/src/parts.py" },
+      },
+      "tool",
+    )) as PluginNativeResult;
+    console.log(
+      "compose",
+      JSON.stringify({ ...composed, stdout: composed.stdout?.slice(-2500), stderr: composed.stderr?.slice(-2500) }),
+    );
+    assert.equal(composed.state, "completed", composed.stdout || composed.stderr || composed.reason);
+    assert.deepEqual([...composed.files].sort(), ["model.glb", "render-front.png", "render.png"]);
   } finally {
     await sandbox.dispose();
   }

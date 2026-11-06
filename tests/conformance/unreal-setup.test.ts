@@ -24,7 +24,14 @@ import path from "node:path";
 import { describe, it } from "node:test";
 import { createUnrealBackend, PanelStep } from "../../src/plugins/unreal/backend.ts";
 import { type Launch, type LaunchEnv, systemLaunchEnv } from "../../src/plugins/unreal/editor-launch.ts";
-import { UnrealStepId, unrealInstallCard, unrealSteps, XcodeStep } from "../../src/plugins/unreal/engine-steps.ts";
+import {
+  opensByItself,
+  UnrealStepId,
+  unrealInstallCard,
+  unrealSteps,
+  XcodeStep,
+} from "../../src/plugins/unreal/engine-steps.ts";
+import { BuildToolsPlan, VisualStudioState } from "../../src/plugins/unreal/visual-studio.ts";
 import type { PluginEngineLink, PluginEngineRun } from "../../src/plugin-sdk/index.d.ts";
 import { pluginBackendEnv } from "../../src/substrate/plugins/process.ts";
 import { editorLogPath, readEditorLog } from "../../src/plugins/unreal/editor-log.ts";
@@ -1650,6 +1657,59 @@ describe("a game's own Unreal project and the steps card", () => {
     assert.deepEqual([windows.open, windows.steps.length], [false, 1]);
   });
 
+  it("on Windows, the steps card offers Microsoft's Build Tools with Do it for me, and follows their install", () => {
+    const windows = { ...NO_XCODE, state: XcodeState.NotApplicable };
+    const missing = {
+      state: VisualStudioState.Missing,
+      toolset: null,
+      windowsSdk: false,
+      plan: BuildToolsPlan.Install,
+    };
+    const offered = unrealSteps("Valley", "5.8", windows, { status: missing, forMe: true });
+    assert.deepEqual(
+      [offered.open, offered.intro, offered.primary?.name, offered.secondary],
+      [true, "One step left so Unreal can build C++ on this PC.", "install-for-me", undefined],
+    );
+    const row = offered.steps.find((s) => s.id === UnrealStepId.InstallBuildTools);
+    assert.deepEqual([row?.label, row?.done], ["Install Visual Studio Build Tools", false]);
+    assert.equal(
+      opensByItself(offered),
+      false,
+      "a game in Blueprints packages without them: the card waits to be shown",
+    );
+    const working = { step: UnrealStepId.InstallBuildTools, message: "Installing Visual Studio Build Tools." };
+    const going = unrealSteps("Valley", "5.8", windows, { status: missing, forMe: true, working });
+    assert.deepEqual([going.primary, going.secondary?.name], [undefined, "stop-install"]);
+    assert.deepEqual(
+      going.steps.filter((s) => s.working).map((s) => s.detail),
+      ["Installing Visual Studio Build Tools."],
+    );
+    const yourself = unrealSteps("Valley", "5.8", windows, { status: missing, forMe: false });
+    assert.equal(yourself.primary, undefined);
+    const outdated = {
+      ...missing,
+      state: VisualStudioState.Outdated,
+      plan: BuildToolsPlan.Update,
+      installPath: "C:\\BT",
+    };
+    const update = unrealSteps("Valley", "5.8", windows, { status: outdated, forMe: true });
+    assert.equal(update.steps.find((s) => !s.done)?.label, "Update Visual Studio Build Tools");
+    const ready = { state: VisualStudioState.Ready, toolset: "14.44.35211", windowsSdk: true };
+    const done = unrealSteps("Valley", "5.8", windows, { status: ready, forMe: true });
+    assert.deepEqual([done.open, done.primary], [false, undefined]);
+    assert.match(String(done.doneSays), /^Visual Studio's C\+\+ tools are installed on this PC/);
+  });
+
+  it("on a Mac, the steps card has no Build Tools row and still shows itself while Xcode is missing", () => {
+    const mac = { state: VisualStudioState.NotApplicable, toolset: null, windowsSdk: false };
+    const card = unrealSteps("Valley", "5.8", NO_XCODE, { status: mac, forMe: true });
+    assert.equal(
+      card.steps.some((s) => s.id === UnrealStepId.InstallBuildTools),
+      false,
+    );
+    assert.deepEqual([card.primary, card.doneSays, opensByItself(card)], [undefined, undefined, true]);
+  });
+
   it("an Xcode too new for the engine points to Apple's downloads, one too old to the App Store", () => {
     const range = { min: "15.2", max: "27.9" };
     const tooNew = { ...READY_XCODE, state: XcodeState.Unsupported, version: "28.0", supported: range, tooNew: true };
@@ -1793,12 +1853,15 @@ describe("a game's own Unreal project and the steps card", () => {
     return { ...b, port: there.port };
   }
 
-  it("open-for-run records a linked project another profile set up, touching none of its files, then opens it", async () => {
+  // Was "open-for-run records a linked project another profile set up, …": the lead opens it now.
+  it("the agent's open-editor records a linked project another profile set up, touching none of its files, then opens it; an Unreal that has it open is never quit", async () => {
     const b = await linkedElsewhere({ running: false, answering: false });
     assert.deepEqual(await listSetUpProjects(b.storage), [], "no set-up record in this profile");
     const project = await tree(b.project.directory);
-    const answer = (await b.backend.tool?.("open-for-run", {}, b.context)) as { block?: string };
-    assert.equal(answer.block, undefined, answer.block);
+    const answer = (await b.backend.tool?.("open-editor", {}, b.context)) as { started?: boolean };
+    assert.equal(answer.started, true, JSON.stringify(answer));
+    const status = (await b.backend.tool?.("editor-status", { seconds: 30 }, b.context)) as { answering?: boolean };
+    assert.equal(status.answering, true, JSON.stringify(status));
     assert.deepEqual(await listSetUpProjects(b.storage), [{ project: b.real, name: "Drift", port: b.port }]);
     assert.deepEqual(await tree(b.project.directory), project, "the project's files as they were");
     assert.deepEqual(
@@ -1806,16 +1869,13 @@ describe("a game's own Unreal project and the steps card", () => {
       [b.real],
       "opened, never quit",
     );
-  });
 
-  it("open-for-run never quits Unreal to set up a linked project it can't adopt: it blocks, naming the tool that can", async () => {
-    const b = await linkedElsewhere({ running: true, answering: false }, false);
-    const before = await tree(b.root);
-    const answer = (await b.backend.tool?.("open-for-run", {}, b.context)) as { block?: string };
-    assert.match(answer.block ?? "", /Unreal has Drift open/);
-    assert.match(answer.block ?? "", /unreal__use-project/);
-    assert.deepEqual(b.launched, [], "Unreal is neither quit nor opened at the Loop's start");
-    assert.deepEqual(await tree(b.root), before, "nothing set up");
+    const open = await linkedElsewhere({ running: true, answering: true });
+    const files = await tree(open.project.directory);
+    assert.deepEqual(await open.backend.tool?.("open-editor", {}, open.context), { answering: true });
+    assert.deepEqual(await listSetUpProjects(open.storage), [{ project: open.real, name: "Drift", port: open.port }]);
+    assert.deepEqual(await tree(open.project.directory), files, "an open project's files as they were");
+    assert.deepEqual(open.launched, [], "an Unreal that has it open is neither quit nor opened again");
   });
 
   it("the agent's use-project links a project another profile set up while Unreal has it open, quitting nothing", async () => {

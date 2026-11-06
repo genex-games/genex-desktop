@@ -1,9 +1,9 @@
 /**
- * A lead's turn a plugin of the game holds back at its start (`turn.start`): never an idle turn.
- * The wake loop asks again after a wait, and the turn runs once nothing holds it; it waits for as long
- * as the plugin holds it, and gives up with the hold's reason only when the run can't wait (its
- * wrap-up, or a run that is over: the person's Stop). A module of its own, so the shipped wake loop
- * needs no new name from a module an agent may have kept.
+ * A lead's turn a plugin of the game held back at its start (`turn.start`): never an idle turn.
+ * The wake loop asked again after a wait, and the turn ran once nothing held it; it waited for as long
+ * as the plugin held it, and gave up with the hold's reason only when the run couldn't wait (its
+ * wrap-up, or a run that is over: the person's Stop). Kept for a `wake.ts` an agent kept from before:
+ * the seed's wake loop holds no turn back, and reads what `turn.start` found as lines of the turn.
  */
 import { MINUTE_MS } from "../time.ts";
 

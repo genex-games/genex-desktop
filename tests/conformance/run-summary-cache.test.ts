@@ -284,3 +284,28 @@ test("summary cache bounds retained runs and keeps recently read entries", async
   assert.equal(await cache.read(events, "game", "run0", "/runs"), first);
   assert.notEqual(await cache.read(events, "game", "run1", "/runs"), second);
 });
+
+test("a builder's trace keeps the run's summary and its revision; a drawn record makes a new one", async () => {
+  const cache = new RunSummaryCache({ version: async () => "", supplement: async () => {} });
+  const record = (id: string, eventType: string, payload: Record<string, unknown> = {}): EventEnvelope => ({
+    id,
+    thread_id: "lead",
+    session_id: null,
+    turn_id: null,
+    created_at: `2026-09-04T21:00:${id}Z`,
+    data: { type: EventKind.Custom, event_type: eventType, payload: { runId: "run", project: "game", ...payload } },
+  });
+  const events = [record("01", CustomEvent.RunStarted, { goal: "Make it" })];
+  const first = await cache.read(events, "game", "run", "/runs");
+  const traced = [
+    ...events,
+    record("02", `${DELEGATED_PREFIX}codex`, { kind: "assistant" }),
+    record("03", CustomEvent.SessionActivity, { phase: "working" }),
+    record("04", CustomEvent.ContextUsage, { used: 10 }),
+  ];
+  assert.equal(await cache.read(traced, "game", "run", "/runs"), first, "the same summary, the same revision");
+  const drawn = [...traced, record("05", CustomEvent.FacetBuildStarted, { facetId: "sky", iteration: 1 })];
+  const next = await cache.read(drawn, "game", "run", "/runs");
+  assert.notEqual(next.revision, first.revision);
+  assert.equal(next.graphEvents?.length, 2);
+});

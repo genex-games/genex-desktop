@@ -627,14 +627,18 @@ export interface NativeGameRequest {
   bundleName: string;
   /** Arguments for the game: a game from Play gets its engine's full-screen one (`launchArgs`), or none. */
   args?: string[];
-  /** Its way to Genex: its gateway's ports and what it tells the game (`GameGenexEnv`); none, no network at all. */
+  /**
+   * Its way to Genex: its gateway's ports and what it tells the game (`GameGenexEnv`); none, no
+   * network at all. On Windows there is no gateway: no ports, and the API's own https address.
+   */
   genex?: { ports: readonly number[]; env: GameGenexEnv };
 }
 
 /**
  * What a launched game is told about Genex (CLI_INTEGRATION §6b): its API's address, which is its
- * gateway's, a single-use sign-in ticket while the person is signed in, and its own project on
- * Genex, so a build made before its first publish still knows which game's rooms to join.
+ * gateway's (on Windows the API's own), a single-use sign-in ticket while the person is signed in,
+ * and its own project on Genex, so a build made before its first publish still knows which game's
+ * rooms to join.
  */
 export interface GameGenexEnv {
   GENEX_API_URL: string;
@@ -646,17 +650,35 @@ const GATEWAY_URL = /^http:\/\/127\.0\.0\.1:(\d{4,5})$/;
 /** A ticket as Genex mints one: a short token of URL-safe characters. */
 const TICKET = /^[A-Za-z0-9._~-]{16,4096}$/;
 
+/** The ticket and the game's name of `env`, each checked; none that doesn't hold up. */
+function genexIdentity(env: GameGenexEnv): Record<string, string> {
+  const ticket = env.GENEX_EMBED_TICKET && TICKET.test(env.GENEX_EMBED_TICKET) ? env.GENEX_EMBED_TICKET : undefined;
+  const game = env.GENEX_GAME && isGenexSlug(env.GENEX_GAME) ? env.GENEX_GAME : undefined;
+  return { ...(ticket ? { GENEX_EMBED_TICKET: ticket } : {}), ...(game ? { GENEX_GAME: game } : {}) };
+}
+
 /** The Genex part of a game's environment, each value checked; nothing that doesn't hold up. */
 export function gameGenexEnv(env: GameGenexEnv | undefined): Record<string, string> {
   const port = Number(GATEWAY_URL.exec(env?.GENEX_API_URL ?? "")?.[1]);
   if (!env || !isGatewayPort(port)) return {};
-  const ticket = env.GENEX_EMBED_TICKET && TICKET.test(env.GENEX_EMBED_TICKET) ? env.GENEX_EMBED_TICKET : undefined;
-  const game = env.GENEX_GAME && isGenexSlug(env.GENEX_GAME) ? env.GENEX_GAME : undefined;
-  return {
-    GENEX_API_URL: env.GENEX_API_URL,
-    ...(ticket ? { GENEX_EMBED_TICKET: ticket } : {}),
-    ...(game ? { GENEX_GAME: game } : {}),
-  };
+  return { GENEX_API_URL: env.GENEX_API_URL, ...genexIdentity(env) };
+}
+
+/** Whether `url` is an https origin and nothing more: no path, query, credentials or stray characters. */
+function isHttpsOrigin(url: string): boolean {
+  if (!URL.canParse(url)) return false;
+  const parsed = new URL(url);
+  return parsed.protocol === "https:" && parsed.origin === url;
+}
+
+/**
+ * The Genex part of the environment of a game that reaches Genex's API itself, with no gateway
+ * (Windows: an AppContainer reaches no loopback port, `windows-game.ts`): the API as an https
+ * origin, the ticket and the game's name, each checked; nothing when the API doesn't hold up.
+ */
+export function directGenexEnv(env: GameGenexEnv | undefined): Record<string, string> {
+  if (!env || !isHttpsOrigin(env.GENEX_API_URL)) return {};
+  return { GENEX_API_URL: env.GENEX_API_URL, ...genexIdentity(env) };
 }
 
 /**

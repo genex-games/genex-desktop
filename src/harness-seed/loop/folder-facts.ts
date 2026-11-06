@@ -177,6 +177,36 @@ export function servedAsWeb(game: FactsOfDescriptor): boolean {
   return hasFact(servedFactsOf(game), CoreFact.WebGame, ROOT);
 }
 
+/** The kinds of project a game engine's editor works on: a game that holds one is built and played in that engine. */
+const ENGINE_PROJECTS: ReadonlySet<string> = new Set<string>([
+  CoreFact.UnrealProject,
+  CoreFact.UnityProject,
+  CoreFact.GodotProject,
+  CoreFact.RobloxProject,
+]);
+
+/** Whether the facts hold a game engine's project (`ENGINE_PROJECTS`), anywhere in the game's folder. */
+export function holdsEngineProject(facts: readonly FactRef[]): boolean {
+  return facts.some((fact) => ENGINE_PROJECTS.has(fact.id));
+}
+
+/**
+ * Whether the game is an engine's game: it is linked to an engine's project, or its folder holds
+ * one, whatever web page sits beside it (a web starter a port left as the reference, one written
+ * before the engine was picked).
+ */
+export function engineGame(game: FactsOfDescriptor): boolean {
+  return isEngineGame(engineOfGame(game)) || holdsEngineProject(factsOfGame(game));
+}
+
+/**
+ * Whether a Loop's finish checks the game's page (loop/health-check.ts): a game served as a web game
+ * that is no engine's game. An engine's game is seen in its engine, never as a blank page.
+ */
+export function pageChecked(game: FactsOfDescriptor): boolean {
+  return servedAsWeb(game) && !engineGame(game);
+}
+
 /**
  * Whether a session in the game's folder gets Genex's eyes on it (the capture and computer tools over
  * a pooled window): a web game, or a folder served as one, is a page to capture and drive, and a game

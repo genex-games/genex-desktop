@@ -23,6 +23,7 @@ import { type RunSummary, UNKNOWN_EXECUTION } from "../shared/run-summary.ts";
 import { LoopProfile } from "../shared/project-facts.ts";
 import { WorkerEnd, WorkerIsolation, WorkerStopCode, WorkerVerdict } from "../shared/workers.ts";
 import {
+  type AssetInfo,
   boundsOf,
   type FacetNode,
   finalNodeOf,
@@ -40,7 +41,7 @@ import {
   type VerdictRecord,
   WorkerState,
 } from "./run-graph.ts";
-import { AssetCardState } from "./run-graph-assets.ts";
+import { AssetCardState, assetVersions } from "./run-graph-assets.ts";
 import type { WorkerInfo } from "./run-graph-workers.ts";
 import {
   GAME_ENGINE_WORDS,
@@ -121,6 +122,8 @@ export interface Step {
   picture?: WorkerPicture;
   /** A save point after the first: the one before it, whose pictures its own are compared with. */
   earlier?: IterationNode;
+  /** A worker that delivered assets: a card per distinct asset, under its node, in the order each was first made. */
+  assets?: AssetCard[];
 }
 
 /** Where a worker's node gets its picture from. */
@@ -148,6 +151,38 @@ export type WorkerPicture =
   | { source: typeof PictureSource.Build; path: string }
   | { source: typeof PictureSource.Asset; asset: ProjectAsset }
   | { source: typeof PictureSource.Reviewed; round: IterationNode };
+
+/**
+ * One asset a worker delivered, as a card of its own under the worker. Making the same asset again
+ * (`assetVersions`: the same game file, or the same plugin tool's asset of the same name) is its
+ * next version, never another card.
+ */
+export interface AssetCard {
+  /** its selection id (`assetSelection`), named by its first version: it stays put as versions arrive */
+  id: string;
+  facetId: string;
+  /** its newest version's name */
+  name: string;
+  /** what the worker delivered of this asset, oldest first */
+  versions: AssetInfo[];
+  /** its newest version's picture, when it has one to draw (a sound has none) */
+  picture?: WorkerPicture;
+}
+
+const ASSET_PREFIX = "asset:";
+
+/**
+ * The selection id of a worker's asset card, by the part and the card's first version: its job
+ * first, which a delivery has before its call comes back and keeps once the call's card folds it in.
+ */
+export const assetSelection = (facetId: string, first: AssetInfo): string =>
+  `${ASSET_PREFIX}${facetId}:${first.jobId ?? first.callId ?? `${first.name}@${first.at}`}`;
+
+/** Whether a selection id names one of a worker's asset cards. */
+export const isAssetSelection = (id: string): boolean => id.startsWith(ASSET_PREFIX);
+
+/** A step's id, then its asset cards' in order: how Previous and Next walk a worker and what it made. */
+export const stepAndAssetIds = (step: Step): string[] => [step.id, ...(step.assets ?? []).map((card) => card.id)];
 
 export interface PartRow {
   facet: FacetNode;
@@ -377,18 +412,63 @@ interface Delivery {
   inGame?: boolean;
 }
 
-function deliveriesOf(graph: RunGraph, facetId: string): Delivery[] {
-  const cards = graph.nodes.flatMap((node) => {
+/** Every asset card of the graph: the plugins' jobs and the modeller's own. */
+function graphAssetCards(graph: RunGraph): AssetInfo[] {
+  return graph.nodes.flatMap((node) => {
     if (node.kind === GraphNodeKind.Assets) return node.jobs;
     return node.kind === GraphNodeKind.Blender ? node.assets : [];
   });
+}
+
+/** Oldest first, by when each was made. */
+const byTime = (a: { at: string }, b: { at: string }): number => (a.at < b.at ? -1 : Number(a.at > b.at));
+
+function deliveriesOf(graph: RunGraph, facetId: string): Delivery[] {
+  const cards = graphAssetCards(graph);
   const own: Array<Delivery & { at: string }> = cards.filter(
     (card) => card.facetId === facetId && card.state === AssetCardState.Delivered,
   );
   const folded = cards.flatMap((card) =>
     (card.derived ?? []).filter((step) => step.facetId === facetId).map((step) => ({ ...step, render: null })),
   );
-  return [...own, ...folded].sort((a, b) => (a.at < b.at ? -1 : Number(a.at > b.at)));
+  return [...own, ...folded].sort(byTime);
+}
+
+/**
+ * An asset card's name: its job's, or for a delivery no call named (named by its game path) its
+ * file's own name, without the folders or the extension a small card has no room for.
+ */
+function cardName(version: AssetInfo): string {
+  if (!version.files.includes(version.name)) return version.name;
+  const leaf = version.name.slice(version.name.lastIndexOf("/") + 1);
+  const dot = leaf.lastIndexOf(".");
+  return dot > 0 ? leaf.slice(0, dot) : leaf;
+}
+
+/**
+ * What a worker delivered as cards of their own: one per distinct asset, in the order each was first
+ * made, each wearing its newest version's picture. Work it did on another asset (Blender measuring
+ * a Genex model) is a step of that asset's card, not an asset of its own.
+ */
+function assetCardsOf(graph: RunGraph, facetId: string): AssetCard[] {
+  const own = graphAssetCards(graph)
+    .filter((card) => card.facetId === facetId)
+    .sort(byTime);
+  return assetVersions(own).flatMap((versions) => {
+    const [first] = versions;
+    const newest = versions.at(-1);
+    if (!first || !newest) return [];
+    const picture = deliveryPicture(newest);
+    return [
+      {
+        id: assetSelection(facetId, first),
+        facetId,
+        name: cardName(newest),
+        versions,
+        ...(picture ? { picture } : {}),
+      },
+    ];
+  });
 }
 
 /** The kinds of asset a node draws as the Assets stage does: a picture, a model or a clip's first frame. */
@@ -464,6 +544,7 @@ function sessionStep(
 ): Step {
   const verdict = sessionVerdict(graph, facet, task);
   const made = facet.worker ? deliveriesOf(graph, facet.facetId) : [];
+  const assets = facet.worker ? assetCardsOf(graph, facet.facetId) : [];
   const state = sessionState(graph, facet, task, { ...part, nothingMade: madeNothing(facet, made) });
   const picture = facet.worker
     ? workerPicture(facet, made, savePointsOf(graph), mergedBuildPicture(graph, facet.facetId))
@@ -483,6 +564,7 @@ function sessionStep(
     verdict,
     ...(facet.worker ? { worker: facet.worker } : {}),
     ...(picture ? { picture } : {}),
+    ...(assets.length ? { assets } : {}),
   };
 }
 
@@ -1248,7 +1330,16 @@ export const STEPS = {
   resultGap: 18,
   leadGap: 64,
   corner: 10,
+  /** A worker's asset cards, two to a row under its node and as wide together as it (`placeShelf`). */
+  assetCardW: 100,
+  assetCardH: 100,
+  assetCardGap: 8,
+  /** From a worker's node down to its first row of asset cards. */
+  shelfGap: 12,
 } as const;
+
+/** How many of a worker's asset cards sit side by side under it: as many as its node's width holds. */
+const SHELF_COLUMNS = Math.floor((STEPS.nodeW + STEPS.assetCardGap) / (STEPS.assetCardW + STEPS.assetCardGap));
 
 /** How far the start's line runs when there is no row to feed. */
 const EMPTY_BUS_REACH = 40;
@@ -1292,6 +1383,33 @@ export interface StepsLayout {
 /** What a layout fills in as it places things. */
 export type LayoutDraft = Pick<StepsLayout, "rects" | "edges" | "gates" | "ghosts">;
 
+/** How much room a worker's asset cards take under its node: none when it delivered none. */
+export function shelfHeight(step: Step): number {
+  const count = step.assets?.length ?? 0;
+  if (!count) return 0;
+  const rows = Math.ceil(count / SHELF_COLUMNS);
+  return STEPS.shelfGap + rows * STEPS.assetCardH + (rows - 1) * STEPS.assetCardGap;
+}
+
+/**
+ * A worker's asset cards under its node, two to a row inside the node's width, in the order each
+ * was first made. Placed once the node is: a ghost worker's cards are ghosts too.
+ */
+export function placeShelf(draft: LayoutDraft, step: Step, node: Rect): void {
+  const S = STEPS;
+  (step.assets ?? []).forEach((card, index) => {
+    const column = index % SHELF_COLUMNS;
+    const row = Math.floor(index / SHELF_COLUMNS);
+    draft.rects[card.id] = {
+      x: node.x + column * (S.assetCardW + S.assetCardGap),
+      y: node.y + node.h + S.shelfGap + row * (S.assetCardH + S.assetCardGap),
+      w: S.assetCardW,
+      h: S.assetCardH,
+    };
+    if (draft.ghosts.has(step.id)) draft.ghosts.add(card.id);
+  });
+}
+
 /** A tree's extra nodes: the lead's background work under it, and the finish check after the result. */
 export interface TreeOptions {
   jobs: boolean;
@@ -1326,14 +1444,16 @@ function busOrigin(tree: boolean): BusOrigin {
 }
 
 /**
- * A row as the layout sees it: nothing on its line (a ghost row), or something hanging below; and
- * the height of its label, which a part built in one session does not have.
+ * A row as the layout sees it: nothing on its line (a ghost row), or something hanging below; the
+ * height of its label, which a part built in one session does not have; and the room a worker's
+ * asset cards take under its node.
  */
 interface RowShape {
   row: PartRow;
   ghostRow: boolean;
   label: number;
   hangs: boolean;
+  shelf: number;
 }
 
 /** A drawn row: where its line runs, and the last node on it that reaches the build. */
@@ -1355,7 +1475,8 @@ interface RowCursor {
 const rowShape = (row: PartRow): RowShape => {
   const ghostRow = !row.steps.some((step) => step.onLine);
   const label = row.steps.some((step) => !step.session) ? STEPS.labelH : 0;
-  return { row, ghostRow, label, hangs: !ghostRow && row.steps.some((step) => !step.onLine) };
+  const hangs = !ghostRow && row.steps.some((step) => !step.onLine);
+  return { row, ghostRow, label, hangs, shelf: Math.max(0, ...row.steps.map(shelfHeight)) };
 };
 
 /**
@@ -1370,9 +1491,10 @@ export function layoutSteps(rows: PartRow[], options: LayoutOptions = {}): Steps
   const draft: LayoutDraft = { rects: {}, edges: [], gates: [], ghosts: new Set<string>() };
   const origin = busOrigin(options.tree !== undefined);
   const shapes = rows.map(rowShape);
-  // A row is taller by one lane when something hangs below its line; the start and the result
-  // sit on the middle of the rows, and the rows move down when the start would not fit above.
-  const heights = shapes.map(({ label, hangs }) => label + S.nodeH + (hangs ? S.hangGap + S.nodeH : 0));
+  // A row is taller by one lane when something hangs below its line, and by a worker's asset cards
+  // under its node; the start and the result sit on the middle of the rows, and the rows move down
+  // when the start would not fit above.
+  const heights = shapes.map(({ label, hangs, shelf }) => label + S.nodeH + shelf + (hangs ? S.hangGap + S.nodeH : 0));
   const lines = rowLines(shapes, heights);
   const rowsMid = lines.length ? ((lines[0] ?? 0) + (lines.at(-1) ?? 0)) / 2 : S.startH / 2;
   const top = S.pad + Math.max(0, S.startH / 2 - rowsMid);
@@ -1417,16 +1539,21 @@ function rowLines(shapes: RowShape[], heights: number[]): number[] {
   return lines;
 }
 
-/** One row: its label (none for a part built in one session), the steps on its line, the rest below. */
-function placeRow(draft: LayoutDraft, { row, ghostRow, label }: RowShape, y: number, origin: BusOrigin): DrawnRow {
+/**
+ * One row: its label (none for a part built in one session), the steps on its line with a worker's
+ * asset cards under its node, the rest below them.
+ */
+function placeRow(draft: LayoutDraft, shape: RowShape, y: number, origin: BusOrigin): DrawnRow {
   const S = STEPS;
+  const { row, ghostRow, label } = shape;
   const nodeY = y + label;
   const cy = nodeY + S.nodeH / 2;
   if (label) draft.rects[`row:${row.facet.facetId}`] = { x: origin.rowX, y, w: S.nodeW, h: S.labelH };
   const cursor: RowCursor = { origin, col: 0, previous: null, anchor: null, hangX: -Infinity };
+  const hangY = nodeY + S.nodeH + shape.shelf + S.hangGap;
   for (const step of row.steps) {
     if (ghostRow || step.onLine) placeOnLine(draft, cursor, step, { nodeY, cy, ghostRow });
-    else placeHanging(draft, cursor, step, { hangY: nodeY + S.nodeH + S.hangGap, cy });
+    else placeHanging(draft, cursor, step, { hangY, cy });
   }
   return { row, cy, last: ghostRow ? null : cursor.anchor };
 }
@@ -1456,6 +1583,7 @@ function placeOnLine(
       kind: lineKind(step),
     });
   if (step.gate) draft.gates.push({ target: step.id, gate: step.gate, x: rect.x, y: at.cy });
+  placeShelf(draft, step, rect);
   cursor.previous = rect;
   if (step.onLine) cursor.anchor = rect;
 }

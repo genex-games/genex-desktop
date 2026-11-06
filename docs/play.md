@@ -277,14 +277,16 @@ is.
   forward. On Windows (`windowsGames`, `substrate/plugins/windows-game.ts`) srt-win can't serve:
   it puts every program on a desktop of its own, with no window on screen. A game runs instead
   through Genex's game host (`windows-game-host.ts`, compiled once with .NET Framework's `csc.exe`
-  into `<userData>/game-host/`) in an AppContainer of its own (`Genex.Play.<slug>`, no
-  capabilities). It reads its version folder, writes only `saves/` and its scratch folder (each an
-  ACL entry for the container's SID, plus a Low integrity label on the write folders), and its
-  AppData goes to the container's own folder. It reads none of the person's files and reaches no
-  network: an AppContainer reaches no loopback port without an administrator's exemption, so a
-  Windows game has no way to Genex yet. It gets the person's desktop, GPU, sound and input. It runs
-  in a job killed with the host (also with no other desktops, logging off, clipboard reads or system
-  settings); the host ends it when Genex's process or the host's stdin ends, says when its window
+  into `<userData>/game-host/`) in an AppContainer of its own (`Genex.Play.<slug>`). It reads its
+  version folder, writes only `saves/` and its scratch folder (each an ACL entry for the
+  container's SID, plus a Low integrity label on the write folders), and its AppData goes to the
+  container's own folder. It reads none of the person's files. An AppContainer reaches no loopback
+  port without an administrator's exemption, so no gateway can serve it: with a way to Genex, its
+  container gets one capability, `internetClient` (outbound to the internet, never loopback, the
+  local network Windows knows of or a server of its own), and it is told the API's own https address; with
+  none, it gets no capabilities and no network. It gets the person's desktop, GPU, sound and
+  input. It runs in a job killed with the host (also with no other desktops, logging off, clipboard
+  reads or system settings); the host ends it when Genex's process or the host's stdin ends, says when its window
   is up (Genex counts it as on screen then), brings that window forward once, and passes Quit on as
   `WM_CLOSE`. An Unreal game whose binary carries Microsoft's Visual C++ runtime beside it (Build on
   Genex ships it there) starts past Unreal's launcher: the launcher reads the runtime from the
@@ -304,19 +306,23 @@ is.
     host but `localhost`, so the gateway is how "Genex only" is enforced. On Linux the game's own
     network namespace holds only loopback: socat inside listens on the gateway's ports on 127.0.0.1
     and passes each connection through a unix socket to the gateway outside (no socat, no network).
+    Windows has no gateway (an AppContainer reaches no loopback port): the game is told the API's
+    own address (`directGenexEnv`: an https origin, nothing after it) and reaches it, and the relays
+    its answers name, over the internet (`internetClient`); there "Genex only" is not enforced.
   - **What goes through.** Requests and WebSockets go on to their own Genex host over TLS. Relay
     addresses in JSON answers (relay lists, a seat's `publicAddress`) are rewritten to their local
     port, so the next connection comes back through the gateway. Anything else is refused: a port
     with no host yet, a relay once the ports are full, a request over 1 MB.
-  - **What the game is told.** Its environment carries `GENEX_API_URL` (the gateway), `GENEX_GAME`
-    (its slug, so a build made before its first publish knows which rooms to join) and, while the
-    Genex account is unlocked, `GENEX_EMBED_TICKET`. That is a single-use ticket minted with
-    `delivery: "desktop"` (`gallery.ticket`); otherwise the game plays as a guest. Genex signs the
-    player in without asking first: its per-game question (App Review 4.7.3) gates only the phone
-    app's `native` delivery, and the desktop app ships outside the App Store. Genex's Godot addon
-    and Unity package read both (CLI_INTEGRATION §6b).
+  - **What the game is told.** Its environment carries `GENEX_API_URL` (the gateway; on Windows the
+    API), `GENEX_GAME` (its slug, so a build made before its first publish knows which rooms to
+    join) and, while the Genex account is unlocked, `GENEX_EMBED_TICKET`. That is a single-use
+    ticket minted with `delivery: "desktop"` (`gallery.ticket`); otherwise the game plays as a
+    guest. Genex signs the player in without asking first: its per-game question (App Review 4.7.3)
+    gates only the phone app's `native` delivery, and the desktop app ships outside the App Store.
+    Genex's Godot addon and Unity package read both (CLI_INTEGRATION §6b).
   - **Failure and shutdown.** A gateway that can't open leaves the game offline, not unplayable. The
-    gateway closes when the game ends. A fixture launch opens none.
+    gateway closes when the game ends. A fixture launch opens none, and a game being made (Play
+    from its own folder) stays offline.
   - **Its play count** (`main/play/native-plays.ts`). Most native builds never redeem the ticket, so
     once a game counts as running (its window on screen, or a minute up without one) Play reports
     the play itself (`POST /api/embed/native-play`): genex.games counts the signed-in account, or,

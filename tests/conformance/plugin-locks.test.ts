@@ -999,7 +999,7 @@ async function lockPackage(): Promise<string> {
     capabilities: [],
     locks: [{ id: "bench", label: "Bench", per: "project", personFirst: "busy" }],
     hooks: [
-      { on: "crash", tool: "sand" },
+      { on: "turn.start", tool: "sand" },
       { on: "checkpoint.before", tool: "sand" },
       { on: "restore.before", tool: "sand" },
     ],
@@ -1744,7 +1744,10 @@ describe("locks in a real core", () => {
     assert.deepEqual(lite.core.locks.holders(), []);
   });
 
-  it("a run's crash steps pass the lock its own writer in place holds; a chat's crash steps wait for it", async () => {
+  // Flipped: "a run's crash steps pass the lock its own writer in place holds; a chat's crash steps
+  // wait for it": the harness fires no crash now, and a lock not given holds back only a moment that
+  // answers a call; at any other moment its steps are skipped, with Genex's typed note.
+  it("a run's turn.start steps pass the lock its own writer in place holds; a chat's wait for it, then run none, with Genex's typed note", async () => {
     await reset();
     const writer = { project: PROJECT, threadId, runId: "run-own", holder: { id: "w4", title: "Carve" } };
     assert.deepEqual(await call(HostMethod.LocksHold, writer), { held: true, labels: ["Bench"] });
@@ -1753,15 +1756,15 @@ describe("locks in a real core", () => {
         call(HostMethod.HooksFire, {
           project: PROJECT,
           threadId,
-          on: "crash",
+          on: "turn.start",
           ...(runId ? { runId } : {}),
         }) as Promise<{
           blocked: { reason: string; hold?: string; label?: string } | null;
-          notes: Array<{ text: string }>;
+          notes: Array<{ text: string; hold?: string; label?: string }>;
           ran: string[];
         }>;
       const own = await fire("run-own");
-      assert.deepEqual(own.ran, [`${PLUGIN_ID}__sand`], "the run's own recovery never waits on its worker");
+      assert.deepEqual(own.ran, [`${PLUGIN_ID}__sand`], "the run's own turn never waits on its worker");
       assert.deepEqual(await paintLog(), ["sand"]);
       const chat = fire();
       let settled = false;
@@ -1773,10 +1776,12 @@ describe("locks in a real core", () => {
         await clock.advance(PERSON_FIRST_POLL_MS * 3);
       }
       const held = await chat;
-      assert.deepEqual(held.ran, [], "a moment of no run waits for the worker, then is held with why");
-      assert.equal(held.blocked?.hold, "busy", "a writing moment's hold is typed, as Plan mode's is");
-      assert.equal(held.blocked?.label, "Bench");
-      assert.match(String(held.blocked?.reason), /Carve/);
+      assert.deepEqual(held.ran, [], "a moment of no run waits for the worker, then runs no step");
+      assert.equal(held.blocked, null, "it answers no call, so nothing is held back");
+      const [note] = held.notes;
+      assert.equal(note?.hold, "busy", "Genex's note is typed, as Plan mode's is");
+      assert.equal(note?.label, "Bench");
+      assert.match(String(note?.text), /Carve/);
       assert.deepEqual(await paintLog(), ["sand"]);
     } finally {
       await call(HostMethod.LocksRelease, writer);
@@ -1816,7 +1821,10 @@ describe("locks in a real core", () => {
 
   it("Stop ends a moment, a checkpoint, a harness step and a game restore while they wait for the person: nothing runs, nothing is held", async () => {
     const asks: Array<[string, () => Promise<unknown>]> = [
-      ["a moment", () => call(HostMethod.HooksFire, { project: PROJECT, threadId, runId: "run-own", on: "crash" })],
+      [
+        "a moment",
+        () => call(HostMethod.HooksFire, { project: PROJECT, threadId, runId: "run-own", on: "turn.start" }),
+      ],
       ["a checkpoint", () => call(HostMethod.CheckpointTake, { project: PROJECT, threadId, label: "Halfway" })],
       ["a harness step", harnessStep],
     ];
@@ -1855,7 +1863,10 @@ describe("locks in a real core", () => {
 
   it("a harness that dies while its moment, harness step or game restore waits for the person ends them: no step runs afterwards", async () => {
     const asks: Array<[string, () => Promise<unknown>]> = [
-      ["a moment", () => call(HostMethod.HooksFire, { project: PROJECT, threadId, runId: "run-own", on: "crash" })],
+      [
+        "a moment",
+        () => call(HostMethod.HooksFire, { project: PROJECT, threadId, runId: "run-own", on: "turn.start" }),
+      ],
       ["a harness step", harnessStep],
       [
         "a game restore",
@@ -1890,7 +1901,7 @@ describe("locks in a real core", () => {
       events.length = 0;
       await person({ personActive: true });
       const pending = outcomeOf(
-        call(HostMethod.HooksFire, { project: PROJECT, threadId, runId: "run-own", on: "crash" }),
+        call(HostMethod.HooksFire, { project: PROJECT, threadId, runId: "run-own", on: "turn.start" }),
       );
       await untilWaitingOnPerson();
       await call(HostMethod.EngineAbort, stop);

@@ -4,13 +4,14 @@
  * with a typed code beside the same words (`WorkspaceRefusal`, `ExportRefusal`); the code crosses
  * IPC and reaches `game_launch_failed`, `game_location_picked`, `open_folder_picked`,
  * `open_folder_sheet_closed`, `game_managed`, `games_root_changed` and `game_export_finished`.
- * Words, paths and Node codes read as none.
+ * Words, paths and Node codes read as none. A game's asset inventory that could not be read says
+ * why by the file system's code (`AssetInventoryFailure`) on `assets_inventory_failed`.
  */
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
-import { CodedError, errorMessage } from "../../src/shared/errors.ts";
+import { CodedError, errorCodeIn, errorMessage } from "../../src/shared/errors.ts";
 import { ExportRefusal, WorkspaceRefusal } from "../../src/shared/game-library.ts";
 import { exportPublicGame } from "../../src/substrate/game-export.ts";
 import {
@@ -31,6 +32,10 @@ import {
   SheetOutcome,
 } from "../../src/renderer/analytics/workspace-vocabulary.ts";
 import { inspectPickedFolder } from "../../src/renderer/open-folder.ts";
+import { inventoryFailure } from "../../src/main/game-assets.ts";
+import { BuildsEvent, inventoryFailures, type InventoryStreaks } from "../../src/renderer/analytics/events/builds.ts";
+import { assetsFailed, initialLibrary } from "../../src/renderer/state/library.ts";
+import { AssetInventoryFailure } from "../../src/shared/game-assets.ts";
 import { coreLite } from "../helpers/core-lite.ts";
 import { assertClean, crossed, HOSTILE_THROWS, refusalOf } from "../helpers/failure-codes.ts";
 import { removeTree, tmpDir } from "../helpers/tmp.ts";
@@ -180,5 +185,29 @@ describe("phase 3 analytics: a refused game or folder says why", () => {
     }
     const rewind = await crossed(new CodedError(ExportRefusal.NoEntry, "Export needs index.html"));
     assert.equal(workspaceCode(rewind), null, "an export's refusal is not the library's");
+  });
+});
+
+describe("phase 3 analytics: an asset inventory says why it could not be read", () => {
+  it("an asset inventory that could not be read says why by the file system's code, never its words", async () => {
+    const held = Object.assign(
+      new Error("EBUSY: resource busy or locked, open 'C:\\Users\\alice\\game\\Assets\\a.png'"),
+      {
+        code: "EBUSY",
+      },
+    );
+    const values: readonly string[] = Object.values(AssetInventoryFailure);
+    for (const [label, thrown] of [["a held file", held] as const, ...HOSTILE_THROWS]) {
+      const caught = await crossed(inventoryFailure(thrown));
+      const code = errorCodeIn(AssetInventoryFailure, caught);
+      assert.ok(code && values.includes(code), label);
+      const library = assetsFailed(initialLibrary(), "pond", String(caught), code);
+      const [sent] = inventoryFailures({}, library.assets, new Map() as InventoryStreaks);
+      assert.ok(sent?.event === BuildsEvent.AssetsInventoryFailed, label);
+      assert.equal(sent.properties.code, code, label);
+      assertClean(label, sent.properties);
+    }
+    const caught = await crossed(inventoryFailure(held));
+    assert.equal(errorCodeIn(AssetInventoryFailure, caught), AssetInventoryFailure.FileBusy);
   });
 });

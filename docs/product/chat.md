@@ -44,7 +44,7 @@ quits; agents may [look at apps](projects-engines.md#plugins-on-or-off) in any m
 A sent message shows at once: idle, as the next bubble, **Sending** until saved.
 While the chat works it reaches that work at its next step (else waits below with **Send now**,
 **Edit**, **Remove**): **Sending…** until read, then sits there. A changed model or effort applies
-from there; workers carry over or finish. A build's lead hears it, wrap-up included.
+from there; workers carry over or finish. A build's lead breaks off to answer it.
 During work a sendable draft shows Send, else Stop; Stopping shows until done; a repeat
 within 5 s is ignored. The stopped build shows its result, else Stopped once, with Resume. A
 message a quit cut off is retried once, then left to resend.

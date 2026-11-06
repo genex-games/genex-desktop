@@ -3,8 +3,7 @@
  * clock: the place saved into the game folder before Genex's checkpoint (only what changed, large
  * containers split, a child past the host's cap left out and named by the host's own report), the
  * place loaded back after a restore with the scripts brought in step (or left waiting while Studio
- * is closed), health, the crash note, Team Create, the run's start, and the person told apart from
- * the agent's own marks.
+ * is closed), health, Team Create, and the person told apart from the agent's own marks.
  */
 import assert from "node:assert/strict";
 import { mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
@@ -51,14 +50,11 @@ import {
   heroShotsAt,
   loadPlaceAt,
   type MomentOps,
-  OPEN_WAIT_MS,
-  openForRun,
   PERSON_ACTIVE_MS,
   personActive,
   RECONNECT_WAIT_MS,
   SAVE_PLACE_CHAT_MAX_MS,
   savePlaceAt,
-  STUDIO_PING_MS,
   studioStateAt,
   teamNoteAt,
   viewportStill,
@@ -152,13 +148,10 @@ async function momentWorld(options: { initial?: Record<string, Buffer> } = {}) {
     shot: { data: Buffer.from("jpeg bytes").toString("base64") } as { data: string } | null,
     /** Whether the scripts' reconcile runs to its end. */
     reconciles: true,
-    /** Connects the helper once Genex opens Studio, after this long. */
-    connectsAfterOpen: undefined as number | undefined,
   };
   const marks: AgentMarks = {};
   const watch = createStudioWatch(() => clock);
   const controller = new AbortController();
-  let openedAt: number | undefined;
   const ops: MomentOps = {
     now: () => clock,
     sleep: async (ms) => {
@@ -170,10 +163,7 @@ async function momentWorld(options: { initial?: Record<string, Buffer> } = {}) {
     folder,
     setUp: async () => studio.setUp,
     linked: async () => studio.linked,
-    bound: () => {
-      const connected = openedAt !== undefined && studio.connectsAfterOpen !== undefined;
-      return studio.bound || (connected && clock - (openedAt as number) >= (studio.connectsAfterOpen as number));
-    },
+    bound: () => studio.bound,
     running: async () => studio.running,
     starting: async () => studio.starting,
     ask: place.ask,
@@ -185,12 +175,6 @@ async function momentWorld(options: { initial?: Record<string, Buffer> } = {}) {
       steps.push(options?.restored ? "reapply restored" : "reapply");
       return studio.reconciles;
     },
-    open: async () => {
-      steps.push("open");
-      openedAt = clock;
-      return { opened: true, message: "Opening sky-race in Roblox Studio." };
-    },
-    placeName: async () => "sky-race",
     shot: async () => {
       steps.push("shot");
       return studio.shot;
@@ -271,8 +255,9 @@ describe("save-place: the place into the game folder before Genex's checkpoint",
       },
     });
     await ensureRepo(world.folder);
-    const answer = await savePlaceAt(world.ops, RUN_CHECKPOINT);
-    assert.deepEqual(answer, {
+    // Flipped: a run's save point named the part too, though no lead can change the host's cap.
+    assert.deepEqual(await savePlaceAt(world.ops, RUN_CHECKPOINT), {}, "a run's lead isn't told what it can't change");
+    assert.deepEqual(await savePlaceAt(world.ops, CHAT_CHECKPOINT), {
       note: ".genex/place/Workspace.split/Island.rbxm is larger than 50 MB, so save points leave it out and Rewind can't bring it back.",
     });
     assert.equal(await readFile(placeFile(world.folder, "Workspace.split/Baseplate.rbxm"), "utf8"), "baseplate");
@@ -338,10 +323,11 @@ describe("save-place: the place into the game folder before Genex's checkpoint",
     }
   });
 
-  it("a run's save point is refused while Studio isn't connected; a chat's checkpoint notes it and holds the scripts", async () => {
+  // Flipped: a run's save point was refused while Studio wasn't connected.
+  it("a run's save point and a chat's checkpoint while Studio isn't connected: each is noted and holds the scripts", async () => {
     const world = await momentWorld();
     world.studio.bound = false;
-    assert.deepEqual(await savePlaceAt(world.ops, RUN_CHECKPOINT), { block: MOMENT_WORDS.NotConnectedRun });
+    assert.deepEqual(await savePlaceAt(world.ops, RUN_CHECKPOINT), { note: MOMENT_WORDS.NotConnectedRun });
     assert.deepEqual(await savePlaceAt(world.ops, CHAT_CHECKPOINT), { note: MOMENT_WORDS.NotConnectedChat });
     assert.deepEqual(world.steps, [], "nothing asked of a Studio that isn't there");
   });
@@ -527,37 +513,6 @@ describe("studio-state: health", () => {
   });
 });
 
-describe("open-for-run: Studio connected before a Loop's first turn", () => {
-  it("opens the place when it isn't connected and waits for its helper", async () => {
-    const world = await momentWorld();
-    world.studio.bound = false;
-    world.studio.connectsAfterOpen = 20_000;
-    assert.deepEqual(await openForRun(world.ops), { note: "Opened sky-race in Roblox Studio for the Loop." });
-    assert.deepEqual(world.steps.slice(0, 1), ["open"]);
-  });
-
-  it("blocks once the wait ran out on its clock, and on a Stop", async () => {
-    const world = await momentWorld();
-    world.studio.bound = false;
-    const started = world.now();
-    assert.deepEqual(await openForRun(world.ops), { block: MOMENT_WORDS.NotConnected(OPEN_WAIT_MS / 60_000) });
-    assert.ok(world.now() - started >= OPEN_WAIT_MS && world.now() - started < OPEN_WAIT_MS + STUDIO_PING_MS);
-    const stopped = await momentWorld();
-    stopped.studio.bound = false;
-    stopped.stop();
-    assert.deepEqual(await openForRun(stopped.ops), { block: MOMENT_WORDS.Stopped });
-  });
-
-  it("quiet when the helper answers; blocks when it doesn't (a dialog), or when Studio isn't set up", async () => {
-    const world = await momentWorld();
-    assert.deepEqual(await openForRun(world.ops), {});
-    world.place.state.pings = false;
-    assert.match(String((await openForRun(world.ops)).block), /dialog may be open/);
-    world.studio.setUp = false;
-    assert.deepEqual(await openForRun(world.ops), { block: MOMENT_WORDS.NotSetUp });
-  });
-});
-
 describe("team-note, hero-shots", () => {
   it("names who else is in the place when that changes, asking the helper when it hasn't said", async () => {
     const world = await momentWorld();
@@ -712,15 +667,6 @@ describe("the backend at Genex's moments", () => {
     );
     await world.call(RobloxTool.SavePlace, CHAT_CHECKPOINT);
     assert.deepEqual(world.flushes, [[GAME, FLUSH_MAX_MS]]);
-  });
-
-  it("the crash note asks the person and never quits or kills Studio", async () => {
-    const world = await backendWorld();
-    assert.deepEqual(await world.call(RobloxTool.StudioCrashNote, { on: HookEvent.Crash, runId: "run_1" }), {
-      note: MOMENT_WORDS.Crash,
-    });
-    assert.deepEqual(world.mac.launches, [], "nothing opened or quit");
-    assert.ok(!world.mac.ran.some((file) => /osascript|taskkill|kill/.test(file)), "no quit and no kill");
   });
 
   it("the lock's probe answers the person's activity through the helper link's watch", async () => {

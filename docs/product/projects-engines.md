@@ -24,8 +24,8 @@ Genex's moments never ask.
 
 The chat leads every Loop in place, a web game's too (Claude Code, Codex or OpenCode). It keeps
 save points, starts workers, pauses if blocked, finishes on its word (a reviewer reads it only if
-asked; a web game's page is checked first). Plugins add steps, reviewer
-pictures and editor locks: while you use an editor, agents wait. A linked engine game is no web
+asked; a web game's page is checked first). Plugins' steps only inform it; it opens and builds
+its app. While you use an editor, agents wait. A linked engine game is no web
 game; an Unreal or Godot project outside it is not held by save points or Rewind.
 
 ## Unreal

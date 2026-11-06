@@ -176,7 +176,9 @@ inline and put a long guide in a file:
   (never started for another game); a tool that makes a project of your kind says
   `"makes": ["toy-project"]`: it is refused while a run of the game is going, Genex snapshots the
   game before it runs, records the web game it replaced as the game's `portedFrom`, and tells the
-  session to end its reply, which then goes on with your tools. A game with no kind yet is served as
+  session to end its reply, which then goes on with your tools. A tool that links the game to a
+  project file also says `"links": "project"` (its string parameter for the file): during a run
+  it may still link the game's own project, one in the game's folder that already gives your fact. A game with no kind yet is served as
   a web game (`web-game`); a folder of a kind Genex can't name is served by no fact. So a tool that
   makes a project of your kind names `"facts": ["web-game"]`: a game with no kind yet and a web game
   get it, a game of another kind never does; scope your other tools to your own fact. The
@@ -238,8 +240,9 @@ your harness tools answering `{ "personActive": false, "unsaved": 0 }`: while th
 editor, the agents' work in it waits. Hooks run your harness tools at Genex's moments, such as
 `"hooks": [{ "on": "checkpoint.before", "tool": "save-scenes" }]`; your handler reads
 `context.hook` (`{ on, runId?, worker?, … }`, absent when called directly) and answers `{ block?,
-note?, pending?, images? }`. A handler that throws blocks a moment that can be blocked, so answer
-`note` for trouble that should not stop the work. It never changes another call's arguments, and
+note?, pending?, images? }`. Only `restore.before`, `tool.before` and `finish` can be blocked (a
+handler that throws there blocks too); anywhere else a block or a throw is a note the lead reads,
+and nothing stops a Loop. It never changes another call's arguments, and
 git stays Genex's. A quick `checkpoint.before` save may add `"messages": true` to run before each
 chat message's checkpoint too, so a Rewind brings back what it saved ([Before each chat
 message](plugins.md#before-each-chat-message)). An agent tool that `makes` a kind
@@ -274,8 +277,9 @@ nothing was captured. See [Observers](plugins.md#observers).
 
 Together these give your kind of project a Loop with no code in Genex. While your plugin is on, a
 Loop on a folder your `detect` recognises is led in place by the chat's own session: your hooks run
-at its start, its save points, rewinds, restarts, health checks and its end, its lead starts your
-worker types, and your observers feed the reviewer who checks its finish. The toy engine plugin in
+at its start, its save points, rewinds, restarts, health checks and its end and tell its lead what
+they found; its lead opens and builds your app with your agent tools and starts your worker types,
+and your observers feed the reviewer who checks its finish. The toy engine plugin in
 Genex's tests (`tests/fixtures/toy-engine-plugin/`) runs such a Loop, and so does a copy of it with
 every tool renamed. See [the open Loop](harness-runtime.md).
 

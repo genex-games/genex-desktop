@@ -4,10 +4,12 @@
  * start in stages, says it is ready with its view of the primary screen (half the driver's physical
  * pixels, as Windows scaling a process's points at 200% would), and answers one JSON line per request
  * line from a fixed desktop (`raise <exe>` brings Notepad forward, nothing else; `running <exe>` finds
- * Notepad and a windowless Roblox Studio). `--log <file>` appends each start and each request; `--hang <request>`
- * never answers that request; `--fail-start` exits before it is ready, saying why on stderr;
- * `--stall` stops after loading and never says it is ready; `--chatter` says a warning, and puts a
- * byte-order mark before its first line, as Windows PowerShell can; `--exit-after-one` exits once it
+ * Notepad and a windowless Roblox Studio; `windows <exe>` lists Unreal Editor's Fab window in front of
+ * its main window, both of one process; `raise <exe> <window>` brings either forward by its handle).
+ * `--log <file>` appends each start and each request; `--hang <request>` never answers that request;
+ * `--fail-start` exits before it is ready, saying why on stderr; `--stall` stops after loading and
+ * never says it is ready; `--chatter` says a warning, and puts a byte-order mark before its first
+ * line, as Windows PowerShell can; `--exit-after-one` exits once it
  * has answered one request, as a helper that ends while idle.
  */
 import { appendFileSync } from "node:fs";
@@ -19,6 +21,9 @@ const log = flag("--log");
 const hang = flag("--hang");
 const note = (entry) => log && appendFileSync(log, `${JSON.stringify(entry)}\n`);
 const say = (line) => process.stdout.write(`${line}\n`);
+
+/** Unreal Editor's windows by their handles: its main window and its separate Fab window. */
+const UNREAL_WINDOWS = new Set(["7001", "7002"]);
 
 /** The desktop: Notepad in front with a password field focused, 1Password on the right half of the view. */
 const ANSWERS = {
@@ -33,7 +38,17 @@ const ANSWERS = {
     if (exe === "robloxstudiobeta.exe") return '{"pid":50,"exe":"RobloxStudioBeta.exe","name":"Roblox Studio"}';
     return '{"pid":0}';
   },
-  raise: (exe) => (exe === "notepad.exe" ? '{"pid":40,"exe":"Notepad.exe","name":"Notepad","window":4001}' : '{"pid":0}'),
+  raise: (exe, window) => {
+    if (window !== undefined)
+      return exe === "unrealeditor.exe" && UNREAL_WINDOWS.has(window)
+        ? `{"pid":70,"exe":"UnrealEditor.exe","name":"Unreal Editor","window":${window}}`
+        : '{"pid":0}';
+    return exe === "notepad.exe" ? '{"pid":40,"exe":"Notepad.exe","name":"Notepad","window":4001}' : '{"pid":0}';
+  },
+  windows: (exe) =>
+    exe === "unrealeditor.exe"
+      ? '{"windows":[{"pid":70,"window":7002,"title":"Fab"},{"pid":70,"window":7001,"title":"MyGame - Unreal Editor"}]}'
+      : '{"windows":[]}',
 };
 
 function serve() {

@@ -336,6 +336,61 @@ describe("a game's project staged for a build on Genex", () => {
     assert.equal(staged.bytes, "{}".length + "map".length + "[x]".length);
   });
 
+  it("takes what the game's .gitignore keeps out of checkpoints when the cook needs it, and nothing else", async () => {
+    // The incident: a Fab kit stayed out of checkpoints, so it never reached the build machine, and
+    // the cook failed on 830 "Unknown structure" errors in the game's own Blueprints.
+    const ignored = [
+      "unreal/Content/BodycamFPSKIT/BP_Item.uasset",
+      "unreal/Config/Local.ini",
+      "unreal/Plugins/Kit/Content/Mesh.uasset",
+      "unreal/Plugins/Kit/Kit.uplugin",
+      "unreal/Plugins/Kit/Binaries/Mac/Kit.dylib",
+      "unreal/Plugins/Kit/Intermediate/Build/x.o",
+      "unreal/Saved/Logs/game.log",
+      "unreal/Intermediate/x.o",
+      "unreal/DerivedDataCache/x.ddc",
+      "unreal/Builds/Game.app/x",
+      "unreal/Content/Sample/Other.uproject",
+      "unreal/Content/.env",
+      "assets/Big.fbx",
+      "notes/private.md",
+    ];
+    const files = { ...unrealGame, ...Object.fromEntries(ignored.map((file) => [file, "x"])) };
+    const { game, dest } = await gameWith(files);
+    const tracked = Object.keys(unrealGame);
+    const staged = await stageBuildSource(game, dest, { ...listing(tracked), listIgnored: async () => ignored });
+    assert.deepEqual(await filesIn(dest), [
+      "Config/DefaultGame.ini",
+      "Config/Local.ini",
+      "Content/BodycamFPSKIT/BP_Item.uasset",
+      "Content/Maps/Arena.umap",
+      "Plugins/Kit/Content/Mesh.uasset",
+      "Plugins/Kit/Kit.uplugin",
+      "Strike.uproject",
+    ]);
+    assert.equal(staged.files, 7);
+  });
+
+  it("reads what git itself ignores, and a remix of the same game still leaves it out", async () => {
+    const { game, dest } = await gameWith({
+      ...unrealGame,
+      "unreal/Content/Kit/BP.uasset": "kit",
+      ".gitignore": "unreal/Content/Kit/\n",
+    });
+    execFileSync("git", ["init", "-q"], { cwd: game });
+    await stageBuildSource(game, dest);
+    assert.ok((await filesIn(dest)).includes("Content/Kit/BP.uasset"), "the build gets the kit");
+    const remix = path.join(dest, "..", "remix");
+    await stageRemixSource(game, remix);
+    assert.ok(!(await filesIn(remix)).some((file) => file.includes("Content/Kit")), "a remix never does");
+  });
+
+  it("takes nothing ignored for a game with no one Unreal project", async () => {
+    const { game, dest } = await gameWith({ "index.html": "x", "dist/app.js": "y" });
+    await stageBuildSource(game, dest, { ...listing(["index.html"]), listIgnored: async () => ["dist/app.js"] });
+    assert.deepEqual(await filesIn(dest), ["index.html"]);
+  });
+
   it("keeps no limit of Studio's own: a project past what remixing takes still goes, and Genex decides", async () => {
     const many = Array.from({ length: SOURCE_MAX_FILES + 1 }, (_, n) => `unreal/Content/${n}.uasset`);
     const files = { "unreal/Strike.uproject": "{}", ...Object.fromEntries(many.map((file) => [file, "a"])) };

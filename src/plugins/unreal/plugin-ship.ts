@@ -75,6 +75,7 @@ import {
   projectPluginDirs,
   type RunCommand,
 } from "./ubt.ts";
+import { type VisualStudioStatus, visualStudioLacking } from "./visual-studio.ts";
 import type { XcodeStatus } from "./xcode.ts";
 
 /** The four tools, by their names after `unreal__`. */
@@ -128,6 +129,8 @@ export type ShipToolsDeps = RestartDeps & {
   engine(): Promise<Engine | undefined>;
   project(storage: string, game: string): Promise<string | undefined>;
   xcode(engineDir: string | undefined): Promise<Pick<XcodeStatus, "state"> & Partial<Pick<XcodeStatus, "app">>>;
+  /** Where Microsoft's C++ tools stand on Windows, which BuildPlugin compiles the plugin with; none off Windows. */
+  visualStudio?(engineDir: string | undefined): Promise<Pick<VisualStudioStatus, "state">>;
   editorCall(storage: string, game: string, tool: CppEditorTool, args: Record<string, unknown>): Promise<unknown>;
   /** Builds the host's editor target; UnrealBuildTool's own unless a test stands in. */
   compile?(options: CompileOptions): Promise<CompileResult>;
@@ -181,6 +184,8 @@ const MESSAGE = {
   NoEngine: "No supported Unreal is installed, so Genex can't build, test or package the plugin.",
   CannotCompile: (xcode: string) =>
     `This computer can't build Unreal C++ (Xcode: ${xcode}); an Unreal plugin is built on a Mac whose Xcode is ready.`,
+  NeedsBuildTools: (state: string) =>
+    `Packaging an Unreal plugin on Windows compiles its C++ with Microsoft's Visual Studio Build Tools (Visual Studio: ${state}). Call unreal__install-unreal, which installs them (Windows asks the user for permission), end your reply, and package again once the chat says they are installed.`,
   NoHostModule: "The host project has no C++ module of its own, so Genex can't build its plugin.",
   BadPlugin: "A plugin is named by its folder under Plugins/: a letter first, then letters, digits or _.",
   NoPlugin: "This project holds no Unreal plugin: new-plugin makes one.",
@@ -734,6 +739,7 @@ async function startPackage(deps: ShipToolsDeps, jobs: Jobs, call: ShipCall) {
   const windows = deps.platform === WINDOWS;
   const engine = await engineTarget(deps, target, !windows);
   if (jobs.running(packaging)) return STARTED;
+  if (windows) await assertBuildTools(deps, engine);
   jobs.refuseBusy(target.project);
   const packageDir = path.join(target.projectDir, ...PACKAGES_FOLDER, target.plugin.name);
   const problem = windows ? windowsPackageProblem(windowsPackage(engine, packageDir)) : undefined;
@@ -754,6 +760,12 @@ async function startPackage(deps: ShipToolsDeps, jobs: Jobs, call: ShipCall) {
   });
   job.hand(started.id, async (ended) => packaged(engine, folders, await packageResultOf(ended, folder), deps.platform));
   return STARTED;
+}
+
+/** Refuses a Windows package while Microsoft's C++ tools aren't ready; a computer that can't tell is let through. */
+async function assertBuildTools(deps: ShipToolsDeps, engine: EngineTarget): Promise<void> {
+  const tools = await deps.visualStudio?.(engine.engine.directory).catch(() => undefined);
+  if (tools && visualStudioLacking(tools)) throw new Error(MESSAGE.NeedsBuildTools(tools.state));
 }
 
 /** Whether a plain file is at `file` (never a link). */

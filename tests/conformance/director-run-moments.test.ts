@@ -1,8 +1,9 @@
 /**
  * A director's run at Genex's moments, through the real core and harness: its start
- * (`run.prepare`) runs the game's plugins' steps before any lead turn, and one that holds the run
- * back closes it before any session opens, in the person's words; a Stop while those steps work is
- * the user's stop; and the run's end (`run.end`) is announced once, however it ended.
+ * (`run.prepare`) runs the game's plugins' steps before any lead turn, and what they found (a block,
+ * or Genex's hold that skipped a step) is its lead's first line, never a closed run; a Stop while
+ * those steps work is the user's stop; and the run's end (`run.end`) is announced once, however it
+ * ended.
  *
  * The local test plugin `hk5` (`helpers/hook-plugin.ts`) hooks both for every game; its start step
  * needs its lock `stage`, whose probe the test scripts.
@@ -96,7 +97,9 @@ async function stagedRun(name: string, budgets: Record<string, unknown> = {}) {
 const count = async (stage: HookPackage, entry: string) => (await stage.trail()).filter((at) => at === entry).length;
 
 describe("a director's run at Genex's moments", () => {
-  it("a run whose start a plugin's step blocks closes before any lead turn, saying why, and its end is announced once", {
+  // Flipped: the run closed before any lead turn, in the Loop's words ("a plugin of this project
+  // held it back: The stage is being swept."); every start is its lead's, which reads why.
+  it("a run whose start a plugin's step blocks runs, its lead's first message saying why, and its end is announced once", {
     timeout: RIG_TIMEOUT_MS,
   }, async () => {
     const { stage, leadTurns, dispatch, finished } = await stagedRun("stage-blocked");
@@ -104,14 +107,16 @@ describe("a director's run at Genex's moments", () => {
     const running = dispatch();
     const ended = await finished();
     await running;
-    assert.equal(leadTurns.length, 0, "no session opened");
-    // Flipped (one Loop): a web game's start closed in the web Loop's words ("a plugin of this game");
-    // every Loop's held start closes in the Loop's own, as a Godot game's did.
-    assert.match(String(ended.stoppedBecause), /a plugin of this project held it back: The stage is being swept\./);
+    const [first] = leadTurns;
+    assert.ok(first, "its lead's session opened");
+    assert.match(first.prompt, /The stage is being swept\./);
+    assert.doesNotMatch(String(ended.stoppedBecause), /held it back/);
     assert.equal(await count(stage, "run.end:farewell"), 1, "the run's end is announced once");
   });
 
-  it("a run whose start Genex held for the person closes before any lead turn, in words for the person", {
+  // Flipped: Genex's hold closed the run before any lead turn ("waited for you to finish in Stage, so
+  // the run didn't start"); the step that needs the stage is skipped, and its lead reads that.
+  it("a run whose start Genex held for the person skips the step that needs the stage and runs, its lead told in Genex's words", {
     timeout: RIG_TIMEOUT_MS,
   }, async () => {
     const { stage, leadTurns, dispatch, finished } = await stagedRun("stage-person");
@@ -119,9 +124,10 @@ describe("a director's run at Genex's moments", () => {
     const running = dispatch();
     const ended = await finished();
     await running;
-    assert.equal(leadTurns.length, 0, "no session opened");
-    assert.match(String(ended.stoppedBecause), /waited for you to finish in Stage, so the run didn't start/);
-    assert.doesNotMatch(String(ended.stoppedBecause), /the person|ask them|Try again later/i);
+    const [first] = leadTurns;
+    assert.ok(first, "its lead's session opened");
+    assert.match(first.prompt, /Genex skipped a step of the game's plugins while you were using Stage\./);
+    assert.doesNotMatch(String(ended.stoppedBecause), /didn't start/);
     assert.equal(await count(stage, "run.prepare:gate"), 0, "the step that needs the stage never ran");
     assert.equal(await count(stage, "run.end:farewell"), 1);
   });

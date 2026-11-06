@@ -351,6 +351,8 @@ export default {
   "Another clip": "换个片段",
   "Another cover": "换个封面",
   "Another folder…": "其他文件夹…",
+  "Another installer or Visual Studio is running. Close it, then press Do it for me again.":
+    "另一个安装程序或 Visual Studio 正在运行。请先关闭它，再点一次“帮我完成”。",
   "Another model installation is running.": "另一个模型正在安装。",
   Answer: "回答",
   "Answer question": "回答问题",
@@ -501,8 +503,38 @@ export default {
   "Build with the Grok account you already have.": "用你已有的 Grok 账号来制作。",
   "Changes Harness made to its own instructions. Undo any of them.":
     "Harness 对自己指令所做的修改。任何一项都可以撤销。",
+  "Checking that Microsoft signed the installer…": "正在确认安装程序由 Microsoft 签名…",
+  "Downloading the Visual Studio Build Tools installer from Microsoft…":
+    "正在从 Microsoft 下载 Visual Studio Build Tools 安装程序…",
+  "Install Visual Studio Build Tools": "安装 Visual Studio Build Tools",
+  "Install Visual Studio Build Tools 2022 from Microsoft with Desktop development with C++.":
+    "从 Microsoft 安装 Visual Studio Build Tools 2022，并勾选“使用 C++ 的桌面开发”。",
+  "Installing Visual Studio Build Tools. Choose Yes when Windows asks; Microsoft's installer shows its progress.":
+    "正在安装 Visual Studio Build Tools。Windows 询问时请选“是”；Microsoft 的安装程序会显示进度。",
+  "Microsoft's download led somewhere other than Microsoft, so Genex stopped.":
+    "Microsoft 的下载指向了 Microsoft 以外的地方，所以 Genex 停止了。",
+  "Microsoft's download link wasn't secure, so Genex didn't download it.":
+    "Microsoft 的下载链接不安全，所以 Genex 没有下载。",
+  "Microsoft's download was far bigger than its installer, so Genex stopped.":
+    "Microsoft 的下载比安装程序大太多，所以 Genex 停止了。",
+  "Microsoft's installer couldn't download the Build Tools. Check your internet connection and try again.":
+    "Microsoft 的安装程序没能下载 Build Tools。请检查网络连接后再试一次。",
+  "Microsoft's installer didn't download. Check your internet connection and try again.":
+    "没能下载 Microsoft 的安装程序。请检查网络连接后再试一次。",
+  "Microsoft's installer finished, but Unreal still can't build C++ with what it installed. Install Visual Studio Build Tools 2022 with Desktop development with C++ yourself.":
+    "Microsoft 的安装程序已完成，但 Unreal 仍无法用它安装的内容编译 C++。请自行安装 Visual Studio Build Tools 2022，并勾选“使用 C++ 的桌面开发”。",
+  "Recommended. Microsoft's free C++ tools: Unreal needs them to package a game or plugin with C++. About 7 GB. Do it for me installs them: choose Yes when Windows asks.":
+    "推荐。Microsoft 免费的 C++ 工具：Unreal 打包含 C++ 的游戏或插件时需要它们。约 7 GB。“帮我完成”会自动安装：Windows 询问时请选“是”。",
+  "Recommended. Microsoft's free C++ tools: Unreal needs them to package a game or plugin with C++. Install Visual Studio Build Tools with Desktop development with C++.":
+    "推荐。Microsoft 免费的 C++ 工具：Unreal 打包含 C++ 的游戏或插件时需要它们。请安装 Visual Studio Build Tools，并勾选“使用 C++ 的桌面开发”。",
   "Self-improvement is off. Harness keeps its own instructions as they are.":
     "自我改进已关闭。Harness 会保持自己的指令不变。",
+  "Unreal can build C++ on this PC.": "Unreal 可以在这台电脑上编译 C++。",
+  "Unreal {engine} doesn't build with the C++ tools on this PC. Do it for me updates them: choose Yes when Windows asks.":
+    "Unreal {engine} 无法用这台电脑上的 C++ 工具编译。“帮我完成”会更新它们：Windows 询问时请选“是”。",
+  "Update Visual Studio Build Tools": "更新 Visual Studio Build Tools",
+  "Visual Studio Build Tools are installed.": "Visual Studio Build Tools 已安装。",
+  "Visual Studio's C++ tools are ready": "Visual Studio 的 C++ 工具已就绪",
   "When off, Harness doesn’t change its own instructions. Changes it already made stay until you undo them.":
     "关闭后，Harness 不会修改自己的指令。已做的修改会保留，直到你撤销。",
   "Workers pitch in": "助手一起帮忙",
@@ -5039,6 +5071,7 @@ export default {
   "{count, plural, one {# try} other {# tries}}": "{count, plural, other {# 次尝试}}",
   "{count, plural, one {# update from your games} other {# updates from your games}}":
     "{count, plural, other {你的游戏有 # 条更新}}",
+  "{count, plural, one {# version} other {# versions}}": "{count, plural, other {# 个版本}}",
   "{count, plural, one {# worker didn't deliver} other {# workers didn't deliver}}":
     "{count, plural, other {# 个助手未交付}}",
   "{count, plural, one {# worker} other {# workers}} on it": "{count, plural, other {# 个助手在处理}}",
@@ -5270,6 +5303,8 @@ export default {
   "{name}: {status}": "{name}：{status}",
   "{name}: {status}, {count, plural, other {# tries}}": "{name}：{status}，{count, plural, other {# 次尝试}}",
   "{name}’s friends": "{name} 的好友",
+  "{open, plural, =1 {One step left so Unreal can build C++ on this PC.} other {# steps left so Unreal can build C++ on this PC.}}":
+    "{open, plural, =1 {还差一步，Unreal 就能在这台电脑上编译 C++ 了。} other {还差 # 步，Unreal 就能在这台电脑上编译 C++ 了。}}",
   "{open, plural, =1 {One step left so the agent can add C++ to this game.} =2 {Two steps left so the agent can add C++ to this game.} =3 {Three steps left so the agent can add C++ to this game.} other {# steps left so the agent can add C++ to this game.}}":
     "{open, plural, =1 {还差一步，智能体就能为这个游戏添加 C++ 了。} =2 {还差两步，智能体就能为这个游戏添加 C++ 了。} =3 {还差三步，智能体就能为这个游戏添加 C++ 了。} other {还差 # 步，智能体就能为这个游戏添加 C++ 了。}}",
   "{owners} came with setup scripts written by their authors. Genex skipped them when it made your copy, and the game may need them to build. Run them only if you trust this game.":
@@ -5742,6 +5777,7 @@ export default {
     "连接你已付费的 Claude 或 ChatGPT 套餐，或用 Genex 积分制作。",
   "Continue in browser": "在浏览器中继续",
   "Continue on ChatGPT plan": "使用 ChatGPT 套餐继续",
+  "Continue on {name}": "使用 {name} 继续",
   "Continue on Claude plan": "使用 Claude 套餐继续",
   "Everything so far is saved.": "目前的一切都已保存。",
   "Finish on genex.games in your browser.": "请在浏览器中完成 genex.games 上的步骤。",
@@ -5987,4 +6023,6 @@ export default {
   "Ask the agent to fix these errors": "请智能体修复这些错误",
   "Genex couldn’t build the {players} app of “{title}”. Fix these errors in the game’s code so it builds there, and keep the game working as it does on other systems. This computer can’t build for {players}, so check each fix carefully. Then tell me to press Build on Genex again.\n\n{errors}":
     "Genex 无法构建“{title}”的 {players} 应用。请修复游戏代码中的这些错误，让它能在那里构建，并保持游戏在其他系统上的表现不变。这台电脑无法为 {players} 构建，所以请仔细检查每处修复。完成后告诉我再按一次 Build on Genex。\n\n{errors}",
+  "The same project fails the same way: change it first, then try again.":
+    "同一个项目会以同样的方式失败：请先修改，再试一次。",
 } satisfies LocaleCatalog;

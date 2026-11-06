@@ -34,7 +34,7 @@ export const SendSource = {
   SetupCard: "setup_card",
   TagRetry: "tag_retry",
   PluginTurnedOn: "plugin_turned_on",
-  /** Genex telling the agent why the Loop it started didn't start (never sent from the renderer). */
+  /** Genex telling the agent why the Loop it started didn't start (never sent from the renderer; only an older Genex sent it). */
   LoopHeld: "loop_held",
   /** Genex asking the agent for the game's cover once a build landed (never sent from the renderer). */
   CoverStep: "cover_step",
@@ -219,6 +219,10 @@ export const SignInAction = {
   ContinueLocal: "continue_local",
 } as const;
 export type SignInAction = (typeof SignInAction)[keyof typeof SignInAction];
+
+/** Which of the Genex notice's ways the person took: its main step, or a move onto another model. */
+export const GenexNoticeStep = { Primary: "primary", Use: "use" } as const;
+export type GenexNoticeStep = (typeof GenexNoticeStep)[keyof typeof GenexNoticeStep];
 
 /** Where a lost sign-in showed: the turn that needed it. */
 export const SignInFrom = { Turn: "turn" } as const;

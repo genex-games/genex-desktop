@@ -25,7 +25,6 @@ import type { ChatPermissionService } from "./chat-permissions.ts";
 import type { SteerDoor } from "./chat-steer.ts";
 import type { ConversationService } from "./conversation.ts";
 import type { CutOffCall } from "./cut-off-calls.ts";
-import type { UnsavedFile } from "./unsaved-files.ts";
 import type { DelegationService } from "./delegation.ts";
 import type { StudioSettings } from "./settings.ts";
 import type { ObserverService } from "./observers.ts";
@@ -133,11 +132,6 @@ export interface WorkInFlight {
    * made them, until that thread's next delegated session is told of them (`cut-off-calls.ts`).
    */
   readonly cutOffCalls: Map<string, CutOffCall[]>;
-  /**
-   * Files too large to save that a thread's chat said a checkpoint or a rewind left, until that
-   * thread's next delegated session is told of them (`unsaved-files.ts`).
-   */
-  readonly unsavedFiles: Map<string, UnsavedFile[]>;
   /**
    * One contractor per *directory* (live game folder or facet worktree), keyed by resolved cwd.
    * The first live build proved why a dir takes a lock: a crash mid-delegation left the
@@ -336,7 +330,6 @@ export function idleWork(): WorkInFlight {
     assetCalls: new Map(),
     activeMoments: new Map(),
     cutOffCalls: new Map(),
-    unsavedFiles: new Map(),
     activeDelegations: new Map(),
     gameChanges: new Map(),
     activeRunIds: new Set(),

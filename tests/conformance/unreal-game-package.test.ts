@@ -22,6 +22,7 @@ import {
   uatEnv,
   uatLaunch,
 } from "../../src/plugins/unreal/game-package.ts";
+import { VisualStudioState } from "../../src/plugins/unreal/visual-studio.ts";
 import { XcodeState } from "../../src/plugins/unreal/xcode.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
@@ -45,7 +46,13 @@ const contextIn = (game: string): PluginContext =>
 function depsFor(
   project: string,
   runUat: RunUat,
-  options: { answers?: boolean; saved?: boolean; platform?: NodeJS.Platform; toolchain?: string } = {},
+  options: {
+    answers?: boolean;
+    saved?: boolean;
+    platform?: NodeJS.Platform;
+    toolchain?: string;
+    visualStudio?: VisualStudioState;
+  } = {},
 ) {
   const launches: string[][] = [];
   const envs: Array<Record<string, string> | undefined> = [];
@@ -56,6 +63,7 @@ function depsFor(
     linuxToolchain: async () => options.toolchain,
     project: async () => project,
     xcode: async () => ({ state: XcodeState.Ready }),
+    visualStudio: async () => ({ state: options.visualStudio ?? VisualStudioState.Ready }),
     editorAnswers: async () => options.answers ?? false,
     save: async (_storage, game) => {
       saves.push(game);
@@ -285,6 +293,33 @@ const stagesLinux: RunUat = async (launch) => {
   await writeFile(path.join(linux, "Dust", "Binaries", "Linux", "Dust-Linux-Shipping"), "\x7fELF");
   return { code: 0, output: PACKAGED, timedOut: false };
 };
+
+describe("packaging an Unreal game with C++ on Windows", () => {
+  it("refuses while Microsoft's C++ tools aren't ready, naming the tool that installs them; a game in Blueprints packages", async () => {
+    const { game, project } = await gameWithProject();
+    await writeFile(project, JSON.stringify({ FileVersion: 3, Modules: [{ Name: "Dust", Type: "Runtime" }] }));
+    const missing = depsFor(project, stagesLinux, { platform: "win32", visualStudio: VisualStudioState.Missing });
+    await assert.rejects(
+      createGamePackageTools(missing.deps).handlers["package-game"]({}, contextIn(game), "/s"),
+      /This game has C\+\+.*Visual Studio Build Tools \(Visual Studio: missing\)\. Call unreal__install-unreal/,
+    );
+    assert.deepEqual([missing.launches, missing.saves], [[], []], "nothing saved or run");
+    assert.deepEqual(await readdir(path.join(game, "unreal")), ["Dust.uproject"], "no build folder was made");
+    const ready = depsFor(project, stagesLinux, { platform: "win32", visualStudio: VisualStudioState.Ready });
+    const started = await createGamePackageTools(ready.deps).handlers["package-game"]({}, contextIn(game), "/s");
+    assert.deepEqual(started, { started: true, system: "Windows" });
+    const blueprints = await gameWithProject();
+    const plain = depsFor(blueprints.project, stagesLinux, {
+      platform: "win32",
+      visualStudio: VisualStudioState.Missing,
+    });
+    const context = contextIn(blueprints.game);
+    assert.deepEqual(await createGamePackageTools(plain.deps).handlers["package-game"]({}, context, "/s"), {
+      started: true,
+      system: "Windows",
+    });
+  });
+});
 
 describe("packaging an Unreal game for Linux on Windows", () => {
   it("asks BuildCookRun for Linux, cooked by Windows' own editor, only from Windows", () => {

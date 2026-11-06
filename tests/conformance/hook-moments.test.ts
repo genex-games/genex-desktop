@@ -1,15 +1,19 @@
 /**
  * Where the seed fires Genex's moments, and that a game no plugin hooks makes no new call. A chat
  * turn announces its start and end, the worker pool each worker's start and end, and the director
- * its lead's finish; a step's block holds the moment back (the turn never reaches an engine, the
- * worker never starts, the run goes on unfinished). A game whose descriptor lists no moment (every
- * web game) gets no `hooks.fire` at all.
+ * its lead's finish. A step's block refuses only the call that asked for its moment (the lead's
+ * finish); at a chat turn's or a worker's start or end, what the steps said is a line for whoever
+ * reads that moment (the turn's first leg, `worker_start`'s answer, a run's worker end line), and
+ * nothing is held back. A game whose descriptor lists no moment (every web game) gets no
+ * `hooks.fire` at all.
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { runDelegatedTurn } from "../../src/harness-seed/loop/delegated-turn.ts";
+import { openLoopPool } from "../../src/harness-seed/loop/director/open/setup.ts";
 import { HELD_TURN_WAIT_MS, whileTurnHeld } from "../../src/harness-seed/loop/director/turn-hold.ts";
 import { openStartHeld, turnsHeldWords as directorTurnsHeld } from "../../src/harness-seed/loop/director/held-words.ts";
+import { NoteKind } from "../../src/harness-seed/loop/director/wake-schedule.ts";
 import {
   endOfTurnCheckpoint,
   fireHooks,
@@ -21,12 +25,25 @@ import {
   turnHeldLine,
   waitReady,
 } from "../../src/harness-seed/loop/hooks.ts";
+import { momentLines } from "../../src/harness-seed/loop/moment-lines.ts";
+import { closeRunPool } from "../../src/harness-seed/loop/workers/run-pool.ts";
 import { HOOK_LABEL_CHARS, isHookLabel } from "../../src/shared/plugin-hooks.ts";
 import { CustomEvent } from "../../src/shared/custom-events.ts";
 import { HostMethod } from "../../src/shared/harness-api.ts";
 import { WorkerTool } from "../../src/shared/workers.ts";
 import { ctxRecorder } from "../helpers/ctx-recorder.ts";
-import { chatPool, fakeLocks, finish, gameRepo, PROJECT, poolHost, start } from "../helpers/worker-pool-host.ts";
+import {
+  CLAUDE as POOL_ENGINE,
+  chatPool,
+  fakeLocks,
+  fastClock,
+  finish,
+  gameRepo,
+  PROJECT,
+  poolHost,
+  start,
+  THREAD,
+} from "../helpers/worker-pool-host.ts";
 
 /** A test that would hang on a regression fails within this instead. */
 const TEST_TIMEOUT_MS = 60_000;
@@ -65,29 +82,65 @@ function fired(
   });
 }
 
-/** One chat turn on a game whose descriptor lists `hookEvents` (absent: a web game's, none). */
-async function chatTurn(hookEvents: string[] | undefined, blockOn: string | null = null, by?: Record<string, unknown>) {
+/**
+ * A `hooks.fire` answer with `note` at `noteOn`, as today's host files a step's block or Genex's hold
+ * there; nothing said elsewhere.
+ */
+function noted(noteOn: string, note: Record<string, unknown> = { plugin: "harbor", text: REASON }) {
+  return (p: Record<string, unknown>) => ({
+    blocked: null,
+    pending: null,
+    notes: p.on === noteOn ? [note] : [],
+    images: [],
+    ran: ["harbor__crane"],
+  });
+}
+
+/** Genex's own hold as today's host answers it at a moment that answers no call: a note carrying the hold. */
+const PERSON_HELD_NOTE = {
+  plugin: PERSON_HELD.plugin,
+  text: PERSON_HELD.reason,
+  hold: PERSON_HELD.hold,
+  label: PERSON_HELD.label,
+};
+
+/** A `hooks.fire` handler, as a test's host answers each moment. */
+type Fired = (p: Record<string, unknown>) => unknown;
+
+/** The harbor game as `game.list` lists it: a web game, plus what a turn's first leg added (`gained`). */
+function harbor(hookEvents: string[] | undefined, gained: readonly unknown[] = []) {
+  return {
+    name: NAME,
+    title: NAME,
+    dir: `/games/${NAME}`,
+    shape: { entry: "index.html", main: "src/main.js", build: null, own: false, kind: "studio-template" },
+    built: true,
+    facts: [{ id: "web-game", path: ".", source: "core" }, ...gained],
+    ...(hookEvents ? { hookEvents } : {}),
+  };
+}
+
+/**
+ * One chat turn on a game whose descriptor lists `hookEvents` (absent: a web game's, none), its
+ * moments answered by `answer`. A first leg that `gains` facts changes what the project is, so the
+ * same session goes on in a second leg.
+ */
+async function chatTurn(hookEvents: string[] | undefined, answer: Fired = fired(null), gains: readonly unknown[] = []) {
+  let legs = 0;
   const recorder = ctxRecorder({
     unknown: { value: null },
     handlers: {
       "events.messages": () => [{ role: "user", content: TURN.text }],
       "game.contentStamp": () => ({ all: "a", source: "a" }),
-      "game.list": () => [
-        {
-          name: NAME,
-          title: NAME,
-          dir: `/games/${NAME}`,
-          shape: { entry: "index.html", main: "src/main.js", build: null, own: false, kind: "studio-template" },
-          built: true,
-          facts: [{ id: "web-game", path: ".", source: "core" }],
-          ...(hookEvents ? { hookEvents } : {}),
-        },
-      ],
+      "game.list": () => [harbor(hookEvents, legs > 0 ? gains : [])],
       "plugins.tools": () => ({ tools: [], guidance: "", revision: 1, kinds: [] }),
       "engine.describe": () => [],
       "preview.ready": () => ({ ready: true, ms: 1 }),
-      "hooks.fire": fired(blockOn, by),
-      "engine.delegate": () => ({ ok: true, engine: CLAUDE, turns: 1, usage: {}, sessionId: "s", summary: "Done." }),
+      "hooks.fire": answer,
+      "engine.delegate": () => {
+        legs += 1;
+        return { ok: true, engine: CLAUDE, turns: 1, usage: {}, sessionId: "s", summary: "Done." };
+      },
     },
   });
   await runDelegatedTurn(recorder.ctx as never, { ...TURN, project: NAME } as never);
@@ -95,6 +148,31 @@ async function chatTurn(hookEvents: string[] | undefined, blockOn: string | null
     .filter((n) => n.type === "chat.message")
     .map((n) => String((n.payload as { content?: unknown }).content));
   return { recorder, said };
+}
+
+/** The notices one leg of a chat turn was handed. */
+const noticesOf = (leg: Record<string, unknown> | undefined): string[] =>
+  Array.isArray(leg?.notices) ? leg.notices.map(String) : [];
+
+/**
+ * A run's worker pool as the open Loop opens it (`openLoopPool`), on a stand-in for the Loop's run
+ * that keeps every line noted for its lead, with its kind (`LoopRun.note`).
+ */
+async function runPoolOn(host: ReturnType<typeof poolHost>, repo: string, hookEvents: readonly string[]) {
+  const noted: Array<{ text: string; kind: string }> = [];
+  const runId = `run-${Math.random().toString(36).slice(2)}`;
+  const open: Record<string, unknown> = { hookEvents, facts: [], holds: null, clock: fastClock(), halted: null };
+  const loopRun = {
+    ctx: host.recorder.ctx,
+    projectDir: repo,
+    run: { project: PROJECT, runId, engine: POOL_ENGINE },
+    threadId: THREAD,
+    state: { finished: false },
+    open,
+    note: (text: string, kind: string) => noted.push({ text, kind }),
+  };
+  await openLoopPool(loopRun as never, open as never);
+  return { pool: open.pool as Awaited<ReturnType<typeof chatPool>>, noted, close: () => closeRunPool(runId) };
 }
 
 describe("Genex's moments, as the seed fires them", { timeout: TEST_TIMEOUT_MS }, () => {
@@ -116,42 +194,77 @@ describe("Genex's moments, as the seed fires them", { timeout: TEST_TIMEOUT_MS }
     );
   });
 
-  it("a turn.start block ends a chat turn before any engine call, and the chat says why", async () => {
-    const { recorder, said } = await chatTurn([HookEvent.TurnStart, HookEvent.TurnEnd], HookEvent.TurnStart);
-    assert.deepEqual(recorder.paramsOf("engine.delegate"), [], "no engine works on it");
-    assert.ok(
-      said.some((line) => line.includes(REASON)),
-      said.join(" | "),
-    );
+  // Flipped (hooks advise, the lead decides): "a turn.start block ends a chat turn before any engine
+  // call, and the chat says why". Only a call's own moment refuses it; a chat turn is no such call.
+  it("a turn.start step's block never ends a chat turn: its reason is one notice on the turn's first leg, from today's host or an older one", async () => {
+    // Today's host files a step's block at turn.start as its note; an older one answered it as a block.
+    for (const [host, answer] of [
+      ["today's", noted(HookEvent.TurnStart)],
+      ["an older", fired(HookEvent.TurnStart)],
+    ] as const) {
+      const { recorder, said } = await chatTurn([HookEvent.TurnStart, HookEvent.TurnEnd], answer);
+      const legs = recorder.paramsOf("engine.delegate");
+      assert.equal(legs.length, 1, `${host} host: the turn ran`);
+      const told = noticesOf(legs[0]).filter((notice) => notice.includes(REASON));
+      assert.equal(told.length, 1, `${host} host: ${JSON.stringify(legs[0]?.notices)}`);
+      assert.ok(!said.some((line) => /wasn't worked on/.test(line)), said.join(" | "));
+      assert.deepEqual(
+        recorder.paramsOf("hooks.fire").map((p) => p.on),
+        [HookEvent.TurnStart, HookEvent.TurnEnd],
+        `${host} host: its end is announced too`,
+      );
+    }
   });
 
-  it("a turn.start Genex held for the person says so in words for them, never the agents' words", async () => {
-    const { recorder, said } = await chatTurn(
-      [HookEvent.TurnStart, HookEvent.TurnEnd],
-      HookEvent.TurnStart,
-      PERSON_HELD,
-    );
-    assert.deepEqual(recorder.paramsOf("engine.delegate"), []);
-    const line = said.find((text) => /wasn't worked on/.test(text)) ?? "";
-    assert.match(line, /you're using the crane/, said.join(" | "));
-    assert.doesNotMatch(line, /the person|ask them|Try again later/i);
+  it("a turn.start notice is said once: a leg the same session goes on in is not told it again", async () => {
+    const gains = [{ id: "godot-project", path: ".", source: "core" }];
+    const { recorder } = await chatTurn([HookEvent.TurnStart], noted(HookEvent.TurnStart), gains);
+    const legs = recorder.paramsOf("engine.delegate");
+    assert.equal(legs.length, 2, "the project's new kind goes on in the same session");
+    assert.equal(legs[1]?.resume, "s");
+    assert.ok(noticesOf(legs[0]).some((notice) => notice.includes(REASON)));
+    assert.ok(!noticesOf(legs[1]).some((notice) => notice.includes(REASON)), JSON.stringify(legs[1]?.notices));
   });
 
-  it("a worker.start block starts no worker and writes no worker_started; a worker's end is announced after its record", async () => {
+  // Flipped (hooks advise, the lead decides): "a turn.start Genex held for the person says so in words
+  // for them, never the agents' words" ended the turn with "This message wasn't worked on".
+  it("a turn.start Genex held for the person reaches the turn's session in words for them, never the agents' words", async () => {
+    for (const answer of [noted(HookEvent.TurnStart, PERSON_HELD_NOTE), fired(HookEvent.TurnStart, PERSON_HELD)]) {
+      const { recorder, said } = await chatTurn([HookEvent.TurnStart, HookEvent.TurnEnd], answer);
+      const legs = recorder.paramsOf("engine.delegate");
+      assert.equal(legs.length, 1, "the turn ran");
+      const notice = noticesOf(legs[0]).find((text) => /the crane/.test(text)) ?? "";
+      assert.match(notice, /while you were using the crane/, JSON.stringify(legs[0]?.notices));
+      assert.doesNotMatch(notice, /the person|ask them|Try again later/i);
+      assert.ok(!said.some((line) => /wasn't worked on/.test(line)), said.join(" | "));
+    }
+  });
+
+  // Flipped (hooks advise, the lead decides): "a worker.start block starts no worker and writes no
+  // worker_started; a worker's end is announced after its record". worker.start answers no call.
+  it("a worker.start step's block never holds a worker back: it starts, its answer carries the step's words, and its end is announced after its record", async () => {
     const repo = await gameRepo();
-    const held = poolHost(repo);
-    held.recorder.handle(HostMethod.HooksFire, fired(HookEvent.WorkerStart));
-    const heldPool = await chatPool(held, repo, { hookEvents: [HookEvent.WorkerStart, HookEvent.WorkerEnd] });
-    const answer = await heldPool.call(WorkerTool.Start, { title: "Read", task: "Read the code.", isolation: "read" });
-    assert.match(answer, /Not started: .*crane is being serviced/);
-    assert.deepEqual(heldPool.state.records, [], "no record is kept");
-    assert.deepEqual(held.sessions, [], "no session starts");
-    assert.ok(!held.appended.some((row) => row.type === CustomEvent.WorkerStarted), "no worker_started");
-    assert.equal(
-      held.recorder.paramsOf(HostMethod.HooksFire)[0]?.worker !== undefined,
-      true,
-      "the step is told the worker",
-    );
+    for (const answer of [noted(HookEvent.WorkerStart), fired(HookEvent.WorkerStart)]) {
+      const told = poolHost(repo);
+      told.recorder.handle(HostMethod.HooksFire, answer);
+      const toldPool = await chatPool(told, repo, { hookEvents: [HookEvent.WorkerStart, HookEvent.WorkerEnd] });
+      const started = await toldPool.call(WorkerTool.Start, {
+        title: "Read",
+        task: "Read the code.",
+        isolation: "read",
+      });
+      assert.match(started, /^Started (w\d+) \(read\)\./, started);
+      assert.ok(started.includes(REASON), started);
+      assert.equal(toldPool.state.records.length, 1, "its record is kept");
+      assert.equal(told.sessions.length, 1, "its session starts");
+      assert.ok(
+        told.appended.some((row) => row.type === CustomEvent.WorkerStarted),
+        "worker_started",
+      );
+      assert.ok(told.recorder.paramsOf(HostMethod.HooksFire)[0]?.worker !== undefined, "the step is told the worker");
+      const id = String(/^Started (w\d+)/.exec(started)?.[1]);
+      await finish(told, toldPool, id, { ok: true, sessionId: "s0", summary: "Read it." });
+    }
 
     const open = poolHost(repo);
     open.recorder.handle(HostMethod.HooksFire, fired(null));
@@ -168,7 +281,29 @@ describe("Genex's moments, as the seed fires them", { timeout: TEST_TIMEOUT_MS }
     assert.equal(order.at(-1), HostMethod.HooksFire, "the end is announced after the end's record");
   });
 
-  it("a hooks.fire that fails at a blocking moment holds it back; only a host that never knew the moments goes on", async () => {
+  it("a worker.end step's words join the end line a run's lead is woken with", async () => {
+    const repo = await gameRepo();
+    const host = poolHost(repo);
+    const LUAU = "Luau: 2 warnings in src/Cannon.luau.";
+    host.recorder.handle(HostMethod.HooksFire, noted(HookEvent.WorkerEnd, { plugin: "roblox", text: LUAU }));
+    const run = await runPoolOn(host, repo, [HookEvent.WorkerStart, HookEvent.WorkerEnd]);
+    try {
+      const id = await start(run.pool, { title: "Read", task: "Read the code.", isolation: "read" });
+      await finish(host, run.pool, id, { ok: true, sessionId: "s1", summary: "Read it." });
+      const ends = run.noted.filter((line) => line.kind === NoteKind.WorkerEnded);
+      assert.deepEqual(
+        ends.map((line) => line.text),
+        [`worker ${id} "Read" ended: done. ${LUAU}`],
+      );
+    } finally {
+      await run.close();
+    }
+  });
+
+  // Flipped (hooks advise, the lead decides): "a hooks.fire that fails at a blocking moment holds it
+  // back; only a host that never knew the moments goes on" held a worker back. Blocking moments now
+  // answer a call (the lead's finish); a failure anywhere else is Genex's note.
+  it("a hooks.fire that fails holds back only a blocking moment's call; elsewhere it is Genex's note, and a host that never knew the moments says nothing", async () => {
     const repo = await gameRepo();
     const failing = poolHost(repo);
     failing.recorder.handle(HostMethod.HooksFire, () => {
@@ -176,10 +311,11 @@ describe("Genex's moments, as the seed fires them", { timeout: TEST_TIMEOUT_MS }
     });
     const pool = await chatPool(failing, repo, { hookEvents: [HookEvent.WorkerStart, HookEvent.WorkerEnd] });
     const answer = await pool.call(WorkerTool.Start, { title: "Read", task: "Read the code.", isolation: "read" });
-    assert.match(answer, /Not started: .*the plugin host is restarting/);
-    assert.deepEqual(failing.sessions, [], "no session starts");
+    assert.match(answer, /^Started w1 \(read\)\..*couldn't ask the game's plugins: the plugin host is restarting/);
+    assert.equal(failing.sessions.length, 1, "its session starts");
+    await finish(failing, pool, "w1", { ok: true, sessionId: "s1", summary: "Read it." });
 
-    const game = { hookEvents: [HookEvent.WorkerStart, HookEvent.Health] };
+    const game = { hookEvents: [HookEvent.Finish, HookEvent.WorkerStart, HookEvent.Health] };
     const throwing = (name: string) =>
       ctxRecorder({
         handlers: {
@@ -189,14 +325,28 @@ describe("Genex's moments, as the seed fires them", { timeout: TEST_TIMEOUT_MS }
         },
       }).ctx as never;
     const scope = { project: NAME };
-    const held = await fireHooks(throwing("InvalidParams"), game, HookEvent.WorkerStart, scope);
-    assert.match(String(held.blocked?.reason), /refused: InvalidParams/);
-    const older = await fireHooks(throwing("UnknownMethod"), game, HookEvent.WorkerStart, scope);
-    assert.equal(older.blocked, null, "an older host without moments: nothing held");
-    const health = await fireHooks(throwing("InvalidParams"), game, HookEvent.Health, scope);
-    assert.equal(health.blocked, null, "a moment that never blocks stays quiet");
+    const held = await fireHooks(throwing("InvalidParams"), game, HookEvent.Finish, scope);
+    assert.match(String(held.blocked?.reason), /refused: InvalidParams/, "fail closed where the block answers a call");
+    for (const on of [HookEvent.WorkerStart, HookEvent.Health]) {
+      const report = await fireHooks(throwing("InvalidParams"), game, on, scope);
+      assert.equal(report.blocked, null, on);
+      assert.deepEqual(
+        report.notes.map((note) => [
+          note.plugin,
+          /couldn't ask the game's plugins: refused: InvalidParams/.test(note.text),
+        ]),
+        [["@genex", true]],
+        on,
+      );
+    }
+    for (const on of [HookEvent.Finish, HookEvent.WorkerStart]) {
+      const older = await fireHooks(throwing("UnknownMethod"), game, on, scope);
+      assert.deepEqual([older.blocked, older.notes], [null, []], `an older host without moments says nothing: ${on}`);
+    }
   });
 
+  // Flipped (hooks advise, the lead decides): turn.start and worker.start answered "Stopped." as a
+  // block; they answer no call now, so a Stop there says nothing, as a moment no step ran at.
   it("a moment or a checkpoint a Stop ended answers as stopped, never as a failure of the game's plugins", async () => {
     const stopped = () => {
       const recorder = ctxRecorder({
@@ -212,11 +362,18 @@ describe("Genex's moments, as the seed fires them", { timeout: TEST_TIMEOUT_MS }
       recorder.cancel();
       return recorder.ctx as never;
     };
-    const game = { hookEvents: [HookEvent.TurnStart, HookEvent.WorkerStart] };
-    for (const on of [HookEvent.TurnStart, HookEvent.WorkerStart]) {
+    const game = {
+      hookEvents: [HookEvent.Finish, HookEvent.RestoreBefore, HookEvent.TurnStart, HookEvent.WorkerStart],
+    };
+    for (const on of [HookEvent.Finish, HookEvent.RestoreBefore]) {
       const report = await fireHooks(stopped(), game, on, { project: NAME });
       assert.equal(report.blocked?.reason, "Stopped.", on);
       assert.doesNotMatch(String(report.blocked?.reason), /couldn't ask/);
+    }
+    for (const on of [HookEvent.TurnStart, HookEvent.WorkerStart]) {
+      const report = await fireHooks(stopped(), game, on, { project: NAME });
+      assert.deepEqual([report.blocked, report.notes], [null, []], on);
+      assert.deepEqual(await momentLines(stopped(), game, on, { project: NAME }), [], on);
     }
     const checkpoint = await takeCheckpoint(stopped(), { project: NAME, threadId: "t1", label: "Halfway" });
     assert.deepEqual(checkpoint, { blocked: "Stopped." });
@@ -377,9 +534,22 @@ describe("Genex's own holds, in the person's words on every surface", () => {
   const AGENTS_WORDS = /the person|ask them|Try again later|a plugin of this game/i;
   const held = (hold: HookHold) => ({ reason: "The person is using the crane. Try again later.", hold, label: APP });
 
-  /** Every surface's words for Genex's holds: a line the person reads for each, or null where it says nothing. */
+  /**
+   * Every surface's words for Genex's holds: a line the person reads for each, or null where it says
+   * nothing. Flipped (hooks advise, the lead decides): a chat turn's start, a Loop's start and a
+   * director run's lead turns are held no more, so their lines left; a Loop's start line came.
+   */
   const SURFACES: Array<[string, (hold: HookHold) => Promise<string | null> | string | null]> = [
-    ["a chat turn's start", (hold) => turnHeldLine(held(hold))],
+    [
+      "a Loop's start line",
+      async (hold) => {
+        const note = { plugin: "@genex", text: held(hold).reason, hold, label: APP };
+        const recorder = ctxRecorder({ handlers: { [HostMethod.HooksFire]: noted(HookEvent.RunPrepare, note) } });
+        const game = { hookEvents: [HookEvent.RunPrepare] };
+        const lines = await momentLines(recorder.ctx as never, game, HookEvent.RunPrepare, { project: NAME });
+        return lines[0] ?? null;
+      },
+    ],
     [
       "a chat turn's end checkpoint",
       async (hold) => {
@@ -390,8 +560,6 @@ describe("Genex's own holds, in the person's words on every surface", () => {
         return endOfTurnCheckpoint(recorder.ctx as never, { project: NAME, threadId: "t1" }, game);
       },
     ],
-    ["a Loop's start", (hold) => openStartHeld(held(hold))],
-    ["a director run's lead turns held", (hold) => directorTurnsHeld(held(hold))],
     ["a chat's wait for the game's apps", (hold) => pendingLine(held(hold))],
     [
       "a note Genex added at a moment",
@@ -415,7 +583,7 @@ describe("Genex's own holds, in the person's words on every surface", () => {
     });
   }
 
-  it("a step's own block keeps its reason: no surface words it as Genex's hold", () => {
+  it("a step's own block keeps its reason: no surface words it as Genex's hold", async () => {
     // A step's block: its reason, and no hold of Genex's.
     const step = { reason: "The crane is being serviced.", hold: undefined };
     assert.match(openStartHeld(step), /a plugin of this project held it back: The crane is being serviced\./);
@@ -423,5 +591,12 @@ describe("Genex's own holds, in the person's words on every surface", () => {
     assert.match(turnHeldLine(step), /The crane is being serviced\./);
     assert.equal(pendingLine(step), "The crane is being serviced.");
     assert.deepEqual(notesText({ notes: [{ plugin: "crane", text: step.reason }] }), [step.reason]);
+    // An older host's block at a moment that answers no call: one line, after the steps' notes.
+    const blocked = { plugin: "crane", tool: "service", reason: step.reason };
+    const answer = { blocked, pending: null, notes: [{ plugin: "crane", text: "Oiled." }], images: [], ran: [] };
+    const recorder = ctxRecorder({ handlers: { [HostMethod.HooksFire]: () => answer } });
+    const game = { hookEvents: [HookEvent.TurnStart] };
+    const lines = await momentLines(recorder.ctx as never, game, HookEvent.TurnStart, { project: NAME });
+    assert.deepEqual(lines, ["Oiled.", step.reason]);
   });
 });

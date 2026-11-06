@@ -31,6 +31,7 @@ import {
   partRows,
   STEPS,
   type Step,
+  shelfHeight,
   StepEdgeKind,
   StepState,
   statusLine,
@@ -276,10 +277,22 @@ describe("a lead's Loop in place is a comb", () => {
     assert.equal(layout.edges.find((edge) => edge.id === `hang:${worker(1)}`)?.kind, StepEdgeKind.Solid);
   });
 
-  it("fourteen workers make it no taller than three lanes, so Fit is set by the save points alone", () => {
-    const { layout } = columns();
+  // Flipped from "no taller than three lanes, so Fit is set by the save points alone": a worker's
+  // assets are cards of their own under it now, so what the workers made adds height; how many there are still does not.
+  it("fourteen workers make it no taller than three lanes and the asset cards under them", () => {
+    const { rows, layout, lead } = columns();
     const lanes = 3;
-    assert.ok(layout.height <= 2 * STEPS.pad + STEPS.nodeH + lanes * (STEPS.nodeH + STEPS.hangGap));
+    const shelves = { above: new Map<number, number>(), below: new Map<number, number>() };
+    for (const step of rows.flatMap((row) => row.steps).filter((each) => each.worker)) {
+      const rect = layout.rects[step.id];
+      assert.ok(rect);
+      const side = rect.y < lead.y ? shelves.above : shelves.below;
+      side.set(rect.x, (side.get(rect.x) ?? 0) + shelfHeight(step));
+    }
+    const tallest = (side: Map<number, number>) => Math.max(0, ...side.values());
+    assert.ok(tallest(shelves.below) > 0, "the fixture's workers delivered assets");
+    const lanesHigh = 2 * STEPS.pad + STEPS.nodeH + lanes * (STEPS.nodeH + STEPS.hangGap);
+    assert.ok(layout.height <= lanesHigh + tallest(shelves.above) + tallest(shelves.below));
   });
 
   it("Previous and Next walk along the spine: each save point after the workers it took", () => {

@@ -740,7 +740,7 @@ describe("a chat asked for research (corner-guy)", () => {
   });
 });
 
-import { gameRepo, loopHost } from "../helpers/loop-host.ts";
+import { gameRepo, type LoopHost, type LoopManifest, type LoopTurn, loopHost } from "../helpers/loop-host.ts";
 import { copyProject, Project } from "../helpers/project-fixtures.ts";
 
 /**
@@ -1456,6 +1456,108 @@ describe("the chat's agent decides when a Loop starts (always-launch)", () => {
 });
 
 /**
+ * A new game's chat asked for Unreal, and its session started a build before the game had a kind: the
+ * build's start wrote the web starter, so the Loop ran on a web page, Unreal's new-game was refused
+ * while that Loop ran, and its finish failed the web check ("the page's frame is blank") on what was
+ * meant to be an Unreal game; only the person's pause got it out. Now the kind comes before the
+ * build: Genex holds the launch, and the same session makes the kind and then starts the build. A
+ * finish checks no page on an engine's game, by what its folder holds as the lead finishes.
+ */
+describe("a build started before its game had a kind (web-scaffold-unreal)", () => {
+  const NAME = "sword-duel";
+  const UNREAL_KIND = { plugin: "unreal", name: "Unreal Editor", tool: "unreal__new-game", makes: ["unreal-project"] };
+  const PENDING = { name: NAME, title: NAME, dir: `/games/${NAME}`, facts: [], holds: "nothing" };
+  const UNREAL = { ...PENDING, facts: [{ id: "unreal-project", path: "unreal", source: "core" }], holds: undefined };
+  const LAUNCH = { name: "start_autopilot", args: { goal: "An Unreal sword duel" } };
+
+  /**
+   * One chat turn on the new game: each leg of the session answers the next of `legs` (its recorded
+   * calls, and whether it made the Unreal project), with the Unreal plugin's kind on offer or not.
+   */
+  async function chatTurn(legs: Array<{ calls?: unknown[]; makesUnreal?: boolean }>, kinds: unknown[] = [UNREAL_KIND]) {
+    const { runDelegatedTurn } = await import("../../src/harness-seed/loop/delegated-turn.ts");
+    let unreal = false;
+    let leg = 0;
+    const recorder = ctxRecorder({
+      unknown: { value: null },
+      handlers: {
+        "events.messages": () => [{ role: "user", content: "make an Unreal sword duel" }],
+        "game.contentStamp": () => ({ all: "a", source: "a" }),
+        "game.list": () => [unreal ? UNREAL : PENDING],
+        "plugins.tools": () => ({ tools: [], guidance: "", revision: 1, kinds }),
+        "engine.describe": () => [],
+        "preview.ready": () => ({ ready: false }),
+        "engine.delegate": () => {
+          const answer = legs[leg] ?? {};
+          leg += 1;
+          if (answer.makesUnreal) unreal = true;
+          return {
+            ok: true,
+            engine: "claude-code",
+            turns: 1,
+            usage: {},
+            sessionId: "s1",
+            summary: "Working on it.",
+            ...(answer.calls ? { studioToolCalls: answer.calls } : {}),
+          };
+        },
+      },
+    });
+    const turn = { threadId: "t1", turnId: "turn-1", engine: "claude-code", engineLabel: "Claude Code", project: NAME };
+    const outcome = await runDelegatedTurn(
+      recorder.ctx as never,
+      { ...turn, text: "make an Unreal sword duel" } as never,
+    );
+    return { outcome, legs: recorder.paramsOf("engine.delegate") };
+  }
+
+  it("web-scaffold-unreal. a launch on a game with no kind while a plugin offers one waits: the same session makes the kind, then its launch starts the build on it", async () => {
+    const turn = await chatTurn([{ calls: [LAUNCH] }, { makesUnreal: true }, { calls: [LAUNCH] }]);
+    assert.equal(turn.legs.length, 3, "the launch, the kind, the launch again");
+    for (const later of turn.legs.slice(1)) assert.equal(later.resume, "s1", "the same session goes on");
+    const kindFirst = String(turn.legs[1]?.prompt);
+    assert.match(kindFirst, /mcp__studio__unreal__new-game/, "the kind on offer, by the tool that makes it");
+    assert.match(kindFirst, /mcp__studio__start_web_game/, "and the web page");
+    assert.match(kindFirst, /mcp__studio__start_autopilot/, "then the build again");
+    assert.equal(turn.outcome.stopped, "launch_run", "the build starts once the game has its kind");
+    assert.equal((turn.outcome.details as { run?: { project?: string } })?.run?.project, NAME);
+  });
+
+  it("web-scaffold-unreal. a launch recorded again with still no kind starts as before, and one with no kind on offer starts at once", async () => {
+    const again = await chatTurn([{ calls: [LAUNCH] }, { calls: [LAUNCH] }]);
+    assert.equal(again.legs.length, 2, "held once, never twice");
+    assert.equal(again.outcome.stopped, "launch_run");
+    const none = await chatTurn([{ calls: [LAUNCH] }], []);
+    assert.equal(none.legs.length, 1, "no kind to pick: no hold");
+    assert.equal(none.outcome.stopped, "launch_run");
+    const asked = await chatTurn([{ calls: [{ name: "ask_user", args: { question: "Web or Unreal?" } }, LAUNCH] }]);
+    assert.equal(asked.legs.length, 1, "a question beside the launch is asked: its answer comes first");
+    assert.notEqual(asked.outcome.stopped, "launch_run", "and nothing starts");
+  });
+
+  it("web-scaffold-unreal. a game ported from the web starter to Unreal in unreal/ (its index.html and src/ left as the reference) is an engine's game: no web page check", async (t) => {
+    const { pageChecked } = await import("../../src/harness-seed/loop/folder-facts.ts");
+    const { core, close } = await coreLite();
+    t.after(close);
+    const game = await core.games.scaffold("asian-sword-duel");
+    await mkdir(path.join(game.dir, "unreal"));
+    await writeFile(path.join(game.dir, "unreal", "SwordDuel.uproject"), "{}\n");
+    const meta = JSON.parse(await readFile(path.join(game.dir, "studio.json"), "utf8")) as object;
+    const portedFrom = [{ id: "web-game", path: ".", source: "core" }];
+    await writeFile(path.join(game.dir, "studio.json"), `${JSON.stringify({ ...meta, portedFrom }, null, 2)}\n`);
+    const listed = (await core.games.list()).find((row) => row.name === game.name);
+    assert.deepEqual(
+      listed?.facts.map((fact) => `${fact.id}@${fact.path}`),
+      ["unreal-project@unreal"],
+      "the web files stay as the reference only",
+    );
+    assert.equal(pageChecked(listed as never), false, "a finish checks no page");
+    assert.equal(pageChecked({ ...listed, facts: [...(listed?.facts ?? []), ...portedFrom] } as never), false);
+    assert.equal(pageChecked({ facts: portedFrom } as never), true, "a web game's page is still checked");
+  });
+});
+
+/**
  * A resumed run read its inbox from the whole log as if it were new: a wrap-up the user asked
  * of the session before the Resume told it to skip every builder and integrate having built
  * nothing (the host only narrowed this by refusing a finish on a run that was not running), and
@@ -2057,6 +2159,8 @@ function liveChat() {
 
 /** The lead's turn that worked on its message: a session, and a turn taken. */
 const worked = { ok: true, sessionId: "lead-1", turns: 1 };
+/** The lead's turn the chat's words cut short: its session stopped at its next step, to be resumed with them. */
+const cutShort = { ok: false, stopReason: "stopped", sessionId: "lead-1", turns: 1 };
 
 /**
  * Live chat during a build, reviewed before it shipped: every chat message is now a steer of the
@@ -2536,7 +2640,12 @@ describe("live chat during a build, reviewed", () => {
     });
     assert.equal(one.calls.length, 2, one.calls.map((c) => c.prompt.slice(0, 60)).join(" | "));
     assert.equal(one.calls[1]!.prompt, "stop building");
-    assert.deepEqual(one.calls[1]!.said?.notices, [LOOP_WORDS.started("a dusk plaza")], "the start it never read");
+    // Flipped (CA4): the start it never read is now followed by Genex's line that the person waits.
+    assert.deepEqual(
+      one.calls[1]!.said?.notices,
+      [LOOP_WORDS.started("a dusk plaza"), LOOP_WORDS.personWaits],
+      "the start it never read, then that they wait for an answer",
+    );
   });
 
   it("LC14. a first turn with no session to resume yet is left alone: the words open the next message", async () => {
@@ -2641,17 +2750,24 @@ describe("live chat during a build, reviewed", () => {
     chat.hooks.native = true;
     const one = chat.loopRun();
     const sky = { data: "iVBORw0KGgo=", mimeType: "image/png", label: "sky" };
-    await one.run(async () => {
+    await one.run(async (turn) => {
+      if (turn === 2) {
+        one.state.finished = true;
+        return worked;
+      }
       void chat.say("hdrp или urp?", { stills: [sky] });
       await settleOn(() => chat.steers.length > 0);
-      one.state.finished = true;
-      return { ...worked, steered: chat.steers.map((steer) => steer.messages[0].id) };
+      return cutShort;
     });
     assert.equal(chat.steers.length, 1);
     const said = chat.steers[0]!.messages.map(({ id: _id, ...message }: Record<string, unknown>) => message);
     // Flipped: a steer marks only Genex's; the person's carries no sender.
     assert.deepEqual(said, [{ text: "hdrp или urp?", images: [sky] }]);
-    assert.deepEqual(chat.requeued(), [], "read mid-turn: heard");
+    // Flipped (castle-artillery): read mid-turn on an engine that takes input as it works; their words
+    // now cut the turn, and the turn after it opens with them and their picture.
+    assert.equal(one.calls[1]?.prompt, "hdrp или urp?");
+    assert.deepEqual(one.calls[1]?.said?.images, [sky]);
+    assert.deepEqual(chat.requeued(), [], "heard in the turn they opened");
   });
 
   it("LM3. a message Genex wrote, sent during a build, reaches the lead as Genex's, never as the person's", async () => {
@@ -2675,16 +2791,21 @@ describe("live chat during a build, reviewed", () => {
     chat.hooks.native = true;
     const one = chat.loopRun();
     const sky = { data: "iVBORw0KGgo=", mimeType: "image/png", label: "sky" };
-    await one.run(async () => {
+    await one.run(async (turn) => {
+      if (turn === 2) {
+        one.state.finished = true;
+        return worked;
+      }
       void chat.say("", { stills: [sky] });
       await settleOn(() => chat.steers.length > 0);
-      one.state.finished = true;
-      return { ...worked, steered: chat.steers.map((steer) => steer.messages[0].id) };
+      return cutShort;
     });
     const said = chat.steers[0]!.messages.map(({ id: _id, ...message }: Record<string, unknown>) => message);
     assert.deepEqual(said, [{ text: "", images: [sky] }]);
     assert.deepEqual(standing(chat), { "": `delivered ${chat.RUN}` });
-    assert.deepEqual(chat.requeued(), [], "read mid-turn: heard");
+    // Flipped (castle-artillery): read mid-turn; the person's picture now cuts the turn, and the next opens with it.
+    assert.deepEqual(one.calls[1]?.said?.images, [sky]);
+    assert.deepEqual(chat.requeued(), [], "heard in the turn it opened");
   });
 
   it("LM2. a worker's end said into the lead's turn is Genex's, and Claude Code takes it as not the person's", async () => {
@@ -2723,6 +2844,126 @@ describe("live chat during a build, reviewed", () => {
 });
 
 /**
+ * CA4's case on one kind of engine: a turn the person's words open carries Genex's line that they
+ * wait for an answer, said last before their words, and a turn Genex's own line opens does not.
+ */
+async function personWaitsCase(native: boolean): Promise<void> {
+  const chat = liveChat();
+  chat.hooks.native = native;
+  const one = chat.loopRun();
+  chat.ticks.push((now) => {
+    if (now >= chat.T0 + 10 * MINUTE_MS) one.state.finished = true;
+  });
+  await one.run(async (turn) => {
+    if (turn === 2) {
+      one.state.finished = true;
+      return worked;
+    }
+    void chat.say("You have all tools you need? You use blender if needed?");
+    await settleOn(() => chat.steers.length > 0);
+    // Not cut, the turn ends as worked and no second turn comes: the count below says so.
+    return chat.steers[0]?.native === false ? cutShort : worked;
+  });
+  assert.equal(one.calls.length, 2, one.calls.map((c) => c.prompt.slice(0, 60)).join(" | "));
+  const [opened, theirs] = one.calls;
+  /** The notices a call carried: the recorded `said` keeps them untyped. */
+  const noticesOf = (call: typeof opened): string[] => {
+    const notices = call?.said?.notices;
+    return Array.isArray(notices) ? notices.filter((notice): notice is string => typeof notice === "string") : [];
+  };
+  assert.equal(theirs?.prompt, "You have all tools you need? You use blender if needed?", "their words, as written");
+  assert.equal(theirs?.said?.from, MessageFrom.Person);
+  assert.ok(
+    noticesOf(theirs).includes(LOOP_WORDS.personWaits),
+    `the lead is told they wait for its answer: ${JSON.stringify(noticesOf(theirs))}`,
+  );
+  assert.equal(noticesOf(theirs).at(-1), LOOP_WORDS.personWaits, "said last, right before their words");
+  assert.ok(!noticesOf(opened).includes(LOOP_WORDS.personWaits), "Genex's own opening line asks for no answer");
+  assert.ok(!opened?.prompt.includes(String(LOOP_WORDS.personWaits)), "nor does its prompt");
+}
+
+/**
+ * A Claude Code lead building an Unreal game was asked "How is it going?", then "Man you hear me? Can
+ * you answer please": both reached its turn mid-turn, beside a tool's result, and it went on writing
+ * code with no word back (its turn had started with Genex's "The Loop started" half an hour before).
+ * The person's words now cut the turn at its next step on an engine that reads input mid-turn too,
+ * and the same session goes on with them as the person's own message. Genex's words go in mid-turn
+ * and cut nothing, and inside a tool call the person's do too, as before.
+ */
+describe("the lead built on past the person's words (castle-artillery)", () => {
+  /** How each steer asked to be delivered: whether it may cut the turn, and whether it may be read mid-turn. */
+  const asked = (chat: ReturnType<typeof liveChat>) => chat.steers.map((steer) => [steer.interrupt, steer.native]);
+  /** The ids a steer carried, as the session reports what it read mid-turn. */
+  const idsOf = (steer: { messages?: SteerMessage[] } | undefined): string[] =>
+    (steer?.messages ?? []).map((m) => m.id);
+
+  it("CA1. the person's words while a Claude Code lead works cut its turn, and the next turn opens with them as they wrote them", async () => {
+    const chat = liveChat();
+    chat.hooks.native = true;
+    const one = chat.loopRun();
+    // The run ends ten minutes on, its worker still at work, whether or not a turn came for the words.
+    chat.ticks.push((now) => {
+      if (now >= chat.T0 + 10 * MINUTE_MS) one.state.finished = true;
+    });
+    await one.run(async (turn) => {
+      if (turn === 2) {
+        one.state.finished = true;
+        return worked;
+      }
+      void chat.say("How is it going?");
+      await settleOn(() => chat.steers.length > 0);
+      // Read mid-turn, the turn goes on and ends without a word to them; cut, it stops at its next step.
+      return chat.steers[0]?.native === false ? cutShort : { ...worked, steered: idsOf(chat.steers[0]) };
+    });
+    assert.deepEqual(asked(chat), [[true, false]], "never read beside a tool's result: the turn is cut for them");
+    assert.equal(one.calls.length, 2, one.calls.map((c) => c.prompt.slice(0, 60)).join(" | "));
+    assert.equal(one.calls[1]?.prompt, "How is it going?", "the same session goes on with their message, as written");
+    assert.equal(one.calls[1]?.said?.from, MessageFrom.Person);
+    assert.deepEqual(chat.requeued(), [], "heard by the lead: never given back");
+  });
+
+  it("CA2. inside a tool call the person's words still reach a Claude Code lead's turn mid-turn, and never cut it there", async () => {
+    const chat = liveChat();
+    chat.hooks.native = true;
+    const one = chat.loopRun();
+    await one.run(async () => {
+      one.n.toolsInFlight = 1;
+      void chat.say("is the door done?");
+      await settleOn(() => chat.steers.length > 0);
+      one.state.finished = true;
+      return { ...worked, steered: idsOf(chat.steers[0]) };
+    });
+    assert.deepEqual(asked(chat), [[false, undefined]], "read at the session's next step, as before");
+    assert.equal(one.calls.length, 1);
+    assert.deepEqual(chat.requeued(), []);
+  });
+
+  it("CA3. a message Genex wrote in the chat during a build goes into a Claude Code lead's turn mid-turn, never cutting it", async () => {
+    const chat = liveChat();
+    chat.hooks.native = true;
+    const one = chat.loopRun();
+    await one.run(async () => {
+      void chat.say("You turned on the Blender plugin.", { origin: "plugin-turned-on", from: "genex" });
+      await settleOn(() => chat.steers.length > 0);
+      one.state.finished = true;
+      return { ...worked, steered: idsOf(chat.steers[0]) };
+    });
+    assert.notEqual(chat.steers[0]?.native, false, "Genex's own words are read mid-turn");
+    assert.equal(one.calls.length, 1, "no turn cut for them");
+  });
+
+  // castle-artillery, after CA1: the person's question opened the lead's next turn as they wrote it,
+  // and the lead looked into it, then saved and went on to the next asset without a word to them.
+  // Claude Code reads input mid-turn; Codex, Cursor, Grok Build, OpenCode and the local sessions take
+  // none, so the person's words always open their next turn: both are told the person waits.
+  it("CA4. on an engine that reads input mid-turn (Claude Code), a turn the person's words open tells the lead they wait for its answer; a turn Genex opens does not", () =>
+    personWaitsCase(true));
+
+  it("CA4b. on an engine that takes no input mid-turn (Codex and the rest), a turn the person's words open tells the lead they wait for its answer; a turn Genex opens does not", () =>
+    personWaitsCase(false));
+});
+
+/**
  * A resting lead was woken with a digest around the person's words: "WOKEN AT 09:01 UTC — the user
  * spoke; a worker ended", "THE USER SAYS (verbatim, oldest first):", "WHAT HAPPENED:", "WHERE THE
  * RUN STANDS:" and "Act on it…", and every worker's or job's end carried what to do next. Now a
@@ -2755,21 +2996,36 @@ describe("a person's words woke the lead inside a digest (digest-wake)", () => {
     assert.equal(one.calls.length, 2, one.calls.map((c) => c.prompt.slice(0, 60)).join(" | "));
     assert.equal(one.calls[1]!.prompt, "hdrp или urp?", "the person's words, as they wrote them");
     assert.equal(one.calls[1]!.said?.from, MessageFrom.Person);
-    assert.deepEqual(one.calls[1]!.said?.notices, [`${SKY_DONE}\n${SEA_DONE}`], "Genex's lines beside them, marked");
+    // Flipped (CA4): Genex's lines beside them are now followed by its line that the person waits.
+    assert.deepEqual(
+      one.calls[1]!.said?.notices,
+      [`${SKY_DONE}\n${SEA_DONE}`, LOOP_WORDS.personWaits],
+      "Genex's lines beside them, marked, then that they wait for an answer",
+    );
     assert.deepEqual(chat.steers, [], "nothing said again into the turn they woke");
   });
 
-  it("DW2. the person's message sent while the lead works reaches that turn as they wrote it, and the turn answers it", async () => {
+  // Flipped (castle-artillery): the message was read by the turn it reached, mid-turn, and that turn
+  // was taken to answer it; a Claude Code lead built on past it. It now cuts that turn, and the same
+  // session's next turn opens with it.
+  it("DW2. the person's message sent while the lead works cuts that turn, and the next opens with it as they wrote it", async () => {
     const chat = liveChat();
     chat.hooks.native = true;
     const one = chat.loopRun();
-    await one.run(async () => {
+    await one.run(async (turn) => {
+      if (turn === 2) {
+        one.state.finished = true;
+        return worked;
+      }
       void chat.say("is the door done?");
       await settleOn(() => chat.steers.length > 0);
-      one.state.finished = true;
-      return { ...worked, steered: chat.steers.flatMap((steer) => steer.messages.map((m: SteerMessage) => m.id)) };
+      return cutShort;
     });
-    assert.equal(one.calls.length, 1, "no wake after it: the turn it reached answered it");
+    assert.deepEqual(
+      one.calls.map((c) => c.prompt),
+      [LOOP_WORDS.started("a dusk plaza"), "is the door done?"],
+      "its own turn, nothing of Genex's around it",
+    );
     const said = chat.steers.flatMap((steer) => steer.messages.map(({ id: _id, ...m }: SteerMessage) => m));
     assert.deepEqual(said, [{ text: "is the door done?" }], "verbatim, the person's");
     const heard = chat.log
@@ -5133,36 +5389,180 @@ describe("the language of Genex's own turns", () => {
   });
 });
 
-describe("a new Loop a plugin held back before its first turn", () => {
-  it("HS1. the Loop's start was held back (Unreal wouldn't reopen) and nobody acted until the person asked the chat to reopen it: the close says startHeld and the chat's agent is told once", async () => {
-    const { heldStartAsk } = await import("../../src/main/core/held-start.ts");
-    const { MessageOrigin } = await import("../../src/shared/protocol.ts");
-    const record = (id: string, event_type: string, payload: Record<string, unknown>) => ({
-      id,
-      thread_id: "t1",
-      turn_id: null,
-      session_id: null,
-      created_at: "2026-10-27T18:58:00.000Z",
-      data: { type: "custom" as const, event_type, payload },
-    });
-    const person = { type: "user_message", threadId: "t1", text: "make it photoreal", engine: "claude-code" };
-    const because = "The Loop didn't start: a plugin of this project held it back: Unreal couldn't be reopened.";
-    const events = [
-      record("1", "coordinator_message_queued", { messageId: "m1", action: person }),
-      record("2", "run_finished", { runId: "r1", stoppedBecause: because, startHeld: true }),
-    ];
-    const ask = heldStartAsk("t1", events, "r1");
-    assert.equal(ask?.options.origin, MessageOrigin.LoopHeld);
-    assert.equal(ask?.options.engine, "claude-code");
-    assert.ok(ask?.text.includes(because));
-    const asked = { ...person, origin: MessageOrigin.LoopHeld };
-    const again = [
-      ...events,
-      record("3", "coordinator_message_queued", { messageId: "m2", action: asked }),
-      record("4", "run_finished", { runId: "r2", stoppedBecause: because, startHeld: true }),
-    ];
-    assert.equal(heldStartAsk("t1", again, "r2"), null, "held again: it waits for the person");
+/** The castle-artillery incident's words: the app's stop, a build that failed, a project never linked. */
+const CASTLE = {
+  stopped: "Unreal isn't running: it crashed or was quit.",
+  unbuilt: "The game's code didn't build: Source/Castle/Cannon.cpp(42): error",
+  unlinked: "This game isn't linked to an Unreal project.",
+} as const;
+/** No castle Loop may hang the suite: each is over in a few seconds when it works. */
+const CASTLE_TIMEOUT = { timeout: 60_000 };
+
+/** A turn that claims the goal is reached, naming the project's own file as proof. */
+const castleFinishes: LoopTurn = async ({ tool }) => {
+  await tool("finish", { review: "yes", summary: "The castle's cannon fires.", proof: "Garden.toyproj" });
+  return undefined;
+};
+
+/** A Loop's host on a copy of the toy project, its plugin hooking the start, health and crash moments. */
+async function castleHost(turns: LoopTurn[], runId: string): Promise<LoopHost> {
+  const manifest = (await import("../fixtures/toy-engine-plugin/plugin.json", { with: { type: "json" } })).default;
+  const dir = await gameRepo(await copyProject(Project.ToyProject, await tmpDir("castle-")));
+  const facts = [{ id: "toy-project", path: "." }];
+  return loopHost({ dir, facts, manifest: manifest as unknown as LoopManifest, turns, run: { runId } });
+}
+
+/** A castle Loop's start step blocks with the step's own words. */
+const startBlocks = (host: LoopHost, why: string) =>
+  host.stepAnswers.set("editor-state", (hook) => (hook.on === "run.prepare" ? { block: why } : {}));
+
+/** A castle Loop that kept save point "One" and was paused by the person's Stop: its journal never says the app was lost. */
+async function pausedCastle(runId: string): Promise<LoopHost> {
+  const stops: LoopTurn = async ({ host, tool }) => {
+    await tool("save_point", { label: "One", summary: "the castle's walls" });
+    host.rec.cancel();
+    return undefined;
+  };
+  const host = await castleHost([stops], runId);
+  const paused = await host.start();
+  assert.equal(paused.executionStatus, "paused");
+  host.rec.ctx.cancelled = false;
+  return host;
+}
+
+/**
+ * A castle Loop whose app stops once its lead's first turn kept save point "One": its health step
+ * blocks, and its crash step (which reopens and compiles it) counts its calls and fails to build.
+ * That turn works on until Genex did something about the stop (told the lead, or reopened the
+ * app); the next turn finishes.
+ */
+async function stoppingCastle() {
+  const state = { broken: false, reopens: 0, seen: false };
+  const stopsTheApp: LoopTurn = async ({ host, tool }) => {
+    await tool("save_point", { label: "One", summary: "the castle's walls" });
+    state.broken = true;
+    const told = () => host.steered.some((line) => line.text.includes("isn't running"));
+    state.seen = await host.until(() => state.reopens > 0 || told());
+    return undefined;
+  };
+  const host = await castleHost([stopsTheApp, castleFinishes], "run-castle-crash");
+  host.stepAnswers.set("editor-state", (hook) =>
+    hook.on === "health" && state.broken ? { block: CASTLE.stopped } : {},
+  );
+  host.stepAnswers.set("reopen-editor", () => {
+    state.reopens += 1;
+    return { block: CASTLE.unbuilt };
   });
+  return { host, state };
+}
+
+describe("a new Loop a plugin held back before its first turn", () => {
+  // Flipped: the start was held back and its close said `startHeld`, so Genex sent the chat's agent
+  // to fix it once (core/held-start.ts, gone): the start is its lead's, which reads why and decides.
+  it(
+    "HS1. the Loop's start was held back (Unreal wouldn't reopen) and nobody acted until the person asked the chat to reopen it: a new Loop whose start a plugin's step couldn't prepare runs, the step's words its lead's first line; the chat's agent is never sent to fix it",
+    CASTLE_TIMEOUT,
+    async () => {
+      const host = await castleHost([castleFinishes], "run-castle-held");
+      startBlocks(host, "Unreal couldn't be reopened (The game's code didn't build).");
+      const report = await host.start();
+      const [first, ...more] = host.prompts();
+      assert.ok(
+        first?.includes("Unreal couldn't be reopened"),
+        `the lead reads the step's words first: ${String(first)}`,
+      );
+      assert.equal(more.length, 0, "one turn, and it finished");
+      assert.equal(report.victory, true, String(report.stoppedBecause));
+      const [close] = host.appended("run_finished");
+      assert.equal(close?.startHeld, undefined, "no close asks the chat's agent to fix the start");
+    },
+  );
+});
+
+describe("a Loop on Unreal decides for itself (castle-artillery)", () => {
+  it(
+    "HL1. the lead ended its turn with C++ that didn't compile; Genex found Unreal closed, reopened and compiled it, failed, and paused the Loop without telling the lead: the lead is woken with the app's reason and decides; Genex reopens, compiles and restores nothing",
+    CASTLE_TIMEOUT,
+    async () => {
+      const { host, state } = await stoppingCastle();
+      const report = await host.start();
+      assert.ok(state.seen, "the stop was seen while the lead worked");
+      assert.equal(state.reopens, 0, "Genex never reopened or compiled the app");
+      const crashes = host.rec.paramsOf("hooks.fire").filter((params) => params.on === "crash");
+      assert.deepEqual(crashes, [], "no crash moment was fired");
+      assert.deepEqual(host.rec.paramsOf("snapshot.restore"), [], "the folder never went back");
+      assert.match(String(host.prompts()[1]), /isn't running/, "the lead was woken with the app's own reason");
+      assert.equal(report.victory, true, String(report.stoppedBecause));
+      assert.notEqual(report.executionStatus, "paused", "only the lead or the person pauses a Loop");
+    },
+  );
+
+  it(
+    "HL2. a Resume ran run.prepare, which opened and compiled first, the step failed, and the lead was never woken: the Resume's lead reads why and goes on",
+    CASTLE_TIMEOUT,
+    async () => {
+      const host = await pausedCastle("run-castle-resume");
+      startBlocks(host, CASTLE.unbuilt);
+      host.turns.push(castleFinishes);
+      const turns = host.leadCalls().length;
+      const pauses = host.appended("autopilot_paused").length;
+      const resumed = await host.start({ resume: true });
+      const [first, ...more] = host.prompts().slice(turns);
+      assert.ok(first?.includes(CASTLE.unbuilt), `the resumed lead's first message says why: ${String(first)}`);
+      assert.equal(more.length, 0, "one turn, and it finished");
+      assert.equal(resumed.victory, true, String(resumed.stoppedBecause));
+      assert.equal(host.appended("autopilot_paused").length, pauses, "never paused again");
+      assert.doesNotMatch(String(resumed.stoppedBecause), /Cannon\.cpp/, "the person never reads the step's error");
+    },
+  );
+
+  // Was a check that no start step is named open-for-run; it is the rule now: whatever its steps
+  // are called, nothing at a run's start opens Unreal, even on a project Genex could open.
+  it("HL3a. a project the lead made by hand mid-run wasn't linked, and open-for-run blocked every Resume: no start step of the Unreal plugin opens its editor, though its project is linked, set up and closed", async () => {
+    const { HookEvent, hookPlan } = await import("../../src/shared/plugin-hooks.ts");
+    const { unrealBackendFixture } = await import("../helpers/unreal-fake-engine.ts");
+    const unreal = (await import("../../src/plugins/unreal/plugin.json", { with: { type: "json" } })).default;
+    const plugins = [{ id: unreal.id, manifest: unreal as unknown as LoopManifest }];
+    const steps = hookPlan(plugins, HookEvent.RunPrepare, { facts: [{ id: "unreal-project", path: "." }] });
+    assert.ok(steps.length > 0, "the plugin has steps at a run's start");
+    // A linked, set-up project on a fake Unreal that is closed: the plugin's new-plugin makes one.
+    const f = await unrealBackendFixture();
+    await f.call("new-plugin", { name: "LevelTools", template: "window" });
+    for (const step of steps) await f.atMoment(step.tool, { on: HookEvent.RunPrepare, runId: "run-castle" });
+    // An opening a step only began has launched Unreal by the time it ends.
+    await f.call("editor-status", { seconds: 5 });
+    assert.deepEqual(f.launches, [], "the lead opens and builds its editor itself");
+  });
+
+  it(
+    "HL3b. a project the lead made by hand mid-run wasn't linked, and open-for-run blocked every Resume: no start step blocks a start, a Resume's or a new Loop's",
+    CASTLE_TIMEOUT,
+    async () => {
+      const host = await pausedCastle("run-castle-unlinked");
+      startBlocks(host, CASTLE.unlinked);
+      for (const resume of [1, 2]) {
+        const turns = host.leadCalls().length;
+        host.turns.push(async ({ host }) => {
+          host.rec.cancel();
+          return undefined;
+        });
+        const resumed = await host.start({ resume: true });
+        host.rec.ctx.cancelled = false;
+        const [first] = host.prompts().slice(turns);
+        assert.ok(
+          first?.includes(CASTLE.unlinked),
+          `Resume ${resume} reached the lead with the step's line: ${String(first)}`,
+        );
+        assert.equal(resumed.executionStatus, "paused", "the person's Stop paused it again");
+      }
+      const fresh = await castleHost([castleFinishes], "run-castle-unlinked-new");
+      startBlocks(fresh, CASTLE.unlinked);
+      const report = await fresh.start();
+      assert.ok(fresh.prompts()[0]?.includes(CASTLE.unlinked), "a new Loop's lead reads the step's line first");
+      assert.equal(report.startHeld, undefined, "the chat's agent is never sent to fix the start");
+      assert.equal(report.victory, true, String(report.stoppedBecause));
+    },
+  );
 });
 
 describe("the lead and its workers are free agents (Loop phase 3)", () => {

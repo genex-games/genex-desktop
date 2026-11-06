@@ -33,8 +33,10 @@ import { isInside } from "../../substrate/paths.ts";
 import { envValue } from "../../substrate/toolchain.ts";
 import { killProcessTree } from "../../substrate/process-tree.ts";
 import { editorCmdPath, type ProgramOutcome, programEnv } from "./automation-tests.ts";
+import { projectModule } from "./cpp-module.ts";
 import { LINUX_TOOLCHAIN_VARIABLE } from "./setup.ts";
 import { canCompileCpp, outputCollector, pathScrubber } from "./ubt.ts";
+import { type VisualStudioStatus, visualStudioLacking } from "./visual-studio.ts";
 import type { XcodeStatus } from "./xcode.ts";
 
 /** The two tools, by their names after `unreal__`. */
@@ -164,6 +166,8 @@ const MESSAGE = {
     `A ${folder} package of this game is running: wait for it (package-status), or stop it, then package again.`,
   NoXcode: (state: string) =>
     `Packaging an Unreal game on a Mac needs Xcode (Xcode: ${state}). Call unreal__show-steps so the user can install it, then package again.`,
+  NeedsBuildTools: (state: string) =>
+    `This game has C++, which packaging it for Windows compiles with Microsoft's Visual Studio Build Tools (Visual Studio: ${state}). Call unreal__install-unreal, which installs them (Windows asks the user for permission), end your reply, and package again once the chat says they are installed. Genex packaged nothing.`,
   Uncarried:
     "Genex won't package here: the game's path holds a quote, % or !, which cmd.exe can't carry, or is on a network share. Move the game to a plain local folder.",
   NotAFolder: (where: string) => `${where} isn't a plain folder in the project, so Genex packaged nothing.`,
@@ -196,6 +200,8 @@ export type GamePackageDeps = {
   engine(): Promise<{ version: string; directory: string } | undefined>;
   project(storage: string, game: string): Promise<string | undefined>;
   xcode(engineDir: string | undefined): Promise<Pick<XcodeStatus, "state">>;
+  /** Where Microsoft's C++ tools stand on Windows, which a game with C++ is packaged with; none off Windows. */
+  visualStudio?(engineDir: string | undefined): Promise<Pick<VisualStudioStatus, "state">>;
   /** Windows: `LINUX_MULTIARCH_ROOT` as Epic's installer set it, or undefined; none means no toolchain. */
   linuxToolchain?(): Promise<string | undefined>;
   /** Whether the game's own Unreal answers now. */
@@ -392,11 +398,23 @@ async function targetOf(
 async function assertRunnable(deps: GamePackageDeps, target: Target): Promise<Record<string, string>> {
   if (deps.platform === WINDOWS) {
     if (!carried([target.engineDir, target.projectFile])) throw new Error(MESSAGE.Uncarried);
-    if (target.system.id !== PackageSystem.Linux) return {};
+    if (target.system.id !== PackageSystem.Linux) return assertBuildTools(deps, target);
     return { [LINUX_TOOLCHAIN_VARIABLE]: await linuxToolchainRoot(deps, target.engineVersion) };
   }
   const xcode = await deps.xcode(target.engineDir);
   if (!canCompileCpp(xcode, deps.platform)) throw new Error(MESSAGE.NoXcode(xcode.state));
+  return {};
+}
+
+/**
+ * Refuses a Windows package of a game with C++ while Microsoft's C++ tools aren't ready: a game in
+ * Blueprints is packaged from the engine's own binaries without them, and a computer that can't tell
+ * is let through. Adds nothing to RunUAT's environment.
+ */
+async function assertBuildTools(deps: GamePackageDeps, target: Target): Promise<Record<string, string>> {
+  if (!(await projectModule(target.projectFile).catch(() => undefined))) return {};
+  const tools = await deps.visualStudio?.(target.engineDir).catch(() => undefined);
+  if (tools && visualStudioLacking(tools)) throw new Error(MESSAGE.NeedsBuildTools(tools.state));
   return {};
 }
 

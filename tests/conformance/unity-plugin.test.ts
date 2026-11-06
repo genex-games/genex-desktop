@@ -102,10 +102,11 @@ describe("the bundled Unity plugin", () => {
     assert.deepEqual(unity.scaffolds, [{ id: "game", label: "Unity game", tool: UnityTool.NewGame }]);
     assert.deepEqual(
       unity.hooks?.map((hook) => [hook.on, hook.tool]),
+      // Flipped: run.prepare opened Unity (open-for-run) and crash ended and reopened it
+      // (reopen-editor): Genex opens and restarts no app by itself; its lead opens Unity.
       [
         [HookEvent.TurnStart, UnityTool.FindProject],
         [HookEvent.RunPrepare, UnityTool.FindProject],
-        [HookEvent.RunPrepare, UnityTool.OpenForRun],
         [HookEvent.RunEnd, UnityTool.AfterRun],
         [HookEvent.CheckpointBefore, UnityTool.SaveAll],
         [HookEvent.CheckpointAfter, UnityTool.SceneShots],
@@ -113,10 +114,10 @@ describe("the bundled Unity plugin", () => {
         [HookEvent.RestoreBefore, UnityTool.EndEditor],
         [HookEvent.RestoreAfter, UnityTool.ReopenEditor],
         [HookEvent.Health, UnityTool.EditorState],
-        [HookEvent.Crash, UnityTool.ReopenEditor],
       ],
-      "a restore saves before it ends the editor, and the project is found before a run opens it",
+      "a restore saves before it ends the editor, and the project is found at a run's start",
     );
+    assert.equal(tool("open-for-run"), undefined, "the run's lead opens Unity with open-editor");
     for (const hook of unity.hooks ?? []) assert.deepEqual(hook.facts, [CoreFact.UnityProject], hook.tool);
     const needing = unity.tools
       .filter((declared) => declared.needs?.includes("editor"))
@@ -126,7 +127,6 @@ describe("the bundled Unity plugin", () => {
       [
         ...ENGINE_PLAY_TOOLS,
         UnityTool.EndEditor,
-        UnityTool.OpenForRun,
         UnityTool.QuitEditor,
         UnityTool.ReopenEditor,
         UnityTool.SaveAll,

@@ -1,18 +1,19 @@
 /**
  * The lead's `finish`: its claim that the project meets the request. Genex's finish moment runs
  * first (a plugin may hold the finish back: the lead hears why and keeps working), and a web game's
- * page gets one health check in the game folder (it loads, throws nothing uncaught, its frame is not
- * blank: a failing one comes back to the lead, and the Loop goes on); then the claim closes the Loop
+ * page (never an engine's game's, by what its folder holds then) gets one health check in the game
+ * folder (it loads, throws nothing uncaught, its frame is not blank: a failing one comes back to the
+ * lead, and the Loop goes on); then the claim closes the Loop
  * in place on the lead's word (Loop phase 4). With `review=yes` the lead asks a
  * reviewer that did none of the work for a second opinion first (`../../finish-check.ts`), reading
  * the game folder, the lead's proof and the observers' captures: a yes closes the Loop as reviewed,
  * and a no comes back with its reasons and decides nothing. A finish the person asked for needs no
  * claim. Everything runs on the Loop's clock, inside the lead's call, which the close's own time
  * (`OPEN_CLOSE_MS`) shares: a close that outlasts the call goes on after the lead is told it was
- * accepted. A claim whose turn ended while the reviewer read, or whose folder went back to a save
- * point meanwhile, gets no answer. No claim is made while Genex brings the project's app back, nor
- * while a rewind or restart the lead asked for waits for the turn's end, nor while a worker writes in
- * the folder in place.
+ * accepted. A claim whose turn ended while the reviewer read gets no answer. No claim is made while a
+ * rewind or restart the lead asked for waits for the turn's end, nor while a worker writes in the
+ * folder in place. What the project's app is doing is the lead's to judge: a claim is never refused
+ * for an app that stopped.
  */
 import type { AnyRecord } from "../../../types/harness.d.ts";
 import type { DelegateResult } from "../../../types/host-api.d.ts";
@@ -32,8 +33,9 @@ import { fireHooks, HookEvent, runScope } from "../../hooks.ts";
 import { HOOK_PROMPTS } from "../../hooks-prompts.ts";
 import { CLIP_REASON, clipMarked, hasText } from "../../text.ts";
 import { SECOND_MS } from "../../time.ts";
-import { servedAsWeb } from "../../folder-facts.ts";
+import { type FactsOfDescriptor, pageChecked } from "../../folder-facts.ts";
 import { checkHealth, healthLine } from "../../health-check.ts";
+import { HostMethod } from "../../host-methods.ts";
 import { yes } from "../args.ts";
 import { closeUnderWay, holdFinish, releaseFinish } from "../close-latch.ts";
 import { CLAIM_WORDS } from "../second-opinion-prompts.ts";
@@ -58,8 +60,6 @@ export const MESSAGE = {
   sessionEnded: (how: string) => `the lead's session ended (${how}) before it claimed the goal`,
   /** The person asked to finish, and the lead did not claim the goal in its last turn. */
   finishAsked: "the person asked the Loop to finish, and the lead did not claim the goal in its last turn",
-  /** A reviewer's yes given across a way back to a save point no longer speaks for the folder. */
-  wentBackUnderReview: "the folder went back to a save point while the reviewer read it",
 } as const;
 
 /** How often a close running past the lead's call is looked at, until the call must answer. */
@@ -95,12 +95,6 @@ const turnLost = (loopRun: LoopRun, claimed: TurnEnds | undefined): boolean => {
   return now !== claimed || now?.over === true;
 };
 
-/** Why a yes no longer speaks for the folder: a recovery took it back to a save point since the claim. */
-function lapsedSince(loopRun: LoopRun): () => Promise<string | null> {
-  const restores = loopRun.open.restores;
-  return async () => (loopRun.open.restores !== restores ? MESSAGE.wentBackUnderReview : null);
-}
-
 /** Ask the reviewer about the claim, on the Loop's clock, from the call's start: a yes leaves the close its time (`OPEN_CLOSE_MS`). */
 async function check(loopRun: LoopRun, claim: FinishClaim, started: number): Promise<FinishOutcome> {
   const { ctx, gameFacts, inbox, projectDir, run, threadId } = loopRun;
@@ -123,7 +117,6 @@ async function check(loopRun: LoopRun, claim: FinishClaim, started: number): Pro
       relayed: log.relayed,
       ended: () => closing(loopRun),
       abandoned: () => turnLost(loopRun, turn),
-      lapsed: lapsedSince(loopRun),
       workMark: async () => workMarkOf(loopRun),
       keep: () => loopRun.saveJournal(),
     },
@@ -166,14 +159,13 @@ async function closeWithinCall(loopRun: LoopRun, end: OpenEnd, started: number):
 }
 
 /**
- * Why a claim is turned back before anything looks, or null: no summary, a recovery or an ask of the
- * lead's still under way, the project's app still closed for the lead to fix, a worker that writes in the folder in place (the reviewer would read a
- * folder that keeps changing). A finish is never refused for time, nor for what the lead says remains.
+ * Why a claim is turned back before anything looks, or null: no summary, an ask of the lead's still
+ * under way, a worker that writes in the folder in place (the reviewer would read a folder that keeps
+ * changing). A finish is never refused for time, for what the lead says remains, nor for the project's
+ * app: whether it answers is the lead's to weigh, and the finish moment's own steps may say why not.
  */
 function claimRefusal(loopRun: LoopRun, args: AnyRecord): string | null {
   if (!hasText(args.summary)) return OPEN_WORDS.needsSummary;
-  if (loopRun.open.recovering) return OPEN_WORDS.recovering;
-  if (loopRun.open.appDown) return OPEN_WORDS.appDown;
   // The folder the reviewer would read is not the one the lead asked for yet.
   if (asksPending(loopRun.open.journal)) return OPEN_WORDS.askFirst;
   const writers = writersInPlace(loopRun.open).map((record) => record.id);
@@ -192,12 +184,24 @@ async function checked(loopRun: LoopRun, claim: FinishClaim, started: number): P
 }
 
 /**
+ * The game as the host lists it as the lead finishes: the Loop may have changed what its folder holds
+ * (an engine's project made in it). The Loop's start's reading when the host can't list it.
+ */
+async function gameAtFinish(loopRun: LoopRun): Promise<FactsOfDescriptor> {
+  const { ctx, gameFacts, open, run } = loopRun;
+  const games = await ctx.call(HostMethod.GameList).catch(() => null);
+  const listed = Array.isArray(games) ? games.find((game) => game.name === run.project) : undefined;
+  return listed ?? { facts: gameFacts, holds: open.holds };
+}
+
+/**
  * A web game's page, checked once in the game folder before its Loop closes: what is wrong with it,
- * or null when it is healthy, the project is no web game, or no check could be made.
+ * or null when it is healthy, the project is no web game or an engine's game as the lead finishes
+ * (`pageChecked`), or no check could be made.
  */
 async function pageProblems(loopRun: LoopRun): Promise<string | null> {
-  const { ctx, gameFacts, open, run } = loopRun;
-  if (!servedAsWeb({ facts: gameFacts, holds: open.holds })) return null;
+  const { ctx, run } = loopRun;
+  if (!pageChecked(await gameAtFinish(loopRun))) return null;
   const target = { project: run.project, runId: run.runId, label: "director/finish" };
   const check = await checkHealth(ctx, target, { sleep: loopRun.open.clock.sleep });
   return check.ok || check.unchecked ? null : OPEN_WORDS.unhealthy(healthLine(check));

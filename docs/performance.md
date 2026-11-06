@@ -133,6 +133,12 @@ counters carry the regression gates.
 - Sidebar ordering and keyboard navigation index conversation activity in one history pass;
   sort comparisons do not scan the history. Bounded event pages materialize only their selected
   references, including the placeholder rows for damaged bodies.
+- A long Loop's log is mostly its builders' mirrored traces and tool traffic, each its own
+  batch. The stage folds only the records it draws (`stageLogOf` in `build-progress.ts`), so a
+  batch of traces leaves the arrays it reads as they were and recomputes nothing; a run summary
+  whose drawn records and facts did not change keeps its revision, and the feed hands it to no
+  view (`shared/run-summary-feed.ts`); the chat settles running tool rows from the ones still
+  open, never every row it made (`openCalls` in `chat-entries.ts`).
 - Concurrent run-summary readers share a matching evidence-version scan; a subsequent read
   still validates the files. Toolbar status batches run one at a time, with at most one queued
   refresh after a burst; teardown cancels timers and ignores late answers.

@@ -31,17 +31,15 @@ export interface OpenEnd {
   notDone?: readonly string[];
   /** A reviewer's check ended it (a yes, or the no's that stop a Loop): never a pause, whatever else holds. */
   checked?: boolean;
-  /** The Loop pauses for a Resume whatever else holds (the project's app couldn't be brought back). */
+  /** The Loop pauses for a Resume whatever else holds (its lead paused it for the person). */
   paused?: boolean;
   /** The Loop closes before it did anything (a paused run it can't pick up): no checkpoint of the folder. */
   keepNothing?: boolean;
   /**
-   * No turn of the lead's ran this time (its start was held back or stopped while the plugins prepared
-   * it): the app counts none of the attempt as the run's worked time.
+   * No turn of the lead's ran this time (the person stopped it while its start was prepared): the app
+   * counts none of the attempt as the run's worked time.
    */
   unworked?: boolean;
-  /** A new Loop a plugin's step held back before its first turn: the report says so, and the app tells the chat's agent. */
-  startHeld?: boolean;
 }
 
 /** A close the log refuses is written again, at most this many times this far apart: one never written leaves the run running. */
@@ -51,28 +49,12 @@ const CLOSE_APPEND_RETRY_MS = SECOND_MS;
 /** The close's words for the run's feed and its last checkpoint. */
 const MESSAGE = {
   loopEnd: "The Loop's end",
-  /** A recovery took the folder back to a save point the lead never heard of before the close. */
-  wentBack: (label: string) =>
-    `The project's app stopped and wouldn't reopen, so Genex took the folder back to save point "${label}" as the Loop closed; the work since it is in the snapshot Genex took before going back.`,
   notKept: (why: string) => `Genex couldn't keep the Loop's last work in a checkpoint: ${why}`,
   notKeptPlain:
     "Genex couldn't keep the Loop's last work in a checkpoint; the files are in the folder as the lead left them.",
   /** A rewind or restart the lead asked for that the Loop's close came before. */
   askDropped: "The rewind or restart the lead asked for last didn't run: the Loop closed first.",
 } as const;
-
-/** The Loop's own journal. */
-
-/**
- * The save point a recovery took the folder back to while the lead has not heard so (no message
- * or turn carried the line that tells it), or null: a close says it, and keeps nothing over it.
- */
-function wentBackUnheard(loopRun: Pick<LoopRun, "open" | "waitSeq">): string | null {
-  const open = loopRun.open;
-  if (!open.wentBack) return null;
-  const seq = open.wentBackSeq;
-  return seq !== null && loopRun.waitSeq >= seq ? null : open.wentBack;
-}
 
 /** The game folder's uncommitted changes (`FOLDER_GIT.status`), trimmed; null when git couldn't say. */
 async function folderStatus(loopRun: LoopRun): Promise<string | null> {
@@ -131,20 +113,15 @@ function leftToFix(loopRun: LoopRun, end: OpenEnd, paused: boolean): AnyRecord {
 }
 
 /** The report's last fields: how the Loop ended, what it kept, and how it reads on the run's card. */
-function finishReport(
-  loopRun: LoopRun,
-  end: OpenEnd,
-  closed: { kept: string | null; paused: boolean; wentBack: string | null },
-): void {
+function finishReport(loopRun: LoopRun, end: OpenEnd, closed: { kept: string | null; paused: boolean }): void {
   const { report, state } = loopRun;
-  const { kept, paused, wentBack } = closed;
+  const { kept, paused } = closed;
   const journal = loopRun.open.journal;
   const opened = openCloseOf(journal, kept !== null, paused);
   // A paused Loop says a dropped ask on Resume (`settledAcrossPause`); a closed one says it here, and forgets it.
   const dropped = !paused && asksPending(journal);
   if (dropped) journal.between = { rewind: null, restart: false };
-  const extra = [wentBack ? MESSAGE.wentBack(wentBack) : "", dropped ? MESSAGE.askDropped : ""].filter(Boolean);
-  const close = extra.length ? { ...opened, summary: [opened.summary, ...extra].join(" ") } : opened;
+  const close = dropped ? { ...opened, summary: `${opened.summary} ${MESSAGE.askDropped}` } : opened;
   const notDone = [...(end.notDone ?? [])];
   Object.assign(report, {
     profile: LoopProfile.Open,
@@ -158,7 +135,6 @@ function finishReport(
     ...(notDone.length ? { notDone } : {}),
     ...leftToFix(loopRun, end, paused),
     ...(state.limit ? { limit: limitRecord(state.limit) } : {}),
-    ...(end.startHeld ? { startHeld: true } : {}),
     finishedAt: new Date().toISOString(),
   });
   report.notes = [...(report.notes ?? []), ...(loopRun.journal.director.notes ?? [])];
@@ -216,15 +192,12 @@ async function closeNow(loopRun: LoopRun, end: OpenEnd): Promise<void> {
   const { ctx, journal, run, state } = loopRun;
   if (state.finished) return;
   await closeRunPool(run.runId);
-  // A way back a recovery already queued finishes first: the close reads, keeps and says the folder after it.
+  // A git write already queued (a worker's merge, the lead's save point) finishes first: the close reads and keeps the folder after it.
   if (loopRun.open) await loopRun.open.gitWrite(async () => {});
-  const wentBack = wentBackUnheard(loopRun);
-  if (wentBack) await loopRun.decision(MESSAGE.wentBack(wentBack), MESSAGE.wentBack(wentBack)).catch(() => {});
-  // Over a folder just taken back there is none of the lead's work left to keep.
-  const kept = end.keepNothing || wentBack ? null : await keepLastWork(loopRun);
+  const kept = end.keepNothing ? null : await keepLastWork(loopRun);
   // A Stop or a lost provider with no reviewer's word pauses the Loop: Resume goes on from the folder.
   const paused = end.paused === true || (end.checked !== true && (ctx.cancelled === true || Boolean(state.limit)));
-  finishReport(loopRun, end, { kept, paused, wentBack });
+  finishReport(loopRun, end, { kept, paused });
   if (end.unworked) workedNothing(loopRun);
   state.finished = true;
   journal.phase = paused ? JournalPhase.Paused : JournalPhase.Done;

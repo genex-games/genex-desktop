@@ -236,6 +236,24 @@ describe("desktop target", () => {
     assert.equal(focused, 1);
   });
 
+  it("reads its state by the app in front alone where the driver can say it, never waiting on the password check", async () => {
+    const fake = fakeDriver();
+    const asked: string[] = [];
+    fake.driver.focus = async () => {
+      asked.push("focus");
+      return { app: EDITOR, secure: false };
+    };
+    fake.driver.frontApp = async () => {
+      asked.push("front app");
+      return EDITOR;
+    };
+    const { target } = await targetOver(fake);
+    assert.deepEqual(await target.state?.(), { app: "TextEdit", tree: { role: "AXWindow", title: "Untitled" } });
+    assert.deepEqual(asked, ["front app"]);
+    fake.driver.frontApp = async () => STUDIO;
+    assert.match(JSON.stringify(await target.state?.()), /never driven/, "a refused app in front is still refused");
+  });
+
   it("refuses a click over a point no window covers, never the app in front in its place", async () => {
     const fake = fakeDriver({ focus: { app: EDITOR, secure: false }, under: null });
     const { target, asked } = await targetOver(fake);
@@ -614,6 +632,37 @@ describe("bringing an app to the front", () => {
       const why = String(await target.front?.("com.apple.Safari"));
       assert.match(why, /did not come to the front/);
       assert.doesNotMatch(why, /Windows/);
+    });
+  });
+
+  describe("on Windows, picking one of an app's windows by its title", () => {
+    const UNREAL: DesktopApp = { name: "Unreal Editor", bundleId: "unrealeditor.exe", pid: 70 };
+    const MAIN = { pid: 70, windowId: 7001, title: "MyGame - Unreal Editor" };
+    const FAB = { pid: 70, windowId: 7002, title: "Fab" };
+
+    /** Unreal Editor's main window in front of its separate Fab window, both of one process. */
+    function editorWindows(raises = true) {
+      const fake = raisingDriver([]);
+      let window = MAIN.windowId;
+      fake.driver.focus = async () => ({ app: UNREAL, secure: false, window });
+      fake.driver.appWindows = async () => [MAIN, FAB];
+      fake.driver.bringToFront = async (id, picked) => {
+        fake.calls.push(`raise ${id} ${picked?.windowId}`);
+        if (raises && picked?.windowId) window = picked.windowId;
+      };
+      const target = desktopTarget({ driver: fake.driver, allowApp: async () => true, frontSettleMs: 0 });
+      return { target, calls: fake.calls };
+    }
+
+    it("raises the Fab window though the editor's main window, of the same process, is in front", async () => {
+      const { target, calls } = editorWindows();
+      assert.equal(await target.front?.("UnrealEditor.exe", "fab"), null);
+      assert.deepEqual(calls, ["raise unrealeditor.exe 7002"]);
+    });
+
+    it("says so when the main window stayed in front: the same process is not the window asked for", async () => {
+      const { target } = editorWindows(false);
+      assert.match(String(await target.front?.("unrealeditor.exe", "Fab")), /did not come to the front/);
     });
   });
 

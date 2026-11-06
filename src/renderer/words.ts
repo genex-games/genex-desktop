@@ -2497,8 +2497,10 @@ export const BUILD_LINE_WORDS = {
   found: t("found"),
 } as const;
 
-/** An asset delivered again, beside the version before it on the run's Assets card. */
+/** An asset delivered again: its card's count of versions, and its compare with the version before it. */
 export const ASSET_VERSION_WORDS = {
+  /** How many times a worker made one asset, on its card under the worker. */
+  count: (count: number) => t("{count, plural, one {# version} other {# versions}}", { count }),
   compare: t("Compare with the earlier version"),
   earlier: t("Earlier"),
   now: t("Now"),
@@ -4002,6 +4004,8 @@ export const PUBLISH_PLATFORM_WORDS = {
   cloudSending: t("Sending to Genex. Keep Genex open"),
   /** A failed build's first error, then how many more the agent is given. */
   cloudMoreErrors: (count: number) => t("{count, plural, one {and # more error} other {and # more errors}}", { count }),
+  /** Under a failed build's errors: Genex answers the same project with the same failure. */
+  cloudChangeFirst: t("The same project fails the same way: change it first, then try again."),
   cloudFix: t("Fix with agent"),
   cloudFixLabel: t("Ask the agent to fix these errors"),
   cloudFixAsk: (players: string, title: string, errors: string) =>

@@ -11,6 +11,8 @@ import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
 import type { EventEnvelope } from "../../src/shared/event-log.ts";
 import type { ConversationRecord, GameProject, ProjectAssets } from "../../src/shared/studio-api.ts";
+import { AssetInventoryFailure } from "../../src/shared/game-assets.ts";
+import { CodedError } from "../../src/shared/errors.ts";
 import type { UiEvent } from "../../src/shared/ui-events.ts";
 import { PermissionMode } from "../../src/shared/permissions.ts";
 import { EngineId } from "../../src/shared/providers.ts";
@@ -598,11 +600,33 @@ describe("the library store", () => {
     library.refreshAssets("pond");
     await tick();
     assert.equal(library.getState().assets.pond?.error, "Error: walk failed");
+    assert.equal(library.getState().assets.pond?.code, null, "a failure main named no why for has none");
     assert.ok(library.getState().assets.pond?.value, "the last inventory stays on screen");
     answer = async () => ({ project: "renamed", assets: [], truncated: true, skipped: [] });
     library.refreshAssets("pond");
     await tick();
     assert.equal(library.getState().assets.pond?.value?.truncated, false);
+  });
+});
+
+describe("the library store's inventory failures", () => {
+  it("keeps why main said a read failed, until a read works", async () => {
+    let busy = true;
+    const fake = fakeStudioApi({
+      projectAssets: async (project) => {
+        if (busy) throw new CodedError(AssetInventoryFailure.FileBusy, "EBUSY: resource busy or locked");
+        return { project, assets: [], truncated: false, skipped: [] };
+      },
+    });
+    const library = createLibraryStore(fake.api, manualTimers());
+    library.watchAssets("pond");
+    await tick();
+    assert.equal(library.getState().assets.pond?.code, AssetInventoryFailure.FileBusy);
+    busy = false;
+    library.refreshAssets("pond");
+    await tick();
+    assert.equal(library.getState().assets.pond?.code, null);
+    assert.equal(library.getState().assets.pond?.error, null);
   });
 });
 

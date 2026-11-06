@@ -13,6 +13,7 @@ import {
 } from "../substrate/engines/codex-cli.ts";
 import { CodexLoginProblem, isCodexLoginActive, type CodexLoginState } from "../shared/codex-login.ts";
 import { errorMessage } from "../shared/errors.ts";
+import { isCodingCliMissing } from "../shared/coding-cli.ts";
 import { redactSecrets } from "../shared/redact.ts";
 import { MINUTE_MS } from "../shared/duration.ts";
 import { t } from "../shared/i18n.ts";
@@ -156,9 +157,7 @@ export class CodexLoginController {
       problem: undefined,
     });
     try {
-      const installation = await this.#deps.resolveCli?.();
-      const binary = installation?.path ?? (await (this.#deps.findBinary ?? findCodexBinary)());
-      attempt.env = installation?.env;
+      const binary = await this.#findCli(attempt);
       if (attempt.cancelled) return this.snapshot();
       if (!binary) {
         this.#fail(MESSAGE.notInstalled(), CodexLoginProblem.MissingCli);
@@ -172,6 +171,21 @@ export class CodexLoginController {
         this.#fail(errorMessage(error), CodexLoginProblem.CouldNotStart);
     }
     return this.snapshot();
+  }
+
+  /**
+   * The Codex to sign in with, null when none is installed. The packaged resolver refuses a
+   * missing CLI by throwing, and that refusal is the same "install Codex" as finding none.
+   */
+  async #findCli(attempt: LoginAttempt): Promise<string | null> {
+    try {
+      const installation = await this.#deps.resolveCli?.();
+      attempt.env = installation?.env;
+      return installation?.path ?? (await (this.#deps.findBinary ?? findCodexBinary)());
+    } catch (error) {
+      if (isCodingCliMissing(error)) return null;
+      throw error;
+    }
   }
 
   /** Run `codex login` and read what it prints until it exits or the sign-in times out. */

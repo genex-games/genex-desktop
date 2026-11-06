@@ -3,9 +3,11 @@
  * compiler every Windows has in .NET Framework 4): it starts one game from Play in an AppContainer
  * of the game's own, in a job that ends with the host, and answers on stdout.
  *
- * - The container: one per game (`Genex.Play.<slug>`), with no capabilities, so no network at all,
- *   loopback included. Its own folder (`%LOCALAPPDATA%\Packages\<name>\AC`) is where Windows sends
- *   the game's AppData, so its saves stay apart from every other game's.
+ * - The container: one per game (`Genex.Play.<slug>`). With no capabilities it reaches no network at
+ *   all; a game Genex gives a way (`internet`) gets `internetClient` alone: outbound to the
+ *   internet, never loopback, the local network Windows knows of or a server of its own. Its own folder
+ *   (`%LOCALAPPDATA%\Packages\<name>\AC`) is where Windows sends the game's AppData, so its saves
+ *   stay apart from every other game's.
  * - What it reads and writes: its app folder (read and run), its saves and scratch folders (change),
  *   each an ACL entry for the container's SID, inherited by what is inside. A write folder also gets
  *   a Low integrity label: an AppContainer runs at Low integrity, and Windows lets it write only
@@ -43,6 +45,7 @@ public static class GenexGameHost
         public string[] reads;
         public string[] writes;
         public int parent;
+        public bool internet;
     }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
@@ -63,6 +66,9 @@ public static class GenexGameHost
 
     [StructLayout(LayoutKind.Sequential)]
     struct SECURITY_CAPABILITIES { public IntPtr AppContainerSid; public IntPtr Capabilities; public uint CapabilityCount; public uint Reserved; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct SID_AND_ATTRIBUTES { public IntPtr Sid; public uint Attributes; }
 
     [StructLayout(LayoutKind.Sequential)]
     struct JOBOBJECT_BASIC_LIMIT_INFORMATION
@@ -143,6 +149,9 @@ public static class GenexGameHost
     const uint CREATE_SUSPENDED = 0x4;
     const uint CREATE_UNICODE_ENVIRONMENT = 0x400;
     const uint PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES = 0x00020009;
+    // The internetClient capability: outbound connections to the internet, and nothing local.
+    const string INTERNET_CLIENT = "S-1-15-3-1";
+    const uint SE_GROUP_ENABLED = 0x4;
     const int JobObjectBasicProcessIdList = 3;
     const int JobObjectBasicUIRestrictions = 4;
     const int JobObjectExtendedLimitInformation = 9;
@@ -258,10 +267,29 @@ public static class GenexGameHost
         if (!SetInformationJobObject(job, JobObjectBasicUIRestrictions, ui, 4)) throw new Exception("job UI: " + Marshal.GetLastWin32Error());
     }
 
+    // The container's capabilities: internetClient when the game has a way to Genex, else none.
+    static void Capabilities(Request request, ref SECURITY_CAPABILITIES capabilities)
+    {
+        if (!request.internet) return;
+        SecurityIdentifier internet = new SecurityIdentifier(INTERNET_CLIENT);
+        byte[] bytes = new byte[internet.BinaryLength];
+        internet.GetBinaryForm(bytes, 0);
+        IntPtr capabilitySid = Marshal.AllocHGlobal(bytes.Length);
+        Marshal.Copy(bytes, 0, capabilitySid, bytes.Length);
+        SID_AND_ATTRIBUTES entry = new SID_AND_ATTRIBUTES();
+        entry.Sid = capabilitySid;
+        entry.Attributes = SE_GROUP_ENABLED;
+        IntPtr entries = Marshal.AllocHGlobal(Marshal.SizeOf(entry));
+        Marshal.StructureToPtr(entry, entries, false);
+        capabilities.Capabilities = entries;
+        capabilities.CapabilityCount = 1;
+    }
+
     static PROCESS_INFORMATION Start(Request request, IntPtr sid)
     {
         SECURITY_CAPABILITIES capabilities = new SECURITY_CAPABILITIES();
         capabilities.AppContainerSid = sid;
+        Capabilities(request, ref capabilities);
         IntPtr caps = Marshal.AllocHGlobal(Marshal.SizeOf(capabilities));
         Marshal.StructureToPtr(capabilities, caps, false);
         IntPtr size = IntPtr.Zero;

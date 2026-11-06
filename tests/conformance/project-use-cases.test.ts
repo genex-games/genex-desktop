@@ -852,7 +852,8 @@ describe("a new Unreal game, plugin on: the editor under its lock, workers in co
   it("the plugin's hooks cover the editor's moments, and the end leaves the editor open", () => {
     const hooks = entriesOf(UNREAL_MANIFEST, "hooks");
     const moments = hooks.map((hook) => hook.on);
-    const wanted = ["run.prepare", "checkpoint.before", "checkpoint.after", "restore.after", "health", "crash"];
+    // Flipped: the plugin hooked crash, which nobody fires now: the lead reopens its app.
+    const wanted = ["run.prepare", "checkpoint.before", "checkpoint.after", "restore.after", "health"];
     assert.deepEqual(
       wanted.filter((moment) => !moments.includes(moment)),
       [],

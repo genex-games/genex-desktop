@@ -70,6 +70,25 @@ export interface ProjectAsset {
   building?: { runId: string; workspace: string };
 }
 
+/**
+ * Why a game's asset inventory could not be read, as the failure crosses IPC and analytics count it
+ * (`assets_inventory_failed`): by the file system's answer, never its words or a path. Wire values:
+ * never rename one.
+ */
+export const AssetInventoryFailure = {
+  /** Another program holds a file open (Windows: Unity or a virus scanner), `EBUSY`. */
+  FileBusy: "inventory_file_busy",
+  /** The system refused the read, `EPERM` or `EACCES` (Windows also answers a held file so). */
+  AccessDenied: "inventory_access_denied",
+  /** A file or folder went away while it was read, `ENOENT` or `ENOTDIR`. */
+  Missing: "inventory_missing",
+  /** The app had too many files open, `EMFILE` or `ENFILE`. */
+  TooManyOpen: "inventory_too_many_open",
+  /** Anything else. */
+  Failed: "inventory_failed",
+} as const;
+export type AssetInventoryFailure = (typeof AssetInventoryFailure)[keyof typeof AssetInventoryFailure];
+
 export interface ProjectAssets {
   project: string;
   assets: ProjectAsset[];

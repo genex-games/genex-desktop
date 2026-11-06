@@ -327,14 +327,16 @@ it was told>" (`[data-told-line]`), never a row folded among the turn's tool cal
   calls `engine.steer {threadId, into: <runId>}` — the director's delegation carries `chatTurn:
   {messageId: <runId>}` on a waking run, which the host honours only for that run's director grant.
   Each message is a steer of its own, as written, with its pictures and its sender (Genex's `from:
-  genex`); Claude Code reads them at its next step. Any other engine, on a turn with a session to
-  resume — the first too, so a Codex lead is never deaf for a whole turn — not the wrap-up and not
-  inside a director tool call (`toolsInFlight`, whose answer a cut would lose), is interrupted and
-  resumed in the same session with those words alone (and, when it was cut before it read its own
-  message, Genex's lines of that message beside them, never crashing the run); otherwise
-  `interrupt: false` leaves the turn alone, as for a fresh lead's first turn, which has no session to
-  resume yet. Words a turn did not read, or that a turn failed before working on, stay unheard on the
-  line and open its next message. A cut is never a failed turn. A message is heard once a turn works
+  genex`). On a turn with a session to resume — the first too, so a Codex lead is never deaf for a
+  whole turn — not the wrap-up and not inside a director tool call (`toolsInFlight`, whose answer a
+  cut would lose), the person's words cut the turn at its next step on every engine (`native:
+  false`: read beside a tool's result, a Claude Code lead built on past them), and it is resumed in
+  the same session with those words alone (and, when it was cut before it read its own message,
+  Genex's lines of that message beside them, never crashing the run); a message Genex wrote in the
+  chat cuts only an engine that reads no input mid-turn. Otherwise Claude Code reads them at its next
+  step, and `interrupt: false` leaves any other engine's turn alone, as for a fresh lead's first turn,
+  which has no session to resume yet. Words a turn did not read, or that a turn failed before
+  working on, stay unheard on the line and open its next message. A cut is never a failed turn. A message is heard once a turn works
   on (or answers) the message that carried it, or reads it mid-turn (`LeadLine.heardThrough`), and is
   recorded heard (`run_steering_delivered {sourceMessageId, how: "lead"}`). That an ask to stop or
   finish is `wrap_up`, quoting their words, is said once: in `wrap_up`'s own description
@@ -476,9 +478,9 @@ and leaves out files over 50 MB and the largest ones past 1 GB of new content; e
 records what it left out, and a restore never touches those paths. Leaving them out is never
 silent: a checkpoint that skips a new set of files for their size appends the host-only
 `checkpoint_skipped` (`by: checkpoint`, each file's size), the confirmation names the changed ones
-(`tooLargeFiles`), and a restore that left some appends it with `by: rewind`. Each report is also
-noted for the thread (`unsaved-files.ts`, memory only): its next delegated session with host tools
-reads them after the cut-off notice (`delegation-prompts.ts` `unsavedFilesNotice`) until one settles. It commits as the studio on
+(`tooLargeFiles`), and a restore that left some appends it with `by: rewind`. Its chat line is the
+person's alone: no delegated session is told of the files, since nothing it can do brings them
+back and it would only repeat the line. It commits as the studio on
 `refs/studio/chat/<thread>/before|after/<message>` with hooks off, without moving HEAD, branches
 or the user's index. Restoring changes the working tree only, and only while HEAD is the
 checkpoint's parent. The pre-rewind folder is saved on `.../rewound/<id>`; a restore that fails
@@ -607,7 +609,11 @@ guidance and connectors go by the game's facts ([scope by facts](plugins.md#scop
 editor's tools only for a game that holds an Unreal project. A game with no kind yet, while an
 engine plugin offers a kind (`plugins.tools`'s `kinds`), is handed `ask_user` beside the kind tools;
 a recorded question is asked, and the next turn resumes the same session, which calls
-`unreal__new-game` for Unreal. A chat turn whose game's served facts changed (a port, or files it
+`unreal__new-game` for Unreal. A build it starts there before the game has its kind
+(`start_autopilot` recorded, no question) waits once (`kindsBeforeLaunch`): the same session is told
+to make the kind first (`kindFirstNotice`), goes on with that kind's tools, and its launch then
+starts the build; started on a game with no kind, a build takes the web starter, which no call of
+its own can change. A chat turn whose game's served facts changed (a port, or files it
 wrote) goes on by itself in the same session, with the tools for the new kind
 (`continueOnNewFacts`, [plugins](plugins.md#scope-by-facts)), told Genex's one line of the
 project's new kind (`factsReadyNotice`); when the new kind's plugins hook

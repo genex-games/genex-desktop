@@ -366,6 +366,8 @@ export default {
   "Another clip": "다른 클립",
   "Another cover": "다른 커버",
   "Another folder…": "다른 폴더…",
+  "Another installer or Visual Studio is running. Close it, then press Do it for me again.":
+    "다른 설치 프로그램이나 Visual Studio가 실행 중이에요. 닫은 다음 '대신 해 주기'를 다시 누르세요.",
   "Another model installation is running.": "다른 모델을 설치하는 중이에요.",
   Answer: "답하기",
   "Answer question": "질문에 답하기",
@@ -522,8 +524,38 @@ export default {
   "Build with the Grok account you already have.": "이미 있는 Grok 계정으로 만들어요.",
   "Changes Harness made to its own instructions. Undo any of them.":
     "Harness가 자기 지침에 한 변경이에요. 어떤 것이든 되돌릴 수 있어요.",
+  "Checking that Microsoft signed the installer…": "설치 프로그램에 Microsoft 서명이 있는지 확인하고 있어요…",
+  "Downloading the Visual Studio Build Tools installer from Microsoft…":
+    "Microsoft에서 Visual Studio Build Tools 설치 프로그램을 내려받고 있어요…",
+  "Install Visual Studio Build Tools": "Visual Studio Build Tools 설치",
+  "Install Visual Studio Build Tools 2022 from Microsoft with Desktop development with C++.":
+    "Microsoft의 Visual Studio Build Tools 2022를 'C++를 사용한 데스크톱 개발'과 함께 설치하세요.",
+  "Installing Visual Studio Build Tools. Choose Yes when Windows asks; Microsoft's installer shows its progress.":
+    "Visual Studio Build Tools를 설치하고 있어요. Windows가 물어보면 '예'를 고르세요. 진행 상황은 Microsoft 설치 프로그램에 표시돼요.",
+  "Microsoft's download led somewhere other than Microsoft, so Genex stopped.":
+    "Microsoft 다운로드가 Microsoft가 아닌 곳으로 연결돼서 Genex가 멈췄어요.",
+  "Microsoft's download link wasn't secure, so Genex didn't download it.":
+    "Microsoft 다운로드 링크가 안전하지 않아서 Genex가 다운로드하지 않았어요.",
+  "Microsoft's download was far bigger than its installer, so Genex stopped.":
+    "Microsoft 다운로드가 설치 프로그램보다 훨씬 커서 Genex가 멈췄어요.",
+  "Microsoft's installer couldn't download the Build Tools. Check your internet connection and try again.":
+    "Microsoft 설치 프로그램이 Build Tools를 내려받지 못했어요. 인터넷 연결을 확인하고 다시 시도하세요.",
+  "Microsoft's installer didn't download. Check your internet connection and try again.":
+    "Microsoft 설치 프로그램을 내려받지 못했어요. 인터넷 연결을 확인하고 다시 시도하세요.",
+  "Microsoft's installer finished, but Unreal still can't build C++ with what it installed. Install Visual Studio Build Tools 2022 with Desktop development with C++ yourself.":
+    "Microsoft 설치 프로그램은 끝났지만, 설치된 것으로는 Unreal이 아직 C++를 빌드할 수 없어요. Visual Studio Build Tools 2022를 'C++를 사용한 데스크톱 개발'과 함께 직접 설치하세요.",
+  "Recommended. Microsoft's free C++ tools: Unreal needs them to package a game or plugin with C++. About 7 GB. Do it for me installs them: choose Yes when Windows asks.":
+    "추천해요. Microsoft의 무료 C++ 도구예요. C++가 들어간 게임이나 플러그인을 Unreal로 패키징하려면 필요해요. 약 7GB예요. '대신 해 주기'로 설치할 수 있어요. Windows가 물어보면 '예'를 고르세요.",
+  "Recommended. Microsoft's free C++ tools: Unreal needs them to package a game or plugin with C++. Install Visual Studio Build Tools with Desktop development with C++.":
+    "추천해요. Microsoft의 무료 C++ 도구예요. C++가 들어간 게임이나 플러그인을 Unreal로 패키징하려면 필요해요. Visual Studio Build Tools를 'C++를 사용한 데스크톱 개발'과 함께 설치하세요.",
   "Self-improvement is off. Harness keeps its own instructions as they are.":
     "자기 개선이 꺼져 있어요. Harness가 자기 지침을 그대로 둬요.",
+  "Unreal can build C++ on this PC.": "이 PC에서 Unreal이 C++를 빌드할 수 있어요.",
+  "Unreal {engine} doesn't build with the C++ tools on this PC. Do it for me updates them: choose Yes when Windows asks.":
+    "Unreal {engine}은 이 PC의 C++ 도구로 빌드할 수 없어요. '대신 해 주기'로 업데이트할 수 있어요. Windows가 물어보면 '예'를 고르세요.",
+  "Update Visual Studio Build Tools": "Visual Studio Build Tools 업데이트",
+  "Visual Studio Build Tools are installed.": "Visual Studio Build Tools를 설치했어요.",
+  "Visual Studio's C++ tools are ready": "Visual Studio C++ 도구가 준비됐어요",
   "When off, Harness doesn’t change its own instructions. Changes it already made stay until you undo them.":
     "끄면 Harness가 자기 지침을 바꾸지 않아요. 이미 한 변경은 되돌리기 전까지 남아요.",
   "Workers pitch in": "작업자가 거들어요",
@@ -5216,6 +5248,7 @@ export default {
   "{count, plural, one {# try} other {# tries}}": "{count, plural, other {시도 #번}}",
   "{count, plural, one {# update from your games} other {# updates from your games}}":
     "{count, plural, other {내 게임 업데이트 #건}}",
+  "{count, plural, one {# version} other {# versions}}": "{count, plural, other {버전 #개}}",
   "{count, plural, one {# worker didn't deliver} other {# workers didn't deliver}}":
     "{count, plural, other {작업자 #명이 전달 못 함}}",
   "{count, plural, one {# worker} other {# workers}} on it": "{count, plural, other {작업자 #명이 작업 중}}",
@@ -5450,6 +5483,8 @@ export default {
   "{name}: {status}": "{name}: {status}",
   "{name}: {status}, {count, plural, other {# tries}}": "{name}: {status}, {count, plural, other {#번 시도}}",
   "{name}’s friends": "{name}의 친구",
+  "{open, plural, =1 {One step left so Unreal can build C++ on this PC.} other {# steps left so Unreal can build C++ on this PC.}}":
+    "{open, plural, =1 {한 단계만 더 하면 이 PC에서 Unreal이 C++를 빌드할 수 있어요.} other {#단계만 더 하면 이 PC에서 Unreal이 C++를 빌드할 수 있어요.}}",
   "{open, plural, =1 {One step left so the agent can add C++ to this game.} =2 {Two steps left so the agent can add C++ to this game.} =3 {Three steps left so the agent can add C++ to this game.} other {# steps left so the agent can add C++ to this game.}}":
     "{open, plural, =1 {한 단계만 더 하면 에이전트가 이 게임에 C++를 추가할 수 있어요.} =2 {두 단계만 더 하면 에이전트가 이 게임에 C++를 추가할 수 있어요.} =3 {세 단계만 더 하면 에이전트가 이 게임에 C++를 추가할 수 있어요.} other {#단계만 더 하면 에이전트가 이 게임에 C++를 추가할 수 있어요.}}",
   "{owners} came with setup scripts written by their authors. Genex skipped them when it made your copy, and the game may need them to build. Run them only if you trust this game.":
@@ -5941,6 +5976,7 @@ export default {
     "이미 결제 중인 Claude나 ChatGPT 요금제를 연결하거나, Genex 크레딧으로 만들어 보세요.",
   "Continue in browser": "브라우저에서 계속하기",
   "Continue on ChatGPT plan": "ChatGPT 요금제로 계속하기",
+  "Continue on {name}": "{name}(으)로 계속하기",
   "Continue on Claude plan": "Claude 요금제로 계속하기",
   "Everything so far is saved.": "지금까지 한 작업은 저장돼 있어요.",
   "Finish on genex.games in your browser.": "브라우저에서 genex.games 단계를 마쳐 주세요.",
@@ -6198,4 +6234,6 @@ export default {
   "Ask the agent to fix these errors": "이 오류를 고쳐 달라고 에이전트에게 요청",
   "Genex couldn’t build the {players} app of “{title}”. Fix these errors in the game’s code so it builds there, and keep the game working as it does on other systems. This computer can’t build for {players}, so check each fix carefully. Then tell me to press Build on Genex again.\n\n{errors}":
     "Genex가 “{title}”의 {players} 앱을 만들지 못했어요. 거기서 만들어지도록 게임 코드의 오류를 고치고, 다른 시스템에서는 지금처럼 동작하게 유지해 주세요. 이 컴퓨터로는 {players}용으로 만들 수 없으니 수정마다 꼼꼼히 확인해 주세요. 끝나면 Build on Genex를 다시 누르라고 알려 주세요.\n\n{errors}",
+  "The same project fails the same way: change it first, then try again.":
+    "같은 프로젝트는 똑같이 실패해요. 먼저 고친 뒤 다시 시도해 주세요.",
 } satisfies LocaleCatalog;

@@ -22,7 +22,7 @@ import {
   vmDriverCommand,
 } from "../../src/substrate/cua-driver-client.ts";
 import { macApps, parseAppInfo, parseHitPid } from "../../src/substrate/mac-apps.ts";
-import type { ProbedApp, WindowsProbe } from "../../src/substrate/windows-window-probe.ts";
+import type { ProbedApp, ProbedWindow, WindowsProbe } from "../../src/substrate/windows-window-probe.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 const PIXEL = Buffer.from(
@@ -408,9 +408,11 @@ describe("cua-driver on Windows", () => {
     front?: () => ProbedApp | null;
     at?: (x: number, y: number) => ProbedApp | null;
     process?: (pid: number) => ProbedApp | null;
-    raise?: (exe: string) => ProbedApp | null;
+    raise?: (exe: string, window?: number | null) => ProbedApp | null;
     running?: (exe: string) => ProbedApp | null;
-    tree?: CuaAnswer;
+    windows?: (exe: string) => ProbedWindow[];
+    tree?: CuaAnswer | (() => CuaAnswer);
+    now?: () => number;
   }) {
     const windows = [
       { pid: 40, window_id: 400, app_name: "Notepad.exe", z_index: 1, bounds: { x: 0, y: 0, width: 756, height: 945 } },
@@ -439,7 +441,11 @@ describe("cua-driver on Windows", () => {
         if (tool === "list_windows")
           return json({ windows: windows.filter((w) => args.pid === undefined || w.pid === args.pid) });
         if (tool === "get_window_state")
-          return probed.tree ?? { content: [{ type: "text", text: '- [1] Window "Notepad"' }] };
+          return (
+            (typeof probed.tree === "function" ? probed.tree() : probed.tree) ?? {
+              content: [{ type: "text", text: '- [1] Window "Notepad"' }],
+            }
+          );
         return json({ ok: true });
       },
       close: async () => {},
@@ -457,15 +463,20 @@ describe("cua-driver on Windows", () => {
       },
       process: async (pid) => probed.process?.(pid) ?? null,
       running: async (exe) => probed.running?.(exe) ?? null,
-      raise: async (exe) => {
-        asked.push(`raise ${exe}`);
-        return probed.raise?.(exe) ?? null;
+      raise: async (exe, window) => {
+        asked.push(window ? `raise ${exe} ${window}` : `raise ${exe}`);
+        return probed.raise?.(exe, window) ?? null;
+      },
+      windows: async (exe) => {
+        asked.push(`windows ${exe}`);
+        return probed.windows?.(exe) ?? [];
       },
       close: async () => {
         closed = true;
       },
     };
-    return { driver: cuaDriver(connection, { windows: probe }), calls, asked, closed: () => closed };
+    const driver = cuaDriver(connection, { windows: probe, ...(probed.now ? { now: probed.now } : {}) });
+    return { driver, calls, asked, closed: () => closed };
   }
   const NOTEPAD: ProbedApp = { pid: 40, exe: "Notepad.exe", name: "Notepad", secure: false, window: 4001 };
   const PASSWORDS: ProbedApp = { pid: 41, exe: "1Password.exe", name: "1Password", secure: null, window: 4101 };
@@ -479,6 +490,7 @@ describe("cua-driver on Windows", () => {
     assert.deepEqual(await driver.focus(), {
       app: { name: "Notepad", bundleId: "notepad.exe", pid: 40 },
       secure: false,
+      window: 4001,
     });
     assert.deepEqual(await driver.appAt?.(100, 100), { name: "Notepad", bundleId: "notepad.exe", pid: 40 });
     assert.deepEqual(await driver.appAt?.(1000, 100), { name: "1Password", bundleId: "1password.exe", pid: 41 });
@@ -498,6 +510,7 @@ describe("cua-driver on Windows", () => {
     assert.deepEqual(await driver.focus(), {
       app: { name: "Credential Dialog Xaml Host", bundleId: "credentialuibroker.exe", pid: 52 },
       secure: true,
+      window: 5201,
     });
   });
 
@@ -567,6 +580,121 @@ describe("cua-driver on Windows", () => {
     await fake.driver.bringToFront("robloxstudiobeta.exe");
     assert.deepEqual(fake.asked, ["raise robloxstudiobeta.exe"]);
     assert.deepEqual(fake.calls, [], "the driver's own list and bring_to_front are not used");
+  });
+
+  const UNREAL: ProbedApp = { pid: 70, exe: "UnrealEditor.exe", name: "Unreal Editor", secure: null, window: 7001 };
+  const EDITOR_WINDOWS: ProbedWindow[] = [
+    { pid: 70, window: 7002, title: "Fab" },
+    { pid: 70, window: 7001, title: "MyGame - Unreal Editor" },
+  ];
+
+  it("lists an app's windows through Windows itself, front first with their titles, and raises the one asked for", async () => {
+    const fake = windowsDriver({
+      windows: (exe) => (exe === "unrealeditor.exe" ? EDITOR_WINDOWS : []),
+      raise: (exe, window) => (exe === "unrealeditor.exe" ? { ...UNREAL, window: window ?? 7001 } : null),
+    });
+    assert.ok(fake.driver.appWindows, "a PC's driver can pick one of an app's windows by its title");
+    const windows = await fake.driver.appWindows("unrealeditor.exe");
+    assert.deepEqual(windows, [
+      { pid: 70, windowId: 7002, title: "Fab" },
+      { pid: 70, windowId: 7001, title: "MyGame - Unreal Editor" },
+    ]);
+    await fake.driver.bringToFront?.("unrealeditor.exe", windows[1]);
+    assert.deepEqual(fake.asked, ["windows unrealeditor.exe", "raise unrealeditor.exe 7001"], "by its handle");
+    assert.deepEqual(fake.calls, [], "neither cua's slow window list nor its bring_to_front");
+  });
+
+  it("says which window holds the keyboard, so another window of the same app is never taken for the one raised", async () => {
+    const fab = { ...UNREAL, secure: false, window: 7002 };
+    const { driver } = windowsDriver({ front: () => fab });
+    assert.deepEqual(await driver.focus(), {
+      app: { name: "Unreal Editor", bundleId: "unrealeditor.exe", pid: 70 },
+      secure: false,
+      window: 7002,
+    });
+    assert.equal((await windowsDriver({}).driver.focus()).window, null, "no window where Windows reads no app");
+  });
+
+  describe("a window whose UI Automation does not answer (Unreal's)", () => {
+    /** cua's answer when its UI Automation walk timed out before reaching a single element. */
+    const SILENT: CuaAnswer = {
+      content: [
+        {
+          type: "text",
+          text: "window_id=7001 pid=70 elements=0\n\n(The UIA provider for hwnd 0x1b59, class 'UnrealWindow', did not answer. Act by pixel off the screenshot.)",
+        },
+      ],
+      structuredContent: {
+        window_id: 7001,
+        pid: 70,
+        element_count: 0,
+        truncated: true,
+        truncation_reason: "timeout",
+        nodes_visited: 0,
+        nodes_pending: 0,
+      },
+    };
+    const treeReads = (calls: Array<{ tool: string; args: Record<string, unknown> }>) =>
+      calls.filter((call) => call.tool === "get_window_state").map((call) => call.args.window_id);
+
+    it("is asked for its tree once, and every later state read goes by pixel without waiting on it", async () => {
+      let clock = 1_000_000;
+      const fake = windowsDriver({ front: () => UNREAL, tree: SILENT, now: () => clock });
+      const said = String(await fake.driver.accessibility());
+      assert.match(said, /did not answer/, "the agent reads why it has only the picture");
+      for (let action = 0; action < 5; action++) {
+        clock += 1_000;
+        assert.equal(String(await fake.driver.accessibility()), said);
+      }
+      assert.deepEqual(treeReads(fake.calls), [7001], "one wait on the silent window, not one per action");
+      clock += 60_000;
+      await fake.driver.accessibility();
+      assert.deepEqual(
+        treeReads(fake.calls),
+        [7001, 7001],
+        "asked again once a while has passed: it may only have been busy",
+      );
+    });
+
+    it("is still read afresh for every password check, so a field that shows up later is caught", async () => {
+      let tree = SILENT;
+      const fake = windowsDriver({ front: () => UNREAL, tree: () => tree, now: () => 0 });
+      assert.equal((await fake.driver.focus()).secure, false, "no password field shows in a tree that never came");
+      await fake.driver.accessibility();
+      tree = { content: [{ type: "text", text: '- [1] Window "Sign in"\n  - [3] Edit "Password"' }] };
+      assert.equal((await fake.driver.focus()).secure, true, "the window answered, with a password field");
+      assert.deepEqual(treeReads(fake.calls), [7001, 7001], "the state read alone was answered from memory");
+    });
+
+    it("says the app in front without its tree, for reads that need only the app", async () => {
+      const fake = windowsDriver({ front: () => UNREAL, tree: SILENT, now: () => 0 });
+      assert.ok(fake.driver.frontApp, "the driver names the app in front on its own");
+      assert.deepEqual(await fake.driver.frontApp(), { name: "Unreal Editor", bundleId: "unrealeditor.exe", pid: 70 });
+      assert.deepEqual(treeReads(fake.calls), [], "no tree read, no wait on a silent window");
+    });
+
+    it("is told apart from a window whose tree answers, which is read every time", async () => {
+      const partial: CuaAnswer = {
+        content: [{ type: "text", text: '- [1] Window "Roblox Studio"' }],
+        structuredContent: { truncated: true, truncation_reason: "timeout", nodes_visited: 40, element_count: 12 },
+      };
+      for (const tree of [partial, { content: [{ type: "text", text: '- [1] Window "Notepad"' }] }]) {
+        const fake = windowsDriver({ front: () => ({ ...NOTEPAD, secure: null }), tree, now: () => 0 });
+        await fake.driver.accessibility();
+        await fake.driver.accessibility();
+        assert.deepEqual(treeReads(fake.calls), [4001, 4001], JSON.stringify(tree.structuredContent ?? null));
+      }
+    });
+
+    it("keeps each window apart: the app's other window is asked on its own", async () => {
+      let front: ProbedApp = UNREAL;
+      const fake = windowsDriver({ front: () => front, tree: SILENT, now: () => 0 });
+      await fake.driver.accessibility();
+      front = { ...UNREAL, window: 7002 };
+      await fake.driver.accessibility();
+      await fake.driver.accessibility();
+      assert.deepEqual(treeReads(fake.calls), [7001, 7002]);
+    });
   });
 
   it("says which named app runs, by its executable: a name no process has is no app", async () => {
@@ -731,6 +859,7 @@ describe("cua-driver over a real MCP connection (a stand-in driver process)", ()
       at: async () => null,
       process: async () => null,
       raise: async () => null,
+      windows: async () => [],
       running: async () => null,
       close: async () => {
         probed = "closed";
@@ -761,6 +890,7 @@ describe("cua-driver over a real MCP connection (a stand-in driver process)", ()
       at: async () => null,
       process: async () => null,
       raise: async () => null,
+      windows: async () => [],
       running: async () => null,
       close: async () => {
         closed = true;

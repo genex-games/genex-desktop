@@ -243,10 +243,13 @@ function CloudErrors({
   };
   return (
     <div className="genex-publish-cloud-errors" data-publish-cloud-errors>
-      <p className="genex-publish-platform-failure">
-        {fix.errors[0]}
-        {fix.errors.length > 1 && ` ${WORDS.cloudMoreErrors(fix.errors.length - 1)}`}
-      </p>
+      <div className="genex-publish-cloud-words">
+        <p className="genex-publish-platform-failure">
+          {fix.errors[0]}
+          {fix.errors.length > 1 && ` ${WORDS.cloudMoreErrors(fix.errors.length - 1)}`}
+        </p>
+        <p className="genex-publish-reach">{WORDS.cloudChangeFirst}</p>
+      </div>
       {askedFix === key ? (
         <span className="genex-publish-platform-note" role="status">
           {WORDS.asked}

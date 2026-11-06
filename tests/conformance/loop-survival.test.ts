@@ -97,13 +97,14 @@ const momentTrail = (host: Pick<LoopHost, "trail">) =>
  * session leads (no `contractor_session` of a session of its own); its journal is a director journal
  * with the open Loop's record (`director.open`); its save points draw on the lead's row
  * (`director_worker`), with no milestone columns; and `worker_*` records appear only when a worker
- * starts. The editor calls at each moment, with the editor's polls left out: Unreal opened for the
- * run and its log marked; a turn; before and after its save point; a turn that ends with unsaved work
- * is autosaved the same way, then its rewind; a turn and its save point; the close's save point.
+ * starts. The editor calls at each moment, with the editor's polls left out: the log marked at the
+ * run's start; a turn; before and after its save point; a turn that ends with unsaved work is
+ * autosaved the same way, then its rewind; a turn and its save point; the close's save point.
+ * Flipped: Unreal was opened for the run (`open-for-run`) before its log was marked; the lead opens
+ * it itself.
  */
 const ONE_LOOP_TRAIL = [
   "snapshot.create",
-  "tool:unreal__open-for-run",
   "tool:unreal__log-errors",
   "engine.delegate",
   "tool:unreal__save-all",
@@ -135,8 +136,9 @@ const ONE_LOOP_TRAIL = [
 // Flipped (phase 5): no fresh-eyes reminder, so no last reader is kept.
 // Flipped: the open Loop's journal carried lines for the lead's next message (`carried`); they are
 // lines of the run's log, which the director's own record keeps.
-// `appLost`: whether the app was the lead's to bring back when the journal was kept (a Resume goes on from it).
-const OPEN_JOURNAL_KEYS = ["appLost", "between", "crashes", "savePoints", "version"];
+// Flipped: it kept `appLost`, whether the app was the lead's to bring back when the journal was kept
+// (a Resume went on from it); Genex hands the lead no app now, and holds no Resume back.
+const OPEN_JOURNAL_KEYS = ["between", "crashes", "savePoints", "version"];
 
 describe("a canonical Unreal Loop on the one Loop, as Genex sees it", () => {
   let host: LoopHost;

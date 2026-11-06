@@ -4,6 +4,7 @@ import { CodedError } from "../../shared/errors.ts";
 import { validateGameCover, WorkspaceRefusal } from "../../shared/game-library.ts";
 import { t } from "../../shared/i18n.ts";
 import { UiEvent } from "../../shared/ui-events.ts";
+import { inventoryFailure } from "../game-assets.ts";
 import type { RunSummaryReader } from "../run-summary-reader.ts";
 import type { StudioCore } from "../studio-core.ts";
 import type { IpcHandle } from "./registrar.ts";
@@ -78,7 +79,9 @@ export function registerGamesIpc(handle: IpcHandle, { core, runSummaryReader, pu
   handle("studio:game.asset.rigs", async (payload) => core.projectModelRigs(payload));
   handle("studio:game.assets", async (payload) => {
     if (!payload || typeof payload.project !== "string") throw new Error(MESSAGE.projectRequired);
-    const events = await runSummaryReader.forProject(payload.project, core.mainThread);
+    const events = await runSummaryReader.forProject(payload.project, core.mainThread).catch((error: unknown) => {
+      throw inventoryFailure(error);
+    });
     return core.projectAssets(payload.project, events);
   });
   handle("studio:game.asset.still", async (payload) => core.readProjectAsset(payload));

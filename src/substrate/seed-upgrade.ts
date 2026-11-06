@@ -132,6 +132,11 @@ export const SEED_MOVES: readonly SeedMove[] = [
   { from: "loop/main.ts", to: "loop/run-dispatch.ts", names: ["loopRunRefusal"] },
   { from: "loop/turn-loop.ts", to: "loop/chat-session.ts", names: ["nameFromAsk"] },
   { from: "loop/turn-loop.ts", to: "loop/tool-loop.ts", names: ["resolveContextWindow"] },
+  {
+    from: "loop/director/open/health.ts",
+    to: "loop/director/open/app-look.ts",
+    names: ["abortLead", "healthWatch", "settleRecovery"],
+  },
 ];
 
 interface SeedManifest {

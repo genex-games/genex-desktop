@@ -47,6 +47,7 @@ import {
   rememberAnswers,
   SetupStorage,
 } from "./editor-port.ts";
+import { systemVisualStudioCheck, type VisualStudioCheck } from "./visual-studio.ts";
 import { systemXcodeCheck, type XcodeCheck } from "./xcode.ts";
 
 /** The oldest engine Genex works with: Epic's MCP server ships from 5.8. */
@@ -207,6 +208,11 @@ export type SetupEnv = {
   /** Where Xcode stands on a Mac, judged by the range of the engine installed in the folder it is given. */
   xcode: XcodeCheck;
   /**
+   * Where Microsoft's C++ tools stand on Windows, judged by the engine installed in the folder it is
+   * given; without it, nothing is judged (not Windows).
+   */
+  visualStudio?: VisualStudioCheck;
+  /**
    * Windows: the folder Epic's Linux cross-compile installer set in `LINUX_MULTIARCH_ROOT`, read from
    * the registry (an install after Genex started is seen), else this process's own; undefined without one.
    */
@@ -364,6 +370,9 @@ export function systemSetupEnv(
       return project === undefined ? editorAnswers(endpoint) : editorServes(endpoint, project);
     }, now),
     xcode: systemXcodeCheck(platform, env),
+    visualStudio: systemVisualStudioCheck(platform, {
+      programFilesX86: windowsFolder(env, "ProgramFiles(x86)", "Program Files (x86)"),
+    }),
     linuxToolchain: async () => {
       if (platform !== "win32") return undefined;
       const registry = await readRegistryVariable(LINUX_TOOLCHAIN_VARIABLE, env).catch(() => null);

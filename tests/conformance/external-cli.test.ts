@@ -1,3 +1,4 @@
+import { isCodingCliMissing } from "../../src/shared/coding-cli.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, writeFile, chmod, symlink, rm, readFile } from "node:fs/promises";
@@ -162,6 +163,8 @@ test("host-owned overrides persist, clear, and validate provider IDs", async () 
   assert.deepEqual(JSON.parse(await readFile(settings, "utf8")), { codex: "/invalid/manual" });
   // With no automatic installation either, a broken saved path reads as not installed.
   assert.equal((await resolveCodingCli("codex")).status.state, "missing");
+  // A caller that needs the CLI is refused with where it stands, so a sign-in offers the install.
+  await assert.rejects(() => requireCodingCli("codex"), isCodingCliMissing);
   await setCodingCliOverride("codex", null);
   assert.deepEqual(JSON.parse(await readFile(settings, "utf8")), {});
   await assert.rejects(() => setCodingCliOverride("arbitrary" as never, "/bin/sh"), /Unknown/);

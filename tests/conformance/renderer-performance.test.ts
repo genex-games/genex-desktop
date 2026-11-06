@@ -191,6 +191,72 @@ it("Live's pictures project each finished or paused earlier run once, however ma
   );
 });
 
+/**
+ * A long Loop's chat log: per round, the lead's own tools in a turn of its own, then a builder whose
+ * mirrored calls each settle, and the builder's result.
+ */
+function longLoopChat(rounds: number): EventEnvelope[] {
+  const log: EventEnvelope[] = [];
+  const push = (turn: string, data: EventEnvelope["data"]) =>
+    log.push({ ...event(String(log.length).padStart(8, "0")), turn_id: turn, data });
+  const trace = (turn: string, delegationId: string, payload: Record<string, unknown>) =>
+    push(turn, {
+      type: EventKind.Custom,
+      event_type: "delegated.claude-code",
+      payload: { runId: "r", delegationId, ...payload },
+    });
+  for (let round = 0; round < rounds; round++) {
+    const turn = `turn-${round}`;
+    const delegationId = `builder-${round}`;
+    push(turn, { type: EventKind.TurnStarted });
+    for (let call = 0; call < 10; call++) {
+      const id = `${turn}-call-${call}`;
+      push(turn, { type: EventKind.ToolRequested, tool_call_id: id, request: { name: "Read", arguments: {} } });
+      push(turn, { type: EventKind.ToolResult, tool_call_id: id, result: { ok: true, content: "ok" } });
+    }
+    for (let call = 0; call < 10; call++) {
+      const id = `use-${call}`;
+      trace(turn, delegationId, {
+        kind: "assistant",
+        data: { parts: [{ type: "tool_use", id, name: "Edit", input: {} }] },
+      });
+      trace(turn, delegationId, {
+        kind: "user",
+        data: { parts: [{ type: "tool_result", tool_use_id: id, content: "ok" }] },
+      });
+    }
+    trace(turn, delegationId, { kind: "result", data: {} });
+    push(turn, { type: EventKind.TurnEnded, status: "ok" });
+  }
+  return log;
+}
+
+it("a long Loop's chat settles its running tools without reading every row it ever made", async () => {
+  const { toEntries } = await import("../../src/renderer/chat-entries.ts");
+  // Every pass over the chat's tool rows walks a Map; count the steps of all of them.
+  const iterator = Object.getPrototypeOf(new Map().entries()) as { next: (...args: unknown[]) => unknown };
+  const next = iterator.next;
+  let steps = 0;
+  iterator.next = function (this: unknown, ...args: unknown[]) {
+    steps++;
+    return next.apply(this, args);
+  };
+  const stepsPerEvent = (rounds: number): number => {
+    const log = longLoopChat(rounds);
+    steps = 0;
+    toEntries(log);
+    return steps / log.length;
+  };
+  try {
+    const short = stepsPerEvent(20);
+    const long = stepsPerEvent(200);
+    assert.ok(long <= ceilings.chatRowStepsPerEvent, `row steps per event: ${long}`);
+    assert.ok(long <= short * 1.5, `a ten times longer chat takes ${long / short} times the steps per event`);
+  } finally {
+    iterator.next = next;
+  }
+});
+
 it("coordinator status is transient and never triggers event polling", async () => {
   const { uiEventReads } = await import("../../src/renderer/state/ui-event-routes.ts");
   const { UiEvent } = await import("../../src/shared/ui-events.ts");

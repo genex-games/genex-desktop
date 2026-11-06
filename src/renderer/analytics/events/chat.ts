@@ -20,6 +20,7 @@ import type {
 import type { MentionKind, MentionOrigin } from "../../../shared/prompt-mention.ts";
 import type { ConsentChoice } from "../../chat/consent-card.ts";
 import type { SendPlacement } from "../../chat/pending-sends.ts";
+import type { GenexNeed } from "../../genex-build.ts";
 import type { CommandState } from "../../state/command-runs.ts";
 import { type ChatMemory, chatMemory } from "../chat-memory.ts";
 import type { SendEvent } from "../chat-observe.ts";
@@ -46,6 +47,7 @@ import type {
   SendFailStage,
   SendRoute,
   SendSource,
+  GenexNoticeStep,
   SignInAction,
   SignInFrom,
   StopEndedBy,
@@ -92,6 +94,8 @@ export const ChatEvent = {
   ModelPickReplaced: "model_pick_replaced",
   ChatSignInNeeded: "chat_sign_in_needed",
   SignInCardAction: "sign_in_card_action",
+  GenexNoticeShown: "genex_notice_shown",
+  GenexNoticeAction: "genex_notice_action",
   EngineFellBack: "engine_fell_back",
   ChatContextCompacted: "chat_context_compacted",
   ChatOpened: "chat_opened",
@@ -180,6 +184,8 @@ export type ChatEventProperties = {
     reason: SendBlock;
     room: ComposerRoom;
     engine: EngineRef;
+    /** What a Genex model still needs (a sign-in, a plan, credits…); null for any other model. */
+    genex_need: GenexNeed | null;
     /** Presses on a dead Send since the last message that went. */
     attempts_in_row: number;
   };
@@ -291,6 +297,10 @@ export type ChatEventProperties = {
   [ChatEvent.ModelPickReplaced]: { engine: EngineRef; reason: ModelReplaced };
   [ChatEvent.ChatSignInNeeded]: { engine: EngineRef; from: SignInFrom };
   [ChatEvent.SignInCardAction]: { action: SignInAction; engine: EngineRef };
+  /** The blue Genex notice came up: what Genex needs, the engine it offered instead (null: none) and how many plans are connected. */
+  [ChatEvent.GenexNoticeShown]: { need: GenexNeed; offered: EngineRef | null; plans_ready: number };
+  /** The person pressed one of the notice's ways; `engine` is the model's engine for `use`. */
+  [ChatEvent.GenexNoticeAction]: { need: GenexNeed; step: GenexNoticeStep; engine: EngineRef | null };
   [ChatEvent.EngineFellBack]: { from: EngineRef; to: EngineRef; kind?: EngineFailureKind };
   [ChatEvent.ChatContextCompacted]: {
     trigger: CompactTrigger;

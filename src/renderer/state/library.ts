@@ -12,6 +12,8 @@ import { sameSnapshot, shareRecords } from "./snapshot-equality.ts";
  */
 import { createStore, type StoreApi } from "zustand/vanilla";
 import { SECOND_MS } from "../../shared/duration.ts";
+import { errorCodeIn } from "../../shared/errors.ts";
+import { AssetInventoryFailure } from "../../shared/game-assets.ts";
 import type { GameUpdate } from "../../shared/game-library.ts";
 import type { Bootstrap, GameProject, ProjectAssets, StudioApi } from "../../shared/studio-api.ts";
 import { createRefresher, type Refresher } from "./refresher.ts";
@@ -23,6 +25,8 @@ export interface AssetInventory {
   value: ProjectAssets | null;
   /** The last read failed; `value` is what the read before it found. */
   error: string | null;
+  /** Why it failed, when main named it; null after a read that worked. */
+  code: AssetInventoryFailure | null;
 }
 
 export interface LibraryState {
@@ -111,14 +115,20 @@ export function rootLabelChanged(state: LibraryState, rootLabel: string): Librar
 export function assetsLoaded(state: LibraryState, project: string, value: ProjectAssets): LibraryState {
   const previous = state.assets[project];
   if (previous?.error === null && sameSnapshot(previous.value, value)) return state;
-  return { ...state, assets: { ...state.assets, [project]: { value, error: null } } };
+  return { ...state, assets: { ...state.assets, [project]: { value, error: null, code: null } } };
 }
 
-export function assetsFailed(state: LibraryState, project: string, error: string): LibraryState {
-  return { ...state, assets: { ...state.assets, [project]: { value: state.assets[project]?.value ?? null, error } } };
+export function assetsFailed(
+  state: LibraryState,
+  project: string,
+  error: string,
+  code: AssetInventoryFailure | null = null,
+): LibraryState {
+  const value = state.assets[project]?.value ?? null;
+  return { ...state, assets: { ...state.assets, [project]: { value, error, code } } };
 }
 
-const NO_ASSETS: AssetInventory = { value: null, error: null };
+const NO_ASSETS: AssetInventory = { value: null, error: null, code: null };
 export const assetsOf = (state: LibraryState, project: string | null | undefined): AssetInventory =>
   (project ? state.assets[project] : undefined) ?? NO_ASSETS;
 
@@ -164,7 +174,13 @@ export function createLibraryStore(
       (value) => {
         if (value.project === project) store.setState((state) => assetsLoaded(state, project, value), true);
       },
-      { onError: (error) => store.setState((state) => assetsFailed(state, project, String(error)), true) },
+      {
+        onError: (error) =>
+          store.setState(
+            (state) => assetsFailed(state, project, String(error), errorCodeIn(AssetInventoryFailure, error)),
+            true,
+          ),
+      },
     );
 
   return Object.assign(store, {

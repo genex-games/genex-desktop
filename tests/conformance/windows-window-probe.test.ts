@@ -15,6 +15,7 @@ import { fileURLToPath } from "node:url";
 import { driverEnv } from "../../src/substrate/cua-driver-client.ts";
 import {
   parseProbeAnswer,
+  parseProbeWindows,
   probeCommand,
   WINDOW_PROBE_SCRIPT,
   windowsPowerShell,
@@ -84,6 +85,38 @@ describe("the Windows window probe's answers", () => {
     for (const line of hostile) assert.throws(() => parseProbeAnswer(line), Error, line);
   });
 
+  it("reads an app's windows front first, each with its process, its handle and its title", () => {
+    assert.deepEqual(
+      parseProbeWindows(
+        '{"windows":[{"pid":70,"window":7002,"title":"Fab"},{"pid":70,"window":7001,"title":"MyGame - Unreal Editor"}]}',
+      ),
+      [
+        { pid: 70, window: 7002, title: "Fab" },
+        { pid: 70, window: 7001, title: "MyGame - Unreal Editor" },
+      ],
+    );
+    assert.deepEqual(parseProbeWindows('{"windows":[]}'), []);
+    assert.deepEqual(parseProbeWindows('{"windows":[{"pid":70,"window":7001}]}'), [
+      { pid: 70, window: 7001, title: "" },
+    ]);
+  });
+
+  it("passes over a window it cannot raise, and refuses an answer that lists none", () => {
+    const rows = [
+      '{"pid":0,"window":7001,"title":"no process"}',
+      '{"pid":70,"window":0,"title":"no handle"}',
+      '{"pid":70,"window":-5,"title":"a negative handle"}',
+      '{"pid":70,"window":1.5,"title":"half a handle"}',
+      '{"pid":"70","window":7001,"title":"a pid in words"}',
+      '{"pid":70,"window":7001,"title":7}',
+      "null",
+      '"Fab"',
+    ];
+    for (const row of rows) assert.deepEqual(parseProbeWindows(`{"windows":[${row}]}`), [], row);
+    for (const line of ['{"error":"unknown request"}', "not json", "[]", "null", '{"windows":"Fab"}', '{"pid":70}'])
+      assert.throws(() => parseProbeWindows(line), Error, line);
+  });
+
   it("runs Windows PowerShell by its full path, with no profile, no prompt and its script as an encoded command", () => {
     assert.equal(
       windowsPowerShell({ SystemRoot: "D:\\Win" }),
@@ -142,6 +175,42 @@ describe("the Windows window probe's helper (a stand-in process)", () => {
       (await logged()).flatMap((entry) => (entry.request ? [entry.request] : [])),
       ["raise notepad.exe", "raise calc.exe"],
       "only plain executable names reach the helper",
+    );
+  });
+
+  it("lists an app's windows by its executable's name, and never asks for a name that isn't one", async () => {
+    const { probe, logged } = await standIn();
+    assert.deepEqual(await probe.windows("unrealeditor.exe"), [
+      { pid: 70, window: 7002, title: "Fab" },
+      { pid: 70, window: 7001, title: "MyGame - Unreal Editor" },
+    ]);
+    assert.deepEqual(await probe.windows("calc.exe"), [], "no window of it");
+    for (const hostile of ["", "unrealeditor.exe\nfront", "a b.exe", "..\\cmd.exe", "x".repeat(300)])
+      assert.deepEqual(await probe.windows(hostile), [], JSON.stringify(hostile));
+    assert.deepEqual(
+      (await logged()).flatMap((entry) => (entry.request ? [entry.request] : [])),
+      ["windows unrealeditor.exe", "windows calc.exe"],
+      "only plain executable names reach the helper",
+    );
+  });
+
+  it("brings one of an app's windows forward by its handle, and never sends a handle that isn't one", async () => {
+    const { probe, logged } = await standIn();
+    assert.deepEqual(await probe.raise("unrealeditor.exe", 7002), {
+      pid: 70,
+      exe: "UnrealEditor.exe",
+      name: "Unreal Editor",
+      secure: null,
+      window: 7002,
+    });
+    assert.equal(await probe.raise("unrealeditor.exe", 9999), null, "no such window of it: nothing raised");
+    for (const hostile of [0, -7002, 1.5, Number.NaN, Number.POSITIVE_INFINITY, 2 ** 64])
+      assert.equal(await probe.raise("unrealeditor.exe", hostile), null, String(hostile));
+    assert.equal(await probe.raise("a b.exe", 7002), null, "nor a name that isn't an executable's");
+    assert.deepEqual(
+      (await logged()).flatMap((entry) => (entry.request ? [entry.request] : [])),
+      ["raise unrealeditor.exe 7002", "raise unrealeditor.exe 9999"],
+      "only whole positive handles reach the helper, never in place of the app's own raise",
     );
   });
 
@@ -210,6 +279,10 @@ describe("the Windows window probe on Windows", () => {
     console.log(`the window probe was ready in ${Date.now() - began} ms`);
     assert.equal((await probe.process(process.pid))?.exe.toLowerCase(), "node.exe");
     assert.ok(((await probe.running("node.exe"))?.pid ?? 0) > 0, "this very process runs");
+    // A runner may show no window of node: the answer is a list, front first, every row raisable.
+    const windows = await probe.windows("node.exe");
+    assert.ok(Array.isArray(windows));
+    for (const window of windows) assert.ok(window.pid > 0 && window.window > 0, JSON.stringify(window));
     assert.equal(await probe.running("genex-no-such-app.exe"), null, "a name no process has is none");
     // A runner may have no desktop in front (a service session): either answer is an answer.
     const front = await probe.front();

@@ -6,5 +6,6 @@
   "gesturePaintsPerFrame": 1,
   "gestureSettleCommitCount": 1,
   "earlierRunsLooked": 8,
-  "loopLogReadsPerEvent": 3
+  "loopLogReadsPerEvent": 3,
+  "chatRowStepsPerEvent": 1
 }

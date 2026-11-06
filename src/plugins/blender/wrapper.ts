@@ -43,7 +43,7 @@ export function frontRenderPath(png: string): string {
 }
 
 export const BLENDER_WRAPPER_PY = String.raw`
-import bpy, bmesh, json, math, os, shutil, sys, tempfile, time, traceback
+import bpy, bmesh, errno, json, math, os, secrets, shutil, sys, tempfile, time, traceback
 from mathutils import Vector
 t0 = time.time()
 argv = sys.argv[sys.argv.index("--") + 1:]
@@ -76,20 +76,62 @@ def error_headline(error):
     return listed[max(0, len(listed) - 1 - count)].split("\n")[0]
 
 def error_text(error):
-    # The error's own first line, then the traceback's last lines that fit with it in ERROR_CHARS,
-    # each other line cut to LINE_CHARS; a first line longer than ERROR_CHARS alone keeps its start.
+    # The error's own first line, always first: a card that shows only a line or two of the error
+    # names it, not "Traceback (most recent call last)" and the job folder's path. Then the
+    # traceback's last lines that fit with it in ERROR_CHARS, each other line cut to LINE_CHARS; a
+    # first line longer than ERROR_CHARS alone keeps its start. A first line longer than LINE_CHARS
+    # leads alone: the traceback's own copy of it is left out, so it doesn't spend the room the
+    # script's File lines need a second time.
     headline = error_headline(error)
     if len(headline) > ERROR_CHARS:
         return cut(headline, ERROR_CHARS)
     traced = "".join(traceback.format_exception(error)).rstrip("\n").split("\n")
-    lines = [line if line == headline else cut(line, LINE_CHARS) for line in traced]
+    leads_alone = len(headline) > LINE_CHARS
+    lines = [cut(line, LINE_CHARS) for line in traced if not (leads_alone and line == headline)]
     kept = []
     for line in reversed(lines):
-        shown = [line] + kept
-        if len("\n".join(shown if headline in shown else [headline] + shown)) > ERROR_CHARS:
+        if len("\n".join([headline, line] + kept)) > ERROR_CHARS:
             break
-        kept = shown
-    return "\n".join(kept if headline in kept else [headline] + kept)
+        kept = [line] + kept
+    return "\n".join([headline] + kept)
+
+WRAPPER_CODE = sys._getframe().f_code  # this file's own top level, as Blender runs it
+
+def report_uncaught(kind, error, trace):
+    # A failure in the wrapper's own steps (the export, the renders) ends with a result line too,
+    # naming the error first, rather than leaving only Blender's traceback on stderr. Blender prints
+    # a callback's error (a script's render or update handler) through this hook too and goes on, so
+    # only an error that came up through this file's top level is the job's result.
+    if any(frame.f_code is WRAPPER_CODE for frame, _ in traceback.walk_tb(trace)):
+        result({"ok": False, "error": error_text(error)})
+    sys.__excepthook__(kind, error, trace)
+
+sys.excepthook = report_uncaught
+
+def mkdtemp_inheriting(suffix=None, prefix=None, dir=None):
+    # tempfile.mkdtemp, with the folder made like any other: it takes its parent's entries.
+    as_bytes = any(isinstance(part, bytes) for part in (suffix, prefix, dir))
+    parent = os.fsdecode(dir) if dir is not None else tempfile.gettempdir()
+    start = os.fsdecode(prefix) if prefix is not None else tempfile.template
+    end = os.fsdecode(suffix) if suffix is not None else ""
+    for _ in range(tempfile.TMP_MAX):
+        folder = os.path.join(parent, start + secrets.token_hex(4) + end)
+        try:
+            os.mkdir(folder)
+        except FileExistsError:
+            continue
+        made = os.path.abspath(folder)
+        return os.fsencode(made) if as_bytes else made
+    raise FileExistsError(errno.EEXIST, "No usable temporary directory name found")
+
+# On Windows, Python since 3.12.4 (Blender 5.2 has 3.13) makes mkdtemp's folder with a protected DACL
+# for SYSTEM, the Administrators and its owner alone (CVE-2024-4030). The job's sandbox token may write
+# only where its own identifier is allowed, so it may not make such a folder: every mkdtemp in the
+# job failed with "Access is denied" after 10,000 tries (the extra inputs' folder, the GPU check's,
+# and any a script makes). The job's temp folder is its own scratch, which no other user opens, so
+# there its folders take that folder's entries, as Blender's own temp folder does.
+if sys.platform == "win32":
+    tempfile.mkdtemp = mkdtemp_inheriting
 
 def flags(rest):
     # The flags after the four positional arguments, each with one value; --slot repeats.
@@ -343,8 +385,9 @@ def gpu_draws():
     if sys.platform != "win32":
         return True
     import subprocess
-    target = os.path.join(tempfile.mkdtemp(prefix="gpu-check-"), "check.png")
     try:
+        # Any failure here, the check's own folder included, means "draw on the CPU", never a failed job.
+        target = os.path.join(tempfile.mkdtemp(prefix="gpu-check-"), "check.png")
         done = subprocess.run(
             [bpy.app.binary_path, "-b", "--factory-startup", "-noaudio", "--python-exit-code", "1",
              "--python-expr", GPU_CHECK, "--", target],

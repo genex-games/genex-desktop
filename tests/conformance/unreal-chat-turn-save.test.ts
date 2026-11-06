@@ -3,9 +3,10 @@
  * only if something is unsaved: the plugins' steps save what their apps hold (the Unreal editor's
  * levels and assets), Genex snapshots the game folder, and the chat says so plainly after the
  * builder's report. The harness names no plugin's tool for it: it reads the checkpoint's answer.
- * Nothing unsaved, or an app that can't say, is said by nobody; a blocked checkpoint says why the
- * work stays unsaved. A web game (its descriptor lists no moment), a run's turn and a stopped turn
- * take none.
+ * Nothing unsaved, or an app that can't say, is said by nobody; a checkpoint Genex couldn't take
+ * says why the work stays unsaved, and one whose steps Genex skipped (the person was using the app)
+ * says so in the person's words, and that the files on disk were kept. A web game (its descriptor
+ * lists no moment), a run's turn and a stopped turn take none.
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
@@ -33,7 +34,6 @@ const UNREAL_MOMENTS = [
   HookEvent.RestoreBefore,
   HookEvent.RestoreAfter,
   HookEvent.Health,
-  HookEvent.Crash,
 ];
 
 /** A descriptor as `game.list` answers it: an Unreal game whose plugins hook checkpoints, or a web game. */
@@ -127,11 +127,13 @@ describe("a chat turn on a game whose plugins hook checkpoints", () => {
     assert.ok(ended.said.indexOf(REPORT) < ended.said.indexOf("Saved 412"), "the line follows the report");
   });
 
-  it("a blocked checkpoint is said, and nothing else happens", async () => {
-    const reason = "The game is playing in the Unreal editor, so nothing was saved.";
+  // Flipped: a play blocked the checkpoint; a step's play is a note now, and only a snapshot that
+  // fails (or Plan mode) blocks one.
+  it("a checkpoint Genex couldn't take is said, and nothing else happens", async () => {
+    const reason = "No snapshot was taken: the game folder is locked.";
     const ended = await turnOn({ answer: { blocked: reason } });
     assert.equal(ended.checkpoints.length, 1);
-    assert.match(ended.said, /stays unsaved: The game is playing in the Unreal editor/);
+    assert.match(ended.said, /stays unsaved: No snapshot was taken: the game folder is locked\./);
     assert.doesNotMatch(ended.said, /took a snapshot/);
     assert.deepEqual(ended.snapshots, []);
     const failed = await turnOn({ answer: new Error("the host went away") });
@@ -149,22 +151,31 @@ describe("a chat turn on a game whose plugins hook checkpoints", () => {
     assert.ok(plan.said.includes(REPORT));
     assert.doesNotMatch(plan.said, /unsaved|Plan mode|snapshot/);
 
-    const agentWords =
-      "The person is using Unreal, and this waited for them to finish. Try again later, or ask them in the chat.";
-    const person = await turnOn({ answer: { blocked: agentWords, hold: HookHold.PersonFirst, label: "Unreal" } });
-    assert.match(person.said, /This turn left unsaved work in Unreal/);
-    assert.match(person.said, /\byou\b/, "the person is spoken to");
-    assert.doesNotMatch(person.said, /The person|ask them|Try again later/, "never the words written for agents");
-
-    const busy = await turnOn({
-      answer: {
-        blocked: '"Varnish" is working in Unreal now, and only one at a time works there.',
-        hold: HookHold.Busy,
-        label: "Unreal",
-      },
+    // Flipped: a lock not given blocked the checkpoint; Genex now takes the snapshot alone, its
+    // hold a note, and the chat says the work in the app stays unsaved, never "Genex saved it".
+    const hostWords =
+      "The checkpoint's steps were skipped, since Unreal was not free: its snapshot holds only the files on disk.";
+    const alone = (hold: HookHold) => ({
+      ...TAKEN,
+      notes: [{ plugin: "@genex", text: hostWords, hold, label: "Unreal" }],
     });
-    assert.match(busy.said, /This turn left unsaved work in Unreal/);
-    assert.doesNotMatch(busy.said, /only one at a time/);
+    const person = await turnOn({ answer: alone(HookHold.PersonFirst) });
+    assert.match(person.said, /This turn left unsaved work in Unreal, and it stays unsaved while you use it/);
+    assert.match(person.said, /\byou\b/, "the person is spoken to");
+    assert.match(person.said, /Genex took a snapshot of the files on disk\./);
+    assert.doesNotMatch(person.said, /Genex saved it|skipped a step|was not free/, "never the host's words");
+
+    const busy = await turnOn({ answer: alone(HookHold.Busy) });
+    assert.match(
+      busy.said,
+      /This turn left unsaved work in Unreal, and it stays unsaved: something else was working there/,
+    );
+    assert.match(busy.said, /Genex took a snapshot of the files on disk\./);
+    assert.doesNotMatch(busy.said, /Genex saved it/);
+
+    const cantTell = await turnOn({ answer: alone(HookHold.CantTell) });
+    assert.match(cantTell.said, /Genex couldn't tell whether you were using Unreal/);
+    assert.match(cantTell.said, /Genex took a snapshot of the files on disk\./);
   });
 
   it("nothing unsaved, or an app that can't say, is said by nobody", async () => {

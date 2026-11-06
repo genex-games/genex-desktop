@@ -41,6 +41,7 @@ import { barPlay } from "./run-graph/bar-shape.ts";
 import { BuildStatus, type BuildTabs, PlayButton, ZoomPill } from "./run-graph/chrome.tsx";
 import { GateButton, GateTip, gateWords } from "./run-graph/gates.tsx";
 import {
+  AssetCardNode,
   AssetsTile,
   BuildNode,
   FinishCheckNode,
@@ -665,23 +666,7 @@ const GraphNodes = memo(function GraphNodes({
           onSelect={() => onSelect(GraphSelection.Assets)}
         />
       ) : null}
-      {model.steps.map((node) => {
-        const place = model.timeline?.places.get(node.id);
-        return (
-          <StepNode
-            key={node.id}
-            project={project}
-            runId={graph.runId}
-            active={graph.active}
-            step={node}
-            rect={layout.rects[node.id]}
-            ghost={layout.ghosts.has(node.id)}
-            selected={selected === node.id}
-            onSelect={onSelect}
-            place={place ?? null}
-          />
-        );
-      })}
+      <StepNodes model={model} project={project} selected={selected} onSelect={onSelect} />
       <BuildLine model={model} selected={selected} onSelect={onSelect} />
       <ResultNode
         active={graph.active}
@@ -720,6 +705,55 @@ const GraphNodes = memo(function GraphNodes({
     </>
   );
 });
+
+/** Every step of the graph, and under a worker that delivered assets, a card for each of them. */
+function StepNodes({
+  model,
+  project,
+  selected,
+  onSelect,
+}: {
+  model: BuildsModel;
+  project: string | null;
+  selected: string | null;
+  onSelect: (id: string) => void;
+}): JSX.Element {
+  const { graph, layout } = model;
+  return (
+    <>
+      {model.steps.map((node) => {
+        const place = model.timeline?.places.get(node.id);
+        return (
+          <StepNode
+            key={node.id}
+            project={project}
+            runId={graph.runId}
+            active={graph.active}
+            step={node}
+            rect={layout.rects[node.id]}
+            ghost={layout.ghosts.has(node.id)}
+            selected={selected === node.id}
+            onSelect={onSelect}
+            place={place ?? null}
+          />
+        );
+      })}
+      {model.steps.flatMap((node) =>
+        (node.assets ?? []).map((card) => (
+          <AssetCardNode
+            key={card.id}
+            project={project}
+            card={card}
+            rect={layout.rects[card.id]}
+            ghost={layout.ghosts.has(card.id)}
+            selected={selected === card.id}
+            onSelect={onSelect}
+          />
+        )),
+      )}
+    </>
+  );
+}
 
 /** A Loop's builds on their line, and the cards that fold a build's finished workers. */
 function BuildLine({

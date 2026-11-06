@@ -3,8 +3,9 @@
  * on its line (lead-line.ts), as they were written, and Genex's own lines of the run's log — a worker
  * or a job that ended, the project's app that stopped or came back, what Genex did with the folder
  * (`NoteKind`), each one fact. A resting lead is woken with them (`askOf`, wake.ts); a working one
- * is handed them at its next step (`watchTurn`, `engine.steer`), Genex's never cutting its turn
- * short. What the lead heard is kept in two places only: the line, for the chat's messages, and the
+ * is handed them at its next step (`watchTurn`, `engine.steer`) — the person's words cut its turn
+ * short when it may be cut, and the same session goes on with them, Genex's never cut it. What the
+ * lead heard is kept in two places only: the line, for the chat's messages, and the
  * run's `waitSeq`, for Genex's lines (every one up to it is told: a line a turn's message carried or
  * the turn took counts while the turn works, and is untold again when the turn ends without reading it).
  */
@@ -16,7 +17,8 @@ import { SECOND_MS } from "../time.ts";
 import { closeUnderWay } from "./close-latch.ts";
 import type { LeadLine } from "./lead-line.ts";
 import type { LoopRun, LoopRunLogEntry } from "./loop-run.ts";
-import { abortLead } from "./open/health.ts";
+import { abortLead } from "./open/app-look.ts";
+import { LOOP_WORDS } from "./wake-prompts.ts";
 import type { NoteKind } from "./wake-schedule.ts";
 
 /** How often a turn under way is looked at for Genex's lines. */
@@ -46,7 +48,7 @@ type GenexLine = LoopRunLogEntry & { kind: NoteKind };
 
 /**
  * The run is over for the lead: it finished, the user stopped it, or it failed on its own; or its
- * close has started; or, an open Loop, it pauses because the project's app couldn't be brought back.
+ * close has started; or, an open Loop, its lead paused it for the person.
  */
 export const runOver = (loopRun: LoopRun): boolean =>
   loopRun.state.finished ||
@@ -77,8 +79,9 @@ function leadingWords(line: LeadLine | null): QueueAction[] {
 
 /**
  * The lead's next message: the chat's unheard messages as they were written, Genex's lines beside
- * them (`lead`, then the log's untold ones) as a notice — or, with no message waiting, Genex's lines
- * alone, as Genex's.
+ * them (`lead`, then the log's untold ones) as a notice, and when the person's words open it, Genex's
+ * line that they wait for an answer (`LOOP_WORDS.personWaits`) last — or, with no message waiting,
+ * Genex's lines alone, as Genex's.
  */
 export async function askOf(loopRun: LoopRun, line: LeadLine | null, lead: readonly string[]): Promise<TurnAsk> {
   const words = leadingWords(line);
@@ -90,7 +93,10 @@ export async function askOf(loopRun: LoopRun, line: LeadLine | null, lead: reado
   const said = words.map(steerMessageOf);
   const images = said.flatMap((one) => one.images ?? []);
   const from = fromThePerson(first) ? MessageFrom.Person : MessageFrom.Genex;
-  const beside = { ...(images.length ? { images } : {}), ...(genex ? { notices: [genex] } : {}) };
+  // The person's words that open the turn come last, right after Genex's line that they wait for an answer.
+  const waits = from === MessageFrom.Person ? [LOOP_WORDS.personWaits] : [];
+  const notices = [...(genex ? [genex] : []), ...waits];
+  const beside = { ...(images.length ? { images } : {}), ...(notices.length ? { notices } : {}) };
   return { prompt: textsOf(said).join(WORDS_APART), said: { from, ...beside }, ...carried };
 }
 
@@ -126,7 +132,10 @@ export async function handNotes(loopRun: LoopRun, line: LeadLine | null): Promis
 
 /** One session call's watch: it ends with the call. */
 interface TurnWatch {
-  /** The chat's words cut the turn short (an engine that takes no input as it works): it is resumed with them. */
+  /**
+   * The chat's words cut the turn short (`wordsAsk`: the person's on any engine, Genex's on one that
+   * takes no input as it works): it is resumed with them.
+   */
   cut(): boolean;
   /** The call ended: the watch stops, and what its session read (`steered`) is heard or told. */
   end(result: Partial<DelegateResult> | undefined): Promise<void>;
@@ -159,17 +168,40 @@ interface Handed {
   cut: boolean;
 }
 
-/** Says `messages` into the lead's turn under way; how the host delivered them and which it took. */
-async function steer(loopRun: LoopRun, messages: SteerMessage[], interrupt: boolean) {
-  const params = { threadId: loopRun.threadId, into: loopRun.run.runId, messages, interrupt };
+/**
+ * How a steer asks the host to deliver it: `interrupt` lets it cut the turn short at its next step,
+ * and `native: false` never lets the session read it mid-turn, so the host cuts the turn instead.
+ */
+interface SteerAsk {
+  interrupt: boolean;
+  native?: boolean;
+}
+
+/** Says `messages` into the lead's turn under way, as `ask` asks; how the host delivered them and which it took. */
+async function steer(loopRun: LoopRun, messages: SteerMessage[], ask: SteerAsk) {
+  const params = { threadId: loopRun.threadId, into: loopRun.run.runId, messages, ...ask };
   const answer = await loopRun.ctx.call(HostMethod.EngineSteer, params).catch(() => null);
   return { how: answer?.how ?? null, accepted: new Set<string>(answer?.accepted ?? []) };
 }
 
 /**
+ * How the chat's words go into the turn. The person's cut it whenever it may be cut, on an engine that
+ * reads input mid-turn too, and the same session goes on with them as their own message: read beside
+ * a tool's result, "How is it going?" went unanswered while a lead built on for half an hour
+ * (castle-artillery). Inside a tool call or the wrap-up they are only read mid-turn; Genex's cut
+ * only an engine that takes no input as it works.
+ */
+function wordsAsk(kit: WatchKit, waiting: readonly QueueAction[]): SteerAsk {
+  const interrupt = kit.mayCut();
+  if (interrupt && waiting.some(fromThePerson)) return { interrupt, native: false };
+  return { interrupt };
+}
+
+/**
  * The chat's messages sent since the turn's own message, each as written, when one of them was not
- * offered to the turn yet: taken to read at its next step, or — an engine that takes no input as it
- * works, and the turn may be cut now — cutting it short.
+ * offered to the turn yet: the person's cutting the turn short when it may be cut now (`wordsAsk`),
+ * anything else taken to read at its next step — or cutting it, on an engine that takes no input as
+ * it works.
  */
 async function sayWords(loopRun: LoopRun, kit: WatchKit, handed: Handed): Promise<void> {
   const unheard = kit.line?.unheard() ?? [];
@@ -180,7 +212,7 @@ async function sayWords(loopRun: LoopRun, kit: WatchKit, handed: Handed): Promis
   for (const item of waiting) handed.tried.add(item);
   const ids = new Map(waiting.map((item) => [`${loopRun.run.runId}:${kit.turn}:said-${item.messageId}`, item]));
   const messages = [...ids].map(([id, item]) => ({ ...steerMessageOf(item), id }));
-  const answer = await steer(loopRun, messages, kit.mayCut());
+  const answer = await steer(loopRun, messages, wordsAsk(kit, waiting));
   if (answer.how === SteerDelivery.Interrupt && answer.accepted.size) handed.cut = true;
   else for (const [id, item] of ids) if (answer.accepted.has(id)) handed.taken.set(id, item);
 }
@@ -196,7 +228,7 @@ async function sayLines(loopRun: LoopRun, kit: WatchKit, handed: Handed): Promis
   for (const entry of waiting) handed.offered.add(entry.seq);
   const seqs = new Map(waiting.map((entry) => [`${loopRun.run.runId}:${kit.turn}:news-${entry.seq}`, entry]));
   const messages = [...seqs].map(([id, entry]) => ({ id, text: entry.text, from: MessageFrom.Genex }));
-  const answer = await steer(loopRun, messages, false);
+  const answer = await steer(loopRun, messages, { interrupt: false });
   for (const [id, entry] of seqs) {
     if (!answer.accepted.has(id)) continue;
     handed.taken.set(id, entry.seq);
@@ -228,7 +260,7 @@ export const startedASession = (result: Partial<DelegateResult> | undefined): bo
 /**
  * Watches one session call of the lead's until it ends (the module's header): each look reads the
  * run's job ends and the project's app first (`poll`), then hands the turn what came since its own
- * message. A Loop Genex paused, or one the person stopped, ends an open Loop's session again instead
+ * message. A Loop its lead paused, or one the person stopped, ends an open Loop's session again instead
  * (one its first abort missed: the host had not seated it yet); a run that is over hears nothing more.
  */
 export function watchTurn(loopRun: LoopRun, kit: WatchKit): TurnWatch {

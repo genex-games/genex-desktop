@@ -173,3 +173,32 @@ test("native derivative retains the staged original identity after both files ar
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("an asset file the inventory cannot read (one Unity holds open on Windows) leaves the rest of it standing", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "asset-unreadable-"));
+  try {
+    const game = path.join(root, "game");
+    await mkdir(path.join(game, "Assets"), { recursive: true });
+    await writeFile(path.join(game, "Assets/hero.png"), Buffer.from("hero"));
+    // A folder where a file was listed: its read fails as a held file's does.
+    await mkdir(path.join(game, "Assets/held.png"));
+    const asset = (file: string) => ({ file, kind: "image" as const, bytes: 4, mtime: "now", source: "imported" });
+    const inventory = await reconcileGeneratedAssets(
+      game,
+      root,
+      {
+        project: "game",
+        assets: [asset("Assets/held.png"), asset("Assets/hero.png")],
+        truncated: false,
+        skipped: [],
+      },
+      [],
+    );
+    assert.deepEqual(
+      inventory.assets.map((a) => a.file),
+      ["Assets/held.png", "Assets/hero.png"],
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

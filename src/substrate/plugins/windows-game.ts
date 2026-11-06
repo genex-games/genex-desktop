@@ -1,15 +1,20 @@
 /**
  * A game from Play on Windows, in an AppContainer of its own (`windows-game-host.ts`): its app
  * read-only, its saves and scratch folders the only places it writes (its AppData goes to the
- * container's own folder), none of the person's files, no network at all, and the person's own
- * desktop, so it has a window, the GPU, sound, the mouse and the keyboard. Windows has no
- * Seatbelt or bubblewrap, and srt-win, the sandbox the agents run in, puts every program on a
- * desktop of its own with no window on screen, so games get this one.
+ * container's own folder), none of the person's files, and the person's own desktop, so it has a
+ * window, the GPU, sound, the mouse and the keyboard. Windows has no Seatbelt or bubblewrap, and
+ * srt-win, the sandbox the agents run in, puts every program on a desktop of its own with no
+ * window on screen, so games get this one.
+ *
+ * Its way to Genex: an AppContainer reaches no loopback port without an administrator's exemption,
+ * so no gateway can serve it as on the Mac. A game Genex gives a way gets the internet as a client
+ * instead (`internetClient`: no loopback, no local network Windows knows of, no server of its own) and is told Genex's
+ * API itself, its sign-in ticket and its name (`directGenexEnv`); a game with none, or with an
+ * address that doesn't hold up, reaches no network at all.
  *
  * The host program is compiled once from its source with the C# compiler every Windows has (.NET
  * Framework 4) into a folder of Genex's own, named by the source's hash. The game ends with the
- * host, which ends with Genex. A Windows game has no way to Genex yet: an AppContainer reaches no
- * loopback port without an administrator's exemption.
+ * host, which ends with Genex.
  */
 import { execFile, spawn, type ChildProcessByStdio } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -21,7 +26,7 @@ import { promisify } from "node:util";
 import { MINUTE_MS } from "../../shared/duration.ts";
 import { envValue } from "../toolchain.ts";
 import type { NativeGameRequest } from "./native-process.ts";
-import { treeKiller } from "./native-process.ts";
+import { directGenexEnv, treeKiller } from "./native-process.ts";
 import { GAME_HOST_SOURCE } from "./windows-game-host.ts";
 
 /** How long the C# compiler may take for the host: a first run on a slow PC takes a few seconds. */
@@ -85,12 +90,15 @@ export interface GameHostRequest {
   reads: string[];
   writes: string[];
   parent: number;
+  /** Whether the container gets the internet as a client: only with a way to Genex it is told. */
+  internet: boolean;
 }
 
 /**
  * The host's request for `request`: the game's own container, its app the one folder it reads,
  * its saves and scratch folders the ones it writes, and an environment of Windows' own folders,
- * the profile's (which Windows needs to make the container's folder) and its scratch as TEMP.
+ * the profile's (which Windows needs to make the container's folder) and its scratch as TEMP. With
+ * a way to Genex that holds up, the environment tells it Genex too and the container goes online.
  */
 export function gameHostRequest(
   request: NativeGameRequest,
@@ -104,6 +112,7 @@ export function gameHostRequest(
       return value ? [[name, value]] : [];
     }),
   );
+  const genex = directGenexEnv(request.genex?.env);
   return {
     container: containerName(request.bundleId),
     displayName: request.bundleName || request.bundleId,
@@ -112,6 +121,7 @@ export function gameHostRequest(
     cwd: path.dirname(request.binary),
     env: {
       ...passed,
+      ...genex,
       PATH: [path.win32.join(root, "System32"), root, path.win32.join(root, "System32", "Wbem")].join(";"),
       TEMP: request.scratch,
       TMP: request.scratch,
@@ -119,6 +129,7 @@ export function gameHostRequest(
     reads: [request.app],
     writes: [request.saves, request.scratch],
     parent,
+    internet: genex.GENEX_API_URL !== undefined,
   };
 }
 

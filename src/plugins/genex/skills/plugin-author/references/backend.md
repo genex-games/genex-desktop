@@ -20,8 +20,10 @@ name. Genex runs it in a process of its own with the person's access and a small
   programs to the lead, who runs them as jobs in the chat's permission mode. A program that turns
   named files into others runs in Genex's sandbox through `nativeJobs` and `native.run` (Genex's
   plugin guide).
-- The backend can't start the engine, so it never closes it either: no hook at `run.end` closes
-  the editor the next run's `run.prepare` needs open. The person's editor stays as they left it.
+- The backend can't start the engine, so it never closes it either, and no step at Genex's moments
+  opens, reopens or closes the editor: the person's editor stays as they left it. A step says what
+  it found (a `{block}` at `health`: the editor stopped), and the lead decides, with an agent tool
+  such as Sketch's `open-editor` or by asking the person.
 - A tool's call lasts minutes at most. For longer work (a long build), start it, answer at once and
   add a status tool that reads how it is going.
 
@@ -112,7 +114,7 @@ const TOOLS = {
   },
   async "open-editor"(_args, context) {
     const result = await editor("open", context, { body: {} });
-    return result.ok ? {} : { block: result.problem };
+    return result.ok ? { ok: true } : result;
   },
   async "save-scenes"(_args, context) {
     return noteOf(await editor("save-all", context, { body: {} }));
@@ -129,11 +131,10 @@ const TOOLS = {
   },
   async "check-editor"(_args, context) {
     const state = await editorJson("status", context);
-    if (!state.ok) return { pending: true };
+    // Genex reads `block` and `pending` as words for the lead: a closed editor stopped; one that
+    // runs but can't answer yet is pending, and the look goes on.
+    if (!state.ok) return state.closed ? { block: state.problem } : { pending: state.problem };
     return state.value.open ? {} : { block: "The Sketch editor has no project open." };
-  },
-  async "reopen-editor"(_args, context) {
-    return noteOf(await editor("open", context, { body: {} }));
   },
 };
 

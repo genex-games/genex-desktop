@@ -1,10 +1,13 @@
 /**
- * Closing a Unity editor Genex opened for a run once nobody uses it. Unity holds gigabytes of
- * memory for as long as it runs, and an editor a run opened is otherwise left open for good. Only
- * that editor is ever closed, and only when all of these hold:
+ * Closing a Unity editor Genex opened once a run on it ended and nobody uses it. Unity holds
+ * gigabytes of memory for as long as it runs, and an editor a run's lead opened is otherwise left
+ * open for good. Only that editor is ever closed, and only when all of these hold:
  *
- * - Genex itself opened it at the run's start (`open-for-run`); one already open was the person's.
- * - The run ended (`run.end`), and no other run started on it since.
+ * - Genex itself opened it for a run: its agent's `open-editor` launched it while a run was under
+ *   way on the game (the run's lead, mostly). One that was already open, that the person opened
+ *   from the panel, or that an agent opened with no run under way, is the person's.
+ * - A run on it ended (`run.end`), and no other run went on on it since (`find-project` at a run's
+ *   `run.prepare` or `turn.start`: a start whose steps Plan mode skipped still has its lead's turns).
  * - The plugin's {@link CLOSE_IDLE_SETTING} is on (it is unless the person turned it off).
  * - For {@link IDLE_CLOSE_MS} no agent sent the editor a command through the connector, which marks
  *   each one it sends ({@link agentUseMarker}).
@@ -15,7 +18,9 @@
  *
  * The backend looks every {@link IDLE_LOOK_MS} once a run ended ({@link closeIdleEditors}); each
  * game's record (`launched/<game>.json` in the plugin's storage) is forgotten as soon as one of
- * these can no longer hold.
+ * these can no longer hold. A run under way on a game is a mark of its own (`runs/<game>.json`),
+ * from its first moment to its end; a backend forgets the marks the one before it left
+ * ({@link runMarksOnce}), so a run that never reached its end makes no later open Genex's.
  */
 import { mkdir, readdir, rm } from "node:fs/promises";
 import path from "node:path";
@@ -33,6 +38,8 @@ export const IDLE_LOOK_MS = 30 * SECOND_MS;
 export const CLOSE_IDLE_SETTING = "close-idle-editor";
 /** The folder in the plugin's storage holding a record per game whose editor Genex opened for a run. */
 const LAUNCHED_FOLDER = "launched";
+/** The folder in the plugin's storage holding a mark per game a run is under way on, from its start to its end. */
+const RUNS_FOLDER = "runs";
 /** The file the editor connector touches, in its own folder, each time it sends the editor a command. */
 const AGENT_USE_FILE = "agent-used.json";
 /** A game id as Genex names a game's record: a plain folder name, never a path. */
@@ -60,8 +67,11 @@ export interface IdleDeps extends EditorDeps {
   now: () => Date;
 }
 
-const recordFile = (storage: string, game: string): string | null =>
-  GAME_ID.test(game) ? path.join(storage, LAUNCHED_FOLDER, `${game}${JSON_EXTENSION}`) : null;
+/** A game's file in one of the plugin's folders; null for a game id that is no plain folder name. */
+const gameFile = (storage: string, folder: string, game: string): string | null =>
+  GAME_ID.test(game) ? path.join(storage, folder, `${game}${JSON_EXTENSION}`) : null;
+
+const recordFile = (storage: string, game: string): string | null => gameFile(storage, LAUNCHED_FOLDER, game);
 
 async function readLaunched(storage: string, game: string): Promise<Launched | undefined> {
   const file = recordFile(storage, game);
@@ -88,18 +98,56 @@ async function forgetLaunched(storage: string, game: string): Promise<void> {
   if (file) await rm(file, { force: true });
 }
 
-/** Remembers that Genex opened the game's editor for a run, which then goes on. */
-export const rememberLaunch = (storage: string, game: string, root: string): Promise<void> =>
-  writeLaunched(storage, game, { root });
-
-/** A run starts on an editor already open: one Genex opened for an earlier run is in use again. */
-export async function runGoesOn(storage: string, game: string, root: string): Promise<void> {
-  const record = await readLaunched(storage, game);
-  if (record?.root === root) await writeLaunched(storage, game, { root });
+/**
+ * Once per backend, before its first look at a run mark: the marks an earlier backend left go. A run
+ * that never reached its end (Genex quit, or its harness stopped mid-run) left its mark for good; a
+ * run still going marks again at its next moment (`find-project` at its lead's next turn). Until
+ * then an editor its lead opens is the person's: left open, never closed by mistake.
+ */
+export function runMarksOnce(): (storage: string) => Promise<void> {
+  const forgotten = new Map<string, Promise<void>>();
+  return (storage) => {
+    let done = forgotten.get(storage);
+    if (!done) {
+      done = rm(path.join(storage, RUNS_FOLDER), { recursive: true, force: true }).catch(() => undefined);
+      forgotten.set(storage, done);
+    }
+    return done;
+  };
 }
 
-/** The run ended: its editor's idle time starts now, unless the person turned closing off. */
+/** Whether a run is under way on the game: one went on (`runGoesOn`) and has not ended since. */
+async function runUnderWay(storage: string, game: string): Promise<boolean> {
+  const file = gameFile(storage, RUNS_FOLDER, game);
+  return file ? isJsonObject(await readJsonIfExists<unknown>(file).catch(() => null)) : false;
+}
+
+/**
+ * Remembers that Genex's agent opened the game's editor while a run is under way on it (the run's
+ * lead, mostly): once that run ends, its idle time starts. One opened with no run under way (a
+ * chat's agent) is the person's, and is never remembered.
+ */
+export async function rememberLaunch(storage: string, game: string, root: string): Promise<void> {
+  if (await runUnderWay(storage, game)) await writeLaunched(storage, game, { root });
+}
+
+/**
+ * A run goes on on the game (its start, or its lead's turn): it is under way until it ends, and an
+ * editor Genex opened, idle since an earlier run ended, is in use again.
+ */
+export async function runGoesOn(storage: string, game: string, root: string): Promise<void> {
+  const mark = gameFile(storage, RUNS_FOLDER, game);
+  if (!mark) return;
+  await mkdir(path.dirname(mark), { recursive: true, mode: 0o700 });
+  await atomicWriteJson(mark, {});
+  const record = await readLaunched(storage, game);
+  if (record?.root === root && record.endedAt !== undefined) await writeLaunched(storage, game, { root });
+}
+
+/** The run ended: no run is under way on the game, and its editor's idle time starts now, unless the person turned closing off. */
 export async function runEnded(storage: string, game: string, now: number, closeIdle: boolean): Promise<void> {
+  const mark = gameFile(storage, RUNS_FOLDER, game);
+  if (mark) await rm(mark, { force: true });
   const record = await readLaunched(storage, game);
   if (!record) return;
   if (!closeIdle) return forgetLaunched(storage, game);

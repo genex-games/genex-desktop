@@ -376,8 +376,8 @@ export interface RunFinishedPayload extends RunScope {
   /** Older closes marked a pause with this flag instead of `executionStatus`. */
   paused?: boolean;
   /**
-   * A new Loop a plugin's step held back before its first turn (not Genex's own hold, not a resume):
-   * the chat's agent is told why, to fix it and start the Loop again (`core/held-start.ts`).
+   * A new Loop a plugin's step held back before its first turn (not Genex's own hold, not a resume).
+   * Written only by seeds from before every start became its lead's; nothing reads it now.
    */
   startHeld?: boolean;
   integrationHead?: string;
@@ -423,7 +423,10 @@ export const RunStartRefusal = {
   RunOwnsThread: "run_owns_thread",
   /** The folder is an engine's export: compiled, with nothing a run could edit. */
   EngineExport: "engine_export",
-  /** Genex's `web.ready` gate: the web page lacks files it needs to load. */
+  /**
+   * Genex's `web.ready` gate: the web page lacked files it needs to load. Written only by seeds from
+   * before its finding became a line the Loop's lead reads at its start: old records carry it.
+   */
   WebNotReady: "web_not_ready",
 } as const;
 export type RunStartRefusal = (typeof RunStartRefusal)[keyof typeof RunStartRefusal];
