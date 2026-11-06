@@ -69,14 +69,7 @@ import type { ActiveDelegation } from "./internals.ts";
 import { CallCutOff, PluginCapability, type PluginInfo, type PluginTool } from "../../shared/plugins.ts";
 import type { PluginRegistry, PluginSnapshot } from "../../substrate/plugins/registry.ts";
 import { type CutOffCall, clearCutOffs, noteCutOff, peekCutOffs } from "./cut-off-calls.ts";
-import { clearUnsaved, peekUnsaved, type UnsavedFile } from "./unsaved-files.ts";
-import {
-  cutOffNotice,
-  type HandedPlugin,
-  handedPluginsNote,
-  unsavedFilesNotice,
-  silentConnectorLog,
-} from "./delegation-prompts.ts";
+import { cutOffNotice, type HandedPlugin, handedPluginsNote, silentConnectorLog } from "./delegation-prompts.ts";
 import { computerTools, type ComputerGrant, type ComputerTools } from "./computer-tools.ts";
 import { delegationMirror, scopedRecord, type ActivityScope, type DelegationMirror } from "./delegation-events.ts";
 import { withFallbacks } from "./engine-failure.ts";
@@ -330,8 +323,6 @@ interface SessionTools {
   handed: HandedPlugin[];
   /** The thread's cut-off calls its notices name; forgotten once the session answers (`#settled`). */
   cutOffs: CutOffCall[];
-  /** The thread's files too large to save that its notices name; forgotten the same way. */
-  unsaved: UnsavedFile[];
   builder: ComputerTools | null;
   director: DirectorTools | null;
   /** The person's computer, behind their consent: only the chat's own session holds it. */
@@ -2230,8 +2221,9 @@ export class DelegationService {
    * an engine with none reads it as the first notice of a new session, its history keeping it after.
    * Genex's own lines for this message are its notices, each a block of its own the engine marks: the
    * harness's, then calls of its thread cut off before they answered, to a session that could repeat
-   * them (host tools, and a turn, not a compaction), until one answers; files Rewind cannot bring back,
-   * to the same sessions; and to the chat's own session its jobs that ended since it was last told.
+   * them (host tools, and a turn, not a compaction), until one answers; and to the chat's own session
+   * its jobs that ended since it was last told. Files a checkpoint left out for their size are the
+   * chat's line to the person alone (`rewind.ts`): no session is told of them.
    */
   #brief(
     p: DelegateParams,
@@ -2254,13 +2246,7 @@ export class DelegationService {
   #notices(p: DelegateParams, session: DelegationSession, tools: SessionTools): string[] {
     const told = session.hostTools && !p.compact;
     tools.cutOffs = told ? peekCutOffs(this.#x.cutOffCalls, p.threadId) : [];
-    tools.unsaved = told ? peekUnsaved(this.#x.unsavedFiles, p.threadId) : [];
-    return [
-      ...(p.notices ?? []),
-      cutOffNotice(tools.cutOffs),
-      unsavedFilesNotice(tools.unsaved),
-      tools.jobNews.notice,
-    ].filter(Boolean);
+    return [...(p.notices ?? []), cutOffNotice(tools.cutOffs), tools.jobNews.notice].filter(Boolean);
   }
 
   /**
@@ -2531,7 +2517,6 @@ export class DelegationService {
     // A session that failed may never have read its notices: its cut-off calls are named again.
     if (result.ok) {
       clearCutOffs(this.#x.cutOffCalls, p.threadId, tools.cutOffs);
-      clearUnsaved(this.#x.unsavedFiles, p.threadId, tools.unsaved);
     }
     // Calls it made once a background task woke it past its turn's end: the CLI refused them in the
     // person's words, so the next session hears they were Genex's and are not done.
@@ -2627,7 +2612,6 @@ function sessionTools(plugins: Pick<PluginSnapshot, "tools" | "guidance">, hande
     pluginGuidance: plugins.guidance,
     handed,
     cutOffs: [],
-    unsaved: [],
     builder: null,
     director: null,
     desktop: null,

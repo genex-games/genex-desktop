@@ -59,7 +59,6 @@ import {
   ChatCheckpoints,
 } from "../chat-checkpoints.ts";
 import type { CoreInternals, StudioCore } from "../studio-core.ts";
-import { noteUnsaved } from "./unsaved-files.ts";
 import { HookBlockedError } from "./plugin-hooks.ts";
 import { HookHold } from "../../shared/plugin-hooks.ts";
 
@@ -479,8 +478,8 @@ export class ChatRewindService {
   }
 
   /**
-   * A checkpoint that left files out for their size says so once per new set: the chat gets a line
-   * and the thread's next delegated session is told. A report that fails is logged, never more.
+   * A checkpoint that left files out for their size says so once per new set, in a line of the
+   * chat's own, which no delegated session is told. A report that fails is logged, never more.
    */
   async #reportCheckpointSkips(threadId: string, dir: string, commit: string, report: SkippedReport): Promise<void> {
     try {
@@ -523,10 +522,12 @@ export class ChatRewindService {
     return tooLarge ? (plan.tooLargeFiles ?? []) : [];
   }
 
-  /** Files too large to save, with their sizes: noted for the lead, and a line in the chat. */
+  /**
+   * Files too large to save, with their sizes: a line in the chat for the person. No session is told
+   * of them: nothing it can do brings them back, and it would only say Genex's line again.
+   */
   async #reportSkipped(threadId: string, dir: string, files: readonly string[], report: SkippedReport): Promise<void> {
     const sized = await sizedFiles(dir, files);
-    noteUnsaved(this.#x.unsavedFiles, threadId, sized);
     const listed = sized.slice(0, CHECKPOINT_SKIPPED_FILES_LISTED);
     const record = customEventData(CustomEvent.CheckpointSkipped, {
       ...report,

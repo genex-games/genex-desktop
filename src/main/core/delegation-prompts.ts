@@ -2,10 +2,8 @@
  * What a builder session is told about the host's side of its tools (`delegation.ts`): the plugins it
  * is handed, in its system text, and Genex's notices of what happened outside it, facts only. Model-facing.
  */
-import { sizeWordsInEnglish } from "../../shared/byte-size.ts";
 import { CallCutOff, PluginAccountState } from "../../shared/plugins.ts";
 import type { CutOffCall } from "./cut-off-calls.ts";
-import type { UnsavedFile } from "./unsaved-files.ts";
 import type { SilentConnector } from "../../substrate/mcp/registry.ts";
 import { MINUTE_MS } from "../../shared/duration.ts";
 import { type JobRecord, JobState, JobStopper } from "../../shared/jobs.ts";
@@ -87,16 +85,6 @@ export function cutOffNotice(calls: readonly CutOffCall[]): string {
   if (!calls.length) return "";
   const named = calls.map((c) => `${c.tool}${c.args ? ` ${c.args}` : ""} (${MESSAGE.cutOffWhy[c.reason]})`);
   return `Genex cut these calls off before they answered, so whether they took effect is unknown: ${named.join("; ")}.`;
-}
-
-/**
- * Genex's notice to a thread's next delegated session after its chat said files are too large to
- * save: Rewind cannot bring them back. Empty for none.
- */
-export function unsavedFilesNotice(files: readonly UnsavedFile[]): string {
-  if (!files.length) return "";
-  const named = files.map((file) => `${file.file} (${sizeWordsInEnglish(file.bytes)})`);
-  return `Genex couldn't save these files at its checkpoint (too large), so Rewind can't bring them back: ${named.join(", ")}.`;
 }
 
 /** How an ended job reads in the jobs notice, by how it ended. */

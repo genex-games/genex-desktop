@@ -894,7 +894,7 @@ it("tells the chat once when a checkpoint leaves a file out for its size", async
     status: async () => ({ code: "ready", detail: "" }),
     models: async () => [],
     delegate: async (request) => {
-      prompts.push([...(request.notices ?? []), request.prompt].join("\n\n"));
+      prompts.push([request.system ?? "", ...(request.notices ?? []), request.prompt].join("\n\n"));
       const step = prompts.length;
       await writeFile(path.join(request.cwd ?? dir, `step-${step}.js`), `step ${step}\n`);
       // The third answer grows a saved file past the limit.
@@ -933,8 +933,10 @@ it("tells the chat once when a checkpoint leaves a file out for its size", async
     { file: "intro.mp4", bytes: tooLarge },
     { file: "theme.wav", bytes: tooLarge },
   ]);
-  assert.match(prompts[0] ?? "", /Rewind can't bring them back: intro\.mp4 \(50 MB\)/);
-  assert.doesNotMatch(prompts[1] ?? "", /Rewind can't bring them back/, "told once, then used up");
+  // Flipped: the first session read "Rewind can't bring them back: intro.mp4 (50 MB)". The chat's
+  // line says it to the person; no session is told, so none repeats it to them.
+  assert.ok(prompts.length >= 3, "each message was answered");
+  for (const prompt of prompts) assert.doesNotMatch(prompt, /intro\.mp4|theme\.wav|Rewind can't bring/);
 
   // A rewind that leaves a file as it is says so too.
   const music = bubble(events, "Add music");

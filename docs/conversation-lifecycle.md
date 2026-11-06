@@ -476,9 +476,9 @@ and leaves out files over 50 MB and the largest ones past 1 GB of new content; e
 records what it left out, and a restore never touches those paths. Leaving them out is never
 silent: a checkpoint that skips a new set of files for their size appends the host-only
 `checkpoint_skipped` (`by: checkpoint`, each file's size), the confirmation names the changed ones
-(`tooLargeFiles`), and a restore that left some appends it with `by: rewind`. Each report is also
-noted for the thread (`unsaved-files.ts`, memory only): its next delegated session with host tools
-reads them after the cut-off notice (`delegation-prompts.ts` `unsavedFilesNotice`) until one settles. It commits as the studio on
+(`tooLargeFiles`), and a restore that left some appends it with `by: rewind`. Its chat line is the
+person's alone: no delegated session is told of the files, since nothing it can do brings them
+back and it would only repeat the line. It commits as the studio on
 `refs/studio/chat/<thread>/before|after/<message>` with hooks off, without moving HEAD, branches
 or the user's index. Restoring changes the working tree only, and only while HEAD is the
 checkpoint's parent. The pre-rewind folder is saved on `.../rewound/<id>`; a restore that fails
