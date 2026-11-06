@@ -88,7 +88,7 @@ function Maker({ name, known, send }: { name: string; known: boolean; send: Send
   );
 }
 
-/** The Genex G, alone, in ink. */
+/** The Genex G, alone, in ink, drawn whole at a fractional offset as `ui/GenexLogo.tsx` explains. */
 function GenexMark(): JSX.Element {
   return (
     <svg
@@ -96,6 +96,7 @@ function GenexMark(): JSX.Element {
       width="16"
       height="12"
       viewBox="0 0 683 533"
+      overflow="visible"
       fill="currentColor"
       aria-hidden="true"
     >

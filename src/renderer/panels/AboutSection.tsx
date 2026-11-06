@@ -49,10 +49,17 @@ function NextStep({ result }: { result: UpdateCheckResult }): JSX.Element | null
   );
 }
 
-/** The Genex mark beside the name. */
+/** The Genex mark beside the name, drawn whole at a fractional offset as `ui/GenexLogo.tsx` explains. */
 function GenexMark(): JSX.Element {
   return (
-    <svg width="48" height="38" viewBox="0 0 683 533" aria-hidden="true" className="shrink-0 fill-ink">
+    <svg
+      width="48"
+      height="38"
+      viewBox="0 0 683 533"
+      overflow="visible"
+      aria-hidden="true"
+      className="shrink-0 fill-ink"
+    >
       <path d="M526.479 314.98H239.981V266.964H683V397.295C683 397.295 648.57 532.96 347.968 532.96C347.968 532.96 0 542.868 0 252.483C0 -16.5617 376.426 0.205967 376.426 0.205967C666.184 0.205967 683 141.207 683 141.207L607.973 153.401C607.973 153.401 584.689 45.1737 371.252 45.1737C371.252 45.1737 85.375 34.5034 85.375 257.818C85.375 257.818 78.9072 480.37 351.849 486.467C566.58 493.327 597.625 379.002 600.212 359.186C607.973 334.034 574.341 314.98 526.479 314.98Z" />
     </svg>
   );

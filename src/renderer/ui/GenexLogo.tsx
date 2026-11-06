@@ -7,9 +7,9 @@ const G_PATH =
 /**
  * Original Genex wordmark with theme-aware neutral stops (a palette's `logo` when set). See GENEX-SOURCES.md.
  * Chromium clips an SVG to its box snapped to whole device pixels while the drawing keeps its exact
- * size: at 80px the wordmark is 12.625px tall, and the sidebar centres it at a fractional top, so on
- * a 100% screen (most Windows PCs, Linux) the snap cut the letters' bottom edge. Its paths stay inside
- * the viewBox, so `overflow="visible"` draws exactly the logo, whole, wherever layout puts it.
+ * size: at 80px the wordmark is 12.625px tall, and the sidebar centres it at a fractional top, so the
+ * snap cut the letters' edges at every display scale, plainest at 100% (most Windows PCs). Its paths
+ * stay inside the viewBox, so `overflow="visible"` draws exactly the logo, whole, wherever layout puts it.
  */
 export function GenexLogo({ className = "" }: { className?: string }) {
   return (
