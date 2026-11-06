@@ -1,7 +1,7 @@
 {
   "apiVersion": 3,
   "id": "blender",
-  "version": "1.9.0",
+  "version": "1.9.1",
   "name": "Local Blender",
   "publisher": "Studio",
   "description": "Model 3D assets with Blender on this computer. No account or credits.",

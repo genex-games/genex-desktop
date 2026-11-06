@@ -356,7 +356,10 @@ bpy.context.active_object.name = "Cable"
     const parsed = resultLine(result.stdout);
     assert.equal(result.code, 1, "--python-exit-code 1 turns the exception into a non-zero exit");
     assert.ok(parsed && parsed.ok === false);
-    assert.match(String(parsed.error), /no such primitive/);
+    const lines = String(parsed.error).split("\n");
+    assert.equal(lines[0], "RuntimeError: no such primitive", "the error leads, so a short view of it names it");
+    assert.equal(lines[1], "Traceback (most recent call last):", "then the traceback");
+    assert.equal(lines.at(-1), "RuntimeError: no such primitive");
   });
 
   it("a long error leads with its own first line, notes left after it, then the traceback's last lines; a first line too long alone keeps its start", {
@@ -379,6 +382,18 @@ bpy.context.active_object.name = "Cable"
     const long = await errorOf(`raise RuntimeError("PROBE " + "x" * 3000)`);
     assert.match(long, /^RuntimeError: PROBE x+…$/, "the error's own start, cut at its end");
     assert.ok(long.length <= 1500, `${long.length} characters`);
+  });
+
+  it("a failure in the wrapper's own steps still ends with a result line that names it first", {
+    skip: SKIP,
+  }, async () => {
+    const error = await errorOf(`bpy.ops.mesh.primitive_cube_add()\nimport os\nos.path.getsize = lambda path: 1 / 0`);
+    const lines = error.split("\n");
+    assert.equal(lines[0], "ZeroDivisionError: division by zero");
+    assert.ok(
+      lines.some((line) => line.includes("glbBytes")),
+      error,
+    );
   });
 
   it("an error raised on a very long source line still names the script's file and line", { skip: SKIP }, async () => {
