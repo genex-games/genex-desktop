@@ -4,7 +4,13 @@ import { useId } from "react";
 const G_PATH =
   "M14.8313 8.85849H6.76045V7.51031H19.2407V11.1697C19.2407 11.1697 18.2707 14.9788 9.80253 14.9788C9.80253 14.9788 0 15.257 0 7.10372C0 -0.450362 10.6042 0.0204315 10.6042 0.0204315C18.7669 0.0204315 19.2407 3.97937 19.2407 3.97937L17.1271 4.32176C17.1271 4.32176 16.4712 1.28301 10.4585 1.28301C10.4585 1.28301 2.40508 0.983416 2.40508 7.25352C2.40508 7.25352 2.22288 13.5022 9.91186 13.6734C15.961 13.866 16.8356 10.6561 16.9085 10.0997C17.1271 9.39349 16.1796 8.85849 14.8313 8.85849Z";
 
-/** Original Genex wordmark with theme-aware neutral stops (a palette's `logo` when set). See GENEX-SOURCES.md. */
+/**
+ * Original Genex wordmark with theme-aware neutral stops (a palette's `logo` when set). See GENEX-SOURCES.md.
+ * Chromium clips an SVG to its box snapped to whole device pixels while the drawing keeps its exact
+ * size: at 80px the wordmark is 12.625px tall, and the sidebar centres it at a fractional top, so on
+ * a 100% screen (most Windows PCs, Linux) the snap cut the letters' bottom edge. Its paths stay inside
+ * the viewBox, so `overflow="visible"` draws exactly the logo, whole, wherever layout puts it.
+ */
 export function GenexLogo({ className = "" }: { className?: string }) {
   return (
     <svg
@@ -14,6 +20,7 @@ export function GenexLogo({ className = "" }: { className?: string }) {
       width="95"
       height="15"
       viewBox="0 0 95 15"
+      overflow="visible"
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
     >
@@ -100,7 +107,7 @@ export function GenexLogo({ className = "" }: { className?: string }) {
   );
 }
 
-/** The G of the wordmark alone, in the wordmark's theme-aware stops: Genex's mark beside its name. */
+/** The G of the wordmark alone, in the wordmark's theme-aware stops and drawn whole like it: Genex's mark beside its name. */
 export function GenexMark({ size = 14 }: { size?: number }) {
   const fill = useId();
   return (
@@ -110,6 +117,7 @@ export function GenexMark({ size = 14 }: { size?: number }) {
       width={(size * 19.25) / 15}
       height={size}
       viewBox="0 0 19.25 15"
+      overflow="visible"
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
       className="shrink-0"
