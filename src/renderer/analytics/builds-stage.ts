@@ -13,6 +13,7 @@ import { LiveLoadFailure, PreviewGone } from "../../shared/preview-contract.ts";
 import type { StepRow, StepsCard } from "../chat/engine-steps.ts";
 import { GraphSelection, isPartSelection } from "../panels/inspector/selection.ts";
 import { isBuildSelection } from "../run-graph-builds.ts";
+import { isAssetSelection } from "../run-steps.ts";
 import {
   type BuildsEventProperties,
   type BuildsEvent,
@@ -176,11 +177,15 @@ export function planningEnded(
 
 // ── Builds ──────────────────────────────────────────────────────────────────────────────────
 
-/** What a Builds graph selection is: one of its fixed nodes, a part's row, a build of a Loop's line, or a step. */
+/**
+ * What a Builds graph selection is: one of its fixed nodes, a part's row, a build of a Loop's line,
+ * an asset a worker delivered, or a step.
+ */
 export function nodeKindOf(id: string): GraphSelection | NodeKind {
   const fixed = oneOf(GraphSelection, id);
   if (fixed) return fixed;
   if (isBuildSelection(id)) return NodeKind.Build;
+  if (isAssetSelection(id)) return NodeKind.Asset;
   return isPartSelection(id) ? NodeKind.Part : NodeKind.Step;
 }
 

@@ -3,8 +3,8 @@ import { PerformanceBoundary } from "../../performance.tsx";
 import { PerformanceComponent } from "../../../shared/performance.ts";
 import { t } from "../../../shared/i18n.ts";
 /**
- * The Builds graph's nodes: what you asked, the assets tile, every step,
- * your build and the lead — in a tree for the whole run, with its background tile and the finish
+ * The Builds graph's nodes: what you asked, the assets tile, every step and the asset cards under a
+ * worker, your build and the lead — in a tree for the whole run, with its background tile and the finish
  * check; otherwise while it has the run between parts. Every picture node is one size:
  * its picture fills it and its words sit on the picture, so no state changes its height. A node at
  * work is its agent's screen: the window's newest frame, the agent's cursor, what it is doing.
@@ -23,7 +23,16 @@ import type {
 import { runIdOf } from "../../run-graph.ts";
 import type { JobInfo } from "../../run-graph-workers.ts";
 import { AssetCardState, BLENDER_SOURCE } from "../../run-graph-assets.ts";
-import { askedRest, isLiveStep, type ResultStatus, STATE_TONE, type Step, StepState, Tone } from "../../run-steps.ts";
+import {
+  type AssetCard,
+  askedRest,
+  isLiveStep,
+  type ResultStatus,
+  STATE_TONE,
+  type Step,
+  StepState,
+  Tone,
+} from "../../run-steps.ts";
 import {
   FinishLook,
   finishCheckFace,
@@ -34,7 +43,14 @@ import {
 } from "../../run-tree.ts";
 import { useStill } from "../../stills.ts";
 import { Icon, type IconName } from "../../ui/icons.tsx";
-import { ASSET_THUMB_PX, assetsStatus, blenderRender, firstImage, isMaking } from "../inspector/asset-jobs.ts";
+import {
+  ASSET_THUMB_PX,
+  assetsStatus,
+  blenderRender,
+  firstImage,
+  isMaking,
+  kindWord,
+} from "../inspector/asset-jobs.ts";
 import { IMAGE_OUTLINE } from "../inspector/pictures.tsx";
 import { GraphSelection } from "../inspector/selection.ts";
 import { NodeCursor, ScreenWords, useFrameSrc, usePartFrame } from "../inspector/screen.tsx";
@@ -42,11 +58,11 @@ import { StateGlyph, TONE } from "../inspector/tone.tsx";
 import { sameStepNode, type StepNodeProps } from "./step-props.ts";
 import { useRoundStill, useSavePointShot, useWorkerStill } from "../run-stills.ts";
 import { AssetThumbnail } from "../AssetThumbnail.tsx";
-import { BUILD_LINE_WORDS, FINISH_CHECK_WORDS, JOBS_EYEBROW, LEAD_WORDS } from "../../words.ts";
+import { ASSET_VERSION_WORDS, BUILD_LINE_WORDS, FINISH_CHECK_WORDS, JOBS_EYEBROW, LEAD_WORDS } from "../../words.ts";
 import { type BuildCard, type BuildHangers, BuildOutcome, placedFace } from "../../run-graph-builds.ts";
 import { useNow } from "./use-builds-model.ts";
 import type { ReferenceFrame } from "../../../shared/protocol.ts";
-import type { ProjectAsset } from "../../../shared/game-assets.ts";
+import { assetKind, type ProjectAsset } from "../../../shared/game-assets.ts";
 import { imageSrc, useMessageImages } from "../../chat/MessageImages.tsx";
 
 /** How many asset pictures the assets tile shows before it counts the rest. */
@@ -409,6 +425,114 @@ function stepLook(ghost: boolean, borrowed: boolean): Look {
 function WorkerAsset({ project, asset }: { project: string; asset: ProjectAsset }): JSX.Element {
   return <AssetThumbnail project={project} asset={asset} companions={[]} fallback={null} quiet />;
 }
+
+/** Where an asset's name may wrap onto its card's second line: after a word's end, `_`, `-` or `.`. */
+const NAME_BREAKS = /([ _.-])/;
+
+/** An asset's name with a line break allowed after each of its word ends, so a long one wraps between words. */
+function wrappableName(name: string): ReactNode {
+  return name.split(NAME_BREAKS).map((part, index) =>
+    NAME_BREAKS.test(part) ? (
+      // biome-ignore lint/suspicious/noArrayIndexKey: the parts of one fixed name, in order
+      <span key={index}>
+        {part}
+        <wbr />
+      </span>
+    ) : (
+      part
+    ),
+  );
+}
+
+/** The chip that counts an asset's versions: none for an asset made once. */
+const versionsChip = (card: AssetCard): string | null =>
+  card.versions.length > 1 ? ASSET_VERSION_WORDS.count(card.versions.length) : null;
+
+/** What an asset with no picture to draw shows instead: a sound its sound, anything else a box. */
+function assetIcon(card: AssetCard): IconName {
+  const file = card.versions.at(-1)?.files[0];
+  return file && assetKind(file) === "audio" ? "sound" : "box";
+}
+
+/**
+ * One asset a worker delivered, a card of its own under the worker: its newest version's picture,
+ * its name, and how many versions it has once it was made again. A ghost worker's cards are dim.
+ */
+export const AssetCardNode = memo(function AssetCardNode({
+  project,
+  card,
+  rect,
+  ghost,
+  selected,
+  onSelect,
+}: {
+  project: string | null;
+  card: AssetCard;
+  rect: Rect | undefined;
+  ghost: boolean;
+  selected: boolean;
+  onSelect: (id: string) => void;
+}): JSX.Element | null {
+  const worker = useWorkerStill(project, card.picture);
+  if (!rect) return null;
+  const chip = versionsChip(card);
+  const newest = card.versions.at(-1);
+  const status = chip ?? (newest ? kindWord(newest) : null) ?? t("asset");
+  const asset = worker.src ? null : worker.asset;
+  const pictured = Boolean(worker.src) || Boolean(asset);
+  return (
+    <NodeFrame
+      id={card.id}
+      rect={rect}
+      variant={ghost ? Variant.Ghost : Variant.Normal}
+      selected={selected}
+      label={t("{name}: {status}", { name: card.name, status })}
+      onSelect={() => onSelect(card.id)}
+    >
+      {worker.src ? (
+        <img
+          src={worker.src}
+          decoding="async"
+          alt=""
+          draggable={false}
+          className="absolute inset-0 block h-full w-full object-cover"
+          style={LOOK_STYLE[stepLook(ghost, false)]}
+        />
+      ) : (
+        <span
+          aria-hidden="true"
+          className="absolute inset-0 grid place-items-center bg-inset text-ink-3"
+          style={LOOK_STYLE[stepLook(ghost, false)]}
+        >
+          {project && asset ? (
+            <WorkerAsset project={project} asset={asset} />
+          ) : (
+            <Icon name={assetIcon(card)} size={18} />
+          )}
+        </span>
+      )}
+      {chip ? (
+        <span
+          className="absolute top-1.5 right-1.5 rounded-[6px] px-1.5 text-[11px] leading-4 text-white group-data-[zoom=far]/canvas:hidden"
+          style={{ background: "rgb(14 14 16 / 72%)" }}
+        >
+          {chip}
+        </span>
+      ) : null}
+      <span
+        data-node-caption
+        className="absolute inset-x-0 bottom-0 px-2 pt-5 pb-1.5 group-data-[zoom=far]/canvas:hidden"
+        style={pictured ? PICTURED_CAPTION : PLAIN_CAPTION}
+      >
+        <span
+          className={`line-clamp-2 text-[12px] leading-4 font-semibold [overflow-wrap:anywhere] ${pictured ? "text-white" : "text-ink"}`}
+        >
+          {wrappableName(card.name)}
+        </span>
+      </span>
+    </NodeFrame>
+  );
+});
 
 /** A step being checked says so before its checker's action; a step being built says only the action. */
 const checkingWord = (step: Step, word: string): string | null => (step.state === StepState.Judging ? word : null);

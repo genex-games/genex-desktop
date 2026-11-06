@@ -32,10 +32,11 @@ hangs below. Tries a pause cut off show Paused until added. An eye opens the rev
 working node shows its agent's screen; a selected one opens as a card. **Follow up in chat** notes
 the next message to its build. Tabs (one per build; past three, one picker, newest first) and chat
 cards open earlier builds. A Loop, workers, jobs or a claim make a tree: the lead (jobs below),
-then, when asked, a finish check: Checking, Not yet, Done or Stopped. A Loop's line is its save points
+then, when asked, a finish check. A Loop's line is its save points
 (an earlier Genex's web Loop: its builds); workers hang off them, solid under the one taking their
-work, else ghosts; past three finished per point fold into “+N workers”. Compares pair only one frame (consecutive points or builds, asset versions) whose pixels
-differ; else the card says nothing visibly changed.
+work, else ghosts, each asset they made a card below (made again: a version); past three finished
+per point fold into “+N workers”. Compares show one frame (consecutive points or builds, asset
+versions) only where pixels differ, else say nothing visibly changed.
 
 Agents test hidden (Godot too), never Live. A finished worker, its merge and Live's revision
 differ; chat shows a delivery's capture, failures too. A web game's finish first loads its page
@@ -47,7 +48,7 @@ the Loop goes on.
 After a chat-led build, its session takes follow-ups: edits, resuming a paused run, or a
 new Loop for more work than a reply holds. **Stop** interrupts at once, keeping finished
 work: a stopped Loop shows one Stopped line with Resume. Resume refuses an earlier Genex's
-paused web Loop; its card says the work is kept in git and names the ref for the chat to bring in. Limit, outage and crash pauses resume twice unless stopped (Settings → Harness); sign-in
+paused web Loop; its card names the git ref keeping the work, for the chat to bring in. Limit, outage and crash pauses resume twice unless stopped (Settings → Harness); sign-in
 pauses wait. A crash or restart settles abandoned activity from saved state.
 
 ## Where to work

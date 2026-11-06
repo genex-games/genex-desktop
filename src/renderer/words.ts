@@ -2497,8 +2497,10 @@ export const BUILD_LINE_WORDS = {
   found: t("found"),
 } as const;
 
-/** An asset delivered again, beside the version before it on the run's Assets card. */
+/** An asset delivered again: its card's count of versions, and its compare with the version before it. */
 export const ASSET_VERSION_WORDS = {
+  /** How many times a worker made one asset, on its card under the worker. */
+  count: (count: number) => t("{count, plural, one {# version} other {# versions}}", { count }),
   compare: t("Compare with the earlier version"),
   earlier: t("Earlier"),
   now: t("Now"),

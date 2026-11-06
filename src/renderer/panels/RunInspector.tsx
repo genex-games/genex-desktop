@@ -9,7 +9,8 @@
  * `pictures.tsx`, and one file per kind of node.
  */
 import type { JSX } from "react";
-import { AssetsPanel } from "./inspector/AssetsPanel.tsx";
+import { AssetCardPanel, AssetsPanel } from "./inspector/AssetsPanel.tsx";
+import { isAssetSelection } from "../run-steps.ts";
 import { BuildPanel } from "./inspector/BuildPanel.tsx";
 import { isBuildSelection } from "../run-graph-builds.ts";
 import { FinishCheckPanel } from "./inspector/FinishCheckPanel.tsx";
@@ -29,7 +30,7 @@ export type { InspectorProps, LightItem, Reply } from "./inspector/types.ts";
 
 /** The card of whatever is selected on the graph, or nothing when the selection names no node. */
 export function Inspector(props: InspectorProps): JSX.Element | null {
-  const { selection, rows } = props;
+  const { selection } = props;
   if (selection === GraphSelection.Start) return <StartPanel {...props} />;
   if (selection === GraphSelection.Final) return <ResultPanel {...props} />;
   if (selection === GraphSelection.Lead) return <LeadPanel {...props} />;
@@ -40,9 +41,22 @@ export function Inspector(props: InspectorProps): JSX.Element | null {
     const build = props.timeline?.builds.find((item) => item.id === selection);
     return build ? <BuildPanel {...props} build={build} /> : null;
   }
+  return <RowCard {...props} />;
+}
+
+/** The card of something on a part's row: the part itself, an asset its worker delivered, or one of its steps. */
+function RowCard(props: InspectorProps): JSX.Element | null {
+  const { selection, rows } = props;
   if (isPartSelection(selection)) {
     const row = rows.find((item) => partSelection(item.facet.facetId) === selection);
     return row ? <PartPanel {...props} row={row} /> : null;
+  }
+  if (isAssetSelection(selection)) {
+    const card = rows
+      .flatMap((item) => item.steps)
+      .flatMap((step) => step.assets ?? [])
+      .find((item) => item.id === selection);
+    return card ? <AssetCardPanel {...props} card={card} /> : null;
   }
   const row = rows.find((item) => item.steps.some((step) => step.id === selection));
   const step = row?.steps.find((item) => item.id === selection);

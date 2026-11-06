@@ -4920,6 +4920,7 @@ export const MESSAGES = [
   "{count, plural, one {# tool} other {# tools}} in {ms} ms",
   "{count, plural, one {# try} other {# tries}}",
   "{count, plural, one {# update from your games} other {# updates from your games}}",
+  "{count, plural, one {# version} other {# versions}}",
   "{count, plural, one {# worker didn't deliver} other {# workers didn't deliver}}",
   "{count, plural, one {# worker} other {# workers}} on it",
   "{count, plural, one {# year ago} other {# years ago}}",

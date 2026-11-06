@@ -3,7 +3,8 @@
  * → Build 1 → Build 2 → … → your build, on one line. Each worker hangs below or above the build its
  * work went into, or the build it started from (the lead's column before the first build), each on
  * its own line from the trunk left of that column: solid when its work is in that build, live while
- * it works, dotted otherwise. Finished workers past a few fold into one card in the same lanes.
+ * it works, dotted otherwise; the assets a worker made sit under it, a card each. Finished workers
+ * past a few fold into one card in the same lanes.
  *
  * Pure: no DOM, no window. `run-tree.ts` picks it for a graph whose timeline is drawn.
  */
@@ -15,7 +16,7 @@ import {
   foldId,
   type WorkerPlace,
 } from "../../run-graph-builds.ts";
-import { columnX, LANE_PITCH, laneOf, TRUNK_INSET } from "../../run-graph-comb.ts";
+import { columnX, type HangSlot, hangHeight, reachAbove, stackHangers, TRUNK_INSET } from "../../run-graph-comb.ts";
 import {
   bend,
   isLiveStep,
@@ -23,12 +24,14 @@ import {
   type LayoutOptions,
   placeEnd,
   placeResult,
+  placeShelf,
   placeStart,
   placeTreeLead,
   STEPS,
   type Step,
   StepEdgeKind,
   type StepsLayout,
+  stepAndAssetIds,
 } from "../../run-steps.ts";
 
 /** One thing hanging off a column: a worker's node, or (no step) the card that folds the rest. */
@@ -43,19 +46,23 @@ function columnHangers(hangers: BuildHangers): Hanger[] {
   return hangers.folded ? [...items, { id: foldId(hangers.build), step: null }] : items;
 }
 
-/** The lane of a column's `index`th hanger; the lead's first lane below is its background tile's when it has one. */
-const slotOf = (index: number, jobsBelow: boolean) => laneOf(jobsBelow ? index + 1 : index);
+/**
+ * How tall each of a column's hangers is, in lane order: a worker with its asset cards, the fold card
+ * a lane; the lead's first lane below is its background tile's when it has one.
+ */
+function hangHeights(items: Hanger[], jobsBelow: boolean): number[] {
+  const heights = items.map((item) => (item.step ? hangHeight(item.step) : STEPS.nodeH));
+  return jobsBelow ? [STEPS.nodeH, ...heights] : heights;
+}
 
-/** How many lanes the busiest column needs above the line. */
-function lanesAbove(columns: Hanger[][], jobs: boolean): number {
-  let most = 0;
-  columns.forEach((items, column) => {
-    items.forEach((_, index) => {
-      const { below, lane } = slotOf(index, column === 0 && jobs);
-      if (!below) most = Math.max(most, lane + 1);
-    });
-  });
-  return most;
+/** Where each of a column's hangers goes, past the lead's background tile when it holds the first lane. */
+function slotsOf(items: Hanger[], midY: number, jobsBelow: boolean): HangSlot[] {
+  return stackHangers(hangHeights(items, jobsBelow), midY).slice(jobsBelow ? 1 : 0);
+}
+
+/** How far the busiest column reaches above the line. */
+function reachOf(columns: Hanger[][], jobs: boolean): number {
+  return Math.max(0, ...columns.map((items, column) => reachAbove(hangHeights(items, column === 0 && jobs))));
 }
 
 /** The line into a hanger: in hand now, its work in this build, or not. The fold card's is dotted. */
@@ -65,7 +72,7 @@ function hangKind(step: Step | null, place: WorkerPlace | undefined): StepEdgeKi
   return place?.merged ? StepEdgeKind.Solid : StepEdgeKind.Dotted;
 }
 
-/** One column's hangers, each on its own line from the trunk left of it. */
+/** One column's hangers, each on its own line from the trunk left of it, a worker's asset cards under it. */
 function placeHangers(
   draft: LayoutDraft,
   items: Hanger[],
@@ -75,16 +82,17 @@ function placeHangers(
   const S = STEPS;
   const x = columnX(at.column);
   const trunk = x - TRUNK_INSET;
+  const slots = slotsOf(items, at.midY, at.jobsBelow);
   items.forEach((item, index) => {
-    const { below, lane } = slotOf(index, at.jobsBelow);
-    const offset = (lane + 1) * LANE_PITCH;
-    const y = at.midY - S.nodeH / 2 + (below ? offset : -offset);
+    const y = slots[index]?.y ?? at.midY;
     const cy = y + S.nodeH / 2;
-    draft.rects[item.id] = { x, y, w: S.nodeW, h: S.nodeH };
+    const rect = { x, y, w: S.nodeW, h: S.nodeH };
+    draft.rects[item.id] = rect;
     const kind = hangKind(item.step, item.step ? places.get(item.step.id) : undefined);
     if (item.step && kind === StepEdgeKind.Dotted) draft.ghosts.add(item.step.id);
     draft.edges.push({ id: `hang:${item.id}`, d: bend(trunk, at.midY, cy, x, S.corner), kind });
     if (item.step?.gate) draft.gates.push({ target: item.step.id, gate: item.step.gate, x, y: cy });
+    if (item.step) placeShelf(draft, item.step, rect);
   });
 }
 
@@ -99,9 +107,10 @@ function placeBuilds(draft: LayoutDraft, builds: readonly BuildCard[], midY: num
   });
 }
 
-/** Reading order along the line: the lead's hangers, then each build and what hangs off it. */
+/** Reading order along the line: the lead's hangers, then each build and what hangs off it, each worker with its assets. */
 function timelineOrder(timeline: BuildTimeline, columns: Hanger[][]): string[] {
-  const workers = (column: number): string[] => (columns[column] ?? []).flatMap((item) => (item.step ? [item.id] : []));
+  const workers = (column: number): string[] =>
+    (columns[column] ?? []).flatMap((item) => (item.step ? stepAndAssetIds(item.step) : []));
   return [...workers(0), ...timeline.builds.flatMap((build) => [build.id, ...workers(build.n)])];
 }
 
@@ -114,7 +123,7 @@ export function layoutTimeline(timeline: BuildTimeline, options: LayoutOptions =
   const draft: LayoutDraft = { rects: {}, edges: [], gates: [], ghosts: new Set<string>() };
   const columns = timeline.hangers.map(columnHangers);
   const jobs = options.tree?.jobs === true;
-  const midY = S.pad + lanesAbove(columns, jobs) * LANE_PITCH + S.startH / 2;
+  const midY = S.pad + reachOf(columns, jobs) + S.startH / 2;
 
   placeStart(draft, midY, options.assets === true, options.startWords === true);
   placeTreeLead(draft, midY, jobs, options.lead === true);

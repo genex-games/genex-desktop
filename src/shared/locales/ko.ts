@@ -5248,6 +5248,7 @@ export default {
   "{count, plural, one {# try} other {# tries}}": "{count, plural, other {시도 #번}}",
   "{count, plural, one {# update from your games} other {# updates from your games}}":
     "{count, plural, other {내 게임 업데이트 #건}}",
+  "{count, plural, one {# version} other {# versions}}": "{count, plural, other {버전 #개}}",
   "{count, plural, one {# worker didn't deliver} other {# workers didn't deliver}}":
     "{count, plural, other {작업자 #명이 전달 못 함}}",
   "{count, plural, one {# worker} other {# workers}} on it": "{count, plural, other {작업자 #명이 작업 중}}",

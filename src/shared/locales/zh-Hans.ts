@@ -5071,6 +5071,7 @@ export default {
   "{count, plural, one {# try} other {# tries}}": "{count, plural, other {# 次尝试}}",
   "{count, plural, one {# update from your games} other {# updates from your games}}":
     "{count, plural, other {你的游戏有 # 条更新}}",
+  "{count, plural, one {# version} other {# versions}}": "{count, plural, other {# 个版本}}",
   "{count, plural, one {# worker didn't deliver} other {# workers didn't deliver}}":
     "{count, plural, other {# 个助手未交付}}",
   "{count, plural, one {# worker} other {# workers}} on it": "{count, plural, other {# 个助手在处理}}",

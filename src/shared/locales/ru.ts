@@ -5372,6 +5372,8 @@ export default {
     "{count, plural, one {# попытка} few {# попытки} many {# попыток} other {# попытки}}",
   "{count, plural, one {# update from your games} other {# updates from your games}}":
     "{count, plural, one {# обновление в твоих играх} few {# обновления в твоих играх} many {# обновлений в твоих играх} other {# обновления в твоих играх}}",
+  "{count, plural, one {# version} other {# versions}}":
+    "{count, plural, one {# версия} few {# версии} many {# версий} other {# версии}}",
   "{count, plural, one {# worker didn't deliver} other {# workers didn't deliver}}":
     "{count, plural, one {# помощник ничего не доставил} few {# помощника ничего не доставили} many {# помощников ничего не доставили} other {# помощника ничего не доставили}}",
   "{count, plural, one {# worker} other {# workers}} on it":

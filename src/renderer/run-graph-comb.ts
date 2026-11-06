@@ -18,17 +18,18 @@ import {
   type PartRow,
   placeEnd,
   placeResult,
+  placeShelf,
   placeStart,
   placeTreeLead,
   STEPS,
   type Step,
   StepEdgeKind,
   type StepsLayout,
+  shelfHeight,
+  stepAndAssetIds,
   treeLeadX,
 } from "./run-steps.ts";
 
-/** How far apart two hanging lanes are, top to top. */
-export const LANE_PITCH = STEPS.nodeH + STEPS.hangGap;
 /** Where a column's trunk runs: in the middle of the gap left of its node. */
 export const TRUNK_INSET = (STEPS.pitch - STEPS.nodeW) / 2;
 
@@ -99,9 +100,43 @@ export const laneOf = (index: number): { below: boolean; lane: number } => ({
   lane: Math.floor(index / 2),
 });
 
-/** How many lanes the busiest gap needs above the spine. */
-function lanesAbove(gaps: Map<number, Step[]>): number {
-  return Math.max(0, ...[...gaps.values()].map((steps) => Math.floor(steps.length / 2)));
+/** How tall a worker hangs: its node, and its asset cards under it. */
+export const hangHeight = (step: Step): number => STEPS.nodeH + shelfHeight(step);
+
+/** Where one hanger of a column goes: below the spine or above it, and the top of its node. */
+export interface HangSlot {
+  below: boolean;
+  y: number;
+}
+
+/**
+ * A column's hangers in lane order (`laneOf`), each side stacked out from the spine's nodes, whose
+ * middle line is `midY`; each hanger is as tall as `heights` says, a lane apart from the next.
+ */
+export function stackHangers(heights: readonly number[], midY: number): HangSlot[] {
+  const S = STEPS;
+  let below = midY + S.nodeH / 2 + S.hangGap;
+  let above = midY - S.nodeH / 2 - S.hangGap;
+  return heights.map((height, index) => {
+    if (laneOf(index).below) {
+      const y = below;
+      below = y + height + S.hangGap;
+      return { below: true, y };
+    }
+    const y = above - height;
+    above = y - S.hangGap;
+    return { below: false, y };
+  });
+}
+
+/** How far a column's hangers reach above the spine's nodes: what the spine moves down by. */
+export function reachAbove(heights: readonly number[]): number {
+  return heights.reduce((sum, height, index) => (laneOf(index).below ? sum : sum + height + STEPS.hangGap), 0);
+}
+
+/** How far the busiest gap reaches above the spine. */
+function gapsReach(gaps: Map<number, Step[]>): number {
+  return Math.max(0, ...[...gaps.values()].map((steps) => reachAbove(steps.map(hangHeight))));
 }
 
 /** The edge into a hanger: in hand now, its work taken, or nothing of it taken. */
@@ -113,20 +148,24 @@ function hangKind(step: Step): StepEdgeKind {
 /** A column's left edge: column 0 is the lead, column `c` the spine's `c`th place. */
 export const columnX = (column: number): number => treeLeadX() + column * STEPS.pitch;
 
-/** The workers of one gap, under or over the column right of it, each on its own line from the spine. */
+/**
+ * The workers of one gap, under or over the column right of it, each on its own line from the spine
+ * and its asset cards under it.
+ */
 function placeGap(draft: LayoutDraft, steps: Step[], column: number, midY: number): void {
   const S = STEPS;
   const x = columnX(column);
   const trunk = x - TRUNK_INSET;
+  const slots = stackHangers(steps.map(hangHeight), midY);
   steps.forEach((step, index) => {
-    const { below, lane } = laneOf(index);
-    const offset = (lane + 1) * LANE_PITCH;
-    const y = midY - S.nodeH / 2 + (below ? offset : -offset);
+    const y = slots[index]?.y ?? midY;
     const cy = y + S.nodeH / 2;
-    draft.rects[step.id] = { x, y, w: S.nodeW, h: S.nodeH };
+    const rect = { x, y, w: S.nodeW, h: S.nodeH };
+    draft.rects[step.id] = rect;
     if (!step.onLine && !isLiveStep(step)) draft.ghosts.add(step.id);
     draft.edges.push({ id: `hang:${step.id}`, d: bend(trunk, midY, cy, x, S.corner), kind: hangKind(step) });
     if (step.gate) draft.gates.push({ target: step.id, gate: step.gate, x, y: cy });
+    placeShelf(draft, step, rect);
   });
 }
 
@@ -143,11 +182,11 @@ function placeSaves(draft: LayoutDraft, saves: Step[], midY: number): void {
   });
 }
 
-/** Reading order along the spine: each gap's workers, then the save point that closes it. */
+/** Reading order along the spine: each gap's workers (each with its assets), then the save point that closes it. */
 function spineOrder({ saves, gaps }: Spine, columns: number): string[] {
   const order: string[] = [];
   for (let gap = 0; gap < columns; gap++) {
-    order.push(...(gaps.get(gap) ?? []).map((step) => step.id));
+    order.push(...(gaps.get(gap) ?? []).flatMap(stepAndAssetIds));
     const save = saves[gap];
     if (save) order.push(save.id);
   }
@@ -166,7 +205,7 @@ export function layoutComb(rows: PartRow[], options: LayoutOptions = {}): StepsL
   const spine = spineOf(rows);
   const last = spine.saves.length;
   const columns = last + 1 + (spine.gaps.has(last) ? 1 : 0);
-  const midY = S.pad + lanesAbove(spine.gaps) * LANE_PITCH + S.startH / 2;
+  const midY = S.pad + gapsReach(spine.gaps) + S.startH / 2;
 
   placeStart(draft, midY, options.assets === true, options.startWords === true);
   placeTreeLead(draft, midY, options.tree?.jobs === true, options.lead === true);

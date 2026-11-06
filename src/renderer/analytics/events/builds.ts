@@ -150,8 +150,8 @@ export const EmptyAction = {
 } as const;
 export type EmptyAction = (typeof EmptyAction)[keyof typeof EmptyAction];
 
-/** A Builds graph node that is not one of its fixed nodes: a part's row, or one of its steps. */
-export const NodeKind = { Part: "part", Step: "step", Build: "build" } as const;
+/** A Builds graph node that is not one of its fixed nodes: a part's row, one of its steps, a build, or an asset a worker delivered. */
+export const NodeKind = { Part: "part", Step: "step", Build: "build", Asset: "asset" } as const;
 export type NodeKind = (typeof NodeKind)[keyof typeof NodeKind];
 
 /** How a Builds graph node was opened. */

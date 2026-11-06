@@ -702,6 +702,7 @@ describe("the stage", () => {
     assert.equal(nodeKindOf("part:facet-7"), NodeKind.Part);
     assert.equal(nodeKindOf("step-abc"), NodeKind.Step);
     assert.equal(nodeKindOf("build:3"), NodeKind.Build, "a build of a Loop's line");
+    assert.equal(nodeKindOf("asset:w3:call-j01"), NodeKind.Asset, "an asset a worker delivered");
   });
 
   it("sends a slow projection of the Builds graph with its size, at most once in a while", () => {

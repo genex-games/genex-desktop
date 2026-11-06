@@ -231,6 +231,35 @@ function oneAsset(a: AssetInfo, b: AssetInfo): boolean {
 }
 
 /**
+ * Delivered cards grouped into the assets they are (`oneAsset`): each group one asset's versions in
+ * the order given, the groups in the order each asset was first delivered. A card that delivered
+ * nothing (failed, still on its way) is no version of anything.
+ */
+export function assetVersions(cards: readonly AssetInfo[]): AssetInfo[][] {
+  const groups: AssetInfo[][] = [];
+  for (const card of cards) {
+    if (card.state !== AssetCardState.Delivered) continue;
+    const group = groups.find((versions) => versions.some((version) => oneAsset(version, card)));
+    if (group) group.push(card);
+    else groups.push([card]);
+  }
+  return groups;
+}
+
+/**
+ * Whether two cards are one record of the log: the same call, job, name and moment. The Builds tab
+ * may hold a card and the run's list of jobs as separate copies of the same snapshot.
+ */
+const sameRecord = (a: AssetInfo, b: AssetInfo): boolean =>
+  a.callId === b.callId && a.jobId === b.jobId && a.name === b.name && a.at === b.at && a.source === b.source;
+
+/** Where a card stands in the run's jobs: itself, else its copy there; -1 when the run has neither. */
+function placeIn(jobs: readonly AssetInfo[], job: AssetInfo): number {
+  const at = jobs.indexOf(job);
+  return at >= 0 ? at : jobs.findIndex((other) => sameRecord(other, job));
+}
+
+/**
  * The version of `job`'s asset delivered before it, for the compare: the newest card before it in
  * the log's order of the same asset whose kept picture shows the same view (the same picture file).
  * Null for a first version, another view, or a card without a kept picture: unrelated pictures are
@@ -244,7 +273,7 @@ export function earlierVersion(jobs: readonly AssetInfo[], job: AssetInfo): Asse
     const pictured = other.state === AssetCardState.Delivered && Boolean(other.picture);
     return pictured && otherView !== null && leafOf(otherView) === leafOf(view) && oneAsset(other, job);
   };
-  return jobs.slice(0, Math.max(0, jobs.indexOf(job))).findLast(pairs) ?? null;
+  return jobs.slice(0, Math.max(0, placeIn(jobs, job))).findLast(pairs) ?? null;
 }
 
 /** The copy the host kept of a picture this card's files delivered, when it kept one. */
@@ -256,13 +285,17 @@ function keptPictureOf(ledger: AssetLedger, job: AssetInfo): string | undefined 
   return undefined;
 }
 
-/** Two records of one asset: the card that was asked for keeps what the other one learned. */
+/**
+ * Two records of one asset: the card that was asked for keeps what the other one learned, the
+ * picture its delivery kept too (the files' map holds only the newest delivery's of each file).
+ */
 function foldAsset(ledger: AssetLedger, from: AssetInfo, into: AssetInfo): void {
   if (from.files.length) into.files = from.files;
   into.file = into.files[0] ?? from.file ?? into.file;
   if (from.bytes) into.bytes = from.bytes;
   into.render ??= from.render;
   into.renderFront ??= from.renderFront;
+  if (from.picture) into.picture = from.picture;
   into.jobId ??= from.jobId;
   if (from.state === AssetCardState.Delivered) {
     into.state = AssetCardState.Delivered;
@@ -376,10 +409,14 @@ function foldOrphanDelivery(
 /** A plugin's card that no call asked for. */
 const unaskedPluginCard = (card: AssetInfo): boolean => card.callId === null && card.source !== BLENDER_SOURCE;
 
-/** A plugin delivery nothing asked for that holds one of these files. */
+/**
+ * A plugin delivery nothing asked for that holds one of these files. One an earlier call already
+ * folded in is that call's: the same file delivered again is a newer delivery's.
+ */
 function orphanHoldingFiles(ledger: AssetLedger, files: string[]): AssetInfo | undefined {
   if (!files.length) return undefined;
-  return ledger.jobs.find((card) => unaskedPluginCard(card) && card.files.some((file) => files.includes(file)));
+  const holds = (card: AssetInfo): boolean => card.files.some((file) => files.includes(file));
+  return ledger.jobs.find((card) => unaskedPluginCard(card) && !ledger.dropped.has(card) && holds(card));
 }
 
 /**
