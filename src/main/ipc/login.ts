@@ -13,6 +13,7 @@ import type { CodexLoginController } from "../codex-login.ts";
 import type { CliLogin, OpenCodeLogin, SubscriptionEngine } from "../login-controllers.ts";
 import type { IpcHandle } from "./registrar.ts";
 import { EngineId } from "../../shared/providers.ts";
+import { CodexLoginProblem } from "../../shared/codex-login.ts";
 import { LoginSource } from "../../shared/engine-descriptor.ts";
 import { SECOND_MS } from "../../shared/duration.ts";
 import { NEW_ACCOUNT, type SubscriptionAccountView } from "../../shared/subscription-accounts.ts";
@@ -100,7 +101,8 @@ export function registerLoginIpc(
     if (id === EngineId.Codex) {
       return changeCodexAccount(async () => {
         const state = await codexLogin.start(await codexSignInHome(engine, payload?.account));
-        return { started: state.phase !== "failed", error: state.error };
+        const missingCli = state.problem === CodexLoginProblem.MissingCli;
+        return { started: state.phase !== "failed", error: state.error, ...(missingCli ? { missingCli } : {}) };
       });
     }
     // The Terminal login signs in where the CLI keeps its own: no config folder named.

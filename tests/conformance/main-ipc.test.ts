@@ -30,7 +30,7 @@ import path from "node:path";
 import type { ClaudeLoginState } from "../../src/shared/claude-login.ts";
 import { FastDecisions } from "../../src/main/core/fast-decisions.ts";
 import { memoryKeyStore } from "../../src/substrate/provider-keys.ts";
-import type { CodexLoginState } from "../../src/shared/codex-login.ts";
+import { CodexLoginProblem, type CodexLoginState } from "../../src/shared/codex-login.ts";
 import { OpenRouterSignInProblem } from "../../src/shared/openrouter-login.ts";
 import { ModelPullProblem } from "../../src/shared/model-install.ts";
 import { EngineFailureKind } from "../../src/shared/engine-requests.ts";
@@ -243,7 +243,12 @@ const codexIdle: CodexLoginState = {
 function loginFixture(
   logins: Record<string, Awaited<ReturnType<SubscriptionEngine["resolveLogin"]>>>,
   busy = false,
-  accountsFor: { signedIn?: string[]; emails?: Record<string, string>; noCursor?: boolean } = {},
+  accountsFor: {
+    signedIn?: string[];
+    emails?: Record<string, string>;
+    noCursor?: boolean;
+    codexStart?: Partial<CodexLoginState>;
+  } = {},
 ) {
   const started: string[] = [];
   const accountsRoot = mkdtempSync(path.join(os.tmpdir(), "studio-ipc-accounts-"));
@@ -316,7 +321,7 @@ function loginFixture(
     codexLogin: {
       start: async (home: string, method?: string) => {
         started.push(`codex ${home} ${method ?? "browser"}`);
-        return { ...codexIdle, phase: "waiting" };
+        return { ...codexIdle, phase: "waiting", ...accountsFor.codexStart };
       },
       snapshot: () => codexIdle,
       cancel: async () => {
@@ -365,6 +370,23 @@ describe("a subscription's accounts", () => {
     logins.codex = { source: "isolated", home: "/elsewhere" };
     await invoke("studio:subscription.signin", { engine: "codex" });
     assert.deepEqual(started, [`codex ${added} browser`, "claude /elsewhere", "codex /homes/codex browser"]);
+  });
+
+  it("tells the card a Codex sign-in failed for a missing CLI, so it offers the install", async () => {
+    const missing = loginFixture({}, false, {
+      codexStart: { phase: "failed", error: "Install Codex, then check again.", problem: CodexLoginProblem.MissingCli },
+    });
+    assert.deepEqual(await missing.invoke("studio:subscription.signin", { engine: "codex" }), {
+      ok: true,
+      value: { started: false, missingCli: true, error: "Install Codex, then check again." },
+    });
+    const failed = loginFixture({}, false, {
+      codexStart: { phase: "failed", error: "spawn failed", problem: CodexLoginProblem.SpawnFailed },
+    });
+    assert.deepEqual(await failed.invoke("studio:subscription.signin", { engine: "codex" }), {
+      ok: true,
+      value: { started: false, error: "spawn failed" },
+    });
   });
 
   it("refuses a sign-in to an id that is no account's, and writes nothing", async () => {

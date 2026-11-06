@@ -18,6 +18,7 @@ import { createStudioBridge } from "../../src/preload/studio-bridge.ts";
 import { ClaudeLoginProblem, ClaudeLoginRefusal, type ClaudeLoginState } from "../../src/shared/claude-login.ts";
 import { CliInstallOperation, CliInstallRefusal } from "../../src/shared/cli-install.ts";
 import { CodexLoginProblem } from "../../src/shared/codex-login.ts";
+import { CodingCliState, CodingCliUnavailable } from "../../src/shared/coding-cli.ts";
 import { type BootFailureCode, SandboxProblemCode } from "../../src/shared/boot.ts";
 import { type PlanReview, PlanReviewState, SendFailure } from "../../src/shared/composer.ts";
 import { CustomEvent } from "../../src/shared/custom-events.ts";
@@ -268,6 +269,12 @@ describe("phase 2 analytics: providers say why", () => {
       },
     });
     assert.equal(unresolved.snapshot().problem, ClaudeLoginProblem.CliUnresolved);
+    const absent = await failedWith({
+      resolveCli: async () => {
+        throw new CodingCliUnavailable(CodingCliState.Missing, "Claude Code CLI was not found.");
+      },
+    });
+    assert.equal(absent.snapshot().problem, ClaudeLoginProblem.MissingCli);
     // A CLI that says nothing on a pipe is handed to the embedded terminal: none to hand it to,
     // one that cannot open, the CLI failing in it, or the CLI gone by then.
     const handedOver: ReadonlyArray<[string, Partial<ConstructorParameters<typeof ClaudeLoginController>[0]>, string]> =
@@ -333,6 +340,15 @@ describe("phase 2 analytics: providers say why", () => {
       detail: "Logged in using an API key - /Users/alice/.codex",
     });
     assert.equal(await failedWith({ findBinary: async () => null }), CodexLoginProblem.MissingCli);
+    // The packaged resolver refuses a Codex that is not there: an install to offer, not a retry.
+    const refusing = (state: CodingCliState) => async () => {
+      throw new CodingCliUnavailable(state, "Codex CLI was not found at /Users/alice/bin/codex.");
+    };
+    assert.equal(await failedWith({ resolveCli: refusing(CodingCliState.Missing) }), CodexLoginProblem.MissingCli);
+    assert.equal(
+      await failedWith({ resolveCli: refusing(CodingCliState.Incompatible) }),
+      CodexLoginProblem.CouldNotStart,
+    );
     assert.equal(await failedWith({ spawn: exiting(1) }), CodexLoginProblem.NotFinished);
     assert.equal(
       await failedWith({ spawn: exiting(0), probe: status("api_key", true) }),

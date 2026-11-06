@@ -134,7 +134,9 @@ installer that exits cleanly without a working CLI counts as failed. There is on
 second press joins it and every button follows it (`cli.install`). The page names only which CLI;
 `studio:cli-install.start` is native, so fixture profiles refuse it. Like the person's own terminal,
 the installer runs outside `ProcessSandbox` ([cli-installer.ts](../src/substrate/cli-installer.ts)).
-A failure says why; Settings then adds the vendor's install guide.
+A failure says why; Settings then adds the vendor's install guide. Sign in with no CLI installed
+(`requireCodingCli` throws `CodingCliUnavailable` in state `missing`) fails as `missing_cli`, and
+`studio:subscription.signin` answers `missingCli`, so the card offers this Install, not a retry.
 
 ## OpenRouter and OpenCode
 

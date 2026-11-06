@@ -27,6 +27,7 @@ import {
   type ClaudeLoginState,
 } from "../shared/claude-login.ts";
 import { CodedError, errorMessage } from "../shared/errors.ts";
+import { isCodingCliMissing } from "../shared/coding-cli.ts";
 import { MINUTE_MS, SECOND_MS } from "../shared/duration.ts";
 import { t } from "../shared/i18n.ts";
 
@@ -183,13 +184,18 @@ export class ClaudeLoginController {
   /** The CLI to run and its environment, or the answer to give when there is none. */
   async #findCli(): Promise<{ binary: string; env?: NodeJS.ProcessEnv } | ClaudeLoginStart> {
     let installation: { path: string; env: NodeJS.ProcessEnv } | undefined;
+    // The packaged resolver refuses a missing CLI by throwing: that is an install to offer.
+    let missing = false;
     try {
       installation = await this.#deps.resolveCli?.();
     } catch (error) {
-      this.#fail(errorMessage(error), ClaudeLoginProblem.CliUnresolved);
-      return { started: false, error: errorMessage(error) };
+      missing = isCodingCliMissing(error);
+      if (!missing) {
+        this.#fail(errorMessage(error), ClaudeLoginProblem.CliUnresolved);
+        return { started: false, error: errorMessage(error) };
+      }
     }
-    const binary = installation?.path ?? (await this.#deps.findBinary());
+    const binary = missing ? null : (installation?.path ?? (await this.#deps.findBinary()));
     if (!binary) {
       this.#fail(MISSING_CLAUDE_CLI, ClaudeLoginProblem.MissingCli);
       return { started: false, missingCli: true, error: MISSING_CLAUDE_CLI };
