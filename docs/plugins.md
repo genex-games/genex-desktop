@@ -3650,9 +3650,9 @@ Local Blender:
   or Scoop, or wherever the person chose `blender.exe` (the `program` setting, Choose Blender… on
   its card). It pins Blender's Mac `.dmg` and Windows x64 and arm64 zips. On a Windows PC with no
   OpenGL 4.3 driver Workbench crashes Blender, so the wrapper checks with a child Blender first and
-  renders with Cycles on the CPU instead. There the job's sandbox may not make a folder only its
-  owner opens, which Python's `tempfile.mkdtemp` asks for, so in a job it makes its folders with the
-  job's temp folder's own entries.
+  renders with Cycles on the CPU instead. On every Windows PC the job's sandbox may not make a
+  folder only its owner opens, which Python's `tempfile.mkdtemp` asks for, so in a job it makes its
+  folders with the job's temp folder's own entries.
 - A failed job's error leads with its own line (`KeyError: …`), then the traceback, also when the
   wrapper's own export or renders failed, so the Assets card's first lines say what went wrong.
 - Run Blender through the tool: in a worker's sandbox Blender started from a shell cannot reach the

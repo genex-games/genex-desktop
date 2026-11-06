@@ -79,12 +79,15 @@ def error_text(error):
     # The error's own first line, always first: a card that shows only a line or two of the error
     # names it, not "Traceback (most recent call last)" and the job folder's path. Then the
     # traceback's last lines that fit with it in ERROR_CHARS, each other line cut to LINE_CHARS; a
-    # first line longer than ERROR_CHARS alone keeps its start.
+    # first line longer than ERROR_CHARS alone keeps its start. A first line longer than LINE_CHARS
+    # leads alone: the traceback's own copy of it is left out, so it doesn't spend the room the
+    # script's File lines need a second time.
     headline = error_headline(error)
     if len(headline) > ERROR_CHARS:
         return cut(headline, ERROR_CHARS)
     traced = "".join(traceback.format_exception(error)).rstrip("\n").split("\n")
-    lines = [line if line == headline else cut(line, LINE_CHARS) for line in traced]
+    leads_alone = len(headline) > LINE_CHARS
+    lines = [cut(line, LINE_CHARS) for line in traced if not (leads_alone and line == headline)]
     kept = []
     for line in reversed(lines):
         if len("\n".join([headline, line] + kept)) > ERROR_CHARS:
@@ -92,10 +95,15 @@ def error_text(error):
         kept = [line] + kept
     return "\n".join([headline] + kept)
 
+WRAPPER_CODE = sys._getframe().f_code  # this file's own top level, as Blender runs it
+
 def report_uncaught(kind, error, trace):
     # A failure in the wrapper's own steps (the export, the renders) ends with a result line too,
-    # naming the error first, rather than leaving only Blender's traceback on stderr.
-    result({"ok": False, "error": error_text(error)})
+    # naming the error first, rather than leaving only Blender's traceback on stderr. Blender prints
+    # a callback's error (a script's render or update handler) through this hook too and goes on, so
+    # only an error that came up through this file's top level is the job's result.
+    if any(frame.f_code is WRAPPER_CODE for frame, _ in traceback.walk_tb(trace)):
+        result({"ok": False, "error": error_text(error)})
     sys.__excepthook__(kind, error, trace)
 
 sys.excepthook = report_uncaught
