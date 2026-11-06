@@ -798,6 +798,7 @@ export const MESSAGES = [
   "Continue on ChatGPT plan",
   "Continue on Claude plan",
   "Continue on this Mac",
+  "Continue on {name}",
   "Continue to confirmation",
   "Contractor",
   "Contrast",

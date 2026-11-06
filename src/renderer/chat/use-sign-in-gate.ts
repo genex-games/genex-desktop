@@ -4,7 +4,7 @@
  * itself asked for a sign-in mid-turn, the card can also finish the turn on a local model. A Genex
  * model that cannot build yet shows the blue Genex notice instead (`genex-build.ts`).
  */
-import type { ComponentProps } from "react";
+import { type ComponentProps, useEffect, useMemo } from "react";
 import type { ComposerSendOptions } from "../../shared/composer.ts";
 import { CustomEvent, customEvent } from "../../shared/custom-events.ts";
 import {
@@ -17,15 +17,22 @@ import {
 } from "../../shared/engine-descriptor.ts";
 import type { EventEnvelope } from "../../shared/event-log.ts";
 import { EngineId, isMetered, SUBSCRIPTION_ENGINES } from "../../shared/providers.ts";
-import { type GenexBuild, useGenexBuild } from "../genex-build.ts";
-import { defaultModelKey } from "../model-choices.ts";
+import {
+  type GenexBuild,
+  type GenexNeed,
+  type OtherModel,
+  type OwnPlan,
+  otherReadyModel,
+  planActions,
+  useGenexBuild,
+} from "../genex-build.ts";
 import { modelKey, parseModelKey } from "../model-key.ts";
 import { useSubscriptionAuth } from "../subscription-auth.ts";
 import type { GenexNoticeProps } from "../ui/GenexNotice.tsx";
 import type { SignInCard } from "../ui/SignInCard.tsx";
 import { CHAT_WORDS } from "../words.ts";
 import { engineRef } from "../analytics/chat-properties.ts";
-import { SignInAction } from "../analytics/chat-vocabulary.ts";
+import { GenexNoticeStep, SignInAction } from "../analytics/chat-vocabulary.ts";
 import { track } from "../analytics/client.ts";
 import { AnalyticsEvent } from "../analytics/events.ts";
 
@@ -73,30 +80,62 @@ export interface SignInGate {
   genex: GenexNoticeProps | null;
 }
 
+const NO_OFFER: { plans: OwnPlan[]; other: OtherModel | null } = { plans: [], other: null };
+
+/** What the notice offers besides its main step: the person's own plans and another ready model. */
+function noticeOffer(engines: readonly EngineDescriptor[]): { plans: OwnPlan[]; other: OtherModel | null } {
+  const plans = SUBSCRIPTION_ENGINES.map((engine) => ({
+    engine,
+    ready: engines.some((candidate) => candidate.id === engine && isEngineReady(candidate)),
+  }));
+  return { plans, other: otherReadyModel([...engines]) };
+}
+
 /** The gate while a Genex model cannot build yet: the Genex notice in place of a sign-in card. */
 function genexGate(
   build: GenexBuild & { need: NonNullable<GenexBuild["need"]> },
-  engines: readonly EngineDescriptor[],
+  offer: { plans: OwnPlan[]; other: OtherModel | null },
   setModelKey: (key: string | null) => void,
 ): SignInGate {
+  const { need } = build;
   return {
     needsSignIn: true,
     signIn: (idea) => build.primary(idea),
     card: null,
     genex: {
-      need: build.need,
+      need,
       waiting: build.waiting,
       installing: build.installing,
       problem: build.problem,
-      plans: SUBSCRIPTION_ENGINES.map((engine) => ({
-        engine,
-        ready: engines.some((candidate) => candidate.id === engine && isEngineReady(candidate)),
-      })),
-      onPrimary: () => void build.primary(),
-      // The chat moves onto that plan; a plan still to connect asks for its own sign-in there.
-      onUse: (engine) => setModelKey(defaultModelKey(engine)),
+      plans: offer.plans,
+      other: offer.other,
+      onPrimary: () => {
+        trackGenexNoticeAction(need, GenexNoticeStep.Primary, null);
+        void build.primary();
+      },
+      // The chat moves onto that model; a plan still to connect asks for its own sign-in there.
+      onUse: (action) => {
+        trackGenexNoticeAction(need, GenexNoticeStep.Use, action.engine);
+        setModelKey(action.key);
+      },
     },
   };
+}
+
+/** `genex_notice_action`: which of the notice's ways the person took. */
+function trackGenexNoticeAction(need: GenexNeed, step: GenexNoticeStep, engine: string | null): void {
+  track(AnalyticsEvent.GenexNoticeAction, { need, step, engine: engine ? engineRef(engine) : null });
+}
+
+/** `genex_notice_shown`, once for each need the notice comes up with, and what it offered beside it. */
+function useGenexNoticeShown(need: GenexNeed | null, offer: { plans: OwnPlan[]; other: OtherModel | null }): void {
+  const { tint } = planActions(offer.plans, offer.other);
+  const offered = tint ? engineRef(tint.engine) : null;
+  const plansReady = offer.plans.filter((plan) => plan.ready).length;
+  useEffect(() => {
+    if (need === null) return;
+    track(AnalyticsEvent.GenexNoticeShown, { need, offered, plans_ready: plansReady });
+  }, [need, offered, plansReady]);
 }
 
 /** Narrows a Genex build to one that needs something. */
@@ -125,7 +164,10 @@ export function useSignInGate({
   // two, and a Codex pick must not be met with a Claude sign-in prompt.
   const auth = useSubscriptionAuth(engines, onEnginesRefresh, parseModelKey(selected).engine || EngineId.ClaudeCode);
   const genex = useGenexBuild(selectedEngine, onEnginesRefresh);
-  if (genexNeeds(genex)) return genexGate(genex, engines, setModelKey);
+  // Only a Genex model that cannot build reads the other ways: every chat runs this gate.
+  const offer = useMemo(() => (genex.need === null ? NO_OFFER : noticeOffer(engines)), [genex.need, engines]);
+  useGenexNoticeShown(genex.need, offer);
+  if (genexNeeds(genex)) return genexGate(genex, offer, setModelKey);
   const blocked = selectedEngine?.id !== EngineId.Genex && subscriptionBlocksSend(selectedEngine, auth.engine);
   const signIn = (): Promise<void> => auth.signIn();
   if (!blocked) return { needsSignIn: false, signIn, card: null, genex: null };

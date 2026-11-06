@@ -1,6 +1,12 @@
 import type { JSX } from "react";
-import type { SubscriptionId } from "../../shared/providers.ts";
-import { type GenexNeed, genexNoticeWords, type OwnPlan, planActions } from "../genex-build.ts";
+import {
+  type GenexNeed,
+  genexNoticeWords,
+  type OtherModel,
+  type OwnPlan,
+  type PlanAction,
+  planActions,
+} from "../genex-build.ts";
 import { Button } from "./Button.tsx";
 import { GenexMark } from "./GenexLogo.tsx";
 
@@ -13,20 +19,23 @@ export interface GenexNoticeProps {
   problem: string | null;
   /** The person's own plans, and whether each is connected now. */
   plans: readonly OwnPlan[];
+  /** Another model that is ready to build with (OpenCode, a local model, OpenRouter…), or null. */
+  other?: OtherModel | null;
   /** The main button: the build page, more credits, the setup or a recheck. */
   onPrimary(): void;
-  /** Move the chat onto one of the person's own plans. */
-  onUse(engine: SubscriptionId): void;
+  /** Move the chat off Genex: onto one of the person's own plans, or the other ready model. */
+  onUse(action: PlanAction): void;
 }
 
 /**
  * The blue notice a Genex model shows while it cannot build yet: Genex's G, one line saying what
- * is missing, its one main step, and the person's own Claude and ChatGPT plans as the other way.
+ * is missing, its one main step, and the other way: what the person can already build with (a
+ * connected plan, else another ready model) as a tinted button, or links to connect a plan.
  * Over a game's first message (`held`) it says the message waits; it is sent once Genex is ready.
  */
 export function GenexNotice({ held = false, ...props }: GenexNoticeProps & { held?: boolean }): JSX.Element {
   const words = genexNoticeWords(props.need, { held, waiting: props.waiting, installing: props.installing });
-  const { tint, links } = planActions(props.need, props.plans);
+  const { tint, links } = planActions(props.plans, props.other ?? null);
   return (
     <div className="genex-notice" role="status" data-genex-notice={props.need}>
       <div className="genex-notice-body">
@@ -45,7 +54,7 @@ export function GenexNotice({ held = false, ...props }: GenexNoticeProps & { hel
           </Button>
         ) : null}
         {tint ? (
-          <Button variant="accent-tint" data-genex-action={tint.engine} onClick={() => props.onUse(tint.engine)}>
+          <Button variant="accent-tint" data-genex-action={tint.engine} onClick={() => props.onUse(tint)}>
             {tint.label}
           </Button>
         ) : null}
@@ -55,7 +64,7 @@ export function GenexNotice({ held = false, ...props }: GenexNoticeProps & { hel
             type="button"
             className="genex-notice-link"
             data-genex-action={link.engine}
-            onClick={() => props.onUse(link.engine)}
+            onClick={() => props.onUse(link)}
           >
             {link.label}
           </button>

@@ -5776,6 +5776,7 @@ export default {
     "连接你已付费的 Claude 或 ChatGPT 套餐，或用 Genex 积分制作。",
   "Continue in browser": "在浏览器中继续",
   "Continue on ChatGPT plan": "使用 ChatGPT 套餐继续",
+  "Continue on {name}": "使用 {name} 继续",
   "Continue on Claude plan": "使用 Claude 套餐继续",
   "Everything so far is saved.": "目前的一切都已保存。",
   "Finish on genex.games in your browser.": "请在浏览器中完成 genex.games 上的步骤。",

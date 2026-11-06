@@ -6220,6 +6220,7 @@ export default {
     "Connecte le forfait Claude ou ChatGPT que tu paies déjà, ou crée avec des crédits Genex.",
   "Continue in browser": "Continuer dans le navigateur",
   "Continue on ChatGPT plan": "Continuer avec le forfait ChatGPT",
+  "Continue on {name}": "Continuer avec {name}",
   "Continue on Claude plan": "Continuer avec le forfait Claude",
   "Everything so far is saved.": "Tout ce qui est fait est enregistré.",
   "Finish on genex.games in your browser.": "Termine sur genex.games dans ton navigateur.",

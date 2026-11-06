@@ -49,6 +49,7 @@ import {
   sendBlockedProperties,
   stopRequestedProperties,
 } from "../../src/renderer/analytics/chat-properties.ts";
+import { GenexNeed } from "../../src/renderer/genex-build.ts";
 import {
   CardSettledBy,
   ComposerRoom,
@@ -273,10 +274,23 @@ describe("a dead Send", () => {
       reason: SendBlock.NoModel,
       room: ComposerRoom.Home,
       engine: EngineId.Ollama,
+      genex_need: null,
       attempts_in_row: 2,
     });
     noteMessageSent(memory, facts(), T0);
     assert.equal(sendBlockedProperties(memory, blocked).attempts_in_row, 1);
+  });
+
+  it("says what a Genex model still needs, apart from a real sign-in", () => {
+    const memory = createChatMemory();
+    const blocked = sendBlockedProperties(memory, {
+      reason: SendBlock.SignInNeeded,
+      room: ComposerRoom.Game,
+      key: `${EngineId.Genex}::sonnet`,
+      genexNeed: GenexNeed.Plan,
+    });
+    assert.equal(blocked.engine, EngineId.Genex);
+    assert.equal(blocked.genex_need, GenexNeed.Plan);
   });
 });
 

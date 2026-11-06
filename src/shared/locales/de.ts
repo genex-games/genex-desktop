@@ -6258,6 +6258,7 @@ export default {
     "Verbinde das Claude- oder ChatGPT-Abo, das du schon bezahlst, oder baue mit Genex-Credits.",
   "Continue in browser": "Im Browser fortfahren",
   "Continue on ChatGPT plan": "Mit ChatGPT-Abo fortfahren",
+  "Continue on {name}": "Mit {name} fortfahren",
   "Continue on Claude plan": "Mit Claude-Abo fortfahren",
   "Everything so far is saved.": "Alles bisher ist gespeichert.",
   "Finish on genex.games in your browser.": "Schließ es auf genex.games in deinem Browser ab.",

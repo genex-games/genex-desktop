@@ -10,8 +10,10 @@ import { CodingCliState } from "../shared/coding-cli.ts";
 import { MINUTE_MS, SECOND_MS } from "../shared/duration.ts";
 import { type EngineDescriptor, EngineStatusCode, EngineStatusReason } from "../shared/engine-descriptor.ts";
 import { t } from "../shared/i18n.ts";
-import { EngineId, type SubscriptionId } from "../shared/providers.ts";
+import { EngineId, providerInfo, SUBSCRIPTION_ENGINES, type SubscriptionId } from "../shared/providers.ts";
 import { useCliInstall } from "./cli-install.ts";
+import { autoChoice, defaultModelKey, toChoices } from "./model-choices.ts";
+import { parseModelKey } from "./model-key.ts";
 import { useGetCredits } from "./play/use-get-credits.ts";
 import { problemWords } from "./words.ts";
 
@@ -116,9 +118,20 @@ export interface OwnPlan {
   ready: boolean;
 }
 
-/** A button that moves the chat onto one of the person's own plans. */
+/** A ready model on another engine (OpenCode, a local model, OpenRouter…) the chat can move onto. */
+export interface OtherModel {
+  engine: string;
+  /** The model key the composer picks. */
+  key: string;
+  /** The engine's name as a person says it. */
+  name: string;
+}
+
+/** A button that moves the chat off Genex: onto one of the person's own plans, or another ready model. */
 export interface PlanAction {
-  engine: SubscriptionId;
+  engine: string;
+  /** The model key the composer picks. */
+  key: string;
   label: string;
 }
 
@@ -128,17 +141,41 @@ const PLAN_WORDS: Record<SubscriptionId, (ready: boolean) => string> = {
 };
 
 /**
- * The person's own plans the notice offers. Out of credits or paused, a connected plan is the
- * tinted button beside Get credits; otherwise each plan is a quiet link, named by its agent.
+ * The other ways the notice offers. Something the person can already build with (a connected
+ * plan first, else another ready model) is the tinted button beside the main step, whatever Genex
+ * needs: new people who picked Genex with Claude, ChatGPT or OpenCode ready met only the paywall
+ * and left (PostHog, 2026-11-05 cohort). With nothing ready, each plan is a quiet link to connect.
  */
 export function planActions(
-  need: GenexNeed,
   plans: readonly OwnPlan[],
+  other: OtherModel | null = null,
 ): { tint: PlanAction | null; links: PlanAction[] } {
-  const actions = plans.map((plan) => ({ engine: plan.engine, label: PLAN_WORDS[plan.engine](plan.ready) }));
+  const actions = plans.map((plan) => ({
+    engine: plan.engine,
+    key: defaultModelKey(plan.engine),
+    label: PLAN_WORDS[plan.engine](plan.ready),
+  }));
   const ready = plans.find((plan) => plan.ready);
-  const tint = STOPPED.has(need) && ready ? (actions.find((action) => action.engine === ready.engine) ?? null) : null;
+  const planTint = ready ? (actions.find((action) => action.engine === ready.engine) ?? null) : null;
+  const otherTint = other
+    ? { engine: other.engine, key: other.key, label: t("Continue on {name}", { name: other.name }) }
+    : null;
+  const tint = planTint ?? otherTint;
   return { tint, links: tint ? [] : actions };
+}
+
+/**
+ * The first ready model outside Genex and the Claude and ChatGPT plans, the way the picker would
+ * fall back to one by itself (`autoChoice`): never a paid one unless every ready row is free.
+ */
+export function otherReadyModel(engines: EngineDescriptor[]): OtherModel | null {
+  const own = (engine: string) => engine === EngineId.Genex || SUBSCRIPTION_ENGINES.some((id) => id === engine);
+  const choices = toChoices(engines).filter((choice) => !own(parseModelKey(choice.key).engine));
+  const choice = autoChoice(choices);
+  if (!choice) return null;
+  const engine = parseModelKey(choice.key).engine;
+  const name = providerInfo(engine)?.label ?? choice.group ?? engine;
+  return { engine, key: choice.key, name };
 }
 
 /** What `useGenexBuild` tells the notice, and its main step. */

@@ -6186,6 +6186,7 @@ export default {
     "Conecte o plano do Claude ou do ChatGPT que você já paga, ou crie com créditos do Genex.",
   "Continue in browser": "Continuar no navegador",
   "Continue on ChatGPT plan": "Continuar no plano do ChatGPT",
+  "Continue on {name}": "Continuar com {name}",
   "Continue on Claude plan": "Continuar no plano do Claude",
   "Everything so far is saved.": "Tudo até aqui está salvo.",
   "Finish on genex.games in your browser.": "Termine no genex.games no seu navegador.",

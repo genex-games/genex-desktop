@@ -77,11 +77,16 @@ export function sendFacts(parts: SendParts, send: RoutedSend): SendFacts | null 
   };
 }
 
-/** Send went nowhere: why, in which chat, and on which engine. */
-export function trackSendBlocked(parts: Pick<SendParts, "chat">, reason: SendBlock, key: string | null): void {
+/** Send went nowhere: why, in which chat, on which engine, and what a Genex model still needs. */
+export function trackSendBlocked(
+  parts: Pick<SendParts, "chat" | "composer">,
+  reason: SendBlock,
+  key: string | null,
+): void {
+  const genexNeed = parts.composer.gate.genex?.need ?? null;
   track(
     AnalyticsEvent.MessageSendBlocked,
-    sendBlockedProperties(chatMemory, { reason, room: chatRoom(parts.chat), key }),
+    sendBlockedProperties(chatMemory, { reason, room: chatRoom(parts.chat), key, genexNeed }),
   );
 }
 

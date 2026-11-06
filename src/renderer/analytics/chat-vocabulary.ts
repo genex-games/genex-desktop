@@ -220,6 +220,10 @@ export const SignInAction = {
 } as const;
 export type SignInAction = (typeof SignInAction)[keyof typeof SignInAction];
 
+/** Which of the Genex notice's ways the person took: its main step, or a move onto another model. */
+export const GenexNoticeStep = { Primary: "primary", Use: "use" } as const;
+export type GenexNoticeStep = (typeof GenexNoticeStep)[keyof typeof GenexNoticeStep];
+
 /** Where a lost sign-in showed: the turn that needed it. */
 export const SignInFrom = { Turn: "turn" } as const;
 export type SignInFrom = (typeof SignInFrom)[keyof typeof SignInFrom];

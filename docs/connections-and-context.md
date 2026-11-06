@@ -368,14 +368,18 @@ status at once, so the chat follows the refusal rather than the next read.
 
 What a Genex model still needs is the chat's blue notice
 ([genex-build.ts](../src/renderer/genex-build.ts), [GenexNotice](../src/renderer/ui/GenexNotice.tsx)):
-Genex's G, one line, one step, and the person's own plans as quiet links (Connect Claude Code,
-Connect Codex) that move the chat onto them. Signed out, without Pro or credits, or with an
+Genex's G, one line, one step, and another way that moves the chat off Genex: what the person can
+already build with is a tinted button beside the step, whatever Genex needs (**Continue on Claude
+plan** or ChatGPT when that plan is connected, else **Continue on OpenCode**, Ollama or another ready
+model, chosen as the picker's own fallback, never a paid one unless every ready model is free);
+with nothing ready, the plans are quiet links (Connect Claude Code, Connect Codex). Signed out, without Pro or credits, or with an
 unverified email, **Continue in browser** opens genex.games's build page through
 `studio:genex-account.build` (native): it signs the person in with the app's device code, offers Pro
 or a credit pack, and shows the waiting idea back; the app asks Genex again every 3 seconds for 15
 minutes, and a game's first message held above the notice sends itself once Genex is ready. Out of
-credits, the step is **Get credits**, beside **Continue on Claude plan** (or ChatGPT) when that plan is
-connected. Claude Code missing or too old is **Set up**, which installs it in the app.
+credits, the step is **Get credits**. Claude Code missing or too old is **Set up**, which installs it in the app.
+`genex_notice_shown` says what the notice needed and offered, `genex_notice_action` which way was
+taken, and `message_send_blocked`'s `genex_need` tells a missing plan from a real sign-in.
 
 First launch offers **Use Genex** beside the two plans where genex.games offers it; it asks for
 nothing then and becomes Genex ready (setting up Claude Code first when it is missing). Settings →

@@ -25,6 +25,7 @@ import {
 } from "../../shared/permissions.ts";
 import { EngineId } from "../../shared/providers.ts";
 import type { SendPlacement } from "../chat/pending-sends.ts";
+import type { GenexNeed } from "../genex-build.ts";
 import { parseModelKey } from "../model-key.ts";
 import {
   type AwaitingReply,
@@ -238,12 +239,13 @@ export function forgetSend(memory: ChatMemory, thread: string, clientId: string 
 /** `message_send_blocked`: why Send went nowhere, counted against the presses before it. */
 export function sendBlockedProperties(
   memory: ChatMemory,
-  blocked: { reason: SendBlock; room: ComposerRoom; key: string | null },
+  blocked: { reason: SendBlock; room: ComposerRoom; key: string | null; genexNeed?: GenexNeed | null },
 ): Props<typeof ChatEvent.MessageSendBlocked> {
   return {
     reason: blocked.reason,
     room: blocked.room,
     engine: engineRef(parseModelKey(blocked.key).engine),
+    genex_need: blocked.genexNeed ?? null,
     attempts_in_row: noteBlocked(memory),
   };
 }

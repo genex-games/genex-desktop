@@ -6112,6 +6112,7 @@ export default {
     "すでに払っているClaudeかChatGPTのプランを接続するか、Genexのクレジットでつくりましょう。",
   "Continue in browser": "ブラウザで続ける",
   "Continue on ChatGPT plan": "ChatGPTプランで続ける",
+  "Continue on {name}": "{name}で続ける",
   "Continue on Claude plan": "Claudeプランで続ける",
   "Everything so far is saved.": "ここまでの内容は保存されています。",
   "Finish on genex.games in your browser.": "ブラウザでgenex.gamesの手続きを済ませてください。",

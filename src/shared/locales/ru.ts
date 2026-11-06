@@ -6153,6 +6153,7 @@ export default {
     "Подключи тариф Claude или ChatGPT, за который уже платишь, или собирай на кредитах Genex.",
   "Continue in browser": "Продолжить в браузере",
   "Continue on ChatGPT plan": "Продолжить на тарифе ChatGPT",
+  "Continue on {name}": "Продолжить на {name}",
   "Continue on Claude plan": "Продолжить на тарифе Claude",
   "Everything so far is saved.": "Всё, что уже сделано, сохранено.",
   "Finish on genex.games in your browser.": "Закончи на genex.games в браузере.",
