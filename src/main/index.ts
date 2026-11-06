@@ -1365,8 +1365,7 @@ function gameLauncher(): Pick<NativeSessionsDeps, "spawn" | "hasWindow" | "show"
 function playSessionsFor(studio: StudioCore): NativeSessions | null {
   const installs = playInstallsFor(studio);
   if (!installs) return null;
-  // A Windows game reaches nothing, Genex included: its AppContainer has no loopback (windows-game.ts).
-  const offline = Boolean(fixtureNativePolicy) || process.platform === StudioPlatform.Windows;
+  const offline = Boolean(fixtureNativePolicy);
   nativeLauncher ??= nativeSessions({
     root: studio.layout.installedGames,
     record: (slug) => installs.record(slug),
@@ -1436,15 +1435,19 @@ function playsFor(studio: StudioCore): NonNullable<NativeSessionsDeps["presence"
 /**
  * A native game's way to Genex while it plays: its own gateway to Genex's API and relays, and a
  * single-use sign-in ticket for it while the person's Genex account is unlocked (a guest otherwise).
+ * A Windows game has no gateway, since its AppContainer reaches no loopback port: it is told the
+ * API's own address and its container gets the internet as a client (`windows-game.ts`).
  */
 async function openGameGenex(studio: StudioCore, slug: string): Promise<GameGenex> {
+  const minted = mintedTicket(await playCatalogFor(studio).ticket(slug, TicketDelivery.Desktop));
+  const ticket = minted ? { GENEX_EMBED_TICKET: minted } : {};
+  if (process.platform === StudioPlatform.Windows)
+    return { ports: [], env: { GENEX_API_URL: playOrigin.api, ...ticket }, close: async () => {} };
   const gateway = await startGenexGateway({
     api: playOrigin.api,
     relay: relayHostsOf(new URL(playOrigin.api).hostname),
   });
-  const ticket = mintedTicket(await playCatalogFor(studio).ticket(slug, TicketDelivery.Desktop));
-  const env = { GENEX_API_URL: gateway.apiUrl, ...(ticket ? { GENEX_EMBED_TICKET: ticket } : {}) };
-  return { ports: gateway.ports, env, close: gateway.close };
+  return { ports: gateway.ports, env: { GENEX_API_URL: gateway.apiUrl, ...ticket }, close: gateway.close };
 }
 
 /**
