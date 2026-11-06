@@ -35,6 +35,8 @@
   "Run a Genex CLI command that spends Nex or credits or changes what this game sells, with your saved Genex account.": "Выполнить команду Genex CLI, которая тратит Nex или кредиты либо меняет то, что продаёт эта игра, от имени твоего сохранённого аккаунта Genex.",
   "Send apps again": "Отправить приложения снова",
   "Sign and notarize Mac apps with my own Apple Developer ID": "Подписывать и нотаризовать приложения для Mac моим Apple Developer ID",
+  "Take an app down": "Убрать приложение",
+  "Take this app off Genex. Players can't download it any more; the game's other apps stay as they are. You can publish it again later.": "Убрать это приложение с Genex. Игроки больше не смогут его скачать; остальные приложения игры останутся как есть. Его можно опубликовать снова позже.",
   "Take this game's cover": "Снять обложку игры",
   "Take this game's web version off Genex. Its page shows its Mac, Windows and Linux apps again, and the apps stay as they are. You can publish a web version again later.": "Убрать веб-версию этой игры с Genex. Страница снова покажет её приложения для Mac, Windows и Linux, а сами приложения останутся как есть. Веб-версию можно опубликовать снова позже.",
   "Unlock saved account": "Разблокировать сохранённый аккаунт",

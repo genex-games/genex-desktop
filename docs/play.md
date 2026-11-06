@@ -45,9 +45,9 @@ What Play sends is in [PRIVACY](../PRIVACY.md#play).
 - Settings › Genex account: avatar (generated or photo, Regenerate), a Pro's nameplate (New one), name, nickname (`@handle` and
   Edit, once genex.games knows nicknames), credits with Get credits, Sign out by the title. Signed
   out it is the sign-in stage, with the account-card drawing.
-- Publish needs only the account: signed out it asks to sign in. Its "Share its N assets on Play"
-  switch (off; shown while some Genex asset is not on Play) shares them when the game goes live. Multiplayer needs the Genex plugin
-  on, since the agent builds it with Genex's tools.
+- Publish needs only the account: signed out it asks to sign in. It shares no assets: a game's
+  assets go to Play one by one from the Assets panel. Multiplayer needs the Genex plugin on, since the
+  agent builds it with Genex's tools.
 
 ## The dashboard
 

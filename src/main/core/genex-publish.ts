@@ -15,7 +15,7 @@ import { type ExportReview, type PluginBinding, PluginSourceKind } from "../../s
 import type { StudioCore } from "../studio-core.ts";
 import { CLOUD_PLATFORMS } from "../../plugins/genex/cloud-build.ts";
 import { pinnedCliSendsApps } from "../../plugins/genex/native-publish.ts";
-import { publishedApps } from "./publish-platforms.ts";
+import { type AppsChoice, publishedApps } from "./publish-platforms.ts";
 import { t } from "../../shared/i18n.ts";
 
 /** Why Publish is refused before Genex is asked anything. */
@@ -94,6 +94,19 @@ const remixArg = (remix: unknown): { remix?: boolean } => (typeof remix === "boo
 const replaceArg = (replace: unknown): { replaceNativePage?: true } =>
   replace === true ? { replaceNativePage: true } : {};
 
+/** The systems an app Publish sends can be for. */
+const APP_PLATFORMS: ReadonlySet<string> = new Set(["mac", "windows", "linux"]);
+
+/**
+ * The Publish card's switches as the send's choice: only the platforms it names go. Absent or not a
+ * list, every ready app goes, as before the card; a name that is no app platform is dropped.
+ */
+export function platformsChoice(platforms: unknown): AppsChoice {
+  if (!Array.isArray(platforms)) return {};
+  const named = platforms.filter((one): one is string => typeof one === "string" && APP_PLATFORMS.has(one));
+  return { platforms: [...new Set(named)] };
+}
+
 /** The game the dialog names, bound as Studio allows it to be opened, while Studio's Genex is installed. */
 async function boundGame(core: BindingCore, project: unknown): Promise<PluginBinding> {
   if (typeof project !== "string" || !project) throw new Error(MESSAGE.NoGame());
@@ -130,11 +143,12 @@ export async function publishFromDialog(
   sendsApps = pinnedCliSendsApps(),
   remix?: unknown,
   replaceNativePage?: unknown,
+  platforms?: unknown,
 ): Promise<void> {
   if (!isExportReview(review)) throw new Error(MESSAGE.NoFileList());
   const binding = await dialogBinding(core, project);
   const name = cleanGenexTitle(title);
-  const native = await publishedApps(core, binding.project, sendsApps);
+  const native = await publishedApps(core, binding.project, sendsApps, platformsChoice(platforms));
   const args = {
     ...(name ? { title: name } : {}),
     ...(native.length > 0 ? { native } : {}),
@@ -159,9 +173,10 @@ export async function publishAppsFromDialog(
   title?: unknown,
   sendsApps = pinnedCliSendsApps(),
   remix?: unknown,
+  platforms?: unknown,
 ): Promise<void> {
   const binding = await boundGame(core, project);
-  const native = await publishedApps(core, binding.project, sendsApps);
+  const native = await publishedApps(core, binding.project, sendsApps, platformsChoice(platforms));
   if (native.length === 0) throw new Error(MESSAGE.NoApps());
   const name = cleanGenexTitle(title);
   await core.plugins.action(

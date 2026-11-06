@@ -107,6 +107,9 @@ export const GenexRoute = {
   web: (id: string) => `/api/games/${encodeURIComponent(id)}/web`,
   /** A game's apps as their owner reads them: the live builds and the ones Genex holds or turned down. */
   nativeBuilds: (id: string) => `/api/games/${encodeURIComponent(id)}/native-builds`,
+  /** One app of a game on Genex, by platform and processors: `DELETE` takes it off, keeping the game's other apps. */
+  nativeBuild: (id: string, platform: string, arch: string) =>
+    `/api/games/${encodeURIComponent(id)}/native-builds/${encodeURIComponent(platform)}/${encodeURIComponent(arch)}`,
   /** Ask a person at Genex to review one app (`POST { note? }`). */
   reviewRequest: (id: string, platform: string, arch: string) =>
     `/api/games/${encodeURIComponent(id)}/native-builds/${encodeURIComponent(platform)}/${encodeURIComponent(arch)}/review-request`,

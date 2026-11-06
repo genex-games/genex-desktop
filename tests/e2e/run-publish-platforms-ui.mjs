@@ -1,14 +1,9 @@
 /**
- * The Publish dialog's platform rows, in a disposable Electron profile with a fake `window.studio`:
- * a game made in an engine lists the web, Mac, Windows and Linux above the presses, each detail on one
- * line; a built Mac app says "Coming soon" and the line under the rows says its players get the
- * web version; Make with agent sends the ask to the game's chat and the row says it was asked; a
- * build older than the game's last change says so; once the CLI sends apps, the line says Publish
- * sends the Mac app and its row says Sending…, On Genex or Not sent (with why), or In review and Not
- * approved (with why) for an app Genex reviews first; a web game with no
- * app shows no rows; an Unreal game whose web version is still on Genex says so with Remove, and a
- * Unity game's web build that would take its apps' page says so above the press. Dark and
- * light screens.
+ * The Publish dialog of a game with apps, in a disposable Electron profile with a fake `window.studio`:
+ * what the Publish card hands to Genex (only the apps it names; a web version still on Genex taken off
+ * once confirmed; a web build that takes a page of apps only with consent), the rows of an app Genex
+ * reviews or turned down, and Genex's review card of each app and takedown state. A web game with no app
+ * shows no rows. The card's own rows, switches and button are run-publish-card-ui's. Dark and light screens.
  */
 import { build } from "esbuild";
 import { spawn } from "node:child_process";
@@ -61,126 +56,36 @@ app.whenReady().then(async()=>{
  const step=async(name,source)=>{const result=await js(source);report.steps[name]=result;return result;};
  try {
   await wc.loadFile(${JSON.stringify(path.join(out, "publish-platforms.html"))});
-  for (const theme of ['dark','light']) {
-   // A game made in Unity with a Mac app built: four rows above Publish, each detail on one line.
-   const engine=await step(theme+'Engine','window.platformsRig.open({theme:"'+theme+'"})');
-   assert.equal(engine.listed,true);
-   assert.deepEqual(engine.rows.map((row)=>[row.target,row.name,row.detail,row.end]),[
-    ['web','Web','Plays right away',null],
-    ['mac','Mac app','Apple silicon and Intel · built 5 min ago','Coming soon'],
-    ['windows','Windows app','Not made yet','Make with agent'],
-    ['linux','Linux app','Not made yet','Make with agent'],
-   ]);
-   assert.equal(engine.rows[1].size,'1.4 GB');
-   assert.equal(engine.reach,'Mac, Windows and Linux players get the web version.');
-   assert.deepEqual(engine.order,['platforms','primary'],'the rows sit above the presses');
-   assert.equal(engine.oneLine,true,'each detail is one line');
-   assert.equal(engine.overflow,false);
-   report[theme+'Engine']=await capture(theme+'-engine');
-  }
-  // Make with agent: the ask goes to the game's chat at once, the dialog stays open and the row says so.
-  const made=await step('make','window.platformsRig.make("windows")');
-  assert.equal(made.closed,0,'the dialog stays open');
-  assert.deepEqual(made.composed,[{project:'dust-runners',text:'Make a Windows app of Dust Runners so I can publish it for Windows players.',send:true}]);
-  assert.equal(made.rows[2].end,'Asked the agent');
-  report.asked=await capture('light-asked');
-  const madeLinux=await step('makeLinux','window.platformsRig.make("linux")');
-  assert.deepEqual(madeLinux.composed.at(-1),{project:'dust-runners',text:'Make a Linux app of Dust Runners so I can publish it for Linux players.',send:true});
-  assert.equal(madeLinux.rows[3].end,'Asked the agent');
-  // A Mac app built before the game's last change says so.
-  const stale=await step('stale','window.platformsRig.open({scene:"stale"})');
-  assert.equal(stale.rows[1].detail,'Built before your last change');
-  assert.equal(stale.rows[1].state,'stale');
-  assert.equal(stale.rows[1].end,'Build again','the agent builds it again');
-  report.stale=await capture('dark-stale');
-  // Once the Genex CLI sends apps: Publish says it sends the Mac app, then how the send went.
-  const apps=await step('apps','window.platformsRig.open({scene:"apps"})');
-  assert.equal(apps.reach,'Publish also sends the Mac and Linux apps. Windows players get the web version.');
-  assert.equal(apps.rows[1].end,null,'nothing at the end before Publish');
-  assert.deepEqual([apps.rows[3].detail,apps.rows[3].size,apps.rows[3].end],['64-bit PCs · built 5 min ago','700 MB',null]);
-  report.apps=await capture('dark-apps');
-  const sending=await step('appsSending','window.platformsRig.open({scene:"appsSending"})');
-  assert.equal(sending.rows[1].end,'Sending…');
-  const sent=await step('appsSent','window.platformsRig.open({scene:"appsSent"})');
-  assert.equal(sent.rows[1].end,'On Genex');
-  assert.equal(sent.rows[3].end,'On Genex','the Linux app too');
-  report.appsSent=await capture('dark-apps-sent');
-  const refused=await step('appsFailed','window.platformsRig.open({scene:"appsFailed"})');
-  assert.equal(refused.rows[1].end,'Not sent');
-  assert.deepEqual(refused.failures,["Couldn’t send the Mac app: Couldn't get an upload token (HTTP 413)."]);
-  assert.equal(refused.overflow,false);
-  report.appsFailed=await capture('dark-apps-failed');
-  // A game with only a Mac app (no web build): Publish publishes the app under its own words.
+  // A game made in an engine gets the Publish card (its rows, switches and button are run-publish-card-ui's):
+  // here, what the card hands to Genex. A game with only a Mac app publishes it alone, never a web copy.
+  const card=(seen,target)=>seen.rows.find((one)=>one.target===target);
   const only=await step('appsOnly','window.platformsRig.open({scene:"appsOnly"})');
-  assert.equal(only.primary,'Publish Mac app');
-  assert.equal(only.reach,'Only Mac players can play it.');
-  assert.deepEqual([only.rows[0].detail,only.rows[0].end],['Not made yet','Make with agent'],'the agent can make its web version');
-  // Flipped on purpose (native review UX): the line under the press now says Genex checks the app first.
-  assert.equal(only.hint,'Genex checks your app before players get it. Usually a few minutes.','what happens to the app before players get it');
+  assert.equal(only.listed,true);
+  assert.deepEqual([card(only,'mac').name,card(only,'mac').status],['Mac','Not published']);
+  assert.equal(only.primary,'Publish to Mac');
   report.appsOnly=await capture('dark-apps-only');
   const pressed=await step('appsOnlyPress','window.platformsRig.press()');
-  assert.deepEqual(pressed.published,[{via:'apps',title:'Dust Runners'}],'the apps go, never a web copy');
-  const held=await step('appsHeld','window.platformsRig.open({scene:"appsHeld"})');
-  assert.deepEqual(held.failures,['Sent for review. It appears in Play once Genex approves it.']);
-  assert.equal(held.rows[1].end,'On Genex');
-  // Someone other than an admin sent it: Genex reviews it first, and may turn it down with why.
+  assert.deepEqual(pressed.published,[{via:'apps',title:'Dust Runners',platforms:['mac']}],'the apps go, never a web copy');
+  // Genex reviews an app sent by someone other than an admin, and may turn it down: the row says so.
   const review=await step('appsReview','window.platformsRig.open({scene:"appsReview"})');
-  assert.deepEqual(review.failures,['Sent for review. It appears in Play once Genex approves it.']);
-  assert.equal(review.rows[1].end,'In review');
+  assert.equal(card(review,'mac').status,'In review');
   assert.equal(review.primary,null,'the same app sent again would change nothing');
   assert.equal(review.overflow,false);
   report.appsReview=await capture('dark-apps-review');
   const rejected=await step('appsRejected','window.platformsRig.open({scene:"appsRejected"})');
-  assert.equal(rejected.rows[1].end,'Not approved');
+  assert.equal(card(rejected,'mac').status,'Not approved');
   assert.deepEqual(rejected.failures,['Genex didn’t approve the Mac app: It opens a shell.']);
-  assert.equal(rejected.primary,'Publish Mac app','a turned-down app can go again');
+  // Flipped on purpose (Publish card): the very build Genex turned down is not offered again; a newer one is.
+  assert.equal(rejected.primary,null,'the same turned-down build would be turned down again');
   report.appsRejected=await capture('dark-apps-rejected');
-  // A Unity game with no app yet, then with one Studio cannot send yet: its press waits and says why.
-  const unity=await step('unityNoApp','window.platformsRig.open({scene:"unityNoApp"})');
-  assert.equal(unity.listed,true);
-  assert.equal(unity.primaryDisabled,true);
-  assert.equal(unity.reach,'Make a web version or a Mac, Windows or Linux app first, then publish it here.');
-  assert.deepEqual(unity.rows.map((row)=>row.end),['Make with agent','Make with agent','Make with agent','Make with agent']);
-  report.unityNoApp=await capture('dark-unity-no-app');
-  // Its web row asks the agent for a web version, as the app rows ask for apps.
-  const webAsk=await step('makeWeb','window.platformsRig.make("web")');
-  assert.deepEqual(webAsk.composed,[{project:'dust-runners',text:'Make a web version of Dust Runners so I can publish it on the web.',send:true}]);
-  assert.equal(webAsk.rows[0].end,'Asked the agent');
-  // An Unreal game has no web export, and nothing can be done about that here: its web row is left out.
-  const row=(seen,target)=>seen.rows.find((one)=>one.target===target);
-  const unreal=await step('unreal','window.platformsRig.open({scene:"unreal"})');
-  assert.equal(row(unreal,'web'),undefined,'no web row for an Unreal game');
-  assert.deepEqual([row(unreal,'mac').detail,row(unreal,'mac').end],['Not made yet','Make with agent']);
-  report.unreal=await capture('dark-unreal');
-  // On a Mac, Genex builds an Unreal game's Windows app: the row offers it, the press asks Genex (not the agent), then it builds.
-  const cloud=await step('unrealCloud','window.platformsRig.open({scene:"unrealCloud"})');
-  assert.deepEqual([row(cloud,'windows').detail,row(cloud,'windows').end],['Genex can build it on Windows for you','Build on Genex']);
-  assert.equal(row(cloud,'linux'),undefined,'a Linux app this Mac cannot package is left out');
-  assert.equal(cloud.oneLine,true);
-  assert.equal(cloud.overflow,false);
-  report.unrealCloud=await capture('dark-unreal-cloud');
-  const asked=await step('cloudBuild','window.platformsRig.make("windows")');
-  assert.deepEqual(asked.published,[{via:'cloud:windows'}]);
-  assert.deepEqual(asked.composed,[],'nothing goes through the game chat');
-  assert.equal(row(asked,'windows').end,'Asked Genex');
-  const building=await step('unrealBuilding','window.platformsRig.open({scene:"unrealBuilding",theme:"light"})');
-  assert.equal(row(building,'windows').detail,'Building on Genex');
-  assert.match(row(building,'windows').end,/^Building…/,'the row clock runs beside its note');
-  report.unrealBuilding=await capture('light-unreal-building');
-  // On Windows the agent packages an Unreal game's Linux app too; the Mac app, made elsewhere, is left out.
-  const onWindows=await step('unrealWindows','window.platformsRig.open({scene:"unrealWindows",platform:"win32"})');
-  assert.deepEqual(onWindows.rows.map((one)=>[one.target,one.detail,one.end]),[['windows','Not made yet','Make with agent'],['linux','Not made yet','Make with agent']]);
-  const linuxAsk=await step('makeLinux','window.platformsRig.make("linux")');
-  assert.deepEqual(linuxAsk.composed,[{project:'dust-runners',text:'Make a Linux app of Dust Runners so I can publish it for Linux players.',send:true}]);
-  report.unrealWindows=await capture('dark-unreal-windows');
-  // The incident: an Unreal game whose page plays a web version (mockups once sent as one) it no longer has.
+  // An Unreal game whose page plays a web version it no longer has: switching the web row off takes it off.
   const stuck=await step('unrealWebOnGenex','window.platformsRig.open({scene:"unrealWebOnGenex"})');
-  assert.deepEqual([stuck.rows[0].detail,stuck.rows[0].end],['A web version is on Genex','Remove']);
-  assert.equal(stuck.reach,'The game’s page plays its web version until you remove it, so players don’t see the apps.');
-  assert.equal(stuck.overflow,false);
+  assert.deepEqual([card(stuck,'web').status,card(stuck,'web').tone],['Live · up to date','live']);
+  const off=await step('webOff','window.platformsRig.toggle("web")');
+  assert.equal(off.primary,'Take web down');
   report.unrealWebOnGenex=await capture('dark-unreal-web-on-genex');
-  const removed=await step('removeWeb','window.platformsRig.removeWeb()');
-  assert.deepEqual(removed.actions,['review:publish-remove-web','publish-remove-web'],'Remove is confirmed before the plugin action runs');
+  const removed=await step('removeWeb','window.platformsRig.press()');
+  assert.deepEqual(removed.actions,['review:publish-remove-web','publish-remove-web'],'it is confirmed before the plugin action runs');
   // A Unity game whose page shows its apps: a web build takes that page only with their consent.
   const replaces=await step('unityReplacesApps','window.platformsRig.open({scene:"unityReplacesApps"})');
   assert.equal(replaces.replaces,'Publish makes this web version the game’s page, in place of its apps.');
@@ -189,10 +94,6 @@ app.whenReady().then(async()=>{
   assert.deepEqual(agreed.published,[{via:'web',replaceNativePage:true}]);
   const engineOnly=await step('engineNoReplace','window.platformsRig.open({scene:"engine"})');
   assert.equal(engineOnly.replaces,null,'no line while Genex has not said its page shows only apps');
-  const soon=await step('unitySoon','window.platformsRig.open({scene:"unitySoon"})');
-  assert.equal(soon.primaryDisabled,true);
-  assert.equal(soon.rows[1].end,'Coming soon');
-  assert.equal(soon.reach,'Publishing Mac, Windows and Linux apps comes with the next Genex update.');
   // Genex's review of the Mac app, and of a takedown (spec §6.9): each card in its words, in both themes.
   const truthful=(name,seen)=>{
    assert.doesNotMatch(seen.text,/few seconds|\\(2s\\)|about 2 min/i,name+' never claims seconds');
@@ -205,7 +106,8 @@ app.whenReady().then(async()=>{
    assert.deepEqual(checking.steps,['done','done','current','next'],'Prepare · Upload · Check · Go live, at Check');
    assert.match(checking.check,/^Checking · 1m 0[56]s/);
    assert.match(checking.check,/Genex reads your app before players get it\\. Usually a few minutes\\./);
-   assert.equal(checking.hint,"You can close this. Studio tells you when it's done.");
+   // Flipped on purpose (Publish card): no explanation line under a game with apps; the Check says what happens.
+   assert.equal(checking.hint,null);
    assert.equal(checking.review,null,'the step bar says it: no card');
    truthful('checking',checking);
    report[theme+'AppsChecking']=await capture(theme+'-apps-checking');
@@ -285,7 +187,8 @@ app.whenReady().then(async()=>{
   // A game opened on an app that is already live: no celebration, and Publish is still there to press.
   const liveApp=await step('appsLive','window.platformsRig.open({scene:"appsLive"})');
   assert.equal(liveApp.celebrating,false,'an app live before the dialog opened is no news');
-  assert.ok(liveApp.primary,'the press is shown');
+  // Flipped on purpose (Publish card): an app live and up to date leaves nothing to press.
+  assert.equal(liveApp.primary,null,'nothing to send again');
   assert.equal(liveApp.listed,true,'the rows are shown');
   // An apps publish that ends while the dialog is open: Genex is asked again, and its Check shows.
   const sendRuns=await step('appsPublishEnds','window.platformsRig.open({scene:"appsPublishEnds"})');
@@ -336,7 +239,7 @@ app.whenReady().then(async()=>{
   assert.equal(plain.listed,false);
   report.web=await capture('dark-web');
   assert.deepEqual(report.errors,[]);
-  console.log('PASS Publish platforms: engine game lists web, Mac, Windows and Linux; Make with agent sends the ask and keeps the dialog; apps go with Publish and say how they went; a game with only an app publishes it; a Unity game with nothing to send waits and says why, and asks the agent for a web version; an Unreal game leaves out the rows nothing can be done about, and on a Mac offers its Windows app built on Genex; Remove for a web version still on Genex; a web build that takes a page of apps says so and asks Genex with their consent; stale says so; the review card of each app and takedown state; web game unchanged');
+  console.log('PASS Publish platforms: a game with only an app publishes just it; an app in review or turned down says so on its row; switching off a web version still on Genex takes it off once confirmed; a web build that takes a page of apps says so and asks Genex with their consent; the review card of each app and takedown state; web game unchanged');
  } catch(error) { report.failure=error.stack; console.error(error); await capture('failure').catch(()=>{}); }
  fs.writeFileSync(path.join(evidence,'report.json'),JSON.stringify(report,null,2));
  app.exit(report.failure?1:0);

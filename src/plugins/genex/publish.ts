@@ -84,6 +84,8 @@ export const MESSAGE = {
   NoApps: "This game has no Mac, Windows or Linux app ready to publish.",
   /** {@link MESSAGE.NoApps} as Publish's refusal. */
   NoAppsRefusal: () => t("This game has no Mac, Windows or Linux app ready to publish."),
+  /** The Publish card switched off something that is no app: only a Mac, Windows or Linux app can be taken off. */
+  NoAppPlatformRefusal: () => t("Only a Mac, Windows or Linux app can be taken off Genex this way."),
   ListingRefused: "Genex did not list the game in the gallery.",
   /** A build on Genex asked for a game with no page there, which the app would go on. */
   NotOnGenexRefusal: () => t("Publish the game first, then Genex can build it"),

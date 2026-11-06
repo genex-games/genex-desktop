@@ -4110,6 +4110,79 @@ export const PUBLISH_PLATFORM_WORDS = {
   replacesApps: t("Publish makes this web version the game’s page, in place of its apps."),
 } as const;
 
+/**
+ * The Publish card of a game made in an engine (canvas "Publish to every platform", round 4): each
+ * row says only what is true now, and the one button says what pressing it does.
+ */
+export const PUBLISH_CARD_WORDS = {
+  /** The rows' list, for a screen reader. */
+  listLabel: t("Platforms"),
+  /** A row's title. */
+  name: {
+    [PublishTarget.Web]: t("Web"),
+    [PublishTarget.Mac]: "Mac",
+    [PublishTarget.Windows]: "Windows",
+    [PublishTarget.Linux]: "Linux",
+  } satisfies Record<PublishTarget, string>,
+  /** A platform inside the button's words: "Update Mac and web". */
+  inPress: {
+    [PublishTarget.Web]: t("web"),
+    [PublishTarget.Mac]: "Mac",
+    [PublishTarget.Windows]: "Windows",
+    [PublishTarget.Linux]: "Linux",
+  } satisfies Record<PublishTarget, string>,
+  /** What is on Genex for a platform now. */
+  live: t("Live"),
+  liveCurrent: t("Live · up to date"),
+  liveOlder: t("Live · older than your game"),
+  notPublished: t("Not published"),
+  inReview: t("In review"),
+  notApproved: t("Not approved"),
+  sendFailed: t("Couldn’t send"),
+  buildFailed: t("Couldn’t build"),
+  buildFailedLive: t("Couldn’t build · the older one is still live"),
+  /** The work going on for a platform now; its clock is at the row's end. */
+  sending: t("Sending to Genex"),
+  sendingCloud: t("Sending to Genex Cloud"),
+  buildingCloud: t("Building on Genex Cloud"),
+  buildingHere: (mac: boolean) => (mac ? t("Building on this Mac") : t("Building on this PC")),
+  /** The row's end: where the press builds it. */
+  buildsHere: (mac: boolean) => (mac ? t("builds on this Mac") : t("builds on this PC")),
+  buildsCloud: t("builds on Genex Cloud"),
+  /** A ready app the pinned CLI can't send yet. */
+  soon: t("coming soon"),
+  /** When the version players have went live: "just now", "5 min ago", "2 days ago". */
+  ago: (at: string, now: number) => {
+    const ms = Math.max(0, now - Date.parse(at));
+    if (ms < MINUTE_MS) return t("just now");
+    if (ms < HOUR_MS) return t("{minutes} min ago", { minutes: Math.floor(ms / MINUTE_MS) });
+    if (ms < DAY_MS)
+      return t("{count, plural, one {# hour ago} other {# hours ago}}", { count: Math.floor(ms / HOUR_MS) });
+    return t("{count, plural, one {# day ago} other {# days ago}}", { count: Math.floor(ms / DAY_MS) });
+  },
+  /** The button: what pressing it does. */
+  update: (platforms: string) => t("Update {platforms}", { platforms }),
+  updateCount: (count: number) => t("Update {count} platforms", { count }),
+  publishTo: (platforms: string) => t("Publish to {platforms}", { platforms }),
+  publishToCount: (count: number) => t("Publish to {count} platforms", { count }),
+  takeDown: (platforms: string) => t("Take {platforms} down", { platforms }),
+  updateAndTakeDown: (platforms: string, down: string) =>
+    t("Update {platforms} and take {down} down", { platforms, down }),
+  publishAndTakeDown: (platforms: string, down: string) =>
+    t("Publish to {platforms} and take {down} down", { platforms, down }),
+  /** The button when apps must be built first: the agent builds them, and a second press publishes them. */
+  build: (platforms: string) => t("Build {platforms}", { platforms }),
+  buildCount: (count: number) => t("Build {count} apps", { count }),
+  /** The button while it works. */
+  building: (platforms: string) => t("Building {platforms}", { platforms }),
+  updating: (platforms: string) => t("Updating {platforms}", { platforms }),
+  publishing: (platforms: string) => t("Publishing to {platforms}", { platforms }),
+  /** Under the button while Genex Cloud builds: so a long wait doesn't scare anyone. */
+  cloudTakesLong: t("It can take up to an hour."),
+  /** A row's switch, for a screen reader. */
+  switchLabel: (name: string) => t("Publish to {name}", { name }),
+} as const;
+
 /** Each kind of space freeing deletes: its name and what it is. */
 export const STORAGE_KIND_WORDS = {
   [StorageKind.Copies]: { label: t("Build copies"), about: t("Folders Genex made to run and show builds.") },
@@ -5048,8 +5121,6 @@ export const GENEX_WORDS = {
     copyLink: t("Copy"),
     copyLinkLabel: t("Copy the game's link"),
     copied: t("Copied"),
-    /** The public link's label in the dialog, beside the globe. */
-    publicLink: t("Public:"),
     /** The public link's own press, its pencil: the field it opens, its Save and the line under it. */
     changeLink: t("Change the link"),
     newLink: t("New link"),
@@ -5058,7 +5129,7 @@ export const GENEX_WORDS = {
     oldLinkWorks: t("The old link will still open the game"),
     changesLeft: (count: number) => t("{count, plural, one {# change left} other {# changes left}}", { count }),
     /** The tested draft, while players do not have it yet: its label, its Copy, and the line under it. */
-    testLink: t("Test link:"),
+    testLink: t("Test"),
     copyTestLinkLabel: t("Copy the test link"),
     testBefore: t("Friends can play it before you publish."),
     testChanges: t("Try your changes before you update."),

@@ -35,6 +35,8 @@
   "Run a Genex CLI command that spends Nex or credits or changes what this game sells, with your saved Genex account.": "Lancer une commande de la CLI Genex qui dépense des Nex ou des crédits, ou qui change ce que ce jeu vend, avec ton compte Genex enregistré.",
   "Send apps again": "Renvoyer les apps",
   "Sign and notarize Mac apps with my own Apple Developer ID": "Signer et notariser les apps Mac avec mon propre Apple Developer ID",
+  "Take an app down": "Retirer une app",
+  "Take this app off Genex. Players can't download it any more; the game's other apps stay as they are. You can publish it again later.": "Retirer cette app de Genex. Les joueurs ne pourront plus la télécharger ; les autres apps du jeu restent telles quelles. Tu pourras la republier plus tard.",
   "Take this game's cover": "Prendre la couverture de ce jeu",
   "Take this game's web version off Genex. Its page shows its Mac, Windows and Linux apps again, and the apps stay as they are. You can publish a web version again later.": "Retirer la version web de ce jeu de Genex. Sa page affiche de nouveau ses apps Mac, Windows et Linux, et les apps restent telles quelles. Tu pourras republier une version web plus tard.",
   "Unlock saved account": "Déverrouiller le compte enregistré",

@@ -35,6 +35,8 @@
   "Run a Genex CLI command that spends Nex or credits or changes what this game sells, with your saved Genex account.": "用你保存的 Genex 账号运行一条会花费 Nex 或积分、或会更改此游戏所售内容的 Genex CLI 命令。",
   "Send apps again": "重新发送应用",
   "Sign and notarize Mac apps with my own Apple Developer ID": "用我自己的 Apple Developer ID 签名并公证 Mac 应用",
+  "Take an app down": "下架应用",
+  "Take this app off Genex. Players can't download it any more; the game's other apps stay as they are. You can publish it again later.": "将此应用从 Genex 下架。玩家将无法再下载它；游戏的其他应用保持不变。你可以稍后重新发布。",
   "Take this game's cover": "拍摄此游戏的封面",
   "Take this game's web version off Genex. Its page shows its Mac, Windows and Linux apps again, and the apps stay as they are. You can publish a web version again later.": "把这款游戏的网页版从 Genex 移除。它的页面会重新显示 Mac、Windows 和 Linux 应用，应用本身保持不变。之后你还可以再发布网页版。",
   "Unlock saved account": "解锁已保存的账号",

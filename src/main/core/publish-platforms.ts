@@ -128,7 +128,7 @@ export async function publishPlatforms(
   sendsApps = pinnedCliSendsApps(),
 ): Promise<PublishPlatform[]> {
   const { web, mac, windows, linux, changed } = await folderFacts(core, project);
-  return [
+  const rows: PublishPlatform[] = [
     {
       target: PublishTarget.Web,
       state: web ? PublishPlatformState.Ready : PublishPlatformState.Missing,
@@ -141,6 +141,9 @@ export async function publishPlatforms(
     nativeRow(PublishTarget.Windows, windows, changed, sendsApps),
     nativeRow(PublishTarget.Linux, linux, changed, sendsApps),
   ];
+  if (changed <= 0) return rows;
+  const changedAt = new Date(changed).toISOString();
+  return rows.map((row) => ({ ...row, changedAt }));
 }
 
 /** Which apps a send takes beyond Publish's own: one platform's newest whatever its age, or only builds newer than a time. */
@@ -149,6 +152,8 @@ export interface AppsChoice {
   force?: string;
   /** Only builds made after this time (ms since the epoch): what the agent built after a fix press. */
   builtAfter?: number;
+  /** Only these platforms' builds: the ones the Publish card's switches send. */
+  platforms?: readonly string[];
 }
 
 /**
@@ -164,7 +169,8 @@ export async function publishedApps(
 ): Promise<string[]> {
   if (!sendsApps) return [];
   const { mac, windows, linux, changed } = await folderFacts(core, project);
-  const builds = [mac, windows, linux].filter((build): build is FoundBuild => build !== undefined);
+  const chosen = (build: FoundBuild): boolean => choice.platforms?.includes(build.platform) ?? true;
+  const builds = [mac, windows, linux].filter((build): build is FoundBuild => build !== undefined && chosen(build));
   if (choice.force !== undefined) return builds.filter((build) => build.platform === choice.force).map((b) => b.entry);
   const after = choice.builtAfter ?? Number.NEGATIVE_INFINITY;
   return builds.filter((build) => !isStaleBuild(build, changed) && build.builtAt > after).map((build) => build.entry);

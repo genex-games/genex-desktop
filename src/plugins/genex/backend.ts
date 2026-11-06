@@ -385,6 +385,7 @@ const ACTIONS: Record<string, Action> = {
     return genex.cloudBuild(ctx.project, args.platform, ctx.directory);
   },
   [GenexAction.PublishRemoveWeb]: withProject((genex, project) => genex.publishRemoveWeb(project)),
+  [GenexAction.PublishRemoveApp]: withProject((genex, project, args) => genex.publishRemoveApp(project, args.platform)),
   [GenexAction.PublishName]: withProject((genex, project, args) =>
     genex.publishName(project, args.title, args.fromStudio === true),
   ),

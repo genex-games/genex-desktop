@@ -243,13 +243,15 @@ export interface StudioApi {
     remix?: boolean,
     /** The dialog said the web build replaces a page that shows only the game's apps. */
     replaceNativePage?: boolean,
+    /** The apps the Publish card's switches send (`mac`, `windows`, `linux`); absent: every ready app. */
+    platforms?: string[],
   ): Promise<void>;
   /**
    * Publish a game that has only apps (no web build) from Studio's Publish dialog: its ready Mac and
    * Windows apps go to Genex and the game is listed under `title`. The press, under the rows it names,
    * is the consent; `remix` is its Allow remixing, whether the game's project goes once they are live.
    */
-  genexPublishApps(project: string, title?: string, remix?: boolean): Promise<void>;
+  genexPublishApps(project: string, title?: string, remix?: boolean, platforms?: string[]): Promise<void>;
   /** Ask Genex to build the game's `platform` app on its own computers (an Unreal game's Windows app on a Mac). */
   genexCloudBuild(project: string, platform: string): Promise<void>;
   /**

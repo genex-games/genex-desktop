@@ -136,6 +136,12 @@ describe("Publish's platform rows from the game folder", () => {
     const rows = byTarget(await publishPlatforms(coreWith("dust", root, engine), "dust"));
     assert.equal(rows.mac.state, PublishPlatformState.Stale);
     assert.deepEqual([rows.web.state, rows.web.uploads], [PublishPlatformState.Missing, false]);
+    const changed = new Date(T0 + 20 * MINUTE_MS).toISOString();
+    assert.deepEqual(
+      Object.values(rows).map((row) => row.changedAt),
+      [changed, changed, changed, changed],
+      "every row says when the game last changed, so an app Genex built can be judged against it",
+    );
   });
 
   it("never offers an Unreal game's page of design mockups as its web build", async () => {
@@ -173,6 +179,17 @@ describe("Publish's platform rows from the game folder", () => {
     await source(root, "Assets/Scripts/Player.cs", T0 + 30 * MINUTE_MS);
     assert.equal(byTarget(await publishPlatforms(core, "dust", true)).mac.uploads, false);
     assert.deepEqual(await publishedApps(core, "dust", true), []);
+  });
+
+  it("sends only the platforms the card's switches name", async () => {
+    const root = await tmpDir("publish-platforms-");
+    await source(root, "Assets/Scripts/Player.cs", T0);
+    await macApp(path.join(root, "Builds", "Mac"), "Dust Runners", T0 + 10 * MINUTE_MS);
+    await linuxProgram(path.join(root, "Builds", "Linux", "Dust.x86_64"), T0 + 10 * MINUTE_MS);
+    const core = coreWith("dust", root, []);
+    assert.deepEqual(await publishedApps(core, "dust", true, { platforms: ["linux"] }), ["Builds/Linux/Dust.x86_64"]);
+    assert.deepEqual(await publishedApps(core, "dust", true, { platforms: [] }), [], "every switch off sends no app");
+    assert.equal((await publishedApps(core, "dust", true)).length, 2, "no choice sends every ready app");
   });
 
   it("keeps an app ready when only notes, editor state or Finder's files changed after it", async () => {

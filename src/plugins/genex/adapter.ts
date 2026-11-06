@@ -70,6 +70,7 @@ import {
   CLOUD_SOURCE_FOLDER,
   CLOUD_UNREAL_VERSIONS,
   type CloudBuildDeps,
+  forgetCloudBuilds,
   isRunning,
   loadCloudBuilds,
   loadCloudSend,
@@ -267,6 +268,8 @@ const NATIVE_PUBLISH_TIMEOUT_MS = 60 * MINUTE_MS;
 const REVIEW_READ_TIMEOUT_MS = MINUTE_MS;
 /** Where a publish's apps are recorded in its workspace, apart from `publish.json`. */
 const NATIVE_FILE = "native.json";
+/** The systems an app on Genex is for: what the Publish card's switch can take off. */
+const APP_PLATFORMS: ReadonlySet<string> = new Set(["mac", "windows", "linux"]);
 /** Bounded so a waiting agent answers well inside the host's 190 s invocation ceiling. */
 const PUBLISH_WAIT_MS = 150_000;
 const MIN_PUBLISH_WAIT_MS = SECOND_MS;
@@ -1845,6 +1848,36 @@ export class GenexTools {
       await this.#savePublishState(project, state);
       return this.publishView(project);
     });
+  }
+  /**
+   * Take `platform`'s app off Genex, from the Publish card's switch: every build Genex holds for it goes,
+   * the game's other apps stay, and the record forgets it, so its row says it is not published. Only a
+   * Mac, Windows or Linux app; not while a publish of the game runs.
+   */
+  async publishRemoveApp(project: string, platform: unknown): Promise<GenexPublishState> {
+    if (typeof platform !== "string" || !APP_PLATFORMS.has(platform))
+      throw new Error(PUBLISH_MESSAGE.NoAppPlatformRefusal());
+    return this.#account(async () => {
+      if (this.#publishJobs.has(project)) throw new Error(PUBLISH_MESSAGE.StillRunning());
+      const state = await this.publishStatus(project);
+      if (!state.connected) throw new Error(PUBLISH_MESSAGE.ConnectFirstRefusal());
+      if (!state.projectId) throw new Error(PUBLISH_MESSAGE.NothingOnline());
+      const id = state.projectId;
+      const held = reviewRecordOf({ native: await this.#fetch(GenexRoute.nativeBuilds(id)), project: undefined });
+      const archs = new Set((held?.apps ?? []).filter((app) => app.platform === platform).map((app) => app.arch));
+      for (const arch of archs) await this.#fetch(GenexRoute.nativeBuild(id, platform, arch), { method: "DELETE" });
+      await this.#forgetApp(project, platform);
+      return this.publishView(project);
+    });
+  }
+  /** The record without `platform`'s app: not in what the last publish sent, nor among Genex Cloud's builds. */
+  async #forgetApp(project: string, platform: string): Promise<void> {
+    const dir = this.#publishDir(project);
+    const file = path.join(dir, NATIVE_FILE);
+    const saved = readNativeSaved(await readJsonOr(file));
+    const other = (entry: { platform: string }) => entry.platform !== platform;
+    await atomicWriteJson(file, { ...saved, sent: saved.sent.filter(other), failed: saved.failed.filter(other) });
+    await forgetCloudBuilds(dir, platform, (one) => readJsonOr(one));
   }
   /**
    * Rename the game from the Publish dialog, the moment the person finishes typing the name. A game

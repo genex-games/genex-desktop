@@ -35,6 +35,8 @@
   "Run a Genex CLI command that spends Nex or credits or changes what this game sells, with your saved Genex account.": "저장된 Genex 계정으로 Nex나 크레딧을 쓰거나 이 게임의 판매 항목을 바꾸는 Genex CLI 명령을 실행해요.",
   "Send apps again": "앱 다시 보내기",
   "Sign and notarize Mac apps with my own Apple Developer ID": "내 Apple Developer ID로 Mac 앱에 서명하고 공증하기",
+  "Take an app down": "앱 내리기",
+  "Take this app off Genex. Players can't download it any more; the game's other apps stay as they are. You can publish it again later.": "이 앱을 Genex에서 내려요. 플레이어는 더 이상 다운로드할 수 없어요. 게임의 다른 앱은 그대로예요. 나중에 다시 게시할 수 있어요.",
   "Take this game's cover": "이 게임 커버 찍기",
   "Take this game's web version off Genex. Its page shows its Mac, Windows and Linux apps again, and the apps stay as they are. You can publish a web version again later.": "이 게임의 웹 버전을 Genex에서 내려요. 페이지에 다시 Mac, Windows, Linux 앱이 보이고, 앱은 그대로 남아요. 웹 버전은 나중에 다시 게시할 수 있어요.",
   "Unlock saved account": "저장된 계정 잠금 해제",

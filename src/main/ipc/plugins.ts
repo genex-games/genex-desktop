@@ -145,10 +145,10 @@ export function registerPluginsIpc(handle: IpcHandle, deps: PluginsIpcDeps): voi
   handle("studio:plugins.genex-publish-review", async (p) => publishReview(core, p?.project));
   handle("studio:plugins.genex-publish-platforms", async (p) => publishPlatforms(core, p?.project));
   handle("studio:plugins.genex-publish", async (p) =>
-    publishFromDialog(core, p?.project, p?.review, p?.title, undefined, p?.remix, p?.replaceNativePage),
+    publishFromDialog(core, p?.project, p?.review, p?.title, undefined, p?.remix, p?.replaceNativePage, p?.platforms),
   );
   handle("studio:plugins.genex-publish-apps", async (p) => {
-    await publishAppsFromDialog(core, p?.project, p?.title, undefined, p?.remix);
+    await publishAppsFromDialog(core, p?.project, p?.title, undefined, p?.remix, p?.platforms);
     // Genex holds what the press sends: the review watch follows the publish to its check.
     core.genexReviewFollow(p?.project);
   });

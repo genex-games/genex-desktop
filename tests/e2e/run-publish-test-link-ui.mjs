@@ -64,8 +64,10 @@ app.whenReady().then(async()=>{
   report.fresh=await capture('fresh');
   // Before the first publish, a tested draft: the test link under the main press, one line under it.
   const draft=await step('draft','window.testLink.open("draft")');
-  assert.deepEqual(draft.order,['primary','test']);
-  assert.ok(draft.testText.startsWith('Test link:'),draft.testText);
+  // Flipped to match the dialog since links sit above the press (2026-10-23): it failed on dev before this.
+  assert.deepEqual(draft.order,['test','primary']);
+  // Flipped on purpose (Publish card round 4): the test link's one word is "Test".
+  assert.ok(draft.testText.startsWith('Test'),draft.testText);
   assert.ok(draft.testText.includes('preview--cathedral-chess.genex.technology'),draft.testText);
   assert.equal(draft.testCopyLabel,'Copy the test link');
   assert.equal(draft.note,'Friends can play it before you publish.','a single-player game is not told about a second player');
@@ -80,8 +82,9 @@ app.whenReady().then(async()=>{
   const newer=await step('newer','window.testLink.open("newer",{multiplayer:true})');
   assert.equal(newer.stage,'public');
   assert.equal(newer.primary,'Publish update');
-  assert.deepEqual(newer.order,['primary','public','test']);
-  assert.ok(newer.publicText.startsWith('Public:'),newer.publicText);
+  assert.deepEqual(newer.order,['public','test','primary']);
+  // Flipped on purpose (Publish card round 4): no word before the public link, its mark is inside the address.
+  assert.ok(newer.publicText.startsWith('genex.games/'),newer.publicText);
   assert.ok(newer.publicText.includes('genex.games/cathedral-chess'),newer.publicText);
   assert.equal(newer.note,'Try your changes before you update. Open it in a private window to join as another player.');
   assert.equal(newer.overflow,false);
@@ -89,7 +92,7 @@ app.whenReady().then(async()=>{
   // Live and the draft is the publish's own build: no test link.
   const same=await step('same','window.testLink.open("same",{multiplayer:true})');
   assert.equal(same.testText,null,'the live build is not offered as a test');
-  assert.deepEqual(same.order,['primary','public']);
+  assert.deepEqual(same.order,['public','primary']);
   report.same=await capture('live-same');
   // The main press publishes exactly as before: once, this game, its name.
   await step('beforeDraftPress','window.testLink.open("draft",{multiplayer:true})');

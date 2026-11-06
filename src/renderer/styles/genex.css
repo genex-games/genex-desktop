@@ -1377,6 +1377,133 @@ button.genex-publish-banner-name:hover {
   line-height: 19px;
   text-align: center;
 }
+/* The Publish card of a game made in an engine: one framed list, a hairline between rows, a dot and
+   one line saying what is true now, the row's end note, then its switch (a clock while it works). */
+.genex-publish-card {
+  display: grid;
+  gap: 12px;
+}
+.genex-publish-card-rows {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 12px;
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.genex-publish-card-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 60px;
+  padding: 8px 14px;
+}
+.genex-publish-card-row + .genex-publish-card-row {
+  box-shadow: inset 0 1px 0 var(--line);
+}
+.genex-publish-card-row > svg {
+  flex: none;
+  color: color-mix(in oklab, var(--accent) 55%, var(--ink));
+}
+.genex-publish-card-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+}
+.genex-publish-card-row[aria-busy] .genex-publish-card-text,
+.genex-publish-card-rows[aria-busy] .genex-publish-card-text {
+  gap: 7px;
+}
+.genex-publish-card-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-3);
+  font-size: 12.5px;
+  font-weight: 400;
+  line-height: 18px;
+  white-space: nowrap;
+}
+/* The dot speaks the banner chip's language: green live, amber older than the game, hollow not on Genex. */
+.genex-publish-card-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1.5px var(--ink-3);
+}
+[data-tone="live"] .genex-publish-card-dot {
+  background: var(--green);
+  box-shadow: none;
+}
+[data-tone="old"] .genex-publish-card-dot {
+  background: var(--orange);
+  box-shadow: none;
+}
+[data-tone="review"] .genex-publish-card-dot {
+  background: color-mix(in oklab, var(--accent) 60%, var(--ink));
+  box-shadow: none;
+}
+[data-tone="bad"] .genex-publish-card-dot {
+  background: var(--red);
+  box-shadow: none;
+}
+[data-tone="old"] .genex-publish-card-status {
+  color: color-mix(in oklab, var(--orange) 80%, var(--ink-2));
+}
+[data-tone="bad"] .genex-publish-card-status {
+  color: color-mix(in oklab, var(--red) 70%, var(--ink-2));
+}
+.genex-publish-card-side,
+.genex-publish-card-clock {
+  flex: none;
+  color: var(--ink-3);
+  font: 12px / 18px var(--font-family-mono);
+  font-variant-numeric: tabular-nums;
+}
+.genex-publish-card-clock {
+  min-width: 36px;
+  text-align: end;
+}
+/* A failed Genex Cloud build's first error, in the log's own words. */
+.genex-publish-card-errors {
+  display: -webkit-box;
+  overflow: hidden;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--orange-tint);
+  color: color-mix(in oklab, var(--orange) 80%, var(--ink));
+  font: 12px / 18px var(--font-family-mono);
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+}
+.genex-publish-card-errors > span {
+  margin-inline-start: 6px;
+  color: var(--ink-3);
+}
+.genex-publish-card-press {
+  display: grid;
+  gap: 10px;
+}
+/* A press that only takes platforms down warns in amber. */
+.genex-publish-primary[data-warn] {
+  background: color-mix(in srgb, var(--orange) 22%, var(--background));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--orange) 45%, transparent);
+  color: color-mix(in oklab, var(--orange) 85%, var(--ink));
+}
+.genex-publish-card-note {
+  color: var(--ink-3);
+  font-size: 13px;
+  line-height: 19px;
+  text-align: center;
+}
 /* The busy button: the step at work, then its clock. */
 .genex-publish-clock {
   margin-inline-start: 6px;
@@ -1504,6 +1631,32 @@ button.genex-publish-banner-name:hover {
 .genex-publish-link-edit > svg {
   flex: none;
   opacity: 0.75;
+}
+/* The link's mark sits inside the address, before it: no word names the link. The address's soft
+   fill starts at the field's inner edge, whole, rather than pulled past a clipping edge. */
+.genex-publish-link-field[data-public] {
+  padding-inline-start: 6px;
+}
+.genex-publish-link-field[data-public] .genex-publish-link-edit {
+  margin-inline-start: 0;
+}
+.genex-publish-link-field[data-public] > .genex-publish-link-plain {
+  padding-inline: 8px;
+}
+.genex-publish-link-mark {
+  flex: none;
+  color: color-mix(in oklab, var(--accent) 45%, var(--ink));
+}
+.genex-publish-link-field > .genex-publish-link-plain {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.genex-publish-link-plain > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 /* Changing the link: the site fixed before the typed part, Save inside the field, one line under it. */
 .genex-publish-link-change {

@@ -63,7 +63,8 @@ app.whenReady().then(async()=>{
    assert.equal(apps.line,'Allow remixing·Rights');
    assert.equal(apps.lineOneRow,true);
    assert.deepEqual(apps.order,['primary','remix'],'under the press');
-   assert.deepEqual(apps.above,[{text:'Only Mac and Windows players can play it.',align:'center'}],'one centred line above the press');
+   // Flipped on purpose (Publish card round 4): a game made in an engine says who plays it on its rows, no line above.
+   assert.deepEqual(apps.above,[],'no line above the press');
    assert.deepEqual(apps.below,[],'nothing else under it');
    report[theme+'Apps']=await capture(theme+'-apps');
    const rights=await step(theme+'Rights','window.remixRig.rights()');

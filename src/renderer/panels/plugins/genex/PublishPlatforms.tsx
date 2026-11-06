@@ -56,20 +56,32 @@ const MARK: Readonly<Record<PublishTarget, IconName>> = {
   [PublishTarget.Linux]: "linux",
 };
 
-/** The game folder's platforms, read once as the dialog opens; null until read or when unreadable. */
-export function usePublishPlatforms(project: string): PublishPlatform[] | null {
+/** How often the folder is read again while the agent builds an app the Publish card asked for. */
+const BUILD_REREAD_MS = 10 * SECOND_MS;
+
+/**
+ * The game folder's platforms, read as the dialog opens; null until read or when unreadable. While
+ * `watch` (the agent builds an app the card asked for) it is read again every few seconds, so the
+ * row sees the new build land.
+ */
+export function usePublishPlatforms(project: string, watch = false): PublishPlatform[] | null {
   const [platforms, setPlatforms] = useState<PublishPlatform[] | null>(null);
   useAsyncEffect(
     (alive) => {
-      void window.studio
-        .genexPublishPlatforms(project)
-        .then((read) => {
-          if (alive()) setPlatforms(read);
-        })
-        .catch(() => {});
-      return undefined;
+      const read = (): void => {
+        void window.studio
+          .genexPublishPlatforms(project)
+          .then((rows) => {
+            if (alive()) setPlatforms(rows);
+          })
+          .catch(() => {});
+      };
+      read();
+      if (!watch) return undefined;
+      const timer = window.setInterval(read, BUILD_REREAD_MS);
+      return () => window.clearInterval(timer);
     },
-    [project],
+    [project, watch],
   );
   return platforms;
 }
@@ -221,7 +233,7 @@ function askText(target: PublishTarget, end: PlatformEnd, title: string): string
 }
 
 /** What went wrong in a build on Genex: the first error, how many more, and the agent to fix them all. */
-function CloudErrors({
+export function CloudErrors({
   project,
   title,
   platforms,

@@ -37,6 +37,8 @@ export interface PublishPlatform {
   builtAt: string | null;
   /** Whether Publish sends it now: the web build does, a native build not until genex.games takes them. */
   uploads: boolean;
+  /** When the game's sources last changed, ISO 8601; absent when unknown. An app Genex built is judged against it. */
+  changedAt?: string;
 }
 
 /** A row's platform as the builds' contract names it, or null for the web. */

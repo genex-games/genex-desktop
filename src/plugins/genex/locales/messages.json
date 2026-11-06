@@ -35,6 +35,8 @@
   "Run a Genex CLI command that spends Nex or credits or changes what this game sells, with your saved Genex account.",
   "Send apps again",
   "Sign and notarize Mac apps with my own Apple Developer ID",
+  "Take an app down",
+  "Take this app off Genex. Players can't download it any more; the game's other apps stay as they are. You can publish it again later.",
   "Take this game's cover",
   "Take this game's web version off Genex. Its page shows its Mac, Windows and Linux apps again, and the apps stay as they are. You can publish a web version again later.",
   "Unlock saved account",

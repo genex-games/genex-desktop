@@ -125,13 +125,16 @@ export function usePublishRecord(plugin: PluginInfo, project: string | null) {
      * project when `remix` (Allow remixing) is ticked, and to the web build taking the place of a page
      * that shows only the game's apps when `replaceNativePage` (the dialog said so above the press).
      */
-    publish: (title: string, remix?: boolean, replaceNativePage?: boolean): Promise<void> =>
+    publish: (title: string, remix?: boolean, replaceNativePage?: boolean, platforms?: string[]): Promise<void> =>
       run(Pressing.Publish, async () =>
-        window.studio.genexPublish(game, await currentFiles(), title, remix, replaceNativePage),
+        window.studio.genexPublish(game, await currentFiles(), title, remix, replaceNativePage, platforms),
       ),
-    /** Publish a game that has only apps under `title`: the press is the consent to the apps its rows name. */
-    publishApps: (title: string, remix?: boolean): Promise<void> =>
-      run(Pressing.Publish, () => window.studio.genexPublishApps(game, title, remix)),
+    /**
+     * Publish a game's apps on their own under `title`: the press is the consent to the apps its rows
+     * name, or only the `platforms` the Publish card's switches send.
+     */
+    publishApps: (title: string, remix?: boolean, platforms?: string[]): Promise<void> =>
+      run(Pressing.Publish, () => window.studio.genexPublishApps(game, title, remix, platforms)),
     /**
      * Publish again while Studio cannot tell whether the last upload reached Genex: settle that
      * upload (`again` names it), then publish under `title` as Publish does.

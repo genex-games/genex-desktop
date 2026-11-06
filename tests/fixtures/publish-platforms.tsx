@@ -300,9 +300,9 @@ fake.stub("pluginAction", async (_id, name) => {
   return {};
 });
 fake.stub("genexPublishPlatforms", async () => SCENES[scene]());
-const published: Array<{ via: string; title?: string; replaceNativePage?: boolean }> = [];
-fake.stub("genexPublishApps", async (_project, title) => {
-  published.push({ via: "apps", ...(title ? { title } : {}) });
+const published: Array<{ via: string; title?: string; replaceNativePage?: boolean; platforms?: string[] }> = [];
+fake.stub("genexPublishApps", async (_project, title, _remix, platforms) => {
+  published.push({ via: "apps", ...(title ? { title } : {}), ...(platforms ? { platforms } : {}) });
 });
 fake.stub("genexCloudBuild", async (_project, platform) => {
   published.push({ via: `cloud:${platform}` });
@@ -351,14 +351,9 @@ function sample() {
   const list = content?.querySelector<HTMLElement>("[data-genex-publish-platforms]") ?? null;
   const rows = [...(list?.querySelectorAll<HTMLElement>("[data-publish-platform]") ?? [])].map((row) => ({
     target: row.dataset.publishPlatform,
-    state: row.dataset.state,
-    name: row.querySelector(".genex-publish-platform-text > span:first-child")?.textContent ?? "",
-    detail: row.querySelector(".genex-publish-platform-detail")?.textContent ?? "",
-    size: row.querySelector(".genex-publish-platform-size")?.textContent ?? null,
-    end:
-      row.querySelector(".genex-publish-platform-note")?.textContent ??
-      row.querySelector(".genex-publish-platform-make")?.textContent ??
-      null,
+    tone: row.dataset.tone,
+    name: row.querySelector(".genex-publish-card-text > span:first-child")?.textContent ?? "",
+    status: row.querySelector("[data-publish-platform-status]")?.textContent ?? "",
   }));
   const column = content?.getBoundingClientRect();
   const overflow = [...(content?.querySelectorAll<HTMLElement>("*") ?? [])].some(
@@ -367,21 +362,18 @@ function sample() {
   const order = [
     ...(content?.querySelectorAll<HTMLElement>("[data-genex-publish-platforms], .genex-publish-primary") ?? []),
   ].map((el) => (el.matches("[data-genex-publish-platforms]") ? "platforms" : "primary"));
-  const details = [...(list?.querySelectorAll<HTMLElement>(".genex-publish-platform-detail") ?? [])];
   return {
     listed: Boolean(list),
     rows,
-    reach: list?.querySelector(".genex-publish-reach")?.textContent ?? null,
-    replaces: list?.querySelector("[data-publish-replaces-apps]")?.textContent ?? null,
+    replaces: content?.querySelector("[data-publish-replaces-apps]")?.textContent ?? null,
     actions: [...actions],
     primary: document.querySelector<HTMLElement>(".genex-publish-primary")?.textContent ?? null,
     primaryDisabled: document.querySelector<HTMLButtonElement>(".genex-publish-primary")?.disabled ?? null,
     hint: content?.querySelector(":scope > .genex-publish-hint")?.textContent ?? null,
     published: [...published],
-    failures: [...(list?.querySelectorAll<HTMLElement>(".genex-publish-platform-failure") ?? [])].map(
+    failures: [...(content?.querySelectorAll<HTMLElement>(".genex-publish-platform-failure") ?? [])].map(
       (line) => line.textContent ?? "",
     ),
-    oneLine: details.every((el) => el.scrollHeight <= Math.ceil(parseFloat(getComputedStyle(el).lineHeight)) + 1),
     review: reviewSample(content),
     chip: document.querySelector<HTMLElement>(".genex-publish-chip")?.textContent ?? null,
     steps: [...(content?.querySelectorAll<HTMLElement>(".step-bar [data-state]") ?? [])].map((el) => el.dataset.state ?? ""),
@@ -492,7 +484,7 @@ async function open(options: { theme?: "dark" | "light"; scene?: Scene; platform
 /** Press the main button, as a person would, and let the press settle. */
 async function press() {
   document.querySelector<HTMLButtonElement>(".genex-publish-primary")?.click();
-  for (let i = 0; i < 100 && published.length === 0; i++) await frame();
+  for (let i = 0; i < 100 && published.length === 0 && actions.length === 0; i++) await frame();
   await settle();
   return sample();
 }
@@ -514,19 +506,11 @@ async function approve() {
   return sample();
 }
 
-/** Press a row's Make with agent. */
-async function make(target: PublishTarget) {
-  document.querySelector<HTMLButtonElement>(`[data-publish-platform-make="${target}"]`)?.click();
+/** Turn a row's switch on the Publish card. */
+async function toggle(target: PublishTarget) {
+  document.querySelector<HTMLButtonElement>(`[data-publish-platform="${target}"] [role="switch"]`)?.click();
   await settle();
   return sample();
 }
 
-/** Press the web row's Remove. */
-async function removeWeb() {
-  document.querySelector<HTMLButtonElement>("[data-publish-platform-remove-web]")?.click();
-  for (let i = 0; i < 100 && actions.length === 0; i++) await frame();
-  await settle();
-  return sample();
-}
-
-Object.assign(window, { platformsRig: { open, make, press, sample, removeWeb, reviewPress, requestReview, endSend, approve } });
+Object.assign(window, { platformsRig: { open, toggle, press, sample, reviewPress, requestReview, endSend, approve } });

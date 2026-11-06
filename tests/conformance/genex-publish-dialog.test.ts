@@ -16,6 +16,7 @@ import {
   PublishRefusal,
   PublishRefusedError,
   publishAppsFromDialog,
+  platformsChoice,
   publishFromDialog,
   publishReview,
   renameOnGenex,
@@ -624,4 +625,17 @@ test("an approved file list is spent once, by its own plugin and game, within it
   approvals.approve("genex", GAME, files);
   now += EXPORT_APPROVAL_TTL_MS + 1;
   assert.equal(approvals.take("genex", GAME, files), false, "expired");
+});
+
+test("the Publish card's switches choose only app platforms, whatever the page sends", () => {
+  const table: Array<[unknown, ReturnType<typeof platformsChoice>]> = [
+    [undefined, {}],
+    ["mac", {}],
+    [{ mac: true }, {}],
+    [["mac", "linux"], { platforms: ["mac", "linux"] }],
+    [["web", "../mac", "MAC", 3, null], { platforms: [] }],
+    [["windows", "windows"], { platforms: ["windows"] }],
+    [[], { platforms: [] }],
+  ];
+  for (const [sent, choice] of table) assert.deepEqual(platformsChoice(sent), choice, JSON.stringify(sent));
 });

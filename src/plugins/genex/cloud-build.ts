@@ -209,6 +209,16 @@ async function keepBuild(
   await atomicWriteJson(path.join(dir, CLOUD_BUILD_FILE), { builds, ...(send ? { send } : {}) });
 }
 
+/**
+ * Forget every build of `platform` in the workspace's record: its app was taken off Genex, so none is
+ * what players have. A send under way stays.
+ */
+export async function forgetCloudBuilds(dir: string, platform: string, read: (file: string) => Promise<unknown>) {
+  const builds = (await loadCloudBuilds(dir, read)).filter((build) => build.platform !== platform);
+  const send = await loadCloudSend(dir, read);
+  await atomicWriteJson(path.join(dir, CLOUD_BUILD_FILE), { builds, ...(send ? { send } : {}) });
+}
+
 /** Keep `send` as the workspace's send, beside its builds. */
 async function keepSend(dir: string, send: GenexCloudSend, read: (file: string) => Promise<unknown>) {
   const builds = await loadCloudBuilds(dir, read);

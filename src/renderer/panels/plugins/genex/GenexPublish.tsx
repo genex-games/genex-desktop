@@ -87,6 +87,8 @@ import { CoverKind } from "./cover-asks.ts";
 import { type PublishCover, useElapsed, usePublishCover } from "./use-publish-cover.ts";
 import { Pressing, usePublishRecord } from "./use-publish-record.ts";
 import { PublishPlatforms, usePublishPlatforms } from "./PublishPlatforms.tsx";
+import { EngineCardRows, PublishCardPress } from "./PublishCard.tsx";
+import { usePublishCard } from "./use-publish-card.ts";
 import {
   appsLabel,
   appsInReview,
@@ -99,8 +101,6 @@ import {
   replacesAppsPage,
 } from "./publish-platforms-view.ts";
 import { type PublishPlatform, PublishTarget } from "../../../../shared/publish-platforms.ts";
-import { PublishShareLine } from "./PublishShare.tsx";
-import { useShareWhenLive } from "./use-publish-share.ts";
 import { Skeleton } from "../../../ui/Skeleton.tsx";
 
 const WORDS = GENEX_WORDS.publish;
@@ -406,8 +406,6 @@ function LinkField({
   const changeable = change !== undefined && change.left !== 0;
   return (
     <div className="genex-publish-link-field" data-public>
-      <Icon name="globe" size={15} />
-      <span className="genex-publish-link-label">{WORDS.publicLink}</span>
       {changeable ? (
         <span className="genex-publish-link-address">
           <button
@@ -417,12 +415,16 @@ function LinkField({
             aria-label={WORDS.changeLink}
             onClick={() => setEditing(true)}
           >
+            <Icon name="link" size={14} className="genex-publish-link-mark" />
             <span>{shown}</span>
             <Icon name={moved ? "check" : "rename"} size={14} />
           </button>
         </span>
       ) : (
-        <span title={link}>{shown}</span>
+        <span className="genex-publish-link-plain" title={link}>
+          <Icon name="link" size={14} className="genex-publish-link-mark" />
+          <span>{shown}</span>
+        </span>
       )}
       <Button aria-label={WORDS.copyLinkLabel} onClick={() => copy(link)}>
         <Icon name={copied ? "check" : "copy"} size={14} className={copied ? "text-green" : undefined} />
@@ -952,6 +954,8 @@ function useAppsPublish(
   project: string,
   native: GenexNativeRecord | undefined,
   hostedWeb: boolean | undefined,
+  /** The agent builds an app the Publish card asked for: the folder is read again until it lands. */
+  watch = false,
 ): {
   platforms: PublishPlatform[] | null;
   apps: string | null;
@@ -963,7 +967,7 @@ function useAppsPublish(
   /** The line above the press says this web build takes the place of the apps' page: the press agrees to it. */
   replacesApps: boolean;
 } {
-  const read = usePublishPlatforms(project);
+  const read = usePublishPlatforms(project, watch);
   const platforms = read ? gateByPlugin(read, native) : null;
   return {
     platforms,
@@ -996,6 +1000,10 @@ const HOLDS_PRESS: ReadonlySet<string> = new Set([
 /** Whether the card takes the press's place: a game with only apps, a plain turn-down, of the very build Publish sends. */
 const cardHoldsPress = (card: ReviewCardView | null, sendsTurnedDown: boolean, appsOnly: boolean): boolean =>
   appsOnly && sendsTurnedDown && card !== null && HOLDS_PRESS.has(card.kind);
+
+/** Whether a review card's way forward is publishing again: it offers Publish, or a person waits for the app sent again. */
+const publishesNext = (card: ReviewCardView): boolean =>
+  card.kind === ReviewCardKind.ResendOwed || card.presses.some((one) => one.press === ReviewPress.Publish);
 
 /** Whether a publish of the game runs now, or its apps are going: Genex's word on them changes once it ends. */
 const publishRuns = (state: GenexPublishState | null): boolean => {
@@ -1039,6 +1047,8 @@ function useAppsReview(
     input,
     // The dialog's own press is the card's Publish: the card leaves it out.
     card: state && card ? { ...card, presses: card.presses.filter((one) => one.press !== ReviewPress.Publish) } : null,
+    /** The card's way forward is publishing again (a resend a person waits for, a fixed game): the dialog's Publish does it. */
+    wantsPublish: Boolean(state && card && publishesNext(card)),
     holdsPress: cardHoldsPress(card, sendsTurnedDown, appsOnly),
     fixId: fix?.fixId,
     record,
@@ -1202,6 +1212,133 @@ function useBannerTitle(
 }
 
 /**
+ * The game's platforms and, for a game made in an engine, its Publish card: the folder is read again
+ * while the agent builds an app the card asked for, so its row sees the build land.
+ */
+function usePlatformsAndCard(
+  project: string,
+  record: ReturnType<typeof usePublishRecord>,
+  name: string,
+  remix: boolean,
+) {
+  const engine = useLibrary((s) => s.games.find((g) => g.name === project)?.engine);
+  const facts = useLibrary((s) => s.games.find((g) => g.name === project)?.facts);
+  const [watchFolder, setWatchFolder] = useState(false);
+  const apps = useAppsPublish(project, record.state?.native, record.state?.hostedWeb, watchFolder);
+  const card = usePublishCard({
+    project,
+    record,
+    platforms: apps.platforms,
+    name,
+    remix,
+    replacesApps: apps.replacesApps,
+  });
+  useEffect(() => setWatchFolder(card.building), [card.building]);
+  return { ...apps, card, engineGame: Boolean(engine) || makesApps(facts ?? []) };
+}
+
+/**
+ * Which press a game's dialog shows: the Publish card's own for a game made in an engine (while nothing
+ * celebrates, runs, waits for Genex's terms or a review card's fix), else the dialog's Publish, which the
+ * card keeps for a publish under way, Genex's terms, and a review card whose way forward is publishing
+ * again (`republish`); and whether the card leaves the foot line out (all but a slow publish's way out).
+ */
+function cardMoment(
+  engineGame: boolean,
+  moment: { shown: boolean; publishing: boolean; view: PublishView; held: boolean; republish: boolean },
+): { press: boolean; dialogPress: boolean; quiet: boolean } {
+  if (!engineGame) return { press: false, dialogPress: true, quiet: false };
+  const { shown, publishing, view, held, republish } = moment;
+  const press = shown && !publishing && !view.terms && !held && !republish;
+  const dialogPress = !press && (publishing || view.terms !== null || republish);
+  return { press, dialogPress, quiet: !(publishing && view.slow) };
+}
+
+/** The game's platforms: the Publish card's rows for a game made in an engine, else the list a web game with apps keeps. */
+function PlatformsSection({
+  engineGame,
+  shown,
+  project,
+  card,
+  platforms,
+  record,
+  replacesApps,
+  reviewed,
+}: {
+  engineGame: boolean;
+  shown: boolean;
+  project: string;
+  card: ReturnType<typeof usePublishCard>;
+  platforms: PublishPlatform[] | null;
+  record: ReturnType<typeof usePublishRecord>;
+  replacesApps: boolean;
+  reviewed: boolean;
+}): JSX.Element | null {
+  if (!engineGame)
+    return (
+      <PublishPlatforms
+        project={project}
+        platforms={platforms}
+        shown={shown}
+        native={record.state?.native}
+        onGenex={Boolean(record.state?.slug)}
+        hostedWeb={record.state?.hostedWeb}
+        onRemoveWeb={() => void record.act(GenexAction.PublishRemoveWeb)}
+        reviewed={reviewed}
+      />
+    );
+  if (!shown) return null;
+  return (
+    <EngineCardRows
+      card={card}
+      platforms={platforms}
+      native={record.state?.native}
+      reviewed={reviewed}
+      replacesApps={replacesApps}
+    />
+  );
+}
+
+/** The press: the Publish card's own, or the dialog's Publish (`moment`, from {@link cardMoment}). */
+function PressSection({
+  moment,
+  parts,
+  shown,
+  ...presses
+}: {
+  moment: ReturnType<typeof cardMoment>;
+  parts: ReturnType<typeof usePlatformsAndCard>;
+  /** The dialog's Publish has something to do. */
+  shown: boolean;
+} & Pick<
+  Parameters<typeof Presses>[0],
+  "view" | "record" | "name" | "remix" | "publishing" | "project"
+>): JSX.Element | null {
+  const { card } = parts;
+  if (moment.press)
+    return (
+      <PublishCardPress
+        plan={card.plan}
+        busy={card.busy}
+        pressing={card.acting}
+        onPress={card.press}
+        onFix={card.onFix}
+      />
+    );
+  if (!moment.dialogPress || !shown) return null;
+  const apps = parts.apps !== null;
+  return (
+    <Presses
+      {...presses}
+      label={parts.apps ?? undefined}
+      apps={apps}
+      waiting={parts.waiting}
+      replacesApps={parts.replacesApps}
+    />
+  );
+}
+
+/**
  * The read record: the banner with the game's name and where it is, then what the moment needs:
  * the platforms a game with an app is built for, the running attempt's progress, the celebration
  * and link once it just went live, the link of a live game, or a failed attempt's line, and the presses.
@@ -1219,19 +1356,22 @@ function PublishBody({
 }): JSX.Element {
   const game = useLibrary((s) => s.games.find((g) => g.name === project));
   const { name, setTitle, onTitleDone } = useBannerTitle(record, project, offeredTitle(record.state, game, project));
-  const { platforms, apps, waiting, upToDate, inReview, replacesApps } = useAppsPublish(
-    project,
-    record.state?.native,
-    record.state?.hostedWeb,
-  );
+  const parts = usePlatformsAndCard(project, record, name, remix.allowed);
+  const { platforms, apps, upToDate, inReview, replacesApps, card, engineGame } = parts;
   const review = useAppsReview(plain, project, record.state, platforms, apps !== null);
   const view = review.view;
   const publishing = record.pressing === Pressing.Publish || view.running;
   const { celebrate, went } = useCelebration(view, publishing, inReview, review.record);
-  const share = useShareWhenLive(project, celebrate);
   const failure = record.error ? { text: record.error, details: record.error } : view.failure;
   const pressShown = !celebrate;
   const pressNeeded = pressHasWork(pressShown, view, publishing, { upToDate, inReview }) && !review.holdsPress;
+  const card$ = cardMoment(engineGame, {
+    shown: pressShown,
+    publishing,
+    view,
+    held: review.holdsPress,
+    republish: review.wantsPublish,
+  });
   return (
     <div
       className="genex-publish-body"
@@ -1258,40 +1398,36 @@ function PublishBody({
             {problem}
           </p>
         ))}
-        <PublishPlatforms
-          project={project}
-          platforms={platforms}
+        <PlatformsSection
+          engineGame={engineGame}
           shown={!celebrate}
-          native={record.state?.native}
-          onGenex={Boolean(record.state?.slug)}
-          hostedWeb={record.state?.hostedWeb}
-          onRemoveWeb={() => void record.act(GenexAction.PublishRemoveWeb)}
+          project={project}
+          card={card}
+          platforms={platforms}
+          record={record}
+          replacesApps={replacesApps}
           reviewed={review.card !== null || view.check !== null}
         />
         <AppsReview view={view} review={review} project={project} quiet={celebrate} />
         {celebrate && <LiveUpdateLine went={went} />}
         {failure && !publishing && <p className="genex-publish-failure">{failure.text}</p>}
-        <PublishShareLine share={share} celebrate={celebrate} />
         <WhoPlays
           project={project}
           shown={pressShown && saysWhoPlays(view, publishing, Boolean(cover.making), Boolean(view.testLink))}
         />
         {!publishing && <Links view={view} project={project} {...linksOf(record)} />}
-        {pressNeeded && (
-          <Presses
-            view={view}
-            record={record}
-            name={name}
-            publishing={publishing}
-            project={project}
-            label={apps ?? undefined}
-            apps={apps !== null}
-            waiting={waiting}
-            remix={remix.allowed}
-            replacesApps={replacesApps}
-          />
-        )}
-        {remixLineShown(pressShown, publishing, view, waiting) && (
+        <PressSection
+          moment={card$}
+          parts={parts}
+          shown={pressNeeded}
+          view={view}
+          record={record}
+          name={name}
+          remix={remix.allowed}
+          publishing={publishing}
+          project={project}
+        />
+        {remixLineShown(pressShown, publishing, view, card$.press ? card.plan === null : parts.waiting) && (
           <RemixChoice
             record={record.state?.remix}
             allowed={remix.allowed}
@@ -1307,6 +1443,7 @@ function PublishBody({
           record={record}
           name={name}
           appsLine={appsHint(view, review, { publishing, celebrate, appsOnly: apps !== null, pressed: pressNeeded })}
+          quiet={card$.quiet && !celebrate}
         />
       </div>
     </div>
@@ -1388,6 +1525,7 @@ function Hint({
   record,
   name,
   appsLine,
+  quiet = false,
 }: {
   view: PublishView;
   publishing: boolean;
@@ -1399,8 +1537,11 @@ function Hint({
   name: string;
   /** A game with apps: what Genex does with them, in place of the line a web game gets. */
   appsLine?: string | null;
+  /** The Publish card of a game made in an engine says what it needs on its rows and button: no line. */
+  quiet?: boolean;
 }): JSX.Element | null {
   const again = view.again;
+  if (quiet) return null;
   if (appsLine) return <p className="genex-publish-hint">{appsLine}</p>;
   if (publishing && view.slow)
     return (

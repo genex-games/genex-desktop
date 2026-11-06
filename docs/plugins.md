@@ -3341,8 +3341,30 @@ Genex:
   new game; so does a link changed on genex.games or another computer. When Genex can't say where
   the game went, the publish fails and keeps the link, never making a second game. A publish
   under way on Genex (`release_conflict`) is said in plain words.
-- For a game linked to an engine, or one whose folder holds a player build, the dialog lists its
-  platforms above the presses (`PublishPlatforms.tsx`, `publish-platforms-view.ts`; read by
+- A game made in an engine gets the Publish card (`PublishCard.tsx`, `publish-card-view.ts`,
+  `use-publish-card.ts`): one row per platform the person can act on (an Unreal game has no Web row,
+  and a Mac shows no Linux row for it unless that app is live), each with a dot and one line saying
+  only what is true now ("Live · up to date", "Live · older than your game" against the folder's
+  `changedAt`, "Not published", "In review", "Not approved", "Couldn't build · the older one is still
+  live"; a Windows app Genex Cloud built counts as live), its end saying when it went live, its size,
+  or where it gets built ("builds on this Mac", "builds on Genex Cloud"), and a switch: players get it.
+  Work under way shows in the row with a clock in the switch's place ("Building on this Mac",
+  "Sending to Genex Cloud", "Building on Genex Cloud"). The one button says what pressing it does
+  (`pressPlan`): apps the agent must build go first and alone ("Build Mac": the chat is asked, nothing
+  reaches players, the folder is read again until the build lands, an ask nothing came of is let go
+  after two hours), then "Update Mac and Windows" / "Publish to Mac and Windows" ("… 3 platforms" from
+  three) sends the switched-on ready apps (`platforms` on `genex-publish-apps` and `genex-publish`,
+  `publishedApps`' `platforms` choice) and has Genex Cloud build (asked once the game has a page on
+  Genex); a live platform switched off is taken down ("Take Windows down", amber, confirmed:
+  `publish-remove-app` → `DELETE /api/games/<id>/native-builds/<platform>/<arch>` for each build Genex
+  holds, the record forgetting it; the Web row's is `publish-remove-web`). While Genex Cloud works the
+  busy button says so and "It can take up to an hour." stands under it. A failed cloud build of the game
+  as it is shows its first error, and the button is Fix with agent. Until the folder and Genex's record
+  both answered the rows are skeletons and there is no button. The card has no Share assets line and no
+  explanation lines; the public link carries its mark inside the address, no word before it ("Test"
+  names the test link). A review card whose way forward is publishing again keeps the dialog's Publish.
+- A web game whose folder also holds a player build lists its platforms above the presses
+  (`PublishPlatforms.tsx`, `publish-platforms-view.ts`; read by
   `studio:plugins.genex-publish-platforms` from `main/core/publish-platforms.ts`): Web, Mac app,
   Windows app and Linux app. `main/core/native-builds.ts` finds the builds from the binaries
   themselves (a `.app`'s Mach-O program, a PE `.exe` beside its data, a 64-bit ELF program named
@@ -3480,8 +3502,8 @@ with the working dot, Checking fixes; none for a game Genex doesn't know) comes 
 - A row nothing can be done about from here is left out (`outOfReach`, `shownRows`): an Unreal
   game's web row, and its rows for a system this computer doesn't package, except the Windows row on
   a Mac once Genex can build it (`cloudWords`, `CLOUD_TARGETS`): while the
-  game has no page on Genex it says to publish first; then it offers Build on Genex, which runs
-  `studio:plugins.genex-cloud-build` (`cloudBuildFromDialog`, Windows only) → the plugin's
+  game has no page on Genex it says to publish first; then it offers Build on Genex (on the Publish
+  card, its button), which runs `studio:plugins.genex-cloud-build` (`cloudBuildFromDialog`, Windows only) → the plugin's
   `cloud-build` (`cloudBuild`, `cloud-build.ts`). The press is the consent: the game's Unreal project
   alone is staged, its `.uproject` at the top, without caches and builds as for remixing
   (`stageBuildSource`, into `cloud-source/`, removed once sent). Unlike a remix it also takes what the

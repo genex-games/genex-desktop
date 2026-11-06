@@ -31,6 +31,8 @@ export const GenexAction = {
   CloudBuild: "cloud-build",
   /** Take the game's web version off Genex, keeping its apps: its page shows them again. */
   PublishRemoveWeb: "publish-remove-web",
+  /** Take one platform's app off Genex (`{ platform }`), from the Publish card's switch. */
+  PublishRemoveApp: "publish-remove-app",
   /** Rename the game: on Genex at once when it is there, else kept for its first publish. */
   PublishName: "publish-name",
   /** Change the game's link on Genex; its old link keeps opening the game. */
@@ -68,6 +70,7 @@ export const GENEX_ACCOUNT_ACTIONS: readonly GenexAction[] = [
   GenexAction.PublishApps,
   GenexAction.CloudBuild,
   GenexAction.PublishRemoveWeb,
+  GenexAction.PublishRemoveApp,
   GenexAction.PublishName,
   GenexAction.PublishLink,
   GenexAction.PublishAllowUpload,

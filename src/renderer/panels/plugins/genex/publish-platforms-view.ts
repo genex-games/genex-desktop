@@ -135,7 +135,7 @@ const REVIEW_END: Record<GenexBuildReview, PlatformEnd> = {
 };
 
 /** The app on Genex for `row` when it is this build or a newer one, else none. */
-function currentSent(row: PublishPlatform, native: GenexNativeRecord | undefined) {
+export function currentSent(row: PublishPlatform, native: GenexNativeRecord | undefined) {
   const sent = native?.sent.find(forRow(row));
   const builtAt = row.builtAt ? Date.parse(row.builtAt) : 0;
   return sent && Date.parse(sent.publishedAt) >= builtAt ? sent : undefined;
@@ -191,17 +191,20 @@ function elsewhereWords(row: PublishPlatform & { target: NativeTarget }, now: nu
 }
 
 /** The rows whose app Genex builds on its own computers when this one can't: an Unreal game's Windows app. */
-const CLOUD_TARGETS: ReadonlySet<PublishTarget> = new Set([PublishTarget.Windows]);
+export const CLOUD_TARGETS: ReadonlySet<PublishTarget> = new Set([PublishTarget.Windows]);
 
 /** The builds still running on Genex's computers. */
-const RUNNING_CLOUD: ReadonlySet<CloudBuildState> = new Set([
+export const RUNNING_CLOUD: ReadonlySet<CloudBuildState> = new Set([
   CloudBuildState.Queued,
   CloudBuildState.Building,
   CloudBuildState.Publishing,
 ]);
 
 /** The newest build Genex made, or makes, of `row`'s app; none before the first. */
-function newestCloudBuild(row: PublishPlatform, native: GenexNativeRecord | undefined): GenexCloudBuild | undefined {
+export function newestCloudBuild(
+  row: PublishPlatform,
+  native: GenexNativeRecord | undefined,
+): GenexCloudBuild | undefined {
   const builds = (native?.cloud?.builds ?? []).filter(forRow(row));
   return builds.reduce<GenexCloudBuild | undefined>(
     (newest, build) => (!newest || Date.parse(build.startedAt) > Date.parse(newest.startedAt) ? build : newest),
