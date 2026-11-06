@@ -182,6 +182,7 @@ and the Plugins page — no polling is needed for a change to show.
 | `hooks[]` | 3 | Up to 32 `{on, tool, facts?, messages?}`: the plugin's harness tools Genex runs at its moments; see [Hooks](#hooks-genexs-moments) |
 | `observers[]` | 3 | Up to 8 `{id, facts, tool, live?, label?}`: what Genex can capture of a project with these facts, and the Live view it shows; see [Observers](#observers) |
 | `tools[].ready` | 3 | Agent tools with `makes` only: the harness tool that answers whether the kind can be made now (`{ready, note}`); Genex itself no longer asks it |
+| `tools[].links` | 3 | Tools with `makes` only: the name of the tool's string parameter that names the engine project file a call links the game to; a call linking the game's own project runs during a run (see below) |
 | `tools[].jobStatus` | 3 | Agent tools only: the tool answers `{started: true}` and its job runs on, and this other agent tool of the manifest (no `confirmation`, `host` or `needs`) says how it stands with a boolean `jobRunning`. Genex reads it while the job runs and, once `false`, starts the next turn of the chat whose own agent started it ([harness runtime](harness-runtime.md)); the trust dialog names it among the steps Genex runs on its own |
 | `tools[].asset` | 3 | Agent tools only: `{kind, prompt?, tool?}`, the kind of asset a call makes; see [Assets being made](#assets-being-made) |
 | `icon` | any | The plugin's picture: a `.png`, `.jpg`, `.webp` or `.svg` file in the package, at most 512 KiB, square and full-bleed (Studio rounds the corners); see [Icons](#icons) |
@@ -2318,7 +2319,7 @@ the game as `kinds` (`{plugin, name, tool, makes, scaffold?, label?}`; one per r
 the plugin declares [scaffolds](#scaffolds)), each as its plugin declares it: nobody asks a plugin
 whether its kind can be made now. A chat turn on a game with no kind yet bridges the question card
 (`ask_user`) while `plugins.tools {project}` lists any; which kind to make, and whether to ask, is
-the session's. An agent never sees `facts`, `makes` or `ready`.
+the session's. An agent never sees `facts`, `makes`, `links` or `ready`.
 
 Every agent tool of a bundled engine plugin names facts. Its way in (`new-game`, `new-plugin`,
 `use-project`, `show-steps`, Unreal's `install-unreal`, Roblox's Studio setup tools `finish-setup`,
@@ -2326,13 +2327,20 @@ Every agent tool of a bundled engine plugin names facts. Its way in (`new-game`,
 and also its own fact where it works in its own games too (`new-game` and `new-plugin` never do);
 its other tools name only its own fact. A game of one engine is handed no tool of another, and
 `genex__package` names `web-game`. Unreal's `use-project` and `new-game` declare
-`makes: ["unreal-project"]`, `new-plugin` also `unreal-plugin`. Publish goes by the same facts: a game served as a web game at its root may be
+`makes: ["unreal-project"]`, `new-plugin` also `unreal-plugin`; `use-project` also declares
+`links: "project"`. Publish goes by the same facts: a game served as a web game at its root may be
 published, an Unreal project is refused as before, and any other kind is refused with its own code
 (`not-web-game`).
 
 A call to a tool that declares `makes` changes what its game is (`main/core/kind-change.ts`). While
 a run of the game is going it is refused with an answer, `{refused: "run_going", message}`: nothing
-runs and nothing is snapshotted. Otherwise Genex snapshots the game first (the way back). When the
+runs and nothing is snapshotted. The one exception only links the game to a project it already
+holds: the tool declares `links`, and that argument is the absolute path of a project file of the
+plugin's engine (one with `projectInFolder`) whose real path lies inside the game's real folder,
+where the game's files already give the engine's fact. Such a call changes nothing about what the
+game is, so it runs as any call does, with no snapshot (a lead that made its Unreal project by hand
+during a run links it so); a path through a link, out of the folder, relative, or to a folder
+without the fact is refused as before. Otherwise Genex snapshots the game first (the way back). When the
 call made one of its facts, the web game it took the place of (at the root, or at a made fact's
 folder or one above it; an untouched starter's counts) joins `portedFrom` in `studio.json`, while
 Blender files and other sub-projects keep counting; a `studio.json` that is a link is never

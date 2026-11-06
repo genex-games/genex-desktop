@@ -6,12 +6,19 @@
  * files stay in the folder as the reference, no longer as a kind; every other fact keeps counting),
  * the scaffold its plugin names for the tool as the game's `scaffold` (whose rules keep finding the
  * facts it made), and the session is told to end its reply: the turn ends and Genex continues the
- * same session with the tools for the new kind.
+ * same session with the tools for the new kind. A call that only links the game to a project it
+ * already holds (its tool's `links`) changes nothing about what the game is, so a run going on never
+ * stops it, and it runs as any call does.
  */
+import { realpath } from "node:fs/promises";
+import path from "node:path";
 import { errorMessage } from "../../shared/errors.ts";
 import { SnapshotScope } from "../../shared/event-log.ts";
+import type { PluginManifestTool } from "../../shared/plugins.ts";
 import { CoreFact, hasFact, type ProjectFact, type ScaffoldRecord } from "../../shared/project-facts.ts";
 import { UiEvent } from "../../shared/ui-events.ts";
+import { projectFileOf } from "../../substrate/game-engine-binding.ts";
+import { isBelow } from "../../substrate/paths.ts";
 import type { StudioCore } from "../studio-core.ts";
 import { KIND_CHANGE_MESSAGE } from "./kind-change-prompts.ts";
 
@@ -43,27 +50,38 @@ function pluginToolName(name: string): { pluginId: string; tool: string } | null
   return split > 0 ? { pluginId: name.slice(0, split), tool: name.slice(split + 2) } : null;
 }
 
+/** A plugin tool as its manifest declares it, by the name a session calls it; undefined for any other. */
+function manifestTool(core: Pick<StudioCore, "plugins">, name: string): PluginManifestTool | undefined {
+  const named = pluginToolName(name);
+  if (!named) return undefined;
+  const manifest = core.plugins.list().find((p) => p.manifest.id === named.pluginId)?.manifest;
+  return manifest?.tools.find((t) => t.name === named.tool);
+}
+
 /** The facts a plugin tool makes in its game's folder (`makes`), by the name a session calls it; empty for any other. */
 export function madeBy(core: Pick<StudioCore, "plugins">, name: string): readonly string[] {
-  const named = pluginToolName(name);
-  if (!named) return [];
-  const manifest = core.plugins.list().find((p) => p.manifest.id === named.pluginId)?.manifest;
-  return manifest?.tools.find((t) => t.name === named.tool)?.makes ?? [];
+  return manifestTool(core, name)?.makes ?? [];
 }
 
 /**
  * Before a call that makes `makes` in `project`'s folder: refused (an answer, never a throw) while a
- * run of the game is going, and nothing is taken; else a game snapshot and the game's raw facts.
+ * run of the game is going, and nothing is taken, unless the call only links the game to a project
+ * it already holds (`linksHeldProject`): then null, and it runs as any call. Otherwise a game
+ * snapshot and the game's raw facts.
  */
 export async function beforeKindChange(
   core: StudioCore,
   project: string,
   tool: string,
   makes: readonly string[],
-): Promise<KindChange | KindChangeRefused> {
+  args: Readonly<Record<string, unknown>> = {},
+): Promise<KindChange | KindChangeRefused | null> {
   const running = (await core.pluginServices.runningGames?.()) ?? [];
-  if (running.some((game) => game.project === project))
-    return { refused: KindChangeRefusal.RunGoing, message: KIND_CHANGE_MESSAGE.runGoing(tool) };
+  if (running.some((game) => game.project === project)) {
+    if (await linksHeldProject(core, project, tool, args)) return null;
+    const links = manifestTool(core, tool)?.links !== undefined;
+    return { refused: KindChangeRefusal.RunGoing, message: KIND_CHANGE_MESSAGE.runGoing(tool, links) };
+  }
   await core.snapshot(SnapshotScope.Game, KIND_CHANGE_MESSAGE.snapshotReason(tool), project);
   const named = pluginToolName(tool);
   const scaffold = named ? core.plugins.scaffoldOf(named.pluginId, named.tool) : undefined;
@@ -75,6 +93,36 @@ export async function beforeKindChange(
 
 /** The root of a game, as a fact's path spells it. */
 const ROOT = ".";
+
+/** The folder holding `file`, as a fact's path spells it: POSIX, relative to the game's `folder`, its root `.`. */
+function factFolderOf(folder: string, file: string): string {
+  return path.relative(folder, path.dirname(file)).split(path.sep).join("/") || ROOT;
+}
+
+/**
+ * Whether the call only links `project` to a project the game already holds: its tool declares
+ * `links`, and that argument is the absolute path of a project file of the plugin's engine (one that
+ * keeps its projects in the game's folder) whose real path lies inside the game's real folder, where
+ * the game's files already give the engine's kind. A path through a link, out of the folder,
+ * relative or to anything else is no such call.
+ */
+async function linksHeldProject(
+  core: StudioCore,
+  project: string,
+  tool: string,
+  args: Readonly<Record<string, unknown>>,
+): Promise<boolean> {
+  const parameter = manifestTool(core, tool)?.links;
+  const file = parameter === undefined ? undefined : args[parameter];
+  const pluginId = pluginToolName(tool)?.pluginId;
+  const engine = pluginId === undefined ? undefined : core.plugins.engines().get(pluginId);
+  if (typeof file !== "string" || !path.isAbsolute(file) || !engine?.projectInFolder) return false;
+  const real = await projectFileOf(file, engine).catch(() => undefined);
+  const folder = await realpath(core.games.dirFor(project)).catch(() => undefined);
+  if (!real || !folder || !isBelow(folder, real)) return false;
+  const facts = await core.games.rawFactsOf(project).catch(() => [] as ProjectFact[]);
+  return hasFact(facts, engine.fact, factFolderOf(folder, real));
+}
 
 /**
  * The facts a port's made kinds take the place of: the web game the game was served as, at its root

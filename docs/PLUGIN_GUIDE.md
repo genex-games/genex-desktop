@@ -176,7 +176,9 @@ inline and put a long guide in a file:
   (never started for another game); a tool that makes a project of your kind says
   `"makes": ["toy-project"]`: it is refused while a run of the game is going, Genex snapshots the
   game before it runs, records the web game it replaced as the game's `portedFrom`, and tells the
-  session to end its reply, which then goes on with your tools. A game with no kind yet is served as
+  session to end its reply, which then goes on with your tools. A tool that links the game to a
+  project file also says `"links": "project"` (its string parameter for the file): during a run
+  it may still link the game's own project, one in the game's folder that already gives your fact. A game with no kind yet is served as
   a web game (`web-game`); a folder of a kind Genex can't name is served by no fact. So a tool that
   makes a project of your kind names `"facts": ["web-game"]`: a game with no kind yet and a web game
   get it, a game of another kind never does; scope your other tools to your own fact. The

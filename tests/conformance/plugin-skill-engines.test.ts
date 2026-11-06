@@ -413,6 +413,8 @@ function unscoped(manifest: PluginManifest): void {
     delete tool.makes;
     // A readiness answers for a tool that makes a kind, so it goes with `makes`.
     delete tool.ready;
+    // So does the parameter a tool that makes a kind links its project by.
+    delete tool.links;
   }
   for (const server of manifest.mcpServers ?? []) delete server.facts;
   // A scaffold names a tool that makes a kind, which came with facts too.

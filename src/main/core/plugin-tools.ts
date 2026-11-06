@@ -591,7 +591,7 @@ export class PluginToolService {
     const deadline = this.#x.locks.clock.now() + AGENT_CALL_MS;
     if (!readsSkill(name) && (await this.#planning(binding.project, binding.threadId, callRun(ctx)?.runId)))
       return { ...PLAN_ANSWER };
-    const kindChange = await this.#beforeKindChange(name, binding);
+    const kindChange = await this.#beforeKindChange(name, args, binding);
     if (kindChange && isRefused(kindChange)) return kindChange;
     const started = await this.pluginToolStarted(name, args, binding, ctx);
     let result: unknown;
@@ -743,11 +743,18 @@ export class PluginToolService {
     return Math.max(0, Math.min(this.#x.locks.agentWaitMs, room - PERSON_FIRST_ASK_MS));
   }
 
-  /** A call to a tool that makes a kind of project in the bound game: refused during its run, else snapshotted first. */
-  async #beforeKindChange(name: string, binding: PluginBinding): Promise<KindChange | KindChangeRefused | null> {
+  /**
+   * A call to a tool that makes a kind of project in the bound game: refused during its run (unless
+   * it only links a project the game holds, which is no kind change), else snapshotted first.
+   */
+  async #beforeKindChange(
+    name: string,
+    args: Record<string, unknown>,
+    binding: PluginBinding,
+  ): Promise<KindChange | KindChangeRefused | null> {
     const makes = madeBy(this.#core, name);
     if (makes.length === 0 || !binding.project) return null;
-    return beforeKindChange(this.#core, binding.project, name, makes);
+    return beforeKindChange(this.#core, binding.project, name, makes, args);
   }
 
   /**

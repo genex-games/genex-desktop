@@ -1,7 +1,7 @@
 {
   "apiVersion": 3,
   "id": "unreal",
-  "version": "0.50.1",
+  "version": "0.50.2",
   "icon": "icon.svg",
   "name": "Unreal Engine",
   "publisher": "Genex",
@@ -29,7 +29,8 @@
       "name": "use-project",
       "facts": ["web-game", "unreal-project"],
       "makes": ["unreal-project"],
-      "description": "Link this game to an Unreal project: the one in this game's folder, or another the user asks for. Give its .uproject path, or the name the Unreal panel lists for a project already set up for Genex. A project that isn't set up yet is set up first, as the panel's Set up does, without asking: the chat shows the set-up and the link with one Undo that takes both back. When Unreal has that project open, Genex quits it first (Unreal asks about unsaved work itself), then opens it again. Later Unreal calls in this game go to that project. Switch to another project only when the user asks.",
+      "links": "project",
+      "description": "Link this game to an Unreal project: the one in this game's folder, or another the user asks for. Give its .uproject path, or the name the Unreal panel lists for a project already set up for Genex. A project that isn't set up yet is set up first, as the panel's Set up does, without asking: the chat shows the set-up and the link with one Undo that takes both back. When Unreal has that project open, Genex quits it first (Unreal asks about unsaved work itself), then opens it again. Later Unreal calls in this game go to that project. During a build it links only the project in this game's own folder, by its absolute .uproject path. Switch to another project only when the user asks.",
       "parameters": {
         "type": "object",
         "properties": {

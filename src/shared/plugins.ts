@@ -259,7 +259,7 @@ export function confirmationInputValue(value: unknown): string | undefined {
 }
 
 /**
- * A tool as the manifest declares it. `host`, `audience`, `facts`, `makes`, `needs` and `ready`
+ * A tool as the manifest declares it. `host`, `audience`, `facts`, `makes`, `links`, `needs` and `ready`
  * never reach an agent: the tool list the registry serves is plain `PluginTool`, which the harness
  * seed is generated from.
  */
@@ -272,6 +272,13 @@ export interface PluginManifestTool extends PluginTool {
   facts?: string[];
   /** API 3, agent tools only: the facts the tool makes in the game's folder (a new project of a kind, a port). */
   makes?: string[];
+  /**
+   * API 3, tools with `makes` only: the string parameter naming the engine project file a call links
+   * the game to. While the game's run is going, a call naming a project file of the plugin's engine
+   * inside the game's own folder, where the game already holds that kind, changes nothing under the
+   * run and runs (`main/core/kind-change.ts`); every other call is still refused then.
+   */
+  links?: string;
   /** API 3: the plugin's locks (`locks[].id`) a call of this tool holds while it runs. */
   needs?: string[];
   /** API 3, agent tools with `makes` only: the harness tool that answers whether what it makes is ready to make. */

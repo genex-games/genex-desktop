@@ -37,6 +37,9 @@ const WEB = [at(CoreFact.WebGame)];
 const UNREAL = [at(CoreFact.UnrealProject)];
 const TOY_GAME = [at(TOY)];
 
+/** A tool's parameters with the one string it links a project by. */
+const PROJECT_PARAMETER = { type: "object", properties: { project: { type: "string" } } };
+
 /** A tool for the example manifest, with `fields` added. */
 const tool = (name: string, fields: Record<string, unknown> = {}) => ({
   name,
@@ -204,6 +207,20 @@ test("the snapshot lists the kinds its tools make for its game, and an agent nev
   }
 });
 
+test("an agent never sees which parameter a tool links a project by", async () => {
+  const registry = await registryWith([
+    tool("use-toy", { parameters: PROJECT_PARAMETER, makes: [TOY], links: "project" }),
+  ]);
+  try {
+    const handed = registry.snapshot(TOY_GAME).tools.find((one) => one.name === "example__use-toy");
+    assert.ok(handed, "the tool is handed");
+    assert.equal(Object.hasOwn(handed, "links"), false);
+    assert.deepEqual(handed.parameters, PROJECT_PARAMETER, "its parameters stay as declared");
+  } finally {
+    registry.cancel();
+  }
+});
+
 test("a manifest keeps its scope fields, and a malformed scope is refused", () => {
   const kept = validateManifest(
     manifestWith(
@@ -233,6 +250,22 @@ test("a manifest keeps its scope fields, and a malformed scope is refused", () =
     assert.throws(() => validateManifest(manifestWith([tool("greet", { makes })])), /makes/, JSON.stringify(makes));
   const harnessMakes = tool("greet", { audience: PluginToolAudience.Harness, makes: [TOY] });
   assert.throws(() => validateManifest(manifestWith([harnessMakes])), /makes/, "a harness tool makes nothing");
+  const linker = (fields: Record<string, unknown>) => tool("use-toy", { parameters: PROJECT_PARAMETER, ...fields });
+  assert.equal(validateManifest(manifestWith([linker({ makes: [TOY], links: "project" })])).tools[0]?.links, "project");
+  const counted = { type: "object", properties: { project: { type: "number" } } };
+  const badLinks: ReadonlyArray<readonly [string, Record<string, unknown>]> = [
+    ["without makes", { links: "project" }],
+    ["naming no parameter", { makes: [TOY], links: "scene" }],
+    ["naming a parameter that is no string", { makes: [TOY], links: "project", parameters: counted }],
+    ["not a name", { makes: [TOY], links: ["project"] }],
+    ["an empty name", { makes: [TOY], links: "" }],
+  ];
+  for (const [label, fields] of badLinks)
+    assert.throws(() => validateManifest(manifestWith([linker(fields)])), /links/, label);
+  assert.throws(
+    () => validateManifest(manifestWith([linker({ makes: [TOY], links: "project" })], [], 2)),
+    /apiVersion 3/,
+  );
   const harnessOnly = tool("step", { audience: PluginToolAudience.Harness });
   const badTools: unknown[] = [[], ["nosuch"], ["greet", "greet"], ["step"], "greet", [1]];
   for (const tools of badTools) {

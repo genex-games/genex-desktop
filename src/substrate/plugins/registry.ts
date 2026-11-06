@@ -410,6 +410,7 @@ function agentTool(id: string, tool: PluginManifestTool): PluginTool {
     audience: _audience,
     facts: _facts,
     makes: _makes,
+    links: _links,
     needs: _needs,
     ready: _ready,
     ...declared

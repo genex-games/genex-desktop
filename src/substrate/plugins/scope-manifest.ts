@@ -17,6 +17,7 @@ const MESSAGE = {
     `Invalid ${where}.facts (1-${LIMIT.Facts} fact ids: lowercase letters, digits and dashes, starting with a letter, each once)`,
   InvalidMakes: `Invalid tools[].makes (1-${LIMIT.Makes} fact ids, each once)`,
   HarnessMakes: "tools[].makes is for agent tools: a tool only the harness calls makes nothing",
+  InvalidLinks: "Invalid tools[].links (the name of one of the tool's string parameters, on a tool with makes)",
   InvalidSkillTools: `Invalid skills[].tools (1-${LIMIT.SkillTools} names of agent tools the manifest declares, each once)`,
 } as const;
 
@@ -35,19 +36,33 @@ function factList(value: unknown, where: string, m: Pick<PluginManifest, "apiVer
   return facts;
 }
 
-/** A tool's `facts` and `makes`, copied onto its canonical form when declared. */
+/** A tool's `facts`, `makes` and `links`, copied onto its canonical form when declared. */
 export function applyToolScope(
   raw: PluginManifestTool,
   tool: PluginManifestTool,
   m: Pick<PluginManifest, "apiVersion">,
 ): void {
   if (raw.facts !== undefined) tool.facts = factList(raw.facts, "tools[]", m);
-  if (raw.makes === undefined) return;
+  if (raw.makes !== undefined) tool.makes = makesList(raw, m);
+  if (raw.links !== undefined) tool.links = linksParameter(raw.links, tool, m);
+}
+
+/** A tool's `makes` in canonical form: API 3, an agent tool's, 1-4 distinct fact ids. */
+function makesList(raw: PluginManifestTool, m: Pick<PluginManifest, "apiVersion">): string[] {
   if (m.apiVersion !== 3) throw new Error(MESSAGE.NeedsApi3("tools[].makes"));
   if (!isAgentTool(raw)) throw new Error(MESSAGE.HarnessMakes);
   const makes = distinctList(raw.makes, LIMIT.Makes, isFactId);
   if (!makes) throw new Error(MESSAGE.InvalidMakes);
-  tool.makes = makes;
+  return makes;
+}
+
+/** A tool's `links`: API 3, on a tool whose `makes` is read already, naming one of its own string parameters. */
+function linksParameter(value: unknown, tool: PluginManifestTool, m: Pick<PluginManifest, "apiVersion">): string {
+  if (m.apiVersion !== 3) throw new Error(MESSAGE.NeedsApi3("tools[].links"));
+  const properties = tool.parameters.properties;
+  const named = typeof value === "string" && Object.hasOwn(properties, value) ? properties[value] : undefined;
+  if (!tool.makes || typeof value !== "string" || named?.type !== "string") throw new Error(MESSAGE.InvalidLinks);
+  return value;
 }
 
 /** A skill's `facts` and `tools` (names of agent tools among `tools`), as fields to add to its canonical form. */
