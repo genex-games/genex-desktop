@@ -33,7 +33,7 @@ import {
 } from "../../src/renderer/analytics/workspace-vocabulary.ts";
 import { inspectPickedFolder } from "../../src/renderer/open-folder.ts";
 import { inventoryFailure } from "../../src/main/game-assets.ts";
-import { inventoryFailures, type InventoryStreaks } from "../../src/renderer/analytics/events/builds.ts";
+import { BuildsEvent, inventoryFailures, type InventoryStreaks } from "../../src/renderer/analytics/events/builds.ts";
 import { assetsFailed, initialLibrary } from "../../src/renderer/state/library.ts";
 import { AssetInventoryFailure } from "../../src/shared/game-assets.ts";
 import { coreLite } from "../helpers/core-lite.ts";
@@ -203,8 +203,9 @@ describe("phase 3 analytics: an asset inventory says why it could not be read", 
       assert.ok(code && values.includes(code), label);
       const library = assetsFailed(initialLibrary(), "pond", String(caught), code);
       const [sent] = inventoryFailures({}, library.assets, new Map() as InventoryStreaks);
-      assert.equal(sent?.properties.code, code, label);
-      assertClean(label, sent?.properties ?? {});
+      assert.ok(sent?.event === BuildsEvent.AssetsInventoryFailed, label);
+      assert.equal(sent.properties.code, code, label);
+      assertClean(label, sent.properties);
     }
     const caught = await crossed(inventoryFailure(held));
     assert.equal(errorCodeIn(AssetInventoryFailure, caught), AssetInventoryFailure.FileBusy);
