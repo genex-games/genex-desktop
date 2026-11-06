@@ -21,6 +21,7 @@ import { deliveryOrder } from "../../src/renderer/chat/delivery-order.ts";
 import { chatContext } from "../../src/shared/chat-history.ts";
 import { JobRole, JobScopeKind } from "../../src/shared/jobs.ts";
 import { PermissionMode } from "../../src/shared/permissions.ts";
+import { MessageFrom } from "../../src/shared/engine-requests.ts";
 
 /** No run here may hang the suite: each is over in well under a minute when it works. */
 const RIG_TIMEOUT_MS = 240_000;
@@ -531,7 +532,11 @@ describe("live chat during a build", () => {
     await say(rig, project.name, "how is it going?", { engine: "claude-code" });
     await until(() => listening, "the lead's second turn to start");
     await say(rig, project.name, "add some fog", { engine: "claude-code" });
-    await until(() => lead.length === 3, "the turn to be cut and its session resumed with the message");
+    // A message read mid-turn ends the wait at once, for the assertion below to name it.
+    await until(
+      () => lead.length >= 3 || handed.length > 0,
+      "the turn to be cut and its session resumed with the message",
+    );
     // Long enough for a poll of the resting lead's inbox to have woken it again, had it not heard.
     await new Promise((resolve) => setTimeout(resolve, 3_000));
     await rig.core.host.dispatch({ type: "run_stop", runId }, 30_000);
@@ -545,6 +550,7 @@ describe("live chat during a build", () => {
     assert.equal(resumed?.resume, "lead-1", "the same session, resumed");
     // Alone: neither what woke the cut turn ("how is it going?") nor that the turn failed is said again.
     assert.equal(resumed?.prompt, "add some fog", "the person's words alone, as they wrote them");
+    assert.equal(resumed?.from, MessageFrom.Person, "the person's own message, not Genex's");
   });
 
   it("L4. Stop mid-build still hands over to the oldest queued message: a slash command waits for the chat", {
