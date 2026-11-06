@@ -8,7 +8,7 @@
  *
  * Its way to Genex: an AppContainer reaches no loopback port without an administrator's exemption,
  * so no gateway can serve it as on the Mac. A game Genex gives a way gets the internet as a client
- * instead (`internetClient`: no loopback, no home network, no server of its own) and is told Genex's
+ * instead (`internetClient`: no loopback, no local network Windows knows of, no server of its own) and is told Genex's
  * API itself, its sign-in ticket and its name (`directGenexEnv`); a game with none, or with an
  * address that doesn't hold up, reaches no network at all.
  *

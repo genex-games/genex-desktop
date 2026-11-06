@@ -282,8 +282,8 @@ is.
   container's SID, plus a Low integrity label on the write folders), and its AppData goes to the
   container's own folder. It reads none of the person's files. An AppContainer reaches no loopback
   port without an administrator's exemption, so no gateway can serve it: with a way to Genex, its
-  container gets one capability, `internetClient` (outbound to the internet, never the home
-  network, loopback or a server of its own), and it is told the API's own https address; with
+  container gets one capability, `internetClient` (outbound to the internet, never loopback, the
+  local network Windows knows of or a server of its own), and it is told the API's own https address; with
   none, it gets no capabilities and no network. It gets the person's desktop, GPU, sound and
   input. It runs in a job killed with the host (also with no other desktops, logging off, clipboard
   reads or system settings); the host ends it when Genex's process or the host's stdin ends, says when its window

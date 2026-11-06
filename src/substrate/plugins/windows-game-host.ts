@@ -5,7 +5,7 @@
  *
  * - The container: one per game (`Genex.Play.<slug>`). With no capabilities it reaches no network at
  *   all; a game Genex gives a way (`internet`) gets `internetClient` alone: outbound to the
- *   internet, never loopback, the home network or a server of its own. Its own folder
+ *   internet, never loopback, the local network Windows knows of or a server of its own. Its own folder
  *   (`%LOCALAPPDATA%\Packages\<name>\AC`) is where Windows sends the game's AppData, so its saves
  *   stay apart from every other game's.
  * - What it reads and writes: its app folder (read and run), its saves and scratch folders (change),

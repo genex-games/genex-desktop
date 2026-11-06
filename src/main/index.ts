@@ -1439,15 +1439,22 @@ function playsFor(studio: StudioCore): NonNullable<NativeSessionsDeps["presence"
  * API's own address and its container gets the internet as a client (`windows-game.ts`).
  */
 async function openGameGenex(studio: StudioCore, slug: string): Promise<GameGenex> {
-  const minted = mintedTicket(await playCatalogFor(studio).ticket(slug, TicketDelivery.Desktop));
-  const ticket = minted ? { GENEX_EMBED_TICKET: minted } : {};
-  if (process.platform === StudioPlatform.Windows)
-    return { ports: [], env: { GENEX_API_URL: playOrigin.api, ...ticket }, close: async () => {} };
+  if (process.platform === StudioPlatform.Windows) {
+    const env = { GENEX_API_URL: playOrigin.api, ...(await gameTicket(studio, slug)) };
+    return { ports: [], env, close: async () => {} };
+  }
   const gateway = await startGenexGateway({
     api: playOrigin.api,
     relay: relayHostsOf(new URL(playOrigin.api).hostname),
   });
-  return { ports: gateway.ports, env: { GENEX_API_URL: gateway.apiUrl, ...ticket }, close: gateway.close };
+  const env = { GENEX_API_URL: gateway.apiUrl, ...(await gameTicket(studio, slug)) };
+  return { ports: gateway.ports, env, close: gateway.close };
+}
+
+/** A native game's single-use sign-in ticket while the person's Genex account is unlocked; none otherwise. */
+async function gameTicket(studio: StudioCore, slug: string): Promise<{ GENEX_EMBED_TICKET?: string }> {
+  const ticket = mintedTicket(await playCatalogFor(studio).ticket(slug, TicketDelivery.Desktop));
+  return ticket ? { GENEX_EMBED_TICKET: ticket } : {};
 }
 
 /**

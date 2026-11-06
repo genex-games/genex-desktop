@@ -181,7 +181,8 @@ file from the list for it. The informational fast-group report (a Windows dispat
 Tests that read local projects or open the network are skipped unless opted in:
 `STUDIO_LOCAL_FIXTURES=1` for local projects, `STUDIO_NETWORK_TESTS=1` for real network and
 local Ollama probes (on Windows also Local Blender's and Godot's real downloads and sandboxed
-jobs, `blender-windows-live.test.ts` and `godot-windows-live.test.ts`), `STUDIO_GODOT_LIVE=1` for the Godot plugin against this Mac's own Godot
+jobs, `blender-windows-live.test.ts` and `godot-windows-live.test.ts`, and a Play game's reach to
+Genex's API, `windows-game-live.test.ts`), `STUDIO_GODOT_LIVE=1` for the Godot plugin against this Mac's own Godot
 (`godot-live.test.ts`), `STUDIO_CLAUDE_CLI_TESTS=1` for the real Claude Code CLI against
 `fake-anthropic.ts` (`claude-studio-shell-cli.test.ts`, `claude-tool-loading.test.ts`, `claude-steer-cli.test.ts`),
 `STUDIO_CODEX_CLI_TESTS=1` for the real Codex CLI against `fake-openai-responses.ts`
