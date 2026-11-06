@@ -169,6 +169,15 @@ const SLUG = /^[a-z0-9](?:[a-z0-9-]{0,98}[a-z0-9])?$/;
 /** Whether a value is a slug the app will build an address from. */
 export const isPlaySlug = (value: unknown): value is string => typeof value === "string" && SLUG.test(value);
 
+/**
+ * What a `genex://` link opens in the studio page: the game's page in Play (`slug`), or, for a
+ * `genex://create/<slug>` link to a game of this library, that game (`project`) with Publish open.
+ */
+export interface GameLinkOpen {
+  slug: string;
+  project?: string;
+}
+
 /** The game itself, served on its own subdomain of `games` (genex.games' own unless a development profile says). */
 export function playGameUrl(slug: string, games: string = PLAY_ORIGIN.games): string {
   const served = new URL(games);

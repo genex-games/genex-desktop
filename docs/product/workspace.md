@@ -10,20 +10,20 @@ opens **home** (also the wordmark): one composer over an optional picture. A gam
 conversation beside the stage (Live, Builds once planned, Assets), Harness its conversation
 and Activity; Plugins and Items fill the workspace.
 
-Settings (a modal): Genex account, Model Providers, Local Models, Appearance, Games, Storage,
-Harness, Permissions, Privacy, About; narrow windows: a drawer.
+Settings is a modal (narrow windows: a drawer).
 
-The bell keeps unanswered questions, plans, permission requests, then build endings and
-sign-outs, each opening where answered; unfocused, macOS notifications and the Dock badge carry
-them.
+The bell keeps unanswered questions, plans, permissions and Genex reviews (taken down, not
+approved: **Fix**), then build endings, sign-outs and review news, each opening where answered;
+unfocused, macOS notifications and the Dock badge carry them; another game's review toasts. The
+sidebar shows each game's review state.
 
 **Play** shows genex.games' games and their [Stores](../play.md#the-item-store), the Genex account and
 nickname (kept offline), **Friends** with invites, profiles and **Stats** ([Play](../play.md)).
 
 ## First launch
 
-An empty, never-welcomed profile opens a full-window welcome connecting Claude Code, ChatGPT, local
-models, OpenRouter, OpenCode, Grok Build, Cursor or Genex credits; Skip or Start building opens home, keeping a
+An empty, never-welcomed profile opens a full-window welcome connecting a
+[model provider](models-context.md) or Genex credits; Skip or Start building opens home, keeping a
 typed idea. [Usage analytics](../usage-analytics.md) ask first, once.
 
 A Genex card then offers **Connect Genex plugin** once.
@@ -45,7 +45,7 @@ administrator prompt, two if Secondary Logon is off).
   entry; active work blocks it; reopening restores it).
 - The chat header: title, Show in Finder, Terminal, ⋯ (Export game…, Rename), **Free N GB**
   past 1 GB (not Harness or unbound drafts). Search reaches older and unbound chats.
-- Command-B toggles navigation, Command-K searches, Command-2 Harness, Command-1 the last chat.
+- Command-B: navigation, Command-K: search, Command-2: Harness, Command-1: last chat.
 
 ## State and appearance
 

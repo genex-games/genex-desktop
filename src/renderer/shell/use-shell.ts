@@ -70,7 +70,7 @@ export function useShell() {
     navigation,
     views,
   );
-  useGameLinks(app, ready, chrome.setPlayOpen);
+  useGameLinks(app, ready, chrome.setPlayOpen, navigation.selectGame);
   // At home, the keyboard's composer is home's; the chat's stays mounted beneath it.
   const homeUp = room === Room.Home;
   useShellShortcuts(dialogs, chrome, navigation, homeUp ? handoff.homeComposer : handoff.composer);

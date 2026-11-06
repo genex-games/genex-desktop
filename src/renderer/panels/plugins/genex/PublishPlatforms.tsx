@@ -279,6 +279,7 @@ export function PublishPlatforms({
   onGenex = false,
   hostedWeb,
   onRemoveWeb,
+  reviewed = false,
 }: {
   project: string;
   /** The game folder's platforms as the Genex plugin can send them (`gateByPlugin`), null until read. */
@@ -292,6 +293,8 @@ export function PublishPlatforms({
   hostedWeb?: boolean | undefined;
   /** The web row's Remove: the Genex plugin's `publish-remove-web`. */
   onRemoveWeb: () => void;
+  /** Genex's review card or check says how the apps stand: no line under the rows says it again. */
+  reviewed?: boolean;
 }): JSX.Element | null {
   const facts = useLibrary((s) => s.games.find((g) => g.name === project)?.facts);
   const engineGame =
@@ -305,7 +308,7 @@ export function PublishPlatforms({
   const webOffer = webOfferFor(facts ?? []);
   const reach = reachLine(platforms, webOffer, hostedWeb === true);
   const replaces = replacesAppsPage(platforms, native, hostedWeb);
-  const listing = listingLine(platforms, native);
+  const listing = reviewed ? null : listingLine(platforms, native);
   const rows = platformRows(
     platforms,
     Date.now(),
@@ -353,7 +356,7 @@ export function PublishPlatforms({
         ))}
       </ul>
       <CloudErrors project={project} title={title} platforms={platforms} native={native} />
-      {failureLines(platforms, native).map((line) => (
+      {failureLines(platforms, native, reviewed).map((line) => (
         <p key={line} className="genex-publish-platform-failure">
           {line}
         </p>

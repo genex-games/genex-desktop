@@ -38,6 +38,7 @@ import { EngineError } from "../../src/substrate/engines/types.ts";
 import type { UiEvent } from "../../src/shared/ui-events.ts";
 import { RestartAnswer, UpdateAction, UpdateCheckStatus } from "../../src/shared/app-update.ts";
 import type { EventEnvelope } from "../../src/shared/event-log.ts";
+import { GenexSidebarLine } from "../../src/shared/genex-review.ts";
 import { recommendModels, type HardwareInfo } from "../../src/substrate/hardware.ts";
 
 type Listener = (event: IpcSender, payload: unknown) => Promise<IpcResult>;
@@ -1374,6 +1375,7 @@ describe("Play's share menu", () => {
     registerPlayIpc(handle, {
       gallery: unused as PlayIpcDeps["gallery"],
       gameLinks: links,
+      localGame: async (slug) => (slug === "midnight-asphalt" ? "midnight" : null),
       remix: async () => "",
       remixReady: async () => ({}),
       viewer: () => null,
@@ -1396,8 +1398,20 @@ describe("Play's share menu", () => {
     const { invoke } = shareRig("https://genex.games", links);
     assert.deepEqual(await invoke("studio:play.take-game-link"), { ok: true, value: null });
     links.arrive("genex://game/iron-tide");
-    assert.deepEqual(await invoke("studio:play.take-game-link"), { ok: true, value: "iron-tide" });
+    assert.deepEqual(await invoke("studio:play.take-game-link"), { ok: true, value: { slug: "iron-tide" } });
     assert.deepEqual(await invoke("studio:play.take-game-link"), { ok: true, value: null });
+  });
+
+  it("hands the page the creator's own game a genex://create link names, else its page in Play", async () => {
+    const links = gameLinks();
+    const { invoke } = shareRig("https://genex.games", links);
+    links.arrive("genex://create/midnight-asphalt");
+    assert.deepEqual(await invoke("studio:play.take-game-link"), {
+      ok: true,
+      value: { slug: "midnight-asphalt", project: "midnight" },
+    });
+    links.arrive("genex://create/iron-tide");
+    assert.deepEqual(await invoke("studio:play.take-game-link"), { ok: true, value: { slug: "iron-tide" } });
   });
 
   it("names this computer even where Genex installs no native game, so a page can say why", async () => {
@@ -1436,5 +1450,72 @@ describe("Play's share menu", () => {
     assert.deepEqual(shared, []);
     await invoke("studio:play.share", { url: "http://localhost:5173/@rab", at: { x: -1, y: "top" } });
     assert.deepEqual(shared, [["http://localhost:5173/@rab", undefined]], "a point off the window is no point");
+  });
+});
+
+describe("a game's Genex review over IPC", () => {
+  /** The three review channels, each recording what reached the core, in a profile of each kind. */
+  function reviewRig(fixture: boolean) {
+    const listeners = new Map<string, Listener>();
+    const handle = createIpcHandle(
+      { handle: (channel, listener) => void listeners.set(channel, listener) },
+      { fixture, isStudioUi: () => true },
+    );
+    const reached: string[] = [];
+    handle("studio:plugins.genex-review-status", (p) => {
+      reached.push(`status ${p.project}`);
+      return {
+        record: null,
+        checkedAt: null,
+        connected: true,
+        open: false,
+        fingerprint: null,
+        told: null,
+        publishing: false,
+      };
+    });
+    handle("studio:plugins.genex-review-lines", () => {
+      reached.push("lines");
+      return { dust: { line: GenexSidebarLine.TakenDown } };
+    });
+    handle("studio:plugins.genex-fix-review", (p) => {
+      reached.push(`fix ${p.project}`);
+      return { fixId: "f1" };
+    });
+    handle("studio:plugins.genex-request-review", (p) => {
+      reached.push(`request ${p.project}`);
+      return { requested: [], takedown: false };
+    });
+    const invoke = (channel: string, payload: unknown) => {
+      const listener = listeners.get(channel);
+      assert.ok(listener, `${channel} is not registered`);
+      return listener(studio, payload);
+    };
+    return { invoke, reached };
+  }
+
+  it("a fixture profile answers the review it kept, and refuses Fix with agent and Request human review", async () => {
+    const { invoke, reached } = reviewRig(true);
+    assert.equal((await invoke("studio:plugins.genex-review-status", { project: "dust" })).ok, true);
+    const fix = await invoke("studio:plugins.genex-fix-review", { project: "dust", autoPublish: true });
+    const request = await invoke("studio:plugins.genex-request-review", { project: "dust", note: "our own shop" });
+    assert.equal(fix.ok, false, "Fix with agent sends the game's chat a message and reaches Genex");
+    assert.equal(request.ok, false, "Request human review reaches Genex with the real account");
+    assert.deepEqual(reached, ["status dust"], "neither press reached the core");
+  });
+
+  it("a fixture profile answers the sidebar's lines from what it kept", async () => {
+    const { invoke, reached } = reviewRig(true);
+    const lines = await invoke("studio:plugins.genex-review-lines", undefined);
+    assert.deepEqual(lines, { ok: true, value: { dust: { line: GenexSidebarLine.TakenDown } } });
+    assert.deepEqual(reached, ["lines"]);
+  });
+
+  it("a live profile hands every press to the core", async () => {
+    const { invoke, reached } = reviewRig(false);
+    await invoke("studio:plugins.genex-review-status", { project: "dust", refresh: true });
+    await invoke("studio:plugins.genex-fix-review", { project: "dust", autoPublish: false, fixId: "f1" });
+    await invoke("studio:plugins.genex-request-review", { project: "dust" });
+    assert.deepEqual(reached, ["status dust", "fix dust", "request dust"]);
   });
 });

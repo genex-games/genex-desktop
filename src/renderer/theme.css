@@ -2074,6 +2074,24 @@ button.chat-header-title:hover {
   line-height: 24px;
   white-space: nowrap;
 }
+/* A review row's Fix is a press of its own, over the row's end. */
+.notify-item {
+  position: relative;
+}
+.notify-item > .notify-row {
+  padding-inline-end: 64px;
+}
+.notify-press {
+  position: absolute;
+  inset-inline-end: 10px;
+  top: 50%;
+  translate: 0 -50%;
+  cursor: pointer;
+  transition: background-color var(--duration-quick);
+}
+.notify-press:is(:hover, :focus-visible) {
+  background: color-mix(in srgb, var(--accent-primary) 26%, transparent);
+}
 .notify-dot {
   flex: none;
   align-self: center;
@@ -3107,6 +3125,28 @@ button.chat-header-title:hover {
 .sidebar-game-menu:hover {
   background: var(--inset);
   color: var(--ink);
+}
+/* A game on Genex says where it stands under its name: Public in green, Not approved and Taken down in red. */
+.sidebar-game-names {
+  display: flex;
+  min-width: 2rem;
+  flex: 1;
+  flex-direction: column;
+}
+.sidebar-game-line {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--ink-3);
+}
+.sidebar-game-line[data-review-tone="ok"] {
+  color: var(--green);
+}
+.sidebar-game-line[data-review-tone="err"] {
+  color: var(--red);
 }
 /* The pin and the working dot sit where ⋯ appears, centred in its 28px slot, and give way to it on hover. */
 .sidebar-pin,

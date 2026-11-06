@@ -1,4 +1,5 @@
 import type { AudioPlaybackEvidence } from "./audio-observation.ts";
+import type { GenexSentReviewDetail } from "./genex-review.ts";
 import { type CaptureSource, type StillExposure, StillMimeType } from "./preview-contract.ts";
 
 /** The bundled Genex plugin's id: the host's own Genex surfaces (its page, the promo) look it up by this. */
@@ -39,6 +40,12 @@ export const GenexAction = {
   PublishBadge: "publish-badge",
   CoverAuto: "cover-auto",
   CoverPick: "cover-pick",
+  /** Genex's review of the game's apps and its takedown (`{ refresh?, told? }`): the record `review.json` keeps. */
+  ReviewStatus: "review-status",
+  /** Ask a person at Genex to review a turned-down app or the takedown (`{ platform?, arch?, note?, native? }`). */
+  ReviewRequest: "review-request",
+  /** Send the game's ready apps again on their own (`{ native }`): the web version stays as it is. */
+  AppsResend: "apps-resend",
 } as const;
 export type GenexAction = (typeof GenexAction)[keyof typeof GenexAction];
 
@@ -68,6 +75,9 @@ export const GENEX_ACCOUNT_ACTIONS: readonly GenexAction[] = [
   GenexAction.PublishBadge,
   GenexAction.CoverAuto,
   GenexAction.CoverPick,
+  GenexAction.ReviewStatus,
+  GenexAction.ReviewRequest,
+  GenexAction.AppsResend,
 ];
 
 /**
@@ -691,6 +701,8 @@ export interface GenexNativeSent {
   review?: GenexBuildReview;
   /** Why Genex turned it down, when it did and said why. */
   reviewReason?: string;
+  /** Where Genex holds it and who decided, from an API that says (`reviewDetail`); absent from an older one. */
+  reviewDetail?: GenexSentReviewDetail;
 }
 
 /**

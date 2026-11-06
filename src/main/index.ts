@@ -922,6 +922,10 @@ function launchCoreOptions(): Partial<ConstructorParameters<typeof StudioCore>[0
     return {
       gamesRoot: dev.games,
       executionPolicy: { allowedProjectRoot: dev.games },
+      // A fixture profile asks Genex nothing about a game's review: it answers what its fixture laid down.
+      ...(fixtureProviders
+        ? { genexReviewReads: false, genexReviewFixtureSignedIn: fixtureGenexAccount !== null }
+        : {}),
       ...(fixtureProviders
         ? {
             engines: fixtureEngines(
@@ -1811,6 +1815,8 @@ function nativeAppFor(studio: StudioCore): NonNullable<PlayViewerDeps["nativeApp
 function wireGameSound(studio: StudioCore, win: BrowserWindow, view: GamePreview): void {
   const syncForeground = (): void => studio.previewForeground(!win.isDestroyed() && win.isFocused());
   win.on("focus", syncForeground);
+  // A focus asks the review watch to sweep when its last sweep is old: Genex may have decided meanwhile.
+  win.on("focus", () => studio.genexReviewFocus());
   win.on("blur", syncForeground);
   syncForeground();
   const game = view.view?.webContents;
@@ -2222,6 +2228,7 @@ function playIpcDeps(studio: StudioCore): PlayIpcDeps {
     sessions: () => playSessionsFor(studio),
     reveal: (file) => shell.showItemInFolder(file),
     gameLinks: gameLinkQueue,
+    localGame: (slug) => studio.genexGameOfSlug(slug),
   };
 }
 

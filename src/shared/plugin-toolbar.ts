@@ -163,5 +163,7 @@ export function toolbarReaction(
   if (event.type === UiEvent.GameChanged) return gameRecordChanged(event.payload, project) ? "refresh" : null;
   // A turn's tools may have changed what a button says (an engine chosen, a project made).
   if (event.type === UiEvent.DelegationFinished) return project && event.payload.project === project ? "refresh" : null;
+  // Genex's review of the open game changed: its Publish may carry a red dot now, or no longer.
+  if (event.type === UiEvent.GenexReviewChanged) return project && event.payload.project === project ? "refresh" : null;
   return event.type === UiEvent.PluginEvent ? toolbarChange(event.payload, entries) : null;
 }

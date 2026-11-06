@@ -12,7 +12,7 @@ import {
   PlayChangeOutcome,
 } from "../../shared/play-manage.ts";
 import type { CreatorStats } from "../play/creator-stats.ts";
-import type { GameLinks } from "../play/game-links.ts";
+import { type GameLinks, linkOpening } from "../play/game-links.ts";
 import type { GenexCredits } from "../play/credits.ts";
 import type { PlayGallery, PlayWorld } from "../play/gallery.ts";
 import type { PlayManage } from "../play/manage.ts";
@@ -77,6 +77,8 @@ export interface PlayIpcDeps {
   reveal(file: string): void;
   /** The game a `genex://` link asked to open, waiting for the page. */
   gameLinks: Pick<GameLinks, "take">;
+  /** The library's game whose publish record has this link on Genex, for a `genex://create/<slug>` link. */
+  localGame(slug: string): Promise<string | null>;
 }
 
 /** Register Play's channels: the catalog's reads, Remix and the viewer. */
@@ -135,7 +137,7 @@ export function registerPlayIpc(handle: IpcHandle, deps: PlayIpcDeps): void {
     shown.open(payload.slug, payload.title);
   });
   handle("studio:play.close", async () => viewer()?.close());
-  handle("studio:play.take-game-link", async () => deps.gameLinks.take());
+  handle("studio:play.take-game-link", async () => linkOpening(deps.gameLinks.take(), deps.localGame));
   handle("studio:play.game", (payload) => {
     if (!isPlaySlug(payload?.slug)) throw new Error(MESSAGE.badSlug);
     return gallery.game(payload.slug);

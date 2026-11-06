@@ -38,7 +38,7 @@ import type { GameSoundRequest } from "../shared/game-sound.ts";
 import { latestRun } from "../shared/chat-run.ts";
 import { validateCoverSurface } from "../shared/cover-shader.ts";
 import { coverLookName, coverRecipeFromTool } from "../shared/cover-recipe.ts";
-import { CustomEvent, customEventData } from "../shared/custom-events.ts";
+import { CustomEvent, customEventData, customPayload } from "../shared/custom-events.ts";
 import { MINUTE_MS, SECOND_MS } from "../shared/duration.ts";
 import { EngineStatusCode } from "../shared/engine-descriptor.ts";
 import { CodedError, errorMessage } from "../shared/errors.ts";
@@ -205,6 +205,29 @@ import { PreviewService } from "./core/previews.ts";
 import { AutoResumeService, type AutoResumeDeps } from "./core/auto-resume.ts";
 import { heldStartAsk, heldStartRuns } from "./core/held-start.ts";
 import { coverStepAsk, coverStepRuns } from "./core/cover-step.ts";
+import { type ReviewWatch, startReviewWatch } from "./core/genex-review-watch.ts";
+import {
+  afterFixRunEnds,
+  fixReviewFromDialog,
+  requestReviewFromDialog,
+  settleInterruptedFix,
+} from "./core/genex-review.ts";
+import {
+  gameOfSlug,
+  gamesOnGenex,
+  reviewFlowDeps,
+  reviewLinesDeps,
+  reviewStatusOf,
+  reviewWatchDeps,
+} from "./core/genex-review-host.ts";
+import { type ReviewLines, reviewLines } from "./core/genex-review-lines.ts";
+import {
+  GenexReviewReadProblem,
+  type GenexReviewRequestAnswer,
+  type GenexReviewStatus,
+  type GenexSidebarEntry,
+  REVIEW_NOTE_CHARS,
+} from "../shared/genex-review.ts";
 import { availableMemory } from "../substrate/hardware.ts";
 import { RecoveryService } from "./core/recovery.ts";
 import { ChatRewindService } from "./core/rewind.ts";
@@ -267,6 +290,12 @@ const ENGINE_SCRATCH_PREFIX = "genex-play-";
 
 /** How long after a boot the first full read of the log (for Activity) waits. */
 const ACTIVITY_WARMUP_DELAY_MS = 5 * SECOND_MS;
+/** The Publish dialog has a game's review read again at most this often. */
+const REVIEW_REFRESH_MS = 30 * SECOND_MS;
+
+/** Whether an appended record ends a chat's work: a turn, or a build that closed. */
+const endsWork = (event: EventEnvelope): boolean =>
+  event.data.type === EventKind.TurnEnded || customPayload(event.data, CustomEvent.RunFinished) !== null;
 
 /**
  * What the core itself writes: thread titles and journal reasons (stored, so English), the cover
@@ -399,6 +428,16 @@ export interface StudioPaths {
 export type GenexBuildOptions = Pick<GenexLaneDeps, "api" | "token" | "refused">;
 
 export interface StudioCoreOptions {
+  /**
+   * Whether Studio reads Genex's review of the games on Genex (`core/genex-review-watch.ts`): off in a
+   * fixture profile, which answers the review its fixture laid down and asks Genex nothing.
+   */
+  genexReviewReads?: boolean;
+  /**
+   * A fixture launch signed in to its fixture Genex account: its Genex plugin holds no token of its
+   * own, so the review it kept is answered as signed in rather than "Sign in to see what to fix".
+   */
+  genexReviewFixtureSignedIn?: boolean;
   renderGameCover?: (surface: string, seed: number) => Promise<string>;
   /** Computer control (`desktop-control.ts`): absent where no desktop driver can be reached, and in tests. */
   desktop?: DesktopControl;
@@ -628,6 +667,14 @@ export class StudioCore {
   #activityIndex = new ActivityIndex();
   #activityTurn: Promise<unknown> = Promise.resolve();
   #activityWarmup: NodeJS.Timeout | null = null;
+  /** Main's watch over Genex's review of each game on Genex, from start to stop. */
+  #reviewWatch: ReviewWatch | null = null;
+  /** Each game's step after a fix under way: one at a time, so one fix press never sends twice. */
+  readonly #fixSettles = new Map<string, Promise<unknown>>();
+  /** When the Publish dialog last asked each game's review to be read again: at most once a 30 s. */
+  readonly #reviewAskedAt = new Map<string, number>();
+  /** The sidebar's second line under each game on Genex, each kept until its review changes. */
+  readonly #reviewLines: ReviewLines = reviewLines(reviewLinesDeps(this));
 
   constructor(options: StudioCoreOptions) {
     this.options = options;
@@ -1680,6 +1727,7 @@ export class StudioCore {
     // than on the first Activity open or Studio message.
     this.#activityWarmup = setTimeout(() => void this.activityItems().catch(() => {}), ACTIVITY_WARMUP_DELAY_MS);
     this.#activityWarmup.unref?.();
+    this.#startReviewWatch();
     void this.#probeSubscriptions();
     await this.#settlePendingUpdates(pending, rewound);
   }
@@ -1759,6 +1807,8 @@ export class StudioCore {
 
   async stop(): Promise<void> {
     this.#planReviews?.stop();
+    this.#reviewWatch?.stop();
+    this.#reviewWatch = null;
     this.#pluginTools?.jobWatches.dispose();
     // A pause appended before `start()` may have planned a resume: it, and the hold on the Mac
     // awake that it asked for, end with the core either way.
@@ -1874,9 +1924,115 @@ export class StudioCore {
    */
   #afterRunEnds(threadId: string, events: readonly EventEnvelope[]): void {
     this.#autoResume.observe(threadId, events);
+    if (events.some(endsWork)) void this.#afterFixWork(threadId);
     for (const runId of heldStartRuns(events)) void this.#askAfterHeldStart(threadId, runId);
     for (const runId of coverStepRuns(events)) void this.#askForCover(threadId, runId);
     void noteBuildEnd(this.#buildEnds, threadId, events).catch(() => {});
+  }
+
+  /** Whether Studio reads Genex's review: not in a fixture profile. */
+  get #reviewReads(): boolean {
+    return this.options.genexReviewReads !== false;
+  }
+
+  /**
+   * The review watch, from start to stop (`core/genex-review-watch.ts`), and a fix Studio quit in the
+   * middle of said to have stopped. A fixture profile reads nothing from Genex, so it has no watch.
+   */
+  #startReviewWatch(): void {
+    if (!this.plugins || !this.#reviewReads) return;
+    this.#reviewWatch = startReviewWatch(reviewWatchDeps(this, true));
+    void gamesOnGenex(this)
+      .then((games) => Promise.all(games.map((game) => settleInterruptedFix(this.#reviewFlows(), game))))
+      .catch(() => {});
+  }
+
+  #reviewFlows() {
+    return reviewFlowDeps(this, this.#reviewReads, (project) => this.#reviewWatch?.refresh(project));
+  }
+
+  /** The window came to the front: the review watch sweeps when its last sweep is old. */
+  genexReviewFocus(): void {
+    this.#reviewWatch?.focus();
+  }
+
+  /**
+   * A publish of `project`'s apps started: the review watch reads the game now, again while the
+   * publish runs, then follows what it sent through Genex's check, the dialog open or not.
+   */
+  genexReviewFollow(project: unknown): void {
+    if (typeof project === "string" && project) this.#reviewWatch?.refresh(project);
+  }
+
+  /**
+   * Genex's review of `project`, as the Genex plugin keeps it. `refresh` (the Publish dialog, at most
+   * once a 30 s per game) has it read again, and has the watch follow it.
+   */
+  async genexReviewStatus(project: unknown, refresh?: unknown): Promise<GenexReviewStatus> {
+    if (typeof project !== "string" || !project) throw new Error(t("Open a game"));
+    const now = Date.now();
+    const due = refresh === true && now - (this.#reviewAskedAt.get(project) ?? 0) >= REVIEW_REFRESH_MS;
+    if (due) this.#reviewAskedAt.set(project, now);
+    const status = await reviewStatusOf(this, project, { refresh: due }, this.#reviewReads);
+    if (due) this.#reviewWatch?.refresh(project);
+    const fixtureAccount = !this.#reviewReads && this.options.genexReviewFixtureSignedIn === true;
+    if (fixtureAccount && status.problem === GenexReviewReadProblem.SignedOut) {
+      const { problem: _signedOut, ...signedIn } = status;
+      return { ...signedIn, connected: true };
+    }
+    return status;
+  }
+
+  /**
+   * The sidebar's second line under each game on Genex (`core/genex-review-lines.ts`): from what Studio
+   * keeps (the plugin's kept review, the chat's fix records, the publish record), never a read of Genex.
+   */
+  async genexReviewLines(): Promise<Record<string, GenexSidebarEntry>> {
+    if (!this.plugins) return {};
+    return this.#reviewLines.lines();
+  }
+
+  /** The library's game whose publish record has `slug` on Genex (a `genex://create/<slug>` link); null when none has. */
+  async genexGameOfSlug(slug: string): Promise<string | null> {
+    if (!this.plugins) return null;
+    return gameOfSlug(this, slug).catch(() => null);
+  }
+
+  /** Fix with agent on `project`'s review card, or its Build again with `rebuild` (`core/genex-review.ts`). */
+  async genexFixReview(
+    project: unknown,
+    autoPublish: unknown,
+    fixId?: unknown,
+    rebuild?: unknown,
+  ): Promise<{ fixId: string }> {
+    if (typeof project !== "string" || !project) throw new Error(t("Open a game"));
+    return fixReviewFromDialog(this.#reviewFlows(), project, { autoPublish, fixId, rebuild });
+  }
+
+  /** Request human review on `project`'s review card (`core/genex-review.ts`). */
+  async genexRequestReview(
+    project: unknown,
+    args: { platform?: unknown; arch?: unknown; note?: unknown },
+  ): Promise<GenexReviewRequestAnswer> {
+    if (typeof project !== "string" || !project) throw new Error(t("Open a game"));
+    if (args.note !== undefined && (typeof args.note !== "string" || args.note.length > REVIEW_NOTE_CHARS))
+      throw new Error(t("Keep the note under {max} characters.", { max: REVIEW_NOTE_CHARS }));
+    return requestReviewFromDialog(this.#reviewFlows(), project, args);
+  }
+
+  /** A chat's work ended: the game's newest fix press takes Studio's step after it, one at a time per game. */
+  async #afterFixWork(threadId: string): Promise<void> {
+    const project = gameOfThread((await this.store.getRecord(threadId).catch(() => null))?.metadata);
+    if (!project || !this.plugins) return;
+    const before = this.#fixSettles.get(project) ?? Promise.resolve();
+    const next = before
+      .then(() => afterFixRunEnds(this.#reviewFlows(), project, threadId))
+      .catch((err) =>
+        this.options.onLog?.(`[core] the fix in ${threadId} took no step after it: ${errorMessage(err)}`, "stderr"),
+      );
+    this.#fixSettles.set(project, next);
+    await next;
+    if (this.#fixSettles.get(project) === next) this.#fixSettles.delete(project);
   }
 
   /** A Loop a plugin held back at its start: the chat's agent is told why, to fix it (`core/held-start.ts`). */
@@ -1949,6 +2105,8 @@ export class StudioCore {
       const { project } = event.payload;
       this.#x.gameChanges.set(project, (this.#x.gameChanges.get(project) ?? 0) + 1);
     }
+    // A game's review changed: its sidebar line is read again when the window asks.
+    if (event.type === UiEvent.GenexReviewChanged) this.#reviewLines.forget(event.payload.project);
     this.options.onUiEvent?.(event);
   }
 
@@ -2159,6 +2317,11 @@ export class StudioCore {
    */
   async threadForGame(project: string): Promise<string> {
     return serial(this.#gameThreadOperations, project, () => this.#threads.threadForGame(project));
+  }
+
+  /** The game's canonical chat when it has one, else null: a read that makes no chat and remembers nothing. */
+  async existingGameThread(project: string): Promise<string | null> {
+    return this.#threads.existingThreadForGame(project);
   }
 
   createGameThread(

@@ -4,7 +4,9 @@ import { AnalyticsEvent } from "../analytics/events.ts";
 import { noticeOpenedProperties } from "../analytics/workspace-properties.ts";
 import { noteNav, noteStageSwitch } from "../analytics/workspace-trackers.ts";
 import { NavVia, NoticeVia, NoticeWent, PlayModeVia, StageSwitchVia } from "../analytics/workspace-vocabulary.ts";
-import { type Notice, NoticeKind } from "../notifications.ts";
+import { GENEX_PLUGIN_ID } from "../../shared/genex.ts";
+import { type Notice, noticeDestination } from "../notifications.ts";
+import { openPluginSetupFor } from "../plugin-setup.ts";
 import type { AppDialogs as Dialogs } from "../panels/AppDialogs.tsx";
 import { SettingsOpenedFrom, SettingsSection } from "../settings-navigation.ts";
 import { useRailView } from "../state/hooks.ts";
@@ -36,32 +38,35 @@ export function useShellNotices(
   const { openSettings } = input.dialogs;
   const { records: threads, activeThreadId, games } = useRailView();
   const goTo = useCallback(
-    (notice: Notice): NoticeWent => {
-      if (notice.kind === NoticeKind.SignIn) {
+    (notice: Notice, via: NoticeVia): NoticeWent => {
+      const chatExists = (id: string) => app.threads.getState().records.some((thread) => thread.id === id);
+      const to = noticeDestination(notice, chatExists, via === NoticeVia.Fix);
+      if (to.to === "settings") {
         openSettings(SettingsSection.Providers, null, SettingsOpenedFrom.Notification);
         return NoticeWent.Settings;
       }
       // A game from Play: its own page.
-      if (notice.kind === NoticeKind.Play) {
-        if (!notice.slug) return NoticeWent.Nowhere;
+      if (to.to === "play") {
         input.openPlay(true, PlayModeVia.Notification);
-        app.play.showGame(notice.slug);
+        app.play.showGame(to.slug);
         return NoticeWent.Play;
       }
-      if (!app.threads.getState().records.some((thread) => thread.id === notice.threadId)) return NoticeWent.Nowhere;
+      if (to.to === "nowhere") return NoticeWent.Nowhere;
       noteNav(NavVia.Notification);
-      selectThread(notice.threadId);
-      if (notice.view) {
+      selectThread(to.threadId);
+      if (to.view) {
         noteStageSwitch(StageSwitchVia.Notification);
-        chooseStageView(notice.view);
+        chooseStageView(to.view);
       }
+      // A game's review: its Publish opens once its strip is up, on the card that says what to fix.
+      if (to.publish) openPluginSetupFor(to.publish, GENEX_PLUGIN_ID);
       return NoticeWent.Thread;
     },
     [app, openSettings, selectThread, chooseStageView, input.openPlay],
   );
   const openNotice = useCallback(
     (notice: Notice, via: NoticeVia) => {
-      const went = goTo(notice);
+      const went = goTo(notice, via);
       track(AnalyticsEvent.NoticeOpened, noticeOpenedProperties(notice, { via, went, now: Date.now() }));
     },
     [goTo],

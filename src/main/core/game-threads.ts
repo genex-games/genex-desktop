@@ -44,7 +44,8 @@ export class GameThreadService {
     this.#core = core;
   }
 
-  async threadForGame(project: string): Promise<string> {
+  /** The game's canonical chat as it stands, and the one remembered as its primary; nothing is written. */
+  async #currentThread(project: string): Promise<{ current: string | null; primary: string | undefined }> {
     const threads = (await this.#core.store.listThreads())
       .filter((t) => {
         const meta = metaOf(t);
@@ -53,9 +54,19 @@ export class GameThreadService {
       .sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1));
     const primary = (await this.#core.games.presentation(project)).primaryThreadId;
     const current = threads.find((thread) => thread.id === primary) ?? threads[0];
+    return { current: current?.id ?? null, primary };
+  }
+
+  /** The game's canonical chat when it has one; null otherwise. A read: it makes and remembers nothing. */
+  async existingThreadForGame(project: string): Promise<string | null> {
+    return (await this.#currentThread(project)).current;
+  }
+
+  async threadForGame(project: string): Promise<string> {
+    const { current, primary } = await this.#currentThread(project);
     if (current) {
-      if (primary !== current.id) await this.#core.games.rememberThread(project, current.id);
-      return current.id;
+      if (primary !== current) await this.#core.games.rememberThread(project, current);
+      return current;
     }
     const id = await this.#core.store.createThread({
       title: NEW_CHAT_TITLE,

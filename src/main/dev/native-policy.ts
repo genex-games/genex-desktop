@@ -24,6 +24,10 @@ const NATIVE_CHANNELS = [
   "studio:plugins.genex-publish",
   "studio:plugins.genex-publish-apps",
   "studio:plugins.genex-cloud-build",
+  // A review card's Fix with agent and Request human review reach Genex with the user's real account
+  // and send the game's chat a message; a fixture answers unsupported.
+  "studio:plugins.genex-fix-review",
+  "studio:plugins.genex-request-review",
   "studio:subscription.signin",
   "studio:subscription.forget-studio-login",
   // Building with Genex opens genex.games's build page in the person's browser, where it signs the
@@ -303,6 +307,12 @@ const FIXTURE_SAFE = [
   "studio:plugins.genex-publish-review",
   // Publish's platform rows: what the game folder holds, read only.
   "studio:plugins.genex-publish-platforms",
+  // A game's review as the Genex plugin keeps it: a fixture profile never has Genex read again
+  // (`genexReviewReads`), so it answers the record its fixture laid down.
+  "studio:plugins.genex-review-status",
+  // The sidebar's lines under the games on Genex: what Studio keeps (the plugin's kept review, the
+  // chat's fix records, the publish record), never a read of Genex.
+  "studio:plugins.genex-review-lines",
   "studio:plugins.index",
   "studio:plugins.watch",
   // A local plugin's grants live in the profile's install record; no dialog, no socket.

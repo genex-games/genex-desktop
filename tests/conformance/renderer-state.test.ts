@@ -57,7 +57,7 @@ import {
   libraryBootstrapped,
 } from "../../src/renderer/state/library.ts";
 import { frameReceived, screenClosed, screensLoaded } from "../../src/renderer/state/agent-screens.ts";
-import { createToastsStore, TOAST_MS } from "../../src/renderer/state/toasts.ts";
+import { createToastsStore, REVIEW_TOAST_MS, TOAST_MS } from "../../src/renderer/state/toasts.ts";
 import {
   chatWidthCommitted,
   chatWidthDragged,
@@ -656,6 +656,24 @@ describe("agent screens, toasts and layout", () => {
     assert.deepEqual(toasts.getState().items, []);
   });
 
+  it("a toast with a press stays eight seconds and keeps its press", () => {
+    const timeouts: Array<{ run: () => void; ms: number }> = [];
+    const toasts = createToastsStore((run, ms) => timeouts.push({ run, ms }));
+    const pressed: string[] = [];
+    toasts.offer("Skate Dog is public again", { label: "Open", run: () => pressed.push("open") });
+    const [toast] = toasts.getState().items;
+    assert.deepEqual([toast?.text, toast?.tone, toast?.action?.label], ["Skate Dog is public again", "info", "Open"]);
+    toast?.action?.run();
+    assert.deepEqual(pressed, ["open"]);
+    assert.deepEqual(
+      timeouts.map((t) => t.ms),
+      [REVIEW_TOAST_MS],
+    );
+    assert.equal(REVIEW_TOAST_MS, 8000);
+    timeouts[0]!.run();
+    assert.deepEqual(toasts.getState().items, []);
+  });
+
   it("persists layout into the keys earlier builds wrote, and a drag only when it ends", () => {
     const storage = memoryStorage({
       "studio.sidebarOpen": "false",
@@ -728,7 +746,15 @@ describe("what each UI event makes the renderer read again", () => {
   const ev = (type: string, payload: unknown = {}): UiEvent => ({ type, payload }) as UiEvent;
 
   it("pulls logged events in live, and lists on their own changes", () => {
-    for (const type of ["chat.message", "run.finished", "delegated.event", "plugin.consent", "coordinator.queued"]) {
+    // A review change's records are in the log by the time it is told: the bell reads them at once.
+    for (const type of [
+      "chat.message",
+      "run.finished",
+      "delegated.event",
+      "plugin.consent",
+      "coordinator.queued",
+      "genex.review",
+    ]) {
       assert.deepEqual(reads(ev(type)), ["events"], type);
     }
     assert.deepEqual(reads(ev("thread.bound")), ["events", "threads"]);
@@ -774,6 +800,36 @@ describe("the studio: one subscription, the bootstrap and the commands that span
     const stop = app.start();
     return { fake, app, stop, timers, storage };
   }
+
+  it("reads the sidebar's Genex lines once up, again when a review changes or Genex speaks, a burst once", async () => {
+    const answers = [
+      { pond: { line: "taken_down" } },
+      { pond: { line: "fixing", things: 3 } },
+      { pond: { line: "fixing", things: 3 } },
+    ];
+    let reads = 0;
+    const { app, fake } = started({
+      genexReviewLines: async () => answers[Math.min(reads++, answers.length - 1)] as never,
+    });
+    await tick();
+    await tick();
+    assert.deepEqual(app.genexReview.getState().lines, { pond: { line: "taken_down" } });
+    fake.emit({ type: "genex.review", payload: { project: "pond" } } as never);
+    fake.emit({ type: "genex.review", payload: { project: "pond" } } as never);
+    await tick();
+    await tick();
+    assert.deepEqual(app.genexReview.getState().lines, { pond: { line: "fixing", things: 3 } });
+    assert.equal(reads, 3, "two changes during a read are one more read");
+    const before = app.genexReview.getState();
+    fake.emit({ type: "plugin.event", payload: { id: "genex", event: {}, project: "pond" } } as never);
+    await tick();
+    await tick();
+    assert.equal(reads, 4);
+    assert.equal(app.genexReview.getState(), before, "the same lines leave the rows alone");
+    fake.emit({ type: "plugin.event", payload: { id: "unreal", event: {}, project: "pond" } } as never);
+    await tick();
+    assert.equal(reads, 4, "another plugin's word is not Genex's");
+  });
 
   it("asks about usage analytics once per consent version, and only in a session that offers them", async () => {
     const analytics = { key: "phc_x", host: "https://eu.i.posthog.com", version: "1.0.0" };

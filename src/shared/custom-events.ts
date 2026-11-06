@@ -10,6 +10,7 @@
  * harness, which the in-app agent may edit, and old logs keep old shapes. Read them through
  * `customEvent` / `customPayload`, never `payload as`.
  */
+import type { GenexReviewFixPayload, GenexReviewPayload } from "./genex-review.ts";
 import type { ChatActivityPhase } from "./chat-activity.ts";
 import type { ChatRewind, CheckpointSkippedPayload, RewindUndonePayload } from "./chat-rewind.ts";
 import type { PlanReviewRecord } from "./composer.ts";
@@ -75,6 +76,10 @@ export const CustomEvent = {
   ChatJudgeResult: "chat_judge_result",
   /** The game's agent made or changed a store item, on genex.games or as a local draft: its Listing draft card (shared/item-draft.ts); written by the host only. */
   ItemDrafted: "item_drafted",
+  /** Genex's review of a game's apps or its takedown changed, as the host read it (shared/genex-review.ts); written by the host only. */
+  GenexReview: "genex_review",
+  /** Fix with agent pressed on a game's review: what the agent was sent, and whether Studio publishes after (shared/genex-review.ts); written by the host only. */
+  GenexReviewFix: "genex_review_fix",
   // the unattended run and its lead
   AutopilotBase: "autopilot_base",
   AutopilotBaseStarted: "autopilot_base_started",
@@ -774,6 +779,8 @@ export interface CustomEventMap {
   agent_went_ahead: Partial<AgentWentAheadPayload>;
   chat_judge_result: Partial<ChatJudgeResultPayload>;
   item_drafted: Partial<ListingDraft> | Partial<LocalListingDraft>;
+  genex_review: Partial<GenexReviewPayload>;
+  genex_review_fix: Partial<GenexReviewFixPayload>;
   worker_started: WorkerStartedPayload;
   worker_finished: WorkerFinishedPayload;
   observer_capture: Partial<ObserverCapturePayload>;

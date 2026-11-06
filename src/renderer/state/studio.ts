@@ -84,6 +84,8 @@ import {
 } from "./play.ts";
 import { createPeopleStore, type PeopleStore } from "./people.ts";
 import { createItemsStore, type ItemsStore, ItemsRead } from "./items.ts";
+import { createGenexReviewStore, type GenexReviewStore } from "./genex-review.ts";
+import { GENEX_PLUGIN_ID } from "../../shared/genex.ts";
 import { createSharingStore, type SharingStore } from "./sharing.ts";
 import {
   analyticsChosen,
@@ -159,6 +161,8 @@ export interface Studio {
   readonly people: PeopleStore;
   /** Create › Items: Browse, Selling and the presses on an item (`items.ts`). */
   readonly items: ItemsStore;
+  /** The sidebar's line under each game on Genex: Public, In review, Taken down… (`genex-review.ts`). */
+  readonly genexReview: GenexReviewStore;
   /** Save and Share on the open game's assets (`sharing.ts`). */
   readonly sharing: SharingStore;
   readonly agentScreens: AgentScreensStore;
@@ -255,6 +259,7 @@ interface Stores {
   readonly play: PlayStore;
   readonly people: PeopleStore;
   readonly items: ItemsStore;
+  readonly genexReview: GenexReviewStore;
   readonly sharing: SharingStore;
   readonly agentScreens: AgentScreensStore;
   readonly commandRuns: CommandRunsStore;
@@ -291,6 +296,7 @@ function createStores(
     play: createPlayStore(api, storage, Date.now, (gameId, next) => people.gameChanged(gameId, next)),
     people,
     items: createItemsStore(api, timers),
+    genexReview: createGenexReviewStore(api),
     sharing: createSharingStore(api, timers),
     agentScreens: createAgentScreensStore(),
     commandRuns: createCommandRunsStore(),
@@ -390,7 +396,8 @@ function bootstrapper(
   storage: KeyValueStorage | null,
   chance: Chance,
 ): () => Promise<void> {
-  const { session, eventLog, library, engines, threads, plugins, agentScreens, update, agentsStart } = stores;
+  const { session, eventLog, library, engines, threads, plugins, agentScreens, update, agentsStart, genexReview } =
+    stores;
   let generation = 0;
   return async () => {
     const version = ++generation;
@@ -411,6 +418,7 @@ function bootstrapper(
       session.setState((state) => bootstrapReady(state, opening), true);
       void plugins.refresh();
       void plugins.refreshIndex();
+      void genexReview.refresh();
       // An update downloaded before this window opened, or before a reload, still waits.
       const ready = await api.readyUpdate().catch(() => null);
       if (superseded()) return;
@@ -429,10 +437,18 @@ function bootstrapper(
 
 /** The events that change a store directly, beyond the reads they ask for. */
 function applyUiEvent(
-  { agentScreens, threads, layout, library, update, play, agentsStart, providerUsage, items }: Stores,
+  { agentScreens, threads, layout, library, update, play, agentsStart, providerUsage, items, genexReview }: Stores,
   event: UiEvent,
 ): void {
   switch (event.type) {
+    case UiEvent.GenexReviewChanged:
+      // A game's review changed: the sidebar's lines are read again.
+      void genexReview.refresh();
+      break;
+    case UiEvent.PluginEvent:
+      // The Genex plugin said something of a game (a publish went): its line may now say Public.
+      if (event.payload?.id === GENEX_PLUGIN_ID) void genexReview.refresh();
+      break;
     case UiEvent.ItemDrafted:
       // A new or changed item of the account's: Selling, once shown, reads it again.
       if (items.getState().selling.read !== ItemsRead.Idle) void items.readSelling();

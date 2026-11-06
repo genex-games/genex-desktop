@@ -4,8 +4,9 @@
  * A glance, not a task: the panel hangs off the bell and the app stays lit behind it. What waits
  * on you comes first and stays until it is answered; what happened follows by day and is read by
  * opening. Every row opens the place that owns the action, so no answer or approval is repeated
- * here. The bell carries a count for waiting work and a dot for unread news, and rings once when
- * something arrives.
+ * here. The one press of its own is a game's review row's Fix (Fix with agent, then the game's chat);
+ * the row itself only opens the game with Publish. The bell carries a count for waiting work and a
+ * dot for unread news, and rings once when something arrives.
  */
 import type { JSX, KeyboardEvent } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -17,7 +18,19 @@ import { isRovingKey, RovingAxis, rovingTarget } from "../ui/roving-focus.ts";
 import { GameAvatar } from "../ui/GameAvatar.tsx";
 import { CLAUDE_CODE_MARK, CODEX_MARK } from "../ui/provider-marks.ts";
 import { relativeTime } from "../chat-labels.ts";
-import { activityNotices, dayGroup, type Notice, NoticeKind, noticeSource, waitingNotices } from "../notifications.ts";
+import {
+  activityNotices,
+  dayGroup,
+  type Notice,
+  NoticeKind,
+  noticeSource,
+  pressReviewFix,
+  waitingNotices,
+} from "../notifications.ts";
+import { studio } from "../state/studio.ts";
+import { notifyProblem } from "../state/toasts.ts";
+import { REVIEW_WORDS } from "../words.ts";
+import { NoticeVia } from "../analytics/workspace-vocabulary.ts";
 import { isGameThread, threadMeta } from "../state/threads.ts";
 import type { ConversationRecord, GameProject } from "../types.ts";
 import { MINUTE_MS } from "../../shared/duration.ts";
@@ -28,7 +41,11 @@ const ACTION: Partial<Record<Notice["kind"], string>> = {
   question: t("Answer"),
   plan: t("Review"),
   permission: t("Review"),
+  review: REVIEW_WORDS.notice.fix,
 };
+
+/** A row whose action is a press of its own (a review's Fix), not the row's opening. */
+const pressesOwnAction = (notice: Notice): boolean => notice.kind === NoticeKind.Review && notice.waiting === true;
 
 /** The bell's count shows up to this many, then "9+". */
 const BADGE_MAX = 9;
@@ -41,7 +58,8 @@ interface Props {
   items: Notice[];
   games: GameProject[];
   threads: ConversationRecord[];
-  onOpen: (notice: Notice) => void;
+  /** Open a row; `via` says how (its Fix press goes to the game's chat alone). */
+  onOpen: (notice: Notice, via?: NoticeVia) => void;
   /** Opening the panel reads the news in it. */
   onRead: () => void;
   onClear: () => void;
@@ -117,6 +135,8 @@ function NoticeArt({ notice, game, gameChat }: { notice: Notice; game?: GameProj
 
 /** A row's end: the action a waiting row asks for, else the dot of a row new since the panel opened. */
 function NoticeTrail({ notice, fresh }: { notice: Notice; fresh: boolean }) {
+  // A review's Fix is a button of its own beside the row.
+  if (pressesOwnAction(notice)) return null;
   const action = notice.waiting ? ACTION[notice.kind] : undefined;
   if (action) return <span className="notify-action">{action}</span>;
   if (!fresh) return null;
@@ -129,6 +149,38 @@ function NoticeTrail({ notice, fresh }: { notice: Notice; fresh: boolean }) {
 
 /** One notification: what it is about, when, what it says, and what it asks. */
 function NoticeRow({
+  notice,
+  games,
+  threads,
+  fresh,
+  now,
+  onChoose,
+  onFix,
+}: {
+  notice: Notice;
+  games: GameProject[];
+  threads: ConversationRecord[];
+  fresh: boolean;
+  now: number;
+  onChoose: (notice: Notice) => void;
+  onFix: (notice: Notice) => void;
+}): JSX.Element {
+  const button = (
+    <NoticeButton notice={notice} games={games} threads={threads} fresh={fresh} now={now} onChoose={onChoose} />
+  );
+  if (!pressesOwnAction(notice)) return button;
+  return (
+    <div className="notify-item" data-notice-item={notice.kind}>
+      {button}
+      <button type="button" className="notify-action notify-press" data-notice-fix onClick={() => onFix(notice)}>
+        {ACTION[notice.kind]}
+      </button>
+    </div>
+  );
+}
+
+/** The row itself: its picture, who it is from, when, and what it says; pressing it opens where it points. */
+function NoticeButton({
   notice,
   games,
   threads,
@@ -160,7 +212,10 @@ function NoticeRow({
       {/* Its game, chat and words are the person's. */}
       <span className="notify-copy" data-analytics-mask>
         <span className="notify-title">
-          <span className="min-w-0 truncate">{noticeSource(notice, game?.title, gameChat)}</span>
+          {/* A review's headline is a sentence ("… was taken down"): it takes two lines before it shortens. */}
+          <span className={notice.kind === NoticeKind.Review ? "min-w-0 line-clamp-2" : "min-w-0 truncate"}>
+            {noticeSource(notice, game?.title, gameChat)}
+          </span>
           <span className="notify-time">{noticeTime(notice, now)}</span>
         </span>
         <span className="notify-text" title={notice.text}>
@@ -242,6 +297,12 @@ export function NotificationsMenu({ items, games, threads, onOpen, onRead, onCle
     change(false);
     onOpen(notice);
   };
+  // A review's Fix: Fix with agent on its game, then its chat.
+  const fix = (notice: Notice) => {
+    change(false);
+    const toChat = (pressed: Notice) => onOpen(pressed, NoticeVia.Fix);
+    void pressReviewFix(window.studio, notice, toChat, notifyProblem(studio().toasts.notify));
+  };
   const row = (notice: Notice) => (
     <NoticeRow
       key={notice.id}
@@ -251,6 +312,7 @@ export function NotificationsMenu({ items, games, threads, onOpen, onRead, onCle
       fresh={fresh.has(notice.id)}
       now={now}
       onChoose={choose}
+      onFix={fix}
     />
   );
 

@@ -7,7 +7,11 @@ import {
   dayGroup,
   EMPTY_NOTICES,
   markRead,
+  noticeDestination,
   noticeSource,
+  pressReviewFix,
+  reviewToasts,
+  systemNotes,
   waitingNotices,
   type NoticeState,
 } from "../../src/renderer/notifications.ts";
@@ -284,5 +288,192 @@ describe("notifications: games from Play", () => {
   it("raises nothing for a record that names no game", () => {
     const { state } = run(EMPTY_NOTICES, [custom("studio", "play_install_finished", { title: "Nameless" })]);
     assert.deepEqual(state.items, []);
+  });
+});
+
+describe("notifications: Genex's review of a game", () => {
+  const THINGS = [{ text: "The coin button opens an outside payment page" }, { text: "Loads code from unpkg.com" }];
+  const review = (change: string, payload: Record<string, unknown> = {}, project = "asphalt") =>
+    custom(`chat-${project}`, "genex_review", {
+      project,
+      title: project === "asphalt" ? "Midnight Asphalt" : "Skate Dog",
+      change,
+      at,
+      ...payload,
+    });
+  const fixed = (project = "asphalt") =>
+    custom(`chat-${project}`, "genex_review_fix", {
+      project,
+      fixId: "f1",
+      kind: "app",
+      count: 2,
+      autoPublish: true,
+      at,
+    });
+
+  it("keeps a taken-down game, a turned-down app and a takedown kept down waiting, one row per game", () => {
+    const down = run(EMPTY_NOTICES, [review("taken_down", { things: THINGS, count: 3 })]);
+    const [row] = waitingNotices(down.state.items);
+    assert.equal(row?.kind, "review");
+    assert.equal(noticeSource(row!, "Midnight Asphalt"), "Midnight Asphalt was taken down");
+    assert.equal(row?.text, "3 things to fix");
+    assert.equal(row?.project, "asphalt");
+    const app = run(EMPTY_NOTICES, [
+      review("not_approved", { app: { platform: "mac", arch: "arm64", version: "1.3.0" }, things: THINGS }),
+    ]);
+    assert.equal(waitingNotices(app.state.items)[0]?.headline, "Midnight Asphalt's Mac app wasn't approved");
+    assert.equal(waitingNotices(app.state.items)[0]?.text, "2 things to fix");
+    const kept = run(down.state, [review("upheld", { things: THINGS })]);
+    assert.deepEqual(
+      waitingNotices(kept.state.items).map((item) => item.headline),
+      ["Midnight Asphalt: human review kept it down"],
+      "the newer row replaces the game's older one",
+    );
+  });
+
+  it("no longer waits once the person asked for a person: the newer change is news in its place", () => {
+    const down = run(EMPTY_NOTICES, [review("not_approved", { count: 1 }, "skate")]);
+    const asked = run(down.state, [review("with_person", { requested: true }, "skate")]);
+    assert.equal(waitingNotices(asked.state.items).length, 0);
+    assert.equal(activityNotices(asked.state.items)[0]?.text, "Human review, usually within a day.");
+  });
+
+  it("tells a person reviewing it, and a game live or public again, as news that settles what waited", () => {
+    const down = run(EMPTY_NOTICES, [review("taken_down", { count: 3 }), review("with_person", {}, "skate")]);
+    const person = activityNotices(down.state.items).find((item) => item.project === "skate");
+    assert.equal(person?.headline, "Skate Dog");
+    assert.equal(person?.text, "Human review, usually within a day.");
+    assert.equal(person?.waiting, undefined);
+    const back = run(down.state, [review("restored")]);
+    assert.equal(waitingNotices(back.state.items).length, 0, "public again: nothing waits");
+    const news = activityNotices(back.state.items).find((item) => item.project === "asphalt");
+    assert.equal(news?.headline, "Midnight Asphalt is public again");
+    assert.equal(news?.text, "Anyone can find it on Genex.");
+    const live = run(EMPTY_NOTICES, [review("not_approved", { count: 1 }), review("live")]);
+    assert.equal(waitingNotices(live.state.items).length, 0);
+    assert.equal(activityNotices(live.state.items)[0]?.headline, "Midnight Asphalt is live!");
+  });
+
+  it("settles the waiting row when Fix with agent is pressed, and only that game's", () => {
+    const both = run(EMPTY_NOTICES, [
+      review("taken_down", { count: 3 }),
+      review("not_approved", { count: 1 }, "skate"),
+    ]);
+    assert.equal(waitingNotices(both.state.items).length, 2);
+    const pressed = run(both.state, [fixed()]);
+    assert.deepEqual(
+      waitingNotices(pressed.state.items).map((item) => item.project),
+      ["skate"],
+    );
+  });
+
+  it("raises nothing for a change the bell does not tell, or a record with no game", () => {
+    const { state } = run(EMPTY_NOTICES, [
+      review("sent"),
+      review("fix_stopped"),
+      review("not_built"),
+      custom("t9", "genex_review", { change: "taken_down" }),
+      custom("t9", "genex_review", {}),
+    ]);
+    assert.deepEqual(state.items, []);
+  });
+
+  it("counts on the Dock while it waits, and stops counting once settled", () => {
+    const down = run(EMPTY_NOTICES, [
+      review("taken_down", { count: 3 }),
+      review("not_approved", { count: 1 }, "skate"),
+      custom("t1", "interview_question", { question: "Night or day?" }),
+    ]);
+    assert.equal(waitingNotices(down.state.items).length, 3, "each waiting review row adds one");
+    const settled = run(down.state, [fixed(), review("live", {}, "skate")]);
+    assert.equal(waitingNotices(settled.state.items).length, 1, "only the question still waits");
+  });
+
+  it("tells macOS only while Studio is in the background, in the review's own words", () => {
+    const { arrived } = run(EMPTY_NOTICES, [
+      review("taken_down", { count: 3 }),
+      review("restored", {}, "skate"),
+      review("with_person", {}, "skate"),
+    ]);
+    const source = () => "fallback";
+    assert.deepEqual(systemNotes(arrived, { first: false, focused: true }, source), [], "never while in front");
+    assert.deepEqual(systemNotes(arrived, { first: true, focused: false }, source), [], "never on the first read");
+    const notes = systemNotes(arrived, { first: false, focused: false }, source);
+    assert.deepEqual(
+      notes.map(({ title, body }) => [title, body]),
+      [
+        ["Midnight Asphalt was taken down", "3 things to fix. Click to see them and fix them with your agent."],
+        ["Skate Dog is public again", "Anyone can find it on Genex."],
+      ],
+      "a person reviewing it stays in the bell",
+    );
+    assert.equal(notes[0]?.id, arrived[0]?.id, "a click opens the row");
+    for (const note of notes) {
+      assert.ok(note.title.length <= 120 && note.body.length <= 240);
+    }
+    const one = run(EMPTY_NOTICES, [review("not_approved", { count: 1, app: { platform: "windows" } })]);
+    assert.equal(
+      systemNotes(one.arrived, { first: false, focused: false }, source)[0]?.body,
+      "1 thing to fix. Click to see it and fix it with your agent.",
+    );
+  });
+
+  it("opens its game's chat with Publish, from the bell, macOS or a toast, and sends nothing", () => {
+    const { state } = run(EMPTY_NOTICES, [review("taken_down", { count: 3 })]);
+    const row = state.items[0]!;
+    assert.deepEqual(
+      noticeDestination(row, () => true),
+      { to: "thread", threadId: "chat-asphalt", publish: "asphalt" },
+    );
+    assert.deepEqual(
+      noticeDestination(row, () => false),
+      { to: "nowhere" },
+      "a chat that is gone goes nowhere",
+    );
+    assert.deepEqual(
+      noticeDestination(row, () => true, true),
+      { to: "thread", threadId: "chat-asphalt" },
+      "after the bell's Fix, the game's chat alone, where the agent has it",
+    );
+    const build = run(EMPTY_NOTICES, [custom("t1", "run_finished", { runId: "r1", landed: true })]).state.items[0]!;
+    assert.equal((noticeDestination(build, () => true) as { publish?: string }).publish, undefined);
+  });
+
+  it("presses Fix with agent from the bell's Fix, then opens the game, even when the press fails", async () => {
+    const { state } = run(EMPTY_NOTICES, [review("taken_down", { count: 3 })]);
+    const row = state.items[0]!;
+    const calls: unknown[] = [];
+    const went: string[] = [];
+    await pressReviewFix(
+      { genexFixReview: async (project, options) => calls.push([project, options]) },
+      row,
+      (notice) => went.push(notice.id),
+      () => went.push("failed"),
+    );
+    assert.deepEqual(calls, [["asphalt", { autoPublish: true }]]);
+    assert.deepEqual(went, [row.id]);
+    const failing: string[] = [];
+    await pressReviewFix(
+      { genexFixReview: async () => Promise.reject(new Error("offline")) },
+      row,
+      () => failing.push("went"),
+      () => failing.push("failed"),
+    );
+    assert.deepEqual(failing, ["failed", "went"]);
+  });
+
+  it("toasts a game taken down, turned down or public again only while in front and another game is open", () => {
+    const { arrived } = run(EMPTY_NOTICES, [
+      review("taken_down", { count: 3 }),
+      review("restored", {}, "skate"),
+      review("live", {}, "skate"),
+    ]);
+    assert.deepEqual(reviewToasts(arrived, { focused: false, openProject: null }), [], "in the background: macOS");
+    assert.deepEqual(
+      reviewToasts(arrived, { focused: true, openProject: "asphalt" }).map((notice) => notice.headline),
+      ["Skate Dog is public again"],
+      "the open game's own card already says it, and live is news for the bell",
+    );
+    assert.equal(reviewToasts(arrived, { focused: true, openProject: null }).length, 2);
   });
 });

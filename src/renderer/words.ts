@@ -3751,6 +3751,198 @@ export const PUBLISH_REMIX_WORDS = {
   notSent: t("Its project didn’t go, so no one can remix it yet."),
 } as const;
 
+/**
+ * Genex's review of a game's Mac, Windows and Linux apps and of a takedown, as the Publish dialog, the
+ * chat's review card and Request human review say it (spec in `shared/genex-review.ts`). `app` is
+ * `mac`, `windows`, `linux`, or `apps` for several. Every line is true of what Genex does: the check
+ * takes minutes, Genex never checks public games again in the background, and a person decides only
+ * when the check could not or the creator asked.
+ */
+export const REVIEW_WORDS = {
+  /** The card, for assistive tech. */
+  label: t("Genex review"),
+  dialog: {
+    hint: t("Genex checks your app before players get it. Usually a few minutes."),
+    checking: (elapsed: string) => t("Checking · {elapsed}", { elapsed }),
+    checkingLine: t("Genex reads your app before players get it. Usually a few minutes."),
+    slow: t("Taking longer than usual. If the check can't finish, a person at Genex reviews it."),
+    closeHint: t("You can close this. Studio tells you when it's done."),
+    chipReview: t("In review"),
+    chipNotApproved: t("Not approved"),
+    chipTakenDown: t("Taken down"),
+    liveFooter: t("If Genex ever takes it down, you'll hear it here and by email."),
+    liveUpdate: (version: string, app: string) =>
+      t(
+        "Version {version} is live for {app, select, mac {Mac} windows {Windows} linux {Linux} other {desktop}} players.",
+        { version, app },
+      ),
+  },
+  title: {
+    cantPublish: (n: number) =>
+      t("{n, plural, one {Can't publish yet: # thing to fix} other {Can't publish yet: # things to fix}}", { n }),
+    update: (n: number) =>
+      t("{n, plural, one {Update not approved: # thing to fix} other {Update not approved: # things to fix}}", { n }),
+    still: (n: number) =>
+      t(
+        "{n, plural, one {Not approved: # thing still to fix after the re-check} other {Not approved: # things still to fix after the re-check}}",
+        { n },
+      ),
+    notApproved: (n: number) =>
+      t("{n, plural, one {Not approved: # thing to fix} other {Not approved: # things to fix}}", { n }),
+    takenDown: (n: number) =>
+      t("{n, plural, one {Taken down: # thing to fix} other {Taken down: # things to fix}}", { n }),
+    takenDownPlain: t("Taken down"),
+    withPerson: t("A person at Genex is reviewing it"),
+    checking: (app: string) =>
+      t("Checking your {app, select, mac {Mac app} windows {Windows app} linux {Linux app} other {apps}}", { app }),
+    checkingFixes: t("Checking your fixes"),
+    live: (title: string) => t("{title} is live!", { title }),
+    versionLive: (version: string) => t("Version {version} is live", { version }),
+    publicAgain: (title: string) => t("{title} is public again", { title }),
+  },
+  line: {
+    playersKeep: (date: string) => t("Players keep the {date} version.", { date }),
+    agreedWithCheck: t("Human review agreed with the check."),
+    personReviewed: t("A person at Genex reviewed it."),
+    repeated: t("Turned down 3 times this week, so a person at Genex reviews the next build. Usually within a day."),
+    requested: t("Human review requested. Usually within a day. You can still fix it yourself."),
+    resending: (app: string) =>
+      t(
+        "Sending the {app, select, mac {Mac app} windows {Windows app} linux {Linux app} other {apps}} again so a person can read it…",
+        { app },
+      ),
+    resendOwed: (app: string) =>
+      t(
+        "Human review requested. A person reviews the next {app, select, mac {Mac app} windows {Windows app} linux {Linux app} other {apps}} you send.",
+        { app },
+      ),
+    withPerson: t("Usually within a day. You'll hear here and by email."),
+    usuallyMinutes: t("usually a few minutes"),
+    anyone: t("Anyone can find it on Genex."),
+    platformPlayers: (app: string) =>
+      t("{app, select, mac {Mac} windows {Windows} linux {Linux} other {Desktop}} players get it now.", { app }),
+    teamAgreed: t("Someone from the Genex team agreed it's fine."),
+    hidden: t("Hidden from players until it's fixed and a person at Genex puts it back."),
+    teamReviewing: t("The Genex team is reviewing this game."),
+    upheld: t("Human review agreed with the takedown."),
+    sentApp: t("Sent to your agent. When it's done, Studio publishes it and Genex checks it again."),
+    sentTakedown: t("Sent to your agent. When it's done, Studio asks a person at Genex to put it back."),
+    /** A taken-down game Studio sends again but cannot ask about: no request may go now. */
+    sentPublishes: t("Sent to your agent. When it's done, Studio publishes it."),
+    /** A taken-down web game, or one whose automatic step was taken back: both steps are the person's. */
+    sentPublishThenAsk: t("Sent to your agent. When it's done, publish it, then ask a person at Genex to put it back."),
+    autoCancelled: t("Sent to your agent. Publish it yourself when it's ready."),
+    fixStopped: t("Your agent stopped before it finished."),
+    notBuilt: (app: string) =>
+      t(
+        "The fix isn't built yet. Build the {app, select, mac {Mac app} windows {Windows app} linux {Linux app} other {apps}} again and it publishes.",
+        { app },
+      ),
+    fixedWeb: t("Fixed. Publish it, then ask a person at Genex to put it back."),
+    offline: (state: string) =>
+      t(
+        "{state, select, taken_down {Taken down} not_approved {Not approved} other {In review}} · reconnect to see what to fix",
+        { state },
+      ),
+    signedOut: t("Sign in to see what to fix"),
+  },
+  footer: {
+    first: t("Nothing went public. After the fix, it publishes by itself and Genex checks it again."),
+    update: t("Players keep the version they have. After the fix, it publishes by itself and Genex checks it again."),
+    person: t("After the fix, it publishes by itself and Genex checks it again."),
+    takedown: t("After the fix, Studio asks a person at Genex to put it back. Usually within a day."),
+    /** A taken-down web game, or an old Genex that needs the person's own words: Studio asks nobody by itself. */
+    takedownYourself: t("After the fix, publish it, then ask a person at Genex to put it back. Usually within a day."),
+    upheld: t("After the fix, Studio asks a person at Genex to look again. Usually within a day."),
+  },
+  press: {
+    fix: t("Fix with agent"),
+    request: t("Request human review"),
+    publish: t("Publish"),
+    fixAgain: t("Fix again"),
+    buildAgain: t("Build again"),
+    signIn: t("Sign in"),
+    copyLink: t("Copy link"),
+    openOnGenex: t("Open on Genex"),
+    dontPublish: t("Don't publish it automatically"),
+    dontAsk: t("Don't ask automatically"),
+    showMore: (n: number) => t("Show {n} more", { n }),
+    showLess: t("Show less"),
+  },
+  /** Request human review (D1). */
+  request: {
+    title: t("Request human review"),
+    bodyApp: t(
+      "Think we got it wrong? Someone from the Genex team will check your app, usually within a day. Players don't get it until then.",
+    ),
+    bodyTakedown: t(
+      "Think we got it wrong? Someone from the Genex team will check your game, usually within a day. It stays taken down until then.",
+    ),
+    label: t("Anything we should know? (optional)"),
+    labelOld: (min: number) => t("Tell us why (at least {min} characters)", { min }),
+    placeholder: t("For example: the coin page is our own shop, not a third party."),
+    counter: (count: number, max: number) => t("{count}/{max}", { count, max }),
+    cancel: t("Cancel"),
+    send: t("Send request"),
+    /** What a refusal says, by `GenexReviewRefusal`. */
+    refused: {
+      already_requested: t("You already asked. A person will look at it, usually within a day."),
+      already_appealed: t("You already asked. A person will look at it, usually within a day."),
+      with_person: t("A person at Genex is already reviewing it."),
+      decided_by_person: t("A person at Genex already decided this build. Change it and publish it again."),
+      not_appealable: t("This decision can't be reviewed again."),
+      note_too_short: (min: number) => t("Tell us why in at least {min} characters.", { min }),
+      nothing_to_ask: t("There's nothing to ask about right now."),
+    },
+  },
+  /** A settled card's one line in the chat's history (C2, C4, D2). */
+  history: {
+    published: t("Published"),
+    sent: t("Sent for review"),
+    live: t("Live"),
+    notApproved: t("Not approved"),
+    requested: t("Human review requested"),
+    fixes: (n: number) => t("{n, plural, one {# fix sent} other {# fixes sent}}", { n }),
+    takenDown: t("Taken down"),
+    publicAgain: t("Public again"),
+  },
+  /**
+   * The bell's row, the macOS notification and the toast (C5): a headline, then what it says. A
+   * turned-down or taken-down game waits for the person; the rest is news.
+   */
+  notice: {
+    takenDown: (title: string) => t("{title} was taken down", { title }),
+    notApproved: (title: string, app: string) =>
+      t("{title}'s {app, select, mac {Mac app} windows {Windows app} linux {Linux app} other {apps}} wasn't approved", {
+        title,
+        app,
+      }),
+    upheld: (title: string) => t("{title}: human review kept it down", { title }),
+    things: (n: number) => t("{n, plural, one {# thing to fix} other {# things to fix}}", { n }),
+    humanReview: t("Human review, usually within a day."),
+    /** A macOS notification's body for a game that waits: what to fix, and what a click does. */
+    systemThings: (n: number) =>
+      t(
+        "{n, plural, one {# thing to fix. Click to see it and fix it with your agent.} other {# things to fix. Click to see them and fix them with your agent.}}",
+        { n },
+      ),
+    /** The bell row's press for a game that waits: Fix with agent. */
+    fix: t("Fix"),
+    /** The toast's press: the game, with Publish open. */
+    open: t("Open"),
+  },
+  /** The sidebar's second line under a game's name (C1), by `GenexSidebarLine`. */
+  sidebar: {
+    public: t("Public"),
+    in_review: t("In review"),
+    human_review: t("Human review"),
+    not_approved: t("Not approved"),
+    taken_down: t("Taken down"),
+    fixing: (n: number) => t("{n, plural, one {Fixing # thing} other {Fixing # things}}", { n }),
+    checking_fixes: t("Checking fixes"),
+  },
+} as const;
+
 /** The Publish dialog's platform rows (`panels/plugins/genex/PublishPlatforms.tsx`). */
 export const PUBLISH_PLATFORM_WORDS = {
   label: t("Platforms"),
@@ -4959,6 +5151,7 @@ export const GENEX_WORDS = {
       prepare: t("Prepare"),
       upload: t("Upload"),
       test: t("Test"),
+      check: t("Check"),
       live: t("Go live"),
     },
   },

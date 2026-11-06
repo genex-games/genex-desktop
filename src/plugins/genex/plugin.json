@@ -1,7 +1,7 @@
 {
   "apiVersion": 3,
   "id": "genex",
-  "version": "1.15.2",
+  "version": "1.16.1",
   "name": "Genex plugin",
   "publisher": "Genex",
   "description": "3D models, characters, sound and art for your games, made in chat with Genex credits. Coding stays on your own provider.",
@@ -400,6 +400,20 @@
     {
       "name": "cover-pick",
       "label": "Use this cover"
+    },
+    {
+      "name": "review-status",
+      "label": "Review of this game's apps"
+    },
+    {
+      "name": "review-request",
+      "label": "Request human review",
+      "confirmation": "Ask a person at Genex to review this game's turned-down Mac, Windows or Linux app, or its takedown, with your note. An app Genex keeps no copy of is uploaded again from the game folder so a person can read it."
+    },
+    {
+      "name": "apps-resend",
+      "label": "Send apps again",
+      "confirmation": "Upload this game's ready Mac, Windows and Linux apps from its folder to Genex again, so Genex checks them before players get them. The game's web version stays as it is."
     }
   ],
   "toolbar": [

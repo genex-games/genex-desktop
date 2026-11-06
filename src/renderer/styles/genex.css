@@ -1147,6 +1147,13 @@ button.genex-publish-banner-name:hover {
   line-height: 20px;
   text-align: center;
 }
+/* An update's celebration: the version that players of that system get now. */
+.genex-publish-live-update {
+  color: var(--ink-2);
+  font-size: 13px;
+  line-height: 20px;
+  text-align: center;
+}
 .genex-publish-hint .genex-publish-text-button {
   font-family: inherit;
   color: var(--ink);
@@ -1945,4 +1952,242 @@ button.genex-publish-banner-name:hover {
   background: rgb(0 0 0 / 0.5);
   color: #fff;
   font: 500 11px / 14px var(--font-family-mono);
+}
+
+/* Genex's check of an app under the steps: the orb, its words and clock, then what it is. */
+.genex-publish-check {
+  display: grid;
+  gap: 6px;
+}
+.genex-publish-check-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 36px;
+  border-radius: var(--radius-control);
+  background: var(--hover-2);
+  color: var(--ink-2);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The review card, the same in the Publish dialog and the chat (review-card-view.ts). */
+.genex-review-card {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 14px;
+  border-radius: var(--radius-card);
+  background: var(--composer);
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 19px;
+}
+.genex-review-card[data-place="chat"] {
+  width: 100%;
+  max-width: 26rem;
+}
+/* In the dialog the card is part of it: flush with the rows, no box of its own. */
+.genex-review-card[data-place="dialog"] {
+  padding: 0;
+  background: transparent;
+}
+.genex-review-card[data-place="dialog"][data-one-line] {
+  padding: 10px 14px;
+  background: var(--hover-2);
+}
+.genex-review-card[data-one-line] {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  padding: 10px 14px;
+}
+.genex-review-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+}
+.genex-review-title > svg {
+  color: var(--green);
+  flex: none;
+}
+.genex-review-clock {
+  margin-inline-start: auto;
+  color: var(--ink-3);
+  font-family: var(--font-family-mono);
+  font-size: 12px;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+.genex-review-line,
+.genex-review-after {
+  color: var(--ink-2);
+}
+.genex-review-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.genex-review-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--red);
+}
+.genex-review-card[data-genex-review="offline"] .genex-review-dot {
+  background: var(--ink-3);
+}
+.genex-review-quote {
+  padding-inline-start: 10px;
+  border-inline-start: 2px solid var(--line-strong);
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+.genex-review-things {
+  display: grid;
+  gap: 4px;
+  padding-inline-start: 18px;
+  list-style: disc;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.genex-review-things li::marker {
+  color: var(--ink-3);
+}
+.genex-review-more,
+.genex-review-link {
+  justify-self: start;
+  color: var(--ink-2);
+  font-size: 12px;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in oklab, currentColor 40%, transparent);
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.genex-review-link:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.genex-review-presses {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.genex-review-card[data-place="dialog"] .genex-review-presses {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+.genex-review-card[data-place="dialog"] .genex-review-presses > :only-child {
+  grid-column: 1 / -1;
+}
+.genex-review-footer {
+  color: var(--ink-3);
+  font-size: 12px;
+  line-height: 17px;
+}
+.genex-review-card[data-place="dialog"] .genex-review-footer {
+  text-align: center;
+}
+.genex-review-problem {
+  color: color-mix(in oklab, var(--orange) 70%, var(--ink-2));
+  font-size: 12px;
+}
+/* The chat's live card: its cover at 16:9 over the words, the link beside Copy link and Open on Genex. */
+.genex-review-live-cover {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: 10px;
+  object-fit: cover;
+  background: var(--inset);
+}
+.genex-review-link-text {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-2);
+  font-family: var(--font-family-mono);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* An older review record in the chat: one quiet line that opens to what it said. */
+.genex-review-history {
+  display: grid;
+  gap: 6px;
+}
+.genex-review-history-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  justify-self: start;
+  color: var(--ink-3);
+  font-size: 13px;
+  cursor: pointer;
+}
+.genex-review-history-line:hover {
+  color: var(--ink-2);
+}
+.genex-review-history-ring {
+  width: 7px;
+  height: 7px;
+  border: 1.5px solid currentColor;
+  border-radius: 999px;
+}
+.genex-review-history[data-genex-review-history="taken_down"] .genex-review-history-ring,
+.genex-review-history[data-genex-review-history="upheld"] .genex-review-history-ring,
+.genex-review-history[data-genex-review-history="not_approved"] .genex-review-history-ring {
+  color: var(--red);
+}
+.genex-review-history[data-genex-review-history="live"] .genex-review-history-ring,
+.genex-review-history[data-genex-review-history="restored"] .genex-review-history-ring {
+  color: var(--green);
+}
+/* What an older record said, opened read only from its line: the card quieter, with no press. */
+.genex-review-settled .genex-review-title {
+  color: var(--ink-2);
+  font-weight: 500;
+}
+/* Request human review (D1). */
+.genex-review-request {
+  display: grid;
+  gap: 10px;
+  font-size: 13px;
+  line-height: 19px;
+}
+.genex-review-request-body {
+  color: var(--ink-2);
+}
+.genex-review-request-label {
+  color: var(--ink-2);
+  font-size: 12px;
+}
+.genex-review-request-note {
+  width: 100%;
+  min-height: 72px;
+  padding: 8px 10px;
+  border-radius: var(--radius-control);
+  background: var(--inset);
+  color: var(--ink);
+  resize: vertical;
+}
+.genex-review-request-counter {
+  justify-self: end;
+  color: var(--ink-3);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.genex-review-request-problem {
+  color: color-mix(in oklab, var(--orange) 70%, var(--ink-2));
+  font-size: 12px;
+}
+.genex-review-request-presses {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px;
 }

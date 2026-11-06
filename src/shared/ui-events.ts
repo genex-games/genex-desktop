@@ -177,6 +177,12 @@ export interface UiEventMap {
    * settle after its publish): its Listing draft cards read them again (`studio:items.local`). Host only.
    */
   "items.local": { project: string };
+  /**
+   * Genex's review of a game's apps or its takedown changed, as the host's review watch read it
+   * (`main/core/genex-review-watch.ts`): the Publish dialog, the chat's review card and the sidebar
+   * read it again. A nudge, never state. Host only.
+   */
+  "genex.review": { project: string };
 
   // — plugins and connectors —
   "plugins.changed": PluginChange;
@@ -291,6 +297,7 @@ export const UiEvent = {
   PlayGameLink: "play.game-link",
   ItemDrafted: "item.drafted",
   ItemsLocal: "items.local",
+  GenexReviewChanged: "genex.review",
   PluginsChanged: "plugins.changed",
   PluginEvent: "plugin.event",
   PluginConsent: "plugin.consent",
@@ -359,6 +366,7 @@ const HOST_ONLY: ReadonlySet<string> = new Set<UiEventType>([
   UiEvent.LiveBehind,
   UiEvent.ItemDrafted,
   UiEvent.ItemsLocal,
+  UiEvent.GenexReviewChanged,
 ]);
 
 /** Whether a harness notification names an event only the host sends. */

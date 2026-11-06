@@ -279,6 +279,23 @@ describe("one app sent", () => {
     );
   });
 
+  it("keeps where Genex holds a sent app and who decided, never the decider's address", () => {
+    const held = sentBuild({
+      build: { ...BUILD, review: "pending", reviewDetail: { stage: "checking", decidedBy: null, decidedAt: null } },
+    });
+    assert.deepEqual(held?.reviewDetail, { stage: "checking" });
+    const decided = sentBuild({
+      build: {
+        ...BUILD,
+        review: "rejected",
+        reviewDetail: { stage: "decided", decidedBy: "admin@genex.games", decidedAt: "2026-10-27T14:06:00.000Z" },
+      },
+    });
+    assert.deepEqual(decided?.reviewDetail, { stage: "decided", decidedAt: "2026-10-27T14:06:00.000Z" });
+    const older = sentBuild({ build: { ...BUILD, review: "pending" } });
+    assert.equal(older?.reviewDetail, undefined, "an older API's build has no detail");
+  });
+
   it("keeps a failure in the CLI's own last words, and an answer without a build as a failure", async () => {
     const failed = await sendNativeBuild(MAC, async () => {
       throw new Error(

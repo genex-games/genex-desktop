@@ -1,3 +1,4 @@
+import type { GenexReviewFixPayload, GenexReviewPayload } from "../shared/genex-review.ts";
 import { t, tc } from "../shared/i18n.ts";
 import { EngineId, providerInfo } from "../shared/providers.ts";
 import { harnessTurnFailure, TurnFailureCode } from "../shared/engine-requests.ts";
@@ -133,6 +134,8 @@ export const EntryKind = {
   Mentions: "mentions",
   /** A store item the game's agent made: its Listing draft card, with Put on sale (`item_drafted`). */
   ListingDraft: "listing-draft",
+  /** Genex's review of the game's apps or its takedown, or a Fix with agent press (`genex_review`, `genex_review_fix`). */
+  GenexReview: "genex-review",
 } as const;
 export type EntryKind = (typeof EntryKind)[keyof typeof EntryKind];
 
@@ -226,6 +229,19 @@ export type Entry =
    * turn that made it has ended, the item's latest draft (an earlier card of the same item comes down).
    */
   | { kind: typeof EntryKind.ListingDraft; id: string; draft: ListingRecord }
+  /**
+   * A change in Genex's review of the game, or a Fix with agent press, placed at its time. The game's
+   * newest is its live card, drawn from Genex's word now; an older one settles into one line.
+   */
+  | {
+      kind: typeof EntryKind.GenexReview;
+      id: string;
+      project?: string;
+      at: string;
+      review: Partial<GenexReviewPayload> | null;
+      fix: Partial<GenexReviewFixPayload> | null;
+      latest: boolean;
+    }
   /** A card with one affordance: Resume a paused run, prefill a steering message, or Rewind. */
   | {
       kind: typeof EntryKind.Action;
@@ -327,6 +343,7 @@ type ToolsEntry = Extract<Entry, { kind: typeof EntryKind.Tools }>;
 export type GenexCoverEntry = Extract<Entry, { kind: typeof EntryKind.GenexCover }>;
 /** A store item's Listing draft card. */
 export type ListingDraftEntry = Extract<Entry, { kind: typeof EntryKind.ListingDraft }>;
+export type GenexReviewEntry = Extract<Entry, { kind: typeof EntryKind.GenexReview }>;
 type ActionEntry = Extract<Entry, { kind: typeof EntryKind.Action }>;
 
 /** A plugin's permission card in the transcript. */
@@ -649,6 +666,7 @@ export function toEntries(events: EventEnvelope[], queueIds?: ReadonlyMap<string
   keepOfferedRewind(chat, events);
   placeLastCoverCard(chat);
   placeLastListings(chat);
+  markLatestReviews(chat.entries);
   for (const [runId, deliveries] of chat.runAssets) {
     const result = chat.runResults.get(runId);
     if (result) result.assets = deliveries;
@@ -716,6 +734,7 @@ function readEvent(chat: ChatDraft, event: EventEnvelope): void {
   settleWaitingCards(chat, event.data);
   if (readToolTraffic(chat, event)) return;
   if (holdListing(chat, event)) return;
+  if (readGenexReview(chat, event)) return;
   if (readQuiet(chat, event.data)) return;
   closeGroup(chat);
   for (const narrate of NARRATORS) narrate(chat, event);
@@ -1769,6 +1788,45 @@ function holdListing(chat: ChatDraft, event: EventEnvelope): boolean {
   chat.listings.push({ entry, thread: event.thread_id, placed: false });
   if (!chat.activeTurns.has(event.thread_id)) placeListings(chat, event.thread_id);
   return true;
+}
+
+/**
+ * A review record or a fix press (`genex_review`, `genex_review_fix`): its card goes up at its time,
+ * never held for the turn. A later record of the same press (Don't publish it automatically) changes
+ * no card: the live card reads the press from the log. True when the record was one.
+ */
+function readGenexReview(chat: ChatDraft, event: EventEnvelope): boolean {
+  const review = customPayload(event.data, CustomEvent.GenexReview);
+  const fix = review ? null : customPayload(event.data, CustomEvent.GenexReviewFix);
+  if (!review && !fix) return false;
+  const again =
+    fix !== null &&
+    chat.entries.some((entry) => entry.kind === EntryKind.GenexReview && entry.fix?.fixId === fix.fixId);
+  if (again) return true;
+  const project = review?.project ?? fix?.project;
+  chat.entries.push({
+    kind: EntryKind.GenexReview,
+    id: event.id,
+    ...(typeof project === "string" ? { project } : {}),
+    at: event.created_at,
+    review,
+    fix,
+    latest: false,
+  });
+  return true;
+}
+
+/** Each game's newest review card is its live one; the rest settle into lines. */
+function markLatestReviews(entries: Entry[]): void {
+  const seen = new Set<string>();
+  for (let at = entries.length - 1; at >= 0; at -= 1) {
+    const entry = entries[at];
+    if (entry?.kind !== EntryKind.GenexReview) continue;
+    const key = entry.project ?? "";
+    if (seen.has(key)) continue;
+    seen.add(key);
+    entry.latest = true;
+  }
 }
 
 /** The thread's held Listing draft cards go up, in the order they were made. */

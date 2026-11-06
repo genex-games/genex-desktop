@@ -105,6 +105,13 @@ export const GenexRoute = {
   generationRequest: (id: string) => `/api/generations/requests/${encodeURIComponent(id)}`,
   /** Take a game's web version off Genex, keeping its apps (`DELETE`). */
   web: (id: string) => `/api/games/${encodeURIComponent(id)}/web`,
+  /** A game's apps as their owner reads them: the live builds and the ones Genex holds or turned down. */
+  nativeBuilds: (id: string) => `/api/games/${encodeURIComponent(id)}/native-builds`,
+  /** Ask a person at Genex to review one app (`POST { note? }`). */
+  reviewRequest: (id: string, platform: string, arch: string) =>
+    `/api/games/${encodeURIComponent(id)}/native-builds/${encodeURIComponent(platform)}/${encodeURIComponent(arch)}/review-request`,
+  /** Ask a person at Genex to review a taken-down game (`POST { note? }`). */
+  appeal: (id: string) => `/api/projects/${encodeURIComponent(id)}/moderation/appeal`,
 } as const;
 
 /** Request options carrying `signal` only when there is one. */

@@ -20,7 +20,10 @@ import {
   GENEX_TITLE_MAX_CHARS,
   genexSlug,
   GenexAction,
+  GenexBuildReview,
   type GenexNativeRecord,
+  type GenexPublishJob,
+  GenexPublishJobState,
   type GenexPublishState,
 } from "../../../../shared/genex.ts";
 import type { PluginInfo } from "../../../../shared/plugins.ts";
@@ -35,11 +38,12 @@ import { OPEN_PLUGINS_EVENT } from "../../../ui/ComposerAddMenu.tsx";
 import { DialogSurface } from "../../../ui/dialog.tsx";
 import { Icon, type IconName } from "../../../ui/icons.tsx";
 import { Pending } from "../../../ui/Pending.tsx";
+import { StatusOrb } from "../../../ui/StatusOrb.tsx";
 import { StepBar } from "../../../ui/StepBar.tsx";
 import { useAsyncEffect } from "../../../use-async-effect.ts";
 import { useCopy } from "../../../use-copy.ts";
 import { richText } from "../../../rich-text.tsx";
-import { ACCOUNT_WORDS, GENEX_WORDS, problemWords } from "../../../words.ts";
+import { ACCOUNT_WORDS, GENEX_WORDS, problemWords, REVIEW_WORDS } from "../../../words.ts";
 import { MakingArt } from "../../MakingArt.tsx";
 import { PluginApproval } from "../../PluginApproval.tsx";
 import { readGenexShot } from "./genex-cover-shot.ts";
@@ -48,7 +52,9 @@ import {
   clock,
   GenexSetup,
   genexSetup,
+  heldApps,
   justPublished,
+  LinkTarget,
   offeredTitle,
   PublishGate,
   PublishStage,
@@ -57,7 +63,22 @@ import {
   publishReport,
   publishView,
   type StepView,
+  type WentLive,
+  wentLive,
+  withAppsReview,
 } from "./genex-publish-view.ts";
+import type { GenexReviewApp, GenexReviewRecord, GenexReviewStatus } from "../../../../shared/genex-review.ts";
+import { publishesAsWebGame } from "../../../../shared/project-workspace.ts";
+import { ReviewCard } from "./ReviewCard.tsx";
+import {
+  elapsedWords,
+  ReviewCardKind,
+  type ReviewCardView,
+  ReviewPlace,
+  ReviewPress,
+  reviewCardView,
+} from "./review-card-view.ts";
+import { useGenexFix, useGenexReview } from "./use-genex-review.ts";
 import { drawRocket, ROCKET_FPS, ROCKET_FRAMES, ROCKET_GRID, rocketScene } from "./publish-rocket.ts";
 import { useGenexStatus } from "./use-genex-status.ts";
 import { CoverControls, CoverMedia, CoverTool } from "./PublishCover.tsx";
@@ -69,6 +90,7 @@ import { PublishPlatforms, usePublishPlatforms } from "./PublishPlatforms.tsx";
 import {
   appsLabel,
   appsInReview,
+  appsTurnedDown,
   appsUpToDate,
   gateByPlugin,
   makesApps,
@@ -76,15 +98,13 @@ import {
   onlyApps,
   replacesAppsPage,
 } from "./publish-platforms-view.ts";
-import type { PublishPlatform } from "../../../../shared/publish-platforms.ts";
+import { type PublishPlatform, PublishTarget } from "../../../../shared/publish-platforms.ts";
 import { PublishShareLine } from "./PublishShare.tsx";
 import { useShareWhenLive } from "./use-publish-share.ts";
 import { Skeleton } from "../../../ui/Skeleton.tsx";
 
 const WORDS = GENEX_WORDS.publish;
 const ACCOUNT = GENEX_WORDS.account;
-/** Where the publish-open action sends the browser (the plugin's `PublishLinkTarget`). */
-const LinkTarget = { Gallery: "gallery" } as const;
 /** The celebration's canvas: 4 px a cell, drawn at half that on screen for sharp pixels. */
 const ROCKET_CANVAS_PX = 128;
 /** How long the link's pencil shows a ✓ once the link moved. */
@@ -98,13 +118,29 @@ const words = (e: unknown): string => (e instanceof Error ? e.message : String(e
 
 /** The running attempt's steps as one bar with their names; amber while it takes longer than usual. */
 function Progress({ view }: { view: PublishView }): JSX.Element {
+  const slow = view.slow || view.check?.slow === true;
   return (
-    <div className="genex-publish-progress" data-slow={view.slow || undefined}>
+    <div className="genex-publish-progress" data-slow={slow || undefined}>
       <StepBar
         steps={view.steps.map((step: StepView) => ({ key: step.step, label: step.label, state: step.state }))}
         label={WORDS.progress}
         valueText={view.phase}
       />
+      {view.check && !view.check.person && <CheckRow since={view.check.since} slow={view.check.slow} />}
+    </div>
+  );
+}
+
+/** Genex's check of the apps under the steps: its clock from when they were sent, and what it is. */
+function CheckRow({ since, slow }: { since: string; slow: boolean }): JSX.Element {
+  useElapsed(since);
+  return (
+    <div className="genex-publish-check" data-genex-publish-check data-slow={slow || undefined}>
+      <p className="genex-publish-check-row" role="status">
+        <StatusOrb />
+        <span>{REVIEW_WORDS.dialog.checking(elapsedWords(since, Date.now()))}</span>
+      </p>
+      <p className="genex-publish-hint">{slow ? REVIEW_WORDS.dialog.slow : REVIEW_WORDS.dialog.checkingLine}</p>
     </div>
   );
 }
@@ -940,25 +976,170 @@ function useAppsPublish(
   };
 }
 
+/**
+ * The cards of an app Genex turned down whose Fix with agent takes the dialog's press's place while
+ * the very build it turned down is what Publish would send: the plain turn-downs, and a fix on its way
+ * that Studio publishes by itself. A takedown, a fixed web game, a resend a person waits for and an
+ * automatic step taken back all keep the press: publishing is their way forward.
+ */
+const HOLDS_PRESS: ReadonlySet<string> = new Set([
+  ReviewCardKind.NotApproved,
+  ReviewCardKind.Update,
+  ReviewCardKind.Still,
+  ReviewCardKind.PersonKept,
+  ReviewCardKind.PersonDecided,
+  ReviewCardKind.Repeated,
+  ReviewCardKind.Requested,
+  ReviewCardKind.FixSent,
+]);
+
+/** Whether the card takes the press's place: a game with only apps, a plain turn-down, of the very build Publish sends. */
+const cardHoldsPress = (card: ReviewCardView | null, sendsTurnedDown: boolean, appsOnly: boolean): boolean =>
+  appsOnly && sendsTurnedDown && card !== null && HOLDS_PRESS.has(card.kind);
+
+/** Whether a publish of the game runs now, or its apps are going: Genex's word on them changes once it ends. */
+const publishRuns = (state: GenexPublishState | null): boolean => {
+  const job: GenexPublishJob | undefined = state?.job;
+  const running = job?.state === GenexPublishJobState.Running || job?.state === GenexPublishJobState.Unresolved;
+  return running || state?.native?.sending === true;
+};
+
+/** A game with apps, as Genex reviews them: the review, the dialog's card, and the record a celebration reads. */
+function useAppsReview(
+  plain: PublishView,
+  project: string,
+  state: GenexPublishState | null,
+  platforms: PublishPlatform[] | null,
+  appsOnly: boolean,
+) {
+  const native = state?.native;
+  const sent = native?.sent ?? [];
+  const apps = sent.length > 0 || (platforms?.some((row) => row.uploads && row.target !== PublishTarget.Web) ?? false);
+  // Genex is read again once a publish of the apps ends, and while a sent app waits for its word.
+  const status: GenexReviewStatus | null = useGenexReview(project, {
+    poll: true,
+    busy: apps && publishRuns(state),
+    held: sent.some((one) => one.review === GenexBuildReview.Pending),
+  });
+  const { fix, latest } = useGenexFix(project);
+  const game = useLibrary((s) => s.games.find((one) => one.name === project));
+  const record = status?.record ?? null;
+  // Only a game with apps has a review card to word.
+  const web = apps && game ? publishesAsWebGame(game) : !appsOnly;
+  const card = apps
+    ? reviewCardView({ status, fix, latest, title: "", sending: native?.sending, web, place: ReviewPlace.Dialog })
+    : null;
+  // An admin's apps go live at once: they come back with no review, so the dialog has no Check for them.
+  const admin = sent.length > 0 && sent.every((one) => one.review === undefined);
+  const input = { apps, appsOnly, admin, record, job: state?.job };
+  const sendsTurnedDown = platforms !== null && appsTurnedDown(platforms, native);
+  return {
+    status,
+    view: withAppsReview(plain, input),
+    input,
+    // The dialog's own press is the card's Publish: the card leaves it out.
+    card: state && card ? { ...card, presses: card.presses.filter((one) => one.press !== ReviewPress.Publish) } : null,
+    holdsPress: cardHoldsPress(card, sendsTurnedDown, appsOnly),
+    fixId: fix?.fixId,
+    record,
+  };
+}
+
+/** The apps' progress through Genex's check and the review card under the rows; nothing while it celebrates. */
+function AppsReview({
+  view,
+  review,
+  project,
+  quiet,
+}: {
+  view: PublishView;
+  review: ReturnType<typeof useAppsReview>;
+  project: string;
+  quiet: boolean;
+}): JSX.Element | null {
+  if (quiet) return null;
+  return (
+    <>
+      {(view.running || view.check) && <Progress view={view} />}
+      {review.card && !view.running && (
+        <ReviewCard
+          project={project}
+          view={review.card}
+          record={review.status?.record ?? null}
+          place={ReviewPlace.Dialog}
+          fixId={review.fixId}
+        />
+      )}
+    </>
+  );
+}
+
+/**
+ * The foot line of a game with only apps: that Studio tells when Genex's check ends, that players get
+ * nothing before Genex checked what the press sends (unless a send came back with no review, an
+ * admin's), or, live, that a takedown is heard of.
+ */
+function appsHint(
+  view: PublishView,
+  review: ReturnType<typeof useAppsReview>,
+  moment: { publishing: boolean; celebrate: boolean; appsOnly: boolean; pressed: boolean },
+): string | null {
+  if (!review.input.apps) return null;
+  if (moment.celebrate) return REVIEW_WORDS.dialog.liveFooter;
+  if (!moment.appsOnly) return null;
+  if (view.check) return REVIEW_WORDS.dialog.closeHint;
+  const beforePress = moment.pressed && !moment.publishing && !review.card;
+  return beforePress && !review.input.admin ? REVIEW_WORDS.dialog.hint : null;
+}
+
 /** Whether Allow remixing shows under the press: only while there is a publish to press that would carry it. */
 const remixLineShown = (pressShown: boolean, publishing: boolean, view: PublishView, waiting: boolean): boolean =>
   pressShown && !publishing && !view.terms && !waiting;
 
 /**
- * Whether the dialog celebrates: an attempt it watched just went live; a new press ends it. A game
- * whose apps Genex still reviews has not reached players, so it is not celebrated.
+ * Whether the dialog celebrates: an attempt it watched just went live, or an app Genex held when the
+ * dialog read it is live now; a new press ends it. A game whose apps Genex still reviews has not
+ * reached players, and an app already live when the dialog opened is no news: neither is celebrated.
+ * With it, the app that went live, when Genex's check of it ended while the dialog watched.
  */
-function useCelebration(view: PublishView, publishing: boolean, inReview: boolean): boolean {
+function useCelebration(
+  view: PublishView,
+  publishing: boolean,
+  inReview: boolean,
+  record: GenexReviewRecord | null,
+): { celebrate: boolean; went: WentLive | null } {
   const before = useRef<PublishView | null>(null);
+  const held = useRef<Map<string, GenexReviewApp>>(new Map());
   const [celebrate, setCelebrate] = useState(false);
+  const [went, setWent] = useState<WentLive | null>(null);
   useEffect(() => {
     if (justPublished(before.current, view) && !inReview) setCelebrate(true);
     before.current = view;
   }, [view, inReview]);
   useEffect(() => {
-    if (publishing) setCelebrate(false);
+    const live = wentLive(held.current, record);
+    if (live) {
+      setWent(live);
+      setCelebrate(true);
+    }
+    held.current = heldApps(record);
+  }, [record]);
+  useEffect(() => {
+    if (!publishing) return;
+    setCelebrate(false);
+    setWent(null);
   }, [publishing]);
-  return celebrate;
+  return { celebrate, went };
+}
+
+/** The line an update's celebration adds: the version players of that system get now. */
+function LiveUpdateLine({ went }: { went: WentLive | null }): JSX.Element | null {
+  if (!went?.update) return null;
+  return (
+    <p className="genex-publish-live-update" data-genex-publish-live-update>
+      {REVIEW_WORDS.dialog.liveUpdate(went.app.version, went.app.platform)}
+    </p>
+  );
 }
 
 /** What the dialog shows the publish with: its record, the game, its cover, and the way to close it. */
@@ -1026,7 +1207,7 @@ function useBannerTitle(
  * and link once it just went live, the link of a live game, or a failed attempt's line, and the presses.
  */
 function PublishBody({
-  view,
+  view: plain,
   record,
   project,
   cover,
@@ -1038,20 +1219,19 @@ function PublishBody({
 }): JSX.Element {
   const game = useLibrary((s) => s.games.find((g) => g.name === project));
   const { name, setTitle, onTitleDone } = useBannerTitle(record, project, offeredTitle(record.state, game, project));
-  const publishing = record.pressing === Pressing.Publish || view.running;
   const { platforms, apps, waiting, upToDate, inReview, replacesApps } = useAppsPublish(
     project,
     record.state?.native,
     record.state?.hostedWeb,
   );
-  const celebrate = useCelebration(view, publishing, inReview);
+  const review = useAppsReview(plain, project, record.state, platforms, apps !== null);
+  const view = review.view;
+  const publishing = record.pressing === Pressing.Publish || view.running;
+  const { celebrate, went } = useCelebration(view, publishing, inReview, review.record);
   const share = useShareWhenLive(project, celebrate);
   const failure = record.error ? { text: record.error, details: record.error } : view.failure;
-  const open = () => void record.act(GenexAction.PublishOpen, { target: LinkTarget.Gallery });
-  const change = { left: record.state?.renamesLeft, save: record.changeLink };
-  const opening = record.pressing === Pressing.Action;
   const pressShown = !celebrate;
-  const pressNeeded = pressHasWork(pressShown, view, publishing, { upToDate, inReview });
+  const pressNeeded = pressHasWork(pressShown, view, publishing, { upToDate, inReview }) && !review.holdsPress;
   return (
     <div
       className="genex-publish-body"
@@ -1086,15 +1266,17 @@ function PublishBody({
           onGenex={Boolean(record.state?.slug)}
           hostedWeb={record.state?.hostedWeb}
           onRemoveWeb={() => void record.act(GenexAction.PublishRemoveWeb)}
+          reviewed={review.card !== null || view.check !== null}
         />
-        {view.running && <Progress view={view} />}
+        <AppsReview view={view} review={review} project={project} quiet={celebrate} />
+        {celebrate && <LiveUpdateLine went={went} />}
         {failure && !publishing && <p className="genex-publish-failure">{failure.text}</p>}
         <PublishShareLine share={share} celebrate={celebrate} />
         <WhoPlays
           project={project}
           shown={pressShown && saysWhoPlays(view, publishing, Boolean(cover.making), Boolean(view.testLink))}
         />
-        {!publishing && <Links view={view} project={project} onOpen={open} opening={opening} change={change} />}
+        {!publishing && <Links view={view} project={project} {...linksOf(record)} />}
         {pressNeeded && (
           <Presses
             view={view}
@@ -1124,6 +1306,7 @@ function PublishBody({
           taking={Boolean(cover.taking)}
           record={record}
           name={name}
+          appsLine={appsHint(view, review, { publishing, celebrate, appsOnly: apps !== null, pressed: pressNeeded })}
         />
       </div>
     </div>
@@ -1147,6 +1330,13 @@ const pressHasWork = (
  */
 const settled = (view: PublishView, publishing: boolean, inReview: boolean): boolean =>
   (view.stage === PublishStage.Public || inReview) && !publishing && !view.failure && !view.terms;
+
+/** The public link's Open and its pencil, from the record: what `Links` takes besides the view. */
+const linksOf = (record: ReturnType<typeof usePublishRecord>) => ({
+  onOpen: () => void record.act(GenexAction.PublishOpen, { target: LinkTarget.Gallery }),
+  opening: record.pressing === Pressing.Action,
+  change: { left: record.state?.renamesLeft, save: record.changeLink },
+});
 
 /** The public link, then the tested draft players do not have yet: shown together, right above the press. */
 function Links({
@@ -1197,6 +1387,7 @@ function Hint({
   taking,
   record,
   name,
+  appsLine,
 }: {
   view: PublishView;
   publishing: boolean;
@@ -1206,8 +1397,11 @@ function Hint({
   taking: boolean;
   record: ReturnType<typeof usePublishRecord>;
   name: string;
+  /** A game with apps: what Genex does with them, in place of the line a web game gets. */
+  appsLine?: string | null;
 }): JSX.Element | null {
   const again = view.again;
+  if (appsLine) return <p className="genex-publish-hint">{appsLine}</p>;
   if (publishing && view.slow)
     return (
       <p className="genex-publish-hint">

@@ -6061,8 +6061,140 @@ export default {
   "Genex can’t play this game’s app on this computer.": "Genex가 이 컴퓨터에서 이 게임의 앱을 실행할 수 없어요.",
   "Open the game’s chat to have the agent package it.": "에이전트가 패키징하도록 게임 채팅을 열어 주세요.",
   "Not open in Unreal": "Unreal에서 열려 있지 않아요",
+  "A person at Genex already decided this build. Change it and publish it again.":
+    "Genex 담당자가 이미 이 빌드를 판단했어요. 수정한 뒤 다시 게시해 주세요.",
+  "A person at Genex is already reviewing it.": "Genex 담당자가 이미 검토하고 있어요.",
+  "A person at Genex is reviewing it": "Genex 담당자가 검토하고 있어요",
+  "A person at Genex reviewed it.": "Genex 담당자가 검토했어요.",
+  "After the fix, Studio asks a person at Genex to look again. Usually within a day.":
+    "수정 후 Studio가 Genex 담당자에게 다시 봐 달라고 요청해요. 보통 하루 안에 처리돼요.",
+  "After the fix, Studio asks a person at Genex to put it back. Usually within a day.":
+    "수정 후 Studio가 Genex 담당자에게 다시 게시해 달라고 요청해요. 보통 하루 안에 처리돼요.",
+  "After the fix, it publishes by itself and Genex checks it again.":
+    "수정 후 자동으로 게시되고 Genex가 다시 확인해요.",
+  "Anyone can find it on Genex.": "누구나 Genex에서 찾을 수 있어요.",
+  "Anything we should know? (optional)": "알려 줄 내용이 있나요? (선택)",
+  "Checking your fixes": "수정 사항 확인 중",
+  "Checking your {app, select, mac {Mac app} windows {Windows app} linux {Linux app} other {apps}}":
+    "{app, select, mac {Mac 앱 확인 중} windows {Windows 앱 확인 중} linux {Linux 앱 확인 중} other {앱 확인 중}}",
+  "Checking · {elapsed}": "확인 중 · {elapsed}",
+  "Don't ask automatically": "자동으로 요청하지 않기",
+  "Don't publish it automatically": "자동으로 게시하지 않기",
+  "Fix again": "다시 수정",
+  "Fix with agent": "에이전트로 수정",
+  "Fixed. Publish it, then ask a person at Genex to put it back.":
+    "수정했어요. 게시한 뒤 Genex 담당자에게 다시 올려 달라고 요청하세요.",
+  "For example: the coin page is our own shop, not a third party.": "예: 코인 페이지는 외부가 아닌 우리 상점이에요.",
+  "Genex checks your app before players get it. Usually a few minutes.":
+    "플레이어가 받기 전에 Genex가 앱을 확인해요. 보통 몇 분 걸려요.",
+  "Genex has nothing for this game's agent to fix": "이 게임의 에이전트가 고칠 것이 Genex에 없어요",
+  "Genex reads your app before players get it. Usually a few minutes.":
+    "플레이어가 받기 전에 Genex가 앱을 살펴봐요. 보통 몇 분 걸려요.",
+  "Genex review": "Genex 검토",
+  "Hidden from players until it's fixed and a person at Genex puts it back.":
+    "수정되고 Genex 담당자가 다시 올릴 때까지 플레이어에게 보이지 않아요.",
+  "Human review agreed with the check.": "사람 검토도 자동 확인과 같은 판단을 내렸어요.",
+  "Human review agreed with the takedown.": "사람 검토도 게시 중단과 같은 판단을 내렸어요.",
+  "Human review requested": "사람 검토 요청됨",
+  "Human review requested. A person reviews the next {app, select, mac {Mac app} windows {Windows app} linux {Linux app} other {apps}} you send.":
+    "사람 검토를 요청했어요. 다음에 보내는 {app, select, mac {Mac 앱} windows {Windows 앱} linux {Linux 앱} other {앱}}은 담당자가 검토해요.",
+  "Human review requested. Usually within a day. You can still fix it yourself.":
+    "사람 검토를 요청했어요. 보통 하루 안에 처리돼요. 직접 고칠 수도 있어요.",
+  "If Genex ever takes it down, you'll hear it here and by email.":
+    "Genex가 게시를 중단하면 여기와 이메일로 알려 드려요.",
+  "Keep the note under {max} characters.": "메모는 {max}자 이내로 써 주세요.",
+  "Nothing went public. After the fix, it publishes by itself and Genex checks it again.":
+    "아무것도 게시되지 않았어요. 수정 후 자동으로 게시되고 Genex가 다시 확인해요.",
+  "Open a game": "게임을 여세요",
+  "Open on Genex": "Genex에서 열기",
+  "Players keep the version they have. After the fix, it publishes by itself and Genex checks it again.":
+    "플레이어는 지금 버전을 그대로 써요. 수정 후 자동으로 게시되고 Genex가 다시 확인해요.",
+  "Players keep the {date} version.": "플레이어는 {date} 버전을 그대로 써요.",
+  "Public again": "다시 공개됨",
+  Published: "게시됨",
+  "Request human review": "사람 검토 요청",
+  "Send request": "요청 보내기",
+  "Sending the {app, select, mac {Mac app} windows {Windows app} linux {Linux app} other {apps}} again so a person can read it…":
+    "담당자가 볼 수 있도록 {app, select, mac {Mac 앱} windows {Windows 앱} linux {Linux 앱} other {앱}}을 다시 보내는 중…",
+  "Sent for review": "검토로 보냄",
+  "Sent to your agent. Publish it yourself when it's ready.": "에이전트에게 보냈어요. 준비되면 직접 게시하세요.",
+  "Sent to your agent. When it's done, Studio asks a person at Genex to put it back.":
+    "에이전트에게 보냈어요. 끝나면 Studio가 Genex 담당자에게 다시 올려 달라고 요청해요.",
+  "Sent to your agent. When it's done, Studio publishes it and Genex checks it again.":
+    "에이전트에게 보냈어요. 끝나면 Studio가 게시하고 Genex가 다시 확인해요.",
+  "Show {n} more": "{n}개 더 보기",
+  "Sign in to see what to fix": "로그인해서 고칠 점 보기",
+  "Someone from the Genex team agreed it's fine.": "Genex 팀이 문제없다고 확인했어요.",
+  "Taken down": "게시 중단",
+  "Taking longer than usual. If the check can't finish, a person at Genex reviews it.":
+    "평소보다 오래 걸리고 있어요. 확인이 끝나지 않으면 Genex 담당자가 검토해요.",
+  "Tell us why (at least {min} characters)": "이유를 알려 주세요 ({min}자 이상)",
+  "Tell us why in at least {min} characters.": "이유를 {min}자 이상 적어 주세요.",
+  "That fix isn't the game's latest one": "이 게임의 최신 수정이 아니에요",
+  "Sent to your agent. When it's done, Studio publishes it.": "에이전트에게 보냈어요. 끝나면 Studio가 게시해요.",
+  "Sent to your agent. When it's done, publish it, then ask a person at Genex to put it back.":
+    "에이전트에게 보냈어요. 끝나면 게시한 다음 Genex 담당자에게 다시 올려 달라고 요청하세요.",
+  "After the fix, publish it, then ask a person at Genex to put it back. Usually within a day.":
+    "수정 후 게시한 다음 Genex 담당자에게 다시 게시해 달라고 요청하세요. 보통 하루 안에 처리돼요.",
+  "This game's latest fix isn't waiting for a build": "이 게임의 최신 수정은 빌드를 기다리고 있지 않아요",
+  "The Genex team is reviewing this game.": "Genex 팀이 이 게임을 검토하고 있어요.",
+  "The fix isn't built yet. Build the {app, select, mac {Mac app} windows {Windows app} linux {Linux app} other {apps}} again and it publishes.":
+    "수정 사항이 아직 빌드되지 않았어요. {app, select, mac {Mac 앱} windows {Windows 앱} linux {Linux 앱} other {앱}}을 다시 빌드하면 게시돼요.",
+  "There's nothing to ask about right now.": "지금은 요청할 것이 없어요.",
+  "Think we got it wrong? Someone from the Genex team will check your app, usually within a day. Players don't get it until then.":
+    "판단이 틀린 것 같나요? Genex 팀이 앱을 확인해요. 보통 하루 안에 처리돼요. 그때까지 플레이어는 받을 수 없어요.",
+  "Think we got it wrong? Someone from the Genex team will check your game, usually within a day. It stays taken down until then.":
+    "판단이 틀린 것 같나요? Genex 팀이 게임을 확인해요. 보통 하루 안에 처리돼요. 그때까지 게시 중단 상태로 남아요.",
+  "This decision can't be reviewed again.": "이 결정은 다시 검토할 수 없어요.",
+  "Turned down 3 times this week, so a person at Genex reviews the next build. Usually within a day.":
+    "이번 주에 3번 거절되어 다음 빌드는 Genex 담당자가 검토해요. 보통 하루 안에 처리돼요.",
+  "Usually within a day. You'll hear here and by email.": "보통 하루 안에 처리돼요. 여기와 이메일로 알려 드려요.",
+  "Version {version} is live": "버전 {version} 게시됨",
+  "Version {version} is live for {app, select, mac {Mac} windows {Windows} linux {Linux} other {desktop}} players.":
+    "{app, select, mac {Mac} windows {Windows} linux {Linux} other {데스크톱}} 플레이어에게 버전 {version}이 게시됐어요.",
+  "You already asked. A person will look at it, usually within a day.":
+    "이미 요청했어요. 담당자가 확인해요. 보통 하루 안에 처리돼요.",
+  "You can close this. Studio tells you when it's done.": "닫아도 괜찮아요. 끝나면 Studio가 알려 드려요.",
+  "Your agent stopped before it finished.": "에이전트가 끝내기 전에 멈췄어요.",
+  "usually a few minutes": "보통 몇 분",
+  "{app, select, mac {Mac} windows {Windows} linux {Linux} other {Desktop}} players get it now.":
+    "{app, select, mac {Mac} windows {Windows} linux {Linux} other {데스크톱}} 플레이어가 이제 받을 수 있어요.",
+  "{count}/{max}": "{count}/{max}",
+  "{minutes}m {seconds}s": "{minutes}분 {seconds}초",
+  "{n, plural, one {# fix sent} other {# fixes sent}}": "{n, plural, other {수정 #개 보냄}}",
+  "{n, plural, one {Can't publish yet: # thing to fix} other {Can't publish yet: # things to fix}}":
+    "{n, plural, other {아직 게시할 수 없어요: 고칠 점 #개}}",
+  "{n, plural, one {Not approved: # thing still to fix after the re-check} other {Not approved: # things still to fix after the re-check}}":
+    "{n, plural, other {승인되지 않음: 다시 확인한 뒤에도 고칠 점 #개}}",
+  "{n, plural, one {Not approved: # thing to fix} other {Not approved: # things to fix}}":
+    "{n, plural, other {승인되지 않음: 고칠 점 #개}}",
+  "{n, plural, one {Taken down: # thing to fix} other {Taken down: # things to fix}}":
+    "{n, plural, other {게시 중단: 고칠 점 #개}}",
+  "{n, plural, one {Update not approved: # thing to fix} other {Update not approved: # things to fix}}":
+    "{n, plural, other {업데이트 승인되지 않음: 고칠 점 #개}}",
+  "{state, select, taken_down {Taken down} not_approved {Not approved} other {In review}} · reconnect to see what to fix":
+    "{state, select, taken_down {게시 중단} not_approved {승인되지 않음} other {검토 중}} · 다시 연결해서 고칠 점 보기",
+  "{title} is live!": "{title} 게시 완료!",
+  "{title} is public again": "{title} 다시 공개됨",
+  "A person at Genex is reviewing the {app, select, mac {Mac app} windows {Windows app} linux {Linux app} other {apps}}. Usually within a day.":
+    "Genex 담당자가 {app, select, mac {Mac 앱} windows {Windows 앱} linux {Linux 앱} other {앱}}을 검토하고 있어요. 보통 하루 안에 끝나요.",
+  "Checking fixes": "수정 사항 확인 중",
+  "Genex is checking the {app, select, mac {Mac app} windows {Windows app} linux {Linux app} other {apps}}. Usually a few minutes.":
+    "Genex가 {app, select, mac {Mac 앱} windows {Windows 앱} linux {Linux 앱} other {앱}}을 확인하고 있어요. 보통 몇 분 걸려요.",
+  "Human review": "사람 검토",
+  "Human review, usually within a day.": "사람 검토 중, 보통 하루 안에 끝나요.",
+  Public: "공개",
+  "{n, plural, one {# thing to fix. Click to see it and fix it with your agent.} other {# things to fix. Click to see them and fix them with your agent.}}":
+    "{n, plural, other {고칠 점 #개. 클릭해서 확인하고 에이전트로 고쳐 보세요.}}",
+  "{n, plural, one {# thing to fix. Open Publish to see it.} other {# things to fix. Open Publish to see them.}}":
+    "{n, plural, other {고칠 점 #개. 게시하기를 열어 확인하세요.}}",
+  "{n, plural, one {# thing to fix} other {# things to fix}}": "{n, plural, other {고칠 점 #개}}",
+  "{n, plural, one {Fixing # thing} other {Fixing # things}}": "{n, plural, other {#개 수정 중}}",
+  "{title} was taken down": "{title} 게시가 중단됐어요",
+  "{title}'s {app, select, mac {Mac app} windows {Windows app} linux {Linux app} other {apps}} wasn't approved":
+    "{title}의 {app, select, mac {Mac 앱} windows {Windows 앱} linux {Linux 앱} other {앱}}이 승인되지 않았어요",
+  "{title}: human review kept it down": "{title}: 사람 검토 후에도 게시 중단이 유지됐어요",
   "{count, plural, one {and # more error} other {and # more errors}}": "{count, plural, other {외 오류 #개}}",
-  "Fix with agent": "에이전트로 고치기",
   "Ask the agent to fix these errors": "이 오류를 고쳐 달라고 에이전트에게 요청",
   "Genex couldn’t build the {players} app of “{title}”. Fix these errors in the game’s code so it builds there, and keep the game working as it does on other systems. This computer can’t build for {players}, so check each fix carefully. Then tell me to press Build on Genex again.\n\n{errors}":
     "Genex가 “{title}”의 {players} 앱을 만들지 못했어요. 거기서 만들어지도록 게임 코드의 오류를 고치고, 다른 시스템에서는 지금처럼 동작하게 유지해 주세요. 이 컴퓨터로는 {players}용으로 만들 수 없으니 수정마다 꼼꼼히 확인해 주세요. 끝나면 Build on Genex를 다시 누르라고 알려 주세요.\n\n{errors}",

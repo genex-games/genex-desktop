@@ -46,6 +46,8 @@ const LOGGED: ReadonlySet<UiEventType> = new Set<UiEventType>([
   UiEvent.ToolPermission,
   // A store item the agent made: its Listing draft card is in the log (`item_drafted`).
   UiEvent.ItemDrafted,
+  // A change in a game's Genex review: its `genex_review` records are in the log, for the bell and the chat.
+  UiEvent.GenexReviewChanged,
 ]);
 
 const THREADS: ReadonlySet<UiEventType> = new Set<UiEventType>([

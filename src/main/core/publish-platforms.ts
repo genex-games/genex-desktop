@@ -143,17 +143,29 @@ export async function publishPlatforms(
   ];
 }
 
+/** Which apps a send takes beyond Publish's own: one platform's newest whatever its age, or only builds newer than a time. */
+export interface AppsChoice {
+  /** This platform's newest build, even when it is older than the game's last change: the build a person is asked to read. */
+  force?: string;
+  /** Only builds made after this time (ms since the epoch): what the agent built after a fix press. */
+  builtAfter?: number;
+}
+
 /**
  * The apps a Publish of `project` sends, by their place in its folder: each platform's newest build
- * that is not older than the game's last change. None while the CLI cannot send apps.
+ * that is not older than the game's last change (with `choice`, see {@link AppsChoice}). None while
+ * the CLI cannot send apps.
  */
 export async function publishedApps(
   core: Pick<StudioCore, "games" | "pluginBinding">,
   project: unknown,
   sendsApps = pinnedCliSendsApps(),
+  choice: AppsChoice = {},
 ): Promise<string[]> {
   if (!sendsApps) return [];
   const { mac, windows, linux, changed } = await folderFacts(core, project);
-  const fresh = (build: FoundBuild | undefined) => build !== undefined && !isStaleBuild(build, changed);
-  return [mac, windows, linux].filter(fresh).map((build) => build?.entry ?? "");
+  const builds = [mac, windows, linux].filter((build): build is FoundBuild => build !== undefined);
+  if (choice.force !== undefined) return builds.filter((build) => build.platform === choice.force).map((b) => b.entry);
+  const after = choice.builtAfter ?? Number.NEGATIVE_INFINITY;
+  return builds.filter((build) => !isStaleBuild(build, changed) && build.builtAt > after).map((build) => build.entry);
 }

@@ -42,6 +42,11 @@ const HOST_CUSTOM_EVENTS: ReadonlySet<unknown> = new Set([
   // A Listing draft card puts an item on sale from its button: only a real `genex shop add` result
   // that main read (`core/item-draft.ts`) draws one, never the harness or what an agent wrote.
   CustomEvent.ItemDrafted,
+  // A review card offers Fix with agent and Request human review, and its fix record lets Studio
+  // publish by itself once the agent is done: only Genex's answer as main read it, and the person's
+  // own press, write one (`core/genex-review-watch.ts`, `core/genex-review.ts`).
+  CustomEvent.GenexReview,
+  CustomEvent.GenexReviewFix,
 ]);
 
 /** Refuse the entire batch before writing any row or updating the recovery index. */

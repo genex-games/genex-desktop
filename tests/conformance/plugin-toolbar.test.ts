@@ -255,6 +255,14 @@ test("a finished turn in the open game's chat re-asks the buttons; another game'
   assert.equal(finished("lantern", null), null);
 });
 
+test("a change in the open game's Genex review re-asks the buttons (Publish's red dot); another game's does not", () => {
+  const changed = (project: string, open: string | null) =>
+    toolbarReaction({ type: UiEvent.GenexReviewChanged, payload: { project } } as UiEvent, [], open);
+  assert.equal(changed("asphalt", "asphalt"), "refresh");
+  assert.equal(changed("skate", "asphalt"), null);
+  assert.equal(changed("asphalt", null), null);
+});
+
 test("a plugin change re-asks every button; a plugin's toolbar event updates its own button", () => {
   const [entry] = toolbarItems([plugin("a", [item()])], "game");
   const event = (payload: unknown) => ({ type: UiEvent.PluginEvent, payload }) as UiEvent;

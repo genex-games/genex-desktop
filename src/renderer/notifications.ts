@@ -12,6 +12,11 @@ import { compareIds } from "../shared/compare-ids.ts";
  *
  * A build the person stopped is not news, and neither is one that ended in the chat they were
  * watching: it arrives already read.
+ *
+ * Genex's review of a game's apps or its takedown (`genex_review`) is one row per game, its newest
+ * change: a game taken down or an app turned down waits for the person until they press Fix with
+ * agent, ask a person, or it goes live again; a person reviewing it, and a game going live or public
+ * again, is news.
  */
 import { withdrawnId } from "../shared/chat-rewind.ts";
 import { PlanReviewState } from "../shared/composer.ts";
@@ -26,6 +31,7 @@ import { DAY_MS, MINUTE_MS } from "../shared/duration.ts";
 import { EventKind } from "../shared/event-log.ts";
 import { t } from "../shared/i18n.ts";
 import { ExecutionStatus, executionStep } from "../shared/run-state.ts";
+import { GenexReviewChange } from "../shared/genex-review.ts";
 import { LoopProfile } from "../shared/project-facts.ts";
 import { contractorIdentity } from "./chat-labels.ts";
 import { StageView } from "./stage.ts";
@@ -39,6 +45,7 @@ import {
   permissionTitleWords,
   permissionWords,
   problemWords,
+  REVIEW_WORDS,
   wasCancelled,
 } from "./words.ts";
 import { sizeWords } from "../shared/byte-size.ts";
@@ -56,6 +63,8 @@ export const NoticeKind = {
   Build: "build",
   SignIn: "signin",
   Play: "play",
+  /** Genex's review of a game's apps or its takedown (`genex_review`). */
+  Review: "review",
 } as const;
 export type NoticeKind = (typeof NoticeKind)[keyof typeof NoticeKind];
 
@@ -86,6 +95,11 @@ export interface Notice {
   /** A Play notice's game, and its name as the row says it. */
   slug?: string;
   title?: string;
+  /** A review row's first line in place of its game's name: "Midnight Asphalt was taken down". */
+  headline?: string;
+  /** What changed in a review row's game, and how many things it has to fix: its macOS and toast words. */
+  change?: GenexReviewChange;
+  count?: number;
 }
 
 export interface NoticeState {
@@ -108,6 +122,8 @@ const noticeKey = {
   build: (runId: string) => `build:${runId}`,
   signIn: (engine: string) => `signin:${engine}`,
   play: (slug: string) => `play:${slug}`,
+  /** A game's review: one row per game, its newest change, which waits while the game must be fixed. */
+  review: (project: string) => `review:${project}`,
 };
 const AUTOPLAN_PREFIX = noticeKey.autoplan("");
 
@@ -248,6 +264,13 @@ function readNoticeEvent(feed: FeedDraft, event: EventEnvelope): void {
     case CustomEvent.PlayInstallFailed:
     case CustomEvent.PlayUpdateAvailable:
       onPlayInstall(feed, event, custom.event_type);
+      break;
+    case CustomEvent.GenexReview:
+      onReview(feed, event);
+      break;
+    case CustomEvent.GenexReviewFix:
+      // Fix with agent pressed: the game no longer waits for the person.
+      if (project) settle(feed, (item) => item.key === noticeKey.review(project));
       break;
     default:
       break;
@@ -418,11 +441,206 @@ function onPlayInstall(feed: FeedDraft, event: EventEnvelope, kind: PlayInstallE
   });
 }
 
-/** Who a row is from: the provider for a sign-in, a Play game, else the game, a game still being named, or the Harness chat. */
+/**
+ * How a review row reads, by what changed: its headline and words, and whether it waits for the
+ * person. A newer change replaces the game's row: a request for a person, or the game live again,
+ * no longer waits.
+ */
+interface ReviewShown {
+  headline: string;
+  text: string;
+  waiting: boolean;
+  /** It is live again. */
+  done: boolean;
+}
+
+/** A review record's row; null for a change the bell does not tell (sent, a fix's end). */
+function reviewShown(
+  change: GenexReviewChange | undefined,
+  game: { title: string; app: string; count: number },
+): ReviewShown | null {
+  const { title, app, count } = game;
+  const waits = (headline: string): ReviewShown => ({
+    headline,
+    text: REVIEW_WORDS.notice.things(count),
+    waiting: true,
+    done: false,
+  });
+  const news = (headline: string, text: string, done: boolean): ReviewShown => ({
+    headline,
+    text,
+    waiting: false,
+    done,
+  });
+  switch (change) {
+    case GenexReviewChange.TakenDown:
+      return waits(REVIEW_WORDS.notice.takenDown(title));
+    case GenexReviewChange.NotApproved:
+      return waits(REVIEW_WORDS.notice.notApproved(title, app));
+    case GenexReviewChange.Upheld:
+      return waits(REVIEW_WORDS.notice.upheld(title));
+    case GenexReviewChange.WithPerson:
+    case GenexReviewChange.Requested:
+      return news(title, REVIEW_WORDS.notice.humanReview, false);
+    case GenexReviewChange.Live:
+      return news(REVIEW_WORDS.title.live(title), REVIEW_WORDS.line.anyone, true);
+    case GenexReviewChange.Restored:
+      return news(REVIEW_WORDS.title.publicAgain(title), REVIEW_WORDS.line.anyone, true);
+    default:
+      return null;
+  }
+}
+
+/** How many things a review record has to fix: its count, else its things. */
+const thingsCount = (review: CustomPayload<typeof CustomEvent.GenexReview>): number => {
+  if (typeof review.count === "number") return review.count;
+  return Array.isArray(review.things) ? review.things.length : 0;
+};
+
+/** Genex's review of a game changed: a row that waits for the person, news, or nothing. */
+function onReview(feed: FeedDraft, event: EventEnvelope): void {
+  const review = payloadOf(event, CustomEvent.GenexReview);
+  const project = words(review.project);
+  if (!project) return;
+  const title = words(review.title) ?? project;
+  const app = words(review.app?.platform) ?? "apps";
+  const shown = reviewShown(review.change, { title, app, count: thingsCount(review) });
+  if (!shown) return;
+  raise(feed, event, {
+    kind: NoticeKind.Review,
+    key: noticeKey.review(project),
+    project,
+    headline: shown.headline,
+    text: shown.text,
+    ...(review.change ? { change: review.change } : {}),
+    count: thingsCount(review),
+    ...(shown.waiting ? { waiting: true } : {}),
+    ...(shown.done ? { tone: NoticeTone.Done } : {}),
+  });
+}
+
+/** Who a row is from: the provider for a sign-in, a Play game, a review's headline, else the game, a game still being named, or the Harness chat. */
 export function noticeSource(notice: Notice, gameTitle: string | undefined, gameThread = true): string {
   if (notice.kind === NoticeKind.SignIn) return contractorIdentity(notice.engine ?? "").label;
   if (notice.kind === NoticeKind.Play) return notice.title ?? "";
+  if (notice.kind === NoticeKind.Review && notice.headline) return notice.headline;
   return gameTitle ?? (gameThread ? NOTICE_WORDS.newGame : NOTICE_WORDS.harness);
+}
+
+/** The review changes macOS is told of while Studio is in the background. */
+const REVIEW_SYSTEM: ReadonlySet<string> = new Set<GenexReviewChange>([
+  GenexReviewChange.TakenDown,
+  GenexReviewChange.NotApproved,
+  GenexReviewChange.Restored,
+  GenexReviewChange.Live,
+]);
+/** The review changes a toast tells while another game is open. */
+const REVIEW_TOAST: ReadonlySet<string> = new Set<GenexReviewChange>([
+  GenexReviewChange.TakenDown,
+  GenexReviewChange.NotApproved,
+  GenexReviewChange.Restored,
+]);
+/** Past this many notices arriving at once, macOS is told one line about them all. */
+const SYSTEM_NOTES_MAX = 3;
+
+const NOTICE_SUBTITLES: Partial<Record<NoticeKind, string>> = {
+  [NoticeKind.Question]: t("Waiting for your answer"),
+  [NoticeKind.Plan]: t("Plan ready for review"),
+  [NoticeKind.Permission]: t("Permission needed"),
+};
+
+/** One macOS notification: `id` names the row a click opens. */
+export interface SystemNote {
+  id?: string;
+  title: string;
+  subtitle?: string;
+  body: string;
+}
+
+/** Whether macOS is told of a notice: every one but a review change the bell alone tells. */
+const tellsSystem = (notice: Notice): boolean =>
+  notice.kind !== NoticeKind.Review || REVIEW_SYSTEM.has(notice.change ?? "");
+
+/** One notice as macOS says it: a review's headline, and for a game that waits what a click does. */
+function systemNote(notice: Notice, source: string): SystemNote {
+  if (notice.kind === NoticeKind.Review) {
+    const body = notice.waiting ? REVIEW_WORDS.notice.systemThings(notice.count ?? 0) : notice.text;
+    return { id: notice.id, title: notice.headline ?? source, body };
+  }
+  const subtitle = NOTICE_SUBTITLES[notice.kind];
+  return { id: notice.id, title: source, body: notice.text, ...(subtitle ? { subtitle } : {}) };
+}
+
+/**
+ * What macOS is told of the notices that arrived: nothing on the first read or while Studio is in
+ * front (the person sees the bell), else one note each, or one line for a burst.
+ */
+export function systemNotes(
+  arrived: readonly Notice[],
+  seen: { first: boolean; focused: boolean },
+  source: (notice: Notice) => string,
+): SystemNote[] {
+  if (seen.first || seen.focused) return [];
+  const told = arrived.filter(tellsSystem);
+  if (told.length <= SYSTEM_NOTES_MAX) return told.map((notice) => systemNote(notice, source(notice)));
+  const body = t("{count, plural, one {# update from your games} other {# updates from your games}}", {
+    count: told.length,
+  });
+  return [{ title: "Genex", body }];
+}
+
+/**
+ * The review notices a toast tells: a game taken down, an app turned down or a game public again,
+ * while Studio is in front and another game is open (the open game's own card already says it).
+ */
+export function reviewToasts(arrived: readonly Notice[], seen: { focused: boolean; openProject: string | null }) {
+  if (!seen.focused) return [];
+  return arrived.filter(
+    (notice) =>
+      notice.kind === NoticeKind.Review && REVIEW_TOAST.has(notice.change ?? "") && notice.project !== seen.openProject,
+  );
+}
+
+/** Where opening a row takes the person: a chat (a review row's with its game's Publish open), Settings, Play, or nowhere. */
+export type NoticeDestination =
+  | { to: "thread"; threadId: string; view?: Notice["view"]; publish?: string }
+  | { to: "settings" }
+  | { to: "play"; slug: string }
+  | { to: "nowhere" };
+
+/**
+ * Where a row goes when it is opened, from the bell, macOS or a toast: a sign-in to Settings, a Play
+ * game to its page, a review to its game's chat with Publish open (never a press: opening it sends
+ * nothing), anything else to its chat. After the bell's Fix (`fixed`), a review goes to its game's
+ * chat alone, where the agent has the fix. A chat that is gone goes nowhere.
+ */
+export function noticeDestination(
+  notice: Notice,
+  chatExists: (threadId: string) => boolean,
+  fixed = false,
+): NoticeDestination {
+  if (notice.kind === NoticeKind.SignIn) return { to: "settings" };
+  if (notice.kind === NoticeKind.Play) return notice.slug ? { to: "play", slug: notice.slug } : { to: "nowhere" };
+  if (!chatExists(notice.threadId)) return { to: "nowhere" };
+  if (notice.kind === NoticeKind.Review && notice.project && !fixed)
+    return { to: "thread", threadId: notice.threadId, publish: notice.project };
+  return { to: "thread", threadId: notice.threadId, ...(notice.view ? { view: notice.view } : {}) };
+}
+
+/**
+ * The bell's Fix on a review row: Fix with agent on its game (the press is the consent to the brief it
+ * sends the game's chat), then the game's chat. A failed press still opens the chat, where its card is.
+ */
+export async function pressReviewFix(
+  api: { genexFixReview(project: string, options: { autoPublish: boolean }): Promise<unknown> },
+  notice: Notice,
+  go: (notice: Notice) => void,
+  failed: (error: unknown) => void,
+): Promise<void> {
+  if (notice.kind === NoticeKind.Review && notice.project) {
+    await api.genexFixReview(notice.project, { autoPublish: true }).catch(failed);
+  }
+  go(notice);
 }
 
 /** Rows still waiting now; a plan that has started by itself no longer is. */

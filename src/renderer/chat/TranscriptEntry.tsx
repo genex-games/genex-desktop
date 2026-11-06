@@ -23,6 +23,7 @@ import { ChatDisclosure } from "./ChatDisclosure.tsx";
 import { CommandRun } from "./CommandRun.tsx";
 import { GenexCoverCard } from "./GenexCoverCard.tsx";
 import { ListingDraftCard } from "./ListingDraftCard.tsx";
+import { GenexReviewCard } from "./GenexReviewCard.tsx";
 import { ChatQuestion } from "./ChatQuestion.tsx";
 import { EngineLinkLine } from "./EngineLinkLine.tsx";
 import { RewindLine } from "./RewindLine.tsx";
@@ -187,6 +188,8 @@ function CardEntry({ entry, context }: { entry: ConversationEntry; context: Tran
       return <PluginSuggestionCard entry={entry} onNotice={context.onNotice} onTurnedOn={context.onPluginTurnedOn} />;
     case EntryKind.ListingDraft:
       return <ListingDraftCard draft={entry.draft} />;
+    case EntryKind.GenexReview:
+      return <GenexReviewCard entry={entry} project={context.project} />;
     default:
       return null;
   }

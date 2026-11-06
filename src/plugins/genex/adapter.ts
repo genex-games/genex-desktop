@@ -42,6 +42,14 @@ import {
   GenexWebRefusal,
 } from "../../shared/genex.ts";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
+import {
+  type GenexReviewRecord,
+  GenexReviewRefusal,
+  type GenexReviewRequestAnswer,
+  type GenexReviewStatus,
+  type GenexTakedown,
+  REVIEW_NOTE_CHARS,
+} from "../../shared/genex-review.ts";
 import { errorMessage } from "../../shared/errors.ts";
 import { t } from "../../shared/i18n.ts";
 import { isBlankStill } from "../../shared/preview-contract.ts";
@@ -69,6 +77,21 @@ import {
   sendCloudBuild,
   watchCloudBuild,
 } from "./cloud-build.ts";
+import {
+  pinnedCliReviews,
+  readCameBack,
+  readFailed,
+  readReviewSaved,
+  refusalOf,
+  requestedApps,
+  REVIEW_FILE,
+  ReviewReadSource,
+  type ReviewSaved,
+  reviewRecordOf,
+  reviewStatusOf,
+  sentWithReview,
+  toldOf,
+} from "./native-review.ts";
 import {
   appClipCommit,
   listingOf,
@@ -240,6 +263,8 @@ const ASSET_TIMEOUT_MS = 3 * MINUTE_MS;
 const PUBLISH_TIMEOUT_MS = 20 * MINUTE_MS;
 /** How long one app's `genex native publish` may take: zipping, hashing and uploading a large build. */
 const NATIVE_PUBLISH_TIMEOUT_MS = 60 * MINUTE_MS;
+/** How long a read of a game's review may take through the CLI. */
+const REVIEW_READ_TIMEOUT_MS = MINUTE_MS;
 /** Where a publish's apps are recorded in its workspace, apart from `publish.json`. */
 const NATIVE_FILE = "native.json";
 /** Bounded so a waiting agent answers well inside the host's 190 s invocation ceiling. */
@@ -348,6 +373,8 @@ const MESSAGE = {
     "Waiting for Genex's terms used up this call, so nothing was submitted or charged. Make this request again now that they are accepted.",
   TermsPending:
     "Genex's terms changed and the user has not accepted them yet, so nothing was submitted or charged. Studio shows them Review in the chat and in the sidebar: ask them to accept the terms, then make this request again.",
+  NotAReview: "Genex answered without the game's review",
+  NoteTooLong: () => t("Keep the note under {max} characters.", { max: REVIEW_NOTE_CHARS }),
 } as const;
 
 /**
@@ -451,6 +478,22 @@ function readNativeSaved(value: unknown): NativeSaved {
   };
 }
 
+/**
+ * The record a send of `apps` starts from: empty, or what `kept` says of the game's other platforms,
+ * so an app sent again on its own leaves the others' rows as they were.
+ */
+function recordKeeping(jobId: string, kept: NativeSaved | undefined, apps: readonly NativeUpload[]): NativeSaved {
+  if (!kept) return { jobId, sent: [], failed: [] };
+  const sending = new Set<string>(apps.map((app) => app.platform));
+  const other = (entry: { platform: string }) => !sending.has(entry.platform);
+  return {
+    jobId,
+    sent: kept.sent.filter(other),
+    failed: kept.failed.filter(other),
+    ...(kept.listing ? { listing: kept.listing } : {}),
+  };
+}
+
 /** How long the cover's own steps may take; tests shorten them. */
 interface CoverTimeouts {
   shotMs: number;
@@ -545,6 +588,8 @@ export class GenexTools {
   #nativeSteps = new Map<string, NativeStep>();
   /** Whether this CLI has `genex native`; tests say so of their stand-in. */
   readonly #sendsApps: boolean;
+  /** Whether this CLI has `genex review`; else the plugin reads the API's answer for the apps itself. */
+  readonly #readsReviews: boolean;
   /** Whether the pinned Genex CLI takes `--replace-native-page` on its promotion and listing. */
   readonly #replacesNativePage: boolean;
   /** Whether this CLI pushes a game's source from another folder (`--source`); tests say so of their stand-in. */
@@ -603,6 +648,8 @@ export class GenexTools {
       sendsSource?: boolean;
       /** Whether the CLI asks Genex to build apps (`genex native build`); else read from the pinned CLI's version. */
       buildsApps?: boolean;
+      /** Whether the CLI reads a game's review (`genex review`); else read from the pinned CLI's version. */
+      readsReviews?: boolean;
       /** How a build on Genex waits between its status reads; tests make it instant. */
       cloudSleep?: CloudBuildDeps["sleep"];
       /** Signs and notarizes a Mac app under the creator's Apple ID; the system tools unless a test stands in. */
@@ -632,6 +679,7 @@ export class GenexTools {
     this.#replacesNativePage = options.replacesNativePage ?? pinnedCliReplacesNativePage();
     this.#sendsSource = options.sendsSource ?? pinnedCliSendsSource();
     this.#buildsApps = options.buildsApps ?? pinnedCliBuildsApps();
+    this.#readsReviews = options.readsReviews ?? pinnedCliReviews();
     this.#cloudSleep = options.cloudSleep ?? ((ms, signal) => sleep(ms, undefined, { signal }).catch(() => {}));
     this.#notarize =
       options.notarize ?? ((app, signing, signal) => notarizeMacApp(app, signing, { run: systemNotarizeRun }, signal));
@@ -2041,12 +2089,184 @@ export class GenexTools {
   /** A game's apps as its last publish sent them, and whether they are going now. */
   async #nativeRecord(project: string): Promise<GenexNativeRecord> {
     const saved = readNativeSaved(await readJsonOr(path.join(this.#publishDir(project), NATIVE_FILE)));
+    // Genex's later word on each sent app (`review.json`), so its row says where it stands now.
+    const { record } = readReviewSaved(await readJsonOr(this.#reviewFile(project)));
     return {
       supported: this.#sendsApps,
       sending: this.#nativeSteps.has(project),
       ...saved,
+      sent: sentWithReview(saved.sent, record),
       cloud: await this.#cloud(project),
     };
+  }
+  /**
+   * Send `apps` again on their own, keeping what the record says of the game's other apps: an app a
+   * person reviews only once it is sent again, or one the agent fixed. Not while a publish of the game
+   * runs, or its apps already go. Answers at once; the record says how the send goes.
+   */
+  async resendApps(project: string, apps: readonly NativeUpload[]): Promise<GenexNativeRecord> {
+    if (!this.#sendsApps || apps.length === 0) throw new Error(PUBLISH_MESSAGE.NoAppsRefusal());
+    if (!this.#publishing(project)) {
+      const kept = readNativeSaved(await readJsonOr(path.join(this.#publishDir(project), NATIVE_FILE)));
+      this.#startNativeStep(project, kept.jobId ?? randomUUID(), apps, kept);
+    }
+    return this.#nativeRecord(project);
+  }
+  /** Settles once the game's apps being sent have gone; for tests. */
+  async appsSent(project: string): Promise<void> {
+    await this.#nativeSteps.get(project)?.done;
+  }
+  // ── the game's review ────────────────────────────────────────────────────────────────────
+  /** Whether a publish of the game runs, or its apps are going: what Genex says of it is changing then. */
+  #publishing(project: string): boolean {
+    return this.#publishJobs.has(project) || this.#nativeSteps.has(project);
+  }
+  #reviewFile(project: string): string {
+    return path.join(this.#publishDir(project), REVIEW_FILE);
+  }
+  /**
+   * What Genex says of the game's review: the record `review.json` keeps, read from Genex again first
+   * with `refresh` (signed in, on Genex, and never while a publish of the game runs). `told` keeps what
+   * the host told the person instead, and reads nothing.
+   */
+  async reviewStatus(project: string, options: { refresh?: unknown; told?: unknown } = {}): Promise<GenexReviewStatus> {
+    await this.init();
+    const file = this.#reviewFile(project);
+    let saved = readReviewSaved(await readJsonOr(file));
+    const state = await this.#linkedPublishState(project);
+    const connected = Boolean(await this.#token());
+    const publishing = this.#publishing(project);
+    const told = toldOf(options.told);
+    if (told) {
+      saved = { ...saved, told };
+      await this.#saveReview(project, saved);
+    } else if (options.refresh === true && connected && state.slug && !publishing) {
+      saved = await this.#readReview(project, state, saved);
+      await this.#saveReview(project, saved);
+    }
+    return reviewStatusOf(saved, connected, publishing);
+  }
+  /** The game's review as `review.json` keeps it, read from nothing else; null before any read. */
+  async keptReview(project: string): Promise<GenexReviewRecord | null> {
+    return readReviewSaved(await readJsonOr(this.#reviewFile(project))).record;
+  }
+  async #saveReview(project: string, saved: ReviewSaved): Promise<void> {
+    await mkdir(this.#publishDir(project), { recursive: true, mode: 0o700 });
+    await atomicWriteJson(this.#reviewFile(project), saved);
+  }
+  /** The game's review read from Genex into what is kept, or the kept one with the failure counted. */
+  async #readReview(project: string, state: GenexPublishState, saved: ReviewSaved): Promise<ReviewSaved> {
+    try {
+      const at = new Date(this.#now()).toISOString();
+      if (this.#readsReviews) return readCameBack(saved, await this.#reviewOfCli(project), ReviewReadSource.Review, at);
+      return readCameBack(saved, await this.#reviewOfApi(project, state), ReviewReadSource.List, at);
+    } catch (error) {
+      return readFailed(saved, statusOf(error) === HTTP_UNAUTHORIZED);
+    }
+  }
+  /** `genex review --json --no-brief` in the publish workspace: the CLI reads the apps and the takedown. */
+  async #reviewOfCli(project: string): Promise<GenexReviewRecord> {
+    const dir = this.#publishDir(project);
+    await mkdir(path.join(dir, "home"), { recursive: true, mode: 0o700 });
+    const answer = await this.#spawnCli(dir, ["review", "--no-brief"], undefined, {
+      timeoutMs: REVIEW_READ_TIMEOUT_MS,
+      parse: true,
+      home: path.join(dir, "home"),
+    });
+    const record = reviewRecordOf({ review: answer });
+    if (!record) throw new Error(MESSAGE.NotAReview);
+    return record;
+  }
+  /**
+   * The API's answer for the game's apps (when its last publish sent any) and the owner read of the
+   * game, which names its takedown. CLIs before 1.38.2 answer only the live builds from `native list
+   * --json`, so the plugin asks the API itself, with the same sign-in: one read for every CLI.
+   */
+  async #reviewOfApi(project: string, state: GenexPublishState): Promise<GenexReviewRecord> {
+    const saved = readNativeSaved(await readJsonOr(path.join(this.#publishDir(project), NATIVE_FILE)));
+    const hasApps = saved.sent.length > 0 && typeof state.projectId === "string";
+    const native = hasApps && state.projectId ? await this.#fetch(GenexRoute.nativeBuilds(state.projectId)) : {};
+    const read = await this.#fetch(GenexRoute.projectBySlug(String(state.slug)));
+    const record = reviewRecordOf({ native, project: read?.project });
+    if (!record) throw new Error(MESSAGE.NotAReview);
+    return record;
+  }
+  /**
+   * Ask a person at Genex to review the game: its takedown when it is taken down, else each app that
+   * allows a request (or the one `platform` and `arch` name), with the creator's `note`. An app Genex
+   * keeps no copy of is sent again at once from `uploads`. A refusal Genex or Studio can name comes back
+   * as its code; nothing is asked for a note over {@link REVIEW_NOTE_CHARS} characters.
+   */
+  async requestReview(
+    project: string,
+    args: { platform?: unknown; arch?: unknown; note?: unknown },
+    uploads: readonly NativeUpload[],
+  ): Promise<GenexReviewRequestAnswer> {
+    const note = typeof args.note === "string" ? args.note.trim() : "";
+    if (note.length > REVIEW_NOTE_CHARS) throw new Error(MESSAGE.NoteTooLong());
+    if (!(await this.#token())) throw new Error(PUBLISH_MESSAGE.ConnectFirstRefusal());
+    const state = await this.#linkedPublishState(project);
+    if (!state.projectId) throw new Error(PUBLISH_MESSAGE.NotOnGenexRefusal());
+    const { record } = readReviewSaved(await readJsonOr(this.#reviewFile(project)));
+    const body = JSON.stringify(note ? { note } : {});
+    const answer = record?.takedown
+      ? await this.#askAboutTakedown(state.projectId, record.takedown, note, body)
+      : await this.#askAboutApps(project, state.projectId, record, args, body, uploads);
+    if (!answer.refused) await this.reviewStatus(project, { refresh: true });
+    return answer;
+  }
+  /** The takedown's appeal; an old API's note floor and a takedown never reviewed again are refused first. */
+  async #askAboutTakedown(
+    id: string,
+    takedown: GenexTakedown,
+    note: string,
+    body: string,
+  ): Promise<GenexReviewRequestAnswer> {
+    const none = { requested: [], takedown: true };
+    if (!takedown.appealable) return { ...none, refused: GenexReviewRefusal.NotAppealable };
+    if (takedown.noteMin && note.length < takedown.noteMin)
+      return { ...none, refused: GenexReviewRefusal.NoteTooShort };
+    const refused = await this.#post(GenexRoute.appeal(id), body);
+    return refused ? { ...none, refused } : none;
+  }
+  /** Each app that allows a request, asked about in turn; the first refusal ends it. */
+  async #askAboutApps(
+    project: string,
+    id: string,
+    record: GenexReviewRecord | null,
+    args: { platform?: unknown; arch?: unknown },
+    body: string,
+    uploads: readonly NativeUpload[],
+  ): Promise<GenexReviewRequestAnswer> {
+    const apps = requestedApps(record, args.platform, args.arch);
+    if (apps.length === 0) return { requested: [], takedown: false, refused: GenexReviewRefusal.NothingToAsk };
+    const requested: GenexReviewRequestAnswer["requested"] = [];
+    for (const app of apps) {
+      const answer = await this.#fetch(GenexRoute.reviewRequest(id, app.platform, app.arch), { method: "POST", body })
+        .then((value: unknown) => ({ value }))
+        .catch((error: unknown) => {
+          const refused = refusalOf(codeOf(error));
+          if (refused) return { refused };
+          throw error;
+        });
+      if ("refused" in answer) return { requested, takedown: false, refused: answer.refused };
+      const resend = (answer.value as { resend?: unknown } | null)?.resend === true;
+      requested.push({ platform: app.platform, arch: app.arch, resend });
+    }
+    const again = uploads.filter((upload) => requested.some((app) => app.resend && app.platform === upload.platform));
+    if (again.length > 0) await this.resendApps(project, again);
+    return { requested, takedown: false };
+  }
+  /** POST `body` to `route`: undefined once Genex took it, its refusal's code when it named one Studio knows. */
+  async #post(route: string, body: string): Promise<GenexReviewRefusal | undefined> {
+    try {
+      await this.#fetch(route, { method: "POST", body });
+      return undefined;
+    } catch (error) {
+      const refused = refusalOf(codeOf(error));
+      if (refused) return refused;
+      throw error;
+    }
   }
   // ── apps Genex builds ────────────────────────────────────────────────────────────────────
   /**
@@ -2156,11 +2376,11 @@ export class GenexTools {
     await this.#stopNativeStep(project);
     await this.#startNativeStep(project, jobId, apps).done;
   }
-  #startNativeStep(project: string, jobId: string, apps: readonly NativeUpload[]): NativeStep {
+  #startNativeStep(project: string, jobId: string, apps: readonly NativeUpload[], kept?: NativeSaved): NativeStep {
     const controller = new AbortController();
     this.#controllers.set(controller, { project });
     const step: NativeStep = { jobId, controller, done: Promise.resolve() };
-    step.done = this.#sendApps(project, jobId, apps, controller.signal)
+    step.done = this.#sendApps(project, jobId, apps, controller.signal, undefined, kept)
       .then(() => {})
       .catch(() => {})
       .finally(() => {
@@ -2173,7 +2393,9 @@ export class GenexTools {
   /**
    * Each app through `genex native publish`, recorded as it goes: what went live and what did not.
    * With `gallery`, the game is listed under its title with the first app that goes (a game with only
-   * apps); the record then keeps Genex's answer.
+   * apps); the record then keeps Genex's answer. With `kept`, the record keeps what it says of the
+   * other platforms (an app sent again on its own). The game's review (`review.json`) is never
+   * touched: only a read of Genex writes it.
    */
   async #sendApps(
     project: string,
@@ -2181,10 +2403,11 @@ export class GenexTools {
     apps: readonly NativeUpload[],
     signal: AbortSignal,
     gallery?: { title: string },
+    kept?: NativeSaved,
   ): Promise<NativeSaved> {
     const dir = this.#publishDir(project);
     const file = path.join(dir, NATIVE_FILE);
-    const record: NativeSaved = { jobId, sent: [], failed: [] };
+    const record = recordKeeping(jobId, kept, apps);
     await mkdir(path.join(dir, "home"), { recursive: true, mode: 0o700 });
     await atomicWriteJson(file, record);
     for (const app of apps) {

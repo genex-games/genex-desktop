@@ -6352,9 +6352,149 @@ export default {
     "Genex kann die App dieses Spiels auf diesem Computer nicht starten.",
   "Open the game’s chat to have the agent package it.": "Öffne den Chat des Spiels, damit der Agent es verpackt.",
   "Not open in Unreal": "Nicht in Unreal geöffnet",
+  "A person at Genex already decided this build. Change it and publish it again.":
+    "Jemand bei Genex hat über diesen Build schon entschieden. Ändere ihn und veröffentliche ihn erneut.",
+  "A person at Genex is already reviewing it.": "Jemand bei Genex prüft es schon.",
+  "A person at Genex is reviewing it": "Jemand bei Genex prüft es",
+  "A person at Genex reviewed it.": "Jemand bei Genex hat es geprüft.",
+  "After the fix, Studio asks a person at Genex to look again. Usually within a day.":
+    "Nach der Korrektur bittet Studio jemanden bei Genex, noch mal draufzuschauen. Meist innerhalb eines Tages.",
+  "After the fix, Studio asks a person at Genex to put it back. Usually within a day.":
+    "Nach der Korrektur bittet Studio jemanden bei Genex, es wieder freizuschalten. Meist innerhalb eines Tages.",
+  "After the fix, it publishes by itself and Genex checks it again.":
+    "Nach der Korrektur wird es von selbst veröffentlicht und Genex prüft es erneut.",
+  "Anyone can find it on Genex.": "Alle können es auf Genex finden.",
+  "Anything we should know? (optional)": "Sollten wir etwas wissen? (optional)",
+  "Checking your fixes": "Deine Korrekturen werden geprüft",
+  "Checking your {app, select, mac {Mac app} windows {Windows app} linux {Linux app} other {apps}}":
+    "{app, select, mac {Deine Mac-App wird geprüft} windows {Deine Windows-App wird geprüft} linux {Deine Linux-App wird geprüft} other {Deine Apps werden geprüft}}",
+  "Checking · {elapsed}": "Prüfung · {elapsed}",
+  "Don't ask automatically": "Nicht automatisch fragen",
+  "Don't publish it automatically": "Nicht automatisch veröffentlichen",
+  "Fix again": "Noch mal korrigieren",
+  "Fix with agent": "Mit Agent korrigieren",
+  "Fixed. Publish it, then ask a person at Genex to put it back.":
+    "Korrigiert. Veröffentliche es und bitte dann jemanden bei Genex, es wieder freizuschalten.",
+  "For example: the coin page is our own shop, not a third party.":
+    "Zum Beispiel: Die Münzseite ist unser eigener Shop, kein fremder.",
+  "Genex checks your app before players get it. Usually a few minutes.":
+    "Genex prüft deine App, bevor Spieler sie bekommen. Meist ein paar Minuten.",
+  "Genex has nothing for this game's agent to fix": "Genex hat nichts, was der Agent dieses Spiels korrigieren müsste",
+  "Genex reads your app before players get it. Usually a few minutes.":
+    "Genex liest deine App, bevor Spieler sie bekommen. Meist ein paar Minuten.",
+  "Genex review": "Genex-Prüfung",
+  "Hidden from players until it's fixed and a person at Genex puts it back.":
+    "Für Spieler verborgen, bis es korrigiert ist und jemand bei Genex es wieder freischaltet.",
+  "Human review agreed with the check.": "Die Prüfung durch einen Menschen hat die automatische bestätigt.",
+  "Human review agreed with the takedown.": "Die Prüfung durch einen Menschen hat die Sperre bestätigt.",
+  "Human review requested": "Prüfung durch einen Menschen angefragt",
+  "Human review requested. A person reviews the next {app, select, mac {Mac app} windows {Windows app} linux {Linux app} other {apps}} you send.":
+    "Prüfung durch einen Menschen angefragt. Jemand prüft {app, select, mac {die nächste Mac-App} windows {die nächste Windows-App} linux {die nächste Linux-App} other {die nächsten Apps}}, die du sendest.",
+  "Human review requested. Usually within a day. You can still fix it yourself.":
+    "Prüfung durch einen Menschen angefragt. Meist innerhalb eines Tages. Du kannst es trotzdem selbst korrigieren.",
+  "If Genex ever takes it down, you'll hear it here and by email.":
+    "Falls Genex es je sperrt, erfährst du es hier und per E-Mail.",
+  "Keep the note under {max} characters.": "Die Notiz darf höchstens {max} Zeichen haben.",
+  "Nothing went public. After the fix, it publishes by itself and Genex checks it again.":
+    "Nichts wurde veröffentlicht. Nach der Korrektur wird es von selbst veröffentlicht und Genex prüft es erneut.",
+  "Open a game": "Öffne ein Spiel",
+  "Open on Genex": "Auf Genex öffnen",
+  "Players keep the version they have. After the fix, it publishes by itself and Genex checks it again.":
+    "Spieler behalten ihre Version. Nach der Korrektur wird es von selbst veröffentlicht und Genex prüft es erneut.",
+  "Players keep the {date} version.": "Spieler behalten die Version vom {date}.",
+  "Public again": "Wieder öffentlich",
+  Published: "Veröffentlicht",
+  "Request human review": "Prüfung durch Menschen anfragen",
+  "Send request": "Anfrage senden",
+  "Sending the {app, select, mac {Mac app} windows {Windows app} linux {Linux app} other {apps}} again so a person can read it…":
+    "{app, select, mac {Die Mac-App wird erneut gesendet} windows {Die Windows-App wird erneut gesendet} linux {Die Linux-App wird erneut gesendet} other {Die Apps werden erneut gesendet}}, damit jemand sie lesen kann…",
+  "Sent for review": "Zur Prüfung gesendet",
+  "Sent to your agent. Publish it yourself when it's ready.":
+    "An deinen Agent gesendet. Veröffentliche es selbst, wenn es fertig ist.",
+  "Sent to your agent. When it's done, Studio asks a person at Genex to put it back.":
+    "An deinen Agent gesendet. Wenn er fertig ist, bittet Studio jemanden bei Genex, es wieder freizuschalten.",
+  "Sent to your agent. When it's done, Studio publishes it and Genex checks it again.":
+    "An deinen Agent gesendet. Wenn er fertig ist, veröffentlicht Studio es und Genex prüft es erneut.",
+  "Show {n} more": "{n} weitere zeigen",
+  "Sign in to see what to fix": "Melde dich an, um zu sehen, was zu korrigieren ist",
+  "Someone from the Genex team agreed it's fine.": "Jemand aus dem Genex-Team hat bestätigt, dass alles passt.",
+  "Taken down": "Gesperrt",
+  "Taking longer than usual. If the check can't finish, a person at Genex reviews it.":
+    "Dauert länger als üblich. Kann die Prüfung nicht abschließen, prüft es jemand bei Genex.",
+  "Tell us why (at least {min} characters)": "Sag uns, warum (mindestens {min} Zeichen)",
+  "Tell us why in at least {min} characters.": "Sag uns in mindestens {min} Zeichen, warum.",
+  "That fix isn't the game's latest one": "Das ist nicht die neueste Korrektur des Spiels",
+  "Sent to your agent. When it's done, Studio publishes it.":
+    "An deinen Agent gesendet. Wenn er fertig ist, veröffentlicht Studio es.",
+  "Sent to your agent. When it's done, publish it, then ask a person at Genex to put it back.":
+    "An deinen Agent gesendet. Wenn er fertig ist, veröffentliche es und bitte dann jemanden bei Genex, es wieder freizuschalten.",
+  "After the fix, publish it, then ask a person at Genex to put it back. Usually within a day.":
+    "Nach der Korrektur veröffentliche es und bitte dann jemanden bei Genex, es wieder freizuschalten. Meist innerhalb eines Tages.",
+  "This game's latest fix isn't waiting for a build": "Die neueste Korrektur dieses Spiels wartet auf keinen Build",
+  "The Genex team is reviewing this game.": "Das Genex-Team prüft dieses Spiel.",
+  "The fix isn't built yet. Build the {app, select, mac {Mac app} windows {Windows app} linux {Linux app} other {apps}} again and it publishes.":
+    "Die Korrektur ist noch nicht gebaut. Baue {app, select, mac {die Mac-App} windows {die Windows-App} linux {die Linux-App} other {die Apps}} neu, dann wird veröffentlicht.",
+  "There's nothing to ask about right now.": "Gerade gibt es nichts anzufragen.",
+  "Think we got it wrong? Someone from the Genex team will check your app, usually within a day. Players don't get it until then.":
+    "Glaubst du, wir liegen falsch? Jemand aus dem Genex-Team prüft deine App, meist innerhalb eines Tages. Bis dahin bekommen Spieler sie nicht.",
+  "Think we got it wrong? Someone from the Genex team will check your game, usually within a day. It stays taken down until then.":
+    "Glaubst du, wir liegen falsch? Jemand aus dem Genex-Team prüft dein Spiel, meist innerhalb eines Tages. Bis dahin bleibt es gesperrt.",
+  "This decision can't be reviewed again.": "Diese Entscheidung kann nicht erneut geprüft werden.",
+  "Turned down 3 times this week, so a person at Genex reviews the next build. Usually within a day.":
+    "Diese Woche 3-mal abgelehnt, deshalb prüft jemand bei Genex den nächsten Build. Meist innerhalb eines Tages.",
+  "Usually within a day. You'll hear here and by email.":
+    "Meist innerhalb eines Tages. Du erfährst es hier und per E-Mail.",
+  "Version {version} is live": "Version {version} ist live",
+  "Version {version} is live for {app, select, mac {Mac} windows {Windows} linux {Linux} other {desktop}} players.":
+    "Version {version} ist live für {app, select, mac {Mac} windows {Windows} linux {Linux} other {Desktop}}-Spieler.",
+  "You already asked. A person will look at it, usually within a day.":
+    "Du hast schon gefragt. Jemand schaut es sich an, meist innerhalb eines Tages.",
+  "You can close this. Studio tells you when it's done.":
+    "Du kannst das schließen. Studio sagt dir, wenn es fertig ist.",
+  "Your agent stopped before it finished.": "Dein Agent hat aufgehört, bevor er fertig war.",
+  "usually a few minutes": "meist ein paar Minuten",
+  "{app, select, mac {Mac} windows {Windows} linux {Linux} other {Desktop}} players get it now.":
+    "{app, select, mac {Mac} windows {Windows} linux {Linux} other {Desktop}}-Spieler bekommen es jetzt.",
+  "{count}/{max}": "{count}/{max}",
+  "{minutes}m {seconds}s": "{minutes} Min. {seconds} s",
+  "{n, plural, one {# fix sent} other {# fixes sent}}":
+    "{n, plural, one {# Korrektur gesendet} other {# Korrekturen gesendet}}",
+  "{n, plural, one {Can't publish yet: # thing to fix} other {Can't publish yet: # things to fix}}":
+    "{n, plural, one {Noch nicht veröffentlichbar: # Sache zu korrigieren} other {Noch nicht veröffentlichbar: # Sachen zu korrigieren}}",
+  "{n, plural, one {Not approved: # thing still to fix after the re-check} other {Not approved: # things still to fix after the re-check}}":
+    "{n, plural, one {Nicht freigegeben: nach der erneuten Prüfung noch # Sache zu korrigieren} other {Nicht freigegeben: nach der erneuten Prüfung noch # Sachen zu korrigieren}}",
+  "{n, plural, one {Not approved: # thing to fix} other {Not approved: # things to fix}}":
+    "{n, plural, one {Nicht freigegeben: # Sache zu korrigieren} other {Nicht freigegeben: # Sachen zu korrigieren}}",
+  "{n, plural, one {Taken down: # thing to fix} other {Taken down: # things to fix}}":
+    "{n, plural, one {Gesperrt: # Sache zu korrigieren} other {Gesperrt: # Sachen zu korrigieren}}",
+  "{n, plural, one {Update not approved: # thing to fix} other {Update not approved: # things to fix}}":
+    "{n, plural, one {Update nicht freigegeben: # Sache zu korrigieren} other {Update nicht freigegeben: # Sachen zu korrigieren}}",
+  "{state, select, taken_down {Taken down} not_approved {Not approved} other {In review}} · reconnect to see what to fix":
+    "{state, select, taken_down {Gesperrt} not_approved {Nicht freigegeben} other {In Prüfung}} · verbinde dich neu, um zu sehen, was zu korrigieren ist",
+  "{title} is live!": "{title} ist live!",
+  "{title} is public again": "{title} ist wieder öffentlich",
+  "A person at Genex is reviewing the {app, select, mac {Mac app} windows {Windows app} linux {Linux app} other {apps}}. Usually within a day.":
+    "Jemand bei Genex prüft {app, select, mac {die Mac-App} windows {die Windows-App} linux {die Linux-App} other {die Apps}}. Meist innerhalb eines Tages.",
+  "Checking fixes": "Korrekturen werden geprüft",
+  "Genex is checking the {app, select, mac {Mac app} windows {Windows app} linux {Linux app} other {apps}}. Usually a few minutes.":
+    "Genex prüft {app, select, mac {die Mac-App} windows {die Windows-App} linux {die Linux-App} other {die Apps}}. Meist ein paar Minuten.",
+  "Human review": "Prüfung durch Menschen",
+  "Human review, usually within a day.": "Prüfung durch Menschen, meist innerhalb eines Tages.",
+  Public: "Öffentlich",
+  "{n, plural, one {# thing to fix. Click to see it and fix it with your agent.} other {# things to fix. Click to see them and fix them with your agent.}}":
+    "{n, plural, one {# Sache zu korrigieren. Klick, um sie zu sehen und mit deinem Agenten zu korrigieren.} other {# Sachen zu korrigieren. Klick, um sie zu sehen und mit deinem Agenten zu korrigieren.}}",
+  "{n, plural, one {# thing to fix. Open Publish to see it.} other {# things to fix. Open Publish to see them.}}":
+    "{n, plural, one {# Sache zu korrigieren. Öffne Veröffentlichen, um sie zu sehen.} other {# Sachen zu korrigieren. Öffne Veröffentlichen, um sie zu sehen.}}",
+  "{n, plural, one {# thing to fix} other {# things to fix}}":
+    "{n, plural, one {# Sache zu korrigieren} other {# Sachen zu korrigieren}}",
+  "{n, plural, one {Fixing # thing} other {Fixing # things}}":
+    "{n, plural, one {# Sache wird korrigiert} other {# Sachen werden korrigiert}}",
+  "{title} was taken down": "{title} wurde gesperrt",
+  "{title}'s {app, select, mac {Mac app} windows {Windows app} linux {Linux app} other {apps}} wasn't approved":
+    "{app, select, mac {Die Mac-App} windows {Die Windows-App} linux {Die Linux-App} other {Die Apps}} von {title} {app, select, mac {wurde} windows {wurde} linux {wurde} other {wurden}} nicht freigegeben",
+  "{title}: human review kept it down": "{title}: Die Prüfung durch Menschen hat die Sperre bestätigt",
   "{count, plural, one {and # more error} other {and # more errors}}":
     "{count, plural, one {und # weiterer Fehler} other {und # weitere Fehler}}",
-  "Fix with agent": "Mit Agent beheben",
   "Ask the agent to fix these errors": "Den Agenten bitten, diese Fehler zu beheben",
   "Genex couldn’t build the {players} app of “{title}”. Fix these errors in the game’s code so it builds there, and keep the game working as it does on other systems. This computer can’t build for {players}, so check each fix carefully. Then tell me to press Build on Genex again.\n\n{errors}":
     "Genex konnte die {players}-App von „{title}“ nicht bauen. Behebe diese Fehler im Code des Spiels, damit es dort gebaut wird, und lass das Spiel auf anderen Systemen weiter so laufen wie bisher. Dieser Computer kann nicht für {players} bauen, also prüfe jede Korrektur genau. Sag mir dann, dass ich wieder Build on Genex drücken soll.\n\n{errors}",

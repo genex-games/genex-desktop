@@ -126,8 +126,8 @@ async function world(options: { applyHeld?: Promise<unknown> } = {}) {
   await writeFile(path.join(part, "apply.py"), "genex.save()\n");
   const shot = path.join(projectDir, "Saved", "Genex", "captures", "lanterns.png");
   const calls: Array<[AnyLoopTool, Record<string, unknown>]> = [];
-  // `personPie`: the person pressed Play in Unreal, beside whatever the queue does.
-  const state = { pie: false, personPie: false };
+  // `personPie`: the person pressed Play in Unreal, beside whatever the queue does; `answers`: the game's Unreal is open.
+  const state = { pie: false, personPie: false, answers: true };
   const refuse: { export?: string; project?: string } = {};
   const editorCall = async (_storage: string, _game: string, tool: AnyLoopTool, args: Record<string, unknown>) => {
     calls.push([tool, args]);
@@ -173,7 +173,7 @@ async function world(options: { applyHeld?: Promise<unknown> } = {}) {
     project: async () => path.join(projectDir, "Game.uproject"),
     xcode: async () => ({ state: XcodeState.Ready }),
     editorCall,
-    editorAnswers: async () => true,
+    editorAnswers: async () => state.answers,
     // These tests never add a C++ module, so Unreal is never quit or opened.
     restart: { editors: async () => 0, quit: async () => {}, open: async () => {} },
     ...clock,
@@ -464,6 +464,7 @@ describe("the Unreal Loop's tools", () => {
 
   it("find-nodes looks node types up in the engine's reference, with their pins when known", async () => {
     const w = await world();
+    w.state.answers = false;
     await assert.rejects(w.call(LoopToolName.FindNodes, { query: "light" }), /reference/);
     await storeReference(w.storage, "5.8", {
       version: 1,
@@ -497,5 +498,39 @@ describe("the Unreal Loop's tools", () => {
       ["Development|PrintString"],
     );
     await assert.rejects(w.call(LoopToolName.FindNodes, { query: "" }), /query/);
+  });
+
+  it("find-nodes exports the engine's reference from the game's open Unreal once, when none is kept yet", async () => {
+    const w = await world();
+    const exports = () => w.calls.filter(([tool]) => tool === LoopEditorTool.ExportReference).length;
+    w.state.answers = false;
+    await assert.rejects(w.call(LoopToolName.FindNodes, { query: "print" }), /open-editor/);
+    assert.equal(exports(), 0, "a closed Unreal is never asked");
+    w.state.answers = true;
+    type Found = { nodes: Array<{ typeId: string }> };
+    const [printing, car] = (await Promise.all([
+      w.call(LoopToolName.FindNodes, { query: "print" }),
+      w.call(LoopToolName.FindNodes, { query: "offroad reversing" }),
+    ])) as [Found, Found];
+    assert.deepEqual(
+      printing.nodes.map((n) => n.typeId),
+      ["Development|PrintString"],
+    );
+    assert.deepEqual(
+      car.nodes.map((n) => n.typeId),
+      ["Class|BPVehicleAdvOffroadCar|GetIsReversing", "Class|BPVehicleAdvOffroadCar|SetIsReversing"],
+      "the first lookup already reads the template Blueprints the export wrote",
+    );
+    assert.equal(exports(), 1, "lookups at once share one export");
+    await w.call(LoopToolName.FindNodes, { query: "print" });
+    assert.equal(exports(), 1, "the kept reference answers every later lookup");
+    assert.deepEqual((await loadReference(w.storage, "5.8"))?.common, ["Development|PrintString"]);
+  });
+
+  it("find-nodes names why the open Unreal couldn't export the reference", async () => {
+    const w = await world();
+    w.refuse.export = "export_reference is not a tool of this helper";
+    await assert.rejects(w.call(LoopToolName.FindNodes, { query: "print" }), /not a tool of this helper/);
+    assert.equal(await loadReference(w.storage, "5.8"), null);
   });
 });

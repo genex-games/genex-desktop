@@ -244,7 +244,13 @@ export const RuleScope = { OneGame: "one_game", AllGames: "all_games" } as const
 export type RuleScope = (typeof RuleScope)[keyof typeof RuleScope];
 
 /** How a notification was opened. */
-export const NoticeVia = { Panel: "panel", SystemNotification: "system_notification" } as const;
+export const NoticeVia = {
+  Panel: "panel",
+  SystemNotification: "system_notification",
+  Toast: "toast",
+  /** A review row's Fix in the bell: Fix with agent pressed, then its game's chat. */
+  Fix: "fix",
+} as const;
 export type NoticeVia = (typeof NoticeVia)[keyof typeof NoticeVia];
 
 /** Where opening a notification took the person. */

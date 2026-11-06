@@ -42,7 +42,13 @@ import {
 } from "../analytics/plugins-page.ts";
 import { composeInChat } from "../compose-in-chat.ts";
 import { type PluginReviewRequest, runPluginAction } from "../plugin-actions.ts";
-import { PLUGIN_SETUP_EVENT } from "../plugin-setup.ts";
+import {
+  PLUGIN_SETUP_EVENT,
+  type PluginSetupRequest,
+  settlePendingSetup,
+  setupIsFor,
+  takePendingSetup,
+} from "../plugin-setup.ts";
 import { type Notify, ToastTone, notifyProblem } from "../state/toasts.ts";
 import { createRefresher } from "../state/refresher.ts";
 import { Button } from "../ui/Button.tsx";
@@ -577,22 +583,41 @@ const multiplayerOn = (publish: boolean, emptyGame: boolean, game: GameMultiplay
     engineMultiplayer: takesEngineMultiplayer(kind),
   });
 
-/** A chat card or a stage card asks for a plugin's setup (`openPluginSetup`): its panel opens here, or Plugins at it when it has no button. */
-function usePluginSetupEvent(entries: readonly PluginToolbarEntry[], press: (entry: PluginToolbarEntry) => unknown) {
+/**
+ * A chat card or a stage card asks for a plugin's setup (`openPluginSetup`): its panel opens here, or
+ * Plugins at it when it has no button. A request for another game waits for that game's strip, which
+ * takes it once it is up and has the plugin's panel (`openPluginSetupFor`).
+ */
+function usePluginSetupEvent(
+  entries: readonly PluginToolbarEntry[],
+  press: (entry: PluginToolbarEntry) => unknown,
+  project: string | null,
+) {
   useEffect(() => {
-    const open = (event: Event) => {
-      const detail = (event as CustomEvent).detail;
+    const panelOf = (id: unknown) => entries.find((e) => e.plugin.manifest.id === id && e.item.target.kind === "panel");
+    const handle = (detail: Partial<PluginSetupRequest> | undefined) => {
       const id = detail?.id;
-      const entry = entries.find((e) => e.plugin.manifest.id === id && e.item.target.kind === "panel");
+      const entry = panelOf(id);
       if (entry) void press(entry);
       else if (typeof id === "string") {
         notePluginsOpening(isPluginsOpenedFrom(detail?.from) ? detail.from : PluginsOpenedFrom.SetupRequest);
         openPluginsAt(id);
       }
     };
+    const waiting = takePendingSetup(project, (request) => panelOf(request.id) !== undefined);
+    if (waiting) handle(waiting);
+    const open = (event: Event) => {
+      const detail = (event as CustomEvent<PluginSetupRequest>).detail;
+      if (!setupIsFor(detail ?? {}, project)) return;
+      if (detail?.project !== undefined) {
+        if (!panelOf(detail.id)) return;
+        settlePendingSetup(detail);
+      }
+      handle(detail);
+    };
     window.addEventListener(PLUGIN_SETUP_EVENT, open);
     return () => window.removeEventListener(PLUGIN_SETUP_EVENT, open);
-  }, [entries, press]);
+  }, [entries, press, project]);
 }
 
 /** What every button reads: each one's status, the one being pressed, whether the game is empty, and the press. */
@@ -721,7 +746,7 @@ export function PluginToolbar({
     void press(handOff);
   }, [handOff, closeSetup, press]);
 
-  usePluginSetupEvent(entries, press);
+  usePluginSetupEvent(entries, press, project);
 
   const genexPlugin = plugins.find((p) => p.manifest.id === GENEX_PLUGIN_ID);
   const livePanelPlugin = panel

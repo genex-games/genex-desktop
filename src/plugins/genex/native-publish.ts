@@ -19,6 +19,8 @@ import {
 } from "../../shared/genex.ts";
 import { linuxBuildOf } from "../../shared/publish-platforms.ts";
 import type { MacSigning } from "./mac-notarize.ts";
+import { isAtLeast } from "./cli-version.ts";
+import { reviewDetailOf } from "./native-review.ts";
 
 /** The first Genex CLI with `genex native`: an older pin sends no app. */
 const NATIVE_CLI = [1, 36, 11] as const;
@@ -37,21 +39,6 @@ const CLIP_COMMIT_CHARS = 40;
 const SHA256_HEX = /^[0-9a-f]{64}$/i;
 
 const MESSAGE = { NotABuild: "Genex answered without the build it published" } as const;
-
-/**
- * Whether CLI `version` is release `first` or later. A prerelease comes before its release
- * (`1.36.11-dev.4` may predate what 1.36.11 brings), so only a later release's prerelease counts.
- */
-function isAtLeast(version: string, first: readonly [number, number, number]): boolean {
-  const match = /^(\d+)\.(\d+)\.(\d+)(-.+)?$/.exec(version);
-  if (!match) return false;
-  const parts = match.slice(1, 4).map(Number);
-  for (const [at, wanted] of first.entries()) {
-    const part = parts[at] ?? 0;
-    if (part !== wanted) return part > wanted;
-  }
-  return match[4] === undefined;
-}
 
 /** Whether CLI `version` has `genex native`. */
 export const hasNativeCommand = (version: string): boolean => isAtLeast(version, NATIVE_CLI);
@@ -172,12 +159,20 @@ export function sentBuild(answer: unknown): GenexNativeSent | null {
 
 const REVIEWS: ReadonlySet<unknown> = new Set(Object.values(GenexBuildReview));
 
-/** Genex's review of a sent build, as the API answers it beside the build; nothing for an unknown one. */
-function reviewOf(build: Record<string, unknown>): Pick<GenexNativeSent, "review" | "reviewReason"> {
+/**
+ * Genex's review of a sent build, as the API answers it beside the build, with where it holds it and
+ * who decided (`reviewDetail`) from an API that says; nothing for an unknown review.
+ */
+function reviewOf(build: Record<string, unknown>): Pick<GenexNativeSent, "review" | "reviewReason" | "reviewDetail"> {
   if (!REVIEWS.has(build.review)) return {};
   const review = build.review as GenexBuildReview;
   const reason = typeof build.reviewReason === "string" ? build.reviewReason.trim() : "";
-  return reason ? { review, reviewReason: reason.slice(0, REVIEW_REASON_CHARS) } : { review };
+  const detail = reviewDetailOf(build.reviewDetail);
+  return {
+    review,
+    ...(reason ? { reviewReason: reason.slice(0, REVIEW_REASON_CHARS) } : {}),
+    ...(detail ? { reviewDetail: detail } : {}),
+  };
 }
 
 /**

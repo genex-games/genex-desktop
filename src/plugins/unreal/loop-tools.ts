@@ -38,7 +38,6 @@ import { atomicWriteJson, isJsonObject, readRegularFile } from "../../substrate/
 import { Severity } from "./blueprint-check.ts";
 import {
   BaseClass,
-  type BlueprintDecl,
   contextKey,
   GraphKind,
   type NodePins,
@@ -257,7 +256,10 @@ const MESSAGE = {
     `${part} has ${count} ${count === 1 ? "problem" : "problems"} to fix before it can go to the editor:\n${list}`,
   UnknownRun: (id: string) => `There is no part run ${id}.`,
   NoProject: "This game has no Unreal project yet.",
-  NoReference: "There is no node reference for this engine yet; check-part still reads the text without it.",
+  NoReference:
+    "There is no node reference for this engine yet, and this game's Unreal isn't answering to export one: open it with open-editor if it is closed, or call find-nodes again once it has started. check-part still reads the Blueprint text without it.",
+  ExportFailed: (reason: string) =>
+    `There is no node reference for this engine yet, and this game's Unreal couldn't export one (${reason}). check-part still reads the Blueprint text without it.`,
   NoQuery: 'find-nodes needs a query: a few words of the node\'s name, such as "set intensity".',
   BadReference: "The editor's node reference didn't have the expected shape; it was not kept.",
   Meant: (message: string, names: readonly string[]) => `${message} Did you mean ${names.join(" or ")}?`,
@@ -688,6 +690,8 @@ export function createLoopTools(deps: LoopToolsDeps) {
   };
 
   const compiles = createCompileJobs(deps.now);
+  // One export of an engine's reference at a time: lookups that find none kept wait for the same one.
+  const lookupExports: LookupExports = new Map();
   const cpp = createCppTools(deps);
   const motion = createMotionTools(deps);
   // Adding the C++ module or the sample's content restarts Unreal: one restart of a project at a time.
@@ -747,8 +751,7 @@ export function createLoopTools(deps: LoopToolsDeps) {
       if (!engine) throw new Error(MESSAGE.NoEngine);
       return readBlueprintGuide(engine.directory, engine.version);
     },
-    [LoopToolName.FindNodes]: async (args, context, storage) =>
-      findNodes(deps, storage, args, await templateBlueprints(deps, storage, context.project)),
+    [LoopToolName.FindNodes]: async (args, context, storage) => findNodes(deps, storage, context, args, lookupExports),
     [LoopToolName.CppStatus]: (_args, context, storage) => cpp.status(storage, game(context)),
     [LoopToolName.AddCppModule]: (_args, context, storage) => cpp.add(storage, game(context)),
     ...restartHandlers(reopen, moments),
@@ -1223,14 +1226,15 @@ async function updateGameHelper(deps: SetDeps, storage: string, game: string): P
 async function findNodes(
   deps: LoopToolsDeps,
   storage: string,
+  context: PluginContext,
   args: Record<string, unknown>,
-  template: readonly BlueprintDecl[],
+  exports: LookupExports,
 ) {
   const words = text(args, "query").toLowerCase().split(/\s+/).filter(Boolean);
   if (!words.length) throw new Error(MESSAGE.NoQuery);
-  const engine = await deps.engine();
-  const reference = engine ? await loadReference(storage, engine.version) : null;
-  if (!reference) throw new Error(MESSAGE.NoReference);
+  const reference = await lookupReference(deps, storage, context, exports);
+  // Read after the reference: an export it needed also wrote the template's project file.
+  const template = await templateBlueprints(deps, storage, context.project);
   const base = text(args, "base");
   const graph = text(args, "graph");
   const known = BASES.has(base) && GRAPHS.has(graph);
@@ -1244,6 +1248,41 @@ async function findNodes(
     return pins ? { typeId, pins } : { typeId };
   });
   return { nodes, more: matches.length > MAX_FOUND_NODES };
+}
+
+/** The exports lookups started, by plugin storage and engine version, while each runs. */
+type LookupExports = Map<string, Promise<unknown>>;
+
+/**
+ * The engine's node reference for a lookup: the one kept, or, when none is kept yet (only a Loop's
+ * start exports it), the one the game's open Unreal exports now, each editor call on the Loop
+ * start's budget. Throws what the agent can do about a missing one.
+ */
+async function lookupReference(
+  deps: LoopToolsDeps,
+  storage: string,
+  context: PluginContext,
+  exports: LookupExports,
+): Promise<ReferenceData> {
+  const engine = await deps.engine();
+  if (!engine) throw new Error(MESSAGE.NoEngine);
+  const kept = await loadReference(storage, engine.version);
+  if (kept) return kept;
+  const game = gameOf(context);
+  if (!(await deps.editorAnswers(storage, game).catch(() => false))) throw new Error(MESSAGE.NoReference);
+  const key = `${storage}\0${engine.version}`;
+  const running = exports.get(key) ?? exportReference(deps, storage, game, MOMENT_ASK_MS);
+  exports.set(key, running);
+  try {
+    await running;
+  } catch (failure) {
+    throw new Error(MESSAGE.ExportFailed(errorMessage(failure)));
+  } finally {
+    if (exports.get(key) === running) exports.delete(key);
+  }
+  const exported = await loadReference(storage, engine.version);
+  if (!exported) throw new Error(MESSAGE.BadReference);
+  return exported;
 }
 
 /** Throws the editor's refusal (`{error}`), so a file left from an earlier export is never read. */

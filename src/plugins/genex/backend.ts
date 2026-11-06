@@ -21,6 +21,7 @@ import {
   GenexPublishStatusOperation,
 } from "../../shared/genex.ts";
 import { t } from "../../shared/i18n.ts";
+import { GenexGameReview, type GenexReviewRecord, thingsOf, worstApps } from "../../shared/genex-review.ts";
 import { PluginService } from "../../shared/plugins.ts";
 import type { PluginContext, PluginToolbarStatus } from "../../plugin-sdk/index.d.ts";
 import type { GenexObserver } from "../../substrate/genex-outcomes.ts";
@@ -84,12 +85,88 @@ const PUBLISH_STATUS = {
   Unpublished: () => ({ title: t("Publish this game with a playable link"), attention: true }),
 } as const satisfies Record<string, (phase: string) => PluginToolbarStatus>;
 
-/** Publish's status for a game's publish state: uploading, failed, listed, drafted, or never published. */
-export function publishButtonStatus(state: GenexPublishState): PluginToolbarStatus {
+/** The `app` placeholder for a game's apps in review: their one platform, or `apps` for several. */
+function appWord(record: GenexReviewRecord): string {
+  const platforms = new Set(worstApps(record).map((app) => app.platform));
+  const [only] = [...platforms];
+  return platforms.size === 1 && only ? only : "apps";
+}
+
+/**
+ * Publish's status while Genex reviews the game: a red dot for a takedown or an app turned down
+ * (the dot's word, then what to fix and where), a quiet tooltip while an app is checked or with a
+ * person. Genex never checks public games again in the background, so nothing else is said here.
+ */
+const REVIEW_STATUS = {
+  TakenDown: (n: number) => ({
+    badge: t("Taken down"),
+    dot: true,
+    tone: "err" as const,
+    attention: true,
+    title: t(
+      "{n, plural, one {# thing to fix. Open Publish to see it.} other {# things to fix. Open Publish to see them.}}",
+      { n },
+    ),
+  }),
+  NotApproved: (n: number) => ({
+    badge: t("Not approved"),
+    dot: true,
+    tone: "err" as const,
+    attention: true,
+    title: t(
+      "{n, plural, one {# thing to fix. Open Publish to see it.} other {# things to fix. Open Publish to see them.}}",
+      { n },
+    ),
+  }),
+  Checking: (app: string) => ({
+    title: t(
+      "Genex is checking the {app, select, mac {Mac app} windows {Windows app} linux {Linux app} other {apps}}. Usually a few minutes.",
+      { app },
+    ),
+    attention: false,
+  }),
+  WithPerson: (app: string) => ({
+    title: t(
+      "A person at Genex is reviewing the {app, select, mac {Mac app} windows {Windows app} linux {Linux app} other {apps}}. Usually within a day.",
+      { app },
+    ),
+    attention: false,
+  }),
+} as const satisfies Record<string, (value: never) => PluginToolbarStatus>;
+
+/** What to fix on a game the person must act on: a takedown's things, or the turned-down apps'; null otherwise. */
+function needsFixStatus(review: GenexReviewRecord | null): PluginToolbarStatus | null {
+  if (review?.takedown) return REVIEW_STATUS.TakenDown(review.takedown.things.length);
+  if (review?.state === GenexGameReview.NotApproved)
+    return REVIEW_STATUS.NotApproved(thingsOf(worstApps(review)).length);
+  return null;
+}
+
+/** An app Genex still holds: checked, or with a person; null otherwise. */
+function heldStatus(review: GenexReviewRecord | null): PluginToolbarStatus | null {
+  if (review?.state === GenexGameReview.Checking) return REVIEW_STATUS.Checking(appWord(review));
+  if (review?.state === GenexGameReview.WithPerson) return REVIEW_STATUS.WithPerson(appWord(review));
+  return null;
+}
+
+/**
+ * Publish's status for a game's publish state and Genex's review of it (`review.json`): uploading,
+ * taken down or turned down, failed, held, listed, drafted, or never published. A game whose apps
+ * Genex holds says so, never that it has a draft page.
+ */
+export function publishButtonStatus(
+  state: GenexPublishState,
+  review: GenexReviewRecord | null = null,
+): PluginToolbarStatus {
   const job = state.job?.state;
   if (job === GenexPublishJobState.Running || job === GenexPublishJobState.Unresolved)
     return PUBLISH_STATUS.Uploading(state.job?.phase ?? "");
+  const needsFix = needsFixStatus(review);
+  if (needsFix) return needsFix;
   if (job === GenexPublishJobState.Failed) return PUBLISH_STATUS.Failed();
+  // A game whose web version Genex plays keeps the web game's status: its apps' check shows in Publish.
+  const held = state.hostedWeb === true ? null : heldStatus(review);
+  if (held) return held;
   if (state.status === GenexHostedStatus.Published) return PUBLISH_STATUS.Live();
   if (state.slug) return PUBLISH_STATUS.Draft();
   return PUBLISH_STATUS.Unpublished();
@@ -318,11 +395,22 @@ const ACTIONS: Record<string, Action> = {
   [GenexAction.PublishOpen]: withProject((genex, project, args) => genex.publishLinks(project, args.target)),
   [GenexAction.CoverAuto]: withProject((genex, project, _args, _service, camera) => genex.coverAuto(project, camera)),
   [GenexAction.CoverPick]: withProject((genex, project, args) => genex.coverPick(project, args.sha256)),
+  [GenexAction.ReviewStatus]: withProject((genex, project, args) => genex.reviewStatus(project, args)),
+  [GenexAction.ReviewRequest]: async (genex, args, ctx, service) => {
+    if (!ctx.project) throw new Error(MESSAGE.OpenProject());
+    // An app Genex keeps no copy of goes again from the game folder: only real builds inside it.
+    const uploads = await appsToSend(ctx, args.native, service);
+    const { platform, arch, note } = args;
+    return genex.requestReview(ctx.project, { platform, arch, note }, uploads);
+  },
+  [GenexAction.AppsResend]: async (genex, args, ctx, service) => {
+    if (!ctx.project) throw new Error(MESSAGE.OpenProject());
+    return genex.resendApps(ctx.project, await appsToSend(ctx, args.native, service));
+  },
   [GenexAction.PublishBadge]: async (genex, args, ctx) => {
     if (!ctx.project) return {};
-    return publishButtonStatus(
-      await genex.publishStatus(ctx.project, args.operation === GenexPublishStatusOperation.Check),
-    );
+    const state = await genex.publishStatus(ctx.project, args.operation === GenexPublishStatusOperation.Check);
+    return publishButtonStatus(state, await genex.keptReview(ctx.project));
   },
 };
 

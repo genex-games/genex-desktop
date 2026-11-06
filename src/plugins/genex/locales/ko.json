@@ -2,6 +2,7 @@
   "3D models, characters, sound and art for your games, made in chat with Genex credits. Coding stays on your own provider.": "게임에 쓸 3D 모델, 캐릭터, 사운드, 아트를 채팅에서 Genex 크레딧으로 만들어요. 코딩은 계속 내 제공자가 맡아요.",
   "Account and jobs": "계정 및 작업",
   "Approve character workflow": "캐릭터 작업 승인",
+  "Ask a person at Genex to review this game's turned-down Mac, Windows or Linux app, or its takedown, with your note. An app Genex keeps no copy of is uploaded again from the game folder so a person can read it.": "이 게임의 거절된 Mac, Windows 또는 Linux 앱이나 게임 내림 조치를 메모와 함께 Genex 담당자에게 검토 요청합니다. Genex가 사본을 보관하지 않는 앱은 사람이 읽을 수 있도록 게임 폴더에서 다시 업로드됩니다.",
   "Asset setup state": "에셋 설정 상태",
   "Blender server address": "Blender 서버 주소",
   "Build an app on Genex": "Genex에서 앱 만들기",
@@ -27,9 +28,12 @@
   "Remove Studio’s saved Genex credential and stop new asset submissions.": "Studio에 저장된 Genex 로그인 정보를 지우고 새 에셋 요청을 멈춰요.",
   "Remove web version": "웹 버전 지우기",
   "Rename the game": "게임 이름 바꾸기",
+  "Request human review": "사람 검토 요청",
   "Review Genex terms": "Genex 약관 확인",
   "Review character candidates in Studio before approving paid generation.": "유료 생성을 승인하기 전에 Studio에서 캐릭터 후보를 확인하세요.",
+  "Review of this game's apps": "이 게임 앱의 검토",
   "Run a Genex CLI command that spends Nex or credits or changes what this game sells, with your saved Genex account.": "저장된 Genex 계정으로 Nex나 크레딧을 쓰거나 이 게임의 판매 항목을 바꾸는 Genex CLI 명령을 실행해요.",
+  "Send apps again": "앱 다시 보내기",
   "Sign and notarize Mac apps with my own Apple Developer ID": "내 Apple Developer ID로 Mac 앱에 서명하고 공증하기",
   "Take this game's cover": "이 게임 커버 찍기",
   "Take this game's web version off Genex. Its page shows its Mac, Windows and Linux apps again, and the apps stay as they are. You can publish a web version again later.": "이 게임의 웹 버전을 Genex에서 내려요. 페이지에 다시 Mac, Windows, Linux 앱이 보이고, 앱은 그대로 남아요. 웹 버전은 나중에 다시 게시할 수 있어요.",
@@ -37,6 +41,7 @@
   "Upload Studio's exported copy of this game to its Genex draft page and make it the public version in the gallery. Everyone can find and play it. The first time, a hosted Genex project is created for this game under your account. Its cover shot also becomes its picture on Genex, unless you chose one there.": "Studio가 내보낸 이 게임의 사본을 Genex 초안 페이지에 올리고 갤러리의 공개 버전으로 만들어요. 누구나 찾아서 플레이할 수 있어요. 처음에는 내 계정에 이 게임용 호스팅 Genex 프로젝트가 만들어져요. Genex에서 직접 고른 이미지가 없으면 커버 샷도 Genex 이미지가 돼요.",
   "Upload Studio's exported copy of this game to its unlisted Genex draft page only; the public version stays as it is. The first time, a hosted Genex project is created for this game under your account; Studio keeps that link in its own copy, never in your game folder. Until the game is public, its cover shot also becomes its picture on Genex, unless you chose one there.": "Studio가 내보낸 이 게임의 사본을 일부 공개 Genex 초안 페이지에만 올려요. 공개 버전은 그대로예요. 처음에는 내 계정에 이 게임용 호스팅 Genex 프로젝트가 만들어져요. Studio는 그 연결 정보를 자체 사본에 보관하고, 게임 폴더에는 절대 넣지 않아요. 게임이 공개되기 전까지는 Genex에서 직접 고른 이미지가 없으면 커버 샷도 Genex 이미지가 돼요.",
   "Upload this game's project privately to Genex, which builds an app of it for another system (a Windows app of an Unreal game made on a Mac) on its own computers and adds it to the game's Genex page. Only you and Genex can see the project.": "이 게임의 프로젝트를 비공개로 Genex에 올려요. Genex가 자체 컴퓨터에서 다른 시스템용 앱(Mac에서 만든 Unreal 게임의 Windows 앱)을 만들어 Genex의 게임 페이지에 추가해요. 프로젝트는 나와 Genex만 볼 수 있어요.",
+  "Upload this game's ready Mac, Windows and Linux apps from its folder to Genex again, so Genex checks them before players get them. The game's web version stays as it is.": "이 게임의 준비된 Mac, Windows, Linux 앱을 폴더에서 Genex에 다시 업로드해, 플레이어가 받기 전에 Genex가 확인하게 합니다. 게임의 웹 버전은 그대로 둡니다.",
   "Upload this game's ready Mac, Windows and Linux apps from its folder to Genex and list the game in the gallery, where people playing in the Genex desktop app can install them. The first time, a hosted Genex project is created for this game under your account.": "이 게임 폴더에 있는 완성된 Mac, Windows 및 Linux 앱을 Genex에 올리고 게임을 갤러리에 등록해요. Genex 데스크톱 앱에서 플레이하는 사람들이 설치할 수 있어요. 처음에는 내 계정에 이 게임용 호스팅 Genex 프로젝트가 만들어져요.",
   "Use this cover": "이 커버 사용"
 }

@@ -361,6 +361,17 @@ export function appsUpToDate(platforms: readonly PublishPlatform[], native: Gene
   return platforms.filter((row) => isNative(row) && row.uploads).every((row) => ON_GENEX.has(sendEnd(row, native)));
 }
 
+/**
+ * Whether every app Publish would send is the very build Genex turned down: sending it again would only
+ * be turned down again, so the review card's Fix with agent takes the press's place.
+ */
+export function appsTurnedDown(platforms: readonly PublishPlatform[], native: GenexNativeRecord | undefined): boolean {
+  if (!onlyApps(platforms) || !native || native.sending) return false;
+  return platforms
+    .filter((row) => isNative(row) && row.uploads)
+    .every((row) => sendEnd(row, native) === PlatformEnd.Rejected);
+}
+
 /** The ends of an app Genex has: sending it again would change nothing. */
 const ON_GENEX: ReadonlySet<PlatformEnd> = new Set([PlatformEnd.Sent, PlatformEnd.Review]);
 
@@ -449,9 +460,13 @@ export function reachLine(
  * A line for each app the last Publish could not send, in the CLI's words, and for each that went
  * without the notarizing its creator asked for, why.
  */
-export function failureLines(platforms: readonly PublishPlatform[], native: GenexNativeRecord | undefined): string[] {
+export function failureLines(
+  platforms: readonly PublishPlatform[],
+  native: GenexNativeRecord | undefined,
+  reviewed = false,
+): string[] {
   const shown = platforms.filter((row) => isNative(row) && row.uploads);
-  const unsent = shown.flatMap((row) => failureLine(row, native));
+  const unsent = shown.flatMap((row) => failureLine(row, native, reviewed));
   const unnotarized = shown
     .map((row) => currentSent(row, native)?.notarizeFailure)
     .filter((failure): failure is MacNotarizeFailure => failure !== undefined)
@@ -460,12 +475,15 @@ export function failureLines(platforms: readonly PublishPlatform[], native: Gene
   return [...unsent, ...unnotarized, ...(sendError ? [WORDS.cloudSendFailedLine(sendError)] : [])];
 }
 
-/** A sent app's line when it did not reach players: not sent and why, or turned down by Genex and why. */
-function failureLine(row: PublishPlatform, native: GenexNativeRecord | undefined): string[] {
+/**
+ * A sent app's line when it did not reach players: not sent and why, or turned down by Genex and why
+ * (none once the review card says it, `reviewed`).
+ */
+function failureLine(row: PublishPlatform, native: GenexNativeRecord | undefined, reviewed: boolean): string[] {
   const end = sendEnd(row, native);
   const name = WORDS.name[row.target];
   if (end === PlatformEnd.Failed) return [WORDS.failedLine(name, native?.failed.find(forRow(row))?.error ?? "")];
-  if (end !== PlatformEnd.Rejected) return [];
+  if (end !== PlatformEnd.Rejected || reviewed) return [];
   const reason = native?.sent.find(forRow(row))?.reviewReason;
   return [reason ? WORDS.rejectedLine(name, reason) : WORDS.rejected(name)];
 }

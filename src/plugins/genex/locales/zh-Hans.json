@@ -2,6 +2,7 @@
   "3D models, characters, sound and art for your games, made in chat with Genex credits. Coding stays on your own provider.": "在对话中用 Genex 积分为你的游戏制作 3D 模型、角色、音效和美术。编程仍由你自己的提供方负责。",
   "Account and jobs": "账号和任务",
   "Approve character workflow": "批准角色流程",
+  "Ask a person at Genex to review this game's turned-down Mac, Windows or Linux app, or its takedown, with your note. An app Genex keeps no copy of is uploaded again from the game folder so a person can read it.": "附上你的备注，请 Genex 的工作人员审核这款游戏被拒的 Mac、Windows 或 Linux 应用，或游戏的下架。Genex 未保留副本的应用会从游戏文件夹重新上传，以便工作人员查看。",
   "Asset setup state": "素材设置状态",
   "Blender server address": "Blender 服务器地址",
   "Build an app on Genex": "在 Genex 上制作应用",
@@ -27,9 +28,12 @@
   "Remove Studio’s saved Genex credential and stop new asset submissions.": "移除 Studio 保存的 Genex 凭据，并停止提交新的素材。",
   "Remove web version": "移除网页版",
   "Rename the game": "重命名游戏",
+  "Request human review": "申请人工审核",
   "Review Genex terms": "查看 Genex 条款",
   "Review character candidates in Studio before approving paid generation.": "批准付费生成前，请先在 Studio 中查看角色候选。",
+  "Review of this game's apps": "这款游戏应用的审核",
   "Run a Genex CLI command that spends Nex or credits or changes what this game sells, with your saved Genex account.": "用你保存的 Genex 账号运行一条会花费 Nex 或积分、或会更改此游戏所售内容的 Genex CLI 命令。",
+  "Send apps again": "重新发送应用",
   "Sign and notarize Mac apps with my own Apple Developer ID": "用我自己的 Apple Developer ID 签名并公证 Mac 应用",
   "Take this game's cover": "拍摄此游戏的封面",
   "Take this game's web version off Genex. Its page shows its Mac, Windows and Linux apps again, and the apps stay as they are. You can publish a web version again later.": "把这款游戏的网页版从 Genex 移除。它的页面会重新显示 Mac、Windows 和 Linux 应用，应用本身保持不变。之后你还可以再发布网页版。",
@@ -37,6 +41,7 @@
   "Upload Studio's exported copy of this game to its Genex draft page and make it the public version in the gallery. Everyone can find and play it. The first time, a hosted Genex project is created for this game under your account. Its cover shot also becomes its picture on Genex, unless you chose one there.": "将 Studio 导出的这个游戏副本上传到它的 Genex 草稿页面，并设为画廊中的公开版本。所有人都能找到并游玩。第一次上传时，会在你的账号下为这个游戏创建一个托管的 Genex 项目。除非你已在那里自选图片，否则封面截图也会成为它在 Genex 上的图片。",
   "Upload Studio's exported copy of this game to its unlisted Genex draft page only; the public version stays as it is. The first time, a hosted Genex project is created for this game under your account; Studio keeps that link in its own copy, never in your game folder. Until the game is public, its cover shot also becomes its picture on Genex, unless you chose one there.": "只将 Studio 导出的这个游戏副本上传到它不公开列出的 Genex 草稿页面；公开版本保持不变。第一次上传时，会在你的账号下为这个游戏创建一个托管的 Genex 项目；Studio 会把这个关联保存在自己的副本里，绝不放进你的游戏文件夹。在游戏公开前，除非你已在那里自选图片，否则封面截图也会成为它在 Genex 上的图片。",
   "Upload this game's project privately to Genex, which builds an app of it for another system (a Windows app of an Unreal game made on a Mac) on its own computers and adds it to the game's Genex page. Only you and Genex can see the project.": "将这个游戏的项目私密上传到 Genex，Genex 会在自己的电脑上用它制作另一个系统的应用（在 Mac 上做的 Unreal 游戏的 Windows 应用），并添加到游戏的 Genex 页面。只有你和 Genex 能看到这个项目。",
+  "Upload this game's ready Mac, Windows and Linux apps from its folder to Genex again, so Genex checks them before players get them. The game's web version stays as it is.": "从游戏文件夹把这款游戏已就绪的 Mac、Windows 和 Linux 应用重新上传到 Genex，让 Genex 在玩家拿到之前先检查。游戏的网页版保持不变。",
   "Upload this game's ready Mac, Windows and Linux apps from its folder to Genex and list the game in the gallery, where people playing in the Genex desktop app can install them. The first time, a hosted Genex project is created for this game under your account.": "将这个游戏文件夹中已就绪的 Mac、Windows 和 Linux 应用上传到 Genex，并在画廊中上架这个游戏，在 Genex 桌面应用中游玩的人可以安装它们。第一次上传时，会在你的账号下为这个游戏创建一个托管的 Genex 项目。",
   "Use this cover": "使用这个封面"
 }

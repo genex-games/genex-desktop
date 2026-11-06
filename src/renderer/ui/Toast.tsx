@@ -34,6 +34,19 @@ export function ToastStack({
           <div className="flex items-start gap-2">
             <ToneMark tone={toast.tone} />
             <span className="min-w-0 flex-1 font-mono text-xs leading-relaxed text-ink-2">{toast.text}</span>
+            {toast.action && (
+              <button
+                type="button"
+                data-toast-action
+                onClick={() => {
+                  onDismiss(toast.id);
+                  toast.action?.run();
+                }}
+                className="shrink-0 rounded-sm px-1.5 text-xs leading-relaxed font-medium text-accent hover:bg-control-hover"
+              >
+                {toast.action.label}
+              </button>
+            )}
             <button
               type="button"
               aria-label={t("Dismiss")}

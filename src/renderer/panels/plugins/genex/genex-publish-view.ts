@@ -33,7 +33,15 @@ import { t } from "../../../../shared/i18n.ts";
 import { FEEDBACK_TEXT_MAX_CHARS, type FeedbackDraft, FeedbackScreen } from "../../../../shared/feedback.ts";
 import { relativeTime } from "../../../chat-labels.ts";
 import { type StepState, stepStateAt } from "../../../ui/step-bar.ts";
-import { GENEX_WORDS } from "../../../words.ts";
+import { GENEX_WORDS, REVIEW_WORDS } from "../../../words.ts";
+import {
+  appKey,
+  GenexAppReview,
+  GenexGameReview,
+  type GenexReviewApp,
+  type GenexReviewRecord,
+} from "../../../../shared/genex-review.ts";
+import { checkingSince } from "./review-card-view.ts";
 
 const WORDS = GENEX_WORDS.publish;
 
@@ -46,6 +54,8 @@ export const GenexPublishStep = {
   Prepare: "prepare",
   Upload: "upload",
   Test: "test",
+  /** Genex's check of an app before players get it: an apps-only publish has it in place of the test. */
+  Check: "check",
   Live: "live",
 } as const;
 export type GenexPublishStep = (typeof GenexPublishStep)[keyof typeof GenexPublishStep];
@@ -67,6 +77,8 @@ const PHASE_STEP: Partial<Record<GenexPublishPhase, GenexPublishStep>> = {
 
 /** A test running longer than this is "Still testing": Genex usually serves a new build well within it. */
 export const SLOW_TEST_MS = 2 * MINUTE_MS;
+/** Genex's check of an app taking longer than this says so, and that a person reviews it if it can't finish. */
+export const SLOW_CHECK_MS = 15 * MINUTE_MS;
 
 /** One step on the progress bar. */
 export interface StepView {
@@ -133,6 +145,8 @@ export interface PublishView {
   canAskCover: boolean;
   /** The game would go out with no picture: no cover to send, and none on Genex ({@link goesWithoutCover}). */
   withoutCover: boolean;
+  /** Genex checks the game's apps now: when the last was sent, and whether it takes longer than usual. */
+  check: { since: string; slow: boolean; person: boolean } | null;
 }
 
 export const isListed = (state: GenexPublishState): boolean => state.status === GenexHostedStatus.Published;
@@ -298,7 +312,124 @@ export function publishView(state: GenexPublishState, now = Date.now()): Publish
     needsCover: needsCover(state),
     canAskCover: canAskCover(state),
     withoutCover: goesWithoutCover(state),
+    check: null,
   };
+}
+
+/** The steps of an apps-only publish: Genex checks its apps before they go live; an admin's go at once. */
+const APPS_STEPS: readonly GenexPublishStep[] = [
+  GenexPublishStep.Prepare,
+  GenexPublishStep.Upload,
+  GenexPublishStep.Check,
+  GenexPublishStep.Live,
+];
+const ADMIN_STEPS: readonly GenexPublishStep[] = [
+  GenexPublishStep.Prepare,
+  GenexPublishStep.Upload,
+  GenexPublishStep.Live,
+];
+
+/** Where an apps-only publish stands on its steps: a running job's phase, or Genex's check after it. */
+function appsStepAt(view: PublishView, phase: GenexPublishPhase | undefined, checking: boolean): GenexPublishStep {
+  if (checking && !view.running) return GenexPublishStep.Check;
+  return phase === GenexPublishPhase.Uploading ? GenexPublishStep.Upload : GenexPublishStep.Prepare;
+}
+
+/** The chip a game's review puts on the banner, when it has one to say. */
+const REVIEW_CHIP: Partial<Record<GenexGameReview, { tone: ChipTone; text: string }>> = {
+  [GenexGameReview.TakenDown]: { tone: ChipTone.Failed, text: REVIEW_WORDS.dialog.chipTakenDown },
+  [GenexGameReview.NotApproved]: { tone: ChipTone.Failed, text: REVIEW_WORDS.dialog.chipNotApproved },
+  [GenexGameReview.WithPerson]: { tone: ChipTone.Quiet, text: REVIEW_WORDS.dialog.chipReview },
+  [GenexGameReview.Checking]: { tone: ChipTone.Quiet, text: REVIEW_WORDS.dialog.chipReview },
+};
+
+/** Where the publish-open action sends the browser (the plugin's `PublishLinkTarget`). */
+export const LinkTarget = { Gallery: "gallery" } as const;
+
+/**
+ * The chip a game's review puts on its banner. A game with only apps says In review, Not approved or
+ * Taken down; a game with a web version keeps the web game's chip, except Taken down, which hides the
+ * whole game: its apps' review shows on their rows and in the card.
+ */
+const reviewChip = (record: GenexReviewRecord | null, appsOnly: boolean) => {
+  if (!record) return undefined;
+  if (!appsOnly && record.state !== GenexGameReview.TakenDown) return undefined;
+  return REVIEW_CHIP[record.state];
+};
+
+/**
+ * A game with only apps whose app players get, while its publish record has no listing to say so
+ * yet: Live, since the newest app went live, never "Not published".
+ */
+function appsLiveChip(view: PublishView, record: GenexReviewRecord | null, now: number): PublishView["chip"] {
+  if (record?.state !== GenexGameReview.Live || view.chip?.tone !== ChipTone.Quiet) return view.chip;
+  const live = record.apps
+    .filter((app) => app.state === GenexAppReview.Live)
+    .map((app) => app.decidedAt ?? app.sentAt)
+    .filter((at): at is string => typeof at === "string" && Number.isFinite(Date.parse(at)))
+    .sort()
+    .at(-1);
+  return { tone: ChipTone.Live, text: live ? WORDS.chipLive(relativeTime(live, now)) : WORDS.chipLiveUndated };
+}
+
+/**
+ * The dialog's view of a game with apps, with Genex's review of them: an apps-only publish's steps are
+ * Prepare · Upload · Check · Go live (an admin's, whose apps go live at once, have no Check), the Check
+ * stays current while an app is checked or with a person, its clock counting from when it was sent,
+ * and the banner's chip says In review, Not approved or Taken down. A web game's view is never changed.
+ */
+export function withAppsReview(
+  view: PublishView,
+  input: { apps: boolean; appsOnly: boolean; admin: boolean; record: GenexReviewRecord | null; job?: GenexPublishJob },
+  now = Date.now(),
+): PublishView {
+  if (!input.apps) return view;
+  const chip = reviewChip(input.record, input.appsOnly);
+  const said = chip && !view.running ? { ...view, chip } : view;
+  if (!input.appsOnly) return said;
+  const reviewed = view.running ? said : { ...said, chip: appsLiveChip(said, input.record, now) };
+  const since = checkingSince(input.record);
+  const checking = since !== null;
+  const steps = input.admin ? ADMIN_STEPS : APPS_STEPS;
+  if (!view.running && !checking) return reviewed;
+  const at = steps.indexOf(appsStepAt(view, input.job?.phase, checking));
+  const person = input.record?.state === GenexGameReview.WithPerson;
+  const slow = !person && now - Date.parse(since ?? "") >= SLOW_CHECK_MS;
+  const check = since !== null && !view.running ? { since, slow, person } : null;
+  return {
+    ...reviewed,
+    steps: steps.map((step, index) => ({ step, label: WORDS.step[step], state: stepStateAt(index, at) })),
+    check,
+  };
+}
+
+/** The apps Genex holds in `record` (checked or with a person), by their key. */
+export function heldApps(record: GenexReviewRecord | null): Map<string, GenexReviewApp> {
+  const held = new Map<string, GenexReviewApp>();
+  if (!record || record.takedown) return held;
+  for (const app of record.apps)
+    if (app.state === GenexAppReview.Checking || app.state === GenexAppReview.WithPerson) held.set(appKey(app), app);
+  return held;
+}
+
+/** An app that went live while the dialog watched it, and whether players had an earlier build of it. */
+export interface WentLive {
+  app: GenexReviewApp;
+  update: boolean;
+}
+
+/**
+ * The app Genex held when the dialog last read it (`held`) that `record` says is live now; null for
+ * none. An app already live when the dialog opened is never one: only a check the dialog watched end
+ * is celebrated.
+ */
+export function wentLive(held: ReadonlyMap<string, GenexReviewApp>, record: GenexReviewRecord | null): WentLive | null {
+  if (!record || record.takedown) return null;
+  for (const app of record.apps) {
+    const before = held.get(appKey(app));
+    if (before && app.state === GenexAppReview.Live) return { app, update: before.players !== undefined };
+  }
+  return null;
 }
 
 /**

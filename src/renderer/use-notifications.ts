@@ -4,7 +4,8 @@ import { SECOND_MS } from "../shared/duration.ts";
  * The notifications feed as the app shows it: read from the same log the chat reads, kept per
  * profile in storage (`notifications.ts` owns the rules and the format), badged on the Dock, and
  * — for what arrives while Studio is in the background — sent to macOS. A row about the chat on
- * screen arrives read.
+ * screen arrives read. A game's review that arrives while Studio is in front and another game is
+ * open is a toast with [Open].
  */
 import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import type { ConversationRecord, GameProject } from "./types.ts";
@@ -16,7 +17,9 @@ import {
   loadNotices,
   markRead,
   noticeSource,
+  reviewToasts,
   saveNotices,
+  systemNotes,
   waitingNotices,
   type Notice,
   NoticeKind,
@@ -26,17 +29,11 @@ import { threadMeta } from "./state/threads.ts";
 import { safeStorage } from "./storage.ts";
 import { ThreadKind } from "../shared/event-log.ts";
 import { UiEvent } from "../shared/ui-events.ts";
-import { t } from "../shared/i18n.ts";
 import { track } from "./analytics/client.ts";
 import { AnalyticsEvent } from "./analytics/events.ts";
 import { noticeProperties } from "./analytics/workspace-properties.ts";
 import { NoticeVia } from "./analytics/workspace-vocabulary.ts";
-
-const NOTICE_SUBTITLES: Partial<Record<NoticeKind, string>> = {
-  [NoticeKind.Question]: t("Waiting for your answer"),
-  [NoticeKind.Plan]: t("Plan ready for review"),
-  [NoticeKind.Permission]: t("Permission needed"),
-};
+import { REVIEW_WORDS } from "./words.ts";
 
 /** A sign-in or Play notice belongs to no chat: it always shows. Any other shows while its chat is open and its game is here. */
 const unthreaded = (notice: Notice): boolean => notice.kind === NoticeKind.SignIn || notice.kind === NoticeKind.Play;
@@ -90,6 +87,15 @@ export function useNotifications({
     },
     [save],
   );
+  const onOpenNow = useRef(onOpen);
+  onOpenNow.current = onOpen;
+  const open = useCallback(
+    (notice: Notice, via: NoticeVia = NoticeVia.Panel) => {
+      changed(markRead(noticesNow.current, new Set([notice.id])));
+      onOpenNow.current(notice, via);
+    },
+    [changed],
+  );
   const receive = useEffectEvent(() => {
     if (!ready) return;
     const feed = studio().eventLog.getState().feed;
@@ -103,11 +109,7 @@ export function useNotifications({
     started.current = true;
     if (state === noticesNow.current) return;
     changed(state);
-    // The first read and a focused window are already in front of the user: no system notice.
-    // (Nothing arrived counts nothing and sends nothing.)
-    const notifies = !first && !focused && arrived.length > 0;
-    countArrived(arrived, { system_notified: notifies, window_focused: focused });
-    if (notifies) sendSystemNotices(arrived, threads, games);
+    tellArrived(arrived, { first, focused }, { threads, games, watching: watching.current, open });
   });
   useEffect(() => {
     if (ready) receive();
@@ -136,15 +138,6 @@ export function useNotifications({
     void window.studio.setBadge(waitingCount).catch(() => {});
   }, [waitingCount]);
 
-  const onOpenNow = useRef(onOpen);
-  onOpenNow.current = onOpen;
-  const open = useCallback(
-    (notice: Notice, via: NoticeVia = NoticeVia.Panel) => {
-      changed(markRead(noticesNow.current, new Set([notice.id])));
-      onOpenNow.current(notice, via);
-    },
-    [changed],
-  );
   // A click on the macOS notification focuses Studio and names the row.
   useEffect(
     () =>
@@ -171,35 +164,45 @@ export function useNotifications({
   );
 }
 
+/** What a read tells of the notices that arrived: where they stand, and to whom. */
+interface Telling {
+  threads: ConversationRecord[];
+  games: GameProject[];
+  /** The chat on screen, and whether another room covers it. */
+  watching: { threadId: string | null; away: boolean };
+  open(notice: Notice, via: NoticeVia): void;
+}
+
+/**
+ * Tell what arrived: macOS while Studio is in the background (the first read and a focused window
+ * are already in front of the person; nothing arrived sends nothing), the count for usage
+ * analytics, and a toast with [Open] for a game's review while another game is open.
+ */
+function tellArrived(arrived: Notice[], seen: { first: boolean; focused: boolean }, telling: Telling): void {
+  const notes = systemNotes(arrived, seen, (notice) => sourceOf(notice, telling.threads, telling.games));
+  countArrived(arrived, { system_notified: notes.length > 0, window_focused: seen.focused });
+  for (const note of notes) void window.studio.notify(note).catch(() => {});
+  if (seen.first) return;
+  const { threadId, away } = telling.watching;
+  const openProject = away ? null : (threadMeta(telling.threads.find((one) => one.id === threadId)).project ?? null);
+  for (const notice of reviewToasts(arrived, { focused: seen.focused, openProject }))
+    studio().toasts.offer(notice.headline ?? notice.text, {
+      label: REVIEW_WORDS.notice.open,
+      run: () => telling.open(notice, NoticeVia.Toast),
+    });
+}
+
 /** Each notice that arrived, by its kind, for usage analytics: never its words or its game. */
 function countArrived(arrived: Notice[], seen: { system_notified: boolean; window_focused: boolean }): void {
   for (const notice of arrived) track(AnalyticsEvent.NoticeArrived, { ...noticeProperties(notice), ...seen });
 }
 
-function sendSystemNotices(arrived: Notice[], threads: ConversationRecord[], games: GameProject[]): void {
-  const source = (notice: Notice): string => {
-    const thread = threadMeta(threads.find((item) => item.id === notice.threadId));
-    return noticeSource(
-      notice,
-      games.find((game) => game.name === (notice.project ?? thread.project))?.title,
-      thread.kind === ThreadKind.Game,
-    );
-  };
-  const notes =
-    arrived.length > 3
-      ? [
-          {
-            title: "Genex",
-            body: t("{count, plural, one {# update from your games} other {# updates from your games}}", {
-              count: arrived.length,
-            }),
-          },
-        ]
-      : arrived.map((notice) => ({
-          id: notice.id,
-          title: source(notice),
-          body: notice.text,
-          ...(NOTICE_SUBTITLES[notice.kind] ? { subtitle: NOTICE_SUBTITLES[notice.kind] } : {}),
-        }));
-  for (const note of notes) void window.studio.notify(note).catch(() => {});
+/** Who a row is from, as macOS titles it: its game, its chat's kind, or its own headline. */
+function sourceOf(notice: Notice, threads: ConversationRecord[], games: GameProject[]): string {
+  const thread = threadMeta(threads.find((item) => item.id === notice.threadId));
+  return noticeSource(
+    notice,
+    games.find((game) => game.name === (notice.project ?? thread.project))?.title,
+    thread.kind === ThreadKind.Game,
+  );
 }

@@ -100,6 +100,13 @@ export const FixtureName = {
    * the account's Snowball on Genex, its chat holding a Listing draft card for Frost Axe.
    */
   ItemsStore: "items-store",
+  /**
+   * Genex's review of a game's apps (with `STUDIO_FIXTURE_GENEX_ACCOUNT=1`): five games on Genex. The
+   * fixture game is Midnight Asphalt, taken down for three things to fix; Skate Dog is with a person,
+   * Stick & Steel and Lost Cathedral are public and The Long Silence is being checked. Each change
+   * arrives once the window is up: the bell, the Dock, a toast, the sidebar's lines and the Publish dot.
+   */
+  NativeReview: "native-review",
 } as const;
 export type FixtureName = (typeof FixtureName)[keyof typeof FixtureName];
 

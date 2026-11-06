@@ -227,6 +227,7 @@ describe("Who may answer a purchase sheet", () => {
     registerPlayIpc(handle, {
       gallery: unused as PlayIpcDeps["gallery"],
       gameLinks: gameLinks(),
+      localGame: async () => null,
       remix: async () => "",
       remixReady: async () => ({}),
       viewer: () => viewer,

@@ -37,6 +37,8 @@ const METHODS = [
   "defaultDelegatedEngine",
   "dispatchRun",
   "emit",
+  // The game's chat when it has one, read without making one (the review's sidebar line and restart).
+  "existingGameThread",
   "exportPublicCopy",
   "forgetPermission",
   // What freeing space deletes, and deleting it (studio:storage, studio:storage.free).
@@ -80,6 +82,13 @@ const METHODS = [
   "checkpointPreview",
   "previewStageVisible",
   "previewForeground",
+  "genexFixReview",
+  "genexGameOfSlug",
+  "genexRequestReview",
+  "genexReviewFocus",
+  "genexReviewFollow",
+  "genexReviewLines",
+  "genexReviewStatus",
   "previewSound",
   "reconcileSeedManifest",
   "recover",

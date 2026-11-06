@@ -2,6 +2,7 @@
   "3D models, characters, sound and art for your games, made in chat with Genex credits. Coding stays on your own provider.": "Modelos 3D, personajes, sonido y arte para tus juegos, hechos en el chat con créditos de Genex. El código sigue en tu propio proveedor.",
   "Account and jobs": "Cuenta y tareas",
   "Approve character workflow": "Aprobar el flujo del personaje",
+  "Ask a person at Genex to review this game's turned-down Mac, Windows or Linux app, or its takedown, with your note. An app Genex keeps no copy of is uploaded again from the game folder so a person can read it.": "Pedir a una persona de Genex que revise la app para Mac, Windows o Linux de este juego que fue rechazada, o su retirada, con tu nota. Una app de la que Genex no guarda copia se vuelve a subir desde la carpeta del juego para que una persona pueda leerla.",
   "Asset setup state": "Estado de configuración de recursos",
   "Blender server address": "Dirección del servidor de Blender",
   "Build an app on Genex": "Crear una app en Genex",
@@ -27,9 +28,12 @@
   "Remove Studio’s saved Genex credential and stop new asset submissions.": "Quitar la credencial de Genex guardada en Studio y detener el envío de nuevos recursos.",
   "Remove web version": "Quitar versión web",
   "Rename the game": "Cambiar el nombre del juego",
+  "Request human review": "Pedir revisión humana",
   "Review Genex terms": "Revisar los términos de Genex",
   "Review character candidates in Studio before approving paid generation.": "Revisa las opciones de personaje en Studio antes de aprobar la generación de pago.",
+  "Review of this game's apps": "Revisión de las apps de este juego",
   "Run a Genex CLI command that spends Nex or credits or changes what this game sells, with your saved Genex account.": "Ejecutar un comando de la CLI de Genex que gasta Nex o créditos o cambia lo que vende este juego, con tu cuenta de Genex guardada.",
+  "Send apps again": "Enviar las apps otra vez",
   "Sign and notarize Mac apps with my own Apple Developer ID": "Firmar y notarizar apps de Mac con mi propio Apple Developer ID",
   "Take this game's cover": "Capturar la portada de este juego",
   "Take this game's web version off Genex. Its page shows its Mac, Windows and Linux apps again, and the apps stay as they are. You can publish a web version again later.": "Quita la versión web de este juego de Genex. Su página vuelve a mostrar sus apps para Mac, Windows y Linux, y las apps se quedan como están. Puedes volver a publicar una versión web más adelante.",
@@ -37,6 +41,7 @@
   "Upload Studio's exported copy of this game to its Genex draft page and make it the public version in the gallery. Everyone can find and play it. The first time, a hosted Genex project is created for this game under your account. Its cover shot also becomes its picture on Genex, unless you chose one there.": "Subir la copia exportada por Studio de este juego a su página borrador de Genex y hacerla la versión pública en la galería. Todos podrán encontrarlo y jugarlo. La primera vez, se crea un proyecto alojado de Genex para este juego en tu cuenta. Su captura de portada también pasa a ser su imagen en Genex, salvo que hayas elegido una allí.",
   "Upload Studio's exported copy of this game to its unlisted Genex draft page only; the public version stays as it is. The first time, a hosted Genex project is created for this game under your account; Studio keeps that link in its own copy, never in your game folder. Until the game is public, its cover shot also becomes its picture on Genex, unless you chose one there.": "Subir la copia exportada por Studio de este juego solo a su página borrador oculta de Genex; la versión pública se queda como está. La primera vez, se crea un proyecto alojado de Genex para este juego en tu cuenta; Studio guarda ese vínculo en su propia copia, nunca en la carpeta de tu juego. Hasta que el juego sea público, su captura de portada también pasa a ser su imagen en Genex, salvo que hayas elegido una allí.",
   "Upload this game's project privately to Genex, which builds an app of it for another system (a Windows app of an Unreal game made on a Mac) on its own computers and adds it to the game's Genex page. Only you and Genex can see the project.": "Sube el proyecto de este juego en privado a Genex, que crea con él una app para otro sistema (una app de Windows de un juego de Unreal hecho en un Mac) en sus propios ordenadores y la añade a la página del juego en Genex. Solo tú y Genex pueden ver el proyecto.",
+  "Upload this game's ready Mac, Windows and Linux apps from its folder to Genex again, so Genex checks them before players get them. The game's web version stays as it is.": "Volver a subir a Genex desde su carpeta las apps listas para Mac, Windows y Linux de este juego, para que Genex las revise antes de que les lleguen a los jugadores. La versión web del juego se queda como está.",
   "Upload this game's ready Mac, Windows and Linux apps from its folder to Genex and list the game in the gallery, where people playing in the Genex desktop app can install them. The first time, a hosted Genex project is created for this game under your account.": "Subir a Genex las apps de Mac, Windows y Linux ya listas de este juego desde su carpeta y poner el juego en la galería, donde quienes juegan en la app de escritorio de Genex pueden instalarlas. La primera vez, se crea un proyecto alojado de Genex para este juego en tu cuenta.",
   "Use this cover": "Usar esta portada"
 }

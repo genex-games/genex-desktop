@@ -1,29 +1,46 @@
 /**
- * Links that open a game in Genex (`genex://game/<slug>`), as the website's "Open in Genex" sends
- * them: macOS hands one to the running app (`open-url`); Windows and Linux start Genex with it as
- * an argument (the second start's `second-instance`, or the first start's own). Only a game's own
- * address is taken and anything else is ignored. The newest link waits here until the studio page
- * takes it (`studio:play.take-game-link`), so a link that starts Genex is not lost before the page
- * loads. Links are taken from the first moment (macOS sends one that starts Genex early); the
- * window and the page are told once main listens. Electron-free: both are deps.
+ * Links that open a game in Genex, as the website sends them: macOS hands one to the running app
+ * (`open-url`); Windows and Linux start Genex with it as an argument (the second start's
+ * `second-instance`, or the first start's own). Two addresses are taken and anything else is ignored:
+ * `genex://game/<slug>` ("Open in Genex") opens the game's page in Play, and `genex://create/<slug>`
+ * ("Open in Genex Studio", from a game's review on genex.games or its email) opens the creator's own
+ * game with that link, with Publish open, or its page in Play when no game here has it. The newest
+ * link waits here until the studio page takes it (`studio:play.take-game-link`), so a link that
+ * starts Genex is not lost before the page loads. Links are taken from the first moment (macOS sends
+ * one that starts Genex early); the window and the page are told once main listens. Electron-free:
+ * both are deps.
  */
-import { isPlaySlug } from "../../shared/play.ts";
+import { type GameLinkOpen, isPlaySlug } from "../../shared/play.ts";
 
 /** The URL scheme Genex registers with the system. */
 export const GAME_LINK_SCHEME = "genex";
-/** The link's host: what it opens. */
-const GAME_HOST = "game";
+/** What a link opens, by its host: a game's page in Play, or the creator's own game in Create. */
+export const GameLinkKind = { Game: "game", Create: "create" } as const;
+export type GameLinkKind = (typeof GameLinkKind)[keyof typeof GameLinkKind];
+const LINK_HOSTS: ReadonlySet<string> = new Set(Object.values(GameLinkKind));
 /** The longest link read: a game's address is far shorter. */
 const MAX_LINK_CHARS = 256;
 
-/** The game a link opens, or null for any link that is not exactly `genex://game/<slug>`. */
-export function gameLinkSlug(link: unknown): string | null {
+/** What a link opens: its kind and the game's link on Genex. */
+export interface GameLinkTarget {
+  kind: GameLinkKind;
+  slug: string;
+}
+
+/** What a link opens, or null for any link that is not exactly `genex://game/<slug>` or `genex://create/<slug>`. */
+export function gameLinkTarget(link: unknown): GameLinkTarget | null {
   if (typeof link !== "string" || link.length > MAX_LINK_CHARS || !URL.canParse(link)) return null;
   const url = new URL(link);
   const extras = url.username || url.password || url.port || url.search || url.hash;
-  if (url.protocol !== `${GAME_LINK_SCHEME}:` || url.host !== GAME_HOST || extras) return null;
+  if (url.protocol !== `${GAME_LINK_SCHEME}:` || !LINK_HOSTS.has(url.host) || extras) return null;
   const slug = url.pathname.replace(/^\//, "").replace(/\/$/, "");
-  return isPlaySlug(slug) ? slug : null;
+  return isPlaySlug(slug) ? { kind: url.host as GameLinkKind, slug } : null;
+}
+
+/** The game a `genex://game/<slug>` link opens, or null for any other link. */
+export function gameLinkSlug(link: unknown): string | null {
+  const target = gameLinkTarget(link);
+  return target?.kind === GameLinkKind.Game ? target.slug : null;
 }
 
 /** The link among the arguments Genex was started with, or null: one argument that is a whole link. */
@@ -44,19 +61,19 @@ export interface GameLinks {
   arrive(link: unknown): boolean;
   /** From now on, each link that arrives shows the window and tells the page. */
   listen(deps: GameLinksDeps): void;
-  /** The game waiting, once; null when none does. */
-  take(): string | null;
+  /** What the waiting link opens, once; null when none waits. */
+  take(): GameLinkTarget | null;
 }
 
 /** The game links of this launch. */
 export function gameLinks(): GameLinks {
-  let waiting: string | null = null;
+  let waiting: GameLinkTarget | null = null;
   let listener: GameLinksDeps | null = null;
   return {
     arrive(link) {
-      const slug = gameLinkSlug(link);
-      if (!slug) return false;
-      waiting = slug;
+      const target = gameLinkTarget(link);
+      if (!target) return false;
+      waiting = target;
       listener?.show();
       listener?.announce();
       return true;
@@ -65,9 +82,23 @@ export function gameLinks(): GameLinks {
       listener = deps;
     },
     take() {
-      const slug = waiting;
+      const target = waiting;
       waiting = null;
-      return slug;
+      return target;
     },
   };
+}
+
+/**
+ * What the studio page opens for the waiting link: a create link's own game here (`localGame`, the
+ * game whose publish record has that link), else, as a game link does, the game's page in Play.
+ */
+export async function linkOpening(
+  target: GameLinkTarget | null,
+  localGame: (slug: string) => Promise<string | null>,
+): Promise<GameLinkOpen | null> {
+  if (!target) return null;
+  if (target.kind !== GameLinkKind.Create) return { slug: target.slug };
+  const project = await localGame(target.slug).catch(() => null);
+  return project ? { slug: target.slug, project } : { slug: target.slug };
 }

@@ -412,7 +412,13 @@ steps card `[data-engine-steps]` (rows `[data-step=studio|sign-in|helper|mcp|pla
 this machine; Set up, Open Studio and Get Roblox Studio are native, so a fixture refuses them)
 and items-store (with `STUDIO_FIXTURE_GENEX_ACCOUNT=1`: the fixture game is the account's Snowball on
 Genex, so Create › Items' Add to and Ask the agent reach its chat, which ends with Frost Axe's Listing draft
-card; [the item store](play.md#the-item-store)).
+card; [the item store](play.md#the-item-store))
+and native-review (with `STUDIO_FIXTURE_GENEX_ACCOUNT=1`: five games on Genex. The fixture game,
+Midnight Asphalt, is taken down for three things to fix; Skate Dog is with a person, Stick & Steel
+and Lost Cathedral are public, The Long Silence is being checked. Their news arrives 4 s after the
+window is up: the bell, the Dock, a toast for another game, the sidebar's lines and the Publish dot.
+Fix with agent and Request human review are native, so a fixture refuses them; a fixture never
+reads Genex's review again, `genexReviewReads: false`).
 Use `--reuse` explicitly for a stopped existing profile with the same fixture/provider mode.
 `--providers live` is explicit, retained, and uses existing ambient account semantics; no auth
 or account copying is performed. Fixtures park background improvement but keep the real core,

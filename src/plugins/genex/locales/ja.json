@@ -2,6 +2,7 @@
   "3D models, characters, sound and art for your games, made in chat with Genex credits. Coding stays on your own provider.": "ゲーム用の3Dモデル、キャラクター、サウンド、アートを、チャットでGenexクレジットを使ってつくれます。コーディングはこれまでどおり自分のプロバイダーで行います。",
   "Account and jobs": "アカウントとジョブ",
   "Approve character workflow": "キャラクター作成を承認",
+  "Ask a person at Genex to review this game's turned-down Mac, Windows or Linux app, or its takedown, with your note. An app Genex keeps no copy of is uploaded again from the game folder so a person can read it.": "このゲームの却下されたMac・Windows・Linuxアプリ、またはゲームの公開停止について、メモを添えてGenexのスタッフに確認を依頼します。Genexがコピーを保管していないアプリは、スタッフが確認できるようゲームフォルダからもう一度アップロードされます。",
   "Asset setup state": "アセット設定の状態",
   "Blender server address": "Blenderサーバーのアドレス",
   "Build an app on Genex": "Genexでアプリをつくる",
@@ -27,9 +28,12 @@
   "Remove Studio’s saved Genex credential and stop new asset submissions.": "Studioに保存したGenexの認証情報を削除し、新しいアセットの送信を止めます。",
   "Remove web version": "ウェブ版を削除",
   "Rename the game": "ゲーム名を変更",
+  "Request human review": "スタッフに確認を依頼",
   "Review Genex terms": "Genexの規約を確認",
   "Review character candidates in Studio before approving paid generation.": "有料の生成を承認する前に、Studioでキャラクターの候補を確認してください。",
+  "Review of this game's apps": "このゲームのアプリの審査",
   "Run a Genex CLI command that spends Nex or credits or changes what this game sells, with your saved Genex account.": "保存したGenexアカウントで、Nexやクレジットを使う、またはこのゲームの販売内容を変えるGenex CLIコマンドを実行します。",
+  "Send apps again": "アプリをもう一度送る",
   "Sign and notarize Mac apps with my own Apple Developer ID": "自分のApple Developer IDでMacアプリに署名して公証する",
   "Take this game's cover": "このゲームのカバーを撮る",
   "Take this game's web version off Genex. Its page shows its Mac, Windows and Linux apps again, and the apps stay as they are. You can publish a web version again later.": "このゲームのウェブ版を Genex から削除します。ページには再び Mac・Windows・Linux アプリが表示され、アプリはそのまま残ります。ウェブ版は後でまた公開できます。",
@@ -37,6 +41,7 @@
   "Upload Studio's exported copy of this game to its Genex draft page and make it the public version in the gallery. Everyone can find and play it. The first time, a hosted Genex project is created for this game under your account. Its cover shot also becomes its picture on Genex, unless you chose one there.": "StudioがエクスポートしたこのゲームのコピーをGenexの下書きページにアップロードし、ギャラリーの公開バージョンにします。誰でも見つけてプレイできるようになります。初回は、あなたのアカウントにこのゲーム用のホスト型Genexプロジェクトが作られます。Genexで自分で選んでいなければ、カバー用ショットもGenexでの画像になります。",
   "Upload Studio's exported copy of this game to its unlisted Genex draft page only; the public version stays as it is. The first time, a hosted Genex project is created for this game under your account; Studio keeps that link in its own copy, never in your game folder. Until the game is public, its cover shot also becomes its picture on Genex, unless you chose one there.": "Studioがエクスポートしたこのゲームのコピーを、限定公開のGenex下書きページだけにアップロードします。公開バージョンはそのままです。初回は、あなたのアカウントにこのゲーム用のホスト型Genexプロジェクトが作られます。そのリンクはStudioが自分のコピーに保存し、ゲームフォルダーには入れません。ゲームが公開されるまでは、Genexで自分で選んでいなければ、カバー用ショットもGenexでの画像になります。",
   "Upload this game's project privately to Genex, which builds an app of it for another system (a Windows app of an Unreal game made on a Mac) on its own computers and adds it to the game's Genex page. Only you and Genex can see the project.": "このゲームのプロジェクトを非公開でGenexにアップロードします。Genexは自分のコンピューターで別のシステム向けのアプリ（MacでつくったUnrealゲームのWindowsアプリ）をつくり、Genexのゲームページに追加します。プロジェクトはあなたとGenexだけが見られます。",
+  "Upload this game's ready Mac, Windows and Linux apps from its folder to Genex again, so Genex checks them before players get them. The game's web version stays as it is.": "このゲームの準備ができたMac・Windows・Linuxアプリを、フォルダからもう一度Genexにアップロードします。プレイヤーに届く前にGenexが確認します。ゲームのウェブ版はそのままです。",
   "Upload this game's ready Mac, Windows and Linux apps from its folder to Genex and list the game in the gallery, where people playing in the Genex desktop app can install them. The first time, a hosted Genex project is created for this game under your account.": "このゲームのフォルダーにある完成したMac版、Windows版、Linux版のアプリをGenexにアップロードし、ギャラリーに掲載します。Genexデスクトップアプリで遊ぶ人がインストールできるようになります。初回は、あなたのアカウントにこのゲーム用のホスト型Genexプロジェクトが作られます。",
   "Use this cover": "このカバーを使う"
 }

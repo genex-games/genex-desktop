@@ -1,5 +1,7 @@
+import type { GenexReviewRequestAnswer, GenexReviewStatus, GenexSidebarEntry } from "./genex-review.ts";
 import type { AnalyticsConfig } from "./analytics.ts";
 import type {
+  GameLinkOpen,
   PlayControl,
   PlayFeedPage,
   PlayFeedRequest,
@@ -250,6 +252,37 @@ export interface StudioApi {
   genexPublishApps(project: string, title?: string, remix?: boolean): Promise<void>;
   /** Ask Genex to build the game's `platform` app on its own computers (an Unreal game's Windows app on a Mac). */
   genexCloudBuild(project: string, platform: string): Promise<void>;
+  /**
+   * Genex's review of a game's apps and its takedown, as the Genex plugin keeps it. With `refresh`
+   * (the Publish dialog while something is open) Genex is asked again, at most once a 30 s.
+   */
+  genexReviewStatus(project: string, refresh?: boolean): Promise<GenexReviewStatus>;
+  /**
+   * The sidebar's second line under each game on Genex (Public, In review, Not approved, Taken down,
+   * Fixing…), by game: from what Studio keeps, never a read of Genex. A game Genex does not know has none.
+   */
+  genexReviewLines(): Promise<Record<string, GenexSidebarEntry>>;
+  /**
+   * Fix with agent on a game's review card: Genex's things to fix go to the game's chat as a brief, and,
+   * with `autoPublish`, Studio sends the fixed app again (or asks a person to put a takedown back) once
+   * the agent is done. The press is the consent. With `fixId` and `autoPublish: false`, it takes that
+   * press's automatic step back ("Don't publish it automatically"). With `rebuild` (Build again, after a
+   * fix whose app was not built again), the agent is asked to build the fixed app, and Studio sends it
+   * once that is done.
+   */
+  genexFixReview(
+    project: string,
+    options: { autoPublish: boolean; fixId?: string; rebuild?: boolean },
+  ): Promise<{ fixId: string }>;
+  /**
+   * Request human review on a game's review card: a person at Genex reviews the turned-down app (`platform`,
+   * `arch`, or every one that allows it) or the takedown, with the person's `note`. An app Genex keeps no
+   * copy of is sent again in the same press, which is the consent.
+   */
+  genexRequestReview(
+    project: string,
+    args: { platform?: string; arch?: string; note?: string },
+  ): Promise<GenexReviewRequestAnswer>;
   pluginsIndex(refresh?: boolean): Promise<PluginIndexView>;
   pluginInstallGithub(spec: string): Promise<void>;
   /** What a pasted GitHub link leads to, pinned to one exact commit; nothing is installed. */
@@ -583,8 +616,12 @@ export interface StudioApi {
   playLike(slug: string, liked: boolean): Promise<{ liked: boolean; likes: number }>;
   /** Play: close the viewer. */
   playClose(): Promise<void>;
-  /** Play: the game a `genex://game/<slug>` link asked to open, once; null when none waits. */
-  playTakeGameLink(): Promise<string | null>;
+  /**
+   * The game a `genex://` link asked to open, once; null when none waits. A `genex://game/<slug>` link
+   * opens its page in Play; a `genex://create/<slug>` link names this library's game with that link
+   * (`project`), opened with Publish, or only the slug when no game here has it.
+   */
+  playTakeGameLink(): Promise<GameLinkOpen | null>;
   /** Play: one of the viewer header's controls (Like, Share, Exit…); main answers with `UiEvent.PlayViewer`. */
   playControl(control: PlayControl, at?: PlayPoint): Promise<void>;
   /** Play: whether the viewer bar's Comments is open (main lays its layer over the whole window). */
