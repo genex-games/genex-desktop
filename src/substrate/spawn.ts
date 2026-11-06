@@ -85,15 +85,37 @@ import { type LiveInput, openLiveInput } from "./windows-live-input.ts";
  * agent) cannot read Electron's archive, and the runtime's own lookup answers the archive's virtual
  * path even for an unpacked file, since Electron's fs answers for it.
  */
-export function packagedVendorFile(packageDir: string, sep: string, ...parts: string[]): string | undefined {
+export function packagedVendorFile(
+  packageDir: string | undefined,
+  sep: string,
+  ...parts: string[]
+): string | undefined {
   const archive = `app.asar${sep}`;
-  if (!packageDir.includes(archive)) return undefined;
+  if (!packageDir?.includes(archive)) return undefined;
   return [packageDir.replace(archive, `app.asar.unpacked${sep}`), "vendor", ...parts].join(sep);
 }
 
-const sandboxPackage = path.dirname(
-  createRequire(import.meta.url).resolve("@anthropic-ai/sandbox-runtime/package.json"),
-);
+/**
+ * sandbox-runtime's package folder, or undefined where Node can't find it. A bundled plugin's
+ * backend carries this module and runs from its copy in the profile, with no `node_modules` beside
+ * or above it: resolving there threw on import, so that plugin never started (Godot). Without the
+ * folder the runtime looks up its vendor files itself, as it does outside a package.
+ */
+function sandboxPackageDir(): string | undefined {
+  try {
+    return path.dirname(createRequire(import.meta.url).resolve("@anthropic-ai/sandbox-runtime/package.json"));
+  } catch (error) {
+    // Only a package Node can't find: one that stops exposing its package.json still fails loudly.
+    if (!isModuleNotFound(error)) throw error;
+    return undefined;
+  }
+}
+
+/** Node's answer for a module it can't find from where it looked. */
+const isModuleNotFound = (error: unknown): boolean =>
+  error instanceof Error && "code" in error && error.code === "MODULE_NOT_FOUND";
+
+const sandboxPackage = sandboxPackageDir();
 const packagedSeccomp =
   process.platform === "linux"
     ? packagedVendorFile(sandboxPackage, path.sep, "seccomp", process.arch, "apply-seccomp")
