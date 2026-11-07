@@ -487,7 +487,8 @@ those paths. Nothing is lost when a checkpoint leaves a file out, so the chat sa
 (a `checkpoint_skipped` with `by: checkpoint` from an older version shows no line). The rewind
 confirmation names the changed ones (`tooLargeFiles`): one either tree holds that changed, one left
 out then that is gone or whose size or time differs now, and one left out now that was not there
-then; a checkpoint an older version took kept no times, so of its files only a gone one is named.
+then; a checkpoint an older version took kept no times, so of its files only a gone one is named,
+and a recorded path that is not a plain one inside the folder, or crosses a link, is never named.
 A restore that left some appends the host-only `checkpoint_skipped` with `by: rewind`, each file's
 size (a gone one's is 0, and its line names it without one). That line is the person's alone: no
 delegated session is told of the files, since nothing it can do brings them back and it would

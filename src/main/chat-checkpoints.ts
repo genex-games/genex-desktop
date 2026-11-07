@@ -20,7 +20,7 @@ import { GIT_ENV } from "../substrate/snapshots.ts";
 import { hostGitArgs, hostGitConfig, hostGitEnv } from "../substrate/git-policy.ts";
 import { pathExists } from "../substrate/fsx.ts";
 import { nestedRepos } from "../substrate/game-workspace.ts";
-import { isBelow } from "../substrate/paths.ts";
+import { isBelow, isPlainRelativePath } from "../substrate/paths.ts";
 import { ignoreLine, type PlacedRule, ruleGlob, ruleMatches } from "../shared/project-workspace.ts";
 import { ensureFactIgnoreRules } from "../substrate/nested-repos.ts";
 import { REWIND_REFS } from "../shared/game-history.ts";
@@ -624,17 +624,39 @@ async function snapshotOf(dir: string, commit: string): Promise<Snapshot> {
   const stamped = Array.isArray(recorded.stamps) ? recorded.stamps.filter(isStampedFile) : [];
   return {
     tree: commit,
-    nested: Array.isArray(recorded.nested) ? recorded.nested : [],
-    skipped: Array.isArray(recorded.skipped) ? recorded.skipped : [],
+    nested: paths(recorded.nested),
+    skipped: paths(recorded.skipped),
     stamps: new Map(stamped.map(({ file, bytes, modifiedMs }) => [file, { bytes, modifiedMs }])),
     ruled: [],
   };
+}
+
+/** The paths a record lists: its non-empty strings, whatever else it holds. */
+function paths(listed: unknown): string[] {
+  return Array.isArray(listed) ? listed.filter((entry) => typeof entry === "string" && entry !== "") : [];
 }
 
 /** How a file looks now, links never followed; null once it is gone. */
 async function stampNow(dir: string, file: string): Promise<FileStamp | null> {
   const found = await lstat(path.join(dir, file)).catch(() => null);
   return found ? { bytes: found.size, modifiedMs: found.mtimeMs } : null;
+}
+
+/**
+ * Is a file a record names gone from the folder? Only a plain path inside it whose way there
+ * crosses no link can be told: anything else counts as there, so a record never names a file
+ * outside the folder.
+ */
+async function goneFrom(dir: string, file: string): Promise<boolean> {
+  if (!isPlainRelativePath(file)) return false;
+  let place = dir;
+  for (const segment of file.split("/")) {
+    place = path.join(place, segment);
+    const found = await lstat(place).catch(() => null);
+    if (!found) return true;
+    if (found.isSymbolicLink()) return false;
+  }
+  return false;
 }
 
 /** A folder name as a glob that matches only itself: wildcard characters become classes. */
@@ -764,7 +786,7 @@ async function changedSince(
   current: Snapshot,
   skippedNow: ReadonlySet<string>,
 ): Promise<boolean> {
-  if (!skippedNow.has(file)) return (await stampNow(dir, file)) === null;
+  if (!skippedNow.has(file)) return goneFrom(dir, file);
   const then = from.stamps.get(file);
   const now = current.stamps.get(file);
   if (!then || !now) return false;

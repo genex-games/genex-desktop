@@ -119,7 +119,7 @@ export function assertRelativePath(file: string): string {
 }
 
 /** The shape `assertRelativePath` accepts. */
-function isPlainRelativePath(file: unknown): file is string {
+export function isPlainRelativePath(file: unknown): file is string {
   if (typeof file !== "string" || !file) return false;
   if (CONTROL_OR_BACKSLASH.test(file) || path.isAbsolute(file)) return false;
   return file.split("/").every((segment) => segment && segment !== "." && segment !== "..");

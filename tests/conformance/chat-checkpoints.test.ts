@@ -460,6 +460,57 @@ test(".env.local and friends never enter a checkpoint and are never deleted, wha
   );
 });
 
+/** Put `record` in place of what the checkpoint at `ref` recorded it left out, as an older or a broken writer would. */
+async function recordLeftOut(dir: string, ref: string, record: unknown): Promise<void> {
+  const commit = (await git(dir, ["rev-parse", ref])).trim();
+  const index = path.join(dir, ".git", "left-out-record.index");
+  const blob = (await git(dir, ["hash-object", "-w", "--stdin"], {}, JSON.stringify(record))).trim();
+  await git(dir, ["read-tree", commit], { GIT_INDEX_FILE: index });
+  await git(dir, ["update-index", "--add", "--cacheinfo", `100644,${blob},.studio-checkpoint-left-out.json`], {
+    GIT_INDEX_FILE: index,
+  });
+  const tree = (await git(dir, ["write-tree"], { GIT_INDEX_FILE: index })).trim();
+  const parent = (await git(dir, ["rev-parse", `${commit}^1`])).trim();
+  await fs.rm(index, { force: true });
+  await git(dir, [
+    "update-ref",
+    ref,
+    (await git(dir, ["commit-tree", tree, "-p", parent, "-m", "a rewritten record"])).trim(),
+  ]);
+}
+
+/** A record a checkpoint never wrote, naming what it left out: none of it is a file of the folder that is gone. */
+const HOSTILE_LEFT_OUT = [
+  { name: "entries that are no path", skipped: [42, null, {}, ""] },
+  { name: "a path out of the folder", skipped: ["../outside/gone.bin"] },
+  { name: "an absolute path", skipped: ["/nonexistent-genex-root/gone.bin"] },
+  { name: "a path through a link out of the folder", skipped: ["linked/gone.bin"] },
+];
+
+for (const row of HOSTILE_LEFT_OUT)
+  test(`a left-out record with ${row.name} plans and restores as before, naming nothing and touching nothing outside`, async (t) => {
+    const { dir, checkpoints } = await game(t);
+    const outside = path.join(path.dirname(dir), "outside");
+    await fs.mkdir(outside);
+    await fs.writeFile(path.join(outside, "kept.txt"), "outside\n");
+    await fs.symlink(outside, path.join(dir, "linked"), process.platform === "win32" ? "junction" : "dir");
+    await checkpoints.take(dir, "thread-1", "msg_a");
+    await recordLeftOut(dir, chatCheckpointRef("thread-1", "msg_a"), { nested: [], skipped: row.skipped });
+    await fs.writeFile(path.join(dir, "src", "main.js"), "changed();\n");
+    assert.deepEqual(await checkpoints.plan(dir, "thread-1", "msg_a"), {
+      state: "restore",
+      files: 1,
+      outside: [],
+      outsideUnknown: false,
+      nested: [],
+      tooLarge: 0,
+    });
+    const restored = await checkpoints.restore(dir, "thread-1", "msg_a");
+    assert.equal("stayed" in restored, false, "nothing is named");
+    assert.equal(await read(dir, "src/main.js"), "jump();\n");
+    assert.deepEqual(await fs.readdir(outside), ["kept.txt"], "nothing outside changed");
+  });
+
 /** A sparse file past the size a checkpoint keeps (it costs no disk), `extra` bytes larger still. */
 async function oversized(dir: string, file: string, extra = 0): Promise<void> {
   await fs.writeFile(path.join(dir, file), "");
@@ -521,25 +572,10 @@ test("a checkpoint an older Genex took, which kept no file times, still names a 
   await oversized(dir, "rewritten.mp4");
   await checkpoints.take(dir, "thread-1", "msg_a");
   // That checkpoint as an older Genex recorded it: the names it left out, and nothing more.
-  const ref = chatCheckpointRef("thread-1", "msg_a");
-  const commit = (await git(dir, ["rev-parse", ref])).trim();
-  const index = path.join(dir, ".git", "old-record.index");
-  const blob = (
-    await git(
-      dir,
-      ["hash-object", "-w", "--stdin"],
-      {},
-      JSON.stringify({ nested: [], skipped: ["gone.mp4", "rewritten.mp4"] }),
-    )
-  ).trim();
-  await git(dir, ["read-tree", commit], { GIT_INDEX_FILE: index });
-  await git(dir, ["update-index", "--cacheinfo", `100644,${blob},.studio-checkpoint-left-out.json`], {
-    GIT_INDEX_FILE: index,
+  await recordLeftOut(dir, chatCheckpointRef("thread-1", "msg_a"), {
+    nested: [],
+    skipped: ["gone.mp4", "rewritten.mp4"],
   });
-  const tree = (await git(dir, ["write-tree"], { GIT_INDEX_FILE: index })).trim();
-  const parent = (await git(dir, ["rev-parse", `${commit}^1`])).trim();
-  const old = (await git(dir, ["commit-tree", tree, "-p", parent, "-m", "an older checkpoint"])).trim();
-  await git(dir, ["update-ref", ref, old]);
 
   await fs.rm(path.join(dir, "gone.mp4"));
   await oversized(dir, "rewritten.mp4", 1);
