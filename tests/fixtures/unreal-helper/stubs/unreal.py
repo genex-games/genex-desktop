@@ -135,14 +135,19 @@ def _box_of(points: list[tuple]) -> tuple[Vector, Vector]:
 
 
 class World(Object):
-    def __init__(self, name: str) -> None:
+    """A level's world. A play session's is the editor's copied into a package named with Unreal's
+    play prefix (/Game/Maps/UEDPIE_0_Map); the world inside keeps the level's own name."""
+
+    def __init__(self, name: str, play_instance: int | None = None) -> None:
         self.name = name
+        prefix = '' if play_instance is None else f'UEDPIE_{play_instance}_'
+        self.package = f'/Game/Maps/{prefix}{name}'
 
     def get_name(self) -> str:
         return self.name
 
     def get_path_name(self) -> str:
-        return f'/Game/Maps/{self.name}.{self.name}'
+        return f'{self.package}.{self.name}'
 
     def get_world_settings(self):
         return WorldSettings()
@@ -1019,10 +1024,11 @@ class ScopedEditorTransaction:
 
 class UnrealEditorSubsystem:
     def get_game_world(self):
-        return World('PIE_Map') if state['pie'] else None
+        return World('Map', play_instance=0) if state['pie'] else None
 
     def get_editor_world(self):
-        return World('Map')
+        # Like Unreal's, it answers None while a play session runs ("The Editor is currently in a play mode.").
+        return None if state['pie'] else World('Map')
 
     def get_level_viewport_camera_info(self):
         return Vector(1, 2, 3), Rotator(0, -10, 90)
@@ -1097,7 +1103,9 @@ def get_engine_subsystem(cls):
 class EditorAssetLibrary:
     @staticmethod
     def find_asset_data(path: str):
-        return next((a for a in state['registry'] if str(a.package_name) == path), AssetData(path, 'None'))
+        # Like Unreal's, it finds nothing while a play session runs.
+        found = None if state['pie'] else next((a for a in state['registry'] if str(a.package_name) == path), None)
+        return found or AssetData(path, 'None')
 
     @staticmethod
     def does_directory_exist(path: str) -> bool:

@@ -52,10 +52,14 @@ def _left_out(package: str) -> bool:
     return outside_game or any(package == folder or package.startswith(f'{folder}/') for folder in LEFT_OUT)
 
 
-def _assets(class_path: tuple[str, str], sub_classes: bool) -> list:
+def _registry_assets(class_path: tuple[str, str], sub_classes: bool) -> list:
+    """Every asset of the class the registry lists; the registry answers during play too."""
     registry = unreal.AssetRegistryHelpers.get_asset_registry()
-    found = registry.get_assets_by_class(unreal.TopLevelAssetPath(*class_path), sub_classes)
-    return [data for data in found if not _left_out(str(data.package_name))]
+    return list(registry.get_assets_by_class(unreal.TopLevelAssetPath(*class_path), sub_classes))
+
+
+def _assets(class_path: tuple[str, str], sub_classes: bool) -> list:
+    return [data for data in _registry_assets(class_path, sub_classes) if not _left_out(str(data.package_name))]
 
 
 def _native_parent(data) -> str | None:
@@ -134,14 +138,15 @@ def _asset_path(cls) -> str:
     return path.split('.', 1)[0] if path.startswith(GAME_ROOT) else path
 
 
-def _game_mode(world) -> dict | None:
+def _game_mode(world, blueprints: dict) -> dict | None:
+    """The level's game mode and its pawn; a Blueprint mode's parent comes from `blueprints` (by
+    package), every Blueprint the registry lists, since EditorAssetLibrary finds nothing during play."""
     cls = _mode_class(world)
     if not cls:
         return None
     path = _asset_path(cls)
-    data = unreal.EditorAssetLibrary.find_asset_data(path) if path.startswith(GAME_ROOT) else None
     pawn = unreal.get_default_object(cls).get_editor_property('default_pawn_class')
-    parent = _native_parent(data) if path.startswith(GAME_ROOT) else _class_name(path)
+    parent = _native_parent(blueprints.get(path)) if path.startswith(GAME_ROOT) else _class_name(path)
     return {'path': path, 'parent': parent, 'defaultPawn': _class_name(pawn.get_path_name()) if pawn else None}
 
 
@@ -151,12 +156,16 @@ def _input_actions() -> list[str]:
 
 
 def export_project(file: str) -> dict:
-    """Writes the level, game mode, the project's Blueprints and input actions into a Saved/Genex file."""
+    """Writes the level, game mode, the project's Blueprints and input actions into a Saved/Genex file,
+    also while a play session runs (from its copy of the level)."""
     target = paths.inside_genex_folder(file, editor.project_dir())
     started = time.perf_counter()
-    world = editor.editor_subsystem().get_editor_world()
-    found = sorted(_assets(BLUEPRINT_CLASS, True), key=lambda data: str(data.package_name))
-    data = {'map': str(world.get_path_name()).split('.', 1)[0], 'gameMode': _game_mode(world),
+    world = editor.level_world()
+    every = _registry_assets(BLUEPRINT_CLASS, True)
+    by_package = {str(data.package_name): data for data in every}
+    listed = (data for data in every if not _left_out(str(data.package_name)))
+    found = sorted(listed, key=lambda data: str(data.package_name))
+    data = {'map': editor.level_path(world), 'gameMode': _game_mode(world, by_package),
             'blueprints': [_blueprint_row(d) for d in found[:BLUEPRINTS_CAP]],
             'more': max(0, len(found) - BLUEPRINTS_CAP), 'inputActions': _input_actions()}
     with open(target, 'w', encoding='utf-8') as handle:
