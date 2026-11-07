@@ -142,12 +142,13 @@ class OlderHelpersCharacters(HelperCase):
 
     def test_an_older_helpers_mannequin_is_hidden_in_game_and_the_blueprint_saved(self) -> None:
         blueprint, mesh, body = self.character()
+        body_before = dict(body.props)
         self.assertEqual(motion.hide_old_drivers(), [OLD])
         self.assertTrue(mesh.props['hidden_in_game'])
         self.assertFalse(mesh.props['visible'])
         self.assertEqual(mesh.props['visibility_based_anim_tick_option'].name, 'ALWAYS_TICK_POSE_AND_REFRESH_BONES',
                          'it still poses every frame for the Body to copy')
-        self.assertEqual(body.props, {}, 'the Body is left as it is')
+        self.assertEqual(body.props, body_before, 'the Body is left as it is')
         self.assertEqual(self.changed(), [('compile', blueprint), ('save_asset', 'BP_Duel')])
 
     def test_each_character_is_loaded_and_checked_once(self) -> None:

@@ -66,7 +66,7 @@ MESSAGE = {
     'map': 'Unreal did not keep the map entry {tag} on {abp}.',
     'old_hidden': 'Genex editor helper: hid the Motion Matching mannequin in game too for {blueprints}.',
     'old_failed': 'Genex editor helper: could not check the motion characters an older helper made: {why}',
-    'old_retry': ('Genex editor helper: could not check {blueprints} in /Game/GX/Characters yet (not loaded, the '
+    'old_retry': (f'Genex editor helper: could not check {{blueprints}} in {CHARACTER_FOLDER} yet (not loaded, the '
                   'sample\'s character missing, or not compiled or saved); it tries again at the next start.'),
 }
 

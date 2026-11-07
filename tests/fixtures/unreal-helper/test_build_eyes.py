@@ -5,8 +5,9 @@ capture_play and motion_strip take the player's view during play through the pla
 Every high-resolution shot freezes the game clock while it renders, so a strip that asked for its
 frames by the wall clock kept landing in the same frozen moment: consecutive frames came out
 identical while the pawn was said to move. A strip now asks for a frame only when the GAME clock has
-moved `interval_s` past the last one and the last one is on disk, and records the pawn's and the
-view's position the moment it asks. Refused input queues nothing."""
+moved `interval_s` past the last one and the last one is on disk, records the pawn's and the view's
+position the moment it asks, and holds the game all but still until the frame is on disk: the frame
+after a shot's stall moved a sword duel's game up to 0.4 s on. Refused input queues nothing."""
 
 import json
 import os
@@ -43,6 +44,20 @@ class Clock:
         return 1_800_000_000.0 + self.now
 
 
+class TickingClock:
+    """The test's clock, moving a microsecond on every read, as a real one does between calls in one frame."""
+
+    def __init__(self, clock: Clock) -> None:
+        self.clock = clock
+
+    def monotonic(self) -> float:
+        self.clock.now += 1e-6
+        return self.clock.now
+
+    def time(self) -> float:
+        return self.clock.time()
+
+
 class EyesCase(HelperCase):
     """An editor whose "Use Less CPU when in Background" is on, with a moved clock."""
 
@@ -63,6 +78,7 @@ class EyesCase(HelperCase):
         return self.settings.props['bThrottleCPUWhenNotForeground']
 
     def tick(self, game: float = 0.0, wall: float = 0.0) -> None:
+        game *= unreal.state['time_dilation']
         unreal.state['game_seconds'] += game
         unreal.state['world_delta'] = game
         self.clock.now += wall
@@ -210,12 +226,14 @@ class Strips(PlayCase):
         self.tick(game=0.5, wall=0.1)
         self.assertEqual(len(self.shots_asked()), 2, 'one game second after the first')
         self.land(1)
+        self.tick(game=0.03, wall=0.03)
+        self.tick(game=0.03, wall=0.03)
         self.walk(900)
         self.tick(game=1.0, wall=0.1)
-        self.tick(game=0.1, wall=0.1)
         self.assertEqual(len(self.shots_asked()), 3)
         self.land(2)
-        self.tick(game=0.1, wall=0.1)
+        for _ in range(3):
+            self.tick(game=0.1, wall=0.1)
         with open(answer['poses'], encoding='utf-8') as handle:
             record = json.load(handle)
         self.assertEqual([frame['pawn'] for frame in record['frames']], [[0, 0, 90], [500, 0, 90], [900, 0, 90]])
@@ -225,6 +243,141 @@ class Strips(PlayCase):
         self.assertEqual(record['files'], answer['files'])
         self.assertTrue(self.throttled(), 'the throttle is given back when the strip is done')
 
+    def test_the_game_is_held_still_while_a_frame_is_drawn_and_written_then_runs_on(self) -> None:
+        # A shot stalls the editor about a second, and the frame after the stall moved the duel's game up
+        # to 0.4 s on: a 0.05 s burst came out 0.02 to 0.42 s apart, and a picture 2 m past its pose.
+        answer = tool('motion_strip', 2, 0.05)
+        self.tick(game=0.02, wall=0.02)
+        self.assertEqual(unreal.state['time_dilation'], shots.FREEZE_DILATION)
+        asked_at = unreal.state['game_seconds']
+        self.tick(game=0.4, wall=1.0)  # the long frame after the shot's stall
+        self.assertLess(unreal.state['game_seconds'] - asked_at, 0.001, 'the game barely moved')
+        self.land(0)
+        self.tick(game=0.03, wall=0.03)
+        self.assertEqual(unreal.state['time_dilation'], shots.FREEZE_DILATION, 'still held as the file lands')
+        self.tick(game=0.4, wall=0.4)  # the long frame that can follow a shot's write
+        self.assertLess(unreal.state['game_seconds'] - asked_at, 0.001, 'the game barely moved')
+        self.assertEqual(unreal.state['time_dilation'], 1.0, 'it runs on once that frame is past')
+        for _ in range(2):
+            self.tick(game=0.03, wall=0.03)
+        self.assertEqual(len(self.shots_asked()), 2)
+        self.land(1)
+        for _ in range(3):
+            self.tick(game=0.03, wall=0.03)
+        with open(answer['poses'], encoding='utf-8') as handle:
+            times = [frame['gameSeconds'] for frame in json.load(handle)['frames']]
+        self.assertAlmostEqual(times[1] - times[0], 0.06, places=2)
+        self.assertEqual(unreal.state['time_dilation'], 1.0)
+
+    def end_watching(self) -> None:
+        """Ends the play's own watches, and the frame after, so no tick outlives the test."""
+        play.release_all()
+        self.tick()
+
+    def settle(self, index: int) -> None:
+        """Frame `index` lands, and the world frame the game stays held after it passes."""
+        self.land(index)
+        self.tick(game=0.03, wall=0.03)
+        self.tick(game=0.03, wall=0.03)
+
+    def test_a_slow_motion_the_game_sets_while_a_frame_is_taken_is_kept(self) -> None:
+        tool('motion_strip', 2, 0.05)
+        self.tick(game=0.02, wall=0.02)
+        unreal.state['time_dilation'] = 0.3  # a hit's slow motion, set by the game meanwhile
+        self.settle(0)
+        self.assertEqual(unreal.state['time_dilation'], 0.3)
+        unreal.state['pie'] = False
+        self.tick()  # the play ends, and the strip with it
+
+    def test_a_slow_motion_the_game_had_before_a_frame_is_given_back(self) -> None:
+        unreal.state['time_dilation'] = 0.5
+        tool('motion_strip', 2, 0.05)
+        self.tick(game=0.02, wall=0.02)
+        self.assertEqual(unreal.state['time_dilation'], shots.FREEZE_DILATION)
+        self.settle(0)
+        self.assertEqual(unreal.state['time_dilation'], 0.5)
+        unreal.state['pie'] = False
+        self.tick()
+
+    def test_a_game_that_cannot_be_slowed_as_far_is_held_as_far_as_it_goes_then_given_back(self) -> None:
+        # A world whose least time dilation is raised clamps the freeze: read back, it is still the strip's.
+        unreal.state['min_time_dilation'] = 0.01
+        tool('motion_strip', 2, 0.05)
+        self.tick(game=0.02, wall=0.02)
+        self.assertEqual(unreal.state['time_dilation'], 0.01)
+        self.settle(0)
+        self.assertEqual(unreal.state['time_dilation'], 1.0)
+        unreal.state['pie'] = False
+        self.tick()
+
+    def test_a_hold_runs_its_game_seconds_however_long_the_frames_hold_the_game(self) -> None:
+        # Held, the game barely moves while the wall clock runs on: a cap that counted those seconds let go of
+        # a key held for 2 game seconds once two frames had taken 10 s each to land.
+        self.addCleanup(self.end_watching)
+        self.assertIn('held', json.loads(GenexPlayTools.hold('W', 1.0, 0.0, 2.0)))
+        tool('motion_strip', 2, 0.5)
+        for index in range(2):
+            self.tick(game=0.5, wall=0.5)  # a frame asked, the game held
+            self.tick(game=0.0, wall=10.0)
+            self.settle(index)
+        self.assertEqual(json.loads(GenexPlayTools.player_state())['held'], ['W'])
+        # Not held, the cap counts on: 4 x 2 s + 10 s of wall clock in all.
+        for _ in range(18):
+            self.tick(game=0.0, wall=1.0)
+        self.assertEqual(json.loads(GenexPlayTools.player_state())['held'], [])
+
+    def test_a_shot_after_a_strip_still_excuses_the_frame_its_stall_froze(self) -> None:
+        # The caps' clock stands still while a strip holds the game; timed on it, a later shot's stall read as a hitch.
+        def findings() -> list:
+            return [finding['code'] for finding in json.loads(GenexPlayTools.player_state(True))['findings']]
+        self.addCleanup(self.end_watching)
+        self.assertEqual(findings(), [])
+        for _ in range(250):  # past the first seconds, which are the level loading
+            self.tick(game=0.016, wall=0.016)
+        tool('motion_strip', 2, 0.05)
+        for index in range(2):
+            self.tick(game=0.06, wall=0.06)  # a frame asked, the game held
+            self.tick(game=0.0, wall=2.0)  # the shot renders and is written
+            self.settle(index)
+        self.assertTrue(tool('capture_play', 'look', 1280, 720)['queued'])
+        self.tick(game=0.016, wall=1.2)  # the frame that renders the shot
+        self.assertEqual(findings(), [])
+        self.tick(game=0.016, wall=1.2)  # a frame no shot froze
+        self.assertEqual(findings(), ['hitch'])
+
+    def test_a_strip_shot_excuses_its_stall_whatever_watch_steps_first(self) -> None:
+        # Started before the play's own watch, the strip notes its shot a moment before that watch steps in
+        # the same frame: timed from then, the frame that renders the shot read as a hitch.
+        ticking = TickingClock(self.clock)
+        for module in (play, shots):
+            patcher = mock.patch.object(module, 'time', ticking)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.addCleanup(self.end_watching)
+        tool('motion_strip', 2, 4.0)
+        self.assertEqual(json.loads(GenexPlayTools.player_state(True))['findings'], [])
+        self.tick(game=0.02, wall=0.02)
+        self.settle(0)
+        for _ in range(400):  # past the first seconds and the next frame's due time
+            self.tick(game=0.016, wall=0.016)
+            if len(self.shots_asked()) == 2:
+                break
+        self.assertEqual(len(self.shots_asked()), 2)
+        self.tick(game=0.0, wall=1.2)  # the frame that renders frame 1
+        self.settle(1)
+        self.assertEqual(json.loads(GenexPlayTools.player_state(True))['findings'], [])
+
+    def test_a_strip_stepped_after_it_finished_asks_nothing_and_holds_nothing(self) -> None:
+        self.addCleanup(self.end_watching)
+        tool('motion_strip', 2, 0.05)
+        self.tick(game=0.02, wall=0.02)
+        strip = shots._strip[0]
+        strip.finish('the play session ended')
+        self.assertEqual(unreal.state['time_dilation'], 1.0, 'let go as it finishes')
+        self.land(0)
+        self.assertFalse(strip.step(1.0, 1.0))
+        self.assertEqual((len(self.shots_asked()), unreal.state['time_dilation']), (1, 1.0))
+
     def test_a_frame_that_never_lands_ends_the_strip_with_why(self) -> None:
         answer = tool('motion_strip', 2, 0.5)
         self.tick(game=0.02, wall=0.02)
@@ -232,9 +385,10 @@ class Strips(PlayCase):
         with open(answer['poses'], encoding='utf-8') as handle:
             record = json.load(handle)
         self.assertIn('never landed', record['error'])
+        self.assertEqual(unreal.state['time_dilation'], 1.0, 'the game runs on')
 
     def test_refuses_counts_and_intervals_out_of_range_and_a_strip_without_play(self) -> None:
-        for frames, interval in ((1, 1.0), (13, 1.0), (True, 1.0), (3, 0.0), (3, 9.0), (3, 'fast')):
+        for frames, interval in ((1, 1.0), (25, 1.0), (True, 1.0), (3, 0.0), (3, 0.02), (3, 9.0), (3, 'fast')):
             with self.subTest(frames=frames, interval=interval):
                 self.fresh()
                 self.assertIn('error', tool('motion_strip', frames, interval))

@@ -2,7 +2,9 @@
 that slides along without stepping, one that stands in a T-pose (no animation plays on it), and feet
 that float over the ground or sink into it. A few times a second, every character within NEAR_CM
 but the player's own is read by its skeleton's feet, shoulders and hands; a ragdoll is left alone.
-The arithmetic is in looks_math.
+The body read is the one the player sees (visible_body): a Motion Matching character's own mesh is a
+driver whose pose another mesh copies, and that mesh is the one that may slide, even when the driver
+is left shown under it. The arithmetic is in looks_math.
 """
 
 import math
@@ -40,10 +42,11 @@ def reset() -> None:
 
 
 def _side(name: str) -> str | None:
-    low = name.lower()
-    if low.endswith('_l') or low.startswith('left'):
+    # A rig's prefix (mixamorig:LeftFoot) is not part of the bone's own name.
+    low = name.lower().rsplit(':', 1)[-1]
+    if low.endswith(('_l', '.l')) or low.startswith('left'):
         return 'l'
-    if low.endswith('_r') or low.startswith('right'):
+    if low.endswith(('_r', '.r')) or low.startswith('right'):
         return 'r'
     return None
 
@@ -68,6 +71,47 @@ def parts(mesh) -> dict:
         _state['parts'][key] = {'feet': _named(names, FOOT), 'shoulders': _named(names, SHOULDER),
                                 'hands': _named(names, HAND)}
     return _state['parts'][key]
+
+
+def shown(mesh) -> bool:
+    """Whether a mesh is drawn in the game: visible, not hidden in game, and drawn in the main pass."""
+    if not mesh.is_visible() or mesh.get_editor_property('hidden_in_game'):
+        return False
+    try:
+        return bool(mesh.get_editor_property('render_in_main_pass'))
+    except Exception:  # noqa: BLE001 - a component without the flag is drawn
+        return True
+
+
+def _own_mesh(actor):
+    try:
+        return actor.get_editor_property('mesh')
+    except Exception:  # noqa: BLE001 - an actor that is no Character has no mesh property
+        return None
+
+
+def _first_person(mesh) -> bool:
+    """Whether a mesh is drawn only for its owner's own view (first-person arms), not as the body."""
+    try:
+        if mesh.get_editor_property('only_owner_see'):
+            return True
+        kinds = getattr(unreal, 'FirstPersonPrimitiveType', None)
+        return kinds is not None and mesh.get_editor_property('first_person_primitive_type') == kinds.FIRST_PERSON
+    except Exception:  # noqa: BLE001 - a mesh without these flags is drawn for everyone
+        return False
+
+
+def visible_body(actor):
+    """The skeletal mesh a player sees on a character: the first shown one with feet besides its own
+    mesh and its first-person arms (a Motion Matching character's Body copies its own mesh's pose, and
+    a game may leave that driver shown under it), else its own mesh when shown with feet; None without one."""
+    own = _own_mesh(actor)
+    meshes = list(actor.get_components_by_class(unreal.SkeletalMeshComponent))
+    others = [m for m in meshes if m is not own and not _first_person(m)]
+    for mesh in others + ([own] if own in meshes else []):
+        if shown(mesh) and parts(mesh)['feet']:
+            return mesh
+    return None
 
 
 def _xyz(vector) -> tuple:
@@ -112,8 +156,8 @@ def _held(body: dict, key: str, now: float, on: bool) -> bool:
 
 
 def _check_body(actor, now: float, note) -> None:
-    mesh = actor.get_editor_property('mesh')
-    if mesh is None or not mesh.is_visible() or mesh.is_simulating_physics():
+    mesh = visible_body(actor)
+    if mesh is None or mesh.is_simulating_physics():
         return
     bones = parts(mesh)
     label = _label(actor)
