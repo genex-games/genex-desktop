@@ -635,13 +635,16 @@ limb's angle from the driver's at the same frame. The thresholds are named const
 side and back in idle and from the side through the walk, then removed; the bridge shows the shots
 as one sheet. The eyes: `capture_shot {camera, width, height, delay_s}` (a still from a
 hero camera, no play needed), `capture_play` (the player's 3D view during play, through the player's
-console `HighResShot`, which leaves out on-screen UI), `motion_strip` (2 to 24 frames scheduled by the game clock, one at a time and
-0.03 to 5 game seconds apart and spanning at most a minute, each with the pawn's and view's position) and `shot_cameras` (the hero cameras' labels). `motion_check
+console `HighResShot`, which leaves out UMG widgets but keeps what a HUD draws on its Canvas), `motion_strip` (2 to 24 frames scheduled by the game clock, one at a time and
+0.03 to 5 game seconds apart and spanning at most a minute, each with the pawn's and view's position and the game time of the frame it
+is drawn on, the one after it is asked for) and `shot_cameras` (the hero cameras' labels). `motion_check
 {target, seconds}` measures one character's motion every frame for 0.5 to 20 game seconds on the body the player sees (`looks.visible_body`:
-a Motion Matching character's Body, never its hidden driver, whose montages it reads too) and writes its report to the captures folder:
-planted feet sliding while the body travels, one-frame pose pops, snap turns (the facing read from the pose's shoulders, never a capsule
-that turns ahead of the body), montages stopped early or started over (a blend-out counts as played; a section that loops does not start
-over), hidden and ragdoll frames (`genex_build/motion_check_math.py` holds the thresholds). Strips, stills and checks each hold the
+a Motion Matching character's Body, never its driver, even one left shown under it; it reads the driver's montages too) and writes its
+report to the captures folder: planted feet sliding while the body travels, pose pops (a bone that jumps and comes straight back, or
+three of the six read jumping at once: one fast limb, a sword's swing, is motion), snap turns (the facing read from the pose's shoulders, never a capsule
+that turns ahead of the body), montages stopped early, started over or stuck at their start (a blend-out counts as played; a section that
+loops does not start over; a montage played over and over and stopped mid-way, a run let go, is `loop-stopped`, not cut), hidden and
+ragdoll frames (`genex_build/motion_check_math.py` holds the thresholds). Strips, stills and checks each hold the
 background CPU throttle off (on a Mac only while `r.RayTracing` is 0), and the last one done gives it back. The play's own look checks read that visible body too. The bridge waits for
 a capture's file and hands the agent the picture itself, with its tone numbers (black point,
 contrast, near against far contrast, saturation; a nearly black frame is called out as a render to

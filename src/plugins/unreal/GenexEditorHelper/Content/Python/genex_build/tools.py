@@ -171,7 +171,8 @@ class GenexBuildTools(unreal.ToolsetDefinition):
     @staticmethod
     def capture_play(name: str, width: int, height: int) -> str:
         """A shot of the 3D frame the player sees during a play session (StartPIE first), without the
-        editor around it and without on-screen UI (the HUD and screen-space bars are not in it). The
+        editor around it and without its widgets (UMG menus and screen-space bars are not in it; what a
+        HUD draws on its Canvas is). The
         image, its tone numbers and the frame rate come back with the answer.
 
         Args:
@@ -187,8 +188,9 @@ class GenexBuildTools(unreal.ToolsetDefinition):
     @toolset_registry.tool_call
     @staticmethod
     def motion_strip(frames: int, interval_s: float) -> str:
-        """Frames of the 3D view the player sees during a play session (no on-screen UI),
-        interval_s GAME seconds apart, each with where the pawn and the view were when it was taken. Start the motion first
+        """Frames of the 3D view the player sees during a play session (no UMG widgets; a HUD's Canvas
+        shows), interval_s GAME seconds apart, each with where the pawn and the view were on the frame
+        it was drawn on and that frame's game time. Start the motion first
         (hold an input with genex_play's hold), then call this. The frames come back as one
         contact sheet with each frame's pose, how much it differs from the one before, and tone.
 
@@ -209,10 +211,10 @@ class GenexBuildTools(unreal.ToolsetDefinition):
     @staticmethod
     def motion_check(target: str = '', seconds: float = 3.0) -> str:
         """Measures how a character moves during a play session, every frame of `seconds` game seconds,
-        on the body the player sees (a Motion Matching character's visible mesh, never its hidden
-        driver): whether its planted feet slide while it travels, frames its pose jumps (pops), snap
-        turns, montages that stop well before their end or start over, and frames it is hidden or a
-        ragdoll. Start the move first (a pilot, hold, walk_to), then call this; several characters
+        on the body the player sees (a Motion Matching character's Body, never its driver): whether
+        its planted feet slide while it travels, frames its pose jumps (pops), snap turns, montages
+        that stop well before their end, start over or stay at their start, and frames it is hidden
+        or a ragdoll. Start the move first (a pilot, hold, walk_to), then call this; several characters
         can be checked at once. The report comes back with the answer once the time is up.
 
         Args:

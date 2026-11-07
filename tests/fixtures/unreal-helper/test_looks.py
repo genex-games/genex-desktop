@@ -83,6 +83,22 @@ class Looks(DetectCase):
         self.bot.stepping = False
         self.assertEqual(self.play(4.0, 300.0), ['sliding'])
 
+    def test_a_driver_left_shown_under_the_body_is_not_the_body_read(self) -> None:
+        # The sword duel's driver stayed shown in play, under the Body: read first, its stepping feet hid the slide.
+        stepper = Body('BP_Duel_3_Driver')
+        self.bot.actor.props['mesh'] = stepper.mesh
+        self.bot.actor.components.append(stepper.mesh)
+        pose = self.bot.pose
+
+        def both(t: float) -> None:
+            pose(t)
+            stepper.actor.location = self.bot.actor.location
+            stepper.pose(t)
+
+        self.bot.pose = both
+        self.bot.stepping = False
+        self.assertEqual(self.play(4.0, 300.0), ['sliding'])
+
     def test_a_rig_whose_bones_carry_a_prefix_is_read_by_its_feet(self) -> None:
         self.bot.mesh.bones = {}
         self.bot.pose = lambda t: self.bot.mesh.bones.update({

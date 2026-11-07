@@ -209,10 +209,11 @@ class Strips(PlayCase):
         self.walk(500)
         self.tick(game=0.5, wall=0.1)
         self.assertEqual(len(self.shots_asked()), 2, 'one game second after the first')
+        self.tick(game=0.03, wall=0.03)  # the frame it is drawn on
         self.land(1)
         self.walk(900)
         self.tick(game=1.0, wall=0.1)
-        self.tick(game=0.1, wall=0.1)
+        self.tick(game=0.03, wall=0.03)
         self.assertEqual(len(self.shots_asked()), 3)
         self.land(2)
         self.tick(game=0.1, wall=0.1)
@@ -224,6 +225,25 @@ class Strips(PlayCase):
         self.assertTrue(all(b - a >= 1.0 for a, b in zip(times, times[1:])), times)
         self.assertEqual(record['files'], answer['files'])
         self.assertTrue(self.throttled(), 'the throttle is given back when the strip is done')
+
+    def test_a_frames_pose_and_time_are_those_of_the_frame_it_is_drawn_on(self) -> None:
+        # A shot asked for after a frame is drawn on the next. On the duel a 0.4 s hitch came between,
+        # and the picture showed the fighter 2 m ahead of the pose the strip had recorded with it.
+        answer = tool('motion_strip', 2, 0.05)
+        self.tick(game=0.02, wall=0.02)
+        self.assertEqual(len(self.shots_asked()), 1)
+        self.walk(200)
+        self.tick(game=0.4, wall=1.0)  # the long frame that draws it
+        self.land(0)
+        self.tick(game=0.03, wall=0.03)
+        self.tick(game=0.03, wall=0.03)
+        self.land(1)
+        self.tick(game=0.03, wall=0.03)
+        with open(answer['poses'], encoding='utf-8') as handle:
+            record = json.load(handle)
+        first = record['frames'][0]
+        self.assertEqual(first['pawn'], [200, 0, 90])
+        self.assertAlmostEqual(record['frames'][1]['gameSeconds'] - first['gameSeconds'], 0.06, places=3)
 
     def test_a_frame_that_never_lands_ends_the_strip_with_why(self) -> None:
         answer = tool('motion_strip', 2, 0.5)

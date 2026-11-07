@@ -5,7 +5,7 @@ capture_shot    a still from a named CameraActor (a hero camera, GX_Shot_<name>)
                 fog settle; the level viewport is piloted through the camera for the shot only.
 capture_play    the player's view during a play session.
 motion_strip    N frames of the player's view during a play session, `interval_s` GAME seconds
-                apart, each with the pawn's and the view's position recorded the moment it is taken.
+                apart, each with the pawn's and the view's position at the frame it is drawn on.
                 A short interval (down to 0.03 s, about every frame at 30 fps) shows one move
                 frame by frame: a step, a swing, a turn; the judge reads its frames with their times.
 
@@ -16,7 +16,8 @@ its file twice about a second apart. A strip that asks for frames by the wall cl
 landing in the same frozen moment: consecutive frames come out identical while the pawn is said to
 move. So play frames go through the player's own console (HighResShot, one write, the play
 session's viewport wherever it is shown), are scheduled by the game clock, and one frame is only
-asked for once the last one is on disk. While a shot settles the editor's "Use Less CPU when in
+asked for once the last one is on disk. A shot asked for after a frame is drawn on the next one, so
+its pose and game time are read then: a long frame in between (a hitch) moves them with the picture. While a shot settles the editor's "Use Less CPU when in
 Background" is lifted, and given back afterwards, so a Genex window in front doesn't starve Lumen.
 """
 
@@ -267,6 +268,7 @@ class _Strip:
         self.poses_file = os.path.join(folder, f'{stem}.json')
         self.interval, self.due = interval, start
         self.poses: list = []
+        # (file, wall time asked, whether its pose is read yet) of the frame being taken.
         self.waiting: tuple | None = None
         self.owed = False
         self.done = False
@@ -285,7 +287,10 @@ class _Strip:
 
     def step(self, game_now: float, wall_now: float) -> bool:
         if self.waiting is not None:
-            file, asked = self.waiting
+            file, asked, read = self.waiting
+            if not read:
+                self.poses.append(pose())
+                self.waiting = (file, asked, True)
             landed = os.path.exists(file) and os.path.getsize(file) > 0
             if not landed and wall_now - asked > FRAME_WAIT_S:
                 return self.finish(f'frame {len(self.poses) - 1} never landed')
@@ -297,9 +302,8 @@ class _Strip:
         if game_now < self.due:
             return True
         index = len(self.poses)
-        self.poses.append(pose())
         capture.console_shot(self.files[index], *STRIP_SIZE)
-        self.waiting = (self.files[index], wall_now)
+        self.waiting = (self.files[index], wall_now, False)
         self.due = game_now + self.interval
         return True
 

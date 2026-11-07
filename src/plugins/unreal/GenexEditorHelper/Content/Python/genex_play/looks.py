@@ -3,8 +3,8 @@ that slides along without stepping, one that stands in a T-pose (no animation pl
 that float over the ground or sink into it. A few times a second, every character within NEAR_CM
 but the player's own is read by its skeleton's feet, shoulders and hands; a ragdoll is left alone.
 The body read is the one the player sees (visible_body): a Motion Matching character's own mesh is a
-hidden driver whose pose another mesh copies, and that mesh is the one that may slide. The arithmetic
-is in looks_math.
+driver whose pose another mesh copies, and that mesh is the one that may slide, even when the driver
+is left shown under it. The arithmetic is in looks_math.
 """
 
 import math
@@ -74,8 +74,13 @@ def parts(mesh) -> dict:
 
 
 def shown(mesh) -> bool:
-    """Whether a mesh is drawn in the game: visible and not hidden in game."""
-    return bool(mesh.is_visible()) and not mesh.get_editor_property('hidden_in_game')
+    """Whether a mesh is drawn in the game: visible, not hidden in game, and drawn in the main pass."""
+    if not mesh.is_visible() or mesh.get_editor_property('hidden_in_game'):
+        return False
+    try:
+        return bool(mesh.get_editor_property('render_in_main_pass'))
+    except Exception:  # noqa: BLE001 - a component without the flag is drawn
+        return True
 
 
 def _own_mesh(actor):
@@ -86,11 +91,12 @@ def _own_mesh(actor):
 
 
 def visible_body(actor):
-    """The skeletal mesh a player sees on a character: its own mesh when that is shown and has feet,
-    else the first shown one with feet (a Motion Matching character's Body); None without one."""
+    """The skeletal mesh a player sees on a character: the first shown one with feet besides its own
+    mesh (a Motion Matching character's Body copies its own mesh's pose, and a game may leave that
+    driver shown under it), else its own mesh when shown with feet; None without one."""
     own = _own_mesh(actor)
     meshes = list(actor.get_components_by_class(unreal.SkeletalMeshComponent))
-    for mesh in ([own] if own in meshes else []) + [m for m in meshes if m is not own]:
+    for mesh in [m for m in meshes if m is not own] + ([own] if own in meshes else []):
         if shown(mesh) and parts(mesh)['feet']:
             return mesh
     return None

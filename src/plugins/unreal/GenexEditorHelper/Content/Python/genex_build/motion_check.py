@@ -11,7 +11,7 @@ falling. Background CPU throttling is lifted meanwhile, so a check behind anothe
 a few frames a second. When
 the time is up (or the play ends) it writes its report to <project>/Saved/Genex/captures/<check>.json
 (motion_check_math reads the frames): planted feet sliding while the body travels, pose pops, snap
-turns, montages stopped early or started over, hidden and ragdoll frames. Start the move first (a
+turns, montages stopped early, started over or stuck at their start, hidden and ragdoll frames. Start the move first (a
 pilot, hold, walk_to), then call this; several characters can be checked at once.
 """
 
@@ -114,7 +114,21 @@ def _bones(mesh) -> dict:
     return bones
 
 
-def _blend_out(anim, montage) -> float:
+def _rate(anim, montage) -> float:
+    """How fast a montage plays against the game's clock: the instance's rate times the asset's own."""
+    rate = 1.0
+    try:
+        rate = abs(float(anim.montage_get_play_rate(montage)))
+    except Exception:  # noqa: BLE001 - its rate unread: the montage's own pace
+        pass
+    try:
+        rate *= abs(float(montage.get_editor_property('rate_scale')))
+    except Exception:  # noqa: BLE001 - an asset without a rate scale plays at 1
+        pass
+    return rate
+
+
+def _blend_out(montage, rate: float) -> float:
     """How far before its end (montage seconds) a montage stops being the active one: its blend-out
     trigger time when it sets one (0 or more), else its blend-out time, at the rate it plays; 0 when
     the montage names neither."""
@@ -127,20 +141,17 @@ def _blend_out(anim, montage) -> float:
             lead = float(montage.get_editor_property('blend_out').get_editor_property('blend_time'))
         except Exception:  # noqa: BLE001 - a montage without the blend: no allowance
             lead = 0.0
-    try:
-        rate = abs(float(anim.montage_get_play_rate(montage)))
-    except Exception:  # noqa: BLE001 - its rate unread: the montage's own pace
-        rate = 1.0
     return max(0.0, lead * rate)
 
 
 def _montage(anim) -> tuple | None:
-    """(name, position s, length s, blend-out s) of the montage an animation instance plays, or None."""
+    """(name, position s, length s, blend-out s, rate) of the montage an animation instance plays, or None."""
     montage = anim.get_current_active_montage() if anim is not None else None
     if montage is None:
         return None
+    rate = _rate(anim, montage)
     return (str(montage.get_name()), float(anim.montage_get_position(montage)), float(montage.get_play_length()),
-            _blend_out(anim, montage))
+            _blend_out(montage, rate), rate)
 
 
 def _hidden(actor, mesh) -> bool:

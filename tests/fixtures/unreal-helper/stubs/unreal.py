@@ -529,6 +529,8 @@ class SkeletalMeshComponent(MeshComponent):
     def __init__(self, name: str = 'SkeletalMeshComponent', bones: dict[str, Vector] | None = None,
                  location: Vector | None = None, visible: bool = True,
                  bounds: tuple[Vector, Vector] | None = None, **props) -> None:
+        # Unreal draws a mesh in the main pass unless it is told not to.
+        props.setdefault('render_in_main_pass', True)
         super().__init__(name, location, None, None, visible, **props)
         self.bones, self.bounds = bones or {}, bounds
 

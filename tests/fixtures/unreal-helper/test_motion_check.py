@@ -3,8 +3,8 @@ sword duel's fighters slid for hours while stills, a critic and the old slide de
 walked. The detector read the character's own mesh, which on a Motion Matching character is a hidden
 driver, so it never measured the fighters at all; and a still can't show a foot riding along with the
 body. The check reads the visible Body, and tells sliding (the stance foot moving with the body),
-one-frame pose pops, snap turns, montages stopped early or started over, and hidden frames; a body that
-steps, swings smoothly and turns at a turn's pace is clean."""
+pose pops, snap turns, montages stopped early, started over or stuck at their start, and hidden frames;
+a body that steps, swings a sword, turns at a turn's pace and lets go of a looping run is clean."""
 
 import json
 import math
@@ -130,6 +130,31 @@ class Pops(unittest.TestCase):
             frame['bones']['hand_r'] = (60 * math.cos(angle), 20.0 + 60 * math.sin(angle), 0.0)
         self.assertEqual(maths.report(frames)['pops'], [])
 
+    def test_a_sword_swing_whose_hands_cover_a_metre_in_one_frame_and_go_on_is_no_pop(self) -> None:
+        # The duel's light attack moved its sword hand 58 to 105 cm in one frame at 22 to 49 fps.
+        frames = walk()
+        for i, frame in enumerate(frames):
+            reach = 0.0 if i < 40 else 90.0 + min(i - 40, 5) * 4.0  # struck in one frame, then follows through
+            for side, y in (('hand_r', 20.0), ('hand_l', -20.0)):
+                frame['bones'][side] = (reach, y, 30.0 if i >= 40 else 0.0)
+        report = maths.report(frames)
+        self.assertEqual((report['pops'], codes(report)), ([], []))
+
+    def test_the_whole_pose_snapping_to_another_in_one_frame_is_one_pop(self) -> None:
+        frames = walk()
+        for frame in frames[40:]:
+            for bone in ('pelvis', 'head', 'hand_r'):
+                x, y, z = frame['bones'][bone]
+                frame['bones'][bone] = (x, y, z - 30.0)  # a crouch with no blend
+        report = maths.report(frames)
+        self.assertEqual([p['bones'] for p in report['pops']], [['hand_r', 'head', 'pelvis']])
+        self.assertEqual(codes(report), [maths.POSE_POP])
+
+    def test_frames_too_far_apart_to_tell_a_jump_from_a_move_read_no_pops(self) -> None:
+        frames = walk()[::4]  # 7.5 fps
+        frames[10]['bones']['hand_r'] = (60.0, 20.0, 30.0)
+        self.assertEqual(maths.report(frames)['pops'], [])
+
 
 class Turns(unittest.TestCase):
     def test_a_quarter_turn_in_one_frame_is_a_snap(self) -> None:
@@ -162,12 +187,13 @@ class Turns(unittest.TestCase):
         self.assertEqual(maths.report(frames)['snapTurns'], [])
 
 
-def montage(name: str, start: int, stop: int, length: float, mesh: str = 'Mesh', blend_out: float = 0.0):
-    """Plays a montage from frame `start` to frame `stop` (its position from 0 at the game's pace)."""
+def montage(name: str, start: int, stop: int, length: float, mesh: str = 'Mesh', blend_out: float = 0.0,
+            rate: float = 1.0):
+    """Plays a montage from frame `start` to frame `stop` (its position from 0 at `rate` times the game's pace)."""
     def play(frame: dict) -> None:
         i = round(frame['t'] * FPS)
         if start <= i < stop:
-            frame['montages'][mesh] = (name, (i - start) / FPS, length, blend_out)
+            frame['montages'][mesh] = (name, (i - start) / FPS * rate, length, blend_out, rate)
         else:
             frame['montages'].setdefault(mesh, None)
     return play
@@ -199,11 +225,46 @@ class Montages(unittest.TestCase):
     def test_a_fast_montage_that_starts_over_between_two_frames_is_told(self) -> None:
         frames = walk(first=lambda f: None)
         for i, frame in enumerate(frames[10:18]):  # 4.5 times the game's pace
-            frame['montages']['Mesh'] = ('AM_Dash', i / FPS * 4.5, 3.0)
+            frame['montages']['Mesh'] = ('AM_Dash', i / FPS * 4.5, 3.0, 0.0, 4.5)
         for i, frame in enumerate(frames[18:30]):  # begun again, first read 0.15 s in
-            frame['montages']['Mesh'] = ('AM_Dash', (i + 1) / FPS * 4.5, 3.0)
+            frame['montages']['Mesh'] = ('AM_Dash', (i + 1) / FPS * 4.5, 3.0, 0.0, 4.5)
         report = maths.report(frames)
         self.assertEqual(report['montages'][0]['end'], 'restarted', report['montages'])
+
+    def test_a_loop_back_to_an_early_section_at_the_games_pace_plays_on(self) -> None:
+        frames = walk(hold=lambda f: None)
+        for i, frame in enumerate(frames[10:80]):  # a 2 s guard looping its 0.15 to 0.5 s section
+            position = i / FPS if i < 15 else 0.15 + ((i - 15) / FPS) % 0.35
+            frame['montages']['Mesh'] = ('AM_Guard', position, 2.0, 0.0, 1.0)
+        played = maths.report(frames)['montages']
+        self.assertEqual([m['montage'] for m in played], ['AM_Guard'], played)
+
+    def test_a_looping_run_played_over_and_over_and_let_go_mid_way_is_no_cut(self) -> None:
+        # The duel's run montage (0.8 s) plays again at each end and stops where the player lets go of W.
+        frames = walk(seconds=4.0, run=lambda f: None)
+        for i, frame in enumerate(frames[:80]):
+            frame['montages']['Mesh'] = ('AM_RMRun_F', (i % 24) / FPS, 0.8, 0.2, 1.0)
+        report = maths.report(frames)
+        self.assertEqual([m['end'] for m in report['montages']], ['finished'] * 3 + ['loop-stopped'], report['montages'])
+        self.assertEqual(codes(report), [])
+
+    def test_a_montage_played_again_every_frame_is_stuck_at_its_start(self) -> None:
+        # With the duel's Anim variable left on an old instance, its run montage sat at 0.00 s for 2.7 s.
+        frames = walk(stuck=lambda f: None)
+        for frame in frames[5:85]:
+            frame['montages']['Mesh'] = ('AM_RMRun_F', 0.0, 0.8, 0.2, 1.0)
+        for frame in frames[85:]:
+            frame['montages']['Mesh'] = ('AM_Stance', (round(frame['t'] * FPS) - 85) / FPS, 4.0, 0.25, 1.0)
+        report = maths.report(frames)
+        run = report['montages'][0]
+        self.assertEqual((run['end'], run['heldS']), ('stuck', round(79 / FPS, 2)))
+        self.assertEqual(codes(report), [maths.STUCK_MONTAGE])
+
+    def test_a_montage_held_at_its_end_is_not_stuck(self) -> None:
+        frames = walk(rest=lambda f: None)
+        for i, frame in enumerate(frames[5:80]):  # a fall played to its last pose and held there
+            frame['montages']['Mesh'] = ('AM_Fall', min(i / FPS, 1.2), 1.2, 0.0, 1.0)
+        self.assertEqual([m['end'] for m in maths.report(frames)['montages']], ['finished'])
 
     def test_a_montage_that_stops_being_active_at_its_long_blend_out_is_finished(self) -> None:
         report = maths.report(walk(slash=montage('AM_Slash', 10, 55, 2.0, blend_out=0.5)))
@@ -239,14 +300,16 @@ class Flags(unittest.TestCase):
 
 
 class Montage:
-    """A montage's blend-out settings and an animation instance playing it at `rate`."""
+    """A montage's blend-out settings and rate scale, and an animation instance playing it at `rate`."""
 
-    def __init__(self, trigger: float, blend: float, rate: float = 1.0) -> None:
-        self.trigger, self.blend, self.rate = trigger, blend, rate
+    def __init__(self, trigger: float, blend: float, rate: float = 1.0, scale: float = 1.0) -> None:
+        self.trigger, self.blend, self.rate, self.scale = trigger, blend, rate, scale
 
     def get_editor_property(self, name: str):
         if name == 'blend_out_trigger_time':
             return self.trigger
+        if name == 'rate_scale':
+            return self.scale
         return mock.Mock(get_editor_property=lambda key: {'blend_time': self.blend}[key])
 
     def montage_get_play_rate(self, montage) -> float:
@@ -268,11 +331,18 @@ class Shoulders:
 
 class EngineReads(unittest.TestCase):
     def test_the_blend_out_is_its_trigger_time_when_set_else_its_blend_at_the_rate_it_plays(self) -> None:
-        for label, montage, lead in (('trigger at the end', Montage(0.0, 0.5), 0.0),
-                                     ('its own blend, twice as fast', Montage(-1.0, 0.4, rate=2.0), 0.8),
-                                     ('a trigger time', Montage(0.3, 0.5), 0.3)):
+        # Read on Unreal 5.8: the duel's montages answer a blend_out of 0.2 s and a trigger time of -1.
+        for label, montage, rate, lead in (('trigger at the end', Montage(0.0, 0.5), 1.0, 0.0),
+                                           ('its own blend, twice as fast', Montage(-1.0, 0.4), 2.0, 0.8),
+                                           ('a trigger time', Montage(0.3, 0.5), 1.0, 0.3),
+                                           ('neither', object(), 1.0, 0.0)):
             with self.subTest(label):
-                self.assertAlmostEqual(motion_check._blend_out(montage, montage), lead)
+                self.assertAlmostEqual(motion_check._blend_out(montage, rate), lead)
+
+    def test_a_montage_plays_at_its_instances_rate_times_its_own_rate_scale(self) -> None:
+        montage = Montage(-1.0, 0.2, rate=2.0, scale=1.5)
+        self.assertAlmostEqual(motion_check._rate(montage, montage), 3.0)
+        self.assertAlmostEqual(motion_check._rate(object(), object()), 1.0, msg='unread: the game\'s pace')
 
     def test_the_facing_is_square_to_the_shoulders_and_none_for_a_body_on_its_side(self) -> None:
         sides = {'l': 'l', 'r': 'r'}
@@ -342,6 +412,15 @@ class Tool(PlayCase):
         self.assertEqual(record['mesh'], 'Body')
         self.assertEqual(unreal.state['ticks'], {}, 'the check stops watching once it reported')
 
+    def test_a_driver_left_shown_under_the_body_is_still_not_the_one_measured(self) -> None:
+        # The duel's driver stayed shown in play (it showed through the Body) and was measured instead.
+        self.fighter.driver.visible = True
+        self.fighter.legs = 'skating'
+        answer = tool('motion_check', 'DuelManny', 1.0)
+        self.assertEqual((answer['mesh'], answer['otherMeshes']), ('Body', ['Mesh']))
+        self.run_frames(1.0)
+        self.assertEqual(codes(self.record(answer)), [maths.SLIDING])
+
     def test_a_body_that_steps_reports_clean_and_names_the_driver_montage(self) -> None:
         slash = unreal.AnimMontage('/Game/Sword/AM_Slash', seconds=1.2)
         self.fighter.driver.props['anim_instance'] = unreal.AnimInstance(slash, 0.4)
@@ -405,13 +484,17 @@ class Tool(PlayCase):
         hidden = unreal.Character('BP_Ghost_0', Vector(500, 0, 90),
                                   mesh=unreal.SkeletalMeshComponent('Mesh', bones={'foot_l': Vector(), 'foot_r': Vector()},
                                                                     visible=False))
-        unreal.state['actors'].append(hidden)
+        unpassed = unreal.Character('BP_Shade_0', Vector(600, 0, 90),
+                                    mesh=unreal.SkeletalMeshComponent('Mesh', bones={'foot_l': Vector(), 'foot_r': Vector()},
+                                                                      render_in_main_pass=False))
+        unreal.state['actors'].extend([hidden, unpassed])
         for label, args, pie, says in (('no play', ('DuelManny', 2.0), False, 'play session'),
                                        ('too long', ('DuelManny', 60.0), True, 'seconds'),
                                        ('too short', ('DuelManny', 0.1), True, 'seconds'),
                                        ('not a number', ('DuelManny', 'long'), True, 'seconds'),
                                        ('no such actor', ('Kagemaru', 2.0), True, 'Closest names'),
-                                       ('nothing shown', ('Ghost', 2.0), True, 'no shown skeletal mesh')):
+                                       ('nothing shown', ('Ghost', 2.0), True, 'no shown skeletal mesh'),
+                                       ('drawn in no main pass', ('Shade', 2.0), True, 'no shown skeletal mesh')):
             with self.subTest(label):
                 unreal.state['pie'] = pie
                 answer = tool('motion_check', *args)
