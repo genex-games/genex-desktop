@@ -128,12 +128,6 @@ export function timeUpWrapLine(loopRun: TimedRun): string {
 }
 
 /**
- * What the game folder holds, as git reads it without writing a thing: its commit's tree and what is
- * uncommitted. A save point of an unchanged folder leaves both as they were (its commit is empty).
- */
-const FOLDER_CONTENT = `git --no-optional-locks rev-parse HEAD: && ${FOLDER_GIT.status}`;
-
-/**
  * The lead's work so far as a mark: what the game folder holds (a change saved, autosaved, committed
  * or merged moves it) and the workers it started. A call of Genex's tools alone is no work, nor is a
  * save point of an unchanged folder: a lead that answered each wake with a finish Genex refused was
@@ -142,7 +136,7 @@ const FOLDER_CONTENT = `git --no-optional-locks rev-parse HEAD: && ${FOLDER_GIT.
 async function workMark(loopRun: LoopRun): Promise<string> {
   const { ctx, run } = loopRun;
   const label = `open:${run.runId}:work-mark`;
-  const folder = await gitAt(ctx, { project: run.project }, FOLDER_CONTENT, { label }).catch(() => "");
+  const folder = await gitAt(ctx, { project: run.project }, FOLDER_GIT.content, { label }).catch(() => "");
   return `${folder}/${loopRun.open.pool?.state.records.length ?? 0}`;
 }
 
