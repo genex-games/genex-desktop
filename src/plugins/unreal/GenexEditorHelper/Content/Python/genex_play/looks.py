@@ -90,13 +90,25 @@ def _own_mesh(actor):
         return None
 
 
+def _first_person(mesh) -> bool:
+    """Whether a mesh is drawn only for its owner's own view (first-person arms), not as the body."""
+    try:
+        if mesh.get_editor_property('only_owner_see'):
+            return True
+        kinds = getattr(unreal, 'FirstPersonPrimitiveType', None)
+        return kinds is not None and mesh.get_editor_property('first_person_primitive_type') == kinds.FIRST_PERSON
+    except Exception:  # noqa: BLE001 - a mesh without these flags is drawn for everyone
+        return False
+
+
 def visible_body(actor):
     """The skeletal mesh a player sees on a character: the first shown one with feet besides its own
-    mesh (a Motion Matching character's Body copies its own mesh's pose, and a game may leave that
-    driver shown under it), else its own mesh when shown with feet; None without one."""
+    mesh and its first-person arms (a Motion Matching character's Body copies its own mesh's pose, and
+    a game may leave that driver shown under it), else its own mesh when shown with feet; None without one."""
     own = _own_mesh(actor)
     meshes = list(actor.get_components_by_class(unreal.SkeletalMeshComponent))
-    for mesh in [m for m in meshes if m is not own] + ([own] if own in meshes else []):
+    others = [m for m in meshes if m is not own and not _first_person(m)]
+    for mesh in others + ([own] if own in meshes else []):
         if shown(mesh) and parts(mesh)['feet']:
             return mesh
     return None

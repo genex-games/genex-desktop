@@ -5,8 +5,9 @@ capture_play and motion_strip take the player's view during play through the pla
 Every high-resolution shot freezes the game clock while it renders, so a strip that asked for its
 frames by the wall clock kept landing in the same frozen moment: consecutive frames came out
 identical while the pawn was said to move. A strip now asks for a frame only when the GAME clock has
-moved `interval_s` past the last one and the last one is on disk, and records the pawn's and the
-view's position the moment it asks. Refused input queues nothing."""
+moved `interval_s` past the last one and the last one is on disk, records the pawn's and the view's
+position the moment it asks, and holds the game all but still until the frame is on disk: the frame
+after a shot's stall moved a sword duel's game up to 0.4 s on. Refused input queues nothing."""
 
 import json
 import os
@@ -212,11 +213,13 @@ class Strips(PlayCase):
         self.assertEqual(len(self.shots_asked()), 2, 'one game second after the first')
         self.land(1)
         self.tick(game=0.03, wall=0.03)
+        self.tick(game=0.03, wall=0.03)
         self.walk(900)
         self.tick(game=1.0, wall=0.1)
         self.assertEqual(len(self.shots_asked()), 3)
         self.land(2)
-        self.tick(game=0.1, wall=0.1)
+        for _ in range(3):
+            self.tick(game=0.1, wall=0.1)
         with open(answer['poses'], encoding='utf-8') as handle:
             record = json.load(handle)
         self.assertEqual([frame['pawn'] for frame in record['frames']], [[0, 0, 90], [500, 0, 90], [900, 0, 90]])
@@ -237,12 +240,16 @@ class Strips(PlayCase):
         self.assertLess(unreal.state['game_seconds'] - asked_at, 0.001, 'the game barely moved')
         self.land(0)
         self.tick(game=0.03, wall=0.03)
-        self.assertEqual(unreal.state['time_dilation'], 1.0, 'it runs on once the frame is on disk')
+        self.assertEqual(unreal.state['time_dilation'], shots.FREEZE_DILATION, 'still held as the file lands')
+        self.tick(game=0.4, wall=0.4)  # the long frame that can follow a shot's write
+        self.assertLess(unreal.state['game_seconds'] - asked_at, 0.001, 'the game barely moved')
+        self.assertEqual(unreal.state['time_dilation'], 1.0, 'it runs on once that frame is past')
         for _ in range(2):
             self.tick(game=0.03, wall=0.03)
         self.assertEqual(len(self.shots_asked()), 2)
         self.land(1)
-        self.tick(game=0.03, wall=0.03)
+        for _ in range(3):
+            self.tick(game=0.03, wall=0.03)
         with open(answer['poses'], encoding='utf-8') as handle:
             times = [frame['gameSeconds'] for frame in json.load(handle)['frames']]
         self.assertAlmostEqual(times[1] - times[0], 0.06, places=2)

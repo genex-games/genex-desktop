@@ -86,7 +86,7 @@ const MESSAGE = {
   CheckHeader: (target: unknown, mesh: unknown, others: string) =>
     `[motion check of ${target}, measured on its mesh ${mesh}${others}]`,
   CheckOthers: (names: string) => ` (not measured: ${names})`,
-  CheckClean: "No sliding, pose pops, snap turns, cut or restarted montages, or hidden frames.",
+  CheckClean: "No sliding, pose pops, snap turns, cut, restarted or stuck montages, or hidden frames.",
   CheckProblem: (detail: unknown) => `- ${detail}`,
   CheckStopped: (why: string) => `The check stopped early: ${why}.`,
   CheckNumbers: (json: string) => `numbers: ${json}`,

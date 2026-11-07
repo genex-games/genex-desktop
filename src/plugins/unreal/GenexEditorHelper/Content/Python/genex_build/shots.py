@@ -20,7 +20,8 @@ session's viewport wherever it is shown), are scheduled by the game clock, and o
 asked for once the last one is on disk. Meanwhile the game is held all but still (its global time
 dilation at FREEZE_DILATION): a shot is drawn a frame or more after it is asked for, and the frame
 after a shot's stall moved the game up to 0.4 s on (Unreal's longest frame), so on a sword duel a
-0.05 s burst came out 0.02 to 0.42 s apart and a picture showed the fighter 2 m past its pose. A
+0.05 s burst came out 0.02 to 0.42 s apart and a picture showed the fighter 2 m past its pose; it
+stays held SETTLE_FRAMES frames after the file lands, past the long frame that can follow. A
 time dilation the game sets meanwhile (a hit's slow motion) is kept. While a shot settles the
 editor's "Use Less CPU when in Background" is lifted, and given back afterwards, so a Genex window in
 front doesn't starve Lumen.
@@ -52,6 +53,9 @@ STRIP_PREFIX = 'strip-'
 # The time dilation that holds the game all but still while a strip frame is drawn and written:
 # Unreal's least by default (WorldSettings.MinGlobalTimeDilation).
 FREEZE_DILATION = 0.0001
+# The game stays held this many frames after a frame lands: the frame that follows a shot's write can
+# be long, and let go at once the game jumped 0.3 to 0.4 s on in it.
+SETTLE_FRAMES = 2
 # How long one strip frame may take to land on disk before the strip gives up on it.
 FRAME_WAIT_S = 15.0
 # How long after its delay a still may take before the throttle is given back anyway.
@@ -302,6 +306,8 @@ class _Strip:
         # (file, wall time asked) of the frame being taken, and the time dilation the game had before it.
         self.waiting: tuple | None = None
         self.before: float | None = None
+        # Frames the game stays held after the last frame landed.
+        self.settle = 0
         self.owed = False
         self.done = False
 
@@ -328,6 +334,11 @@ class _Strip:
             if not landed:
                 return True
             self.waiting = None
+            self.settle = SETTLE_FRAMES
+        if self.settle:
+            self.settle -= 1
+            if self.settle:
+                return True
             _let_go(self.before)
             self.before = None
         if len(self.poses) == len(self.files):

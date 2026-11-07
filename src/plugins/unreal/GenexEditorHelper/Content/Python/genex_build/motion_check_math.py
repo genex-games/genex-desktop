@@ -26,17 +26,23 @@ FLOOR_SHARE = 0.1
 SLIDE_MAX = 0.25
 # A frame whose grounded foot moves at least this share of the body's speed is a sliding frame.
 SLIDING_FRAME = 0.5
+# Steps longer than this (s) are not read for sliding: a stride's stance changes inside one, so a
+# stepping foot reads as moving (the long frame a shot's stall leaves).
+SLIDE_STEP_S = 0.15
 # A bone jumps when it moves at least POP_MIN_CM in one frame, at least POP_RATIO times its usual
 # speed around that frame (the median over POP_WINDOW frames either side, never under POP_FLOOR_CM_S).
-# The pose pops when a jump comes straight back (the next frame undoes at least POP_BACK_SHARE of it:
-# a flash) or at least POP_BONES of the six bones read jump in the same frame (the pose snaps): one
-# limb going fast on its way, a sword's swing, is motion. Frames more than POP_STEP_S apart are not
-# read for pops: that far apart a fast move and a jump look alike.
+# The pose pops when a jump comes straight back (a jump within POP_FLASH_S after it undoes at least
+# POP_BACK_SHARE of it: a flash, however many frames it is on screen) or at least POP_BONES of the six
+# bones read jump in the same frame (the pose snaps): one limb going fast on its way, a sword's swing,
+# is motion. Frames more than POP_STEP_S apart are not read for pops: that far apart a fast move and a
+# jump look alike. One or two bones that snap and stay (an upper-body montage with no blend-in) are
+# not told apart from a swing.
 POP_MIN_CM = 12.0
 POP_RATIO = 4.0
 POP_WINDOW = 5
 POP_FLOOR_CM_S = 30.0
 POP_BACK_SHARE = 0.5
+POP_FLASH_S = 0.1
 POP_BONES = 3
 POP_STEP_S = 0.1
 # Pops this few frames apart are one pop (a pose that jumps away and back is one flash).
@@ -55,9 +61,16 @@ MIN_MONTAGE_S = 0.2
 # a later point plays a section again (a loop, a hold).
 RESTART_BACK_S = 0.05
 RESTART_START_S = 0.1
-# A montage that stays within RESTART_START_S (plus a frame's play) of its start for STUCK_S while
-# active is stuck: something plays it again every frame, or it is paused.
+# A montage that began near its start (within RESTART_START_S, plus a frame's play) and, active for
+# STUCK_S or longer, moved on less than STUCK_SHARE of what its rate plays in that time is stuck:
+# something plays it again every frame, or it is paused.
 STUCK_S = 0.5
+STUCK_SHARE = 0.2
+# A montage that played through at least LOOP_CYCLES times in a row (again within LOOP_GAP_S of its
+# last stretch, with nothing between) loops: one stopped mid-way after that is a run let go, not a cut.
+# Two plays in a row are an attack pressed again, whose second swing can still be cut.
+LOOP_CYCLES = 2
+LOOP_GAP_S = 0.3
 # The fewest frames a check reports on, and the most it lists of each kind.
 MIN_FRAMES = 10
 MAX_LISTED = 12
@@ -120,7 +133,7 @@ def slide(frames: list) -> dict:
     floor = _foot_floor([f for f in frames if _counted(f) and not f.get('falling')])
     ratios = []
     for a, b, dt in _steps(frames):
-        if not (_counted(a) and _counted(b)) or a.get('falling') or b.get('falling'):
+        if not (_counted(a) and _counted(b)) or a.get('falling') or b.get('falling') or dt > SLIDE_STEP_S:
             continue
         body = _speed_xy(a['root'], b['root'], dt)
         if body < MOVING_CM_S:
@@ -154,18 +167,18 @@ def _undone(move: tuple, after: tuple) -> float:
 
 
 def _bone_jumps(steps: list) -> list:
-    """(time, cm, back) of each step a bone moved far more than around it; back when the next step undid it."""
+    """(time, cm, back) of each step a bone moved far more than around it; back when a jump within
+    POP_FLASH_S after it undid it."""
     jumps = []
     for i, (t, move, speed, dt) in enumerate(steps):
         around = [s for _t, _m, s, _dt in steps[max(0, i - POP_WINDOW):i + POP_WINDOW + 1]]
         usual = max(statistics.median(around), POP_FLOOR_CM_S)
         moved = math.hypot(*move)
-        if dt > POP_STEP_S or moved < POP_MIN_CM or speed < POP_RATIO * usual:
-            continue
-        after = steps[i + 1] if i + 1 < len(steps) else None
-        back = after is not None and after[3] <= POP_STEP_S and _undone(move, after[1]) >= POP_BACK_SHARE
-        jumps.append((t, moved, back))
-    return jumps
+        if dt <= POP_STEP_S and moved >= POP_MIN_CM and speed >= POP_RATIO * usual:
+            jumps.append((t, move, moved))
+    return [(t, moved, any(0 < later - t <= POP_FLASH_S and _undone(move, back) >= POP_BACK_SHARE
+                           for later, back, _cm in jumps))
+            for t, move, moved in jumps]
 
 
 def pops(frames: list) -> list:
@@ -220,17 +233,27 @@ def _short(run: dict) -> bool:
     return length >= MIN_MONTAGE_S and reached < CUT_SHARE * length and length - reached > CUT_REST_S
 
 
-def _begun(frame: dict, mesh: str, playing, cycled: bool) -> dict:
-    """A stretch of `playing` on a mesh from `frame`; cycled when the same montage played to its end just before."""
-    return {'montage': playing[0], 'mesh': mesh, 'at': frame['t'], 'last': frame['t'], 'played': playing[1],
-            'length': playing[2], 'blendOut': playing[3] if len(playing) > 3 else 0.0,
-            'rate': playing[4] if len(playing) > 4 else 1.0, 'step': 0.0, 'cycled': cycled, 'end': 'running',
+def _cycles(before, frame: dict, name: str) -> int:
+    """How many times in a row the montage `name` played through up to `frame`: one more than the stretch
+    `before` when that was the same montage, played to its end, with nothing between and no long gap."""
+    follows = before is not None and before['montage'] == name and before['then'] in (None, name)
+    if not follows or _short(before) or frame['t'] - before['last'] > LOOP_GAP_S:
+        return 0
+    return before['cycles'] + 1
+
+
+def _begun(frame: dict, mesh: str, playing, cycles: int) -> dict:
+    """A stretch of `playing` on a mesh from `frame`, after `cycles` full plays of it in a row."""
+    return {'montage': playing[0], 'mesh': mesh, 'at': frame['t'], 'last': frame['t'], 'from': playing[1],
+            'played': playing[1], 'length': playing[2], 'blendOut': playing[3] if len(playing) > 3 else 0.0,
+            'rate': playing[4] if len(playing) > 4 else 1.0, 'step': 0.0, 'cycles': cycles, 'end': 'running',
             'then': None}
 
 
 def _playthroughs(frames: list, mesh: str) -> list:
-    """Each stretch one montage played on a mesh: {montage, at, last, played, length, blendOut, rate, step
-    (its longest frame), cycled, end, then}; end is stopped, again (the same montage began anew) or running."""
+    """Each stretch one montage played on a mesh: {montage, at, last, from, played, length, blendOut, rate,
+    step (its longest frame), cycles, end, then}; end is stopped, again (the same montage began anew) or
+    running."""
     runs: list = []
     current = None
     last_t = None
@@ -241,22 +264,25 @@ def _playthroughs(frames: list, mesh: str) -> list:
         if current is not None and _goes_on(current, playing, dt):
             current.update(played=max(current['played'], playing[1]), last=frame['t'], step=max(current['step'], dt))
             continue
-        cycled = False
         if current is not None:
             again = bool(playing) and playing[0] == current['montage']
             current.update(end='again' if again else 'stopped', then=playing[0] if playing else None)
             runs.append(current)
-            cycled = again and not _short(current)
-        current = _begun(frame, mesh, playing, cycled) if playing else None
+            current = None
+        if playing:
+            current = _begun(frame, mesh, playing, _cycles(runs[-1] if runs else None, frame, playing[0]))
     if current is not None:
         runs.append(current)
     return runs
 
 
 def _stuck(run: dict) -> bool:
-    """Whether a montage stayed at its start the whole time it was active, for STUCK_S or longer."""
-    near_start = run['played'] <= RESTART_START_S + run['rate'] * run['step']
-    return run['length'] >= MIN_MONTAGE_S and near_start and run['last'] - run['at'] >= STUCK_S
+    """Whether a montage stayed at its start while active for STUCK_S or longer: it began near its start
+    and moved on less than STUCK_SHARE of what its rate plays in that time."""
+    held = run['last'] - run['at']
+    began_near = run['from'] <= RESTART_START_S + run['rate'] * run['step']
+    barely_moved = run['played'] - run['from'] < STUCK_SHARE * run['rate'] * held
+    return run['length'] >= MIN_MONTAGE_S and held >= STUCK_S and began_near and barely_moved
 
 
 def _end(run: dict) -> str:
@@ -269,7 +295,7 @@ def _end(run: dict) -> str:
         return 'finished'
     if run['end'] == 'again':
         return 'restarted'
-    return 'loop-stopped' if run['cycled'] else 'cut'
+    return 'loop-stopped' if run['cycles'] >= LOOP_CYCLES else 'cut'
 
 
 def montages(frames: list) -> list:

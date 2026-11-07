@@ -99,6 +99,13 @@ class Looks(DetectCase):
         self.bot.stepping = False
         self.assertEqual(self.play(4.0, 300.0), ['sliding'])
 
+    def test_first_person_arms_are_never_the_body_read(self) -> None:
+        # A first-person pawn's arms share the body's skeleton, feet and all, and its owner alone sees them.
+        arms = unreal.SkeletalMeshComponent('Mesh1P', bones={'foot_l': Vector(), 'foot_r': Vector()}, only_owner_see=True)
+        self.bot.actor.components.append(arms)
+        self.bot.stepping = False
+        self.assertEqual(self.play(4.0, 300.0), ['sliding'])
+
     def test_a_rig_whose_bones_carry_a_prefix_is_read_by_its_feet(self) -> None:
         self.bot.mesh.bones = {}
         self.bot.pose = lambda t: self.bot.mesh.bones.update({

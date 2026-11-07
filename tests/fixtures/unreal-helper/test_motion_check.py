@@ -105,6 +105,13 @@ class Sliding(unittest.TestCase):
         self.assertEqual(report['slide']['movingFrames'], 0)
         self.assertEqual(codes(report), [])
 
+    def test_a_long_frame_a_strides_stance_changes_inside_is_not_read_for_sliding(self) -> None:
+        # A shot's stall can leave one 0.4 s frame, half a stride: the foot that stood has stepped on.
+        frames = walk()
+        before, after = frames[:30], frames[42:]
+        moving = maths.slide(before)['movingFrames'] + maths.slide(after)['movingFrames']
+        self.assertEqual(maths.slide(before + after)['movingFrames'], moving)
+
     def test_one_low_frame_a_foot_steps_down_into_leaves_the_slide_measured(self) -> None:
         frames = walk(legs='skating')
         for frame in frames[:3]:  # a step down with foot IK before the skate
@@ -122,6 +129,19 @@ class Pops(unittest.TestCase):
         self.assertEqual(len(report['pops']), 1, report['pops'])
         self.assertEqual(report['pops'][0]['bones'], ['hand_r'])
         self.assertEqual(codes(report), [maths.POSE_POP])
+
+    def test_a_flash_a_few_frames_long_is_one_pop_at_any_frame_rate(self) -> None:
+        # On screen for 1/15 s: two frames at 30 fps, eight at 120.
+        for fps in (30.0, 120.0):
+            with self.subTest(fps=fps):
+                frames = walk()
+                for frame in frames:
+                    frame['t'] = frame['t'] * FPS / fps
+                out = range(40, 40 + round(fps / 15))
+                for i in out:
+                    frames[i]['bones']['hand_r'] = (60.0, 20.0, 30.0)
+                report = maths.report(frames)
+                self.assertEqual([p['bones'] for p in report['pops']], [['hand_r']], report['pops'])
 
     def test_a_fast_smooth_swing_is_no_pop(self) -> None:
         frames = walk()
@@ -247,6 +267,36 @@ class Montages(unittest.TestCase):
         report = maths.report(frames)
         self.assertEqual([m['end'] for m in report['montages']], ['finished'] * 3 + ['loop-stopped'], report['montages'])
         self.assertEqual(codes(report), [])
+
+    def test_a_looping_run_replayed_after_each_blend_out_and_let_go_is_no_cut(self) -> None:
+        # Played again from its On Completed: no montage is active for the blend-out between cycles.
+        frames = walk(seconds=4.0, run=lambda f: None)
+        for i, frame in enumerate(frames[:92]):  # three cycles, then let go 0.23 s into the fourth
+            cycle = i % 28
+            frame['montages']['Mesh'] = ('AM_Run', cycle / FPS, 0.8, 0.2, 1.0) if cycle < 22 else None
+        report = maths.report(frames)
+        self.assertEqual([m['end'] for m in report['montages']], ['finished'] * 3 + ['loop-stopped'], report['montages'])
+        self.assertEqual(codes(report), [])
+
+    def test_an_attack_pressed_again_whose_second_swing_is_cut_is_a_cut(self) -> None:
+        frames = walk(slash=montage('AM_Slash', 10, 42, 1.2))
+        for i, frame in enumerate(frames[42:50]):  # pressed again, then hit 0.27 s in
+            frame['montages']['Mesh'] = ('AM_Slash', i / FPS, 1.2, 0.25, 1.0)
+        for i, frame in enumerate(frames[50:70]):
+            frame['montages']['Mesh'] = ('AM_HitReact', i / FPS, 0.6, 0.2, 1.0)
+        report = maths.report(frames)
+        self.assertEqual([m['end'] for m in report['montages']][:2], ['finished', 'cut'], report['montages'])
+        self.assertIn(maths.CUT_MONTAGE, codes(report))
+
+    def test_a_slow_montage_and_one_with_a_long_frame_are_not_stuck(self) -> None:
+        slow = walk(slow=montage('AM_Bow', 5, 35, 2.0, rate=0.2))  # a bow at a fifth of its pace, 1 s
+        self.assertNotEqual(maths.report(slow)['montages'][0]['end'], 'stuck')
+        frames = walk(late=lambda f: None)
+        for frame in frames[30:]:
+            frame['t'] += 0.4  # one long frame after frame 29: a shot's stall
+        for i, frame in enumerate(frames[10:30] + frames[30:33]):
+            frame['montages']['Mesh'] = ('AM_Guard', (frame['t'] - frames[10]['t']) * 0.5, 2.0, 0.0, 0.5)
+        self.assertEqual(maths.report(frames)['montages'][0]['end'], 'cut')
 
     def test_a_montage_played_again_every_frame_is_stuck_at_its_start(self) -> None:
         # With the duel's Anim variable left on an old instance, its run montage sat at 0.00 s for 2.7 s.
