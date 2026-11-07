@@ -120,6 +120,7 @@ import {
   type SetupOptions,
   systemSetupEnv,
   updateHelper,
+  updateHelperLive,
 } from "./setup.ts";
 import { toneOf } from "./tone.ts";
 import {
@@ -140,6 +141,8 @@ export const LoopEditorTool = {
   ExportReference: "export_reference",
   ExportPythonNames: "export_python_names",
   ExportProject: "export_project",
+  SaveDuringPlay: "save_during_play",
+  ReloadHelper: "reload_helper",
 } as const;
 export type LoopEditorTool = (typeof LoopEditorTool)[keyof typeof LoopEditorTool];
 
@@ -184,6 +187,8 @@ export const TOOLSET_OF = {
   [LoopEditorTool.ExportReference]: LOOP_TOOLSET,
   [LoopEditorTool.ExportPythonNames]: LOOP_TOOLSET,
   [LoopEditorTool.ExportProject]: LOOP_TOOLSET,
+  [LoopEditorTool.SaveDuringPlay]: LOOP_TOOLSET,
+  [LoopEditorTool.ReloadHelper]: LOOP_TOOLSET,
   [CppEditorTool.SaveAll]: LOOP_TOOLSET,
   [HeroShotTool.ShotCameras]: BUILD_TOOLSET,
   [HeroShotTool.CaptureShot]: BUILD_TOOLSET,
@@ -396,6 +401,8 @@ export type LoopToolsDeps = {
   setup?(storage: string): SetupOptions;
   /** Updates a project's Genex editor helper; `updateHelper` unless a test stands in. */
   updateHelper?: typeof updateHelper;
+  /** Updates the helper of a project Unreal has open, when it reloads; `updateHelperLive` unless a test stands in. */
+  updateHelperLive?: typeof updateHelperLive;
   /** Where Genex's own start of the game's set-up project stands (the toolbar's Starting); null without one. */
   starting?(storage: string, game: string): Promise<EditorStart | null>;
   /** Runs the headless editor for a plugin's tests; the product's runner unless a test stands in. */
@@ -1009,8 +1016,15 @@ function editorOps(
       (await agentPlaying(storage, game, deps.now())) ||
       (inRun(context.hook) && (await agentsSetting(storage)).whilePlaying),
     // A checkpoint's save has its step to itself; before a restore the busy wait leaves it less.
-    save: () =>
-      saveAll(deps, storage, game, context.hook?.on === HookEvent.CheckpointBefore ? CHECKPOINT_SAVE : MOMENT_SAVE),
+    updateHelperLive: () => liveHelperUpdate(deps, storage, game),
+    save: (keepPlay) =>
+      saveAll(
+        deps,
+        storage,
+        game,
+        context.hook?.on === HookEvent.CheckpointBefore ? CHECKPOINT_SAVE : MOMENT_SAVE,
+        keepPlay,
+      ),
     end: () => reopen.end(storage, game),
     reopen: () => reopen.reopen(storage, game, true),
     state: () => reopen.state(storage, game),
@@ -1157,19 +1171,34 @@ async function stopPlayFirst(deps: LoopToolsDeps, storage: string, game: string,
 /** How long each editor call of a save may take: under a moment, its limits (`editor-moments.ts`); else each call's own. */
 type SaveLimits = { askMs?: number; saveMs?: number };
 
-/**
- * `save-all`: a play session ended first, then the helper saves every unsaved level and asset;
- * throws its refusal, or when Unreal doesn't answer or stays in play.
- */
-async function saveAll(deps: LoopToolsDeps, storage: string, game: string, limits: SaveLimits = {}) {
-  if (!(await deps.editorAnswers(storage, game).catch(() => false))) throw new Error(MESSAGE.NotAnswering);
-  await stopPlayFirst(deps, storage, game, limits.askMs);
-  const answer = await deps.editorCall(storage, game, CppEditorTool.SaveAll, {}, limits.saveMs);
+/** What a save answered (`save_all`, `save_during_play`); throws the helper's refusal or anything else. */
+function savedOf(answer: unknown) {
   const reply = isJsonObject(answer) ? answer : {};
   if (reply.error !== undefined) throw new Error(String(reply.error));
   if (typeof reply.saved !== "boolean" || !Array.isArray(reply.dirty)) throw new Error(MESSAGE.NoSaveAnswer);
   const dirty = reply.dirty.filter((name): name is string => typeof name === "string");
   return { saved: reply.saved, dirty, ms: typeof reply.ms === "number" ? reply.ms : 0 };
+}
+
+/** Whether the game's editor helper saves while a play session goes on: an older one has no `save_during_play`. */
+async function savesDuringPlay(deps: LoopToolsDeps, storage: string, game: string, askMs?: number): Promise<boolean> {
+  const tool = LoopEditorTool.SaveDuringPlay;
+  const answer = await deps.editorCall(storage, game, tool, { check_only: true }, askMs).catch(() => undefined);
+  return isJsonObject(answer) && answer.ready === true;
+}
+
+/**
+ * `save-all`: the helper saves every unsaved level and asset, a play session ended first. With
+ * `keepPlay` (a save point while the agent plays) a helper that can saves with the play going on, so
+ * the agent's play test outlives its save point; an older one ends the play as before. Throws the
+ * helper's refusal, or when Unreal doesn't answer or stays in play.
+ */
+async function saveAll(deps: LoopToolsDeps, storage: string, game: string, limits: SaveLimits = {}, keepPlay = false) {
+  if (!(await deps.editorAnswers(storage, game).catch(() => false))) throw new Error(MESSAGE.NotAnswering);
+  if (keepPlay && (await savesDuringPlay(deps, storage, game, limits.askMs)))
+    return savedOf(await deps.editorCall(storage, game, LoopEditorTool.SaveDuringPlay, {}, limits.saveMs));
+  await stopPlayFirst(deps, storage, game, limits.askMs);
+  return savedOf(await deps.editorCall(storage, game, CppEditorTool.SaveAll, {}, limits.saveMs));
 }
 
 /** `log-errors`' `since`: absent, or a byte offset (a whole number, 0 or more); anything else is refused. */
@@ -1202,6 +1231,23 @@ function createLogReader(deps: LoopToolsDeps) {
     }
     return { offset: read.offset, lines: read.lines, more: read.more, rotated: read.rotated };
   };
+}
+
+/**
+ * The open Unreal's outdated Genex editor helper brought up to the plugin's without a restart, when
+ * every change is Python the editor reloads (`updateHelperLive`) and the running helper can reload
+ * now (`reload_helper`, which an older helper lacks); whether it was. Nothing is written when the
+ * running helper can't reload; a reload that fails after the write leaves the next start to load it.
+ */
+async function liveHelperUpdate(deps: SetDeps, storage: string, game: string): Promise<boolean> {
+  const project = await linkedOrThrow(deps, storage, game);
+  const reload = (args: Record<string, unknown>) =>
+    deps.editorCall(storage, game, LoopEditorTool.ReloadHelper, args, MOMENT_ASK_MS).catch(() => undefined);
+  const check = await reload({ check_only: true });
+  if (!isJsonObject(check) || check.ready !== true) return false;
+  if (!(await (deps.updateHelperLive ?? updateHelperLive)(project, deps.setup(storage)))) return false;
+  const reloaded = await reload({});
+  return isJsonObject(reloaded) && Array.isArray(reloaded.reloaded);
 }
 
 /** `update-helper`: the project's Genex editor helper brought up to the plugin's, only while this game's Unreal is closed. */

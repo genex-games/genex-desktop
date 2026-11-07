@@ -6,7 +6,7 @@ import unreal
 
 import toolset_registry
 
-from genex_loop import activity, assets, capture, cpp, parts, probes, project, reference, session
+from genex_loop import activity, assets, capture, cpp, parts, probes, project, reference, reload, session
 from genex_loop.errors import Refused
 
 
@@ -87,6 +87,34 @@ class GenexLoopTools(unreal.ToolsetDefinition):
             JSON {saved, dirty, ms}: dirty names the packages still unsaved.
         """
         return _answer(parts.save_all)
+
+    @toolset_registry.tool_call
+    @staticmethod
+    def save_during_play(check_only: bool = False) -> str:
+        """Saves every unsaved level and asset without asking, keeping a play session running (Genex
+        calls it at a save point while the agent plays).
+
+        Args:
+            check_only: Only answer {ready: true}, saving nothing: an older helper has no such tool.
+
+        Returns:
+            JSON {saved, dirty, ms, pie}: dirty names the packages still unsaved; pie whether play runs.
+        """
+        return _answer(parts.ready if check_only else parts.save_during_play)
+
+    @toolset_registry.tool_call
+    @staticmethod
+    def reload_helper(check_only: bool = False) -> str:
+        """Reloads the helper's Python behind its toolsets after Genex wrote newer files, so the
+        editor runs them without a restart. Refused during a play session.
+
+        Args:
+            check_only: Only say whether a reload can run now, reloading nothing.
+
+        Returns:
+            JSON {reloaded, ms}, or with check_only {ready, why?}.
+        """
+        return _answer(reload.check if check_only else reload.reload_helper)
 
     @toolset_registry.tool_call
     @staticmethod

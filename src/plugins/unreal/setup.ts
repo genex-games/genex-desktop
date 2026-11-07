@@ -105,6 +105,17 @@ const PROJECT_HELPER_DESCRIPTOR = ["Plugins", HELPER_FOLDER, HELPER_DESCRIPTOR].
 const HELPER_DESCRIPTOR_MAX_BYTES = 64 * 1024;
 /** A version as the helper's descriptor writes it: dotted numbers, never anything else. */
 const HELPER_VERSION = /^\d{1,4}(?:\.\d{1,4}){0,3}$/;
+/**
+ * A helper module the running editor reloads (`reload_helper`), by its path in the helper,
+ * `/`-separated: never a toolset (`tools.py`), a package's `__init__.py`, `errors.py` (whose refusal
+ * the toolsets catch) or `init_unreal.py`, which Unreal registers or holds until it restarts.
+ */
+const RELOADED_MODULE =
+  /^Content\/Python\/genex_(?:build|loop|play)\/(?!(?:tools|errors|__init__)\.py$)[A-Za-z_][A-Za-z0-9_]*\.py$/;
+/** Helper files Unreal never reads (Genex reads its starter pilot from its own copy). */
+const UNREAD_BY_UNREAL = /^Templates\//;
+/** The descriptor's fields Unreal only shows: a change to them alone needs no restart. */
+const DESCRIPTOR_SHOWN: readonly string[] = ["Version", "VersionName", "Description"];
 const RECENT_PROJECTS_CAP = 12;
 const RECORD_KEY_CHARS = 16;
 const COMMAND_TIMEOUT_MS = 5 * SECOND_MS;
@@ -1201,6 +1212,55 @@ export async function updateHelper(file: string, options: SetupOptions): Promise
   const project = await resolveProject(file);
   await assertHelperWritable(project, options);
   await assertEditorClosed(options.env);
+  return writeHelperUpdate(project, options);
+}
+
+/** The descriptor without the fields Unreal only shows, as comparable text; undefined when it can't be read. */
+async function descriptorShape(root: string, relative: string): Promise<string | undefined> {
+  const descriptor = await readHelperDescriptor(root, relative);
+  if (!descriptor) return undefined;
+  return JSON.stringify(Object.entries(descriptor).filter(([key]) => !DESCRIPTOR_SHOWN.includes(key)));
+}
+
+/**
+ * Whether the running editor can take the shipped helper without a restart: every shipped file the
+ * project's copy lacks or holds otherwise is a module `reload_helper` reloads, a file Unreal never
+ * reads, or the descriptor with only the fields Unreal shows changed.
+ */
+async function reloadsLive(project: Project, helper: string): Promise<boolean> {
+  const target = helperTarget(project);
+  for (const file of await shippedHelperFiles(helper)) {
+    const theirs = await readFile(path.join(target, file)).catch(() => null);
+    if (theirs?.equals(await readFile(path.join(helper, file)))) continue;
+    const relative = file.split(path.sep).join("/");
+    if (RELOADED_MODULE.test(relative) || UNREAD_BY_UNREAL.test(relative)) continue;
+    if (relative !== HELPER_DESCRIPTOR) return false;
+    const [ours, their] = await Promise.all([
+      descriptorShape(helper, HELPER_DESCRIPTOR),
+      descriptorShape(project.directory, PROJECT_HELPER_DESCRIPTOR),
+    ]);
+    if (ours === undefined || ours !== their) return false;
+  }
+  return true;
+}
+
+/**
+ * Brings a set-up project's outdated Genex editor helper up to the shipped one while Unreal has the
+ * project open, only when the open editor can take it without a restart ({@link reloadsLive}); the
+ * caller then has the editor reload the helper's modules. Answers the update, or null, writing
+ * nothing, when the helper isn't outdated or a changed file needs Unreal restarted. Refuses, writing
+ * nothing, for a project Genex hasn't set up and when any path the helper is written to is a link.
+ */
+export async function updateHelperLive(file: string, options: SetupOptions): Promise<HelperUpdate | null> {
+  const project = await resolveProject(file);
+  await assertHelperWritable(project, options);
+  if ((await helperState(project, options.helper)) !== HelperState.Outdated) return null;
+  if (!(await reloadsLive(project, options.helper))) return null;
+  return writeHelperUpdate(project, options);
+}
+
+/** Writes the shipped helper over a set-up project's missing or outdated one, recording it for undo. */
+async function writeHelperUpdate(project: Project, options: SetupOptions): Promise<HelperUpdate> {
   const folder = recordFolder(options.storage, project);
   const record = await readRecord(folder);
   if (!record) throw new SetupError(SetupErrorCode.NotSetUp, MESSAGE.NotSetUp());

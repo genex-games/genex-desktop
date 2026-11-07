@@ -7,6 +7,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { validateManifest } from "../../src/substrate/plugins/manifest.ts";
+import type { AgentPlayMarker } from "../../src/plugins/unreal/agent-play.ts";
 import { recordStarting } from "../../src/plugins/unreal/editor-launch.ts";
 import {
   crashIn,
@@ -166,10 +167,11 @@ async function connected(
   watch?: CrashWatcher,
   starts?: StartWait,
   platform?: NodeJS.Platform,
+  agentPlay?: AgentPlayMarker,
 ) {
   const projects = Array.isArray(found) ? { chosen: found[0], setUp: found } : found;
   const logs = watch ?? logCrashWatcher(await quietHome, "darwin", POLL_MS);
-  const bridge = createEditorMcp(async () => projects, fetchImpl, logs, starts, undefined, platform);
+  const bridge = createEditorMcp(async () => projects, fetchImpl, logs, starts, agentPlay, platform);
   const [local, hosted] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: "studio-test", version: "1" });
   await bridge.server.connect(hosted);
@@ -440,6 +442,8 @@ function throttledEditor(
     project?: string;
     /** The editor's crash on `tool`, if this call crashes it. */
     crash?: (tool: string, signal?: AbortSignal | null) => Promise<never> | undefined;
+    /** Whether the helper's `play_state` says a play runs; it answers no state unless a test says. */
+    pie?: boolean;
   } = {},
 ) {
   const settings = { throttle: options.throttle ?? true };
@@ -456,6 +460,8 @@ function throttledEditor(
     }
     if (tool === "SearchCVars")
       return { returnValue: JSON.stringify({ "r.RayTracing": { help: "", value: options.rayTracing ? 1 : 0 } }) };
+    if (tool === "play_state" && options.pie !== undefined)
+      return { returnValue: JSON.stringify({ pie: options.pie }) };
     return { returnValue: null };
   }, options.project);
   const calls = () => toolCalls(unreal).map((s) => s.body.params.arguments.tool_name);
@@ -513,7 +519,16 @@ test("a play start that fails, or the bridge closing mid-test, puts the user's s
   try {
     const result: any = await first.client.callTool(play("StartPIE"));
     assert.equal(result.isError, true);
-    assert.deepEqual(failed.calls(), ["get_properties", "SearchCVars", "set_properties", "StartPIE", "set_properties"]);
+    // Flipped: the refused start now asks the helper's play_state whether the play runs anyway
+    // before it gives the setting back; this helper can't say, so the refusal stands.
+    assert.deepEqual(failed.calls(), [
+      "get_properties",
+      "SearchCVars",
+      "set_properties",
+      "StartPIE",
+      "play_state",
+      "set_properties",
+    ]);
     assert.equal(failed.settings.throttle, true);
   } finally {
     await first.close();
@@ -526,6 +541,83 @@ test("a play start that fails, or the bridge closing mid-test, puts the user's s
   await second.close();
   assert.equal(abandoned.settings.throttle, true);
   assert.equal(abandoned.calls().at(-1), "set_properties");
+});
+
+/** A mark of the agent's play that records what the bridge did with it. */
+function recordedMarks() {
+  const marks: string[] = [];
+  const marker: AgentPlayMarker = {
+    started: async () => {
+      marks.push("started");
+      return async () => {
+        marks.push("given back");
+      };
+    },
+    stopped: async () => {
+      marks.push("stopped");
+    },
+  };
+  return { marker, marks };
+}
+
+// Sword Duel, Windows: the game's own Blueprint errors made StartPIE answer an error while the play
+// ran, so the bridge gave the throttle back and the agent played the rest of the day at 3 frames/s.
+test("a play start Unreal answers with an error while the play runs keeps full speed and the agent's mark", async () => {
+  const unreal = throttledEditor({ refuse: ["StartPIE"], pie: true });
+  const { marker, marks } = recordedMarks();
+  const { client, close } = await connected(unreal.fetchImpl, [DRIFT], undefined, undefined, "win32", marker);
+  try {
+    const result: any = await client.callTool(play("StartPIE"));
+    assert.notEqual(result.isError, true, textOf(result));
+    assert.match(textOf(result), /play session is running/);
+    assert.match(textOf(result), /StartPIE failed/, "Unreal's own words stay in the answer");
+    assert.equal(unreal.settings.throttle, false, "the play keeps running at full speed");
+    assert.deepEqual(marks, ["started"], "the play is still the agent's");
+    assert.deepEqual(unreal.calls().slice(3), ["StartPIE", "play_state"]);
+
+    await client.callTool(play("StopPIE"));
+    assert.equal(unreal.settings.throttle, true, "the stop gives the user's setting back");
+    assert.deepEqual(marks, ["started", "stopped"]);
+  } finally {
+    await close();
+  }
+});
+
+test("a stop with no play left answers that there was nothing to stop, and still gives everything back", async () => {
+  const unreal = throttledEditor({ refuse: ["StopPIE"], pie: false });
+  const { marker, marks } = recordedMarks();
+  const { client, close } = await connected(unreal.fetchImpl, [DRIFT], undefined, undefined, "win32", marker);
+  try {
+    await client.callTool(play("StartPIE"));
+    const result: any = await client.callTool(play("StopPIE"));
+    assert.notEqual(result.isError, true, textOf(result));
+    assert.match(textOf(result), /nothing to stop/);
+    assert.equal(unreal.settings.throttle, true);
+    assert.deepEqual(marks, ["started", "stopped"]);
+  } finally {
+    await close();
+  }
+});
+
+test("a refused play step stays refused when the helper's play state says it didn't take", async () => {
+  for (const [step, pie] of [
+    ["StartPIE", false],
+    ["StopPIE", true],
+  ] as const) {
+    const unreal = throttledEditor({ refuse: [step], pie });
+    const { marker, marks } = recordedMarks();
+    const { client, close } = await connected(unreal.fetchImpl, [DRIFT], undefined, undefined, "win32", marker);
+    try {
+      if (step === "StopPIE") await client.callTool(play("StartPIE"));
+      const result: any = await client.callTool(play(step));
+      assert.equal(result.isError, true, step);
+      assert.match(textOf(result), new RegExp(`${step} failed`), step);
+      const expected = step === "StartPIE" ? ["started", "given back"] : ["started"];
+      assert.deepEqual(marks, expected, `${step}: a play still running stays the agent's`);
+    } finally {
+      await close();
+    }
+  }
 });
 
 // UE 5.8 on a Mac hangs the GPU rendering a ray-traced level at full speed behind another app.
@@ -1673,6 +1765,33 @@ test("a capture_shot answer reaches the agent as the image and its tone numbers"
     assert.match(text, /black point p2 0\.0\d+/);
     assert.match(text, /contrast std/);
     assert.match(text, /far std .* near std/);
+  } finally {
+    await close();
+  }
+});
+
+// Sword Duel, Windows: three 3840x2160 covers in a row each lost the engine's connection to Genex
+// (about 13 MB of text per answer) while every file was written; 1920x1080 shots came through.
+test("a capture bigger than the agent's picture goes as a copy at most 1920 px wide, and its file keeps every pixel", async () => {
+  const { captures, project } = await captureProject();
+  const file = path.join(captures, "play-cover.png");
+  const width = 2400;
+  const height = 1350;
+  const full = encodePng({ width, height, rgb: new Uint8Array(width * height * 3).fill(90) });
+  const unreal = editor(async () => {
+    await writeFile(file, full);
+    return { returnValue: JSON.stringify({ queued: true, file, width, height }) };
+  }, project.project);
+  const { client, close } = await connected(unreal.fetchImpl, [project], undefined, stillClock());
+  try {
+    const result: any = await client.callTool(captureCall("capture_play", { name: "cover", width, height }));
+    const images = result.content.filter((part: any) => part.type === "image");
+    assert.equal(images.length, 1);
+    const sent = decodePng(Buffer.from(images[0].data, "base64"));
+    assert.deepEqual([sent.width, sent.height], [1920, 1080]);
+    const text = result.content.map((part: any) => part.text ?? "").join("\n");
+    assert.match(text, /2400x1350, attached at 1920x1080; the file keeps every pixel/);
+    assert.deepEqual(await readFile(file), full, "the file on disk is untouched");
   } finally {
     await close();
   }
