@@ -2512,16 +2512,20 @@ old for the engine, or Add Xcode N for one too new (Apple's developer downloads 
 installed Xcode in range is the one to select instead). `get-xcode` opens only the App Store page,
 Apple's downloads page (`{step: downloads}`) or the Xcode app the probes found. On Windows a game
 with a project has one row instead, Microsoft's C++ tools (`visual-studio.ts`): Microsoft's
-`vswhere.exe` lists Visual Studio's installs, a compiler counts with its x64 `cl.exe` and a Windows
-SDK with its headers, each judged by the engine's own `Engine/Config/Windows/Windows_SDK.json`
-(`MinimumVisualCppVersion`, `BannedVisualCppVersions`, the SDK range). Install Visual Studio Build
+`vswhere.exe` lists Visual Studio's installs, a compiler counts with its x64 `cl.exe` (named by that
+file's own version, as UnrealBuildTool reads it: Microsoft's updates raise it and leave the folder's
+name) and a Windows SDK with its headers, each judged by the engine's own
+`Engine/Config/Windows/Windows_SDK.json` (`MinimumVisualCppVersion`, `BannedVisualCppVersions`, the
+SDK range), and a .NET Framework SDK (4.6 or later, which every Win64 editor build needs) counts by
+the registry's `NETFXSDK` keys, read with `reg.exe`. Install Visual Studio Build
 Tools, or Update for Build Tools whose only compilers the engine refuses, is done by the card's
 **Do it for me** (and `unreal__install-unreal` in a game with a project): Genex downloads
 Microsoft's VS 2022 Build Tools installer from `aka.ms` (redirects only to Microsoft's download
 host, HTTPS, capped), runs it only once Authenticode calls it Valid and signed by Microsoft
-Corporation, and installs the C++ workload, its x64 compiler and the Windows 11 SDK with
-`--passive --wait` (`modify` on Build Tools already there, on their own channel, or `update` when their
-own compilers are the refused ones); Windows asks the person for permission, and the card tells the
+Corporation, and installs the C++ workload, its x64 compiler, the Windows 11 SDK and the .NET
+Framework 4.8 SDK with `--passive --wait` (`modify` on Build Tools already there, on their own
+channel, or `update` when their own compilers are the refused ones, then `modify` in the same press
+for what the update can't add); Windows asks the person for permission, and the card tells the
 agent once they are in. An install that ends well but leaves the tools still missing stops with
 that reason and leaves the row to the person; presses of Do it for me are answered one after
 another, so a card press and the agent's never start two installs. With the tools ready Genex

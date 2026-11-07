@@ -203,12 +203,12 @@ const UNDEFINED_SYMBOL = /^"(?<symbol>.+)", referenced from:$/;
 const REFERENCED_BY = /^(?<user>.+ in \S+\.o)$/;
 /** UBT's result line, where a failure's explanation ends. */
 const RESULT_LINE = /^Result: /;
-/** Lines UBT prints just before its result that never say why it failed. */
+/** Lines UBT prints just before its result that never say why it failed, such as which module led to a broken one. */
 const RESULT_NOISE =
-  /^(?:Total time in |Total execution time|Trace written|Output binary:|Deploying|Location: |\[\d+\/\d+\] |\d+ errors? generated\.)/;
+  /^(?:Total time in |Total execution time|Trace written|Output binary:|Deploying|Location: |\[\d+\/\d+\] |\d+ errors? generated\.|\(referenced via )/;
 /** UBT's progress lines from the start of a build: reaching them, nothing before the result explained it. */
 const PREAMBLE =
-  /^(?:Setting up bundled|Running dotnet|Log file:|Determining max actions|Executing up to|UbaServer|Invalidating makefile|Creating makefile|Compiling with|Using |Building |CppDependencyCache|UHT |\/.+\/DotNet\/)/;
+  /^(?:Setting up bundled|Running dotnet|Running UnrealBuildTool|Requested |Uba|Log file:|Determining max actions|Executing up to|Invalidating makefile|Creating makefile|Compiling with|Using |Building |CppDependencyCache|UHT |\/.+\/DotNet\/)/;
 const SUCCEEDED = /^\s*Result: Succeeded\b/m;
 const FAILED = /^\s*Result: Failed \((?<reason>\w+)\)/m;
 const CONFLICTING_REASON = "ConflictingInstance";

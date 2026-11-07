@@ -122,7 +122,7 @@ const WORDS = {
     ),
   BuildToolsYourself: () =>
     t(
-      "Recommended. Microsoft's free C++ tools: with them the agent writes your game's logic in C++, and Unreal packages a game or plugin with C++. Install Visual Studio Build Tools with Desktop development with C++.",
+      "Recommended. Microsoft's free C++ tools: with them the agent writes your game's logic in C++, and Unreal packages a game or plugin with C++. Install Visual Studio Build Tools with Desktop development with C++ and the .NET Framework 4.8 SDK.",
     ),
   UpdateBuildToolsDetail: (engine: string) =>
     t(

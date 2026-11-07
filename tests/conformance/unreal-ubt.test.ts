@@ -894,6 +894,20 @@ describe("compiling a game's editor target on Windows", () => {
     const result = await compileEditor(onWindows({ runWindows, signal: stop.signal }));
     assert.equal(result.failure, CompileFailure.Aborted);
   });
+
+  it("a PC without the .NET Framework SDK is named by UBT's cause, not the chain of modules that led to it", async () => {
+    // Real Unreal 5.8 output from a Windows PC (2026-11-07), its user folder renamed.
+    const { runWindows } = answeringOnWindows(await fixture("win-no-netfx.log"));
+    const projectFile = "D:\\ai-games\\gx cpp check\\unreal\\GxCpp.uproject";
+    const result = await compileEditor(onWindows({ runWindows, projectFile }));
+    assert.equal(result.failure, CompileFailure.Failed);
+    assert.equal(result.summary, "GxCppEditor didn't build (RulesError): 1 error.");
+    assert.match(
+      result.errors[0]?.message ?? "",
+      /^Unable to instantiate module 'SwarmInterface': Could not find NetFxSDK install dir/,
+    );
+    assertNoWindowsPaths(result);
+  });
 });
 
 describe("whether C++ is possible", () => {
