@@ -12,7 +12,7 @@ import sys
 
 import unreal
 
-from editor_toolset.toolsets.blueprint import BlueprintTools
+from editor_toolset.toolsets.blueprint import BlueprintTools, LinkedPin, Node, NodeInfo, Pin
 from genex_build.tools import GenexBuildTools
 from genex_loop import graph_write
 
@@ -58,6 +58,51 @@ ISVALID_WITH_PINS = """(fn CombatTick (DT)
   (:"Is Valid" (CallFunction|TickCommon :DT DT))
   (:"Is Not Valid" (return))))
 """
+
+
+# A function's graph after Epic rewrote it: its live nodes, and the old ones it left because they take the
+# function's parameter (DT), which nothing runs or reads; its result, which no flow reaches here, holds the
+# function's outputs and keeps what feeds it. Each name: (class, kind, exec from, data from).
+LEFT_OVER = {
+    'Entry': ('K2Node_FunctionEntry', 'start', [], []),
+    'Tick': ('K2Node_CallFunction', 'step', ['Entry'], ['Entry']),
+    'Speed': ('K2Node_CallFunction', 'pure', [], []),
+    'Move': ('K2Node_CallFunction', 'step', ['Tick'], ['Speed']),
+    'Return': ('K2Node_FunctionResult', 'end', [], ['Total']),
+    'Total': ('K2Node_CallFunction', 'pure', [], []),
+    'Note': ('EdGraphNode_Comment', 'note', [], []),
+    'OldTick': ('K2Node_CallFunction', 'step', [], ['Entry']),
+    'OldScale': ('K2Node_CallFunction', 'pure', [], ['Entry']),
+    'OldMove': ('K2Node_CallFunction', 'step', ['OldTick'], ['OldScale']),
+}
+LEFT_OVER_NAMES = [f'{GRAPH}.{name}' for name in ('OldMove', 'OldScale', 'OldTick')]
+# A graph no event or entry starts (an animation graph's poses).
+POSES = {'Root': ('AnimGraphNode_Root', 'pure', [], ['Blend']), 'Blend': ('AnimGraphNode_BlendSpace', 'pure', [], [])}
+
+
+def place(graph: str, nodes: dict) -> None:
+    """Puts a graph's nodes in the stub editor, as Epic's get_node_infos lists them. A kind is 'start' (an
+    event or entry: exec out only), 'step' (exec in and out), 'end' (exec in only), 'pure' (data only) or
+    'note' (no pins)."""
+    made = {name: Node(f'{graph}.{name}', cls) for name, (cls, *_rest) in nodes.items()}
+    infos = []
+    for name, (_cls, kind, exec_from, data_from) in nodes.items():
+        inputs, outputs = [], []
+        if kind in ('step', 'end'):
+            inputs.append(Pin('execute', 'Exec', [LinkedPin(made[source]) for source in exec_from]))
+        if kind in ('start', 'step'):
+            targets = [other for other, spec in nodes.items() if name in spec[2]]
+            outputs.append(Pin('then', 'Exec', [LinkedPin(made[target]) for target in targets]))
+        if kind != 'note':
+            inputs.append(Pin('In', 'Real', [LinkedPin(made[source]) for source in data_from]))
+            readers = [other for other, spec in nodes.items() if name in spec[3]]
+            outputs.append(Pin('Out', 'Real', [LinkedPin(made[reader]) for reader in readers]))
+        infos.append(NodeInfo(made[name], f'Test|{name}', inputs, outputs))
+    unreal.state.setdefault('nodes', {})[graph] = infos
+
+
+def deleted() -> list:
+    return sorted(call[1] for call in unreal.calls if call[0] == 'delete_node')
 
 
 def tool(name: str, *args) -> dict:
@@ -106,6 +151,10 @@ class Compares(HelperCase):
              '(fn F (A B) (bind (ax ay az) (Math|Vector|BreakVector A)) (bind (bx by bz) (Math|Vector|BreakVector B))'
              ' (return (+ (* ax bx) (* ay by))))',
              '(fn F (A B) (return (+ (* (.x A) (.x B)) (* (.y A) (.y B)))))'),
+            ('an input action event, whose body the read-back leaves out',
+             '(event Custom|Holder (Input|EnhancedActionEvents|IA_Attack (:Triggered (CallFunction|Attack))'
+             ' (:Completed (CallFunction|Rest))))',
+             '(event Custom|Holder (Input|EnhancedActionEvents|EnhancedInputActionIA_Attack))'),
             ('two equal pure calls shared', '(fn F () (CallFunction|A (Game|GetPawn)) (CallFunction|B (Game|GetPawn)))',
              '(fn F () (bind p (Game|GetPawn)) (CallFunction|A p) (CallFunction|B p))'),
         ]
@@ -182,6 +231,30 @@ class Writes(HelperCase):
                 self.assertTrue(raised.exception.facts['refused'])
                 self.assertNotIn(('write_graph_dsl', GRAPH), unreal.calls)
         self.assertIsNone(graph_write.write(self.graph, ISVALID_WITH_PINS))
+
+    def test_the_nodes_no_event_or_entry_reaches_are_deleted_after_a_write(self) -> None:
+        place(GRAPH, LEFT_OVER)
+        self.assertIsNone(graph_write.write(self.graph, COMBAT_TICK))
+        self.assertEqual(deleted(), LEFT_OVER_NAMES)
+        kept = sorted(info.node.get_path_name().rsplit('.', 1)[-1] for info in unreal.state['nodes'][GRAPH])
+        self.assertEqual(kept, ['Entry', 'Move', 'Note', 'Return', 'Speed', 'Tick', 'Total'])
+
+    def test_a_write_that_came_back_short_says_how_many_unlinked_nodes_it_deleted(self) -> None:
+        place(GRAPH, LEFT_OVER)
+        unreal.state['kept'] = {GRAPH: KEPT}
+        with self.assertRaises(graph_write.GraphWriteLost) as raised:
+            graph_write.write(self.graph, COMBAT_TICK)
+        self.assertIn('Genex deleted the 3 nodes', raised.exception.message)
+        self.assertEqual(raised.exception.facts['cleared'], 3)
+        self.assertEqual(deleted(), LEFT_OVER_NAMES)
+
+    def test_a_graph_nothing_starts_or_one_that_can_t_be_listed_keeps_every_node(self) -> None:
+        place(GRAPH, POSES)
+        self.assertIsNone(graph_write.write(self.graph, COMBAT_TICK))
+        place(GRAPH, LEFT_OVER)
+        unreal.state['nodes_fail'] = 'find_nodes failed'
+        self.assertIsNone(graph_write.write(self.graph, COMBAT_TICK))
+        self.assertEqual(deleted(), [])
 
     def test_a_text_too_big_never_reaches_unreal(self) -> None:
         with self.assertRaises(graph_write.GraphWriteLost) as raised:
@@ -266,7 +339,9 @@ class CheckGraph(HelperCase):
                 self.assertNotIn('read_graph_dsl', [call[0] for call in unreal.calls])
 
     def test_before_a_write_it_counts_the_text_and_refuses_one_too_big(self) -> None:
+        place(GRAPH, LEFT_OVER)
         self.assertEqual(tool('check_graph', GRAPH, COMBAT_TICK, False), {'graph': GRAPH, 'nodes': 15})
+        self.assertEqual(deleted(), [], 'nothing is written yet')
         refused = tool('check_graph', GRAPH, calls(graph_write.MAX_NODES + 1), False)
         self.assertTrue(refused['refused'])
         self.assertIn('helper functions', refused['error'])
@@ -275,10 +350,13 @@ class CheckGraph(HelperCase):
 
     def test_a_read_back_that_fails_is_no_verdict(self) -> None:
         unreal.state['read_fails'] = "read_graph_dsl can't spell node K2Node_X"
-        self.assertEqual(tool('check_graph', GRAPH, COMBAT_TICK, True), {'graph': GRAPH})
+        self.assertEqual(tool('check_graph', GRAPH, COMBAT_TICK, True), {'graph': GRAPH, 'cleared': 0})
 
     def test_after_a_write_it_names_what_came_back_short(self) -> None:
-        self.assertEqual(tool('check_graph', GRAPH, COMBAT_TICK, True), {'graph': GRAPH, 'nodes': 15, 'kept': 15})
+        place(GRAPH, LEFT_OVER)
+        self.assertEqual(tool('check_graph', GRAPH, COMBAT_TICK, True),
+                         {'graph': GRAPH, 'nodes': 15, 'kept': 15, 'cleared': 3})
+        self.assertEqual(deleted(), LEFT_OVER_NAMES)
         unreal.state['kept'] = {GRAPH: KEPT}
         lost = tool('check_graph', GRAPH, COMBAT_TICK, True)
         self.assertEqual((lost['wrote'], lost['kept']), (15, 1))

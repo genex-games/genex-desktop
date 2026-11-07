@@ -3,15 +3,17 @@
 Epic's writer can answer ok while the graph it built lost most of its text: on UE 5.8 a function
 that began (if (or (not (Utilities|IsValid ...)) ...) (return)) kept one of its fifteen nodes, and
 was saved that way before anyone looked. Epic makes Utilities|IsValid its exec macro, which has no
-value and no "then": it took the exec wire, and the nodes after it were made but never linked (they
-stay in the graph). So a text with an IsValid that has none of its exec pins is refused before
-Unreal gets it, and each write Genex makes or watches is read back (read_graph_dsl) and compared
-with its text, and a write that came back short fails, naming what is missing:
+value and no "then": it took the exec wire, and the nodes after it were made but never linked. So a
+text with an IsValid that has none of its exec pins is refused before Unreal gets it, and each write
+Genex makes or watches is read back (read_graph_dsl) and compared with its text, and a write that
+came back short fails, naming what is missing:
 
 - nodes are counted on both sides: calls, operators, branches, switches and loops. Variable reads
   are left out on both sides: the read-back spells each one as a node, the text often as a bare
   name. So are a component access such as (.x v), which Unreal may share between uses, and a break
-  node (Math|Vector|BreakVector), which it reads back as component accesses.
+  node (Math|Vector|BreakVector), which it reads back as component accesses. An input action's
+  event (Input|EnhancedActionEvents|IA_Jump) is left out with everything it runs: the read-back
+  shows it with an empty body.
 - a node the text calls by name that doesn't come back under that name (its last part, so a call
   spelled CallFunction|Foo or Class|BP|Foo is the same node) is missing, except math, flow
   control, arrays and strings, which the read-back may spell as operators and statements.
@@ -21,6 +23,14 @@ with its text, and a write that came back short fails, naming what is missing:
 
 A read-back that can't be taken or read leaves the write as Unreal answered it: the check only
 ever fails a write it could compare.
+
+After each write the nodes nothing starts are deleted (clear_unlinked): Epic's writer deletes only
+old nodes nothing links to, so every old node that takes the function's or event's parameter (DT,
+DeltaSeconds) stayed through each rewrite, three identical writes leaving 7, 13 and 19 nodes, and
+the nodes a lost write made stay unlinked too. read_graph_dsl never shows them. A node is kept
+when an event or entry runs it, or it feeds one that is run; a function's entry and result (which
+hold its parameters, so what feeds a result is kept too) and pinless nodes (comments) always are,
+and a graph nothing starts (an animation graph) keeps every node.
 
 One graph's text that makes more than MAX_NODES nodes is refused before Unreal gets it (a Loop
 part's, which holds all its events, only is read back): writes that big took minutes each, grew the editor to about 29 GB and crashed it three times in one
@@ -74,6 +84,12 @@ OWN_CALLS = ('callfunction|', 'class|')
 # Epic's IsValid exec macro: written with none of its exec pins (:"Is Valid" ...), Unreal links nothing after it.
 EXEC_MACRO = 'utilities|isvalid'
 PIN = ':'
+# An input action's event: the read-back shows it with an empty body, so nothing in it is compared.
+INPUT_EVENT = 'input|enhancedactionevents|'
+# A pin of the exec flow, as get_node_infos lists its type.
+EXEC_PIN = 'Exec'
+# Nodes never deleted as unlinked: a function's (or macro's) entry and result hold its parameters.
+KEPT_CLASSES = frozenset({'K2Node_FunctionEntry', 'K2Node_FunctionResult', 'K2Node_Tunnel'})
 WORD_END = frozenset(' \t\n\r;")')
 SPACE = frozenset(' \t\n\r')
 
@@ -83,10 +99,10 @@ MESSAGE = {
                 'helper functions (fn ...) of a few dozen nodes each, write each to its own graph, and write '
                 'only the ones you changed.'),
     'lost': ('{graph}: Unreal answered ok, but reading the graph back found {kept} of the {wrote} nodes the text '
-             'makes{missing}. Unreal may have left the rest in the graph unlinked: don\'t save it like this. '
-             'readBack shows what it linked; write the lost part another way or split it into smaller functions, '
-             'then write it again.'),
+             'makes{missing}: don\'t save it like this. readBack shows what it linked; write the lost part another '
+             'way or split it into smaller functions, then write it again.{cleared}'),
     'missing': '; missing {names}',
+    'cleared': ' Genex deleted the {cleared} nodes Unreal left unlinked.',
     'exec_macro': ('{graph}: {name} makes Unreal\'s IsValid macro, which has no value and no "then": inside not, '
                    'and, or, a condition or a bind, or as a plain statement, it takes the exec wire and Unreal '
                    'links nothing after it. Write it with its exec pins: ({name} X (:"Is Valid" ...) '
@@ -230,6 +246,8 @@ def _visit(form, made: GraphText, counts: list) -> None:
     if not isinstance(form, list) or not form:
         return
     head = _word(form[0])
+    if head.lower().startswith(INPUT_EVENT):
+        return
     if '|' in head:
         title = head.rsplit('|', 1)[-1].lower()
         if not _is_getter(head) and not _is_break(head):
@@ -283,13 +301,66 @@ def text_problem(text: str, graph: str, limit: bool = True) -> str | None:
     return MESSAGE['too_big'].format(graph=graph, nodes=made.nodes, limit=MAX_NODES)
 
 
-def loss_message(graph: str, lost: dict) -> str:
-    """The words for a write that came back short."""
+def loss_message(graph: str, lost: dict, cleared: int = 0) -> str:
+    """The words for a write that came back short, and how many unlinked nodes were deleted after it."""
     shown = lost['missing'][:MISSING_SHOWN]
     more = len(lost['missing']) - len(shown)
     names = ', '.join(shown) + (f' and {more} more' if more > 0 else '')
     missing = MESSAGE['missing'].format(names=names) if shown else ''
-    return MESSAGE['lost'].format(graph=graph, kept=lost['kept'], wrote=lost['wrote'], missing=missing)
+    deleted = MESSAGE['cleared'].format(cleared=cleared) if cleared else ''
+    return MESSAGE['lost'].format(graph=graph, kept=lost['kept'], wrote=lost['wrote'], missing=missing,
+                                  cleared=deleted)
+
+
+def _is_exec(pin) -> bool:
+    return str(pin.type_id) == EXEC_PIN
+
+
+def _starts(info) -> bool:
+    """Whether a node starts an exec flow: an event or a function's entry (exec out, no exec in)."""
+    return any(_is_exec(pin) for pin in info.output_pins) and not any(_is_exec(pin) for pin in info.input_pins)
+
+
+def _linked(pins: list, flow: bool) -> list:
+    """The nodes at the other end of the exec (`flow`) or data pins among `pins`."""
+    return [linked.node.get_path_name() for pin in pins if _is_exec(pin) == flow for linked in pin.connected_pins]
+
+
+def _kept(info) -> bool:
+    return info.node.get_class().get_name() in KEPT_CLASSES or not (info.input_pins or info.output_pins)
+
+
+def unlinked(infos: list) -> list:
+    """The nodes among `infos` (Epic's get_node_infos) that nothing starts: on no exec flow from an
+    event or entry, and feeding no node that is (nor a function's result). Kept classes, pinless
+    nodes and every node of a graph nothing starts are never among them."""
+    by_path = {info.node.get_path_name(): info for info in infos}
+    starts = [path for path, info in by_path.items() if _starts(info)]
+    if not starts:
+        return []
+    todo = starts + [path for path, info in by_path.items() if _kept(info)]
+    live = set()
+    while todo:
+        path = todo.pop()
+        if path in live or path not in by_path:
+            continue
+        live.add(path)
+        info = by_path[path]
+        todo += _linked(info.output_pins, True) + _linked(info.input_pins, False)
+    return [info.node for path, info in by_path.items() if path not in live]
+
+
+def clear_unlinked(graph) -> int:
+    """Deletes the nodes nothing in `graph` starts (unlinked); how many. Any error leaves the rest."""
+    tools = epic_tools()
+    cleared = 0
+    try:
+        for node in unlinked(tools.get_node_infos(tools.find_nodes(graph))):
+            tools.delete_node(node)
+            cleared += 1
+    except Exception:  # noqa: BLE001 - a graph that can't be listed or cleaned is left as Unreal wrote it
+        return cleared
+    return cleared
 
 
 # ---------------------------------------------------------------------------
@@ -329,9 +400,10 @@ def check_text(graph, code: str, limit: bool = True) -> None:
         raise GraphWriteLost(problem, graph=name, refused=True)
 
 
-def check_written(graph, code: str) -> dict:
-    """Reads a written graph back and compares it with its text: {nodes, kept}, GraphWriteLost, or
-    {} when it can't (Epic's reader failed, or either text can't be read here)."""
+def check_written(graph, code: str, cleared: int = 0) -> dict:
+    """Reads a written graph back and compares it with its text: {nodes, kept}, GraphWriteLost
+    (naming the `cleared` unlinked nodes deleted after the write), or {} when it can't (Epic's
+    reader failed, or either text can't be read here)."""
     name = graph_name(graph)
     try:
         read_back = epic_tools().read_graph_dsl(graph)
@@ -342,30 +414,34 @@ def check_written(graph, code: str) -> dict:
     except Exception:  # noqa: BLE001 - a check that can't compare leaves the write as Unreal answered it
         return {}
     if lost:
-        raise GraphWriteLost(loss_message(name, lost), graph=name, readBack=read_back[:READ_BACK_CHARS], **lost)
+        raise GraphWriteLost(loss_message(name, lost, cleared), graph=name, readBack=read_back[:READ_BACK_CHARS],
+                             cleared=cleared, **lost)
     return {'nodes': read_text(code).nodes, 'kept': read_text(read_back).nodes}
 
 
 def write(graph, code: str, send=None, limit: bool = True):
     """Writes Blueprint text into a graph with Epic's write_graph_dsl (or `send`, the caller's own
     call of it), refusing a text with an unpinned IsValid or too big for one write (unless not
-    `limit`) and failing one that came back short (GraphWriteLost); Epic's answer otherwise."""
+    `limit`) and failing one that came back short (GraphWriteLost), after deleting the nodes it
+    left unlinked; Epic's answer otherwise."""
     check_text(graph, code, limit)
     answer = send() if send else epic_tools().write_graph_dsl(graph, code)
-    check_written(graph, code)
+    check_written(graph, code, clear_unlinked(graph))
     return answer
 
 
 def check_graph(path: str, code: str, written: bool) -> dict:
     """The check_graph tool: before a write (`written` false) whether `code` may be sent as one
-    write, {graph, nodes}; after it, whether the graph at `path` holds what `code` makes, {graph, nodes,
-    kept}. Refused with the words and facts of what is wrong."""
+    write, {graph, nodes}; after it, deletes the nodes the write left unlinked and answers whether
+    the graph at `path` holds what `code` makes, {graph, nodes, kept, cleared}. Refused with the
+    words and facts of what is wrong."""
     graph = find_graph(path)
     try:
         if not written:
             check_text(graph, code)
             return {'graph': path, 'nodes': read_text(code).nodes}
-        return {'graph': path, **check_written(graph, code)}
+        cleared = clear_unlinked(graph)
+        return {'graph': path, **check_written(graph, code, cleared), 'cleared': cleared}
     except GraphWriteLost as lost:
         raise Refused(lost.message, **lost.facts) from None
     except ValueError:
@@ -437,7 +513,7 @@ def watching():
         setattr(module, EPIC_CLASS, epic)
 
 
-def failure(watch: Watch) -> dict:
+def failed_writes(watch: Watch) -> dict:
     """A run's answer for the writes that failed: {error, graphs}, or {}."""
     if not watch.failed:
         return {}

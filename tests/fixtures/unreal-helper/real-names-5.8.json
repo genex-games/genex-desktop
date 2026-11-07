@@ -488,13 +488,7 @@
   "set_mesh_u_vs_from_planar_projection"
  ],
  "EdGraph": [
-  "get_class",
-  "get_default_object",
-  "get_editor_property",
-  "get_name",
-  "get_path_name",
-  "get_typed_outer",
-  "set_editor_property"
+  "get_path_name"
  ],
  "EdGraphPinType": [
   "export_text"

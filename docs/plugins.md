@@ -482,9 +482,10 @@ short or qualified, in any case): the agent and the chat read it as a failed cal
 own words. An `error` field in any other toolset's answer stays as Epic sent it.
 An agent's own `write_graph_dsl` (Epic's Blueprint toolset named short or qualified, in any case,
 its arguments as an object or as JSON text) is checked by the helper's `check_graph`
-(`graph-write-guard.ts`): before the write, a text too big is refused and never sent; after a write
-Unreal answered ok, a graph that came back short fails the call, the helper's words first, so the
-agent learns before it saves. Only those two verdicts (`refused`, and `wrote` with `kept`) fail a
+(`graph-write-guard.ts`): before the write, a text too big (or with an `IsValid` lacking its exec
+pins) is refused and never sent; after a write Unreal answered ok, the check deletes the nodes the
+write left unlinked, and a graph that came back short fails the call, the helper's words first, so
+the agent learns before it saves. Only those two verdicts (`refused`, and `wrote` with `kept`) fail a
 write: a helper that can't check (an older one, a project whose build tools didn't load, its own
 error, no answer within 10 s before or 30 s after, such as while a reference export holds the
 editor) leaves the write as Unreal answered it; the checks' time comes out of the call's own.
@@ -620,15 +621,21 @@ answered ok the graph is read back with `read_graph_dsl` and compared with the t
 titles it calls and how many nodes it makes, allowing for how Unreal's reader spells the same graph
 (variable reads as nodes, an early return as an `else`, math, arrays and strings as operators and
 statements, break nodes as component accesses, a call by another prefix, a conversion it added, a
-few nodes shared). It came back short when a node is missing and the count fell, or when fewer than
+few nodes shared; an input action's event, whose body the read-back leaves out, isn't compared). It came back short when a node is missing and the count fell, or when fewer than
 three quarters of the nodes (and at least two fewer) came back. A write that came back short (UE 5.8
 linked one node of a function, left the rest unlinked in the graph, and the agent saved it) fails
 the run with `graphs` (each graph's `wrote`, `kept`, `missing` and the start of its `readBack`),
-even when the script caught the error; a read-back that fails leaves the
-write as Unreal answered it. The Loop's parts are checked the same way but never refused for
+even when the script caught the error; a read-back that fails leaves the write as Unreal answered
+it. After every write the nodes nothing runs are deleted: Epic's writer deletes only old nodes
+nothing links to, so each old node taking the function's or event's parameter stayed through every
+rewrite (three identical writes of a function with one left 7, 13 and 19 nodes, none shown by
+`read_graph_dsl`). A node is kept when an event or entry runs it or it feeds one that runs (or a
+function's result); entries, results and comments always are, and a graph nothing starts keeps
+every node. The Loop's parts are checked the same way but never refused for
 their size: a part writes all its events in one text, and `check-part` doesn't count its nodes.
-`check_graph {graph, code, written}` runs the same check for a graph written another way and changes
-nothing; anything but a loaded graph's object path is refused before anything is read.
+`check_graph {graph, code, written}` runs the same check for a graph written another way (after a
+write, deleting what it left unlinked, `cleared`); anything but a loaded graph's object path is
+refused before anything is read.
 `import_model {file, dest, name, collision, nanite}` combines a model file of the game's assets into
 one static mesh in `<dest>/<name>/`; `import_character`, `import_animation` (with its `skeleton`),
 `import_sound`, `attach_to_socket` and `audit` do what their names say, and no import

@@ -171,7 +171,7 @@ def run_script(file: str, args_json: str) -> dict:
 def _graphs(problem: dict, writes: graph_write.Watch) -> dict:
     """The run's problem with the Blueprint writes that lost nodes or were refused as too big: those fail the
     run even when the script caught their error (its own error, if any, staying the error)."""
-    failed = graph_write.failure(writes)
+    failed = graph_write.failed_writes(writes)
     if not failed:
         return problem
     return {**failed, **problem, 'graphs': failed['graphs']}

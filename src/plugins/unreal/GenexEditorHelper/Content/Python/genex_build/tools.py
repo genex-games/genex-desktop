@@ -143,9 +143,11 @@ class GenexBuildTools(unreal.ToolsetDefinition):
     @staticmethod
     def check_graph(graph: str, code: str, written: bool) -> str:
         """Checks Blueprint text against a graph, as Genex does around every write_graph_dsl: before
-        the write (written false), whether the text fits one write (at most 150 nodes, not counting
-        variable reads); after it (written true), whether the graph read back holds every node the
-        text makes, since Unreal's writer can answer ok and drop nodes. Changes nothing.
+        the write (written false), whether the text may be sent as one write (at most 150 nodes, not
+        counting variable reads, and no Utilities|IsValid without its exec pins); changes nothing.
+        After it (written true), deletes the nodes nothing in the graph runs (Unreal's writer leaves
+        old ones behind) and answers whether the graph read back holds every node the text makes,
+        since Unreal's writer can answer ok and drop nodes.
 
         Args:
             graph: The graph's path, such as /Game/BP_Door.BP_Door:EventGraph.
@@ -153,8 +155,9 @@ class GenexBuildTools(unreal.ToolsetDefinition):
             written: Whether the text was already written.
 
         Returns:
-            JSON {graph, nodes, kept?}, or {error, wrote, kept, missing, readBack} for a graph that came back
-            short, or {error, refused: true} for a text too big for one write.
+            JSON {graph, nodes, kept?, cleared?} (cleared: unlinked nodes deleted), or {error, wrote, kept,
+            missing, readBack, cleared} for a graph that came back short, or {error, refused: true} for a
+            text refused before the write.
         """
         return _answer(graph_write.check_graph, graph, code, written)
 
