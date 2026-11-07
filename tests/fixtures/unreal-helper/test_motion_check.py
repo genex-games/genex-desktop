@@ -590,6 +590,13 @@ class Tool(PlayCase):
         record = self.record(answer)
         self.assertEqual(record['stopped'], motion_check.MESSAGE['wall'])
 
+    def test_the_bridge_waits_for_the_check_past_its_cap_by_the_time_strips_may_hold_the_game(self) -> None:
+        # A strip's hold pauses the check's own cap; a bridge that waited only the cap gave up on its report.
+        answer = tool('motion_check', 'DuelManny', 2.0)
+        self.assertGreaterEqual(answer['waitS'], play.wall_cap(2.0) + motion_check.STRIP_HOLD_S)
+        play.release_all()
+        self.tick()
+
     def test_refused_without_play_out_of_range_for_an_unknown_name_and_a_body_it_cannot_see(self) -> None:
         hidden = unreal.Character('BP_Ghost_0', Vector(500, 0, 90),
                                   mesh=unreal.SkeletalMeshComponent('Mesh', bones={'foot_l': Vector(), 'foot_r': Vector()},

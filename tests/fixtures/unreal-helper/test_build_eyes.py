@@ -44,6 +44,20 @@ class Clock:
         return 1_800_000_000.0 + self.now
 
 
+class TickingClock:
+    """The test's clock, moving a microsecond on every read, as a real one does between calls in one frame."""
+
+    def __init__(self, clock: Clock) -> None:
+        self.clock = clock
+
+    def monotonic(self) -> float:
+        self.clock.now += 1e-6
+        return self.clock.now
+
+    def time(self) -> float:
+        return self.clock.time()
+
+
 class EyesCase(HelperCase):
     """An editor whose "Use Less CPU when in Background" is on, with a moved clock."""
 
@@ -330,6 +344,28 @@ class Strips(PlayCase):
         self.assertEqual(findings(), [])
         self.tick(game=0.016, wall=1.2)  # a frame no shot froze
         self.assertEqual(findings(), ['hitch'])
+
+    def test_a_strip_shot_excuses_its_stall_whatever_watch_steps_first(self) -> None:
+        # Started before the play's own watch, the strip notes its shot a moment before that watch steps in
+        # the same frame: timed from then, the frame that renders the shot read as a hitch.
+        ticking = TickingClock(self.clock)
+        for module in (play, shots):
+            patcher = mock.patch.object(module, 'time', ticking)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.addCleanup(self.end_watching)
+        tool('motion_strip', 2, 4.0)
+        self.assertEqual(json.loads(GenexPlayTools.player_state(True))['findings'], [])
+        self.tick(game=0.02, wall=0.02)
+        self.settle(0)
+        for _ in range(400):  # past the first seconds and the next frame's due time
+            self.tick(game=0.016, wall=0.016)
+            if len(self.shots_asked()) == 2:
+                break
+        self.assertEqual(len(self.shots_asked()), 2)
+        self.tick(game=0.0, wall=1.2)  # the frame that renders frame 1
+        self.settle(1)
+        self.assertEqual(json.loads(GenexPlayTools.player_state(True))['findings'], [])
 
     def test_a_strip_stepped_after_it_finished_asks_nothing_and_holds_nothing(self) -> None:
         self.addCleanup(self.end_watching)

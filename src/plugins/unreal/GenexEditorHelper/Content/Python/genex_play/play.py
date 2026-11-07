@@ -90,6 +90,12 @@ def real_clock() -> float:
     return time.monotonic()
 
 
+def frame_clock() -> float:
+    """The real clock as this editor frame began, read once by the tick: a shot noted later in the frame
+    falls inside the gap to the next, so the frame that renders it is known as the shot's."""
+    return _frames[-1] if _frames else real_clock()
+
+
 def wall_clock() -> float:
     """The wall clock the game-time waits' caps read, in seconds (tests move it): it stands still while a
     strip holds the game still."""

@@ -134,7 +134,8 @@ def _pawn():
 
 
 def _check_hitch(game_now: float, wall_now: float) -> None:
-    """`wall_now` is the real clock, the one shots are noted on: the caps' clock stands still under a strip's hold."""
+    """`wall_now` is the real clock as the frame began, the one shots are noted on: the caps' clock stands still
+    under a strip's hold."""
     gap = wall_now - _state['wall']
     loading = game_now - _state['since'] < GRACE_S
     if gap > HITCH_S and not loading and not play._stalled(_state['wall'], wall_now):
@@ -167,7 +168,7 @@ def _step(game_now: float, _wall_now: float) -> bool:
     """One frame's checks; answers whether to keep watching (until the play ends)."""
     if not _state.get('running'):
         return False
-    real_now = play.real_clock()
+    real_now = play.frame_clock()
     _check_hitch(game_now, real_now)
     _state['wall'] = real_now
     pawn = _pawn()
