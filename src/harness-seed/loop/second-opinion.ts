@@ -5,11 +5,11 @@
  * decides. The judge role's engine and model answer (the run's own when none is set).
  *
  * Motion is judged from frames with their times: a motion strip's poses file (`strip`) hands over
- * each of its frames at full size with the game time it was taken, and pictures can carry `times`.
- * The judge is told every picture's place and time (judge-frames-prompts.ts), since an engine sends a
- * picture's bytes without its label.
+ * each of its frames at full size with the game time it was taken, and pictures can carry `times`
+ * (judge-frames.ts reads them). The judge is told every picture's place and time
+ * (judge-frames-prompts.ts), since an engine sends a picture's bytes without its label.
  */
-import { readFile, realpath, stat } from "node:fs/promises";
+import { readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 import { HostMethod } from "./host-methods.ts";
 import { CompletionRole } from "./judge-provenance.ts";
@@ -26,17 +26,6 @@ export const SECOND_OPINION_TOOL = "judge";
 const MAX_PICTURES = 6;
 /** The largest picture file a question carries. */
 const MAX_PICTURE_BYTES = 8 * 1024 * 1024;
-/** The most frames one motion strip hands the judge: motion_strip's own most. */
-const MAX_STRIP_FRAMES = 24;
-/**
- * The most bytes a strip's frames and the pictures carry together: a model's API takes about 32 MB a
- * request and base64 adds a third. Frames past it are left out, the last ones first.
- */
-const MAX_ASK_BYTES = 20 * 1024 * 1024;
-/** The largest motion strip record read. */
-const MAX_STRIP_RECORD_BYTES = 1024 * 1024;
-/** A motion strip's record, by extension. */
-const STRIP_RECORD = ".json";
 /** The longest question. */
 const MAX_QUESTION_CHARS = 1_000;
 /** The longest answer the lead is handed. */
@@ -65,22 +54,10 @@ export const SECOND_OPINION_WORDS = {
   noQuestion: "judge needs a question.",
   noPictures: "judge needs at least one picture: name PNG or JPEG files in the project's folder, or a motion strip.",
   badPicture: (rel: string, why: string) => `${JSON.stringify(rel)} is not a picture judge can read (${why}).`,
-  badTimes: (count: number, pictures: number) =>
-    `times names ${count} times for ${pictures} pictures: give one game time (a number) per picture, or leave times out.`,
-  badStrip: (rel: string, why: string) => `${JSON.stringify(rel)} is not a motion strip judge can read (${why}).`,
   failed: (why: string) => `No second opinion came back: ${why}.`,
   answer: (text: string) => `Second opinion: ${text}`,
   leftOut: (count: number) =>
     `(${count} later frames of the strip were left out: together they were too large to send.)`,
-} as const;
-
-/** Why a strip can't be read, in the words of badStrip. */
-const STRIP_WHY = {
-  notRecord: "not a motion strip's .json poses file",
-  outside: "not a file in the project's folder",
-  unreadable: "it could not be read as a motion strip's record",
-  empty: "it holds no frames yet: wait for the strip's answer",
-  tooLarge: "its first frame alone is too large to send",
 } as const;
 
 /** `judge` as a lead's engine sees it. */
@@ -122,19 +99,13 @@ export async function picturesIn(
   return { images };
 }
 
-/** A file's real path when it is inside `top` (by its real path too), else null. */
-async function fileInside(top: string, rel: string): Promise<string | null> {
-  const full = await realpath(path.resolve(top, rel)).catch(() => null);
-  const inside = full !== null && (full === top || full.startsWith(`${top}${path.sep}`));
-  return inside ? full : null;
-}
-
 /** One picture inside `top`, by its path there. */
 async function pictureAt(top: string, rel: string): Promise<{ image: MessageImage } | { refused: string }> {
   const mimeType = PICTURE_TYPES[path.extname(rel).toLowerCase()];
   if (!mimeType) return { refused: SECOND_OPINION_WORDS.badPicture(rel, "not a PNG or JPEG") };
-  const full = await fileInside(top, rel);
-  if (!full) return { refused: SECOND_OPINION_WORDS.badPicture(rel, "not a file in the project's folder") };
+  const full = await realpath(path.resolve(top, rel)).catch(() => null);
+  const inside = full !== null && (full === top || full.startsWith(`${top}${path.sep}`));
+  if (!full || !inside) return { refused: SECOND_OPINION_WORDS.badPicture(rel, "not a file in the project's folder") };
   const bytes = await readFile(full).catch(() => null);
   if (!bytes) return { refused: SECOND_OPINION_WORDS.badPicture(rel, "it could not be read") };
   if (bytes.length > MAX_PICTURE_BYTES) return { refused: SECOND_OPINION_WORDS.badPicture(rel, "too large") };
@@ -147,102 +118,6 @@ export async function pictureFile(file: string): Promise<MessageImage | null> {
   const dir = await realpath(path.dirname(file)).catch(() => path.dirname(file));
   const read = await pictureAt(dir, path.basename(file));
   return "image" in read ? read.image : null;
-}
-
-/** What a lead hands the judge: the pictures in order, each one's name and game time, and the strip's frames left out. */
-export interface JudgedPictures {
-  images: MessageImage[];
-  names: string[];
-  /** Each picture's game time, null for one without. */
-  times: (number | null)[];
-  leftOut: number;
-}
-
-/** A strip's poses file inside `top`: its frame files (at most MAX_STRIP_FRAMES) and poses; or why it can't be read. */
-async function stripRecord(
-  top: string,
-  rel: string,
-): Promise<{ files: unknown[]; poses: unknown[] } | { why: string }> {
-  if (path.extname(rel).toLowerCase() !== STRIP_RECORD) return { why: STRIP_WHY.notRecord };
-  const full = await fileInside(top, rel);
-  if (!full) return { why: STRIP_WHY.outside };
-  const size = await stat(full).then(
-    (info) => (info.isFile() ? info.size : -1),
-    () => -1,
-  );
-  if (size < 0 || size > MAX_STRIP_RECORD_BYTES) return { why: STRIP_WHY.unreadable };
-  const record = await readFile(full, "utf8")
-    .then((text) => JSON.parse(text) as { files?: unknown; frames?: unknown } | null)
-    .catch(() => null);
-  if (!Array.isArray(record?.files)) return { why: STRIP_WHY.unreadable };
-  if (!record.files.length) return { why: STRIP_WHY.empty };
-  const poses = Array.isArray(record.frames) ? record.frames : [];
-  return { files: record.files.slice(0, MAX_STRIP_FRAMES), poses };
-}
-
-/** A strip's frames that fit in `budget` bytes, each with its name and game time; or why the strip can't be read. */
-async function stripFrames(top: string, rel: string, budget: number): Promise<JudgedPictures | { refused: string }> {
-  const refused = (why: string) => ({ refused: SECOND_OPINION_WORDS.badStrip(rel, why) });
-  const record = await stripRecord(top, rel);
-  if ("why" in record) return refused(record.why);
-  const { files, poses } = record;
-  const out: JudgedPictures = { images: [], names: [], times: [], leftOut: 0 };
-  let used = 0;
-  for (const [index, file] of files.entries()) {
-    const read = await pictureAt(top, String(file));
-    if ("refused" in read) return read;
-    const bytes = Buffer.byteLength(read.image.data, "base64");
-    if (used + bytes > budget) {
-      out.leftOut = files.length - index;
-      break;
-    }
-    used += bytes;
-    const at = Number((poses[index] as { gameSeconds?: unknown } | undefined)?.gameSeconds);
-    out.images.push(read.image);
-    out.names.push(`frame ${index} of the strip`);
-    out.times.push(Number.isFinite(at) ? at : null);
-  }
-  return out.images.length ? out : refused(STRIP_WHY.tooLarge);
-}
-
-/** The game times a lead gives its pictures, one each; null for none given, or why they don't fit. */
-function timesOf(named: unknown, count: number): (number | null)[] | { refused: string } {
-  if (!hasText(named)) return Array.from({ length: count }, () => null);
-  const times = named.split(",").map((item) => Number(item.trim()));
-  if (times.length !== count || !times.every(Number.isFinite))
-    return { refused: SECOND_OPINION_WORDS.badTimes(times.length, count) };
-  return times;
-}
-
-/**
- * Everything a lead hands the judge, read from inside `root`: a motion strip's frames first (as many
- * as fit beside the pictures), then the pictures, each with its game time; or why one can't be read.
- */
-export async function judgedPictures(
-  root: string,
-  args: { pictures?: unknown; times?: unknown; strip?: unknown },
-): Promise<JudgedPictures | { refused: string }> {
-  const pictures = await picturesIn(root, args.pictures);
-  if ("refused" in pictures) return pictures;
-  const times = timesOf(args.times, pictures.images.length);
-  if (!Array.isArray(times)) return times;
-  const own: JudgedPictures = {
-    images: pictures.images,
-    names: pictures.images.map((image) => image.label ?? ""),
-    times,
-    leftOut: 0,
-  };
-  if (!hasText(args.strip)) return own;
-  const top = await realpath(root).catch(() => path.resolve(root));
-  const taken = own.images.reduce((sum, image) => sum + Buffer.byteLength(image.data, "base64"), 0);
-  const strip = await stripFrames(top, args.strip.trim(), Math.max(0, MAX_ASK_BYTES - taken));
-  if ("refused" in strip) return strip;
-  return {
-    images: [...strip.images, ...own.images],
-    names: [...strip.names, ...own.names],
-    times: [...strip.times, ...own.times],
-    leftOut: strip.leftOut,
-  };
 }
 
 /** What the lead asked: the question and the pictures, with each picture's name and game time when it has one. */

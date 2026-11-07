@@ -4,8 +4,11 @@ character (motion_character) poses a hidden driver mesh that another mesh copies
 one measured, and the driver's montages are read too, since that is where they play.
 
 It records, for `seconds` of game time from the call: where the character is and which way its body
-faces, its feet in the world, its pelvis, head, hands and feet in its own frame, the montage each of
-its skeletal meshes plays and how far in, and whether the body is hidden, a ragdoll or falling. When
+faces (by its shoulders, since a Motion Matching capsule may turn ahead of the body it carries), its
+feet in the world, its pelvis, head, hands and feet from where it stands, the montage each of its
+skeletal meshes plays, how far in and its blend-out, and whether the body is hidden, a ragdoll or
+falling. Background CPU throttling is lifted meanwhile, so a check behind another app is not read at
+a few frames a second. When
 the time is up (or the play ends) it writes its report to <project>/Saved/Genex/captures/<check>.json
 (motion_check_math reads the frames): planted feet sliding while the body travels, pose pops, snap
 turns, montages stopped early or started over, hidden and ragdoll frames. Start the move first (a
@@ -23,7 +26,7 @@ import unreal
 from genex_build import motion_check_math, shots
 from genex_loop import editor
 from genex_loop.errors import Refused, short_message
-from genex_play import looks, looks_math, play
+from genex_play import looks, play
 
 SECONDS_RANGE = (0.5, 20.0)
 CHECK_PREFIX = 'check-'
@@ -44,6 +47,8 @@ MESSAGE = {
                 'character the player sees, not a hidden driver.'),
     'ended': 'the play session ended',
     'gone': 'the character could no longer be read: {why}',
+    'wall': 'the game ran too slowly to cover the time asked within its wall-clock cap',
+    'full': f'it reached its most frames ({MAX_FRAMES}) before the time asked',
 }
 
 
@@ -106,12 +111,28 @@ def _bones(mesh) -> dict:
     return bones
 
 
+def _blend_out(montage) -> float:
+    """How long before its end a montage stops being the active one: its blend-out, or the trigger time
+    that starts it; 0 when the montage names neither."""
+    times = [0.0]
+    try:
+        times.append(float(montage.get_editor_property('blend_out').get_editor_property('blend_time')))
+    except Exception:  # noqa: BLE001 - a montage without the blend: no allowance
+        pass
+    try:
+        times.append(float(montage.get_editor_property('blend_out_trigger_time')))
+    except Exception:  # noqa: BLE001 - no trigger time (-1 means the blend-out's own)
+        pass
+    return max(times)
+
+
 def _montage(anim) -> tuple | None:
-    """(name, position s, length s) of the montage an animation instance plays, or None."""
+    """(name, position s, length s, blend-out s) of the montage an animation instance plays, or None."""
     montage = anim.get_current_active_montage() if anim is not None else None
     if montage is None:
         return None
-    return (str(montage.get_name()), float(anim.montage_get_position(montage)), float(montage.get_play_length()))
+    return (str(montage.get_name()), float(anim.montage_get_position(montage)), float(montage.get_play_length()),
+            _blend_out(montage))
 
 
 def _hidden(actor, mesh) -> bool:
@@ -129,6 +150,17 @@ def _falling(actor) -> bool:
     return movement is not None and bool(movement.is_falling())
 
 
+def _facing(mesh, shoulders: dict) -> float:
+    """The body's facing (degrees): square to its shoulders as the pose has them, else the mesh's yaw."""
+    if 'l' not in shoulders or 'r' not in shoulders:
+        return float(mesh.get_world_rotation().yaw)
+    left, right = (_xyz(mesh.get_socket_location(shoulders[side])) for side in ('l', 'r'))
+    across = (left[0] - right[0], left[1] - right[1])
+    if math.hypot(*across) < 1e-6:
+        return float(mesh.get_world_rotation().yaw)
+    return math.degrees(math.atan2(across[0], -across[1]))
+
+
 class _Check:
     """A check being recorded: its character and body, the frames so far, when it ends and its record file."""
 
@@ -136,7 +168,8 @@ class _Check:
         self.stem, self.actor, self.mesh, self.seconds = stem, actor, mesh, seconds
         self.record = os.path.join(shots.captures_folder(), f'{stem}.json')
         self.label, self.bones = _label(actor), _bones(mesh)
-        self.feet = looks.parts(mesh)['feet']
+        self.feet, self.shoulders = looks.parts(mesh)['feet'], looks.parts(mesh)['shoulders']
+        self.held = False
         self.meshes = list(actor.get_components_by_class(unreal.SkeletalMeshComponent))
         self.frames: list = []
         start = play.game_seconds()
@@ -152,11 +185,12 @@ class _Check:
     def frame(self, game_now: float) -> dict:
         """What the character's body is doing in this frame."""
         at = _xyz(self.actor.get_actor_location())
-        yaw = float(self.mesh.get_world_rotation().yaw)
+        # Bones from where the character stands, in the world's axes: a pop is a jump of the pose
+        # itself, never a capsule that turned ahead of the body.
         return {
-            't': game_now, 'root': at, 'yaw': yaw,
+            't': game_now, 'root': at, 'yaw': _facing(self.mesh, self.shoulders),
             'feet': {side: _xyz(self.mesh.get_socket_location(bone)) for side, bone in self.feet.items()},
-            'bones': {label: looks_math.local(_xyz(self.mesh.get_socket_location(bone)), at, yaw)
+            'bones': {label: tuple(p - r for p, r in zip(_xyz(self.mesh.get_socket_location(bone)), at))
                       for label, bone in self.bones.items()},
             'montages': {m.get_name(): _montage(m.get_anim_instance()) for m in self.meshes},
             'hidden': _hidden(self.actor, self.mesh), 'ragdoll': bool(self.mesh.is_simulating_physics()),
@@ -166,8 +200,12 @@ class _Check:
     def step(self, game_now: float, wall_now: float) -> bool:
         if self.done:
             return False
-        if game_now >= self.ends or wall_now >= self.wall_ends or len(self.frames) >= MAX_FRAMES:
+        if game_now >= self.ends:
             return self.finish()
+        if wall_now >= self.wall_ends:
+            return self.finish(MESSAGE['wall'])
+        if len(self.frames) >= MAX_FRAMES:
+            return self.finish(MESSAGE['full'])
         if self.frames and game_now <= self.frames[-1]['t']:
             return True  # the game clock stood still (a pause, a shot rendering): nothing new to read
         try:
@@ -180,6 +218,7 @@ class _Check:
         if self.done:
             return False
         self.done = True
+        shots.give_back_throttle(self.held)
         record = {**self.facts(), **motion_check_math.report(self.frames)}
         if why:
             record['stopped'] = why
@@ -206,5 +245,6 @@ def motion_check(target: str, seconds: float) -> dict:
     check = _Check(f'{CHECK_PREFIX}{int(time.time() * 1000)}-{len(_started)}', actor, mesh, span)
     if os.path.lexists(check.record):
         os.remove(check.record)
+    check.held = shots.lift_throttle()
     play.watch(check.step, lambda: check.finish(MESSAGE['ended']))
     return {**check.facts(), 'record': check.record, 'waitS': round(play.wall_cap(span))}

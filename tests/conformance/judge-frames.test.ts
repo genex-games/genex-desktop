@@ -6,15 +6,18 @@
  * order, and the judge is told every picture's place and game time (an engine sends a picture's bytes
  * without its label). Pictures without times reach it exactly as before. Whatever a lead names, the
  * judge reads only files inside the project's folder: a strip or a frame outside it is refused and
- * no model is asked.
+ * no model is asked. The strip reading lives beside the judge and takes from it only what every
+ * shipped judge has, so the open lead's tools still load beside a second-opinion.ts the agent edited
+ * and kept from an older seed.
  */
 import assert from "node:assert/strict";
-import { mkdir, symlink, writeFile } from "node:fs/promises";
+import { cp, mkdir, rename, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
+import { pathToFileURL } from "node:url";
 import { openHandler } from "../../src/harness-seed/loop/director/open/tools.ts";
 import { HostMethod } from "../../src/harness-seed/loop/host-methods.ts";
-import { judgedPictures, SECOND_OPINION_WORDS } from "../../src/harness-seed/loop/second-opinion.ts";
+import { JUDGE_FRAMES_REFUSALS, judgedPictures } from "../../src/harness-seed/loop/judge-frames.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 /** A 1x1 PNG. */
@@ -42,7 +45,7 @@ async function gameWithStrip() {
 }
 
 /** The open lead's judge, on a run whose engine answers "Yes, the feet slide." and records what it was asked. */
-function judgeOn(projectDir: string) {
+function judgeOn(projectDir: string, handler: typeof openHandler = openHandler) {
   const asked: Array<Record<string, any>> = [];
   const loopRun = {
     ctx: {
@@ -59,7 +62,7 @@ function judgeOn(projectDir: string) {
     projectDir,
     run: { runId: "run-judge", engine: "claude-code" },
   };
-  const judge = (args: Record<string, unknown>) => openHandler(loopRun as never)("judge", args);
+  const judge = (args: Record<string, unknown>) => handler(loopRun as never)("judge", args);
   return { judge, asked };
 }
 
@@ -96,6 +99,22 @@ describe("the judge reads motion from frames with their times", () => {
     assert.equal(asked[0]?.messages[0].images.length, 1);
   });
 
+  it("a frame that never landed (the play ended mid-strip) is left out, and the frames that did reach the judge", async () => {
+    const { game, files, frames } = await gameWithStrip();
+    const pending = path.join(game, CAPTURES, "strip-1-3.png");
+    const record = { frames: [...frames, { gameSeconds: 12.1 }], files: [...files, pending] };
+    await writeFile(path.join(game, CAPTURES, "strip-cut.json"), JSON.stringify(record));
+    const { judge, asked } = judgeOn(game);
+    await judge({ question: "Do the feet slide?", strip: path.join(CAPTURES, "strip-cut.json") });
+    assert.equal(asked[0]?.messages[0].images.length, 3);
+    assert.doesNotMatch(String(asked[0]?.messages[0].content), /frame 3/);
+    await writeFile(path.join(game, CAPTURES, "strip-none.json"), JSON.stringify({ frames: [{}], files: [pending] }));
+    const none = judgeOn(game);
+    const answer = await none.judge({ question: "Do the feet slide?", strip: path.join(CAPTURES, "strip-none.json") });
+    assert.match(String(answer), /no frames yet/);
+    assert.equal(none.asked.length, 0);
+  });
+
   it("frames past the size a model takes are left out from the end, and the lead and the judge are told", async () => {
     const { game } = await gameWithStrip();
     const big = path.join(game, CAPTURES, "big.png");
@@ -121,6 +140,8 @@ describe("the judge reads nothing outside the project's folder and asks no model
       JSON.stringify({ files: [path.join(outside, "secret.png")], frames: [{ gameSeconds: 1 }] }),
     );
     await writeFile(path.join(game, "climbs.json"), JSON.stringify({ files: ["../outside/secret.png"] }));
+    await writeFile(path.join(game, "climbs-to-none.json"), JSON.stringify({ files: ["../outside/none.png"] }));
+    await writeFile(path.join(game, "commas.json"), JSON.stringify({ files: ["still.png,../outside/secret.png"] }));
     await writeFile(path.join(game, "broken.json"), "{ not json");
     await writeFile(path.join(game, "empty.json"), JSON.stringify({ files: [], frames: [] }));
     await writeFile(path.join(game, "strip.txt"), "{}");
@@ -134,12 +155,19 @@ describe("the judge reads nothing outside the project's folder and asks no model
       ["a link out of the folder", { strip: "linked.json" }, /not a file in the project's folder/],
       ["a strip whose frames are outside", { strip: "leaks.json" }, /secret\.png.*not a file in the project's folder/],
       ["a frame that climbs out", { strip: "climbs.json" }, /not a file in the project's folder/],
+      ["a missing frame outside", { strip: "climbs-to-none.json" }, /not a file in the project's folder/],
+      ["a frame that names two pictures", { strip: "commas.json" }, /not one picture's path/],
       ["a strip that is not JSON", { strip: "broken.json" }, /could not be read/],
       ["a strip with no frames yet", { strip: "empty.json" }, /no frames yet/],
       ["a strip that is no .json", { strip: "strip.txt" }, /\.json poses file/],
       ["a missing strip", { strip: "gone.json" }, /not a file in the project's folder/],
       ["fewer times than pictures", { pictures: "still.png,still.png", times: "1" }, /1 times for 2 pictures/],
       ["a time that is no number", { pictures: "still.png", times: "soon" }, /1 times for 1 pictures/],
+      [
+        "a blank time, which is no 0 s",
+        { pictures: "still.png,still.png,still.png", times: "1,,3" },
+        /2 times for 3 pictures/,
+      ],
     ];
     for (const [label, args, refusal] of cases) {
       const { judge, asked } = judgeOn(game);
@@ -153,7 +181,28 @@ describe("the judge reads nothing outside the project's folder and asks no model
     const { game } = await gameWithStrip();
     const read = await judgedPictures(game, { strip: "strip.txt" });
     assert.deepEqual(read, {
-      refused: SECOND_OPINION_WORDS.badStrip("strip.txt", "not a motion strip's .json poses file"),
+      refused: JUDGE_FRAMES_REFUSALS.badStrip("strip.txt", "not a motion strip's .json poses file"),
     });
+  });
+});
+
+describe("the open lead's tools beside a judge kept from an older seed", () => {
+  it("load and hand the judge a strip's frames when second-opinion.ts has only what every shipped judge has", async () => {
+    const root = await tmpDir("judge-kept-");
+    const seed = path.join(root, "seed");
+    await cp(path.resolve("src/harness-seed"), seed, { recursive: true });
+    const loop = path.join(seed, "loop");
+    await rename(path.join(loop, "second-opinion.ts"), path.join(loop, "second-opinion-shipped.ts"));
+    // The names the judge has shipped with since the open Loop first had one: an agent's kept copy has these and no more.
+    await writeFile(
+      path.join(loop, "second-opinion.ts"),
+      'export { askSecondOpinion, pictureFile, picturesIn, SECOND_OPINION_TOOL, SECOND_OPINION_WORDS, secondOpinionSpec } from "./second-opinion-shipped.ts";\n',
+    );
+    const tools = await import(pathToFileURL(path.join(loop, "director", "open", "tools.ts")).href);
+    const { game } = await gameWithStrip();
+    const { judge, asked } = judgeOn(game, tools.openHandler);
+    const answer = await judge({ question: "Do the feet stay planted?", strip: STRIP });
+    assert.equal(answer, "Second opinion: Yes, the feet slide.");
+    assert.equal(asked[0]?.messages[0].images.length, 3);
   });
 });

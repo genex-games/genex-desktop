@@ -4,8 +4,8 @@ its pose jumps (a pop), the frames it turns in one snap, the montages that stopp
 end or started over, and the frames it was hidden or a ragdoll.
 
 A frame is a dict: t (game seconds), root (x, y, z), yaw (the body's facing, degrees), feet
-{side: (x, y, z) world cm}, bones {name: (x, y, z) in the body's own frame}, montages {mesh: (name,
-position s, length s) or None}, and the flags hidden, ragdoll and falling.
+{side: (x, y, z) world cm}, bones {name: (x, y, z) from the root, world cm}, montages {mesh: (name,
+position s, length s, blend-out s) or None}, and the flags hidden, ragdoll and falling.
 
 The numbers were set on a sword duel whose fighters slid: a run whose stance foot rode along with
 the body (its speed over the body's about 1.2) against the same run stepping (about 0.04).
@@ -16,8 +16,10 @@ import statistics
 
 # The body travels when it moves at least this fast along the ground (cm/s).
 MOVING_CM_S = 50.0
-# A foot within this of its lowest height under the body in the check (cm) stands on the ground.
+# A foot within this of its ground height under the body (cm) stands on the ground; its ground height
+# is the height it is at or below in FLOOR_SHARE of the frames (one low frame, a step down, moves it not).
 GROUND_CM = 6.0
+FLOOR_SHARE = 0.1
 # Feet slide when, over the frames the body travels, the slowest foot on the ground moves at least
 # this share of the body's speed (median): a stepping foot stands still while the body passes over it.
 SLIDE_MAX = 0.25
@@ -35,13 +37,15 @@ POP_JOIN_FRAMES = 2
 SNAP_DEG = 45.0
 SNAP_DEG_S = 900.0
 # A montage stopped short when it ended before this share of its length with more than CUT_REST_S
-# left: its own blend-out ends a whole montage a little before its last frame.
+# left, its blend-out counted as played: a montage stops being the active one once it blends out.
 CUT_SHARE = 0.8
 CUT_REST_S = 0.3
 # A montage shorter than this (s) is too short to call cut.
 MIN_MONTAGE_S = 0.2
-# A montage whose position goes back by more than this (s) started over.
+# A montage whose position goes back by more than RESTART_BACK_S to within RESTART_START_S of its
+# start began again; one that goes back to a later point plays a section again (a loop, a hold).
 RESTART_BACK_S = 0.05
+RESTART_START_S = 0.1
 # The fewest frames a check reports on, and the most it lists of each kind.
 MIN_FRAMES = 10
 MAX_LISTED = 12
@@ -86,13 +90,12 @@ def _counted(frame: dict) -> bool:
 
 
 def _foot_floor(frames: list) -> dict:
-    """Each foot's lowest height under the body over the check (cm): where it stands on the ground."""
-    floor: dict = {}
+    """Each foot's ground height under the body over the check (cm): where it stands on the ground."""
+    heights: dict = {}
     for frame in frames:
         for side, foot in frame.get('feet', {}).items():
-            low = foot[2] - frame['root'][2]
-            floor[side] = min(low, floor.get(side, low))
-    return floor
+            heights.setdefault(side, []).append(foot[2] - frame['root'][2])
+    return {side: sorted(low)[int(len(low) * FLOOR_SHARE)] for side, low in heights.items()}
 
 
 def slide(frames: list) -> dict:
@@ -173,31 +176,46 @@ def snap_turns(frames: list) -> list:
     return snaps
 
 
+def _goes_on(current: dict, name, position) -> bool:
+    """Whether a frame goes on with the montage `current` played: the same montage, onward or back to a
+    later section, not back at its start."""
+    if name != current['montage']:
+        return False
+    back = position < current['played'] - RESTART_BACK_S
+    return not back or position > RESTART_START_S
+
+
 def _playthroughs(frames: list, mesh: str) -> list:
-    """Each stretch one montage played on a mesh: {montage, at, played, length, end, then}."""
+    """Each stretch one montage played on a mesh: {montage, at, played, length, blendOut, end, then}; end
+    is stopped, again (the same montage began anew) or running."""
     runs: list = []
     current = None
     for frame in frames:
         playing = frame.get('montages', {}).get(mesh)
         name, position = (playing[0], playing[1]) if playing else (None, None)
-        if current is not None and name == current['montage'] and position >= current['played'] - RESTART_BACK_S:
+        if current is not None and _goes_on(current, name, position):
             current['played'] = max(current['played'], position)
             continue
         if current is not None:
-            restarted = name == current['montage']
-            current.update(end='restarted' if restarted else 'stopped', then=name)
+            current.update(end='again' if name == current['montage'] else 'stopped', then=name)
             runs.append(current)
-        current = None if name is None else {'montage': name, 'mesh': mesh, 'at': frame['t'], 'played': position,
-                                             'length': playing[2], 'end': 'running', 'then': None}
+        current = None if name is None else {
+            'montage': name, 'mesh': mesh, 'at': frame['t'], 'played': position, 'length': playing[2],
+            'blendOut': playing[3] if len(playing) > 3 else 0.0, 'end': 'running', 'then': None}
     if current is not None:
         runs.append(current)
     return runs
 
 
-def _cut(run: dict) -> bool:
-    length, played = run['length'], run['played']
-    stopped = run['end'] == 'stopped'
-    return stopped and length >= MIN_MONTAGE_S and played < CUT_SHARE * length and length - played > CUT_REST_S
+def _short(run: dict) -> bool:
+    """Whether a montage ended well before its end, its blend-out counted as played."""
+    length = run['length']
+    reached = run['played'] + run['blendOut']
+    return length >= MIN_MONTAGE_S and reached < CUT_SHARE * length and length - reached > CUT_REST_S
+
+
+# What a stretch's end means once its length is weighed: (ended short, ended near its end).
+_ENDS = {'stopped': ('cut', 'finished'), 'again': ('restarted', 'finished')}
 
 
 def montages(frames: list) -> list:
@@ -208,8 +226,8 @@ def montages(frames: list) -> list:
     listed = []
     for run in runs:
         end = run['end']
-        if end == 'stopped':
-            end = 'cut' if _cut(run) else 'finished'
+        if end in _ENDS:
+            end = _ENDS[end][0] if _short(run) else _ENDS[end][1]
         listed.append({'montage': run['montage'], 'mesh': run['mesh'], 'at': round(run['at'], 3),
                        'playedS': round(run['played'], 2), 'lengthS': round(run['length'], 2), 'end': end,
                        'then': run['then']})

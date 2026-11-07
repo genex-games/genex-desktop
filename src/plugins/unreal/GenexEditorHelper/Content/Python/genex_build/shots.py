@@ -39,6 +39,8 @@ STRIP_SIZE = (960, 540)
 DELAY_RANGE_S = (0.0, 15.0)
 FRAMES_RANGE = (2, 24)
 INTERVAL_RANGE_S = (0.03, 5.0)
+# The most game seconds a strip spans (frames x interval): the bridge waits a fixed while for it.
+MAX_SPAN_S = 60.0
 STRIP_PREFIX = 'strip-'
 # How long one strip frame may take to land on disk before the strip gives up on it.
 FRAME_WAIT_S = 15.0
@@ -57,6 +59,7 @@ MESSAGE = {
     'not_playing': 'No play session is running; start one (StartPIE) first.',
     'frames': f'frames must be a whole number from {FRAMES_RANGE[0]} to {FRAMES_RANGE[1]}.',
     'interval': f'interval_s must be from {INTERVAL_RANGE_S[0]:g} to {INTERVAL_RANGE_S[1]:g} game seconds.',
+    'span': f'frames x interval_s must be at most {MAX_SPAN_S:g} game seconds: take fewer frames, or closer together.',
     'busy': 'A motion strip is still being taken; wait for it to finish.',
 }
 
@@ -89,6 +92,8 @@ def check_strip(frames: object, interval_s: object) -> tuple:
     ok = isinstance(interval_s, (int, float)) and not isinstance(interval_s, bool)
     if not ok or not INTERVAL_RANGE_S[0] <= interval_s <= INTERVAL_RANGE_S[1]:
         raise Refused(MESSAGE['interval'], interval_s=interval_s)
+    if frames * interval_s > MAX_SPAN_S:
+        raise Refused(MESSAGE['span'], frames=frames, interval_s=interval_s)
     return frames, float(interval_s)
 
 
@@ -146,18 +151,29 @@ def _settings():
     return unreal.get_default_object(unreal.load_class(None, PERFORMANCE_SETTINGS))
 
 
+# The holds on the throttle (a still, a strip and a motion check can run at once) and whether it was
+# on before the first: the last one given back turns it back on, never a strip that ends mid-check.
+_throttle = {'holds': 0, 'owed': False}
+
+
 def lift_throttle() -> bool:
-    """Turns "Use Less CPU when in Background" off for this editor run; whether it was on (and is owed back)."""
-    settings = _settings()
-    was_on = bool(settings.get_editor_property(THROTTLE))
-    if was_on:
-        settings.set_editor_property(THROTTLE, False)
-    return was_on
+    """Turns "Use Less CPU when in Background" off while anything holds it; True, a hold to give back."""
+    if _throttle['holds'] == 0:
+        settings = _settings()
+        _throttle['owed'] = bool(settings.get_editor_property(THROTTLE))
+        if _throttle['owed']:
+            settings.set_editor_property(THROTTLE, False)
+    _throttle['holds'] += 1
+    return True
 
 
-def give_back_throttle(owed: bool) -> None:
-    """Turns the throttle back on when lift_throttle turned it off."""
-    if owed:
+def give_back_throttle(held: bool) -> None:
+    """Gives back a hold lift_throttle took; the last one turns the throttle back on when it was on."""
+    if not held or _throttle['holds'] == 0:
+        return
+    _throttle['holds'] -= 1
+    if _throttle['holds'] == 0 and _throttle['owed']:
+        _throttle['owed'] = False
         _settings().set_editor_property(THROTTLE, True)
 
 

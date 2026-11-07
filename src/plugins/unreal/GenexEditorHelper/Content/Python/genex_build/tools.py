@@ -198,7 +198,7 @@ class GenexBuildTools(unreal.ToolsetDefinition):
 
         Args:
             frames: How many frames, 2 to 24.
-            interval_s: Game seconds between frames, 0.03 to 5.
+            interval_s: Game seconds between frames, 0.03 to 5; frames x interval_s at most 60.
 
         Returns:
             JSON {strip, files, poses, width, height, intervalS, waitS}, or {error}.

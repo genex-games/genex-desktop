@@ -8,7 +8,8 @@
  */
 import type { AnyRecord } from "../../../types/harness.d.ts";
 import { HostMethod } from "../../host-methods.ts";
-import { askSecondOpinion, judgedPictures, SECOND_OPINION_TOOL, SECOND_OPINION_WORDS } from "../../second-opinion.ts";
+import { judgedPictures } from "../../judge-frames.ts";
+import { askSecondOpinion, SECOND_OPINION_TOOL, SECOND_OPINION_WORDS } from "../../second-opinion.ts";
 import { WorkerTool } from "../../workers/contract.ts";
 import type { LoopRun } from "../loop-run.ts";
 import { plainly } from "../rules.ts";

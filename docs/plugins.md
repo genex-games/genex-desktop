@@ -636,11 +636,13 @@ side and back in idle and from the side through the walk, then removed; the brid
 as one sheet. The eyes: `capture_shot {camera, width, height, delay_s}` (a still from a
 hero camera, no play needed), `capture_play` (the player's 3D view during play, through the player's
 console `HighResShot`, which leaves out on-screen UI), `motion_strip` (2 to 24 frames scheduled by the game clock, one at a time and
-0.03 to 5 game seconds apart, each with the pawn's and view's position) and `shot_cameras` (the hero cameras' labels). `motion_check
+0.03 to 5 game seconds apart and spanning at most a minute, each with the pawn's and view's position) and `shot_cameras` (the hero cameras' labels). `motion_check
 {target, seconds}` measures one character's motion every frame for 0.5 to 20 game seconds on the body the player sees (`looks.visible_body`:
 a Motion Matching character's Body, never its hidden driver, whose montages it reads too) and writes its report to the captures folder:
-planted feet sliding while the body travels, one-frame pose pops, snap turns, montages stopped early or started over, hidden and ragdoll
-frames (`genex_build/motion_check_math.py` holds the thresholds). The play's own look checks read that visible body too. The bridge waits for
+planted feet sliding while the body travels, one-frame pose pops, snap turns (the facing read from the pose's shoulders, never a capsule
+that turns ahead of the body), montages stopped early or started over (a blend-out counts as played; a section that loops does not start
+over), hidden and ragdoll frames (`genex_build/motion_check_math.py` holds the thresholds). Strips, stills and checks each hold the
+background CPU throttle off, and the last one done gives it back. The play's own look checks read that visible body too. The bridge waits for
 a capture's file and hands the agent the picture itself, with its tone numbers (black point,
 contrast, near against far contrast, saturation; a nearly black frame is called out as a render to
 doubt) and the frame rate (`editor-captures.ts`, `tone.ts`); a strip and a character sheet come back as one contact sheet, a strip with

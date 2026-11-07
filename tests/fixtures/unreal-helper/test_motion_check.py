@@ -16,6 +16,7 @@ from unreal import Rotator, Vector
 
 from genex_build import motion_check, motion_check_math as maths
 from genex_build.tools import GenexBuildTools
+from genex_play import play
 
 from test_build_eyes import PlayCase
 
@@ -102,6 +103,14 @@ class Sliding(unittest.TestCase):
         self.assertEqual(report['slide']['movingFrames'], 0)
         self.assertEqual(codes(report), [])
 
+    def test_one_low_frame_a_foot_steps_down_into_leaves_the_slide_measured(self) -> None:
+        frames = walk(legs='skating')
+        for frame in frames[:3]:  # a step down with foot IK before the skate
+            frame['feet'] = {side: (x, y, z - 15.0) for side, (x, y, z) in frame['feet'].items()}
+        report = maths.report(frames)
+        self.assertGreater(report['slide']['movingFrames'], 60)
+        self.assertEqual(codes(report), [maths.SLIDING])
+
 
 class Pops(unittest.TestCase):
     def test_a_hand_that_jumps_for_one_frame_and_back_is_one_pop(self) -> None:
@@ -142,12 +151,12 @@ class Turns(unittest.TestCase):
         self.assertEqual(maths.report(frames)['snapTurns'], [])
 
 
-def montage(name: str, start: int, stop: int, length: float, mesh: str = 'Mesh'):
+def montage(name: str, start: int, stop: int, length: float, mesh: str = 'Mesh', blend_out: float = 0.0):
     """Plays a montage from frame `start` to frame `stop` (its position from 0 at the game's pace)."""
     def play(frame: dict) -> None:
         i = round(frame['t'] * FPS)
         if start <= i < stop:
-            frame['montages'][mesh] = (name, (i - start) / FPS, length)
+            frame['montages'][mesh] = (name, (i - start) / FPS, length, blend_out)
         else:
             frame['montages'].setdefault(mesh, None)
     return play
@@ -175,6 +184,21 @@ class Montages(unittest.TestCase):
         report = maths.report(frames)
         self.assertEqual(report['montages'][0]['end'], 'restarted')
         self.assertIn(maths.RESTARTED_MONTAGE, codes(report))
+
+    def test_a_montage_that_stops_being_active_at_its_long_blend_out_is_finished(self) -> None:
+        report = maths.report(walk(slash=montage('AM_Slash', 10, 55, 2.0, blend_out=0.5)))
+        self.assertEqual([(m['montage'], m['end']) for m in report['montages']], [('AM_Slash', 'finished')])
+        self.assertEqual(codes(report), [])
+
+    def test_a_held_section_that_loops_plays_on_and_a_swing_played_again_at_its_end_finished(self) -> None:
+        frames = walk(seconds=5.0, hold=lambda f: None)
+        for i, frame in enumerate(frames[10:70]):  # a 2 s channel looping its 0.5 to 0.8 s section
+            frame['montages']['Mesh'] = ('AM_Channel', i / FPS if i < 15 else 0.5 + ((i - 15) / FPS) % 0.3, 2.0)
+        for i, frame in enumerate(frames[70:]):  # the same slash again as the first blends out
+            frame['montages']['Mesh'] = ('AM_Slash', (i % 40) / FPS, 1.5)
+        report = maths.report(frames)
+        self.assertEqual([m['end'] for m in report['montages']][:2], ['cut', 'finished'], report['montages'])
+        self.assertNotIn(maths.RESTARTED_MONTAGE, codes(report))
 
 
 class Flags(unittest.TestCase):
@@ -218,7 +242,8 @@ class MotionCharacter:
         for mesh, posed in ((self.driver, driver_feet), (self.body, feet)):
             mesh.bones.update({f'foot_{s}': Vector(x, -12 if s == 'l' else 12, z) for s, (x, z) in posed.items()})
             mesh.bones.update({'pelvis': Vector(at.x, 0, at.z), 'head': Vector(at.x, 0, at.z + 70),
-                               'hand_r': Vector(at.x + 20, 20, at.z), 'hand_l': Vector(at.x + 20, -20, at.z)})
+                               'hand_r': Vector(at.x + 20, 20, at.z), 'hand_l': Vector(at.x + 20, -20, at.z),
+                               'upperarm_l': Vector(at.x, -20, at.z + 50), 'upperarm_r': Vector(at.x, 20, at.z + 50)})
 
     def step(self, dt: float) -> None:
         self.t += dt
@@ -272,6 +297,36 @@ class Tool(PlayCase):
         self.assertEqual(record['stopped'], motion_check.MESSAGE['ended'])
         self.assertGreaterEqual(record['frames'], maths.MIN_FRAMES)
 
+    def test_a_capsule_that_turns_ahead_of_the_body_is_no_snap_turn_and_no_pop(self) -> None:
+        answer = tool('motion_check', 'DuelManny', 2.0)
+        self.run_frames(1.0)
+        self.fighter.body.rotation = Rotator(yaw=90.0)  # the capsule turned at once; the pose turns later
+        self.run_frames(1.0)
+        record = self.record(answer)
+        self.assertEqual((record['snapTurns'], record['pops']), ([], []))
+        self.assertEqual(record['verdict'], 'clean', record['problems'])
+
+    def test_a_strip_that_ends_mid_check_leaves_the_throttle_lifted_until_the_check_is_done(self) -> None:
+        tool('motion_check', 'DuelManny', 1.0)
+        strip = tool('motion_strip', 2, 0.1)
+        for index in range(2):
+            self.run_frames(0.1)
+            with open(strip['files'][index], 'wb') as handle:
+                handle.write(b'\x89PNG frame')
+        self.run_frames(0.1)
+        self.assertTrue(os.path.exists(strip['poses']), 'the strip is done')
+        self.assertFalse(self.throttled(), 'the check still holds the throttle off')
+        self.run_frames(1.0)
+        self.assertTrue(self.throttled(), 'given back once the check is done too')
+
+    def test_a_check_the_wall_clock_cuts_short_says_so(self) -> None:
+        answer = tool('motion_check', 'DuelManny', 2.0)
+        self.run_frames(0.5)
+        self.fighter.step(0.01)
+        self.tick(game=0.01, wall=play.wall_cap(2.0))
+        record = self.record(answer)
+        self.assertEqual(record['stopped'], motion_check.MESSAGE['wall'])
+
     def test_refused_without_play_out_of_range_for_an_unknown_name_and_a_body_it_cannot_see(self) -> None:
         hidden = unreal.Character('BP_Ghost_0', Vector(500, 0, 90),
                                   mesh=unreal.SkeletalMeshComponent('Mesh', bones={'foot_l': Vector(), 'foot_r': Vector()},
@@ -291,8 +346,8 @@ class Tool(PlayCase):
 
 
 class Strip(PlayCase):
-    def test_a_burst_of_24_frames_every_frame_is_taken_and_finer_or_longer_is_refused(self) -> None:
-        for frames, interval in ((25, 0.1), (12, 0.02)):
+    def test_a_burst_of_24_frames_is_taken_and_finer_more_or_over_a_minute_is_refused(self) -> None:
+        for frames, interval in ((25, 0.1), (12, 0.02), (24, 5.0)):
             with self.subTest(frames=frames, interval=interval):
                 self.assertIn('error', tool('motion_strip', frames, interval))
         self.assertEqual(len(tool('motion_strip', 24, 0.03)['files']), 24)
