@@ -530,7 +530,7 @@ git-write queue comes once the Loop pauses or closes lands nothing. `OpenLoop.ha
 lead's `pause` alone: once the pause call has answered, the lead has 30 seconds to end its turn with
 its words for the person (`PAUSE_END_MS`), then its session under way is aborted (`engine.abort {cwd,
 lead}`, again each watch round until it ends, as after a Stop); a call of Genex's tools still
-answering holds that off up to 2 minutes (`PAUSE_CALLS_MS`; an abort under a call made Claude Code answer the lead's own pause
+answering, the pause's own included, holds that off up to 2 minutes from the pause (`PAUSE_CALLS_MS`; an abort under a call made Claude Code answer the lead's own pause
 "The user doesn't want to take this action right now", which the lead told the person as their
 refusal; every session's context says such an answer is a cut-off, never the person's no), an outage wait ends at its next step, no session opens, and
 `save_point`, `rewind`, `restart`, `finish`, `worker_start` and `worker_mark` are refused, as once the
@@ -874,9 +874,9 @@ nothing, and a resume's new time counts from where the run stands. The lead's fi
 time and what is left, as does a fresh session's when the old one is lost; a resume drops the time
 lines of the session before it. Before it is worked, the lead's `finish` is refused with what is left
 (`WORK_WORDS.tooSoon`), and a turn that ends with nothing at work wakes the lead to go on
-(`NoteKind.WorkTime`) instead of pausing, until two such wakes in a row bring no save point (an
-autosave counts) and no worker (`MAX_IDLE_KEEPS`; a refused `finish` is no work): then it pauses as
-above. Only the person ends it sooner (Finish, Stop,
+(`NoteKind.WorkTime`) instead of pausing, until two such wakes in a row leave the game folder as it was (its
+commit's tree and what is uncommitted) and start no worker (`MAX_IDLE_KEEPS`; a refused `finish` or a
+save point of an unchanged folder is no work): then it pauses as above. Only the person ends it sooner (Finish, Stop,
 the lead's `wrap_up` for them), or the lead's `pause`; a failed turn's wrap-up may still claim the goal. Once the time is up, a lead at work is told at
 its next step, a resting one at once, and its next turn is the wrap-up (`WrapCause.Time`); a close
 tells the lead how long the Loop worked for its summary (`WORK_WORDS.worked`). A resume with no new

@@ -9,13 +9,15 @@
  */
 import { askedMs, dueMs, spanWords, type WorkAsk, workAskOf, withoutWork } from "../work-time.ts";
 import { WORK_WORDS } from "../work-time-prompts.ts";
+import { gitAt } from "../git.ts";
+import { FOLDER_GIT } from "./open/folder-git.ts";
 import { NoteKind } from "./wake-schedule.ts";
 import type { AnyRecord, Run } from "../../types/harness.d.ts";
 import type { LoopRun } from "./loop-run.ts";
 
 /**
- * How many wakes in a row to go on its lead may answer with nothing done (no save point, no worker
- * started) before its Loop pauses as any Loop whose turn ends with nothing at work does.
+ * How many wakes in a row to go on its lead may answer with nothing done (the game folder as it was,
+ * no worker started) before its Loop pauses as any Loop whose turn ends with nothing at work does.
  */
 export const MAX_IDLE_KEEPS = 2;
 
@@ -126,22 +128,33 @@ export function timeUpWrapLine(loopRun: TimedRun): string {
 }
 
 /**
- * The lead's work so far as a mark: its save points (an autosave counts, so a turn that changed the
- * folder moves it) and the workers it started. A call of Genex's tools alone is no work: a lead that
- * answered each wake with a finish Genex refused was woken again and again until the time ran out.
+ * What the game folder holds, as git reads it without writing a thing: its commit's tree and what is
+ * uncommitted. A save point of an unchanged folder leaves both as they were (its commit is empty).
  */
-const workMark = (loopRun: LoopRun): string =>
-  `${loopRun.open.journal.savePoints.length}/${loopRun.open.pool?.state.records.length ?? 0}`;
+const FOLDER_CONTENT = `git --no-optional-locks rev-parse HEAD: && ${FOLDER_GIT.status}`;
+
+/**
+ * The lead's work so far as a mark: what the game folder holds (a change saved, autosaved, committed
+ * or merged moves it) and the workers it started. A call of Genex's tools alone is no work, nor is a
+ * save point of an unchanged folder: a lead that answered each wake with a finish Genex refused was
+ * woken again and again until the time ran out. A folder git can't read leaves the mark as it was.
+ */
+async function workMark(loopRun: LoopRun): Promise<string> {
+  const { ctx, run } = loopRun;
+  const label = `open:${run.runId}:work-mark`;
+  const folder = await gitAt(ctx, { project: run.project }, FOLDER_CONTENT, { label }).catch(() => "");
+  return `${folder}/${loopRun.open.pool?.state.records.length ?? 0}`;
+}
 
 /**
  * A lead whose turn ended with nothing at work while the person's time has some left is told how much,
  * in a line that wakes it at once. False when no time is asked or left, or when it has answered
  * `MAX_IDLE_KEEPS` such wakes in a row with nothing done: then the Loop pauses as any does.
  */
-export function keepsWorking(loopRun: LoopRun, keep: KeepState): boolean {
+export async function keepsWorking(loopRun: LoopRun, keep: KeepState): Promise<boolean> {
   const clock = workClock(loopRun);
   if (!clock || clock.left <= 0) return false;
-  const mark = workMark(loopRun);
+  const mark = await workMark(loopRun);
   keep.idleKeeps = keep.keptAt === mark ? keep.idleKeeps + 1 : 0;
   if (keep.idleKeeps >= MAX_IDLE_KEEPS) return false;
   keep.keptAt = mark;

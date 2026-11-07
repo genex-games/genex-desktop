@@ -36,7 +36,7 @@ export const MAX_HANDOFFS = 3;
  * lead told the person they had declined the pause (sword duel).
  */
 export const PAUSE_END_MS = 30 * SECOND_MS;
-/** How long a call of Genex's tools still answering after the lead's pause holds off the end of its session. */
+/** How long, from the lead's pause, a call of Genex's tools still answering (the pause's own included) holds off the end of its session. */
 export const PAUSE_CALLS_MS = 2 * MINUTE_MS;
 /** What a yes still needs of the lead's `finish` call: the workers settled and the last checkpoint. */
 export const OPEN_CLOSE_MS = 2 * MINUTE_MS;
@@ -156,8 +156,10 @@ export interface OpenLoop {
   journal: OpenJournal;
   /** Why the Loop pauses: its lead's words for the person (`pause`), once it asked; null while it runs. */
   halted: string | null;
-  /** When its lead's `pause` call answered, on the Loop's clock: it has `PAUSE_END_MS` from then to end its turn itself. */
+  /** When its lead asked to pause, on the Loop's clock: a call still answering holds its session up to `PAUSE_CALLS_MS` from then. */
   haltedAt?: number;
+  /** When its lead's `pause` call answered, on the Loop's clock: it has `PAUSE_END_MS` from then to end its turn itself. */
+  haltAnsweredAt?: number;
   /** The save point count when the lead's turn under way began: a turn that saved none is autosaved. */
   turnSavedFrom: number;
   /**

@@ -8,6 +8,8 @@
  * answers it as the person's refusal.
  */
 import assert from "node:assert/strict";
+import { writeFile } from "node:fs/promises";
+import path from "node:path";
 import { describe, it } from "node:test";
 import { startAutopilot } from "../../src/harness-seed/loop/start-autopilot.ts";
 import { MAX_IDLE_KEEPS } from "../../src/harness-seed/loop/director/work-time.ts";
@@ -287,6 +289,44 @@ describe("a Loop the person gave a time", () => {
     },
   );
 
+  it(
+    "a save point of an unchanged folder is no work either: the lead is woken twice, then its Loop pauses",
+    TEST_TIMEOUT,
+    async () => {
+      const saving: LoopTurn = async ({ host, tool }) => {
+        host.pass(MINUTE);
+        await tool("save_point", { label: "Done", summary: "Nothing left to do." });
+        await tool("finish", { summary: SUMMARY });
+        return undefined;
+      };
+      const host = await timedHost(Array.from({ length: 10 }, () => saving));
+      const report = await host.start();
+      assert.equal(host.prompts().length, 1 + MAX_IDLE_KEEPS, host.prompts().join("\n---\n"));
+      assert.equal(report.executionStatus, "paused");
+    },
+  );
+
+  it(
+    "a lead that commits its own work each turn keeps working: what the folder holds moved",
+    TEST_TIMEOUT,
+    async () => {
+      let turns = 0;
+      const committing: LoopTurn = async ({ host, tool }) => {
+        turns += 1;
+        host.pass(15 * MINUTE);
+        await writeFile(path.join(host.dir, `part-${turns}.txt`), `part ${turns}\n`);
+        await host.git("add", "-A");
+        await host.git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", `part ${turns}`);
+        if (turns === 5) await tool("finish", { summary: SUMMARY });
+        return undefined;
+      };
+      const host = await timedHost(Array.from({ length: 5 }, () => committing));
+      const report = await host.start();
+      assert.equal(host.leadCalls().length, 5, "woken after each turn of committed work");
+      assert.equal(report.victory, true, "and closed on its finish once the hour was worked");
+    },
+  );
+
   it("a failed turn's wrap-up, its last, lets its lead claim the goal before the time", TEST_TIMEOUT, async () => {
     const answers: unknown[] = [];
     const host = await timedHost([
@@ -415,6 +455,47 @@ describe("a lead's own pause", () => {
       const report = await host.start();
       assert.equal(early, 0, "not inside the lead's time to end its turn");
       assert.ok(ended, "Genex ended the session that worked on");
+      assert.equal(report.executionStatus, "paused");
+    },
+  );
+
+  it(
+    "a pause whose own save never answers still has its session ended, after the calls' longer while",
+    TEST_TIMEOUT,
+    async () => {
+      let held = false;
+      let stuck = true;
+      let early = -1;
+      let ended = false;
+      let pauseAnswered = false;
+      let endedUnderCall = false;
+      const aborts = (host: LoopHost) => host.rec.paramsOf("engine.abort").length;
+      const host = await timedHost([
+        async ({ host, tool }) => {
+          held = true;
+          const pausing = tool("pause", { why: "I need the person to sign in." }).then(() => {
+            pauseAnswered = true;
+          });
+          const from = host.now();
+          await host.until(() => host.now() - from >= 2 * PAUSE_END_MS);
+          early = aborts(host);
+          host.pass(PAUSE_CALLS_MS);
+          ended = await host.until(() => aborts(host) > 0);
+          endedUnderCall = ended && !pauseAnswered;
+          stuck = false;
+          await pausing;
+          return { ok: false, stopReason: "aborted" };
+        },
+      ]);
+      // The pause's own journal save never answers until the test lets it.
+      const call = host.rec.ctx.call;
+      host.rec.ctx.call = async (method: string, params?: Record<string, unknown>) => {
+        if (method === "artifact.write" && held) await host.until(() => !stuck);
+        return call(method, params);
+      };
+      const report = await host.start();
+      assert.equal(early, 0, "a slow pause call is answered first");
+      assert.ok(endedUnderCall, "one that never answers is not waited for forever");
       assert.equal(report.executionStatus, "paused");
     },
   );

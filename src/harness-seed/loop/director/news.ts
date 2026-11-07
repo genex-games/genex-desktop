@@ -260,18 +260,19 @@ export const startedASession = (result: Partial<DelegateResult> | undefined): bo
 
 /**
  * Whether Genex ends the lead's session now: the person stopped the Loop, or its lead paused it and
- * had its time to end its turn with its words (`PAUSE_END_MS` from its pause's answer, `PAUSE_CALLS_MS`
- * while a call of Genex's tools is still answering). Ended under a call, the engine answers that call
+ * had its time to end its turn with its words (`PAUSE_END_MS` from its pause's answer; `PAUSE_CALLS_MS`
+ * from the pause while a call of Genex's tools, the pause's own included, is still answering). Ended under a call, the engine answers that call
  * as if the person had declined it.
  */
 function endsTheSession(loopRun: LoopRun): boolean {
   const open = loopRun.open;
   if (loopRun.ctx.cancelled === true) return true;
-  const pausedAt = open?.halted ? open.haltedAt : undefined;
-  if (pausedAt === undefined) return false;
+  const askedAt = open?.halted ? open.haltedAt : undefined;
+  if (askedAt === undefined) return false;
+  const now = open.clock.now();
   // A call still answering gets longer, never forever: one that never answers would leave a paused lead at work.
-  const grace = (loopRun.toolsInFlight ?? 0) > 0 ? PAUSE_CALLS_MS : PAUSE_END_MS;
-  return open.clock.now() - pausedAt >= grace;
+  if ((loopRun.toolsInFlight ?? 0) > 0) return now - askedAt >= PAUSE_CALLS_MS;
+  return now - (open.haltAnsweredAt ?? askedAt) >= PAUSE_END_MS;
 }
 
 /**
