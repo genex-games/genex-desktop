@@ -74,6 +74,46 @@ class Looks(DetectCase):
         self.bot.feet_z = -50.0
         self.assertEqual(self.play(2.0), ['sunk'])
 
+    def test_a_motion_character_is_read_by_the_body_the_player_sees_not_its_hidden_driver(self) -> None:
+        # motion_character's own mesh is the sample's hidden mannequin; the visible Body copies its pose.
+        # Read by its own mesh, a sliding fighter was skipped as hidden, and the detector said nothing.
+        driver = unreal.SkeletalMeshComponent('BP_Duel_3_Driver', bones=dict(self.bot.mesh.bones), visible=False)
+        self.bot.actor.props['mesh'] = driver
+        self.bot.actor.components.append(driver)
+        self.bot.stepping = False
+        self.assertEqual(self.play(4.0, 300.0), ['sliding'])
+
+    def test_a_driver_left_shown_under_the_body_is_not_the_body_read(self) -> None:
+        # The sword duel's driver stayed shown in play, under the Body: read first, its stepping feet hid the slide.
+        stepper = Body('BP_Duel_3_Driver')
+        self.bot.actor.props['mesh'] = stepper.mesh
+        self.bot.actor.components.append(stepper.mesh)
+        pose = self.bot.pose
+
+        def both(t: float) -> None:
+            pose(t)
+            stepper.actor.location = self.bot.actor.location
+            stepper.pose(t)
+
+        self.bot.pose = both
+        self.bot.stepping = False
+        self.assertEqual(self.play(4.0, 300.0), ['sliding'])
+
+    def test_first_person_arms_are_never_the_body_read(self) -> None:
+        # A first-person pawn's arms share the body's skeleton, feet and all, and its owner alone sees them.
+        arms = unreal.SkeletalMeshComponent('Mesh1P', bones={'foot_l': Vector(), 'foot_r': Vector()}, only_owner_see=True)
+        self.bot.actor.components.append(arms)
+        self.bot.stepping = False
+        self.assertEqual(self.play(4.0, 300.0), ['sliding'])
+
+    def test_a_rig_whose_bones_carry_a_prefix_is_read_by_its_feet(self) -> None:
+        self.bot.mesh.bones = {}
+        self.bot.pose = lambda t: self.bot.mesh.bones.update({
+            'mixamorig:LeftFoot': Vector(self.bot.actor.location.x, self.bot.actor.location.y - 12, 12),
+            'mixamorig:RightFoot': Vector(self.bot.actor.location.x, self.bot.actor.location.y + 12, 12)})
+        self.bot.pose(0.0)
+        self.assertEqual(self.play(4.0, 300.0), ['sliding'])
+
     def test_a_floor_that_lets_the_sight_channel_through_is_still_the_ground(self) -> None:
         unreal.state['floors'] = [unreal.Floor(0.0, sight=False), unreal.Floor(-40.0)]
         self.assertEqual(self.play(2.0), [], 'the bot stands on the floor the sight channel passes')

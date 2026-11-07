@@ -27,7 +27,13 @@ plain chat, and a run started on it closes at once with `refusal: "needs_session
 Second opinions. No judge decides anything on its own. The lead may ask one with `judge`
 (`loop/second-opinion.ts`): the pictures it names (PNG or JPEG inside the project's folder, read by
 real path, at most six of 8 MB each) and a question it chooses, go to the Reviewers role (`run.judgeEngine`, `judgeModel`) as one
-`engine.complete`, and its words come back as advice. `finish review=yes` asks a reviewer the same
+`engine.complete`, and its words come back as advice. Motion goes as frames with their times
+(`loop/judge-frames.ts`, which takes from the judge only names every shipped one has): `strip` names a
+motion strip's poses file, whose frames (at most 24, each inside the folder; one that never landed is
+left out) go first at full size, and `times` gives each picture a game time. When any picture has a time, the question is
+followed by every picture's place, game time and gap (`loop/judge-frames-prompts.ts`), since an engine
+sends a picture without its label; frames past 20 MB together are left out from the end, and the
+answer says how many. `finish review=yes` asks a reviewer the same
 way (the finish check below): its yes closes the Loop, its no comes back with its reasons and stops
 nothing.
 Every direct model call is recorded by the host as `completion_call` with the caller's role.

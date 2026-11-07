@@ -1941,6 +1941,57 @@ test("a motion strip reaches the agent as one contact sheet with each frame's po
     assert.match(text, /frame 0 .*pawn \[0, 0, 90\]/);
     assert.match(text, /frame 2 .*pawn \[300, 0, 90\].*moved 300 cm/);
     assert.match(text, /frame 1 .*same picture as the frame before/);
+    assert.match(text, /poses file: .*strip-1\.json .*judge/, "the strip names the file the judge reads");
+  } finally {
+    await close();
+  }
+});
+
+test("a motion check's report reaches the agent once its record lands: who was measured, each problem, its numbers", async () => {
+  const { captures, project } = await captureProject();
+  const record = path.join(captures, "check-1-1.json");
+  const report = {
+    check: "check-1-1",
+    target: "BP_DuelManny_C_1",
+    mesh: "Body",
+    otherMeshes: ["Mesh"],
+    frames: 60,
+    slide: { ratio: 1.0, slidingShare: 1.0, movingFrames: 59, sliding: true },
+    problems: [{ code: "sliding", detail: "the feet slide: while the body travels, its planted foot moves at 100%" }],
+    verdict: "problems",
+  };
+  const unreal = editor(async () => {
+    await writeFile(record, JSON.stringify(report));
+    return {
+      returnValue: JSON.stringify({ check: "check-1-1", record, target: report.target, mesh: "Body", waitS: 18 }),
+    };
+  }, project.project);
+  const { client, close } = await connected(unreal.fetchImpl, [project], undefined, stillClock());
+  try {
+    const result: any = await client.callTool(captureCall("motion_check", { target: "DuelManny", seconds: 2 }));
+    const text = result.content.map((part: any) => part.text ?? "").join("\n");
+    assert.match(text, /motion check of BP_DuelManny_C_1, measured on its mesh Body \(not measured: Mesh\)/);
+    assert.match(text, /- the feet slide/);
+    assert.match(text, /numbers: .*"ratio":1/);
+  } finally {
+    await close();
+  }
+});
+
+test("a motion check whose record is outside the project's captures folder is never read", async () => {
+  const { project } = await captureProject();
+  const outside = path.join(await tmpDir("studio-check-outside-"), "check-1-1.json");
+  await writeFile(outside, JSON.stringify({ problems: [], target: "secret" }));
+  const unreal = editor(
+    () => ({ returnValue: JSON.stringify({ check: "check-1-1", record: outside, waitS: 1 }) }),
+    project.project,
+  );
+  const { client, close } = await connected(unreal.fetchImpl, [project], undefined, stillClock());
+  try {
+    const result: any = await client.callTool(captureCall("motion_check", { target: "", seconds: 1 }));
+    const text = result.content.map((part: any) => part.text ?? "").join("\n");
+    assert.doesNotMatch(text, /secret/);
+    assert.match(text, /no image: .*check-1-1\.json is not a file in this project's Saved\/Genex\/captures folder/);
   } finally {
     await close();
   }
