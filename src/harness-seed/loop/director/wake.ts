@@ -3,7 +3,9 @@
  * the studio wakes the SAME session when something happens: with the person's message as they wrote
  * it, or with Genex's own lines — a worker or a job that ended, the project's app that stopped
  * (director/news.ts; wake-schedule.ts decides when). A turn that ends with nothing at work and nothing
- * to be woken for closes the Loop, as a bare agent's turn ends; no clock wakes or ends it. One turn at
+ * to be woken for closes the Loop, as a bare agent's turn ends. The one clock that wakes or ends it is
+ * the time the person asked for (work-time.ts): while some is left such a turn is woken to go on, and
+ * once it is up the next turn is the last. One turn at
  * a time: what arrives during a turn reaches it at its next step when its engine can take it, or opens
  * the next message. The fresh-session fallback covers every turn; a lost provider (a limit, a sign-in)
  * pauses the run, and the host resumes it.
@@ -52,6 +54,16 @@ import {
 import { LOOP_WORDS } from "./wake-prompts.ts";
 import { afterTurn, nextWake, NoteKind, TurnEnd, WrapCause } from "./wake-schedule.ts";
 import { keepRunClock } from "./loop-run.ts";
+import {
+  type KeepState,
+  keepsWorking,
+  newKeepState,
+  sayTimeUp,
+  timeIsUp,
+  timeUpWrapLine,
+  withWorkLine,
+  workedLine,
+} from "./work-time.ts";
 import type { HarnessCtx } from "../../types/harness.d.ts";
 import type { DelegateResult } from "../../types/host-api.d.ts";
 import type { RestoredWake } from "./journal.ts";
@@ -94,6 +106,8 @@ export interface WakeState {
   failed: Partial<DelegateResult> | null;
   /** When the run's job ends were last asked for (null: not yet). */
   jobsPolledAt: number | null;
+  /** The wakes to go on while the person's time has some left, and whether its end was said (work-time.ts). */
+  keep: KeepState;
 }
 
 /** How the loop ended: the last turn's answer, why the wrap-up started, and the turn that failed. */
@@ -125,6 +139,7 @@ function newWakeState(restored: RestoredWake = {}): WakeState {
     freshSessions: restored.freshSessions ?? 0,
     failed: null,
     jobsPolledAt: null,
+    keep: newKeepState(),
   };
 }
 
@@ -141,6 +156,7 @@ async function turnFacts(
     closed: runOver(loopRun) || wake.wrapping,
     providerLost: Boolean(state.limit) || (await pauseOnLostSignIn(loopRun, now)),
     finishRequested: await inbox.finishing().catch(() => false),
+    timeUp: timeIsUp(loopRun),
   };
 }
 
@@ -157,8 +173,18 @@ function startWrapUp(
   loopRun.wrapping = true;
 }
 
-/** Genex's line the wrap-up turn opens with: the person's Finish, or the turn that failed and why. */
-function wrapLine(wake: WakeState): string {
+/**
+ * Genex's line the wrap-up turn opens with: the person's Finish, their time that is up, or the turn
+ * that failed and why; with a time asked, the time the Loop worked beside it.
+ */
+function wrapLine(loopRun: LoopRun, wake: WakeState): string {
+  if (wake.wrapCause === WrapCause.Time) return timeUpWrapLine(loopRun);
+  const worked = workedLine(loopRun);
+  return worked ? `${wrapCauseLine(wake)} ${worked}` : wrapCauseLine(wake);
+}
+
+/** Why the wrap-up turn is the last: the person's Finish, or the turn that failed and why. */
+function wrapCauseLine(wake: WakeState): string {
   if (wake.wrapCause === WrapCause.Finish) return LOOP_WORDS.finishAsked;
   const failed = wake.failed;
   return LOOP_WORDS.turnFailed(clip(String(failed?.errorText ?? failed?.stopReason ?? ""), CLIP_REASON));
@@ -197,10 +223,11 @@ async function journalNews(loopRun: LoopRun, wake: WakeState, now: number): Prom
 }
 
 /**
- * Rest until something is due — the person's message, a line of Genex's, the person's Finish (which
- * starts the wrap-up); false once the run ends under the lead, or once nothing is at work and nothing
- * would wake it: then the Loop is done, as a bare agent's turn ends. A message from the chat cuts the
- * rest short.
+ * Rest until something is due — the person's message, a line of Genex's, the person's Finish or the
+ * end of the time they asked for (either starts the wrap-up); false once the run ends under the lead,
+ * or once nothing is at work and nothing would wake it: then the Loop is done, as a bare agent's turn
+ * ends — unless the person's time has some left, which wakes the lead to go on (`keepsWorking`). A
+ * message from the chat cuts the rest short.
  */
 async function sleepUntilDue(loopRun: LoopRun, wake: WakeState, kit: TurnKit): Promise<boolean> {
   const { clock, line } = kit;
@@ -209,17 +236,42 @@ async function sleepUntilDue(loopRun: LoopRun, wake: WakeState, kit: TurnKit): P
     const spoke = line?.heard();
     await tick(loopRun, wake, line, clock.now());
     await activeWork(loopRun, clock.now());
-    if (await loopRun.inbox.finishing().catch(() => false)) {
-      startWrapUp(loopRun, wake, WrapCause.Finish, null);
+    const ends = await restEnds(loopRun);
+    if (ends) {
+      startWrapUp(loopRun, wake, ends, null);
       return true;
     }
     const now = clock.now();
     const due = dueAt(loopRun, wake, line, now);
     if (due !== null && due <= now) return true;
-    if (due === null && !hasWorkAtHand(loopRun) && (await nothingJustEnded(loopRun, wake, line, now))) return false;
+    const idle = await restingIdle(loopRun, wake, line, { due, now });
+    if (idle === false) return false;
+    if (idle) continue;
     await journalNews(loopRun, wake, now);
     await (spoke ? Promise.race([clock.sleep(WAKE_POLL_MS), spoke]) : clock.sleep(WAKE_POLL_MS));
   }
+}
+
+/**
+ * A resting lead with nothing due and nothing at work: false when its Loop is done, true when it is
+ * woken to go on because the person's time has some left (`keepsWorking`); null while something is
+ * due or at work, or ended just now.
+ */
+async function restingIdle(
+  loopRun: LoopRun,
+  wake: WakeState,
+  line: LeadLine | null,
+  { due, now }: { due: number | null; now: number },
+): Promise<boolean | null> {
+  if (due !== null || hasWorkAtHand(loopRun)) return null;
+  if (!(await nothingJustEnded(loopRun, wake, line, now))) return null;
+  return keepsWorking(loopRun, wake.keep);
+}
+
+/** Why a resting lead's next turn is its wrap-up: the person's Finish, or the time they asked for is up; null for neither. */
+async function restEnds(loopRun: LoopRun): Promise<WrapCause | null> {
+  if (await loopRun.inbox.finishing().catch(() => false)) return WrapCause.Finish;
+  return timeIsUp(loopRun) ? WrapCause.Time : null;
 }
 
 /**
@@ -316,7 +368,7 @@ function openFresh(loopRun: LoopRun, kit: TurnKit, ask: TurnAsk, why: string): P
   // A Loop its lead paused, or one the person stopped, opens no new session.
   const refused = openSessionRefused(loopRun);
   if (refused) return Promise.resolve(refused);
-  const lost = [LEAD_FRESH_START(why), ...kit.start].join("\n");
+  const lost = [LEAD_FRESH_START(why), ...withWorkLine(loopRun, kit.start)].join("\n");
   return kit.talk.session(ask.prompt, null, { ...ask.said, notices: [lost, ...(ask.said.notices ?? [])] });
 }
 
@@ -510,7 +562,10 @@ async function oneTurn(
     turn: wake.turns,
     ask,
     mayCut: () => mayCut(loopRun, wake, kit),
-    poll: () => tick(loopRun, wake, kit.line, kit.clock.now()),
+    poll: async () => {
+      await tick(loopRun, wake, kit.line, kit.clock.now());
+      sayTimeUp(loopRun, wake.keep);
+    },
   });
   let result: Partial<DelegateResult> | undefined;
   let thrown: { err: unknown } | null = null;
@@ -629,7 +684,7 @@ export async function runWakeLoop(
   if (resumed) await handAgain(loopRun, line);
   // The parts the lead calls (the plan hold, worker_start) answer a run the wake loop drives.
   loopRun.waking = true;
-  let result = await turnThenBetween(loopRun, wake, kit, start);
+  let result = await turnThenBetween(loopRun, wake, kit, withWorkLine(loopRun, start));
   for (;;) {
     const verdict = afterTurn(await turnFacts(loopRun, wake, result, clock.now()));
     if (verdict.next === TurnEnd.Close) break;
@@ -637,7 +692,7 @@ export async function runWakeLoop(
     else if (!(await restUntilDue(loopRun, wake, kit))) break;
     // A sign-in a worker or a judge lost while the lead slept pauses the run before it is woken.
     if (await pauseOnLostSignIn(loopRun, clock.now())) break;
-    result = await turnThenBetween(loopRun, wake, kit, wake.wrapping ? [wrapLine(wake)] : []);
+    result = await turnThenBetween(loopRun, wake, kit, wake.wrapping ? [wrapLine(loopRun, wake)] : []);
   }
   journalWake(loopRun, wake);
   return { result, wrapCause: wake.wrapCause, failed: wake.failed };

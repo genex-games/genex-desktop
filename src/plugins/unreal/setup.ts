@@ -383,6 +383,7 @@ export function systemSetupEnv(
     xcode: systemXcodeCheck(platform, env),
     visualStudio: systemVisualStudioCheck(platform, {
       programFilesX86: windowsFolder(env, "ProgramFiles(x86)", "Program Files (x86)"),
+      regExe: windowsSystemTool(env, "System32", "reg.exe"),
     }),
     linuxToolchain: async () => {
       if (platform !== "win32") return undefined;

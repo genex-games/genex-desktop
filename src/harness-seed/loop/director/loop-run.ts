@@ -91,6 +91,8 @@ export interface LoopRunData {
   journalSaved?: string | null;
   /** The Loop's own record (open/contract.ts): its facts, journal, git-write queue, clock and pool. */
   open: OpenLoop;
+  /** How long the run worked in its earlier sessions, as its journal kept it (`director.worked`, work-time.ts). */
+  workedBefore?: number;
   /** How many of the run's jobs ran when they were last read (null: the host could not say), and when (`active-work.ts`). */
   jobsRunning?: number | null;
   jobsReadAt?: number | null;

@@ -4,11 +4,16 @@
  * the setup card installs the Build Tools (`epic-install.ts`). Each status asks where they stand, so
  * the card notices an install by itself.
  *
- * Every probe is a folder read or Microsoft's own `vswhere.exe` by its full path with an argument
- * array, never a shell, and none of them prompts. The compiler versions and the Windows SDK an
- * engine builds with come from its own `Engine/Config/Windows/Windows_SDK.json`, as UnrealBuildTool
- * reads them: a toolset at least `MinimumVisualCppVersion` and outside `BannedVisualCppVersions`,
- * and an SDK from `MinVersion` to `MaxVersion`.
+ * Every probe is a folder or file read, or Microsoft's own `vswhere.exe` or Windows' `reg.exe` by its
+ * full path with an argument array, never a shell, and none of them prompts. The compiler versions and
+ * the Windows SDK an engine builds with come from its own `Engine/Config/Windows/Windows_SDK.json`, as
+ * UnrealBuildTool reads them: a toolset at least `MinimumVisualCppVersion` and outside
+ * `BannedVisualCppVersions`, and an SDK from `MinVersion` to `MaxVersion`. A toolset's version is
+ * its x64 `cl.exe`'s own product version, as UnrealBuildTool judges those two by: Microsoft's updates
+ * raise it in place and leave the folder's name as it was (the folder names only the
+ * `PreferredVisualCppVersions` family, which Genex doesn't judge by). Every Win64 editor build
+ * also needs a .NET Framework SDK (4.6 or later): the engine's SwarmInterface module refuses the whole
+ * build without one, and UnrealBuildTool finds it only through the registry's `NETFXSDK` keys.
  */
 import { execFile } from "node:child_process";
 import { readdir, stat } from "node:fs/promises";
@@ -47,6 +52,8 @@ export type VisualStudioStatus = {
   toolset: string | null;
   /** Whether a Windows SDK the engine builds with is installed. */
   windowsSdk: boolean;
+  /** Whether a .NET Framework SDK UnrealBuildTool accepts is installed. */
+  netFxSdk: boolean;
   /** What Do it for me runs to make it ready; absent once ready or off Windows. */
   plan?: BuildToolsPlan;
   /** The Build Tools install the plan changes (Modify, Update); absent for a new install. */
@@ -75,10 +82,12 @@ export type MsvcRules = {
 /** Each question Genex asks the computer; tests stand in for it. */
 export type VisualStudioProbes = {
   instances: () => Promise<VisualStudioInstance[]>;
-  /** The compiler versions in an instance that have their x64 compiler. */
+  /** The versions of an instance's compilers that have their x64 cl.exe, as cl.exe names them. */
   toolsets: (installationPath: string) => Promise<string[]>;
   /** The Windows SDK versions installed with their headers. */
   sdks: () => Promise<string[]>;
+  /** The .NET Framework SDK versions the registry names an install folder for. */
+  netFxSdks: () => Promise<string[]>;
   rules: (engineDirectory: string) => Promise<MsvcRules | null>;
 };
 
@@ -89,8 +98,8 @@ export type VisualStudioRunner = (
   options: { timeout: number; windowsHide: boolean; maxBuffer: number },
 ) => Promise<{ stdout: string }>;
 
-/** Windows' Program Files (x86), where Visual Studio's installer and the Windows Kits are. */
-export type VisualStudioFolders = { programFilesX86: string };
+/** Windows' Program Files (x86), where Visual Studio's installer and the Windows Kits are, and Windows' reg.exe. */
+export type VisualStudioFolders = { programFilesX86: string; regExe?: string };
 
 /** Microsoft's link to the Visual Studio 2022 Build Tools installer, which redirects to the current release. */
 export const BUILD_TOOLS_URL = "https://aka.ms/vs/17/release/vs_BuildTools.exe";
@@ -101,13 +110,15 @@ export const BUILD_TOOLS_CHANNEL = "VisualStudio.17.Release";
 /** The Build Tools' product id, as vswhere names it. */
 export const BUILD_TOOLS_PRODUCT = "Microsoft.VisualStudio.Product.BuildTools";
 /**
- * What Unreal needs of the Build Tools: the C++ workload, its x64 compiler and the Windows SDK the
- * engine's own Windows_SDK.json names as its main version.
+ * What Unreal needs of the Build Tools: the C++ workload, its x64 compiler, the Windows SDK the
+ * engine's own Windows_SDK.json names as its main version and the .NET Framework SDK every editor
+ * build reads.
  */
 export const BUILD_TOOLS_COMPONENTS = [
   "Microsoft.VisualStudio.Workload.VCTools",
   "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
   "Microsoft.VisualStudio.Component.Windows11SDK.22621",
+  "Microsoft.Net.Component.4.8.SDK",
 ] as const;
 
 /** Visual Studio 2022's first version number; Build Tools of another release are another product line. */
@@ -123,6 +134,32 @@ const TOOLSET_VERSION = /^\d+\.\d+\.\d+$/;
 /** A Visual Studio 2022 release channel as vswhere names it: VisualStudio.17.Release, or an LTSC one. */
 const CHANNEL_ID = /^VisualStudio\.17\.[A-Za-z0-9.]+$/;
 const SDK_VERSION = /^\d+\.\d+\.\d+\.\d+$/;
+/** VS_FIXEDFILEINFO's signature, 0xFEEF04BD as it lies in a Windows program, which starts its version block. */
+const FIXED_FILE_INFO = Buffer.from([0xbd, 0x04, 0xef, 0xfe]);
+/** That block's own version, which the signature's other matches in a program lack. */
+const FIXED_FILE_INFO_VERSION = 0x00010000;
+/** Where the block's product version lies: after its signature, its own version and the file version. */
+const PRODUCT_VERSION_AT = 16;
+/** The block up to the product version's two halves, 32 bits each. */
+const FIXED_FILE_INFO_BYTES = 24;
+/** An x64 cl.exe is under a megabyte; a bigger file is not one to read whole. */
+const COMPILER_MAX_BYTES = 16 * 1024 * 1024;
+/** The oldest .NET Framework SDK UnrealBuildTool accepts. */
+const NETFX_MINIMUM = "4.6";
+/** Where the registry keeps .NET Framework SDKs, 32-bit view first, as UnrealBuildTool looks. */
+const NETFX_KEYS = [
+  "HKLM\\SOFTWARE\\WOW6432Node\\Microsoft\\Microsoft SDKs\\NETFXSDK",
+  "HKLM\\SOFTWARE\\Microsoft\\Microsoft SDKs\\NETFXSDK",
+] as const;
+/** The value UnrealBuildTool reads from each version's key. */
+const NETFX_VALUE = "KitsInstallationFolder";
+/** A key's line in `reg query /s` output, which the values under it follow. */
+const REGISTRY_KEY_LINE = /^HKEY_/i;
+/** A version's own key: `…\NETFXSDK\4.8`, not one of its subkeys. */
+const NETFX_KEY_LINE = /\\NETFXSDK\\(?<version>\d+(?:\.\d+)*)\s*$/i;
+/** Its install folder, a non-empty string value. */
+const NETFX_FOLDER_LINE = /^\s+KitsInstallationFolder\s+REG_(?:EXPAND_)?SZ\s+\S/i;
+const REG_EXE = "C:\\Windows\\System32\\reg.exe";
 const VERSION = /^\d+(\.\d+)*$/;
 /** A banned range as Windows_SDK.json writes it: "14.40.0-14.43.99999". */
 const VERSION_RANGE = /^(\d+(?:\.\d+)*)-(\d+(?:\.\d+)*)$/;
@@ -198,6 +235,23 @@ export async function engineMsvcRules(engineDirectory: string): Promise<MsvcRule
   return bytes ? parseWindowsSdk(bytes.toString("utf8")) : null;
 }
 
+/**
+ * The .NET Framework SDK versions in `reg query <key> /s /v KitsInstallationFolder` output whose key
+ * names an install folder, as UnrealBuildTool reads them; anything else is left out.
+ */
+export function parseNetFxSdks(output: string): string[] {
+  const versions = new Set<string>();
+  let current: string | undefined;
+  for (const line of output.split(/\r?\n/)) {
+    if (REGISTRY_KEY_LINE.test(line)) current = NETFX_KEY_LINE.exec(line)?.groups?.version;
+    else if (current && NETFX_FOLDER_LINE.test(line)) versions.add(current);
+  }
+  return [...versions].sort(newestFirst);
+}
+
+/** Whether UnrealBuildTool builds with this .NET Framework SDK. */
+export const netFxSdkAccepted = (version: string) => compareVersions(version, NETFX_MINIMUM) >= 0;
+
 /** The instances in vswhere's JSON that are whole installs at an absolute path; anything else is left out. */
 export function parseInstances(stdout: string): VisualStudioInstance[] {
   try {
@@ -228,6 +282,29 @@ async function isFile(target: string): Promise<boolean> {
   return (await stat(target).catch(() => null))?.isFile() ?? false;
 }
 
+/**
+ * The product version a Windows program's version block names, as UnrealBuildTool reads cl.exe's
+ * (ProductMajorPart.ProductMinorPart.ProductBuildPart, "14.44.35229"; its file version says 19.44);
+ * null without a block, or with one whose major part is 0, where UnrealBuildTool takes the folder's.
+ */
+export function productVersionOf(program: Buffer): string | null {
+  for (let at = program.indexOf(FIXED_FILE_INFO); at >= 0; at = program.indexOf(FIXED_FILE_INFO, at + 1)) {
+    if (at + FIXED_FILE_INFO_BYTES > program.length) return null;
+    if (program.readUInt32LE(at + 4) !== FIXED_FILE_INFO_VERSION) continue;
+    const high = program.readUInt32LE(at + PRODUCT_VERSION_AT);
+    const low = program.readUInt32LE(at + PRODUCT_VERSION_AT + 4);
+    if (high >>> 16 === 0) return null;
+    return `${high >>> 16}.${high & 0xffff}.${low >>> 16}`;
+  }
+  return null;
+}
+
+/** A toolset's version: its cl.exe's own product version, or the folder's name when the file names none. */
+async function compilerVersion(compiler: string, folderName: string): Promise<string> {
+  const program = await readRegularFile(compiler, COMPILER_MAX_BYTES).catch(() => null);
+  return (program && productVersionOf(program)) ?? folderName;
+}
+
 /** The names in a folder that match `shape`, kept when `keep` says so. */
 async function versionsIn(folder: string, shape: RegExp, keep: (name: string) => Promise<boolean>) {
   const names = (await readdir(folder).catch(() => [])).filter((name) => shape.test(name));
@@ -252,11 +329,21 @@ export function systemVisualStudioProbes(
       const answer = await runner(vswherePath(folders), args, options).catch(() => null);
       return answer ? parseInstances(answer.stdout) : [];
     },
-    toolsets: (installationPath) => {
+    toolsets: async (installationPath) => {
       const msvc = path.join(installationPath, ...MSVC_FOLDER);
-      return versionsIn(msvc, TOOLSET_VERSION, (name) => isFile(path.join(msvc, name, ...X64_COMPILER)));
+      const compiler = (name: string) => path.join(msvc, name, ...X64_COMPILER);
+      const folders = await versionsIn(msvc, TOOLSET_VERSION, (name) => isFile(compiler(name)));
+      const versions = await Promise.all(folders.map((name) => compilerVersion(compiler(name), name)));
+      return [...new Set(versions)].sort(newestFirst);
     },
     sdks: () => versionsIn(include, SDK_VERSION, (name) => isFolder(path.join(include, name, SDK_HEADERS))),
+    netFxSdks: async () => {
+      const regExe = folders.regExe ?? REG_EXE;
+      const answers = await Promise.all(
+        NETFX_KEYS.map((key) => runner(regExe, ["query", key, "/s", "/v", NETFX_VALUE], options).catch(() => null)),
+      );
+      return [...new Set(answers.flatMap((answer) => (answer ? parseNetFxSdks(answer.stdout) : [])))].sort(newestFirst);
+    },
     rules: engineMsvcRules,
   };
 }
@@ -275,6 +362,8 @@ export type VisualStudioFacts = {
   /** Each instance's compilers, newest first, by its installation path. */
   toolsets: Map<string, string[]>;
   sdks: string[];
+  /** The .NET Framework SDK versions installed. */
+  netFxSdks: string[];
   rules: MsvcRules | null;
 };
 
@@ -297,18 +386,22 @@ function planOf(
 }
 
 /**
- * Where the tools stand: Ready with a compiler and an SDK the engine builds with; Outdated when the
- * only compilers are ones it refuses (and the SDK is there); otherwise Missing.
+ * Where the tools stand: Ready with a compiler, a Windows SDK and a .NET Framework SDK the engine
+ * builds with; Outdated when the only compilers are ones it refuses (and the Windows SDK is there),
+ * whose update comes first; otherwise Missing.
  */
 export function visualStudioStatus(facts: VisualStudioFacts): VisualStudioStatus {
-  if (facts.platform !== "win32") return { state: VisualStudioState.NotApplicable, toolset: null, windowsSdk: false };
+  if (facts.platform !== "win32")
+    return { state: VisualStudioState.NotApplicable, toolset: null, windowsSdk: false, netFxSdk: false };
   const all = [...facts.toolsets.values()].flat().sort(newestFirst);
   const toolset = all.find((version) => toolsetAccepted(version, facts.rules)) ?? null;
   const windowsSdk = facts.sdks.some((version) => sdkAccepted(version, facts.rules));
-  if (toolset !== null && windowsSdk) return { state: VisualStudioState.Ready, toolset, windowsSdk };
+  const netFxSdk = facts.netFxSdks.some(netFxSdkAccepted);
+  const found = { toolset, windowsSdk, netFxSdk };
+  if (toolset !== null && windowsSdk && netFxSdk) return { state: VisualStudioState.Ready, ...found };
   const outdated = toolset === null && all.length > 0 && windowsSdk;
   const state = outdated ? VisualStudioState.Outdated : VisualStudioState.Missing;
-  return { state, toolset, windowsSdk, ...planOf(facts, state) };
+  return { state, ...found, ...planOf(facts, state) };
 }
 
 /** Where the tools stand for the engine installed at `engineDirectory` (none: any compiler counts). */
@@ -318,16 +411,17 @@ export type VisualStudioCheck = (engineDirectory: string | undefined) => Promise
 export function visualStudioChecker(platform: NodeJS.Platform, probes: VisualStudioProbes): VisualStudioCheck {
   return async (engineDirectory) => {
     if (platform !== "win32")
-      return visualStudioStatus({ platform, instances: [], toolsets: new Map(), sdks: [], rules: null });
-    const [instances, sdks, rules] = await Promise.all([
+      return visualStudioStatus({ platform, instances: [], toolsets: new Map(), sdks: [], netFxSdks: [], rules: null });
+    const [instances, sdks, netFxSdks, rules] = await Promise.all([
       probes.instances(),
       probes.sdks(),
+      probes.netFxSdks(),
       engineDirectory === undefined ? null : probes.rules(engineDirectory),
     ]);
     const toolsets = new Map<string, string[]>();
     for (const instance of instances)
       toolsets.set(instance.installationPath, await probes.toolsets(instance.installationPath));
-    return visualStudioStatus({ platform, instances, toolsets, sdks, rules });
+    return visualStudioStatus({ platform, instances, toolsets, sdks, netFxSdks, rules });
   };
 }
 

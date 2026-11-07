@@ -133,7 +133,7 @@ import {
   type RunCommand,
 } from "./ubt.ts";
 import type { VisualStudioStatus } from "./visual-studio.ts";
-import type { XcodeStatus } from "./xcode.ts";
+import { XcodeState, type XcodeStatus } from "./xcode.ts";
 
 /** The editor tools the Loop uses beyond the queue's own. */
 export const LoopEditorTool = {
@@ -300,8 +300,11 @@ const MESSAGE = {
   NoCameras: "The Genex editor helper didn't answer shot_cameras with the level's hero cameras.",
 } as const;
 
-/** The only platform Unreal C++ is compiled on (Xcode). */
+/** The platforms Unreal C++ is compiled on: a Mac (Xcode) and Windows (Microsoft's C++ tools). */
 const MAC: NodeJS.Platform = "darwin";
+const WINDOWS: NodeJS.Platform = "win32";
+/** Xcode as Windows has it: never there, never asked. */
+const NO_XCODE = { state: XcodeState.NotApplicable } as const;
 /** The largest module rules file read into a compile's fingerprint. */
 const MAX_RULES_BYTES = 64 * 1024;
 const SOURCE_FOLDER = "Source";
@@ -461,11 +464,19 @@ async function templateBlueprints(deps: LoopToolsDeps, storage: string, game: st
   return readProjectBlueprints(await linkedProject(deps, storage, game));
 }
 
-/** Whether this computer compiles the game's C++ (a Mac whose Xcode is ready for the engine), and with which Xcode. */
+/**
+ * Whether this computer compiles the game's C++ (a Mac whose Xcode is ready for the engine, or
+ * Windows whose Microsoft C++ tools are), and with which Xcode.
+ */
 async function cppSupportOf(deps: LoopToolsDeps, engine: Engine | undefined): Promise<CppSupportFound> {
+  if (deps.platform === WINDOWS) {
+    const visualStudio = await deps.visualStudio?.(engine?.directory).catch(() => undefined);
+    const ready = canCompileCpp({ xcode: NO_XCODE, visualStudio }, deps.platform);
+    return { support: ready ? CppSupport.Ready : CppSupport.NoBuildTools, app: null };
+  }
   if (deps.platform !== MAC) return { support: CppSupport.NotMac, app: null };
   const xcode = await deps.xcode(engine?.directory).catch(() => undefined);
-  const support = xcode && canCompileCpp(xcode, deps.platform) ? CppSupport.Ready : CppSupport.NoXcode;
+  const support = xcode && canCompileCpp({ xcode }, deps.platform) ? CppSupport.Ready : CppSupport.NoXcode;
   return { support, app: xcode?.app ?? null };
 }
 

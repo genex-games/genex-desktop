@@ -18,6 +18,7 @@ import { closeUnderWay } from "./close-latch.ts";
 import type { LeadLine } from "./lead-line.ts";
 import type { LoopRun, LoopRunLogEntry } from "./loop-run.ts";
 import { abortLead } from "./open/app-look.ts";
+import { PAUSE_CALLS_MS, PAUSE_END_MS } from "./open/contract.ts";
 import { LOOP_WORDS } from "./wake-prompts.ts";
 import type { NoteKind } from "./wake-schedule.ts";
 
@@ -258,10 +259,28 @@ export const startedASession = (result: Partial<DelegateResult> | undefined): bo
   Boolean(result?.sessionId) && (result?.turns ?? 0) > 0;
 
 /**
+ * Whether Genex ends the lead's session now: the person stopped the Loop, or its lead paused it and
+ * had its time to end its turn with its words (`PAUSE_END_MS` from its pause's answer; `PAUSE_CALLS_MS`
+ * from the pause while a call of Genex's tools, the pause's own included, is still answering). Ended under a call, the engine answers that call
+ * as if the person had declined it.
+ */
+function endsTheSession(loopRun: LoopRun): boolean {
+  const open = loopRun.open;
+  if (loopRun.ctx.cancelled === true) return true;
+  const askedAt = open?.halted ? open.haltedAt : undefined;
+  if (askedAt === undefined) return false;
+  const now = open.clock.now();
+  // A call still answering gets longer, never forever: one that never answers would leave a paused lead at work.
+  if ((loopRun.toolsInFlight ?? 0) > 0) return now - askedAt >= PAUSE_CALLS_MS;
+  return now - (open.haltAnsweredAt ?? askedAt) >= PAUSE_END_MS;
+}
+
+/**
  * Watches one session call of the lead's until it ends (the module's header): each look reads the
  * run's job ends and the project's app first (`poll`), then hands the turn what came since its own
- * message. A Loop its lead paused, or one the person stopped, ends an open Loop's session again instead
- * (one its first abort missed: the host had not seated it yet); a run that is over hears nothing more.
+ * message. A Loop the person stopped ends an open Loop's session again instead (one its first abort
+ * missed: the host had not seated it yet), and so does one its lead paused, once the lead had its time
+ * to end its turn (`endsTheSession`); a run that is over hears nothing more.
  */
 export function watchTurn(loopRun: LoopRun, kit: WatchKit): TurnWatch {
   const open = loopRun.open;
@@ -280,7 +299,7 @@ export function watchTurn(loopRun: LoopRun, kit: WatchKit): TurnWatch {
     stop = resolve;
   });
   const look = async (): Promise<void> => {
-    if (open && (open.halted || loopRun.ctx.cancelled === true)) return abortLead(loopRun);
+    if (open && endsTheSession(loopRun)) return abortLead(loopRun);
     await kit.poll();
     if (over || runOver(loopRun)) return;
     await sayWords(loopRun, kit, handed);

@@ -785,11 +785,11 @@ themselves and never ask the person to open, quit or restart it (`editor-control
 answers `{answering}`, `{starting}` while Genex is already opening it, or `{started}` once a reopen
 job ended what was left of a crashed editor and its crash reporter, updated an outdated Genex editor
 helper while Unreal was closed (as the panel's Open does) and opened the project. It builds no C++
-unless asked: Unreal's own Open builds a hot-reloaded module. With `build: true` (on a Mac), or while
+unless asked: Unreal's own Open builds a hot-reloaded module. With `build: true` (on a Mac, or on Windows with Microsoft's C++ tools), or while
 the project's last module build failed, such as a restore's reopen whose build broke, the job builds
 it first, so the agent's fix is what opens and a fix that still doesn't build fails with its errors,
 Unreal left closed (`editor-status` names them); a reopen that failed for anything else, such as
-Xcode not ready, leaves the Open as asked. A Loop's lead opens and builds its Unreal this way
+a Mac's Xcode not ready, leaves the Open as asked, and Windows without the tools opens on the last build. A Loop's lead opens and builds its Unreal this way
 itself: Genex opens it at no run's start and after no crash. An editor of the game that runs without
 answering is `{busy}` and ended only with `restart: true` (or at once when its log says the port is
 blocked). `quit-editor` saves through the helper's `save_all`, then sends Unreal's normal quit and waits
@@ -952,10 +952,11 @@ its brief says to call `restart` after C++ changes, which
 rebuilds through `reopen-editor`, and a lead that finds Unreal closed opens it itself with
 `open-editor` (`build: true` builds the module first).
 
-C++: `cpp-status` answers `{canCompile, xcode, platform, module,
-adding: {state: idle|adding|done|failed, error?, seconds?}}` (`cpp-tools.ts`). `add-cpp-module`
-answers `{module, already: true}` for a game that has one; it refuses off a Mac, without a ready
-Xcode or for a project `addCppModule` would refuse, touching nothing; otherwise it answers
+C++: `cpp-status` answers `{canCompile, xcode, visualStudio, platform, module,
+adding: {state: idle|adding|done|failed, error?, seconds?}}` (`cpp-tools.ts`); C++ compiles on a
+Mac whose Xcode is ready and on Windows whose Microsoft C++ tools are (`ubt.ts` `canCompileCpp`).
+`add-cpp-module` answers `{module, already: true}` for a game that has one; it refuses where C++
+doesn't compile (on Windows naming `install-unreal`) or for a project `addCppModule` would refuse, touching nothing; otherwise it answers
 `{started: true}` and runs one job per project: `save_all` (any work left unsaved stops it with
 Unreal open), the panel's normal quit and up to 90 s for no editor to run, `addCppModule`,
 UnrealBuildTool on the project, then Open in Unreal and up to 5 minutes for the project to answer
@@ -967,8 +968,8 @@ is never quit.
 `check-part` on a C++ part (`part-files.ts`, `part-check.ts`, `part-compile.ts`) reads that folder in
 the builder's copy by real path: plain `.h` and `.cpp` files at most one folder deep, at most 20, each
 at most 200 KB; a link or anything else is a problem, never read. It refuses the part in a game
-without a C++ module (write it in Blueprints and Python, or wait for the module), off a Mac or
-without a ready Xcode, for a listed class whose `UCLASS()` declaration (`class <MODULE>_API A<Name>`
+without a C++ module (write it in Blueprints and Python, or wait for the module), where C++
+doesn't compile, for a listed class whose `UCLASS()` declaration (`class <MODULE>_API A<Name>`
 or `U<Name>`) no header has, for C++ files `cpp` doesn't list, for a class another part defines, and
 for anything else UnrealBuildTool reads that the copy added, changed or lost against the game: its
 Source (outside `Parts/`, a part that landed later is no change), `.uproject` and `Plugins/`.
@@ -979,7 +980,19 @@ it is. UBT runs under `sandbox-exec` (`ubt-sandbox.ts`): of the home folder it r
 the engine, Xcode and its own folders (its configuration read-only), it writes only the copy's
 `Intermediate/`, `Binaries/` and `Saved/`, its log folder and a private scratch, never a sign-in home,
 with no network, no Apple Events (no scripting or typing into another app) and a fresh environment. It builds with `-NoUBA`: the build accelerator lists the
-folders above the copy, which the sandbox closes in the home folder (a full build took 26.7 s). UBT
+folders above the copy, which the sandbox closes in the home folder (a full build took 26.7 s). On
+Windows `Build.bat <Target> Win64 Development -Project=… -NoMutex -NoUBA -NoHotReloadFromIDE` runs through `cmd.exe`
+outside the process sandbox, like `package-game`'s RunUAT (srt-win can't confine one build; the
+gate above keeps the copy's `Build.cs`, `.uproject` and `Plugins/` the game's), with RunUAT's small
+environment (`program-env.ts`); a game or engine path holding a quote, `%` or `!`, or on a network
+share, is refused before anything runs. MSVC's `file(line): error C…` and the linker's `LNK…`
+errors are named the same way. An editor running Live Coding locks every outside build of the
+engine's editor target, whatever its project (the lock is named for the engine's `UnrealEditor.exe`),
+so the last flag skips UBT's check: the game's own project is built only with its editor closed. A
+refusal that still comes fails with that reason (`live-coding`). A link the game's open editor
+blocks by holding its module's DLL fails as `module-in-use`, and a compiler or linker out of memory
+as `out-of-memory` (retryable: a copy's first build compiles the engine's multi-gigabyte shared
+precompiled header beside the open editors); check-part keeps neither for that C++. UBT
 misses a source written within about a second after its last build, so a part file written then is
 given a later write time first. In the game's own
 folder check-part never compiles: the open editor compiles that module, so the C++ counts as not
@@ -2551,23 +2564,27 @@ old for the engine, or Add Xcode N for one too new (Apple's developer downloads 
 installed Xcode in range is the one to select instead). `get-xcode` opens only the App Store page,
 Apple's downloads page (`{step: downloads}`) or the Xcode app the probes found. On Windows a game
 with a project has one row instead, Microsoft's C++ tools (`visual-studio.ts`): Microsoft's
-`vswhere.exe` lists Visual Studio's installs, a compiler counts with its x64 `cl.exe` and a Windows
-SDK with its headers, each judged by the engine's own `Engine/Config/Windows/Windows_SDK.json`
-(`MinimumVisualCppVersion`, `BannedVisualCppVersions`, the SDK range). Install Visual Studio Build
+`vswhere.exe` lists Visual Studio's installs, a compiler counts with its x64 `cl.exe` (named by that
+file's own product version, as UnrealBuildTool reads it: Microsoft's updates raise it and leave the
+folder's name) and a Windows SDK with its headers, each judged by the engine's own
+`Engine/Config/Windows/Windows_SDK.json` (`MinimumVisualCppVersion`, `BannedVisualCppVersions`, the
+SDK range), and a .NET Framework SDK (4.6 or later, which every Win64 editor build needs) counts by
+the registry's `NETFXSDK` keys, read with `reg.exe`. Install Visual Studio Build
 Tools, or Update for Build Tools whose only compilers the engine refuses, is done by the card's
 **Do it for me** (and `unreal__install-unreal` in a game with a project): Genex downloads
 Microsoft's VS 2022 Build Tools installer from `aka.ms` (redirects only to Microsoft's download
 host, HTTPS, capped), runs it only once Authenticode calls it Valid and signed by Microsoft
-Corporation, and installs the C++ workload, its x64 compiler and the Windows 11 SDK with
-`--passive --wait` (`modify` on Build Tools already there, on their own channel, or `update` when their
-own compilers are the refused ones); Windows asks the person for permission, and the card tells the
+Corporation, and installs the C++ workload, its x64 compiler, the Windows 11 SDK and the .NET
+Framework 4.8 SDK with `--passive --wait` (`modify` on Build Tools already there, on their own
+channel, or `update` when their own compilers are the refused ones, then `modify` in the same press
+for what the update can't add); Windows asks the person for permission, and the card tells the
 agent once they are in. An install that ends well but leaves the tools still missing stops with
 that reason and leaves the row to the person; presses of Do it for me are answered one after
-another, so a card press and the agent's never start two installs. Genex doesn't compile a game's C++ on
-Windows yet (`cpp-status` names the tools' state, `canCompile` stays false), so the row alone
-never brings the card out after `new-game` (`opensByItself`); `plugin-package`, and `package-game`
-for a game with a C++ module, refuse on Windows while the tools aren't ready and name
-`install-unreal`. The agent shows it again with `unreal__show-steps` when C++ would
+another, so a card press and the agent's never start two installs. With the tools ready Genex
+compiles a game's C++ on Windows as on a Mac (`cpp-status` `canCompile`); the row alone still never
+brings the card out after `new-game` (`opensByItself`), since a Blueprint game needs no tools;
+`add-cpp-module`, `plugin-build`, `plugin-package`, and `package-game` for a game with a C++
+module, refuse on Windows while the tools aren't ready and name `install-unreal`. The agent shows it again with `unreal__show-steps` when C++ would
 help, links a game to a project with `unreal__use-project` (a set-up project by name, any by its
 `.uproject` path: one not set up yet is set up first, unasked, and linked with `setUp`; while Unreal
 has it open, or when setup would switch a project from an older Unreal to the supported one (the

@@ -507,8 +507,8 @@ export default {
   "Downloading the Visual Studio Build Tools installer from Microsoft…":
     "正在从 Microsoft 下载 Visual Studio Build Tools 安装程序…",
   "Install Visual Studio Build Tools": "安装 Visual Studio Build Tools",
-  "Install Visual Studio Build Tools 2022 from Microsoft with Desktop development with C++.":
-    "从 Microsoft 安装 Visual Studio Build Tools 2022，并勾选“使用 C++ 的桌面开发”。",
+  "Install Visual Studio Build Tools 2022 from Microsoft with Desktop development with C++ and the .NET Framework 4.8 SDK.":
+    "从 Microsoft 安装 Visual Studio Build Tools 2022，并勾选“使用 C++ 的桌面开发”和 .NET Framework 4.8 SDK。",
   "Installing Visual Studio Build Tools. Choose Yes when Windows asks; Microsoft's installer shows its progress.":
     "正在安装 Visual Studio Build Tools。Windows 询问时请选“是”；Microsoft 的安装程序会显示进度。",
   "Microsoft's download led somewhere other than Microsoft, so Genex stopped.":
@@ -521,12 +521,12 @@ export default {
     "Microsoft 的安装程序没能下载 Build Tools。请检查网络连接后再试一次。",
   "Microsoft's installer didn't download. Check your internet connection and try again.":
     "没能下载 Microsoft 的安装程序。请检查网络连接后再试一次。",
-  "Microsoft's installer finished, but Unreal still can't build C++ with what it installed. Install Visual Studio Build Tools 2022 with Desktop development with C++ yourself.":
-    "Microsoft 的安装程序已完成，但 Unreal 仍无法用它安装的内容编译 C++。请自行安装 Visual Studio Build Tools 2022，并勾选“使用 C++ 的桌面开发”。",
-  "Recommended. Microsoft's free C++ tools: Unreal needs them to package a game or plugin with C++. About 7 GB. Do it for me installs them: choose Yes when Windows asks.":
-    "推荐。Microsoft 免费的 C++ 工具：Unreal 打包含 C++ 的游戏或插件时需要它们。约 7 GB。“帮我完成”会自动安装：Windows 询问时请选“是”。",
-  "Recommended. Microsoft's free C++ tools: Unreal needs them to package a game or plugin with C++. Install Visual Studio Build Tools with Desktop development with C++.":
-    "推荐。Microsoft 免费的 C++ 工具：Unreal 打包含 C++ 的游戏或插件时需要它们。请安装 Visual Studio Build Tools，并勾选“使用 C++ 的桌面开发”。",
+  "Microsoft's installer finished, but Unreal still can't build C++ with what it installed. Install Visual Studio Build Tools 2022 with Desktop development with C++ and the .NET Framework 4.8 SDK yourself.":
+    "Microsoft 的安装程序已完成，但 Unreal 仍无法用它安装的内容编译 C++。请自行安装 Visual Studio Build Tools 2022，并勾选“使用 C++ 的桌面开发”和 .NET Framework 4.8 SDK。",
+  "Recommended. Microsoft's free C++ tools: with them the agent writes your game's logic in C++, and Unreal packages a game or plugin with C++. About 7 GB. Do it for me installs them: choose Yes when Windows asks.":
+    "推荐。Microsoft 免费的 C++ 工具：有了它们，代理就能用 C++ 编写游戏逻辑，Unreal 也能打包含 C++ 的游戏或插件。约 7 GB。“帮我完成”会自动安装：Windows 询问时请选“是”。",
+  "Recommended. Microsoft's free C++ tools: with them the agent writes your game's logic in C++, and Unreal packages a game or plugin with C++. Install Visual Studio Build Tools with Desktop development with C++ and the .NET Framework 4.8 SDK.":
+    "推荐。Microsoft 免费的 C++ 工具：有了它们，代理就能用 C++ 编写游戏逻辑，Unreal 也能打包含 C++ 的游戏或插件。请安装 Visual Studio Build Tools，并勾选“使用 C++ 的桌面开发”和 .NET Framework 4.8 SDK。",
   "Self-improvement is off. Harness keeps its own instructions as they are.":
     "自我改进已关闭。Harness 会保持自己的指令不变。",
   "Unreal can build C++ on this PC.": "Unreal 可以在这台电脑上编译 C++。",

@@ -12,10 +12,9 @@
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { MINUTE_MS } from "../../shared/duration.ts";
-import { windowsBaseEnv } from "../../substrate/child-env.ts";
 import { readRegularFile } from "../../substrate/fsx.ts";
 import { killProcessTree } from "../../substrate/process-tree.ts";
-import { envValue } from "../../substrate/toolchain.ts";
+import { programEnv } from "./program-env.ts";
 import { outputCollector } from "./ubt.ts";
 
 /** How long a test run may take before its process tree is ended. */
@@ -34,8 +33,6 @@ const MESSAGE_CHARS = 300;
 const NAME_CHARS = 200;
 const ELLIPSIS = "…";
 const BOM = "﻿";
-/** The variables of Genex's environment a test run keeps; nothing else of it reaches the editor. */
-const KEPT_ENV = ["HOME", "PATH", "LANG", "TMPDIR", "USER"] as const;
 /** Automation's line for each finished test. */
 const COMPLETED =
   /Test Completed\. Result=\{(?<result>[^}]*)\}\s+Name=\{(?<name>[^}]*)\}(?:\s+Path=\{(?<path>[^}]*)\})?/g;
@@ -160,22 +157,6 @@ export async function readAutomationReport(reportDir: string, output: string): P
   } catch {
     return resultsFromOutput(output);
   }
-}
-
-/**
- * The small environment a test run starts with: the kept variables Genex has (`Path` read as
- * `PATH`) and, on Windows, the basics any program needs to start and find its folders.
- */
-export function programEnv(
-  env: NodeJS.ProcessEnv = process.env,
-  platform: NodeJS.Platform = process.platform,
-): Record<string, string> {
-  const kept: Record<string, string> = windowsBaseEnv(env, platform);
-  for (const name of KEPT_ENV) {
-    const value = envValue(env, name);
-    if (value !== undefined) kept[name] = value;
-  }
-  return kept;
 }
 
 /**

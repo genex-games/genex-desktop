@@ -20,6 +20,7 @@ import { type PluginSandboxJob, type PluginSandboxRunArgs, SandboxJobState } fro
 import { prepareBuildSandbox } from "./ubt-sandbox.ts";
 import {
   type CompileError,
+  cmdCarries,
   type PrepareSandbox,
   parseBuildErrors,
   type RunCommand,
@@ -39,11 +40,6 @@ const LOG_FOLDER = "uat-logs";
 /** The variable naming UAT's log folder: on Windows a scratch folder of the host job's own. */
 const LOG_FOLDER_ENV = "uebp_LogFolder";
 const BATCH_FILES = ["Engine", "Build", "BatchFiles"];
-/** What cmd.exe's quoting can't carry in a path: a quote, `%`, `!` or a control character. */
-// biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are what this refuses
-const UNCARRIED = /["%!\x00-\x1f]/;
-/** A network share or a device path: never handed to the sandbox. */
-const NETWORK_PATH = /^(?:\\\\|\/\/)/;
 const SUCCEEDED = /\bBUILD SUCCESSFUL\b/;
 const ERROR_CODE = /^[A-Z0-9_]+$/;
 
@@ -186,7 +182,7 @@ export type WindowsPackage = Pick<PackageOptions, "engineDir" | "projectDir" | "
 export function windowsPackageProblem(o: WindowsPackage): string | undefined {
   const folders = [o.engineDir, o.projectDir, o.pluginFile, o.packageDir];
   if (!folders.every((folder) => path.isAbsolute(folder))) return MESSAGE.Invalid;
-  if (folders.some((folder) => UNCARRIED.test(folder) || NETWORK_PATH.test(folder))) return MESSAGE.Uncarried;
+  if (!cmdCarries(folders)) return MESSAGE.Uncarried;
   return undefined;
 }
 

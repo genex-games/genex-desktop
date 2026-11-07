@@ -1,0 +1,15 @@
+Using bundled DotNet SDK version: 10.0 win-x64
+Running UnrealBuildTool: dotnet "..\..\Engine\Binaries\DotNET\UnrealBuildTool\UnrealBuildTool.dll" GxCppEditor Win64 Development -Project="D:\ai-games\gx cpp check copy\unreal\GxCpp.uproject" -NoMutex -NoUBA
+Log file: C:\Users\Ana\AppData\Local\UnrealBuildTool\Log.txt
+Determining max actions to execute in parallel (8 physical cores, 16 logical cores)
+  Executing up to 8 processes, one per physical core
+  Requested 1.5 GB memory per action, 1.12 GB available: limiting max parallel actions to 1
+Creating makefile for GxCppEditor (no existing makefile)
+UbaSessionServer - Disable remote execution (remote sessions will finish current processes)
+UHT compiled-in object format Default
+UHT processed GxCppEditor in 11.2110926 seconds (4 generated files written)
+Unable to build while Live Coding is active. Exit the editor and game, or press Ctrl+Alt+F11 if iterating on code in the editor or game
+
+Result: Failed (OtherCompilationError)
+Total execution time: 87.00 seconds
+Trace written to file C:\Users\Ana\AppData\Local\UnrealBuildTool\Trace.uba with size 10.4kb

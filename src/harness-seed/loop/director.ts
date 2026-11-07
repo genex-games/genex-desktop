@@ -220,6 +220,7 @@ async function prepareTheStart(loopRun: LoopRun): Promise<StartOfRun> {
 /**
  * The Loop's first lines to its lead: that it started (or resumed), with its goal as the chat's
  * session wrote it; then what its start found (the plugins' words, Genex's gates, the app's look).
+ * The time the person asked for goes beside the first as each is sent (wake.ts, `withWorkLine`).
  */
 function startLines(loopRun: LoopRun, start: StartOfRun): string[] {
   const { goal } = loopRun.run;

@@ -11,6 +11,7 @@ import { createRunInbox } from "../run-inbox.ts";
 import { MAX_WORKERS_AT_ONCE } from "../workers/contract.ts";
 import { bindLoopRun } from "./loop-run.ts";
 import { restoreLoopRun } from "./journal.ts";
+import { settleWorkAsk, workedBefore } from "./work-time.ts";
 import { newOpenJournal, OPEN_WALL_CLOCK, type OpenClock, type OpenLoop, openJournalOf } from "./open/contract.ts";
 import {
   type OpenedGame,
@@ -163,6 +164,7 @@ function loopRunData(
     state: loopRunState(run, threadId, projectDir, baseCommit),
     journal,
     open,
+    workedBefore: workedBefore(priorJournal),
     logSeq: 0,
     waitSeq: 0,
     toolCalls: 0,
@@ -187,6 +189,8 @@ export async function prepareLoopRun(
   const priorJournal = await readPriorJournal(ctx, threadId, run, resume);
   const game = await openGame(ctx, run);
   recordCreditCap(run);
+  // A resume after the person's time ran out goes on with none, unless they named a new one.
+  settleWorkAsk(run, workedBefore(priorJournal));
   const report = loopRunReport(run, resume ? await earlierReport(ctx, threadId, run.runId) : null);
   await announceRunStart(ctx, threadId, run, resume);
   const baseCommit = await openStartingPoint(ctx, run, priorJournal);

@@ -1664,6 +1664,7 @@ describe("a game's own Unreal project and the steps card", () => {
       state: VisualStudioState.Missing,
       toolset: null,
       windowsSdk: false,
+      netFxSdk: false,
       plan: BuildToolsPlan.Install,
     };
     const offered = unrealSteps("Valley", "5.8", windows, { status: missing, forMe: true });
@@ -1695,14 +1696,14 @@ describe("a game's own Unreal project and the steps card", () => {
     };
     const update = unrealSteps("Valley", "5.8", windows, { status: outdated, forMe: true });
     assert.equal(update.steps.find((s) => !s.done)?.label, "Update Visual Studio Build Tools");
-    const ready = { state: VisualStudioState.Ready, toolset: "14.44.35211", windowsSdk: true };
+    const ready = { state: VisualStudioState.Ready, toolset: "14.44.35211", windowsSdk: true, netFxSdk: true };
     const done = unrealSteps("Valley", "5.8", windows, { status: ready, forMe: true });
     assert.deepEqual([done.open, done.primary], [false, undefined]);
     assert.match(String(done.doneSays), /^Visual Studio's C\+\+ tools are installed on this PC/);
   });
 
   it("on a Mac, the steps card has no Build Tools row and still shows itself while Xcode is missing", () => {
-    const mac = { state: VisualStudioState.NotApplicable, toolset: null, windowsSdk: false };
+    const mac = { state: VisualStudioState.NotApplicable, toolset: null, windowsSdk: false, netFxSdk: false };
     const card = unrealSteps("Valley", "5.8", NO_XCODE, { status: mac, forMe: true });
     assert.equal(
       card.steps.some((s) => s.id === UnrealStepId.InstallBuildTools),

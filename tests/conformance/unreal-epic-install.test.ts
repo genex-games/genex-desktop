@@ -298,6 +298,8 @@ describe("Microsoft's Visual Studio Build Tools, installed for the person on Win
     "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
     "--add",
     "Microsoft.VisualStudio.Component.Windows11SDK.22621",
+    "--add",
+    "Microsoft.Net.Component.4.8.SDK",
   ];
   const ranInstaller = (calls: Call[]) => calls.some((call) => call.file.endsWith("vs_BuildTools.exe"));
 

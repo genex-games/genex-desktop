@@ -527,8 +527,12 @@ takes the folder back only for the lead's `rewind` or the person's Rewind, and p
 `save_point`, `finish` and the turn's end go on as ever, and what to do about the app is the lead's
 (its plugin's tools, `restart`, `rewind`, `pause`). A merge of a worker's copy whose turn on the
 git-write queue comes once the Loop pauses or closes lands nothing. `OpenLoop.halted` is set by the
-lead's `pause` alone: its session under way is aborted (`engine.abort {cwd, lead}`, again each watch
-round until it ends, as after a Stop), an outage wait ends at its next step, no session opens, and
+lead's `pause` alone: once the pause call has answered, the lead has 30 seconds to end its turn with
+its words for the person (`PAUSE_END_MS`), then its session under way is aborted (`engine.abort {cwd,
+lead}`, again each watch round until it ends, as after a Stop); a call of Genex's tools still
+answering, the pause's own included, holds that off up to 2 minutes from the pause (`PAUSE_CALLS_MS`; an abort under a call made Claude Code answer the lead's own pause
+"The user doesn't want to take this action right now", which the lead told the person as their
+refusal; every session's context says such an answer is a cut-off, never the person's no), an outage wait ends at its next step, no session opens, and
 `save_point`, `rewind`, `restart`, `finish`, `worker_start` and `worker_mark` are refused, as once the
 Loop closes; the close is paused, and a Resume starts over. A look under way once the Loop begins to
 close says nothing; the teardown waits for it a while (`settleRecovery`). A
@@ -840,9 +844,9 @@ Windows/Linux.
 
 #### What ends a Loop
 
-A Loop has no clock, one rule for every Loop (`director/wake.ts`, `wake-schedule.ts` `afterTurn`):
-no time limit of Genex's own ends a turn, wakes the lead or closes the run, and a lead's turn is
-delegated with no `timeoutMs`. The lead's `finish` ends it. A lead turn that ends with nothing at work
+A Loop has no clock of Genex's own, one rule for every Loop (`director/wake.ts`, `wake-schedule.ts`
+`afterTurn`): no time limit of Genex's ends a turn, wakes the lead or closes the run, and a lead's turn
+is delegated with no `timeoutMs`. Only a time the person asked for counts (below). The lead's `finish` ends it. A lead turn that ends with nothing at work
 (no worker's run, no running job of the run: `hasWorkAtHand`) and
 nothing to wake it for pauses it, as a bare agent's turn ends and waits for the person: a build is the
 whole making of the game, so their next word goes on with it (`director.ts` `closeLeftOpen`; the
@@ -858,8 +862,26 @@ failed turn, give the lead its one wrap-up turn at once, opened with Genex's one
 it at once (paused, for a Resume). A lead's rate limit, an outage past the ladder, a lost sign-in and
 the lead's `pause` pause it; the host's auto-resume resumes a limit's pause at its reset, every time
 ([automatic resume](#automatic-resume)). A Loop an
-earlier seed paused resumes with no clock: its journal's `director.clock`, its run's hours and a
-wrap-up begun at its old working deadline are read by nothing. The run's own clock (`loop-run.ts`
+earlier seed paused resumes with no clock: its journal's `director.clock`, its run's old hours ceiling
+and a wrap-up begun at its old working deadline are read by nothing.
+
+A time the person asked for ("work 3h on that") is the one exception (`loop/work-time.ts`,
+`director/work-time.ts`). The chat's session names it as `hours`/`minutes` on `start_autopilot` or
+`resume_run`, only from the person's words, and the run's budgets carry it (`workMinutes`,
+`workFromMs`, `completionPolicy: "duration"`). It counts the run's worked time: its earlier sessions
+(the journal's `director.worked`) and this one on the Loop's clock, so a pause or a closed app adds
+nothing, and a resume's new time counts from where the run stands. The lead's first message says the
+time and what is left, as does a fresh session's when the old one is lost; a resume drops the time
+lines of the session before it. Before it is worked, the lead's `finish` is refused with what is left
+(`WORK_WORDS.tooSoon`), and a turn that ends with nothing at work wakes the lead to go on
+(`NoteKind.WorkTime`) instead of pausing, until two such wakes in a row leave the game folder as it was (its
+commit's tree and what is uncommitted) and start no worker (`MAX_IDLE_KEEPS`; a refused `finish` or a
+save point of an unchanged folder is no work): then it pauses as above. Only the person ends it sooner (Finish, Stop,
+the lead's `wrap_up` for them), or the lead's `pause`; a failed turn's wrap-up may still claim the goal. Once the time is up, a lead at work is told at
+its next step, a resting one at once, and its next turn is the wrap-up (`WrapCause.Time`); a close
+tells the lead how long the Loop worked for its summary (`WORK_WORDS.worked`). A resume with no new
+time after the time was worked goes on with none (`settleWorkAsk`). Before, a lead that closed on its
+own word ran 2 h 20 min of three hours asked, three times, and said it had run "the 3-hour loop". The run's own clock (`loop-run.ts`
 `keepRunClock`, `runNow`) stays injectable for what reads the time outside the wake loop (`wrap_up`
 stamps the person's ask with it).
 

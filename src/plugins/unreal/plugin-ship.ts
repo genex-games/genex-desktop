@@ -70,6 +70,7 @@ import {
   type CompileResult,
   canCompileCpp,
   compileEditor,
+  cppToolsState,
   type PrepareSandbox,
   pathScrubber,
   projectPluginDirs,
@@ -182,8 +183,8 @@ const MESSAGE = {
   NoProject: "This game isn't linked to an Unreal project, so there is no plugin to build.",
   OutsideGame: "This game's Unreal project isn't inside its folder; the plugin tools work on a project in unreal/.",
   NoEngine: "No supported Unreal is installed, so Genex can't build, test or package the plugin.",
-  CannotCompile: (xcode: string) =>
-    `This computer can't build Unreal C++ (Xcode: ${xcode}); an Unreal plugin is built on a Mac whose Xcode is ready.`,
+  CannotCompile: (tools: string) =>
+    `This computer can't build Unreal C++ (${tools}); an Unreal plugin is built on a Mac whose Xcode is ready, or on Windows with Microsoft's Visual Studio Build Tools, which unreal__install-unreal installs.`,
   NeedsBuildTools: (state: string) =>
     `Packaging an Unreal plugin on Windows compiles its C++ with Microsoft's Visual Studio Build Tools (Visual Studio: ${state}). Call unreal__install-unreal, which installs them (Windows asks the user for permission), end your reply, and package again once the chat says they are installed.`,
   NoHostModule: "The host project has no C++ module of its own, so Genex can't build its plugin.",
@@ -305,8 +306,16 @@ async function engineTarget(deps: ShipToolsDeps, target: ShipTarget, compiles: b
   const engine = await deps.engine();
   if (!engine) throw new Error(MESSAGE.NoEngine);
   const xcode = await deps.xcode(engine.directory);
-  if (compiles && !canCompileCpp(xcode, deps.platform)) throw new Error(MESSAGE.CannotCompile(xcode.state));
+  if (compiles) await assertCompiles(deps, engine.directory, xcode);
   return { ...target, engine, xcodeApp: xcode.app ?? null };
+}
+
+/** Refuses where Unreal C++ can't be built: a Mac without a ready Xcode, Windows without Microsoft's C++ tools. */
+async function assertCompiles(deps: ShipToolsDeps, engineDir: string, xcode: Pick<XcodeStatus, "state">) {
+  const visualStudio =
+    deps.platform === WINDOWS ? await deps.visualStudio?.(engineDir).catch(() => undefined) : undefined;
+  const tools = { xcode, visualStudio };
+  if (!canCompileCpp(tools, deps.platform)) throw new Error(MESSAGE.CannotCompile(cppToolsState(tools, deps.platform)));
 }
 
 /**

@@ -45,7 +45,7 @@
     {
       "name": "show-steps",
       "facts": ["web-game", "unreal-project"],
-      "description": "Show the user the Unreal setup card in this game's chat. On a computer without the Unreal Genex makes games with, it shows getting Epic's launcher and installing Unreal there (its Do it for me does both; the user signs in to Epic), and brings the Unreal button out; use it when the user wants an Unreal game and new-game refuses or the engine question says Unreal needs installing, then end your reply: the chat tells you when Unreal is installed. Otherwise it shows installing, updating or opening Xcode on a Mac, which lets you write C++ for this game; use it then when C++ would clearly help. On Windows it shows installing Microsoft's Visual Studio Build Tools, which packaging a game or plugin with C++ needs. It does nothing when every step is done.",
+      "description": "Show the user the Unreal setup card in this game's chat. On a computer without the Unreal Genex makes games with, it shows getting Epic's launcher and installing Unreal there (its Do it for me does both; the user signs in to Epic), and brings the Unreal button out; use it when the user wants an Unreal game and new-game refuses or the engine question says Unreal needs installing, then end your reply: the chat tells you when Unreal is installed. Otherwise it shows installing, updating or opening Xcode on a Mac, which lets you write C++ for this game; use it then when C++ would clearly help. On Windows it shows installing Microsoft's Visual Studio Build Tools, which let you write C++ for this game and package a game or plugin with C++; use it then when C++ would clearly help. It does nothing when every step is done.",
       "parameters": {
         "type": "object",
         "properties": {}
@@ -54,7 +54,7 @@
     {
       "name": "install-unreal",
       "facts": ["web-game", "unreal-project"],
-      "description": "Install what Unreal needs on this computer, one step per call, as Do it for me on the Unreal setup card does: Epic's launcher (on Windows Genex downloads it from Epic, checks Epic signed it and installs it; Windows asks the user for permission), then Unreal 5.8 in the launcher (Genex opens the launcher and hands the install to this chat's next turn, which clicks it with the desktop tool), then, on Windows when it is missing, Microsoft's Visual C++ runtime the editor needs, and, in a game with an Unreal project on Windows, Microsoft's Visual Studio Build Tools, which packaging C++ needs (Genex downloads Microsoft's installer, checks Microsoft signed it and installs them; Windows asks the user for permission): call it for them when a package says so. Call it yourself when the user wants an Unreal game and Unreal isn't installed, instead of asking them to install it; only signing in to Epic is theirs. It answers at once with what it started; end your reply then, and call it again for the next step once the card shows the last one done.",
+      "description": "Install what Unreal needs on this computer, one step per call, as Do it for me on the Unreal setup card does: Epic's launcher (on Windows Genex downloads it from Epic, checks Epic signed it and installs it; Windows asks the user for permission), then Unreal 5.8 in the launcher (Genex opens the launcher and hands the install to this chat's next turn, which clicks it with the desktop tool), then, on Windows when it is missing, Microsoft's Visual C++ runtime the editor needs, and, in a game with an Unreal project on Windows, Microsoft's Visual Studio Build Tools, which compiling and packaging C++ need (Genex downloads Microsoft's installer, checks Microsoft signed it and installs them; Windows asks the user for permission): call it for them when cpp-status, add-cpp-module or a package says so. Call it yourself when the user wants an Unreal game and Unreal isn't installed, instead of asking them to install it; only signing in to Epic is theirs. It answers at once with what it started; end your reply then, and call it again for the next step once the card shows the last one done.",
       "parameters": {
         "type": "object",
         "properties": {}
@@ -388,7 +388,7 @@
           },
           "build": {
             "type": "boolean",
-            "description": "Optional. true builds the game's C++ module before Unreal opens (on a Mac; elsewhere Unreal's own open builds it); a build that fails leaves Unreal closed, and editor-status names its errors."
+            "description": "Optional. true builds the game's C++ module before Unreal opens (on a Mac, or on Windows with Microsoft's C++ tools; elsewhere Unreal's own open builds it); a build that fails leaves Unreal closed, and editor-status names its errors."
           }
         }
       }
@@ -845,7 +845,7 @@
   "workerTypes": [
     {
       "id": "cpp",
-      "description": "Writes C++ in a copy and checks it with the plugin's sandboxed build",
+      "description": "Writes C++ in a copy and checks it with UnrealBuildTool's build of that copy",
       "tools": ["check-part"],
       "isolation": "copy"
     }

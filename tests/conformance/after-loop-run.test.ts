@@ -239,7 +239,12 @@ describe("what the chat's own session is told and handed after a run", () => {
       ["resume_run"],
     );
     // The resume reaches this run only: the bridged tool names no run to reach another with.
-    assert.deepEqual(Object.keys(pausedGrant.interviewTools?.[0]?.parameters.properties ?? {}), ["text"]);
+    // Flipped: it took `text` alone; it takes the time the person named for the build too (work-time.ts).
+    assert.deepEqual(Object.keys(pausedGrant.interviewTools?.[0]?.parameters.properties ?? {}), [
+      "text",
+      "hours",
+      "minutes",
+    ]);
     // On another engine the build's controls stay, and its resume is Builds' alone.
     assert.deepEqual(afterLoopRunGrant({ ...pausedElsewhere, messageId: "m2" } as never), {
       runControls: { runId: RUN, messageId: "m2" },
@@ -301,6 +306,44 @@ describe("what the chat's own session is told and handed after a run", () => {
     const told = refused.find((c) => c.method === "events.append")?.params;
     assert.equal(told?.threadId, THREAD);
     assert.match(JSON.stringify(told?.batch), /Only a paused run from this conversation can be resumed/);
+  });
+
+  it("A6b. a time the person named with the resume goes on the paused run's journal first, counted from what it has worked", async () => {
+    const recorded = (args: Record<string, unknown>) => [{ name: "resume_run", args }];
+    assert.deepEqual(resumeAsked(paused as never, recorded({ text: "work 2h more", hours: 2 })), {
+      text: "work 2h more",
+      hours: 2,
+    });
+    // Hostile: no time, or one that is no time, is not taken.
+    for (const hours of [0, -3, "abc", null])
+      assert.deepEqual(
+        resumeAsked(paused as never, recorded({ text: "go on", hours })),
+        { text: "go on" },
+        String(hours),
+      );
+
+    const worked = 47 * 60_000;
+    const journalOf = () => ({
+      run: { runId: RUN, budgets: { creditCap: 600, workMinutes: 180, workFromMs: 0, completionPolicy: "duration" } },
+      director: { worked, lead: { chatSession: true } },
+    });
+    const writes = async (args: Record<string, unknown>, running = false) => {
+      const calls: Array<{ method: string; params: any }> = [];
+      const studio = studioWith(hostWith(journalOf(), calls));
+      if (running) studio.activeRuns.set(THREAD, { run: { runId: RUN }, done: false } as never);
+      await resumeAfterReply(studio, chatOf(studio), { ...paused, messageId: "m6" } as never, args, NEVER_RESERVED_MS);
+      return calls.filter((call) => call.method === "artifact.write").map((call) => call.params.value);
+    };
+    const [written] = await writes({ text: "work 2h more", hours: 2 });
+    // The rest of its budgets kept; the new time counted from the 47 minutes the run has worked.
+    assert.deepEqual(written?.run.budgets, {
+      creditCap: 600,
+      workMinutes: 120,
+      workFromMs: worked,
+      completionPolicy: "duration",
+    });
+    assert.deepEqual(await writes({ text: "go on" }), [], "no time named: the journal is untouched");
+    assert.deepEqual(await writes({ text: "go on", hours: 2 }, true), [], "a run under way here is never written");
   });
 
   it("A7. the chat holds its next message until the run it asked to resume is reserved or already held, never past its bound", async () => {

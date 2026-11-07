@@ -71,13 +71,20 @@ async function noteTool(loopRun: LoopRun, args: AnyRecord): Promise<string> {
 
 /**
  * `pause`: the Loop pauses with the lead's words as its reason once this turn ends (the director's
- * close reads `open.halted`), so a block only the person can lift waits for them.
+ * close reads `open.halted`), so a block only the person can lift waits for them. The lead's time to
+ * end its turn itself starts once the call has answered (`haltAnsweredAt`, director/news.ts).
  */
 async function pauseTool(loopRun: LoopRun, args: AnyRecord): Promise<string> {
   const why = String(args.why ?? "").trim();
   if (!why) return OPEN_WORDS.needsWhy;
-  loopRun.open.halted = why.slice(0, PAUSE_CHARS);
-  await loopRun.saveJournal();
+  const open = loopRun.open;
+  open.halted = why.slice(0, PAUSE_CHARS);
+  open.haltedAt = open.clock.now();
+  try {
+    await loopRun.saveJournal();
+  } finally {
+    open.haltAnsweredAt = open.clock.now();
+  }
   return OPEN_WORDS.pausing;
 }
 
