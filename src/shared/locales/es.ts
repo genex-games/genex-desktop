@@ -768,6 +768,8 @@ export default {
   "Choose another": "Elegir otra",
   "Choose another model or check your account in Model providers, then try again.":
     "Elige otro modelo o revisa tu cuenta en Proveedores de modelos y vuelve a intentarlo.",
+  "Choose another model, or try again once its provider is back. Your prompt stays here.":
+    "Elige otro modelo o vuelve a intentarlo cuando su proveedor vuelva. Tu mensaje se queda aquí.",
   "Choose another version": "Elegir otra versión",
   "Choose blender.exe": "Elige blender.exe",
   "Choose browser OAuth or an Authorization header, not both":
@@ -4179,6 +4181,7 @@ export default {
   "This model is unavailable": "Este modelo no está disponible",
   "This model is unavailable. Check the connection or choose another model.":
     "Este modelo no está disponible. Revisa la conexión o elige otro modelo.",
+  "This model isn’t available right now": "Este modelo no está disponible ahora",
   "This page isn't from the sign-in Genex started.": "Esta página no es del inicio de sesión que abrió Genex.",
   "This paste has {count, plural, other {# servers}}. Pick one:":
     "Lo que pegaste tiene {count, plural, one {# servidor} other {# servidores}}. Elige uno:",

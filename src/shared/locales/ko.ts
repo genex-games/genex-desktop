@@ -704,6 +704,8 @@ export default {
   "Choose another": "다른 사진 선택",
   "Choose another model or check your account in Model providers, then try again.":
     "다른 모델을 고르거나 ‘모델 제공자’에서 계정을 확인한 뒤 다시 시도해 주세요.",
+  "Choose another model, or try again once its provider is back. Your prompt stays here.":
+    "다른 모델을 고르거나, 제공자가 돌아오면 다시 시도하세요. 프롬프트는 여기 그대로 있어요.",
   "Choose another version": "다른 버전 선택",
   "Choose blender.exe": "blender.exe 선택",
   "Choose browser OAuth or an Authorization header, not both": "브라우저 OAuth와 Authorization 헤더 중 하나만 고르세요",
@@ -4020,6 +4022,7 @@ export default {
   "This model is unavailable": "이 모델은 사용할 수 없어요",
   "This model is unavailable. Check the connection or choose another model.":
     "이 모델은 사용할 수 없어요. 연결을 확인하거나 다른 모델을 고르세요.",
+  "This model isn’t available right now": "이 모델은 지금 사용할 수 없어요",
   "This page isn't from the sign-in Genex started.": "이 페이지는 Genex가 시작한 로그인에서 온 것이 아니에요.",
   "This paste has {count, plural, other {# servers}}. Pick one:":
     "붙여 넣은 내용에 서버가 {count, plural, other {#개}} 있어요. 하나 골라 주세요:",

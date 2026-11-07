@@ -7289,10 +7289,20 @@ a:focus-visible {
   color: var(--accent-foreground);
   box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 22%, transparent);
 }
-.composer-connect-model[data-nudge="a"] {
+/* A send the chat's model could not take rings the model button and bumps it the same way
+   (ModelMenu.tsx); its tooltip says why. */
+.composer-text-button.composer-model[data-nudge] {
+  background: var(--accent-fill);
+  color: var(--accent-foreground);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 22%, transparent);
+  transition: box-shadow 220ms var(--ease-smooth-out);
+}
+.composer-connect-model[data-nudge="a"],
+.composer-model[data-nudge="a"] {
   animation: composer-nudge-a 420ms var(--ease-smooth-out);
 }
-.composer-connect-model[data-nudge="b"] {
+.composer-connect-model[data-nudge="b"],
+.composer-model[data-nudge="b"] {
   animation: composer-nudge-b 420ms var(--ease-smooth-out);
 }
 @keyframes composer-nudge-a {
@@ -7312,7 +7322,8 @@ a:focus-visible {
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .composer-connect-model[data-nudge] {
+  .composer-connect-model[data-nudge],
+  .composer-model[data-nudge] {
     animation: none;
   }
 }

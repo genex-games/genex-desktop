@@ -731,6 +731,8 @@ export default {
   "Choose another": "Выбрать другую",
   "Choose another model or check your account in Model providers, then try again.":
     "Выбери другую модель или проверь аккаунт в «Провайдерах моделей», потом попробуй снова.",
+  "Choose another model, or try again once its provider is back. Your prompt stays here.":
+    "Выбери другую модель или попробуй снова, когда провайдер вернётся. Твой запрос останется здесь.",
   "Choose another version": "Выбрать другую версию",
   "Choose blender.exe": "Выбери blender.exe",
   "Choose browser OAuth or an Authorization header, not both":
@@ -4097,6 +4099,7 @@ export default {
   "This model is unavailable": "Эта модель недоступна",
   "This model is unavailable. Check the connection or choose another model.":
     "Эта модель недоступна. Проверь подключение или выбери другую модель.",
+  "This model isn’t available right now": "Эта модель сейчас недоступна",
   "This page isn't from the sign-in Genex started.": "Эта страница не от того входа, который начал Genex.",
   "This paste has {count, plural, other {# servers}}. Pick one:":
     "Во вставленном тексте {count, plural, one {# сервер} few {# сервера} many {# серверов} other {# сервера}}. Выбери один:",

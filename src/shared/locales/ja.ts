@@ -711,6 +711,8 @@ export default {
   "Choose another": "別の画像を選ぶ",
   "Choose another model or check your account in Model providers, then try again.":
     "別のモデルを選ぶか、「モデルプロバイダー」でアカウントを確認してから、もう一度試してください。",
+  "Choose another model, or try again once its provider is back. Your prompt stays here.":
+    "別のモデルを選ぶか、プロバイダーが戻ってからもう一度試してください。プロンプトはここに残ります。",
   "Choose another version": "別のバージョンを選ぶ",
   "Choose blender.exe": "blender.exeを選ぶ",
   "Choose browser OAuth or an Authorization header, not both":
@@ -4127,6 +4129,7 @@ export default {
   "This model is unavailable": "このモデルは利用できません",
   "This model is unavailable. Check the connection or choose another model.":
     "このモデルは使えません。接続を確認するか、別のモデルを選んでください。",
+  "This model isn’t available right now": "このモデルは今使えません",
   "This page isn't from the sign-in Genex started.": "このページは、Genexが開始したサインインのものではありません。",
   "This paste has {count, plural, other {# servers}}. Pick one:":
     "貼り付けた内容に{count, plural, other {#個のサーバー}}があります。1つ選んでください：",

@@ -680,6 +680,8 @@ export default {
   "Choose another": "换一张",
   "Choose another model or check your account in Model providers, then try again.":
     "请选择其他模型，或在“模型提供方”中检查你的账号，然后重试。",
+  "Choose another model, or try again once its provider is back. Your prompt stays here.":
+    "请选择其他模型，或等它的提供方恢复后再试。你的提示会留在这里。",
   "Choose another version": "选择其他版本",
   "Choose blender.exe": "选择 blender.exe",
   "Choose browser OAuth or an Authorization header, not both":
@@ -3873,6 +3875,7 @@ export default {
   "This model is unavailable": "此模型不可用",
   "This model is unavailable. Check the connection or choose another model.":
     "此模型不可用。请检查连接或选择其他模型。",
+  "This model isn’t available right now": "此模型暂时不可用",
   "This page isn't from the sign-in Genex started.": "此页面不属于 Genex 发起的登录。",
   "This paste has {count, plural, other {# servers}}. Pick one:":
     "粘贴内容中有 {count, plural, other {# 个服务器}}。选一个：",

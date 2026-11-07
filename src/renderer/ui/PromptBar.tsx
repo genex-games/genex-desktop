@@ -456,7 +456,7 @@ function SendControl({
   ignoreStopUntil: RefObject<number>;
 }): JSX.Element {
   const stopping = action === SendAction.Stop;
-  // A blocked send's reason is Connect AI model's own tooltip.
+  // A blocked send's reason is the tooltip of Connect AI model, or of the model button.
   const quiet = action === SendAction.Idle || action === SendAction.Blocked;
   return (
     <ComposerTip
@@ -552,6 +552,13 @@ interface PromptBarProps {
   /** Composer stays usable, but Enter/send starts sign-in instead of a turn. */
   blockSend?: boolean;
   onBlockedSend?: () => void;
+  /**
+   * The chat's model cannot take a message now (`sendBlockOf`): a send keeps the prompt and lights
+   * the model button with why, instead of going nowhere in silence.
+   */
+  modelUnavailable?: boolean;
+  /** A send the unavailable model held back (usage analytics counts it). */
+  onModelUnavailable?: () => void;
   /** Where this composer sits, as usage analytics names it (a dead Send says where). */
   room?: ComposerRoom;
 }
@@ -603,7 +610,9 @@ function useComposerSend(
   // A picture or a file is a message on its own: words are optional when one is attached.
   const hasMessage = draft.trim().length > 0 || board.frames.length > 0 || board.files.length > 0;
   const writable = !props.disabled && !props.busy && hasMessage;
-  const canSend = writable && !noModel;
+  // The model the send would go with cannot take it: Send points at the model button instead.
+  const modelHeld = writable && !noModel && !props.blockSend && props.modelUnavailable === true;
+  const canSend = writable && !noModel && !modelHeld;
   const send = (): void => {
     if (writable && noModel) {
       modelNudge.nudge();
@@ -613,6 +622,11 @@ function useComposerSend(
     }
     if (props.blockSend) {
       props.onBlockedSend?.();
+      return;
+    }
+    if (modelHeld) {
+      modelNudge.nudge();
+      props.onModelUnavailable?.();
       return;
     }
     if (!canSend) return;
@@ -636,9 +650,11 @@ function useComposerSend(
       board.restore(sent);
     });
   };
-  const blocked = writable && noModel;
+  const blocked = (writable && noModel) || modelHeld;
   const action = blocked ? SendAction.Blocked : sendAction(canSend, Boolean(props.stoppable && props.onStop));
-  return { send, action, ignoreStopUntil, modelNudge: modelNudge.beat };
+  // The nudge says what holds the send back: once a model that runs is picked, it goes out.
+  const nudging = noModel || props.modelUnavailable === true;
+  return { send, action, ignoreStopUntil, modelNudge: nudging ? modelNudge.beat : null };
 }
 
 /** The prompt itself: typing, the @ mention or / command list it may open, and Enter to send. */
@@ -1069,7 +1085,7 @@ interface ComposerToolbarProps {
   panelRef: RefObject<HTMLDivElement | null>;
   addMenuRef: RefObject<AddMenuHandle | null>;
   modelMenuRef: RefObject<ModelMenuHandle | null>;
-  /** A blocked send's beat while Connect AI model is lit (`useModelNudge`), else null. */
+  /** A blocked send's beat while Connect AI model or the model button is lit (`useModelNudge`), else null. */
   modelNudge: number | null;
   mentions: ReturnType<typeof useMention>;
   mentionSide: "top" | "bottom";
@@ -1199,6 +1215,7 @@ function ModelControls({
           onModel={onModel}
           disabled={disabled}
           onClosed={onClosed}
+          nudge={modelNudge}
         />
         {effortControl}
       </>
@@ -1236,6 +1253,7 @@ function ModelControls({
         onRoles={onRoles}
         disabled={disabled}
         onClosed={onClosed}
+        nudge={modelNudge}
       />
       {effortControl}
     </>

@@ -121,6 +121,8 @@ stops recording, opts out and resets the id.
   `net_error`), so a vendor refusing a region (403) reads apart from a machine that is offline.
 - **A dead Send** counts presses in a row (`message_send_blocked`'s `attempts_in_row`) until a
   message actually goes: a send refused for its model is noted first and still counts as dead.
+  The composer holds a send whose model cannot take it (`model_unavailable`) and lights the model
+  button with why; a menu opened while it is lit closes as `model_menu_closed` from `send_held`.
 - **Every event** carries app version, platform, language, a per-launch id, first launch, the
   ready engines and whether a Genex account is signed in. There is no `identify()`: the id is
   random and kept in the renderer's storage.

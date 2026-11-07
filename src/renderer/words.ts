@@ -2718,6 +2718,9 @@ export const COMPACT_WORDS = {
 /** The model picker's section headers, row tags and reasons (`model-choices.ts`). */
 export const MODEL_PICKER_WORDS = {
   unavailable: t("This model is unavailable. Check the connection or choose another model."),
+  /** A send the chat's model could not take: the model button's tooltip says why and what to do. */
+  sendHeldTitle: t("This model isn’t available right now"),
+  sendHeldText: t("Choose another model, or try again once its provider is back. Your prompt stays here."),
   localModels: t("Local models"),
   chatGptModels: t("ChatGPT models"),
   claudeModels: t("Claude models"),
