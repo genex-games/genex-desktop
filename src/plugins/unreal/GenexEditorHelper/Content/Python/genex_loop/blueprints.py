@@ -20,6 +20,7 @@
   ErrorMsg of each node with an error (as Epic's compile_blueprint helper reads them).
 """
 
+import contextlib
 import re
 
 import unreal
@@ -191,10 +192,10 @@ FUNCTION_ENTRY = 'K2Node_FunctionEntry'
 def _forget_node_types(blueprint: unreal.Blueprint) -> None:
     """Drops the node types Epic's toolset remembers for the Blueprint's graphs. It keeps each graph's list
     for the editor session under the Blueprint's member variables and graph names; a component added since
-    changes neither, and compiling drops nothing, so the node reading that component would be missing."""
-    cache = _node_type_cache()
-    if cache is not None and hasattr(cache, 'invalidate'):
-        cache.invalidate(blueprint)
+    changes neither, and compiling drops nothing, so the node reading that component would be missing.
+    A toolset that changed this private call only loses the refresh, never the attach."""
+    with contextlib.suppress(AttributeError, TypeError):
+        _node_type_cache().invalidate(blueprint)
 
 
 def _getter(graph, name: str) -> str:

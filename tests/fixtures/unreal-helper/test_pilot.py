@@ -365,7 +365,8 @@ class WindowsDisk:
         return next((real for real in self.FILES if ntpath.normcase(real) == ntpath.normcase(spelled)), spelled)
 
     def is_regular_file(self, path: str) -> bool:
-        return ntpath.normcase(ntpath.normpath(path)) in {ntpath.normcase(real) for real in self.FILES}
+        """Like os.lstat, it follows links on the way to the file."""
+        return ntpath.normcase(self.realpath(path)) in {ntpath.normcase(real) for real in self.FILES}
 
     def os(self) -> types.SimpleNamespace:
         """An `os` whose path module is ntpath with this disk's real paths."""
@@ -401,10 +402,18 @@ class WindowsPilotPaths(HelperCase):
                 self.assertEqual(pilot_run.pilot_file(file), path)
 
     def test_still_refuses_a_link_a_way_up_or_a_missing_file(self) -> None:
-        for file in ('Linked/evil.py', 'Linked\\evil.py', 'Pilots\\..\\..\\pilots\\fight.py',
-                     'Pilots/../Pilots/fight.py', 'Pilots/missing.py', 'Pilots/fight.txt'):
-            with self.subTest(file=file), self.assertRaises(Refused):
+        cases = {
+            'Linked/evil.py': 'leads through a link',
+            'Linked\\evil.py': 'leads through a link',
+            'Pilots\\..\\..\\pilots\\fight.py': 'is a .py file',
+            'Pilots/../Pilots/fight.py': 'is a .py file',
+            'Pilots/missing.py': 'no pilot file',
+            'Pilots/fight.txt': 'is a .py file',
+        }
+        for file, why in cases.items():
+            with self.subTest(file=file), self.assertRaises(Refused) as refused:
                 pilot_run.pilot_file(file)
+            self.assertIn(why, str(refused.exception), file)
 
 
 class Blocker:

@@ -604,9 +604,11 @@ atmosphere preset (`megastructure`, `daylight`), lights and hero cameras (`GX_Sh
 one static mesh in `<dest>/<name>/`; `import_character`, `import_animation` (with its `skeleton`),
 `import_sound` and `audit` do what their names say, and no import opens the Content Browser.
 `attach_to_socket` holds a static mesh at a socket of the first skeletal mesh players see that has it
-(gathered with the Blueprint's inherited components, so a `motion_character`'s `Body`, never its hidden
-mannequin `Mesh`; a socket only a hidden mesh has is refused), through one construction-script attach
-node per mesh, which attaching again reuses or, when the parent changed, replaces. It drops the node
+(gathered with the Blueprint's inherited components, so a `motion_character`'s `Body`, not its hidden
+mannequin `Mesh`; a socket only a hidden mesh has is refused, and with no skeletal mesh shown the first
+with the socket holds it), through one construction-script attach node per mesh, which attaching again
+reuses or, when the parent changed, replaces; the component keeps its place in the component tree, since
+that node is what holds it in play. It drops the node
 types Epic's toolset remembers for the Blueprint before reading them, since neither an added component
 nor a compile renews that list. Imports and retargets refuse during play, where Unreal makes only part of
 an asset (a Skeleton with no mesh) and says so only in its log. A `.glb` character or clip whose
