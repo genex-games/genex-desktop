@@ -210,13 +210,19 @@ class Compares(HelperCase):
     def test_isvalid_without_its_exec_pins_is_refused_before_the_write(self) -> None:
         for name, text in (('as a value', ISVALID_AS_VALUE),
                            ('as a plain statement', '(fn F (A) (Utilities|IsValid A) (CallFunction|G))'),
-                           ('bound to a name', '(fn F (A) (bind ok (Utilities|IsValid A)) (if ok (CallFunction|G)))')):
+                           ('bound to a name', '(fn F (A) (bind ok (Utilities|IsValid A)) (if ok (CallFunction|G)))'),
+                           ('its input by name, as a value',
+                            '(fn F (A) (if (not (Utilities|IsValid :InputObject A)) (return)) (CallFunction|G))'),
+                           ('its input as a group',
+                            '(fn F (A) (Utilities|IsValid (:InputObject A)) (CallFunction|G))')):
             with self.subTest(name):
                 problem = graph_write.text_problem(text, GRAPH, limit=False)
                 self.assertIn('Utilities|IsValid', problem)
                 self.assertIn(':"Is Not Valid"', problem)
         self.assertIsNone(graph_write.text_problem(ISVALID_WITH_PINS, GRAPH))
-        self.assertIsNone(graph_write.text_problem('(fn F (A) (Utilities|IsValid A :"Is Valid" (CallFunction|G)))', GRAPH))
+        for pins in (':"Is Valid" (CallFunction|G)', ':IsNotValid (return)', '(:"is not valid" (return))'):
+            with self.subTest(pins):
+                self.assertIsNone(graph_write.text_problem(f'(fn F (A) (Utilities|IsValid :InputObject A {pins}))', GRAPH))
 
     def test_an_input_action_event_s_body_is_checked_before_the_write_though_never_compared(self) -> None:
         unpinned = '(event Custom|Holder (Input|EnhancedActionEvents|IA_Fire (:Triggered {})))'

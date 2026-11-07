@@ -86,6 +86,8 @@ BREAK_CATEGORY = 'math|'
 # Epic's IsValid exec macro: written with none of its exec pins (:"Is Valid" ...), Unreal links nothing after it.
 EXEC_MACRO = 'utilities|isvalid'
 PIN = ':'
+# The macro's exec outputs, as a keyword names them (case and spaces aside).
+EXEC_MACRO_PINS = frozenset({'isvalid', 'isnotvalid'})
 # An input action's event: the read-back shows it with an empty body, so nothing in it is compared.
 INPUT_EVENT = 'input|enhancedactionevents|'
 # A pin of the exec flow, as get_node_infos lists its type.
@@ -250,11 +252,11 @@ def _is_break(name: str) -> bool:
     return lowered.startswith(BREAK_CATEGORY) and lowered.rsplit('|', 1)[-1].startswith(BREAK)
 
 
-def _is_pin(form) -> bool:
-    """Whether an item of a node's form names one of its pins: a (:Pin ...) group or a :Pin keyword."""
-    if isinstance(form, list):
-        return bool(form) and _word(form[0]).startswith(PIN)
-    return _word(form).startswith(PIN)
+def _is_exec_pin(form) -> bool:
+    """Whether an item of an IsValid's form names one of its exec pins: (:"Is Valid" ...) or :"Is Not
+    Valid" (a data input's keyword, :InputObject, is none)."""
+    word = _word(form[0]) if isinstance(form, list) and form else _word(form)
+    return word.startswith(PIN) and word[len(PIN):].replace(' ', '').lower() in EXEC_MACRO_PINS
 
 
 def _visit(form, made: GraphText, counts: list, compared: bool) -> None:
@@ -268,7 +270,7 @@ def _visit(form, made: GraphText, counts: list, compared: bool) -> None:
         if not _is_getter(head) and not (compared and _is_break(head)):
             counts[0] += 1
             made.named.setdefault(title, head)
-        if head.lower() == EXEC_MACRO and not any(_is_pin(item) for item in form[1:]):
+        if head.lower() == EXEC_MACRO and not any(_is_exec_pin(item) for item in form[1:]):
             made.unpinned.append(head)
     elif head in OPERATORS or head in NODE_STATEMENTS:
         counts[0] += 1
@@ -363,15 +365,15 @@ def _reached(by_path: dict, todo: list) -> set:
 def unlinked(infos: list) -> list:
     """The nodes among `infos` (Epic's get_node_infos) that nothing runs: of a DELETABLE class, on
     no exec flow from an event, an entry or a node of another class, and feeding no node that is.
-    A function keeps the result nodes its flow reaches, or one when it reaches none; a graph
-    nothing starts keeps every node."""
+    A function keeps the result nodes its flow reaches, or the last listed (the newest) when it
+    reaches none; a graph nothing starts keeps every node."""
     by_path = {info.node.get_path_name(): info for info in infos}
     if not any(_starts(info) for info in by_path.values()):
         return []
     live = _reached(by_path, [path for path, info in by_path.items() if _starts(info) or _class(info) not in DELETABLE])
     results = [path for path, info in by_path.items() if _class(info) == RESULT]
     if results and not live.intersection(results):
-        live |= _reached(by_path, results[:1])
+        live |= _reached(by_path, results[-1:])
     return [info.node for path, info in by_path.items() if path not in live]
 
 
