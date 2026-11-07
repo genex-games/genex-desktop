@@ -205,7 +205,7 @@ def _main_mesh(pawn):
     mesh = _prop(pawn, 'mesh')
     if mesh and not _shown(mesh):
         meshes = pawn.get_components_by_class(unreal.SkeletalMeshComponent)
-        return next((m for m in meshes if m.get_name() == MOTION_BODY and _shown(m)), mesh)
+        return next((m for m in meshes if m.get_name() == MOTION_BODY and _shown(m) and m.get_skinned_asset()), mesh)
     if mesh:
         return mesh
     return pawn.get_component_by_class(unreal.SkeletalMeshComponent) or pawn.get_component_by_class(unreal.StaticMeshComponent)

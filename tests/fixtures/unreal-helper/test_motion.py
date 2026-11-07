@@ -225,19 +225,33 @@ class OlderHelpersCharacters(HelperCase):
         other = unreal.SkeletalMeshComponent('CharacterMesh0')
         other.set_editor_property('visible', False)
         unreal.state['actors'].append(unreal.Character('Guard_0', mesh=other))
+        not_a_character = unreal.Actor('Statue_0')
+        not_a_character.get_class = blueprint.generated_class
+        unreal.state['actors'].append(not_a_character)
         self.assertEqual(motion.hide_old_drivers(), [OLD])
         self.assertTrue(placed[0].props['hidden_in_game'], 'a copy as an older helper left it')
         self.assertNotIn('hidden_in_game', placed[1].props, 'a copy someone made visible stays')
         self.assertNotIn('hidden_in_game', other.props, 'another class\'s actor stays')
         self.assertNotIn('save_current_level', [call[0] for call in unreal.calls])
 
-    def test_one_whose_mannequin_is_not_found_yet_is_tried_again(self) -> None:
-        """As when the sample's character is missing, its content kept out of checkpoints."""
+    def test_one_without_its_mannequin_while_the_sample_is_missing_is_tried_again_with_a_warning(self) -> None:
+        """The sample's content is kept out of checkpoints, so a game copied elsewhere can lack it."""
         blueprint, mesh, _body = self.character()
         blueprint.components = [component for component in blueprint.components if component[0] != 'Mesh']
-        self.assertEqual(motion.hide_old_drivers(), [])
+        with mock.patch.object(unreal, 'log_warning') as warn:
+            self.assertEqual(motion.hide_old_drivers(), [])
+        self.assertIn('BP_Duel', warn.call_args.args[0])
         blueprint.components.insert(0, ('Mesh', mesh))
         self.assertEqual(motion.hide_old_drivers(), [OLD])
+
+    def test_a_blueprint_with_no_mannequin_while_the_sample_is_there_is_checked_once(self) -> None:
+        sample_content()
+        blueprint, _mesh, _body = self.character()
+        blueprint.components = [component for component in blueprint.components if component[0] != 'Mesh']
+        self.assertEqual(motion.hide_old_drivers(), [])
+        with mock.patch.object(unreal, 'load_asset', wraps=unreal.load_asset) as load:
+            self.assertEqual(motion.hide_old_drivers(), [])
+        self.assertEqual(load.call_count, 0)
 
     def test_one_that_does_not_compile_is_not_saved_and_is_tried_again(self) -> None:
         self.character()
@@ -282,6 +296,13 @@ class OlderHelpersCharacters(HelperCase):
                         self.assertEqual(file.read(), 'keep')
                 finally:
                     (os.rmdir if os.path.isdir(self.record) and not os.path.islink(self.record) else os.remove)(self.record)
+
+    def test_a_record_that_could_not_be_put_in_place_leaves_no_file_behind(self) -> None:
+        self.character()
+        with mock.patch.object(motion.os, 'replace', side_effect=PermissionError('in use')):
+            with self.assertRaises(PermissionError):
+                motion.hide_old_drivers()
+        self.assertEqual(os.listdir(os.path.dirname(self.record)), [])
 
     def test_an_unreadable_record_checks_every_character_again(self) -> None:
         for text in ('{not json', '{"checked": null}', '{"checked": 5}', '[]', '"BP_Duel"', '{"checked": [7]}'):

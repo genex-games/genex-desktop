@@ -66,6 +66,8 @@ MESSAGE = {
     'map': 'Unreal did not keep the map entry {tag} on {abp}.',
     'old_hidden': 'Genex editor helper: hid the Motion Matching mannequin in game too for {blueprints}.',
     'old_failed': 'Genex editor helper: could not check the motion characters an older helper made: {why}',
+    'old_retry': ('Genex editor helper: could not check {blueprints} in /Game/GX/Characters yet (not loaded, the '
+                  'sample\'s character missing, or not compiled or saved); it tries again at the next start.'),
 }
 
 
@@ -180,7 +182,7 @@ def _hide_placed(blueprint) -> None:
     left them change; the level is not saved here."""
     path = blueprint.generated_class().get_path_name()
     for actor in editor.actors().get_all_level_actors():
-        if actor.get_class().get_path_name() != path:
+        if not isinstance(actor, unreal.Character) or actor.get_class().get_path_name() != path:
             continue
         driver = actor.get_editor_property('mesh')
         if driver and _hidden_only_in_editor(driver):
@@ -189,8 +191,7 @@ def _hide_placed(blueprint) -> None:
 
 def _check_character(path: str) -> str:
     """Checks one BP_<name> (see hide_old_drivers): FIXED, FINE (nothing to change) or RETRY (it did not
-    load, its mannequin was not found, as when the sample's character is missing, or it did not compile
-    or save)."""
+    load, it has no mannequin while the sample's character is missing, or it did not compile or save)."""
     blueprint = unreal.load_asset(path)
     if blueprint is None:
         return RETRY
@@ -198,7 +199,7 @@ def _check_character(path: str) -> str:
         return FINE
     driver = _component(blueprint, DRIVER_MESH)
     if driver is None:
-        return RETRY
+        return RETRY if unreal.load_asset(SAMPLE_CHARACTER) is None else FINE
     if _component(blueprint, BODY) is None or not _hidden_only_in_editor(driver):
         return FINE
     _hide(driver)
@@ -233,13 +234,23 @@ def _read_checked(record: str) -> set[str]:
     return {name for name in names if isinstance(name, str)} if isinstance(names, list) else set()
 
 
-def _write_checked(record: str, names: set[str]) -> None:
-    """Writes the record through a new file put in its place, so a link put there meanwhile is replaced,
-    never followed."""
+def _record_path(project: str) -> str:
+    """The record's real path in the project's Saved/Genex, or Refused when it leads out of it."""
+    return paths.inside_genex_folder(os.path.join(project, *paths.GENEX_FOLDER, CHECKED_RECORD), project)
+
+
+def _write_checked(project: str, names: set[str]) -> None:
+    """Writes the record through a new file put in its place, its path checked again first, so a link
+    put there meanwhile is replaced, never followed; the new file never stays behind."""
+    record = _record_path(project)
     fresh = f'{record}.{os.getpid()}.tmp'
-    with open(fresh, 'x', encoding='utf-8') as file:
-        json.dump({'checked': sorted(names)}, file, indent=1)
-    os.replace(fresh, record)
+    try:
+        with open(fresh, 'x', encoding='utf-8') as file:
+            json.dump({'checked': sorted(names)}, file, indent=1)
+        os.replace(fresh, record)
+    finally:
+        if os.path.lexists(fresh):
+            os.remove(fresh)
 
 
 def hide_old_drivers() -> list[str]:
@@ -254,13 +265,15 @@ def hide_old_drivers() -> list[str]:
     names = _character_files(project)
     if not names:
         return []
-    record = paths.inside_genex_folder(os.path.join(project, *paths.GENEX_FOLDER, CHECKED_RECORD), project)
-    checked = _read_checked(record)
+    checked = _read_checked(_record_path(project))
     unchecked = [name for name in names if name not in checked]
     if not unchecked:
         return []
     results = {name: _check_character(f'{CHARACTER_FOLDER}/{name}') for name in unchecked}
-    _write_checked(record, checked | {name for name, result in results.items() if result != RETRY})
+    _write_checked(project, checked | {name for name, result in results.items() if result != RETRY})
+    retried = [name for name, result in results.items() if result == RETRY]
+    if retried:
+        unreal.log_warning(MESSAGE['old_retry'].format(blueprints=', '.join(retried)))
     return [f'{CHARACTER_FOLDER}/{name}' for name, result in results.items() if result == FIXED]
 
 

@@ -80,11 +80,15 @@ class Characters(ProbeCase):
     def test_a_motion_matching_character_is_read_by_the_body_players_see(self) -> None:
         actor = self.character('Kagemaru_0', mesh_from=0)
         actor.props['mesh'].set_editor_property('hidden_in_game', True)
-        body = unreal.SkeletalMeshComponent('Body', bones(25, 195))
+        body = unreal.SkeletalMeshComponent('Body', bones(25, 195), skinned_asset=unreal.SkeletalMesh())
         actor.components.append(body)
         [row] = self.pawns()
         self.assertEqual((row['meshHidden'], row['feetGapCm']), (False, 25),
                          'the Body is what shows: its feet, not the hidden mannequin\'s')
+        body.props['skinned_asset'] = None
+        [row] = self.pawns()
+        self.assertTrue(row['meshHidden'], 'a Body with no mesh in it draws nothing')
+        body.props['skinned_asset'] = unreal.SkeletalMesh()
         body.set_editor_property('hidden_in_game', True)
         [row] = self.pawns()
         self.assertTrue(row['meshHidden'], 'a hidden Body leaves the character hidden')

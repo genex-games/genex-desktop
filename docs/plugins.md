@@ -686,10 +686,10 @@ copied. An older helper hid the mannequin only in the editor, so it showed throu
 once Unreal has its level, the helper (`hide_old_drivers`, scheduled by `init_unreal.py`) hides in
 game the mannequin of each `BP_<name>` in `/Game/GX/Characters` whose Mesh is hidden only in the
 editor and has a Body, compiles and saves it, and does the same to the level's placed copies still as
-the old helper left them (the level is not saved). It reads the folder from disk and checks each
+the old helper left them (the level is left with those changes unsaved). It reads the folder from disk and checks each
 Blueprint once: the names checked are kept in `Saved/Genex/motion-characters-checked.json`, and one
-that didn't load, has no Mesh yet (the sample's content missing) or didn't compile or save is tried
-at the next start. It changes nothing during play and leaves a mannequin someone made visible.
+that didn't load, has no Mesh while the sample's character is missing, or didn't compile or save
+is tried at the next start, with a warning in the log. It changes nothing during play and leaves a mannequin someone made visible.
 `probe_characters` reads such a character by its shown Body, not the hidden mannequin.
 
 The helper offers no tool that derives normal and roughness maps from a base-colour texture's
