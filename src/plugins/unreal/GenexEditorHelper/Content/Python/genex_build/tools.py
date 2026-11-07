@@ -189,8 +189,8 @@ class GenexBuildTools(unreal.ToolsetDefinition):
     @staticmethod
     def motion_strip(frames: int, interval_s: float) -> str:
         """Frames of the 3D view the player sees during a play session (no UMG widgets; a HUD's Canvas
-        shows), interval_s GAME seconds apart, each with where the pawn and the view were on the frame
-        it was drawn on and that frame's game time. Start the motion first
+        shows), interval_s GAME seconds apart, each with where the pawn and the view were and its game
+        time; the game is held all but still while each frame is drawn. Start the motion first
         (hold an input with genex_play's hold), then call this. The frames come back as one
         contact sheet with each frame's pose, how much it differs from the one before, and tone.
 

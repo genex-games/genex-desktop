@@ -32,6 +32,9 @@ SECONDS_RANGE = (0.5, 20.0)
 CHECK_PREFIX = 'check-'
 # A check keeps at most this many frames (20 game seconds at 120 fps).
 MAX_FRAMES = 2400
+# A frame less than this many game seconds after the last is not read: the game is held all but still
+# (a motion strip's frame being written), and its frames would fill the check with one moment.
+MIN_STEP_S = 0.001
 # How many actor labels a refusal names when nothing matches.
 CLOSEST_NAMES = 6
 # The bones read in the body's own frame for pops, by these words in their names (feet and hands come
@@ -226,8 +229,8 @@ class _Check:
             return self.finish(MESSAGE['wall'])
         if len(self.frames) >= MAX_FRAMES:
             return self.finish(MESSAGE['full'])
-        if self.frames and game_now <= self.frames[-1]['t']:
-            return True  # the game clock stood still (a pause, a shot rendering): nothing new to read
+        if self.frames and game_now - self.frames[-1]['t'] < MIN_STEP_S:
+            return True  # the game clock stood (all but) still: a pause, a shot rendering or being written
         try:
             self.frames.append(self.frame(game_now))
         except Exception as error:  # noqa: BLE001 - the character was destroyed or its mesh went

@@ -636,8 +636,9 @@ side and back in idle and from the side through the walk, then removed; the brid
 as one sheet. The eyes: `capture_shot {camera, width, height, delay_s}` (a still from a
 hero camera, no play needed), `capture_play` (the player's 3D view during play, through the player's
 console `HighResShot`, which leaves out UMG widgets but keeps what a HUD draws on its Canvas), `motion_strip` (2 to 24 frames scheduled by the game clock, one at a time and
-0.03 to 5 game seconds apart and spanning at most a minute, each with the pawn's and view's position and the game time of the frame it
-is drawn on, the one after it is asked for) and `shot_cameras` (the hero cameras' labels). `motion_check
+0.03 to 5 game seconds apart and spanning at most a minute, each with the pawn's and view's position and game time; from each frame's
+ask until it is on disk the game is held all but still, its global time dilation at 0.0001, so a stall's long next frame never moves
+the game past the picture, and a dilation the game sets meanwhile is kept) and `shot_cameras` (the hero cameras' labels). `motion_check
 {target, seconds}` measures one character's motion every frame for 0.5 to 20 game seconds on the body the player sees (`looks.visible_body`:
 a Motion Matching character's Body, never its driver, even one left shown under it; it reads the driver's montages too) and writes its
 report to the captures folder: planted feet sliding while the body travels, pose pops (a bone that jumps and comes straight back, or

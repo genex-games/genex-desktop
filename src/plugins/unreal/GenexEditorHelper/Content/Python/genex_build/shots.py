@@ -5,7 +5,8 @@ capture_shot    a still from a named CameraActor (a hero camera, GX_Shot_<name>)
                 fog settle; the level viewport is piloted through the camera for the shot only.
 capture_play    the player's view during a play session.
 motion_strip    N frames of the player's view during a play session, `interval_s` GAME seconds
-                apart, each with the pawn's and the view's position at the frame it is drawn on.
+                apart, each with the pawn's and the view's position the moment it is asked for: the
+                game is held all but still until it is on disk.
                 A short interval (down to 0.03 s, about every frame at 30 fps) shows one move
                 frame by frame: a step, a swing, a turn; the judge reads its frames with their times.
 
@@ -16,9 +17,13 @@ its file twice about a second apart. A strip that asks for frames by the wall cl
 landing in the same frozen moment: consecutive frames come out identical while the pawn is said to
 move. So play frames go through the player's own console (HighResShot, one write, the play
 session's viewport wherever it is shown), are scheduled by the game clock, and one frame is only
-asked for once the last one is on disk. A shot asked for after a frame is drawn on the next one, so
-its pose and game time are read then: a long frame in between (a hitch) moves them with the picture. While a shot settles the editor's "Use Less CPU when in
-Background" is lifted, and given back afterwards, so a Genex window in front doesn't starve Lumen.
+asked for once the last one is on disk. Meanwhile the game is held all but still (its global time
+dilation at FREEZE_DILATION): a shot is drawn a frame or more after it is asked for, and the frame
+after a shot's stall moved the game up to 0.4 s on (Unreal's longest frame), so on a sword duel a
+0.05 s burst came out 0.02 to 0.42 s apart and a picture showed the fighter 2 m past its pose. A
+time dilation the game sets meanwhile (a hit's slow motion) is kept. While a shot settles the
+editor's "Use Less CPU when in Background" is lifted, and given back afterwards, so a Genex window in
+front doesn't starve Lumen.
 """
 
 import json
@@ -44,6 +49,9 @@ INTERVAL_RANGE_S = (0.03, 5.0)
 # The most game seconds a strip spans (frames x interval): the bridge waits a fixed while for it.
 MAX_SPAN_S = 60.0
 STRIP_PREFIX = 'strip-'
+# The time dilation that holds the game all but still while a strip frame is drawn and written:
+# Unreal's least by default (WorldSettings.MinGlobalTimeDilation).
+FREEZE_DILATION = 0.0001
 # How long one strip frame may take to land on disk before the strip gives up on it.
 FRAME_WAIT_S = 15.0
 # How long after its delay a still may take before the throttle is given back anyway.
@@ -259,6 +267,29 @@ def capture_play(name: str, width: int, height: int) -> dict:
     return {'queued': True, 'file': file, 'width': size[0], 'height': size[1], **taken}
 
 
+def _hold_still() -> float | None:
+    """Holds the play's game all but still; the time dilation it had, or None when it couldn't be set."""
+    try:
+        world = play.game_world()
+        before = float(unreal.GameplayStatics.get_global_time_dilation(world))
+        unreal.GameplayStatics.set_global_time_dilation(world, FREEZE_DILATION)
+        return before
+    except Exception:  # noqa: BLE001 - a play without the setting runs on, its frames timed as they come
+        return None
+
+
+def _let_go(before: float | None) -> None:
+    """Gives the game the time dilation it had, unless the game set one of its own meanwhile."""
+    if before is None:
+        return
+    try:
+        world = play.game_world()
+        if abs(float(unreal.GameplayStatics.get_global_time_dilation(world)) - FREEZE_DILATION) < FREEZE_DILATION / 2:
+            unreal.GameplayStatics.set_global_time_dilation(world, before)
+    except Exception:  # noqa: BLE001 - the play ended, and its world with it
+        pass
+
+
 class _Strip:
     """A motion strip being taken: its frames' files, the poses recorded so far and the next frame's due time."""
 
@@ -268,8 +299,9 @@ class _Strip:
         self.poses_file = os.path.join(folder, f'{stem}.json')
         self.interval, self.due = interval, start
         self.poses: list = []
-        # (file, wall time asked, whether its pose is read yet) of the frame being taken.
+        # (file, wall time asked) of the frame being taken, and the time dilation the game had before it.
         self.waiting: tuple | None = None
+        self.before: float | None = None
         self.owed = False
         self.done = False
 
@@ -280,6 +312,8 @@ class _Strip:
         record = {'frames': self.poses, 'files': self.files[:len(self.poses)], 'intervalS': self.interval}
         if why:
             record['error'] = why
+        _let_go(self.before)
+        self.before = None
         with open(self.poses_file, 'w', encoding='utf-8') as handle:
             json.dump(record, handle)
         give_back_throttle(self.owed)
@@ -287,23 +321,24 @@ class _Strip:
 
     def step(self, game_now: float, wall_now: float) -> bool:
         if self.waiting is not None:
-            file, asked, read = self.waiting
-            if not read:
-                self.poses.append(pose())
-                self.waiting = (file, asked, True)
+            file, asked = self.waiting
             landed = os.path.exists(file) and os.path.getsize(file) > 0
             if not landed and wall_now - asked > FRAME_WAIT_S:
                 return self.finish(f'frame {len(self.poses) - 1} never landed')
             if not landed:
                 return True
             self.waiting = None
+            _let_go(self.before)
+            self.before = None
         if len(self.poses) == len(self.files):
             return self.finish()
         if game_now < self.due:
             return True
         index = len(self.poses)
+        self.poses.append(pose())
         capture.console_shot(self.files[index], *STRIP_SIZE)
-        self.waiting = (self.files[index], wall_now, False)
+        self.before = _hold_still()
+        self.waiting = (self.files[index], wall_now)
         self.due = game_now + self.interval
         return True
 

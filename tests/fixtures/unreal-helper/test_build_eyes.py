@@ -63,6 +63,7 @@ class EyesCase(HelperCase):
         return self.settings.props['bThrottleCPUWhenNotForeground']
 
     def tick(self, game: float = 0.0, wall: float = 0.0) -> None:
+        game *= unreal.state['time_dilation']
         unreal.state['game_seconds'] += game
         unreal.state['world_delta'] = game
         self.clock.now += wall
@@ -209,11 +210,10 @@ class Strips(PlayCase):
         self.walk(500)
         self.tick(game=0.5, wall=0.1)
         self.assertEqual(len(self.shots_asked()), 2, 'one game second after the first')
-        self.tick(game=0.03, wall=0.03)  # the frame it is drawn on
         self.land(1)
+        self.tick(game=0.03, wall=0.03)
         self.walk(900)
         self.tick(game=1.0, wall=0.1)
-        self.tick(game=0.03, wall=0.03)
         self.assertEqual(len(self.shots_asked()), 3)
         self.land(2)
         self.tick(game=0.1, wall=0.1)
@@ -226,24 +226,37 @@ class Strips(PlayCase):
         self.assertEqual(record['files'], answer['files'])
         self.assertTrue(self.throttled(), 'the throttle is given back when the strip is done')
 
-    def test_a_frames_pose_and_time_are_those_of_the_frame_it_is_drawn_on(self) -> None:
-        # A shot asked for after a frame is drawn on the next. On the duel a 0.4 s hitch came between,
-        # and the picture showed the fighter 2 m ahead of the pose the strip had recorded with it.
+    def test_the_game_is_held_still_while_a_frame_is_drawn_and_written_then_runs_on(self) -> None:
+        # A shot stalls the editor about a second, and the frame after the stall moved the duel's game up
+        # to 0.4 s on: a 0.05 s burst came out 0.02 to 0.42 s apart, and a picture 2 m past its pose.
         answer = tool('motion_strip', 2, 0.05)
         self.tick(game=0.02, wall=0.02)
-        self.assertEqual(len(self.shots_asked()), 1)
-        self.walk(200)
-        self.tick(game=0.4, wall=1.0)  # the long frame that draws it
+        self.assertEqual(unreal.state['time_dilation'], shots.FREEZE_DILATION)
+        asked_at = unreal.state['game_seconds']
+        self.tick(game=0.4, wall=1.0)  # the long frame after the shot's stall
+        self.assertLess(unreal.state['game_seconds'] - asked_at, 0.001, 'the game barely moved')
         self.land(0)
         self.tick(game=0.03, wall=0.03)
-        self.tick(game=0.03, wall=0.03)
+        self.assertEqual(unreal.state['time_dilation'], 1.0, 'it runs on once the frame is on disk')
+        for _ in range(2):
+            self.tick(game=0.03, wall=0.03)
+        self.assertEqual(len(self.shots_asked()), 2)
         self.land(1)
         self.tick(game=0.03, wall=0.03)
         with open(answer['poses'], encoding='utf-8') as handle:
-            record = json.load(handle)
-        first = record['frames'][0]
-        self.assertEqual(first['pawn'], [200, 0, 90])
-        self.assertAlmostEqual(record['frames'][1]['gameSeconds'] - first['gameSeconds'], 0.06, places=3)
+            times = [frame['gameSeconds'] for frame in json.load(handle)['frames']]
+        self.assertAlmostEqual(times[1] - times[0], 0.06, places=2)
+        self.assertEqual(unreal.state['time_dilation'], 1.0)
+
+    def test_a_slow_motion_the_game_sets_while_a_frame_is_taken_is_kept(self) -> None:
+        tool('motion_strip', 2, 0.05)
+        self.tick(game=0.02, wall=0.02)
+        unreal.state['time_dilation'] = 0.3  # a hit's slow motion, set by the game meanwhile
+        self.land(0)
+        self.tick(game=0.03, wall=0.03)
+        self.assertEqual(unreal.state['time_dilation'], 0.3)
+        unreal.state['pie'] = False
+        self.tick()  # the play ends, and the strip with it
 
     def test_a_frame_that_never_lands_ends_the_strip_with_why(self) -> None:
         answer = tool('motion_strip', 2, 0.5)
@@ -252,6 +265,7 @@ class Strips(PlayCase):
         with open(answer['poses'], encoding='utf-8') as handle:
             record = json.load(handle)
         self.assertIn('never landed', record['error'])
+        self.assertEqual(unreal.state['time_dilation'], 1.0, 'the game runs on')
 
     def test_refuses_counts_and_intervals_out_of_range_and_a_strip_without_play(self) -> None:
         for frames, interval in ((1, 1.0), (25, 1.0), (True, 1.0), (3, 0.0), (3, 0.02), (3, 9.0), (3, 'fast')):

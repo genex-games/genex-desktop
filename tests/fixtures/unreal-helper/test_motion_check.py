@@ -472,6 +472,15 @@ class Tool(PlayCase):
                 self.assertTrue(os.path.exists(answer['record']))
                 self.assertTrue(self.throttled(), 'on again once the check is done')
 
+    def test_frames_of_a_game_held_all_but_still_are_not_read(self) -> None:
+        # A motion strip holds the game all but still while each of its frames is written.
+        answer = tool('motion_check', 'DuelManny', 1.0)
+        self.run_frames(0.5)
+        for _ in range(200):
+            self.tick(game=0.00004, wall=0.005)
+        self.run_frames(0.6)
+        self.assertLess(self.record(answer)['frames'], 60)
+
     def test_a_check_the_wall_clock_cuts_short_says_so(self) -> None:
         answer = tool('motion_check', 'DuelManny', 2.0)
         self.run_frames(0.5)

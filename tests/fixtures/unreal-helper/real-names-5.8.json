@@ -568,6 +568,7 @@
   "get_class",
   "get_default_object",
   "get_editor_property",
+  "get_global_time_dilation",
   "get_name",
   "get_path_name",
   "get_player_camera_manager",
@@ -579,7 +580,8 @@
   "get_world_delta_seconds",
   "is_game_paused",
   "set_editor_property",
-  "set_game_paused"
+  "set_game_paused",
+  "set_global_time_dilation"
  ],
  "GeometryScriptBoneInfo": [],
  "GeometryScriptBoneWeight": [],
