@@ -13,6 +13,8 @@ const checks = [],
   captures = [],
   measurements = [],
   errors = [];
+/** CDP's modifier bit for ⌘. */
+const CDP_META = 4;
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const check = (name, ok, detail) => {
   checks.push({ name, ok: Boolean(ok), detail });
@@ -62,6 +64,13 @@ const key = async (key) => {
   await wc.debugger.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", ...p });
   await wait(180);
 };
+/** ⌘2 opens Harness: its sidebar row is hidden for now (#654). */
+const openHarness = async () => {
+  const p = { key: "2", code: "Digit2", windowsVirtualKeyCode: 50, modifiers: CDP_META };
+  await wc.debugger.sendCommand("Input.dispatchKeyEvent", { type: "keyDown", ...p });
+  await wc.debugger.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", ...p });
+  await wait(180);
+};
 const type = async (text) => {
   await click('[aria-label="Prompt"]');
   await wc.debugger.sendCommand("Input.insertText", { text });
@@ -89,7 +98,7 @@ async function acceptance() {
     });
     if (!wc.debugger.isAttached()) wc.debugger.attach("1.3");
     await until(`!!document.querySelector('nav [data-thread="studio"]')`);
-    await click('nav [data-thread="studio"]');
+    await openHarness();
     check(
       "feed loads runs from both games beyond the bootstrap tail",
       await until(`document.querySelectorAll('[data-activity-kind="run"]').length===3`),
@@ -270,7 +279,7 @@ async function acceptance() {
         `!!document.querySelector('[data-promptbar] [aria-label="Model settings"]') && !document.querySelector('[data-studio-composer]')`,
       ),
     );
-    await click('nav [data-thread="studio"]');
+    await openHarness();
     check(
       "Studio draft survives navigation",
       await until(`document.querySelector('[aria-label="Prompt"]')?.value==='Keep this Studio draft'`),
