@@ -28,7 +28,10 @@
  * editor lock tells the agent's play from the person's: an agent's `StartPIE` the editor took sets
  * it, and its `StopPIE`, the editor crashing under a call and the bridge closing clear it. A play
  * step Unreal refuses is checked against the helper's `play_state`: a start whose play runs anyway
- * (the game's own errors read as a failed `StartPIE`) or a stop with no play left answers so.
+ * (the game's own errors read as a failed `StartPIE`) or a stop with no play left answers so. An
+ * agent's Blueprint write (Epic's `write_graph_dsl`) is checked by the Genex editor helper before
+ * and after (`graph-write-guard.ts`): a text too big for one write is refused, and a graph that came
+ * back short of its text fails the call, though Unreal answered ok.
  */
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -59,6 +62,15 @@ import {
 } from "./editor-port.ts";
 import { BUILD_TOOLSET, type CaptureClock, captureTool, helperAnswer, liftCapture } from "./editor-captures.ts";
 import { fitDescription } from "./editor-describe.ts";
+import {
+  CHECK_AFTER_MS,
+  CHECK_BEFORE_MS,
+  CHECK_GRAPH_TOOL,
+  checkArguments,
+  checkProblem,
+  type GraphWrite,
+  graphWriteOf,
+} from "./graph-write-guard.ts";
 import { LOOP_TOOLSET, LoopTool } from "./editor-queue.ts";
 import {
   OBJECT_TOOLSET,
@@ -100,6 +112,8 @@ const EDITOR_START_WAIT_MS = 150 * SECOND_MS;
  * answers about a second after the editor's log says it loaded, which ends the Starting state.
  */
 const LOADED_ANSWER_MS = 10 * SECOND_MS;
+/** The time a graph write's two checks may take out of the call's own. */
+const CHECKS_MS = CHECK_BEFORE_MS + CHECK_AFTER_MS;
 /** Pictures handed over per answer; any more leave the text without becoming images. */
 const MAX_IMAGES = 4;
 /** The picture types every engine accepts as a tool-result image. */
@@ -884,6 +898,9 @@ async function capturedParts(
  */
 async function forward(session: EditorSession, params: CallParams, how: Forwarding, signal: AbortSignal) {
   const step = playStep(params);
+  const write = params.name === EditorTool.CallTool ? graphWriteOf(params.arguments) : undefined;
+  const refusal = write ? await checkGraph(session, write, false) : undefined;
+  if (refusal) return errorResult(`${refusal}\n${MESSAGE.Answered(how.project.name)}`);
   try {
     await how.keeper.before(session, step);
   } catch (error) {
@@ -894,7 +911,8 @@ async function forward(session: EditorSession, params: CallParams, how: Forwardi
   const play = { step, before, giveBack: await markStart(how.agentPlay, step) };
   let result: CallResult;
   try {
-    result = await session.call(editorParams(params), how.timeoutMs);
+    // A graph write leaves its checks their time inside the call's own.
+    result = await session.call(editorParams(params), write ? how.timeoutMs - CHECKS_MS : how.timeoutMs);
   } catch (error) {
     // A JSON-RPC error is the editor's own answer: it is still there, and the call did not complete.
     if (editorAnswered(error)) return refusedStep(session, play, errorMessage(error), how);
@@ -903,16 +921,49 @@ async function forward(session: EditorSession, params: CallParams, how: Forwardi
   try {
     const held = await settleStep(session, play, Boolean(result.isError), how);
     if (held && step) return heldAnswer(step, answerText(result), how.project);
-    const content = Array.isArray(result.content) ? (result.content as Part[]) : [];
-    const fit = fitAnswer(params, content, Boolean(result.isError));
-    const captured = result.isError ? [] : await capturedParts(params, content, how.project, how.clock, signal);
-    const named = [...liftImages(fit.parts), ...captured, { type: "text", text: MESSAGE.Answered(how.project.name) }];
-    const failed = Boolean(result.isError) || fit.failed || helperFailed(params, content);
-    return { content: named, ...(failed ? { isError: true } : {}) };
+    return await answerOf(session, params, result, how, { write, signal });
   } catch (error) {
     // The editor answered: what failed after is Genex's own, and the editor is still there.
     return errorResult(MESSAGE.NotCompleted(errorMessage(error)));
   }
+}
+
+/**
+ * The editor's answer as the caller reads it: fitted, with a capture's pictures, naming the
+ * project; a graph write that came back short fails, the helper's words first.
+ */
+async function answerOf(
+  session: EditorSession,
+  params: CallParams,
+  result: CallResult,
+  how: Forwarding,
+  call: { write: GraphWrite | undefined; signal: AbortSignal },
+) {
+  const content = Array.isArray(result.content) ? (result.content as Part[]) : [];
+  const fit = fitAnswer(params, content, Boolean(result.isError));
+  const captured = result.isError ? [] : await capturedParts(params, content, how.project, how.clock, call.signal);
+  const failed = Boolean(result.isError) || fit.failed || helperFailed(params, content);
+  const lost = call.write && !failed ? await checkGraph(session, call.write, true) : undefined;
+  const said = lost ? [{ type: "text", text: lost }] : [];
+  const named = [
+    ...said,
+    ...liftImages(fit.parts),
+    ...captured,
+    { type: "text", text: MESSAGE.Answered(how.project.name) },
+  ];
+  return { content: named, ...(failed || lost ? { isError: true } : {}) };
+}
+
+/**
+ * What the Genex editor helper's check says is wrong with a graph write (`graph-write-guard.ts`):
+ * before it, a text too big for one write; after it, a graph that came back short. Undefined when
+ * nothing is, and when the helper can't check (it answers anything else, or not in time).
+ */
+async function checkGraph(session: EditorSession, write: GraphWrite, written: boolean): Promise<string | undefined> {
+  const check = toolsetCall(BUILD_TOOLSET, CHECK_GRAPH_TOOL, checkArguments(write, written));
+  const result = await session.call(check, written ? CHECK_AFTER_MS : CHECK_BEFORE_MS).catch(() => undefined);
+  if (!result || result.isError || !Array.isArray(result.content)) return undefined;
+  return checkProblem(result.content as Part[], written);
 }
 
 /** A call the editor answered with a JSON-RPC error: a play step whose aim held anyway answers so ({@link settleStep}); anything else fails. */

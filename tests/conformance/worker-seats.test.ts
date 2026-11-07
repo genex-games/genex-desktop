@@ -205,7 +205,7 @@ describe("the host's worker seat", () => {
   it("a run worker's consent card waits out the chat's other turns: a lead's turn ending never withdraws its question", {
     timeout: CASE_TIMEOUT_MS,
   }, async () => {
-    const { core, threadId, delegate, runWorker, whileRunning } = await workerChat();
+    const { core, threadId, delegate, runWorker, whileRunning, nextConsent } = await workerChat();
     const tool = { name: "fixture__deliver", description: "Deliver an asset", parameters: { type: "object" } };
     core.plugins.snapshot = (() => ({
       tools: [tool],
@@ -221,21 +221,10 @@ describe("the host's worker seat", () => {
     whileRunning(async (request) => {
       heard = await request.onLiveTool!(tool.name, {}).catch((err: Error) => err.message);
     });
-    const pending = async () =>
-      (await core.store.listEvents(threadId)).flatMap((event) => {
-        const custom = customRecord(event.data);
-        const consent = custom?.payload as { consentId?: string; state?: string } | undefined;
-        return custom?.event_type === CustomEvent.PluginConsent && consent?.state === "pending"
-          ? [String(consent.consentId)]
-          : [];
-      });
     const turn = delegate(runWorker());
-    let card: string | undefined;
-    for (let waited = 0; !card && waited < 400; waited++) {
-      card = (await pending())[0];
-      if (!card) await new Promise((resolve) => setImmediate(resolve));
-    }
-    assert.ok(card, "the worker's call asked the person");
+    // The card, or the worker's turn ending without one: a call that never asks fails here, at once.
+    const card = await Promise.race([nextConsent(), turn.then(() => undefined)]);
+    assert.ok(card, `the worker's call asked the person: ${JSON.stringify(heard)}`);
     // The lead's turn ends on the chat, as a waking lead's turns do all through a run.
     await core.append([{ type: "turn_ended", status: "ok" }] as never, threadId);
     assert.equal(core.resolveConsent(card, true), true, "the card still waits for the person");

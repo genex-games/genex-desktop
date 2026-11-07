@@ -480,6 +480,15 @@ The Genex editor helper's build and play tools (below) answer a refusal or a fai
 inside a call Epic counts as done, so the bridge marks such an answer `isError` (the toolset named
 short or qualified, in any case): the agent and the chat read it as a failed call, in the helper's
 own words. An `error` field in any other toolset's answer stays as Epic sent it.
+An agent's own `write_graph_dsl` (Epic's Blueprint toolset named short or qualified, in any case,
+its arguments as an object or as JSON text) is checked by the helper's `check_graph`
+(`graph-write-guard.ts`): before the write, a text too big (or with an `IsValid` lacking its exec
+pins) is refused and never sent; after a write Unreal answered ok, the check deletes the nodes the
+write left unlinked, and a graph that came back short fails the call, the helper's words first, so
+the agent learns before it saves. Only those two verdicts (`refused`, and `wrote` with `kept`) fail a
+write: a helper that can't check (an older one, a project whose build tools didn't load, its own
+error, no answer within 10 s before or 30 s after, such as while a reference export holds the
+editor) leaves the write as Unreal answered it; the checks' time comes out of the call's own.
 Some of Epic's toolsets describe themselves in more than an engine takes from one tool answer
 (Niagara's system toolset in about 278 KB, past Claude Code's 25,000 tokens), so a
 `describe_toolset` answer over 60,000 characters comes back as its tools by name, each with the
@@ -605,6 +614,32 @@ changed it (unsaved, or saved since it began; others compiling meanwhile are onl
 `otherMaterials`), read from what the editor log gained meanwhile (`genex_loop/editor_log.py`, `genex_build/compile_log.py`); `gx.scope` makes a script idempotent,
 and `gx` places instanced meshes, bevelled Nanite kit pieces, world-aligned materials, an
 atmosphere preset (`megastructure`, `daylight`), lights and hero cameras (`GX_Shot_<name>`).
+Every Blueprint graph a script writes through Epic's `BlueprintTools.write_graph_dsl` is checked
+(`genex_loop/graph_write.py`): a text of more than 150 counted nodes is refused before Unreal gets
+it (big writes took minutes, grew the editor by gigabytes and crashed it), and so is one with a
+`Utilities|IsValid` that has none of its exec pins: Unreal makes it the IsValid macro, which has no
+value, and inside `(not ...)` it linked nothing after it on UE 5.8. After a write Unreal
+answered ok the graph is read back with `read_graph_dsl` and compared with the text by the node
+titles it calls and how many nodes it makes, allowing for how Unreal's reader spells the same graph
+(variable reads as nodes, an early return as an `else`, math, arrays and strings as operators and
+statements, break nodes as component accesses, a call by another prefix, a conversion it added, a
+few nodes shared; an input action's event, whose body the read-back leaves out, isn't compared). It came back short when a node is missing and the count fell, or when fewer than
+three quarters of the nodes (and at least two fewer) came back. A write that came back short (UE 5.8
+linked one node of a function, left the rest unlinked in the graph, and the agent saved it) fails
+the run with `graphs` (each graph's `wrote`, `kept`, `missing` and the start of its `readBack`),
+even when the script caught the error; a read-back that fails leaves the write as Unreal answered
+it. After every write the nodes nothing runs are deleted: Epic's writer deletes only old nodes
+nothing links to, so each old node taking the function's or event's parameter stayed through every
+rewrite (three identical writes of a function with one left 7, 13 and 19 nodes, none shown by
+`read_graph_dsl`), as did each old result node. Only the node classes the text writer makes are
+deleted, and only when no exec flow from an event, an entry or a node of any other class (a
+timeline its component runs) reaches them and they feed no node it does; a function keeps the
+result nodes its flow reaches (or one), comments always stay, and a graph nothing starts keeps
+every node. The Loop's parts are checked the same way but never refused for
+their size: a part writes all its events in one text, and `check-part` doesn't count its nodes.
+`check_graph {graph, code, written}` runs the same check for a graph written another way (after a
+write, deleting what it left unlinked, `cleared`); anything but a loaded graph's object path is
+refused before anything is read.
 `import_model {file, dest, name, collision, nanite}` combines a model file of the game's assets into
 one static mesh in `<dest>/<name>/`; `import_character`, `import_animation` (with its `skeleton`),
 `import_sound` and `audit` do what their names say, and no import opens the Content Browser.
@@ -771,10 +806,16 @@ the other parts' and the template's exported Blueprints, `apply.py` parsed by Un
 its `genex.` and `unreal.` names checked, the test), `run-part` (queues a part that passes and answers at once),
 `part-result` (its state, then its shots, checks and `probes`), `rollback-part`, `reload-level`,
 `find-nodes` (the reference's nodes and the template Blueprints' casts and members; with no
-reference kept yet it has the game's open Unreal export one first, and with one kept, a game whose
-project never exported its template's facts has its open Unreal write `project.json` first) and
-`export-reference` (keeps the node reference and Python names per engine in the plugin's storage,
-then asks for `project.json`; that call failing fails nothing). The harness's tools
+reference kept yet it has the game's open Unreal export one, each editor call within 3 minutes,
+and waits up to 90 s for it, then answers that it still runs; with one kept, a game whose
+project never exported its template's facts has its open Unreal write `project.json` first). The
+export makes throwaway Blueprints, so the editor refuses it during play, and on Windows it took
+longer than a moment's 15 s ask: Genex starts it in the background whenever it sees the game's
+Unreal answer (`open-editor`, `editor-status`, a run's start; `reference-warm.ts`), one per engine
+at a time (lookups and `export-reference` join it) and a failed one again only 2 minutes later, so
+lookups during play read the kept copy.
+`export-reference` keeps the node reference and Python names per engine in the plugin's storage,
+then asks for `project.json` (that call failing fails nothing). The harness's tools
 (`run-part`, `part-result`, `rollback-part`, `reload-level`, `export-reference`, `reopen-editor`,
 `editor-state`, `play-check`, `save-all`, `log-errors`, `end-editor`, `update-helper`,
 `editor-activity`, `hero-shots`, `wait-editor`, `engine-status`) are

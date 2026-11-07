@@ -10,18 +10,23 @@ import { chmod, mkdir, readFile, realpath, rm, symlink, writeFile } from "node:f
 import path from "node:path";
 import { describe, it } from "node:test";
 import { setImmediate as nextTurn } from "node:timers/promises";
-import type { PluginContext } from "../../src/plugin-sdk/index.d.ts";
+import type { PluginContext, PluginHookContext } from "../../src/plugin-sdk/index.d.ts";
+import { EditorControlToolName } from "../../src/plugins/unreal/editor-control.ts";
 import { LoopTool, PartProbe, PartRunState } from "../../src/plugins/unreal/editor-queue.ts";
 import {
   type AnyLoopTool,
+  type AnyLoopToolName,
   createLoopTools,
   LeadLoopToolName,
+  LiveLoopToolName,
   LoopEditorTool,
   LoopToolName,
   shotFileReady,
 } from "../../src/plugins/unreal/loop-tools.ts";
 import { unrealPython } from "../../src/plugins/unreal/python-check.ts";
 import { loadReference, storeReference } from "../../src/plugins/unreal/reference-store.ts";
+import { REFERENCE_RETRY_MS } from "../../src/plugins/unreal/reference-warm.ts";
+import { HookEvent } from "../../src/shared/plugin-hooks.ts";
 import { XcodeState } from "../../src/plugins/unreal/xcode.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
@@ -112,7 +117,15 @@ async function untilRun(
   }
 }
 
-async function world(options: { applyHeld?: Promise<unknown> } = {}) {
+/** A wait that ends only when it is stopped: a lookup on it waits for the export itself. */
+const untilStopped = (_ms: number, signal?: AbortSignal) =>
+  new Promise<void>((_resolve, reject) => signal?.addEventListener("abort", () => reject(signal.reason)));
+
+/**
+ * The Loop's tools over a stand-in for the game's Unreal. `applyHeld` and `exportHeld` hold its
+ * apply and its reference export until they settle; with `patient`, waits end only when stopped.
+ */
+async function world(options: { applyHeld?: Promise<unknown>; exportHeld?: Promise<unknown>; patient?: boolean } = {}) {
   const root = await realpath(await tmpDir("studio-loop-tools-"));
   const game = path.join(root, "game");
   const storage = path.join(root, "storage");
@@ -126,10 +139,17 @@ async function world(options: { applyHeld?: Promise<unknown> } = {}) {
   await writeFile(path.join(part, "apply.py"), "genex.save()\n");
   const shot = path.join(projectDir, "Saved", "Genex", "captures", "lanterns.png");
   const calls: Array<[AnyLoopTool, Record<string, unknown>]> = [];
-  // `personPie`: the person pressed Play in Unreal, beside whatever the queue does; `answers`: the game's Unreal is open.
-  const state = { pie: false, personPie: false, answers: true };
+  // `personPie`: the person pressed Play in Unreal, beside whatever the queue does; `answers`: the game's Unreal is open;
+  // `exportTakesMs`: how long its reference export takes, so a call given less fails as a timeout does.
+  const state = { pie: false, personPie: false, answers: true, exportTakesMs: 0 };
   const refuse: { export?: string; project?: string } = {};
-  const editorCall = async (_storage: string, _game: string, tool: AnyLoopTool, args: Record<string, unknown>) => {
+  const editorCall = async (
+    _storage: string,
+    _game: string,
+    tool: AnyLoopTool,
+    args: Record<string, unknown>,
+    callMs?: number,
+  ) => {
     calls.push([tool, args]);
     if (tool === LoopTool.ApplyPart) {
       await options.applyHeld;
@@ -149,7 +169,10 @@ async function world(options: { applyHeld?: Promise<unknown> } = {}) {
     }
     if (tool === LoopEditorTool.ExportReference && !("pins" in args))
       throw new Error("export_reference is missing pins (Unreal's schema needs every parameter)");
+    if (tool === LoopEditorTool.ExportReference) await options.exportHeld;
     if (tool === LoopEditorTool.ExportReference && refuse.export) return { error: refuse.export };
+    if (tool === LoopEditorTool.ExportReference && callMs !== undefined && callMs < state.exportTakesMs)
+      throw new Error(`Unreal didn't answer export_reference within ${callMs} ms`);
     if (tool === LoopEditorTool.ExportReference) {
       await mkdir(path.dirname(String(args.file)), { recursive: true });
       await writeFile(
@@ -177,6 +200,7 @@ async function world(options: { applyHeld?: Promise<unknown> } = {}) {
     // These tests never add a C++ module, so Unreal is never quit or opened.
     restart: { editors: async () => 0, quit: async () => {}, open: async () => {} },
     ...clock,
+    ...(options.patient ? { sleep: untilStopped } : {}),
   });
   const context: PluginContext = {
     project: "valley",
@@ -185,8 +209,8 @@ async function world(options: { applyHeld?: Promise<unknown> } = {}) {
     callId: 1,
     host: (async () => storage) as never,
   };
-  const call = (name: (typeof LoopToolName)[keyof typeof LoopToolName], args: Record<string, unknown> = {}) =>
-    tools.call(name, args, context, storage);
+  const call = (name: AnyLoopToolName, args: Record<string, unknown> = {}, hook?: PluginHookContext) =>
+    tools.call(name, args, hook ? { ...context, hook } : context, storage);
   return {
     root,
     game,
@@ -198,8 +222,17 @@ async function world(options: { applyHeld?: Promise<unknown> } = {}) {
     tools,
     refuse,
     state,
+    clock,
     engineDir: path.join(root, "engine"),
   };
+}
+
+/** Waits, a turn at a time, until `kept` holds; the test's `signal` ends a wait that never does. */
+async function until(kept: () => Promise<boolean> | boolean, signal: AbortSignal, what: string) {
+  while (!(await kept())) {
+    if (signal.aborted) throw new Error(`${what} never happened`);
+    await nextTurn(undefined, { signal }).catch(() => undefined);
+  }
 }
 
 /** Writes <project>/Saved/Genex/project.json, or makes it a link to `text` when `link`. */
@@ -501,7 +534,7 @@ describe("the Unreal Loop's tools", () => {
   });
 
   it("find-nodes exports the engine's reference from the game's open Unreal once, when none is kept yet", async () => {
-    const w = await world();
+    const w = await world({ patient: true });
     const exports = () => w.calls.filter(([tool]) => tool === LoopEditorTool.ExportReference).length;
     w.state.answers = false;
     await assert.rejects(w.call(LoopToolName.FindNodes, { query: "print" }), /open-editor/);
@@ -528,9 +561,107 @@ describe("the Unreal Loop's tools", () => {
   });
 
   it("find-nodes names why the open Unreal couldn't export the reference", async () => {
-    const w = await world();
+    const w = await world({ patient: true });
     w.refuse.export = "export_reference is not a tool of this helper";
     await assert.rejects(w.call(LoopToolName.FindNodes, { query: "print" }), /not a tool of this helper/);
     assert.equal(await loadReference(w.storage, "5.8"), null);
   });
+
+  it("find-nodes waits for an export slower than a moment's 15 s ask", async () => {
+    const w = await world({ patient: true });
+    // A Windows computer took longer than that, and every lookup through a day of building failed.
+    w.state.exportTakesMs = 40_000;
+    const found = (await w.call(LoopToolName.FindNodes, { query: "print" })) as { nodes: Array<{ typeId: string }> };
+    assert.deepEqual(
+      found.nodes.map((n) => n.typeId),
+      ["Development|PrintString"],
+    );
+  });
+
+  it(
+    "find-nodes answers once its wait ends that the export still runs, and the export is kept after",
+    TEST_TIMEOUT,
+    async (t) => {
+      let release = () => {};
+      const w = await world({ exportHeld: new Promise<void>((resolve) => (release = resolve)) });
+      const exports = () => w.calls.filter(([tool]) => tool === LoopEditorTool.ExportReference).length;
+      await assert.rejects(w.call(LoopToolName.FindNodes, { query: "print" }), /is exporting .* Call find-nodes again/);
+      await assert.rejects(w.call(LoopToolName.FindNodes, { query: "print" }), /is exporting/);
+      release();
+      await until(async () => (await loadReference(w.storage, "5.8")) !== null, t.signal, "the export kept");
+      const found = (await w.call(LoopToolName.FindNodes, { query: "print" })) as { nodes: unknown[] };
+      assert.equal(found.nodes.length, 1);
+      assert.equal(exports(), 1, "the lookups shared the one export");
+    },
+  );
+
+  it(
+    "the game's Unreal seen answering exports the reference in the background, and find-nodes reads it during play",
+    TEST_TIMEOUT,
+    async (t) => {
+      const w = await world();
+      const exports = () => w.calls.filter(([tool]) => tool === LoopEditorTool.ExportReference).length;
+      w.state.exportTakesMs = 40_000;
+      w.state.answers = false;
+      await w.call(EditorControlToolName.EditorStatus);
+      assert.equal(exports(), 0, "a closed Unreal is never asked");
+      w.state.answers = true;
+      assert.deepEqual(await w.call(EditorControlToolName.OpenEditor), { answering: true });
+      await until(async () => (await loadReference(w.storage, "5.8")) !== null, t.signal, "the background export");
+      // In play the editor refuses an export (it makes throwaway Blueprints): the kept copy answers.
+      w.refuse.export = "Stop play first: the export makes Blueprints.";
+      w.state.pie = true;
+      const found = (await w.call(LoopToolName.FindNodes, { query: "print" })) as { nodes: Array<{ typeId: string }> };
+      assert.deepEqual(
+        found.nodes.map((n) => n.typeId),
+        ["Development|PrintString"],
+      );
+      await w.call(EditorControlToolName.EditorStatus);
+      await w.call(LiveLoopToolName.LogErrors, {}, { on: HookEvent.RunPrepare, runId: "run-1" });
+      assert.equal(exports(), 1, "a kept reference is never exported again");
+    },
+  );
+
+  it(
+    "export-reference joins a background export that runs, so two never write the same files",
+    TEST_TIMEOUT,
+    async (t) => {
+      let release = () => {};
+      const w = await world({ exportHeld: new Promise<void>((resolve) => (release = resolve)) });
+      const exports = () => w.calls.filter(([tool]) => tool === LoopEditorTool.ExportReference).length;
+      await w.call(EditorControlToolName.OpenEditor);
+      await until(() => exports() === 1, t.signal, "the background export");
+      const asked = w.call(LoopToolName.ExportReference);
+      release();
+      const answer = (await asked) as { stored?: boolean };
+      assert.equal(answer.stored, true);
+      assert.equal(exports(), 1);
+    },
+  );
+
+  for (const [seen, see] of [
+    ["editor-status", (w: Awaited<ReturnType<typeof world>>) => w.call(EditorControlToolName.EditorStatus)],
+    [
+      "a run's start",
+      (w: Awaited<ReturnType<typeof world>>) =>
+        w.call(LiveLoopToolName.LogErrors, {}, { on: HookEvent.RunPrepare, runId: "run-1" }),
+    ],
+  ] as const) {
+    it(
+      `${seen} starts the background export too, and after one failed starts it again only a while later`,
+      TEST_TIMEOUT,
+      async (t) => {
+        const w = await world();
+        const exports = () => w.calls.filter(([tool]) => tool === LoopEditorTool.ExportReference).length;
+        w.refuse.export = "Stop play first: the export makes Blueprints.";
+        await see(w);
+        await until(() => exports() === 1, t.signal, "the first export");
+        delete w.refuse.export;
+        await w.clock.sleep(REFERENCE_RETRY_MS);
+        await see(w);
+        await until(async () => (await loadReference(w.storage, "5.8")) !== null, t.signal, "the export tried again");
+        assert.equal(exports(), 2);
+      },
+    );
+  }
 });

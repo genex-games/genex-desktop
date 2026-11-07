@@ -22,6 +22,7 @@ from genex_build import (
     sockets,
     terrain,
 )
+from genex_loop import graph_write
 from genex_loop.errors import Refused, short_message
 
 
@@ -122,7 +123,10 @@ class GenexBuildTools(unreal.ToolsetDefinition):
         unreal/build/ import fresh each run. An MCP timeout does not stop a running script. A run
         that changed a level with navigation bounds rebuilds its nav mesh (navigation: rebuilt). A
         material Unreal fails to compile while it runs fails the run (Unreal would draw it with its
-        default material): materials names each one and why.
+        default material): materials names each one and why. Its Blueprint writes (Epic's
+        BlueprintTools.write_graph_dsl) are checked: a graph's text over 150 nodes is refused, and a
+        graph Unreal answered ok for that came back short of its text fails the run (graphs names
+        each one, what it kept and what is missing), even when the script caught the error.
 
         Args:
             file: The script, relative to unreal/build/: kit.py or zones/shaft.py.
@@ -132,9 +136,33 @@ class GenexBuildTools(unreal.ToolsetDefinition):
             JSON {ok, ms, script, output, result?, scopes: {scope: {removed, made}}, navigation?, actors,
             otherMaterials?}; when it failed also {error, where: "file.py:line", line} or {error, materials:
             [{material, instanceOf?, platform, reasons}]} for materials it changed that Unreal failed to compile
-            (otherMaterials: ones it didn't change that failed meanwhile). What it changed before failing stays.
+            (otherMaterials: ones it didn't change that failed meanwhile), or {error, graphs: [{graph, error,
+            wrote, kept, missing, readBack}]} for Blueprint writes that lost nodes or were too big. What it
+            changed before failing stays.
         """
         return _answer(scripts.run_script, file, args_json)
+
+    @toolset_registry.tool_call
+    @staticmethod
+    def check_graph(graph: str, code: str, written: bool) -> str:
+        """Checks Blueprint text against a graph, as Genex does around every write_graph_dsl: before
+        the write (written false), whether the text may be sent as one write (at most 150 nodes, not
+        counting variable reads, and no Utilities|IsValid without its exec pins); changes nothing.
+        After it (written true), deletes the nodes nothing in the graph runs (Unreal's writer leaves
+        old ones behind) and answers whether the graph read back holds every node the text makes,
+        since Unreal's writer can answer ok and drop nodes.
+
+        Args:
+            graph: The graph's path, such as /Game/BP_Door.BP_Door:EventGraph.
+            code: The Blueprint text written (or to write) to it.
+            written: Whether the text was already written.
+
+        Returns:
+            JSON {graph, nodes, kept?, cleared?} (cleared: unlinked nodes deleted), or {error, wrote, kept,
+            missing, readBack, cleared} for a graph that came back short, or {error, refused: true} for a
+            text refused before the write.
+        """
+        return _answer(graph_write.check_graph, graph, code, written)
 
     @toolset_registry.tool_call
     @staticmethod

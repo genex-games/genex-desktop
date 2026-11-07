@@ -1,7 +1,7 @@
 {
   "apiVersion": 3,
   "id": "unreal",
-  "version": "0.53.3",
+  "version": "0.54.1",
   "icon": "icon.svg",
   "name": "Unreal Engine",
   "publisher": "Genex",

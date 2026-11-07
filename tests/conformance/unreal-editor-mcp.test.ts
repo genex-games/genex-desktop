@@ -1568,6 +1568,136 @@ test("a helper tool that answers {error} reaches the agent as a failed call; any
   }
 });
 
+/* ---- Blueprint writes: the Genex editor helper checks an agent's write before and after ---- */
+
+const BLUEPRINTS = "editor_toolset.toolsets.blueprint.BlueprintTools";
+const COMBAT_TICK = { refPath: "/Game/Duel/BPC_Duel.BPC_Duel:CombatTick" };
+const TICK_TEXT = "(fn CombatTick (DT) (CallFunction|TickCommon :DT DT))";
+const WRITE = {
+  toolset_name: BLUEPRINTS,
+  tool_name: "write_graph_dsl",
+  arguments: { graph: COMBAT_TICK, code: TICK_TEXT },
+};
+const LOST = "BPC_Duel:CombatTick: Unreal answered ok, but reading the graph back found 0 of the 1 nodes";
+const TOO_BIG = "BPC_Duel:CombatTick: this text makes about 151 nodes, more than the 150 one write takes";
+
+/** The helper's check answering `before` and `after` (as Epic delivers the helper's JSON), Epic's write answering ok. */
+function checkingEditor(before: unknown, after: unknown) {
+  return editor((params) => {
+    if (params.arguments.tool_name !== "check_graph") return { returnValue: true };
+    const answer = params.arguments.arguments.written ? after : before;
+    return answer instanceof Refusal ? answer : { returnValue: JSON.stringify(answer) };
+  });
+}
+
+/** The tools the editor was asked for, in order: a check names whether its text was written. */
+const asked = (unreal: ReturnType<typeof editor>) =>
+  toolCalls(unreal).map(({ body }) => {
+    const { tool_name, arguments: args } = body.params.arguments;
+    return tool_name === "check_graph" ? `check_graph written=${args.written}` : tool_name;
+  });
+
+test("an agent's Blueprint write that came back short fails with the helper's words first, Unreal's answer kept", async () => {
+  const unreal = checkingEditor({ graph: COMBAT_TICK.refPath, nodes: 1 }, { error: LOST, wrote: 1, kept: 0 });
+  const { client, close } = await connected(unreal.fetchImpl);
+  try {
+    const result: any = await client.callTool({ name: EditorTool.CallTool, arguments: WRITE });
+    assert.equal(result.isError, true);
+    assert.equal(result.content[0].text, LOST);
+    assert.match(JSON.stringify(result.content), /returnValue/, "Unreal's own answer stays");
+    assert.match(JSON.stringify(result.content), /\[Unreal project: Drift\]/);
+    assert.deepEqual(asked(unreal), ["check_graph written=false", "write_graph_dsl", "check_graph written=true"]);
+    const check = toolCalls(unreal)[0]?.body.params.arguments;
+    assert.equal(check.toolset_name, "genex_build.tools.GenexBuildTools");
+    assert.deepEqual(check.arguments, { graph: COMBAT_TICK.refPath, code: TICK_TEXT, written: false });
+  } finally {
+    await close();
+  }
+});
+
+test("an agent's Blueprint text too big for one write never reaches Unreal's writer", async () => {
+  const unreal = checkingEditor({ error: TOO_BIG, refused: true }, {});
+  const { client, close } = await connected(unreal.fetchImpl);
+  try {
+    const result: any = await client.callTool({ name: EditorTool.CallTool, arguments: WRITE });
+    assert.equal(result.isError, true);
+    assert.match(textOf(result), /about 151 nodes/);
+    assert.match(textOf(result), /\[Unreal project: Drift\]/);
+    assert.deepEqual(asked(unreal), ["check_graph written=false"]);
+  } finally {
+    await close();
+  }
+});
+
+test("a Blueprint write that came back whole, or that the helper can't check, answers as Unreal did", async () => {
+  const rows: Array<[string, unknown, unknown]> = [
+    ["came back whole", { nodes: 1 }, { nodes: 1, kept: 3 }],
+    ["an older helper without the check", new Refusal("Unknown tool check_graph"), new Refusal("Unknown tool")],
+    ["a check that answers no JSON", { returnValue: 7 }, "not json"],
+    // The helper answers every failure as {error}: only its verdicts (refused, wrote and kept) fail a write.
+    [
+      "a check that failed itself",
+      { error: "graph must be a Blueprint graph's path" },
+      { error: "RuntimeError: read_graph_dsl can't spell node K2Node_X" },
+    ],
+  ];
+  for (const [label, before, after] of rows) {
+    const unreal = checkingEditor(before, after);
+    const { client, close } = await connected(unreal.fetchImpl);
+    try {
+      const result: any = await client.callTool({ name: EditorTool.CallTool, arguments: WRITE });
+      assert.equal(result.isError, undefined, label);
+      assert.match(textOf(result), /returnValue/, label);
+      assert.equal(asked(unreal).filter((tool) => tool === "write_graph_dsl").length, 1, `${label}: written once`);
+    } finally {
+      await close();
+    }
+  }
+});
+
+test("only Epic's write_graph_dsl is checked, named short or qualified, and a write Unreal refused is not read back", async () => {
+  const qualified = { tool_name: `${BLUEPRINTS.toUpperCase()}.WRITE_GRAPH_DSL`, arguments: WRITE.arguments };
+  const asText = { ...WRITE, arguments: JSON.stringify(WRITE.arguments) };
+  const rows: Array<[string, Record<string, unknown>, string[]]> = [
+    [
+      "a qualified name in capitals",
+      qualified,
+      ["check_graph written=false", qualified.tool_name, "check_graph written=true"],
+    ],
+    [
+      "arguments sent as JSON text",
+      asText,
+      ["check_graph written=false", "write_graph_dsl", "check_graph written=true"],
+    ],
+    ["a read of the graph", { ...WRITE, tool_name: "read_graph_dsl" }, ["read_graph_dsl"]],
+    ["a write without its text", { ...WRITE, arguments: { graph: COMBAT_TICK } }, ["write_graph_dsl"]],
+  ];
+  for (const [label, args, tools] of rows) {
+    const unreal = checkingEditor({ nodes: 1 }, { error: LOST });
+    const { client, close } = await connected(unreal.fetchImpl);
+    try {
+      await client.callTool({ name: EditorTool.CallTool, arguments: args });
+      assert.deepEqual(asked(unreal), tools, label);
+    } finally {
+      await close();
+    }
+  }
+  const refusing = editor((params) =>
+    params.arguments.tool_name === "check_graph"
+      ? { returnValue: JSON.stringify({ nodes: 1 }) }
+      : new Refusal("BlueprintTools: The node could not be created"),
+  );
+  const { client, close } = await connected(refusing.fetchImpl);
+  try {
+    const result: any = await client.callTool({ name: EditorTool.CallTool, arguments: WRITE });
+    assert.equal(result.isError, true);
+    assert.match(textOf(result), /could not be created/);
+    assert.deepEqual(asked(refusing), ["check_graph written=false", "write_graph_dsl"]);
+  } finally {
+    await close();
+  }
+});
+
 /* ---- Descriptions: a toolset described in more than one answer holds reaches the agent by its tools' names ---- */
 
 /** The longest description the bridge hands over whole, in characters. */

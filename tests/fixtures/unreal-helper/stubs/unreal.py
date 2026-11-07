@@ -13,6 +13,10 @@ appended to `state['traces']`, so a test can assert that refused input never eve
 The player controller's view is `state['control_rotation']`; the nav mesh's path is `state['nav_path']`
 (None: the level has none), every query appended to `state['nav_queries']`.
 
+A Blueprint graph is an EdGraph in `state['graphs']` (by path); Epic's write_graph_dsl keeps its
+text in `state['written']`, and read_graph_dsl answers it back unless `state['kept']` holds what
+Unreal kept of that graph instead (a write that dropped nodes).
+
 A console command is recorded, then handed to `state['on_console']` when a test sets it (a fake
 UBT for `Module Recompile`); the editor's log folder is the project's Saved/Logs.
 
@@ -1014,6 +1018,25 @@ def log_flush() -> None:
 
 def log_warning(message: str) -> None:
     pass
+
+
+class EdGraph(Object):
+    """A Blueprint graph, found by its path once a test lists it in `state['graphs']`."""
+
+    def __init__(self, path: str) -> None:
+        self.path = path
+
+    def get_path_name(self) -> str:
+        return self.path
+
+
+def find_object(outer, path: str):
+    _record('find_object', path)
+    return state.get('graphs', {}).get(path)
+
+
+def load_object(outer, path: str):
+    return state.get('graphs', {}).get(path)
 
 
 class ScopedEditorTransaction:

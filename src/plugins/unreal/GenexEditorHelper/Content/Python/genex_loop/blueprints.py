@@ -12,7 +12,8 @@
 - a function: BlueprintTools.add_function_graph, then BlueprintGraphEditor
   add_graph_input_parameter / add_graph_output_parameter for each missing input and output (what
   add_function_param does, without refusing one that exists);
-- a graph's Blueprint text: BlueprintTools.write_graph_dsl (it compiles and raises on errors);
+- a graph's Blueprint text: BlueprintTools.write_graph_dsl (it compiles and raises on errors), read
+  back and compared with the text (graph_write), since Epic's writer can answer ok and drop nodes;
 - a component held at a socket: an "Attach Component To Component" node right after the construction
   script's entry (Python can't set a Blueprint component's parent socket), made with BlueprintTools'
   node calls, or the one made before reused;
@@ -24,6 +25,8 @@ import contextlib
 import re
 
 import unreal
+
+from genex_loop import graph_write
 
 OBJECT_REF = re.compile(r'([A-Za-z][A-Za-z0-9_]{0,63}) object ref', re.IGNORECASE)
 BASIC_TYPES = {'bool': 'bool', 'int': 'int', 'float': 'real', 'real': 'real', 'byte': 'byte',
@@ -164,8 +167,11 @@ def graph_named(blueprint: unreal.Blueprint, graph: str | None) -> unreal.EdGrap
 
 
 def write_graph(blueprint: unreal.Blueprint, text: str, graph: str | None = None) -> None:
-    """Writes Blueprint text into a graph (Epic's write_graph_dsl); raises with Epic's message."""
-    _tools().write_graph_dsl(graph_named(blueprint, graph), text)
+    """Writes Blueprint text into a graph (Epic's write_graph_dsl); raises with Epic's message, and
+    with Genex's when the graph came back short (graph_write)."""
+    # A part writes all its events in one EventGraph text, and check-part doesn't count its nodes:
+    # its write is read back, never refused for its size.
+    graph_write.write(graph_named(blueprint, graph), text, limit=False)
 
 
 def compile_status(blueprint: unreal.Blueprint) -> tuple[bool, list[str]]:

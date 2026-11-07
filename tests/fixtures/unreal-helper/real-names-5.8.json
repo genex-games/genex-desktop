@@ -487,6 +487,9 @@
   "set_mesh_u_vs_from_box_projection",
   "set_mesh_u_vs_from_planar_projection"
  ],
+ "EdGraph": [
+  "get_path_name"
+ ],
  "EdGraphPinType": [
   "export_text"
  ],
@@ -2038,11 +2041,13 @@
  "WorldSettings": [
   "get_editor_property"
  ],
+ "find_object": null,
  "get_default_object": null,
  "get_editor_subsystem": null,
  "get_engine_subsystem": null,
  "load_asset": null,
  "load_class": null,
+ "load_object": null,
  "log": null,
  "log_flush": null,
  "log_warning": null,

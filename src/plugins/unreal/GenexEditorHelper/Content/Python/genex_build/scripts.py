@@ -10,6 +10,11 @@ result (the script's `result`, if it set one), scopes (actors removed and made p
 (the level's count)} or, when it failed, also {error, where (file:line), line (its text)}. Whatever
 it changed before failing stays: fix the script and run it again, or undo in the editor.
 
+The script's own Blueprint writes (Epic's BlueprintTools.write_graph_dsl) are checked as Genex's are
+(genex_loop.graph_write): a text too big for one write is refused before Unreal gets it, and a
+graph that came back short of its text fails the run, with {graphs: [{graph, error, wrote, kept,
+missing, readBack}]}, even when the script caught the error.
+
 A material Unreal fails to compile while the script runs is only a warning in the editor's log, and
 the game draws it with the default material: the run reads what the log gained meanwhile, and a
 material it changed (unsaved, or saved since it began) that so failed makes it fail too, with
@@ -29,7 +34,7 @@ import traceback
 import unreal
 
 from genex_build import compile_log, gx, scope, script_files
-from genex_loop import editor, editor_log
+from genex_loop import editor, editor_log, graph_write
 
 SCRIPT_TIMEOUT_S = 240.0
 # How many traced Python lines pass between looks at the clock.
@@ -150,16 +155,26 @@ def run_script(file: str, args_json: str) -> dict:
     log, offset = editor_log.mark()
     since = time.time()
     with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
-        with unreal.ScopedEditorTransaction(f'Genex build {name}'):
+        with unreal.ScopedEditorTransaction(f'Genex build {name}'), graph_write.watching() as writes:
             scope.begin_run(name)
             problem = _execute(code, namespace, build)
             counts = scope.end_run()
+    problem = _graphs(problem, writes)
     failed, others = _materials(log, offset, problem, (project, since))
     problem = {**problem, **failed}
     return {'ok': not problem, 'ms': editor.elapsed_ms(started), 'script': relative,
             'output': io.StringIO.getvalue(output)[-OUTPUT_CHARS:], **_result(namespace), **problem, **others,
             'scopes': counts,
             **_navigation(counts), 'actors': len(editor.actors().get_all_level_actors())}
+
+
+def _graphs(problem: dict, writes: graph_write.Watch) -> dict:
+    """The run's problem with the Blueprint writes that lost nodes or were refused as too big: those fail the
+    run even when the script caught their error (its own error, if any, staying the error)."""
+    failed = graph_write.failed_writes(writes)
+    if not failed:
+        return problem
+    return {**failed, **problem, 'graphs': failed['graphs']}
 
 
 def _materials(log: str | None, offset: int, problem: dict, run: tuple) -> tuple:
