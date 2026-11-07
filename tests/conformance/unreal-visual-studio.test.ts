@@ -11,12 +11,12 @@ import { describe, it } from "node:test";
 import {
   BuildToolsPlan,
   engineMsvcRules,
-  fileVersionOf,
   type MsvcRules,
   netFxSdkAccepted,
   parseInstances,
   parseNetFxSdks,
   parseWindowsSdk,
+  productVersionOf,
   sdkAccepted,
   systemVisualStudioProbes,
   toolsetAccepted,
@@ -248,7 +248,7 @@ async function windowsPc(layout: {
   vswhere?: (root: string) => string | Error;
   toolsets?: string[];
   noCompiler?: string[];
-  /** The file version a toolset folder's cl.exe names, by the folder's name. */
+  /** The product version a toolset folder's cl.exe names, by the folder's name. */
   compilerVersions?: Record<string, string>;
   sdks?: string[];
   noHeaders?: string[];
@@ -261,8 +261,8 @@ async function windowsPc(layout: {
   for (const version of layout.toolsets ?? []) {
     const bin = path.join(instance, "VC", "Tools", "MSVC", version, "bin", "Hostx64", "x64");
     await mkdir(bin, { recursive: true });
-    const fileVersion = layout.compilerVersions?.[version];
-    const program = fileVersion ? programNaming(fileVersion) : "MZ";
+    const productVersion = layout.compilerVersions?.[version];
+    const program = productVersion ? programNaming(productVersion) : "MZ";
     if (!layout.noCompiler?.includes(version)) await writeFile(path.join(bin, "cl.exe"), program);
   }
   for (const version of layout.sdks ?? []) {
@@ -281,13 +281,19 @@ async function windowsPc(layout: {
   return { probes, calls, instance, programFilesX86 };
 }
 
-/** A VS_FIXEDFILEINFO naming `fileVersion` (major.minor.build) as its file and product version. */
-function versionBlock(fileVersion: string, structVersion = 0x00010000): Buffer {
-  const [major = 0, minor = 0, build = 0] = fileVersion.split(".").map(Number);
+/** cl.exe's file version, which counts the compiler (19.x) where its product version counts the toolset (14.x). */
+const CL_FILE_VERSION = "19.44.35229";
+
+/** A VS_FIXEDFILEINFO naming `productVersion` and `fileVersion` (major.minor.build). */
+function versionBlock(productVersion: string, fileVersion = CL_FILE_VERSION, structVersion = 0x00010000): Buffer {
   const block = Buffer.alloc(52);
   block.writeUInt32LE(0xfeef04bd, 0);
   block.writeUInt32LE(structVersion, 4);
-  for (const at of [8, 16]) {
+  for (const [at, version] of [
+    [8, fileVersion],
+    [16, productVersion],
+  ] as const) {
+    const [major = 0, minor = 0, build = 0] = version.split(".").map(Number);
     block.writeUInt32LE(((major << 16) | minor) >>> 0, at);
     block.writeUInt32LE((build << 16) >>> 0, at + 4);
   }
@@ -298,13 +304,13 @@ function versionBlock(fileVersion: string, structVersion = 0x00010000): Buffer {
  * A Windows program as Microsoft's linker lays one out, cut short: its header, code in which the
  * signature's four bytes happen to stand, and the version block among its resources.
  */
-const programNaming = (fileVersion: string) =>
+const programNaming = (productVersion: string) =>
   Buffer.concat([
     Buffer.from("MZ"),
     Buffer.alloc(62),
-    versionBlock("1.2.3", 0),
+    versionBlock("1.2.3", "1.2.3", 0),
     Buffer.alloc(32),
-    versionBlock(fileVersion),
+    versionBlock(productVersion),
   ]);
 
 const vswhereAnswer = (vswhere: ((root: string) => string | Error) | undefined, instance: string) =>
@@ -357,8 +363,9 @@ describe("what this PC has, as the probes read it", () => {
     assert.deepEqual(await pc.probes.toolsets(pc.instance), ["14.44.35211", "14.38.33130"]);
   });
 
-  it("names a compiler by its cl.exe's own version, which Microsoft's updates raise in place, as UnrealBuildTool does", async () => {
-    // A real PC on 2026-11-07: the folder still says 14.44.35207 (which 5.8 bans) and cl.exe says 14.44.35229.
+  it("names a compiler by its cl.exe's own product version, which Microsoft's updates raise in place, as UnrealBuildTool does", async () => {
+    // A real PC on 2026-11-07: the folder still says 14.44.35207 (which 5.8 bans), cl.exe's product
+    // version says 14.44.35229 and its file version 19.44.35229.
     const pc = await windowsPc({
       toolsets: ["14.44.35207", "14.38.33130"],
       compilerVersions: { "14.44.35207": "14.44.35229" },
@@ -368,14 +375,14 @@ describe("what this PC has, as the probes read it", () => {
 
   const versionBlocks: Array<[string, Buffer, string | null]> = [
     ["a program with no version block", Buffer.from("MZ not a resource"), null],
-    ["the signature's bytes in code only", Buffer.concat([Buffer.from("MZ"), versionBlock("1.2.3", 0)]), null],
-    ["a block after the signature's bytes in code", programNaming("14.44.35229"), "14.44.35229"],
-    ["a block naming no version", versionBlock("0.0.0"), null],
-    ["a block cut short", versionBlock("14.44.35229").subarray(0, 12), null],
+    ["the signature's bytes in code only", Buffer.concat([Buffer.from("MZ"), versionBlock("1.2.3", "1.2.3", 0)]), null],
+    ["cl.exe's block, its product version, not its 19.x file version", programNaming("14.44.35229"), "14.44.35229"],
+    ["a block whose product version's major part is 0", versionBlock("0.44.35229"), null],
+    ["a block cut short before its product version ends", versionBlock("14.44.35229").subarray(0, 20), null],
   ];
   for (const [shape, program, version] of versionBlocks)
     it(`reads ${version ?? "no version"} from ${shape}`, () => {
-      assert.equal(fileVersionOf(program), version);
+      assert.equal(productVersionOf(program), version);
     });
 
   it("asks reg.exe by its full path for the .NET Framework SDKs under both registry views, as UnrealBuildTool looks", async () => {

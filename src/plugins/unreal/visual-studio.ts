@@ -9,8 +9,9 @@
  * the Windows SDK an engine builds with come from its own `Engine/Config/Windows/Windows_SDK.json`, as
  * UnrealBuildTool reads them: a toolset at least `MinimumVisualCppVersion` and outside
  * `BannedVisualCppVersions`, and an SDK from `MinVersion` to `MaxVersion`. A toolset's version is
- * its x64 `cl.exe`'s own file version, as UnrealBuildTool judges it: Microsoft's updates raise it in
- * place and leave the folder's name as it was. Every Win64 editor build
+ * its x64 `cl.exe`'s own product version, as UnrealBuildTool judges those two by: Microsoft's updates
+ * raise it in place and leave the folder's name as it was (the folder names only the
+ * `PreferredVisualCppVersions` family, which Genex doesn't judge by). Every Win64 editor build
  * also needs a .NET Framework SDK (4.6 or later): the engine's SwarmInterface module refuses the whole
  * build without one, and UnrealBuildTool finds it only through the registry's `NETFXSDK` keys.
  */
@@ -137,8 +138,10 @@ const SDK_VERSION = /^\d+\.\d+\.\d+\.\d+$/;
 const FIXED_FILE_INFO = Buffer.from([0xbd, 0x04, 0xef, 0xfe]);
 /** That block's own version, which the signature's other matches in a program lack. */
 const FIXED_FILE_INFO_VERSION = 0x00010000;
-/** The block's signature, its version and the two halves of the file version, 32 bits each. */
-const FIXED_FILE_INFO_BYTES = 16;
+/** Where the block's product version lies: after its signature, its own version and the file version. */
+const PRODUCT_VERSION_AT = 16;
+/** The block up to the product version's two halves, 32 bits each. */
+const FIXED_FILE_INFO_BYTES = 24;
 /** An x64 cl.exe is under a megabyte; a bigger file is not one to read whole. */
 const COMPILER_MAX_BYTES = 16 * 1024 * 1024;
 /** The oldest .NET Framework SDK UnrealBuildTool accepts. */
@@ -280,25 +283,26 @@ async function isFile(target: string): Promise<boolean> {
 }
 
 /**
- * The file version a Windows program's version block names, as UnrealBuildTool reads cl.exe's:
- * major.minor.build ("14.44.35229"); null without a block, or with one that names no version.
+ * The product version a Windows program's version block names, as UnrealBuildTool reads cl.exe's
+ * (ProductMajorPart.ProductMinorPart.ProductBuildPart, "14.44.35229"; its file version says 19.44);
+ * null without a block, or with one whose major part is 0, where UnrealBuildTool takes the folder's.
  */
-export function fileVersionOf(program: Buffer): string | null {
+export function productVersionOf(program: Buffer): string | null {
   for (let at = program.indexOf(FIXED_FILE_INFO); at >= 0; at = program.indexOf(FIXED_FILE_INFO, at + 1)) {
     if (at + FIXED_FILE_INFO_BYTES > program.length) return null;
     if (program.readUInt32LE(at + 4) !== FIXED_FILE_INFO_VERSION) continue;
-    const high = program.readUInt32LE(at + 8);
-    const low = program.readUInt32LE(at + 12);
-    if (high === 0) return null;
+    const high = program.readUInt32LE(at + PRODUCT_VERSION_AT);
+    const low = program.readUInt32LE(at + PRODUCT_VERSION_AT + 4);
+    if (high >>> 16 === 0) return null;
     return `${high >>> 16}.${high & 0xffff}.${low >>> 16}`;
   }
   return null;
 }
 
-/** A toolset's version: its cl.exe's own, or the folder's name when the file names none. */
+/** A toolset's version: its cl.exe's own product version, or the folder's name when the file names none. */
 async function compilerVersion(compiler: string, folderName: string): Promise<string> {
   const program = await readRegularFile(compiler, COMPILER_MAX_BYTES).catch(() => null);
-  return (program && fileVersionOf(program)) ?? folderName;
+  return (program && productVersionOf(program)) ?? folderName;
 }
 
 /** The names in a folder that match `shape`, kept when `keep` says so. */

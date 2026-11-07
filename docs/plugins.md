@@ -2513,8 +2513,8 @@ installed Xcode in range is the one to select instead). `get-xcode` opens only t
 Apple's downloads page (`{step: downloads}`) or the Xcode app the probes found. On Windows a game
 with a project has one row instead, Microsoft's C++ tools (`visual-studio.ts`): Microsoft's
 `vswhere.exe` lists Visual Studio's installs, a compiler counts with its x64 `cl.exe` (named by that
-file's own version, as UnrealBuildTool reads it: Microsoft's updates raise it and leave the folder's
-name) and a Windows SDK with its headers, each judged by the engine's own
+file's own product version, as UnrealBuildTool reads it: Microsoft's updates raise it and leave the
+folder's name) and a Windows SDK with its headers, each judged by the engine's own
 `Engine/Config/Windows/Windows_SDK.json` (`MinimumVisualCppVersion`, `BannedVisualCppVersions`, the
 SDK range), and a .NET Framework SDK (4.6 or later, which every Win64 editor build needs) counts by
 the registry's `NETFXSDK` keys, read with `reg.exe`. Install Visual Studio Build
