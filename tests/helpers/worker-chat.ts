@@ -110,14 +110,22 @@ export async function permissionRows(core: CoreLite["core"], threadId: string): 
   });
 }
 
-/** The ids of a thread's plugin consent cards still waiting for an answer, as the chat keeps them. */
+/**
+ * The ids of a thread's plugin consent cards still waiting for an answer, as the chat keeps them:
+ * an answer is a later row of the same card, so a card with one is left out.
+ */
 async function pendingConsents(core: CoreLite["core"], threadId: string): Promise<string[]> {
-  return (await core.store.listEvents(threadId)).flatMap((event) => {
+  const asked: string[] = [];
+  const answered = new Set<string>();
+  for (const event of await core.store.listEvents(threadId)) {
     const custom = customRecord(event.data);
-    const consent = custom?.payload as Partial<PluginConsentEvent> | undefined;
-    const waiting = custom?.event_type === CustomEvent.PluginConsent && consent?.state === "pending";
-    return waiting ? [String(consent.consentId)] : [];
-  });
+    if (custom?.event_type !== CustomEvent.PluginConsent) continue;
+    const { consentId, state } = custom.payload as Partial<PluginConsentEvent>;
+    if (!consentId) continue;
+    if (state === "pending") asked.push(consentId);
+    else answered.add(consentId);
+  }
+  return asked.filter((consentId) => !answered.has(consentId));
 }
 
 /** The seat's way to ask, when it has one. */
