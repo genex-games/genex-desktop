@@ -3,8 +3,9 @@ sword duel's fighters slid for hours while stills, a critic and the old slide de
 walked. The detector read the character's own mesh, which on a Motion Matching character is a hidden
 driver, so it never measured the fighters at all; and a still can't show a foot riding along with the
 body. The check reads the visible Body, and tells sliding (the stance foot moving with the body),
-pose pops, snap turns, montages stopped early, started over or stuck at their start, and hidden frames;
-a body that steps, swings a sword, turns at a turn's pace and lets go of a looping run is clean."""
+pose pops, snap turns, montages stopped early, started over or stuck at their start, hidden frames, and
+frames too far apart to read; a body that steps, swings a sword, turns at a turn's pace and lets go of a
+looping run is clean."""
 
 import json
 import math
@@ -97,10 +98,10 @@ class Sliding(unittest.TestCase):
         # The duel's fixed slash read 0.18 to 0.24 in Unreal, its bug 1.0.
         def glide(frame: dict) -> None:
             for side, (x, y, z) in frame['feet'].items():
-                frame['feet'][side] = (x + 0.3 * SPEED * frame['t'], y, z)
+                frame['feet'][side] = (x + 0.25 * SPEED * frame['t'], y, z)
         frames = walk(glide=glide)
         report = maths.report(frames)
-        self.assertAlmostEqual(report['slide']['ratio'], 0.3, delta=0.05)
+        self.assertAlmostEqual(report['slide']['ratio'], 0.25, delta=0.03)
         self.assertEqual(codes(report), [])
 
     def test_a_body_standing_still_is_not_measured_as_sliding(self) -> None:
@@ -121,6 +122,14 @@ class Sliding(unittest.TestCase):
         before, after = frames[:30], frames[42:]
         moving = maths.slide(before)['movingFrames'] + maths.slide(after)['movingFrames']
         self.assertEqual(maths.slide(before + after)['movingFrames'], moving)
+
+    def test_frames_too_far_apart_to_read_are_a_problem_never_a_clean_check(self) -> None:
+        # At 5 fps every step is longer than a slide or a pop is read over: read clean, a skate passed.
+        report = maths.report(walk(seconds=6.0, legs='skating')[::6])
+        self.assertEqual(report['slide']['movingFrames'], 0)
+        self.assertEqual(report['slowShare'], 1.0)
+        self.assertEqual((codes(report), report['verdict']), ([maths.SLOW_FRAMES], 'problems'))
+        self.assertEqual(maths.report(walk())['slowShare'], 0.0, 'none at 30 fps')
 
     def test_one_low_frame_a_foot_steps_down_into_leaves_the_slide_measured(self) -> None:
         frames = walk(legs='skating')
@@ -180,9 +189,17 @@ class Pops(unittest.TestCase):
         self.assertEqual([p['bones'] for p in report['pops']], [['hand_r', 'head', 'pelvis']])
         self.assertEqual(codes(report), [maths.POSE_POP])
 
-    def test_frames_too_far_apart_to_tell_a_jump_from_a_move_read_no_pops(self) -> None:
+    def test_frames_too_far_apart_to_tell_a_jump_from_a_move_read_no_pops_and_say_so(self) -> None:
         frames = walk()[::4]  # 7.5 fps
         frames[10]['bones']['hand_r'] = (60.0, 20.0, 30.0)
+        report = maths.report(frames)
+        self.assertEqual((report['pops'], codes(report)), ([], [maths.SLOW_FRAMES]))
+
+    def test_a_hand_that_snaps_out_and_back_a_third_of_a_second_later_reads_as_a_move(self) -> None:
+        # Back after more than POP_FLASH_S is a jab, not a flash; one bone that snaps and stays is a known gap.
+        frames = walk()
+        for frame in frames[40:50]:
+            frame['bones']['hand_r'] = (60.0, 20.0, 30.0)
         self.assertEqual(maths.report(frames)['pops'], [])
 
 
@@ -288,6 +305,15 @@ class Montages(unittest.TestCase):
         self.assertEqual([m['end'] for m in report['montages']], ['finished'] * 3 + ['loop-stopped'], report['montages'])
         self.assertEqual(codes(report), [])
 
+    def test_a_run_played_again_after_a_long_pause_and_let_go_mid_way_is_a_cut(self) -> None:
+        # More than LOOP_GAP_S between plays is no loop: each one is an attack of its own.
+        frames = walk(seconds=4.0, run=lambda f: None)
+        for i, frame in enumerate(frames[:109]):  # three plays 0.4 s apart, then one cut 0.23 s in
+            cycle = i % 34
+            frame['montages']['Mesh'] = ('AM_Run', cycle / FPS, 0.8, 0.2, 1.0) if cycle < 22 else None
+        report = maths.report(frames)
+        self.assertEqual([m['end'] for m in report['montages']], ['finished'] * 3 + ['cut'], report['montages'])
+
     def test_an_attack_pressed_again_whose_second_swing_is_cut_is_a_cut(self) -> None:
         frames = walk(slash=montage('AM_Slash', 10, 42, 1.2))
         for i, frame in enumerate(frames[42:50]):  # pressed again, then hit 0.27 s in
@@ -299,8 +325,10 @@ class Montages(unittest.TestCase):
         self.assertIn(maths.CUT_MONTAGE, codes(report))
 
     def test_a_slow_montage_and_one_with_a_long_frame_are_not_stuck(self) -> None:
-        slow = walk(slow=montage('AM_Bow', 5, 35, 2.0, rate=0.2))  # a bow at a fifth of its pace, 1 s
-        self.assertNotEqual(maths.report(slow)['montages'][0]['end'], 'stuck')
+        for rate, stop in ((0.2, 35), (0.1, 32)):  # a bow at a fifth of its pace for 1 s, a tenth for 0.9 s
+            with self.subTest(rate=rate):
+                slow = walk(slow=montage('AM_Bow', 5, stop, 2.0, rate=rate))
+                self.assertNotEqual(maths.report(slow)['montages'][0]['end'], 'stuck')
         frames = walk(late=lambda f: None)
         for frame in frames[30:]:
             frame['t'] += 0.4  # one long frame after frame 29: a shot's stall
@@ -319,6 +347,11 @@ class Montages(unittest.TestCase):
         run = report['montages'][0]
         self.assertEqual((run['end'], run['heldS']), ('stuck', round(79 / FPS, 2)))
         self.assertEqual(codes(report), [maths.STUCK_MONTAGE])
+
+    def test_a_montage_paused_at_its_start_is_stuck(self) -> None:
+        frames = walk(paused=montage('AM_Draw', 5, 40, 1.0, rate=0.0))
+        run = maths.report(frames)['montages'][0]
+        self.assertEqual((run['end'], run['heldS']), ('stuck', round(34 / FPS, 2)))
 
     def test_a_montage_held_at_its_end_is_not_stuck(self) -> None:
         frames = walk(rest=lambda f: None)

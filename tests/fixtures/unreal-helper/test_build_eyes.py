@@ -255,15 +255,58 @@ class Strips(PlayCase):
         self.assertAlmostEqual(times[1] - times[0], 0.06, places=2)
         self.assertEqual(unreal.state['time_dilation'], 1.0)
 
+    def settle(self, index: int) -> None:
+        """Frame `index` lands, and the world frame the game stays held after it passes."""
+        self.land(index)
+        self.tick(game=0.03, wall=0.03)
+        self.tick(game=0.03, wall=0.03)
+
     def test_a_slow_motion_the_game_sets_while_a_frame_is_taken_is_kept(self) -> None:
         tool('motion_strip', 2, 0.05)
         self.tick(game=0.02, wall=0.02)
         unreal.state['time_dilation'] = 0.3  # a hit's slow motion, set by the game meanwhile
-        self.land(0)
-        self.tick(game=0.03, wall=0.03)
+        self.settle(0)
         self.assertEqual(unreal.state['time_dilation'], 0.3)
         unreal.state['pie'] = False
         self.tick()  # the play ends, and the strip with it
+
+    def test_a_slow_motion_the_game_had_before_a_frame_is_given_back(self) -> None:
+        unreal.state['time_dilation'] = 0.5
+        tool('motion_strip', 2, 0.05)
+        self.tick(game=0.02, wall=0.02)
+        self.assertEqual(unreal.state['time_dilation'], shots.FREEZE_DILATION)
+        self.settle(0)
+        self.assertEqual(unreal.state['time_dilation'], 0.5)
+        unreal.state['pie'] = False
+        self.tick()
+
+    def test_a_game_that_cannot_be_slowed_as_far_is_held_as_far_as_it_goes_then_given_back(self) -> None:
+        # A world whose least time dilation is raised clamps the freeze: read back, it is still the strip's.
+        unreal.state['min_time_dilation'] = 0.01
+        tool('motion_strip', 2, 0.05)
+        self.tick(game=0.02, wall=0.02)
+        self.assertEqual(unreal.state['time_dilation'], 0.01)
+        self.settle(0)
+        self.assertEqual(unreal.state['time_dilation'], 1.0)
+        unreal.state['pie'] = False
+        self.tick()
+
+    def test_a_hold_runs_its_game_seconds_however_long_the_frames_hold_the_game(self) -> None:
+        # Held, the game barely moves while the wall clock runs on: a cap that counted those seconds let go of
+        # a key held for 2 game seconds once two frames had taken 10 s each to land.
+        self.assertIn('held', json.loads(GenexPlayTools.hold('W', 1.0, 0.0, 2.0)))
+        tool('motion_strip', 2, 0.5)
+        for index in range(2):
+            self.tick(game=0.5, wall=0.5)  # a frame asked, the game held
+            self.tick(game=0.0, wall=10.0)
+            self.settle(index)
+        self.assertEqual(json.loads(GenexPlayTools.player_state())['held'], ['W'])
+        # Not held, the cap counts on: 4 x 2 s + 10 s of wall clock in all.
+        for _ in range(18):
+            self.tick(game=0.0, wall=1.0)
+        self.assertEqual(json.loads(GenexPlayTools.player_state())['held'], [])
+        play.release_all()
+        self.tick()  # one frame after the play's own watch ends, so no tick outlives the test
 
     def test_a_frame_that_never_lands_ends_the_strip_with_why(self) -> None:
         answer = tool('motion_strip', 2, 0.5)

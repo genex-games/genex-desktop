@@ -1,7 +1,8 @@
 """The arithmetic of motion_check (genex_build.motion_check), free of the engine: from a character's
 visible body read every frame of a play, how far its planted feet slide while it travels, the frames
 its pose jumps (a pop), the frames it turns in one snap, the montages that stopped well before their
-end, started over or stayed at their start, and the frames it was hidden or a ragdoll.
+end, started over or stayed at their start, and the frames it was hidden or a ragdoll. Frames too far
+apart to read slides and pops from are a problem of their own, never a clean check.
 
 A frame is a dict: t (game seconds), root (x, y, z), yaw (the body's facing, degrees; None when
 its pose shows none), feet
@@ -26,7 +27,7 @@ FLOOR_SHARE = 0.1
 # Feet slide when, over the frames the body travels, the slowest foot on the ground moves at least
 # this share of the body's speed (median): a stepping foot stands still while the body passes over it,
 # and a lunge's front foot glides a little.
-SLIDE_MAX = 0.35
+SLIDE_MAX = 0.30
 # A frame whose grounded foot moves at least this share of the body's speed is a sliding frame.
 SLIDING_FRAME = 0.5
 # Steps longer than this (s) are not read for sliding: a stride's stance changes inside one, so a
@@ -66,14 +67,18 @@ RESTART_BACK_S = 0.05
 RESTART_START_S = 0.1
 # A montage that began near its start (within RESTART_START_S, plus a frame's play) and, active for
 # STUCK_S or longer, moved on less than STUCK_SHARE of what its rate plays in that time is stuck:
-# something plays it again every frame, or it is paused.
+# something plays it again every frame, or it is paused (its rate 0, counted as 1).
 STUCK_S = 0.5
 STUCK_SHARE = 0.2
 # A montage that played through at least LOOP_CYCLES times in a row (again within LOOP_GAP_S of its
 # last stretch, with nothing between) loops: one stopped mid-way after that is a run let go, not a cut.
-# Two plays in a row are an attack pressed again, whose second swing can still be cut.
+# Two plays in a row are an attack pressed again, whose second swing can still be cut; a third press
+# cut short reads as a loop let go.
 LOOP_CYCLES = 2
 LOOP_GAP_S = 0.3
+# A check most of whose steps are longer than POP_STEP_S (under about 10 fps) reads too few of them for
+# pops, and under about 7 fps for slides: it says so, never clean.
+SLOW_SHARE = 0.5
 # The fewest frames a check reports on, and the most it lists of each kind.
 MIN_FRAMES = 10
 MAX_LISTED = 12
@@ -85,7 +90,8 @@ CUT_MONTAGE = 'cut-montage'
 RESTARTED_MONTAGE = 'restarted-montage'
 STUCK_MONTAGE = 'stuck-montage'
 HIDDEN = 'hidden'
-PROBLEMS = (SLIDING, POSE_POP, SNAP_TURN, CUT_MONTAGE, RESTARTED_MONTAGE, STUCK_MONTAGE, HIDDEN)
+SLOW_FRAMES = 'slow-frames'
+PROBLEMS = (SLIDING, POSE_POP, SNAP_TURN, CUT_MONTAGE, RESTARTED_MONTAGE, STUCK_MONTAGE, HIDDEN, SLOW_FRAMES)
 
 MESSAGE = {
     SLIDING: ('the feet slide: while the body travels, its planted foot moves at {ratio:.0%} of the body\'s speed '
@@ -97,6 +103,8 @@ MESSAGE = {
     STUCK_MONTAGE: ('a montage stays at its start for {held:.1f} s (first {montage} at {t:.2f} s): something plays '
                     'it again every frame, or it is paused'),
     HIDDEN: 'the body is hidden in {count} frames (first at {t:.2f} s)',
+    SLOW_FRAMES: ('the frames came too far apart to read: {share:.0%} of them more than {pop:.2f} s apart, where pops '
+                  'are read up to {pop:.2f} s and slides up to {slide:.2f} s; check again while the editor runs faster'),
     'few': 'Only {count} frames were read; a check needs at least {least}. Check a longer stretch.',
 }
 
@@ -239,7 +247,7 @@ def _short(run: dict) -> bool:
 def _cycles(before, frame: dict, name: str) -> int:
     """How many times in a row the montage `name` played through up to `frame`: one more than the stretch
     `before` when that was the same montage, played to its end, with nothing between and no long gap."""
-    follows = before is not None and before['montage'] == name and before['then'] in (None, name)
+    follows = before is not None and before['montage'] == name
     if not follows or _short(before) or frame['t'] - before['last'] > LOOP_GAP_S:
         return 0
     return before['cycles'] + 1
@@ -283,8 +291,9 @@ def _stuck(run: dict) -> bool:
     """Whether a montage stayed at its start while active for STUCK_S or longer: it began near its start
     and moved on less than STUCK_SHARE of what its rate plays in that time."""
     held = run['last'] - run['at']
-    began_near = run['from'] <= RESTART_START_S + run['rate'] * run['step']
-    barely_moved = run['played'] - run['from'] < STUCK_SHARE * run['rate'] * held
+    rate = run['rate'] or 1.0
+    began_near = run['from'] <= RESTART_START_S + rate * run['step']
+    barely_moved = run['played'] - run['from'] < STUCK_SHARE * rate * held
     return run['length'] >= MIN_MONTAGE_S and held >= STUCK_S and began_near and barely_moved
 
 
@@ -319,15 +328,23 @@ def montages(frames: list) -> list:
     return listed
 
 
+def slow_share(frames: list) -> float | None:
+    """The share of the steps both frames count that are too long to read pops from; None without one."""
+    steps = [dt for a, b, dt in _steps(frames) if _counted(a) and _counted(b)]
+    return round(sum(1 for dt in steps if dt > POP_STEP_S) / len(steps), 2) if steps else None
+
+
 def flagged(frames: list, flag: str) -> dict:
     """{frames, firstAt} of the frames with a flag set (hidden, ragdoll)."""
     marked = [frame['t'] for frame in frames if frame.get(flag)]
     return {'frames': len(marked), 'firstAt': round(marked[0], 3) if marked else None}
 
 
-def _problems(sliding: dict, popped: list, snaps: list, played: list, hidden: dict) -> list:
+def _problems(sliding: dict, popped: list, snaps: list, played: list, hidden: dict, slow: float | None) -> list:
     """The problems found, each {code, detail}."""
     found = []
+    if slow is not None and slow > SLOW_SHARE:
+        found.append((SLOW_FRAMES, MESSAGE[SLOW_FRAMES].format(share=slow, pop=POP_STEP_S, slide=SLIDE_STEP_S)))
     if sliding['sliding']:
         found.append((SLIDING, MESSAGE[SLIDING].format(ratio=sliding['ratio'], most=SLIDE_MAX)))
     if popped:
@@ -360,11 +377,11 @@ def report(frames: list) -> dict:
     seconds = frames[-1]['t'] - frames[0]['t']
     travel = sum(math.hypot(b['root'][0] - a['root'][0], b['root'][1] - a['root'][1]) for a, b, _dt in _steps(frames))
     sliding, popped, snaps, played = slide(frames), pops(frames), snap_turns(frames), montages(frames)
-    hidden, ragdoll = flagged(frames, 'hidden'), flagged(frames, 'ragdoll')
-    problems = _problems(sliding, popped, snaps, played, hidden)
+    hidden, ragdoll, slow = flagged(frames, 'hidden'), flagged(frames, 'ragdoll'), slow_share(frames)
+    problems = _problems(sliding, popped, snaps, played, hidden, slow)
     return {'seconds': round(seconds, 2), 'frames': len(frames),
             'fps': round((len(frames) - 1) / seconds, 1) if seconds > 0 else None,
             'travelM': round(travel / 100.0, 2),
             'slide': sliding, 'pops': popped[:MAX_LISTED], 'snapTurns': snaps[:MAX_LISTED],
-            'montages': played[:MAX_LISTED * 2], 'hidden': hidden, 'ragdoll': ragdoll,
+            'montages': played[:MAX_LISTED * 2], 'hidden': hidden, 'ragdoll': ragdoll, 'slowShare': slow,
             'problems': problems, 'verdict': 'problems' if problems else 'clean'}

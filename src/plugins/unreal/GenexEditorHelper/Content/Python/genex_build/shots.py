@@ -21,10 +21,11 @@ asked for once the last one is on disk. Meanwhile the game is held all but still
 dilation at FREEZE_DILATION): a shot is drawn a frame or more after it is asked for, and the frame
 after a shot's stall moved the game up to 0.4 s on (Unreal's longest frame), so on a sword duel a
 0.05 s burst came out 0.02 to 0.42 s apart and a picture showed the fighter 2 m past its pose; it
-stays held SETTLE_FRAMES frames after the file lands, past the long frame that can follow. A
-time dilation the game sets meanwhile (a hit's slow motion) is kept. While a shot settles the
-editor's "Use Less CPU when in Background" is lifted, and given back afterwards, so a Genex window in
-front doesn't starve Lumen.
+stays held SETTLE_FRAMES world frame after the one the file is seen on disk in, past the long frame
+that can follow. A time dilation the game sets meanwhile (a hit's slow motion) is kept, and the
+game-time waits' wall caps (holds, walks, a motion check) pause while it is held. While a shot
+settles the editor's "Use Less CPU when in Background" is lifted, and given back afterwards, so a
+Genex window in front doesn't starve Lumen.
 """
 
 import json
@@ -53,9 +54,9 @@ STRIP_PREFIX = 'strip-'
 # The time dilation that holds the game all but still while a strip frame is drawn and written:
 # Unreal's least by default (WorldSettings.MinGlobalTimeDilation).
 FREEZE_DILATION = 0.0001
-# The game stays held this many frames after a frame lands: the frame that follows a shot's write can
-# be long, and let go at once the game jumped 0.3 to 0.4 s on in it.
-SETTLE_FRAMES = 2
+# The game stays held for this many world frames after the one its frame is seen on disk in: the frame
+# that follows a shot's write can be long, and let go at once the game jumped 0.3 to 0.4 s on in it.
+SETTLE_FRAMES = 1
 # How long one strip frame may take to land on disk before the strip gives up on it.
 FRAME_WAIT_S = 15.0
 # How long after its delay a still may take before the throttle is given back anyway.
@@ -271,24 +272,36 @@ def capture_play(name: str, width: int, height: int) -> dict:
     return {'queued': True, 'file': file, 'width': size[0], 'height': size[1], **taken}
 
 
-def _hold_still() -> float | None:
-    """Holds the play's game all but still; the time dilation it had, or None when it couldn't be set."""
+def _same(a: float, b: float) -> bool:
+    return abs(a - b) <= FREEZE_DILATION / 2
+
+
+def _hold_still() -> tuple | None:
+    """Holds the play's game all but still; (the time dilation it had, the one it holds at), or None when
+    it couldn't be set. The held one is read back: a game whose least time dilation is raised holds there."""
     try:
         world = play.game_world()
         before = float(unreal.GameplayStatics.get_global_time_dilation(world))
         unreal.GameplayStatics.set_global_time_dilation(world, FREEZE_DILATION)
-        return before
+        held = float(unreal.GameplayStatics.get_global_time_dilation(world))
+        if held >= before or _same(held, before):  # it can't be slowed any further
+            unreal.GameplayStatics.set_global_time_dilation(world, before)
+            return None
     except Exception:  # noqa: BLE001 - a play without the setting runs on, its frames timed as they come
         return None
+    play.hold_still(True)
+    return before, held
 
 
-def _let_go(before: float | None) -> None:
+def _let_go(hold: tuple | None) -> None:
     """Gives the game the time dilation it had, unless the game set one of its own meanwhile."""
-    if before is None:
+    if hold is None:
         return
+    before, held = hold
+    play.hold_still(False)
     try:
         world = play.game_world()
-        if abs(float(unreal.GameplayStatics.get_global_time_dilation(world)) - FREEZE_DILATION) < FREEZE_DILATION / 2:
+        if _same(float(unreal.GameplayStatics.get_global_time_dilation(world)), held):
             unreal.GameplayStatics.set_global_time_dilation(world, before)
     except Exception:  # noqa: BLE001 - the play ended, and its world with it
         pass
@@ -303,10 +316,11 @@ class _Strip:
         self.poses_file = os.path.join(folder, f'{stem}.json')
         self.interval, self.due = interval, start
         self.poses: list = []
-        # (file, wall time asked) of the frame being taken, and the time dilation the game had before it.
+        # (file, wall time asked) of the frame being taken, and (the time dilation the game had before it,
+        # the one it is held at).
         self.waiting: tuple | None = None
-        self.before: float | None = None
-        # Frames the game stays held after the last frame landed.
+        self.hold: tuple | None = None
+        # Frames the game stays held after the one the last frame was seen landing in.
         self.settle = 0
         self.owed = False
         self.done = False
@@ -318,18 +332,19 @@ class _Strip:
         record = {'frames': self.poses, 'files': self.files[:len(self.poses)], 'intervalS': self.interval}
         if why:
             record['error'] = why
-        _let_go(self.before)
-        self.before = None
+        _let_go(self.hold)
+        self.hold = None
         with open(self.poses_file, 'w', encoding='utf-8') as handle:
             json.dump(record, handle)
         give_back_throttle(self.owed)
         return False
 
-    def step(self, game_now: float, wall_now: float) -> bool:
+    def step(self, game_now: float, _wall_now: float) -> bool:
         if self.waiting is not None:
             file, asked = self.waiting
             landed = os.path.exists(file) and os.path.getsize(file) > 0
-            if not landed and wall_now - asked > FRAME_WAIT_S:
+            # The real wall clock: the caps' one stands still while the game is held.
+            if not landed and time.monotonic() - asked > FRAME_WAIT_S:
                 return self.finish(f'frame {len(self.poses) - 1} never landed')
             if not landed:
                 return True
@@ -337,10 +352,9 @@ class _Strip:
             self.settle = SETTLE_FRAMES
         if self.settle:
             self.settle -= 1
-            if self.settle:
-                return True
-            _let_go(self.before)
-            self.before = None
+            return True
+        _let_go(self.hold)
+        self.hold = None
         if len(self.poses) == len(self.files):
             return self.finish()
         if game_now < self.due:
@@ -348,8 +362,8 @@ class _Strip:
         index = len(self.poses)
         self.poses.append(pose())
         capture.console_shot(self.files[index], *STRIP_SIZE)
-        self.before = _hold_still()
-        self.waiting = (self.files[index], wall_now)
+        self.hold = _hold_still()
+        self.waiting = (self.files[index], time.monotonic())
         self.due = game_now + self.interval
         return True
 

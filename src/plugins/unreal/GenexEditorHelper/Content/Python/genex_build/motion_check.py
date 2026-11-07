@@ -11,7 +11,8 @@ falling. Background CPU throttling is lifted meanwhile, so a check behind anothe
 a few frames a second. When
 the time is up (or the play ends) it writes its report to <project>/Saved/Genex/captures/<check>.json
 (motion_check_math reads the frames): planted feet sliding while the body travels, pose pops, snap
-turns, montages stopped early, started over or stuck at their start, hidden and ragdoll frames. Start the move first (a
+turns, montages stopped early, started over or stuck at their start, hidden and ragdoll frames, and frames too far
+apart to read. Start the move first (a
 pilot, hold, walk_to), then call this; several characters can be checked at once.
 """
 

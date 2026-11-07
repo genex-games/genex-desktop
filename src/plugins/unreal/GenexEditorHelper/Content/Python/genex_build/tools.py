@@ -214,8 +214,9 @@ class GenexBuildTools(unreal.ToolsetDefinition):
         on the body the player sees (a Motion Matching character's Body, never its driver): whether
         its planted feet slide while it travels, frames its pose jumps (pops), snap turns, montages
         that stop well before their end, start over or stay at their start, and frames it is hidden
-        or a ragdoll. Start the move first (a pilot, hold, walk_to), then call this; several characters
-        can be checked at once. The report comes back with the answer once the time is up.
+        or a ragdoll; frames too far apart to read (under about 10 fps) are a problem of their own.
+        Start the move first (a pilot, hold, walk_to), then call this; several characters can be
+        checked at once. The report comes back with the answer once the time is up.
 
         Args:
             target: The character's actor label or name (or part of it: the closest match wins);

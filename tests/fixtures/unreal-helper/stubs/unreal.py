@@ -19,7 +19,8 @@ UBT for `Module Recompile`); the editor's log folder is the project's Saved/Logs
 The play world's game clock is `state['game_seconds']` and its last frame's delta
 `state['world_delta']`, its real-time clock (which runs on while the game is paused)
 `state['real_seconds']`, its global time dilation `state['time_dilation']` (a test that advances the
-game clock scales its step by it); a test advances them itself. Slate post-tick callbacks are kept in
+game clock scales its step by it; set it is clamped to at least `state['min_time_dilation']`); a test
+advances them itself. Slate post-tick callbacks are kept in
 `state['ticks']` (handle: callback), so a test runs a frame by calling each. The valid key names
 are `state['keys']`.
 
@@ -50,7 +51,7 @@ def reset(project_dir: str) -> None:
                   'camera': None, 'cvars': {}, 'registry': [], 'classes': {},
                   'mode_override': None, 'default_mode': '', 'dirty': [], 'imports': {}, 'loaded': {},
                   'import_tasks': [], 'game_seconds': 0.0, 'real_seconds': 0.0, 'world_delta': 0.0, 'ticks': {},
-                  'time_dilation': 1.0,
+                  'time_dilation': 1.0, 'min_time_dilation': 0.0001,
                   'control_rotation': Rotator(), 'nav_path': None, 'nav_queries': [],
                   'keys': {'W', 'A', 'S', 'D', 'SpaceBar', 'Gamepad_LeftX'}, 'pictures': {},
                   'viewport_size': (1280, 720)})
@@ -1377,8 +1378,8 @@ class GameplayStatics:
 
     @staticmethod
     def set_global_time_dilation(world_context_object, time_dilation: float) -> None:
-        # Unreal clamps it to the world's MinGlobalTimeDilation and MaxGlobalTimeDilation (0.0001 and 20).
-        state['time_dilation'] = min(max(float(time_dilation), 0.0001), 20.0)
+        # Unreal clamps it to the world's MinGlobalTimeDilation and MaxGlobalTimeDilation (0.0001 and 20 by default).
+        state['time_dilation'] = min(max(float(time_dilation), state['min_time_dilation']), 20.0)
 
     @staticmethod
     def set_game_paused(world_context_object, paused: bool) -> bool:
