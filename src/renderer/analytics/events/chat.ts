@@ -92,6 +92,7 @@ export const ChatEvent = {
   ModelPicked: "model_picked",
   ModelSettingsChanged: "model_settings_changed",
   ModelPickReplaced: "model_pick_replaced",
+  ModelListReread: "model_list_reread",
   ChatSignInNeeded: "chat_sign_in_needed",
   SignInCardAction: "sign_in_card_action",
   GenexNoticeShown: "genex_notice_shown",
@@ -294,7 +295,10 @@ export type ChatEventProperties = {
     after_failure: boolean;
   };
   [ChatEvent.ModelSettingsChanged]: { setting: ModelSetting; effort?: string };
-  [ChatEvent.ModelPickReplaced]: { engine: EngineRef; reason: ModelReplaced };
+  /** `listed_again`: a second listing of the provider's models left the pick out too. */
+  [ChatEvent.ModelPickReplaced]: { engine: EngineRef; reason: ModelReplaced; listed_again: boolean };
+  /** A provider's list left out a chat's saved pick, so its models are listed again before the pick counts as gone. */
+  [ChatEvent.ModelListReread]: { engine: EngineRef };
   [ChatEvent.ChatSignInNeeded]: { engine: EngineRef; from: SignInFrom };
   [ChatEvent.SignInCardAction]: { action: SignInAction; engine: EngineRef };
   /** The blue Genex notice came up: what Genex needs, the engine it offered instead (null: none) and how many plans are connected. */

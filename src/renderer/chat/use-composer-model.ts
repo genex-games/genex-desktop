@@ -24,7 +24,9 @@ import {
 } from "../model-choices.ts";
 import { openingRoles, presetRoles, readStoredRoles, storeRoles } from "../role-store.ts";
 import { readJson, safeStorage, STORAGE_KEYS, storageKeyFor, type KeyValueStorage } from "../storage.ts";
-import { useModelPicker } from "../state/hooks.ts";
+import { useEngines, useModelPicker } from "../state/hooks.ts";
+import { REREAD_UNAVAILABLE } from "../state/engines.ts";
+import { studio } from "../state/studio.ts";
 import { rememberChatEffort, rememberChatModel, storedChatEffort, storedChatModel } from "../stored-model.ts";
 import type { EngineDescriptor, ThreadMeta } from "../types.ts";
 import { ThreadKind } from "../../shared/event-log.ts";
@@ -140,13 +142,14 @@ function rolePicks(
   view: RoleView,
   roles: RoleRecord | null,
   engines: readonly EngineDescriptor[] = [],
+  rereads: Rereads = {},
 ): RoleRecord | null {
   if (!view.rolesApply) return null;
   if (!roles || !view.selectedEngine) return null;
   const next = normalizeRoles(view.selectedEngine.id, roles);
   if (!next) return null;
   next.planner = parseModelKey(view.selected).model || undefined;
-  const offered = withoutDroppedModels(next, view, engines);
+  const offered = withoutDroppedModels(next, view, { engines, rereads });
   return withRoleEfforts(offered, view.choices, view.selectedEngine.id, null);
 }
 
@@ -156,14 +159,14 @@ function rolePicks(
  * and no worker or reviewer may be hired onto a model that is gone. A provider that is signed out
  * or not listed keeps its job, where the sign-in is asked for.
  */
-function withoutDroppedModels(roles: RoleRecord, view: RoleView, engines: readonly EngineDescriptor[]): RoleRecord {
+function withoutDroppedModels(roles: RoleRecord, view: RoleView, listings: Listings): RoleRecord {
   const engine = view.selectedEngine?.id;
   if (!engine) return roles;
   const dropped = HELPER_ROLES.filter((role) => {
     const provider = roles.engines?.[role] ?? engine;
-    const listed = engines.some((candidate) => candidate.id === provider);
+    const listed = listings.engines.some((candidate) => candidate.id === provider);
     const choice = resolveChoice(view.choices, keyOf(provider, roles[role] ?? ""));
-    return listed && noLongerOffered(choice, view.choices, engines);
+    return listed && noLongerOffered(choice, view.choices, listings);
   });
   if (!dropped.length) return roles;
   const preset = presetRoles(engine, roles.planner, view.choices);
@@ -187,24 +190,91 @@ export function effectiveRoles(
     : null;
 }
 
+/** Engine id → the catalog revision a re-read of its models was asked at (`state/engines.ts`). */
+export type Rereads = Readonly<Record<string, number>>;
+
+/** The engines as main describes them, and which of them listed their models again. */
+interface Listings {
+  engines: readonly EngineDescriptor[];
+  rereads: Rereads;
+}
+
 /**
  * A saved pick its provider no longer offers (a model the plan dropped, a provider gone), known for
- * sure: the provider is ready with a fresh model list, or not there at all. The chat then opens on a
- * model that runs instead, and the picker, the panel and the send all name that one. A pick whose
- * provider is still reading its models, or is signed out (the sign-in is asked for), stays.
+ * sure: the provider is ready with a fresh model list that left it out twice (`listedAgain`), or
+ * is not there at all. The chat then opens on a model that runs instead, and the picker, the panel
+ * and the send all name that one. A pick whose provider is still reading its models, or is signed
+ * out (the sign-in is asked for), stays.
  */
 function noLongerOffered(
   choice: ModelChoice | undefined,
   choices: readonly ModelChoice[],
-  engines: readonly EngineDescriptor[],
+  listings: Listings,
 ): boolean {
-  if (!choice || choices.includes(choice) || !engines.length) return false;
+  if (!choice || choices.includes(choice) || !listings.engines.length) return false;
+  const engine = parseModelKey(choice.key).engine;
+  if (!listings.engines.some((candidate) => candidate.id === engine)) return true;
+  const missing = listingWithout(choice, choices, listings.engines);
+  return missing !== undefined && listedAgain(missing, listings.rereads);
+}
+
+/**
+ * The ready provider whose fresh, complete list leaves a saved pick out; undefined while the pick
+ * is listed, its provider is not ready, or its list is loading, stale or failed (it may still name it).
+ */
+function listingWithout(
+  choice: ModelChoice | undefined,
+  choices: readonly ModelChoice[],
+  engines: readonly EngineDescriptor[],
+): EngineDescriptor | undefined {
+  if (!choice || choices.includes(choice)) return undefined;
   const engine = engines.find((candidate) => candidate.id === parseModelKey(choice.key).engine);
-  if (!engine) return true;
-  if (engine.status.code !== EngineStatusCode.Ready) return false;
-  // Only a fresh, complete list proves a model gone; a loading, stale or failed one may still name it.
+  if (engine?.status.code !== EngineStatusCode.Ready) return undefined;
   const catalog = engine.catalog;
-  return !catalog || (catalog.state === ModelCatalogState.Ready && !catalog.refreshing);
+  const settled = !catalog || (catalog.state === ModelCatalogState.Ready && !catalog.refreshing);
+  return settled ? engine : undefined;
+}
+
+/**
+ * Has the provider listed its models again since a pick went missing from its list: one listing
+ * is not proof, since a first one after launch can be partial (OpenCode lists its built-in catalog
+ * while its cached one is missing). A provider with no catalog revisions is taken at its word.
+ */
+function listedAgain(engine: EngineDescriptor, rereads: Rereads): boolean {
+  const asked = rereads[engine.id];
+  if (!engine.catalog) return true;
+  return asked !== undefined && engine.catalog.revision > asked;
+}
+
+/**
+ * The providers to ask for their models again (`EnginesStore.reread`): ready ones whose fresh list
+ * leaves out the chat's pick or one of its workers' or reviewers' models, not asked yet this run,
+ * each with the catalog revision the missing pick was seen at.
+ */
+export function rereadsWanted(input: {
+  engines: readonly EngineDescriptor[];
+  choices: ModelChoice[];
+  keys: ReadonlyArray<string | null>;
+  rereads: Rereads;
+}): Array<{ engine: string; revision: number }> {
+  const wanted = new Map<string, number>();
+  for (const key of input.keys) {
+    if (!key) continue;
+    const engine = listingWithout(resolveChoice(input.choices, key), input.choices, input.engines);
+    if (!engine?.catalog || input.rereads[engine.id] !== undefined) continue;
+    wanted.set(engine.id, engine.catalog.revision);
+  }
+  return [...wanted].map(([engine, revision]) => ({ engine, revision }));
+}
+
+/** The keys a chat's picks name: its own model, and its workers' and reviewers' on their providers. */
+export function pickedKeys(modelKey: string | null, roles: RoleRecord | null, engine: string | undefined): string[] {
+  const own = modelKey ? [modelKey] : [];
+  if (!roles || !engine) return own;
+  const helpers = HELPER_ROLES.flatMap((role) =>
+    roles[role] ? [keyOf(roles.engines?.[role] ?? engine, roles[role] ?? "")] : [],
+  );
+  return [...own, ...helpers];
 }
 
 /**
@@ -216,11 +286,13 @@ export function pickReplaced(input: {
   choices: ModelChoice[];
   modelKey: string | null;
   selected: string | null;
+  rereads?: Rereads;
 }): ModelReplaced | null {
   const { engines, choices, modelKey, selected } = input;
   if (!modelKey || selected === null) return null;
   const resolved = resolveChoice(choices, modelKey);
-  if (!noLongerOffered(resolved, choices, engines) || resolved?.key === selected) return null;
+  const listings = { engines, rereads: input.rereads ?? {} };
+  if (!noLongerOffered(resolved, choices, listings) || resolved?.key === selected) return null;
   const engine = parseModelKey(modelKey).engine;
   return engines.some((candidate) => candidate.id === engine) ? ModelReplaced.ModelDropped : ModelReplaced.ProviderGone;
 }
@@ -242,16 +314,41 @@ function trackModelPick(pick: {
   track(AnalyticsEvent.ModelPicked, modelPickedProperties(chatMemory, picked, Date.now()));
 }
 
-/** A saved pick swapped without a word to the person, counted once per chat and pick. */
-function useReplacedPick(threadId: string | undefined, modelKey: string | null, replaced: ModelReplaced | null): void {
+/**
+ * A saved pick swapped without a word to the person, counted once per chat and pick, and whether a
+ * second listing of its provider's models left it out too (false: the provider could not list again).
+ */
+function useReplacedPick(
+  threadId: string | undefined,
+  modelKey: string | null,
+  replaced: ModelReplaced | null,
+  rereads: Rereads,
+): void {
   const counted = useRef<string | null>(null);
   useEffect(() => {
     if (!replaced || !modelKey) return;
     const mark = `${threadId}\n${modelKey}`;
     if (counted.current === mark) return;
     counted.current = mark;
-    track(AnalyticsEvent.ModelPickReplaced, { engine: engineRef(parseModelKey(modelKey).engine), reason: replaced });
-  }, [threadId, modelKey, replaced]);
+    const engine = parseModelKey(modelKey).engine;
+    const asked = rereads[engine];
+    track(AnalyticsEvent.ModelPickReplaced, {
+      engine: engineRef(engine),
+      reason: replaced,
+      listed_again: asked !== undefined && asked !== REREAD_UNAVAILABLE,
+    });
+  }, [threadId, modelKey, replaced, rereads]);
+}
+
+/** Asks each provider whose list left out a saved pick to list its models again (once per run). */
+function useRereadMissingPicks(wanted: Array<{ engine: string; revision: number }>): void {
+  const signature = wanted.map(({ engine, revision }) => `${engine}@${revision}`).join(" ");
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the signature names every wanted re-read
+  useEffect(() => {
+    for (const { engine, revision } of wanted)
+      if (studio().engines.reread(engine, revision))
+        track(AnalyticsEvent.ModelListReread, { engine: engineRef(engine) });
+  }, [signature]);
 }
 
 /** Everything the composer derives from the engines and the chat's own picks (roles and effort). */
@@ -262,10 +359,14 @@ export function resolveComposerModel(input: {
   modelKey: string | null;
   effort: string | null;
   roles?: RoleRecord | null;
+  /** Which providers listed their models again since a pick went missing (`EnginesStore.reread`). */
+  rereads?: Rereads;
 }): ComposerModelView {
   const choices = [...(input.choices ?? toChoices(input.engines))];
+  const rereads = input.rereads ?? {};
   const resolved = resolveChoice(choices, input.modelKey);
-  const choice = noLongerOffered(resolved, choices, input.engines) ? (autoChoice(choices) ?? resolved) : resolved;
+  const dropped = noLongerOffered(resolved, choices, { engines: input.engines, rereads });
+  const choice = dropped ? (autoChoice(choices) ?? resolved) : resolved;
   if (choice && !choices.some((row) => row.key === choice.key)) choices.push(choice);
   const selected = choice?.key ?? null;
   const selectedChoice = choices.find((choice) => choice.key === selected);
@@ -276,7 +377,7 @@ export function resolveComposerModel(input: {
   const view: RoleView = { choices, selected, selectedEngine, rolesApply };
   // One effort for every role: the control offers the orchestrator's levels, and each worker and
   // judge model runs at the closest level it accepts.
-  const picks = rolePicks(view, input.roles ?? null, input.engines);
+  const picks = rolePicks(view, input.roles ?? null, input.engines, rereads);
   const roleChoice = (role: "builder" | "judge"): ModelChoice | undefined =>
     picks && selectedEngine
       ? findChoice(choices, `${picks.engines?.[role] ?? selectedEngine.id}::${picks[role] ?? ""}`)
@@ -390,13 +491,16 @@ export function useComposerModel({
   const modelKey = pickedKey(pick, thread, storage);
   const setModelKey = (key: string | null): void => setPick({ thread: threadId, key });
   const picker = useModelPicker((state) => state.choices);
+  const rereads = useEngines((state) => state.rereads);
   const choices = useMemo(() => toChoices(engines, picker), [engines, picker]);
   const view = useMemo(
-    () => resolveComposerModel({ studio, engines, choices, modelKey, effort, roles }),
-    [studio, engines, choices, modelKey, effort, roles],
+    () => resolveComposerModel({ studio, engines, choices, modelKey, effort, roles, rereads }),
+    [studio, engines, choices, modelKey, effort, roles, rereads],
   );
   const { selected, selectedEngine, rolesApply } = view;
-  useReplacedPick(threadId, modelKey, pickReplaced({ engines, choices, modelKey, selected }));
+  const keys = pickedKeys(modelKey, rolesApply ? roles : null, selectedEngine?.id);
+  useRereadMissingPicks(rereadsWanted({ engines, choices, keys, rereads }));
+  useReplacedPick(threadId, modelKey, pickReplaced({ engines, choices, modelKey, selected, rereads }), rereads);
 
   // A chat opens on its own pick, and a game chat keeps the model and effort it opened with.
   // Keyed on the chat alone: a pick made in it must not be re-read.

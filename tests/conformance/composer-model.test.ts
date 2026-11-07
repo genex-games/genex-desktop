@@ -4,16 +4,21 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { setImmediate } from "node:timers/promises";
 import {
   composerOpening,
   composerSendOptions,
   effectiveRoles,
   effortOnModelPick,
   pinComposerOpening,
+  pickedKeys,
+  pickReplaced,
   rememberEffortPick,
+  rereadsWanted,
   resolveComposerModel,
   sendBlockOf,
 } from "../../src/renderer/chat/use-composer-model.ts";
+import { createEnginesStore, REREAD_UNAVAILABLE } from "../../src/renderer/state/engines.ts";
 import { openingRoles, presetRoles } from "../../src/renderer/role-store.ts";
 import { toChoices } from "../../src/renderer/model-choices.ts";
 import type { KeyValueStorage } from "../../src/renderer/storage.ts";
@@ -84,7 +89,14 @@ describe("a saved model the plan no longer offers", () => {
         "codex::gpt-5.5",
         `a ${unsure.catalog?.state} list is not proof the model is gone`,
       );
-    assert.equal(notOffered([claude, catalog("ready")], "codex::gpt-5.5").selected?.split("::")[0], "claude-code");
+    const listedAgain = resolveComposerModel({
+      studio: false,
+      engines: [claude, { ...catalog("ready"), catalog: { state: "ready", revision: 2, refreshing: false } }],
+      modelKey: "codex::gpt-5.5",
+      effort: null,
+      rereads: { codex: 1 },
+    });
+    assert.equal(listedAgain.selected?.split("::")[0], "claude-code");
     assert.equal(
       notOffered([], "codex::gpt-5.5").selected,
       "codex::gpt-5.5",
@@ -160,6 +172,133 @@ describe("a saved model the plan no longer offers", () => {
       { builder: "qwen", judge: "qwen", engines: undefined },
       "a model the ready subscription no longer lists falls back to the chat's own preset",
     );
+  });
+});
+
+describe("a saved model one listing left out", () => {
+  // Field case (Windows, 0.1.34): after each restart the chat's OpenCode model was swapped out and
+  // every Send refused. OpenCode lists the models of its cached models.dev catalog, and its built-in
+  // one while that cache is missing; a later listing named the model again.
+  const opencode = (revision: number, refreshing = false): EngineDescriptor => ({
+    id: "opencode",
+    label: "OpenCode",
+    kind: "delegated",
+    supportsSessions: true,
+    status: { code: "ready", detail: "" },
+    defaultModel: null,
+    models: [model("openrouter/old-model")],
+    catalog: { state: "ready", revision, refreshing },
+  });
+  const pick = "opencode::openrouter/new-model";
+  const view = (engines: EngineDescriptor[], rereads: Record<string, number> = {}) =>
+    resolveComposerModel({ studio: false, engines, modelKey: pick, effort: null, rereads });
+
+  it("keeps the pick and asks its provider to list its models again", () => {
+    const engines = [claude, opencode(1)];
+    assert.equal(view(engines).selected, pick, "one listing is not proof the model is gone");
+    const choices = toChoices(engines);
+    assert.deepEqual(rereadsWanted({ engines, choices, keys: [pick], rereads: {} }), [
+      { engine: "opencode", revision: 1 },
+    ]);
+    assert.deepEqual(
+      rereadsWanted({ engines, choices, keys: [pick], rereads: { opencode: 1 } }),
+      [],
+      "asked once per run",
+    );
+    assert.deepEqual(
+      rereadsWanted({ engines, choices, keys: ["opencode::openrouter/old-model"], rereads: {} }),
+      [],
+      "a listed pick needs no second listing",
+    );
+  });
+
+  it("counts the pick gone only once a newer listing leaves it out too", () => {
+    assert.equal(view([claude, opencode(1)], { opencode: 1 }).selected, pick, "the second listing has not landed");
+    assert.equal(view([claude, opencode(2, true)], { opencode: 1 }).selected, pick, "the second listing is running");
+    const gone = view([claude, opencode(2)], { opencode: 1 });
+    assert.equal(gone.selected?.split("::")[0], "claude-code", "the chat opens on a model that runs");
+    assert.equal(
+      pickReplaced({
+        engines: [claude, opencode(2)],
+        choices: toChoices([claude, opencode(2)]),
+        modelKey: pick,
+        selected: gone.selected,
+        rereads: { opencode: 1 },
+      }),
+      "model_dropped",
+    );
+    assert.equal(
+      pickReplaced({
+        engines: [claude, opencode(1)],
+        choices: toChoices([claude, opencode(1)]),
+        modelKey: pick,
+        selected: claude.id,
+        rereads: {},
+      }),
+      null,
+      "no swap is counted before the second listing",
+    );
+    const listedNow = { ...opencode(2), models: [model("openrouter/new-model")] };
+    assert.equal(view([claude, listedNow], { opencode: 1 }).selected, pick, "the second listing names it");
+  });
+
+  it("takes a provider that cannot list again at its first listing", () => {
+    assert.equal(view([claude, opencode(1)], { opencode: REREAD_UNAVAILABLE }).selected?.split("::")[0], "claude-code");
+  });
+
+  it("asks for the workers' and reviewers' models too", () => {
+    const roles = {
+      planner: "openrouter/old-model",
+      builder: "openrouter/new-model",
+      engines: { judge: "codex" },
+      judge: "gpt",
+    };
+    assert.deepEqual(pickedKeys("opencode::openrouter/old-model", roles, "opencode"), [
+      "opencode::openrouter/old-model",
+      "opencode::openrouter/new-model",
+      "codex::gpt",
+    ]);
+    assert.deepEqual(pickedKeys(null, null, "opencode"), []);
+  });
+});
+
+describe("listing a provider's models again (engines store)", () => {
+  const api = (refused: boolean) => {
+    const asked: string[] = [];
+    let reads = 0;
+    return {
+      asked,
+      reads: () => reads,
+      engines: async () => {
+        reads++;
+        return [];
+      },
+      refreshModels: async (provider: string) => {
+        asked.push(provider);
+        if (refused) throw new Error("unknown provider");
+        return true;
+      },
+    };
+  };
+
+  it("asks once per provider, then reads the engines again", async () => {
+    const fake = api(false);
+    const store = createEnginesStore(fake);
+    assert.equal(store.reread("opencode", 3), true);
+    assert.equal(store.reread("opencode", 4), false, "a second ask is not made");
+    assert.deepEqual(store.getState().rereads, { opencode: 3 });
+    await setImmediate();
+    await store.refresh();
+    assert.deepEqual(fake.asked, ["opencode"]);
+    assert.ok(fake.reads() >= 1, "the engines are read again after the listing");
+    assert.deepEqual(store.getState().rereads, { opencode: 3 });
+  });
+
+  it("marks a provider that cannot list again, so its first listing stands", async () => {
+    const store = createEnginesStore(api(true));
+    store.reread("ollama", 2);
+    await setImmediate();
+    assert.deepEqual(store.getState().rereads, { ollama: REREAD_UNAVAILABLE });
   });
 });
 
