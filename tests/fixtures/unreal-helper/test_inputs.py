@@ -182,4 +182,4 @@ class Session(HelperCase):
     def test_play_state_reads_the_play_sessions_game_clock(self) -> None:
         unreal.state['pie'] = True
         unreal.state['game_seconds'], unreal.state['world_delta'] = 12.25, 0.125
-        self.assertEqual(self.call('play_state'), {'pie': True, 'world': 'PIE_Map', 'gameSeconds': 12.25, 'fps': 8.0})
+        self.assertEqual(self.call('play_state'), {'pie': True, 'world': 'Map', 'gameSeconds': 12.25, 'fps': 8.0})
