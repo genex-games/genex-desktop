@@ -12,8 +12,9 @@
  * (`OPEN_CLOSE_MS`) shares: a close that outlasts the call goes on after the lead is told it was
  * accepted. A claim whose turn ended while the reviewer read gets no answer. No claim is made while a
  * rewind or restart the lead asked for waits for the turn's end, nor while a worker writes in the
- * folder in place. What the project's app is doing is the lead's to judge: a claim is never refused
- * for an app that stopped.
+ * folder in place, nor before the time the person asked the Loop to work is worked (work-time.ts):
+ * only their ask to finish ends a timed Loop sooner. What the project's app is doing is the lead's to
+ * judge: a claim is never refused for an app that stopped.
  */
 import type { AnyRecord } from "../../../types/harness.d.ts";
 import type { DelegateResult } from "../../../types/host-api.d.ts";
@@ -43,6 +44,8 @@ import { heldTurnEnding } from "../held-words.ts";
 import type { LoopRun } from "../loop-run.ts";
 import { WrapCause } from "../wake-schedule.ts";
 import { type TurnEnds, turnEndsOf } from "../turn-ends.ts";
+import { finishTooSoon, workedLine } from "../work-time.ts";
+import { finishAsked } from "../wrap-up.ts";
 import { closeInPlace, type OpenEnd } from "./close.ts";
 import { asksPending, OPEN_CLOSE_MS } from "./contract.ts";
 import { OPEN_WORDS } from "./prompts.ts";
@@ -60,6 +63,8 @@ export const MESSAGE = {
   sessionEnded: (how: string) => `the lead's session ended (${how}) before it claimed the goal`,
   /** The person asked to finish, and the lead did not claim the goal in its last turn. */
   finishAsked: "the person asked the Loop to finish, and the lead did not claim the goal in its last turn",
+  /** The time the person asked the Loop to work ran out, and the lead did not claim the goal in its last turn. */
+  timeUp: "the time the person asked for ran out, and the lead did not claim the goal in its last turn",
 } as const;
 
 /** How often a close running past the lead's call is looked at, until the call must answer. */
@@ -161,8 +166,9 @@ async function closeWithinCall(loopRun: LoopRun, end: OpenEnd, started: number):
 /**
  * Why a claim is turned back before anything looks, or null: no summary, an ask of the lead's still
  * under way, a worker that writes in the folder in place (the reviewer would read a folder that keeps
- * changing). A finish is never refused for time, for what the lead says remains, nor for the project's
- * app: whether it answers is the lead's to weigh, and the finish moment's own steps may say why not.
+ * changing). Time is `finishTooSoon`'s alone (work-time.ts); a finish is never refused for what the lead
+ * says remains, nor for the project's app: whether it answers is the lead's to weigh, and the finish
+ * moment's own steps may say why not.
  */
 function claimRefusal(loopRun: LoopRun, args: AnyRecord): string | null {
   if (!hasText(args.summary)) return OPEN_WORDS.needsSummary;
@@ -207,12 +213,18 @@ async function pageProblems(loopRun: LoopRun): Promise<string | null> {
   return check.ok || check.unchecked ? null : OPEN_WORDS.unhealthy(healthLine(check));
 }
 
-/** The claim itself, once the finish is the lead's alone: the moment, then the close on the lead's word or after the review it asked for. */
+/**
+ * The claim itself, once the finish is the lead's alone: the moment, then the close on the lead's word
+ * or after the review it asked for. Before the time the person asked for is worked, only their ask to
+ * finish closes the Loop (work-time.ts).
+ */
 async function claimFinish(loopRun: LoopRun, args: AnyRecord, started: number): Promise<string> {
   if (await loopRun.inbox.finishing().catch(() => false)) {
     const closed = await closeWithinCall(loopRun, { victory: false, because: MESSAGE.personFinished }, started);
     return closed ? OPEN_WORDS.personFinished : OPEN_WORDS.closing;
   }
+  const early = finishTooSoon(loopRun, await finishAsked(loopRun));
+  if (early) return early;
   const refused = claimRefusal(loopRun, args);
   if (refused) return refused;
   const review = yes(args.review, false);
@@ -252,13 +264,18 @@ async function reviewedClaim(
   return ends.closing ?? OPEN_WORDS.closing;
 }
 
-/** `finish` (the module's header): one claim at a time, never on a Loop already closing. */
+/**
+ * `finish` (the module's header): one claim at a time, never on a Loop already closing. A claim that
+ * closes a timed Loop tells its lead how long it worked, for its summary.
+ */
 export async function openFinish(loopRun: LoopRun, args: AnyRecord): Promise<string> {
   const started = loopRun.open.clock.now();
   if (closing(loopRun)) return OPEN_WORDS.ending;
   if (!holdFinish(loopRun.state)) return OPEN_WORDS.finishUnderWay;
   try {
-    return await claimFinish(loopRun, args, started);
+    const answer = await claimFinish(loopRun, args, started);
+    const worked = closing(loopRun) ? workedLine(loopRun) : null;
+    return worked ? `${answer} ${worked}` : answer;
   } finally {
     releaseFinish(loopRun.state);
   }
@@ -281,6 +298,7 @@ export function openEndWords(
   const { ctx, state } = loopRun;
   if (ctx.cancelled || state.limit || heldTurnEnding(result) !== null) return null;
   if (wrapCause === WrapCause.Finish) return MESSAGE.finishAsked;
+  if (wrapCause === WrapCause.Time) return MESSAGE.timeUp;
   if (result?.ok) return MESSAGE.nothingAtWork;
   return MESSAGE.sessionEnded(endedHow(result));
 }

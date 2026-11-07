@@ -286,7 +286,7 @@ the [feature map](feature-map.md). A file a chat names links once main confirms 
 **Composer.** What the composer's controls show is specified in the
 [prompt composer design](design.md#prompt-composer). It has no Loop control: a send carries
 text, pictures, plan review and the message's `roles`, and the chat's agent decides whether to start
-a Loop (`start_autopilot`), which runs with no time limit
+a Loop (`start_autopilot`), which runs with no time limit, or for the time the person named
 ([what ends a Loop](../harness-runtime.md#what-ends-a-loop)). The
 permissions pill (`ComposerPermissionMenu`) sets a Claude chat's mode. A
 saved `fast` preference is dropped. One composer effort (`ComposerEffort`,
@@ -593,7 +593,7 @@ a preview window. Rules:
   [after the build](../conversation-lifecycle.md#after-the-build-the-same-session)).
 - Each turn of the lead's session ends with a host-written `session_activity` (`completed`,
   `interrupted` or `failed`), never a `turn_ended`, so the chat shows the build between turns.
-- A Loop has no clock ([what ends a Loop](../harness-runtime.md#what-ends-a-loop)); every close is
+- A Loop has no clock but the time a person asks for ([what ends a Loop](../harness-runtime.md#what-ends-a-loop)); every close is
   one function (`closeInPlace`).
 
 **Refs and the user's repository.** Everything a run must find later lives on the studio's refs:

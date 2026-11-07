@@ -1,0 +1,34 @@
+Using bundled DotNet SDK version: 10.0 win-x64
+Running UnrealBuildTool: dotnet "..\..\Engine\Binaries\DotNET\UnrealBuildTool\UnrealBuildTool.dll" GxCppEditor Win64 Development -Project="D:\ai-games\gx cpp check\unreal\GxCpp.uproject" -NoMutex -NoUBA -NoHotReloadFromIDE
+Log file: C:\Users\Ana\AppData\Local\UnrealBuildTool\Log.txt
+Determining max actions to execute in parallel (8 physical cores, 16 logical cores)
+  Executing up to 8 processes, one per physical core
+  Requested 1.5 GB memory per action, 4.46 GB available: limiting max parallel actions to 2
+UbaSessionServer - Disable remote execution (remote sessions will finish current processes)
+UHT compiled-in object format Default
+Building GxCppEditor...
+===== Toolchain Information =====
+Using ISPC compiler (D:\Epic Games\UE_5.8\Engine\Source\ThirdParty\Intel\ISPC\bin\Windows\ispc.exe)
+  Intel(r) Implicit SPMD Program Compiler (Intel(r) ISPC), 1.24.0 (build commit  @ 20250404, LLVM 18.1.2) 
+Using Visual Studio 14.44.35229 toolchain (C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207) and Windows 10.0.22621.0 SDK (C:\Program Files (x86)\Windows Kits\10).
+===== End Toolchain Information =====
+Using Unreal Build Accelerator local executor to run 5 action(s)
+  CPU 8 physical cores, 16 logical cores
+  Memory 15.94 GB physical, 22.99 GB/26.53 GB committed
+  UBA Storage capacity 40 GB
+[1/5] Compile [x64] GxCheckActor.cpp [NoUba]
+D:\ai-games\gx cpp check\unreal\Source\GxCpp\Parts\Check\GxCheckActor.cpp(16,2): error C2065: 'Damge': undeclared identifier
+	Damge += 1;
+	^
+D:\ai-games\gx cpp check\unreal\Source\GxCpp\Parts\Check\GxCheckActor.cpp(17,8): error C4458: declaration of 'Tags' hides class member
+	float Tags = 0.f; (void)Tags;
+	      ^
+D:\Epic Games\UE_5.8\Engine\Source\Runtime\Engine\Classes\GameFramework\Actor.h(1344,16): note: see declaration of 'AActor::Tags'
+	TArray<FName> Tags;
+	              ^
+[2/5] Compile [x64] Module.GxCpp.gen.cpp [NoUba]
+Total time in Unreal Build Accelerator local executor: 5.88 seconds
+
+Result: Failed (OtherCompilationError)
+Total execution time: 13.65 seconds
+Trace written to file C:\Users\Ana\AppData\Local\UnrealBuildTool\Trace.uba with size 4.7kb

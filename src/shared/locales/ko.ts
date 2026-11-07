@@ -528,8 +528,8 @@ export default {
   "Downloading the Visual Studio Build Tools installer from Microsoft…":
     "Microsoft에서 Visual Studio Build Tools 설치 프로그램을 내려받고 있어요…",
   "Install Visual Studio Build Tools": "Visual Studio Build Tools 설치",
-  "Install Visual Studio Build Tools 2022 from Microsoft with Desktop development with C++.":
-    "Microsoft의 Visual Studio Build Tools 2022를 'C++를 사용한 데스크톱 개발'과 함께 설치하세요.",
+  "Install Visual Studio Build Tools 2022 from Microsoft with Desktop development with C++ and the .NET Framework 4.8 SDK.":
+    "Microsoft의 Visual Studio Build Tools 2022를 'C++를 사용한 데스크톱 개발', .NET Framework 4.8 SDK와 함께 설치하세요.",
   "Installing Visual Studio Build Tools. Choose Yes when Windows asks; Microsoft's installer shows its progress.":
     "Visual Studio Build Tools를 설치하고 있어요. Windows가 물어보면 '예'를 고르세요. 진행 상황은 Microsoft 설치 프로그램에 표시돼요.",
   "Microsoft's download led somewhere other than Microsoft, so Genex stopped.":
@@ -542,12 +542,12 @@ export default {
     "Microsoft 설치 프로그램이 Build Tools를 내려받지 못했어요. 인터넷 연결을 확인하고 다시 시도하세요.",
   "Microsoft's installer didn't download. Check your internet connection and try again.":
     "Microsoft 설치 프로그램을 내려받지 못했어요. 인터넷 연결을 확인하고 다시 시도하세요.",
-  "Microsoft's installer finished, but Unreal still can't build C++ with what it installed. Install Visual Studio Build Tools 2022 with Desktop development with C++ yourself.":
-    "Microsoft 설치 프로그램은 끝났지만, 설치된 것으로는 Unreal이 아직 C++를 빌드할 수 없어요. Visual Studio Build Tools 2022를 'C++를 사용한 데스크톱 개발'과 함께 직접 설치하세요.",
-  "Recommended. Microsoft's free C++ tools: Unreal needs them to package a game or plugin with C++. About 7 GB. Do it for me installs them: choose Yes when Windows asks.":
-    "추천해요. Microsoft의 무료 C++ 도구예요. C++가 들어간 게임이나 플러그인을 Unreal로 패키징하려면 필요해요. 약 7GB예요. '대신 해 주기'로 설치할 수 있어요. Windows가 물어보면 '예'를 고르세요.",
-  "Recommended. Microsoft's free C++ tools: Unreal needs them to package a game or plugin with C++. Install Visual Studio Build Tools with Desktop development with C++.":
-    "추천해요. Microsoft의 무료 C++ 도구예요. C++가 들어간 게임이나 플러그인을 Unreal로 패키징하려면 필요해요. Visual Studio Build Tools를 'C++를 사용한 데스크톱 개발'과 함께 설치하세요.",
+  "Microsoft's installer finished, but Unreal still can't build C++ with what it installed. Install Visual Studio Build Tools 2022 with Desktop development with C++ and the .NET Framework 4.8 SDK yourself.":
+    "Microsoft 설치 프로그램은 끝났지만, 설치된 것으로는 Unreal이 아직 C++를 빌드할 수 없어요. Visual Studio Build Tools 2022를 'C++를 사용한 데스크톱 개발', .NET Framework 4.8 SDK와 함께 직접 설치하세요.",
+  "Recommended. Microsoft's free C++ tools: with them the agent writes your game's logic in C++, and Unreal packages a game or plugin with C++. About 7 GB. Do it for me installs them: choose Yes when Windows asks.":
+    "추천해요. Microsoft의 무료 C++ 도구예요. 이게 있으면 에이전트가 게임 로직을 C++로 쓰고, C++가 들어간 게임이나 플러그인을 Unreal로 패키징할 수 있어요. 약 7GB예요. '대신 해 주기'로 설치할 수 있어요. Windows가 물어보면 '예'를 고르세요.",
+  "Recommended. Microsoft's free C++ tools: with them the agent writes your game's logic in C++, and Unreal packages a game or plugin with C++. Install Visual Studio Build Tools with Desktop development with C++ and the .NET Framework 4.8 SDK.":
+    "추천해요. Microsoft의 무료 C++ 도구예요. 이게 있으면 에이전트가 게임 로직을 C++로 쓰고, C++가 들어간 게임이나 플러그인을 Unreal로 패키징할 수 있어요. Visual Studio Build Tools를 'C++를 사용한 데스크톱 개발', .NET Framework 4.8 SDK와 함께 설치하세요.",
   "Self-improvement is off. Harness keeps its own instructions as they are.":
     "자기 개선이 꺼져 있어요. Harness가 자기 지침을 그대로 둬요.",
   "Unreal can build C++ on this PC.": "이 PC에서 Unreal이 C++를 빌드할 수 있어요.",

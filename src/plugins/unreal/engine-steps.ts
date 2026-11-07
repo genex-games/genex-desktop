@@ -108,7 +108,7 @@ const WORDS = {
   AddButton: () => t("Open Apple's downloads"),
   XcodeReady: (version: string | null) => (version ? t("Xcode {version} is ready", { version }) : t("Xcode is ready")),
   ReadyDetail: () => t("The agent can add C++ to this game."),
-  /** On Windows, where Genex doesn't compile the agent's C++ yet: what Microsoft's tools are for. */
+  /** On Windows, where Microsoft's tools compile the agent's C++: how many steps are left. */
   WindowsIntro: (open: number) =>
     t(
       "{open, plural, =1 {One step left so Unreal can build C++ on this PC.} other {# steps left so Unreal can build C++ on this PC.}}",
@@ -118,11 +118,11 @@ const WORDS = {
   UpdateBuildTools: () => t("Update Visual Studio Build Tools"),
   BuildToolsForMe: () =>
     t(
-      "Recommended. Microsoft's free C++ tools: Unreal needs them to package a game or plugin with C++. About 7 GB. Do it for me installs them: choose Yes when Windows asks.",
+      "Recommended. Microsoft's free C++ tools: with them the agent writes your game's logic in C++, and Unreal packages a game or plugin with C++. About 7 GB. Do it for me installs them: choose Yes when Windows asks.",
     ),
   BuildToolsYourself: () =>
     t(
-      "Recommended. Microsoft's free C++ tools: Unreal needs them to package a game or plugin with C++. Install Visual Studio Build Tools with Desktop development with C++.",
+      "Recommended. Microsoft's free C++ tools: with them the agent writes your game's logic in C++, and Unreal packages a game or plugin with C++. Install Visual Studio Build Tools with Desktop development with C++ and the .NET Framework 4.8 SDK.",
     ),
   UpdateBuildToolsDetail: (engine: string) =>
     t(
@@ -265,12 +265,12 @@ export function unrealSteps(
 
 /** What the agent is told once the Build Tools row is done and nothing else is open: English. */
 const BUILD_TOOLS_DONE =
-  "Visual Studio's C++ tools are installed on this PC, so Unreal can compile C++ here. If a package asked for them, package again.";
+  "Visual Studio's C++ tools are installed on this PC, so Genex compiles the game's Unreal C++ here. If a package asked for them, package again; if C++ waited for them, go on with it.";
 
 /**
  * Whether the card shows itself in a game's chat once new-game made the project: a Mac step is
  * open. The Build Tools alone don't bring it out, since a game in Blueprints packages without them;
- * the agent shows it when a package needs them.
+ * the agent shows it when a package or the game's C++ needs them.
  */
 export const opensByItself = (card: UnrealSteps): boolean =>
   card.steps.some((step) => !step.done && step.id !== UnrealStepId.InstallBuildTools);

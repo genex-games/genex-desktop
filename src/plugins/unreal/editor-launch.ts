@@ -483,7 +483,7 @@ async function buildIfHotReloaded(project: string, engine: Engine, options: Laun
   if (!module || !(await hotLibraryLoaded(project, module))) return;
   const notBuilt = (why: string) => new LaunchError(LaunchErrorCode.NotBuilt, MESSAGE[LaunchErrorCode.NotBuilt](why));
   const xcode = await env.xcode(engine.directory);
-  if (!canCompileCpp(xcode, env.platform)) throw notBuilt(MESSAGE.CannotBuild(xcode.state));
+  if (!canCompileCpp({ xcode }, env.platform)) throw notBuilt(MESSAGE.CannotBuild(xcode.state));
   const build = launch.build ?? compileEditor;
   const result = await build({ engineDir: engine.directory, projectFile: project, module, xcodeApp: xcode.app });
   if (!result.ok) throw notBuilt(`${result.summary}${buildErrors(result)}`);

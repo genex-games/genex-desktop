@@ -1,0 +1,14 @@
+Using bundled DotNet SDK version: 10.0 win-x64
+Running UnrealBuildTool: dotnet "..\..\Engine\Binaries\DotNET\UnrealBuildTool\UnrealBuildTool.dll" GxCppEditor Win64 Development -Project="D:\ai-games\gx cpp check\unreal\GxCpp.uproject" -NoMutex -NoUBA -NoHotReloadFromIDE
+Log file: C:\Users\Ana\AppData\Local\UnrealBuildTool\Log.txt
+Determining max actions to execute in parallel (8 physical cores, 16 logical cores)
+  Executing up to 8 processes, one per physical core
+  Requested 1.5 GB memory per action, 8.77 GB available: limiting max parallel actions to 5
+Creating makefile for GxCppEditor (no existing makefile)
+UbaSessionServer - Disable remote execution (remote sessions will finish current processes)
+Unable to instantiate module 'SwarmInterface': Could not find NetFxSDK install dir; this will prevent SwarmInterface from installing.  Install a version of .NET Framework SDK at 4.6.0 or higher.
+(referenced via GxCppEditor -> Launch.Build.cs -> SessionServices.Build.cs -> Core.Build.cs -> Virtualization.Build.cs -> SourceControl.Build.cs -> RenderCore.Build.cs -> RHI.Build.cs -> D3D11RHI.Build.cs -> Engine.Build.cs -> AssetRegistry.Build.cs -> TargetPlatform.Build.cs -> TurnkeySupport.Build.cs -> LauncherServices.Build.cs -> TurnkeyIO.Build.cs -> ToolWidgets.Build.cs -> AppFramework.Build.cs -> SlateReflector.Build.cs -> PropertyEditor.Build.cs -> EditorConfig.Build.cs -> UnrealEd.Build.cs)
+
+Result: Failed (RulesError)
+Total execution time: 11.07 seconds
+Trace written to file C:\Users\Ana\AppData\Local\UnrealBuildTool\Trace.uba with size 2.4kb

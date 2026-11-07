@@ -59,7 +59,8 @@ project, and graph: a request to wait for the remaining workers could start a se
   Optional **Resume** also keeps the journal; a run interrupted by a quit or a crash is repaired
   at boot as paused, keyed on its journal artifact rather than on `mode`, so a director run is
   resumable too. A resumed
-  director run goes on from its journal with no clock, as every Loop
+  director run goes on from its journal with no clock (the time the person asked for counts what
+  it worked, never the pause), as every Loop
   ([what ends a Loop](harness-runtime.md#what-ends-a-loop)): its lead's first message is Genex's
   line that it resumed, with the run's lines it was not told before the pause
   ([what wakes a Loop's lead](harness-runtime.md#what-wakes-a-loops-lead)); `run_status` names the

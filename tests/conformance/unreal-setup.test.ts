@@ -53,6 +53,7 @@ import {
   tasklistShowsEditor,
   undoSetup,
   updateHelper,
+  updateHelperLive,
 } from "../../src/plugins/unreal/setup.ts";
 import { type XcodeStatus, XcodeState } from "../../src/plugins/unreal/xcode.ts";
 import { createEngineLinks } from "../../src/substrate/plugins/engine-links.ts";
@@ -1663,6 +1664,7 @@ describe("a game's own Unreal project and the steps card", () => {
       state: VisualStudioState.Missing,
       toolset: null,
       windowsSdk: false,
+      netFxSdk: false,
       plan: BuildToolsPlan.Install,
     };
     const offered = unrealSteps("Valley", "5.8", windows, { status: missing, forMe: true });
@@ -1694,14 +1696,14 @@ describe("a game's own Unreal project and the steps card", () => {
     };
     const update = unrealSteps("Valley", "5.8", windows, { status: outdated, forMe: true });
     assert.equal(update.steps.find((s) => !s.done)?.label, "Update Visual Studio Build Tools");
-    const ready = { state: VisualStudioState.Ready, toolset: "14.44.35211", windowsSdk: true };
+    const ready = { state: VisualStudioState.Ready, toolset: "14.44.35211", windowsSdk: true, netFxSdk: true };
     const done = unrealSteps("Valley", "5.8", windows, { status: ready, forMe: true });
     assert.deepEqual([done.open, done.primary], [false, undefined]);
     assert.match(String(done.doneSays), /^Visual Studio's C\+\+ tools are installed on this PC/);
   });
 
   it("on a Mac, the steps card has no Build Tools row and still shows itself while Xcode is missing", () => {
-    const mac = { state: VisualStudioState.NotApplicable, toolset: null, windowsSdk: false };
+    const mac = { state: VisualStudioState.NotApplicable, toolset: null, windowsSdk: false, netFxSdk: false };
     const card = unrealSteps("Valley", "5.8", NO_XCODE, { status: mac, forMe: true });
     assert.equal(
       card.steps.some((s) => s.id === UnrealStepId.InstallBuildTools),
@@ -2176,21 +2178,24 @@ describe("The panel's status for a project whose Genex editor helper is newer", 
 const HELPER_FOLDER = "Plugins/GenexEditorHelper";
 const HELPER_TOOLS = `${HELPER_FOLDER}/Content/Python/genex_play/tools.py`;
 
-/** A copy of the shipped helper as an older Genex shipped it: a lower Version and an older tools.py. */
-async function olderHelper(root: string): Promise<string> {
+/**
+ * A copy of the shipped helper as an older Genex shipped it: a lower Version and an older copy of
+ * each of `changed` (helper paths, `/`-separated; tools.py unless a test names others).
+ */
+async function olderHelper(root: string, changed: readonly string[] = ["Content/Python/genex_play/tools.py"]) {
   const older = path.join(root, "older-helper");
   await cp(HELPER, older, { recursive: true });
   const descriptor = path.join(older, "GenexEditorHelper.uplugin");
   const json = JSON.parse(await readFile(descriptor, "utf8"));
   await writeFile(descriptor, `${JSON.stringify({ ...json, Version: 1, VersionName: "0.1.0" }, null, "\t")}\n`);
-  await appendFile(path.join(older, "Content/Python/genex_play/tools.py"), "# as an older Genex shipped it\n");
+  for (const file of changed) await appendFile(path.join(older, file), "# as an older Genex shipped it\n");
   return older;
 }
 
 /** A project an older Genex set up, so this Genex's helper is newer than the project's. */
-async function setUpByOlderGenex(options: { ini?: string } = { ini: USER_INI }) {
+async function setUpByOlderGenex(options: { ini?: string } = { ini: USER_INI }, changed?: readonly string[]) {
   const f = await setupFixture(options);
-  await setUpProject(f.project.file, { ...f.options, helper: await olderHelper(f.root) });
+  await setUpProject(f.project.file, { ...f.options, helper: await olderHelper(f.root, changed) });
   assert.equal((await inspectProject(f.project.file, f.options)).helper, HelperState.Outdated);
   return f;
 }
@@ -2271,6 +2276,58 @@ describe("Updating the Genex editor helper", () => {
   });
 });
 
+/** Helper files an older Genex shipped otherwise, which the open editor takes by reloading or never reads. */
+const RELOADED = ["Content/Python/genex_play/play.py", "Content/Python/genex_build/terrain.py"];
+const UNREAD = ["Templates/pilots/explore.py"];
+
+describe("Updating the Genex editor helper while Unreal has the project open", () => {
+  /** The project's editor runs and answers, as it does while Genex updates the helper live. */
+  const open = (f: SetFixture) => ({ ...f.options, env: { ...f.env, editorRunning: async () => true } });
+
+  it("writes the new helper when only modules the editor reloads, files it never reads and the version changed", async () => {
+    for (const changed of [RELOADED, UNREAD, []]) {
+      const f = await setUpByOlderGenex(undefined, changed);
+      const update = await updateHelperLive(f.project.file, open(f));
+      assert.deepEqual(update, { from: "0.1.0", to: await helperVersion(HELPER), kept: [] }, changed.join(", "));
+      assert.deepEqual(await tree(path.join(f.project.directory, HELPER_FOLDER)), await tree(HELPER));
+      assert.equal((await inspectProject(f.project.file, f.options)).helper, HelperState.Current);
+    }
+  });
+
+  it("writes nothing, answering null, when a changed file needs Unreal restarted or the helper isn't outdated", async () => {
+    const restart = [
+      "Content/Python/genex_play/tools.py",
+      "Content/Python/genex_loop/__init__.py",
+      "Content/Python/genex_loop/errors.py",
+      "Content/Python/init_unreal.py",
+    ];
+    for (const changed of restart.map((file) => [...RELOADED, file])) {
+      const f = await setUpByOlderGenex(undefined, changed);
+      const witness = [await tree(f.project.directory), await tree(f.storage)];
+      assert.equal(await updateHelperLive(f.project.file, open(f)), null, changed.join(", "));
+      assert.deepEqual([await tree(f.project.directory), await tree(f.storage)], witness, changed.join(", "));
+    }
+
+    // A descriptor field Unreal acts on (its modules, its plugins) changes only with a restart.
+    const modules = await setUpByOlderGenex(undefined, RELOADED);
+    const descriptor = path.join(modules.project.directory, HELPER_FOLDER, "GenexEditorHelper.uplugin");
+    const json = JSON.parse(await readFile(descriptor, "utf8"));
+    await writeFile(
+      descriptor,
+      `${JSON.stringify({ ...json, CanContainContent: !json.CanContainContent }, null, "\t")}\n`,
+    );
+    const witness = await tree(modules.project.directory);
+    assert.equal(await updateHelperLive(modules.project.file, open(modules)), null);
+    assert.deepEqual(await tree(modules.project.directory), witness);
+
+    const current = await setupFixture({ ini: USER_INI });
+    await setUpProject(current.project.file, current.options);
+    const before = await tree(current.project.directory);
+    assert.equal(await updateHelperLive(current.project.file, open(current)), null);
+    assert.deepEqual(await tree(current.project.directory), before);
+  });
+});
+
 /** What updating the helper must refuse, writing nothing in the project, outside it or in storage. */
 const hostileUpdate: Array<{
   name: string;
@@ -2348,6 +2405,37 @@ const hostileUpdate: Array<{
     },
   },
 ];
+
+describe("Updating the Genex editor helper while Unreal is open refuses, writing nothing,", () => {
+  // The live update is for an open editor: only the closed-editor check of the table is not its.
+  for (const { name, code, links, arrange } of hostileUpdate.filter(
+    (entry) => entry.code !== SetupErrorCode.EditorRunning,
+  ))
+    it(`refuses ${name}`, {
+      skip: links === true && process.platform === "win32" && "links need privileges",
+    }, async () => {
+      const f = await setUpByOlderGenex(undefined, RELOADED);
+      const outside = path.join(f.root, "outside");
+      await mkdir(outside, { recursive: true });
+      const { file, options } = await arrange(f, outside);
+      const witness = [
+        await tree(f.project.directory),
+        await folders(f.project.directory),
+        await tree(outside),
+        await tree(f.storage),
+      ];
+      await assert.rejects(updateHelperLive(file, options ?? f.options), { code });
+      assert.deepEqual(
+        [
+          await tree(f.project.directory),
+          await folders(f.project.directory),
+          await tree(outside),
+          await tree(f.storage),
+        ],
+        witness,
+      );
+    });
+});
 
 describe("Updating the Genex editor helper refuses, writing nothing,", () => {
   for (const { name, code, links, arrange } of hostileUpdate)

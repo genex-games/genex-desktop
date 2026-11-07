@@ -8,7 +8,8 @@ from Source/ on and the owner's home folder as ~. It refuses bad names, a module
 doesn't have, a running play session and any machine but a Mac without running anything.
 
 save_all saves the editor's unsaved levels and assets without asking, before Genex quits Unreal
-to add the game's C++ module, and says what is still unsaved."""
+to add the game's C++ module, and says what is still unsaved. save_during_play saves them the same
+way while a play session goes on, for a save point during the agent's play test."""
 
 import os
 import shutil
@@ -296,4 +297,28 @@ class SaveAll(HelperCase):
         unreal.state['dirty'] = ['/Game/Maps/Track']
         unreal.state['pie'] = True
         self.assert_refused(self.call('save_all'))
+        self.assertEqual(unreal.state['dirty'], ['/Game/Maps/Track'])
+
+
+class SaveDuringPlay(HelperCase):
+    def test_saves_every_unsaved_level_and_asset_while_the_play_goes_on(self) -> None:
+        unreal.state['dirty'] = ['/Game/Maps/Track', '/Game/Parts/Bike/BP_Bike']
+        unreal.state['pie'] = True
+        result = self.call('save_during_play')
+        self.assertEqual({k: result[k] for k in ['saved', 'dirty', 'pie']}, {'saved': True, 'dirty': [], 'pie': True})
+        self.assertEqual(unreal.calls, [('save_dirty_packages', True, True)])
+        self.assertTrue(unreal.state['pie'], 'the play is never ended')
+
+    def test_names_what_the_editor_left_unsaved(self) -> None:
+        unreal.state['dirty'] = ['/Game/Maps/Track']
+        unreal.state['pie'] = True
+        unreal.state['save_refused'] = True
+        result = self.call('save_during_play')
+        self.assertEqual({k: result[k] for k in ['saved', 'dirty']}, {'saved': False, 'dirty': ['/Game/Maps/Track']})
+
+    def test_check_only_answers_ready_and_saves_nothing(self) -> None:
+        unreal.state['dirty'] = ['/Game/Maps/Track']
+        unreal.state['pie'] = True
+        self.assertEqual(self.call('save_during_play', True), {'ready': True})
+        self.assertEqual(unreal.calls, [])
         self.assertEqual(unreal.state['dirty'], ['/Game/Maps/Track'])
