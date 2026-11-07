@@ -67,8 +67,11 @@ export const CHECKPOINT_SAVE: SaveLimits = { askMs: MOMENT_ASK_MS, saveMs: CHECK
 const saveTakes = ({ askMs, saveMs }: SaveLimits): number =>
   ANSWER_CHECK_MS + 2 * askMs + PLAY_STOP_WAIT_MS + askMs + PLAY_STOP_POLL_MS + saveMs;
 const SAVE_TAKES_MS = saveTakes(MOMENT_SAVE);
-/** The longest `save-all` at a checkpoint: whether Unreal answers, its activity, then the save. */
-export const CHECKPOINT_SAVE_MAX_MS = ANSWER_CHECK_MS + MOMENT_ASK_MS + saveTakes(CHECKPOINT_SAVE);
+/**
+ * The longest `save-all` at a checkpoint: whether Unreal answers, its activity, whether its helper
+ * saves during play (asked only while the agent plays), then the save.
+ */
+export const CHECKPOINT_SAVE_MAX_MS = ANSWER_CHECK_MS + 2 * MOMENT_ASK_MS + saveTakes(CHECKPOINT_SAVE);
 /** The longest `save-all` before a restore runs: the busy wait, then the save. */
 export const RESTORE_SAVE_MAX_MS = BUSY_TAKES_MS + SAVE_TAKES_MS;
 
@@ -88,14 +91,19 @@ export type MomentOps = {
   activity(): Promise<{ pie: boolean; dirty: number }>;
   /** Whether a checkpoint's save may end the play under way: the agent's own, or a run's while agents may use Unreal as the person plays. */
   mayEndPlay(): Promise<boolean>;
-  /** Saves the editor's work (a play session ended first), each editor call within its moment's limit; throws its refusal. */
-  save(): Promise<Saved>;
+  /**
+   * Saves the editor's work, each editor call within its moment's limit; throws its refusal. A play
+   * session ends first, unless `keepPlay` asks to keep it and the editor's helper can save during play.
+   */
+  save(keepPlay?: boolean): Promise<Saved>;
   /** Ends the project's editor; throws when it couldn't. */
   end(): Promise<unknown>;
   /** Starts reopening the game's Unreal in the background, an outdated helper updated while it is closed. */
   reopen(): Promise<unknown>;
   /** `editor-state`: whether Unreal answers and runs, how reopening goes, and the project's helper. */
   state(): Promise<EditorStateAnswer>;
+  /** Brings an open Unreal's outdated helper up to date without a restart, when its changes reload; whether it did. */
+  updateHelperLive(): Promise<boolean>;
   /** Where Genex's own start of the project stands; null when no set-up project is linked. */
   start(): Promise<EditorStart | null>;
   /** The project's name, or null without a linked project. */
@@ -149,10 +157,10 @@ async function lifeAfterBusy(ops: MomentOps): Promise<Life> {
   return life;
 }
 
-/** The editor's save, read: what it saved and left, or why it failed. */
-async function saving(ops: MomentOps, dirty: number): Promise<SaveRead> {
+/** The editor's save, read: what it saved and left, or why it failed; `keepPlay` keeps a play session going. */
+async function saving(ops: MomentOps, dirty: number, keepPlay: boolean): Promise<SaveRead> {
   try {
-    const saved = await ops.save();
+    const saved = await ops.save(keepPlay);
     if (saved.saved && saved.dirty.length === 0) return { outcome: SaveOutcome.Saved, count: dirty };
     return { outcome: SaveOutcome.LeftUnsaved, names: saved.dirty, saved: saved.saved };
   } catch (failure) {
@@ -161,8 +169,9 @@ async function saving(ops: MomentOps, dirty: number): Promise<SaveRead> {
 }
 
 /**
- * A checkpoint's save: never during a play session it may not end (the save ends one it may) or of
- * an editor that can't say whether one runs.
+ * A checkpoint's save: never during a play session it may not end or of an editor that can't say
+ * whether one runs. A play it may end (the agent's own) goes on through the save when the editor's
+ * helper saves during play; an older helper's save ends it.
  * A run saves even with nothing unsaved (as its save points did); a chat saves only what is unsaved.
  */
 async function checkpointSave(ops: MomentOps, hook: HookContext): Promise<SaveRead> {
@@ -171,7 +180,7 @@ async function checkpointSave(ops: MomentOps, hook: HookContext): Promise<SaveRe
   if (!activity) return { outcome: SaveOutcome.CantTell };
   if (activity.pie && !(await ops.mayEndPlay().catch(() => false))) return { outcome: SaveOutcome.Playing };
   if (activity.dirty === 0 && !inRun(hook)) return { outcome: SaveOutcome.Clean };
-  return saving(ops, activity.dirty);
+  return saving(ops, activity.dirty, activity.pie);
 }
 
 /** Why the editor's work isn't all saved before a restore, or null when it is. */
@@ -284,9 +293,15 @@ async function healthOf(ops: MomentOps): Promise<HealthRead> {
   return { health: EditorHealth.ReopenFailed, error: state.reopening.error ?? "" };
 }
 
-/** What a run's start tells its lead of the project's helper (`helperAnswer`); nothing when Unreal can't say. */
-export async function helperAtStart(ops: Pick<MomentOps, "state">): Promise<HookAnswer> {
-  return helperAnswer(await ops.state().catch(() => ({ answering: false, running: null, helper: null })));
+/**
+ * What a run's start tells its lead of the project's helper (`helperAnswer`): an open Unreal's
+ * outdated helper is first brought up to date in place when only Python it reloads changed, and then
+ * nothing is said, so the lead needn't restart Unreal; nothing when Unreal can't say.
+ */
+export async function helperAtStart(ops: Pick<MomentOps, "state" | "updateHelperLive">): Promise<HookAnswer> {
+  const answer = helperAnswer(await ops.state().catch(() => ({ answering: false, running: null, helper: null })));
+  if (!("note" in answer)) return answer;
+  return (await ops.updateHelperLive().catch(() => false)) ? {} : answer;
 }
 
 /** `editor-state` at `health`: quiet while Unreal answers, pending while it may yet, blocked once it can't. */

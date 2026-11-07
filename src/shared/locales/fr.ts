@@ -585,8 +585,8 @@ export default {
   "Downloading the Visual Studio Build Tools installer from Microsoft…":
     "Téléchargement de l’installeur de Visual Studio Build Tools depuis Microsoft…",
   "Install Visual Studio Build Tools": "Installer Visual Studio Build Tools",
-  "Install Visual Studio Build Tools 2022 from Microsoft with Desktop development with C++.":
-    "Installe Visual Studio Build Tools 2022 de Microsoft avec « Développement Desktop en C++ ».",
+  "Install Visual Studio Build Tools 2022 from Microsoft with Desktop development with C++ and the .NET Framework 4.8 SDK.":
+    "Installe Visual Studio Build Tools 2022 de Microsoft avec « Développement Desktop en C++ » et le SDK .NET Framework 4.8.",
   "Installing Visual Studio Build Tools. Choose Yes when Windows asks; Microsoft's installer shows its progress.":
     "Installation de Visual Studio Build Tools. Choisis Oui quand Windows le demande ; l’installeur de Microsoft affiche sa progression.",
   "Microsoft's download led somewhere other than Microsoft, so Genex stopped.":
@@ -599,12 +599,12 @@ export default {
     "L’installeur de Microsoft n’a pas pu télécharger les Build Tools. Vérifie ta connexion internet et réessaie.",
   "Microsoft's installer didn't download. Check your internet connection and try again.":
     "L’installeur de Microsoft ne s’est pas téléchargé. Vérifie ta connexion internet et réessaie.",
-  "Microsoft's installer finished, but Unreal still can't build C++ with what it installed. Install Visual Studio Build Tools 2022 with Desktop development with C++ yourself.":
-    "L’installeur de Microsoft a terminé, mais Unreal ne peut toujours pas compiler de C++ avec ce qu’il a installé. Installe toi-même Visual Studio Build Tools 2022 avec « Développement Desktop en C++ ».",
-  "Recommended. Microsoft's free C++ tools: Unreal needs them to package a game or plugin with C++. About 7 GB. Do it for me installs them: choose Yes when Windows asks.":
-    "Recommandé. Les outils C++ gratuits de Microsoft : Unreal en a besoin pour empaqueter un jeu ou un plugin en C++. Environ 7 Go. « Fais-le pour moi » les installe : choisis Oui quand Windows le demande.",
-  "Recommended. Microsoft's free C++ tools: Unreal needs them to package a game or plugin with C++. Install Visual Studio Build Tools with Desktop development with C++.":
-    "Recommandé. Les outils C++ gratuits de Microsoft : Unreal en a besoin pour empaqueter un jeu ou un plugin en C++. Installe Visual Studio Build Tools avec « Développement Desktop en C++ ».",
+  "Microsoft's installer finished, but Unreal still can't build C++ with what it installed. Install Visual Studio Build Tools 2022 with Desktop development with C++ and the .NET Framework 4.8 SDK yourself.":
+    "L’installeur de Microsoft a terminé, mais Unreal ne peut toujours pas compiler de C++ avec ce qu’il a installé. Installe toi-même Visual Studio Build Tools 2022 avec « Développement Desktop en C++ » et le SDK .NET Framework 4.8.",
+  "Recommended. Microsoft's free C++ tools: with them the agent writes your game's logic in C++, and Unreal packages a game or plugin with C++. About 7 GB. Do it for me installs them: choose Yes when Windows asks.":
+    "Recommandé. Les outils C++ gratuits de Microsoft : avec eux, l'agent écrit la logique de ton jeu en C++, et Unreal empaquette un jeu ou un plugin en C++. Environ 7 Go. « Fais-le pour moi » les installe : choisis Oui quand Windows le demande.",
+  "Recommended. Microsoft's free C++ tools: with them the agent writes your game's logic in C++, and Unreal packages a game or plugin with C++. Install Visual Studio Build Tools with Desktop development with C++ and the .NET Framework 4.8 SDK.":
+    "Recommandé. Les outils C++ gratuits de Microsoft : avec eux, l'agent écrit la logique de ton jeu en C++, et Unreal empaquette un jeu ou un plugin en C++. Installe Visual Studio Build Tools avec « Développement Desktop en C++ » et le SDK .NET Framework 4.8.",
   "Self-improvement is off. Harness keeps its own instructions as they are.":
     "L’auto-amélioration est désactivée. Harness garde ses instructions telles quelles.",
   "Unreal can build C++ on this PC.": "Unreal peut compiler du C++ sur ce PC.",

@@ -113,7 +113,7 @@ import {
   undoGameProjectFolder,
 } from "./game-folder.ts";
 import { isProjectPath, UPROJECT_EXTENSION } from "./project-file.ts";
-import { VisualStudioState, type VisualStudioStatus, visualStudioLacking } from "./visual-studio.ts";
+import { BuildToolsPlan, VisualStudioState, type VisualStudioStatus, visualStudioLacking } from "./visual-studio.ts";
 import { xcodeDownloadsLaunch } from "./xcode.ts";
 import { EditorWait, EngineReadiness, engineReadiness, waitForEditor } from "./editor-wait.ts";
 import { readinessAnswer } from "./hook-answers.ts";
@@ -311,7 +311,7 @@ const MESSAGE = {
   ForMeBuildTools:
     "Genex is downloading Microsoft's Visual Studio Build Tools installer, checking Microsoft signed it, and installing the C++ tools and Windows SDK Unreal builds C++ with: several GB, and Windows asks the person for permission. End your reply now; the chat tells you when they are installed.",
   ForMeBuildToolsYourself:
-    "Unreal needs Microsoft's Visual Studio Build Tools to build C++ on this PC, and Genex can't install them here. Ask the person to install Visual Studio Build Tools 2022 with Desktop development with C++.",
+    "Unreal needs Microsoft's Visual Studio Build Tools to build C++ on this PC, and Genex can't install them here. Ask the person to install Visual Studio Build Tools 2022 with Desktop development with C++ and the .NET Framework 4.8 SDK.",
   ForMeRunning: (words: string) => `Do it for me is already installing; the card says: ${words} End your reply now.`,
   ForMeDone: (version: string) =>
     `Unreal ${version} and everything it needs are on this computer: call unreal__new-game if this game has no Unreal project yet.`,
@@ -455,7 +455,9 @@ const FOR_ME_WORDS = {
       "Run vc_redist.x64.exe from Unreal's Engine › Extras › Redist › en-us folder to install Microsoft's Visual C++ runtime.",
     ),
   BuildToolsYourself: () =>
-    t("Install Visual Studio Build Tools 2022 from Microsoft with Desktop development with C++."),
+    t(
+      "Install Visual Studio Build Tools 2022 from Microsoft with Desktop development with C++ and the .NET Framework 4.8 SDK.",
+    ),
   AllThere: (version: string) => t("Unreal {version} and everything it needs are on this computer.", { version }),
   Stopped: () => t("Stopped."),
   NothingToStop: () => t("Nothing is installing."),
@@ -1140,7 +1142,12 @@ async function engineAndXcode(env: SetupEnv) {
   return { engine, xcode: await env.xcode(engine?.directory) };
 }
 
-const NOT_WINDOWS: VisualStudioStatus = { state: VisualStudioState.NotApplicable, toolset: null, windowsSdk: false };
+const NOT_WINDOWS: VisualStudioStatus = {
+  state: VisualStudioState.NotApplicable,
+  toolset: null,
+  windowsSdk: false,
+  netFxSdk: false,
+};
 
 /** Where Microsoft's C++ tools stand against the engine in `engineDir`; nothing judged where `env` can't tell. */
 const visualStudioOf = async (env: SetupEnv, engineDir: string | undefined): Promise<VisualStudioStatus> =>
@@ -1550,6 +1557,9 @@ async function runtimeForMe(deps: UnrealBackendDeps, slot: ForMeSlot): Promise<F
   return { step: ForMeStep.Runtime, started: true, message: job.message };
 }
 
+/** Whether a press of Do it for me has `plan` left to run: none runs twice, and nothing follows a new install, which asked for everything. */
+const planLeft = (plan: BuildToolsPlan | undefined, ran: ReadonlySet<BuildToolsPlan>): plan is BuildToolsPlan =>
+  plan !== undefined && !ran.has(plan) && !ran.has(BuildToolsPlan.Install);
 /**
  * Microsoft's Visual Studio Build Tools on Windows, for the plan where they stand says: installed,
  * given what they lack, or updated by Microsoft's own installer.
@@ -1567,10 +1577,18 @@ async function buildToolsForMe(deps: UnrealBackendDeps, slot: ForMeSlot): Promis
     return { step: ForMeStep.Done, started: false, message: FOR_ME_WORDS.AllThere(installEngineVersion()) };
   const { install } = deps;
   const job = startInstall(deps, slot, EpicInstallKind.BuildTools, async (options) => {
-    await installBuildTools(install, status, options);
-    // An installer can end well and still leave a compiler the engine refuses (an LTSC channel's).
-    if (visualStudioLacking(await visualStudioOf(deps.env, engineDir)))
-      throw new EpicInstallError(EpicInstallRefusal.StillMissing);
+    // An update brings the compiler up to date but adds nothing the install never had (the .NET
+    // Framework SDK), and adding what's missing leaves a refused compiler as it was: the plan the
+    // tools still need next is the installer's next run, in the same press.
+    const ran = new Set<BuildToolsPlan>();
+    let now = status;
+    while (visualStudioLacking(now)) {
+      // An installer can end well and still leave a compiler the engine refuses (an LTSC channel's).
+      if (!planLeft(now.plan, ran)) throw new EpicInstallError(EpicInstallRefusal.StillMissing);
+      ran.add(now.plan);
+      await installBuildTools(install, now, options);
+      now = await visualStudioOf(deps.env, engineDir);
+    }
   });
   return { step: ForMeStep.BuildTools, started: true, message: job.message };
 }

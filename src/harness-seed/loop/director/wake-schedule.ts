@@ -3,7 +3,8 @@
  * loop (wake.ts), with no run of their own. A leaf: it imports only time.ts, so every part of the run
  * may type its lines with it. The lead ends its turn when it decides to; nothing of it runs between
  * turns; the studio wakes the same session with the person's message, or with Genex's own lines of the
- * run's log (a worker or a job that ended, the project's app that stopped). No timer wakes it. What
+ * run's log (a worker or a job that ended, the project's app that stopped, the person's time for the
+ * Loop: work-time.ts). No other timer wakes it. What
  * counts is decided by typed fields, never by reading a line's English.
  */
 import { SECOND_MS } from "../time.ts";
@@ -32,6 +33,11 @@ export const NoteKind = {
    * Genex's moments (a turn's start), or that the project's app answers again. Said, never woken for.
    */
   Folder: "folder",
+  /**
+   * The person's time for the Loop (work-time.ts): a turn ended with nothing at work while some of it
+   * is left, or it is up. It wakes the lead.
+   */
+  WorkTime: "work_time",
 } as const;
 export type NoteKind = (typeof NoteKind)[keyof typeof NoteKind];
 
@@ -47,12 +53,15 @@ export const NOTE_WAKE = {
   [NoteKind.WorkerEnded]: WakeUrgency.Soon,
   [NoteKind.JobEnded]: WakeUrgency.Soon,
   [NoteKind.Folder]: WakeUrgency.Never,
+  [NoteKind.WorkTime]: WakeUrgency.Now,
 } as const satisfies Record<NoteKind, WakeUrgency>;
 
 /** Why the wrap-up started. The journal keeps it: never rename a value. */
 export const WrapCause = {
   Failed: "failed",
   Finish: "finish",
+  /** The time the person asked the Loop to work is up (work-time.ts). */
+  Time: "time",
 } as const;
 export type WrapCause = (typeof WrapCause)[keyof typeof WrapCause];
 
@@ -110,6 +119,8 @@ export interface TurnFacts {
   /** A provider is lost under the run: the run pauses. */
   providerLost?: boolean;
   finishRequested: boolean;
+  /** The time the person asked the Loop to work is up (work-time.ts). */
+  timeUp?: boolean;
 }
 
 /** What the loop does next, and why a wrap-up starts. */
@@ -119,7 +130,8 @@ export interface TurnVerdict {
 }
 
 /**
- * A turn has ended. Asked by the person to finish, the lead gets its one wrap-up turn at once; a
+ * A turn has ended. Asked by the person to finish, or once the time they asked for is up, the lead
+ * gets its one wrap-up turn at once; a
  * failed turn does too, unless a lost provider failed it: then the run closes paused. Otherwise it
  * rests until something happens — the person speaks or asks to finish, a worker or a job ends — and
  * with nothing at work and nothing to be woken for, the Loop closes as a bare agent's turn ends
@@ -128,6 +140,7 @@ export interface TurnVerdict {
 export function afterTurn(turn: TurnFacts): TurnVerdict {
   if (turn.closed || turn.providerLost === true) return { next: TurnEnd.Close };
   if (turn.finishRequested) return { next: TurnEnd.WrapUp, wrapCause: WrapCause.Finish };
+  if (turn.timeUp === true) return { next: TurnEnd.WrapUp, wrapCause: WrapCause.Time };
   if (!turn.ok) return { next: TurnEnd.WrapUp, wrapCause: WrapCause.Failed };
   return { next: TurnEnd.Sleep };
 }

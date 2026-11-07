@@ -35,7 +35,7 @@ def play_world() -> unreal.World | None:
 def refuse_during_play() -> None:
     """Refused while a play session runs: the level can't be saved or reloaded then."""
     if play_world() is not None:
-        raise Refused('A play session is running; stop it first (stop_play).')
+        raise Refused('A play session is running; stop it first (StopPIE).')
 
 
 def project_dir() -> str:

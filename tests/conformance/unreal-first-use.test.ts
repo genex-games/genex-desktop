@@ -36,12 +36,14 @@ const NO_BUILD_TOOLS: VisualStudioStatus = {
   state: VisualStudioState.Missing,
   toolset: null,
   windowsSdk: false,
+  netFxSdk: false,
   plan: "install",
 };
 const BUILD_TOOLS_READY: VisualStudioStatus = {
   state: VisualStudioState.Ready,
   toolset: "14.44.35211",
   windowsSdk: true,
+  netFxSdk: true,
 };
 
 /** Engines by version and build, as Epic's launcher lists them. */
@@ -537,7 +539,11 @@ describe("Do it for me on the Unreal setup card", () => {
    * `unsigned`), and each installer's run handed to `onInstall`.
    */
   async function fakeInstall(
-    script: { gate?: Promise<void>; unsigned?: boolean; onInstall?: (file: string) => Promise<void> } = {},
+    script: {
+      gate?: Promise<void>;
+      unsigned?: boolean;
+      onInstall?: (file: string, args: readonly string[]) => Promise<void>;
+    } = {},
   ) {
     const ran: string[] = [];
     const fetchFn = (async (_input: string | URL | Request, init?: RequestInit) => {
@@ -547,10 +553,10 @@ describe("Do it for me on the Unreal setup card", () => {
       await Promise.race([script.gate ?? Promise.resolve(), stopped]);
       return new Response(Buffer.from("epic installer"), { status: 200 });
     }) as typeof fetch;
-    const run: EpicInstallDeps["run"] = async (file, _args, options) => {
+    const run: EpicInstallDeps["run"] = async (file, args, options) => {
       ran.push(path.win32.basename(file));
       if (!file.endsWith("powershell.exe")) {
-        await script.onInstall?.(file);
+        await script.onInstall?.(file, args);
         return { code: 0, stdout: "" };
       }
       const subject = options.env?.GENEX_INSTALLER?.endsWith(".msi") ? EPIC : MICROSOFT;
@@ -726,6 +732,105 @@ describe("Do it for me on the Unreal setup card", () => {
     assert.equal(step(done, "install-build-tools")?.done, true);
     assert.match(String(done.doneSays), /^Visual Studio's C\+\+ tools are installed on this PC/);
     assert.equal(done.primary, undefined);
+  });
+
+  it("updates Build Tools whose compiler Unreal refuses, then adds what they lack, in one press", async () => {
+    const installPath = "C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools";
+    const outdated: VisualStudioStatus = {
+      state: VisualStudioState.Outdated,
+      toolset: null,
+      windowsSdk: true,
+      netFxSdk: false,
+      plan: "update",
+      installPath,
+    };
+    const lacking: VisualStudioStatus = {
+      state: VisualStudioState.Missing,
+      toolset: "14.44.35211",
+      windowsSdk: true,
+      netFxSdk: false,
+      plan: "modify",
+      installPath,
+    };
+    const stages = [outdated, lacking, BUILD_TOOLS_READY];
+    const commands: string[] = [];
+    const { install } = await fakeInstall({
+      onInstall: async (_file, args) => {
+        commands.push(args[0] ?? "");
+        stages.shift();
+      },
+    });
+    const c = await computer({
+      platform: "win32",
+      install,
+      runtime: () => true,
+      visualStudio: () => stages[0] ?? BUILD_TOOLS_READY,
+    });
+    await c.linkLantern();
+    const answer = (await c.act("install-for-me")) as Answer;
+    assert.deepEqual([answer.step, answer.started], ["build-tools", true]);
+    await settle(async () => !(await card(c)).open);
+    assert.deepEqual(commands, ["update", "modify"], "the update first, then the .NET Framework SDK added");
+    assert.match(String((await card(c)).doneSays), /^Visual Studio's C\+\+ tools are installed on this PC/);
+  });
+
+  it("adds what Build Tools lack, then updates the compiler Unreal refuses, in one press", async () => {
+    const installPath = "C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools";
+    // Only a refused compiler and no Windows SDK: Missing, so the SDKs come first; then Outdated.
+    const lacking: VisualStudioStatus = {
+      state: VisualStudioState.Missing,
+      toolset: null,
+      windowsSdk: false,
+      netFxSdk: false,
+      plan: "modify",
+      installPath,
+    };
+    const outdated: VisualStudioStatus = {
+      ...lacking,
+      state: VisualStudioState.Outdated,
+      windowsSdk: true,
+      netFxSdk: true,
+      plan: "update",
+    };
+    const stages = [lacking, outdated, BUILD_TOOLS_READY];
+    const commands: string[] = [];
+    const { install } = await fakeInstall({
+      onInstall: async (_file, args) => {
+        commands.push(args[0] ?? "");
+        stages.shift();
+      },
+    });
+    const c = await computer({
+      platform: "win32",
+      install,
+      runtime: () => true,
+      visualStudio: () => stages[0] ?? BUILD_TOOLS_READY,
+    });
+    await c.linkLantern();
+    await c.act("install-for-me");
+    await settle(async () => !(await card(c)).open);
+    assert.deepEqual(commands, ["modify", "update"]);
+    assert.match(String((await card(c)).doneSays), /^Visual Studio's C\+\+ tools are installed on this PC/);
+  });
+
+  it("runs no plan twice in one press: a modify that leaves the tools as they were stops", async () => {
+    const installPath = "C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools";
+    const lacking: VisualStudioStatus = {
+      state: VisualStudioState.Missing,
+      toolset: "14.44.35211",
+      windowsSdk: true,
+      netFxSdk: false,
+      plan: "modify",
+      installPath,
+    };
+    const commands: string[] = [];
+    const { install } = await fakeInstall({ onInstall: async (_file, args) => void commands.push(args[0] ?? "") });
+    const c = await computer({ platform: "win32", install, runtime: () => true, visualStudio: () => lacking });
+    await c.linkLantern();
+    await c.act("install-for-me");
+    await settle(async () => (await card(c)).stuckSays !== undefined);
+    assert.match(String((await card(c)).stuckSays), /Unreal still can't build C\+\+ with what it installed/);
+    assert.deepEqual(commands, ["modify"]);
   });
 
   it("follows the Build Tools install on the card, and tells the agent once when it stops on its own", async () => {

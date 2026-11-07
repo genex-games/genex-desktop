@@ -554,8 +554,8 @@ export default {
   "Downloading the Visual Studio Build Tools installer from Microsoft…":
     "Скачиваем установщик Visual Studio Build Tools с сайта Microsoft…",
   "Install Visual Studio Build Tools": "Установить Visual Studio Build Tools",
-  "Install Visual Studio Build Tools 2022 from Microsoft with Desktop development with C++.":
-    "Установи Visual Studio Build Tools 2022 от Microsoft с набором «Разработка классических приложений на C++».",
+  "Install Visual Studio Build Tools 2022 from Microsoft with Desktop development with C++ and the .NET Framework 4.8 SDK.":
+    "Установи Visual Studio Build Tools 2022 от Microsoft с набором «Разработка классических приложений на C++» и .NET Framework 4.8 SDK.",
   "Installing Visual Studio Build Tools. Choose Yes when Windows asks; Microsoft's installer shows its progress.":
     "Устанавливаем Visual Studio Build Tools. Нажми «Да», когда Windows спросит; установщик Microsoft покажет, как идёт установка.",
   "Microsoft's download led somewhere other than Microsoft, so Genex stopped.":
@@ -568,12 +568,12 @@ export default {
     "Установщик Microsoft не смог скачать Build Tools. Проверь интернет и попробуй ещё раз.",
   "Microsoft's installer didn't download. Check your internet connection and try again.":
     "Установщик Microsoft не скачался. Проверь интернет и попробуй ещё раз.",
-  "Microsoft's installer finished, but Unreal still can't build C++ with what it installed. Install Visual Studio Build Tools 2022 with Desktop development with C++ yourself.":
-    "Установщик Microsoft закончил, но Unreal всё ещё не может собирать C++ с тем, что он поставил. Установи Visual Studio Build Tools 2022 с набором «Разработка классических приложений на C++» сам.",
-  "Recommended. Microsoft's free C++ tools: Unreal needs them to package a game or plugin with C++. About 7 GB. Do it for me installs them: choose Yes when Windows asks.":
-    "Рекомендуем. Бесплатные инструменты C++ от Microsoft: без них Unreal не соберёт игру или плагин с C++. Около 7 ГБ. «Сделать за меня» установит их: нажми «Да», когда Windows спросит.",
-  "Recommended. Microsoft's free C++ tools: Unreal needs them to package a game or plugin with C++. Install Visual Studio Build Tools with Desktop development with C++.":
-    "Рекомендуем. Бесплатные инструменты C++ от Microsoft: без них Unreal не соберёт игру или плагин с C++. Установи Visual Studio Build Tools с набором «Разработка классических приложений на C++».",
+  "Microsoft's installer finished, but Unreal still can't build C++ with what it installed. Install Visual Studio Build Tools 2022 with Desktop development with C++ and the .NET Framework 4.8 SDK yourself.":
+    "Установщик Microsoft закончил, но Unreal всё ещё не может собирать C++ с тем, что он поставил. Установи Visual Studio Build Tools 2022 с набором «Разработка классических приложений на C++» и .NET Framework 4.8 SDK сам.",
+  "Recommended. Microsoft's free C++ tools: with them the agent writes your game's logic in C++, and Unreal packages a game or plugin with C++. About 7 GB. Do it for me installs them: choose Yes when Windows asks.":
+    "Рекомендуем. Бесплатные инструменты C++ от Microsoft: с ними агент пишет логику твоей игры на C++, а Unreal собирает игру или плагин с C++. Около 7 ГБ. «Сделать за меня» установит их: нажми «Да», когда Windows спросит.",
+  "Recommended. Microsoft's free C++ tools: with them the agent writes your game's logic in C++, and Unreal packages a game or plugin with C++. Install Visual Studio Build Tools with Desktop development with C++ and the .NET Framework 4.8 SDK.":
+    "Рекомендуем. Бесплатные инструменты C++ от Microsoft: с ними агент пишет логику твоей игры на C++, а Unreal собирает игру или плагин с C++. Установи Visual Studio Build Tools с набором «Разработка классических приложений на C++» и .NET Framework 4.8 SDK.",
   "Self-improvement is off. Harness keeps its own instructions as they are.":
     "Самоулучшение выключено. Harness не меняет свои инструкции.",
   "Unreal can build C++ on this PC.": "Unreal может собирать C++ на этом ПК.",

@@ -1364,7 +1364,7 @@ describe("the chat's agent decides when a Loop starts (always-launch)", () => {
       "run_registered",
     );
 
-  it("always-launch. a plain message: the chat's own session is handed start_autopilot as it describes itself, with no hours and no rule, and its Loop goes until its lead finishes it, on the message's roles", async () => {
+  it("always-launch. a plain message: the chat's own session is handed start_autopilot as it describes itself, with no rule, and its Loop works the hours the person named, on the message's roles", async () => {
     const { startAutopilot } = await import("../../src/harness-seed/loop/start-autopilot.ts");
     const { rig, thread, chat } = await launchingChat({ ...ask, hours: 3 });
     const roles = { builder: "vendor-fast", judge: "vendor-model" };
@@ -1375,13 +1375,17 @@ describe("the chat's agent decides when a Loop starts (always-launch)", () => {
 
     const launch = chat[0]?.interviewTools?.find((tool) => tool.name === "start_autopilot");
     assert.equal(launch?.description, startAutopilot.description, "the tool's own description, no rule beside it");
-    assert.equal((launch?.parameters as Json)?.properties?.hours, undefined, "no hours");
+    // Flipped (sword duel): the tool took no hours; it takes the time the person named, which the
+    // Loop works before its lead may finish (loop/work-time.ts), never a ceiling.
+    assert.equal((launch?.parameters as Json)?.properties?.hours?.type, "number", "the hours the person named");
     assert.equal("onlyWhenAsked" in (launch ?? {}), false);
     assert.doesNotMatch(String(chat[0]?.prompt), /Never say a Loop started|Loop switch|asks in words/);
     assert.equal(run?.goal, ask.goal);
     // Flipped (no clock): the run's budgets named a day's ceiling and `untilSatisfied`; a run has no clock now.
     assert.equal(run?.budgets?.untilSatisfied, undefined, "no clock: whatever hours the call named");
     assert.equal(run?.budgets?.wallClockMs, undefined, "no working time");
+    assert.equal(run?.budgets?.workMinutes, 180, "the 3 h the call named, as time to work");
+    assert.equal(run?.budgets?.completionPolicy, "duration");
     assert.deepEqual(run?.roles, roles, "the roles the message carries");
   });
 
@@ -3303,9 +3307,10 @@ describe("a Loop has no time limit", () => {
   /**
    * The composer's ∞ ("until satisfied") reached the log as a plain 24-hour budget, so every
    * surface that read the run back called it a 24 h build. There are no hours to pick, and a Loop
-   * has no clock: its start names no hours, whatever hours the call named.
+   * has no clock of Genex's: its start names no cap. Hours the person named are time to work
+   * (loop/work-time.ts), never a ceiling.
    */
-  it("L1. a Loop's start names no hours and no 24-hour cap, whatever hours its call named", async () => {
+  it("L1. a Loop's start names no hours cap and no 24-hour cap: hours its call named are time to work", async () => {
     const { startAutopilot } = await import("../../src/harness-seed/loop/start-autopilot.ts");
     const { ctxRecorder } = await import("../helpers/ctx-recorder.ts");
     const outcome = await startAutopilot.execute({ goal: "g", direction: "d", hours: 3 }, ctxRecorder().ctx);
@@ -3314,6 +3319,7 @@ describe("a Loop has no time limit", () => {
     // Flipped: the start wrote its hours (3) and untilSatisfied only for ∞; it writes neither now.
     assert.equal("hours" in run, false);
     assert.equal("untilSatisfied" in run, false);
+    assert.deepEqual(run.budgets, { workMinutes: 180, workFromMs: 0, completionPolicy: "duration" });
   });
 
   /*

@@ -21,8 +21,12 @@ import {
   MAX_PARALLEL_COMPILES,
   type PrepareSandbox,
   type RunCommand,
+  type RunWindowsBuild,
   systemRunCommand,
+  type WindowsBuildLaunch,
+  windowsBuildLaunch,
 } from "../../src/plugins/unreal/ubt.ts";
+import { VisualStudioState } from "../../src/plugins/unreal/visual-studio.ts";
 import {
   type BuildSandbox,
   type BuildSandboxRequest,
@@ -410,14 +414,15 @@ describe("when UBT doesn't run", () => {
     assertNoAbsolutePaths(result);
   });
 
-  it("is a typed failure off a Mac, without running anything", async () => {
-    for (const platform of ["win32", "linux"] as const) {
-      const { run, calls } = answering(await fixture("first.log"));
-      const result = await compileEditor(options({ run, platform }));
-      assert.equal(result.ok, false);
-      assert.equal(result.failure, CompileFailure.Unsupported);
-      assert.equal(calls.length, 0, platform);
-    }
+  it("is a typed failure on a computer that is neither a Mac nor Windows, without running anything", async () => {
+    const { run, calls } = answering(await fixture("first.log"));
+    const runWindows: RunWindowsBuild = async () => {
+      throw new Error("Build.bat runs only on Windows");
+    };
+    const result = await compileEditor(options({ run, runWindows, platform: "linux" }));
+    assert.equal(result.ok, false);
+    assert.equal(result.failure, CompileFailure.Unsupported);
+    assert.equal(calls.length, 0);
   });
 
   it("refuses a module, project or engine it can't trust, without running anything", async () => {
@@ -708,7 +713,299 @@ describe("the system runner", { skip: process.platform === "darwin" ? false : "m
   });
 });
 
+const WIN_ENGINE = "D:\\Epic Games\\UE_5.8";
+/** The scratch game of the real Windows test whose output the win-*.log fixtures are (2026-11-07, user folder renamed). */
+const WIN_PROJECT = "D:\\ai-games\\gx cpp check\\unreal\\GxCpp.uproject";
+/** Its copy without Binaries, Intermediate and Saved, as a builder's copy is, built while editors ran Live Coding. */
+const WIN_COPY = "D:\\ai-games\\gx cpp check copy\\unreal\\GxCpp.uproject";
+const CMD = "C:\\Windows\\System32\\cmd.exe";
+/** Genex's own environment on Windows, with a credential and a setting no build may see. */
+const WIN_ENV: NodeJS.ProcessEnv = {
+  SystemRoot: "C:\\Windows",
+  Path: "C:\\Windows\\System32;C:\\Windows",
+  TEMP: "C:\\Users\\Ana\\AppData\\Local\\Temp",
+  USERPROFILE: "C:\\Users\\Ana",
+  LOCALAPPDATA: "C:\\Users\\Ana\\AppData\\Local",
+  APPDATA: "C:\\Users\\Ana\\AppData\\Roaming",
+  ProgramData: "C:\\ProgramData",
+  "ProgramFiles(x86)": "C:\\Program Files (x86)",
+  ANTHROPIC_API_KEY: "sk-stand-in",
+  GENEX_PROFILE: "studio:dev",
+};
+
+/** win-err.log's errors as an agent reads them: file, line, column, MSVC's message with its code; the engine's note is no error. */
+const WIN_ERRORS: Array<[string, number, number, string]> = [
+  ["Source/GxCpp/Parts/Check/GxCheckActor.cpp", 16, 2, "C2065: 'Damge': undeclared identifier"],
+  ["Source/GxCpp/Parts/Check/GxCheckActor.cpp", 17, 8, "C4458: declaration of 'Tags' hides class member"],
+];
+
+/** A Windows runner that answers with `output` at once and records each launch. */
+function answeringOnWindows(output: string) {
+  const launches: WindowsBuildLaunch[] = [];
+  const runWindows: RunWindowsBuild = async (launch) => {
+    launches.push(launch);
+    return { code: 0, output };
+  };
+  return { runWindows, launches };
+}
+
+const onWindows = (overrides: Partial<CompileOptions> = {}): CompileOptions => ({
+  engineDir: WIN_ENGINE,
+  projectFile: WIN_PROJECT,
+  module: "GxCpp",
+  platform: "win32",
+  env: WIN_ENV,
+  run: async () => {
+    throw new Error("a Mac's sandboxed Build.sh never runs on Windows");
+  },
+  ...overrides,
+});
+
+/** No absolute path of the Windows computer in anything an agent reads. */
+function assertNoWindowsPaths(result: CompileResult) {
+  const text = JSON.stringify(result);
+  for (const leak of ["D:\\\\", "C:\\\\", "ai-games", "Epic Games", "Users"])
+    assert.ok(!text.includes(leak), `no ${leak} in ${text}`);
+}
+
+describe("compiling a game's editor target on Windows", () => {
+  it("runs the engine's Build.bat through cmd.exe for Win64, every path whole in quotes, without UBT's lock, accelerator or Live Coding check", async () => {
+    const { runWindows, launches } = answeringOnWindows(await fixture("win-first.log"));
+    const result = await compileEditor(onWindows({ runWindows }));
+    assert.equal(result.ok, true, result.summary);
+    assert.equal(launches.length, 1);
+    const [launch] = launches;
+    assert.equal(launch?.file, CMD);
+    assert.deepEqual(launch?.args, [
+      "/d",
+      "/v:off",
+      "/s",
+      "/c",
+      `""D:\\Epic Games\\UE_5.8\\Engine\\Build\\BatchFiles\\Build.bat" GxCppEditor Win64 Development -Project="${WIN_PROJECT}" -NoMutex -NoUBA -NoHotReloadFromIDE"`,
+    ]);
+    assert.deepEqual(
+      launch?.args,
+      windowsBuildLaunch(
+        WIN_ENGINE,
+        ["GxCppEditor", "Win64", "Development", `-Project=${WIN_PROJECT}`, "-NoMutex", "-NoUBA", "-NoHotReloadFromIDE"],
+        WIN_ENV,
+      ).args,
+    );
+  });
+
+  it("hands Build.bat Windows' system folders and names, and never a credential or Genex's own setting", () => {
+    const { env } = windowsBuildLaunch(WIN_ENGINE, ["GxCppEditor"], WIN_ENV);
+    assert.equal(env.SystemRoot, "C:\\Windows");
+    assert.equal(env["ProgramFiles(x86)"], "C:\\Program Files (x86)", "UBT finds Visual Studio's installer there");
+    assert.equal(env.LOCALAPPDATA, "C:\\Users\\Ana\\AppData\\Local", "UBT keeps its log there");
+    assert.equal(env.ANTHROPIC_API_KEY, undefined);
+    assert.equal(env.GENEX_PROFILE, undefined);
+  });
+
+  it("refuses a path cmd.exe can't carry, or one on a network share, without running anything", async () => {
+    const rows: Array<[string, Partial<CompileOptions>]> = [
+      ["a project path with %", { projectFile: "D:\\ai-games\\100%\\unreal\\GxCpp.uproject" }],
+      ["a project path with !", { projectFile: "D:\\ai-games\\go!\\unreal\\GxCpp.uproject" }],
+      ["a project path with a quote", { projectFile: 'D:\\ai-games\\a"b\\unreal\\GxCpp.uproject' }],
+      ["a project on a network share", { projectFile: "\\\\nas\\games\\rush\\unreal\\GxCpp.uproject" }],
+      ["an engine path with %", { engineDir: "D:\\Epic%PATH%\\UE_5.8" }],
+      ["an engine on a network share", { engineDir: "//nas/Epic/UE_5.8" }],
+      ["a relative project", { projectFile: "rush\\unreal\\GxCpp.uproject" }],
+      ["a relative engine", { engineDir: "Epic Games\\UE_5.8" }],
+    ];
+    for (const [label, overrides] of rows) {
+      const { runWindows, launches } = answeringOnWindows(await fixture("win-first.log"));
+      const result = await compileEditor(onWindows({ runWindows, ...overrides }));
+      assert.equal(result.failure, CompileFailure.Invalid, label);
+      assert.equal(launches.length, 0, `${label}: nothing ran`);
+    }
+  });
+
+  it("an MSVC error is its first line, at its file relative to the project with / between folders", async () => {
+    const { runWindows } = answeringOnWindows(await fixture("win-err.log"));
+    const result = await compileEditor(onWindows({ runWindows }));
+    assert.equal(result.ok, false);
+    assert.equal(result.failure, CompileFailure.Failed);
+    assert.deepEqual(
+      result.errors.map((e) => [e.file, e.line, e.column, e.message]),
+      WIN_ERRORS,
+    );
+    assert.equal(result.summary, "GxCppEditor didn't build (OtherCompilationError): 2 errors.");
+    assertNoWindowsPaths(result);
+  });
+
+  it("a link error names the symbol and the object that uses it, never a folder", async () => {
+    const { runWindows } = answeringOnWindows(await fixture("win-link.log"));
+    const result = await compileEditor(onWindows({ runWindows }));
+    assert.equal(result.failure, CompileFailure.Failed);
+    assert.equal(result.errors.length, 2);
+    assert.ok(
+      result.errors.every((e) => e.file === "" && /LNK\d{4}/.test(e.message)),
+      JSON.stringify(result.errors),
+    );
+    assert.match(
+      result.errors[0]?.message ?? "",
+      /^GxCheckActor\.cpp\.obj: LNK2019 unresolved external symbol .*AGxCheckActor::NeverDefined/,
+    );
+    assertNoWindowsPaths(result);
+  });
+
+  it("a build is its time and nothing else, with the engine's whole shared header compiled", async () => {
+    const { runWindows } = answeringOnWindows(await fixture("win-first.log"));
+    const result = await compileEditor(onWindows({ runWindows, now: clock(360_300) }));
+    assert.deepEqual(result, {
+      ok: true,
+      seconds: 360.3,
+      errors: [],
+      summary: "GxCppEditor built in 360.3 s.",
+      retryable: false,
+    });
+  });
+
+  it("an open editor's Live Coding refusing the build is its own failure, which says to close that editor", async () => {
+    // Build.bat by hand without -NoHotReloadFromIDE, on a copy, while another editor ran Live Coding.
+    const { runWindows } = answeringOnWindows(await fixture("win-live-coding.log"));
+    const result = await compileEditor(onWindows({ runWindows, projectFile: WIN_COPY }));
+    assert.equal(result.ok, false);
+    assert.equal(result.failure, CompileFailure.LiveCoding);
+    assert.equal(result.retryable, false);
+    assert.match(result.summary, /Live Coding/);
+    assertNoWindowsPaths(result);
+  });
+
+  it("a compiler out of memory is no error in the code, and may pass once memory is free", async () => {
+    // A copy's first build compiles the engine's shared header; two editors held most of a 16 GB PC.
+    const { runWindows } = answeringOnWindows(await fixture("win-out-of-memory.log"));
+    const result = await compileEditor(onWindows({ runWindows, projectFile: WIN_COPY }));
+    assert.equal(result.failure, CompileFailure.OutOfMemory);
+    assert.equal(result.retryable, true);
+    assert.deepEqual(result.errors, [], "no engine header for the agent to fix");
+    assert.match(result.summary, /out of memory/);
+    assertNoWindowsPaths(result);
+  });
+
+  it("a link the game's open editor blocks by holding its module is no error in the code, and says to build with it closed", async () => {
+    const { runWindows } = answeringOnWindows(await fixture("win-module-in-use.log"));
+    const result = await compileEditor(onWindows({ runWindows }));
+    assert.equal(result.failure, CompileFailure.ModuleInUse);
+    assert.equal(result.retryable, false);
+    assert.deepEqual(result.errors, []);
+    assert.match(result.summary, /editor closed/);
+    assertNoWindowsPaths(result);
+  });
+
+  it("an error of the code beside the computer running out of memory comes first, to be fixed", async () => {
+    const source = "D:\\ai-games\\gx cpp check\\unreal\\Source\\GxCpp\\Parts\\Check\\GxCheckActor.cpp";
+    const rows: Array<[string, string]> = [
+      [
+        "out of memory",
+        "D:\\Epic Games\\UE_5.8\\Engine\\Source\\Runtime\\Core\\Public\\String\\FormatStringSan.h(131,1): fatal error C1060: compiler is out of heap space",
+      ],
+      [
+        "the module in use",
+        "LINK : fatal error LNK1104: cannot open file 'D:\\ai-games\\gx cpp check\\unreal\\Binaries\\Win64\\UnrealEditor-GxCpp.dll'",
+      ],
+    ];
+    for (const [label, line] of rows) {
+      const log = [
+        line,
+        `${source}(16,2): error C2065: 'Damge': undeclared identifier`,
+        "Result: Failed (OtherCompilationError)",
+      ].join("\r\n");
+      const result = await compileEditor(onWindows(answeringOnWindows(log)));
+      assert.equal(result.failure, CompileFailure.Failed, label);
+      assert.equal(result.retryable, false, label);
+      assert.deepEqual(
+        result.errors.map((e) => [e.file, e.line, e.message]),
+        [["Source/GxCpp/Parts/Check/GxCheckActor.cpp", 16, "C2065: 'Damge': undeclared identifier"]],
+        label,
+      );
+    }
+  });
+
+  it("another file the linker can't open stays an error of the build", async () => {
+    const log = [
+      "LINK : fatal error LNK1104: cannot open file 'GxMissing.lib'",
+      "Result: Failed (OtherCompilationError)",
+    ].join("\r\n");
+    const result = await compileEditor(onWindows(answeringOnWindows(log)));
+    assert.equal(result.failure, CompileFailure.Failed);
+    assert.equal(result.errors[0]?.message, "LINK: LNK1104 cannot open file 'GxMissing.lib'");
+  });
+
+  it("never passes on the text of an error in a Windows file outside the project and the engine", async () => {
+    const text = "STANDIN_TOKEN_TEXT: unknown override specifier";
+    const rows: Array<[string, string, string]> = [
+      ["a file in the profile", `C:\\Users\\Ana\\.ssh\\id_stand_in(1): error C3646: ${text}`, "id_stand_in"],
+      ["the same in another case", `c:\\users\\ana\\notes\\stand-in.h(2): error C2143: ${text}`, "stand-in.h"],
+      [
+        "a path that climbs out of the project",
+        `D:\\ai-games\\gx cpp check\\unreal\\Source\\GxCpp\\..\\..\\..\\..\\secret.txt(3): error C2059: ${text}`,
+        "secret.txt",
+      ],
+    ];
+    for (const [label, line, file] of rows) {
+      const log = [line, "Result: Failed (OtherCompilationError)"].join("\r\n");
+      const result = await compileEditor(onWindows(answeringOnWindows(log)));
+      assert.deepEqual(
+        result.errors.map((e) => [e.file, e.message]),
+        [[file, FOREIGN]],
+        label,
+      );
+      assert.ok(!JSON.stringify(result).includes("STANDIN_TOKEN_TEXT"), label);
+    }
+  });
+
+  it("a cmd.exe that can't start is a typed failure without its path", async () => {
+    const runWindows: RunWindowsBuild = async () => {
+      throw Object.assign(new Error(`spawn ${CMD} ENOENT`), { code: "ENOENT" });
+    };
+    const result = await compileEditor(onWindows({ runWindows }));
+    assert.equal(result.failure, CompileFailure.NotStarted);
+    assertNoWindowsPaths(result);
+  });
+
+  it("a compile stopped while it runs is asked to end and says it was stopped", async () => {
+    const stop = new AbortController();
+    const runWindows: RunWindowsBuild = (_launch, { signal }) =>
+      new Promise((resolve) => {
+        signal.addEventListener("abort", () => resolve({ code: 1, output: "" }), { once: true });
+        stop.abort();
+      });
+    const result = await compileEditor(onWindows({ runWindows, signal: stop.signal }));
+    assert.equal(result.failure, CompileFailure.Aborted);
+  });
+
+  it("a PC without the .NET Framework SDK is named by UBT's cause, not the chain of modules that led to it", async () => {
+    const { runWindows } = answeringOnWindows(await fixture("win-no-netfx.log"));
+    const result = await compileEditor(onWindows({ runWindows }));
+    assert.equal(result.failure, CompileFailure.Failed);
+    assert.equal(result.summary, "GxCppEditor didn't build (RulesError): 1 error.");
+    assert.match(
+      result.errors[0]?.message ?? "",
+      /^Unable to instantiate module 'SwarmInterface': Could not find NetFxSDK install dir/,
+    );
+    assertNoWindowsPaths(result);
+  });
+});
+
 describe("whether C++ is possible", () => {
+  it("needs Windows with Microsoft's C++ tools ready for the engine, whatever Xcode says", () => {
+    const rows: Array<[VisualStudioState | undefined, NodeJS.Platform, boolean]> = [
+      [VisualStudioState.Ready, "win32", true],
+      [VisualStudioState.Missing, "win32", false],
+      [VisualStudioState.Outdated, "win32", false],
+      [undefined, "win32", false],
+      [VisualStudioState.Ready, "darwin", false],
+      [VisualStudioState.Ready, "linux", false],
+    ];
+    for (const [state, platform, ready] of rows) {
+      const visualStudio = state ? { state } : undefined;
+      const xcode = { state: platform === "darwin" ? XcodeState.Missing : XcodeState.NotApplicable };
+      assert.equal(canCompileCpp({ xcode, visualStudio }, platform), ready, `${state} ${platform}`);
+    }
+  });
+
   it("needs a Mac with Xcode ready", () => {
     const rows: Array<[XcodeState, NodeJS.Platform, boolean]> = [
       [XcodeState.Ready, "darwin", true],
@@ -720,6 +1017,6 @@ describe("whether C++ is possible", () => {
       [XcodeState.Ready, "linux", false],
     ];
     for (const [state, platform, ready] of rows)
-      assert.equal(canCompileCpp({ state }, platform), ready, `${state} ${platform}`);
+      assert.equal(canCompileCpp({ xcode: { state } }, platform), ready, `${state} ${platform}`);
   });
 });

@@ -5,7 +5,8 @@
  * `open-editor` start a background job, one per project: it ends what is left of this project's
  * editor and its crash reporter, updates an outdated Genex editor helper while Unreal is closed,
  * builds the game's C++ module with UnrealBuildTool when it has one (an agent's Open only when it
- * asks, or while the last build failed), opens the project (the panel's Open, which waits for a
+ * asks, or while the last build failed; on a Mac with Xcode, or on Windows with Microsoft's C++
+ * tools, where without them Unreal opens on its last build), opens the project (the panel's Open, which waits for a
  * free port) and waits until it answers. `editor-state` says whether the game's Unreal answers, whether
  * this project's editor process runs (an editor busy on its game thread answers nothing for a
  * while, yet hasn't crashed), how reopening goes and where the project's Genex editor helper stands
@@ -48,7 +49,8 @@ import {
   runJob,
 } from "./editor-restart.ts";
 import { HelperState, inspectProject, type SetupOptions, updateHelper } from "./setup.ts";
-import { type CompileOptions, type CompileResult, canCompileCpp, compileEditor } from "./ubt.ts";
+import { type CompileOptions, type CompileResult, canCompileCpp, compileEditor, cppToolsState } from "./ubt.ts";
+import type { VisualStudioStatus } from "./visual-studio.ts";
 import type { XcodeStatus } from "./xcode.ts";
 
 /** Where reopening a game's Unreal stands: wire values the Loop's runner reads (its `ReopenState`). */
@@ -89,6 +91,8 @@ export type ReopenDeps = RestartDeps & {
   engine(): Promise<{ version: string; directory: string } | undefined>;
   project(storage: string, game: string): Promise<string | undefined>;
   xcode(engineDir: string | undefined): Promise<Pick<XcodeStatus, "state"> & Partial<Pick<XcodeStatus, "app">>>;
+  /** Where Microsoft's C++ tools stand on Windows, which build the module there; none off Windows. */
+  visualStudio?(engineDir: string | undefined): Promise<Pick<VisualStudioStatus, "state">>;
   /** Builds the project's editor target; UnrealBuildTool's own unless a test stands in. */
   compile?(options: CompileOptions): Promise<CompileResult>;
   /** This computer's processes; without them, nothing is ended. */
@@ -121,6 +125,8 @@ const CRASH_FOLDER_REST = /^-pid-\d{1,10}-[0-9A-Fa-f]{8,64}$/;
 const FOLDER_ARGUMENT = /^([^\s"/]*)\/?(?=$|[\s"])/;
 const BEFORE_ARGUMENT = /[\s"]/;
 const MAC = "darwin";
+/** The computers Genex builds a game's C++ module on before it opens Unreal: a Mac (Xcode) and Windows (Microsoft's tools). */
+const BUILDS_MODULE: ReadonlySet<NodeJS.Platform> = new Set<NodeJS.Platform>([MAC, StudioPlatform.Windows]);
 const PS = "/bin/ps";
 export const PS_TIMEOUT_MS = 10 * SECOND_MS;
 const PS_MAX_BYTES = 16 * 1024 * 1024;
@@ -131,8 +137,8 @@ const REOPEN_STATES = { running: ReopenState.Reopening, done: ReopenState.Done, 
 const MESSAGE = {
   NoProject: "This game isn't linked to an Unreal project, so there is no Unreal to reopen.",
   NoEngine: "No supported Unreal is installed, so Genex can't build the game's C++ module and didn't reopen Unreal.",
-  CannotCompile: (xcode: string) =>
-    `This Mac can't build the game's C++ module (Xcode: ${xcode}), so Genex didn't reopen Unreal on modules that may not match the game's code.`,
+  CannotCompile: (tools: string) =>
+    `This computer can't build the game's C++ module (${tools}), so Genex didn't reopen Unreal on modules that may not match the game's code.`,
   NotEnded:
     "Unreal's crashed editor or its crash reporter for this game didn't end even when killed, so Genex didn't reopen it. Ask the user to force-quit it (Option-Command-Esc), then call unreal__open-editor.",
   EditorNotEnded:
@@ -260,15 +266,31 @@ async function endOwn(deps: ReopenDeps, target: ReopenTarget, notEnded: string):
 
 /**
  * Builds the game's C++ module with Unreal closed, so the project's module list and library match
- * its Source again; a Blueprint project has nothing to build, and off a Mac Unreal builds it itself.
+ * its Source again; a Blueprint project has nothing to build, and on a computer that builds no C++
+ * (Linux) Unreal builds it itself. A Mac without a ready Xcode is refused; Windows without
+ * Microsoft's C++ tools opens Unreal on the module its last build left, as it did before Genex built
+ * C++ there.
  */
 async function buildModule(deps: ReopenDeps, target: ReopenTarget, unbuilt: Unbuilt): Promise<void> {
   const module = await projectModule(target.project);
-  if (!module || deps.platform !== MAC) return;
+  if (!module || !BUILDS_MODULE.has(deps.platform)) return;
   const { engine } = target;
   if (!engine) throw new Error(MESSAGE.NoEngine);
   const xcode = await deps.xcode(engine.directory);
-  if (!canCompileCpp(xcode, deps.platform)) throw new Error(MESSAGE.CannotCompile(xcode.state));
+  const visualStudio = await deps.visualStudio?.(engine.directory).catch(() => undefined);
+  const tools = { xcode, visualStudio };
+  if (canCompileCpp(tools, deps.platform)) return compileModule(deps, target, { module, engine, xcode }, unbuilt);
+  if (deps.platform === MAC) throw new Error(MESSAGE.CannotCompile(cppToolsState(tools, deps.platform)));
+}
+
+/** Builds the module with the engine and Xcode found; a failure keeps the project in `unbuilt`. */
+async function compileModule(
+  deps: ReopenDeps,
+  target: ReopenTarget,
+  found: { module: string; engine: { directory: string }; xcode: Partial<Pick<XcodeStatus, "app">> },
+  unbuilt: Unbuilt,
+): Promise<void> {
+  const { module, engine, xcode } = found;
   const compile = deps.compile ?? compileEditor;
   const options = { engineDir: engine.directory, projectFile: target.project, module, xcodeApp: xcode.app ?? null };
   const result = await compile(options);

@@ -159,7 +159,7 @@ const REFUSED: Record<EpicInstallRefusal, () => string> = {
     t("Microsoft's installer couldn't download the Build Tools. Check your internet connection and try again."),
   [EpicInstallRefusal.StillMissing]: () =>
     t(
-      "Microsoft's installer finished, but Unreal still can't build C++ with what it installed. Install Visual Studio Build Tools 2022 with Desktop development with C++ yourself.",
+      "Microsoft's installer finished, but Unreal still can't build C++ with what it installed. Install Visual Studio Build Tools 2022 with Desktop development with C++ and the .NET Framework 4.8 SDK yourself.",
     ),
   [EpicInstallRefusal.Cancelled]: () => t("Stopped."),
 };

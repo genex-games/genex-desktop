@@ -88,7 +88,14 @@ import * as roles from "../../src/shared/model-roles.ts";
 import { ReasoningEffort } from "../../src/shared/model-preferences.ts";
 import { PreviewConsoleSource, PreviewGone } from "../../src/shared/preview-contract.ts";
 import { EngineId } from "../../src/shared/providers.ts";
-import { ExecutionStatus, JournalPhase, VerdictPass, VerdictRule } from "../../src/shared/run-state.ts";
+import {
+  CompletionPolicy,
+  ExecutionStatus,
+  JournalPhase,
+  VerdictPass,
+  VerdictRule,
+} from "../../src/shared/run-state.ts";
+import { CompletionPolicy as seedCompletionPolicy } from "../../src/harness-seed/loop/completion-policy.ts";
 import { EventKind, type EventEnvelope, MessageUsageSource } from "../../src/shared/event-log.ts";
 import * as seedEngineSeat from "../../src/harness-seed/loop/engine-seat.ts";
 import { EngineKind, EngineStatusCode } from "../../src/shared/engine-descriptor.ts";
@@ -430,6 +437,10 @@ describe("vocabularies (src/shared ↔ the seed's copies)", () => {
 
   it("has the same run execution statuses", () => {
     assert.deepEqual(seedRunEvents.ExecutionStatus, ExecutionStatus);
+  });
+
+  it("names what ends a run as the app reads it (a time the person asked for writes `duration`)", () => {
+    assert.deepEqual(seedCompletionPolicy, CompletionPolicy);
   });
 
   it("names why a run's start was refused as the app reads it", () => {

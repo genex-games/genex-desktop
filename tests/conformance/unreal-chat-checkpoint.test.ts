@@ -157,6 +157,7 @@ function standInOps(editor: StandInEditor): MomentOps {
     projectName: async () => "RailYard",
     restoreClosed: { mark: () => {}, take: () => false },
     mayEndPlay: async () => false,
+    updateHelperLive: async () => false,
   };
 }
 

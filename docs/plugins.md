@@ -493,7 +493,12 @@ Background" (`bThrottleCPUWhenNotForeground`) is on. To avoid that, a `StartPIE`
 the setting off through Epic's `ObjectTools.set_properties`. This changes only the running editor
 and never its saved settings. The bridge turns the setting back on when the agent calls `StopPIE`,
 when the start is refused and when the bridge itself closes. If the user had already turned it
-off, the bridge leaves it alone. A minimized editor is still throttled. Epic's server checks only the `Origin` header: any local process can reach it. What a call
+off, the bridge leaves it alone. Epic answers `StartPIE` with an error when the game's own Blueprints
+log errors as play starts, though the play runs, and `StopPIE` with one when the play had already
+ended; so the bridge asks the helper's `play_state` before a start and after either refusal. A start
+that began a play none ran before answers that it runs, the throttle off and the agent's mark kept; a
+stop that left no play answers there was nothing to stop; a refused stop whose play goes on keeps
+both. When the helper can't say, the refusal stands. A minimized editor is still throttled. Epic's server checks only the `Origin` header: any local process can reach it. What a call
 changes in the editor is in the game's checkpoints only when the project lies inside the game
 folder (New game puts it in `unreal/`); a project elsewhere is not.
 
@@ -648,7 +653,10 @@ console `HighResShot`, which leaves out on-screen UI), `motion_strip` (frames sc
 the pawn's and view's position) and `shot_cameras` (the hero cameras' labels). The bridge waits for
 a capture's file and hands the agent the picture itself, with its tone numbers (black point,
 contrast, near against far contrast, saturation; a nearly black frame is called out as a render to
-doubt) and the frame rate (`editor-captures.ts`, `tone.ts`); a strip and a character sheet come back as one contact sheet. `attach_mesh` puts a static mesh on a
+doubt) and the frame rate (`editor-captures.ts`, `tone.ts`); a strip and a character sheet come back as one contact sheet.
+A still or play shot over 1920 pixels on its longer side goes to the agent as a copy that size, the
+header naming both sizes, and its file keeps every pixel: three 4K answers in a row lost the
+engine's connection to Genex. `attach_mesh` puts a static mesh on a
 Blueprint's component, and `set_route` (the route the play checks drive), `track_terrain` along it
 and `dirt_material` serve racing games. The plugin's `unreal-editor` skill, which an agent reads
 with `unreal__skill`, says to look with these eyes, never `CaptureEditorImage` (the whole editor
@@ -757,11 +765,11 @@ themselves and never ask the person to open, quit or restart it (`editor-control
 answers `{answering}`, `{starting}` while Genex is already opening it, or `{started}` once a reopen
 job ended what was left of a crashed editor and its crash reporter, updated an outdated Genex editor
 helper while Unreal was closed (as the panel's Open does) and opened the project. It builds no C++
-unless asked: Unreal's own Open builds a hot-reloaded module. With `build: true` (on a Mac), or while
+unless asked: Unreal's own Open builds a hot-reloaded module. With `build: true` (on a Mac, or on Windows with Microsoft's C++ tools), or while
 the project's last module build failed, such as a restore's reopen whose build broke, the job builds
 it first, so the agent's fix is what opens and a fix that still doesn't build fails with its errors,
 Unreal left closed (`editor-status` names them); a reopen that failed for anything else, such as
-Xcode not ready, leaves the Open as asked. A Loop's lead opens and builds its Unreal this way
+a Mac's Xcode not ready, leaves the Open as asked, and Windows without the tools opens on the last build. A Loop's lead opens and builds its Unreal this way
 itself: Genex opens it at no run's start and after no crash. An editor of the game that runs without
 answering is `{busy}` and ended only with `restart: true` (or at once when its log says the port is
 blocked). `quit-editor` saves through the helper's `save_all`, then sends Unreal's normal quit and waits
@@ -839,7 +847,10 @@ play (also a part test's holds and waits) counts the play world's game seconds f
 most four times as long plus 10 s on the clock, so a slow editor still plays the whole drive; an older
 helper without a game clock gets real seconds. The result carries `fps` and `gameSeconds`.
 `save-all` ends a play session first (`stop_play`, then up to 15 s for `play_state` to say it ended)
-and saves through the helper. `log-errors {since?}` answers `{offset, lines, more, rotated}`:
+and saves through the helper. At a checkpoint in a play it may end, a helper with `save_during_play`
+saves with the play going on instead, so the agent's play test outlives its save points; an older
+helper's save ends it. The helper's `editor_activity` doesn't ask for the selection during play, a
+call that writes an error line to Unreal's log every save point would report. `log-errors {since?}` answers `{offset, lines, more, rotated}`:
 the project log's `Error:` and `Fatal:` lines since `since` (without it, the log's end now), each once
 and without its stamp or the owner's paths, at most 40 of 300 characters. Epic's and Genex's own
 noise is left out (the MCP server's, online services', a toolset lookup's, an ensure's call stack).
@@ -848,6 +859,12 @@ and crash reporter as the reopen job does, saving nothing, and is refused while 
 answers `{ended}` only once the game's Unreal no longer answers, asked again for up to 15 s (past the
 setup's 10 s memory of a good answer, so a `reopen-editor` right after never reads a closed editor as
 open), and throws when it still does. `update-helper` runs setup's `updateHelper` only while the game's Unreal doesn't answer.
+An open Unreal's helper is updated in place (setup's `updateHelperLive`, then the helper's
+`reload_helper`) only when every changed file is a helper module the editor reloads (never a
+`tools.py`, a package's `__init__.py`, `errors.py` or `init_unreal.py`), a template Unreal never reads
+or the descriptor's version and description, and only while no play runs and the helper holds
+nothing of the editor's (a tick of its own, render settings a lighter play lowered). A reload that
+fails after the files were written leaves the editor on the old code until Unreal restarts.
 `editor-activity` answers `{personActive, unsaved, pie, dirty}`: whether a play session runs and how
 many packages are unsaved (the helper's `editor_activity` names them), and whether the person is
 using the editor (below). With no editor of the game running, no linked project or Unreal still
@@ -891,13 +908,13 @@ card) for the same games.
 
 | Handler at its moment | In a run | In a chat |
 | --- | --- | --- |
-| `save-all` at `checkpoint.before` | notes a play, an editor that doesn't answer or can't tell, or a save that saved nothing: the save point holds the files on disk only; never blocks | notes what it saved or why not, a play among them; never blocks |
+| `save-all` at `checkpoint.before` | saves during the agent's play without ending it (an older helper ends it first); notes the person's play, an editor that doesn't answer or can't tell, or a save that saved nothing: the save point holds the files on disk only; never blocks | notes what it saved or why not, a play among them; never blocks |
 | `save-all` at `restore.before` | nothing for an editor that isn't running; waits up to 5 minutes for a busy one; blocks when it stays busy or the save fails or leaves work | same |
 | `end-editor` at `restore.before` | blocks when Unreal couldn't be closed; a game with no linked project has nothing to end (`save-all` and `reopen-editor` do nothing for it either) | same |
 | `reopen-editor` at `restore.after` | starts reopening, updating an outdated helper while Unreal is closed | same, but only when that restore (the person's Rewind among them) closed a running Unreal |
 | `editor-state` at `health` | quiet while it answers; pending while reopening, opening, busy or can't tell; blocks once reopening failed, its port is blocked or it is gone three asks in a row | same, gone in the chat's words |
-| `log-errors` at `run.prepare`, `checkpoint.before` | marks the log's end per game, and at the start notes an open Unreal whose Genex editor helper is older than the plugin's (only `quit-editor`, then `open-editor`, updates it); notes the new errors since | the new errors since |
-| `hero-shots` at `checkpoint.after` | the stills as images, their tone as measures | nothing: no stills are taken |
+| `log-errors` at `run.prepare`, `checkpoint.before` | marks the log's end per game, and at the start updates an open Unreal's older Genex editor helper in place when it can (above), else notes it (only `quit-editor`, then `open-editor`, updates it); notes the new errors since | the new errors since |
+| `hero-shots` at `checkpoint.after` | the stills as images, their tone as measures; none while a play runs (`capture_shot` refuses during play, and a save point no longer ends the agent's) | nothing: no stills are taken |
 
 Each handler's editor calls have limits its own longest path counts, each call's session with the
 editor (connect, the helper's identity call and the session's end) held within its limit
@@ -915,10 +932,11 @@ its brief says to call `restart` after C++ changes, which
 rebuilds through `reopen-editor`, and a lead that finds Unreal closed opens it itself with
 `open-editor` (`build: true` builds the module first).
 
-C++: `cpp-status` answers `{canCompile, xcode, platform, module,
-adding: {state: idle|adding|done|failed, error?, seconds?}}` (`cpp-tools.ts`). `add-cpp-module`
-answers `{module, already: true}` for a game that has one; it refuses off a Mac, without a ready
-Xcode or for a project `addCppModule` would refuse, touching nothing; otherwise it answers
+C++: `cpp-status` answers `{canCompile, xcode, visualStudio, platform, module,
+adding: {state: idle|adding|done|failed, error?, seconds?}}` (`cpp-tools.ts`); C++ compiles on a
+Mac whose Xcode is ready and on Windows whose Microsoft C++ tools are (`ubt.ts` `canCompileCpp`).
+`add-cpp-module` answers `{module, already: true}` for a game that has one; it refuses where C++
+doesn't compile (on Windows naming `install-unreal`) or for a project `addCppModule` would refuse, touching nothing; otherwise it answers
 `{started: true}` and runs one job per project: `save_all` (any work left unsaved stops it with
 Unreal open), the panel's normal quit and up to 90 s for no editor to run, `addCppModule`,
 UnrealBuildTool on the project, then Open in Unreal and up to 5 minutes for the project to answer
@@ -930,8 +948,8 @@ is never quit.
 `check-part` on a C++ part (`part-files.ts`, `part-check.ts`, `part-compile.ts`) reads that folder in
 the builder's copy by real path: plain `.h` and `.cpp` files at most one folder deep, at most 20, each
 at most 200 KB; a link or anything else is a problem, never read. It refuses the part in a game
-without a C++ module (write it in Blueprints and Python, or wait for the module), off a Mac or
-without a ready Xcode, for a listed class whose `UCLASS()` declaration (`class <MODULE>_API A<Name>`
+without a C++ module (write it in Blueprints and Python, or wait for the module), where C++
+doesn't compile, for a listed class whose `UCLASS()` declaration (`class <MODULE>_API A<Name>`
 or `U<Name>`) no header has, for C++ files `cpp` doesn't list, for a class another part defines, and
 for anything else UnrealBuildTool reads that the copy added, changed or lost against the game: its
 Source (outside `Parts/`, a part that landed later is no change), `.uproject` and `Plugins/`.
@@ -942,7 +960,19 @@ it is. UBT runs under `sandbox-exec` (`ubt-sandbox.ts`): of the home folder it r
 the engine, Xcode and its own folders (its configuration read-only), it writes only the copy's
 `Intermediate/`, `Binaries/` and `Saved/`, its log folder and a private scratch, never a sign-in home,
 with no network, no Apple Events (no scripting or typing into another app) and a fresh environment. It builds with `-NoUBA`: the build accelerator lists the
-folders above the copy, which the sandbox closes in the home folder (a full build took 26.7 s). UBT
+folders above the copy, which the sandbox closes in the home folder (a full build took 26.7 s). On
+Windows `Build.bat <Target> Win64 Development -Project=… -NoMutex -NoUBA -NoHotReloadFromIDE` runs through `cmd.exe`
+outside the process sandbox, like `package-game`'s RunUAT (srt-win can't confine one build; the
+gate above keeps the copy's `Build.cs`, `.uproject` and `Plugins/` the game's), with RunUAT's small
+environment (`program-env.ts`); a game or engine path holding a quote, `%` or `!`, or on a network
+share, is refused before anything runs. MSVC's `file(line): error C…` and the linker's `LNK…`
+errors are named the same way. An editor running Live Coding locks every outside build of the
+engine's editor target, whatever its project (the lock is named for the engine's `UnrealEditor.exe`),
+so the last flag skips UBT's check: the game's own project is built only with its editor closed. A
+refusal that still comes fails with that reason (`live-coding`). A link the game's open editor
+blocks by holding its module's DLL fails as `module-in-use`, and a compiler or linker out of memory
+as `out-of-memory` (retryable: a copy's first build compiles the engine's multi-gigabyte shared
+precompiled header beside the open editors); check-part keeps neither for that C++. UBT
 misses a source written within about a second after its last build, so a part file written then is
 given a later write time first. In the game's own
 folder check-part never compiles: the open editor compiles that module, so the C++ counts as not
@@ -2514,23 +2544,27 @@ old for the engine, or Add Xcode N for one too new (Apple's developer downloads 
 installed Xcode in range is the one to select instead). `get-xcode` opens only the App Store page,
 Apple's downloads page (`{step: downloads}`) or the Xcode app the probes found. On Windows a game
 with a project has one row instead, Microsoft's C++ tools (`visual-studio.ts`): Microsoft's
-`vswhere.exe` lists Visual Studio's installs, a compiler counts with its x64 `cl.exe` and a Windows
-SDK with its headers, each judged by the engine's own `Engine/Config/Windows/Windows_SDK.json`
-(`MinimumVisualCppVersion`, `BannedVisualCppVersions`, the SDK range). Install Visual Studio Build
+`vswhere.exe` lists Visual Studio's installs, a compiler counts with its x64 `cl.exe` (named by that
+file's own product version, as UnrealBuildTool reads it: Microsoft's updates raise it and leave the
+folder's name) and a Windows SDK with its headers, each judged by the engine's own
+`Engine/Config/Windows/Windows_SDK.json` (`MinimumVisualCppVersion`, `BannedVisualCppVersions`, the
+SDK range), and a .NET Framework SDK (4.6 or later, which every Win64 editor build needs) counts by
+the registry's `NETFXSDK` keys, read with `reg.exe`. Install Visual Studio Build
 Tools, or Update for Build Tools whose only compilers the engine refuses, is done by the card's
 **Do it for me** (and `unreal__install-unreal` in a game with a project): Genex downloads
 Microsoft's VS 2022 Build Tools installer from `aka.ms` (redirects only to Microsoft's download
 host, HTTPS, capped), runs it only once Authenticode calls it Valid and signed by Microsoft
-Corporation, and installs the C++ workload, its x64 compiler and the Windows 11 SDK with
-`--passive --wait` (`modify` on Build Tools already there, on their own channel, or `update` when their
-own compilers are the refused ones); Windows asks the person for permission, and the card tells the
+Corporation, and installs the C++ workload, its x64 compiler, the Windows 11 SDK and the .NET
+Framework 4.8 SDK with `--passive --wait` (`modify` on Build Tools already there, on their own
+channel, or `update` when their own compilers are the refused ones, then `modify` in the same press
+for what the update can't add); Windows asks the person for permission, and the card tells the
 agent once they are in. An install that ends well but leaves the tools still missing stops with
 that reason and leaves the row to the person; presses of Do it for me are answered one after
-another, so a card press and the agent's never start two installs. Genex doesn't compile a game's C++ on
-Windows yet (`cpp-status` names the tools' state, `canCompile` stays false), so the row alone
-never brings the card out after `new-game` (`opensByItself`); `plugin-package`, and `package-game`
-for a game with a C++ module, refuse on Windows while the tools aren't ready and name
-`install-unreal`. The agent shows it again with `unreal__show-steps` when C++ would
+another, so a card press and the agent's never start two installs. With the tools ready Genex
+compiles a game's C++ on Windows as on a Mac (`cpp-status` `canCompile`); the row alone still never
+brings the card out after `new-game` (`opensByItself`), since a Blueprint game needs no tools;
+`add-cpp-module`, `plugin-build`, `plugin-package`, and `package-game` for a game with a C++
+module, refuse on Windows while the tools aren't ready and name `install-unreal`. The agent shows it again with `unreal__show-steps` when C++ would
 help, links a game to a project with `unreal__use-project` (a set-up project by name, any by its
 `.uproject` path: one not set up yet is set up first, unasked, and linked with `setUp`; while Unreal
 has it open, or when setup would switch a project from an older Unreal to the supported one (the

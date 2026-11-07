@@ -10,6 +10,7 @@ import type { AnyRecord, HarnessTool, ToolCtx } from "../types/harness.d.ts";
 import { RunMode } from "./run-events.ts";
 import { storeItemsOf } from "./store-items.ts";
 import { TurnStop } from "./turn-record.ts";
+import { askedMinutes, WORK_TIME_PARAMS, workBudget } from "./work-time.ts";
 
 /** How many words of the ask a new folder's name keeps, and how long that name may be. */
 const SLUG_WORDS = 3;
@@ -36,8 +37,13 @@ const SLUG_STOP = new Set([
 ]);
 
 const str = (description: string) => ({ type: "string", description });
-/** What a launch's goal is: the user's ask. */
-const GOAL_WORDS = "one paragraph in the user's words";
+/**
+ * What a launch's goal is: the person's ask in their own words, nothing added. A goal once turned
+ * "we need serious 1x1 arena, that looks like real man, hardcore" in a chat about combat feel into map
+ * work with props and lighting, until the person said "not work on a map" (sword duel).
+ */
+const GOAL_WORDS =
+  "What the person asked for: their own words, quoted as they wrote them, then what that means in this game in a sentence or two. Add no work they didn't ask for, and where a word could mean more than one thing, read it by what they made the priority earlier in this chat.";
 /** What a launch's reference is: whatever the user named, if anything. */
 const DIRECTION_WORDS = "optional: a game, film or picture the user named as a reference, in their words";
 
@@ -68,6 +74,12 @@ function storeArgs(args: AnyRecord): { storeItems?: AnyRecord[] } {
   return storeItems.length ? { storeItems } : {};
 }
 
+/** The time the person named for the build, as its budgets carry it (work-time.ts); none when they named none. */
+function timeArgs(args: AnyRecord): { budgets?: AnyRecord } {
+  const minutes = askedMinutes(args);
+  return minutes ? { budgets: workBudget(minutes) } : {};
+}
+
 /** The pictures the launching message carries, without empty slots: the build's lead receives them. */
 function attachedFrames(stills: unknown): AnyRecord[] {
   return (Array.isArray(stills) ? stills : []).filter((frame: AnyRecord | null) => frame?.data);
@@ -96,6 +108,7 @@ export const startAutopilot: HarnessTool = {
       goal: str(GOAL_WORDS),
       direction: str(DIRECTION_WORDS),
       project: str("folder slug for a chat that has no folder yet, lowercase; a chat already bound to one keeps it"),
+      ...WORK_TIME_PARAMS,
       store_items: storeList(),
     },
     required: ["goal"],
@@ -115,6 +128,7 @@ export const startAutopilot: HarnessTool = {
       // The composer's roles panel: orchestrator / workers / judges, applied at launch (model-roles.ts).
       ...(ctx.roles ? { roles: ctx.roles } : {}),
       ...storeArgs(args),
+      ...timeArgs(args),
     };
     return { ok: true, content: "Building.", stopTurn: TurnStop.LaunchRun, details: { run } };
   },

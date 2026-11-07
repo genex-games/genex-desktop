@@ -1,3 +1,6 @@
 # Every text file is LF in the index and in each checkout, Windows included (Biome, the tests and
 # the harness compare bytes). Git keeps files it detects as binary unchanged.
 * text=auto eol=lf
+
+# Windows UnrealBuildTool output as cmd.exe hands it over, CRLF kept: the build parser reads those bytes.
+tests/fixtures/unreal-ubt/win-*.log -text

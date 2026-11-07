@@ -19,6 +19,7 @@ import { type ActiveRun, StatusLane, type Studio } from "./studio-state.ts";
 import { CLIP_GAME_TITLE } from "./text.ts";
 import { type StoreItem, storeItemsOf, storeLaunchWords, storeScopeItems } from "./store-items.ts";
 import { closeCarriedPool } from "./workers/carry.ts";
+import { workAskOf, workBudget } from "./work-time.ts";
 import type { AnyRecord, ForwardedCall, HarnessCtx, Host, HostCall } from "../types/harness.d.ts";
 import type { ModelPreferences, RunSpec } from "../types/host-api.d.ts";
 import { type QueueAction, type SteerHandle } from "./message-queue.ts";
@@ -428,7 +429,7 @@ function intakeRun(
     goal: intakeGoal(spec, store),
     project,
     reference: spec.reference,
-    budgets: {},
+    budgets: launchBudgets(spec),
     ...(spec.mode ? { mode: spec.mode } : {}),
     ...(spec.engine ? { engine: spec.engine } : {}),
     ...(spec.model ? { model: spec.model } : {}),
@@ -437,6 +438,12 @@ function intakeRun(
     // generates with, never a quieter tier than the chat that started them.
     ...commissionedWith(action),
   };
+}
+
+/** A launch's budgets: the time the person named for it (work-time.ts), and nothing else a launch could write there. */
+function launchBudgets(spec: AnyRecord): AnyRecord {
+  const ask = workAskOf(spec.budgets);
+  return ask ? workBudget(ask.minutes) : {};
 }
 
 /** The effort and preferences a message's launch carries onto its build (`intakeRun`). */

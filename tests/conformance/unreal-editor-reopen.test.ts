@@ -23,6 +23,7 @@ import { EditorHealth, type HealthRead, healthAnswer } from "../../src/plugins/u
 import { createLoopTools, LiveLoopToolName, LoopToolName } from "../../src/plugins/unreal/loop-tools.ts";
 import { HelperState, type SetupEnv } from "../../src/plugins/unreal/setup.ts";
 import { CompileFailure, type CompileOptions, type CompileResult } from "../../src/plugins/unreal/ubt.ts";
+import { VisualStudioState } from "../../src/plugins/unreal/visual-studio.ts";
 import { XcodeState } from "../../src/plugins/unreal/xcode.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 import { CrashLog, crashLog } from "../helpers/unreal-editor-stand-in.ts";
@@ -70,6 +71,8 @@ type Options = {
   openTakes?: number;
   compile?: (options: CompileOptions) => CompileResult;
   xcode?: XcodeState;
+  /** Where Microsoft's C++ tools stand on Windows; none: the computer can't tell. */
+  visualStudio?: VisualStudioState;
   unlinked?: boolean;
   /** Processes the stand-in computer runs, besides the ones a test adds. */
   rows?: (w: Paths) => Row[];
@@ -133,6 +136,11 @@ type EditorState = {
   helper: string | null;
 };
 
+/** The stand-in Visual Studio probe a world gets when a test names its state; none when it doesn't. */
+function visualStudioOf(state: VisualStudioState | undefined) {
+  return state ? { visualStudio: async () => ({ state }) } : {};
+}
+
 async function reopenWorld(options: Options = {}) {
   const { root, unreal, storage, paths } = await reopenFiles(options.module !== false);
   const { home, project } = paths;
@@ -170,6 +178,7 @@ async function reopenWorld(options: Options = {}) {
     engine: async () => ({ version: "5.8", directory: path.join(root, "engine") }),
     project: async () => (options.unlinked ? undefined : project),
     xcode: async () => ({ state: options.xcode ?? XcodeState.Ready, app: XCODE_APP }),
+    ...visualStudioOf(options.visualStudio),
     compile: async (compile) => {
       events.push("compile");
       assert.equal(compile.projectFile, project);
@@ -339,6 +348,26 @@ describe("reopen-editor", () => {
       "the other project's reporter and editor are left as they were",
     );
     assert.ok(w.clock.at >= OPEN_TAKES_MS, "it waited for the project to answer");
+  });
+
+  it("on Windows builds the game's module with Microsoft's C++ tools before it opens the project", async () => {
+    const w = await reopenWorld({ platform: "win32", visualStudio: VisualStudioState.Ready });
+    w.rows.splice(0, w.rows.length);
+    assert.deepEqual(await w.reopen(), { started: true });
+    const end = await w.reopened();
+    assert.equal(end.reopening.state, ReopenState.Done, end.reopening.error);
+    assert.deepEqual(w.events, ["compile", `forget ${NAME}.uproject`, `open ${NAME}.uproject`]);
+  });
+
+  it("on Windows without Microsoft's C++ tools opens the project on the module its last build left, building nothing", async () => {
+    for (const visualStudio of [VisualStudioState.Missing, undefined]) {
+      const w = await reopenWorld({ platform: "win32", ...(visualStudio ? { visualStudio } : {}) });
+      w.rows.splice(0, w.rows.length);
+      assert.deepEqual(await w.reopen(), { started: true });
+      const end = await w.reopened();
+      assert.equal(end.reopening.state, ReopenState.Done, end.reopening.error);
+      assert.deepEqual(w.events, [`forget ${NAME}.uproject`, `open ${NAME}.uproject`], String(visualStudio));
+    }
   });
 
   it("asks a hung editor of this project to quit when it is the only editor, then terminates and kills it", async () => {

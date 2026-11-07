@@ -80,8 +80,14 @@ type Options = {
   unlinked?: boolean;
   /** The editor's answer to save_all. */
   save?: () => unknown;
+  /** The helper's answer to save_during_play (an older helper has none: the call fails). */
+  saveDuringPlay?: (args: Record<string, unknown>) => unknown;
   /** The stand-in helper update's answer. */
   update?: () => HelperUpdate;
+  /** The stand-in live helper update's answer (null: a changed file needs Unreal restarted). */
+  updateLive?: () => HelperUpdate | null;
+  /** The helper's answer to reload_helper (an older helper has none: the call fails). */
+  reloadHelper?: (args: Record<string, unknown>) => unknown;
   /** The editor's answer to editor_activity, in place of the stand-in's. */
   activity?: () => unknown;
   /** The build toolset's answers (its hero cameras and stills), by tool. */
@@ -242,6 +248,8 @@ async function liveWorld(options: Options = {}) {
       if (options.exports && EXPORT_TOOLS.has(tool)) return exportAnswer(tool, args);
       if (tool === LoopEditorTool.ExportReference) throw new Error("not in these tests");
       if (tool === CppEditorTool.SaveAll) return options.save ? options.save() : { saved: true, dirty: [], ms: 640 };
+      if (tool === LoopEditorTool.SaveDuringPlay && options.saveDuringPlay) return options.saveDuringPlay(args);
+      if (tool === LoopEditorTool.ReloadHelper && options.reloadHelper) return options.reloadHelper(args);
       if (tool === LoopTool.EditorActivity && options.activity) return options.activity();
       if (Object.values(HeroShotTool).includes(tool as HeroShotTool)) return options.build?.(tool, args);
       const answer = await editor.editor.port.call(tool as LoopTool, args);
@@ -260,6 +268,10 @@ async function liveWorld(options: Options = {}) {
       updates.push([file, given]);
       events.push("update");
       return options.update?.() ?? { from: "0.4.0", to: "0.5.0", kept: [] };
+    },
+    updateHelperLive: async () => {
+      events.push("live update");
+      return options.updateLive ? options.updateLive() : { from: "0.4.0", to: "0.5.0", kept: [] };
     },
     restart: unreal.restart,
     processes: unreal.processes,
@@ -674,6 +686,7 @@ describe("a run's start and the project's helper", () => {
     assert.match(told.note ?? "", /older Genex editor helper/);
     assert.match(told.note ?? "", /quit-editor, then open-editor/);
     assert.deepEqual(open.updates, [], "nothing is updated under an open Unreal");
+    assert.deepEqual(open.events, [], "a helper that can't reload is never written live");
 
     const closed = await liveWorld({ answering: false, running: false });
     await olderHelper(closed);
@@ -681,6 +694,47 @@ describe("a run's start and the project's helper", () => {
     const current = await liveWorld();
     await cp(current.shipped, helperIn(current), { recursive: true });
     assert.deepEqual(await atStart(current), {}, "a current helper says nothing");
+  });
+});
+
+// Sword Duel, Windows: each Loop began with quit-editor and open-editor only to update the helper's
+// Python; the open editor now reloads it in place when nothing Unreal registers changed.
+describe("a run's start brings an open Unreal's helper up to date in place", () => {
+  const helperIn = (w: World) => path.join(path.dirname(w.project), "Plugins", "GenexEditorHelper");
+  async function olderHelper(w: World): Promise<void> {
+    await cp(w.shipped, helperIn(w), { recursive: true });
+    await writeFile(path.join(helperIn(w), "GenexEditorHelper.uplugin"), JSON.stringify({ Version: 4 }));
+  }
+  const atStart = (w: World) => w.call(LiveLoopToolName.LogErrors, {}, atRun(HookEvent.RunPrepare));
+  const reloads = (w: World) => w.calls.filter(([tool]) => tool === LoopEditorTool.ReloadHelper).map(([, a]) => a);
+  const reloading = (args: Record<string, unknown>) =>
+    args.check_only ? { ready: true } : { reloaded: ["genex_build.terrain"], ms: 80 };
+
+  it("writes the new helper, has the editor reload it, and tells the lead nothing", async () => {
+    const w = await liveWorld({ reloadHelper: reloading });
+    await olderHelper(w);
+    assert.deepEqual(await atStart(w), {});
+    assert.deepEqual(w.events, ["live update"]);
+    assert.deepEqual(reloads(w), [{ check_only: true }, {}], "asked whether it can reload, then reloaded");
+    assert.deepEqual(w.updates, [], "Unreal is never closed to update it");
+  });
+
+  it("tells the lead to restart Unreal when a changed file needs it, the helper is busy, or the reload fails", async () => {
+    const cases: Array<[string, Options]> = [
+      ["a toolset changed", { reloadHelper: reloading, updateLive: () => null }],
+      ["a play runs", { reloadHelper: () => ({ ready: false, why: "A play session is running" }) }],
+      ["the reload failed", { reloadHelper: (args) => (args.check_only ? { ready: true } : { error: "boom" }) }],
+    ];
+    for (const [label, options] of cases) {
+      const w = await liveWorld(options);
+      await olderHelper(w);
+      const told = (await atStart(w)) as { note?: string };
+      assert.match(told.note ?? "", /quit-editor, then open-editor/, label);
+    }
+    const busy = await liveWorld({ reloadHelper: () => ({ ready: false }) });
+    await olderHelper(busy);
+    await atStart(busy);
+    assert.deepEqual(busy.events, [], "nothing is written while the helper can't reload");
   });
 });
 
@@ -938,6 +992,54 @@ async function saveAtChatCheckpoint() {
   assert.doesNotMatch(during.note ?? "", /no snapshot/);
 }
 
+// Sword Duel, Windows: every save point ended the agent's play, and its next StopPIE failed with
+// "not currently running"; a run's play test now goes on through its save points.
+describe("a save point during the agent's play", () => {
+  const before = atRun(HookEvent.CheckpointBefore);
+  const tools = (w: World) => w.calls.map(([tool]) => tool);
+
+  it("keeps the play running when the editor's helper saves during play", async () => {
+    const w = await liveWorld({
+      saveDuringPlay: (args) => (args.check_only ? { ready: true } : { saved: true, dirty: [], ms: 90, pie: true }),
+    });
+    w.editor.editor.state.pie = true;
+    assert.deepEqual(await w.call(LiveLoopToolName.SaveAll, {}, before), {});
+    assert.deepEqual(
+      w.calls.filter(([tool]) => tool === LoopEditorTool.SaveDuringPlay).map(([, args]) => args),
+      [{ check_only: true }, {}],
+    );
+    assert.ok(!tools(w).includes(LoopTool.StopPlay), tools(w).join(", "));
+    assert.ok(!tools(w).includes(CppEditorTool.SaveAll), "the save that ends a play never runs");
+    assert.equal(w.editor.editor.state.pie, true, "the play goes on");
+  });
+
+  it("ends the play first, then saves, with a helper that can't save during play", async () => {
+    const w = await liveWorld();
+    w.editor.editor.state.pie = true;
+    assert.deepEqual(await w.call(LiveLoopToolName.SaveAll, {}, before), {});
+    const asked = tools(w);
+    assert.ok(asked.indexOf(LoopTool.StopPlay) < asked.indexOf(CppEditorTool.SaveAll), asked.join(", "));
+  });
+
+  it("names the helper's refusal when its save during play fails", async () => {
+    const w = await liveWorld({
+      saveDuringPlay: (args) => (args.check_only ? { ready: true } : { error: "The disk is full." }),
+    });
+    w.editor.editor.state.pie = true;
+    const answer = (await w.call(LiveLoopToolName.SaveAll, {}, before)) as MomentAnswer;
+    assert.equal(answer.block, undefined);
+    assert.match(answer.note ?? "", /The disk is full\./);
+    assert.equal(w.editor.editor.state.pie, true, "a failed save never ends the play");
+  });
+
+  it("never asks the helper when nothing plays", async () => {
+    const w = await liveWorld({ activity: unsaved("/Game/Maps/Hall"), saveDuringPlay: () => ({ ready: true }) });
+    await w.call(LiveLoopToolName.SaveAll, {}, before);
+    assert.ok(!tools(w).includes(LoopEditorTool.SaveDuringPlay), tools(w).join(", "));
+    assert.equal(savedTool(w), 1);
+  });
+});
+
 describe("at Genex's moments", () => {
   it(
     "save-all at a run's checkpoint notes a play, an editor that doesn't answer, or work left unsaved, never blocking, and is silent when it saved",
@@ -1189,6 +1291,22 @@ describe("the editor calls of a checkpoint and of hero shots", () => {
       const stopped = w.calls.some(([tool]) => tool === LoopTool.StopPlay);
       assert.ok(stopped, `the play was asked to stop: ${JSON.stringify(answer)}`);
     });
+
+  it("a checkpoint's save during the agent's play, whose helper never answers whether it saves during play, answers within its longest", async () => {
+    playStopEnds = Number.POSITIVE_INFINITY;
+    const w = await liveWorld({
+      slow: true,
+      playsOn: "until the wait ends",
+      activity: () => ({ pie: true, dirty: ["/Game/Track"] }),
+    });
+    const started = w.editor.deps.now();
+    await w.call(LiveLoopToolName.SaveAll, {}, { on: HookEvent.CheckpointBefore, ...IN_RUN });
+    const tookMs = w.editor.deps.now() - started;
+    assert.ok(tookMs <= CHECKPOINT_SAVE_MAX_MS, `it answered after ${tookMs} ms, within ${CHECKPOINT_SAVE_MAX_MS}`);
+    const asked = w.calls.map(([tool]) => tool);
+    assert.ok(asked.includes(LoopEditorTool.SaveDuringPlay), asked.join(", "));
+    assert.ok(asked.includes(CppEditorTool.SaveAll), "an older helper's save ends the play, then saves");
+  });
 
   it("hero-shots asks each editor call within a limit, and waits for no still past its own time", async () => {
     const cameras = ["A", "B", "C", "D", "E", "F", "G", "H"].map((name) => `GX_Shot_${name}`);
