@@ -61,6 +61,7 @@ class MotionCharacter(HelperCase):
         self.assertEqual(body.props['animation_mode'].name, 'ANIMATION_BLUEPRINT')
         self.assertIs(body.props['anim_class'], abp.generated_class())
         self.assertEqual(body.props['component_tags'], [result['tag']])
+        self.assertIn('put props on Body', result['meshes'], 'the answer says which mesh is which')
         entries = abp.generated_class().cdo.props[motion.MAP_VARIABLE]
         self.assertEqual(sorted(entries), ['RTG_SKM_UEFN_Mannequin_to_SK_Hero', 'RTG_UEFN_to_UE5_Mannequin'],
                          'the shipped entries stay')

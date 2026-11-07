@@ -4,15 +4,21 @@ by a decider's answer or, without one, by the pilot's own order. The fast decisi
 without it a pilot plays by its order alone."""
 
 import json
+import ntpath
 import os
 import textwrap
+import types
+from unittest import mock
 
 import unreal
 from unreal import Vector
 
+from genex_loop import paths
+from genex_loop.errors import Refused
 from genex_play import pilot as pilot_run
 from genex_play.tools import GenexPlayTools
 
+from support import HelperCase
 from test_walk import WalkCase
 
 STONE_PILOT = '''
@@ -340,6 +346,74 @@ class Broken(PilotCase):
         self.end_play()
         report = tool('pilot_step')['report']
         self.assertEqual((report['outcome'], report['note']), ('stopped', 'the play ended'))
+
+
+class WindowsDisk:
+    """Paths as Windows spells them (ntpath): Unreal names the project D:/games/duel/unreal/, a real path
+    has \\ between folders and each name in its real case, and a folder may be a link elsewhere."""
+
+    PROJECT = 'D:/games/duel/unreal/'
+    FILES = ('D:\\games\\duel\\unreal\\Pilots\\fight.py', 'D:\\games\\duel\\pilots\\fight.py',
+             'E:\\elsewhere\\evil.py')
+    LINKS = {'D:\\games\\duel\\unreal\\Linked': 'E:\\elsewhere'}
+
+    def realpath(self, path: str) -> str:
+        spelled = ntpath.normpath(path)
+        for link, target in self.LINKS.items():
+            if ntpath.normcase(spelled).startswith(ntpath.normcase(link) + '\\'):
+                spelled = target + spelled[len(link):]
+        return next((real for real in self.FILES if ntpath.normcase(real) == ntpath.normcase(spelled)), spelled)
+
+    def is_regular_file(self, path: str) -> bool:
+        """Like os.lstat, it follows links on the way to the file."""
+        return ntpath.normcase(self.realpath(path)) in {ntpath.normcase(real) for real in self.FILES}
+
+    def os(self) -> types.SimpleNamespace:
+        """An `os` whose path module is ntpath with this disk's real paths."""
+        flavor = types.SimpleNamespace(**{name: getattr(ntpath, name) for name in ('isabs', 'join', 'normpath',
+                                                                                  'normcase', 'sep', 'altsep')})
+        flavor.realpath = self.realpath
+        return types.SimpleNamespace(path=flavor)
+
+
+class WindowsPilotPaths(HelperCase):
+    """On Windows the project's real path has \\ and a pilot is named with / (or by the \\ path Genex hands
+    over): the same file, never a link."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        disk = WindowsDisk()
+        unreal.state['project'] = WindowsDisk.PROJECT.rstrip('/')
+        for patch in (mock.patch.object(pilot_run, 'os', disk.os()), mock.patch.object(paths, 'os', disk.os()),
+                      mock.patch.object(pilot_run, 'is_regular_file', disk.is_regular_file)):
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def test_takes_a_pilot_named_with_slashes_in_any_case_or_by_its_full_path(self) -> None:
+        cases = {
+            'Pilots/fight.py': 'D:\\games\\duel\\unreal\\Pilots\\fight.py',
+            'pilots/FIGHT.py': 'D:\\games\\duel\\unreal\\pilots\\FIGHT.py',
+            'Pilots\\fight.py': 'D:\\games\\duel\\unreal\\Pilots\\fight.py',
+            'D:\\games\\duel\\pilots\\fight.py': 'D:\\games\\duel\\pilots\\fight.py',
+            'D:/games/duel/pilots/fight.py': 'D:\\games\\duel\\pilots\\fight.py',
+        }
+        for file, path in cases.items():
+            with self.subTest(file=file):
+                self.assertEqual(pilot_run.pilot_file(file), path)
+
+    def test_still_refuses_a_link_a_way_up_or_a_missing_file(self) -> None:
+        cases = {
+            'Linked/evil.py': 'leads through a link',
+            'Linked\\evil.py': 'leads through a link',
+            'Pilots\\..\\..\\pilots\\fight.py': 'is a .py file',
+            'Pilots/../Pilots/fight.py': 'is a .py file',
+            'Pilots/missing.py': 'no pilot file',
+            'Pilots/fight.txt': 'is a .py file',
+        }
+        for file, why in cases.items():
+            with self.subTest(file=file), self.assertRaises(Refused) as refused:
+                pilot_run.pilot_file(file)
+            self.assertIn(why, str(refused.exception), file)
 
 
 class Blocker:

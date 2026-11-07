@@ -45,6 +45,12 @@ MESSAGE = {
     'no_driver': 'The sample\'s character has no {mesh} component to hide; its content may be from another version.',
     'compile': '{blueprint} did not compile: {why}',
     'map': 'Unreal did not keep the map entry {tag} on {abp}.',
+    'meshes': ('Mesh is the hidden mannequin that moves: Motion Matching, its AnimBP and every montage you play '
+               'run on it. Body is the character players see, copying Mesh\'s pose each frame: put props on Body '
+               '(attach_to_socket picks it) and measure feet and hands on Body. When every move of the game is a '
+               'root-motion montage (a sword fight), give Mesh a plain AnimBP instead, an idle pose into Slot '
+               '\'DefaultSlot\' into Output Pose, with SetAnimInstanceClass: the sample\'s AnimBP blends its own '
+               'locomotion over the montages and the feet slide.'),
 }
 
 
@@ -106,7 +112,7 @@ def _body(blueprint, mesh: unreal.SkeletalMesh, abp, tag: str) -> None:
 
 def motion_character(mesh: str, name: str) -> dict:
     """Gives `mesh` the sample's Motion Matching (see the module notes); {blueprint, retargeter, tag, fbik,
-    spineFrom, oneToOne, ikOff, armFixDeg, fingersAligned, skinnedMaterials?, next, ms}."""
+    spineFrom, oneToOne, ikOff, armFixDeg, fingersAligned, skinnedMaterials?, meshes, next, ms}."""
     imports.refuse_during_play()
     if not isinstance(name, str) or re.fullmatch(NAME, name) is None:
         raise Refused(MESSAGE['name'], name=name)
@@ -131,6 +137,7 @@ def motion_character(mesh: str, name: str) -> dict:
     path = blueprint.get_path_name().split('.')[0]
     return {'blueprint': path, 'retargeter': rig.get_path_name().split('.')[0], 'tag': tag, **facts,
             **({'skinnedMaterials': skinned} if skinned else {}),
+            'meshes': MESSAGE['meshes'],
             'next': (f'Use {path} as the game mode\'s default pawn (or place it), then run character_check on '
                      f'{mesh} with the mannequin as its driver.'),
             'ms': editor.elapsed_ms(started)}

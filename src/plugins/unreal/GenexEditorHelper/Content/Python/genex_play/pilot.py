@@ -32,7 +32,7 @@ import types
 import unreal
 
 from genex_loop.errors import Refused, short_message
-from genex_loop.paths import is_regular_file
+from genex_loop.paths import is_own_path, is_regular_file
 from genex_play import detect, play
 from genex_play.pilot_game import Game
 from genex_play.pilot_kit import Move, Outcome, Pilot, Stage
@@ -89,14 +89,22 @@ def _project_dir() -> str:
     return os.path.realpath(os.path.normpath(unreal.Paths.convert_relative_path_to_full(unreal.Paths.project_dir())))
 
 
+def _plain(file: object) -> bool:
+    """Whether a pilot is named as a .py path whose folder and file names hold no NUL and no '..'. The
+    names are split at / and, on Windows, at \\ too; elsewhere a \\ is never part of a pilot's name."""
+    if not isinstance(file, str) or not file.endswith('.py') or '\0' in file:
+        return False
+    names = file.replace(os.path.sep, '/').split('/')
+    return '..' not in names and not any('\\' in name for name in names)
+
+
 def pilot_file(file: object) -> str:
     """The real path of a pilot file: given relative to the project (Pilots/<name>.py), or by its real
     absolute path (Genex hands over one in the game folder, pilots/<name>.py); else Refused."""
-    plain = isinstance(file, str) and file.endswith('.py') and '\0' not in file and '\\' not in file
-    if not plain or '..' in file.split('/'):
+    if not _plain(file):
         raise Refused('A pilot is a .py file, such as pilots/gate.py in the game folder.', file=file)
-    path = file if os.path.isabs(file) else os.path.join(_project_dir(), file)
-    if os.path.realpath(path) != path:
+    path = os.path.normpath(file if os.path.isabs(file) else os.path.join(_project_dir(), file))
+    if not is_own_path(path):
         raise Refused('The pilot file leads through a link; give its own path in the project.', file=file)
     if not is_regular_file(path):
         raise Refused(f'There is no pilot file at {file} in the project.', file=file)
