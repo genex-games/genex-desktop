@@ -461,20 +461,22 @@ export function reachLine(
 
 /**
  * A line for each app the last Publish could not send, in the CLI's words, and for each that went
- * without the notarizing its creator asked for, why.
+ * without the notarizing its creator asked for, why. Without `sends` (the Publish card, whose error
+ * blocks hand failed sends over) only why Genex turned an app down and why it went unnotarized.
  */
 export function failureLines(
   platforms: readonly PublishPlatform[],
   native: GenexNativeRecord | undefined,
   reviewed = false,
+  sends = true,
 ): string[] {
   const shown = platforms.filter((row) => isNative(row) && row.uploads);
-  const unsent = shown.flatMap((row) => failureLine(row, native, reviewed));
+  const unsent = shown.flatMap((row) => failureLine(row, native, reviewed, sends));
   const unnotarized = shown
     .map((row) => currentSent(row, native)?.notarizeFailure)
     .filter((failure): failure is MacNotarizeFailure => failure !== undefined)
     .map((failure) => WORDS.notarizeFailed[failure]);
-  const sendError = native?.cloud?.send?.error;
+  const sendError = sends ? native?.cloud?.send?.error : undefined;
   return [...unsent, ...unnotarized, ...(sendError ? [WORDS.cloudSendFailedLine(sendError)] : [])];
 }
 
@@ -482,10 +484,16 @@ export function failureLines(
  * A sent app's line when it did not reach players: not sent and why, or turned down by Genex and why
  * (none once the review card says it, `reviewed`).
  */
-function failureLine(row: PublishPlatform, native: GenexNativeRecord | undefined, reviewed: boolean): string[] {
+function failureLine(
+  row: PublishPlatform,
+  native: GenexNativeRecord | undefined,
+  reviewed: boolean,
+  sends: boolean,
+): string[] {
   const end = sendEnd(row, native);
   const name = WORDS.name[row.target];
-  if (end === PlatformEnd.Failed) return [WORDS.failedLine(name, native?.failed.find(forRow(row))?.error ?? "")];
+  if (end === PlatformEnd.Failed)
+    return sends ? [WORDS.failedLine(name, native?.failed.find(forRow(row))?.error ?? "")] : [];
   if (end !== PlatformEnd.Rejected || reviewed) return [];
   const reason = native?.sent.find(forRow(row))?.reviewReason;
   return [reason ? WORDS.rejectedLine(name, reason) : WORDS.rejected(name)];

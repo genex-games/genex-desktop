@@ -6411,4 +6411,10 @@ export default {
   "coming soon": "近日対応",
   web: "Web",
   "{minutes} min ago": "{minutes}分前",
+  "Agent is fixing the {platform} build": "エージェントが{platform}のビルドを修正中",
+  "Copy the error": "エラーをコピー",
+  "Send the {platform} error to the agent": "{platform}のエラーをエージェントに送る",
+  "Send to agent": "エージェントに送る",
+  "{platform} app didn’t send": "{platform}アプリを送信できませんでした",
+  "{platform} build error": "{platform}のビルドエラー",
 } satisfies LocaleCatalog;

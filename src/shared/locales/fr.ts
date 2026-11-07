@@ -6523,4 +6523,10 @@ export default {
   "coming soon": "bientôt",
   web: "web",
   "{minutes} min ago": "il y a {minutes} min",
+  "Agent is fixing the {platform} build": "L’agent corrige la version {platform}",
+  "Copy the error": "Copier l’erreur",
+  "Send the {platform} error to the agent": "Envoyer l’erreur {platform} à l’agent",
+  "Send to agent": "Envoyer à l’agent",
+  "{platform} app didn’t send": "L’app {platform} n’est pas partie",
+  "{platform} build error": "Erreur de compilation {platform}",
 } satisfies LocaleCatalog;

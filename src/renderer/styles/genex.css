@@ -1471,22 +1471,78 @@ button.genex-publish-banner-name:hover {
   min-width: 36px;
   text-align: end;
 }
-/* A failed Genex Cloud build's first error, in the log's own words. */
-.genex-publish-card-errors {
-  display: -webkit-box;
-  overflow: hidden;
-  padding: 10px 12px;
-  border-radius: 10px;
+/* An error block under the rows: what failed in a few words, its press and Copy; never the log. */
+.genex-publish-card-error {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 56px;
+  padding: 10px 10px 10px 14px;
+  border-radius: 14px;
   background: var(--orange-tint);
-  color: color-mix(in oklab, var(--orange) 80%, var(--ink));
-  font: 12px / 18px var(--font-family-mono);
-  overflow-wrap: anywhere;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 4;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--orange) 26%, transparent);
 }
-.genex-publish-card-errors > span {
-  margin-inline-start: 6px;
-  color: var(--ink-3);
+.genex-publish-card-error > svg {
+  flex: none;
+  color: var(--orange);
+}
+.genex-publish-card-error[data-sent] {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.genex-publish-card-error-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.genex-publish-card-action {
+  flex: none;
+  height: 32px;
+  padding-inline: 12px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--ink) 10%, transparent);
+  color: var(--ink);
+  font: 12.5px / 1 var(--font-family-mono);
+  transition: background var(--duration-quick);
+}
+.genex-publish-card-action:hover {
+  background: color-mix(in srgb, var(--ink) 16%, transparent);
+}
+.genex-publish-card-copy {
+  position: relative;
+  display: flex;
+  flex: none;
+}
+.genex-publish-card-square {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--ink) 7%, transparent);
+  color: var(--ink);
+  transition: background var(--duration-quick);
+}
+.genex-publish-card-square:hover {
+  background: color-mix(in srgb, var(--ink) 13%, transparent);
+}
+.genex-publish-card-copied {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  right: -4px;
+  padding: 3px 8px;
+  border-radius: 7px;
+  background: var(--popover);
+  box-shadow: var(--shadow-hairline);
+  color: var(--ink);
+  font: 12px / 18px var(--font-family-mono);
+  white-space: nowrap;
 }
 .genex-publish-card-press {
   display: grid;

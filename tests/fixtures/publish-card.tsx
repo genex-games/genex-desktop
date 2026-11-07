@@ -44,7 +44,7 @@ async function settle(frames = 10) {
 }
 
 /** The moments of the card. */
-type Scene = "old" | "built" | "building" | "done" | "failed" | "first" | "unity" | "loading";
+type Scene = "old" | "built" | "building" | "done" | "failed" | "sendFailed" | "first" | "unity" | "loading";
 
 const ago = (ms: number): string => new Date(Date.now() - ms).toISOString();
 const CHANGED = (): string => ago(HOUR);
@@ -77,6 +77,7 @@ const PLATFORMS: Record<Scene, () => PublishPlatform[]> = {
   building: () => unreal(Ready, 30 * MINUTE),
   done: () => unreal(Ready, 30 * MINUTE),
   failed: () => unreal(Ready, 30 * MINUTE),
+  sendFailed: () => unreal(Ready, 10 * MINUTE),
   first: () => unreal(Ready, 10 * MINUTE),
   loading: () => unreal(Ready, 30 * MINUTE),
   unity: () => [
@@ -123,6 +124,10 @@ function appsOf(of: Scene): GenexNativeRecord {
         [sent("mac", 20 * MINUTE)],
         [cloud(CloudBuildState.Done, DAY), cloud(CloudBuildState.Failed, 10 * MINUTE, { failure: CloudBuildFailure.Compile, errors: COMPILE })],
       ),
+    sendFailed: () => ({
+      ...record([], [cloud(CloudBuildState.Done, 40 * MINUTE)]),
+      failed: [{ platform: "mac", arch: "universal", error: "Couldn't get an upload token (HTTP 413)." }],
+    }),
     first: () => record([], []),
     loading: () => record([sent("mac", 20 * MINUTE)], [cloud(CloudBuildState.Done, 40 * MINUTE)]),
     unity: () => record([sent("mac", 40 * MINUTE)], []),
@@ -224,7 +229,14 @@ function sample() {
     primaryDisabled: primary?.disabled ?? null,
     warn: primary?.dataset.warn === "true",
     note: content?.querySelector(".genex-publish-card-note")?.textContent ?? null,
-    errors: content?.querySelector("[data-publish-cloud-errors]")?.textContent ?? null,
+    blocks: [...(content?.querySelectorAll<HTMLElement>("[data-publish-error]") ?? [])].map((block) => ({
+      target: block.dataset.publishError,
+      text: block.textContent ?? "",
+      sent: block.hasAttribute("data-sent"),
+      send: Boolean(block.querySelector("[data-publish-error-send]")),
+      retry: Boolean(block.querySelector("[data-publish-error-retry]")),
+      copy: Boolean(block.querySelector("[data-publish-error-copy]")),
+    })),
     link: content?.querySelector("[data-public]")?.textContent ?? null,
     share: Boolean(content?.querySelector(".genex-publish-share, [data-publish-share]")),
     text: content?.textContent ?? "",
@@ -302,4 +314,12 @@ async function land(wait = 120) {
   return sample();
 }
 
-Object.assign(window, { cardRig: { open, answer, toggle, press, sample, land } });
+/** Press an error block's Send to agent, Try again or Copy (`send`, `retry`, `copy`). */
+async function block(which: "send" | "retry" | "copy") {
+  document.querySelector<HTMLButtonElement>(`[data-publish-error-${which}]`)?.click();
+  for (let i = 0; i < 30 && asked.length === 0 && composed.length === 0; i++) await frame();
+  await settle();
+  return sample();
+}
+
+Object.assign(window, { cardRig: { open, answer, toggle, press, sample, land, block } });

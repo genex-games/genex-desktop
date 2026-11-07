@@ -6489,4 +6489,10 @@ export default {
   "coming soon": "em breve",
   web: "web",
   "{minutes} min ago": "há {minutes} min",
+  "Agent is fixing the {platform} build": "O agente está corrigindo a versão de {platform}",
+  "Copy the error": "Copiar o erro",
+  "Send the {platform} error to the agent": "Enviar o erro de {platform} ao agente",
+  "Send to agent": "Enviar ao agente",
+  "{platform} app didn’t send": "O app de {platform} não foi enviado",
+  "{platform} build error": "Erro ao gerar {platform}",
 } satisfies LocaleCatalog;

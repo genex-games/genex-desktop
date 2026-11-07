@@ -6566,4 +6566,10 @@ export default {
   "coming soon": "bald",
   web: "Web",
   "{minutes} min ago": "vor {minutes} Min.",
+  "Agent is fixing the {platform} build": "Der Agent repariert den {platform}-Build",
+  "Copy the error": "Fehler kopieren",
+  "Send the {platform} error to the agent": "Den {platform}-Fehler an den Agenten senden",
+  "Send to agent": "An Agenten senden",
+  "{platform} app didn’t send": "Die {platform}-App wurde nicht gesendet",
+  "{platform} build error": "{platform}-Build-Fehler",
 } satisfies LocaleCatalog;

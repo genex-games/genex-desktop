@@ -6055,4 +6055,10 @@ export default {
   "coming soon": "即将推出",
   web: "网页",
   "{minutes} min ago": "{minutes} 分钟前",
+  "Agent is fixing the {platform} build": "代理正在修复 {platform} 构建",
+  "Copy the error": "复制错误",
+  "Send the {platform} error to the agent": "把 {platform} 错误发给代理",
+  "Send to agent": "发给代理",
+  "{platform} app didn’t send": "{platform} 应用未发送",
+  "{platform} build error": "{platform} 构建错误",
 } satisfies LocaleCatalog;

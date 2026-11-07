@@ -6265,4 +6265,10 @@ export default {
   "coming soon": "곧 지원",
   web: "웹",
   "{minutes} min ago": "{minutes}분 전",
+  "Agent is fixing the {platform} build": "에이전트가 {platform} 빌드를 고치는 중",
+  "Copy the error": "오류 복사",
+  "Send the {platform} error to the agent": "{platform} 오류를 에이전트에게 보내기",
+  "Send to agent": "에이전트에게 보내기",
+  "{platform} app didn’t send": "{platform} 앱을 보내지 못했어요",
+  "{platform} build error": "{platform} 빌드 오류",
 } satisfies LocaleCatalog;

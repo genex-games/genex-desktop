@@ -3358,8 +3358,11 @@ Genex:
   Genex); a live platform switched off is taken down ("Take Windows down", amber, confirmed:
   `publish-remove-app` → `DELETE /api/games/<id>/native-builds/<platform>/<arch>` for each build Genex
   holds, the record forgetting it; the Web row's is `publish-remove-web`). While Genex Cloud works the
-  busy button says so and "It can take up to an hour." stands under it. A failed cloud build of the game
-  as it is shows its first error, and the button is Fix with agent. Until the folder and Genex's record
+  busy button says so and "It can take up to an hour." stands under it. What failed gets a block of its own under the rows, above the link
+  (`cardErrors`): its name in a few words ("Windows build error", "Mac app didn't send"), never the log,
+  with Send to agent (a failed Genex Cloud build: the whole log goes to the game's chat, and the block
+  then says the agent is fixing it, with a clock) or Try again (a send that didn't reach Genex), and a
+  Copy icon. Genex Cloud builds again only once the game changed since it failed. Until the folder and Genex's record
   both answered the rows are skeletons and there is no button. The card has no Share assets line and no
   explanation lines; the public link carries its mark inside the address, no word before it ("Test"
   names the test link). A review card whose way forward is publishing again keeps the dialog's Publish.

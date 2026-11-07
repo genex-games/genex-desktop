@@ -410,6 +410,14 @@ const glyphs = {
     </>
   ),
   check: <path className="a-draw" pathLength={1} d="M5 12.5l4.5 4.5L19 7.5" />,
+  // A triangle with a mark: something failed and waits for the person (the Publish card's error block).
+  warning: (
+    <>
+      <path d="M12 4.5 20.5 19h-17z" />
+      <path d="M12 10v4" />
+      <path d="M12 16.75v.01" />
+    </>
+  ),
   // A shield whose check draws in: what Claude may do without asking (Permissions, Auto).
   shield: (
     <>

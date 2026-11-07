@@ -4181,6 +4181,16 @@ export const PUBLISH_CARD_WORDS = {
   cloudTakesLong: t("It can take up to an hour."),
   /** A row's switch, for a screen reader. */
   switchLabel: (name: string) => t("Publish to {name}", { name }),
+  /** An error block under the rows: what failed, never the log itself. */
+  buildError: (platform: string) => t("{platform} build error", { platform }),
+  sendError: (platform: string) => t("{platform} app didn’t send", { platform }),
+  /** The block once the agent has the error: its clock is at its end. */
+  fixing: (platform: string) => t("Agent is fixing the {platform} build", { platform }),
+  sendToAgent: t("Send to agent"),
+  sendToAgentLabel: (platform: string) => t("Send the {platform} error to the agent", { platform }),
+  tryAgain: t("Try again"),
+  copyError: t("Copy the error"),
+  copied: t("Copied"),
 } as const;
 
 /** Each kind of space freeing deletes: its name and what it is. */

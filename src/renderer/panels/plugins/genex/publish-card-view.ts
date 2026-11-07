@@ -17,7 +17,14 @@ import {
 } from "../../../../shared/genex.ts";
 import { type PublishPlatform, PublishPlatformState, PublishTarget } from "../../../../shared/publish-platforms.ts";
 import { NATIVE_WORDS, PUBLISH_CARD_WORDS } from "../../../words.ts";
-import { CLOUD_TARGETS, currentSent, newestCloudBuild, RUNNING_CLOUD, WebOffer } from "./publish-platforms-view.ts";
+import {
+  CLOUD_TARGETS,
+  cloudErrors,
+  currentSent,
+  newestCloudBuild,
+  RUNNING_CLOUD,
+  WebOffer,
+} from "./publish-platforms-view.ts";
 
 const WORDS = PUBLISH_CARD_WORDS;
 
@@ -262,7 +269,9 @@ function nativeRow(row: PublishPlatform, input: CardInput, firstPublish: boolean
   if (held) return { ...base, ...held, on: true, work: resend };
   const failed = failedNow(row, input, live);
   if (failed) {
-    const work = retryUseless(row, input.native) ? null : update.work;
+    // A send that didn't reach Genex is tried again from its error block, never by the main button.
+    const blockRetries = failed.status === WORDS.sendFailed;
+    const work = blockRetries || retryUseless(row, input.native) ? null : update.work;
     return { ...base, ...failed, on: true, work };
   }
   if (live && !isOlder(row, live))
@@ -426,4 +435,44 @@ export function busyPress(rows: readonly CardRow[]): BusyPress | null {
   const starts = working.map((row) => row.since).filter((at): at is string => at !== undefined);
   const since = starts.reduce<string | null>((first, at) => (first === null || ms(at) < ms(first) ? at : first), null);
   return { label, since, cloud: working.some((row) => row.cloud) };
+}
+
+/** What an error block is about: a build Genex Cloud couldn't make, or an app that didn't reach Genex. */
+export const CardErrorKind = { Build: "build", Send: "send" } as const;
+export type CardErrorKind = (typeof CardErrorKind)[keyof typeof CardErrorKind];
+
+/** One error block: under the rows, above the link. Its text is never shown: it goes to the agent or the clipboard. */
+export interface CardError {
+  target: PublishTarget;
+  kind: CardErrorKind;
+  title: string;
+  /** The whole error, as the log or the CLI said it. */
+  text: string;
+}
+
+/**
+ * The card's error blocks: a failed Genex Cloud build with its log, which the agent can fix, then each
+ * app whose last send didn't reach Genex (and hasn't gone since), which a press tries again.
+ */
+export function cardErrors(platforms: readonly PublishPlatform[], native: GenexNativeRecord | undefined): CardError[] {
+  const errors: CardError[] = [];
+  const build = cloudErrors(platforms, native);
+  if (build)
+    errors.push({
+      target: build.target,
+      kind: CardErrorKind.Build,
+      title: WORDS.buildError(WORDS.name[build.target]),
+      text: build.errors.join("\n"),
+    });
+  for (const row of platforms) {
+    const failed = native?.failed.find((one) => one.platform === row.target);
+    if (!failed || currentSent(row, native)) continue;
+    errors.push({
+      target: row.target,
+      kind: CardErrorKind.Send,
+      title: WORDS.sendError(WORDS.name[row.target]),
+      text: failed.error,
+    });
+  }
+  return errors;
 }

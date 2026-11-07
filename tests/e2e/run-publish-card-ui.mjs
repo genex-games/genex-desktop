@@ -133,18 +133,28 @@ app.whenReady().then(async()=>{
   report.takeDown=await capture('dark-6-take-down');
   const down=await step('down','window.cardRig.press()');
   assert.deepEqual(down.asked.filter((one)=>!one.startsWith('review:')),['publish-remove-app:windows']);
-  // A failed Genex Cloud build of the game as it is: the older app stays live, its error shows, and the one
-  // button hands the errors to the agent (building the same project again fails the same way).
+  // A failed Genex Cloud build of the game as it is: the older app stays live, and a block under the rows
+  // names it, never its log, with Send to agent and Copy; the main button has nothing to do.
   const failed=await step('failed','window.cardRig.open({scene:"failed"})');
   assert.deepEqual(rows(failed)[1],['Windows','Couldn’t build · the older one is still live',null]);
-  assert.match(failed.errors??'',/FVector/);
-  assert.equal(failed.primary,'Fix with agent');
-  assert.doesNotMatch(failed.text,/change it first/,'no explanation line');
+  assert.deepEqual(failed.blocks.map((one)=>[one.target,one.text,one.send,one.copy]),[['windows','Windows build error'+'Send to agent',true,true]]);
+  assert.doesNotMatch(failed.text,/FVector|C2065/,'the log never shows');
+  assert.equal(failed.primary,null,'the error is not the main button');
   clean('failed',failed);
   report.failed=await capture('dark-7-failed');
-  const fixed=await step('fix','window.cardRig.press()');
-  assert.match(fixed.composed[0]?.text??'',/FVector/,'the agent gets the errors');
-  assert.equal(fixed.primary,null,'handed over once');
+  const sentFix=await step('sendFix','window.cardRig.block("send")');
+  assert.match(sentFix.composed[0]?.text??'',/FVector/,'the agent gets the whole log');
+  assert.deepEqual(sentFix.blocks.map((one)=>[one.sent,one.send]),[[true,false]],'the block says the agent is on it');
+  assert.match(sentFix.blocks[0].text,/^Agent is fixing the Windows build/);
+  report.sentFix=await capture('dark-7b-agent-fixing');
+  // A send that didn't reach Genex: its block tries it again, the main button stays out of it.
+  const unsent=await step('sendFailed','window.cardRig.open({scene:"sendFailed"})');
+  assert.deepEqual(unsent.blocks.map((one)=>[one.target,one.retry,one.copy]),[['mac',true,true]]);
+  assert.doesNotMatch(unsent.text,/HTTP 413/,'the words of the CLI never show');
+  assert.equal(unsent.primary,null);
+  report.sendFailed=await capture('dark-7c-send-failed');
+  const retried=await step('retry','window.cardRig.block("retry")');
+  assert.deepEqual(retried.asked,['apps:mac'],'Try again sends that app again');
   // A first publish: the Mac app goes, Genex Cloud builds Windows once the page is there.
   const first=await step('first','window.cardRig.open({scene:"first"})');
   assert.deepEqual(rows(first),[['Mac','Not published','3.2 GB'],['Windows','Not published','builds on Genex Cloud']]);
@@ -167,7 +177,7 @@ app.whenReady().then(async()=>{
   const linux=await step('linuxOn','window.cardRig.toggle("linux")');
   assert.equal(linux.primary,'Build Linux','an app the agent makes is built first, alone');
   assert.deepEqual(report.errors,[]);
-  console.log('PASS Publish card: skeleton rows before the folder answers; older apps say where they get built and build first, and an open card sees the build land; Genex Cloud shows its clock and the hour line; done has no button; a switch off takes an app down in amber; a failed cloud build keeps the older app live and hands its errors to the agent; a first publish names both; a Unity game lists four platforms; no "Public:", no Share assets');
+  console.log('PASS Publish card: skeleton rows before the folder answers; older apps say where they get built and build first, and an open card sees the build land; Genex Cloud shows its clock and the hour line; done has no button; a switch off takes an app down in amber; a failed cloud build keeps the older app live and its block hands the log to the agent, never showing it; a failed send has a block that tries again; a first publish names both; a Unity game lists four platforms; no "Public:", no Share assets');
  } catch(error) { report.failure=error.stack; console.error(error); await capture('failure').catch(()=>{}); }
  fs.writeFileSync(path.join(evidence,'report.json'),JSON.stringify(report,null,2));
  app.exit(report.failure?1:0);

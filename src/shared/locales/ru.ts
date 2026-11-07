@@ -6458,4 +6458,10 @@ export default {
   "coming soon": "скоро",
   web: "веб",
   "{minutes} min ago": "{minutes} мин назад",
+  "Agent is fixing the {platform} build": "Агент чинит сборку {platform}",
+  "Copy the error": "Скопировать ошибку",
+  "Send the {platform} error to the agent": "Отправить ошибку {platform} агенту",
+  "Send to agent": "Отправить агенту",
+  "{platform} app didn’t send": "Приложение {platform} не отправилось",
+  "{platform} build error": "Ошибка сборки {platform}",
 } satisfies LocaleCatalog;

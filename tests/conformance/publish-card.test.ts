@@ -18,6 +18,8 @@ import { NativeArch } from "../../src/shared/play-native.ts";
 import { type PublishPlatform, PublishPlatformState, PublishTarget } from "../../src/shared/publish-platforms.ts";
 import {
   busyPress,
+  cardErrors,
+  CardErrorKind,
   type CardInput,
   type CardRow,
   CardTone,
@@ -371,5 +373,46 @@ describe("the Publish card's button", () => {
     const rows = unityRows();
     const plan = pressPlan(rows, new Map([[PublishTarget.Web, false]]));
     assert.equal(plan?.label, "Publish to Mac");
+  });
+});
+
+describe("the Publish card's error blocks", () => {
+  it("names a failed Genex Cloud build and hands over its whole log, never showing it", () => {
+    const failed = cloudBuild(CloudBuildState.Failed, 10 * MINUTE_MS, {
+      failure: CloudBuildFailure.Compile,
+      errors: ["Weapon.cpp(88): 'FVector' undeclared", "Weapon.cpp(90): ';' expected"],
+    });
+    const errors = cardErrors(unrealFolder(READY, 30 * MINUTE_MS), record(20 * MINUTE_MS, [failed]));
+    assert.deepEqual(errors, [
+      {
+        target: PublishTarget.Windows,
+        kind: CardErrorKind.Build,
+        title: "Windows build error",
+        text: "Weapon.cpp(88): 'FVector' undeclared\nWeapon.cpp(90): ';' expected",
+      },
+    ]);
+  });
+
+  it("names an app that didn't reach Genex, and its row leaves the retry to the block", () => {
+    const native = record(null, [], {
+      failed: [{ platform: PublishTarget.Mac, arch: "universal", error: "HTTP 413" }],
+    });
+    const folder = unrealFolder(READY, 10 * MINUTE_MS);
+    assert.deepEqual(cardErrors(folder, native), [
+      { target: PublishTarget.Mac, kind: CardErrorKind.Send, title: "Mac app didn’t send", text: "HTTP 413" },
+    ]);
+    const mac = unreal(folder, native)[0];
+    assert.deepEqual(
+      [mac?.status, mac?.work],
+      ["Couldn’t send", null],
+      "Try again is the block's, not the main button's",
+    );
+  });
+
+  it("has no block once the app went after all", () => {
+    const native = record(5 * MINUTE_MS, [], {
+      failed: [{ platform: PublishTarget.Mac, arch: "universal", error: "HTTP 413" }],
+    });
+    assert.deepEqual(cardErrors(unrealFolder(READY, 10 * MINUTE_MS), native), []);
   });
 });

@@ -15,8 +15,9 @@ import { PUBLISH_CARD_WORDS, PUBLISH_PLATFORM_WORDS } from "../../../words.ts";
 import type { GenexNativeRecord } from "../../../../shared/genex.ts";
 import { type PublishPlatform, PublishTarget } from "../../../../shared/publish-platforms.ts";
 import { type BusyPress, type CardRow, CardTone, type PressPlan, switchedOn } from "./publish-card-view.ts";
-import { type CloudBuildErrors, failureLines } from "./publish-platforms-view.ts";
-import type { usePublishCard } from "./use-publish-card.ts";
+import { failureLines } from "./publish-platforms-view.ts";
+import type { ErrorBlock, usePublishCard } from "./use-publish-card.ts";
+import { useCopy } from "../../../use-copy.ts";
 
 const WORDS = PUBLISH_CARD_WORDS;
 
@@ -127,22 +128,13 @@ export function PublishCardPress({
   busy,
   pressing,
   onPress,
-  onFix,
 }: {
   plan: PressPlan | null;
   busy: BusyPress | null;
   /** A press is being sent now. */
   pressing: boolean;
   onPress: (plan: PressPlan) => void;
-  /** A failed Genex Cloud build the agent should fix first: with nothing else to press, the button asks it. */
-  onFix?: (() => void) | undefined;
 }): JSX.Element | null {
-  if (!plan && !busy && onFix)
-    return (
-      <Button variant="default" size="default" className="genex-publish-primary" data-publish-cloud-fix onClick={onFix}>
-        {PUBLISH_PLATFORM_WORDS.cloudFix}
-      </Button>
-    );
   if (busy && !plan)
     return (
       <div className="genex-publish-card-press">
@@ -179,14 +171,71 @@ export function PublishCardPress({
   );
 }
 
-/** What a failed Genex Cloud build's log says: its first error and how many more, in the log's own words. */
-function CardErrors({ fix }: { fix: CloudBuildErrors }): JSX.Element {
-  const more = fix.errors.length - 1;
+/** Copy the error: its icon turns to a ✓ and says Copied for a moment. */
+function CopyError({ text }: { text: string }): JSX.Element {
+  const [copied, copy] = useCopy();
   return (
-    <p className="genex-publish-card-errors" data-publish-cloud-errors>
-      {fix.errors[0]}
-      {more > 0 && <span>{PUBLISH_PLATFORM_WORDS.cloudMoreErrors(more)}</span>}
-    </p>
+    <span className="genex-publish-card-copy">
+      <button
+        type="button"
+        className="genex-publish-card-square"
+        aria-label={copied ? WORDS.copied : WORDS.copyError}
+        data-publish-error-copy
+        onClick={() => copy(text)}
+      >
+        <Icon name={copied ? "check" : "copy"} size={15} />
+      </button>
+      {copied && (
+        <span className="genex-publish-card-copied" role="status">
+          {WORDS.copied}
+        </span>
+      )}
+    </span>
+  );
+}
+
+/**
+ * One error block under the rows: what failed in a few words (never the log), then its press (Send to
+ * agent, or Try again) and Copy. Once the agent has it, the block says the agent is fixing it, with a clock.
+ */
+function ErrorBlockRow({ block }: { block: ErrorBlock }): JSX.Element {
+  const name = WORDS.name[block.target];
+  if (block.sentAt)
+    return (
+      <div className="genex-publish-card-error" data-publish-error={block.target} data-sent>
+        <span className="genex-publish-card-error-text">
+          <span data-shimmer className="chat-status-shimmer">
+            {WORDS.fixing(name)}
+          </span>
+        </span>
+        <span className="genex-publish-card-clock">
+          <Elapsed since={Date.parse(block.sentAt)} />
+        </span>
+        <CopyError text={block.text} />
+      </div>
+    );
+  return (
+    <div className="genex-publish-card-error" data-publish-error={block.target} data-kind={block.kind}>
+      <Icon name="warning" size={16} />
+      <span className="genex-publish-card-error-text">{block.title}</span>
+      {block.onSend && (
+        <button
+          type="button"
+          className="genex-publish-card-action"
+          aria-label={WORDS.sendToAgentLabel(name)}
+          data-publish-error-send
+          onClick={block.onSend}
+        >
+          {WORDS.sendToAgent}
+        </button>
+      )}
+      {block.onRetry && (
+        <button type="button" className="genex-publish-card-action" data-publish-error-retry onClick={block.onRetry}>
+          {WORDS.tryAgain}
+        </button>
+      )}
+      <CopyError text={block.text} />
+    </div>
   );
 }
 
@@ -209,11 +258,11 @@ export function EngineCardRows({
   reviewed: boolean;
   replacesApps: boolean;
 }): JSX.Element {
-  const failures = platforms ? failureLines(platforms, native, reviewed) : [];
+  const failures = platforms ? failureLines(platforms, native, reviewed, false) : [];
   return (
     <div className="genex-publish-card" data-genex-publish-card>
       <PublishCardRows rows={card.rows} switches={card.switches} onSwitch={card.onSwitch} />
-      {card.rows && card.fix && <CardErrors fix={card.fix} />}
+      {card.rows && card.errors.map((block) => <ErrorBlockRow key={`${block.target}-${block.kind}`} block={block} />)}
       {failures.map((line) => (
         <p key={line} className="genex-publish-platform-failure">
           {line}
