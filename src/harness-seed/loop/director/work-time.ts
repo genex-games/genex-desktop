@@ -14,13 +14,13 @@ import type { AnyRecord, Run } from "../../types/harness.d.ts";
 import type { LoopRun } from "./loop-run.ts";
 
 /**
- * How many wakes in a row to go on its lead may answer with nothing done (no tool call of Genex's, no
- * save point) before its Loop pauses as any Loop whose turn ends with nothing at work does.
+ * How many wakes in a row to go on its lead may answer with nothing done (no save point, no worker
+ * started) before its Loop pauses as any Loop whose turn ends with nothing at work does.
  */
 export const MAX_IDLE_KEEPS = 2;
 
-/** The run as its time is read: its budgets, its earlier worked time and its clock. */
-type TimedRun = Pick<LoopRun, "run" | "workedBefore" | "open">;
+/** The run as its time is read: its budgets, its earlier worked time, its clock and whether its wrap-up began. */
+type TimedRun = Pick<LoopRun, "run" | "workedBefore" | "open" | "wrapping">;
 
 /** Where the run stands against the person's time: what they asked, what it has worked, and what is left (below zero once over). */
 export interface WorkClock {
@@ -81,7 +81,7 @@ export function settleWorkAsk(run: Run, worked: number): void {
   if (ask && worked >= dueMs(ask)) run.budgets = withoutWork(run.budgets);
 }
 
-/** The line beside the Loop's first one: the person's time and what is left of it; null when they asked for none. */
+/** The line beside the Loop's first one: the person's time and what is left of it now; null when they asked for none. */
 export function workStartLine(loopRun: TimedRun): string | null {
   const clock = workClock(loopRun);
   if (!clock) return null;
@@ -89,12 +89,24 @@ export function workStartLine(loopRun: TimedRun): string | null {
 }
 
 /**
- * Why the lead's finish is turned back for time, or null: the person's time has some left and nobody
- * asked the Loop to finish (`finishAsked`: the person's ask, or the lead's `wrap_up` for them, ends it sooner).
+ * The Loop's first lines with the time line after the first, read as they are sent: a session opened
+ * fresh late in the run hears what is left then, not at the Loop's start.
+ */
+export function withWorkLine(loopRun: TimedRun, lines: readonly string[]): string[] {
+  const time = workStartLine(loopRun);
+  if (!time || !lines.length) return [...lines];
+  return [lines[0] ?? "", time, ...lines.slice(1)];
+}
+
+/**
+ * Why the lead's finish is turned back for time, or null: the person's time has some left, nobody
+ * asked the Loop to finish (`finishAsked`: the person's ask, or the lead's `wrap_up` for them, ends it
+ * sooner), and this is not the run's last turn (`wrapping`: a failed turn's wrap-up closes the Loop
+ * when it ends, so its lead may still claim the goal in it).
  */
 export function finishTooSoon(loopRun: TimedRun, finishAsked: boolean): string | null {
   const clock = workClock(loopRun);
-  if (!clock || clock.left <= 0 || finishAsked) return null;
+  if (!clock || clock.left <= 0 || finishAsked || loopRun.wrapping === true) return null;
   const asked = spanWords(askedMs(clock.ask));
   return WORK_WORDS.tooSoon(asked, spanWords(workedOfAsk(clock)), spanWords(clock.left));
 }
@@ -113,8 +125,13 @@ export function timeUpWrapLine(loopRun: TimedRun): string {
   return WORK_WORDS.wrapUp(spanWords(askedMs(clock.ask)), spanWords(workedOfAsk(clock)));
 }
 
-/** The lead's work so far as a mark: its calls of Genex's tools and its save points (an autosave counts). */
-const workMark = (loopRun: LoopRun): string => `${loopRun.toolCalls}/${loopRun.open.journal.savePoints.length}`;
+/**
+ * The lead's work so far as a mark: its save points (an autosave counts, so a turn that changed the
+ * folder moves it) and the workers it started. A call of Genex's tools alone is no work: a lead that
+ * answered each wake with a finish Genex refused was woken again and again until the time ran out.
+ */
+const workMark = (loopRun: LoopRun): string =>
+  `${loopRun.open.journal.savePoints.length}/${loopRun.open.pool?.state.records.length ?? 0}`;
 
 /**
  * A lead whose turn ended with nothing at work while the person's time has some left is told how much,

@@ -36,6 +36,8 @@ export const MAX_HANDOFFS = 3;
  * lead told the person they had declined the pause (sword duel).
  */
 export const PAUSE_END_MS = 30 * SECOND_MS;
+/** How long a call of Genex's tools still answering after the lead's pause holds off the end of its session. */
+export const PAUSE_CALLS_MS = 2 * MINUTE_MS;
 /** What a yes still needs of the lead's `finish` call: the workers settled and the last checkpoint. */
 export const OPEN_CLOSE_MS = 2 * MINUTE_MS;
 /** The longest save point label Genex keeps. */

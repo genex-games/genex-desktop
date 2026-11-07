@@ -6,6 +6,7 @@
  * take the run explicitly; they are not bound onto it.
  */
 import { tallyOf } from "../finish-check.ts";
+import { NoteKind } from "./wake-schedule.ts";
 import { workedMs } from "./work-time.ts";
 import type { AnyRecord } from "../../types/harness.d.ts";
 import type { LoopRun, LoopRunLogEntry } from "./loop-run.ts";
@@ -68,8 +69,11 @@ export function resumedFromJournal(loopRun: Pick<LoopRun, "resume" | "priorJourn
 
 /** The log's newest lines as the journal kept them, and how much of it the lead has heard. */
 function restoreLog(loopRun: LoopRun, saved: AnyRecord): void {
+  // A line about the person's time spoke for the session that wrote it: the resume's first line says
+  // what is left now, and an old "wrap up" would close the Loop the person just resumed.
   const log = (Array.isArray(saved.log) ? saved.log : []).filter(
-    (entry: AnyRecord): entry is LoopRunLogEntry => typeof entry?.seq === "number" && typeof entry.text === "string",
+    (entry: AnyRecord): entry is LoopRunLogEntry =>
+      typeof entry?.seq === "number" && typeof entry.text === "string" && entry.kind !== NoteKind.WorkTime,
   );
   loopRun.state.log = log;
   loopRun.logSeq = Math.max(countOf(saved.logSeq), log.at(-1)?.seq ?? 0);

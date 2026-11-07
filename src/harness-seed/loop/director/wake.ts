@@ -61,6 +61,7 @@ import {
   sayTimeUp,
   timeIsUp,
   timeUpWrapLine,
+  withWorkLine,
   workedLine,
 } from "./work-time.ts";
 import type { HarnessCtx } from "../../types/harness.d.ts";
@@ -367,7 +368,7 @@ function openFresh(loopRun: LoopRun, kit: TurnKit, ask: TurnAsk, why: string): P
   // A Loop its lead paused, or one the person stopped, opens no new session.
   const refused = openSessionRefused(loopRun);
   if (refused) return Promise.resolve(refused);
-  const lost = [LEAD_FRESH_START(why), ...kit.start].join("\n");
+  const lost = [LEAD_FRESH_START(why), ...withWorkLine(loopRun, kit.start)].join("\n");
   return kit.talk.session(ask.prompt, null, { ...ask.said, notices: [lost, ...(ask.said.notices ?? [])] });
 }
 
@@ -683,7 +684,7 @@ export async function runWakeLoop(
   if (resumed) await handAgain(loopRun, line);
   // The parts the lead calls (the plan hold, worker_start) answer a run the wake loop drives.
   loopRun.waking = true;
-  let result = await turnThenBetween(loopRun, wake, kit, start);
+  let result = await turnThenBetween(loopRun, wake, kit, withWorkLine(loopRun, start));
   for (;;) {
     const verdict = afterTurn(await turnFacts(loopRun, wake, result, clock.now()));
     if (verdict.next === TurnEnd.Close) break;

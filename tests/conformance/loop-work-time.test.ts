@@ -11,7 +11,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { startAutopilot } from "../../src/harness-seed/loop/start-autopilot.ts";
 import { MAX_IDLE_KEEPS } from "../../src/harness-seed/loop/director/work-time.ts";
-import { PAUSE_END_MS } from "../../src/harness-seed/loop/director/open/contract.ts";
+import { PAUSE_CALLS_MS, PAUSE_END_MS } from "../../src/harness-seed/loop/director/open/contract.ts";
 import { OPEN_WORDS } from "../../src/harness-seed/loop/director/open/prompts.ts";
 import { MESSAGE as OPEN_END } from "../../src/harness-seed/loop/director/open/finish.ts";
 import { chatContext } from "../../src/harness-seed/loop/chat-session.ts";
@@ -268,6 +268,89 @@ describe("a Loop the person gave a time", () => {
     assert.match(String(answers[0]), /^The Loop is closed on your word/);
     assert.equal(report.victory, true);
   });
+
+  it(
+    `a lead that answers each wake with a finish Genex refuses is woken ${MAX_IDLE_KEEPS} times, then its Loop pauses`,
+    TEST_TIMEOUT,
+    async () => {
+      // A refused finish is no work: the lead was woken until the time ran out, a full turn each time.
+      const finishing: LoopTurn = async ({ host, tool }) => {
+        host.pass(MINUTE);
+        await tool("finish", { summary: SUMMARY });
+        return undefined;
+      };
+      const host = await timedHost(Array.from({ length: 10 }, () => finishing));
+      const report = await host.start();
+      assert.equal(host.prompts().length, 1 + MAX_IDLE_KEEPS, host.prompts().join("\n---\n"));
+      assert.equal(report.executionStatus, "paused");
+      assert.equal(report.stoppedBecause, OPEN_END.nothingAtWork);
+    },
+  );
+
+  it("a failed turn's wrap-up, its last, lets its lead claim the goal before the time", TEST_TIMEOUT, async () => {
+    const answers: unknown[] = [];
+    const host = await timedHost([
+      async ({ host }) => {
+        host.pass(10 * MINUTE);
+        return { ok: false, stopReason: "error", errorText: "the provider broke" };
+      },
+      async ({ tool }) => {
+        answers.push(await tool("finish", { summary: SUMMARY }));
+        return undefined;
+      },
+    ]);
+    const report = await host.start();
+    assert.equal(host.leadCalls().length, 2);
+    assert.match(String(answers[0]), /^The Loop is closed on your word/);
+    assert.equal(report.victory, true);
+  });
+
+  it(
+    "a session opened fresh late in the run hears the time left then, not at the Loop's start",
+    TEST_TIMEOUT,
+    async () => {
+      const host = await timedHost([
+        async ({ host }) => {
+          host.pass(40 * MINUTE);
+          return undefined;
+        },
+        async ({ params }) => {
+          if (params.resume) throw new Error(`No conversation found with session ID: ${String(params.resume)}`);
+          return undefined;
+        },
+        async ({ host, tool }) => {
+          host.pass(30 * MINUTE);
+          await tool("finish", { summary: SUMMARY });
+          return undefined;
+        },
+      ]);
+      await host.start();
+      const fresh = host.leadCalls()[2];
+      assert.equal(fresh?.resume, undefined, "a fresh session");
+      const told = ((fresh?.notices ?? []) as string[]).join("\n");
+      assert.match(told, /The person asked for 1 h of work: (19|20) min of it is left\./);
+      assert.ok(!told.includes(WORK_WORDS.asked("1 h", "1 h")), told);
+    },
+  );
+
+  it("a resume never hands its lead the time lines of the session before its pause", TEST_TIMEOUT, async () => {
+    const host = await timedHost([
+      async ({ host, tool }) => {
+        host.pass(61 * MINUTE);
+        // Genex says the time is up; the lead never reads it, and pauses.
+        await host.until(() => host.steered.some((one) => one.text.includes("are up")));
+        await tool("pause", { why: "I need the person to sign in." });
+        return undefined;
+      },
+    ]);
+    const paused = await host.start();
+    assert.equal(paused.executionStatus, "paused");
+    host.run.budgets = journalOf(host).run.budgets;
+    await host.start({ resume: true });
+    const resumed = JSON.stringify(host.leadCalls()[1] ?? {});
+    assert.ok(!resumed.includes("are up"), resumed);
+    assert.ok(!resumed.includes("Wrap up now"), resumed);
+  });
 });
 
 describe("a lead's own pause", () => {
@@ -332,6 +415,49 @@ describe("a lead's own pause", () => {
       const report = await host.start();
       assert.equal(early, 0, "not inside the lead's time to end its turn");
       assert.ok(ended, "Genex ended the session that worked on");
+      assert.equal(report.executionStatus, "paused");
+    },
+  );
+
+  it(
+    "a call of Genex's tools that never answers holds the end of a paused lead's session off for a while, never forever",
+    TEST_TIMEOUT,
+    async () => {
+      let held = false;
+      let stuck = true;
+      let early = -1;
+      let ended = false;
+      let noteAnswered = false;
+      let endedUnderCall = false;
+      const aborts = (host: LoopHost) => host.rec.paramsOf("engine.abort").length;
+      const host = await timedHost([
+        async ({ host, tool }) => {
+          await tool("pause", { why: "I need the person to sign in." });
+          held = true;
+          const note = tool("note", { text: "The door stays red." }).then(() => {
+            noteAnswered = true;
+          });
+          const from = host.now();
+          await host.until(() => host.now() - from >= 2 * PAUSE_END_MS);
+          early = aborts(host);
+          host.pass(PAUSE_CALLS_MS);
+          ended = await host.until(() => aborts(host) > 0);
+          endedUnderCall = ended && !noteAnswered;
+          stuck = false;
+          await note;
+          return { ok: false, stopReason: "aborted" };
+        },
+      ]);
+      // The note's journal save never answers until the test lets it.
+      const call = host.rec.ctx.call;
+      host.rec.ctx.call = async (method: string, params?: Record<string, unknown>) => {
+        if (method === "artifact.write" && held) await host.until(() => !stuck);
+        return call(method, params);
+      };
+      const report = await host.start();
+      assert.equal(early, 0, "past the lead's time to end its turn, but a call still answers");
+      assert.ok(ended, "Genex ended the session once the call had held it long enough");
+      assert.ok(endedUnderCall, "with the call still unanswered");
       assert.equal(report.executionStatus, "paused");
     },
   );

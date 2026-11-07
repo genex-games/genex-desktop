@@ -529,8 +529,8 @@ takes the folder back only for the lead's `rewind` or the person's Rewind, and p
 git-write queue comes once the Loop pauses or closes lands nothing. `OpenLoop.halted` is set by the
 lead's `pause` alone: once the pause call has answered, the lead has 30 seconds to end its turn with
 its words for the person (`PAUSE_END_MS`), then its session under way is aborted (`engine.abort {cwd,
-lead}`, again each watch round until it ends, as after a Stop), never while one of its calls of
-Genex's tools is still answering (an abort under a call made Claude Code answer the lead's own pause
+lead}`, again each watch round until it ends, as after a Stop); a call of Genex's tools still
+answering holds that off up to 2 minutes (`PAUSE_CALLS_MS`; an abort under a call made Claude Code answer the lead's own pause
 "The user doesn't want to take this action right now", which the lead told the person as their
 refusal; every session's context says such an answer is a cut-off, never the person's no), an outage wait ends at its next step, no session opens, and
 `save_point`, `rewind`, `restart`, `finish`, `worker_start` and `worker_mark` are refused, as once the
@@ -871,11 +871,13 @@ A time the person asked for ("work 3h on that") is the one exception (`loop/work
 `workFromMs`, `completionPolicy: "duration"`). It counts the run's worked time: its earlier sessions
 (the journal's `director.worked`) and this one on the Loop's clock, so a pause or a closed app adds
 nothing, and a resume's new time counts from where the run stands. The lead's first message says the
-time and what is left. Before it is worked, the lead's `finish` is refused with what is left
+time and what is left, as does a fresh session's when the old one is lost; a resume drops the time
+lines of the session before it. Before it is worked, the lead's `finish` is refused with what is left
 (`WORK_WORDS.tooSoon`), and a turn that ends with nothing at work wakes the lead to go on
-(`NoteKind.WorkTime`) instead of pausing, until two such wakes in a row bring no tool call and no
-save point (`MAX_IDLE_KEEPS`): then it pauses as above. Only the person ends it sooner (Finish, Stop,
-the lead's `wrap_up` for them), or the lead's `pause`. Once the time is up, a lead at work is told at
+(`NoteKind.WorkTime`) instead of pausing, until two such wakes in a row bring no save point (an
+autosave counts) and no worker (`MAX_IDLE_KEEPS`; a refused `finish` is no work): then it pauses as
+above. Only the person ends it sooner (Finish, Stop,
+the lead's `wrap_up` for them), or the lead's `pause`; a failed turn's wrap-up may still claim the goal. Once the time is up, a lead at work is told at
 its next step, a resting one at once, and its next turn is the wrap-up (`WrapCause.Time`); a close
 tells the lead how long the Loop worked for its summary (`WORK_WORDS.worked`). A resume with no new
 time after the time was worked goes on with none (`settleWorkAsk`). Before, a lead that closed on its

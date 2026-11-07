@@ -18,7 +18,7 @@ import { closeUnderWay } from "./close-latch.ts";
 import type { LeadLine } from "./lead-line.ts";
 import type { LoopRun, LoopRunLogEntry } from "./loop-run.ts";
 import { abortLead } from "./open/app-look.ts";
-import { PAUSE_END_MS } from "./open/contract.ts";
+import { PAUSE_CALLS_MS, PAUSE_END_MS } from "./open/contract.ts";
 import { LOOP_WORDS } from "./wake-prompts.ts";
 import type { NoteKind } from "./wake-schedule.ts";
 
@@ -260,15 +260,18 @@ export const startedASession = (result: Partial<DelegateResult> | undefined): bo
 
 /**
  * Whether Genex ends the lead's session now: the person stopped the Loop, or its lead paused it and
- * had its time to end its turn with its words (`PAUSE_END_MS`), with none of its calls of Genex's tools
- * still answering. Ended under a call, the engine answers that call as if the person had declined it.
+ * had its time to end its turn with its words (`PAUSE_END_MS` from its pause's answer, `PAUSE_CALLS_MS`
+ * while a call of Genex's tools is still answering). Ended under a call, the engine answers that call
+ * as if the person had declined it.
  */
 function endsTheSession(loopRun: LoopRun): boolean {
   const open = loopRun.open;
   if (loopRun.ctx.cancelled === true) return true;
   const pausedAt = open?.halted ? open.haltedAt : undefined;
-  if (pausedAt === undefined || (loopRun.toolsInFlight ?? 0) > 0) return false;
-  return open.clock.now() - pausedAt >= PAUSE_END_MS;
+  if (pausedAt === undefined) return false;
+  // A call still answering gets longer, never forever: one that never answers would leave a paused lead at work.
+  const grace = (loopRun.toolsInFlight ?? 0) > 0 ? PAUSE_CALLS_MS : PAUSE_END_MS;
+  return open.clock.now() - pausedAt >= grace;
 }
 
 /**
