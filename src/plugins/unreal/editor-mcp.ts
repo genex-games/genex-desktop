@@ -914,7 +914,7 @@ async function checkGraph(session: EditorSession, write: GraphWrite, written: bo
   const check = toolsetCall(BUILD_TOOLSET, CHECK_GRAPH_TOOL, checkArguments(write, written));
   const result = await session.call(check, written ? CHECK_AFTER_MS : CHECK_BEFORE_MS).catch(() => undefined);
   if (!result || result.isError || !Array.isArray(result.content)) return undefined;
-  return checkProblem(result.content as Part[]);
+  return checkProblem(result.content as Part[], written);
 }
 
 /** The MCP SDK's own codes for a call that got no answer: it ran out of time, or its connection closed. */

@@ -622,6 +622,23 @@ describe("the Unreal Loop's tools", () => {
     },
   );
 
+  it(
+    "export-reference joins a background export that runs, so two never write the same files",
+    TEST_TIMEOUT,
+    async (t) => {
+      let release = () => {};
+      const w = await world({ exportHeld: new Promise<void>((resolve) => (release = resolve)) });
+      const exports = () => w.calls.filter(([tool]) => tool === LoopEditorTool.ExportReference).length;
+      await w.call(EditorControlToolName.OpenEditor);
+      await until(() => exports() === 1, t.signal, "the background export");
+      const asked = w.call(LoopToolName.ExportReference);
+      release();
+      const answer = (await asked) as { stored?: boolean };
+      assert.equal(answer.stored, true);
+      assert.equal(exports(), 1);
+    },
+  );
+
   for (const [seen, see] of [
     ["editor-status", (w: Awaited<ReturnType<typeof world>>) => w.call(EditorControlToolName.EditorStatus)],
     [

@@ -74,8 +74,17 @@ export const checkArguments = (write: GraphWrite, written: boolean) => ({
   written,
 });
 
-/** What the helper's check found wrong, in its words; undefined when nothing is (or it couldn't say). */
-export function checkProblem(content: readonly Part[]): string | undefined {
-  const error = helperAnswer([...content])?.error;
-  return typeof error === "string" ? error : undefined;
+/**
+ * What the helper's check found wrong, in its words: before a write (`written` false) a text it
+ * refused as too big (`refused`), after it a graph that came back short (`wrote` and `kept`).
+ * Undefined when nothing is, and for any other error (a path it can't find, an editor failure): a
+ * check that couldn't judge never fails the write.
+ */
+export function checkProblem(content: readonly Part[], written: boolean): string | undefined {
+  const answer = helperAnswer([...content]);
+  if (typeof answer?.error !== "string") return undefined;
+  const judged = written
+    ? typeof answer.wrote === "number" && typeof answer.kept === "number"
+    : answer.refused === true;
+  return judged ? answer.error : undefined;
 }

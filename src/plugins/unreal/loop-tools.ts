@@ -760,7 +760,8 @@ export function createLoopTools(deps: LoopToolsDeps) {
       deps.editorCall(storage, game(context), LoopEditorTool.RollbackPart, { part: partArg(args) }),
     [LoopToolName.ReloadLevel]: async (_args, context, storage) =>
       deps.editorCall(storage, game(context), LoopEditorTool.ReloadLevel, {}),
-    [LoopToolName.ExportReference]: (_args, context, storage) => exportReference(deps, storage, game(context)),
+    [LoopToolName.ExportReference]: (_args, context, storage) =>
+      exportJoined(deps, lookupExports, storage, game(context)),
     [LoopToolName.BlueprintGuide]: async () => {
       const engine = await deps.engine();
       if (!engine) throw new Error(MESSAGE.NoEngine);
@@ -1296,9 +1297,24 @@ async function warmReference(deps: LoopToolsDeps, exports: LookupExports, storag
   if (!engine) return;
   const kept = await stat(referencePaths(storage, engine.version).nodes).catch(() => null);
   if (kept || !(await deps.editorAnswers(storage, game).catch(() => false))) return;
-  exports.reference.warm(referenceKey(storage, engine.version), () =>
-    exportReference(deps, storage, game, REFERENCE_EXPORT_MS),
-  );
+  exports.reference.warm(referenceKey(storage, engine.version), () => exportUnlessKept(deps, storage, game));
+}
+
+/** `export-reference`: an export of the engine's reference, joining one that runs (a background one), so two never write the same files. */
+async function exportJoined(deps: LoopToolsDeps, exports: LookupExports, storage: string, game: string) {
+  const engine = await deps.engine();
+  if (!engine) throw new Error(MESSAGE.NoEngine);
+  return exports.reference.start(referenceKey(storage, engine.version), () => exportReference(deps, storage, game));
+}
+
+/**
+ * The engine's reference exported with {@link REFERENCE_EXPORT_MS} per editor call, unless one is
+ * kept by the time it starts: a background export may have kept it since its caller looked.
+ */
+async function exportUnlessKept(deps: LoopToolsDeps, storage: string, game: string) {
+  const engine = await deps.engine();
+  if (engine && (await loadReference(storage, engine.version))) return { engine: engine.version, stored: true };
+  return exportReference(deps, storage, game, REFERENCE_EXPORT_MS);
 }
 
 /**
@@ -1324,7 +1340,7 @@ async function lookupReference(
   const game = gameOf(context);
   if (!(await deps.editorAnswers(storage, game).catch(() => false))) throw new Error(MESSAGE.NoReference);
   const running = exports.reference.start(referenceKey(storage, engine.version), () =>
-    exportReference(deps, storage, game, REFERENCE_EXPORT_MS),
+    exportUnlessKept(deps, storage, game),
   );
   const ended = await endWithin(running, (ms, signal) => deps.sleep(ms, signal), FIND_WAIT_MS, context.signal);
   if (!ended) throw new Error(MESSAGE.StillExporting);

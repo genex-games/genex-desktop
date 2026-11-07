@@ -484,9 +484,10 @@ An agent's own `write_graph_dsl` (Epic's Blueprint toolset named short or qualif
 its arguments as an object or as JSON text) is checked by the helper's `check_graph`
 (`graph-write-guard.ts`): before the write, a text too big is refused and never sent; after a write
 Unreal answered ok, a graph that came back short fails the call, the helper's words first, so the
-agent learns before it saves. A helper that can't check (an older one, a project whose build tools
-didn't load, no answer within 10 s before or 30 s after) leaves the write as Unreal answered it;
-the checks' time comes out of the call's own.
+agent learns before it saves. Only those two verdicts (`refused`, and `wrote` with `kept`) fail a
+write: a helper that can't check (an older one, a project whose build tools didn't load, its own
+error, no answer within 10 s before or 30 s after, such as while a reference export holds the
+editor) leaves the write as Unreal answered it; the checks' time comes out of the call's own.
 Some of Epic's toolsets describe themselves in more than an engine takes from one tool answer
 (Niagara's system toolset in about 278 KB, past Claude Code's 25,000 tokens), so a
 `describe_toolset` answer over 60,000 characters comes back as its tools by name, each with the
@@ -606,14 +607,18 @@ changed it (unsaved, or saved since it began; others compiling meanwhile are onl
 and `gx` places instanced meshes, bevelled Nanite kit pieces, world-aligned materials, an
 atmosphere preset (`megastructure`, `daylight`), lights and hero cameras (`GX_Shot_<name>`).
 Every Blueprint graph a script writes through Epic's `BlueprintTools.write_graph_dsl` is checked
-(`genex_loop/graph_write.py`, which the Loop's parts use too): a text of more than 150 counted nodes
-is refused before Unreal gets it (big writes took minutes, grew the editor by gigabytes and crashed
-it), and after a write Unreal answered ok the graph is read back with `read_graph_dsl` and compared
-with the text by the node titles it calls and how many nodes it makes, allowing for how Unreal's
-reader spells the same graph (variable reads as nodes, an early return as an `else`, math as an
-operator, a call by another prefix, a conversion it added). A write that came back short (UE 5.8
-kept two nodes of a function, and the agent saved it) fails the run with `graphs` (each graph's
-`wrote`, `kept`, `missing` and the start of its `readBack`), even when the script caught the error.
+(`genex_loop/graph_write.py`): a text of more than 150 counted nodes is refused before Unreal gets
+it (big writes took minutes, grew the editor by gigabytes and crashed it), and after a write Unreal
+answered ok the graph is read back with `read_graph_dsl` and compared with the text by the node
+titles it calls and how many nodes it makes, allowing for how Unreal's reader spells the same graph
+(variable reads as nodes, an early return as an `else`, math, arrays and strings as operators and
+statements, a call by another prefix, a conversion it added, a few nodes shared). It came back short
+when a node is missing and the count fell, or when fewer than three quarters of the nodes (and at
+least two fewer) came back. A write that came back short (UE 5.8 kept two nodes of a function, and
+the agent saved it) fails the run with `graphs` (each graph's `wrote`, `kept`, `missing` and the
+start of its `readBack`), even when the script caught the error; a read-back that fails leaves the
+write as Unreal answered it. The Loop's parts are read back the same way but never refused for
+their size: a part writes all its events in one text, and `check-part` doesn't count its nodes.
 `check_graph {graph, code, written}` runs the same check for a graph written another way and changes
 nothing; anything but a loaded graph's object path is refused before anything is read.
 `import_model {file, dest, name, collision, nanite}` combines a model file of the game's assets into
@@ -749,7 +754,8 @@ project never exported its template's facts has its open Unreal write `project.j
 export makes throwaway Blueprints, so the editor refuses it during play, and on Windows it took
 longer than a moment's 15 s ask: Genex starts it in the background whenever it sees the game's
 Unreal answer (`open-editor`, `editor-status`, a run's start; `reference-warm.ts`), one per engine
-at a time and a failed one again only 2 minutes later, so lookups during play read the kept copy.
+at a time (lookups and `export-reference` join it) and a failed one again only 2 minutes later, so
+lookups during play read the kept copy.
 `export-reference` keeps the node reference and Python names per engine in the plugin's storage,
 then asks for `project.json` (that call failing fails nothing). The harness's tools
 (`run-part`, `part-result`, `rollback-part`, `reload-level`, `export-reference`, `reopen-editor`,

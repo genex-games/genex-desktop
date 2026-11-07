@@ -161,8 +161,10 @@ def graph_named(blueprint: unreal.Blueprint, graph: str | None) -> unreal.EdGrap
 
 def write_graph(blueprint: unreal.Blueprint, text: str, graph: str | None = None) -> None:
     """Writes Blueprint text into a graph (Epic's write_graph_dsl); raises with Epic's message, and
-    with Genex's when the text is too big for one write or the graph came back short (graph_write)."""
-    graph_write.write(graph_named(blueprint, graph), text)
+    with Genex's when the graph came back short (graph_write)."""
+    # A part writes all its events in one EventGraph text, and check-part doesn't count its nodes:
+    # its write is read back, never refused for its size.
+    graph_write.write(graph_named(blueprint, graph), text, limit=False)
 
 
 def compile_status(blueprint: unreal.Blueprint) -> tuple[bool, list[str]]:

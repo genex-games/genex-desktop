@@ -1542,6 +1542,12 @@ test("a Blueprint write that came back whole, or that the helper can't check, an
     ["came back whole", { nodes: 1 }, { nodes: 1, kept: 3 }],
     ["an older helper without the check", new Refusal("Unknown tool check_graph"), new Refusal("Unknown tool")],
     ["a check that answers no JSON", { returnValue: 7 }, "not json"],
+    // The helper answers every failure as {error}: only its verdicts (refused, wrote and kept) fail a write.
+    [
+      "a check that failed itself",
+      { error: "graph must be a Blueprint graph's path" },
+      { error: "RuntimeError: read_graph_dsl can't spell node K2Node_X" },
+    ],
   ];
   for (const [label, before, after] of rows) {
     const unreal = checkingEditor(before, after);

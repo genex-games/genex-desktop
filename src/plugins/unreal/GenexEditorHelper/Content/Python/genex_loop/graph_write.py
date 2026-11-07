@@ -5,15 +5,21 @@ whose first statement was an early (if ... (return)) kept two of its nodes, and 
 before anyone looked. So each write Genex makes or watches is read back (read_graph_dsl) and
 compared with its text, and a write that came back short fails, naming what is missing:
 
-- the read-back must hold at least as many nodes as the text makes: calls, operators, branches,
-  switches and loops. Variable reads are left out on both sides: the read-back spells each one as
-  a node, the text often as a bare name. So is a component access such as (.x v), which Unreal
-  may share between uses.
-- every node the text calls by name must come back under that name (its last part, so a call
-  spelled CallFunction|Foo or Class|BP|Foo is the same node), except math and flow control,
-  which the read-back may spell as operators and statements.
+- nodes are counted on both sides: calls, operators, branches, switches and loops. Variable reads
+  are left out on both sides: the read-back spells each one as a node, the text often as a bare
+  name. So is a component access such as (.x v), which Unreal may share between uses.
+- a node the text calls by name that doesn't come back under that name (its last part, so a call
+  spelled CallFunction|Foo or Class|BP|Foo is the same node) is missing, except math, flow
+  control, arrays and strings, which the read-back may spell as operators and statements.
+- the write came back short when something is missing and the read-back holds fewer nodes, or
+  when it holds under KEPT_SHARE of them and at least MIN_LOST fewer: Unreal may spell a few
+  nodes another way (a break node as a component access, two equal pure calls as one), never most.
 
-One graph's text that makes more than MAX_NODES nodes is refused before Unreal gets it: writes
+A read-back that can't be taken or read leaves the write as Unreal answered it: the check only
+ever fails a write it could compare.
+
+One graph's text that makes more than MAX_NODES nodes is refused before Unreal gets it (a Loop
+part's, which holds all its events, only is read back): writes
 that big took minutes each, grew the editor to about 29 GB and crashed it three times in one
 evening, and splitting the graph into small functions ended it.
 
@@ -27,6 +33,7 @@ was too big is kept, so the run fails even when the script caught the error.
 """
 
 import contextlib
+import functools
 import sys
 import typing
 
@@ -34,6 +41,10 @@ from genex_loop.errors import Refused
 
 # The most nodes one graph's text may make (variable reads not counted).
 MAX_NODES = 150
+# A read-back with nothing missing came back short when it holds under this share of the text's
+# nodes, at least this many fewer.
+KEPT_SHARE = 0.75
+MIN_LOST = 2
 # How much of a short read-back an answer shows, and how many missing names it lists.
 READ_BACK_CHARS = 600
 MISSING_SHOWN = 12
@@ -51,7 +62,7 @@ NODE_STATEMENTS = frozenset({'if', 'elif', 'switch', 'for', 'while'})
 OPERATORS = frozenset({'+', '-', '*', '/', '%', 'xor', '==', '!=', '<', '<=', '>', '>=', 'and', 'or',
                        'not', 'neg', 'select'})
 # Categories whose nodes the read-back may spell as an operator or a statement.
-RESPELLED = ('math|', 'utilities|flowcontrol|', 'utilities|operators|')
+RESPELLED = ('math|', 'utilities|flowcontrol|', 'utilities|operators|', 'utilities|array|', 'utilities|string|')
 VARIABLES = 'variables|'
 GETTER = 'get'
 WORD_END = frozenset(' \t\n\r;")')
@@ -170,7 +181,7 @@ def _word(form) -> str:
 
 
 def _is_params(form) -> bool:
-    """Whether an (event Name (...)) list is its parameters: plain names, no type ids, no keywords."""
+    """Whether the list after an entry's name is its parameters: plain names, no type ids, no keywords."""
     return isinstance(form, list) and all(_word(item) and '|' not in _word(item) and _word(item) not in STATEMENTS
                                           and _word(item) not in OPERATORS for item in form)
 
@@ -179,9 +190,7 @@ def _skipped(form: list) -> int:
     """How many items at the head of a statement are names, not code: an entry's name and
     parameters, a bind's target, a loop's variable."""
     head = _word(form[0]) if form else ''
-    if head == 'fn':
-        return 3
-    if head == 'event':
+    if head in ('fn', 'event'):
         return 3 if len(form) > 2 and _is_params(form[2]) else 2
     if head in ('bind', 'for'):
         return 2
@@ -226,7 +235,9 @@ def loss(written: str, read_back: str) -> dict | None:
     {wrote, kept, missing}."""
     wrote, kept = read_text(written), read_text(read_back)
     missing = sorted(name for title, name in wrote.named.items() if title not in kept.named and not _respelled(name))
-    if kept.nodes >= wrote.nodes and not missing:
+    fewer = kept.nodes < wrote.nodes
+    most_lost = wrote.nodes - kept.nodes >= MIN_LOST and kept.nodes < wrote.nodes * KEPT_SHARE
+    if not (missing and fewer) and not most_lost:
         return None
     return {'wrote': wrote.nodes, 'kept': kept.nodes, 'missing': missing}
 
@@ -290,24 +301,29 @@ def check_size(graph, code: str) -> None:
 
 
 def check_written(graph, code: str) -> dict:
-    """Reads a written graph back and compares it with its text: {nodes, kept}, or GraphWriteLost."""
+    """Reads a written graph back and compares it with its text: {nodes, kept}, GraphWriteLost, or
+    {} when it can't (Epic's reader failed, or either text can't be read here)."""
     name = graph_name(graph)
-    read_back = str(epic_tools().read_graph_dsl(graph))
     try:
+        read_back = epic_tools().read_graph_dsl(graph)
+        # Outside raising mode a failing Epic tool reports a script error and answers None.
+        if not isinstance(read_back, str):
+            return {}
         lost = loss(code, read_back)
-    except ValueError:
-        # Text Unreal took but this reading can't: the write is Unreal's to judge.
+    except Exception:  # noqa: BLE001 - a check that can't compare leaves the write as Unreal answered it
         return {}
     if lost:
         raise GraphWriteLost(loss_message(name, lost), graph=name, readBack=read_back[:READ_BACK_CHARS], **lost)
     return {'nodes': read_text(code).nodes, 'kept': read_text(read_back).nodes}
 
 
-def write(graph, code: str, tools=None):
-    """Writes Blueprint text into a graph with Epic's write_graph_dsl, refusing a text too big for one
-    write and failing one that came back short (GraphWriteLost); Epic's answer otherwise."""
-    check_size(graph, code)
-    answer = (tools or epic_tools()).write_graph_dsl(graph, code)
+def write(graph, code: str, send=None, limit: bool = True):
+    """Writes Blueprint text into a graph with Epic's write_graph_dsl (or `send`, the caller's own
+    call of it), refusing a text too big for one write (unless not `limit`) and failing one that
+    came back short (GraphWriteLost); Epic's answer otherwise."""
+    if limit:
+        check_size(graph, code)
+    answer = send() if send else epic_tools().write_graph_dsl(graph, code)
     check_written(graph, code)
     return answer
 
@@ -339,10 +355,15 @@ class Watch:
         self.failed: list[dict] = []
 
     def write(self, tools, args: tuple, kwargs: dict):
+        """The script's own call, sent as it made it; checked when it names a graph and a text."""
+        send = functools.partial(tools.write_graph_dsl, *args, **kwargs)
         graph = args[0] if args else kwargs.get('graph')
-        code = args[1] if len(args) > 1 else kwargs.get('code', '')
+        code = args[1] if len(args) > 1 else kwargs.get('code')
+        if graph is None or not isinstance(code, str):
+            # Epic's own refusal names what is wrong with the call.
+            return send()
         try:
-            return write(graph, str(code), tools)
+            return write(graph, code, send)
         except GraphWriteLost as lost:
             self.failed.append({'error': lost.message, **lost.facts})
             raise
@@ -374,6 +395,10 @@ def watching():
         except Exception:  # noqa: BLE001 - without Epic's toolset there is nothing to watch
             module = None
     epic = getattr(module, EPIC_CLASS, None) if module else None
+    if isinstance(epic, CheckedTools):
+        # A run inside a run: the outer one's stand-in already checks every write.
+        yield epic._watch
+        return
     if epic is None:
         yield watch
         return

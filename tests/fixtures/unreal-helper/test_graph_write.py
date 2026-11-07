@@ -81,6 +81,15 @@ class Compares(HelperCase):
              '(fn F () (Development|PrintString "(x)"))'),
             ('an event with its parameters', '(event EventTick (DeltaSeconds) (CallFunction|Tick :DT DeltaSeconds))',
              '(event EventTick (DeltaSeconds) (CallFunction|Tick :DT DeltaSeconds))'),
+            ('a function read back without its empty parameters', '(fn F () (CallFunction|A) (CallFunction|B))',
+             '(fn F (CallFunction|A) (CallFunction|B))'),
+            ('an array loop as a statement', '(fn F (L) (Utilities|Array|ForEachLoop L (CallFunction|G)))',
+             '(fn F (L) (for x L (CallFunction|G)))'),
+            ('a break node as a component access, of many',
+             '(fn F (V) (CallFunction|A (Math|Vector|BreakVector V)) (CallFunction|B) (CallFunction|C))',
+             '(fn F (V) (CallFunction|A (.x V)) (CallFunction|B) (CallFunction|C))'),
+            ('two equal pure calls shared', '(fn F () (CallFunction|A (Game|GetPawn)) (CallFunction|B (Game|GetPawn)))',
+             '(fn F () (bind p (Game|GetPawn)) (CallFunction|A p) (CallFunction|B p))'),
         ]
         for name, written, read_back in same:
             with self.subTest(name):
@@ -122,6 +131,18 @@ class Writes(HelperCase):
         unreal.state['kept'] = {GRAPH: RESTRUCTURED}
         self.assertIsNone(graph_write.write(self.graph, COMBAT_TICK))
         self.assertEqual(unreal.state['written'][GRAPH], COMBAT_TICK)
+
+    def test_a_read_back_that_fails_leaves_the_write_as_epic_answered(self) -> None:
+        unreal.state['read_fails'] = "read_graph_dsl can't spell node K2Node_X"
+        self.assertIsNone(graph_write.write(self.graph, COMBAT_TICK))
+        self.assertEqual(unreal.state['written'][GRAPH], COMBAT_TICK)
+
+    def test_a_loop_part_s_write_is_read_back_but_never_refused_for_its_size(self) -> None:
+        text = calls(graph_write.MAX_NODES + 1)
+        self.assertIsNone(graph_write.write(self.graph, text, limit=False))
+        unreal.state['kept'] = {GRAPH: KEPT}
+        with self.assertRaises(graph_write.GraphWriteLost):
+            graph_write.write(self.graph, text, limit=False)
 
     def test_a_text_too_big_never_reaches_unreal(self) -> None:
         with self.assertRaises(graph_write.GraphWriteLost) as raised:
@@ -173,6 +194,14 @@ class BuildScripts(HelperCase):
         self.assertTrue(answer['graphs'][0]['refused'])
         self.assertNotIn(('write_graph_dsl', GRAPH), unreal.calls)
 
+    def test_a_call_the_check_can_t_read_goes_to_epic_as_the_script_made_it(self) -> None:
+        self.write(os.path.join(self.build, 'apply_dsl.py'), self.SCRIPT.replace(
+            'BT.write_graph_dsl(graph, args["code"])', 'BT.write_graph_dsl(graph=graph, text=args["code"])'))
+        answer = self.run_with(COMBAT_TICK)
+        self.assertIn('text', answer['result'], "Epic's own refusal of the wrong keyword")
+        self.assertNotIn(GRAPH, unreal.state.get('written', {}), 'nothing was written in its place')
+        self.assertNotIn('graphs', answer)
+
     def test_the_script_s_own_error_stays_the_run_s_error(self) -> None:
         unreal.state['kept'] = {GRAPH: KEPT}
         self.write(os.path.join(self.build, 'apply_dsl.py'), self.SCRIPT.replace('    result = str(error)\n',
@@ -203,6 +232,10 @@ class CheckGraph(HelperCase):
         self.assertTrue(refused['refused'])
         self.assertIn('helper functions', refused['error'])
         self.assertNotIn('read_graph_dsl', [call[0] for call in unreal.calls])
+
+    def test_a_read_back_that_fails_is_no_verdict(self) -> None:
+        unreal.state['read_fails'] = "read_graph_dsl can't spell node K2Node_X"
+        self.assertEqual(tool('check_graph', GRAPH, COMBAT_TICK, True), {'graph': GRAPH})
 
     def test_after_a_write_it_names_what_came_back_short(self) -> None:
         self.assertEqual(tool('check_graph', GRAPH, COMBAT_TICK, True), {'graph': GRAPH, 'nodes': 15, 'kept': 15})

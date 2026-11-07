@@ -1,5 +1,6 @@
 """A stand-in for Epic's BlueprintTools: creating a Blueprint fails when the test says so, and a
-graph written reads back as written unless the test says what Unreal kept (unreal.state['kept'])."""
+graph written reads back as written unless the test says what Unreal kept (unreal.state['kept']),
+or that reading it back fails (unreal.state['read_fails'])."""
 
 import unreal
 
@@ -26,6 +27,8 @@ class BlueprintTools:
     @epic_tool
     def read_graph_dsl(graph) -> str:
         unreal._record('read_graph_dsl', graph.get_path_name())
+        if unreal.state.get('read_fails'):
+            raise RuntimeError(unreal.state['read_fails'])
         path = graph.get_path_name()
         return unreal.state.get('kept', {}).get(path, unreal.state.get('written', {}).get(path, ''))
 
