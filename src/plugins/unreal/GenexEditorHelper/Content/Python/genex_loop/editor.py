@@ -1,7 +1,8 @@
-"""The editor pieces the loop tools share: subsystems, the play world, the project folder and
-the part's tag, folder and actors."""
+"""The editor pieces the loop tools share: subsystems, the play world, the open level, the project
+folder and the part's tag, folder and actors."""
 
 import os
+import re
 import time
 
 import unreal
@@ -10,6 +11,9 @@ from genex_loop.errors import Refused
 
 PART_TAG_PREFIX = 'GenexPart:'
 PARTS_CONTENT = '/Game/Parts'
+# A play session's copy of a level lives in a package named with Unreal's play prefix:
+# /Game/Maps/UEDPIE_0_Map copies /Game/Maps/Map.
+PLAY_PACKAGE_PREFIX = re.compile(r'/UEDPIE_\d+_(?=[^/]*$)')
 
 
 def actors() -> unreal.EditorActorSubsystem:
@@ -30,6 +34,23 @@ def editor_subsystem() -> unreal.UnrealEditorSubsystem:
 def play_world() -> unreal.World | None:
     """The running play session's world (PIE), or None."""
     return editor_subsystem().get_game_world()
+
+
+def level_world() -> unreal.World:
+    """The open level's world: the editor's, or while a play session runs, the session's copy of it
+    (Unreal's editor-world getter answers None then, and logs an error)."""
+    world = play_world()
+    if world is None:
+        world = editor_subsystem().get_editor_world()
+    if world is None:
+        raise Refused('Unreal has no level open.')
+    return world
+
+
+def level_path(world: unreal.World) -> str:
+    """The level's package (/Game/Maps/Map); a play session's copy is named as the level it copies."""
+    package = str(world.get_path_name()).split('.', 1)[0]
+    return PLAY_PACKAGE_PREFIX.sub('/', package, count=1)
 
 
 def refuse_during_play() -> None:

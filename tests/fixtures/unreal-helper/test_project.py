@@ -5,9 +5,11 @@ Blueprints; it refuses any file outside Saved/Genex, and changes nothing in the 
 
 import json
 import os
+from unittest import mock
 
 import unreal
 
+from genex_loop import editor
 from support import HelperCase
 
 BLUEPRINTS = '/Game/VehicleTemplate/Blueprints'
@@ -87,6 +89,53 @@ class Project(HelperCase):
         self.call('export_project', self.file)
         self.assertEqual(self.written()['gameMode'], {'path': '/Game/Modes/BP_RaceMode', 'parent': None,
                                                       'defaultPawn': 'BP_Bike'})
+
+    def test_writes_the_same_facts_while_a_play_session_runs(self) -> None:
+        # Unreal's editor-world getter answers None during play; the play session's copy of the level
+        # names the same level (without the play prefix) and carries the same game mode.
+        unreal.state['pie'] = True
+        with mock.patch.object(unreal.UnrealEditorSubsystem, 'get_editor_world', autospec=True) as asked:
+            result = self.call('export_project', self.file)
+        self.assertEqual({k: result[k] for k in ['file', 'blueprints', 'more', 'inputActions']},
+                         {'file': self.file, 'blueprints': 4, 'more': 0, 'inputActions': 3})
+        with open(SHARED_FILE, encoding='utf-8') as handle:
+            self.assertEqual(self.written(), json.load(handle))
+        self.assertEqual(unreal.calls, [], 'the editor was changed')
+        # Each call during play writes "The Editor is currently in a play mode." to the log, which reads as a game error.
+        self.assertEqual(asked.call_count, 0, 'the editor-world getter was asked during play')
+
+    def test_a_parts_game_mode_names_its_parent(self) -> None:
+        # A part may set the level's GameMode Override to its own Blueprint, which the listing leaves out.
+        other = '/Game/Parts/Rules/BP_RulesMode.BP_RulesMode_C'
+        unreal.state['registry'].append(blueprint('/Game/Parts/Rules/BP_RulesMode', 'GameModeBase'))
+        unreal.state['mode_override'] = unreal.Class(path=other, cdo=unreal.Actor())
+        for pie in (False, True):
+            with self.subTest(pie=pie):
+                unreal.state['pie'] = pie
+                self.call('export_project', self.file)
+                self.assertEqual(self.written()['gameMode'], {'path': '/Game/Parts/Rules/BP_RulesMode',
+                                                              'parent': 'GameModeBase', 'defaultPawn': None})
+
+    def test_a_play_copys_level_is_named_as_the_level_it_copies(self) -> None:
+        names = {
+            '/Game/Maps/UEDPIE_0_Map.Map': '/Game/Maps/Map',
+            '/Game/Maps/UEDPIE_12_Arena.Arena': '/Game/Maps/Arena',
+            '/Game/Maps/Map.Map': '/Game/Maps/Map',
+            '/Game/UEDPIE_0_Folder/Map.Map': '/Game/UEDPIE_0_Folder/Map',
+            '/Game/Maps/MyUEDPIE_0_Map.MyUEDPIE_0_Map': '/Game/Maps/MyUEDPIE_0_Map',
+        }
+        for path, level in names.items():
+            with self.subTest(path):
+                world = unreal.World('Map')
+                world.get_path_name = lambda path=path: path
+                self.assertEqual(editor.level_path(world), level)
+
+    def test_no_level_open_is_refused_and_writes_nothing(self) -> None:
+        subsystem = unreal.UnrealEditorSubsystem
+        self.addCleanup(setattr, subsystem, 'get_editor_world', subsystem.get_editor_world)
+        subsystem.get_editor_world = lambda _self: None
+        self.assert_refused(self.call('export_project', self.file))
+        self.assertFalse(os.path.exists(self.file))
 
     def test_no_game_mode_anywhere_is_null(self) -> None:
         unreal.state['default_mode'] = ''

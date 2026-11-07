@@ -743,7 +743,10 @@ post-process volumes and camera settings, flagging extreme values, such as a paw
 writes the template's facts to `Saved/Genex/project.json`: the level, the game mode (the level's
 override, else the project default) and the pawn it spawns, the project's Blueprints outside
 `/Game/Parts` (native parent, components, variables; at most 200, the rest counted in `more`) and the
-input actions. `recompile_module {module, classes}` hot-reloads the game's C++ module
+input actions. It works during play too: Unreal's editor-world getter answers nothing then, so it reads
+the play session's copy of the level (the editor's level and game mode, unless the game opened another
+level) and the asset registry.
+`recompile_module {module, classes}` hot-reloads the game's C++ module
 (`Module Recompile`, 11 to 19 s, refused during play): it answers `ok` only when a new
 `libUnrealEditor-<Module>-<n>.dylib` appeared, the reload logged no `<Category>: Error:` line and
 every class loads, with up to 20 compiler and hot-reload lines from the editor's log written during
