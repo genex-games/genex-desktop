@@ -24,13 +24,15 @@ came back short fails, naming what is missing:
 A read-back that can't be taken or read leaves the write as Unreal answered it: the check only
 ever fails a write it could compare.
 
-After each write the nodes nothing starts are deleted (clear_unlinked): Epic's writer deletes only
+After each write the nodes nothing runs are deleted (clear_unlinked): Epic's writer deletes only
 old nodes nothing links to, so every old node that takes the function's or event's parameter (DT,
-DeltaSeconds) stayed through each rewrite, three identical writes leaving 7, 13 and 19 nodes, and
-the nodes a lost write made stay unlinked too. read_graph_dsl never shows them. A node is kept
-when an event or entry runs it, or it feeds one that is run; a function's entry and result (which
-hold its parameters, so what feeds a result is kept too) and pinless nodes (comments) always are,
-and a graph nothing starts (an animation graph) keeps every node.
+DeltaSeconds) stayed through each rewrite, three identical writes leaving 7, 13 and 19 nodes, as
+did each old result node, and the nodes a lost write made stay unlinked too. read_graph_dsl never
+shows them. Only the classes the text writer makes (DELETABLE) are deleted, and only when no exec
+flow from an event, an entry or a node of any other class (a timeline, which its component or Auto
+Play runs) reaches them and they feed no node it does; a function keeps the result nodes its flow
+reaches, or one, and a graph nothing starts (an animation graph) keeps every node. find_nodes
+doesn't list comments, so they always stay.
 
 One graph's text that makes more than MAX_NODES nodes is refused before Unreal gets it (a Loop
 part's, which holds all its events, only is read back): writes that big took minutes each, grew the editor to about 29 GB and crashed it three times in one
@@ -78,9 +80,9 @@ OPERATORS = frozenset({'+', '-', '*', '/', '%', 'xor', '==', '!=', '<', '<=', '>
 RESPELLED = ('math|', 'utilities|flowcontrol|', 'utilities|operators|', 'utilities|array|', 'utilities|string|')
 VARIABLES = 'variables|'
 GETTER = 'get'
-# A struct's break node, by its title; a Blueprint's own function of that name is a call.
+# A math struct's break node (Math|Vector|BreakVector), which the read-back spells as component accesses.
 BREAK = 'break'
-OWN_CALLS = ('callfunction|', 'class|')
+BREAK_CATEGORY = 'math|'
 # Epic's IsValid exec macro: written with none of its exec pins (:"Is Valid" ...), Unreal links nothing after it.
 EXEC_MACRO = 'utilities|isvalid'
 PIN = ':'
@@ -88,8 +90,18 @@ PIN = ':'
 INPUT_EVENT = 'input|enhancedactionevents|'
 # A pin of the exec flow, as get_node_infos lists its type.
 EXEC_PIN = 'Exec'
-# Nodes never deleted as unlinked: a function's (or macro's) entry and result hold its parameters.
-KEPT_CLASSES = frozenset({'K2Node_FunctionEntry', 'K2Node_FunctionResult', 'K2Node_Tunnel'})
+# The node classes Epic's text writer makes that are deleted once nothing runs them. Any other class (an
+# event, a function's entry, a timeline, which runs from its component or Auto Play, a collapsed graph) is
+# never deleted and keeps what it runs and what feeds it.
+DELETABLE = frozenset({
+    'K2Node_CallFunction', 'K2Node_CallArrayFunction', 'K2Node_IfThenElse', 'K2Node_ExecutionSequence',
+    'K2Node_MacroInstance', 'K2Node_PromotableOperator', 'K2Node_CommutativeAssociativeBinaryOperator',
+    'K2Node_VariableGet', 'K2Node_VariableSet', 'K2Node_Knot', 'K2Node_Select', 'K2Node_SwitchInteger',
+    'K2Node_SwitchString', 'K2Node_SwitchName', 'K2Node_SwitchEnum', 'K2Node_DynamicCast', 'K2Node_BreakStruct',
+    'K2Node_MakeStruct', 'K2Node_MakeArray', 'K2Node_GetArrayItem', 'K2Node_Self', 'K2Node_EnumLiteral',
+    'K2Node_FunctionResult'})
+# A function's result node: its pins are the function's outputs, so one always stays.
+RESULT = 'K2Node_FunctionResult'
 WORD_END = frozenset(' \t\n\r;")')
 SPACE = frozenset(' \t\n\r')
 
@@ -235,38 +247,43 @@ def _is_getter(name: str) -> bool:
 
 def _is_break(name: str) -> bool:
     lowered = name.lower()
-    return lowered.rsplit('|', 1)[-1].startswith(BREAK) and not lowered.startswith(OWN_CALLS)
+    return lowered.startswith(BREAK_CATEGORY) and lowered.rsplit('|', 1)[-1].startswith(BREAK)
 
 
-def _is_pin_group(form) -> bool:
-    return isinstance(form, list) and bool(form) and _word(form[0]).startswith(PIN)
+def _is_pin(form) -> bool:
+    """Whether an item of a node's form names one of its pins: a (:Pin ...) group or a :Pin keyword."""
+    if isinstance(form, list):
+        return bool(form) and _word(form[0]).startswith(PIN)
+    return _word(form).startswith(PIN)
 
 
-def _visit(form, made: GraphText, counts: list) -> None:
+def _visit(form, made: GraphText, counts: list, compared: bool) -> None:
     if not isinstance(form, list) or not form:
         return
     head = _word(form[0])
-    if head.lower().startswith(INPUT_EVENT):
+    if compared and head.lower().startswith(INPUT_EVENT):
         return
     if '|' in head:
         title = head.rsplit('|', 1)[-1].lower()
-        if not _is_getter(head) and not _is_break(head):
+        if not _is_getter(head) and not (compared and _is_break(head)):
             counts[0] += 1
             made.named.setdefault(title, head)
-        if head.lower() == EXEC_MACRO and not any(_is_pin_group(item) for item in form[1:]):
+        if head.lower() == EXEC_MACRO and not any(_is_pin(item) for item in form[1:]):
             made.unpinned.append(head)
     elif head in OPERATORS or head in NODE_STATEMENTS:
         counts[0] += 1
     start = _skipped(form) if head in STATEMENTS else 1
     for item in form[start:]:
-        _visit(item, made, counts)
+        _visit(item, made, counts, compared)
 
 
-def read_text(text: str) -> GraphText:
-    """What a graph's text makes; ValueError when it can't be read."""
+def read_text(text: str, compared: bool = True) -> GraphText:
+    """What a graph's text makes; ValueError when it can't be read. As `compared` with a read-back,
+    break nodes and input action events (with all they run) are left out, which the read-back
+    spells another way or not at all; for the checks before a write, every node counts."""
     made, counts = GraphText(0, {}, []), [0]
     for form in forms(text):
-        _visit(form, made, counts)
+        _visit(form, made, counts, compared)
     return made._replace(nodes=counts[0])
 
 
@@ -291,7 +308,7 @@ def text_problem(text: str, graph: str, limit: bool = True) -> str | None:
     read: Unreal's own parser names what is wrong with it): an IsValid with none of its exec pins,
     or (when `limit`) more nodes than one write takes."""
     try:
-        made = read_text(text)
+        made = read_text(text, compared=False)
     except ValueError:
         return None
     if made.unpinned:
@@ -326,19 +343,12 @@ def _linked(pins: list, flow: bool) -> list:
     return [linked.node.get_path_name() for pin in pins if _is_exec(pin) == flow for linked in pin.connected_pins]
 
 
-def _kept(info) -> bool:
-    return info.node.get_class().get_name() in KEPT_CLASSES or not (info.input_pins or info.output_pins)
+def _class(info) -> str:
+    return str(info.node.get_class().get_name())
 
 
-def unlinked(infos: list) -> list:
-    """The nodes among `infos` (Epic's get_node_infos) that nothing starts: on no exec flow from an
-    event or entry, and feeding no node that is (nor a function's result). Kept classes, pinless
-    nodes and every node of a graph nothing starts are never among them."""
-    by_path = {info.node.get_path_name(): info for info in infos}
-    starts = [path for path, info in by_path.items() if _starts(info)]
-    if not starts:
-        return []
-    todo = starts + [path for path, info in by_path.items() if _kept(info)]
+def _reached(by_path: dict, todo: list) -> set:
+    """The nodes the exec flow from `todo` runs, and every node feeding one of them."""
     live = set()
     while todo:
         path = todo.pop()
@@ -347,14 +357,29 @@ def unlinked(infos: list) -> list:
         live.add(path)
         info = by_path[path]
         todo += _linked(info.output_pins, True) + _linked(info.input_pins, False)
+    return live
+
+
+def unlinked(infos: list) -> list:
+    """The nodes among `infos` (Epic's get_node_infos) that nothing runs: of a DELETABLE class, on
+    no exec flow from an event, an entry or a node of another class, and feeding no node that is.
+    A function keeps the result nodes its flow reaches, or one when it reaches none; a graph
+    nothing starts keeps every node."""
+    by_path = {info.node.get_path_name(): info for info in infos}
+    if not any(_starts(info) for info in by_path.values()):
+        return []
+    live = _reached(by_path, [path for path, info in by_path.items() if _starts(info) or _class(info) not in DELETABLE])
+    results = [path for path, info in by_path.items() if _class(info) == RESULT]
+    if results and not live.intersection(results):
+        live |= _reached(by_path, results[:1])
     return [info.node for path, info in by_path.items() if path not in live]
 
 
 def clear_unlinked(graph) -> int:
-    """Deletes the nodes nothing in `graph` starts (unlinked); how many. Any error leaves the rest."""
-    tools = epic_tools()
+    """Deletes the nodes nothing in `graph` runs (unlinked); how many. Any error leaves the rest."""
     cleared = 0
     try:
+        tools = epic_tools()
         for node in unlinked(tools.get_node_infos(tools.find_nodes(graph))):
             tools.delete_node(node)
             cleared += 1
@@ -439,7 +464,7 @@ def check_graph(path: str, code: str, written: bool) -> dict:
     try:
         if not written:
             check_text(graph, code)
-            return {'graph': path, 'nodes': read_text(code).nodes}
+            return {'graph': path, 'nodes': read_text(code, compared=False).nodes}
         cleared = clear_unlinked(graph)
         return {'graph': path, **check_written(graph, code, cleared), 'cleared': cleared}
     except GraphWriteLost as lost:

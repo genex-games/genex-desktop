@@ -76,6 +76,27 @@ LEFT_OVER = {
     'OldMove': ('K2Node_CallFunction', 'step', ['OldTick'], ['OldScale']),
 }
 LEFT_OVER_NAMES = [f'{GRAPH}.{name}' for name in ('OldMove', 'OldScale', 'OldTick')]
+# A function rewritten twice: the result nodes its flow reaches, and an old one with what fed it.
+OLD_RESULTS = {
+    'Entry': ('K2Node_FunctionEntry', 'start', [], []),
+    'Branch': ('K2Node_IfThenElse', 'step', ['Entry'], ['Entry']),
+    'Zero': ('K2Node_FunctionResult', 'end', ['Branch'], []),
+    'Double': ('K2Node_FunctionResult', 'end', ['Branch'], ['Times']),
+    'Times': ('K2Node_PromotableOperator', 'pure', [], ['Entry']),
+    'OldResult': ('K2Node_FunctionResult', 'end', [], ['OldTimes']),
+    'OldTimes': ('K2Node_PromotableOperator', 'pure', [], ['Entry']),
+}
+# An event graph whose timeline runs from its component (nothing wires its Play), a collapsed graph,
+# and one old call left taking the event's parameter.
+TIMELINE = {
+    'Begin': ('K2Node_Event', 'start', [], []),
+    'Print': ('K2Node_CallFunction', 'step', ['Begin'], []),
+    'Timeline': ('K2Node_Timeline', 'step', [], []),
+    'Lerp': ('K2Node_CallFunction', 'pure', [], ['Timeline']),
+    'SetLoc': ('K2Node_CallFunction', 'step', ['Timeline'], ['Lerp']),
+    'Collapsed': ('K2Node_Composite', 'pure', [], []),
+    'OldPrint': ('K2Node_CallFunction', 'step', [], ['Begin']),
+}
 # A graph no event or entry starts (an animation graph's poses).
 POSES = {'Root': ('AnimGraphNode_Root', 'pure', [], ['Blend']), 'Blend': ('AnimGraphNode_BlendSpace', 'pure', [], [])}
 
@@ -155,6 +176,9 @@ class Compares(HelperCase):
              '(event Custom|Holder (Input|EnhancedActionEvents|IA_Attack (:Triggered (CallFunction|Attack))'
              ' (:Completed (CallFunction|Rest))))',
              '(event Custom|Holder (Input|EnhancedActionEvents|EnhancedInputActionIA_Attack))'),
+            ('a math break node of several, as component accesses',
+             '(fn F (V) (Math|Rotator|BreakRotator V) (CallFunction|A) (CallFunction|B))',
+             '(fn F (V) (CallFunction|A) (CallFunction|B))'),
             ('two equal pure calls shared', '(fn F () (CallFunction|A (Game|GetPawn)) (CallFunction|B (Game|GetPawn)))',
              '(fn F () (bind p (Game|GetPawn)) (CallFunction|A p) (CallFunction|B p))'),
         ]
@@ -166,6 +190,10 @@ class Compares(HelperCase):
         written = '(fn F () (bind st State) (CallFunction|Hit :S st) (CallFunction|Die))'
         read_back = '(fn F () (bind st (Variables|Default|GetState)) (CallFunction|Hit :S st))'
         self.assertEqual(graph_write.loss(written, read_back), {'wrote': 2, 'kept': 1, 'missing': ['CallFunction|Die']})
+
+    def test_a_dropped_call_named_break_that_breaks_no_struct_is_a_loss(self) -> None:
+        lost = graph_write.loss('(fn F () (Physics|Constraint|BreakConstraint) (CallFunction|A))', '(fn F () (CallFunction|A))')
+        self.assertEqual(lost['missing'], ['Physics|Constraint|BreakConstraint'])
 
     def test_fewer_math_nodes_than_written_is_a_loss(self) -> None:
         lost = graph_write.loss('(fn F (A) (return (* (+ A 1.0) 2.0)))', '(fn F (A) (return A))')
@@ -188,6 +216,14 @@ class Compares(HelperCase):
                 self.assertIn('Utilities|IsValid', problem)
                 self.assertIn(':"Is Not Valid"', problem)
         self.assertIsNone(graph_write.text_problem(ISVALID_WITH_PINS, GRAPH))
+        self.assertIsNone(graph_write.text_problem('(fn F (A) (Utilities|IsValid A :"Is Valid" (CallFunction|G)))', GRAPH))
+
+    def test_an_input_action_event_s_body_is_checked_before_the_write_though_never_compared(self) -> None:
+        unpinned = '(event Custom|Holder (Input|EnhancedActionEvents|IA_Fire (:Triggered {})))'
+        problem = graph_write.text_problem(unpinned.format('(if (not (Utilities|IsValid X)) (return))'), GRAPH)
+        self.assertIn('Utilities|IsValid', problem)
+        prints = ' '.join(f'(Development|PrintString "{i}")' for i in range(graph_write.MAX_NODES + 1))
+        self.assertIn('helper functions', graph_write.text_problem(unpinned.format(prints), GRAPH))
         self.assertIsNone(graph_write.loss(ISVALID_WITH_PINS, ISVALID_WITH_PINS))
 
 
@@ -247,6 +283,16 @@ class Writes(HelperCase):
         self.assertIn('Genex deleted the 3 nodes', raised.exception.message)
         self.assertEqual(raised.exception.facts['cleared'], 3)
         self.assertEqual(deleted(), LEFT_OVER_NAMES)
+
+    def test_a_function_keeps_the_results_its_flow_reaches_and_old_ones_go(self) -> None:
+        place(GRAPH, OLD_RESULTS)
+        graph_write.write(self.graph, COMBAT_TICK)
+        self.assertEqual(deleted(), [f'{GRAPH}.OldResult', f'{GRAPH}.OldTimes'])
+
+    def test_a_timeline_its_component_runs_and_a_collapsed_graph_keep_what_they_run(self) -> None:
+        place(GRAPH, TIMELINE)
+        graph_write.write(self.graph, COMBAT_TICK)
+        self.assertEqual(deleted(), [f'{GRAPH}.OldPrint'])
 
     def test_a_graph_nothing_starts_or_one_that_can_t_be_listed_keeps_every_node(self) -> None:
         place(GRAPH, POSES)

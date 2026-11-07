@@ -629,8 +629,10 @@ even when the script caught the error; a read-back that fails leaves the write a
 it. After every write the nodes nothing runs are deleted: Epic's writer deletes only old nodes
 nothing links to, so each old node taking the function's or event's parameter stayed through every
 rewrite (three identical writes of a function with one left 7, 13 and 19 nodes, none shown by
-`read_graph_dsl`). A node is kept when an event or entry runs it or it feeds one that runs (or a
-function's result); entries, results and comments always are, and a graph nothing starts keeps
+`read_graph_dsl`), as did each old result node. Only the node classes the text writer makes are
+deleted, and only when no exec flow from an event, an entry or a node of any other class (a
+timeline its component runs) reaches them and they feed no node it does; a function keeps the
+result nodes its flow reaches (or one), comments always stay, and a graph nothing starts keeps
 every node. The Loop's parts are checked the same way but never refused for
 their size: a part writes all its events in one text, and `check-part` doesn't count its nodes.
 `check_graph {graph, code, written}` runs the same check for a graph written another way (after a
