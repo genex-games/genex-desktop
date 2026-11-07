@@ -143,7 +143,8 @@ try {
   });
   await check("Studio shows its own chat beside Activity and preserves unsent game text", async () => {
     await op(i, "type", { selector: '[aria-label="Prompt"]', text: "Unsent game idea", replace: true });
-    await op(i, "click", { selector: 'nav [data-thread="studio"]' });
+    // ⌘2 opens Harness: its sidebar row is hidden for now (#654).
+    await op(i, "key", { surface: "desktop", key: "2", code: "Digit2", modifiers: ["Meta"] });
     await until(
       async () => (await snap(i)).state.room === "studio" && (await snap(i)).controls.some((c) => c.label === "Prompt"),
       "Studio chat",
@@ -306,7 +307,7 @@ try {
     }, "scroll reset");
   });
   await capture(i, "build");
-  await op(i, "click", { selector: 'nav [data-thread="studio"]' });
+  await op(i, "key", { surface: "desktop", key: "2", code: "Digit2", modifiers: ["Meta"] });
   await until(async () => (await snap(i)).state.room === "studio", "Review");
   await check("an empty Activity says what Harness is and leads back to the game", async () => {
     // Activity loads after the room opens; the empty state is what it settles on.
@@ -370,7 +371,7 @@ try {
   await check("Studio round trip preserves the selected build history", async () => {
     await openBuildFromChat(history, "fixture-build-1");
     const selected = (await snap(history)).stage.selectedRun;
-    await op(history, "click", { selector: 'nav [data-thread="studio"]' });
+    await op(history, "key", { surface: "desktop", key: "2", code: "Digit2", modifiers: ["Meta"] });
     await until(async () => (await snap(history)).state.room === "studio", "Studio");
     await op(history, "key", { surface: "desktop", key: "1", code: "Digit1", modifiers: ["Meta"] });
     await until(async () => (await snap(history)).state.room === "build", "game workspace");

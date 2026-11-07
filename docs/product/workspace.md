@@ -4,11 +4,12 @@
 
 The sidebar holds Search, Notifications, Send feedback
 ([data](../../PRIVACY.md#send-feedback)), the Play/Create switch, New game, Plugins,
-Items ([Browse, Selling](../play.md#the-item-store)), Harness, Settings, Games, Friends and, once they wait, **Genex terms updated**,
+Settings, Games, Friends and, once they wait, **Genex terms updated**,
 **plugin updates** and **Relaunch to update** (Linux: **Download**). Pinned games lead, then recent activity. Every launch
 opens **home** (also the wordmark): one composer over an optional picture. A game opens its
 conversation beside the stage (Live, Builds once planned, Assets), Harness its conversation
-and Activity; Plugins and Items fill the workspace.
+and Activity; Plugins fills the workspace; Items and Harness rows are
+[hidden for now](https://github.com/genex-games/genex-desktop/issues/654).
 
 Settings is a modal (narrow windows: a drawer).
 
