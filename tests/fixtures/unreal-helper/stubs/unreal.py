@@ -22,7 +22,9 @@ UBT for `Module Recompile`); the editor's log folder is the project's Saved/Logs
 
 The play world's game clock is `state['game_seconds']` and its last frame's delta
 `state['world_delta']`, its real-time clock (which runs on while the game is paused)
-`state['real_seconds']`; a test advances them itself. Slate post-tick callbacks are kept in
+`state['real_seconds']`, its global time dilation `state['time_dilation']` (a test that advances the
+game clock scales its step by it; set it is clamped to at least `state['min_time_dilation']`); a test
+advances them itself. Slate post-tick callbacks are kept in
 `state['ticks']` (handle: callback), so a test runs a frame by calling each. The valid key names
 are `state['keys']`.
 
@@ -53,6 +55,7 @@ def reset(project_dir: str) -> None:
                   'camera': None, 'cvars': {}, 'registry': [], 'classes': {},
                   'mode_override': None, 'default_mode': '', 'dirty': [], 'imports': {}, 'loaded': {},
                   'import_tasks': [], 'game_seconds': 0.0, 'real_seconds': 0.0, 'world_delta': 0.0, 'ticks': {},
+                  'time_dilation': 1.0, 'min_time_dilation': 0.0001,
                   'control_rotation': Rotator(), 'nav_path': None, 'nav_queries': [],
                   'keys': {'W', 'A', 'S', 'D', 'SpaceBar', 'Gamepad_LeftX'}, 'pictures': {},
                   'viewport_size': (1280, 720)})
@@ -136,14 +139,19 @@ def _box_of(points: list[tuple]) -> tuple[Vector, Vector]:
 
 
 class World(Object):
-    def __init__(self, name: str) -> None:
+    """A level's world. A play session's is the editor's copied into a package named with Unreal's
+    play prefix (/Game/Maps/UEDPIE_0_Map); the world inside keeps the level's own name."""
+
+    def __init__(self, name: str, play_instance: int | None = None) -> None:
         self.name = name
+        prefix = '' if play_instance is None else f'UEDPIE_{play_instance}_'
+        self.package = f'/Game/Maps/{prefix}{name}'
 
     def get_name(self) -> str:
         return self.name
 
     def get_path_name(self) -> str:
-        return f'/Game/Maps/{self.name}.{self.name}'
+        return f'{self.package}.{self.name}'
 
     def get_world_settings(self):
         return WorldSettings()
@@ -533,6 +541,8 @@ class SkeletalMeshComponent(MeshComponent):
     def __init__(self, name: str = 'SkeletalMeshComponent', bones: dict[str, Vector] | None = None,
                  location: Vector | None = None, visible: bool = True,
                  bounds: tuple[Vector, Vector] | None = None, **props) -> None:
+        # Unreal draws a mesh in the main pass unless it is told not to.
+        props.setdefault('render_in_main_pass', True)
         super().__init__(name, location, None, None, visible, **props)
         self.bones, self.bounds = bones or {}, bounds
 
@@ -1037,10 +1047,11 @@ class ScopedEditorTransaction:
 
 class UnrealEditorSubsystem:
     def get_game_world(self):
-        return World('PIE_Map') if state['pie'] else None
+        return World('Map', play_instance=0) if state['pie'] else None
 
     def get_editor_world(self):
-        return World('Map')
+        # Like Unreal's, it answers None while a play session runs ("The Editor is currently in a play mode.").
+        return None if state['pie'] else World('Map')
 
     def get_level_viewport_camera_info(self):
         return Vector(1, 2, 3), Rotator(0, -10, 90)
@@ -1115,7 +1126,9 @@ def get_engine_subsystem(cls):
 class EditorAssetLibrary:
     @staticmethod
     def find_asset_data(path: str):
-        return next((a for a in state['registry'] if str(a.package_name) == path), AssetData(path, 'None'))
+        # Like Unreal's, it finds nothing while a play session runs.
+        found = None if state['pie'] else next((a for a in state['registry'] if str(a.package_name) == path), None)
+        return found or AssetData(path, 'None')
 
     @staticmethod
     def does_directory_exist(path: str) -> bool:
@@ -1389,6 +1402,15 @@ class GameplayStatics:
     @staticmethod
     def get_real_time_seconds(world_context_object) -> float:
         return state['real_seconds']
+
+    @staticmethod
+    def get_global_time_dilation(world_context_object) -> float:
+        return state['time_dilation']
+
+    @staticmethod
+    def set_global_time_dilation(world_context_object, time_dilation: float) -> None:
+        # Unreal clamps it to the world's MinGlobalTimeDilation and MaxGlobalTimeDilation (0.0001 and 20 by default).
+        state['time_dilation'] = min(max(float(time_dilation), state['min_time_dilation']), 20.0)
 
     @staticmethod
     def set_game_paused(world_context_object, paused: bool) -> bool:

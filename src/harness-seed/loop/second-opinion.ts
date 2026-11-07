@@ -3,6 +3,11 @@
  * work looks at the pictures the lead hands it and answers the lead's own question. It decides
  * nothing — no merge, finish, landing or close waits on it — and the lead reads its answer and
  * decides. The judge role's engine and model answer (the run's own when none is set).
+ *
+ * Motion is judged from frames with their times: a motion strip's poses file (`strip`) hands over
+ * each of its frames at full size with the game time it was taken, and pictures can carry `times`
+ * (judge-frames.ts reads them). The judge is told every picture's place and time
+ * (judge-frames-prompts.ts), since an engine sends a picture's bytes without its label.
  */
 import { readFile, realpath } from "node:fs/promises";
 import path from "node:path";
@@ -10,6 +15,7 @@ import { HostMethod } from "./host-methods.ts";
 import { CompletionRole } from "./judge-provenance.ts";
 import { EngineId, RoleKey, roleEffort } from "./model-roles.ts";
 import { isProviderLoss, noteProviderLoss } from "./provider-loss.ts";
+import { JUDGE_FRAMES_WORDS } from "./judge-frames-prompts.ts";
 import { CLIP_DETAIL, clip, hasText } from "./text.ts";
 import type { HarnessCtx, Run } from "../types/harness.d.ts";
 import type { LiveToolSpec, MessageImage } from "../types/host-api.d.ts";
@@ -38,14 +44,20 @@ const SYSTEM_PROMPT =
 /** The tool's words. */
 export const SECOND_OPINION_WORDS = {
   description:
-    "Ask a second opinion: a model that did none of the work looks at the pictures you name and answers your question. It decides nothing; you read its answer and decide.",
+    "Ask a second opinion: a model that did none of the work looks at the pictures you name and answers your question. It decides nothing; you read its answer and decide. Ask about what the goal puts first. When that is how something moves (walking, running, attacks, animation), hand it frames of the motion with their times (a motion strip as strip, or pictures with times) and ask about the motion: a still can't show a foot sliding or a pose popping.",
   question: "Your question, e.g. 'Does the menu react to a click?'.",
   pictures: "Comma-separated PNG or JPEG files in the project's folder (screenshots you took).",
+  times:
+    "Optional, with pictures: comma-separated game seconds, one per picture in the same order, when they are frames of motion (e.g. '12.0, 12.033, 12.066').",
+  strip:
+    "Optional: a motion strip's poses file (the .json a motion strip answers as poses) in the project's folder. Its frames go to the judge at full size, in order, each with its game time.",
   noQuestion: "judge needs a question.",
-  noPictures: "judge needs at least one picture: name PNG or JPEG files in the project's folder.",
+  noPictures: "judge needs at least one picture: name PNG or JPEG files in the project's folder, or a motion strip.",
   badPicture: (rel: string, why: string) => `${JSON.stringify(rel)} is not a picture judge can read (${why}).`,
   failed: (why: string) => `No second opinion came back: ${why}.`,
   answer: (text: string) => `Second opinion: ${text}`,
+  leftOut: (count: number) =>
+    `(${count} later frames of the strip were left out: together they were too large to send.)`,
 } as const;
 
 /** `judge` as a lead's engine sees it. */
@@ -58,6 +70,8 @@ export function secondOpinionSpec(): LiveToolSpec {
       properties: {
         question: { type: "string", description: SECOND_OPINION_WORDS.question },
         pictures: { type: "string", description: SECOND_OPINION_WORDS.pictures },
+        times: { type: "string", description: SECOND_OPINION_WORDS.times },
+        strip: { type: "string", description: SECOND_OPINION_WORDS.strip },
       },
       required: ["question"],
     },
@@ -106,11 +120,29 @@ export async function pictureFile(file: string): Promise<MessageImage | null> {
   return "image" in read ? read.image : null;
 }
 
-/** What the lead asked: the question and the pictures. */
+/** What the lead asked: the question and the pictures, with each picture's name and game time when it has one. */
 export interface SecondOpinionAsk {
   run: Run;
   question: string;
   images: readonly MessageImage[];
+  names?: readonly string[];
+  times?: readonly (number | null)[];
+  leftOut?: number;
+}
+
+/** The question as the judge reads it: with every picture's place and time when any picture has a time. */
+function askText(question: string, ask: SecondOpinionAsk): string {
+  const times = ask.times ?? [];
+  if (!times.some((at) => at !== null)) return question;
+  const lines = ask.images.map((image, index) =>
+    JUDGE_FRAMES_WORDS.line(
+      index + 1,
+      ask.names?.[index] || image.label || "",
+      times[index] ?? null,
+      times[index - 1] ?? null,
+    ),
+  );
+  return `${question}\n\n${JUDGE_FRAMES_WORDS.note(lines, ask.leftOut ?? 0)}`;
 }
 
 /** Ask the judge role once; its words, or why none came. A lost provider is noted for the run, as every caller's is. */
@@ -128,12 +160,12 @@ export async function askSecondOpinion(ctx: HarnessCtx, ask: SecondOpinionAsk): 
       stream: false,
       effort: roleEffort(run, RoleKey.Judge),
       provenance: { role: CompletionRole.Judge, ...(run.runId ? { runId: run.runId } : {}) },
-      messages: [{ role: "user", content: question, images: [...ask.images] }],
+      messages: [{ role: "user", content: askText(question, ask), images: [...ask.images] }],
     });
     const text = String(response?.message?.content ?? "").trim();
-    return text
-      ? SECOND_OPINION_WORDS.answer(clip(text, MAX_ANSWER_CHARS))
-      : SECOND_OPINION_WORDS.failed("an empty answer");
+    if (!text) return SECOND_OPINION_WORDS.failed("an empty answer");
+    const answer = SECOND_OPINION_WORDS.answer(clip(text, MAX_ANSWER_CHARS));
+    return ask.leftOut ? `${answer} ${SECOND_OPINION_WORDS.leftOut(ask.leftOut)}` : answer;
   } catch (err) {
     const kind = (err as { kind?: unknown })?.kind;
     if (run.runId && isProviderLoss(kind)) noteProviderLoss(run.runId, engine, err);
