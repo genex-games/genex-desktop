@@ -77,7 +77,7 @@ const NO_IDE_HOT_RELOAD = "-NoHotReloadFromIDE";
 const PLUGINS_FOLDER = "Plugins";
 const DESCRIPTOR_EXTENSION = ".uplugin";
 
-/** Why a compile didn't pass. Only Conflicting is retryable as it is. */
+/** Why a compile didn't pass. Only Conflicting and OutOfMemory are retryable as they are. */
 export const CompileFailure = {
   /** Neither a Mac nor Windows: Unreal C++ is compiled with Xcode or Microsoft's C++ tools only. */
   Unsupported: "unsupported",
@@ -89,6 +89,10 @@ export const CompileFailure = {
   Conflicting: "conflicting",
   /** Windows: an open Unreal's Live Coding refused the build; it passes once that editor is closed. */
   LiveCoding: "live-coding",
+  /** The compiler or linker ran out of memory: nothing in the code; running again may pass once memory is free. */
+  OutOfMemory: "out-of-memory",
+  /** Windows: the game's open editor holds its C++ module, which the link can't replace; it passes with that editor closed. */
+  ModuleInUse: "module-in-use",
   TimedOut: "timed-out",
   /** The caller stopped it, while it waited or ran. */
   Aborted: "aborted",
@@ -108,7 +112,7 @@ export type CompileResult = {
   summary: string;
   /** Why it didn't pass; absent when ok. */
   failure?: CompileFailure;
-  /** Whether running it again unchanged may pass: another build held UBT's lock. */
+  /** Whether running it again unchanged may pass: another build held UBT's lock, or memory ran out. */
   retryable: boolean;
 };
 
@@ -169,6 +173,10 @@ const MESSAGE = {
   Conflicting: "Another Unreal build held UnrealBuildTool's lock; compile again.",
   LiveCoding:
     "Unreal's Live Coding in an open editor refused the build: UnrealBuildTool builds no other copy of the engine's editor while it runs. The build passes once that editor is closed.",
+  OutOfMemory:
+    "The compiler ran out of memory, so nothing is wrong in the code: open Unreal editors and other builds were using it. Compile again once memory is free, such as with Unreal editors closed.",
+  ModuleInUse:
+    "Unreal has this game open and holds its C++ module, so the build couldn't replace it: nothing is wrong in the code. Build with that editor closed (open-editor with build: true closes and reopens it).",
   Unsupported:
     "Unreal C++ is compiled on a Mac with Xcode or on Windows with Microsoft's C++ tools; this computer builds Blueprints.",
   Uncarried:
@@ -215,6 +223,14 @@ const CONFLICTING_REASON = "ConflictingInstance";
 const CONFLICTING = /A conflicting instance of \S*UnrealBuildTool_Mutex/;
 /** UBT's refusal while an open editor of the engine runs Live Coding (Windows). */
 const LIVE_CODING = /Unable to build while Live Coding is active/;
+/**
+ * MSVC and its linker out of memory: C1060 and C1002 (out of heap space), C1076 (internal heap
+ * limit), C3859 (no virtual memory for a precompiled header) and LNK1102. A build's first compile
+ * of the engine's shared precompiled header takes gigabytes, beside the editors that are open.
+ */
+const OUT_OF_MEMORY = /\b(?:fatal )?error (?:C1002|C1060|C1076|C3859|LNK1102)\b/;
+/** The linker unable to replace an editor module (the game's or a plugin's) because an open Unreal has it loaded. */
+const MODULE_IN_USE = /\bLNK1104: cannot open file '[^']*[\\/]Binaries[\\/]Win64[\\/]UnrealEditor-[^'\\/]+\.dll'/i;
 /** What cmd.exe's quoting can't carry in a path: a quote, `%`, `!` or a control character. */
 // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are what this refuses
 const UNCARRIED = /["%!\x00-\x1f]/;
@@ -344,7 +360,7 @@ const failed = (failure: CompileFailure, summary: string, seconds = 0): CompileR
   errors: [],
   summary,
   failure,
-  retryable: failure === CompileFailure.Conflicting,
+  retryable: failure === CompileFailure.Conflicting || failure === CompileFailure.OutOfMemory,
 });
 
 function invalidInput(options: CompileOptions, platform: NodeJS.Platform): string | undefined {
@@ -509,7 +525,7 @@ function lastWords(output: string): string | undefined {
   return undefined;
 }
 
-/** What UBT's output says: succeeded, another build's lock, or failed with its errors. */
+/** What UBT's output says: succeeded, another build's lock or the machine in the way, or failed with its errors. */
 function resultOf(outcome: RunOutcome, roots: Roots, target: string, seconds: number): CompileResult {
   const { output } = outcome;
   const reason = FAILED.exec(output)?.groups?.reason;
@@ -519,6 +535,8 @@ function resultOf(outcome: RunOutcome, roots: Roots, target: string, seconds: nu
     return failed(CompileFailure.LiveCoding, MESSAGE.LiveCoding, seconds);
   if (SUCCEEDED.test(output))
     return { ok: true, seconds, errors: [], summary: MESSAGE.Built(target, seconds), retryable: false };
+  if (OUT_OF_MEMORY.test(output)) return failed(CompileFailure.OutOfMemory, MESSAGE.OutOfMemory, seconds);
+  if (MODULE_IN_USE.test(output)) return failed(CompileFailure.ModuleInUse, MESSAGE.ModuleInUse, seconds);
   const parsed = ubtErrors(output, roots);
   const words = parsed.length === 0 && reason ? lastWords(output) : undefined;
   const errors = words === undefined ? parsed : [unplaced(words, roots)];

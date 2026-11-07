@@ -940,7 +940,10 @@ share, is refused before anything runs. MSVC's `file(line): error C…` and the 
 errors are named the same way. An editor running Live Coding locks every outside build of the
 engine's editor target, whatever its project (the lock is named for the engine's `UnrealEditor.exe`),
 so the last flag skips UBT's check: the game's own project is built only with its editor closed. A
-refusal that still comes fails with that reason (`live-coding`). UBT
+refusal that still comes fails with that reason (`live-coding`). A link the game's open editor
+blocks by holding its module's DLL fails as `module-in-use`, and a compiler or linker out of memory
+as `out-of-memory` (retryable: a copy's first build compiles the engine's multi-gigabyte shared
+precompiled header beside the open editors); check-part keeps neither for that C++. UBT
 misses a source written within about a second after its last build, so a part file written then is
 given a later write time first. In the game's own
 folder check-part never compiles: the open editor compiles that module, so the C++ counts as not

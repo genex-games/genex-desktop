@@ -714,7 +714,10 @@ describe("the system runner", { skip: process.platform === "darwin" ? false : "m
 });
 
 const WIN_ENGINE = "D:\\Epic Games\\UE_5.8";
-const WIN_PROJECT = "D:\\ai-games\\sword duel\\unreal\\GxCpp.uproject";
+/** The scratch game of the real Windows test whose output the win-*.log fixtures are (2026-11-07, user folder renamed). */
+const WIN_PROJECT = "D:\\ai-games\\gx cpp check\\unreal\\GxCpp.uproject";
+/** Its copy without Binaries, Intermediate and Saved, as a builder's copy is, built while editors ran Live Coding. */
+const WIN_COPY = "D:\\ai-games\\gx cpp check copy\\unreal\\GxCpp.uproject";
 const CMD = "C:\\Windows\\System32\\cmd.exe";
 /** Genex's own environment on Windows, with a credential and a setting no build may see. */
 const WIN_ENV: NodeJS.ProcessEnv = {
@@ -730,10 +733,10 @@ const WIN_ENV: NodeJS.ProcessEnv = {
   GENEX_PROFILE: "studio:dev",
 };
 
-/** win-err.log's errors as an agent reads them: file, line, MSVC's message with its code; the engine's note is no error. */
-const WIN_ERRORS: Array<[string, number, string]> = [
-  ["Source/GxCpp/Parts/Sword/GxSword.cpp", 12, "C2065: 'Damge': undeclared identifier"],
-  ["Source/GxCpp/Parts/Sword/GxSword.cpp", 20, "C4458: declaration of 'Tags' hides class member"],
+/** win-err.log's errors as an agent reads them: file, line, column, MSVC's message with its code; the engine's note is no error. */
+const WIN_ERRORS: Array<[string, number, number, string]> = [
+  ["Source/GxCpp/Parts/Check/GxCheckActor.cpp", 16, 2, "C2065: 'Damge': undeclared identifier"],
+  ["Source/GxCpp/Parts/Check/GxCheckActor.cpp", 17, 8, "C4458: declaration of 'Tags' hides class member"],
 ];
 
 /** A Windows runner that answers with `output` at once and records each launch. */
@@ -824,9 +827,10 @@ describe("compiling a game's editor target on Windows", () => {
     assert.equal(result.ok, false);
     assert.equal(result.failure, CompileFailure.Failed);
     assert.deepEqual(
-      result.errors.map((e) => [e.file, e.line, e.message]),
+      result.errors.map((e) => [e.file, e.line, e.column, e.message]),
       WIN_ERRORS,
     );
+    assert.equal(result.summary, "GxCppEditor didn't build (OtherCompilationError): 2 errors.");
     assertNoWindowsPaths(result);
   });
 
@@ -834,22 +838,70 @@ describe("compiling a game's editor target on Windows", () => {
     const { runWindows } = answeringOnWindows(await fixture("win-link.log"));
     const result = await compileEditor(onWindows({ runWindows }));
     assert.equal(result.failure, CompileFailure.Failed);
-    assert.ok(result.errors.length > 0);
+    assert.equal(result.errors.length, 2);
     assert.ok(
       result.errors.every((e) => e.file === "" && /LNK\d{4}/.test(e.message)),
       JSON.stringify(result.errors),
     );
+    assert.match(
+      result.errors[0]?.message ?? "",
+      /^GxCheckActor\.cpp\.obj: LNK2019 unresolved external symbol .*AGxCheckActor::NeverDefined/,
+    );
     assertNoWindowsPaths(result);
   });
 
+  it("a build is its time and nothing else, with the engine's whole shared header compiled", async () => {
+    const { runWindows } = answeringOnWindows(await fixture("win-first.log"));
+    const result = await compileEditor(onWindows({ runWindows, now: clock(360_300) }));
+    assert.deepEqual(result, {
+      ok: true,
+      seconds: 360.3,
+      errors: [],
+      summary: "GxCppEditor built in 360.3 s.",
+      retryable: false,
+    });
+  });
+
   it("an open editor's Live Coding refusing the build is its own failure, which says to close that editor", async () => {
+    // Build.bat by hand without -NoHotReloadFromIDE, on a copy, while another editor ran Live Coding.
     const { runWindows } = answeringOnWindows(await fixture("win-live-coding.log"));
-    const result = await compileEditor(onWindows({ runWindows }));
+    const result = await compileEditor(onWindows({ runWindows, projectFile: WIN_COPY }));
     assert.equal(result.ok, false);
     assert.equal(result.failure, CompileFailure.LiveCoding);
     assert.equal(result.retryable, false);
     assert.match(result.summary, /Live Coding/);
     assertNoWindowsPaths(result);
+  });
+
+  it("a compiler out of memory is no error in the code, and may pass once memory is free", async () => {
+    // A copy's first build compiles the engine's shared header; two editors held most of a 16 GB PC.
+    const { runWindows } = answeringOnWindows(await fixture("win-out-of-memory.log"));
+    const result = await compileEditor(onWindows({ runWindows, projectFile: WIN_COPY }));
+    assert.equal(result.failure, CompileFailure.OutOfMemory);
+    assert.equal(result.retryable, true);
+    assert.deepEqual(result.errors, [], "no engine header for the agent to fix");
+    assert.match(result.summary, /out of memory/);
+    assertNoWindowsPaths(result);
+  });
+
+  it("a link the game's open editor blocks by holding its module is no error in the code, and says to build with it closed", async () => {
+    const { runWindows } = answeringOnWindows(await fixture("win-module-in-use.log"));
+    const result = await compileEditor(onWindows({ runWindows }));
+    assert.equal(result.failure, CompileFailure.ModuleInUse);
+    assert.equal(result.retryable, false);
+    assert.deepEqual(result.errors, []);
+    assert.match(result.summary, /editor closed/);
+    assertNoWindowsPaths(result);
+  });
+
+  it("another file the linker can't open stays an error of the build", async () => {
+    const log = [
+      "LINK : fatal error LNK1104: cannot open file 'GxMissing.lib'",
+      "Result: Failed (OtherCompilationError)",
+    ].join("\r\n");
+    const result = await compileEditor(onWindows(answeringOnWindows(log)));
+    assert.equal(result.failure, CompileFailure.Failed);
+    assert.equal(result.errors[0]?.message, "LINK: LNK1104 cannot open file 'GxMissing.lib'");
   });
 
   it("never passes on the text of an error in a Windows file outside the project and the engine", async () => {
@@ -859,7 +911,7 @@ describe("compiling a game's editor target on Windows", () => {
       ["the same in another case", `c:\\users\\ana\\notes\\stand-in.h(2): error C2143: ${text}`, "stand-in.h"],
       [
         "a path that climbs out of the project",
-        `D:\\ai-games\\sword duel\\unreal\\Source\\GxCpp\\..\\..\\..\\..\\secret.txt(3): error C2059: ${text}`,
+        `D:\\ai-games\\gx cpp check\\unreal\\Source\\GxCpp\\..\\..\\..\\..\\secret.txt(3): error C2059: ${text}`,
         "secret.txt",
       ],
     ];
@@ -896,10 +948,8 @@ describe("compiling a game's editor target on Windows", () => {
   });
 
   it("a PC without the .NET Framework SDK is named by UBT's cause, not the chain of modules that led to it", async () => {
-    // Real Unreal 5.8 output from a Windows PC (2026-11-07), its user folder renamed.
     const { runWindows } = answeringOnWindows(await fixture("win-no-netfx.log"));
-    const projectFile = "D:\\ai-games\\gx cpp check\\unreal\\GxCpp.uproject";
-    const result = await compileEditor(onWindows({ runWindows, projectFile }));
+    const result = await compileEditor(onWindows({ runWindows }));
     assert.equal(result.failure, CompileFailure.Failed);
     assert.equal(result.summary, "GxCppEditor didn't build (RulesError): 1 error.");
     assert.match(
