@@ -122,6 +122,12 @@ describe("game chat permissions", () => {
     });
     return seen.at(-1)!;
   };
+  /** The harness starts a turn through `engine.delegate`; its promise ends with the turn. */
+  const delegateTurn = (params: Record<string, unknown>): Promise<unknown> => {
+    const call = api["engine.delegate"];
+    assert.ok(call, "the substrate delegates");
+    return call(params);
+  };
   const rows = async (requestId?: string): Promise<ToolPermissionEvent[]> =>
     permissionRows(await core.store.listEvents(threadId)).filter(
       (row) => requestId === undefined || row.requestId === requestId,
@@ -307,9 +313,7 @@ describe("game chat permissions", () => {
     await core.setPermissionMode(threadId, "plan");
     const known = new Set((await rows()).map((row) => row.requestId));
     const messageId = await personSays();
-    const turn = track(
-      api["engine.delegate"]!({ engine: "bonsai", project, threadId, prompt: "x", chatTurn: { messageId } }),
-    );
+    const turn = track(delegateTurn({ engine: "bonsai", project, threadId, prompt: "x", chatTurn: { messageId } }));
     const card = await newCard(known, turn);
     assert.ok(card, "a plan card");
     assert.equal(card.tool, "ExitPlanMode");
@@ -348,7 +352,7 @@ describe("game chat permissions", () => {
       const known = new Set((await rows()).map((row) => row.requestId));
       const messageId = await personSays();
       const pending = track(
-        api["engine.delegate"]!({
+        delegateTurn({
           engine: "bonsai",
           project,
           threadId,
