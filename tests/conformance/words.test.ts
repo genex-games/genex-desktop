@@ -1194,6 +1194,7 @@ describe("tools", () => {
         "capture_shot",
         "capture_play",
         "motion_strip",
+        "motion_check",
         "import_model",
         "import_character",
         "import_animation",
@@ -1225,6 +1226,8 @@ describe("tools", () => {
     assert.match(label("capture_shot", { camera: "HeroCam_Start" }), /HeroCam_Start/);
     assert.match(label("import_model", { file: "/tmp/bike.fbx", dest: "/Game/Bike", name: "SM_Bike" }), /SM_Bike/);
     assert.equal(showsPlayView(step(build, "motion_strip", { frames: 4, interval_s: 0.5 }), false), true);
+    assert.match(label("motion_check", { target: "Kagemaru", seconds: 3 }), /Kagemaru/);
+    assert.match(label("motion_check", { target: "", seconds: 3 }), /the player/);
     assert.equal(showsPlayView(step(build, "capture_play", { name: "jump" }), false), true);
   });
 

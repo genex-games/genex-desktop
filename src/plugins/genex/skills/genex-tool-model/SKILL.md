@@ -19,7 +19,7 @@ this preface wins.
 - Pass `auto-size` whenever the model's real size matters: without it the model is not to scale.
   Its meshes are dense (150000 faces by default); `low-poly` and `face-limit` lower the count.
 
-<!-- upstream @genex-ai/cli-demo/templates/skills/genex-tool-model/SKILL.md v1.39.0 sha256 849485e095d91b019e09dda27123c33297889cf732b219772eb075b5373f4771 -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-tool-model/SKILL.md v1.40.0 sha256 849485e095d91b019e09dda27123c33297889cf732b219772eb075b5373f4771 -->
 ---
 name: genex-tool-model
 description: Generate a 3D model (GLB) from a text prompt or a reference image with `npx genex model` — props, vehicles, weapons, furniture, environment pieces, anything the scene needs as geometry. Also splits a model into named parts, rigs any mesh across 7 body plans, and retargets ready-made animation clips onto that rig. Files download to ./assets.

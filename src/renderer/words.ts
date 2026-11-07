@@ -1541,6 +1541,14 @@ const STEP_WORDS: Readonly<Record<StepAction, (step: ConnectorStep) => StepPhras
   },
   [StepAction.MotionStrip]: () =>
     fixed(t("Took a motion strip"), t("Taking a motion strip"), t("Couldn't take a motion strip")),
+  [StepAction.MotionCheck]: (s) => {
+    const character = s.object ?? t("the player");
+    return fixed(
+      t("Measured how {character} moves", { character }),
+      t("Measuring how {character} moves", { character }),
+      t("Couldn't measure how {character} moves", { character }),
+    );
+  },
   [StepAction.ListedCameras]: () =>
     fixed(t("Listed the hero cameras"), t("Listing the hero cameras"), t("Couldn't list the hero cameras")),
   [StepAction.ViewportShot]: () =>
@@ -1638,6 +1646,7 @@ const STEP_ICONS: Readonly<Record<StepAction, ToolIcon>> = {
   [StepAction.PictureOf]: "see",
   [StepAction.HeroShot]: "see",
   [StepAction.MotionStrip]: "see",
+  [StepAction.MotionCheck]: "game",
   [StepAction.Played]: "game",
   [StepAction.StoppedPlay]: "game",
   [StepAction.CheckedPlay]: "game",

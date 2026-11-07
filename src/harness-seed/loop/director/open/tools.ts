@@ -8,7 +8,8 @@
  */
 import type { AnyRecord } from "../../../types/harness.d.ts";
 import { HostMethod } from "../../host-methods.ts";
-import { askSecondOpinion, picturesIn, SECOND_OPINION_TOOL, SECOND_OPINION_WORDS } from "../../second-opinion.ts";
+import { judgedPictures } from "../../judge-frames.ts";
+import { askSecondOpinion, SECOND_OPINION_TOOL, SECOND_OPINION_WORDS } from "../../second-opinion.ts";
 import { WorkerTool } from "../../workers/contract.ts";
 import type { LoopRun } from "../loop-run.ts";
 import { plainly } from "../rules.ts";
@@ -115,13 +116,16 @@ async function workerAnswer(loopRun: LoopRun, name: string, args: AnyRecord): Pr
   return pool ? pool.call(name, args) : OPEN_WORDS.unknownTool(name);
 }
 
-/** A second opinion: the pictures the lead names in the project's folder and its question, to a model that did none of the work. */
+/**
+ * A second opinion: the pictures the lead names in the project's folder (a motion strip's frames
+ * among them, each with its game time) and its question, to a model that did none of the work.
+ */
 async function judgeTool(loopRun: LoopRun, args: AnyRecord): Promise<string> {
   const question = String(args.question ?? "").trim();
   if (!question) return SECOND_OPINION_WORDS.noQuestion;
-  const pictures = await picturesIn(loopRun.projectDir, args.pictures);
+  const pictures = await judgedPictures(loopRun.projectDir, args);
   if ("refused" in pictures) return pictures.refused;
-  return askSecondOpinion(loopRun.ctx, { run: loopRun.run, question, images: pictures.images });
+  return askSecondOpinion(loopRun.ctx, { run: loopRun.run, question, ...pictures });
 }
 
 /** The Loop's save points, rewinds and restarts (a restart only where a plugin restarts the project's app); null for any other tool. */

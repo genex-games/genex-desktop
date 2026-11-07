@@ -14,6 +14,7 @@ from genex_build import (
     material,
     models,
     motion,
+    motion_check,
     retarget,
     routes,
     scripts,
@@ -42,12 +43,14 @@ class GenexBuildTools(unreal.ToolsetDefinition):
     script idempotent, kit pieces, instancing, world-aligned materials, atmosphere presets, lights,
     hero cameras), in one undo step: keep every system's geometry and materials in such a script and
     run it again after each change. capture_shot, capture_play and motion_strip are the eyes: clean
-    frames of the game (never the editor), each answered as an image with its tone numbers.
+    frames of the game (never the editor), each answered as an image with its tone numbers;
+    motion_check measures a character's motion on its visible body every frame (sliding feet, pose
+    pops, snap turns, cut montages, hidden frames).
     Imports bring the game's own model, character, animation and sound files in; retarget plays
     one skeleton's clips on another; motion_character moves a character with the Game Animation
     Sample's Motion Matching; character_check measures and pictures a character standing and
     walking; attach_to_socket puts a mesh in a hand; audit counts what the level is made of. Compound arguments are JSON text. Every tool answers JSON; a refusal is
-    {error} and changes nothing. Stop play first, except for capture_play and motion_strip.
+    {error} and changes nothing. Stop play first, except for capture_play, motion_strip and motion_check.
 
     Writing your own Python against the editor: a function with out-params answers a tuple
     (its result and each out-param), so pick the value you want by its type, not its position.
@@ -168,7 +171,8 @@ class GenexBuildTools(unreal.ToolsetDefinition):
     @staticmethod
     def capture_play(name: str, width: int, height: int) -> str:
         """A shot of the 3D frame the player sees during a play session (StartPIE first), without the
-        editor around it and without on-screen UI (the HUD and screen-space bars are not in it). The
+        editor around it and without its widgets (UMG menus and screen-space bars are not in it; what a
+        HUD draws on its Canvas is). The
         image, its tone numbers and the frame rate come back with the answer.
 
         Args:
@@ -184,19 +188,45 @@ class GenexBuildTools(unreal.ToolsetDefinition):
     @toolset_registry.tool_call
     @staticmethod
     def motion_strip(frames: int, interval_s: float) -> str:
-        """Frames of the 3D view the player sees during a play session (no on-screen UI),
-        interval_s GAME seconds apart, each with where the pawn and the view were when it was taken. Start the motion first
+        """Frames of the 3D view the player sees during a play session (no UMG widgets; a HUD's Canvas
+        shows), interval_s GAME seconds apart, each with where the pawn and the view were and its game
+        time; the game is held all but still while each frame is drawn. Start the motion first
         (hold an input with genex_play's hold), then call this. The frames come back as one
         contact sheet with each frame's pose, how much it differs from the one before, and tone.
 
+        For a step, a swing or a turn, take a burst: 0.03 to 0.1 s apart (0.03 is about every frame
+        at 30 fps). Hand the strip to the Loop's judge as its strip (the poses file), so it reads each
+        frame with its game time.
+
         Args:
-            frames: How many frames, 2 to 12.
-            interval_s: Game seconds between frames, 0.1 to 5.
+            frames: How many frames, 2 to 24.
+            interval_s: Game seconds between frames, 0.03 to 5; frames x interval_s at most 60.
 
         Returns:
             JSON {strip, files, poses, width, height, intervalS, waitS}, or {error}.
         """
         return _answer(shots.motion_strip, frames, interval_s)
+
+    @toolset_registry.tool_call
+    @staticmethod
+    def motion_check(target: str = '', seconds: float = 3.0) -> str:
+        """Measures how a character moves during a play session, every frame of `seconds` game seconds,
+        on the body the player sees (a Motion Matching character's Body, never its driver): whether
+        its planted feet slide while it travels, frames its pose jumps (pops), snap turns, montages
+        that stop well before their end, start over or stay at their start, and frames it is hidden
+        or a ragdoll; frames too far apart to read (under about 10 fps) are a problem of their own.
+        Start the move first (a pilot, hold, walk_to), then call this; several characters can be
+        checked at once. The report comes back with the answer once the time is up.
+
+        Args:
+            target: The character's actor label or name (or part of it: the closest match wins);
+                empty for the player's pawn.
+            seconds: Game seconds to measure, 0.5 to 20.
+
+        Returns:
+            JSON {check, record, target, mesh, otherMeshes, bones, askedSeconds, waitS}, or {error}.
+        """
+        return _answer(motion_check.motion_check, target, seconds)
 
     @toolset_registry.tool_call
     @staticmethod

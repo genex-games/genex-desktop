@@ -47,6 +47,8 @@ test("the built Unreal plugin carries the editor helper, which Unreal loads with
     "Content/Python/genex_build/mesh_math.py",
     "Content/Python/genex_build/models.py",
     "Content/Python/genex_build/motion.py",
+    "Content/Python/genex_build/motion_check.py",
+    "Content/Python/genex_build/motion_check_math.py",
     "Content/Python/genex_build/outs.py",
     "Content/Python/genex_build/place.py",
     "Content/Python/genex_build/pose_math.py",
@@ -110,7 +112,7 @@ test("the built Unreal plugin carries the editor helper, which Unreal loads with
   assert.equal(descriptor.EnabledByDefault, true, "the game's .uproject stays untouched");
   assert.equal(descriptor.CanContainContent, true, "Unreal runs Content/Python only for content plugins");
   assert.equal(descriptor.EditorOnly, true, "a packaged game never carries it");
-  assert.deepEqual([descriptor.Version, descriptor.VersionName], [33, "0.31.0"]);
+  assert.deepEqual([descriptor.Version, descriptor.VersionName], [34, "0.32.0"]);
   const geometry = descriptor.Plugins.filter((plugin: { Name: string }) => plugin.Name === "GeometryScripting");
   assert.deepEqual(geometry, [{ Name: "GeometryScripting", Enabled: true }], "the terrain tool needs Geometry Script");
 });
