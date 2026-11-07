@@ -3307,9 +3307,10 @@ describe("a Loop has no time limit", () => {
   /**
    * The composer's ∞ ("until satisfied") reached the log as a plain 24-hour budget, so every
    * surface that read the run back called it a 24 h build. There are no hours to pick, and a Loop
-   * has no clock: its start names no hours, whatever hours the call named.
+   * has no clock of Genex's: its start names no cap. Hours the person named are time to work
+   * (loop/work-time.ts), never a ceiling.
    */
-  it("L1. a Loop's start names no hours and no 24-hour cap, whatever hours its call named", async () => {
+  it("L1. a Loop's start names no hours cap and no 24-hour cap: hours its call named are time to work", async () => {
     const { startAutopilot } = await import("../../src/harness-seed/loop/start-autopilot.ts");
     const { ctxRecorder } = await import("../helpers/ctx-recorder.ts");
     const outcome = await startAutopilot.execute({ goal: "g", direction: "d", hours: 3 }, ctxRecorder().ctx);
@@ -3318,6 +3319,7 @@ describe("a Loop has no time limit", () => {
     // Flipped: the start wrote its hours (3) and untilSatisfied only for ∞; it writes neither now.
     assert.equal("hours" in run, false);
     assert.equal("untilSatisfied" in run, false);
+    assert.deepEqual(run.budgets, { workMinutes: 180, workFromMs: 0, completionPolicy: "duration" });
   });
 
   /*
