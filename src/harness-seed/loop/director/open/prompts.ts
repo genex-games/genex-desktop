@@ -30,15 +30,15 @@ export const OPEN_WORDS = {
   needsSummary: "finish needs a summary of what the project holds now.",
   /** A web game's page failed its health check at the finish (`line`: health-check.ts `healthLine`): the Loop goes on. */
   unhealthy: (line: string) => `Not finished. ${line}`,
-  accepted: "Accepted: the Loop is closed. End your turn with a one-paragraph summary for the person.",
+  accepted: "Accepted: the Loop is closed. End your turn with a short summary for the person.",
   /** A yes whose close outlasts the lead's call: it goes on, and the lead changes nothing more. */
   acceptedClosing:
-    "Accepted: the Loop is closing, and Genex keeps its last work now. Change nothing more; end your turn with a one-paragraph summary for the person.",
+    "Accepted: the Loop is closing, and Genex keeps its last work now. Change nothing more; end your turn with a short summary for the person.",
   /** Any other close that outlasts the lead's call. */
   closing:
-    "The Loop is closing, and Genex keeps its last work now. Change nothing more; end your turn with a one-paragraph summary for the person.",
+    "The Loop is closing, and Genex keeps its last work now. Change nothing more; end your turn with a short summary for the person.",
   personFinished:
-    "The person asked the Loop to finish: it is closed. End your turn with a one-paragraph summary for the person.",
+    "The person asked the Loop to finish: it is closed. End your turn with a short summary for the person.",
   needsLabel: `${OpenTool.SavePoint} needs a label.`,
   saved: (label: string, notes: readonly string[], shows: string | null = null) =>
     [
