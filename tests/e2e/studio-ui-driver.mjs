@@ -49,12 +49,12 @@ const click = async (selector) => {
   });
   await wait(180);
 };
-const key = async (key) => {
+const key = async (key, { code = key, modifiers = 0 } = {}) => {
   const p = {
     key,
-    code: key,
-    windowsVirtualKeyCode: { Enter: 13, Escape: 27, Tab: 9, ArrowDown: 40 }[key] ?? 0,
-    modifiers: 0,
+    code,
+    windowsVirtualKeyCode: { Enter: 13, Escape: 27, Tab: 9, ArrowDown: 40, 2: 50 }[key] ?? 0,
+    modifiers,
   };
   await wc.debugger.sendCommand("Input.dispatchKeyEvent", {
     type: "keyDown",
@@ -65,12 +65,7 @@ const key = async (key) => {
   await wait(180);
 };
 /** ⌘2 opens Harness: its sidebar row is hidden for now (#654). */
-const openHarness = async () => {
-  const p = { key: "2", code: "Digit2", windowsVirtualKeyCode: 50, modifiers: CDP_META };
-  await wc.debugger.sendCommand("Input.dispatchKeyEvent", { type: "keyDown", ...p });
-  await wc.debugger.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", ...p });
-  await wait(180);
-};
+const openHarness = () => key("2", { code: "Digit2", modifiers: CDP_META });
 const type = async (text) => {
   await click('[aria-label="Prompt"]');
   await wc.debugger.sendCommand("Input.insertText", { text });

@@ -465,12 +465,14 @@ function SidebarTitlebar({
 }
 
 /**
- * Rows hidden from the sidebar for now: Create's Items and Harness, and Play's Assets shelf. How
- * they work gets reworked later (backlog: https://github.com/genex-games/genex-desktop/issues/654).
- * A hidden row stays in the page with `hidden`, so its room, its code and ⌘2 keep working; take
- * it out of this set to show it again.
+ * Rows hidden from the sidebar for now: Create's Items and Harness here, and Play's Assets shelf
+ * in `HIDDEN_SHELVES`. How they work gets reworked later (backlog:
+ * https://github.com/genex-games/genex-desktop/issues/654). A hidden row stays in the page with
+ * `hidden`, so its room, its code and ⌘2 keep working; take it out of its set to show it again.
  */
-const HIDDEN_ROWS: ReadonlySet<NavItem | PlayShelf> = new Set([NavItem.Items, NavItem.Harness, PlayShelf.Assets]);
+const HIDDEN_ROWS: ReadonlySet<NavItem> = new Set([NavItem.Items, NavItem.Harness]);
+/** Play's shelves hidden for now, with the rows above (#654). */
+const HIDDEN_SHELVES: ReadonlySet<PlayShelf> = new Set([PlayShelf.Assets]);
 
 /**
  * The fixed top: the toggle with search, notifications and Send feedback; the brand with the Play /
@@ -625,7 +627,7 @@ function PlayShelfRows({ onPick }: { onPick: () => void }): JSX.Element {
             icon={SHELF_ICONS[shelf]}
             current={onShelf && shelf === shown}
             data-play-shelf={shelf}
-            hidden={HIDDEN_ROWS.has(shelf)}
+            hidden={HIDDEN_SHELVES.has(shelf)}
             onClick={() => {
               onPick();
               studioApp().play.chooseShelf(shelf);
