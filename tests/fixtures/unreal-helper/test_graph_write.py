@@ -295,6 +295,16 @@ class Writes(HelperCase):
         graph_write.write(self.graph, COMBAT_TICK)
         self.assertEqual(deleted(), [f'{GRAPH}.OldResult', f'{GRAPH}.OldTimes'])
 
+    def test_an_old_spawn_and_what_it_kept_alive_go_too(self) -> None:
+        place(GRAPH, {'Entry': ('K2Node_FunctionEntry', 'start', [], []),
+                      'Spawn': ('K2Node_SpawnActorFromClass', 'step', ['Entry'], ['Where']),
+                      'Where': ('K2Node_CallFunction', 'pure', [], ['Entry']),
+                      'OldSpawn': ('K2Node_SpawnActorFromClass', 'step', [], ['OldWhere']),
+                      'OldWhere': ('K2Node_CallFunction', 'pure', [], ['Entry']),
+                      'OldPrint': ('K2Node_CallFunction', 'step', ['OldSpawn'], ['OldSpawn'])})
+        graph_write.write(self.graph, COMBAT_TICK)
+        self.assertEqual(deleted(), [f'{GRAPH}.{name}' for name in ('OldPrint', 'OldSpawn', 'OldWhere')])
+
     def test_a_timeline_its_component_runs_and_a_collapsed_graph_keep_what_they_run(self) -> None:
         place(GRAPH, TIMELINE)
         graph_write.write(self.graph, COMBAT_TICK)

@@ -80,7 +80,8 @@ OPERATORS = frozenset({'+', '-', '*', '/', '%', 'xor', '==', '!=', '<', '<=', '>
 RESPELLED = ('math|', 'utilities|flowcontrol|', 'utilities|operators|', 'utilities|array|', 'utilities|string|')
 VARIABLES = 'variables|'
 GETTER = 'get'
-# A math struct's break node (Math|Vector|BreakVector), which the read-back spells as component accesses.
+# A math struct's break node (Math|Vector|BreakVector), which the read-back spells as component accesses
+# (on UE 5.8 a vector's, rotator's and transform's; BreakHitResult and a user struct's come back by name).
 BREAK = 'break'
 BREAK_CATEGORY = 'math|'
 # Epic's IsValid exec macro: written with none of its exec pins (:"Is Valid" ...), Unreal links nothing after it.
@@ -96,11 +97,25 @@ EXEC_PIN = 'Exec'
 # event, a function's entry, a timeline, which runs from its component or Auto Play, a collapsed graph) is
 # never deleted and keeps what it runs and what feeds it.
 DELETABLE = frozenset({
-    'K2Node_CallFunction', 'K2Node_CallArrayFunction', 'K2Node_IfThenElse', 'K2Node_ExecutionSequence',
-    'K2Node_MacroInstance', 'K2Node_PromotableOperator', 'K2Node_CommutativeAssociativeBinaryOperator',
-    'K2Node_VariableGet', 'K2Node_VariableSet', 'K2Node_Knot', 'K2Node_Select', 'K2Node_SwitchInteger',
-    'K2Node_SwitchString', 'K2Node_SwitchName', 'K2Node_SwitchEnum', 'K2Node_DynamicCast', 'K2Node_BreakStruct',
-    'K2Node_MakeStruct', 'K2Node_MakeArray', 'K2Node_GetArrayItem', 'K2Node_Self', 'K2Node_EnumLiteral',
+    # Calls, flow control and values.
+    'K2Node_CallFunction', 'K2Node_CallArrayFunction', 'K2Node_CallParentFunction', 'K2Node_CallFunctionOnMember',
+    'K2Node_CallDataTableFunction', 'K2Node_Message', 'K2Node_IfThenElse', 'K2Node_ExecutionSequence',
+    'K2Node_MacroInstance', 'K2Node_MultiGate', 'K2Node_DoOnceMultiInput', 'K2Node_PromotableOperator',
+    'K2Node_CommutativeAssociativeBinaryOperator', 'K2Node_MathExpression', 'K2Node_EaseFunction',
+    'K2Node_VariableGet', 'K2Node_VariableSet', 'K2Node_TemporaryVariable', 'K2Node_AssignmentStatement',
+    'K2Node_Knot', 'K2Node_Select', 'K2Node_SwitchInteger', 'K2Node_SwitchString', 'K2Node_SwitchName',
+    'K2Node_SwitchEnum', 'K2Node_Self', 'K2Node_Literal', 'K2Node_EnumLiteral', 'K2Node_EnumEquality',
+    'K2Node_EnumInequality', 'K2Node_CastByteToEnum', 'K2Node_GetEnumeratorName',
+    'K2Node_GetEnumeratorNameAsString', 'K2Node_GetNumEnumEntries', 'K2Node_ForEachElementInEnum',
+    # Casts, structs, arrays and text.
+    'K2Node_DynamicCast', 'K2Node_ClassDynamicCast', 'K2Node_BreakStruct', 'K2Node_MakeStruct',
+    'K2Node_SetFieldsInStruct', 'K2Node_MakeArray', 'K2Node_GetArrayItem', 'K2Node_FormatText',
+    # Objects, subsystems, delegates and assets.
+    'K2Node_SpawnActorFromClass', 'K2Node_ConstructObjectFromClass', 'K2Node_CreateWidget', 'K2Node_AddComponent',
+    'K2Node_GetSubsystem', 'K2Node_GetClassDefaults', 'K2Node_GetDataTableRow', 'K2Node_LoadAsset',
+    'K2Node_AsyncAction', 'K2Node_CallDelegate', 'K2Node_AddDelegate', 'K2Node_RemoveDelegate',
+    'K2Node_ClearDelegate', 'K2Node_CreateDelegate', 'K2Node_GetInputAxisValue', 'K2Node_GetInputAxisKeyValue',
+    'K2Node_GetInputVectorAxisValue',
     'K2Node_FunctionResult'})
 # A function's result node: its pins are the function's outputs, so one always stays.
 RESULT = 'K2Node_FunctionResult'
