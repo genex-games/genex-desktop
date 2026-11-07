@@ -234,7 +234,7 @@ class Strips(PlayCase):
         self.assertIn('never landed', record['error'])
 
     def test_refuses_counts_and_intervals_out_of_range_and_a_strip_without_play(self) -> None:
-        for frames, interval in ((1, 1.0), (13, 1.0), (True, 1.0), (3, 0.0), (3, 9.0), (3, 'fast')):
+        for frames, interval in ((1, 1.0), (25, 1.0), (True, 1.0), (3, 0.0), (3, 0.02), (3, 9.0), (3, 'fast')):
             with self.subTest(frames=frames, interval=interval):
                 self.fresh()
                 self.assertIn('error', tool('motion_strip', frames, interval))

@@ -2,7 +2,9 @@
 that slides along without stepping, one that stands in a T-pose (no animation plays on it), and feet
 that float over the ground or sink into it. A few times a second, every character within NEAR_CM
 but the player's own is read by its skeleton's feet, shoulders and hands; a ragdoll is left alone.
-The arithmetic is in looks_math.
+The body read is the one the player sees (visible_body): a Motion Matching character's own mesh is a
+hidden driver whose pose another mesh copies, and that mesh is the one that may slide. The arithmetic
+is in looks_math.
 """
 
 import math
@@ -40,10 +42,11 @@ def reset() -> None:
 
 
 def _side(name: str) -> str | None:
-    low = name.lower()
-    if low.endswith('_l') or low.startswith('left'):
+    # A rig's prefix (mixamorig:LeftFoot) is not part of the bone's own name.
+    low = name.lower().rsplit(':', 1)[-1]
+    if low.endswith(('_l', '.l')) or low.startswith('left'):
         return 'l'
-    if low.endswith('_r') or low.startswith('right'):
+    if low.endswith(('_r', '.r')) or low.startswith('right'):
         return 'r'
     return None
 
@@ -68,6 +71,29 @@ def parts(mesh) -> dict:
         _state['parts'][key] = {'feet': _named(names, FOOT), 'shoulders': _named(names, SHOULDER),
                                 'hands': _named(names, HAND)}
     return _state['parts'][key]
+
+
+def shown(mesh) -> bool:
+    """Whether a mesh is drawn in the game: visible and not hidden in game."""
+    return bool(mesh.is_visible()) and not mesh.get_editor_property('hidden_in_game')
+
+
+def _own_mesh(actor):
+    try:
+        return actor.get_editor_property('mesh')
+    except Exception:  # noqa: BLE001 - an actor that is no Character has no mesh property
+        return None
+
+
+def visible_body(actor):
+    """The skeletal mesh a player sees on a character: its own mesh when that is shown and has feet,
+    else the first shown one with feet (a Motion Matching character's Body); None without one."""
+    own = _own_mesh(actor)
+    meshes = list(actor.get_components_by_class(unreal.SkeletalMeshComponent))
+    for mesh in ([own] if own in meshes else []) + [m for m in meshes if m is not own]:
+        if shown(mesh) and parts(mesh)['feet']:
+            return mesh
+    return None
 
 
 def _xyz(vector) -> tuple:
@@ -112,8 +138,8 @@ def _held(body: dict, key: str, now: float, on: bool) -> bool:
 
 
 def _check_body(actor, now: float, note) -> None:
-    mesh = actor.get_editor_property('mesh')
-    if mesh is None or not mesh.is_visible() or mesh.is_simulating_physics():
+    mesh = visible_body(actor)
+    if mesh is None or mesh.is_simulating_physics():
         return
     bones = parts(mesh)
     label = _label(actor)

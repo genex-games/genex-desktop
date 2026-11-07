@@ -1,0 +1,304 @@
+"""motion_check measures a character's motion on the body the player sees, every frame of a play: a
+sword duel's fighters slid for hours while stills, a critic and the old slide detector all said they
+walked. The detector read the character's own mesh, which on a Motion Matching character is a hidden
+driver, so it never measured the fighters at all; and a still can't show a foot riding along with the
+body. The check reads the visible Body, and tells sliding (the stance foot moving with the body),
+one-frame pose pops, snap turns, montages stopped early or started over, and hidden frames; a body that
+steps, swings smoothly and turns at a turn's pace is clean."""
+
+import json
+import math
+import os
+import unittest
+
+import unreal
+from unreal import Rotator, Vector
+
+from genex_build import motion_check, motion_check_math as maths
+from genex_build.tools import GenexBuildTools
+
+from test_build_eyes import PlayCase
+
+FPS = 30.0
+SPEED = 300.0
+# One stride: each foot stands still for half of it while the body passes over it, then swings ahead.
+STRIDE_S = 0.8
+FOOT_LIFT_CM = 12.0
+ROOT_Z = 90.0
+
+
+def tool(name: str, *args) -> dict:
+    return json.loads(getattr(GenexBuildTools, name)(*args))
+
+
+def foot_x(t: float, offset: float, speed: float) -> tuple[float, float]:
+    """(world x, height) of a foot that steps under a body moving at `speed` along x."""
+    s = t / STRIDE_S + offset
+    k, f = math.floor(s), s - math.floor(s)
+    planted = speed * STRIDE_S * (k - offset) + speed * STRIDE_S / 4
+    if f < 0.5:
+        return planted, 2.0
+    swing = (f - 0.5) * 2
+    return planted + speed * STRIDE_S * swing, 2.0 + FOOT_LIFT_CM * math.sin(math.pi * swing)
+
+
+def walk(seconds: float = 3.0, speed: float = SPEED, legs: str = 'stepping', **change) -> list:
+    """Frames of a body walking along x: its feet stepping, riding along with it ('skating'), or a walk
+    clip playing at half the pace the body moves ('half')."""
+    frames = []
+    for i in range(int(seconds * FPS)):
+        t = i / FPS
+        x = speed * t
+        if legs == 'stepping':
+            feet = {side: foot_x(t, offset, speed) for side, offset in (('l', 0.0), ('r', 0.5))}
+        elif legs == 'half':
+            feet = {side: foot_x(t, offset, speed / 2) for side, offset in (('l', 0.0), ('r', 0.5))}
+            feet = {side: (fx + speed * t / 2, z) for side, (fx, z) in feet.items()}
+        else:
+            feet = {'l': (x + 10, 2.0), 'r': (x - 10, 2.0)}
+        frame = {'t': t, 'root': (x, 0.0, ROOT_Z), 'yaw': 0.0,
+                 'feet': {side: (fx, -12.0 if side == 'l' else 12.0, z) for side, (fx, z) in feet.items()},
+                 'bones': {'pelvis': (0.0, 0.0, 0.0), 'head': (0.0, 0.0, 70.0),
+                           'hand_r': (20.0 * math.sin(t * 4), 20.0, 0.0)},
+                 'montages': {}, 'hidden': False, 'ragdoll': False, 'falling': False}
+        frames.append(frame)
+    for key, edit in change.items():
+        for frame in frames:
+            edit(frame)
+    return frames
+
+
+def codes(report: dict) -> list:
+    return [problem['code'] for problem in report['problems']]
+
+
+class Sliding(unittest.TestCase):
+    def test_a_body_that_steps_has_still_planted_feet_and_no_problem(self) -> None:
+        report = maths.report(walk())
+        self.assertLess(report['slide']['ratio'], 0.05)
+        self.assertEqual(codes(report), [])
+        self.assertEqual(report['verdict'], 'clean')
+
+    def test_feet_that_ride_along_with_the_body_slide(self) -> None:
+        report = maths.report(walk(legs='skating'))
+        self.assertGreater(report['slide']['ratio'], 0.9)
+        self.assertEqual(codes(report), [maths.SLIDING])
+        self.assertIn('slide', report['problems'][0]['detail'])
+
+    def test_a_walk_clip_playing_at_half_the_bodys_pace_slides(self) -> None:
+        report = maths.report(walk(legs='half'))
+        self.assertGreater(report['slide']['ratio'], maths.SLIDE_MAX)
+        self.assertEqual(codes(report), [maths.SLIDING])
+
+    def test_a_body_standing_still_is_not_measured_as_sliding(self) -> None:
+        report = maths.report(walk(speed=0.0, legs='skating'))
+        self.assertIsNone(report['slide']['ratio'])
+        self.assertEqual(codes(report), [])
+
+    def test_a_jump_carries_the_feet_with_the_body_without_sliding(self) -> None:
+        def airborne(frame: dict) -> None:
+            frame['falling'] = True
+        report = maths.report(walk(legs='skating', jump=airborne))
+        self.assertEqual(report['slide']['movingFrames'], 0)
+        self.assertEqual(codes(report), [])
+
+
+class Pops(unittest.TestCase):
+    def test_a_hand_that_jumps_for_one_frame_and_back_is_one_pop(self) -> None:
+        frames = walk()
+        frames[40]['bones']['hand_r'] = (60.0, 20.0, 30.0)
+        report = maths.report(frames)
+        self.assertEqual(len(report['pops']), 1, report['pops'])
+        self.assertEqual(report['pops'][0]['bones'], ['hand_r'])
+        self.assertEqual(codes(report), [maths.POSE_POP])
+
+    def test_a_fast_smooth_swing_is_no_pop(self) -> None:
+        frames = walk()
+        for i, frame in enumerate(frames):
+            angle = min(1.0, max(0.0, (i - 30) / 14)) * math.pi  # at rest, a half circle in 0.47 s, at rest
+            frame['bones']['hand_r'] = (60 * math.cos(angle), 20.0 + 60 * math.sin(angle), 0.0)
+        self.assertEqual(maths.report(frames)['pops'], [])
+
+
+class Turns(unittest.TestCase):
+    def test_a_quarter_turn_in_one_frame_is_a_snap(self) -> None:
+        frames = walk()
+        for frame in frames[50:]:
+            frame['yaw'] = 90.0
+        report = maths.report(frames)
+        self.assertEqual([snap['deg'] for snap in report['snapTurns']], [90.0])
+        self.assertEqual(codes(report), [maths.SNAP_TURN])
+
+    def test_a_half_turn_over_half_a_second_is_no_snap(self) -> None:
+        frames = walk()
+        for i, frame in enumerate(frames):
+            frame['yaw'] = min(180.0, max(0.0, (i - 30) * 12.0))
+        self.assertEqual(maths.report(frames)['snapTurns'], [])
+
+    def test_a_turn_across_the_back_counts_its_short_way_round(self) -> None:
+        frames = walk()
+        for i, frame in enumerate(frames):
+            frame['yaw'] = (170.0 + i * 2.0 + 180.0) % 360.0 - 180.0  # past 180 it reads -178
+        self.assertEqual(maths.report(frames)['snapTurns'], [])
+
+
+def montage(name: str, start: int, stop: int, length: float, mesh: str = 'Mesh'):
+    """Plays a montage from frame `start` to frame `stop` (its position from 0 at the game's pace)."""
+    def play(frame: dict) -> None:
+        i = round(frame['t'] * FPS)
+        if start <= i < stop:
+            frame['montages'][mesh] = (name, (i - start) / FPS, length)
+        else:
+            frame['montages'].setdefault(mesh, None)
+    return play
+
+
+class Montages(unittest.TestCase):
+    def test_a_swing_another_montage_cuts_off_early_is_cut(self) -> None:
+        frames = walk(slash=montage('AM_Slash', 10, 22, 1.5), hit=lambda f: None)
+        for frame in frames[22:40]:
+            frame['montages']['Mesh'] = ('AM_Hit', (round(frame['t'] * FPS) - 22) / FPS, 0.6)
+        report = maths.report(frames)
+        slash = report['montages'][0]
+        self.assertEqual((slash['montage'], slash['end'], slash['then']), ('AM_Slash', 'cut', 'AM_Hit'))
+        self.assertEqual(codes(report), [maths.CUT_MONTAGE])
+
+    def test_a_montage_that_plays_to_its_blend_out_is_finished(self) -> None:
+        report = maths.report(walk(slash=montage('AM_Slash', 10, 49, 1.5)))
+        self.assertEqual([(m['montage'], m['end']) for m in report['montages']], [('AM_Slash', 'finished')])
+        self.assertEqual(codes(report), [])
+
+    def test_a_montage_that_starts_over_before_its_end_is_told(self) -> None:
+        frames = walk(first=montage('AM_Slash', 10, 25, 1.5), again=lambda f: None)
+        for frame in frames[25:40]:
+            frame['montages']['Mesh'] = ('AM_Slash', (round(frame['t'] * FPS) - 25) / FPS, 1.5)
+        report = maths.report(frames)
+        self.assertEqual(report['montages'][0]['end'], 'restarted')
+        self.assertIn(maths.RESTARTED_MONTAGE, codes(report))
+
+
+class Flags(unittest.TestCase):
+    def test_hidden_frames_are_a_problem_and_a_ragdoll_is_only_counted(self) -> None:
+        frames = walk()
+        for frame in frames[20:22]:
+            frame['hidden'] = True
+        for frame in frames[70:]:
+            frame['ragdoll'] = True
+        report = maths.report(frames)
+        self.assertEqual(report['hidden'], {'frames': 2, 'firstAt': round(20 / FPS, 3)})
+        self.assertEqual(report['ragdoll']['frames'], len(frames) - 70)
+        self.assertEqual(codes(report), [maths.HIDDEN])
+
+    def test_too_few_frames_is_no_verdict(self) -> None:
+        report = maths.report(walk(seconds=0.2))
+        self.assertIn('error', report)
+
+
+class MotionCharacter:
+    """A Motion Matching character as motion_character builds it: its own mesh a hidden driver that poses
+    every frame, and a visible Body under it that copies the pose; the test moves them each frame."""
+
+    def __init__(self, label: str = 'BP_DuelManny_C_1', at: Vector | None = None) -> None:
+        self.driver = unreal.SkeletalMeshComponent('Mesh', bones={}, visible=False,
+                                                   anim_instance=unreal.AnimInstance())
+        self.body = unreal.SkeletalMeshComponent('Body', bones={}, anim_instance=unreal.AnimInstance())
+        self.actor = unreal.Character(label, at or Vector(0, 0, ROOT_Z), mesh=self.driver)
+        self.actor.components.append(self.body)
+        self.legs = 'stepping'
+        self.t = 0.0
+        self.pose()
+
+    def pose(self) -> None:
+        at = self.actor.location
+        driver_feet = {side: foot_x(self.t, o, SPEED) for side, o in (('l', 0.0), ('r', 0.5))}
+        if self.legs == 'stepping':
+            feet = driver_feet
+        else:
+            feet = {'l': (at.x + 10, 2.0), 'r': (at.x - 10, 2.0)}
+        for mesh, posed in ((self.driver, driver_feet), (self.body, feet)):
+            mesh.bones.update({f'foot_{s}': Vector(x, -12 if s == 'l' else 12, z) for s, (x, z) in posed.items()})
+            mesh.bones.update({'pelvis': Vector(at.x, 0, at.z), 'head': Vector(at.x, 0, at.z + 70),
+                               'hand_r': Vector(at.x + 20, 20, at.z), 'hand_l': Vector(at.x + 20, -20, at.z)})
+
+    def step(self, dt: float) -> None:
+        self.t += dt
+        self.actor.location = Vector(SPEED * self.t, 0, ROOT_Z)
+        self.pose()
+
+
+class Tool(PlayCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.fighter = MotionCharacter()
+        unreal.state['actors'].append(self.fighter.actor)
+
+    def run_frames(self, seconds: float) -> None:
+        dt = 1 / FPS
+        for _ in range(int(seconds * FPS) + 2):
+            self.fighter.step(dt)
+            self.tick(game=dt, wall=dt)
+
+    def record(self, answer: dict) -> dict:
+        with open(answer['record'], encoding='utf-8') as handle:
+            return json.load(handle)
+
+    def test_it_measures_the_visible_body_of_a_motion_character_never_its_hidden_driver(self) -> None:
+        self.fighter.legs = 'skating'  # the driver steps; the Body the player sees slides
+        answer = tool('motion_check', 'DuelManny', 2.0)
+        self.assertEqual((answer['target'], answer['mesh'], answer['otherMeshes']), ('BP_DuelManny_C_1', 'Body', ['Mesh']))
+        self.assertFalse(os.path.exists(answer['record']), 'the report is written once the time is up')
+        self.run_frames(2.0)
+        record = self.record(answer)
+        self.assertEqual(codes(record), [maths.SLIDING])
+        self.assertEqual(record['mesh'], 'Body')
+        self.assertEqual(unreal.state['ticks'], {}, 'the check stops watching once it reported')
+
+    def test_a_body_that_steps_reports_clean_and_names_the_driver_montage(self) -> None:
+        slash = unreal.AnimMontage('/Game/Sword/AM_Slash', seconds=1.2)
+        self.fighter.driver.props['anim_instance'] = unreal.AnimInstance(slash, 0.4)
+        answer = tool('motion_check', 'BP_DuelManny_C_1', 1.0)
+        self.run_frames(1.0)
+        record = self.record(answer)
+        self.assertEqual(record['verdict'], 'clean', record['problems'])
+        self.assertEqual(record['montages'][0]['montage'], 'AM_Slash')
+        self.assertEqual(record['montages'][0]['mesh'], 'Mesh')
+
+    def test_a_play_that_ends_early_still_writes_what_was_measured(self) -> None:
+        answer = tool('motion_check', 'DuelManny', 5.0)
+        self.run_frames(1.0)
+        unreal.state['pie'] = False
+        self.tick(game=0.0, wall=0.0)
+        record = self.record(answer)
+        self.assertEqual(record['stopped'], motion_check.MESSAGE['ended'])
+        self.assertGreaterEqual(record['frames'], maths.MIN_FRAMES)
+
+    def test_refused_without_play_out_of_range_for_an_unknown_name_and_a_body_it_cannot_see(self) -> None:
+        hidden = unreal.Character('BP_Ghost_0', Vector(500, 0, 90),
+                                  mesh=unreal.SkeletalMeshComponent('Mesh', bones={'foot_l': Vector(), 'foot_r': Vector()},
+                                                                    visible=False))
+        unreal.state['actors'].append(hidden)
+        for label, args, pie, says in (('no play', ('DuelManny', 2.0), False, 'play session'),
+                                       ('too long', ('DuelManny', 60.0), True, 'seconds'),
+                                       ('too short', ('DuelManny', 0.1), True, 'seconds'),
+                                       ('not a number', ('DuelManny', 'long'), True, 'seconds'),
+                                       ('no such actor', ('Kagemaru', 2.0), True, 'Closest names'),
+                                       ('nothing shown', ('Ghost', 2.0), True, 'no shown skeletal mesh')):
+            with self.subTest(label):
+                unreal.state['pie'] = pie
+                answer = tool('motion_check', *args)
+                self.assertIn(says, answer.get('error', ''))
+                self.assertEqual(unreal.state['ticks'], {}, 'nothing is watched')
+
+
+class Strip(PlayCase):
+    def test_a_burst_of_24_frames_every_frame_is_taken_and_finer_or_longer_is_refused(self) -> None:
+        for frames, interval in ((25, 0.1), (12, 0.02)):
+            with self.subTest(frames=frames, interval=interval):
+                self.assertIn('error', tool('motion_strip', frames, interval))
+        self.assertEqual(len(tool('motion_strip', 24, 0.03)['files']), 24)
+        unreal.state['pie'] = False
+        self.tick(game=0.0, wall=0.0)  # the play ends, and the strip with it
+
+
+if __name__ == '__main__':
+    unittest.main()

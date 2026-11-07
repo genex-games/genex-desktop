@@ -6,6 +6,8 @@ capture_shot    a still from a named CameraActor (a hero camera, GX_Shot_<name>)
 capture_play    the player's view during a play session.
 motion_strip    N frames of the player's view during a play session, `interval_s` GAME seconds
                 apart, each with the pawn's and the view's position recorded the moment it is taken.
+                A short interval (down to 0.03 s, about every frame at 30 fps) shows one move
+                frame by frame: a step, a swing, a turn; the judge reads its frames with their times.
 
 Python tools answer at once and the shot lands a frame or more later, so each answers the files it
 queued and the bridge waits for them. Every high-resolution shot freezes the play session's game
@@ -35,8 +37,8 @@ HEIGHT_RANGE = (240, 2160)
 DEFAULT_SIZE = (1280, 720)
 STRIP_SIZE = (960, 540)
 DELAY_RANGE_S = (0.0, 15.0)
-FRAMES_RANGE = (2, 12)
-INTERVAL_RANGE_S = (0.1, 5.0)
+FRAMES_RANGE = (2, 24)
+INTERVAL_RANGE_S = (0.03, 5.0)
 STRIP_PREFIX = 'strip-'
 # How long one strip frame may take to land on disk before the strip gives up on it.
 FRAME_WAIT_S = 15.0
@@ -208,7 +210,7 @@ def pose() -> dict:
     pawn = play.player_pawn()
     camera = unreal.GameplayStatics.get_player_camera_manager(world, 0)
     view = camera.get_camera_rotation()
-    return {'gameSeconds': round(play.game_seconds(), 2), 'fps': play.fps(),
+    return {'gameSeconds': round(play.game_seconds(), 3), 'fps': play.fps(),
             'pawn': _rounded(pawn.get_actor_location()), 'pawnYaw': round(pawn.get_actor_rotation().yaw, 1),
             'view': _rounded(camera.get_camera_location()), 'viewYawPitch': [round(view.yaw, 1), round(view.pitch, 1)]}
 

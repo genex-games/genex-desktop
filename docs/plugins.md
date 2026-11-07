@@ -635,11 +635,16 @@ limb's angle from the driver's at the same frame. The thresholds are named const
 side and back in idle and from the side through the walk, then removed; the bridge shows the shots
 as one sheet. The eyes: `capture_shot {camera, width, height, delay_s}` (a still from a
 hero camera, no play needed), `capture_play` (the player's 3D view during play, through the player's
-console `HighResShot`, which leaves out on-screen UI), `motion_strip` (frames scheduled by the game clock, one at a time, each with
-the pawn's and view's position) and `shot_cameras` (the hero cameras' labels). The bridge waits for
+console `HighResShot`, which leaves out on-screen UI), `motion_strip` (2 to 24 frames scheduled by the game clock, one at a time and
+0.03 to 5 game seconds apart, each with the pawn's and view's position) and `shot_cameras` (the hero cameras' labels). `motion_check
+{target, seconds}` measures one character's motion every frame for 0.5 to 20 game seconds on the body the player sees (`looks.visible_body`:
+a Motion Matching character's Body, never its hidden driver, whose montages it reads too) and writes its report to the captures folder:
+planted feet sliding while the body travels, one-frame pose pops, snap turns, montages stopped early or started over, hidden and ragdoll
+frames (`genex_build/motion_check_math.py` holds the thresholds). The play's own look checks read that visible body too. The bridge waits for
 a capture's file and hands the agent the picture itself, with its tone numbers (black point,
 contrast, near against far contrast, saturation; a nearly black frame is called out as a render to
-doubt) and the frame rate (`editor-captures.ts`, `tone.ts`); a strip and a character sheet come back as one contact sheet. `attach_mesh` puts a static mesh on a
+doubt) and the frame rate (`editor-captures.ts`, `tone.ts`); a strip and a character sheet come back as one contact sheet, a strip with
+its poses file named for the Loop's judge, and a motion check as its problems and numbers once its record lands. `attach_mesh` puts a static mesh on a
 Blueprint's component, and `set_route` (the route the play checks drive), `track_terrain` along it
 and `dirt_material` serve racing games. The plugin's `unreal-editor` skill, which an agent reads
 with `unreal__skill`, says to look with these eyes, never `CaptureEditorImage` (the whole editor
