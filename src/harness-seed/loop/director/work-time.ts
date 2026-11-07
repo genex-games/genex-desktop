@@ -131,13 +131,13 @@ export function timeUpWrapLine(loopRun: TimedRun): string {
  * The lead's work so far as a mark: what the game folder holds (a change saved, autosaved, committed
  * or merged moves it) and the workers it started. A call of Genex's tools alone is no work, nor is a
  * save point of an unchanged folder: a lead that answered each wake with a finish Genex refused was
- * woken again and again until the time ran out. A folder git can't read leaves the mark as it was.
+ * woken again and again until the time ran out. Null when git can't read the folder.
  */
-async function workMark(loopRun: LoopRun): Promise<string> {
+async function workMark(loopRun: LoopRun): Promise<string | null> {
   const { ctx, run } = loopRun;
   const label = `open:${run.runId}:work-mark`;
-  const folder = await gitAt(ctx, { project: run.project }, FOLDER_GIT.content, { label }).catch(() => "");
-  return `${folder}/${loopRun.open.pool?.state.records.length ?? 0}`;
+  const folder = await gitAt(ctx, { project: run.project }, FOLDER_GIT.content, { label }).catch(() => null);
+  return folder === null ? null : `${folder}/${loopRun.open.pool?.state.records.length ?? 0}`;
 }
 
 /**
@@ -148,7 +148,9 @@ async function workMark(loopRun: LoopRun): Promise<string> {
 export async function keepsWorking(loopRun: LoopRun, keep: KeepState): Promise<boolean> {
   const clock = workClock(loopRun);
   if (!clock || clock.left <= 0) return false;
-  const mark = await workMark(loopRun);
+  // A folder git can't read leaves the mark as it was: a read that fails now and then neither wakes
+  // an idle lead for ever nor counts as its work.
+  const mark = (await workMark(loopRun)) ?? keep.keptAt ?? "";
   keep.idleKeeps = keep.keptAt === mark ? keep.idleKeeps + 1 : 0;
   if (keep.idleKeeps >= MAX_IDLE_KEEPS) return false;
   keep.keptAt = mark;

@@ -472,6 +472,8 @@ describe("a lead's own pause", () => {
       const aborts = (host: LoopHost) => host.rec.paramsOf("engine.abort").length;
       const host = await timedHost([
         async ({ host, tool }) => {
+          // A minute's work first, so the pause's journal save has something new to write.
+          host.pass(MINUTE);
           held = true;
           const pausing = tool("pause", { why: "I need the person to sign in." }).then(() => {
             pauseAnswered = true;
