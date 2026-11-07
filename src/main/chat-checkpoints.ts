@@ -20,7 +20,7 @@ import { GIT_ENV } from "../substrate/snapshots.ts";
 import { hostGitArgs, hostGitConfig, hostGitEnv } from "../substrate/git-policy.ts";
 import { pathExists } from "../substrate/fsx.ts";
 import { nestedRepos } from "../substrate/game-workspace.ts";
-import { isBelow } from "../substrate/paths.ts";
+import { isBelow, isPlainRelativePath } from "../substrate/paths.ts";
 import { ignoreLine, type PlacedRule, ruleGlob, ruleMatches } from "../shared/project-workspace.ts";
 import { ensureFactIgnoreRules } from "../substrate/nested-repos.ts";
 import { REWIND_REFS } from "../shared/game-history.ts";
@@ -47,6 +47,8 @@ const NEVER_CAPTURED = [
   "**/output/**",
   "**/.playwright-cli/**",
 ];
+/** The stamp of a file gone by the time it is sized. */
+const GONE = { bytes: 0, modifiedMs: 0 } as const;
 /** A single file this large stays out of checkpoints. */
 export const CHECKPOINT_FILE_MAX_BYTES = 50 * 1024 * 1024;
 /** New or changed content a checkpoint takes in at once; the largest files beyond it stay out. */
@@ -102,11 +104,22 @@ interface Change {
   status: string;
   path: string;
 }
+/** How a file left out for its size looked then, so a later look can tell whether it changed. */
+interface FileStamp {
+  bytes: number;
+  modifiedMs: number;
+}
+/** A file left out for its size, with its stamp: how a checkpoint records it. */
+interface StampedFile extends FileStamp {
+  file: string;
+}
 /** A tree with what it left out. */
 interface Snapshot {
   tree: string;
   nested: string[];
   skipped: string[];
+  /** The skipped files' stamps; none for a checkpoint an older Genex took. */
+  stamps: ReadonlyMap<string, FileStamp>;
   /** The folder's rules it left out by, when it was taken now; none for a stored checkpoint. */
   ruled: readonly PlacedRule[];
 }
@@ -332,7 +345,9 @@ export class ChatCheckpoints {
       ...nested.flatMap((name) => [`:(glob)${literal(name)}/**`, pattern(literal(name))]),
     ];
     const exclude = excluded.map((spec) => spec.replace(/^:\(/, ":(exclude,"));
-    const skipped = await this.#oversized(dir, index, exclude);
+    const oversized = await this.#oversized(dir, index, exclude);
+    const skipped = oversized.map((entry) => entry.file);
+    const stamps = new Map(oversized.map(({ file, bytes, modifiedMs }) => [file, { bytes, modifiedMs }]));
     const env = { GIT_INDEX_FILE: index };
     // Out of the private index too (forced: it is ours), in case an earlier checkpoint held them;
     // so is a record a checkpoint interrupted before taking it back out.
@@ -351,20 +366,23 @@ export class ChatCheckpoints {
     // Nothing left out needs no record (`snapshotOf` reads its absence as empty): three fewer git
     // runs before most answers.
     if (!nested.length && !skipped.length)
-      return { tree: (await read(dir, ["write-tree"], env)).trim(), nested, skipped, ruled };
+      return { tree: (await read(dir, ["write-tree"], env)).trim(), nested, skipped, stamps, ruled };
     // What it left out goes into the tree for the commit, and straight back out of the index.
-    const record = (await read(dir, ["hash-object", "-w", "--stdin"], {}, JSON.stringify({ nested, skipped }))).trim();
+    // `skipped` stays a list of names, as older Genex versions read it; `stamps` is beside it.
+    const left = JSON.stringify({ nested, skipped, stamps: oversized });
+    const record = (await read(dir, ["hash-object", "-w", "--stdin"], {}, left)).trim();
     await read(dir, ["update-index", "--add", "--cacheinfo", `100644,${record},${LEFT_OUT_FILE}`], env);
     const tree = (await read(dir, ["write-tree"], env)).trim();
     await read(dir, ["update-index", "--force-remove", "--", LEFT_OUT_FILE], env);
-    return { tree, nested, skipped, ruled };
+    return { tree, nested, skipped, stamps, ruled };
   }
 
   /**
-   * Files to leave out: each one over the size limit, and past the change budget the largest of
-   * the rest. They are recorded with the checkpoint instead, so they never read as deleted.
+   * Files to leave out, with their stamps: each one over the size limit, and past the change
+   * budget the largest of the rest. They are recorded with the checkpoint instead, so they never
+   * read as deleted.
    */
-  async #oversized(dir: string, index: string, exclude: string[]): Promise<string[]> {
+  async #oversized(dir: string, index: string, exclude: string[]): Promise<StampedFile[]> {
     // A short fixed list (ls-files takes no pathspec file); the long lists go on stdin elsewhere.
     const listed = (
       await read(dir, ["ls-files", "-z", "-o", "-m", "--exclude-standard", "--", ".", ...exclude], {
@@ -373,17 +391,16 @@ export class ChatCheckpoints {
     )
       .split("\0")
       .filter(Boolean);
+    // A file gone since git listed it is no size at all, so it is never left out.
     const sized = await Promise.all(
-      [...new Set(listed)].map(async (file) => ({
-        file,
-        size: (await lstat(path.join(dir, file)).catch(() => null))?.size ?? 0,
-      })),
+      [...new Set(listed)].map(async (file) => ({ file, ...((await stampNow(dir, file)) ?? GONE) })),
     );
-    const skip: string[] = [];
+    const skip: StampedFile[] = [];
     let total = 0;
-    for (const { file, size } of sized.sort((a, b) => a.size - b.size)) {
-      if (size > CHECKPOINT_FILE_MAX_BYTES || total + size > CHECKPOINT_CHANGE_MAX_BYTES) skip.push(file);
-      else total += size;
+    for (const entry of sized.sort((a, b) => a.bytes - b.bytes)) {
+      if (entry.bytes > CHECKPOINT_FILE_MAX_BYTES || total + entry.bytes > CHECKPOINT_CHANGE_MAX_BYTES)
+        skip.push(entry);
+      else total += entry.bytes;
     }
     return skip;
   }
@@ -583,20 +600,63 @@ async function keepIgnoring(dir: string, ruled: readonly PlacedRule[]): Promise<
   await ensureFactIgnoreRules(dir, ruled.map(ignoreLine)).catch(() => {});
 }
 
+/** A checkpoint's record of what it left out, as stored: anything in it may be missing or wrong. */
+interface LeftOutRecord {
+  nested?: unknown;
+  skipped?: unknown;
+  stamps?: unknown;
+}
+
+/** A stamp the record holds for a file, when it is one: a name, a size and a time. */
+function isStampedFile(entry: unknown): entry is StampedFile {
+  const stamped = entry as Partial<StampedFile> | null;
+  return typeof stamped?.file === "string" && Number.isFinite(stamped.bytes) && Number.isFinite(stamped.modifiedMs);
+}
+
 /** A checkpoint commit's tree and what it left out. */
 async function snapshotOf(dir: string, commit: string): Promise<Snapshot> {
-  let recorded: Partial<Snapshot> = {};
+  let recorded: LeftOutRecord = {};
   try {
-    recorded = JSON.parse(await read(dir, ["cat-file", "-p", `${commit}:${LEFT_OUT_FILE}`])) as Partial<Snapshot>;
+    recorded = JSON.parse(await read(dir, ["cat-file", "-p", `${commit}:${LEFT_OUT_FILE}`])) as LeftOutRecord;
   } catch {
     recorded = {};
   }
+  const stamped = Array.isArray(recorded.stamps) ? recorded.stamps.filter(isStampedFile) : [];
   return {
     tree: commit,
-    nested: Array.isArray(recorded.nested) ? recorded.nested : [],
-    skipped: Array.isArray(recorded.skipped) ? recorded.skipped : [],
+    nested: paths(recorded.nested),
+    skipped: paths(recorded.skipped),
+    stamps: new Map(stamped.map(({ file, bytes, modifiedMs }) => [file, { bytes, modifiedMs }])),
     ruled: [],
   };
+}
+
+/** The paths a record lists: its non-empty strings, whatever else it holds. */
+function paths(listed: unknown): string[] {
+  return Array.isArray(listed) ? listed.filter((entry) => typeof entry === "string" && entry !== "") : [];
+}
+
+/** How a file looks now, links never followed; null once it is gone. */
+async function stampNow(dir: string, file: string): Promise<FileStamp | null> {
+  const found = await lstat(path.join(dir, file)).catch(() => null);
+  return found ? { bytes: found.size, modifiedMs: found.mtimeMs } : null;
+}
+
+/**
+ * Is a file a record names gone from the folder? Only a plain path inside it whose way there
+ * crosses no link can be told: anything else counts as there, so a record never names a file
+ * outside the folder.
+ */
+async function goneFrom(dir: string, file: string): Promise<boolean> {
+  if (!isPlainRelativePath(file)) return false;
+  let place = dir;
+  for (const segment of file.split("/")) {
+    place = path.join(place, segment);
+    const found = await lstat(place).catch(() => null);
+    if (!found) return true;
+    if (found.isSymbolicLink()) return false;
+  }
+  return false;
 }
 
 /** A folder name as a glob that matches only itself: wildcard characters become classes. */
@@ -680,10 +740,57 @@ async function restorable(
   const nested = (file: string) => roots.some((root) => file === root || file.startsWith(`${root}/`));
   const ruled = (file: string) => current.ruled.some((rule) => ruleMatches(file, rule));
   const kept = (file: string) => tooLarge(file) || nested(file) || ruled(file);
+  const shown = all.filter((change) => tooLarge(change.path)).map((change) => change.path);
+  const unseen = await unseenTooLarge(dir, from, current, {
+    shown,
+    outOfReach: (file) => nested(file) || ruled(file),
+  });
   return {
     changes: all.filter((change) => !kept(change.path)),
-    tooLarge: all.filter((change) => tooLarge(change.path)).map((change) => change.path),
+    tooLarge: unseen.length ? [...new Set([...shown, ...unseen])].sort() : shown,
   };
+}
+
+/** What `unseenTooLarge` already knows: the paths the trees showed, and the ones no restore reaches. */
+interface UnseenContext {
+  shown: readonly string[];
+  outOfReach: (file: string) => boolean;
+}
+
+/**
+ * Changed files too large to save that neither tree holds, so their change never shows between
+ * them: one left out then that is gone now or whose stamp differs, and one left out now that
+ * was not there then. A path the trees showed, or show beneath it, is named there already. A
+ * checkpoint an older Genex took kept no stamps: a file of it still there cannot be told changed.
+ */
+async function unseenTooLarge(dir: string, from: Snapshot, current: Snapshot, seen: UnseenContext): Promise<string[]> {
+  const named = new Set(seen.shown.flatMap((file) => [file, ...ancestors(file)]));
+  const open = (file: string) => !named.has(file) && !seen.outOfReach(file);
+  const before = new Set(from.skipped);
+  const now = new Set(current.skipped);
+  const changed = await Promise.all(
+    from.skipped.filter(open).map(async (file) => ((await changedSince(dir, file, from, current, now)) ? file : null)),
+  );
+  const added = current.skipped.filter((file) => open(file) && !before.has(file));
+  return [...changed.filter((file) => file !== null), ...added];
+}
+
+/**
+ * Has a file `from` left out for its size changed since: gone now, or stamped differently by
+ * `current`, which left it out too when `skippedNow` holds it?
+ */
+async function changedSince(
+  dir: string,
+  file: string,
+  from: Snapshot,
+  current: Snapshot,
+  skippedNow: ReadonlySet<string>,
+): Promise<boolean> {
+  if (!skippedNow.has(file)) return goneFrom(dir, file);
+  const then = from.stamps.get(file);
+  const now = current.stamps.get(file);
+  if (!then || !now) return false;
+  return then.bytes !== now.bytes || then.modifiedMs !== now.modifiedMs;
 }
 
 /**

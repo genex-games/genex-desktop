@@ -768,6 +768,8 @@ export default {
   "Choose another": "Elegir otra",
   "Choose another model or check your account in Model providers, then try again.":
     "Elige otro modelo o revisa tu cuenta en Proveedores de modelos y vuelve a intentarlo.",
+  "Choose another model, or try again once its provider is back. Your prompt stays here.":
+    "Elige otro modelo o vuelve a intentarlo cuando su proveedor vuelva. Tu mensaje se queda aquí.",
   "Choose another version": "Elegir otra versión",
   "Choose blender.exe": "Elige blender.exe",
   "Choose browser OAuth or an Authorization header, not both":
@@ -4177,6 +4179,7 @@ export default {
   "This model is unavailable": "Este modelo no está disponible",
   "This model is unavailable. Check the connection or choose another model.":
     "Este modelo no está disponible. Revisa la conexión o elige otro modelo.",
+  "This model isn’t available right now": "Este modelo no está disponible ahora",
   "This page isn't from the sign-in Genex started.": "Esta página no es del inicio de sesión que abrió Genex.",
   "This paste has {count, plural, other {# servers}}. Pick one:":
     "Lo que pegaste tiene {count, plural, one {# servidor} other {# servidores}}. Elige uno:",
@@ -5468,10 +5471,6 @@ export default {
     "{count, plural, one {Su propio historial se guarda al lado, renombrado como .git.studio-backup.} other {Sus propios historiales se guardan al lado, renombrados como .git.studio-backup.}}",
   "{count, plural, one {Restored # game file.} other {Restored # game files.}}":
     "{count, plural, one {Se restauró # archivo del juego.} other {Se restauraron # archivos del juego.}}",
-  "{count, plural, one {Rewind can’t bring back # file from this change: it was over {size} at once, so the largest stayed out: {files}.} other {Rewind can’t bring back # files from this change: it was over {size} at once, so the largest stayed out: {files}.}}":
-    "{count, plural, one {Retroceder no puede recuperar # archivo de este cambio: superó {size} de una vez, así que los más grandes quedaron fuera: {files}.} other {Retroceder no puede recuperar # archivos de este cambio: superó {size} de una vez, así que los más grandes quedaron fuera: {files}.}}",
-  "{count, plural, one {Rewind can’t bring back # file that is too large to save: {files}.} other {Rewind can’t bring back # files that are too large to save: {files}.}}":
-    "{count, plural, one {Retroceder no puede recuperar # archivo demasiado grande para guardarse: {files}.} other {Retroceder no puede recuperar # archivos demasiado grandes para guardarse: {files}.}}",
   "{count, plural, one {The chat went back, and # game file with it.} other {The chat went back, and # game files with it.}}":
     "{count, plural, one {El chat retrocedió, y # archivo del juego con él.} other {El chat retrocedió, y # archivos del juego con él.}}",
   "{count, plural, one {Working on # task} other {Working on # tasks}}":

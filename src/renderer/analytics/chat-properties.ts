@@ -34,6 +34,7 @@ import {
   failedRecently,
   noteBlocked,
   noteQuestionAnswered,
+  noteSendWent,
   openCards,
   planKey,
   questionKey,
@@ -235,6 +236,9 @@ export function forgetSend(memory: ChatMemory, thread: string, clientId: string 
   if (clientId) memory.sends.delete(clientId);
   memory.replies.delete(thread);
 }
+
+/** A send that went: the dead-Send count starts again (`chat-memory.ts`). */
+export { noteSendWent };
 
 /** `message_send_blocked`: why Send went nowhere, counted against the presses before it. */
 export function sendBlockedProperties(

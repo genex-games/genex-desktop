@@ -18,7 +18,7 @@ const HOST_CUSTOM_EVENTS: ReadonlySet<unknown> = new Set([
   CustomEvent.ToolInstalled,
   // A turn-it-on card is shown by `plugins_suggest` only, after its checks: its button turns a plugin on.
   CustomEvent.PluginSuggested,
-  // Files too large to save are reported by the host that took the checkpoint or the rewind.
+  // Files too large to save are reported by the host that ran the rewind.
   CustomEvent.CheckpointSkipped,
   // A job's start and end are recorded by the app that owns the job (`substrate/jobs.ts`).
   CustomEvent.JobStarted,

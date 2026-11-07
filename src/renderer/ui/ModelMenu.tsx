@@ -5,6 +5,7 @@ import {
   useState,
   type JSX,
   type KeyboardEvent,
+  type ReactElement,
   type ReactNode,
   type Ref,
   type RefObject,
@@ -104,6 +105,8 @@ const ROLE_INFO: Partial<Record<RoleKey, string>> = {
   judge: t("Reviewers give a second opinion when the lead asks for one."),
 };
 const CHOOSE_MODEL = t("Choose model");
+/** The bump's two names: each held send replays it by switching to the other one (theme.css). */
+const NUDGE_BEATS = ["a", "b"] as const;
 
 /** Up/Down/Home/End move focus between the rows of one panel, like a menu. */
 function moveFocus(event: KeyboardEvent<HTMLElement>, selector: string): boolean {
@@ -408,14 +411,76 @@ function JobList({
   );
 }
 
+/**
+ * Why a send went nowhere, beside the model button while a held send lights it: the model cannot
+ * take a message now, and what to do. It opens only then, never on hover (the button's title names
+ * the model), and a screen reader hears it as a status.
+ */
+function HeldSendTip({ lit, children }: { lit: boolean; children: ReactElement }): JSX.Element {
+  return (
+    <>
+      <Tooltip open={lit}>
+        <TooltipTrigger asChild>{children}</TooltipTrigger>
+        <TooltipContent side="top" align="end" sideOffset={6} className="max-w-[260px] text-left">
+          <span className="flex flex-col gap-0.5">
+            <span className="font-medium">{MODEL_PICKER_WORDS.sendHeldTitle}</span>
+            <span className="opacity-75">{MODEL_PICKER_WORDS.sendHeldText}</span>
+          </span>
+        </TooltipContent>
+      </Tooltip>
+      <span role="status" className="sr-only">
+        {lit ? MODEL_PICKER_WORDS.sendHeldTitle : ""}
+      </span>
+    </>
+  );
+}
+
 /** A model the person or their own server named: replays leave its name out (`analytics/masking.ts`). */
 const ownModelName = (key: string | null | undefined) => (namesOwnModel(key) ? { "data-analytics-mask": "" } : {});
+
+/** The button that opens the menu: the main agent's model, lit while a held send points at it. */
+function ModelButton({
+  trigger,
+  selected,
+  disabled,
+  nudge,
+  menuOpen,
+}: {
+  trigger: RefObject<HTMLButtonElement | null>;
+  selected: ModelChoice | undefined;
+  disabled: boolean;
+  nudge: number | null;
+  menuOpen: boolean;
+}): JSX.Element {
+  const name = selected?.name ?? CHOOSE_MODEL;
+  return (
+    <HeldSendTip lit={nudge !== null && !menuOpen}>
+      <PopoverTrigger
+        ref={trigger}
+        render={<button type="button" />}
+        disabled={disabled}
+        aria-label={t("Model settings")}
+        title={nudge === null ? name : undefined}
+        data-nudge={nudge === null ? undefined : NUDGE_BEATS[nudge % NUDGE_BEATS.length]}
+        className="composer-model composer-text-button min-w-0"
+      >
+        <span data-fit className="truncate" {...ownModelName(selected?.key)}>
+          {shortModelName(name)}
+        </span>
+      </PopoverTrigger>
+    </HeldSendTip>
+  );
+}
 
 /**
  * One visit to the menu, for usage analytics: where it was opened from (the composer's handle is
  * the plan card's Choose model), whether a model was picked, and how long it stayed open.
  */
-function useMenuVisit(ref: Ref<ModelMenuHandle> | undefined, trigger: RefObject<HTMLButtonElement | null>) {
+function useMenuVisit(
+  ref: Ref<ModelMenuHandle> | undefined,
+  trigger: RefObject<HTMLButtonElement | null>,
+  lit: boolean,
+) {
   const visit = useRef<{ from: ModelMenuFrom; at: number; picked: boolean } | null>(null);
   const asked = useRef<ModelMenuFrom | null>(null);
   // Opening is its own button's click, so the popover opens exactly as a press would open it.
@@ -431,7 +496,8 @@ function useMenuVisit(ref: Ref<ModelMenuHandle> | undefined, trigger: RefObject<
   );
   return {
     opened: () => {
-      visit.current = { from: asked.current ?? ModelMenuFrom.Composer, at: Date.now(), picked: false };
+      const from = asked.current ?? (lit ? ModelMenuFrom.SendHeld : ModelMenuFrom.Composer);
+      visit.current = { from, at: Date.now(), picked: false };
       asked.current = null;
     },
     picked: () => {
@@ -492,7 +558,8 @@ function useMenuSteps(withRoles: boolean, onClosed?: () => void) {
 /**
  * The model button. With roles it opens the three jobs (main agent, workers, reviewers), each
  * naming its model; a job opens its model list to the right of the panel. Without roles the button opens that list directly. Effort lives in its own
- * control; everything opens on click, never on hover.
+ * control; everything opens on click, never on hover. A send the model could not take lights the
+ * button for a moment (`nudge`, `useModelNudge`) with a tooltip saying why and what to do.
  */
 export function ModelMenu({
   choices,
@@ -502,6 +569,7 @@ export function ModelMenu({
   onRoles,
   disabled = false,
   onClosed,
+  nudge = null,
   ref,
 }: {
   choices: ModelChoice[];
@@ -511,11 +579,14 @@ export function ModelMenu({
   onRoles?: (roles: RoleRecord) => void;
   disabled?: boolean;
   onClosed?: () => void;
+  /** A held send's beat while the button is lit (`useModelNudge`), else null. */
+  nudge?: number | null;
   ref?: Ref<ModelMenuHandle>;
 }): JSX.Element {
   const trigger = useRef<HTMLButtonElement>(null);
   const listFocus = useRef<HTMLButtonElement>(null);
-  const visit = useMenuVisit(ref, trigger);
+  const lit = nudge !== null;
+  const visit = useMenuVisit(ref, trigger, lit);
   const picks = useRolePicks({ choices, modelKey, roles, onModel, onRoles });
   const { selected } = picks;
   const withRoles = Boolean(onRoles);
@@ -564,18 +635,7 @@ export function ModelMenu({
           }
         }}
       >
-        <PopoverTrigger
-          ref={trigger}
-          render={<button type="button" />}
-          disabled={disabled}
-          aria-label={t("Model settings")}
-          title={selected?.name ?? CHOOSE_MODEL}
-          className="composer-model composer-text-button min-w-0"
-        >
-          <span data-fit className="truncate" {...ownModelName(selected?.key)}>
-            {shortModelName(selected?.name ?? CHOOSE_MODEL)}
-          </span>
-        </PopoverTrigger>
+        <ModelButton trigger={trigger} selected={selected} disabled={disabled} nudge={nudge} menuOpen={open} />
         <PopoverContent
           ref={setPanel}
           side="top"

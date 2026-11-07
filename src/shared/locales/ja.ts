@@ -711,6 +711,8 @@ export default {
   "Choose another": "別の画像を選ぶ",
   "Choose another model or check your account in Model providers, then try again.":
     "別のモデルを選ぶか、「モデルプロバイダー」でアカウントを確認してから、もう一度試してください。",
+  "Choose another model, or try again once its provider is back. Your prompt stays here.":
+    "別のモデルを選ぶか、プロバイダーが戻ってからもう一度試してください。プロンプトはここに残ります。",
   "Choose another version": "別のバージョンを選ぶ",
   "Choose blender.exe": "blender.exeを選ぶ",
   "Choose browser OAuth or an Authorization header, not both":
@@ -4125,6 +4127,7 @@ export default {
   "This model is unavailable": "このモデルは利用できません",
   "This model is unavailable. Check the connection or choose another model.":
     "このモデルは使えません。接続を確認するか、別のモデルを選んでください。",
+  "This model isn’t available right now": "このモデルは今使えません",
   "This page isn't from the sign-in Genex started.": "このページは、Genexが開始したサインインのものではありません。",
   "This paste has {count, plural, other {# servers}}. Pick one:":
     "貼り付けた内容に{count, plural, other {#個のサーバー}}があります。1つ選んでください：",
@@ -5393,10 +5396,6 @@ export default {
     "{count, plural, other {元の履歴は.git.studio-backupという名前に変えて、すぐ横に保存してあります。}}",
   "{count, plural, one {Restored # game file.} other {Restored # game files.}}":
     "{count, plural, other {ゲームのファイルを#個復元しました。}}",
-  "{count, plural, one {Rewind can’t bring back # file from this change: it was over {size} at once, so the largest stayed out: {files}.} other {Rewind can’t bring back # files from this change: it was over {size} at once, so the largest stayed out: {files}.}}":
-    "{count, plural, other {この変更は一度に{size}を超えたため、大きいファイル#件が保存されず、巻き戻しで元に戻せません：{files}。}}",
-  "{count, plural, one {Rewind can’t bring back # file that is too large to save: {files}.} other {Rewind can’t bring back # files that are too large to save: {files}.}}":
-    "{count, plural, other {保存するには大きすぎるファイル#件は、巻き戻しで元に戻せません：{files}。}}",
   "{count, plural, one {The chat went back, and # game file with it.} other {The chat went back, and # game files with it.}}":
     "{count, plural, other {チャットを巻き戻し、ゲームファイル#個も一緒に戻しました。}}",
   "{count, plural, one {Working on # task} other {Working on # tasks}}":

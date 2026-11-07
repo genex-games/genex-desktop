@@ -39,6 +39,7 @@ import {
   modelRef,
   namesOwnModel,
   noteMessageSent,
+  noteSendWent,
   permissionAnsweredProperties,
   planAnsweredProperties,
   questionAnsweredProperties,
@@ -277,7 +278,20 @@ describe("a dead Send", () => {
       genex_need: null,
       attempts_in_row: 2,
     });
-    noteMessageSent(memory, facts(), T0);
+    noteSendWent(memory);
+    assert.equal(sendBlockedProperties(memory, blocked).attempts_in_row, 1);
+  });
+
+  it("keeps counting a press whose send was refused for its model, until one goes", () => {
+    const memory = createChatMemory();
+    const blocked = { reason: SendBlock.ModelUnavailable, room: ComposerRoom.Game, key: `${EngineId.OpenCode}::gone` };
+    // The send is noted before it is known whether it goes; a model refusal then counts it dead.
+    for (const press of [1, 2, 3]) {
+      noteMessageSent(memory, facts(), T0 + press);
+      assert.equal(sendBlockedProperties(memory, blocked).attempts_in_row, press);
+    }
+    noteMessageSent(memory, facts(), T0 + 4);
+    noteSendWent(memory);
     assert.equal(sendBlockedProperties(memory, blocked).attempts_in_row, 1);
   });
 

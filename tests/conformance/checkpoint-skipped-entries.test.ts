@@ -1,6 +1,6 @@
 /**
- * The chat says when Rewind cannot bring files back because they were too large to save: which
- * files, with their sizes, whether a message's checkpoint left them out or a rewind left them.
+ * The chat says when a rewind left files as they were because they were too large to save: which
+ * files, with their sizes. A message's checkpoint that left them out says nothing.
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
@@ -27,34 +27,32 @@ const lines = (events: EventEnvelope[]) =>
 const files = (...sizes: Array<[string, number]>) => sizes.map(([file, bytes]) => ({ file, bytes }));
 
 describe("files too large to save, in the chat", () => {
-  it("says a checkpoint's change was too large at once, not its files, when each was under the file limit", () => {
+  it("adds no line for a message's checkpoint, whatever it left out", () => {
     const limits = { fileLimitBytes: 50 * MB, changeLimitBytes: 1024 * MB };
     const big = files(["a.glb", 34.8 * MB], ["b.glb", 34 * MB], ["c.glb", 33 * MB]);
-    const [line] = lines([skipped(1, { files: big, total: 50, ...limits })]);
-    assert.equal(
-      line?.text,
-      "Rewind can’t bring back 50 files from this change: it was over 1 GB at once, so the largest stayed out: a.glb (34.8 MB), b.glb (34 MB), c.glb (33 MB) and 47 more.",
+    // Flipped: an older version's checkpoint record read "Rewind can’t bring back 1 file that is
+    // too large to save: Dust2_Flythrough.mp4 (50.8 MB)." Nothing was lost yet, and nothing the
+    // person could do brought it back: only a rewind that leaves files as they are names them.
+    assert.deepEqual(
+      lines([
+        skipped(1, { by: SkippedBy.Checkpoint, files: files(["Dust2_Flythrough.mp4", 50.8 * MB]) }),
+        skipped(2, { files: big, total: 50, ...limits }),
+        skipped(3, { files: files(["a.bin", 2 * MB]), total: 80 }),
+      ]),
+      [],
     );
-    const [rewound] = lines([skipped(1, { by: SkippedBy.Rewind, files: big, ...limits })]);
-    assert.equal(
-      rewound?.text,
-      "These files were too large to save, so the rewind left them as they are: a.glb (34.8 MB), b.glb (34 MB), c.glb (33 MB).",
-      "a rewind sizes its files later, so it never names the change",
-    );
-    const [oversized] = lines([skipped(1, { files: files(["Hero.uasset", 120 * MB]), ...limits })]);
-    assert.equal(oversized?.text, "Rewind can’t bring back 1 file that is too large to save: Hero.uasset (120 MB).");
   });
 
-  it("names a checkpoint's files with their sizes, and stands on its own", () => {
+  it("says a rewind left them as they are, with their sizes, and stands on its own", () => {
     const [line] = lines([
       skipped(1, {
-        by: SkippedBy.Checkpoint,
+        by: SkippedBy.Rewind,
         files: files(["Content/Hero.uasset", 120 * MB], ["audio/Theme.wav", 64 * MB]),
       }),
     ]);
     assert.equal(
       line?.text,
-      "Rewind can’t bring back 2 files that are too large to save: Hero.uasset (120 MB), Theme.wav (64 MB).",
+      "These files were too large to save, so the rewind left them as they are: Hero.uasset (120 MB), Theme.wav (64 MB).",
     );
     assert.equal(line?.attention, true, "never folded away with routine lines");
   });
@@ -68,17 +66,29 @@ describe("files too large to save, in the chat", () => {
     );
     const [one] = lines([skipped(1, { by: SkippedBy.Rewind, files: files(["big.uasset", 60 * MB]) })]);
     assert.equal(one?.text, "This file was too large to save, so the rewind left it as it is: big.uasset (60 MB).");
-    const [listed] = lines([skipped(1, { files: files(["a.bin", 2 * MB]), total: 80 })]);
+    const [listed] = lines([skipped(1, { by: SkippedBy.Rewind, files: files(["a.bin", 2 * MB]), total: 80 })]);
     assert.equal(
       listed?.text,
-      "Rewind can’t bring back 80 files that are too large to save: a.bin (2 MB) and 79 more.",
+      "These files were too large to save, so the rewind left them as they are: a.bin (2 MB) and 79 more.",
       "a record that lists some of its files counts them all",
     );
   });
 
+  it("names a file the rewind found gone without a size", () => {
+    const [line] = lines([skipped(1, { by: SkippedBy.Rewind, files: files(["intro.mp4", 60 * MB], ["gone.mp4", 0]) })]);
+    assert.equal(
+      line?.text,
+      "These files were too large to save, so the rewind left them as they are: intro.mp4 (60 MB), gone.mp4.",
+    );
+  });
+
   it("adds no line for a partial record", () => {
-    assert.deepEqual(lines([skipped(1, {}), skipped(2, { by: SkippedBy.Checkpoint, files: [] })]), []);
-    assert.deepEqual(lines([skipped(3, { files: [{ file: 7 }, "x"] })]), [], "entries it cannot read are left out");
+    assert.deepEqual(lines([skipped(1, {}), skipped(2, { by: SkippedBy.Rewind, files: [] })]), []);
+    assert.deepEqual(
+      lines([skipped(3, { by: SkippedBy.Rewind, files: [{ file: 7 }, "x"] })]),
+      [],
+      "entries it cannot read are left out",
+    );
   });
 
   it("says a size in the largest unit it reaches", () => {

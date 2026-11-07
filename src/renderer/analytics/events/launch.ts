@@ -207,6 +207,10 @@ export function startProperties(start: unknown): StartProperties | null {
 /** Chromium's network error names, the only text `net_error` carries. */
 const NET_ERROR_CODE = /^ERR_[A-Z0-9_]{1,60}$/;
 
+/** A network error as Chromium names it, or null for any other text. */
+export const netErrorCode = (value: unknown): string | null =>
+  typeof value === "string" && NET_ERROR_CODE.test(value) ? value : null;
+
 /** `update_background_failed`'s properties: where it failed, what the feed answered, and what Genex offered. */
 export type UpdateFailedProperties = {
   stage: UpdateFailure | null;
@@ -218,13 +222,13 @@ export type UpdateFailedProperties = {
 };
 
 /** An HTTP status, or null for anything else. */
-const httpStatus = (value: unknown): number | null =>
+export const httpStatus = (value: unknown): number | null =>
   Number.isInteger(value) && Number(value) >= 100 && Number(value) <= 599 ? Number(value) : null;
 
 /** `update_background_failed`: an update the app looked for on its own failed, re-checked field by field. */
 export function updateFailedProperties(payload: unknown): UpdateFailedProperties {
   const note = isRecord(payload) ? payload : {};
-  const netError = typeof note.netError === "string" && NET_ERROR_CODE.test(note.netError) ? note.netError : null;
+  const netError = netErrorCode(note.netError);
   return {
     stage: oneOf(UpdateFailure, note.stage),
     feed: oneOf(UpdateFeedState, note.feed),

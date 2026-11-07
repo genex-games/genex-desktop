@@ -157,7 +157,7 @@ export const FINISH_ANSWER = {
   unanswered: (why: string) =>
     `The reviewer could not answer (${why}). Your claim is neither accepted nor counted; call finish again when ready.`,
   alreadyClosed:
-    "The run already closed while the reviewer read your claim. End your session now with a one-paragraph summary for the user.",
+    "The run already closed while the reviewer read your claim. End your session now with a short summary for the user.",
   accepted: (reasons: readonly string[]) =>
     `The reviewer accepted that the goal is reached${reasons.length ? `: ${reasons.join(" ")}` : "."}`,
 } as const;

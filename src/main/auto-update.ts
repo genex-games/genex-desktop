@@ -29,6 +29,7 @@
  */
 import { win32 as winPath } from "node:path";
 import { SECOND_MS } from "../shared/duration.ts";
+import { netErrorOf } from "../shared/errors.ts";
 import { t } from "../shared/i18n.ts";
 import {
   type ReadyUpdate,
@@ -60,10 +61,6 @@ const FEED_PROBE_TIMEOUT_MS = 15 * SECOND_MS;
  * is broken, fails every hour and would otherwise stay on its version for good.
  */
 export const OFFER_DOWNLOAD_AFTER_FAILURES = 2;
-/** Chromium's name for a network failure inside `net.fetch`'s message ("net::ERR_NAME_NOT_RESOLVED"). */
-const NET_ERROR = /\bnet::(ERR_[A-Z0-9_]{1,60})\b/;
-/** The network error a feed request that ran out of time counts as, in Chromium's spelling. */
-const NET_TIMED_OUT = "ERR_TIMED_OUT";
 /** How often an installed copy asks for a newer release (the `ms` syntax the library parses). */
 const UPDATE_CHECK_INTERVAL = "1 hour";
 /**
@@ -517,13 +514,6 @@ export function updateCheckNote(result: UpdateCheckResult): {
 
 /** What Genex's own request to the update feed found (`probeFeed`). */
 export type FeedProbe = Pick<UpdateFailedNote, "feed" | "netError" | "httpStatus">;
-
-/** The network error a failed `net.fetch` names, in Chromium's code; a timeout as `ERR_TIMED_OUT`. */
-function netErrorOf(error: unknown): string | null {
-  if (!(error instanceof Error)) return null;
-  if (error.name === "TimeoutError") return NET_TIMED_OUT;
-  return NET_ERROR.exec(error.message)?.[1] ?? null;
-}
 
 /**
  * Ask the update feed once, as the installer would, so a failed check says whether the feed is out

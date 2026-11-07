@@ -61,3 +61,15 @@ export function errorCodeIn<V extends Record<string, string>>(vocabulary: V, err
   const values: readonly unknown[] = Object.values(vocabulary);
   return values.includes(code) ? (code as V[keyof V]) : null;
 }
+
+/** Chromium's name for a network failure inside `net.fetch`'s message ("net::ERR_NAME_NOT_RESOLVED"). */
+const NET_ERROR = /\bnet::(ERR_[A-Z0-9_]{1,60})\b/;
+/** The network error a request that ran out of time counts as, in Chromium's spelling. */
+const NET_TIMED_OUT = "ERR_TIMED_OUT";
+
+/** The network error a failed `net.fetch` names, in Chromium's code; a timeout as `ERR_TIMED_OUT`. */
+export function netErrorOf(error: unknown): string | null {
+  if (!(error instanceof Error)) return null;
+  if (error.name === "TimeoutError") return NET_TIMED_OUT;
+  return NET_ERROR.exec(error.message)?.[1] ?? null;
+}

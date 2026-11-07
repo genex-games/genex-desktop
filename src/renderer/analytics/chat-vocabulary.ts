@@ -200,7 +200,12 @@ export const RewindAction = { Confirm: "confirm", Cancel: "cancel" } as const;
 export type RewindAction = (typeof RewindAction)[keyof typeof RewindAction];
 
 /** Where the model menu was opened from. */
-export const ModelMenuFrom = { Composer: "composer", PlanRecovery: "plan_recovery" } as const;
+export const ModelMenuFrom = {
+  Composer: "composer",
+  PlanRecovery: "plan_recovery",
+  /** Opened while a send its model held back lit the model button. */
+  SendHeld: "send_held",
+} as const;
 export type ModelMenuFrom = (typeof ModelMenuFrom)[keyof typeof ModelMenuFrom];
 
 /** Which composer model setting changed. */

@@ -17,7 +17,7 @@ export function secondOpinionNo(reasons: readonly string[], notDone: readonly st
 /** What an open Loop's lead is told when its claim closed the Loop, or when no reviewer could read it. */
 export const CLAIM_WORDS = {
   /** A claim on the lead's word, with no review asked: the Loop closed. */
-  closedOnClaim: "The Loop is closed on your word. End your turn with a one-paragraph summary for the person.",
+  closedOnClaim: "The Loop is closed on your word. End your turn with a short summary for the person.",
   /** A review the lead asked for, with no engine here to hold a reviewer. */
   noReviewer:
     "No engine here can hold a reviewer to read your claim. Call finish again without review to close the Loop as you judge it.",

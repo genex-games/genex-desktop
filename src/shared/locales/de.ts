@@ -770,6 +770,8 @@ export default {
   "Choose another": "Anderes wählen",
   "Choose another model or check your account in Model providers, then try again.":
     "Wähle ein anderes Modell oder prüf dein Konto unter „Modellanbieter“ und versuch es dann noch mal.",
+  "Choose another model, or try again once its provider is back. Your prompt stays here.":
+    "Wähl ein anderes Modell oder versuch es noch mal, wenn der Anbieter wieder da ist. Dein Prompt bleibt hier.",
   "Choose another version": "Andere Version wählen",
   "Choose blender.exe": "blender.exe auswählen",
   "Choose browser OAuth or an Authorization header, not both":
@@ -4217,6 +4219,7 @@ export default {
   "This model is unavailable": "Dieses Modell ist nicht verfügbar",
   "This model is unavailable. Check the connection or choose another model.":
     "Dieses Modell ist nicht verfügbar. Prüf die Verbindung oder wähl ein anderes Modell.",
+  "This model isn’t available right now": "Dieses Modell ist gerade nicht verfügbar",
   "This page isn't from the sign-in Genex started.":
     "Diese Seite gehört nicht zu der Anmeldung, die Genex gestartet hat.",
   "This paste has {count, plural, other {# servers}}. Pick one:":
@@ -5522,10 +5525,6 @@ export default {
     "{count, plural, one {Sein eigener Verlauf bleibt daneben erhalten, umbenannt in .git.studio-backup.} other {Ihre eigenen Verläufe bleiben daneben erhalten, umbenannt in .git.studio-backup.}}",
   "{count, plural, one {Restored # game file.} other {Restored # game files.}}":
     "{count, plural, one {# Spieldatei wiederhergestellt.} other {# Spieldateien wiederhergestellt.}}",
-  "{count, plural, one {Rewind can’t bring back # file from this change: it was over {size} at once, so the largest stayed out: {files}.} other {Rewind can’t bring back # files from this change: it was over {size} at once, so the largest stayed out: {files}.}}":
-    "{count, plural, one {Zurückspulen kann # Datei aus dieser Änderung nicht zurückholen: Sie war auf einmal größer als {size}, also blieben die größten draußen: {files}.} other {Zurückspulen kann # Dateien aus dieser Änderung nicht zurückholen: Sie war auf einmal größer als {size}, also blieben die größten draußen: {files}.}}",
-  "{count, plural, one {Rewind can’t bring back # file that is too large to save: {files}.} other {Rewind can’t bring back # files that are too large to save: {files}.}}":
-    "{count, plural, one {Zurückspulen kann # Datei nicht zurückholen, weil sie zu groß zum Speichern ist: {files}.} other {Zurückspulen kann # Dateien nicht zurückholen, weil sie zu groß zum Speichern sind: {files}.}}",
   "{count, plural, one {The chat went back, and # game file with it.} other {The chat went back, and # game files with it.}}":
     "{count, plural, one {Der Chat wurde zurückgespult, und # Spieldatei mit ihm.} other {Der Chat wurde zurückgespult, und # Spieldateien mit ihm.}}",
   "{count, plural, one {Working on # task} other {Working on # tasks}}":

@@ -680,6 +680,8 @@ export default {
   "Choose another": "换一张",
   "Choose another model or check your account in Model providers, then try again.":
     "请选择其他模型，或在“模型提供方”中检查你的账号，然后重试。",
+  "Choose another model, or try again once its provider is back. Your prompt stays here.":
+    "请选择其他模型，或等它的提供方恢复后再试。你的提示会留在这里。",
   "Choose another version": "选择其他版本",
   "Choose blender.exe": "选择 blender.exe",
   "Choose browser OAuth or an Authorization header, not both":
@@ -3871,6 +3873,7 @@ export default {
   "This model is unavailable": "此模型不可用",
   "This model is unavailable. Check the connection or choose another model.":
     "此模型不可用。请检查连接或选择其他模型。",
+  "This model isn’t available right now": "此模型暂时不可用",
   "This page isn't from the sign-in Genex started.": "此页面不属于 Genex 发起的登录。",
   "This paste has {count, plural, other {# servers}}. Pick one:":
     "粘贴内容中有 {count, plural, other {# 个服务器}}。选一个：",
@@ -5090,10 +5093,6 @@ export default {
     "{count, plural, other {原有的历史记录已改名为 .git.studio-backup，保存在旁边。}}",
   "{count, plural, one {Restored # game file.} other {Restored # game files.}}":
     "{count, plural, other {已恢复 # 个游戏文件。}}",
-  "{count, plural, one {Rewind can’t bring back # file from this change: it was over {size} at once, so the largest stayed out: {files}.} other {Rewind can’t bring back # files from this change: it was over {size} at once, so the largest stayed out: {files}.}}":
-    "{count, plural, other {这次更改一次超过了 {size}，最大的 # 个文件未保存，回退时无法恢复：{files}。}}",
-  "{count, plural, one {Rewind can’t bring back # file that is too large to save: {files}.} other {Rewind can’t bring back # files that are too large to save: {files}.}}":
-    "{count, plural, other {有 # 个文件过大，无法保存，回退时无法恢复：{files}。}}",
   "{count, plural, one {The chat went back, and # game file with it.} other {The chat went back, and # game files with it.}}":
     "{count, plural, other {对话已回退，# 个游戏文件也一并回退。}}",
   "{count, plural, one {Working on # task} other {Working on # tasks}}": "{count, plural, other {正在处理 # 个任务}}",

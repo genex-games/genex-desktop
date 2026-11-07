@@ -173,15 +173,19 @@ export function noteBlocked(memory: ChatMemory): number {
 }
 
 /**
- * A message went: kept for its queue wait and reply (by its client id when the chat shows its
- * bubble), and the dead-Send count starts again.
+ * A message went: the dead-Send count starts again. Only once it went: a send is noted before
+ * it is known whether it goes, and one refused for its model is another dead press.
  */
+export function noteSendWent(memory: ChatMemory): void {
+  memory.blockedInRow = 0;
+}
+
+/** A message about to go: kept for its queue wait and reply (by its client id when the chat shows its bubble). */
 export function rememberSend(
   memory: ChatMemory,
   send: { clientId?: string | undefined; reply: AwaitingReply & { thread: string }; placement?: SendPlacement },
 ): void {
   const { clientId, reply, placement } = send;
-  memory.blockedInRow = 0;
   if (clientId)
     memory.sends.set(clientId, {
       thread: reply.thread,

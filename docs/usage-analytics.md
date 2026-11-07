@@ -116,7 +116,13 @@ stops recording, opts out and resets the id.
   network error code, whether Squirrel's Update.exe is there and whether a download was offered), agents that would not start as `harness.start-failed`'s
   `failureCode` (`agents_start_failed`), and Relaunch to update answers a `RestartAnswer`.
 - **The welcome** keeps the step an unfinished welcome stood on (`studio.analytics.welcomeScreen`),
-  so the next launch's `welcome_shown` says it resumed and where.
+  so the next launch's `welcome_shown` says it resumed and where. A CLI install whose installer
+  download failed says what answered it (`cli_install_finished`'s `http_status`, or Chromium's
+  `net_error`), so a vendor refusing a region (403) reads apart from a machine that is offline.
+- **A dead Send** counts presses in a row (`message_send_blocked`'s `attempts_in_row`) until a
+  message actually goes: a send refused for its model is noted first and still counts as dead.
+  The composer holds a send whose model cannot take it (`model_unavailable`) and lights the model
+  button with why; a menu opened while it is lit closes as `model_menu_closed` from `send_held`.
 - **Every event** carries app version, platform, language, a per-launch id, first launch, the
   ready engines and whether a Genex account is signed in. There is no `identify()`: the id is
   random and kept in the renderer's storage.

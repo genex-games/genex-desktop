@@ -34,6 +34,7 @@ import { isLocalDraft } from "../../shared/item-draft.ts";
 import { useLocalItemsSettle } from "../chat/use-local-items.ts";
 import { ChatSkeleton } from "../chat/ChatSkeleton.tsx";
 import { chatRoom, trackSendBlocked } from "../chat/send-analytics.ts";
+import { sendBlockOf } from "../chat/use-composer-model.ts";
 import { QuestionVia, SendBlock, SendSource } from "../analytics/chat-vocabulary.ts";
 import { sendQuestionAnswer } from "../analytics/events/chat.ts";
 import { LoadFailed } from "../ui/LoadFailed.tsx";
@@ -119,6 +120,21 @@ function ownSend(own: OwnAnswer | null, send: Send, thread: string | undefined):
   return async (text, extras, preserveDraft) => {
     if (!text.trim()) return send(text, extras, preserveDraft);
     await answer(text.trim());
+  };
+}
+
+/**
+ * The chat's model cannot take a message now (`sendBlockOf`): Send keeps the prompt and points at
+ * the model button. An answer a card takes itself needs no model, so it is never held.
+ */
+function modelHold(parts: ChatParts, own: OwnAnswer | null) {
+  const { model } = parts.composer;
+  const block = own?.send ? null : sendBlockOf(model, model.selected);
+  return {
+    modelUnavailable: block !== null,
+    onModelUnavailable: () => {
+      if (block) trackSendBlocked(parts, block, model.selected);
+    },
   };
 }
 
@@ -219,6 +235,7 @@ function ChatComposer(parts: ChatParts & { composerRef: RefObject<PromptBarHandl
             trackSendBlocked(parts, SendBlock.SignInNeeded, model.selected);
             void gate.signIn();
           }}
+          {...modelHold(parts, own)}
         />
       )}
     </ComposerDock>

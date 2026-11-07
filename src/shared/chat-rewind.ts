@@ -228,7 +228,10 @@ export type RewindFiles =
   /** `tooLargeFiles` names the changed files when they were all too large to save (`FilesStay.TooLarge`). */
   | { state: "unavailable"; reason: FilesStay; tooLargeFiles?: string[] }
   | { state: "none" };
-/** What left files too large to save out: a chat checkpoint, or a rewind that left them as they were. */
+/**
+ * What left files too large to save out: a rewind that left them as they were, or, in a record an
+ * older version wrote, a chat checkpoint (which the chat no longer shows).
+ */
 export const SkippedBy = {
   Checkpoint: "checkpoint",
   Rewind: "rewind",

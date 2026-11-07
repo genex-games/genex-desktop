@@ -482,12 +482,17 @@ still seen (Git compares file times to the second). It preserves raw file
 bytes instead of running clean/smudge filters, including LFS. Chat links also read stored blobs
 without downloading or converting LFS pointers. It never captures `.env` or `.env.*`, packages, build output or nested repositories,
 and leaves out files over 50 MB and the largest ones past 1 GB of new content; each checkpoint
-records what it left out, and a restore never touches those paths. Leaving them out is never
-silent: a checkpoint that skips a new set of files for their size appends the host-only
-`checkpoint_skipped` (`by: checkpoint`, each file's size), the confirmation names the changed ones
-(`tooLargeFiles`), and a restore that left some appends it with `by: rewind`. Its chat line is the
-person's alone: no delegated session is told of the files, since nothing it can do brings them
-back and it would only repeat the line. It commits as the studio on
+records what it left out, with each file's size and modified time, and a restore never touches
+those paths. Nothing is lost when a checkpoint leaves a file out, so the chat says nothing then
+(a `checkpoint_skipped` with `by: checkpoint` from an older version shows no line). The rewind
+confirmation names the changed ones (`tooLargeFiles`): one either tree holds that changed, one left
+out then that is gone or whose size or time differs now, and one left out now that was not there
+then; a checkpoint an older version took kept no times, so of its files only a gone one is named,
+and a recorded path that is not a plain one inside the folder, or crosses a link, is never named.
+A restore that left some appends the host-only `checkpoint_skipped` with `by: rewind`, each file's
+size (a gone one's is 0, and its line names it without one). That line is the person's alone: no
+delegated session is told of the files, since nothing it can do brings them back and it would
+only repeat the line. It commits as the studio on
 `refs/studio/chat/<thread>/before|after/<message>` with hooks off, without moving HEAD, branches
 or the user's index. Restoring changes the working tree only, and only while HEAD is the
 checkpoint's parent. The pre-rewind folder is saved on `.../rewound/<id>`; a restore that fails
