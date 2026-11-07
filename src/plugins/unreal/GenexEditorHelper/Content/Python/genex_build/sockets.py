@@ -8,8 +8,8 @@ nobody sees. On a Blueprint the mesh becomes the component Gx<mesh name> under t
 a Character's Mesh). Unreal's Python can't set a Blueprint component's parent socket, so the
 Blueprint's construction script gets one "Attach Component To Component" node right after its entry,
 keeping the component's offset relative to the socket; attaching the same mesh again reuses that
-component and that node (it only changes the socket and the offset). The Blueprint is compiled and
-saved. On a level actor the mesh's actor is attached to the actor's skeletal mesh at the socket.
+component and that node (it changes the socket and the offset, and the parent when another mesh held
+it). The Blueprint is compiled and saved. On a level actor the mesh's actor is attached to the actor's skeletal mesh at the socket.
 """
 
 import re

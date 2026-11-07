@@ -606,7 +606,9 @@ one static mesh in `<dest>/<name>/`; `import_character`, `import_animation` (wit
 `attach_to_socket` holds a static mesh at a socket of the first skeletal mesh players see that has it
 (gathered with the Blueprint's inherited components, so a `motion_character`'s `Body`, never its hidden
 mannequin `Mesh`; a socket only a hidden mesh has is refused), through one construction-script attach
-node per mesh, which attaching again reuses or, when the parent changed, replaces. Imports and retargets refuse during play, where Unreal makes only part of
+node per mesh, which attaching again reuses or, when the parent changed, replaces. It drops the node
+types Epic's toolset remembers for the Blueprint before reading them, since neither an added component
+nor a compile renews that list. Imports and retargets refuse during play, where Unreal makes only part of
 an asset (a Skeleton with no mesh) and says so only in its log. A `.glb` character or clip whose
 skeleton hangs under a scaled root (a centimetre Armature at 0.01, the root joint's own scale
 counted; a clip file with no skin by the shallowest node it animates) is imported from a copy with

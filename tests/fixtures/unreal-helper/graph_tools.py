@@ -2,7 +2,8 @@
 node uses: a graph per Blueprint (its entry first), nodes made by type id with the pins Unreal gives
 them, pins joined and broken, values set, nodes deleted. Like Unreal, the node types it finds read a
 component variable only after the Blueprint compiled with that component (the stub's
-`compile_blueprint` keeps the names it compiled)."""
+`compile_blueprint` keeps the names it compiled), and like Epic's toolset it remembers each graph's
+node types until the Blueprint's member variables or graphs change (`NodeTypeCache`)."""
 
 import unreal
 
@@ -79,6 +80,30 @@ def graph_of(blueprint, name: str) -> Graph:
     return graphs.setdefault(name, Graph(blueprint, name))
 
 
+class NodeTypeCache:
+    """Epic's _BlueprintCache as UE 5.8.3 has it: each graph's node types, kept for the whole editor session
+    under a fingerprint of the Blueprint's member variables and graph names. A component added later changes
+    neither, so the node reading it is missing until `invalidate`; compiling never invalidates."""
+
+    remembered: dict[str, tuple] = {}
+
+    @classmethod
+    def node_types(cls, graph: Graph) -> list[str]:
+        blueprint = graph.blueprint
+        fingerprint = (tuple(blueprint.variables), tuple(vars(blueprint).get('graphs', {})))
+        key = f'{blueprint.get_path_name()}:{graph.name}'
+        if key not in cls.remembered or cls.remembered[key][0] != fingerprint:
+            readers = [f'Variables|Default|Get{name}' for name in vars(blueprint).get('compiled', [])]
+            cls.remembered[key] = (fingerprint, [*readers, ATTACH])
+        return cls.remembered[key][1]
+
+    @classmethod
+    def invalidate(cls, blueprint) -> None:
+        prefix = blueprint.get_path_name()
+        for key in [key for key in cls.remembered if key.startswith(prefix)]:
+            del cls.remembered[key]
+
+
 class GraphTools:
     """The BlueprintTools calls blueprints.py makes on a graph."""
 
@@ -88,8 +113,7 @@ class GraphTools:
 
     @staticmethod
     def find_node_types(graph: Graph, type_id_filter: str) -> list[str]:
-        readers = [f'Variables|Default|Get{name}' for name in vars(graph.blueprint).get('compiled', [])]
-        return [type_id for type_id in readers + [ATTACH] if type_id_filter in type_id]
+        return [type_id for type_id in NodeTypeCache.node_types(graph) if type_id_filter in type_id]
 
     @staticmethod
     def find_nodes(graph: Graph) -> list[Node]:

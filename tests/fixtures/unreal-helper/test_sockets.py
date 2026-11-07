@@ -50,9 +50,11 @@ class AttachToSocket(HelperCase):
         static_mesh(KATANA)
         static_mesh(SAYA)
         for patch in (mock.patch.object(blueprints, '_tools', lambda: graph_tools.GraphTools),
+                      mock.patch.object(blueprints, '_node_type_cache', lambda: graph_tools.NodeTypeCache),
                       mock.patch.object(unreal, 'IntPoint', graph_tools.Point, create=True)):
             patch.start()
             self.addCleanup(patch.stop)
+        self.addCleanup(graph_tools.NodeTypeCache.remembered.clear)
 
     @property
     def mesh(self) -> dict:
@@ -73,6 +75,7 @@ class AttachToSocket(HelperCase):
         self.assertEqual(self.attaches(), {'GxSMKatana': ('Variables|Default|GetBody', 'RightHand')})
 
     def test_a_second_prop_gets_its_own_attach_node(self) -> None:
+        """Epic's toolset remembers the graph's node types from the first attach, before the second prop."""
         tool('attach_to_socket', BLUEPRINT, KATANA, 'RightHand', '')
         result = tool('attach_to_socket', BLUEPRINT, SAYA, 'Hips', '{"location": [0, 12, 0]}')
         self.assertNotIn('error', result, result)
