@@ -8,8 +8,9 @@
 import assert from "node:assert/strict";
 import { mkdir, realpath } from "node:fs/promises";
 import path from "node:path";
-import { customRecord } from "../../src/shared/custom-events.ts";
+import { CustomEvent, customRecord } from "../../src/shared/custom-events.ts";
 import type { ToolPermissionEvent } from "../../src/shared/permissions.ts";
+import type { PluginConsentEvent } from "../../src/shared/plugins.ts";
 import { UiEvent } from "../../src/shared/ui-events.ts";
 import type {
   DelegateRequest,
@@ -109,6 +110,16 @@ export async function permissionRows(core: CoreLite["core"], threadId: string): 
   });
 }
 
+/** The ids of a thread's plugin consent cards still waiting for an answer, as the chat keeps them. */
+async function pendingConsents(core: CoreLite["core"], threadId: string): Promise<string[]> {
+  return (await core.store.listEvents(threadId)).flatMap((event) => {
+    const custom = customRecord(event.data);
+    const consent = custom?.payload as Partial<PluginConsentEvent> | undefined;
+    const waiting = custom?.event_type === CustomEvent.PluginConsent && consent?.state === "pending";
+    return waiting ? [String(consent.consentId)] : [];
+  });
+}
+
 /** The seat's way to ask, when it has one. */
 export const workerAsks = (request: DelegateRequest) => request.worker?.asks;
 
@@ -139,10 +150,13 @@ export async function workerChat(
 ) {
   /** The core announced a card (`UiEvent.ToolPermission`): a test waiting for one reads the rows again. */
   const cards = new Changes();
+  /** The core announced a plugin's consent card (`UiEvent.PluginConsent`): a test waiting for one reads the rows again. */
+  const consents = new Changes();
   const lite = await coreLite({
     gamesRoot: await realpath(await tmpDir("worker-seats-games-")),
     onUiEvent: (event) => {
       if (event.type === UiEvent.ToolPermission) cards.notify();
+      if (event.type === UiEvent.PluginConsent) consents.notify();
     },
     ...options,
   });
@@ -220,6 +234,16 @@ export async function workerChat(
     if (!card) throw new Error("no card reached the chat");
     return card;
   };
+  /** Wait for a plugin consent card on the chat that is still waiting for the person; its id. */
+  const nextConsent = async (): Promise<string> => {
+    let consentId: string | undefined;
+    await until(consents, async () => {
+      consentId = (await pendingConsents(core, threadId))[0];
+      return consentId !== undefined;
+    });
+    if (!consentId) throw new Error("no consent card reached the chat");
+    return consentId;
+  };
   /** Wait until the engines have seen `count` requests. */
   const untilSeen = (count: number) => until(saw, () => seen.length >= count);
   /** Wait until the engines have seen a request `matches` holds for. */
@@ -283,6 +307,7 @@ export async function workerChat(
     untilSeen,
     untilRequest,
     nextCard,
+    nextConsent,
     whileRunning: (does: During) => {
       during = does;
     },
