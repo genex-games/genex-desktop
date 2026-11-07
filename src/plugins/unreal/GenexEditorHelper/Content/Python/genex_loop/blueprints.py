@@ -201,18 +201,19 @@ def _reads(source, getter: str) -> bool:
     return source is not None and source.type_id.rsplit('|', 1)[-1] == getter.rsplit('|', 1)[-1]
 
 
-def _existing_attaches(graph, getter: str) -> list:
-    """The attach nodes whose target is read by `getter` (ones this made before), in graph order."""
+def _existing_attaches(graph, getter: str, parent_getter: str) -> tuple[list, list]:
+    """The attach nodes whose target is read by `getter` (ones this made before), in graph order: those
+    whose parent is read by `parent_getter`, and the others."""
     tools = _tools()
     infos = tools.get_node_infos(tools.find_nodes(graph))
     by_node = {info.node.get_path_name(): info for info in infos}
-    found = []
-    for info in infos:
-        if info.type_id != ATTACH_NODE:
-            continue
-        if any(_reads(by_node.get(linked.node.get_path_name()), getter) for linked in _pin(info, 'self').connected_pins):
-            found.append(info)
-    return found
+
+    def fed_by(info, pin: str, reader: str) -> bool:
+        return any(_reads(by_node.get(linked.node.get_path_name()), reader) for linked in _pin(info, pin).connected_pins)
+
+    found = [info for info in infos if info.type_id == ATTACH_NODE and fed_by(info, 'self', getter)]
+    same = [info for info in found if fed_by(info, 'Parent', parent_getter)]
+    return same, [info for info in found if info not in same]
 
 
 def _remove_attach(info) -> None:
@@ -255,14 +256,16 @@ def attach_in_construction_script(blueprint: unreal.Blueprint, component: str, p
                                   parent_getter: str | None, socket: str) -> None:
     """Holds the component variable `component` at `socket` of `parent` from the construction script,
     keeping its relative offset; `parent_getter` names the node reading the parent when it isn't the
-    Blueprint's own component variable (a Character's inherited Mesh)."""
+    Blueprint's own component variable (a Character's inherited Mesh). A node made before for the
+    component is kept when it holds it on the same parent, else replaced (moved from a hidden mesh)."""
     tools = _tools()
     graph = tools.get_graph(blueprint, CONSTRUCTION_SCRIPT)
     getter = _getter(graph, component)
-    existing = _existing_attaches(graph, getter)
-    for extra in existing[1:]:
+    parent_reader = parent_getter or _getter(graph, parent)
+    same, other = _existing_attaches(graph, getter, parent_reader)
+    for extra in same[1:] + other:
         _remove_attach(extra)
-    info = existing[0] if existing else _insert_attach(graph, getter, parent_getter or _getter(graph, parent))
+    info = same[0] if same else _insert_attach(graph, getter, parent_reader)
     tools.set_pin_value(_pin(info, 'SocketName').pin_id, socket)
     for rule in ('LocationRule', 'RotationRule', 'ScaleRule'):
         tools.set_pin_value(_pin(info, rule).pin_id, KEEP_RELATIVE)

@@ -64,7 +64,7 @@ def script_path(project_dir: str, file: object) -> str:
     joined = os.path.join(build, *relative.split('/'))
     if not os.path.lexists(joined):
         raise Refused(MESSAGE['missing'], file=file)
-    if os.path.realpath(joined) != joined:
+    if not paths.is_own_path(joined):
         raise Refused(MESSAGE['link'], file=file)
     if not paths.is_regular_file(joined):
         raise Refused(MESSAGE['missing'], file=file)

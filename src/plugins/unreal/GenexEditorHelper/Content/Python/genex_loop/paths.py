@@ -79,6 +79,13 @@ def _absolute(path: object, field: str) -> str:
     return path
 
 
+def is_own_path(path: str) -> bool:
+    """Whether a path is its own real path, so no link leads anywhere on the way. Both are compared as the
+    system spells paths: on Windows the real path has \\ between folders and each name in its real case,
+    while the same file given with / or in another case is still that file."""
+    return os.path.normcase(os.path.realpath(path)) == os.path.normcase(os.path.normpath(path))
+
+
 def is_regular_file(path: str) -> bool:
     """Whether the path itself (not a link) is a regular file."""
     try:
@@ -117,7 +124,7 @@ def folder_file(folder: str, name: str) -> str | None:
     path = os.path.join(folder, name)
     if not os.path.lexists(path):
         return None
-    if os.path.realpath(path) != path or not is_regular_file(path):
+    if not is_own_path(path) or not is_regular_file(path):
         raise Refused(f'{name} must be a plain file in the part folder.', file=name)
     return path
 
@@ -164,7 +171,7 @@ def game_file(game: str, file: object, extensions: tuple[str, ...], max_bytes: i
     joined = os.path.normpath(os.path.join(game, _relative(file)))
     if joined == game or os.path.commonpath([game, joined]) != game or not os.path.lexists(joined):
         raise Refused(MESSAGE['not_file'], file=file)
-    if os.path.realpath(joined) != joined:
+    if not is_own_path(joined):
         raise Refused(MESSAGE['game_link'], file=file)
     if not is_regular_file(joined):
         raise Refused(MESSAGE['not_file'], file=file)
