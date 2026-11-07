@@ -230,6 +230,10 @@ export type WelcomeEventProperties = {
     phase: CliInstallPhase;
     problem: CliInstallProblem | null;
     duration_ms: number | null;
+    /** A failed download's refusal status (403 where a vendor blocks the region); else null. */
+    http_status: number | null;
+    /** A failed download's network error, only as Chromium's name ("ERR_NAME_NOT_RESOLVED"); else null. */
+    net_error: string | null;
   };
   /** Refused before it started, by the refusal's code; null when the call itself failed. */
   [WelcomeEvent.CliInstallRefused]: {

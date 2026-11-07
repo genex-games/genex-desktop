@@ -180,6 +180,47 @@ test("an installer that cannot be fetched whole over HTTPS is never run and leav
   }
 });
 
+test("a download that failed says what answered: the status it was refused with, or the network error", async () => {
+  const cases: [string, typeof fetch, { httpStatus?: number; netError?: string }][] = [
+    ["refused for the region", serving("blocked", { status: 403 }), { httpStatus: 403 }],
+    [
+      "no DNS",
+      (async () => {
+        throw new TypeError("net::ERR_NAME_NOT_RESOLVED");
+      }) as typeof fetch,
+      { netError: "ERR_NAME_NOT_RESOLVED" },
+    ],
+    [
+      "words only",
+      (async () => {
+        throw new TypeError("fetch failed at C:\\Users\\alice\\AppData");
+      }) as typeof fetch,
+      {},
+    ],
+    ["redirected off HTTPS", serving("echo hi", { url: "http://claude.ai/install.sh" }), {}],
+  ];
+  for (const [name, fetch, answered] of cases) {
+    const outcome = await installCodingCli("codex", {
+      platform: "win32",
+      env: PARENT,
+      fetch,
+      tmpRoot: await tmpDir("cli-installer-"),
+      run: neverRuns,
+    });
+    assert.equal(outcome.ok, false, name);
+    if (outcome.ok) continue;
+    assert.equal(outcome.problem, CliInstallProblem.Download, name);
+    assert.deepEqual(
+      { httpStatus: outcome.httpStatus, netError: outcome.netError },
+      {
+        httpStatus: answered.httpStatus,
+        netError: answered.netError,
+      },
+      name,
+    );
+  }
+});
+
 test("a fetched installer runs as the person with its own switches, and without keys or the other vendor's home", {
   skip: POSIX_ONLY,
 }, async () => {

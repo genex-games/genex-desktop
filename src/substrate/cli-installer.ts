@@ -18,6 +18,7 @@ import path from "node:path";
 import { CliInstallProblem, installsInApp } from "../shared/cli-install.ts";
 import type { CodingProvider } from "../shared/coding-cli.ts";
 import { MINUTE_MS, SECOND_MS } from "../shared/duration.ts";
+import { netErrorOf } from "../shared/errors.ts";
 import { EngineId } from "../shared/providers.ts";
 import { childEnv, windowsPowerShellEnv } from "./child-env.ts";
 import { killProcessTree } from "./process-tree.ts";
@@ -152,8 +153,16 @@ export interface InstallOptions {
   run?: InstallerRun;
 }
 
+/** What answered a download that failed: the status it was refused with, or Chromium's network error. */
+export interface DownloadAnswer {
+  httpStatus?: number;
+  netError?: string;
+}
+
 /** An install's end: done, or the problem and what the log should keep of it. */
-export type InstallOutcome = { ok: true } | { ok: false; problem: CliInstallProblem; detail: string };
+export type InstallOutcome =
+  | { ok: true }
+  | ({ ok: false; problem: CliInstallProblem; detail: string } & DownloadAnswer);
 
 /** Fetch `provider`'s official installer and run it; whether the CLI then works is the caller's check. */
 export async function installCodingCli(
@@ -166,7 +175,10 @@ export async function installCodingCli(
   if (!source)
     return { ok: false, problem: CliInstallProblem.Unsupported, detail: MESSAGE.noInstaller(provider, platform) };
   const script = await download(source.url, options.fetch ?? fetch);
-  if (!script.ok) return { ok: false, problem: CliInstallProblem.Download, detail: script.detail };
+  if (!script.ok) {
+    const { ok: _ok, ...failed } = script;
+    return { ...failed, ok: false, problem: CliInstallProblem.Download };
+  }
   const folder = await mkdtemp(path.join(options.tmpRoot ?? os.tmpdir(), "genex-cli-install-"));
   try {
     const file = path.join(folder, `install${source.extension}`);
@@ -197,16 +209,17 @@ function installerOf(provider: CodingProvider): Installer {
 async function download(
   url: string,
   fetchFn: FetchInstaller,
-): Promise<{ ok: true; text: string } | { ok: false; detail: string }> {
+): Promise<{ ok: true; text: string } | ({ ok: false; detail: string } & DownloadAnswer)> {
   let response: Response;
   try {
     response = await fetchFn(url, { redirect: "follow", headers: { "user-agent": INSTALLER_USER_AGENT } });
   } catch (err) {
-    return { ok: false, detail: String(err) };
+    const netError = netErrorOf(err);
+    return { ok: false, detail: String(err), ...(netError ? { netError } : {}) };
   }
   const servedFrom = response.url || url;
   if (new URL(servedFrom).protocol !== "https:") return { ok: false, detail: MESSAGE.notHttps(servedFrom) };
-  if (!response.ok) return { ok: false, detail: MESSAGE.status(response.status) };
+  if (!response.ok) return { ok: false, detail: MESSAGE.status(response.status), httpStatus: response.status };
   const bytes = new Uint8Array(await response.arrayBuffer());
   if (bytes.byteLength === 0 || bytes.byteLength > SCRIPT_MAX_BYTES)
     return { ok: false, detail: MESSAGE.size(bytes.byteLength) };

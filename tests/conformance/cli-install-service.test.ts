@@ -45,6 +45,27 @@ test("an install runs the installer once, reports each step, and tells the engin
   assert.deepEqual(service.status(), [done]);
 });
 
+test("a download that failed keeps what answered on the job, for the analytics", async () => {
+  const { service } = harness({
+    outcome: async () => ({ ok: false, problem: CliInstallProblem.Download, detail: "answered 403", httpStatus: 403 }),
+  });
+  service.start("codex");
+  const refused = await service.settled("codex");
+  assert.equal(refused?.problem, CliInstallProblem.Download);
+  assert.equal(refused?.httpStatus, 403);
+  assert.equal(refused?.netError, undefined);
+  const offline = harness({
+    outcome: async () => ({
+      ok: false,
+      problem: CliInstallProblem.Download,
+      detail: "net::ERR_CONNECTION_RESET",
+      netError: "ERR_CONNECTION_RESET",
+    }),
+  });
+  offline.service.start("claude-code");
+  assert.equal((await offline.service.settled("claude-code"))?.netError, "ERR_CONNECTION_RESET");
+});
+
 test("an install that fails says why, keeps the installer's words for the log, and changes no engine", async () => {
   const cases: [string, Parameters<typeof harness>[0], CliInstallProblem][] = [
     [

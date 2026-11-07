@@ -495,8 +495,28 @@ describe("usage analytics: CLI installs and engines", () => {
       phase: CliInstallPhase.Failed,
       problem: CliInstallProblem.TimedOut,
       duration_ms: 600_000,
+      http_status: null,
+      net_error: null,
     });
     assert.deepEqual(cliInstallSeen(memory, pairing, failed, T0), {});
+    // A failed download says what answered it, and only as a status or Chromium's error name.
+    const downloads: [Partial<CliInstallJob>, number | null, string | null][] = [
+      [{ httpStatus: 403 }, 403, null],
+      [{ netError: "ERR_NAME_NOT_RESOLVED" }, null, "ERR_NAME_NOT_RESOLVED"],
+      [{ httpStatus: 99_999, netError: "C:\\Users\\alice\\codex.ps1" }, null, null],
+    ];
+    for (const [index, [patch, status, netError]] of downloads.entries()) {
+      const download = job({
+        provider: EngineId.Codex,
+        startedAt: `2026-10-27T11:0${index}:00.000Z`,
+        phase: CliInstallPhase.Failed,
+        problem: CliInstallProblem.Download,
+        ...patch,
+      });
+      const finished = cliInstallSeen(memory, pairing, download, T0).finished;
+      assert.equal(finished?.http_status, status);
+      assert.equal(finished?.net_error, netError);
+    }
     const unstamped = job({ startedAt: "garbled", phase: CliInstallPhase.Installed, provider: EngineId.Codex });
     const late = cliInstallSeen(memory, pairing, unstamped, T0 + 10 * CLICK_CREDIT_MS).finished;
     assert.equal(late?.duration_ms, null);

@@ -42,6 +42,7 @@ import type {
   WelcomeEvent,
   WelcomeEventProperties,
 } from "./events/welcome.ts";
+import { httpStatus, netErrorCode } from "./events/launch.ts";
 import { elapsedMs, oneOf } from "./properties.ts";
 import {
   DownloadOutcome,
@@ -482,7 +483,14 @@ export function cliInstallSeen(
   pairing.cliTold.add(key);
   if (job.phase === CliInstallPhase.Installing) return { started: base };
   return {
-    finished: { ...base, phase: job.phase, problem: job.problem ?? null, duration_ms: jobDuration(job) },
+    finished: {
+      ...base,
+      phase: job.phase,
+      problem: job.problem ?? null,
+      duration_ms: jobDuration(job),
+      http_status: httpStatus(job.httpStatus),
+      net_error: netErrorCode(job.netError),
+    },
   };
 }
 

@@ -16,7 +16,7 @@ import { CodedError } from "../shared/errors.ts";
 import { t } from "../shared/i18n.ts";
 import { EngineId } from "../shared/providers.ts";
 import { UiEvent } from "../shared/ui-events.ts";
-import type { InstallOutcome } from "../substrate/cli-installer.ts";
+import type { DownloadAnswer, InstallOutcome } from "../substrate/cli-installer.ts";
 
 /** What an install needs from the app. */
 export interface CliInstallsDeps {
@@ -67,11 +67,11 @@ export function createCliInstalls(deps: CliInstallsDeps) {
     return job;
   };
 
-  /** Run the installer, then look for the CLI: the problem, or none when it works. */
+  /** Run the installer, then look for the CLI: the problem with what a failed download heard, or none when it works. */
   const attempt = async (
     provider: CodingProvider,
     operation?: CliInstallOperation,
-  ): Promise<CliInstallProblem | undefined> => {
+  ): Promise<({ problem: CliInstallProblem } & DownloadAnswer) | undefined> => {
     let outcome: InstallOutcome;
     try {
       if (operation === CliInstallOperation.Update) {
@@ -84,17 +84,18 @@ export function createCliInstalls(deps: CliInstallsDeps) {
     }
     if (!outcome.ok) {
       deps.log(MESSAGE.failed(provider, outcome.problem, outcome.detail));
-      return outcome.problem;
+      const { ok: _ok, detail: _detail, ...failed } = outcome;
+      return failed;
     }
     if (await deps.found(provider).catch(() => false)) return undefined;
     deps.log(MESSAGE.failed(provider, CliInstallProblem.NotFound, MESSAGE.notFound));
-    return CliInstallProblem.NotFound;
+    return { problem: CliInstallProblem.NotFound };
   };
 
   const run = async (started: CliInstallJob): Promise<CliInstallJob> => {
-    const problem = await attempt(started.provider, started.operation);
+    const failed = await attempt(started.provider, started.operation);
     const finishedAt = now().toISOString();
-    if (problem) return publish({ ...started, phase: CliInstallPhase.Failed, problem, finishedAt });
+    if (failed) return publish({ ...started, ...failed, phase: CliInstallPhase.Failed, finishedAt });
     const done = publish({ ...started, phase: CliInstallPhase.Installed, finishedAt });
     deps.pushUiEvent({ type: UiEvent.EnginesChanged, payload: { engine: started.provider } });
     return done;

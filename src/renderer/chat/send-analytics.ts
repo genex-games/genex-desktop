@@ -4,7 +4,13 @@
  * the words are measured and compared, never sent.
  */
 import { chatMemory, takeComposedFiles } from "../analytics/chat-memory.ts";
-import { forgetSend, noteMessageSent, type SendFacts, sendBlockedProperties } from "../analytics/chat-properties.ts";
+import {
+  forgetSend,
+  noteMessageSent,
+  noteSendWent,
+  type SendFacts,
+  sendBlockedProperties,
+} from "../analytics/chat-properties.ts";
 import {
   ComposerRoom,
   type SendBlock,
@@ -117,7 +123,10 @@ function tracking(parts: SendParts, send: RoutedSend): SendTracking {
   const at = Date.now();
   const properties = noteMessageSent(chatMemory, facts, at);
   return {
-    sent: () => track(AnalyticsEvent.MessageSent, properties),
+    sent: () => {
+      noteSendWent(chatMemory);
+      track(AnalyticsEvent.MessageSent, properties);
+    },
     failed: (error) => {
       forgetSend(chatMemory, facts.thread, send.clientId);
       const block = sendBlockOf(parts.composer.model, send.key);
