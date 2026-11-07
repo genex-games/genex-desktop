@@ -923,17 +923,26 @@ export class ChatPermissionService {
     };
     const pending: ToolPermissionEvent = { ...base, state: ToolPermissionState.Pending };
     const bypassAnswers = card.bypassAnswers ?? mode !== PermissionMode.Bypass;
-    await this.#core.append([customEventData(CustomEvent.ToolPermission, { ...pending })], threadId);
-    this.#core.emit(UiEvent.ToolPermission, { requestId, threadId, project, state: pending.state });
-    const { answer: given, by } = await this.#ledger.request({
+    // The wait starts before the card is written: a card anyone can read in the chat can be
+    // answered. A card that could not be written is withdrawn, so nothing waits on it.
+    const unwritten = new AbortController();
+    const waiting = this.#ledger.request({
       requestId,
       project,
       threadId,
-      signal,
+      signal: AbortSignal.any([signal, unwritten.signal]),
       plan,
       ...(card.outlivesTurn ? { outlivesTurn: true } : {}),
       ...(bypassAnswers ? { bypassAnswers: true } : {}),
     });
+    await this.#core
+      .append([customEventData(CustomEvent.ToolPermission, { ...pending })], threadId)
+      .catch((error: unknown) => {
+        unwritten.abort();
+        throw error;
+      });
+    this.#core.emit(UiEvent.ToolPermission, { requestId, threadId, project, state: pending.state });
+    const { answer: given, by } = await waiting;
     const answer = this.#effectiveAnswer(given, base.always, session);
     const kept = await this.#keptGrants(threadId, base.always);
     // The studio moves the running mode now; what the session reports next is its doing.

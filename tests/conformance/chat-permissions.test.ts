@@ -9,18 +9,18 @@
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { after, before, describe, it } from "node:test";
-import { setTimeout as sleep } from "node:timers/promises";
+import { after, afterEach, before, describe, it } from "node:test";
 import { readsAfterRewind } from "../../src/main/core/rewind.ts";
 import { RecoveryService } from "../../src/main/core/recovery.ts";
 import type { CoreInternals, StudioCore } from "../../src/main/studio-core.ts";
 import type { ToolPermissionAnswer, ToolPermissionEvent } from "../../src/shared/permissions.ts";
-import type { UiEvent } from "../../src/shared/ui-events.ts";
+import { UiEvent } from "../../src/shared/ui-events.ts";
 import type { DelegateRequest, PermissionAsk } from "../../src/substrate/engines/types.ts";
 import type { EventEnvelope } from "../../src/substrate/types.ts";
 import { isInside } from "../../src/substrate/paths.ts";
 import { type CoreLite, coreLite } from "../helpers/core-lite.ts";
 import { tmpDir } from "../helpers/tmp.ts";
+import { Changes, until } from "../helpers/worker-chat.ts";
 
 type Api = Record<string, (input: unknown) => Promise<unknown>>;
 
@@ -39,13 +39,24 @@ describe("game chat permissions", () => {
   const project = "perm-chat";
   const seen: DelegateRequest[] = [];
   const uiEvents: UiEvent[] = [];
+  /** The core announced a card (`UiEvent.ToolPermission`): a test waiting for one reads the rows again. */
+  const cards = new Changes();
+  /** Sessions a test started that have not ended: a failed test's are stopped (`afterEach`). */
+  const running = new Set<Promise<unknown>>();
   let sent = 0;
+  const idle = async () => {};
   /** What the fake Claude session does once it has its request. */
-  let during: (request: DelegateRequest) => Promise<void> = async () => {};
+  let during: (request: DelegateRequest) => Promise<void> = idle;
 
   before(async () => {
     // No project root policy: one test adopts a game from outside the studio's folders.
-    lite = await coreLite({ executionPolicy: {}, onUiEvent: (e) => uiEvents.push(e) });
+    lite = await coreLite({
+      executionPolicy: {},
+      onUiEvent: (event) => {
+        uiEvents.push(event);
+        if (event.type === UiEvent.ToolPermission) cards.notify();
+      },
+    });
     core = lite.core;
     // No harness in a lite core: a dispatch reaches nothing, and a message is still the person's.
     core.host.dispatch = async () => undefined;
@@ -72,9 +83,25 @@ describe("game chat permissions", () => {
     core.engines.register(engine("claude-code", true));
     core.engines.register(engine("codex", false));
   });
+  // A test that failed may leave its session waiting on a card, and the game busy for every test
+  // after it: Stop withdraws the card, as the person's Stop would, and the session ends.
+  afterEach(async () => {
+    during = idle;
+    if (!running.size) return;
+    await core.stopThread(threadId);
+    await Promise.allSettled(running);
+  });
   after(async () => {
     await lite?.close();
   });
+
+  /** A session the test started, kept in `running` until it ends. */
+  const track = <T>(session: Promise<T>): Promise<T> => {
+    running.add(session);
+    const ended = () => running.delete(session);
+    session.then(ended, ended);
+    return session;
+  };
 
   /** The person sends a message in a chat, as the composer does; its id is what a session answers. */
   const personSays = async (thread = threadId): Promise<string> => {
@@ -99,27 +126,40 @@ describe("game chat permissions", () => {
     permissionRows(await core.store.listEvents(threadId)).filter(
       (row) => requestId === undefined || row.requestId === requestId,
     );
+  /**
+   * The first card on the chat that `known` does not hold, read again each time the core announces
+   * one; undefined when `session` ends without one, so a session that never asks fails at once.
+   */
+  const newCard = async (known: Set<string>, session: Promise<unknown>) => {
+    let card: ToolPermissionEvent | undefined;
+    const shown = until(cards, async () => {
+      card = (await rows()).find((row) => !known.has(row.requestId));
+      return card !== undefined;
+    });
+    await Promise.race([shown, session]);
+    return card;
+  };
   /** Start a session that asks once, and wait for its card. */
   const asking = async (ask: Omit<PermissionAsk, "toolUseId">, extra: Record<string, unknown> = {}) => {
     const known = new Set((await rows()).map((row) => row.requestId));
     let answer: ToolPermissionAnswer | undefined;
     during = async (request) => {
-      answer = await request.permissions!.ask({ toolUseId: "tu", ...ask }, new AbortController().signal);
+      assert.ok(request.permissions, "the chat's session asks");
+      answer = await request.permissions.ask({ toolUseId: "tu", ...ask }, new AbortController().signal);
     };
-    const session = brief(extra).finally(() => {
-      during = async () => {};
-    });
-    let card: ToolPermissionEvent | undefined;
-    for (let waited = 0; !card && waited < 200; waited++) {
-      card = (await rows()).find((row) => !known.has(row.requestId));
-      if (!card) await sleep(25);
-    }
-    assert.ok(card, "a permission card");
+    const session = track(
+      brief(extra).finally(() => {
+        during = idle;
+      }),
+    );
+    const card = await newCard(known, session);
+    assert.ok(card, `a permission card: the session answered ${JSON.stringify(answer)}`);
     return {
       card,
       done: async () => {
         await session;
-        return answer!;
+        assert.ok(answer, "the session heard an answer");
+        return answer;
       },
     };
   };
@@ -267,12 +307,10 @@ describe("game chat permissions", () => {
     await core.setPermissionMode(threadId, "plan");
     const known = new Set((await rows()).map((row) => row.requestId));
     const messageId = await personSays();
-    const turn = api["engine.delegate"]!({ engine: "bonsai", project, threadId, prompt: "x", chatTurn: { messageId } });
-    let card: ToolPermissionEvent | undefined;
-    for (let waited = 0; !card && waited < 200; waited++) {
-      card = (await rows()).find((row) => !known.has(row.requestId));
-      if (!card) await sleep(25);
-    }
+    const turn = track(
+      api["engine.delegate"]!({ engine: "bonsai", project, threadId, prompt: "x", chatTurn: { messageId } }),
+    );
+    const card = await newCard(known, turn);
     assert.ok(card, "a plan card");
     assert.equal(card.tool, "ExitPlanMode");
     assert.equal(card.plan, "# Plan\n\n1. Jump on space");
@@ -309,18 +347,16 @@ describe("game chat permissions", () => {
     const turn = async (answer: { decision: "deny" } | { decision: "approve_plan"; mode: "acceptEdits" }) => {
       const known = new Set((await rows()).map((row) => row.requestId));
       const messageId = await personSays();
-      const pending = api["engine.delegate"]!({
-        engine: "bonsai",
-        project,
-        threadId,
-        prompt: "x",
-        chatTurn: { messageId },
-      });
-      let card: ToolPermissionEvent | undefined;
-      for (let waited = 0; !card && waited < 200; waited++) {
-        card = (await rows()).find((row) => !known.has(row.requestId));
-        if (!card) await sleep(25);
-      }
+      const pending = track(
+        api["engine.delegate"]!({
+          engine: "bonsai",
+          project,
+          threadId,
+          prompt: "x",
+          chatTurn: { messageId },
+        }),
+      );
+      const card = await newCard(known, pending);
       assert.ok(card, "a plan card");
       assert.equal(card.tool, "ExitPlanMode");
       assert.match(String(card.plan), /1\. Three levels[\s\S]*A neon platformer/);
@@ -498,6 +534,36 @@ describe("game chat permissions", () => {
     assert.deepEqual(forgotten.rules, []);
   });
 
+  it("a card can be answered the moment the chat shows it", async () => {
+    await core.setPermissionMode(threadId, "default");
+    const asked = new AbortController();
+    const taken: boolean[] = [];
+    // The person's click as soon as the card reaches the chat's log. A click refused there would
+    // leave the session waiting for good, so a refused one withdraws the question instead.
+    const watching = core.store.watch(threadId, (event) => {
+      const card = permissionRows([event]).find((row) => row.state === "pending");
+      if (!card) return;
+      const answered = core.answerPermission(card.requestId, { decision: "allow" });
+      taken.push(answered);
+      if (!answered) asked.abort();
+    });
+    let answer: ToolPermissionAnswer | undefined;
+    during = async (request) => {
+      assert.ok(request.permissions, "the chat's session asks");
+      answer = await request.permissions.ask(
+        { toolUseId: "tu", tool: "Bash", input: { command: "ls" }, always: [] },
+        asked.signal,
+      );
+    };
+    try {
+      await track(brief());
+    } finally {
+      watching.close();
+    }
+    assert.deepEqual(taken, [true], "the click is taken");
+    assert.deepEqual(answer, { decision: "allow" });
+  });
+
   it("a card still waiting when the person switches the chat to Bypass is allowed, as Bypass asks nothing", async () => {
     await core.setPermissionMode(threadId, "default");
     const { card, done } = await asking({ tool: "Bash", input: { command: "npm test" }, always: [] });
@@ -519,7 +585,7 @@ describe("game chat permissions", () => {
       answer = await request.permissions!.ask(ask, new AbortController().signal);
     };
     await brief().finally(() => {
-      during = async () => {};
+      during = idle;
     });
     // The cards below are asked in Manual, as the person who left Bypass would be.
     await core.setPermissionMode(threadId, "default");
@@ -553,6 +619,7 @@ describe("game chat permissions", () => {
   });
 
   it("a deny carries the person's words; a plan approval sets the chat's mode", async () => {
+    await core.setPermissionMode(threadId, "default");
     const denied = await asking({
       tool: "Write",
       input: { file_path: "/Users/me/notes.md", content: "hi" },
@@ -585,6 +652,7 @@ describe("game chat permissions", () => {
   });
 
   it("the end of the turn and Stop withdraw a waiting question", async () => {
+    await core.setPermissionMode(threadId, "default");
     const ended = await asking({ tool: "Bash", input: { command: "rm -rf build" }, always: [] });
     await core.append([{ type: "turn_ended", status: "cancelled" }], threadId);
     // Flipped (review F5): a withdrawal is the host's own deny, marked so Claude reads it as it is.
@@ -697,7 +765,7 @@ describe("game chat permissions", () => {
     await core.setPermissionMode(threadId, "auto");
     during = async (request) => request.permissions!.onMode!("default");
     await brief({ model: "claude-z" });
-    during = async () => {};
+    during = idle;
     await core.setPermissionMode(threadId, "plan");
     const plan = await asking({ tool: "ExitPlanMode", input: { plan: "1. Jump" }, always: [] }, { model: "claude-z" });
     assert.throws(() => core.answerPermission(plan.card.requestId, { decision: "allow" }), /does not fit/);
@@ -742,17 +810,22 @@ describe("game chat permissions", () => {
       ready();
       await held;
     };
-    const session = brief({ model: "claude-y" });
-    await started;
-    await core.setPermissionMode(threadId, "acceptEdits");
-    assert.deepEqual(switched, ["acceptEdits"]);
-    refuse = true;
-    const view = await core.setPermissionMode(threadId, "auto");
-    assert.ok(view.autoUnavailable.includes("claude-y"), "Auto refused mid-turn is shown, not thrown");
-    await assert.rejects(core.setPermissionMode(threadId, "default"), /next message/);
-    release();
+    const session = track(brief({ model: "claude-y" }));
+    try {
+      // Its start, or its end without one: a brief the core refused fails here, at once.
+      await Promise.race([started, session]);
+      await core.setPermissionMode(threadId, "acceptEdits");
+      assert.deepEqual(switched, ["acceptEdits"]);
+      refuse = true;
+      const view = await core.setPermissionMode(threadId, "auto");
+      assert.ok(view.autoUnavailable.includes("claude-y"), "Auto refused mid-turn is shown, not thrown");
+      await assert.rejects(core.setPermissionMode(threadId, "default"), /next message/);
+    } finally {
+      // The held session ends whatever the checks above found, so no later test finds the game busy.
+      release();
+    }
     await session;
-    during = async () => {};
+    during = idle;
     refuse = false;
     await core.setPermissionMode(threadId, "bypassPermissions");
     assert.deepEqual(switched, ["acceptEdits"], "a finished session is not switched");

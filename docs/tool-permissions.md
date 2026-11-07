@@ -651,10 +651,11 @@ worktrees, other runs and `runs/` stay fenced.
 
 ## Questions and answers
 
-`#ask` appends a pending `tool_permission` row (input digest bounded, plan ≤32k characters),
-emits `tool.permission` and waits on `ToolPermissions`
-([`src/main/tool-permissions.ts`](../src/main/tool-permissions.ts)): the plugin consent ledger
-without a timeout, for every card (a lead's and a worker's included; an older chat's rows settled
+`#ask` starts its wait on `ToolPermissions`
+([`src/main/tool-permissions.ts`](../src/main/tool-permissions.ts)), then appends a pending
+`tool_permission` row (input digest bounded, plan ≤32k characters) and emits `tool.permission`, so
+a card anyone can read is already answerable (a row it cannot write withdraws the wait). The
+ledger is the plugin consent ledger without a timeout, for every card (a lead's and a worker's included; an older chat's rows settled
 `by: timeout` still read "Withdrawn: nobody answered"). The person's answer, Stop (`stopThread`, `engine.abort`, harness death, app
 stop), the session's abort or the end of the turn settles it; a lead's card is not
 the chat's turn (`outlivesTurn`), so another turn ending (a picture or slash command answered on its
