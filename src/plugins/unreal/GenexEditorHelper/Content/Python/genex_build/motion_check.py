@@ -36,6 +36,9 @@ MAX_FRAMES = 2400
 # A frame less than this many game seconds after the last is not read: the game is held all but still
 # (a motion strip's frame being written), and its frames would fill the check with one moment.
 MIN_STEP_S = 0.001
+# The wall seconds the bridge's wait for a check's report allows for motion strips holding the game
+# meanwhile, which the check's own wall-clock cap doesn't count (24 frames at about a second each).
+STRIP_HOLD_S = 30.0
 # How many actor labels a refusal names when nothing matches.
 CLOSEST_NAMES = 6
 # The bones read in the body's own frame for pops, by these words in their names (feet and hands come
@@ -271,4 +274,4 @@ def motion_check(target: str, seconds: float) -> dict:
         os.remove(check.record)
     check.held = shots.lift_throttle()
     play.watch(check.step, lambda: check.finish(MESSAGE['ended']))
-    return {**check.facts(), 'record': check.record, 'waitS': round(play.wall_cap(span))}
+    return {**check.facts(), 'record': check.record, 'waitS': round(play.wall_cap(span) + STRIP_HOLD_S)}

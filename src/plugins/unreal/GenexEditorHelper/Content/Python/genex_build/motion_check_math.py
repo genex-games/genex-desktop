@@ -331,7 +331,7 @@ def montages(frames: list) -> list:
 def slow_share(frames: list) -> float | None:
     """The share of the steps both frames count that are too long to read pops from; None without one."""
     steps = [dt for a, b, dt in _steps(frames) if _counted(a) and _counted(b)]
-    return round(sum(1 for dt in steps if dt > POP_STEP_S) / len(steps), 2) if steps else None
+    return sum(1 for dt in steps if dt > POP_STEP_S) / len(steps) if steps else None
 
 
 def flagged(frames: list, flag: str) -> dict:
@@ -383,5 +383,6 @@ def report(frames: list) -> dict:
             'fps': round((len(frames) - 1) / seconds, 1) if seconds > 0 else None,
             'travelM': round(travel / 100.0, 2),
             'slide': sliding, 'pops': popped[:MAX_LISTED], 'snapTurns': snaps[:MAX_LISTED],
-            'montages': played[:MAX_LISTED * 2], 'hidden': hidden, 'ragdoll': ragdoll, 'slowShare': slow,
+            'montages': played[:MAX_LISTED * 2], 'hidden': hidden, 'ragdoll': ragdoll,
+            'slowShare': None if slow is None else round(slow, 2),
             'problems': problems, 'verdict': 'problems' if problems else 'clean'}

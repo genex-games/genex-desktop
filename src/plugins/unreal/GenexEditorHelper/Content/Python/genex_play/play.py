@@ -85,6 +85,11 @@ def hold_still(on: bool) -> None:
         _still['since'] = None
 
 
+def real_clock() -> float:
+    """The wall clock as it runs, holds and all, in seconds: what a frame or a shot's stall took."""
+    return time.monotonic()
+
+
 def wall_clock() -> float:
     """The wall clock the game-time waits' caps read, in seconds (tests move it): it stands still while a
     strip holds the game still."""
@@ -277,7 +282,7 @@ def _stop_watches() -> None:
 
 def _tick(_delta: float) -> None:
     wall = wall_clock()
-    _frames.append(time.monotonic())
+    _frames.append(real_clock())
     try:
         now = game_seconds()
     except RuntimeError:  # the play session ended: its input went with it
@@ -298,7 +303,7 @@ def _tick(_delta: float) -> None:
 
 def note_shot() -> None:
     """A high-resolution shot was asked for now: the frames it stalls stay out of the frame rate."""
-    _shots.append(time.monotonic())
+    _shots.append(real_clock())
 
 
 def _stalled(start: float, end: float) -> bool:
@@ -310,7 +315,7 @@ def _stalled(start: float, end: float) -> bool:
 def fps() -> float | None:
     """The editor's frames per wall second lately, leaving out the frames shots stalled, else the play world's
     last frame; None when unknown."""
-    wall = time.monotonic()
+    wall = real_clock()
     recent = [t for t in _frames if wall - t <= FPS_WINDOW_S]
     gaps = [end - start for start, end in zip(recent, recent[1:]) if not _stalled(start, end)]
     fresh = bool(gaps) and wall - recent[-1] <= FPS_STALE_S and sum(gaps) > 0

@@ -326,20 +326,22 @@ class _Strip:
         self.done = False
 
     def finish(self, why: str = '') -> bool:
+        _let_go(self.hold)
+        self.hold = None
         if self.done:
             return False
         self.done = True
         record = {'frames': self.poses, 'files': self.files[:len(self.poses)], 'intervalS': self.interval}
         if why:
             record['error'] = why
-        _let_go(self.hold)
-        self.hold = None
         with open(self.poses_file, 'w', encoding='utf-8') as handle:
             json.dump(record, handle)
         give_back_throttle(self.owed)
         return False
 
     def step(self, game_now: float, _wall_now: float) -> bool:
+        if self.done:
+            return False
         if self.waiting is not None:
             file, asked = self.waiting
             landed = os.path.exists(file) and os.path.getsize(file) > 0

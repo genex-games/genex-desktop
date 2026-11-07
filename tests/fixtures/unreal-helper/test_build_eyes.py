@@ -255,6 +255,11 @@ class Strips(PlayCase):
         self.assertAlmostEqual(times[1] - times[0], 0.06, places=2)
         self.assertEqual(unreal.state['time_dilation'], 1.0)
 
+    def end_watching(self) -> None:
+        """Ends the play's own watches, and the frame after, so no tick outlives the test."""
+        play.release_all()
+        self.tick()
+
     def settle(self, index: int) -> None:
         """Frame `index` lands, and the world frame the game stays held after it passes."""
         self.land(index)
@@ -294,6 +299,7 @@ class Strips(PlayCase):
     def test_a_hold_runs_its_game_seconds_however_long_the_frames_hold_the_game(self) -> None:
         # Held, the game barely moves while the wall clock runs on: a cap that counted those seconds let go of
         # a key held for 2 game seconds once two frames had taken 10 s each to land.
+        self.addCleanup(self.end_watching)
         self.assertIn('held', json.loads(GenexPlayTools.hold('W', 1.0, 0.0, 2.0)))
         tool('motion_strip', 2, 0.5)
         for index in range(2):
@@ -305,8 +311,36 @@ class Strips(PlayCase):
         for _ in range(18):
             self.tick(game=0.0, wall=1.0)
         self.assertEqual(json.loads(GenexPlayTools.player_state())['held'], [])
-        play.release_all()
-        self.tick()  # one frame after the play's own watch ends, so no tick outlives the test
+
+    def test_a_shot_after_a_strip_still_excuses_the_frame_its_stall_froze(self) -> None:
+        # The caps' clock stands still while a strip holds the game; timed on it, a later shot's stall read as a hitch.
+        def findings() -> list:
+            return [finding['code'] for finding in json.loads(GenexPlayTools.player_state(True))['findings']]
+        self.addCleanup(self.end_watching)
+        self.assertEqual(findings(), [])
+        for _ in range(250):  # past the first seconds, which are the level loading
+            self.tick(game=0.016, wall=0.016)
+        tool('motion_strip', 2, 0.05)
+        for index in range(2):
+            self.tick(game=0.06, wall=0.06)  # a frame asked, the game held
+            self.tick(game=0.0, wall=2.0)  # the shot renders and is written
+            self.settle(index)
+        self.assertTrue(tool('capture_play', 'look', 1280, 720)['queued'])
+        self.tick(game=0.016, wall=1.2)  # the frame that renders the shot
+        self.assertEqual(findings(), [])
+        self.tick(game=0.016, wall=1.2)  # a frame no shot froze
+        self.assertEqual(findings(), ['hitch'])
+
+    def test_a_strip_stepped_after_it_finished_asks_nothing_and_holds_nothing(self) -> None:
+        self.addCleanup(self.end_watching)
+        tool('motion_strip', 2, 0.05)
+        self.tick(game=0.02, wall=0.02)
+        strip = shots._strip[0]
+        strip.finish('the play session ended')
+        self.assertEqual(unreal.state['time_dilation'], 1.0, 'let go as it finishes')
+        self.land(0)
+        self.assertFalse(strip.step(1.0, 1.0))
+        self.assertEqual((len(self.shots_asked()), unreal.state['time_dilation']), (1, 1.0))
 
     def test_a_frame_that_never_lands_ends_the_strip_with_why(self) -> None:
         answer = tool('motion_strip', 2, 0.5)

@@ -131,6 +131,14 @@ class Sliding(unittest.TestCase):
         self.assertEqual((codes(report), report['verdict']), ([maths.SLOW_FRAMES], 'problems'))
         self.assertEqual(maths.report(walk())['slowShare'], 0.0, 'none at 30 fps')
 
+    def test_just_over_half_the_steps_too_long_is_already_too_slow(self) -> None:
+        frames = walk(seconds=14.0)[:401]
+        for i, frame in enumerate(frames):  # 201 steps of 0.2 s, then 199 at 30 fps
+            frame['t'] = 0.2 * min(i, 201) + max(0, i - 201) / FPS
+        report = maths.report(frames)
+        self.assertEqual(report['slowShare'], 0.5)
+        self.assertIn(maths.SLOW_FRAMES, codes(report))
+
     def test_one_low_frame_a_foot_steps_down_into_leaves_the_slide_measured(self) -> None:
         frames = walk(legs='skating')
         for frame in frames[:3]:  # a step down with foot IK before the skate
