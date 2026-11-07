@@ -92,6 +92,10 @@ app.whenReady().then(async()=>{
   assert.deepEqual(rows(buildPress)[0],['Mac','Building on this Mac',null]);
   assert.equal(buildPress.primary,'Update Windows','Windows can update while the Mac app builds');
   report.buildPress=await capture('dark-2-building-mac');
+  // The Mac app lands and the agent's turn ends: the open card sees it, with no reopening.
+  const landed=await step('landed','window.cardRig.land()');
+  assert.deepEqual(rows(landed)[0],['Mac','Live · older than your game','3.2 GB'],'the card follows the folder');
+  assert.equal(landed.primary,'Update Mac and Windows');
   // The Mac app landed: one press updates both.
   const built=await step('built','window.cardRig.open({scene:"built"})');
   assert.deepEqual(rows(built),[
@@ -163,7 +167,7 @@ app.whenReady().then(async()=>{
   const linux=await step('linuxOn','window.cardRig.toggle("linux")');
   assert.equal(linux.primary,'Build Linux','an app the agent makes is built first, alone');
   assert.deepEqual(report.errors,[]);
-  console.log('PASS Publish card: skeleton rows before the folder answers; older apps say where they get built and build first; Genex Cloud shows its clock and the hour line; done has no button; a switch off takes an app down in amber; a failed cloud build keeps the older app live and hands its errors to the agent; a first publish names both; a Unity game lists four platforms; no "Public:", no Share assets');
+  console.log('PASS Publish card: skeleton rows before the folder answers; older apps say where they get built and build first, and an open card sees the build land; Genex Cloud shows its clock and the hour line; done has no button; a switch off takes an app down in amber; a failed cloud build keeps the older app live and hands its errors to the agent; a first publish names both; a Unity game lists four platforms; no "Public:", no Share assets');
  } catch(error) { report.failure=error.stack; console.error(error); await capture('failure').catch(()=>{}); }
  fs.writeFileSync(path.join(evidence,'report.json'),JSON.stringify(report,null,2));
  app.exit(report.failure?1:0);

@@ -28,6 +28,7 @@ import { NativeArch } from "../../src/shared/play-native.ts";
 import type { PluginInfo } from "../../src/shared/plugins.ts";
 import { CoreFact } from "../../src/shared/project-facts.ts";
 import { type PublishPlatform, PublishPlatformState, PublishTarget } from "../../src/shared/publish-platforms.ts";
+import { UiEvent } from "../../src/shared/ui-events.ts";
 import { fakeStudioApi } from "../helpers/fake-studio-api.ts";
 
 const GAME = "genex-strike";
@@ -130,6 +131,8 @@ function appsOf(of: Scene): GenexNativeRecord {
 }
 
 let scene: Scene = "old";
+/** The agent's Mac build has landed in the folder while the card stays open (`land`). */
+let landed = false;
 /**
  * The game each scene opens: the Mac app the agent builds in `old` lands in `built`, so those two share
  * one game (the card remembers its ask per game); every other scene is a game of its own.
@@ -164,7 +167,7 @@ fake.stub("pluginAction", async (_id, name, args) => {
 let release: () => void = () => {};
 fake.stub("genexPublishPlatforms", async () => {
   if (scene === "loading") await new Promise<void>((resolve) => (release = resolve));
-  return PLATFORMS[scene]();
+  return landed ? PLATFORMS.built() : PLATFORMS[scene]();
 });
 fake.stub("genexPublishApps", async (_project, _title, _remix, platforms) => {
   asked.push(`apps:${(platforms ?? []).join("+")}`);
@@ -238,6 +241,7 @@ async function open(options: { theme?: "dark" | "light"; scene?: Scene } = {}) {
     mode: options.theme === "light" ? AppearanceMode.Light : AppearanceMode.Dark,
   }));
   scene = options.scene ?? "old";
+  landed = false;
   game = scene === "old" || scene === "built" ? GAME : `${GAME}-${scene}`;
   asked.length = 0;
   composed.length = 0;
@@ -284,4 +288,18 @@ async function press() {
   return sample();
 }
 
-Object.assign(window, { cardRig: { open, answer, toggle, press, sample } });
+/**
+ * The agent's Mac build lands in the folder while the card stays open, and the agent's turn ends: the
+ * card is never reopened, and waits at most `wait` frames for the row to change.
+ */
+async function land(wait = 120) {
+  landed = true;
+  fake.emit({ type: UiEvent.ChatStreamEnded, payload: { threadId: "t1", streamId: "s1" } });
+  const status = () =>
+    document.querySelector(`[data-publish-platform="mac"] [data-publish-platform-status]`)?.textContent ?? "";
+  for (let i = 0; i < wait && status().startsWith("Building"); i++) await frame();
+  await settle();
+  return sample();
+}
+
+Object.assign(window, { cardRig: { open, answer, toggle, press, sample, land } });
