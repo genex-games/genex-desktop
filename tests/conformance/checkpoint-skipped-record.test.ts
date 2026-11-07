@@ -1,22 +1,21 @@
 /**
- * Files a chat checkpoint leaves out for their size: Genex's own `checkpoint_skipped` record names
- * them in the chat, written by the studio only, and no delegated session is told of them. Nothing a
- * session can do brings them back, and the person already reads Genex's line.
+ * Files a chat checkpoint leaves out for their size: the chat says nothing of them then, since
+ * nothing is lost yet, and no delegated session is told of them. Only a rewind that leaves them as
+ * they are names them, in Genex's own `checkpoint_skipped` record, written by the studio only
+ * (`chat-rewind-studio.test.ts`).
  */
 import assert from "node:assert/strict";
 import { truncate, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { after, before, describe, it } from "node:test";
-import { CHECKPOINT_CHANGE_MAX_BYTES, CHECKPOINT_FILE_MAX_BYTES } from "../../src/main/chat-checkpoints.ts";
-import { CHECKPOINT_SKIPPED_FILES_LISTED, SkippedBy } from "../../src/shared/chat-rewind.ts";
+import { CHECKPOINT_FILE_MAX_BYTES, chatCheckpointRef } from "../../src/main/chat-checkpoints.ts";
 import { CustomEvent, customEvent, customEventData } from "../../src/shared/custom-events.ts";
+import { gitOrNull } from "../../src/substrate/snapshots.ts";
 import type { DelegateRequest } from "../../src/substrate/engines/types.ts";
 import { type CoreLite, coreLite } from "../helpers/core-lite.ts";
 
 type Api = Record<string, (input: unknown) => Promise<unknown>>;
-
-const KB = 1024;
 
 /** Poll until `predicate` holds. */
 async function until(predicate: () => Promise<boolean>, label: string): Promise<void> {
@@ -33,7 +32,7 @@ function everythingRead(request: DelegateRequest): string {
   return [request.system ?? "", ...(request.notices ?? []), request.prompt].join("\n\n");
 }
 
-describe("files too large to save: the chat's record, never a session's notice", () => {
+describe("files too large to save: no line at the checkpoint, and never a session's notice", () => {
   let lite: CoreLite;
   let api: Api;
   let threadId: string;
@@ -80,8 +79,9 @@ describe("files too large to save: the chat's record, never a session's notice",
   const delegate = (thread = threadId, game = project) =>
     call("engine.delegate", { engine: "claude-code", project: game, threadId: thread, prompt: "Build it" });
 
-  it("the chat names a file a checkpoint left out, and no session that follows is told of it", async () => {
-    const big = path.join(lite.core.games.dirFor(project), "big.bin");
+  it("a checkpoint that leaves a file out writes no line, and no session that follows is told of it", async () => {
+    const dir = lite.core.games.dirFor(project);
+    const big = path.join(dir, "big.bin");
     await writeFile(big, "");
     await truncate(big, CHECKPOINT_FILE_MAX_BYTES + 1);
     // The chat's queue starts answering a message: its checkpoint leaves the big file out.
@@ -89,21 +89,13 @@ describe("files too large to save: the chat's record, never a session's notice",
       threadId,
       batch: [customEventData(CustomEvent.CoordinatorMessageProcessing, { messageId: "msg_one" })],
     });
+    const checkpoint = chatCheckpointRef(threadId, "msg_one");
     await until(
-      async () =>
-        (await lite.core.store.listEvents(threadId)).some((event) => customEvent(event, CustomEvent.CheckpointSkipped)),
-      "the chat's line about the file",
+      async () => (await gitOrNull(dir, ["rev-parse", "--verify", "-q", checkpoint])) !== null,
+      "the message's checkpoint",
     );
-    const [record] = (await lite.core.store.listEvents(threadId))
-      .map((event) => customEvent(event, CustomEvent.CheckpointSkipped))
-      .filter((payload) => payload !== null);
-    assert.equal(record?.by, SkippedBy.Checkpoint);
-    assert.deepEqual(
-      record?.files,
-      [{ file: "big.bin", bytes: CHECKPOINT_FILE_MAX_BYTES + 1 }],
-      "Genex's line names it",
-    );
-
+    const leftOut = await gitOrNull(dir, ["show", `${checkpoint}:.studio-checkpoint-left-out.json`]);
+    assert.deepEqual(JSON.parse(leftOut ?? "{}").skipped, ["big.bin"], "the checkpoint left it out");
     await call("engine.delegate", {
       engine: "claude-code",
       project,
@@ -120,53 +112,17 @@ describe("files too large to save: the chat's record, never a session's notice",
     assert.equal(read.length, 5, "every session ran");
     // Flipped: the thread's next sessions read "Genex couldn't save these files at its checkpoint
     // (too large), so Rewind can't bring them back: big.bin (50 MB)." until one settled, and an
-    // agent repeated it to the person, who had already read Genex's line.
+    // agent repeated it to the person.
     for (const [n, text] of read.entries()) {
       assert.ok(text.includes("Build it") || n === 0, `session ${n} read its prompt`);
       assert.doesNotMatch(text, /big\.bin|Rewind can't bring/, `session ${n} is told nothing of the file`);
     }
-  });
-
-  it("the chat's record lists the fifty largest files, the count of all and the limits", async () => {
-    const project = "unsaved-many";
-    await lite.core.games.scaffold(project);
-    const thread = await lite.core.createGameThread(project);
-    const dir = lite.core.games.dirFor(project);
-    // Sparse: each is past the size a checkpoint keeps and costs no disk.
-    const count = CHECKPOINT_SKIPPED_FILES_LISTED + 1;
-    for (let n = 0; n < count; n++) {
-      const file = path.join(dir, `big-${String(n).padStart(2, "0")}.bin`);
-      await writeFile(file, "");
-      await truncate(file, CHECKPOINT_FILE_MAX_BYTES + 1 + ((n * 7) % count) * KB);
-    }
-    await call("events.append", {
-      threadId: thread,
-      batch: [customEventData(CustomEvent.CoordinatorMessageProcessing, { messageId: "msg_many" })],
-    });
-    await until(
-      async () =>
-        (await lite.core.store.listEvents(thread)).some((event) => customEvent(event, CustomEvent.CheckpointSkipped)),
-      "the chat's line about the files",
+    // Flipped: the checkpoint wrote a line, "Rewind can’t bring back 1 file that is too large to
+    // save: big.bin (50 MB)", though nothing was lost yet. Only a rewind that leaves it names it.
+    const records = (await lite.core.store.listEvents(threadId)).filter((event) =>
+      customEvent(event, CustomEvent.CheckpointSkipped),
     );
-    const records = (await lite.core.store.listEvents(thread))
-      .map((event) => customEvent(event, CustomEvent.CheckpointSkipped))
-      .filter((payload) => payload !== null);
-    assert.equal(records.length, 1);
-    const [record] = records;
-    assert.ok(record?.files);
-    const listed = record.files;
-    assert.equal(listed.length, CHECKPOINT_SKIPPED_FILES_LISTED, "at most fifty are listed");
-    assert.equal(record.total, count, "and how many there were");
-    const sizes = listed.map((file) => file.bytes);
-    assert.deepEqual(
-      sizes,
-      [...sizes].sort((a, b) => b - a),
-      "largest first",
-    );
-    assert.equal(sizes[0], CHECKPOINT_FILE_MAX_BYTES + 1 + (count - 1) * KB, "the largest is listed");
-    assert.ok(!listed.some((file) => file.bytes === CHECKPOINT_FILE_MAX_BYTES + 1), "the smallest is the one left out");
-    assert.equal(record.fileLimitBytes, CHECKPOINT_FILE_MAX_BYTES);
-    assert.equal(record.changeLimitBytes, CHECKPOINT_CHANGE_MAX_BYTES);
+    assert.deepEqual(records, [], "the chat says nothing of it");
   });
 
   it("the harness cannot forge one: the record is refused", async () => {

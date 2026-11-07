@@ -5269,10 +5269,6 @@ export default {
     "{count, plural, other {원래 기록은 이름을 .git.studio-backup으로 바꿔서 바로 옆에 보관해 뒀어요.}}",
   "{count, plural, one {Restored # game file.} other {Restored # game files.}}":
     "{count, plural, other {게임 파일 #개를 복원했어요.}}",
-  "{count, plural, one {Rewind can’t bring back # file from this change: it was over {size} at once, so the largest stayed out: {files}.} other {Rewind can’t bring back # files from this change: it was over {size} at once, so the largest stayed out: {files}.}}":
-    "{count, plural, other {이 변경이 한 번에 {size}를 넘어 가장 큰 파일 #개가 저장되지 않았고, 되감기로 되돌릴 수 없어요: {files}.}}",
-  "{count, plural, one {Rewind can’t bring back # file that is too large to save: {files}.} other {Rewind can’t bring back # files that are too large to save: {files}.}}":
-    "{count, plural, other {저장하기에 너무 큰 파일 #개는 되감기로 되돌릴 수 없어요: {files}.}}",
   "{count, plural, one {The chat went back, and # game file with it.} other {The chat went back, and # game files with it.}}":
     "{count, plural, other {채팅을 되감았고, 게임 파일 #개도 함께 되돌렸어요.}}",
   "{count, plural, one {Working on # task} other {Working on # tasks}}": "{count, plural, other {작업 #개 진행 중}}",

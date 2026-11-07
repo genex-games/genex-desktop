@@ -1302,7 +1302,7 @@ function narrateRebuild(chat: ChatDraft, event: EventEnvelope): void {
   say(chat, event.id, tag, `${restart.reason ?? TRANSCRIPT_WORDS.rebuiltItself}`);
 }
 
-/** Files too large to save, which Rewind cannot bring back: never folded away with routine lines. */
+/** Files too large to save that a rewind left as they were: never folded away with routine lines. */
 function narrateCheckpointSkipped(chat: ChatDraft, event: EventEnvelope): void {
   const skipped = customPayload(event.data, CustomEvent.CheckpointSkipped);
   const words = skipped ? checkpointSkippedWords(skipped) : null;

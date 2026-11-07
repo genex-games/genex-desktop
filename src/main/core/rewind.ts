@@ -133,8 +133,6 @@ const MESSAGE = {
     `[core] the engine steps before ${messageId} failed; its files are still saved: ${errorMessage(err).slice(0, LOG_DETAIL_CHARS)}`,
   rulesFailed: (err: unknown) =>
     `[core] a game checkpoint went on without the folder's ignore rules: ${errorMessage(err).slice(0, LOG_DETAIL_CHARS)}`,
-  skippedNotReported: (threadId: string, err: unknown) =>
-    `[core] files too large to save in ${threadId} could not be reported: ${errorMessage(err).slice(0, LOG_DETAIL_CHARS)}`,
   putBackFailed: (err: unknown) => `[core] rewind could not put the game files back: ${errorMessage(err)}`,
   tidyFailed: (threadId: string, what: string, err: unknown) =>
     `[core] after rewinding ${threadId}, ${what} failed: ${errorMessage(err)}`,
@@ -177,7 +175,7 @@ interface RestoredFiles {
   rewindId: string;
   stayed?: string[];
 }
-/** Who left files too large to save, for the chat's line: a message's checkpoint, or a rewind. */
+/** The rewind that left files too large to save as they are, for the chat's line. */
 type SkippedReport = Required<Pick<CheckpointSkippedPayload, "project" | "messageId" | "by">>;
 
 /** Each file with its size now, largest first (0 for one already gone); links are never followed. */
@@ -297,8 +295,6 @@ export class ChatRewindService {
   readonly #inFlight = new Map<string, Set<Promise<void>>>();
   /** Per chat, the game checkpoint its next answer waits for (bounded; it never fails the answer). */
   readonly #checkpointsBefore = new Map<string, Promise<void>>();
-  /** Per chat, the files too large to save its last report named (sorted, one per line). */
-  readonly #reportedSkips = new Map<string, string>();
   #checkpoints?: ChatCheckpoints;
 
   constructor(core: StudioCore, x: CoreInternals) {
@@ -439,15 +435,9 @@ export class ChatRewindService {
     const before = phase === CheckpointPhase.Before;
     await this.#saveEngineFirst(dir, meta.project, { threadId, messageId, phase }, deadline);
     const taken = await this.checkpoints.take(dir, threadId, messageId, phase, before ? deadline : undefined);
-    if (!taken) {
-      this.#log(MESSAGE.checkpointLate(messageId));
-      return;
-    }
-    await this.#reportCheckpointSkips(threadId, dir, taken, {
-      project: meta.project,
-      messageId,
-      by: SkippedBy.Checkpoint,
-    });
+    // Files it left out for their size are named only by a rewind that leaves them as they are:
+    // here nothing is lost yet, and nothing the person or a session does brings them back.
+    if (!taken) this.#log(MESSAGE.checkpointLate(messageId));
   }
 
   /**
@@ -478,33 +468,8 @@ export class ChatRewindService {
   }
 
   /**
-   * A checkpoint that left files out for their size says so once per new set, in a line of the
-   * chat's own, which no delegated session is told. A report that fails is logged, never more.
-   */
-  async #reportCheckpointSkips(threadId: string, dir: string, commit: string, report: SkippedReport): Promise<void> {
-    try {
-      const { skipped } = await this.checkpoints.leftOut(dir, commit);
-      const set = [...skipped].sort().join("\n");
-      const reported = this.#reportedSkips.get(threadId);
-      if (set === (reported ?? "")) return;
-      if (!skipped.length) {
-        this.#reportedSkips.delete(threadId);
-        return;
-      }
-      // Claimed before the report's awaits, so a checkpoint right behind it is not told twice.
-      this.#reportedSkips.set(threadId, set);
-      await this.#reportSkipped(threadId, dir, skipped, report).catch((err: unknown) => {
-        if (this.#reportedSkips.get(threadId) === set) this.#reportedSkips.delete(threadId);
-        throw err;
-      });
-    } catch (err) {
-      this.#log(MESSAGE.skippedNotReported(threadId, err));
-    }
-  }
-
-  /**
-   * Changed files a rewind left as they are for their size, reported like a checkpoint's: those a
-   * restore held back, or, when only the chat went back, every changed file if all were too large.
+   * Changed files a rewind left as they are for their size, the only time the chat names them: those
+   * a restore held back, or, when only the chat went back, every changed file if all were too large.
    */
   async #reportLeftTooLarge(threadId: string, project: string, applied: AppliedRewind): Promise<void> {
     const messageId = applied.planned.rewind.messageId;

@@ -460,6 +460,96 @@ test(".env.local and friends never enter a checkpoint and are never deleted, wha
   );
 });
 
+/** A sparse file past the size a checkpoint keeps (it costs no disk), `extra` bytes larger still. */
+async function oversized(dir: string, file: string, extra = 0): Promise<void> {
+  await fs.writeFile(path.join(dir, file), "");
+  await fs.truncate(path.join(dir, file), CHECKPOINT_FILE_MAX_BYTES + 1 + extra);
+}
+
+test("a file too large to save that the answer rewrote, deleted or added is named, and one it left alone is not", async (t) => {
+  const { dir, checkpoints } = await game(t);
+  const earlier = Date.now() / 1000 - 100;
+  for (const file of ["kept.mp4", "rewritten.mp4", "rewritten-same-size.mp4", "deleted.mp4"]) {
+    await oversized(dir, file);
+    await fs.utimes(path.join(dir, file), earlier, earlier);
+  }
+  await checkpoints.take(dir, "thread-1", "msg_a");
+  assert.deepEqual(
+    await checkpoints.plan(dir, "thread-1", "msg_a"),
+    { state: "unchanged", nested: [] },
+    "files left as they were are no change",
+  );
+  // The answer: one code edit, and every large file but one changed.
+  await fs.writeFile(path.join(dir, "src", "main.js"), "changed();\n");
+  await oversized(dir, "rewritten.mp4", 1);
+  await fs.utimes(path.join(dir, "rewritten-same-size.mp4"), earlier + 50, earlier + 50);
+  await fs.rm(path.join(dir, "deleted.mp4"));
+  await oversized(dir, "added.mp4");
+  const named = ["added.mp4", "deleted.mp4", "rewritten-same-size.mp4", "rewritten.mp4"];
+  assert.deepEqual(await checkpoints.plan(dir, "thread-1", "msg_a"), {
+    state: "restore",
+    files: 1,
+    outside: [],
+    outsideUnknown: false,
+    nested: [],
+    tooLarge: 4,
+    tooLargeFiles: named,
+  });
+  const restored = await checkpoints.restore(dir, "thread-1", "msg_a");
+  assert.deepEqual(restored.stayed, named, "the restore says they stayed");
+  assert.equal(await read(dir, "src/main.js"), "jump();\n");
+  assert.equal(await exists(dir, "deleted.mp4"), false, "nothing brings it back");
+  assert.equal((await fs.stat(path.join(dir, "added.mp4"))).size, CHECKPOINT_FILE_MAX_BYTES + 1, "nor removes it");
+  assert.equal((await fs.stat(path.join(dir, "rewritten.mp4"))).size, CHECKPOINT_FILE_MAX_BYTES + 2);
+});
+
+test("when only a file too large to save changed, only the chat rewinds and the file is named", async (t) => {
+  const { dir, checkpoints } = await game(t);
+  await oversized(dir, "flythrough.mp4");
+  await checkpoints.take(dir, "thread-1", "msg_a");
+  await fs.rm(path.join(dir, "flythrough.mp4"));
+  assert.deepEqual(await checkpoints.plan(dir, "thread-1", "msg_a"), {
+    state: "unavailable",
+    reason: "too-large",
+    tooLargeFiles: ["flythrough.mp4"],
+  });
+});
+
+test("a checkpoint an older Genex took, which kept no file times, still names a file too large to save that is gone", async (t) => {
+  const { dir, checkpoints } = await game(t);
+  await oversized(dir, "gone.mp4");
+  await oversized(dir, "rewritten.mp4");
+  await checkpoints.take(dir, "thread-1", "msg_a");
+  // That checkpoint as an older Genex recorded it: the names it left out, and nothing more.
+  const ref = chatCheckpointRef("thread-1", "msg_a");
+  const commit = (await git(dir, ["rev-parse", ref])).trim();
+  const index = path.join(dir, ".git", "old-record.index");
+  const blob = (
+    await git(
+      dir,
+      ["hash-object", "-w", "--stdin"],
+      {},
+      JSON.stringify({ nested: [], skipped: ["gone.mp4", "rewritten.mp4"] }),
+    )
+  ).trim();
+  await git(dir, ["read-tree", commit], { GIT_INDEX_FILE: index });
+  await git(dir, ["update-index", "--cacheinfo", `100644,${blob},.studio-checkpoint-left-out.json`], {
+    GIT_INDEX_FILE: index,
+  });
+  const tree = (await git(dir, ["write-tree"], { GIT_INDEX_FILE: index })).trim();
+  const parent = (await git(dir, ["rev-parse", `${commit}^1`])).trim();
+  const old = (await git(dir, ["commit-tree", tree, "-p", parent, "-m", "an older checkpoint"])).trim();
+  await git(dir, ["update-ref", ref, old]);
+
+  await fs.rm(path.join(dir, "gone.mp4"));
+  await oversized(dir, "rewritten.mp4", 1);
+  assert.deepEqual(
+    await checkpoints.plan(dir, "thread-1", "msg_a"),
+    { state: "unavailable", reason: "too-large", tooLargeFiles: ["gone.mp4"] },
+    "a file it kept no time for cannot be told changed; a gone one can",
+  );
+});
+
 test("a file too large to save standing where the checkpoint had a folder is left alone", async (t) => {
   const { dir, checkpoints } = await game(t);
   await fs.mkdir(path.join(dir, "intro"));

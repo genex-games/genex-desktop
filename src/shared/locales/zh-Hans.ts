@@ -5092,10 +5092,6 @@ export default {
     "{count, plural, other {原有的历史记录已改名为 .git.studio-backup，保存在旁边。}}",
   "{count, plural, one {Restored # game file.} other {Restored # game files.}}":
     "{count, plural, other {已恢复 # 个游戏文件。}}",
-  "{count, plural, one {Rewind can’t bring back # file from this change: it was over {size} at once, so the largest stayed out: {files}.} other {Rewind can’t bring back # files from this change: it was over {size} at once, so the largest stayed out: {files}.}}":
-    "{count, plural, other {这次更改一次超过了 {size}，最大的 # 个文件未保存，回退时无法恢复：{files}。}}",
-  "{count, plural, one {Rewind can’t bring back # file that is too large to save: {files}.} other {Rewind can’t bring back # files that are too large to save: {files}.}}":
-    "{count, plural, other {有 # 个文件过大，无法保存，回退时无法恢复：{files}。}}",
   "{count, plural, one {The chat went back, and # game file with it.} other {The chat went back, and # game files with it.}}":
     "{count, plural, other {对话已回退，# 个游戏文件也一并回退。}}",
   "{count, plural, one {Working on # task} other {Working on # tasks}}": "{count, plural, other {正在处理 # 个任务}}",

@@ -6,9 +6,14 @@ import path from "node:path";
 import { startRig, waitForLog, customEvents, type Rig } from "../helpers/studio-rig.ts";
 import type { DelegateRequest } from "../../src/substrate/engines/types.ts";
 import { messageQueueState } from "../../src/shared/message-queue.ts";
-import { CHECKPOINT_FILE_MAX_BYTES, CheckpointPhase, chatCheckpointRef } from "../../src/main/chat-checkpoints.ts";
-import { SkippedBy } from "../../src/shared/chat-rewind.ts";
-import { CustomEvent, customRecord } from "../../src/shared/custom-events.ts";
+import {
+  CHECKPOINT_CHANGE_MAX_BYTES,
+  CHECKPOINT_FILE_MAX_BYTES,
+  CheckpointPhase,
+  chatCheckpointRef,
+} from "../../src/main/chat-checkpoints.ts";
+import { CHECKPOINT_SKIPPED_FILES_LISTED, SkippedBy } from "../../src/shared/chat-rewind.ts";
+import { CustomEvent, customEvent, customRecord } from "../../src/shared/custom-events.ts";
 import { GENEX_PLUGIN_ID } from "../../src/shared/genex.ts";
 import { latestRun } from "../../src/shared/chat-run.ts";
 import { DispatchActionType } from "../../src/shared/protocol.ts";
@@ -874,7 +879,7 @@ it("without a saved copy from before the message, a rewind asked to restore the 
   );
 });
 
-it("tells the chat once when a checkpoint leaves a file out for its size", async () => {
+it("a checkpoint that leaves a file out for its size adds no chat line; the rewind that leaves it names it", async () => {
   const rig = await startRig();
   rigs.push(rig);
   const project = "rewind-big-files";
@@ -922,33 +927,87 @@ it("tells the chat once when a checkpoint leaves a file out for its size", async
   await send("Add a track");
   await waitForLog(rig.core, handled(thread, 2), 20000, "second answer");
   await send("Add music");
-  await waitForLog(rig.core, (events) => skips(events).length >= 2, 20000, "a second set of files left out");
+  await waitForLog(rig.core, handled(thread, 3), 20000, "third answer");
   const events = await rig.core.store.listEvents(thread);
-  const [first, second, ...more] = skips(events);
-  assert.deepEqual(more, [], "the same set is told once");
-  assert.equal(first?.by, SkippedBy.Checkpoint);
-  assert.deepEqual(first?.files, [{ file: "intro.mp4", bytes: tooLarge }]);
-  assert.equal(first?.fileLimitBytes, CHECKPOINT_FILE_MAX_BYTES);
-  assert.deepEqual(second?.files, [
-    { file: "intro.mp4", bytes: tooLarge },
-    { file: "theme.wav", bytes: tooLarge },
-  ]);
-  // Flipped: the first session read "Rewind can't bring them back: intro.mp4 (50 MB)". The chat's
-  // line says it to the person; no session is told, so none repeats it to them.
+  const music = bubble(events, "Add music");
+  await refExists(dir, chatCheckpointRef(thread, music.messageId, CheckpointPhase.After));
+  // Flipped: each checkpoint that left a new set out wrote a line, "Rewind can’t bring back 1 file
+  // that is too large to save: intro.mp4 (50 MB)", though nothing was lost and nothing the person
+  // could do brought it back. Only a rewind names them now, in its dialog and its line.
+  assert.deepEqual(skips(await rig.core.store.listEvents(thread)), [], "no checkpoint writes a line");
   assert.ok(prompts.length >= 3, "each message was answered");
   for (const prompt of prompts) assert.doesNotMatch(prompt, /intro\.mp4|theme\.wav|Rewind can't bring/);
 
-  // A rewind that leaves a file as it is says so too.
-  const music = bubble(events, "Add music");
-  await refExists(dir, chatCheckpointRef(thread, music.messageId, CheckpointPhase.After));
+  // A rewind that leaves a file as it is says so; the one nothing changed is not named.
   const preview = await rig.core.rewindPreview(thread, music.eventId, music.messageId);
   assert.deepEqual(preview.files.state === "restore" && preview.files.tooLargeFiles, ["theme.wav"]);
   await rig.core.rewindChat(thread, music.eventId, music.messageId, { files: true });
-  const rewound = skips(await rig.core.store.listEvents(thread)).filter((p) => p.by === SkippedBy.Rewind);
+  const rewound = skips(await rig.core.store.listEvents(thread));
   assert.deepEqual(
-    rewound.map((p) => p.files),
-    [[{ file: "theme.wav", bytes: tooLarge }]],
+    rewound.map((p) => [p.by, p.files]),
+    [[SkippedBy.Rewind, [{ file: "theme.wav", bytes: tooLarge }]]],
   );
+});
+
+it("a rewind's line lists the fifty largest files it left, the count of all and the limits", async () => {
+  const rig = await startRig();
+  rigs.push(rig);
+  const project = "rewind-many-big-files";
+  await rig.core.games.scaffold(project);
+  const thread = await rig.core.createGameThread(project);
+  const dir = rig.core.games.dirFor(project);
+  const count = CHECKPOINT_SKIPPED_FILES_LISTED + 1;
+  const sizeOf = (n: number) => CHECKPOINT_FILE_MAX_BYTES + 1 + ((n * 7) % count) * 1024;
+  rig.core.engines.register({
+    id: "claude-code",
+    label: "Claude",
+    kind: "delegated",
+    status: async () => ({ code: "ready", detail: "" }),
+    models: async () => [],
+    delegate: async () => {
+      // The answer adds a script and many files too large to save (sparse: they cost no disk).
+      await writeFile(path.join(dir, "level.js"), "level();\n");
+      for (let n = 0; n < count; n++) {
+        const file = path.join(dir, `big-${String(n).padStart(2, "0")}.bin`);
+        await writeFile(file, "");
+        await truncate(file, sizeOf(n));
+      }
+      return {
+        ok: true,
+        summary: "Answered.",
+        sessionId: "session-1",
+        turns: 1,
+        usage: {},
+        durationMs: 1,
+        engine: "claude-code",
+      };
+    },
+  });
+  await rig.core.sendUserMessage("Add levels", { thread, engine: "claude-code" });
+  await waitForLog(rig.core, handled(thread, 1), 20000, "the answer");
+  const levels = bubble(await rig.core.store.listEvents(thread), "Add levels");
+  await refExists(dir, chatCheckpointRef(thread, levels.messageId, CheckpointPhase.After));
+  await rig.core.rewindChat(thread, levels.eventId, levels.messageId, { files: true });
+  assert.equal(await exists(path.join(dir, "level.js")), false, "the script went back");
+  const records = (await rig.core.store.listEvents(thread))
+    .map((event) => customEvent(event, CustomEvent.CheckpointSkipped))
+    .filter((payload) => payload !== null);
+  assert.equal(records.length, 1);
+  const [record] = records;
+  assert.equal(record?.by, SkippedBy.Rewind);
+  const listed = record?.files ?? [];
+  assert.equal(listed.length, CHECKPOINT_SKIPPED_FILES_LISTED, "at most fifty are listed");
+  assert.equal(record?.total, count, "and how many there were");
+  const sizes = listed.map((file) => file.bytes);
+  assert.deepEqual(
+    sizes,
+    [...sizes].sort((a, b) => b - a),
+    "largest first",
+  );
+  assert.equal(sizes[0], CHECKPOINT_FILE_MAX_BYTES + 1 + (count - 1) * 1024, "the largest is listed");
+  assert.ok(!sizes.includes(CHECKPOINT_FILE_MAX_BYTES + 1), "the smallest is the one left out");
+  assert.equal(record?.fileLimitBytes, CHECKPOINT_FILE_MAX_BYTES);
+  assert.equal(record?.changeLimitBytes, CHECKPOINT_CHANGE_MAX_BYTES);
 });
 
 it("when every changed file is too large to save, only the chat rewinds and the files are named", async () => {
