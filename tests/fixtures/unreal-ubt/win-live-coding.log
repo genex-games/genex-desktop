@@ -1,0 +1,6 @@
+Using bundled DotNet SDK version: 8.0.412
+Running UnrealBuildTool: dotnet "..\..\Engine\Binaries\DotNET\UnrealBuildTool\UnrealBuildTool.dll" GxCppEditor Win64 Development -Project="D:\ai-games\sword duel\unreal\GxCpp.uproject" -NoMutex -NoUBA
+Log file: C:\Users\Ana\AppData\Local\UnrealBuildTool\Log.txt
+Unable to build while Live Coding is active. Exit the editor and game, or force a recompile with Ctrl+Alt+F11 in the editor.
+Total execution time: 0.84 seconds
+Result: Failed (LiveCodingSessionActive)

@@ -19,9 +19,9 @@ import {
   type GamePackageAnswer,
   packageErrors,
   type RunUat,
-  uatEnv,
   uatLaunch,
 } from "../../src/plugins/unreal/game-package.ts";
+import { uatEnv } from "../../src/plugins/unreal/program-env.ts";
 import { VisualStudioState } from "../../src/plugins/unreal/visual-studio.ts";
 import { XcodeState } from "../../src/plugins/unreal/xcode.ts";
 import { tmpDir } from "../helpers/tmp.ts";

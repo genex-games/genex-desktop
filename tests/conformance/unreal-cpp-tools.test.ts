@@ -427,7 +427,12 @@ describe("cpp-status", () => {
   });
 
   const cannot: Array<[string, Options, string]> = [
-    ["off a Mac", { platform: "win32", xcode: XcodeState.NotApplicable }, XcodeState.NotApplicable],
+    [
+      "on Windows that can't tell its C++ tools",
+      { platform: "win32", xcode: XcodeState.NotApplicable },
+      XcodeState.NotApplicable,
+    ],
+    ["on Linux", { platform: "linux", xcode: XcodeState.NotApplicable }, XcodeState.NotApplicable],
     ["before Xcode's first launch", { xcode: XcodeState.FirstLaunch }, XcodeState.FirstLaunch],
     ["without Xcode", { xcode: XcodeState.Missing }, XcodeState.Missing],
   ];
@@ -443,11 +448,16 @@ describe("cpp-status", () => {
     assert.equal((await (await cppWorld({ unlinked: true })).status()).module, null);
   });
 
-  it("names where Microsoft's C++ tools stand on Windows, where Genex doesn't compile a game's C++ yet", async () => {
-    for (const visualStudio of [VisualStudioState.Missing, VisualStudioState.Ready]) {
+  it("compiles on Windows exactly when Microsoft's C++ tools are ready for the engine, and names where they stand", async () => {
+    const rows: Array<[VisualStudioState, boolean]> = [
+      [VisualStudioState.Ready, true],
+      [VisualStudioState.Missing, false],
+      [VisualStudioState.Outdated, false],
+    ];
+    for (const [visualStudio, canCompile] of rows) {
       const w = await cppWorld({ platform: "win32", xcode: XcodeState.NotApplicable, visualStudio });
       const answer = await w.status();
-      assert.deepEqual([answer.visualStudio, answer.canCompile], [visualStudio, false]);
+      assert.deepEqual([answer.visualStudio, answer.canCompile], [visualStudio, canCompile], visualStudio);
     }
   });
 });
@@ -462,8 +472,12 @@ describe("add-cpp-module", () => {
   });
 
   for (const [when, options] of [
-    ["off a Mac", { platform: "win32", xcode: XcodeState.NotApplicable }],
+    ["on Linux", { platform: "linux", xcode: XcodeState.NotApplicable }],
     ["without a ready Xcode", { xcode: XcodeState.FirstLaunch }],
+    [
+      "on Windows without Microsoft's C++ tools",
+      { platform: "win32", xcode: XcodeState.NotApplicable, visualStudio: VisualStudioState.Missing },
+    ],
   ] as const) {
     it(`refuses ${when} and starts nothing`, async () => {
       const w = await cppWorld(options);
@@ -498,6 +512,33 @@ describe("add-cpp-module", () => {
       [[w.engineDir, w.projectFile, MODULE, XCODE_APP]],
     );
     assert.deepEqual(await w.add(), { module: MODULE, already: true }, "a second call finds it");
+  });
+
+  it("adds the module on Windows with Microsoft's C++ tools: the same save, quit, build and open, with no Xcode", async () => {
+    const w = await cppWorld({
+      platform: "win32",
+      xcode: XcodeState.NotApplicable,
+      visualStudio: VisualStudioState.Ready,
+    });
+    assert.deepEqual(await w.add(), { started: true });
+    const end = await w.added();
+    assert.equal(end.state, CppAddState.Done, end.error);
+    assert.deepEqual(w.events, [CppEditorTool.SaveAll, "quit Rush.uproject", "compile", "open Rush.uproject"]);
+    assert.deepEqual(
+      w.compiles.map((c) => [c.projectFile, c.module]),
+      [[w.projectFile, MODULE]],
+    );
+    assert.equal((await w.status()).module, MODULE);
+  });
+
+  it("refuses on Windows without Microsoft's C++ tools, pointing the agent at their install", async () => {
+    const w = await cppWorld({
+      platform: "win32",
+      xcode: XcodeState.NotApplicable,
+      visualStudio: VisualStudioState.Missing,
+    });
+    await assert.rejects(w.add(), /unreal__install-unreal/);
+    assert.deepEqual(w.events, []);
   });
 
   it("restarts Unreal as Genex's own: a health look meanwhile is no crash, and the crash steps start no second editor or build", async () => {

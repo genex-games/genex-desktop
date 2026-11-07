@@ -42,8 +42,16 @@ export const PartProblemCode = {
 } as const;
 export type PartProblemCode = (typeof PartProblemCode)[keyof typeof PartProblemCode];
 
-/** Whether this computer compiles Unreal C++: only a Mac whose Xcode is ready. */
-export const CppSupport = { Ready: "ready", NotMac: "not-mac", NoXcode: "no-xcode" } as const;
+/**
+ * Whether this computer compiles Unreal C++: a Mac whose Xcode is ready, or Windows whose Microsoft
+ * C++ tools are; `NotMac` is a computer that compiles none (neither a Mac nor Windows).
+ */
+export const CppSupport = {
+  Ready: "ready",
+  NotMac: "not-mac",
+  NoXcode: "no-xcode",
+  NoBuildTools: "no-build-tools",
+} as const;
 export type CppSupport = (typeof CppSupport)[keyof typeof CppSupport];
 
 /** The files a part folder holds. */
@@ -117,7 +125,9 @@ const MESSAGE = {
   NoModule:
     "This game has no C++ module yet; Genex adds it before the Loop's first C++ part. Write this part in Blueprints and Python instead (empty part.json's cpp and remove its C++), or wait for the module.",
   NotMac:
-    "C++ can't be compiled on this computer: Unreal C++ is compiled on a Mac with Xcode. Write this part in Blueprints and Python instead (empty part.json's cpp and remove its C++).",
+    "C++ can't be compiled on this computer: Unreal C++ is compiled on a Mac with Xcode or on Windows with Microsoft's C++ tools. Write this part in Blueprints and Python instead (empty part.json's cpp and remove its C++).",
+  NoBuildTools:
+    "C++ can't be compiled on this computer yet: Microsoft's Visual Studio Build Tools aren't ready for this Unreal. Write this part in Blueprints and Python instead (empty part.json's cpp and remove its C++).",
   NoXcode:
     "C++ can't be compiled on this computer: Xcode isn't ready for this Unreal. Write this part in Blueprints and Python instead (empty part.json's cpp and remove its C++).",
   OwnedClass: (name: string, other: string) =>
@@ -254,11 +264,17 @@ function ownedClassProblems(cpp: readonly string[], others: OtherPart[]): PartPr
   });
 }
 
+/** What a part's check says for each computer that can't compile its C++. */
+const SUPPORT_MESSAGE: Record<Exclude<CppSupport, typeof CppSupport.Ready>, string> = {
+  [CppSupport.NotMac]: MESSAGE.NotMac,
+  [CppSupport.NoXcode]: MESSAGE.NoXcode,
+  [CppSupport.NoBuildTools]: MESSAGE.NoBuildTools,
+};
+
 /** Why this computer can't compile the part's C++, if it can't. */
 function supportProblem(support: CppSupport): PartProblem[] {
   if (support === CppSupport.Ready) return [];
-  const message = support === CppSupport.NotMac ? MESSAGE.NotMac : MESSAGE.NoXcode;
-  return [error(PartFile.Manifest, PartProblemCode.Cpp, message)];
+  return [error(PartFile.Manifest, PartProblemCode.Cpp, SUPPORT_MESSAGE[support])];
 }
 
 /** The C++ the part holds against the classes it lists, in a game with its module where C++ compiles. */

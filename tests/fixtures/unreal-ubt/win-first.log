@@ -1,0 +1,18 @@
+Using bundled DotNet SDK version: 8.0.412
+Running UnrealBuildTool: dotnet "..\..\Engine\Binaries\DotNET\UnrealBuildTool\UnrealBuildTool.dll" GxCppEditor Win64 Development -Project="D:\ai-games\sword duel\unreal\GxCpp.uproject" -NoMutex -NoUBA
+Log file: C:\Users\Ana\AppData\Local\UnrealBuildTool\Log.txt
+Creating makefile for GxCppEditor (no existing makefile)
+Building GxCppEditor...
+Using Visual Studio 2022 14.44.35207 toolchain (C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207) and Windows 10.0.22621.0 SDK (C:\Program Files (x86)\Windows Kits\10).
+Determining max actions to execute in parallel (8 physical cores, 16 logical cores)
+  Executing up to 8 processes, one per physical core
+------ Building 5 action(s) started ------
+[1/5] Compile [x64] SharedPCH.UnrealEd.Project.ValApi.ValExpApi.Cpp20.cpp
+[2/5] Compile [x64] GxCpp.cpp
+[3/5] Compile [x64] Module.GxCpp.gen.cpp
+[4/5] Link [x64] UnrealEditor-GxCpp.dll
+   Creating library D:\ai-games\sword duel\unreal\Intermediate\Build\Win64\x64\UnrealEditor\Development\GxCpp\UnrealEditor-GxCpp.sup.lib and object D:\ai-games\sword duel\unreal\Intermediate\Build\Win64\x64\UnrealEditor\Development\GxCpp\UnrealEditor-GxCpp.sup.exp
+[5/5] WriteMetadata GxCppEditor.target
+Total time in Parallel executor: 41.27 seconds
+Total execution time: 47.90 seconds
+Result: Succeeded

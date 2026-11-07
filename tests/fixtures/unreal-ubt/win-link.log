@@ -1,0 +1,8 @@
+Using bundled DotNet SDK version: 8.0.412
+Log file: C:\Users\Ana\AppData\Local\UnrealBuildTool\Log.txt
+Building GxCppEditor...
+[1/2] Link [x64] UnrealEditor-GxCpp.dll
+Module.GxCpp.cpp.obj : error LNK2019: unresolved external symbol "public: void __cdecl AGxSword::Swing(void)" (?Swing@AGxSword@@QEAAXXZ) referenced in function "public: virtual void __cdecl AGxSword::Tick(float)" (?Tick@AGxSword@@UEAAXM@Z)
+D:\ai-games\sword duel\unreal\Binaries\Win64\UnrealEditor-GxCpp.dll : fatal error LNK1120: 1 unresolved externals
+Total execution time: 5.40 seconds
+Result: Failed (OtherCompilationError)

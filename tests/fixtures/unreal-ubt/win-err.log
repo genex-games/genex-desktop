@@ -1,0 +1,13 @@
+Using bundled DotNet SDK version: 8.0.412
+Running UnrealBuildTool: dotnet "..\..\Engine\Binaries\DotNET\UnrealBuildTool\UnrealBuildTool.dll" GxCppEditor Win64 Development -Project="D:\ai-games\sword duel\unreal\GxCpp.uproject" -NoMutex -NoUBA
+Log file: C:\Users\Ana\AppData\Local\UnrealBuildTool\Log.txt
+Building GxCppEditor...
+Using Visual Studio 2022 14.44.35207 toolchain (C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207) and Windows 10.0.22621.0 SDK (C:\Program Files (x86)\Windows Kits\10).
+------ Building 2 action(s) started ------
+[1/2] Compile [x64] GxSword.cpp
+D:\ai-games\sword duel\unreal\Source\GxCpp\Parts\Sword\GxSword.cpp(12): error C2065: 'Damge': undeclared identifier
+D:\ai-games\sword duel\unreal\Source\GxCpp\Parts\Sword\GxSword.cpp(20): error C4458: declaration of 'Tags' hides class member
+D:\Epic Games\UE_5.8\Engine\Source\Runtime\Engine\Classes\GameFramework\Actor.h(240): note: see declaration of 'AActor::Tags'
+Total time in Parallel executor: 6.10 seconds
+Total execution time: 9.02 seconds
+Result: Failed (OtherCompilationError)

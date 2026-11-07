@@ -549,10 +549,10 @@ export default {
     "Microsoftのインストーラーをダウンロードできませんでした。インターネット接続を確認して、もう一度試してください。",
   "Microsoft's installer finished, but Unreal still can't build C++ with what it installed. Install Visual Studio Build Tools 2022 with Desktop development with C++ yourself.":
     "Microsoftのインストーラーは終わりましたが、インストールされたものではまだUnrealがC++をビルドできません。Visual Studio Build Tools 2022を「C++ によるデスクトップ開発」付きでご自身でインストールしてください。",
-  "Recommended. Microsoft's free C++ tools: Unreal needs them to package a game or plugin with C++. About 7 GB. Do it for me installs them: choose Yes when Windows asks.":
-    "おすすめ。Microsoftの無料のC++ツールです。C++を使うゲームやプラグインをUnrealでパッケージするのに必要です。約7 GB。「おまかせ」でインストールできます。Windowsに聞かれたら「はい」を選んでください。",
-  "Recommended. Microsoft's free C++ tools: Unreal needs them to package a game or plugin with C++. Install Visual Studio Build Tools with Desktop development with C++.":
-    "おすすめ。Microsoftの無料のC++ツールです。C++を使うゲームやプラグインをUnrealでパッケージするのに必要です。Visual Studio Build Toolsを「C++ によるデスクトップ開発」付きでインストールしてください。",
+  "Recommended. Microsoft's free C++ tools: with them the agent writes your game's logic in C++, and Unreal packages a game or plugin with C++. About 7 GB. Do it for me installs them: choose Yes when Windows asks.":
+    "おすすめ。Microsoftの無料のC++ツールです。これがあるとエージェントがゲームのロジックをC++で書けて、C++を使うゲームやプラグインをUnrealでパッケージできます。約7 GB。「おまかせ」でインストールできます。Windowsに聞かれたら「はい」を選んでください。",
+  "Recommended. Microsoft's free C++ tools: with them the agent writes your game's logic in C++, and Unreal packages a game or plugin with C++. Install Visual Studio Build Tools with Desktop development with C++.":
+    "おすすめ。Microsoftの無料のC++ツールです。これがあるとエージェントがゲームのロジックをC++で書けて、C++を使うゲームやプラグインをUnrealでパッケージできます。Visual Studio Build Toolsを「C++ によるデスクトップ開発」付きでインストールしてください。",
   "Self-improvement is off. Harness keeps its own instructions as they are.":
     "自己改善はオフです。Harnessは自分の指示をそのままにします。",
   "Unreal can build C++ on this PC.": "このPCでUnrealがC++をビルドできます。",

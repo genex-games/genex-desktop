@@ -17,6 +17,7 @@ import { createLoopTools, LoopToolName } from "../../src/plugins/unreal/loop-too
 import { CHECK_ANSWER_BY_MS } from "../../src/plugins/unreal/part-compile.ts";
 import { unrealPython } from "../../src/plugins/unreal/python-check.ts";
 import { CompileFailure, type CompileOptions, type CompileResult } from "../../src/plugins/unreal/ubt.ts";
+import { VisualStudioState } from "../../src/plugins/unreal/visual-studio.ts";
 import { XcodeState } from "../../src/plugins/unreal/xcode.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
@@ -66,6 +67,8 @@ async function writeGame(dir: string, module = true) {
 type Options = {
   platform?: NodeJS.Platform;
   xcode?: XcodeState;
+  /** Where Microsoft's C++ tools stand on Windows; none: the computer can't tell. */
+  visualStudio?: VisualStudioState;
   module?: boolean;
   /** Runs while Xcode is probed: a slow probe moves the clock, a watcher looks for apply.py's check. */
   probing?: (clock: { at: number }) => Promise<void>;
@@ -73,6 +76,11 @@ type Options = {
 
 /** The Xcode app the stand-in probe finds. */
 const XCODE_APP = "/Applications/Xcode-26.2.app";
+
+/** The stand-in Visual Studio probe a world gets when a test names its state; none when it doesn't. */
+function visualStudioOf(state: VisualStudioState | undefined) {
+  return state ? { visualStudio: async () => ({ state }) } : {};
+}
 
 /** The game and two builders' copies of it, with a stand-in UBT the test answers by hand. */
 async function world(options: Options = {}) {
@@ -98,6 +106,7 @@ async function world(options: Options = {}) {
       await options.probing?.(clock);
       return { state: options.xcode ?? XcodeState.Ready, app: XCODE_APP };
     },
+    ...visualStudioOf(options.visualStudio),
     compile: (compile) => {
       compiles.push(compile);
       return new Promise((resolve) => answers.push(resolve));
@@ -141,6 +150,17 @@ describe("check-part on a C++ part", () => {
     assert.equal(w.compiles[0]?.projectFile, path.join(copy, "unreal", "Rush.uproject"));
     assert.equal(w.compiles[0]?.module, MODULE);
     assert.equal(w.compiles[0]?.engineDir, path.join(w.root, "engine"));
+  });
+
+  it("compiles the builder's copy on Windows with Microsoft's C++ tools, and never asks for Xcode", async () => {
+    const w = await world({ platform: "win32", visualStudio: VisualStudioState.Ready });
+    const copy = w.copies[0] ?? "";
+    const checked = w.check(copy);
+    await w.answer(0, OK);
+    assert.match(await checked, /^Bike passes/);
+    assert.equal(w.compiles[0]?.projectFile, path.join(copy, "unreal", "Rush.uproject"));
+    assert.equal(w.compiles[0]?.xcodeApp, null);
+    assert.deepEqual(w.xcodeAsked, []);
   });
 
   it("names each compile error at its file and line, relative to the copy", async () => {
@@ -257,7 +277,14 @@ describe("check-part refusing C++ before it compiles", () => {
   it("refuses without compiling: no module, no Mac, Xcode not ready, or a change outside the part", async () => {
     const rows: Array<[string, Options, (copy: string) => Promise<unknown>, RegExp]> = [
       ["a Blueprint game", { module: false }, async () => {}, /no C\+\+ module yet/],
-      ["not a Mac", { platform: "linux" }, async () => {}, /Mac/],
+      ["neither a Mac nor Windows", { platform: "linux" }, async () => {}, /Mac/],
+      [
+        "Windows without Microsoft's C++ tools",
+        { platform: "win32", visualStudio: VisualStudioState.Missing },
+        async () => {},
+        /Visual Studio Build Tools/,
+      ],
+      ["Windows that can't tell its C++ tools", { platform: "win32" }, async () => {}, /Visual Studio Build Tools/],
       ["Xcode not ready", { xcode: XcodeState.NotSelected }, async () => {}, /Xcode/],
       [
         "the module's rules changed",

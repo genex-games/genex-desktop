@@ -21,11 +21,11 @@ import {
   automationArgs,
   editorCmdPath,
   type ProgramOutcome,
-  programEnv,
   type RunProgram,
   systemRunProgram,
 } from "../../src/plugins/unreal/automation-tests.ts";
 import { CppEditorTool } from "../../src/plugins/unreal/cpp-tools.ts";
+import { programEnv } from "../../src/plugins/unreal/program-env.ts";
 import { ReopenState } from "../../src/plugins/unreal/editor-reopen.ts";
 import { createLoopTools, LoopToolName } from "../../src/plugins/unreal/loop-tools.ts";
 import { ShipState, ShipToolName } from "../../src/plugins/unreal/plugin-ship.ts";
@@ -362,6 +362,31 @@ describe("plugin-build", () => {
     assert.match(failed.build.error ?? "", /Unreal stays closed/);
     assert.deepEqual(failing.events.slice(-1), ["compile"], "Unreal isn't opened after a failed build");
     assert.equal(failing.editor.running, false);
+  });
+
+  it("builds on Windows with Microsoft's C++ tools ready, and without them names install-unreal, touching nothing", async () => {
+    const ready = await shipWorld({ platform: "win32", visualStudio: VisualStudioState.Ready });
+    assert.deepEqual(await ready.call(ShipToolName.PluginBuild), { started: true });
+    assert.equal((await ready.settled("build")).build.state, ShipState.Done);
+    assert.deepEqual(ready.events, [
+      CppEditorTool.SaveAll,
+      `quit ${HOST}.uproject`,
+      "compile",
+      `open ${HOST}.uproject`,
+    ]);
+    assert.equal(ready.compiles[0]?.xcodeApp, null, "no Xcode on Windows");
+
+    for (const visualStudio of [VisualStudioState.Missing, VisualStudioState.Outdated]) {
+      const w = await shipWorld({ platform: "win32", visualStudio });
+      await assert.rejects(
+        w.call(ShipToolName.PluginBuild),
+        new RegExp(
+          `can't build Unreal C\\+\\+ \\(Microsoft's C\\+\\+ tools: ${visualStudio}\\).*unreal__install-unreal`,
+        ),
+      );
+      assert.deepEqual(w.events, [], `${visualStudio}: Unreal is neither saved nor closed`);
+      assert.equal((await w.status()).build.state, ShipState.Idle);
+    }
   });
 });
 

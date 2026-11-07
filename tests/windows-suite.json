@@ -339,6 +339,7 @@
   "tests/conformance/unreal-path-scrub.test.ts",
   "tests/conformance/unreal-plugin-ship.test.ts",
   "tests/conformance/unreal-setup.test.ts",
+  "tests/conformance/unreal-ubt-windows.test.ts",
   "tests/conformance/unreal-visual-studio.test.ts",
   "tests/conformance/usage-words.test.ts",
   "tests/conformance/user-data-migration.test.ts",

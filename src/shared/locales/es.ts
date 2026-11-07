@@ -602,10 +602,10 @@ export default {
     "El instalador de Microsoft no se descargó. Revisa tu conexión a internet y vuelve a intentarlo.",
   "Microsoft's installer finished, but Unreal still can't build C++ with what it installed. Install Visual Studio Build Tools 2022 with Desktop development with C++ yourself.":
     "El instalador de Microsoft terminó, pero Unreal sigue sin poder compilar C++ con lo que instaló. Instala tú Visual Studio Build Tools 2022 con «Desarrollo para el escritorio con C++».",
-  "Recommended. Microsoft's free C++ tools: Unreal needs them to package a game or plugin with C++. About 7 GB. Do it for me installs them: choose Yes when Windows asks.":
-    "Recomendado. Las herramientas gratuitas de C++ de Microsoft: Unreal las necesita para empaquetar un juego o plugin con C++. Unos 7 GB. «Hazlo por mí» las instala: elige Sí cuando Windows lo pregunte.",
-  "Recommended. Microsoft's free C++ tools: Unreal needs them to package a game or plugin with C++. Install Visual Studio Build Tools with Desktop development with C++.":
-    "Recomendado. Las herramientas gratuitas de C++ de Microsoft: Unreal las necesita para empaquetar un juego o plugin con C++. Instala Visual Studio Build Tools con «Desarrollo para el escritorio con C++».",
+  "Recommended. Microsoft's free C++ tools: with them the agent writes your game's logic in C++, and Unreal packages a game or plugin with C++. About 7 GB. Do it for me installs them: choose Yes when Windows asks.":
+    "Recomendado. Las herramientas gratuitas de C++ de Microsoft: con ellas el agente escribe la lógica de tu juego en C++, y Unreal empaqueta un juego o plugin con C++. Unos 7 GB. «Hazlo por mí» las instala: elige Sí cuando Windows lo pregunte.",
+  "Recommended. Microsoft's free C++ tools: with them the agent writes your game's logic in C++, and Unreal packages a game or plugin with C++. Install Visual Studio Build Tools with Desktop development with C++.":
+    "Recomendado. Las herramientas gratuitas de C++ de Microsoft: con ellas el agente escribe la lógica de tu juego en C++, y Unreal empaqueta un juego o plugin con C++. Instala Visual Studio Build Tools con «Desarrollo para el escritorio con C++».",
   "Self-improvement is off. Harness keeps its own instructions as they are.":
     "La automejora está desactivada. Harness deja sus instrucciones como están.",
   "Unreal can build C++ on this PC.": "Unreal puede compilar C++ en este PC.",

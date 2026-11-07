@@ -30,12 +30,12 @@ import { errorMessage } from "../../shared/errors.ts";
 import { commandInterpreter, quotedScriptLine } from "../../substrate/command-launch.ts";
 import { ensureDirBelow } from "../../substrate/fsx.ts";
 import { isInside } from "../../substrate/paths.ts";
-import { envValue } from "../../substrate/toolchain.ts";
 import { killProcessTree } from "../../substrate/process-tree.ts";
-import { editorCmdPath, type ProgramOutcome, programEnv } from "./automation-tests.ts";
+import { editorCmdPath, type ProgramOutcome } from "./automation-tests.ts";
+import { uatEnv } from "./program-env.ts";
 import { projectModule } from "./cpp-module.ts";
 import { LINUX_TOOLCHAIN_VARIABLE } from "./setup.ts";
-import { canCompileCpp, outputCollector, pathScrubber } from "./ubt.ts";
+import { canCompileCpp, cmdCarries, outputCollector, pathScrubber } from "./ubt.ts";
 import { type VisualStudioStatus, visualStudioLacking } from "./visual-studio.ts";
 import type { XcodeStatus } from "./xcode.ts";
 
@@ -119,33 +119,6 @@ const SUCCEEDED = /\bBUILD SUCCESSFUL\b/;
 const ERROR_LINE = /(\berror\b|Error:|ERROR:|\(Error_)/;
 /** Lines that say "error" and are not one: counts and summaries. */
 const NOT_AN_ERROR = /\b0 error|Success - 0 error|warning\(s\)/i;
-/** What cmd.exe's quoting can't carry in a path: a quote, `%`, `!` or a control character. */
-// biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are what this refuses
-const UNCARRIED = /["%!\x00-\x1f]/;
-/** A network share or a device path: never handed to cmd.exe. */
-const NETWORK_PATH = /^(?:\\\\|\/\/)/;
-/**
- * What Windows' RunUAT.bat and UnrealBuildTool read beyond the small environment: where programs and
- * shared data are (Visual Studio's installer, the shared derived data), the processor and the
- * account's names. None is a credential.
- */
-const WINDOWS_UAT_ENV = [
-  "ProgramData",
-  "ProgramFiles",
-  "ProgramFiles(x86)",
-  "ProgramW6432",
-  "CommonProgramFiles",
-  "CommonProgramFiles(x86)",
-  "SystemDrive",
-  "HOMEDRIVE",
-  "HOMEPATH",
-  "USERNAME",
-  "USERDOMAIN",
-  "COMPUTERNAME",
-  "NUMBER_OF_PROCESSORS",
-  "PROCESSOR_ARCHITECTURE",
-  "OS",
-] as const;
 const APP_EXTENSION = ".app";
 const EXE_EXTENSION = ".exe";
 const SH_EXTENSION = ".sh";
@@ -297,20 +270,6 @@ export function uatLaunch(
   return { file: commandInterpreter(env), args: ["/d", "/v:off", "/s", "/c", `"${line}"`], verbatim: true };
 }
 
-/** RunUAT's environment: the small one `plugin-test` uses and, on Windows, the system's folders and names. */
-export function uatEnv(
-  env: NodeJS.ProcessEnv = process.env,
-  platform: NodeJS.Platform = process.platform,
-): Record<string, string> {
-  const kept = programEnv(env, platform);
-  if (platform !== WINDOWS) return kept;
-  for (const name of WINDOWS_UAT_ENV) {
-    const value = envValue(env, name);
-    if (value !== undefined) kept[name] = value;
-  }
-  return kept;
-}
-
 /** The product's runner: no shell, the small environment, a process group of its own, output within the cap. */
 export const systemRunUat: RunUat = (launch, { signal, timeoutMs }) =>
   new Promise((resolve, reject) => {
@@ -357,9 +316,6 @@ export function packageErrors(output: string, scrub: (text: string) => string): 
   return chosen.map((line) => scrub(line).slice(0, ERROR_CHARS));
 }
 
-/** Whether cmd.exe can carry every path RunUAT.bat is handed. */
-const carried = (paths: readonly string[]) => paths.every((p) => !UNCARRIED.test(p) && !NETWORK_PATH.test(p));
-
 /**
  * The call's game and its linked project inside the game's folder, by real path, with the engine,
  * for the system `asked` (this computer's own when none).
@@ -397,12 +353,12 @@ async function targetOf(
  */
 async function assertRunnable(deps: GamePackageDeps, target: Target): Promise<Record<string, string>> {
   if (deps.platform === WINDOWS) {
-    if (!carried([target.engineDir, target.projectFile])) throw new Error(MESSAGE.Uncarried);
+    if (!cmdCarries([target.engineDir, target.projectFile])) throw new Error(MESSAGE.Uncarried);
     if (target.system.id !== PackageSystem.Linux) return assertBuildTools(deps, target);
     return { [LINUX_TOOLCHAIN_VARIABLE]: await linuxToolchainRoot(deps, target.engineVersion) };
   }
   const xcode = await deps.xcode(target.engineDir);
-  if (!canCompileCpp(xcode, deps.platform)) throw new Error(MESSAGE.NoXcode(xcode.state));
+  if (!canCompileCpp({ xcode }, deps.platform)) throw new Error(MESSAGE.NoXcode(xcode.state));
   return {};
 }
 
@@ -429,7 +385,7 @@ async function linuxToolchainRoot(deps: GamePackageDeps, version: string): Promi
   const set = (await deps.linuxToolchain?.().catch(() => undefined)) ?? "";
   const folder = set.replace(TRAILING_SEPARATORS, "");
   const named = path.win32.basename(folder) === wanted.name || path.basename(folder) === wanted.name;
-  const plain = path.isAbsolute(folder) && carried([folder]) && named;
+  const plain = path.isAbsolute(folder) && cmdCarries([folder]) && named;
   const info = plain ? await lstat(folder).catch(() => null) : null;
   if (!info?.isDirectory() || info.isSymbolicLink())
     throw new Error(MESSAGE.NeedsToolchain(version, wanted.name, wanted.url));

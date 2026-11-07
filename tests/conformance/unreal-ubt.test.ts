@@ -21,8 +21,12 @@ import {
   MAX_PARALLEL_COMPILES,
   type PrepareSandbox,
   type RunCommand,
+  type RunWindowsBuild,
   systemRunCommand,
+  type WindowsBuildLaunch,
+  windowsBuildLaunch,
 } from "../../src/plugins/unreal/ubt.ts";
+import { VisualStudioState } from "../../src/plugins/unreal/visual-studio.ts";
 import {
   type BuildSandbox,
   type BuildSandboxRequest,
@@ -410,14 +414,15 @@ describe("when UBT doesn't run", () => {
     assertNoAbsolutePaths(result);
   });
 
-  it("is a typed failure off a Mac, without running anything", async () => {
-    for (const platform of ["win32", "linux"] as const) {
-      const { run, calls } = answering(await fixture("first.log"));
-      const result = await compileEditor(options({ run, platform }));
-      assert.equal(result.ok, false);
-      assert.equal(result.failure, CompileFailure.Unsupported);
-      assert.equal(calls.length, 0, platform);
-    }
+  it("is a typed failure on a computer that is neither a Mac nor Windows, without running anything", async () => {
+    const { run, calls } = answering(await fixture("first.log"));
+    const runWindows: RunWindowsBuild = async () => {
+      throw new Error("Build.bat runs only on Windows");
+    };
+    const result = await compileEditor(options({ run, runWindows, platform: "linux" }));
+    assert.equal(result.ok, false);
+    assert.equal(result.failure, CompileFailure.Unsupported);
+    assert.equal(calls.length, 0);
   });
 
   it("refuses a module, project or engine it can't trust, without running anything", async () => {
@@ -708,7 +713,206 @@ describe("the system runner", { skip: process.platform === "darwin" ? false : "m
   });
 });
 
+const WIN_ENGINE = "D:\\Epic Games\\UE_5.8";
+const WIN_PROJECT = "D:\\ai-games\\sword duel\\unreal\\GxCpp.uproject";
+const CMD = "C:\\Windows\\System32\\cmd.exe";
+/** Genex's own environment on Windows, with a credential and a setting no build may see. */
+const WIN_ENV: NodeJS.ProcessEnv = {
+  SystemRoot: "C:\\Windows",
+  Path: "C:\\Windows\\System32;C:\\Windows",
+  TEMP: "C:\\Users\\Ana\\AppData\\Local\\Temp",
+  USERPROFILE: "C:\\Users\\Ana",
+  LOCALAPPDATA: "C:\\Users\\Ana\\AppData\\Local",
+  APPDATA: "C:\\Users\\Ana\\AppData\\Roaming",
+  ProgramData: "C:\\ProgramData",
+  "ProgramFiles(x86)": "C:\\Program Files (x86)",
+  ANTHROPIC_API_KEY: "sk-stand-in",
+  GENEX_PROFILE: "studio:dev",
+};
+
+/** win-err.log's errors as an agent reads them: file, line, MSVC's message with its code; the engine's note is no error. */
+const WIN_ERRORS: Array<[string, number, string]> = [
+  ["Source/GxCpp/Parts/Sword/GxSword.cpp", 12, "C2065: 'Damge': undeclared identifier"],
+  ["Source/GxCpp/Parts/Sword/GxSword.cpp", 20, "C4458: declaration of 'Tags' hides class member"],
+];
+
+/** A Windows runner that answers with `output` at once and records each launch. */
+function answeringOnWindows(output: string) {
+  const launches: WindowsBuildLaunch[] = [];
+  const runWindows: RunWindowsBuild = async (launch) => {
+    launches.push(launch);
+    return { code: 0, output };
+  };
+  return { runWindows, launches };
+}
+
+const onWindows = (overrides: Partial<CompileOptions> = {}): CompileOptions => ({
+  engineDir: WIN_ENGINE,
+  projectFile: WIN_PROJECT,
+  module: "GxCpp",
+  platform: "win32",
+  env: WIN_ENV,
+  run: async () => {
+    throw new Error("a Mac's sandboxed Build.sh never runs on Windows");
+  },
+  ...overrides,
+});
+
+/** No absolute path of the Windows computer in anything an agent reads. */
+function assertNoWindowsPaths(result: CompileResult) {
+  const text = JSON.stringify(result);
+  for (const leak of ["D:\\\\", "C:\\\\", "ai-games", "Epic Games", "Users"])
+    assert.ok(!text.includes(leak), `no ${leak} in ${text}`);
+}
+
+describe("compiling a game's editor target on Windows", () => {
+  it("runs the engine's Build.bat through cmd.exe for Win64, every path whole in quotes, without UBT's lock or accelerator", async () => {
+    const { runWindows, launches } = answeringOnWindows(await fixture("win-first.log"));
+    const result = await compileEditor(onWindows({ runWindows }));
+    assert.equal(result.ok, true, result.summary);
+    assert.equal(launches.length, 1);
+    const [launch] = launches;
+    assert.equal(launch?.file, CMD);
+    assert.deepEqual(launch?.args, [
+      "/d",
+      "/v:off",
+      "/s",
+      "/c",
+      `""D:\\Epic Games\\UE_5.8\\Engine\\Build\\BatchFiles\\Build.bat" GxCppEditor Win64 Development -Project="${WIN_PROJECT}" -NoMutex -NoUBA"`,
+    ]);
+    assert.deepEqual(
+      launch?.args,
+      windowsBuildLaunch(
+        WIN_ENGINE,
+        ["GxCppEditor", "Win64", "Development", `-Project=${WIN_PROJECT}`, "-NoMutex", "-NoUBA"],
+        WIN_ENV,
+      ).args,
+    );
+  });
+
+  it("hands Build.bat Windows' system folders and names, and never a credential or Genex's own setting", () => {
+    const { env } = windowsBuildLaunch(WIN_ENGINE, ["GxCppEditor"], WIN_ENV);
+    assert.equal(env.SystemRoot, "C:\\Windows");
+    assert.equal(env["ProgramFiles(x86)"], "C:\\Program Files (x86)", "UBT finds Visual Studio's installer there");
+    assert.equal(env.LOCALAPPDATA, "C:\\Users\\Ana\\AppData\\Local", "UBT keeps its log there");
+    assert.equal(env.ANTHROPIC_API_KEY, undefined);
+    assert.equal(env.GENEX_PROFILE, undefined);
+  });
+
+  it("refuses a path cmd.exe can't carry, or one on a network share, without running anything", async () => {
+    const rows: Array<[string, Partial<CompileOptions>]> = [
+      ["a project path with %", { projectFile: "D:\\ai-games\\100%\\unreal\\GxCpp.uproject" }],
+      ["a project path with !", { projectFile: "D:\\ai-games\\go!\\unreal\\GxCpp.uproject" }],
+      ["a project path with a quote", { projectFile: 'D:\\ai-games\\a"b\\unreal\\GxCpp.uproject' }],
+      ["a project on a network share", { projectFile: "\\\\nas\\games\\rush\\unreal\\GxCpp.uproject" }],
+      ["an engine path with %", { engineDir: "D:\\Epic%PATH%\\UE_5.8" }],
+      ["an engine on a network share", { engineDir: "//nas/Epic/UE_5.8" }],
+      ["a relative project", { projectFile: "rush\\unreal\\GxCpp.uproject" }],
+      ["a relative engine", { engineDir: "Epic Games\\UE_5.8" }],
+    ];
+    for (const [label, overrides] of rows) {
+      const { runWindows, launches } = answeringOnWindows(await fixture("win-first.log"));
+      const result = await compileEditor(onWindows({ runWindows, ...overrides }));
+      assert.equal(result.failure, CompileFailure.Invalid, label);
+      assert.equal(launches.length, 0, `${label}: nothing ran`);
+    }
+  });
+
+  it("an MSVC error is its first line, at its file relative to the project with / between folders", async () => {
+    const { runWindows } = answeringOnWindows(await fixture("win-err.log"));
+    const result = await compileEditor(onWindows({ runWindows }));
+    assert.equal(result.ok, false);
+    assert.equal(result.failure, CompileFailure.Failed);
+    assert.deepEqual(
+      result.errors.map((e) => [e.file, e.line, e.message]),
+      WIN_ERRORS,
+    );
+    assertNoWindowsPaths(result);
+  });
+
+  it("a link error names the symbol and the object that uses it, never a folder", async () => {
+    const { runWindows } = answeringOnWindows(await fixture("win-link.log"));
+    const result = await compileEditor(onWindows({ runWindows }));
+    assert.equal(result.failure, CompileFailure.Failed);
+    assert.ok(result.errors.length > 0);
+    assert.ok(
+      result.errors.every((e) => e.file === "" && /LNK\d{4}/.test(e.message)),
+      JSON.stringify(result.errors),
+    );
+    assertNoWindowsPaths(result);
+  });
+
+  it("an open editor's Live Coding refusing the build is its own failure, which says to close that editor", async () => {
+    const { runWindows } = answeringOnWindows(await fixture("win-live-coding.log"));
+    const result = await compileEditor(onWindows({ runWindows }));
+    assert.equal(result.ok, false);
+    assert.equal(result.failure, CompileFailure.LiveCoding);
+    assert.equal(result.retryable, false);
+    assert.match(result.summary, /Live Coding/);
+    assertNoWindowsPaths(result);
+  });
+
+  it("never passes on the text of an error in a Windows file outside the project and the engine", async () => {
+    const text = "STANDIN_TOKEN_TEXT: unknown override specifier";
+    const rows: Array<[string, string, string]> = [
+      ["a file in the profile", `C:\\Users\\Ana\\.ssh\\id_stand_in(1): error C3646: ${text}`, "id_stand_in"],
+      ["the same in another case", `c:\\users\\ana\\notes\\stand-in.h(2): error C2143: ${text}`, "stand-in.h"],
+      [
+        "a path that climbs out of the project",
+        `D:\\ai-games\\sword duel\\unreal\\Source\\GxCpp\\..\\..\\..\\..\\secret.txt(3): error C2059: ${text}`,
+        "secret.txt",
+      ],
+    ];
+    for (const [label, line, file] of rows) {
+      const log = [line, "Result: Failed (OtherCompilationError)"].join("\r\n");
+      const result = await compileEditor(onWindows(answeringOnWindows(log)));
+      assert.deepEqual(
+        result.errors.map((e) => [e.file, e.message]),
+        [[file, FOREIGN]],
+        label,
+      );
+      assert.ok(!JSON.stringify(result).includes("STANDIN_TOKEN_TEXT"), label);
+    }
+  });
+
+  it("a cmd.exe that can't start is a typed failure without its path", async () => {
+    const runWindows: RunWindowsBuild = async () => {
+      throw Object.assign(new Error(`spawn ${CMD} ENOENT`), { code: "ENOENT" });
+    };
+    const result = await compileEditor(onWindows({ runWindows }));
+    assert.equal(result.failure, CompileFailure.NotStarted);
+    assertNoWindowsPaths(result);
+  });
+
+  it("a compile stopped while it runs is asked to end and says it was stopped", async () => {
+    const stop = new AbortController();
+    const runWindows: RunWindowsBuild = (_launch, { signal }) =>
+      new Promise((resolve) => {
+        signal.addEventListener("abort", () => resolve({ code: 1, output: "" }), { once: true });
+        stop.abort();
+      });
+    const result = await compileEditor(onWindows({ runWindows, signal: stop.signal }));
+    assert.equal(result.failure, CompileFailure.Aborted);
+  });
+});
+
 describe("whether C++ is possible", () => {
+  it("needs Windows with Microsoft's C++ tools ready for the engine, whatever Xcode says", () => {
+    const rows: Array<[VisualStudioState | undefined, NodeJS.Platform, boolean]> = [
+      [VisualStudioState.Ready, "win32", true],
+      [VisualStudioState.Missing, "win32", false],
+      [VisualStudioState.Outdated, "win32", false],
+      [undefined, "win32", false],
+      [VisualStudioState.Ready, "darwin", false],
+      [VisualStudioState.Ready, "linux", false],
+    ];
+    for (const [state, platform, ready] of rows) {
+      const visualStudio = state ? { state } : undefined;
+      const xcode = { state: platform === "darwin" ? XcodeState.Missing : XcodeState.NotApplicable };
+      assert.equal(canCompileCpp({ xcode, visualStudio }, platform), ready, `${state} ${platform}`);
+    }
+  });
+
   it("needs a Mac with Xcode ready", () => {
     const rows: Array<[XcodeState, NodeJS.Platform, boolean]> = [
       [XcodeState.Ready, "darwin", true],
@@ -720,6 +924,6 @@ describe("whether C++ is possible", () => {
       [XcodeState.Ready, "linux", false],
     ];
     for (const [state, platform, ready] of rows)
-      assert.equal(canCompileCpp({ state }, platform), ready, `${state} ${platform}`);
+      assert.equal(canCompileCpp({ xcode: { state } }, platform), ready, `${state} ${platform}`);
   });
 });
