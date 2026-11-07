@@ -314,7 +314,8 @@ try {
     "desktop",
     "room/project/thread observed from real DOM and CSS resolved",
     async () => {
-      await op(b, "click", { selector: 'nav [data-thread="studio"]' });
+      // ⌘2 opens Harness: its sidebar row is hidden for now (#654).
+      await op(b, "key", { surface: "desktop", key: "2", code: "Digit2", modifiers: ["Meta"] });
       await until(async () => (await snapshot(b)).state.room === "studio", "Studio workspace");
       await op(b, "key", { surface: "desktop", key: "1", code: "Digit1", modifiers: ["Meta"] });
       await until(async () => (await snapshot(b)).state.room === "build", "Build keyboard shortcut");
@@ -600,7 +601,10 @@ try {
       const evolved = fs.readFileSync(runtimeFile, "utf8");
       fs.appendFileSync(sourceFile, "\n<!-- AG-933 shipped seed change -->\n");
       assert.equal((await op(a, "status")).stale, true);
-      await assert.rejects(op(a, "click", { selector: 'nav [data-thread="studio"]' }), /stale-build/);
+      await assert.rejects(
+        op(a, "key", { surface: "desktop", key: "2", code: "Digit2", modifiers: ["Meta"] }),
+        /stale-build/,
+      );
       const old = a.identity.buildId;
       await stop(a);
       a = await start(checkoutA, "fixture", "run-controls", true);

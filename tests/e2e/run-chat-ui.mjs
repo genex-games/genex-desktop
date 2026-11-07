@@ -337,7 +337,8 @@ try {
       beforeTyping,
       "typing commits no conversation subtree",
     );
-    await op("click", { selector: 'nav [data-thread="studio"]' });
+    // ⌘2 opens Harness: its sidebar row is hidden for now (#654).
+    await op("key", { surface: "desktop", key: "2", code: "Digit2", modifiers: ["Meta"] });
     await until(async () => (await snap()).state.room === "studio", "Studio chat");
     await op("key", { surface: "desktop", key: "1", code: "Digit1", modifiers: ["Meta"] });
     await until(
@@ -350,7 +351,7 @@ try {
     await op("type", { selector: '[aria-label="Prompt"]', text: "", replace: true });
   });
   await check("real delta events render before completion and reconcile to one durable reply", async () => {
-    await op("click", { selector: 'nav [data-thread="studio"]' });
+    await op("key", { surface: "desktop", key: "2", code: "Digit2", modifiers: ["Meta"] });
     await until(async () => (await snap()).state.room === "studio", "Studio chat");
     await pause(300); // The pane transition completes after the selected room changes.
     await op("type", { selector: '[aria-label="Prompt"]', text: "fixture:stream", replace: true });
@@ -369,7 +370,7 @@ try {
     await op("key", { surface: "desktop", key: "1", code: "Digit1", modifiers: ["Meta"] });
     await until(async () => (await snap()).state.room === "build", "switch during stream");
     assert.equal((await snap()).chat.streaming, false, "another game never shows the Studio reply");
-    await op("click", { selector: 'nav [data-thread="studio"]' });
+    await op("key", { surface: "desktop", key: "2", code: "Digit2", modifiers: ["Meta"] });
     await until(
       async () => (await snap()).state.room === "studio" && (await snap()).text.includes("Fixture Studio reply:"),
       "stream prefix survives navigation",

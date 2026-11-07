@@ -51,8 +51,10 @@ What Play sends is in [PRIVACY](../PRIVACY.md#play).
 
 ## The dashboard
 
-- Games, Tools and Assets, each with tabs and search; Recent once something was played (opened in
-  the viewer, a native-only game's page shown however it was reached, or a native app launched). A
+- Games, Tools and Assets, each with tabs and search (the sidebar's Assets row is hidden until its
+  rework, [#654](https://github.com/genex-games/genex-desktop/issues/654)); Recent once something
+  was played (opened in the viewer, a native-only game's page shown however it was reached, or a
+  native app launched). A
   Recent row takes the newest cover any card or page shows for its game; one still without a cover,
   or whose cover no longer loads, reads its game's page once a window. A game with no cover shows a
   still wire floor (`NoCover.tsx`) on its row and card. Top creators (the last 30 days) above
@@ -393,7 +395,8 @@ frame only, `STUDIO_UI_ONLY`); prices, shares and counts are genex.games' own, n
   `viewerEscape`). While it is open, a game that finishes loading stays hidden, and Full screen and
   Resume do nothing. A native game's card still opens its page, with its Store under it.
 - **Create › Items** (sidebar row `[data-sidebar-room="items"]`, `panels/items/`,
-  `state/items.ts`) is a room over the workspace, like Plugins. **Browse** lists other creators'
+  `state/items.ts`) is a room over the workspace, like Plugins. Its sidebar row is hidden until its
+  rework ([#654](https://github.com/genex-games/genex-desktop/issues/654)). **Browse** lists other creators'
   shared items with a search, read once the typing pauses; the intro and You get per sale name the
   selling game's share genex.games sends (`sellerShareBps`, `panels/items/browse-model.ts`), else the
   design's words; the panel shows Players pay, You get per sale, **For \<game ▾>** (the account's
