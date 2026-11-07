@@ -932,13 +932,15 @@ the engine, Xcode and its own folders (its configuration read-only), it writes o
 `Intermediate/`, `Binaries/` and `Saved/`, its log folder and a private scratch, never a sign-in home,
 with no network, no Apple Events (no scripting or typing into another app) and a fresh environment. It builds with `-NoUBA`: the build accelerator lists the
 folders above the copy, which the sandbox closes in the home folder (a full build took 26.7 s). On
-Windows `Build.bat <Target> Win64 Development -Project=… -NoMutex -NoUBA` runs through `cmd.exe`
+Windows `Build.bat <Target> Win64 Development -Project=… -NoMutex -NoUBA -NoHotReloadFromIDE` runs through `cmd.exe`
 outside the process sandbox, like `package-game`'s RunUAT (srt-win can't confine one build; the
 gate above keeps the copy's `Build.cs`, `.uproject` and `Plugins/` the game's), with RunUAT's small
 environment (`program-env.ts`); a game or engine path holding a quote, `%` or `!`, or on a network
 share, is refused before anything runs. MSVC's `file(line): error C…` and the linker's `LNK…`
-errors are named the same way, and a build an open editor's Live Coding refuses fails with that
-reason (`live-coding`). UBT
+errors are named the same way. An editor running Live Coding locks every outside build of the
+engine's editor target, whatever its project (the lock is named for the engine's `UnrealEditor.exe`),
+so the last flag skips UBT's check: the game's own project is built only with its editor closed. A
+refusal that still comes fails with that reason (`live-coding`). UBT
 misses a source written within about a second after its last build, so a part file written then is
 given a later write time first. In the game's own
 folder check-part never compiles: the open editor compiles that module, so the C++ counts as not

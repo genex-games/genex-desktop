@@ -14,7 +14,8 @@
  * ProcessSandbox like a game's package (`game-package.ts`): the person's own editor loads the same
  * game code with their rights, and srt-win's grants can't confine one build. A path cmd.exe can't
  * carry (a quote, `%`, `!`) or a network share is refused before anything runs. An open editor's
- * Live Coding refuses every other build of the engine's editor; that refusal is its own failure.
+ * Live Coding would refuse every other build of the engine's editor, so Windows builds skip that
+ * check (`-NoHotReloadFromIDE`); a refusal that still comes is its own failure.
  *
  * A full build peaks near 6 GB, so at most {@link MAX_PARALLEL_COMPILES} run at once in this
  * process and the rest wait in order; a compile past its deadline, or stopped by its caller, ends
@@ -64,6 +65,14 @@ const UNKNOWN_STATE = "unknown";
 const CONFIGURATION = "Development";
 const NO_MUTEX = "-NoMutex";
 const NO_ACCELERATOR = "-NoUBA";
+/**
+ * On Windows UBT refuses every build of an editor target while any editor of the same engine runs
+ * Live Coding: the editor names its lock after the engine's own UnrealEditor.exe, not the project
+ * (UBT's HotReload.cs, the editor's LiveCodingModule.cpp), so a builder's copy wouldn't build while
+ * the person has their game, or any other, open. This flag skips that check; Genex builds a game's
+ * own project only with its editor closed, so no build writes a library an editor has loaded.
+ */
+const NO_IDE_HOT_RELOAD = "-NoHotReloadFromIDE";
 /** Where a project keeps its own plugins, each in a folder with its descriptor. */
 const PLUGINS_FOLDER = "Plugins";
 const DESCRIPTOR_EXTENSION = ".uplugin";
@@ -628,6 +637,7 @@ async function build(options: CompileOptions, platform: NodeJS.Platform): Promis
     `-Project=${options.projectFile}`,
     NO_MUTEX,
     NO_ACCELERATOR,
+    ...(platform === WINDOWS ? [NO_IDE_HOT_RELOAD] : []),
   ];
   const deadline = new AbortController();
   const timer = setTimeout(() => deadline.abort(), options.timeoutMs ?? COMPILE_TIMEOUT_MS);

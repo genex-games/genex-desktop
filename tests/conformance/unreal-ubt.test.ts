@@ -766,7 +766,7 @@ function assertNoWindowsPaths(result: CompileResult) {
 }
 
 describe("compiling a game's editor target on Windows", () => {
-  it("runs the engine's Build.bat through cmd.exe for Win64, every path whole in quotes, without UBT's lock or accelerator", async () => {
+  it("runs the engine's Build.bat through cmd.exe for Win64, every path whole in quotes, without UBT's lock, accelerator or Live Coding check", async () => {
     const { runWindows, launches } = answeringOnWindows(await fixture("win-first.log"));
     const result = await compileEditor(onWindows({ runWindows }));
     assert.equal(result.ok, true, result.summary);
@@ -778,13 +778,13 @@ describe("compiling a game's editor target on Windows", () => {
       "/v:off",
       "/s",
       "/c",
-      `""D:\\Epic Games\\UE_5.8\\Engine\\Build\\BatchFiles\\Build.bat" GxCppEditor Win64 Development -Project="${WIN_PROJECT}" -NoMutex -NoUBA"`,
+      `""D:\\Epic Games\\UE_5.8\\Engine\\Build\\BatchFiles\\Build.bat" GxCppEditor Win64 Development -Project="${WIN_PROJECT}" -NoMutex -NoUBA -NoHotReloadFromIDE"`,
     ]);
     assert.deepEqual(
       launch?.args,
       windowsBuildLaunch(
         WIN_ENGINE,
-        ["GxCppEditor", "Win64", "Development", `-Project=${WIN_PROJECT}`, "-NoMutex", "-NoUBA"],
+        ["GxCppEditor", "Win64", "Development", `-Project=${WIN_PROJECT}`, "-NoMutex", "-NoUBA", "-NoHotReloadFromIDE"],
         WIN_ENV,
       ).args,
     );

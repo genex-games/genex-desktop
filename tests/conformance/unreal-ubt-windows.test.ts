@@ -51,7 +51,10 @@ describe("compiling on Windows through cmd.exe", { skip: SKIP }, () => {
     const result = await compileEditor({ engineDir: w.engineDir, projectFile: w.projectFile, module: MODULE, env });
     assert.equal(result.ok, true, result.summary);
     const args = (await readFile(path.join(w.batchDir, "args.txt"), "utf8")).trim();
-    assert.equal(args, `${MODULE}Editor Win64 Development -Project="${w.projectFile}" -NoMutex -NoUBA`);
+    assert.equal(
+      args,
+      `${MODULE}Editor Win64 Development -Project="${w.projectFile}" -NoMutex -NoUBA -NoHotReloadFromIDE`,
+    );
     const seen = (await readFile(path.join(w.batchDir, "env.txt"), "utf8")).trim();
     assert.equal(
       seen,
