@@ -318,14 +318,13 @@ class GenexLoopTools(unreal.ToolsetDefinition):
 
         The level, the game mode (the level's GameMode Override, else the project's default) and
         the pawn it spawns, the project's own Blueprints under /Game (not /Game/Parts) with their
-        native parent, components and member variables, and the input actions. Works during play
-        too, from the play session's copy of the level.
+        native parent, components and member variables, and the input actions.
 
         Args:
             file: Absolute path of the JSON file, inside <project>/Saved/Genex/.
 
         Returns:
-            JSON {file, blueprints, more, inputActions, ms}, or {error} when Unreal has no level open. The file holds {map, gameMode: {path,
+            JSON {file, blueprints, more, inputActions, ms}. The file holds {map, gameMode: {path,
             parent, defaultPawn} or null, blueprints: [{name, path, parent, components: [{name,
             class}], variables: [{name, type}]}] (at most 200, by path), more, inputActions}.
         """

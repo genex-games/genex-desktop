@@ -5,6 +5,7 @@ Blueprints; it refuses any file outside Saved/Genex, and changes nothing in the 
 
 import json
 import os
+from unittest import mock
 
 import unreal
 
@@ -93,12 +94,15 @@ class Project(HelperCase):
         # Unreal's editor-world getter answers None during play; the play session's copy of the level
         # names the same level (without the play prefix) and carries the same game mode.
         unreal.state['pie'] = True
-        result = self.call('export_project', self.file)
+        with mock.patch.object(unreal.UnrealEditorSubsystem, 'get_editor_world', autospec=True) as asked:
+            result = self.call('export_project', self.file)
         self.assertEqual({k: result[k] for k in ['file', 'blueprints', 'more', 'inputActions']},
                          {'file': self.file, 'blueprints': 4, 'more': 0, 'inputActions': 3})
         with open(SHARED_FILE, encoding='utf-8') as handle:
             self.assertEqual(self.written(), json.load(handle))
         self.assertEqual(unreal.calls, [], 'the editor was changed')
+        # Each call during play writes "The Editor is currently in a play mode." to the log, which reads as a game error.
+        self.assertEqual(asked.call_count, 0, 'the editor-world getter was asked during play')
 
     def test_a_parts_game_mode_names_its_parent(self) -> None:
         # A part may set the level's GameMode Override to its own Blueprint, which the listing leaves out.
