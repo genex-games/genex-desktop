@@ -613,16 +613,19 @@ and `gx` places instanced meshes, bevelled Nanite kit pieces, world-aligned mate
 atmosphere preset (`megastructure`, `daylight`), lights and hero cameras (`GX_Shot_<name>`).
 Every Blueprint graph a script writes through Epic's `BlueprintTools.write_graph_dsl` is checked
 (`genex_loop/graph_write.py`): a text of more than 150 counted nodes is refused before Unreal gets
-it (big writes took minutes, grew the editor by gigabytes and crashed it), and after a write Unreal
+it (big writes took minutes, grew the editor by gigabytes and crashed it), and so is one with a
+`Utilities|IsValid` that has none of its exec pins: Unreal makes it the IsValid macro, which has no
+value, and inside `(not ...)` it linked nothing after it on UE 5.8. After a write Unreal
 answered ok the graph is read back with `read_graph_dsl` and compared with the text by the node
 titles it calls and how many nodes it makes, allowing for how Unreal's reader spells the same graph
 (variable reads as nodes, an early return as an `else`, math, arrays and strings as operators and
-statements, a call by another prefix, a conversion it added, a few nodes shared). It came back short
-when a node is missing and the count fell, or when fewer than three quarters of the nodes (and at
-least two fewer) came back. A write that came back short (UE 5.8 kept two nodes of a function, and
-the agent saved it) fails the run with `graphs` (each graph's `wrote`, `kept`, `missing` and the
-start of its `readBack`), even when the script caught the error; a read-back that fails leaves the
-write as Unreal answered it. The Loop's parts are read back the same way but never refused for
+statements, break nodes as component accesses, a call by another prefix, a conversion it added, a
+few nodes shared). It came back short when a node is missing and the count fell, or when fewer than
+three quarters of the nodes (and at least two fewer) came back. A write that came back short (UE 5.8
+linked one node of a function, left the rest unlinked in the graph, and the agent saved it) fails
+the run with `graphs` (each graph's `wrote`, `kept`, `missing` and the start of its `readBack`),
+even when the script caught the error; a read-back that fails leaves the
+write as Unreal answered it. The Loop's parts are checked the same way but never refused for
 their size: a part writes all its events in one text, and `check-part` doesn't count its nodes.
 `check_graph {graph, code, written}` runs the same check for a graph written another way and changes
 nothing; anything but a loaded graph's object path is refused before anything is read.

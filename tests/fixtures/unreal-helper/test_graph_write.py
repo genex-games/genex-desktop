@@ -20,9 +20,10 @@ from support import HelperCase
 
 GRAPH = '/Game/Duel/Blueprints/BPC_Duel.BPC_Duel:CombatTick'
 
-# The write that dropped nodes on UE 5.8 (an early return first), and what Unreal kept of it.
+# A function Unreal kept one node of, and what it kept. (On UE 5.8 an IsValid used as a value did this
+# first; Genex now refuses that before the write: ISVALID_AS_VALUE.)
 COMBAT_TICK = """(fn CombatTick (DT)
- (if (or (not (Utilities|IsValid Opp)) (not (Utilities|IsValid Sword)))
+ (if (or (not (CallFunction|IsAlive Opp)) (not (CallFunction|IsAlive Sword)))
   (return))
  (CallFunction|TickCommon :DT DT)
  (if IsAI (CallFunction|AITick :DT DT) (else (CallFunction|PollInput)))
@@ -31,11 +32,11 @@ COMBAT_TICK = """(fn CombatTick (DT)
  (if (== _state 1) (CallFunction|TickAttack :DT DT) (else (CallFunction|TickOther :DT DT))))
 """
 KEPT = """(fn CombatTick (DT)
- (Utilities|IsValid (Variables|Default|GetOpp)))
+ (CallFunction|IsAlive (Variables|Default|GetOpp)))
 """
 # The same graph as Unreal reads it back whole: variable reads as nodes, the early return as an else.
 RESTRUCTURED = """(fn CombatTick (DT)
- (if (or (not (Utilities|IsValid (Variables|Default|GetOpp))) (not (Utilities|IsValid (Variables|Default|GetSword))))
+ (if (or (not (CallFunction|IsAlive (Variables|Default|GetOpp))) (not (CallFunction|IsAlive (Variables|Default|GetSword))))
   (return)
   (else
    (CallFunction|TickCommon :DT DT)
@@ -43,6 +44,19 @@ RESTRUCTURED = """(fn CombatTick (DT)
    (CallFunction|Stance)
    (bind _state (Variables|Default|GetState))
    (if (== _state 1) (CallFunction|TickAttack :DT DT) (else (CallFunction|TickOther :DT DT))))))
+"""
+# The UE 5.8 write that came back with one node: Epic makes Utilities|IsValid its exec macro, which has no
+# value and no "then", so inside (not ...) it took the exec wire and Unreal linked nothing after it.
+ISVALID_AS_VALUE = """(fn CombatTick (DT)
+ (if (or (not (Utilities|IsValid (Variables|Default|GetOpp))) (not (Utilities|IsValid (Variables|Default|GetSword))))
+  (return))
+ (CallFunction|TickCommon :DT DT))
+"""
+# The same test with the macro's exec pins, which came back whole.
+ISVALID_WITH_PINS = """(fn CombatTick (DT)
+ (Utilities|IsValid (Variables|Default|GetOpp)
+  (:"Is Valid" (CallFunction|TickCommon :DT DT))
+  (:"Is Not Valid" (return))))
 """
 
 
@@ -88,6 +102,10 @@ class Compares(HelperCase):
             ('a break node as a component access, of many',
              '(fn F (V) (CallFunction|A (Math|Vector|BreakVector V)) (CallFunction|B) (CallFunction|C))',
              '(fn F (V) (CallFunction|A (.x V)) (CallFunction|B) (CallFunction|C))'),
+            ('two break nodes bound to names, read back as component accesses',
+             '(fn F (A B) (bind (ax ay az) (Math|Vector|BreakVector A)) (bind (bx by bz) (Math|Vector|BreakVector B))'
+             ' (return (+ (* ax bx) (* ay by))))',
+             '(fn F (A B) (return (+ (* (.x A) (.x B)) (* (.y A) (.y B)))))'),
             ('two equal pure calls shared', '(fn F () (CallFunction|A (Game|GetPawn)) (CallFunction|B (Game|GetPawn)))',
              '(fn F () (bind p (Game|GetPawn)) (CallFunction|A p) (CallFunction|B p))'),
         ]
@@ -105,11 +123,23 @@ class Compares(HelperCase):
         self.assertEqual((lost['wrote'], lost['kept'], lost['missing']), (2, 0, []))
 
     def test_a_text_too_big_for_one_write_is_refused_by_its_node_count(self) -> None:
-        self.assertIsNone(graph_write.size_problem(calls(graph_write.MAX_NODES), GRAPH))
-        problem = graph_write.size_problem(calls(graph_write.MAX_NODES + 1), GRAPH)
+        self.assertIsNone(graph_write.text_problem(calls(graph_write.MAX_NODES), GRAPH))
+        problem = graph_write.text_problem(calls(graph_write.MAX_NODES + 1), GRAPH)
         self.assertIn(f'about {graph_write.MAX_NODES + 1} nodes', problem)
         self.assertIn('helper functions', problem)
-        self.assertIsNone(graph_write.size_problem('(fn F () (unclosed', GRAPH), "Unreal's own parser names that")
+        self.assertIsNone(graph_write.text_problem(calls(graph_write.MAX_NODES + 1), GRAPH, limit=False))
+        self.assertIsNone(graph_write.text_problem('(fn F () (unclosed', GRAPH), "Unreal's own parser names that")
+
+    def test_isvalid_without_its_exec_pins_is_refused_before_the_write(self) -> None:
+        for name, text in (('as a value', ISVALID_AS_VALUE),
+                           ('as a plain statement', '(fn F (A) (Utilities|IsValid A) (CallFunction|G))'),
+                           ('bound to a name', '(fn F (A) (bind ok (Utilities|IsValid A)) (if ok (CallFunction|G)))')):
+            with self.subTest(name):
+                problem = graph_write.text_problem(text, GRAPH, limit=False)
+                self.assertIn('Utilities|IsValid', problem)
+                self.assertIn(':"Is Not Valid"', problem)
+        self.assertIsNone(graph_write.text_problem(ISVALID_WITH_PINS, GRAPH))
+        self.assertIsNone(graph_write.loss(ISVALID_WITH_PINS, ISVALID_WITH_PINS))
 
 
 class Writes(HelperCase):
@@ -143,6 +173,15 @@ class Writes(HelperCase):
         unreal.state['kept'] = {GRAPH: KEPT}
         with self.assertRaises(graph_write.GraphWriteLost):
             graph_write.write(self.graph, text, limit=False)
+
+    def test_isvalid_as_a_value_never_reaches_unreal_even_in_a_loop_part(self) -> None:
+        for limit in (True, False):
+            with self.subTest(limit=limit):
+                with self.assertRaises(graph_write.GraphWriteLost) as raised:
+                    graph_write.write(self.graph, ISVALID_AS_VALUE, limit=limit)
+                self.assertTrue(raised.exception.facts['refused'])
+                self.assertNotIn(('write_graph_dsl', GRAPH), unreal.calls)
+        self.assertIsNone(graph_write.write(self.graph, ISVALID_WITH_PINS))
 
     def test_a_text_too_big_never_reaches_unreal(self) -> None:
         with self.assertRaises(graph_write.GraphWriteLost) as raised:
@@ -231,6 +270,7 @@ class CheckGraph(HelperCase):
         refused = tool('check_graph', GRAPH, calls(graph_write.MAX_NODES + 1), False)
         self.assertTrue(refused['refused'])
         self.assertIn('helper functions', refused['error'])
+        self.assertTrue(tool('check_graph', GRAPH, ISVALID_AS_VALUE, False)['refused'])
         self.assertNotIn('read_graph_dsl', [call[0] for call in unreal.calls])
 
     def test_a_read_back_that_fails_is_no_verdict(self) -> None:

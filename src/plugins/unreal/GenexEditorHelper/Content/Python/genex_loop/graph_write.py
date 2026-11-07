@@ -1,13 +1,17 @@
 """Blueprint graph writes Genex can trust, through Epic's BlueprintTools.write_graph_dsl.
 
 Epic's writer can answer ok while the graph it built lost most of its text: on UE 5.8 a function
-whose first statement was an early (if ... (return)) kept two of its nodes, and was saved that way
-before anyone looked. So each write Genex makes or watches is read back (read_graph_dsl) and
-compared with its text, and a write that came back short fails, naming what is missing:
+that began (if (or (not (Utilities|IsValid ...)) ...) (return)) kept one of its fifteen nodes, and
+was saved that way before anyone looked. Epic makes Utilities|IsValid its exec macro, which has no
+value and no "then": it took the exec wire, and the nodes after it were made but never linked (they
+stay in the graph). So a text with an IsValid that has none of its exec pins is refused before
+Unreal gets it, and each write Genex makes or watches is read back (read_graph_dsl) and compared
+with its text, and a write that came back short fails, naming what is missing:
 
 - nodes are counted on both sides: calls, operators, branches, switches and loops. Variable reads
   are left out on both sides: the read-back spells each one as a node, the text often as a bare
-  name. So is a component access such as (.x v), which Unreal may share between uses.
+  name. So are a component access such as (.x v), which Unreal may share between uses, and a break
+  node (Math|Vector|BreakVector), which it reads back as component accesses.
 - a node the text calls by name that doesn't come back under that name (its last part, so a call
   spelled CallFunction|Foo or Class|BP|Foo is the same node) is missing, except math, flow
   control, arrays and strings, which the read-back may spell as operators and statements.
@@ -19,8 +23,7 @@ A read-back that can't be taken or read leaves the write as Unreal answered it: 
 ever fails a write it could compare.
 
 One graph's text that makes more than MAX_NODES nodes is refused before Unreal gets it (a Loop
-part's, which holds all its events, only is read back): writes
-that big took minutes each, grew the editor to about 29 GB and crashed it three times in one
+part's, which holds all its events, only is read back): writes that big took minutes each, grew the editor to about 29 GB and crashed it three times in one
 evening, and splitting the graph into small functions ended it.
 
 The text is read with Epic's own rules (blueprint-text.ts follows them too): `;` comments, quoted
@@ -65,6 +68,12 @@ OPERATORS = frozenset({'+', '-', '*', '/', '%', 'xor', '==', '!=', '<', '<=', '>
 RESPELLED = ('math|', 'utilities|flowcontrol|', 'utilities|operators|', 'utilities|array|', 'utilities|string|')
 VARIABLES = 'variables|'
 GETTER = 'get'
+# A struct's break node, by its title; a Blueprint's own function of that name is a call.
+BREAK = 'break'
+OWN_CALLS = ('callfunction|', 'class|')
+# Epic's IsValid exec macro: written with none of its exec pins (:"Is Valid" ...), Unreal links nothing after it.
+EXEC_MACRO = 'utilities|isvalid'
+PIN = ':'
 WORD_END = frozenset(' \t\n\r;")')
 SPACE = frozenset(' \t\n\r')
 
@@ -74,10 +83,14 @@ MESSAGE = {
                 'helper functions (fn ...) of a few dozen nodes each, write each to its own graph, and write '
                 'only the ones you changed.'),
     'lost': ('{graph}: Unreal answered ok, but reading the graph back found {kept} of the {wrote} nodes the text '
-             'makes{missing}. The graph now holds only what Unreal kept: don\'t save it like this. readBack shows '
-             'what it kept; write the lost part another way or split it into smaller functions, then write it '
-             'again.'),
+             'makes{missing}. Unreal may have left the rest in the graph unlinked: don\'t save it like this. '
+             'readBack shows what it linked; write the lost part another way or split it into smaller functions, '
+             'then write it again.'),
     'missing': '; missing {names}',
+    'exec_macro': ('{graph}: {name} makes Unreal\'s IsValid macro, which has no value and no "then": inside not, '
+                   'and, or, a condition or a bind, or as a plain statement, it takes the exec wire and Unreal '
+                   'links nothing after it. Write it with its exec pins: ({name} X (:"Is Valid" ...) '
+                   '(:"Is Not Valid" ...)).'),
     'not_graph': 'graph must be a Blueprint graph\'s path, such as /Game/BP_Door.BP_Door:EventGraph.',
 }
 
@@ -92,9 +105,11 @@ class GraphWriteLost(RuntimeError):
 
 
 class GraphText(typing.NamedTuple):
-    """What a graph's text makes: its nodes (variable reads left out) and the nodes it names, by last part."""
+    """What a graph's text makes: its nodes (variable reads and break nodes left out), the nodes it
+    names, by last part, and each IsValid it writes with none of its exec pins."""
     nodes: int
     named: dict
+    unpinned: list
 
 
 # ---------------------------------------------------------------------------
@@ -202,28 +217,39 @@ def _is_getter(name: str) -> bool:
     return lowered.startswith(VARIABLES) and lowered.rsplit('|', 1)[-1].startswith(GETTER)
 
 
-def _visit(form, found: dict, counts: list) -> None:
+def _is_break(name: str) -> bool:
+    lowered = name.lower()
+    return lowered.rsplit('|', 1)[-1].startswith(BREAK) and not lowered.startswith(OWN_CALLS)
+
+
+def _is_pin_group(form) -> bool:
+    return isinstance(form, list) and bool(form) and _word(form[0]).startswith(PIN)
+
+
+def _visit(form, made: GraphText, counts: list) -> None:
     if not isinstance(form, list) or not form:
         return
     head = _word(form[0])
     if '|' in head:
         title = head.rsplit('|', 1)[-1].lower()
-        if not _is_getter(head):
+        if not _is_getter(head) and not _is_break(head):
             counts[0] += 1
-            found.setdefault(title, head)
+            made.named.setdefault(title, head)
+        if head.lower() == EXEC_MACRO and not any(_is_pin_group(item) for item in form[1:]):
+            made.unpinned.append(head)
     elif head in OPERATORS or head in NODE_STATEMENTS:
         counts[0] += 1
     start = _skipped(form) if head in STATEMENTS else 1
     for item in form[start:]:
-        _visit(item, found, counts)
+        _visit(item, made, counts)
 
 
 def read_text(text: str) -> GraphText:
     """What a graph's text makes; ValueError when it can't be read."""
-    found, counts = {}, [0]
+    made, counts = GraphText(0, {}, []), [0]
     for form in forms(text):
-        _visit(form, found, counts)
-    return GraphText(counts[0], found)
+        _visit(form, made, counts)
+    return made._replace(nodes=counts[0])
 
 
 def _respelled(name: str) -> bool:
@@ -242,16 +268,19 @@ def loss(written: str, read_back: str) -> dict | None:
     return {'wrote': wrote.nodes, 'kept': kept.nodes, 'missing': missing}
 
 
-def size_problem(text: str, graph: str) -> str | None:
-    """Why one write of `text` is refused for its size, or None (also for text this can't read:
-    Unreal's own parser names what is wrong with it)."""
+def text_problem(text: str, graph: str, limit: bool = True) -> str | None:
+    """Why one write of `text` is refused before Unreal gets it, or None (also for text this can't
+    read: Unreal's own parser names what is wrong with it): an IsValid with none of its exec pins,
+    or (when `limit`) more nodes than one write takes."""
     try:
-        nodes = read_text(text).nodes
+        made = read_text(text)
     except ValueError:
         return None
-    if nodes <= MAX_NODES:
+    if made.unpinned:
+        return MESSAGE['exec_macro'].format(graph=graph, name=made.unpinned[0])
+    if not limit or made.nodes <= MAX_NODES:
         return None
-    return MESSAGE['too_big'].format(graph=graph, nodes=nodes, limit=MAX_NODES)
+    return MESSAGE['too_big'].format(graph=graph, nodes=made.nodes, limit=MAX_NODES)
 
 
 def loss_message(graph: str, lost: dict) -> str:
@@ -292,10 +321,10 @@ def find_graph(path: str):
     return graph
 
 
-def check_size(graph, code: str) -> None:
-    """Raises GraphWriteLost for a text too big for one write; nothing reaches Unreal."""
+def check_text(graph, code: str, limit: bool = True) -> None:
+    """Raises GraphWriteLost for a text refused before the write (text_problem); nothing reaches Unreal."""
     name = graph_name(graph)
-    problem = size_problem(code, name)
+    problem = text_problem(code, name, limit)
     if problem:
         raise GraphWriteLost(problem, graph=name, refused=True)
 
@@ -319,23 +348,22 @@ def check_written(graph, code: str) -> dict:
 
 def write(graph, code: str, send=None, limit: bool = True):
     """Writes Blueprint text into a graph with Epic's write_graph_dsl (or `send`, the caller's own
-    call of it), refusing a text too big for one write (unless not `limit`) and failing one that
-    came back short (GraphWriteLost); Epic's answer otherwise."""
-    if limit:
-        check_size(graph, code)
+    call of it), refusing a text with an unpinned IsValid or too big for one write (unless not
+    `limit`) and failing one that came back short (GraphWriteLost); Epic's answer otherwise."""
+    check_text(graph, code, limit)
     answer = send() if send else epic_tools().write_graph_dsl(graph, code)
     check_written(graph, code)
     return answer
 
 
 def check_graph(path: str, code: str, written: bool) -> dict:
-    """The check_graph tool: before a write (`written` false) whether `code` fits one write,
-    {graph, nodes}; after it, whether the graph at `path` holds what `code` makes, {graph, nodes,
+    """The check_graph tool: before a write (`written` false) whether `code` may be sent as one
+    write, {graph, nodes}; after it, whether the graph at `path` holds what `code` makes, {graph, nodes,
     kept}. Refused with the words and facts of what is wrong."""
     graph = find_graph(path)
     try:
         if not written:
-            check_size(graph, code)
+            check_text(graph, code)
             return {'graph': path, 'nodes': read_text(code).nodes}
         return {'graph': path, **check_written(graph, code)}
     except GraphWriteLost as lost:
