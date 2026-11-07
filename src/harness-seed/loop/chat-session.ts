@@ -231,9 +231,18 @@ const DO_IT_YOURSELF =
   "Do every step you can yourself rather than handing it to the person. When you have the desktop tool (computer control), you open and use any app on this computer, a launcher, a store, an installer and an engine's editor included, and where they are signed in already, content tied to their account (Fab, Epic's launcher, an asset store) is yours to add. Your tools start, stop and restart what the work needs. Only a password or two-step code, the system's own permission prompts, a payment, a choice about their own work, and a step in an app when you have no desktop tool are theirs: never tell them anything else is something only they can do.";
 
 /**
+ * Whose "no" a tool's answer is. The person's own refusal always says they denied it; an engine's
+ * answer to a call Genex cut off (a Stop, a pause, a turn's end) reads as the user's. A lead once read
+ * "The user doesn't want to take this action right now" on its own pause, which Genex had cut off, and
+ * told the person they had declined it (sword duel).
+ */
+const CUT_OFF_CALLS =
+  "Only a tool answer that says the person denied it is their refusal. An answer that says the user doesn't want to take this action, or that the call was interrupted, means Genex or your engine cut the call off (a Stop, a pause, a turn ending), not that the person declined: never tell them they declined it.";
+
+/**
  * Genex's context for the chat's own session, said once in its system text: who runs it and the
- * game's folder (`appIdentity`), who the person is, the language they read, whose steps are whose and
- * the chat's Run button.
+ * game's folder (`appIdentity`), who the person is, the language they read, whose steps are whose,
+ * whose "no" a tool's answer is and the chat's Run button.
  * Only what holds for the session's whole life, the same text on every turn, the lead's included
  * (director.ts): a resumed Claude Code or Codex session keeps the system text it started with. So
  * what the folder holds, which a turn can change, is never in it: a turn that changes it tells the
@@ -247,5 +256,12 @@ export function chatContext({
   folderLabel: string;
   appLanguage: AppLanguage | null;
 }): string {
-  return [appIdentity({ folderLabel }), TALK, languageRule(appLanguage), DO_IT_YOURSELF, RUN_BUTTON].join("\n");
+  return [
+    appIdentity({ folderLabel }),
+    TALK,
+    languageRule(appLanguage),
+    DO_IT_YOURSELF,
+    CUT_OFF_CALLS,
+    RUN_BUTTON,
+  ].join("\n");
 }

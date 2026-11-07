@@ -6,6 +6,7 @@
  * take the run explicitly; they are not bound onto it.
  */
 import { tallyOf } from "../finish-check.ts";
+import { workedMs } from "./work-time.ts";
 import type { AnyRecord } from "../../types/harness.d.ts";
 import type { LoopRun, LoopRunLogEntry } from "./loop-run.ts";
 import type { WakeState } from "./wake.ts";
@@ -29,7 +30,7 @@ function logRecord(log: readonly LoopRunLogEntry[]): LoopRunLogEntry[] {
 
 /**
  * Put the run's record on its journal (`journal.director`), as every save does: the log and how much
- * of it the lead has heard, and where its job ends and its finish checks stand.
+ * of it the lead has heard, where its job ends and its finish checks stand, and how long it has worked.
  */
 export function recordLoopRun(loopRun: LoopRun): void {
   const director = loopRun.journal?.director;
@@ -41,6 +42,7 @@ export function recordLoopRun(loopRun: LoopRun): void {
     heardSeq: loopRun.waitSeq,
     judges: state.judges,
     jobsCursor: state.jobsCursor ?? 0,
+    worked: workedMs(loopRun),
     ...(state.finishTally ? { finishTally: state.finishTally } : {}),
   });
 }

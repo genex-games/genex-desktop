@@ -8,13 +8,15 @@
  * session still answers. A turn on another engine moves the chat's bookmark there, so a
  * lead the build seats later starts afresh.
  */
-import { readJournal } from "./run-journal.ts";
+import { readJournal, writeJournal } from "./run-journal.ts";
 import { HostMethod } from "./host-methods.ts";
 import { hasSessionRoles, plannerModel, RoleKey, roleEngine, supportsSessions } from "./model-roles.ts";
 import { EventKind, RunState } from "./run-events.ts";
 import { SECOND_MS, sleep } from "./time.ts";
 import { heldRuns, type RunStart, type Studio } from "./studio-state.ts";
 import { MESSAGE } from "./after-loop-run-prompts.ts";
+import { askedMinutes, WORK_TIME_PARAMS, workBudget } from "./work-time.ts";
+import { workedBefore } from "./director/work-time.ts";
 import type { AnyRecord, HostCall } from "../types/harness.d.ts";
 import type { StudioToolSpec } from "../types/host-api.d.ts";
 
@@ -34,8 +36,10 @@ const RESUME_RUN_TOOL: StudioToolSpec = {
     properties: {
       text: {
         type: "string",
-        description: "The latest requested change or continuation, preserving the user's intent.",
+        description:
+          "The person's latest words, quoted as they wrote them, then what to do now in a sentence or two. Add no work they didn't ask for, and where a word could mean more than one thing, read it by what they made the priority earlier in this chat.",
       },
+      ...WORK_TIME_PARAMS,
     },
   },
 };
@@ -135,8 +139,9 @@ export function afterLoopRunGrant(loopRun: AfterLoopRun): {
 }
 
 /**
- * The resume the session recorded, when it may resume: its instruction (`text`) and nothing else —
- * a run it names is not the one it was granted — else null.
+ * The resume the session recorded, when it may resume: its instruction (`text`) and the time the
+ * person named for it (`hours`, `minutes`), and nothing else — a run it names is not the one it was
+ * granted — else null.
  */
 export function resumeAsked(
   loopRun: AfterLoopRun,
@@ -146,7 +151,30 @@ export function resumeAsked(
   const call = recorded.find((c) => c.name === RESUME_RUN);
   if (!call) return null;
   const text = call.args?.text;
-  return typeof text === "string" ? { text } : {};
+  return { ...(typeof text === "string" ? { text } : {}), ...timeOf(call.args) };
+}
+
+/** The `hours` and `minutes` a recorded resume named, when they name a time; nothing else of its arguments. */
+function timeOf(args: AnyRecord | undefined): AnyRecord {
+  if (!args || !askedMinutes(args)) return {};
+  const time: AnyRecord = {};
+  for (const key of Object.keys(WORK_TIME_PARAMS)) if (args[key] !== undefined) time[key] = args[key];
+  return time;
+}
+
+/**
+ * The time the person named for the resumed build, on its journal's run before the host resumes it:
+ * the resumed run reads its budgets there (run-dispatch.ts `resumeRun`), counted from the time it has
+ * worked so far (work-time.ts). Nothing when they named none, or when the run is under way here.
+ */
+async function askWorkTime(studio: Studio, threadId: string, runId: string, args: AnyRecord): Promise<void> {
+  const minutes = askedMinutes(args);
+  const running = heldRuns(studio).some((active) => active.run?.runId === runId && !active.done);
+  if (!minutes || running) return;
+  const journal = await readJournal(studio.host, threadId, runId);
+  if (!journal?.run) return;
+  journal.run.budgets = { ...journal.run.budgets, ...workBudget(minutes, workedBefore(journal)) };
+  await writeJournal(studio.host, threadId, runId, journal).catch(() => {});
 }
 
 /**
@@ -170,7 +198,8 @@ function askedOf(studio: object): Map<string, AskedResume> {
 }
 
 /**
- * Resume the paused run the session asked for, now that its reply has ended: the host's own
+ * Resume the paused run the session asked for, now that its reply has ended: the time the person
+ * named for it goes on its journal first (`askWorkTime`), then the host's own
  * `resume_run` records the instruction on the run and resumes its journal, and the run's lead
  * continues this same session (lead-session.ts). The chat is held until the run is reserved, so
  * its next message waits for that run — or goes to its lead — instead of being answered as after
@@ -187,6 +216,7 @@ export async function resumeAfterReply(
   const { runId, messageId } = loopRun;
   const asked: AskedResume = { runId, until: Date.now() + within, taken: false, stopped: false };
   askedOf(studio).set(threadId, asked);
+  await askWorkTime(studio, threadId, runId, args);
   try {
     await studio.host.call(HostMethod.RunControl, {
       threadId,

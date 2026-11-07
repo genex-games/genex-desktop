@@ -195,8 +195,9 @@ export function isCompletionPolicy(value: unknown): value is CompletionPolicy {
 
 /**
  * How long a run has worked since its working time began: the stretches it ran, never a pause or
- * the hours the app was closed under it. The harness counts its budget the same way (its journal's
- * `loopRunClock`), so a resumed build goes on from the time it worked, not from its first start.
+ * the hours the app was closed under it. The harness counts the time a person asked for the same way
+ * (its journal's `director.worked`, the seed's `loop/work-time.ts`), so a resumed build goes on from the
+ * time it worked, not from its first start.
  */
 export interface RunWorked {
   /** The working time of its closed stretches, in ms. */

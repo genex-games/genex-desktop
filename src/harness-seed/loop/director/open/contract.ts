@@ -29,6 +29,13 @@ export const MAX_REOPENS = 0;
  * Kept for a `health.ts` an agent kept from before: Genex hands nothing over, and pauses no Loop.
  */
 export const MAX_HANDOFFS = 3;
+/**
+ * How long a lead that paused its Loop has to end its turn with its words for the person before Genex
+ * ends its session (director/news.ts). Ended at once, its own `pause` call was cut off before it
+ * answered: Claude Code answered it "The user doesn't want to take this action right now", and the
+ * lead told the person they had declined the pause (sword duel).
+ */
+export const PAUSE_END_MS = 30 * SECOND_MS;
 /** What a yes still needs of the lead's `finish` call: the workers settled and the last checkpoint. */
 export const OPEN_CLOSE_MS = 2 * MINUTE_MS;
 /** The longest save point label Genex keeps. */
@@ -147,6 +154,8 @@ export interface OpenLoop {
   journal: OpenJournal;
   /** Why the Loop pauses: its lead's words for the person (`pause`), once it asked; null while it runs. */
   halted: string | null;
+  /** When its lead's `pause` call answered, on the Loop's clock: it has `PAUSE_END_MS` from then to end its turn itself. */
+  haltedAt?: number;
   /** The save point count when the lead's turn under way began: a turn that saved none is autosaved. */
   turnSavedFrom: number;
   /**

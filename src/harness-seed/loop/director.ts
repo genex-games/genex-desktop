@@ -37,6 +37,7 @@ import { directors } from "./director/tool-specs.ts";
 import { resumedFromJournal } from "./director/journal.ts";
 import { LOOP_WORDS } from "./director/wake-prompts.ts";
 import { runWakeLoop } from "./director/wake.ts";
+import { workStartLine } from "./director/work-time.ts";
 import { WrapCause } from "./director/wake-schedule.ts";
 import { openLeadLine, type LeadLine } from "./director/lead-line.ts";
 import { bookmarkLead, freshChat, leadSeat } from "./director/lead-session.ts";
@@ -219,12 +220,14 @@ async function prepareTheStart(loopRun: LoopRun): Promise<StartOfRun> {
 
 /**
  * The Loop's first lines to its lead: that it started (or resumed), with its goal as the chat's
- * session wrote it; then what its start found (the plugins' words, Genex's gates, the app's look).
+ * session wrote it, and the time the person asked for when they named one; then what its start found
+ * (the plugins' words, Genex's gates, the app's look).
  */
 function startLines(loopRun: LoopRun, start: StartOfRun): string[] {
   const { goal } = loopRun.run;
   const line = resumedFromJournal(loopRun) ? LOOP_WORDS.resumed(goal) : LOOP_WORDS.started(goal);
-  return [line, ...start.notes];
+  const time = workStartLine(loopRun);
+  return [line, ...(time ? [time] : []), ...start.notes];
 }
 
 /** Why the session ended, in the sentence the report keeps, when the Loop's own words name none (`openEndWords`). */
