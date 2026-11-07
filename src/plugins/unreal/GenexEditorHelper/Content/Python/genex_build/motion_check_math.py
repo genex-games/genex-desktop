@@ -3,7 +3,8 @@ visible body read every frame of a play, how far its planted feet slide while it
 its pose jumps (a pop), the frames it turns in one snap, the montages that stopped well before their
 end or started over, and the frames it was hidden or a ragdoll.
 
-A frame is a dict: t (game seconds), root (x, y, z), yaw (the body's facing, degrees), feet
+A frame is a dict: t (game seconds), root (x, y, z), yaw (the body's facing, degrees; None when
+its pose shows none), feet
 {side: (x, y, z) world cm}, bones {name: (x, y, z) from the root, world cm}, montages {mesh: (name,
 position s, length s, blend-out s) or None}, and the flags hidden, ragdoll and falling.
 
@@ -43,9 +44,11 @@ CUT_REST_S = 0.3
 # A montage shorter than this (s) is too short to call cut.
 MIN_MONTAGE_S = 0.2
 # A montage whose position goes back by more than RESTART_BACK_S to within RESTART_START_S of its
-# start began again; one that goes back to a later point plays a section again (a loop, a hold).
+# start (plus what it plays in the frame's time, up to RESTART_RATE times the game's pace) began
+# again; one that goes back to a later point plays a section again (a loop, a hold).
 RESTART_BACK_S = 0.05
 RESTART_START_S = 0.1
+RESTART_RATE = 3.0
 # The fewest frames a check reports on, and the most it lists of each kind.
 MIN_FRAMES = 10
 MAX_LISTED = 12
@@ -168,7 +171,7 @@ def snap_turns(frames: list) -> list:
     """The frames the body turned in one snap: [{t, deg}]."""
     snaps = []
     for a, b, dt in _steps(frames):
-        if not (_counted(a) and _counted(b)):
+        if not (_counted(a) and _counted(b)) or a.get('yaw') is None or b.get('yaw') is None:
             continue
         turned = abs(_wrap(b['yaw'] - a['yaw']))
         if turned >= SNAP_DEG and turned / dt >= SNAP_DEG_S:
@@ -176,13 +179,13 @@ def snap_turns(frames: list) -> list:
     return snaps
 
 
-def _goes_on(current: dict, name, position) -> bool:
-    """Whether a frame goes on with the montage `current` played: the same montage, onward or back to a
-    later section, not back at its start."""
+def _goes_on(current: dict, name, position, dt: float) -> bool:
+    """Whether a frame `dt` after the last goes on with the montage `current` played: the same montage,
+    onward or back to a later section, not back at its start."""
     if name != current['montage']:
         return False
     back = position < current['played'] - RESTART_BACK_S
-    return not back or position > RESTART_START_S
+    return not back or position > RESTART_START_S + RESTART_RATE * dt
 
 
 def _playthroughs(frames: list, mesh: str) -> list:
@@ -190,10 +193,13 @@ def _playthroughs(frames: list, mesh: str) -> list:
     is stopped, again (the same montage began anew) or running."""
     runs: list = []
     current = None
+    last_t = None
     for frame in frames:
         playing = frame.get('montages', {}).get(mesh)
         name, position = (playing[0], playing[1]) if playing else (None, None)
-        if current is not None and _goes_on(current, name, position):
+        dt = 0.0 if last_t is None else max(0.0, frame['t'] - last_t)
+        last_t = frame['t']
+        if current is not None and _goes_on(current, name, position, dt):
             current['played'] = max(current['played'], position)
             continue
         if current is not None:

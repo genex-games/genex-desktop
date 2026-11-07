@@ -38,6 +38,9 @@ CLOSEST_NAMES = 6
 # from genex_play.looks.parts); these words rule a bone out.
 CORE_BONES = (('pelvis', ('pelvis', 'hips')), ('head', ('head',)))
 NOT_CORE = ('end', 'top', 'twist', 'ik', 'neck')
+# The shoulders give no facing when the line between them lies along the ground less than this share
+# of its length (a body on its side, a roll): that frame's facing is unknown, not a turn.
+LEVEL_SHOULDERS = 0.5
 
 MESSAGE = {
     'not_playing': 'No play session is running; start one (StartPIE) first.',
@@ -111,19 +114,24 @@ def _bones(mesh) -> dict:
     return bones
 
 
-def _blend_out(montage) -> float:
-    """How long before its end a montage stops being the active one: its blend-out, or the trigger time
-    that starts it; 0 when the montage names neither."""
-    times = [0.0]
+def _blend_out(anim, montage) -> float:
+    """How far before its end (montage seconds) a montage stops being the active one: its blend-out
+    trigger time when it sets one (0 or more), else its blend-out time, at the rate it plays; 0 when
+    the montage names neither."""
     try:
-        times.append(float(montage.get_editor_property('blend_out').get_editor_property('blend_time')))
-    except Exception:  # noqa: BLE001 - a montage without the blend: no allowance
-        pass
+        lead = float(montage.get_editor_property('blend_out_trigger_time'))
+    except Exception:  # noqa: BLE001 - no trigger time: the blend-out's own
+        lead = -1.0
+    if lead < 0:
+        try:
+            lead = float(montage.get_editor_property('blend_out').get_editor_property('blend_time'))
+        except Exception:  # noqa: BLE001 - a montage without the blend: no allowance
+            lead = 0.0
     try:
-        times.append(float(montage.get_editor_property('blend_out_trigger_time')))
-    except Exception:  # noqa: BLE001 - no trigger time (-1 means the blend-out's own)
-        pass
-    return max(times)
+        rate = abs(float(anim.montage_get_play_rate(montage)))
+    except Exception:  # noqa: BLE001 - its rate unread: the montage's own pace
+        rate = 1.0
+    return max(0.0, lead * rate)
 
 
 def _montage(anim) -> tuple | None:
@@ -132,7 +140,7 @@ def _montage(anim) -> tuple | None:
     if montage is None:
         return None
     return (str(montage.get_name()), float(anim.montage_get_position(montage)), float(montage.get_play_length()),
-            _blend_out(montage))
+            _blend_out(anim, montage))
 
 
 def _hidden(actor, mesh) -> bool:
@@ -150,14 +158,15 @@ def _falling(actor) -> bool:
     return movement is not None and bool(movement.is_falling())
 
 
-def _facing(mesh, shoulders: dict) -> float:
-    """The body's facing (degrees): square to its shoulders as the pose has them, else the mesh's yaw."""
+def _facing(mesh, shoulders: dict) -> float | None:
+    """The body's facing (degrees): square to its shoulders as the pose has them, else the mesh's yaw;
+    None while the shoulders stand nearly upright (a body on its side)."""
     if 'l' not in shoulders or 'r' not in shoulders:
         return float(mesh.get_world_rotation().yaw)
     left, right = (_xyz(mesh.get_socket_location(shoulders[side])) for side in ('l', 'r'))
     across = (left[0] - right[0], left[1] - right[1])
-    if math.hypot(*across) < 1e-6:
-        return float(mesh.get_world_rotation().yaw)
+    if math.hypot(*across) <= LEVEL_SHOULDERS * math.dist(left, right):
+        return None
     return math.degrees(math.atan2(across[0], -across[1]))
 
 

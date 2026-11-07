@@ -100,7 +100,11 @@ describe("the judge reads motion from frames with their times", () => {
   });
 
   it("a frame that never landed (the play ended mid-strip) is left out, and the frames that did reach the judge", async () => {
-    const { game, files, frames } = await gameWithStrip();
+    const { game: real, files: realFiles, frames } = await gameWithStrip();
+    // Unreal names the frames by the game folder as it was opened, here through a link to it.
+    const game = path.join(path.dirname(real), "game-link");
+    await symlink(real, game);
+    const files = realFiles.map((file) => path.join(game, path.relative(real, file)));
     const pending = path.join(game, CAPTURES, "strip-1-3.png");
     const record = { frames: [...frames, { gameSeconds: 12.1 }], files: [...files, pending] };
     await writeFile(path.join(game, CAPTURES, "strip-cut.json"), JSON.stringify(record));
@@ -142,6 +146,9 @@ describe("the judge reads nothing outside the project's folder and asks no model
     await writeFile(path.join(game, "climbs.json"), JSON.stringify({ files: ["../outside/secret.png"] }));
     await writeFile(path.join(game, "climbs-to-none.json"), JSON.stringify({ files: ["../outside/none.png"] }));
     await writeFile(path.join(game, "commas.json"), JSON.stringify({ files: ["still.png,../outside/secret.png"] }));
+    await writeFile(path.join(game, "nulls.json"), JSON.stringify({ files: [null, 7] }));
+    await symlink(outside, path.join(game, "door"));
+    await writeFile(path.join(game, "through-door.json"), JSON.stringify({ files: ["door/none.png"] }));
     await writeFile(path.join(game, "broken.json"), "{ not json");
     await writeFile(path.join(game, "empty.json"), JSON.stringify({ files: [], frames: [] }));
     await writeFile(path.join(game, "strip.txt"), "{}");
@@ -157,6 +164,12 @@ describe("the judge reads nothing outside the project's folder and asks no model
       ["a frame that climbs out", { strip: "climbs.json" }, /not a file in the project's folder/],
       ["a missing frame outside", { strip: "climbs-to-none.json" }, /not a file in the project's folder/],
       ["a frame that names two pictures", { strip: "commas.json" }, /not one picture's path/],
+      ["frames that are no paths", { strip: "nulls.json" }, /not one picture's path/],
+      [
+        "a missing frame in a linked folder outside",
+        { strip: "through-door.json" },
+        /not a file in the project's folder/,
+      ],
       ["a strip that is not JSON", { strip: "broken.json" }, /could not be read/],
       ["a strip with no frames yet", { strip: "empty.json" }, /no frames yet/],
       ["a strip that is no .json", { strip: "strip.txt" }, /\.json poses file/],

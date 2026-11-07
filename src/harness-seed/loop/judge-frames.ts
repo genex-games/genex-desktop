@@ -27,6 +27,8 @@ const MAX_STRIP_RECORD_BYTES = 1024 * 1024;
 const STRIP_RECORD = ".json";
 /** What a missing file's stat fails with. */
 const NO_SUCH_FILE = "ENOENT";
+/** The frame files a strip can name, by extension: the pictures the judge reads. */
+const FRAME_TYPES: ReadonlySet<string> = new Set([".png", ".jpg", ".jpeg"]);
 
 /** The words a lead is told when a strip or its times can't be read. Model-facing. */
 export const JUDGE_FRAMES_REFUSALS = {
@@ -63,11 +65,16 @@ async function fileInside(top: string, rel: string): Promise<string | null> {
   return full !== null && under(top, full) ? full : null;
 }
 
-/** Whether a strip's frame is one that never landed: its path is inside `top` and nothing is there. */
+/**
+ * Whether a strip's frame is one that never landed: a picture whose folder is inside `top` by its real
+ * path (Unreal spells a game folder reached through a link as it was opened) and nothing is there.
+ */
 async function neverLanded(top: string, rel: string): Promise<boolean> {
   const full = path.resolve(top, rel);
-  if (!under(top, full)) return false;
-  return lstat(full).then(
+  if (!FRAME_TYPES.has(path.extname(full).toLowerCase())) return false;
+  const folder = await realpath(path.dirname(full)).catch(() => null);
+  if (folder === null || (folder !== top && !under(top, folder))) return false;
+  return lstat(path.join(folder, path.basename(full))).then(
     () => false,
     (err: { code?: unknown }) => err?.code === NO_SUCH_FILE,
   );
@@ -98,11 +105,11 @@ async function stripRecord(
 /** One frame of a strip inside `top`: its picture, null for a frame that never landed, or why it can't be read. */
 async function stripFrame(
   top: string,
-  file: string,
+  file: unknown,
   refused: (why: string) => { refused: string },
 ): Promise<MessageImage | null | { refused: string }> {
   // picturesIn reads a comma-separated list: a frame's path names one picture.
-  if (file.includes(",")) return refused(STRIP_WHY.badFrame);
+  if (typeof file !== "string" || !file.trim() || file.includes(",")) return refused(STRIP_WHY.badFrame);
   if (await neverLanded(top, file)) return null;
   const read = await picturesIn(top, file);
   if ("refused" in read) return read;
@@ -121,7 +128,7 @@ async function stripFrames(top: string, rel: string, budget: number): Promise<Ju
   const out: JudgedPictures = { images: [], names: [], times: [], leftOut: 0 };
   let used = 0;
   for (const [index, file] of files.entries()) {
-    const image = await stripFrame(top, String(file), refused);
+    const image = await stripFrame(top, file, refused);
     if (image === null) continue;
     if ("refused" in image) return image;
     const bytes = Buffer.byteLength(image.data, "base64");

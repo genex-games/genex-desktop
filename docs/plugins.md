@@ -642,7 +642,7 @@ a Motion Matching character's Body, never its hidden driver, whose montages it r
 planted feet sliding while the body travels, one-frame pose pops, snap turns (the facing read from the pose's shoulders, never a capsule
 that turns ahead of the body), montages stopped early or started over (a blend-out counts as played; a section that loops does not start
 over), hidden and ragdoll frames (`genex_build/motion_check_math.py` holds the thresholds). Strips, stills and checks each hold the
-background CPU throttle off, and the last one done gives it back. The play's own look checks read that visible body too. The bridge waits for
+background CPU throttle off (on a Mac only while `r.RayTracing` is 0), and the last one done gives it back. The play's own look checks read that visible body too. The bridge waits for
 a capture's file and hands the agent the picture itself, with its tone numbers (black point,
 contrast, near against far contrast, saturation; a nearly black frame is called out as a render to
 doubt) and the frame rate (`editor-captures.ts`, `tone.ts`); a strip and a character sheet come back as one contact sheet, a strip with
@@ -1049,8 +1049,8 @@ hangs the GPU (on an M4 Max it crashed within a few plays, throttled ones too at
 panel notes it with Turn off ray tracing (`ray-tracing-off`, confirmed first), which sets every
 such line to False, Lumen lighting the level in software from the next start. A new game made on a
 Mac is made without it (`create-project.ts`, after Epic's own values), and the bridge, the editor
-queue and the computer's play lift the background throttle on a Mac only for an editor that says
-`r.RayTracing` is 0 (`editor-throttle.ts`). Xcode
+queue, the computer's play and the helper's stills, strips and checks lift the background throttle on a
+Mac only for an editor that says `r.RayTracing` is 0 (`editor-throttle.ts`, `genex_build/shots.py`). Xcode
 is recommended to every Mac user, since without it Genex works in Blueprints only: status's `xcode`
 (`xcode.ts`) gives This computer an Xcode row, only under a shown project, that says to get
 Xcode, to open it once to finish its setup, to run one Terminal command (with Copy) when another

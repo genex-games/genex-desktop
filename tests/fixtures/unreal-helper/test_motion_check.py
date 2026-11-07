@@ -9,7 +9,9 @@ steps, swings smoothly and turns at a turn's pace is clean."""
 import json
 import math
 import os
+import sys
 import unittest
+from unittest import mock
 
 import unreal
 from unreal import Rotator, Vector
@@ -144,6 +146,15 @@ class Turns(unittest.TestCase):
             frame['yaw'] = min(180.0, max(0.0, (i - 30) * 12.0))
         self.assertEqual(maths.report(frames)['snapTurns'], [])
 
+    def test_a_body_on_its_side_shows_no_facing_and_so_no_turn(self) -> None:
+        frames = walk()
+        for frame in frames[40:50]:
+            frame['yaw'] = None  # the shoulders stand upright: a knockdown, a side roll
+        frames[50]['yaw'] = 120.0
+        for frame in frames[51:]:
+            frame['yaw'] = 120.0
+        self.assertEqual(maths.report(frames)['snapTurns'], [])
+
     def test_a_turn_across_the_back_counts_its_short_way_round(self) -> None:
         frames = walk()
         for i, frame in enumerate(frames):
@@ -185,6 +196,15 @@ class Montages(unittest.TestCase):
         self.assertEqual(report['montages'][0]['end'], 'restarted')
         self.assertIn(maths.RESTARTED_MONTAGE, codes(report))
 
+    def test_a_fast_montage_that_starts_over_between_two_frames_is_told(self) -> None:
+        frames = walk(first=lambda f: None)
+        for i, frame in enumerate(frames[10:18]):  # 4.5 times the game's pace
+            frame['montages']['Mesh'] = ('AM_Dash', i / FPS * 4.5, 3.0)
+        for i, frame in enumerate(frames[18:30]):  # begun again, first read 0.15 s in
+            frame['montages']['Mesh'] = ('AM_Dash', (i + 1) / FPS * 4.5, 3.0)
+        report = maths.report(frames)
+        self.assertEqual(report['montages'][0]['end'], 'restarted', report['montages'])
+
     def test_a_montage_that_stops_being_active_at_its_long_blend_out_is_finished(self) -> None:
         report = maths.report(walk(slash=montage('AM_Slash', 10, 55, 2.0, blend_out=0.5)))
         self.assertEqual([(m['montage'], m['end']) for m in report['montages']], [('AM_Slash', 'finished')])
@@ -216,6 +236,50 @@ class Flags(unittest.TestCase):
     def test_too_few_frames_is_no_verdict(self) -> None:
         report = maths.report(walk(seconds=0.2))
         self.assertIn('error', report)
+
+
+class Montage:
+    """A montage's blend-out settings and an animation instance playing it at `rate`."""
+
+    def __init__(self, trigger: float, blend: float, rate: float = 1.0) -> None:
+        self.trigger, self.blend, self.rate = trigger, blend, rate
+
+    def get_editor_property(self, name: str):
+        if name == 'blend_out_trigger_time':
+            return self.trigger
+        return mock.Mock(get_editor_property=lambda key: {'blend_time': self.blend}[key])
+
+    def montage_get_play_rate(self, montage) -> float:
+        return self.rate
+
+
+class Shoulders:
+    """A mesh whose shoulders stand where they are given."""
+
+    def __init__(self, left: tuple, right: tuple) -> None:
+        self.at = {'l': Vector(*left), 'r': Vector(*right)}
+
+    def get_socket_location(self, name: str) -> Vector:
+        return self.at[name]
+
+    def get_world_rotation(self) -> Rotator:
+        return Rotator(yaw=33.0)
+
+
+class EngineReads(unittest.TestCase):
+    def test_the_blend_out_is_its_trigger_time_when_set_else_its_blend_at_the_rate_it_plays(self) -> None:
+        for label, montage, lead in (('trigger at the end', Montage(0.0, 0.5), 0.0),
+                                     ('its own blend, twice as fast', Montage(-1.0, 0.4, rate=2.0), 0.8),
+                                     ('a trigger time', Montage(0.3, 0.5), 0.3)):
+            with self.subTest(label):
+                self.assertAlmostEqual(motion_check._blend_out(montage, montage), lead)
+
+    def test_the_facing_is_square_to_the_shoulders_and_none_for_a_body_on_its_side(self) -> None:
+        sides = {'l': 'l', 'r': 'r'}
+        self.assertAlmostEqual(motion_check._facing(Shoulders((0, -20, 140), (0, 20, 140)), sides), 0.0)
+        self.assertAlmostEqual(motion_check._facing(Shoulders((20, 0, 140), (-20, 0, 140)), sides), 90.0)
+        self.assertIsNone(motion_check._facing(Shoulders((0, 0.3, 30), (0, -0.2, 70)), sides))
+        self.assertEqual(motion_check._facing(Shoulders((0, 0, 0), (0, 0, 0)), {}), 33.0)
 
 
 class MotionCharacter:
@@ -318,6 +382,16 @@ class Tool(PlayCase):
         self.assertFalse(self.throttled(), 'the check still holds the throttle off')
         self.run_frames(1.0)
         self.assertTrue(self.throttled(), 'given back once the check is done too')
+
+    def test_on_a_mac_that_ray_traces_the_throttle_stays_on(self) -> None:
+        for ray_tracing, throttled in ((1, True), (0, False)):
+            with self.subTest(ray_tracing=ray_tracing), mock.patch.object(sys, 'platform', 'darwin'):
+                unreal.state.setdefault('cvars', {})['r.RayTracing'] = ray_tracing
+                answer = tool('motion_check', 'DuelManny', 0.5)
+                self.assertEqual(self.throttled(), throttled)
+                self.run_frames(0.6)
+                self.assertTrue(os.path.exists(answer['record']))
+                self.assertTrue(self.throttled(), 'on again once the check is done')
 
     def test_a_check_the_wall_clock_cuts_short_says_so(self) -> None:
         answer = tool('motion_check', 'DuelManny', 2.0)

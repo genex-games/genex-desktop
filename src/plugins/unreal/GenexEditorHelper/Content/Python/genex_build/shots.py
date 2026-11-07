@@ -22,6 +22,7 @@ Background" is lifted, and given back afterwards, so a Genex window in front doe
 
 import json
 import os
+import sys
 import time
 
 import unreal
@@ -48,6 +49,10 @@ FRAME_WAIT_S = 15.0
 SHOT_WAIT_S = 30.0
 PERFORMANCE_SETTINGS = '/Script/UnrealEd.EditorPerformanceSettings'
 THROTTLE = 'bThrottleCPUWhenNotForeground'
+# On a Mac, UE 5.8 rendering a ray-traced level at full speed behind another app hangs the GPU: there
+# the throttle is lifted only while this is 0, as the bridge's own lift (editor-throttle.ts).
+RAY_TRACING = 'r.RayTracing'
+MAC = 'darwin'
 
 MESSAGE = {
     'size': 'width and height must be whole numbers: width {w[0]} to {w[1]}, height {h[0]} to {h[1]}.',
@@ -156,11 +161,22 @@ def _settings():
 _throttle = {'holds': 0, 'owed': False}
 
 
+def _may_lift() -> bool:
+    """Whether the throttle may be lifted here: anywhere but a Mac whose editor runs ray tracing."""
+    if sys.platform != MAC:
+        return True
+    try:
+        return int(unreal.SystemLibrary.get_console_variable_int_value(RAY_TRACING)) == 0
+    except Exception:  # noqa: BLE001 - a switch that can't be read is treated as on
+        return False
+
+
 def lift_throttle() -> bool:
-    """Turns "Use Less CPU when in Background" off while anything holds it; True, a hold to give back."""
+    """Turns "Use Less CPU when in Background" off while anything holds it (never on a Mac that ray
+    traces); True, a hold to give back."""
     if _throttle['holds'] == 0:
         settings = _settings()
-        _throttle['owed'] = bool(settings.get_editor_property(THROTTLE))
+        _throttle['owed'] = _may_lift() and bool(settings.get_editor_property(THROTTLE))
         if _throttle['owed']:
             settings.set_editor_property(THROTTLE, False)
     _throttle['holds'] += 1
