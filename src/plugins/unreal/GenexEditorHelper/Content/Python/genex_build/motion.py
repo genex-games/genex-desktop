@@ -13,17 +13,24 @@ It makes, from a skeletal mesh already imported (import_character):
   hidden but still poses every frame, with a Body mesh under it carrying the character, the ABP and
   the tag. Calling it again for the same name updates the same Blueprint.
 
+The mannequin is hidden in the editor and hidden in game: the sample's character makes its own mesh
+visible again as play starts, so a mannequin hidden only in the editor showed through the Body in
+play as white patches. An older helper hid it only in the editor; hide_old_drivers, which the helper
+runs once the editor has its level, hides those in game too.
+
 A project without the sample's content is refused (the Unreal button's Motion Matching step adds it),
 as is a call during play. Check the result with character_check, the sample's mannequin as its driver.
 """
 
+import json
+import os
 import re
 import time
 
 import unreal
 
-from genex_build import imports, retarget
-from genex_loop import blueprints, editor
+from genex_build import imports, retarget, shots
+from genex_loop import blueprints, editor, paths
 from genex_loop.errors import Refused, short_message
 
 # The sample's assets this needs, where its content puts them in a game.
@@ -37,6 +44,16 @@ CHARACTER_FOLDER = '/Game/GX/Characters'
 DRIVER_MESH = 'Mesh'
 BODY = 'Body'
 NAME = re.compile(r'[A-Za-z][A-Za-z0-9_]{0,47}')
+# How the mannequin is hidden: not drawn in the editor, and hidden in game, where the sample's character
+# makes its own mesh visible again.
+DRIVER_HIDDEN = {'visible': False, 'hidden_in_game': True}
+# The characters' Blueprint files, as motion_character names them, and the record in Saved/Genex of the
+# ones hide_old_drivers has checked.
+CHARACTER_FILE = re.compile(r'BP_[A-Za-z][A-Za-z0-9_]{0,47}')
+BLUEPRINT_SUFFIX = '.uasset'
+CHECKED_RECORD = 'motion-characters-checked.json'
+# How long, once the helper loads, it waits for the editor's level before checking the characters anyway.
+LEVEL_WAIT_S = 120.0
 
 MESSAGE = {
     'no_sample': ('This project has no Game Animation Sample content ({missing}). Add it first with the Unreal '
@@ -45,6 +62,8 @@ MESSAGE = {
     'no_driver': 'The sample\'s character has no {mesh} component to hide; its content may be from another version.',
     'compile': '{blueprint} did not compile: {why}',
     'map': 'Unreal did not keep the map entry {tag} on {abp}.',
+    'old_hidden': 'Genex editor helper: hid the Motion Matching mannequin in game too for {blueprints}.',
+    'old_failed': 'Genex editor helper: could not check the motion characters an older helper made: {why}',
 }
 
 
@@ -79,20 +98,31 @@ def _character_blueprint(name: str, parent) -> unreal.Blueprint:
     return unreal.BlueprintEditorLibrary.create_blueprint_asset_with_parent(path, parent.generated_class())
 
 
-def _hide_driver(blueprint) -> None:
-    """The inherited mannequin mesh, as this Blueprint overrides it: hidden, still posing every frame."""
+def _component(blueprint, name: str):
+    """The Blueprint's component `name` (inherited ones too) as the Blueprint overrides it, or None."""
     subsystem = unreal.get_engine_subsystem(unreal.SubobjectDataSubsystem)
     library = unreal.SubobjectDataBlueprintFunctionLibrary
     for handle in subsystem.k2_gather_subobject_data_for_blueprint(blueprint):
         data = library.get_data(handle)
-        if str(library.get_variable_name(data)) != DRIVER_MESH:
-            continue
-        driver = library.get_object_for_blueprint(data, blueprint)
-        driver.set_editor_property('visible', False)
-        driver.set_editor_property('visibility_based_anim_tick_option',
-                                   unreal.VisibilityBasedAnimTickOption.ALWAYS_TICK_POSE_AND_REFRESH_BONES)
-        return
-    raise Refused(MESSAGE['no_driver'].format(mesh=DRIVER_MESH))
+        if str(library.get_variable_name(data)) == name:
+            return library.get_object_for_blueprint(data, blueprint)
+    return None
+
+
+def _hide(driver) -> None:
+    """The mannequin hidden in the editor and in game, still posing every frame for the Body to copy."""
+    for name, value in DRIVER_HIDDEN.items():
+        driver.set_editor_property(name, value)
+    driver.set_editor_property('visibility_based_anim_tick_option',
+                               unreal.VisibilityBasedAnimTickOption.ALWAYS_TICK_POSE_AND_REFRESH_BONES)
+
+
+def _hide_driver(blueprint) -> None:
+    """The inherited mannequin mesh, as this Blueprint overrides it: hidden, still posing every frame."""
+    driver = _component(blueprint, DRIVER_MESH)
+    if driver is None:
+        raise Refused(MESSAGE['no_driver'].format(mesh=DRIVER_MESH))
+    _hide(driver)
 
 
 def _body(blueprint, mesh: unreal.SkeletalMesh, abp, tag: str) -> None:
@@ -134,3 +164,95 @@ def motion_character(mesh: str, name: str) -> dict:
             'next': (f'Use {path} as the game mode\'s default pawn (or place it), then run character_check on '
                      f'{mesh} with the mannequin as its driver.'),
             'ms': editor.elapsed_ms(started)}
+
+
+def _shows_in_play(blueprint) -> bool:
+    """Whether a Blueprint is a motion character whose mannequin an older helper hid only in the editor:
+    a Body, and a Mesh not drawn in the editor but not hidden in game. One whose mannequin someone made
+    visible again is left as it is."""
+    driver = _component(blueprint, DRIVER_MESH)
+    if driver is None or _component(blueprint, BODY) is None:
+        return False
+    return not driver.get_editor_property('visible') and not driver.get_editor_property('hidden_in_game')
+
+
+def _character_files(project: str) -> list[str]:
+    """The names of the BP_<name> files in CHARACTER_FOLDER, read from the disk (the asset registry may
+    still be scanning as the editor starts), or [] when the folder doesn't exist."""
+    folder = os.path.join(project, 'Content', *CHARACTER_FOLDER.removeprefix('/Game/').split('/'))
+    try:
+        files = sorted(os.listdir(folder))
+    except OSError:
+        return []
+    stems = [file.removesuffix(BLUEPRINT_SUFFIX) for file in files if file.endswith(BLUEPRINT_SUFFIX)]
+    return [stem for stem in stems if re.fullmatch(CHARACTER_FILE, stem)]
+
+
+def _read_checked(record: str) -> set[str]:
+    if not paths.is_regular_file(record):
+        return set()
+    try:
+        with open(record, encoding='utf-8') as file:
+            names = json.load(file).get('checked', [])
+    except (OSError, ValueError, AttributeError):
+        return set()
+    return {name for name in names if isinstance(name, str)}
+
+
+def _write_checked(record: str, names: set[str]) -> None:
+    with open(record, 'w', encoding='utf-8') as file:
+        json.dump({'checked': sorted(names)}, file, indent=1)
+
+
+def hide_old_drivers() -> list[str]:
+    """Hides in game the mannequin of each motion character an older helper made (see the module
+    notes), compiling and saving each; the Blueprints it changed. Each BP_<name> in CHARACTER_FOLDER is
+    loaded and checked once: the names checked are kept in Saved/Genex, so a later start loads only new
+    ones, and one that did not load or save is tried again at the next. Nothing changes during play, or
+    when the record's place leads out of Saved/Genex (Refused)."""
+    if editor.play_world() is not None:
+        return []
+    project = editor.project_dir()
+    names = _character_files(project)
+    if not names:
+        return []
+    record = paths.inside_genex_folder(os.path.join(project, *paths.GENEX_FOLDER, CHECKED_RECORD), project)
+    checked = _read_checked(record)
+    unchecked = [name for name in names if name not in checked]
+    if not unchecked:
+        return []
+    fixed = []
+    for name in unchecked:
+        path = f'{CHARACTER_FOLDER}/{name}'
+        blueprint = unreal.load_asset(path)
+        if blueprint is None:
+            continue
+        if isinstance(blueprint, unreal.Blueprint) and _shows_in_play(blueprint):
+            _hide(_component(blueprint, DRIVER_MESH))
+            unreal.BlueprintEditorLibrary.compile_blueprint(blueprint)
+            if not unreal.EditorAssetLibrary.save_loaded_asset(blueprint, False):
+                continue
+            fixed.append(path)
+        checked.add(name)
+    _write_checked(record, checked)
+    return fixed
+
+
+def _level_ready() -> bool:
+    return editor.editor_subsystem().get_editor_world() is not None and editor.play_world() is None
+
+
+def _hide_old_drivers_logged() -> None:
+    try:
+        fixed = hide_old_drivers()
+    except Exception as error:  # noqa: BLE001 - checking old characters must never break the editor's start
+        unreal.log_warning(MESSAGE['old_failed'].format(why=short_message(error)))
+        return
+    if fixed:
+        unreal.log(MESSAGE['old_hidden'].format(blueprints=', '.join(fixed)))
+
+
+def hide_old_drivers_soon() -> None:
+    """Runs hide_old_drivers on an editor frame once the editor has its level and no play runs (the
+    helper's init_unreal calls this as it loads), logging what it changed or why it could not."""
+    shots.after(_level_ready, _hide_old_drivers_logged, LEVEL_WAIT_S)

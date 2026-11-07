@@ -1,7 +1,8 @@
 """Registers the Genex editor helper's toolsets with Unreal's toolset registry, which Epic's MCP
 server lists: the play tools, the loop tools and the build tools. The build tools load last and
 apart, so the play and loop tools still register if they can't (a project without Geometry
-Script)."""
+Script). With the build tools, once the editor has its level, the helper also hides in game the
+mannequin of motion characters an older helper hid only in the editor (genex_build.motion)."""
 
 import unreal
 
@@ -17,6 +18,12 @@ except Exception as error:  # noqa: BLE001 - whatever stops the build tools load
     unreal.log_warning(f'Genex editor helper build tools did not load: {error}')
 else:
     _genex_toolsets.append(GenexBuildTools)
+    try:
+        from genex_build import motion as _genex_motion
+
+        _genex_motion.hide_old_drivers_soon()
+    except Exception as error:  # noqa: BLE001 - an editor without Slate (a commandlet) still registers the tools
+        unreal.log_warning(f'Genex editor helper did not schedule its check of older motion characters: {error}')
 
 _genex_registration = Registration(_genex_toolsets)
 unreal.log(f'Genex editor helper tools registered: {_genex_registration.register()}')

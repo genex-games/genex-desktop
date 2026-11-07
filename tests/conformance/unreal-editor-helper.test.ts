@@ -110,7 +110,7 @@ test("the built Unreal plugin carries the editor helper, which Unreal loads with
   assert.equal(descriptor.EnabledByDefault, true, "the game's .uproject stays untouched");
   assert.equal(descriptor.CanContainContent, true, "Unreal runs Content/Python only for content plugins");
   assert.equal(descriptor.EditorOnly, true, "a packaged game never carries it");
-  assert.deepEqual([descriptor.Version, descriptor.VersionName], [32, "0.30.0"]);
+  assert.deepEqual([descriptor.Version, descriptor.VersionName], [33, "0.30.1"]);
   const geometry = descriptor.Plugins.filter((plugin: { Name: string }) => plugin.Name === "GeometryScripting");
   assert.deepEqual(geometry, [{ Name: "GeometryScripting", Enabled: true }], "the terrain tool needs Geometry Script");
 });

@@ -1,11 +1,17 @@
 """motion_character (genex_build.tools.GenexBuildTools) gives an imported character the Game Animation
 Sample's Motion Matching the sample's own way: a retargeter from the sample's mannequin, its entry in
-ABP_GenericRetarget's map, and a child of the sample's character whose mannequin is hidden but still
-poses and whose Body mesh shows the character. Without the sample's content, during play, or for a bad
-name it is refused and nothing in the editor changes."""
+ABP_GenericRetarget's map, and a child of the sample's character whose mannequin is hidden (in the
+editor and in game) but still poses and whose Body mesh shows the character. Without the sample's
+content, during play, or for a bad name it is refused and nothing in the editor changes.
+
+A motion character an older helper made has its mannequin hidden only in the editor, and the sample's
+character shows it again in play; hide_old_drivers, run once the editor has its level, hides it in
+game too, checking each character once."""
 
 import json
+import os
 import unittest
+from unittest import mock
 
 import unreal
 
@@ -55,6 +61,8 @@ class MotionCharacter(HelperCase):
         parts = self.components('/Game/GX/Characters/BP_Hero')
         driver, body = parts['Mesh'], parts['Body']
         self.assertFalse(driver.props['visible'], 'the mannequin is hidden')
+        self.assertTrue(driver.props.get('hidden_in_game'),
+                        'hidden in game too: the sample\'s character makes its mesh visible again as play starts')
         self.assertEqual(driver.props['visibility_based_anim_tick_option'].name, 'ALWAYS_TICK_POSE_AND_REFRESH_BONES')
         self.assertEqual(body.props['attach_parent'], 'Mesh', 'the Body follows the mannequin')
         self.assertIs(body.props['skeletal_mesh_asset'], self.hero)
@@ -101,6 +109,168 @@ class MotionCharacter(HelperCase):
         result = tool('motion_character', HERO, 'Hero')
         self.assertIn('error', result)
         self.assertEqual(unreal.calls, [])
+
+
+OLD = '/Game/GX/Characters/BP_Duel'
+
+
+class OlderHelpersCharacters(HelperCase):
+    """Motion characters an older helper made, in the project's Content/GX/Characters."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.characters = self.path('game', 'unreal', 'Content', 'GX', 'Characters')
+        self.record = os.path.join(self.project, 'Saved', 'Genex', motion.CHECKED_RECORD)
+
+    def character(self, path: str = OLD, body: bool = True, **driver) -> tuple:
+        """A Blueprint file and its loaded Blueprint: Mesh hidden only in the editor (as an older helper
+        left it, unless `driver` says otherwise) and a Body; (blueprint, mesh, body)."""
+        name = path.rsplit('/', 1)[-1]
+        self.write(os.path.join(self.characters, f'{name}.uasset'), 'uasset')
+        mesh = unreal.SkeletalMeshComponent('Mesh')
+        for prop, value in {'visible': False, **driver}.items():
+            mesh.set_editor_property(prop, value)
+        shown = unreal.SkeletalMeshComponent('Body')
+        components = [('Mesh', mesh)] + ([('Body', shown)] if body else [])
+        blueprint = unreal.Blueprint(components, name=name,
+                                     generated=unreal.Class(path=f'{path}.{name}_C', cdo=unreal._Defaults()))
+        unreal.state['loaded'][path] = blueprint
+        return blueprint, mesh, shown
+
+    def changed(self) -> list:
+        return [call for call in unreal.calls if call[0] in ('compile', 'save_asset')]
+
+    def test_an_older_helpers_mannequin_is_hidden_in_game_and_the_blueprint_saved(self) -> None:
+        blueprint, mesh, body = self.character()
+        self.assertEqual(motion.hide_old_drivers(), [OLD])
+        self.assertTrue(mesh.props['hidden_in_game'])
+        self.assertFalse(mesh.props['visible'])
+        self.assertEqual(mesh.props['visibility_based_anim_tick_option'].name, 'ALWAYS_TICK_POSE_AND_REFRESH_BONES',
+                         'it still poses every frame for the Body to copy')
+        self.assertEqual(body.props, {}, 'the Body is left as it is')
+        self.assertEqual(self.changed(), [('compile', blueprint), ('save_asset', 'BP_Duel')])
+
+    def test_each_character_is_loaded_and_checked_once(self) -> None:
+        self.character()
+        motion.hide_old_drivers()
+        with mock.patch.object(unreal, 'load_asset', wraps=unreal.load_asset) as load:
+            unreal.calls.clear()
+            self.assertEqual(motion.hide_old_drivers(), [])
+            self.assertEqual(load.call_count, 0, 'a checked character is not loaded again')
+            self.assertEqual(self.changed(), [])
+            _blueprint, later, _body = self.character('/Game/GX/Characters/BP_Ronin')
+            self.assertEqual(motion.hide_old_drivers(), ['/Game/GX/Characters/BP_Ronin'],
+                             'one added later is checked at the next start')
+            self.assertEqual([call.args for call in load.call_args_list], [('/Game/GX/Characters/BP_Ronin',)])
+        self.assertTrue(later.props['hidden_in_game'])
+        with open(self.record, encoding='utf-8') as file:
+            self.assertEqual(json.load(file), {'checked': ['BP_Duel', 'BP_Ronin']})
+
+    def test_characters_it_did_not_make_that_way_are_left_as_they_are(self) -> None:
+        cases = {
+            'mannequin made visible again': {'visible': True},
+            'already hidden in game': {'hidden_in_game': True},
+            'no Body': {'body': False},
+        }
+        for case, setup in cases.items():
+            with self.subTest(case):
+                unreal.calls.clear()
+                body = setup.pop('body', True)
+                path = f'/Game/GX/Characters/BP_{case.split()[0].title()}{len(unreal.state["loaded"])}'
+                _blueprint, mesh, _shown = self.character(path, body=body, **setup)
+                before = dict(mesh.props)
+                self.assertEqual(motion.hide_old_drivers(), [])
+                self.assertEqual(mesh.props, before)
+                self.assertEqual(self.changed(), [])
+
+    def test_files_that_are_not_a_characters_blueprint_are_never_loaded(self) -> None:
+        for file in ('Hero.uasset', 'BP_9Lives.uasset', 'BP_Duel.uasset.bak', 'BP_Duel.umap', 'BP_.uasset',
+                     'bp_duel.uasset', f'BP_{"x" * 49}.uasset'):
+            self.write(os.path.join(self.characters, file), 'x')
+        self.write(os.path.join(self.characters, 'Nested', 'BP_Deep.uasset'), 'x')
+        with mock.patch.object(unreal, 'load_asset', wraps=unreal.load_asset) as load:
+            self.assertEqual(motion.hide_old_drivers(), [])
+        self.assertEqual(load.call_count, 0)
+        self.assertEqual(self.changed(), [])
+
+    def test_an_asset_that_is_not_a_blueprint_is_left_and_checked(self) -> None:
+        self.write(os.path.join(self.characters, 'BP_Statue.uasset'), 'x')
+        unreal.state['loaded']['/Game/GX/Characters/BP_Statue'] = unreal.SkeletalMesh()
+        self.assertEqual(motion.hide_old_drivers(), [])
+        self.assertEqual(self.changed(), [])
+        with open(self.record, encoding='utf-8') as file:
+            self.assertEqual(json.load(file), {'checked': ['BP_Statue']})
+
+    def test_one_that_did_not_load_or_save_is_tried_again_at_the_next_start(self) -> None:
+        self.write(os.path.join(self.characters, 'BP_Duel.uasset'), 'x')
+        self.assertEqual(motion.hide_old_drivers(), [], 'not loadable yet')
+        self.character()
+        with mock.patch.object(unreal.EditorAssetLibrary, 'save_loaded_asset', return_value=False):
+            self.assertEqual(motion.hide_old_drivers(), [], 'Unreal did not save it')
+        _blueprint, mesh, _body = self.character()  # the next start loads it from the disk again
+        self.assertEqual(motion.hide_old_drivers(), [OLD])
+        self.assertTrue(mesh.props['hidden_in_game'])
+
+    def test_nothing_changes_during_play(self) -> None:
+        _blueprint, mesh, _body = self.character()
+        unreal.state['pie'] = True
+        self.assertEqual(motion.hide_old_drivers(), [])
+        self.assertNotIn('hidden_in_game', mesh.props)
+        self.assertEqual(self.changed(), [])
+        self.assertFalse(os.path.lexists(self.record))
+
+    def test_a_project_without_motion_characters_writes_nothing(self) -> None:
+        os.rmdir(self.characters)
+        self.assertEqual(motion.hide_old_drivers(), [])
+        self.assertFalse(os.path.lexists(os.path.join(self.project, 'Saved')))
+
+    def test_a_record_that_leads_out_of_saved_genex_is_refused_before_anything_changes(self) -> None:
+        outside = self.write(os.path.join(self.outside, 'record.json'), 'keep')
+        os.makedirs(os.path.dirname(self.record), exist_ok=True)
+        hostile = {
+            'a link to a file outside': lambda: os.symlink(outside, self.record),
+            'a link to the folder outside': lambda: os.symlink(self.outside, self.record),
+            'a folder': lambda: os.mkdir(self.record),
+        }
+        for case, make in hostile.items():
+            with self.subTest(case):
+                unreal.calls.clear()
+                _blueprint, mesh, _body = self.character()
+                make()
+                try:
+                    with self.assertRaises(motion.Refused):
+                        motion.hide_old_drivers()
+                    self.assertNotIn('hidden_in_game', mesh.props)
+                    self.assertEqual(self.changed(), [])
+                    with open(outside, encoding='utf-8') as file:
+                        self.assertEqual(file.read(), 'keep')
+                finally:
+                    (os.rmdir if os.path.isdir(self.record) and not os.path.islink(self.record) else os.remove)(self.record)
+
+    def test_an_unreadable_record_checks_every_character_again(self) -> None:
+        _blueprint, mesh, _body = self.character()
+        self.write(self.record, '{not json')
+        self.assertEqual(motion.hide_old_drivers(), [OLD])
+        self.assertTrue(mesh.props['hidden_in_game'])
+
+    def test_soon_runs_on_an_editor_frame_and_a_failure_is_logged_not_raised(self) -> None:
+        _blueprint, mesh, _body = self.character()
+        motion.hide_old_drivers_soon()
+        self.assertNotIn('hidden_in_game', mesh.props, 'nothing changes as the helper loads')
+        with mock.patch.object(unreal, 'log') as log:
+            for callback in list(unreal.state['ticks'].values()):
+                callback(0.016)
+        self.assertTrue(mesh.props['hidden_in_game'])
+        self.assertIn(OLD, log.call_args.args[0])
+        self.assertEqual(unreal.state['ticks'], {}, 'nothing left ticking')
+        self.character('/Game/GX/Characters/BP_Broken')
+        motion.hide_old_drivers_soon()
+        with mock.patch.object(unreal, 'load_asset', side_effect=RuntimeError('LoadPackage failed')), \
+                mock.patch.object(unreal, 'log_warning') as warn:
+            for callback in list(unreal.state['ticks'].values()):
+                callback(0.016)
+        self.assertIn('LoadPackage failed', warn.call_args.args[0])
+        self.assertEqual(unreal.state['ticks'], {})
 
 
 if __name__ == '__main__':

@@ -680,7 +680,14 @@ and the `.gitignore` back as they were. The helper's `motion_character {mesh, na
 then moves a character the sample's way: a retargeter from the sample's UEFN mannequin set up as
 `retarget` sets one, its entry (tag: the retargeter's name) in `ABP_GenericRetarget`'s
 `IKRetargeter_Map`, and `BP_<name>`, a child of `SandboxCharacter_CMC` whose mannequin mesh is hidden
-but still poses and whose `Body` mesh shows the character with that ABP and tag. No clip is copied.
+(in the editor and in game, since the sample's character makes its own mesh visible again as play
+starts) but still poses and whose `Body` mesh shows the character with that ABP and tag. No clip is
+copied. An older helper hid the mannequin only in the editor, so it showed through the Body in play:
+once Unreal has its level, the helper (`hide_old_drivers`, scheduled by `init_unreal.py`) hides in
+game the mannequin of each `BP_<name>` in `/Game/GX/Characters` whose Mesh is hidden only in the editor and has a
+Body, compiles and saves it. It reads the folder from disk and checks each Blueprint once (the names
+checked are kept in `Saved/Genex/motion-characters-checked.json`; one that didn't load or save is
+tried at the next start), changes nothing during play, and leaves a mannequin someone made visible.
 
 The helper offers no tool that derives normal and roughness maps from a base-colour texture's
 luminance: Unreal's Python has no image library, so it would hold the editor for many seconds per
