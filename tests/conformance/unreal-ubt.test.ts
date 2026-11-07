@@ -894,6 +894,35 @@ describe("compiling a game's editor target on Windows", () => {
     assertNoWindowsPaths(result);
   });
 
+  it("an error of the code beside the computer running out of memory comes first, to be fixed", async () => {
+    const source = "D:\\ai-games\\gx cpp check\\unreal\\Source\\GxCpp\\Parts\\Check\\GxCheckActor.cpp";
+    const rows: Array<[string, string]> = [
+      [
+        "out of memory",
+        "D:\\Epic Games\\UE_5.8\\Engine\\Source\\Runtime\\Core\\Public\\String\\FormatStringSan.h(131,1): fatal error C1060: compiler is out of heap space",
+      ],
+      [
+        "the module in use",
+        "LINK : fatal error LNK1104: cannot open file 'D:\\ai-games\\gx cpp check\\unreal\\Binaries\\Win64\\UnrealEditor-GxCpp.dll'",
+      ],
+    ];
+    for (const [label, line] of rows) {
+      const log = [
+        line,
+        `${source}(16,2): error C2065: 'Damge': undeclared identifier`,
+        "Result: Failed (OtherCompilationError)",
+      ].join("\r\n");
+      const result = await compileEditor(onWindows(answeringOnWindows(log)));
+      assert.equal(result.failure, CompileFailure.Failed, label);
+      assert.equal(result.retryable, false, label);
+      assert.deepEqual(
+        result.errors.map((e) => [e.file, e.line, e.message]),
+        [["Source/GxCpp/Parts/Check/GxCheckActor.cpp", 16, "C2065: 'Damge': undeclared identifier"]],
+        label,
+      );
+    }
+  });
+
   it("another file the linker can't open stays an error of the build", async () => {
     const log = [
       "LINK : fatal error LNK1104: cannot open file 'GxMissing.lib'",

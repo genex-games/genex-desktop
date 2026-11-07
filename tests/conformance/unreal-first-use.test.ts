@@ -774,6 +774,65 @@ describe("Do it for me on the Unreal setup card", () => {
     assert.match(String((await card(c)).doneSays), /^Visual Studio's C\+\+ tools are installed on this PC/);
   });
 
+  it("adds what Build Tools lack, then updates the compiler Unreal refuses, in one press", async () => {
+    const installPath = "C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools";
+    // Only a refused compiler and no Windows SDK: Missing, so the SDKs come first; then Outdated.
+    const lacking: VisualStudioStatus = {
+      state: VisualStudioState.Missing,
+      toolset: null,
+      windowsSdk: false,
+      netFxSdk: false,
+      plan: "modify",
+      installPath,
+    };
+    const outdated: VisualStudioStatus = {
+      ...lacking,
+      state: VisualStudioState.Outdated,
+      windowsSdk: true,
+      netFxSdk: true,
+      plan: "update",
+    };
+    const stages = [lacking, outdated, BUILD_TOOLS_READY];
+    const commands: string[] = [];
+    const { install } = await fakeInstall({
+      onInstall: async (_file, args) => {
+        commands.push(args[0] ?? "");
+        stages.shift();
+      },
+    });
+    const c = await computer({
+      platform: "win32",
+      install,
+      runtime: () => true,
+      visualStudio: () => stages[0] ?? BUILD_TOOLS_READY,
+    });
+    await c.linkLantern();
+    await c.act("install-for-me");
+    await settle(async () => !(await card(c)).open);
+    assert.deepEqual(commands, ["modify", "update"]);
+    assert.match(String((await card(c)).doneSays), /^Visual Studio's C\+\+ tools are installed on this PC/);
+  });
+
+  it("runs no plan twice in one press: a modify that leaves the tools as they were stops", async () => {
+    const installPath = "C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools";
+    const lacking: VisualStudioStatus = {
+      state: VisualStudioState.Missing,
+      toolset: "14.44.35211",
+      windowsSdk: true,
+      netFxSdk: false,
+      plan: "modify",
+      installPath,
+    };
+    const commands: string[] = [];
+    const { install } = await fakeInstall({ onInstall: async (_file, args) => void commands.push(args[0] ?? "") });
+    const c = await computer({ platform: "win32", install, runtime: () => true, visualStudio: () => lacking });
+    await c.linkLantern();
+    await c.act("install-for-me");
+    await settle(async () => (await card(c)).stuckSays !== undefined);
+    assert.match(String((await card(c)).stuckSays), /Unreal still can't build C\+\+ with what it installed/);
+    assert.deepEqual(commands, ["modify"]);
+  });
+
   it("follows the Build Tools install on the card, and tells the agent once when it stops on its own", async () => {
     const held = await fakeInstall({ gate: new Promise<void>(() => {}) });
     const c = await computer({ platform: "win32", install: held.install, visualStudio: () => NO_BUILD_TOOLS });

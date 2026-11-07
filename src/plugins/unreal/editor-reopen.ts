@@ -126,7 +126,7 @@ const FOLDER_ARGUMENT = /^([^\s"/]*)\/?(?=$|[\s"])/;
 const BEFORE_ARGUMENT = /[\s"]/;
 const MAC = "darwin";
 /** The computers Genex builds a game's C++ module on before it opens Unreal: a Mac (Xcode) and Windows (Microsoft's tools). */
-const BUILDS_MODULE: ReadonlySet<NodeJS.Platform> = new Set<NodeJS.Platform>([MAC, "win32"]);
+const BUILDS_MODULE: ReadonlySet<NodeJS.Platform> = new Set<NodeJS.Platform>([MAC, StudioPlatform.Windows]);
 const PS = "/bin/ps";
 export const PS_TIMEOUT_MS = 10 * SECOND_MS;
 const PS_MAX_BYTES = 16 * 1024 * 1024;

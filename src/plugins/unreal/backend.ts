@@ -1557,6 +1557,9 @@ async function runtimeForMe(deps: UnrealBackendDeps, slot: ForMeSlot): Promise<F
   return { step: ForMeStep.Runtime, started: true, message: job.message };
 }
 
+/** Whether a press of Do it for me has `plan` left to run: none runs twice, and nothing follows a new install, which asked for everything. */
+const planLeft = (plan: BuildToolsPlan | undefined, ran: ReadonlySet<BuildToolsPlan>): plan is BuildToolsPlan =>
+  plan !== undefined && !ran.has(plan) && !ran.has(BuildToolsPlan.Install);
 /**
  * Microsoft's Visual Studio Build Tools on Windows, for the plan where they stand says: installed,
  * given what they lack, or updated by Microsoft's own installer.
@@ -1574,15 +1577,18 @@ async function buildToolsForMe(deps: UnrealBackendDeps, slot: ForMeSlot): Promis
     return { step: ForMeStep.Done, started: false, message: FOR_ME_WORDS.AllThere(installEngineVersion()) };
   const { install } = deps;
   const job = startInstall(deps, slot, EpicInstallKind.BuildTools, async (options) => {
-    await installBuildTools(install, status, options);
-    const updated = await visualStudioOf(deps.env, engineDir);
     // An update brings the compiler up to date but adds nothing the install never had (the .NET
-    // Framework SDK): adding it is the installer's next run, in the same press.
-    const stillLacks = status.plan === BuildToolsPlan.Update && updated.plan === BuildToolsPlan.Modify;
-    if (stillLacks && visualStudioLacking(updated)) await installBuildTools(install, updated, options);
-    // An installer can end well and still leave a compiler the engine refuses (an LTSC channel's).
-    if (visualStudioLacking(await visualStudioOf(deps.env, engineDir)))
-      throw new EpicInstallError(EpicInstallRefusal.StillMissing);
+    // Framework SDK), and adding what's missing leaves a refused compiler as it was: the plan the
+    // tools still need next is the installer's next run, in the same press.
+    const ran = new Set<BuildToolsPlan>();
+    let now = status;
+    while (visualStudioLacking(now)) {
+      // An installer can end well and still leave a compiler the engine refuses (an LTSC channel's).
+      if (!planLeft(now.plan, ran)) throw new EpicInstallError(EpicInstallRefusal.StillMissing);
+      ran.add(now.plan);
+      await installBuildTools(install, now, options);
+      now = await visualStudioOf(deps.env, engineDir);
+    }
   });
   return { step: ForMeStep.BuildTools, started: true, message: job.message };
 }

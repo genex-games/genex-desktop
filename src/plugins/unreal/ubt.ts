@@ -525,7 +525,20 @@ function lastWords(output: string): string | undefined {
   return undefined;
 }
 
-/** What UBT's output says: succeeded, another build's lock or the machine in the way, or failed with its errors. */
+/** Lines that say the computer, not the code, stopped the build: memory ran out, or an open editor holds the module. */
+const inTheWay = (line: string) => OUT_OF_MEMORY.test(line) || MODULE_IN_USE.test(line);
+
+/** The failure a line in the way names: memory ran out, or the game's open editor holds its module. */
+const machineFailure = (output: string, seconds: number): CompileResult =>
+  OUT_OF_MEMORY.test(output)
+    ? failed(CompileFailure.OutOfMemory, MESSAGE.OutOfMemory, seconds)
+    : failed(CompileFailure.ModuleInUse, MESSAGE.ModuleInUse, seconds);
+
+/**
+ * What UBT's output says: succeeded, another build's lock, or failed with its errors. A failure that
+ * isn't the code's (the computer in the way) is its own only when the build named no error of the
+ * code beside it: an error of the code comes first, to be fixed, and the lines in the way are no errors.
+ */
 function resultOf(outcome: RunOutcome, roots: Roots, target: string, seconds: number): CompileResult {
   const { output } = outcome;
   const reason = FAILED.exec(output)?.groups?.reason;
@@ -535,9 +548,9 @@ function resultOf(outcome: RunOutcome, roots: Roots, target: string, seconds: nu
     return failed(CompileFailure.LiveCoding, MESSAGE.LiveCoding, seconds);
   if (SUCCEEDED.test(output))
     return { ok: true, seconds, errors: [], summary: MESSAGE.Built(target, seconds), retryable: false };
-  if (OUT_OF_MEMORY.test(output)) return failed(CompileFailure.OutOfMemory, MESSAGE.OutOfMemory, seconds);
-  if (MODULE_IN_USE.test(output)) return failed(CompileFailure.ModuleInUse, MESSAGE.ModuleInUse, seconds);
-  const parsed = ubtErrors(output, roots);
+  const lines = output.split(/\r?\n/);
+  const parsed = ubtErrors(lines.filter((line) => !inTheWay(line)).join("\n"), roots);
+  if (parsed.length === 0 && lines.some(inTheWay)) return machineFailure(output, seconds);
   const words = parsed.length === 0 && reason ? lastWords(output) : undefined;
   const errors = words === undefined ? parsed : [unplaced(words, roots)];
   const summary = reason ? MESSAGE.Failed(target, reason, errors.length) : MESSAGE.NoResult(outcome.code);
