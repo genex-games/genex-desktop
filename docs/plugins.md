@@ -558,7 +558,9 @@ Epic's server lists:
   most 1) and puts each console variable back exactly when the computer tool's play ends.
 - `pilot {file, seconds, decide}` starts a pilot and `pilot_step {answer, stop}` steps it
   (`genex_play/pilot.py`). A pilot is a `.py` of the project (`Pilots/<goal>.py`, given relative to it,
-  no link or `..`, compiled from source with no bytecode left beside it) whose last
+  no link or `..`; on Windows `\` separates folders too and the path is compared to its real path
+  without regard to case, `genex_loop/paths.py` `is_own_path`; compiled from source with no bytecode
+  left beside it) whose last
   `genex_play.pilot_kit.Pilot` subclass is played: every frame its running move's generator steps
   (`pilot_game.Game`'s `walk_to`, `look_at`, `hold`, `tap`, `wait`, `mouse` controllers; a stopped
   move's controllers let go), every `1/look_hz` game s it looks, checks `outcome` and its `stages`, and
@@ -605,8 +607,15 @@ and `gx` places instanced meshes, bevelled Nanite kit pieces, world-aligned mate
 atmosphere preset (`megastructure`, `daylight`), lights and hero cameras (`GX_Shot_<name>`).
 `import_model {file, dest, name, collision, nanite}` combines a model file of the game's assets into
 one static mesh in `<dest>/<name>/`; `import_character`, `import_animation` (with its `skeleton`),
-`import_sound`, `attach_to_socket` and `audit` do what their names say, and no import
-opens the Content Browser. Imports and retargets refuse during play, where Unreal makes only part of
+`import_sound` and `audit` do what their names say, and no import opens the Content Browser.
+`attach_to_socket` holds a static mesh at a socket of the first skeletal mesh players see that has it
+(gathered with the Blueprint's inherited components, so a `motion_character`'s `Body`, not its hidden
+mannequin `Mesh`; a socket only a hidden mesh has is refused, and with no skeletal mesh shown the first
+with the socket holds it), through one construction-script attach node per mesh, which attaching again
+reuses or, when the parent changed, replaces; the component keeps its place in the component tree, since
+that node is what holds it in play. It drops the node
+types Epic's toolset remembers for the Blueprint before reading them, since neither an added component
+nor a compile renews that list. Imports and retargets refuse during play, where Unreal makes only part of
 an asset (a Skeleton with no mesh) and says so only in its log. A `.glb` character or clip whose
 skeleton hangs under a scaled root (a centimetre Armature at 0.01, the root joint's own scale
 counted; a clip file with no skin by the shallowest node it animates) is imported from a copy with
@@ -694,14 +703,18 @@ then moves a character the sample's way: a retargeter from the sample's UEFN man
 `IKRetargeter_Map`, and `BP_<name>`, a child of `SandboxCharacter_CMC` whose mannequin mesh is hidden
 (in the editor and in game, since the sample's character makes its own mesh visible again as play
 starts) but still poses and whose `Body` mesh shows the character with that ABP and tag. No clip is
-copied. An older helper hid the mannequin only in the editor, so it showed through the Body in play:
-once Unreal has its level, the helper (`hide_old_drivers`, scheduled by `init_unreal.py`) hides in
-game the mannequin of each `BP_<name>` in `/Game/GX/Characters` whose Mesh is hidden only in the
-editor and has a Body, compiles and saves it, and does the same to the level's placed copies still as
-the old helper left them (the level is left with those changes unsaved). It reads the folder from disk and checks each
-Blueprint once: the names checked are kept in `Saved/Genex/motion-characters-checked.json`, and one
-that didn't load, has no Mesh while the sample's character is missing, or didn't compile or save
-is tried at the next start, with a warning in the log. It changes nothing during play and leaves a mannequin someone made visible.
+copied. Its answer's `meshes` tells the agent which mesh does what: props and foot or hand checks go
+on `Body`, and a game moved only by root-motion montages gives `Mesh` a plain AnimBP (idle,
+`DefaultSlot`, output), since the sample's AnimBP blends its own locomotion over them. An older
+helper hid the mannequin only in the editor, so it showed through the Body in play: once Unreal has
+its level, the helper (`hide_old_drivers`, scheduled by `init_unreal.py`) hides in game the
+mannequin of each `BP_<name>` in `/Game/GX/Characters` whose Mesh is hidden only in the editor and
+has a Body, compiles and saves it, and does the same to the level's placed copies still as the old
+helper left them (the level is left with those changes unsaved). It reads the folder from disk and
+checks each Blueprint once: the names checked are kept in
+`Saved/Genex/motion-characters-checked.json`, and one that didn't load, has no Mesh while the
+sample's character is missing, or didn't compile or save is tried at the next start, with a warning
+in the log. It changes nothing during play and leaves a mannequin someone made visible.
 `probe_characters` reads such a character by its shown Body, not the hidden mannequin.
 
 The helper offers no tool that derives normal and roughness maps from a base-colour texture's

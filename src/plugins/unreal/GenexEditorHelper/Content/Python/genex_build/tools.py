@@ -345,7 +345,7 @@ class GenexBuildTools(unreal.ToolsetDefinition):
 
         Returns:
             JSON {blueprint, retargeter, tag, fbik, spineFrom, oneToOne, ikOff, armFixDeg,
-            fingersAligned, next, ms}, or {error}.
+            fingersAligned, meshes (what Mesh and Body each do), next, ms}, or {error}.
         """
         return _answer(motion.motion_character, mesh, name)
 
@@ -378,10 +378,12 @@ class GenexBuildTools(unreal.ToolsetDefinition):
     @toolset_registry.tool_call
     @staticmethod
     def attach_to_socket(target: str, mesh: str, socket: str, offset: str) -> str:
-        """Puts a static mesh in a skeletal mesh's socket or bone (a sword in hand_r or HandGrip_R).
-        On a Blueprint (a /Game/ path) every spawned character carries it: the component
-        Gx<mesh> under its skeletal mesh, attached by its construction script; the Blueprint is
-        compiled and saved. On a level actor (its label) the mesh's actor is attached there.
+        """Puts a static mesh in a skeletal mesh's socket or bone (a sword in hand_r or HandGrip_R),
+        on the first skeletal mesh players see that has it (a motion_character's Body, not its
+        hidden mannequin Mesh). On a Blueprint (a /Game/ path) every spawned character carries it:
+        the component Gx<mesh> under that skeletal mesh, attached by its construction script; the
+        Blueprint is compiled and saved. On a level actor (its label) the mesh's actor is attached
+        there. Attaching the same mesh again moves it (socket, offset, and onto the visible mesh).
 
         Args:
             target: The Blueprint's /Game/ path, or a level actor's label.
@@ -391,7 +393,7 @@ class GenexBuildTools(unreal.ToolsetDefinition):
                 relative to the socket, each optional; empty for none.
 
         Returns:
-            JSON {blueprint, component, parent, socket, compiled, saved} or {actor, held, socket}.
+            JSON {blueprint, component, parent, socket, compiled, saved} or {actor, held, parent, socket}.
         """
         return _answer(lambda: sockets.attach_to_socket(target, mesh, socket, args.json_object(offset, 'offset')))
 

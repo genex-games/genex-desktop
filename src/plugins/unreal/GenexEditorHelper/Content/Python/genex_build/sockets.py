@@ -1,12 +1,15 @@
 """attach_to_socket: a static mesh held by a skeletal mesh's socket or bone (a katana in a character's
 hand), on a Blueprint so every spawned character carries it, or on an actor already in the level.
 
-On a Blueprint the mesh becomes the component Gx<mesh name> under the Blueprint's skeletal mesh (a
-Character's Mesh). Unreal's Python can't set a Blueprint component's parent socket, so the
+The skeletal mesh is the first one players see that has the socket: a character moved by a hidden
+mesh (motion_character's Body copying its hidden mannequin, Mesh) holds the mesh in the visible hand.
+When only a hidden mesh has the socket the call is refused, since the held mesh would follow a skeleton
+nobody sees. On a Blueprint the mesh becomes the component Gx<mesh name> under that skeletal mesh (often
+a Character's Mesh). Unreal's Python can't set a Blueprint component's parent socket, so the
 Blueprint's construction script gets one "Attach Component To Component" node right after its entry,
 keeping the component's offset relative to the socket; attaching the same mesh again reuses that
-component and that node (it only changes the socket and the offset). The Blueprint is compiled and
-saved. On a level actor the mesh's actor is attached to the actor's skeletal mesh at the socket.
+component and that node (it changes the socket and the offset, and the parent when another mesh held
+it). The Blueprint is compiled and saved. On a level actor the mesh's actor is attached to the actor's skeletal mesh at the socket.
 """
 
 import re
@@ -29,7 +32,10 @@ MESSAGE = {
     'socket': 'socket must be a socket or bone name: 1 to 64 letters, digits or _ (hand_r, HandGrip_R).',
     'target': 'target must be a Blueprint\'s /Game/ path or the label of an actor in the level.',
     'no_skeleton': '{target} has no skeletal mesh component to attach to.',
-    'no_socket': '{target}\'s skeletal mesh has no socket or bone {socket}; it has: {names}.',
+    'no_socket': '{target}\'s skeletal mesh {mesh} has no socket or bone {socket}; it has: {names}.',
+    'hidden_socket': ('{target}\'s visible skeletal mesh {mesh} has no socket or bone {socket}; only the hidden '
+                      '{hidden} has it, and a mesh held there would follow a skeleton nobody sees. {mesh} has: '
+                      '{names}.'),
     'node': 'Unreal did not add the attach node to the construction script: {why}',
     'compile': '{blueprint} did not compile after the attach: {why}',
 }
@@ -55,29 +61,52 @@ def check(socket: object, offset: object) -> tuple:
                     (scale.x, scale.y, scale.z))
 
 
-def _skeletal_component(skeletal_components: list, target: str, socket: str):
-    if not skeletal_components:
+def _shown(component) -> bool:
+    """Whether players see a skeletal mesh: visible and not hidden in game."""
+    return bool(component.get_editor_property('visible')) and not component.get_editor_property('hidden_in_game')
+
+
+def _sockets(component) -> list[str]:
+    return [str(name) for name in component.get_all_socket_names()]
+
+
+def _skeletal_component(meshes: list, target: str, socket: str) -> tuple:
+    """(name, component) of the skeletal mesh to hold at `socket`, from `meshes` [(name, component)] in
+    the order Unreal lists them: the first one players see that has the socket (the first with it when
+    none is seen); Refused when it is missing there or only a hidden mesh has it."""
+    if not meshes:
         raise Refused(MESSAGE['no_skeleton'].format(target=target))
-    component = skeletal_components[0]
-    names = [str(name) for name in component.get_all_socket_names()]
-    if socket not in names:
-        raise Refused(MESSAGE['no_socket'].format(target=target, socket=socket, names=', '.join(names[:40])))
-    return component
+    shown = [mesh for mesh in meshes if _shown(mesh[1])] or meshes
+    held = next((mesh for mesh in shown if socket in _sockets(mesh[1])), None)
+    if held is not None:
+        return held
+    name, component = shown[0]
+    names = ', '.join(_sockets(component)[:40])
+    hidden = next((other for other, mesh in meshes if socket in _sockets(mesh)), None)
+    if hidden is not None:
+        raise Refused(MESSAGE['hidden_socket'].format(target=target, mesh=name, socket=socket, hidden=hidden,
+                                                      names=names))
+    raise Refused(MESSAGE['no_socket'].format(target=target, mesh=name, socket=socket, names=names))
+
+
+def _blueprint_meshes(blueprint: unreal.Blueprint) -> list:
+    """The Blueprint's skeletal mesh components, inherited ones too, as (variable name, the component as
+    this Blueprint sets it up) in the order Unreal gathers them. The class defaults list only the
+    components a C++ class makes, never one a Blueprint adds (motion_character's Body)."""
+    subsystem = unreal.get_engine_subsystem(unreal.SubobjectDataSubsystem)
+    library = unreal.SubobjectDataBlueprintFunctionLibrary
+    found = {}
+    for handle in subsystem.k2_gather_subobject_data_for_blueprint(blueprint):
+        data = subsystem.k2_find_subobject_data_from_handle(handle)
+        component = library.get_object_for_blueprint(data, blueprint)
+        if isinstance(component, unreal.SkeletalMeshComponent):
+            found.setdefault(str(library.get_variable_name(data)), component)
+    return list(found.items())
 
 
 def _component_name(mesh: unreal.StaticMesh) -> str:
     """Gx<mesh name> without underscores, so the Blueprint node reading it is named as predictably."""
     return f'{COMPONENT_PREFIX}{mesh.get_name().replace("_", "")}'[:64]
-
-
-def _variable_name(blueprint, component) -> str:
-    subsystem = unreal.get_engine_subsystem(unreal.SubobjectDataSubsystem)
-    library = unreal.SubobjectDataBlueprintFunctionLibrary
-    for handle in subsystem.k2_gather_subobject_data_for_blueprint(blueprint):
-        data = subsystem.k2_find_subobject_data_from_handle(handle)
-        if library.get_object(data) == component:
-            return str(library.get_variable_name(data))
-    return ''
 
 
 def _place_component(component, mesh, offset) -> None:
@@ -90,10 +119,7 @@ def _place_component(component, mesh, offset) -> None:
 
 
 def _on_blueprint(blueprint: unreal.Blueprint, mesh, socket: str, offset) -> dict:
-    cdo = unreal.get_default_object(blueprint.generated_class())
-    skeletal = _skeletal_component(cdo.get_components_by_class(unreal.SkeletalMeshComponent),
-                                   blueprint.get_name(), socket)
-    parent_name = _variable_name(blueprint, skeletal) or CHARACTER_MESH
+    parent_name = _skeletal_component(_blueprint_meshes(blueprint), blueprint.get_name(), socket)[0]
     name = _component_name(mesh)
     try:
         component = blueprints.add_component(blueprint, 'StaticMeshComponent', name, parent_name)
@@ -115,8 +141,9 @@ def _on_blueprint(blueprint: unreal.Blueprint, mesh, socket: str, offset) -> dic
 
 
 def _on_actor(actor, mesh, socket: str, offset) -> dict:
-    skeletal = _skeletal_component(actor.get_components_by_class(unreal.SkeletalMeshComponent),
-                                   actor.get_actor_label(), socket)
+    meshes = [(component.get_name(), component)
+              for component in actor.get_components_by_class(unreal.SkeletalMeshComponent)]
+    parent, skeletal = _skeletal_component(meshes, actor.get_actor_label(), socket)
     location, rotation, scale = offset
     label = f'{actor.get_actor_label()}_{_component_name(mesh)}'
     for old in [a for a in editor.actors().get_all_level_actors() if a.get_actor_label() == label]:
@@ -132,7 +159,7 @@ def _on_actor(actor, mesh, socket: str, offset) -> dict:
     held.root_component.set_relative_location_and_rotation(
         unreal.Vector(*location), unreal.Rotator(roll=rotation[2], pitch=rotation[0], yaw=rotation[1]), False, True)
     held.set_actor_scale3d(unreal.Vector(*scale))
-    return {'actor': actor.get_actor_label(), 'held': label, 'socket': socket}
+    return {'actor': actor.get_actor_label(), 'held': label, 'parent': parent, 'socket': socket}
 
 
 def attach_to_socket(target, mesh, socket, offset=None) -> dict:

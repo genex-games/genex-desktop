@@ -278,7 +278,7 @@ class SceneComponent(ActorComponent):
         return self.visible
 
     def get_editor_property(self, name: str):
-        return self.props.get(name, False)
+        return self.props.get(name, self.visible if name == 'visible' else False)
 
     def corners(self) -> list[tuple]:
         return [(self.location.x, self.location.y, self.location.z)]
@@ -543,7 +543,9 @@ class SkeletalMeshComponent(MeshComponent):
         self.bones, self.bounds = bones or {}, bounds
 
     def get_all_socket_names(self) -> list[Name]:
-        return [Name(name) for name in self.bones]
+        """Its posed bones, else the bones of the mesh asset it shows (a Blueprint's component)."""
+        asset = self.props.get('skeletal_mesh_asset') or self.props.get('skinned_asset')
+        return [Name(name) for name in self.bones or getattr(asset, 'parents', {})]
 
     def get_skinned_asset(self):
         return self.props.get('skinned_asset')
@@ -820,10 +822,14 @@ class AnimBlueprint(Blueprint):
 
 
 class _Defaults(Object):
-    """A generated class's defaults: its variables by name, read and set as editor properties."""
+    """A generated class's defaults: its variables by name, read and set as editor properties, and the
+    components a C++ class makes (`components`, [(name, template)]); never one a Blueprint adds."""
 
     def __init__(self, **values) -> None:
         self.props = dict(values)
+
+    def get_components_by_class(self, cls) -> list:
+        return [component for _, component in getattr(self, 'components', []) if isinstance(component, cls)]
 
     def get_editor_property(self, name: str):
         return self.props[name]
@@ -1407,16 +1413,22 @@ class GameplayStatics:
 class BlueprintEditorLibrary:
     @staticmethod
     def compile_blueprint(blueprint) -> None:
+        """Records it; a Blueprint's components then have variables graph nodes can read (`compiled`)."""
         _record('compile', blueprint)
+        if isinstance(blueprint, Blueprint):
+            blueprint.compiled = [str(handle[0]) for handle in blueprint.components]
 
     @staticmethod
     def create_blueprint_asset_with_parent(asset_path: str, parent_class: 'Class') -> Blueprint:
-        """A child Blueprint whose components start as the parent's (its defaults' `components`), each its own copy."""
+        """A child Blueprint whose components start as the parent's (its defaults' `components`), each its own
+        copy with the parent's settings; its own defaults list those copies, as Unreal's list a C++ class's."""
         _record('create_blueprint', asset_path, parent_class.get_name())
         inherited = getattr(parent_class.cdo, 'components', []) if parent_class.cdo is not None else []
-        components = [[name, type(template)(name)] for name, template in inherited]
+        components = [[name, type(template)(name, **dict(template.props))] for name, template in inherited]
         name = asset_path.rsplit('/', 1)[-1]
-        made = Blueprint(components, generated=Class(path=f'{asset_path}.{name}_C', cdo=_Defaults()), name=name)
+        defaults = _Defaults()
+        defaults.components = [(name, component) for name, component in components]
+        made = Blueprint(components, generated=Class(path=f'{asset_path}.{name}_C', cdo=defaults), name=name)
         state['loaded'][asset_path] = made
         state['assets'].add(asset_path)
         return made
