@@ -4,9 +4,10 @@ behind the toolsets, each after the helper modules it imports. The toolsets them
 each package's __init__.py, errors.py (whose Refused the toolsets catch) and init_unreal.py are
 registered with Unreal or held by what is, so Genex restarts Unreal when one of them changes.
 
-A module keeps its state in module globals (held keys, a pilot, a pending shot), so the reload is
-refused while a play session runs or while the helper still waits on an editor tick of its own:
-reloading then would leave Unreal calling the old code with state the new module no longer has."""
+A module keeps its state in module globals (held keys, a pilot, a pending shot, the render settings
+a lighter play lowered), so the reload is refused while a play session runs or while the helper still
+holds something of the editor's: reloading then would leave Unreal calling the old code, or settings
+the new module no longer knows to put back."""
 
 import ast
 import importlib
@@ -19,12 +20,13 @@ from genex_loop.errors import Refused
 PACKAGES = ('genex_build', 'genex_loop', 'genex_play')
 # Module names that never reload (see the module notes).
 FIXED = ('tools', 'errors', '__init__')
-# The helper's own editor-tick callbacks, by module and global: set while the helper waits on Unreal.
-TICKS = (('genex_play.play', '_tick_handle'), ('genex_build.shots', '_wait_handle'))
+# What the helper holds of the editor, by module and global, set (truthy) while it does: its own
+# editor-tick callbacks, and the console values a lighter play lowered, to put back when it ends.
+HELD = (('genex_play.play', '_tick_handle'), ('genex_build.shots', '_wait_handle'), ('genex_play.light', '_kept'))
 
 MESSAGE = {
     'playing': 'A play session is running; the helper reloads only between plays. Stop play, then retry.',
-    'busy': 'The helper is still waiting on the editor ({module}); retry in a few seconds.',
+    'busy': 'The helper still holds something of the editor ({module}); retry once it is done, or restart Unreal.',
 }
 
 
@@ -74,10 +76,10 @@ def order(modules: dict) -> list:
 
 
 def _busy() -> str | None:
-    """The helper module still waiting on an editor tick of its own, or None."""
-    for name, handle in TICKS:
+    """The helper module still holding something of the editor's (HELD), or None."""
+    for name, held in HELD:
         module = sys.modules.get(name)
-        if module is not None and getattr(module, handle, None) is not None:
+        if module is not None and getattr(module, held, None):
             return name
     return None
 

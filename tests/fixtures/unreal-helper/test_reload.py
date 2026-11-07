@@ -1,8 +1,9 @@
 """reload_helper brings the helper's newer Python, which Genex has just written into the project,
 into the running editor without a restart: it reloads every loaded helper module, each after the
 helper modules it imports, never a toolset (tools.py), a package's __init__ or errors.py. It
-refuses, reloading nothing, while a play session runs or while the helper still waits on an editor
-tick of its own; check_only answers whether it would run, changing nothing."""
+refuses, reloading nothing, while a play session runs or while the helper still holds something of
+the editor's (a tick of its own, render settings a lighter play lowered); check_only answers whether
+it would run, changing nothing."""
 
 import importlib
 import sys
@@ -66,20 +67,27 @@ class ReloadHelper(HelperCase):
 
     def test_refuses_during_a_play_session_or_a_pending_tick_and_reloads_nothing(self) -> None:
         from genex_build import shots
+        from genex_play import light
+
+        def idle() -> None:
+            shots._wait_handle = None
+            light._kept.clear()
+
         cases = {
             'a play session': lambda: unreal.state.update(pie=True),
             'a capture waiting on the editor': lambda: setattr(shots, '_wait_handle', object()),
+            'render settings a lighter play lowered': lambda: light._kept.update({'r.ScreenPercentage': 100}),
         }
+        self.addCleanup(idle)
         for label, arrange in cases.items():
             with self.subTest(label):
                 unreal.reset(self.project)
-                shots._wait_handle = None
+                idle()
                 arrange()
                 with mock.patch.object(importlib, 'reload') as reloading:
                     self.assertIn('error', self.reloaded())
                     self.assertFalse(self.reloaded(True)['ready'])
                 reloading.assert_not_called()
-        shots._wait_handle = None
 
     def test_check_only_reloads_nothing(self) -> None:
         with mock.patch.object(importlib, 'reload') as reloading:

@@ -818,16 +818,26 @@ async function playing(session: EditorSession): Promise<boolean | undefined> {
   return typeof pie === "boolean" ? pie : undefined;
 }
 
+/** A forwarded call's play step: which it is, whether a play ran before a start, and the mark to give back. */
+type PlayCall = { step: PlayStep | undefined; before: boolean | undefined; giveBack: () => Promise<void> };
+
 /**
- * Whether what a play step the editor refused asked for holds all the same: a start whose play runs
- * (the game's own errors while play starts make Epic's StartPIE answer an error, though the play goes
- * on) or a stop with no play left (it had ended: its pilot, a save point or the game ended it). The
- * helper's play state decides, never the editor's words; when it can't say, the refusal stands.
+ * Gives back or keeps the throttle and the agent's mark once the editor answered a play step. A step
+ * it refused is read by the helper's play state after it, never by the editor's words: a start that
+ * began a play nobody ran before (the game's own errors as play starts make Epic's StartPIE answer an
+ * error, though the play goes on) or a stop with no play left (its pilot, a save point or the game
+ * ended it) held, and is settled as one the editor took; a stop whose play goes on keeps both; when
+ * the helper can't say, the refusal stands. Answers whether a refused step's aim held.
  */
-async function aimHolds(session: EditorSession, step: PlayStep | undefined): Promise<boolean> {
-  if (step === undefined) return false;
-  const pie = await playing(session);
-  return step === PlayStep.Start ? pie === true : pie === false;
+async function settleStep(session: EditorSession, play: PlayCall, refused: boolean, how: Forwarding) {
+  const { step } = play;
+  const pie = refused && step !== undefined ? await playing(session) : undefined;
+  const held = step === PlayStep.Start ? play.before === false && pie === true : pie === false;
+  const failed = refused && !held;
+  const playsOn = failed && step === PlayStep.Stop && pie === true;
+  if (!playsOn) await how.keeper.after(session, step, failed);
+  await settlePlay(how.agentPlay, step, failed, play.giveBack);
+  return refused && held;
 }
 
 /** The answer to a refused play step whose aim holds: the play runs, with Unreal's own words, or there was nothing to stop. */
@@ -879,20 +889,19 @@ async function forward(session: EditorSession, params: CallParams, how: Forwardi
   } catch (error) {
     return errorResult(MESSAGE.NotCompleted(errorMessage(error)));
   }
-  const giveBack = await markStart(how.agentPlay, step);
+  // Whether a play already ran tells a refused start that began one from one that found the person's.
+  const before = step === PlayStep.Start ? await playing(session) : undefined;
+  const play = { step, before, giveBack: await markStart(how.agentPlay, step) };
   let result: CallResult;
   try {
     result = await session.call(editorParams(params), how.timeoutMs);
   } catch (error) {
     // A JSON-RPC error is the editor's own answer: it is still there, and the call did not complete.
-    if (editorAnswered(error)) return refusedStep(session, step, errorMessage(error), how, giveBack);
+    if (editorAnswered(error)) return refusedStep(session, play, errorMessage(error), how);
     return errorResult(MESSAGE.CallFailed(errorMessage(error)), editorWentAway(error, signal));
   }
   try {
-    const held = Boolean(result.isError) && (await aimHolds(session, step));
-    const refused = Boolean(result.isError) && !held;
-    await how.keeper.after(session, step, refused);
-    await settlePlay(how.agentPlay, step, refused, giveBack);
+    const held = await settleStep(session, play, Boolean(result.isError), how);
     if (held && step) return heldAnswer(step, answerText(result), how.project);
     const content = Array.isArray(result.content) ? (result.content as Part[]) : [];
     const fit = fitAnswer(params, content, Boolean(result.isError));
@@ -906,21 +915,10 @@ async function forward(session: EditorSession, params: CallParams, how: Forwardi
   }
 }
 
-/**
- * A call the editor answered with a JSON-RPC error: a play step whose aim holds anyway answers so,
- * with the throttle and the agent's mark kept; anything else gives them back and fails.
- */
-async function refusedStep(
-  session: EditorSession,
-  step: PlayStep | undefined,
-  said: string,
-  how: Forwarding,
-  giveBack: () => Promise<void>,
-) {
-  const held = await aimHolds(session, step);
-  await how.keeper.after(session, step, !held);
-  await settlePlay(how.agentPlay, step, !held, giveBack);
-  return held && step ? heldAnswer(step, said, how.project) : errorResult(MESSAGE.NotCompleted(said));
+/** A call the editor answered with a JSON-RPC error: a play step whose aim held anyway answers so ({@link settleStep}); anything else fails. */
+async function refusedStep(session: EditorSession, play: PlayCall, said: string, how: Forwarding) {
+  const held = await settleStep(session, play, true, how);
+  return held && play.step ? heldAnswer(play.step, said, how.project) : errorResult(MESSAGE.NotCompleted(said));
 }
 
 /** The MCP SDK's own codes for a call that got no answer: it ran out of time, or its connection closed. */

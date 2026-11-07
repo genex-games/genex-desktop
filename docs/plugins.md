@@ -495,9 +495,10 @@ and never its saved settings. The bridge turns the setting back on when the agen
 when the start is refused and when the bridge itself closes. If the user had already turned it
 off, the bridge leaves it alone. Epic answers `StartPIE` with an error when the game's own Blueprints
 log errors as play starts, though the play runs, and `StopPIE` with one when the play had already
-ended; so after either refusal the bridge asks the helper's `play_state`, and when the play runs
-(a start) or doesn't (a stop) it answers that instead, keeping the throttle off and the agent's mark
-for a running play. When the helper can't say, the refusal stands. A minimized editor is still throttled. Epic's server checks only the `Origin` header: any local process can reach it. What a call
+ended; so the bridge asks the helper's `play_state` before a start and after either refusal. A start
+that began a play none ran before answers that it runs, the throttle off and the agent's mark kept; a
+stop that left no play answers there was nothing to stop; a refused stop whose play goes on keeps
+both. When the helper can't say, the refusal stands. A minimized editor is still throttled. Epic's server checks only the `Origin` header: any local process can reach it. What a call
 changes in the editor is in the game's checkpoints only when the project lies inside the game
 folder (New game puts it in `unreal/`); a project elsewhere is not.
 
@@ -849,8 +850,9 @@ open), and throws when it still does. `update-helper` runs setup's `updateHelper
 An open Unreal's helper is updated in place (setup's `updateHelperLive`, then the helper's
 `reload_helper`) only when every changed file is a helper module the editor reloads (never a
 `tools.py`, a package's `__init__.py`, `errors.py` or `init_unreal.py`), a template Unreal never reads
-or the descriptor's version and description, and only while no play runs and the helper waits on no
-editor tick of its own.
+or the descriptor's version and description, and only while no play runs and the helper holds
+nothing of the editor's (a tick of its own, render settings a lighter play lowered). A reload that
+fails after the files were written leaves the editor on the old code until Unreal restarts.
 `editor-activity` answers `{personActive, unsaved, pie, dirty}`: whether a play session runs and how
 many packages are unsaved (the helper's `editor_activity` names them), and whether the person is
 using the editor (below). With no editor of the game running, no linked project or Unreal still
@@ -900,7 +902,7 @@ card) for the same games.
 | `reopen-editor` at `restore.after` | starts reopening, updating an outdated helper while Unreal is closed | same, but only when that restore (the person's Rewind among them) closed a running Unreal |
 | `editor-state` at `health` | quiet while it answers; pending while reopening, opening, busy or can't tell; blocks once reopening failed, its port is blocked or it is gone three asks in a row | same, gone in the chat's words |
 | `log-errors` at `run.prepare`, `checkpoint.before` | marks the log's end per game, and at the start updates an open Unreal's older Genex editor helper in place when it can (above), else notes it (only `quit-editor`, then `open-editor`, updates it); notes the new errors since | the new errors since |
-| `hero-shots` at `checkpoint.after` | the stills as images, their tone as measures | nothing: no stills are taken |
+| `hero-shots` at `checkpoint.after` | the stills as images, their tone as measures; none while a play runs (`capture_shot` refuses during play, and a save point no longer ends the agent's) | nothing: no stills are taken |
 
 Each handler's editor calls have limits its own longest path counts, each call's session with the
 editor (connect, the helper's identity call and the session's end) held within its limit

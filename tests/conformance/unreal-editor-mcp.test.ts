@@ -442,8 +442,11 @@ function throttledEditor(
     project?: string;
     /** The editor's crash on `tool`, if this call crashes it. */
     crash?: (tool: string, signal?: AbortSignal | null) => Promise<never> | undefined;
-    /** Whether the helper's `play_state` says a play runs; it answers no state unless a test says. */
-    pie?: boolean;
+    /**
+     * Whether the helper's `play_state` says a play runs, given Epic's calls so far; it answers no
+     * state unless a test says.
+     */
+    pie?: (calls: string[]) => boolean;
   } = {},
 ) {
   const settings = { throttle: options.throttle ?? true };
@@ -460,12 +463,14 @@ function throttledEditor(
     }
     if (tool === "SearchCVars")
       return { returnValue: JSON.stringify({ "r.RayTracing": { help: "", value: options.rayTracing ? 1 : 0 } }) };
-    if (tool === "play_state" && options.pie !== undefined)
-      return { returnValue: JSON.stringify({ pie: options.pie }) };
+    if (tool === "play_state" && options.pie) return { returnValue: JSON.stringify({ pie: options.pie(calls()) }) };
     return { returnValue: null };
   }, options.project);
-  const calls = () => toolCalls(unreal).map((s) => s.body.params.arguments.tool_name);
-  return { ...unreal, settings, calls };
+  const named = () => toolCalls(unreal).map((s) => s.body.params.arguments.tool_name);
+  /** Epic's calls; the helper's `play_state`, which the bridge asks around a play step, is `playStates`. */
+  const calls = (): string[] => named().filter((tool) => tool !== "play_state");
+  const playStates = () => named().filter((tool) => tool === "play_state").length;
+  return { ...unreal, settings, calls, playStates };
 }
 
 /** A forwarded call to `tool_name`, in the play toolset unless another (or `null`, none) is given. */
@@ -519,16 +524,7 @@ test("a play start that fails, or the bridge closing mid-test, puts the user's s
   try {
     const result: any = await first.client.callTool(play("StartPIE"));
     assert.equal(result.isError, true);
-    // Flipped: the refused start now asks the helper's play_state whether the play runs anyway
-    // before it gives the setting back; this helper can't say, so the refusal stands.
-    assert.deepEqual(failed.calls(), [
-      "get_properties",
-      "SearchCVars",
-      "set_properties",
-      "StartPIE",
-      "play_state",
-      "set_properties",
-    ]);
+    assert.deepEqual(failed.calls(), ["get_properties", "SearchCVars", "set_properties", "StartPIE", "set_properties"]);
     assert.equal(failed.settings.throttle, true);
   } finally {
     await first.close();
@@ -563,7 +559,7 @@ function recordedMarks() {
 // Sword Duel, Windows: the game's own Blueprint errors made StartPIE answer an error while the play
 // ran, so the bridge gave the throttle back and the agent played the rest of the day at 3 frames/s.
 test("a play start Unreal answers with an error while the play runs keeps full speed and the agent's mark", async () => {
-  const unreal = throttledEditor({ refuse: ["StartPIE"], pie: true });
+  const unreal = throttledEditor({ refuse: ["StartPIE"], pie: (calls) => calls.includes("StartPIE") });
   const { marker, marks } = recordedMarks();
   const { client, close } = await connected(unreal.fetchImpl, [DRIFT], undefined, undefined, "win32", marker);
   try {
@@ -573,7 +569,7 @@ test("a play start Unreal answers with an error while the play runs keeps full s
     assert.match(textOf(result), /StartPIE failed/, "Unreal's own words stay in the answer");
     assert.equal(unreal.settings.throttle, false, "the play keeps running at full speed");
     assert.deepEqual(marks, ["started"], "the play is still the agent's");
-    assert.deepEqual(unreal.calls().slice(3), ["StartPIE", "play_state"]);
+    assert.equal(unreal.playStates(), 2, "asked before the start and after its refusal");
 
     await client.callTool(play("StopPIE"));
     assert.equal(unreal.settings.throttle, true, "the stop gives the user's setting back");
@@ -584,7 +580,7 @@ test("a play start Unreal answers with an error while the play runs keeps full s
 });
 
 test("a stop with no play left answers that there was nothing to stop, and still gives everything back", async () => {
-  const unreal = throttledEditor({ refuse: ["StopPIE"], pie: false });
+  const unreal = throttledEditor({ refuse: ["StopPIE"], pie: () => false });
   const { marker, marks } = recordedMarks();
   const { client, close } = await connected(unreal.fetchImpl, [DRIFT], undefined, undefined, "win32", marker);
   try {
@@ -600,20 +596,24 @@ test("a stop with no play left answers that there was nothing to stop, and still
 });
 
 test("a refused play step stays refused when the helper's play state says it didn't take", async () => {
-  for (const [step, pie] of [
-    ["StartPIE", false],
-    ["StopPIE", true],
-  ] as const) {
+  const cases = [
+    { label: "a start with no play after it", step: "StartPIE", pie: () => false, marks: ["started", "given back"] },
+    // With agents allowed to use Unreal as the person plays, a start can find the person's play running.
+    { label: "a start into the person's play", step: "StartPIE", pie: () => true, marks: ["started", "given back"] },
+    { label: "a stop whose play goes on", step: "StopPIE", pie: () => true, marks: ["started"] },
+  ] as const;
+  for (const { label, step, pie, marks: expected } of cases) {
     const unreal = throttledEditor({ refuse: [step], pie });
     const { marker, marks } = recordedMarks();
     const { client, close } = await connected(unreal.fetchImpl, [DRIFT], undefined, undefined, "win32", marker);
     try {
       if (step === "StopPIE") await client.callTool(play("StartPIE"));
       const result: any = await client.callTool(play(step));
-      assert.equal(result.isError, true, step);
-      assert.match(textOf(result), new RegExp(`${step} failed`), step);
-      const expected = step === "StartPIE" ? ["started", "given back"] : ["started"];
-      assert.deepEqual(marks, expected, `${step}: a play still running stays the agent's`);
+      assert.equal(result.isError, true, label);
+      assert.match(textOf(result), new RegExp(`${step} failed`), label);
+      assert.deepEqual(marks, expected, `${label}: only a play still running after a stop stays the agent's`);
+      const lifted = step === "StopPIE";
+      assert.equal(unreal.settings.throttle, !lifted, `${label}: a play that goes on keeps full speed`);
     } finally {
       await close();
     }
