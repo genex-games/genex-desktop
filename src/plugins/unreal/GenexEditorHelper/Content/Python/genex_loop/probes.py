@@ -18,6 +18,9 @@ from genex_loop import editor, paths
 from genex_loop.errors import Refused, short_message
 
 PAWNS_CAP = 30
+# The mesh motion_character shows over a Motion Matching character's hidden mannequin (its own mesh);
+# genex_build.motion.BODY, which genex_loop can't import.
+MOTION_BODY = 'Body'
 MESHES_CAP = 40
 BONES_CAP = 400
 VOLUMES_CAP = 20
@@ -197,8 +200,12 @@ def _bottom(component) -> float:
 
 
 def _main_mesh(pawn):
-    """A character's or vehicle's own `mesh`, else its first skeletal or static mesh, else None."""
+    """A character's or vehicle's own `mesh`, else its first skeletal or static mesh, else None. A Motion
+    Matching character's own mesh is the mannequin hidden under the Body players see: that Body, shown."""
     mesh = _prop(pawn, 'mesh')
+    if mesh and not _shown(mesh):
+        meshes = pawn.get_components_by_class(unreal.SkeletalMeshComponent)
+        return next((m for m in meshes if m.get_name() == MOTION_BODY and _shown(m)), mesh)
     if mesh:
         return mesh
     return pawn.get_component_by_class(unreal.SkeletalMeshComponent) or pawn.get_component_by_class(unreal.StaticMeshComponent)

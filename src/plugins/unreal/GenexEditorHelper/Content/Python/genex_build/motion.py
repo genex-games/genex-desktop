@@ -52,6 +52,8 @@ DRIVER_HIDDEN = {'visible': False, 'hidden_in_game': True}
 CHARACTER_FILE = re.compile(r'BP_[A-Za-z][A-Za-z0-9_]{0,47}')
 BLUEPRINT_SUFFIX = '.uasset'
 CHECKED_RECORD = 'motion-characters-checked.json'
+# What checking one older character found: changed and saved, nothing to change, or no answer yet.
+FIXED, FINE, RETRY = 'fixed', 'fine', 'retry'
 # How long, once the helper loads, it waits for the editor's level before checking the characters anyway.
 LEVEL_WAIT_S = 120.0
 
@@ -166,14 +168,45 @@ def motion_character(mesh: str, name: str) -> dict:
             'ms': editor.elapsed_ms(started)}
 
 
-def _shows_in_play(blueprint) -> bool:
-    """Whether a Blueprint is a motion character whose mannequin an older helper hid only in the editor:
-    a Body, and a Mesh not drawn in the editor but not hidden in game. One whose mannequin someone made
-    visible again is left as it is."""
-    driver = _component(blueprint, DRIVER_MESH)
-    if driver is None or _component(blueprint, BODY) is None:
-        return False
+def _hidden_only_in_editor(driver) -> bool:
+    """Whether a mannequin is as an older helper left it: not drawn in the editor, not hidden in game. One
+    someone made visible again is not."""
     return not driver.get_editor_property('visible') and not driver.get_editor_property('hidden_in_game')
+
+
+def _hide_placed(blueprint) -> None:
+    """The level's placed copies of the Blueprint hide their mannequin in game too: a copy keeps the
+    value it had, and saving the level would write it in for good. Only copies still as an older helper
+    left them change; the level is not saved here."""
+    path = blueprint.generated_class().get_path_name()
+    for actor in editor.actors().get_all_level_actors():
+        if actor.get_class().get_path_name() != path:
+            continue
+        driver = actor.get_editor_property('mesh')
+        if driver and _hidden_only_in_editor(driver):
+            driver.set_editor_property('hidden_in_game', True)
+
+
+def _check_character(path: str) -> str:
+    """Checks one BP_<name> (see hide_old_drivers): FIXED, FINE (nothing to change) or RETRY (it did not
+    load, its mannequin was not found, as when the sample's character is missing, or it did not compile
+    or save)."""
+    blueprint = unreal.load_asset(path)
+    if blueprint is None:
+        return RETRY
+    if not isinstance(blueprint, unreal.Blueprint):
+        return FINE
+    driver = _component(blueprint, DRIVER_MESH)
+    if driver is None:
+        return RETRY
+    if _component(blueprint, BODY) is None or not _hidden_only_in_editor(driver):
+        return FINE
+    _hide(driver)
+    compiled, _messages = blueprints.compile_status(blueprint)
+    if not compiled or not unreal.EditorAssetLibrary.save_loaded_asset(blueprint, False):
+        return RETRY
+    _hide_placed(blueprint)
+    return FIXED
 
 
 def _character_files(project: str) -> list[str]:
@@ -189,27 +222,32 @@ def _character_files(project: str) -> list[str]:
 
 
 def _read_checked(record: str) -> set[str]:
+    """The names the record holds; none when it is missing or not a list of names."""
     if not paths.is_regular_file(record):
         return set()
     try:
         with open(record, encoding='utf-8') as file:
-            names = json.load(file).get('checked', [])
+            names = json.load(file).get('checked')
     except (OSError, ValueError, AttributeError):
         return set()
-    return {name for name in names if isinstance(name, str)}
+    return {name for name in names if isinstance(name, str)} if isinstance(names, list) else set()
 
 
 def _write_checked(record: str, names: set[str]) -> None:
-    with open(record, 'w', encoding='utf-8') as file:
+    """Writes the record through a new file put in its place, so a link put there meanwhile is replaced,
+    never followed."""
+    fresh = f'{record}.{os.getpid()}.tmp'
+    with open(fresh, 'x', encoding='utf-8') as file:
         json.dump({'checked': sorted(names)}, file, indent=1)
+    os.replace(fresh, record)
 
 
 def hide_old_drivers() -> list[str]:
     """Hides in game the mannequin of each motion character an older helper made (see the module
-    notes), compiling and saving each; the Blueprints it changed. Each BP_<name> in CHARACTER_FOLDER is
-    loaded and checked once: the names checked are kept in Saved/Genex, so a later start loads only new
-    ones, and one that did not load or save is tried again at the next. Nothing changes during play, or
-    when the record's place leads out of Saved/Genex (Refused)."""
+    notes), compiling and saving each, and in the level's placed copies of it; the Blueprints it
+    changed. Each BP_<name> in CHARACTER_FOLDER is checked once: the names checked are kept in
+    Saved/Genex, so a later start loads only new ones, and one with no answer yet is tried again at the
+    next. Nothing changes during play, or when the record's place leads out of Saved/Genex (Refused)."""
     if editor.play_world() is not None:
         return []
     project = editor.project_dir()
@@ -221,21 +259,9 @@ def hide_old_drivers() -> list[str]:
     unchecked = [name for name in names if name not in checked]
     if not unchecked:
         return []
-    fixed = []
-    for name in unchecked:
-        path = f'{CHARACTER_FOLDER}/{name}'
-        blueprint = unreal.load_asset(path)
-        if blueprint is None:
-            continue
-        if isinstance(blueprint, unreal.Blueprint) and _shows_in_play(blueprint):
-            _hide(_component(blueprint, DRIVER_MESH))
-            unreal.BlueprintEditorLibrary.compile_blueprint(blueprint)
-            if not unreal.EditorAssetLibrary.save_loaded_asset(blueprint, False):
-                continue
-            fixed.append(path)
-        checked.add(name)
-    _write_checked(record, checked)
-    return fixed
+    results = {name: _check_character(f'{CHARACTER_FOLDER}/{name}') for name in unchecked}
+    _write_checked(record, checked | {name for name, result in results.items() if result != RETRY})
+    return [f'{CHARACTER_FOLDER}/{name}' for name, result in results.items() if result == FIXED]
 
 
 def _level_ready() -> bool:
@@ -253,6 +279,14 @@ def _hide_old_drivers_logged() -> None:
 
 
 def hide_old_drivers_soon() -> None:
-    """Runs hide_old_drivers on an editor frame once the editor has its level and no play runs (the
-    helper's init_unreal calls this as it loads), logging what it changed or why it could not."""
-    shots.after(_level_ready, _hide_old_drivers_logged, LEVEL_WAIT_S)
+    """Runs hide_old_drivers once, on an editor frame once the editor has its level and no play runs (the
+    helper's init_unreal calls this as it loads), logging what it changed or why it could not. Once: a
+    save's progress dialog can tick the editor again while it runs."""
+    ran = []
+
+    def run() -> None:
+        if not ran:
+            ran.append(True)
+            _hide_old_drivers_logged()
+
+    shots.after(_level_ready, run, LEVEL_WAIT_S)

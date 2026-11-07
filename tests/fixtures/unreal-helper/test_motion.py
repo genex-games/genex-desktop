@@ -211,6 +211,42 @@ class OlderHelpersCharacters(HelperCase):
         self.assertEqual(motion.hide_old_drivers(), [OLD])
         self.assertTrue(mesh.props['hidden_in_game'])
 
+    def test_the_levels_placed_copies_hide_their_mannequin_too_without_saving_the_level(self) -> None:
+        blueprint, _mesh, _body = self.character()
+        placed = []
+        for label, driver in (('Duel_0', {'visible': False}), ('Duel_1', {'visible': True})):
+            mesh = unreal.SkeletalMeshComponent('CharacterMesh0')
+            for prop, value in driver.items():
+                mesh.set_editor_property(prop, value)
+            actor = unreal.Character(label, mesh=mesh)
+            actor.get_class = blueprint.generated_class
+            placed.append(mesh)
+            unreal.state['actors'].append(actor)
+        other = unreal.SkeletalMeshComponent('CharacterMesh0')
+        other.set_editor_property('visible', False)
+        unreal.state['actors'].append(unreal.Character('Guard_0', mesh=other))
+        self.assertEqual(motion.hide_old_drivers(), [OLD])
+        self.assertTrue(placed[0].props['hidden_in_game'], 'a copy as an older helper left it')
+        self.assertNotIn('hidden_in_game', placed[1].props, 'a copy someone made visible stays')
+        self.assertNotIn('hidden_in_game', other.props, 'another class\'s actor stays')
+        self.assertNotIn('save_current_level', [call[0] for call in unreal.calls])
+
+    def test_one_whose_mannequin_is_not_found_yet_is_tried_again(self) -> None:
+        """As when the sample's character is missing, its content kept out of checkpoints."""
+        blueprint, mesh, _body = self.character()
+        blueprint.components = [component for component in blueprint.components if component[0] != 'Mesh']
+        self.assertEqual(motion.hide_old_drivers(), [])
+        blueprint.components.insert(0, ('Mesh', mesh))
+        self.assertEqual(motion.hide_old_drivers(), [OLD])
+
+    def test_one_that_does_not_compile_is_not_saved_and_is_tried_again(self) -> None:
+        self.character()
+        with mock.patch.object(motion.blueprints, 'compile_status', return_value=(False, ['EventGraph: bad'])):
+            self.assertEqual(motion.hide_old_drivers(), [])
+        self.assertNotIn('save_asset', [call[0] for call in unreal.calls])
+        self.character()
+        self.assertEqual(motion.hide_old_drivers(), [OLD])
+
     def test_nothing_changes_during_play(self) -> None:
         _blueprint, mesh, _body = self.character()
         unreal.state['pie'] = True
@@ -248,10 +284,12 @@ class OlderHelpersCharacters(HelperCase):
                     (os.rmdir if os.path.isdir(self.record) and not os.path.islink(self.record) else os.remove)(self.record)
 
     def test_an_unreadable_record_checks_every_character_again(self) -> None:
-        _blueprint, mesh, _body = self.character()
-        self.write(self.record, '{not json')
-        self.assertEqual(motion.hide_old_drivers(), [OLD])
-        self.assertTrue(mesh.props['hidden_in_game'])
+        for text in ('{not json', '{"checked": null}', '{"checked": 5}', '[]', '"BP_Duel"', '{"checked": [7]}'):
+            with self.subTest(text):
+                _blueprint, mesh, _body = self.character()
+                self.write(self.record, text)
+                self.assertEqual(motion.hide_old_drivers(), [OLD])
+                self.assertTrue(mesh.props['hidden_in_game'])
 
     def test_soon_runs_on_an_editor_frame_and_a_failure_is_logged_not_raised(self) -> None:
         _blueprint, mesh, _body = self.character()
@@ -270,6 +308,24 @@ class OlderHelpersCharacters(HelperCase):
             for callback in list(unreal.state['ticks'].values()):
                 callback(0.016)
         self.assertIn('LoadPackage failed', warn.call_args.args[0])
+        self.assertEqual(unreal.state['ticks'], {})
+
+    def test_soon_runs_once_even_when_a_save_ticks_the_editor_again(self) -> None:
+        self.character()
+        motion.hide_old_drivers_soon()
+        runs = []
+        real = motion.hide_old_drivers
+
+        def saving_ticks_again() -> list:
+            runs.append(True)
+            for callback in list(unreal.state['ticks'].values()):
+                callback(0.016)
+            return real()
+
+        with mock.patch.object(motion, 'hide_old_drivers', side_effect=saving_ticks_again):
+            for callback in list(unreal.state['ticks'].values()):
+                callback(0.016)
+        self.assertEqual(len(runs), 1)
         self.assertEqual(unreal.state['ticks'], {})
 
 

@@ -77,6 +77,23 @@ class Characters(ProbeCase):
         [row] = self.pawns()
         self.assertEqual((row['gapCm'], row['feetGapCm']), (0, 40), 'the capsule stands; its mesh floats')
 
+    def test_a_motion_matching_character_is_read_by_the_body_players_see(self) -> None:
+        actor = self.character('Kagemaru_0', mesh_from=0)
+        actor.props['mesh'].set_editor_property('hidden_in_game', True)
+        body = unreal.SkeletalMeshComponent('Body', bones(25, 195))
+        actor.components.append(body)
+        [row] = self.pawns()
+        self.assertEqual((row['meshHidden'], row['feetGapCm']), (False, 25),
+                         'the Body is what shows: its feet, not the hidden mannequin\'s')
+        body.set_editor_property('hidden_in_game', True)
+        [row] = self.pawns()
+        self.assertTrue(row['meshHidden'], 'a hidden Body leaves the character hidden')
+
+    def test_the_motion_body_name_is_the_one_motion_character_gives(self) -> None:
+        from genex_build import motion
+        from genex_loop import probes
+        self.assertEqual(probes.MOTION_BODY, motion.BODY)
+
     def test_a_character_under_the_ground_is_not_above_it(self) -> None:
         self.character('Mutant_0', z=-12, mesh_from=-100)
         [row] = self.pawns()

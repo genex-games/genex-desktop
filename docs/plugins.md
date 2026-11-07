@@ -684,10 +684,13 @@ then moves a character the sample's way: a retargeter from the sample's UEFN man
 starts) but still poses and whose `Body` mesh shows the character with that ABP and tag. No clip is
 copied. An older helper hid the mannequin only in the editor, so it showed through the Body in play:
 once Unreal has its level, the helper (`hide_old_drivers`, scheduled by `init_unreal.py`) hides in
-game the mannequin of each `BP_<name>` in `/Game/GX/Characters` whose Mesh is hidden only in the editor and has a
-Body, compiles and saves it. It reads the folder from disk and checks each Blueprint once (the names
-checked are kept in `Saved/Genex/motion-characters-checked.json`; one that didn't load or save is
-tried at the next start), changes nothing during play, and leaves a mannequin someone made visible.
+game the mannequin of each `BP_<name>` in `/Game/GX/Characters` whose Mesh is hidden only in the
+editor and has a Body, compiles and saves it, and does the same to the level's placed copies still as
+the old helper left them (the level is not saved). It reads the folder from disk and checks each
+Blueprint once: the names checked are kept in `Saved/Genex/motion-characters-checked.json`, and one
+that didn't load, has no Mesh yet (the sample's content missing) or didn't compile or save is tried
+at the next start. It changes nothing during play and leaves a mannequin someone made visible.
+`probe_characters` reads such a character by its shown Body, not the hidden mannequin.
 
 The helper offers no tool that derives normal and roughness maps from a base-colour texture's
 luminance: Unreal's Python has no image library, so it would hold the editor for many seconds per
