@@ -98,6 +98,21 @@ def save_all() -> dict:
     return {'saved': bool(saved), 'dirty': editor.dirty_packages(), 'ms': editor.elapsed_ms(started)}
 
 
+def ready() -> dict:
+    """{ready: true}: what a tool asked only whether this helper has it answers."""
+    return {'ready': True}
+
+
+def save_during_play() -> dict:
+    """Saves every unsaved level and asset as save_all does, while a play session goes on: Unreal
+    saves the editor's own level and assets, never the play world's copy, so a save point keeps the
+    play running; {saved, dirty, ms, pie}: pie says whether a play session still runs."""
+    started = time.perf_counter()
+    saved = unreal.EditorLoadingAndSavingUtils.save_dirty_packages(True, True)
+    return {'saved': bool(saved), 'dirty': editor.dirty_packages(), 'ms': editor.elapsed_ms(started),
+            'pie': editor.play_world() is not None}
+
+
 def reload_level() -> dict:
     """Loads the current level again from its files (after the host restored them)."""
     editor.refuse_during_play()

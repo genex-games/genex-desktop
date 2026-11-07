@@ -13,6 +13,8 @@ const checks = [],
   captures = [],
   measurements = [],
   errors = [];
+/** CDP's modifier bit for ⌘. */
+const CDP_META = 4;
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const check = (name, ok, detail) => {
   checks.push({ name, ok: Boolean(ok), detail });
@@ -47,12 +49,12 @@ const click = async (selector) => {
   });
   await wait(180);
 };
-const key = async (key) => {
+const key = async (key, { code = key, modifiers = 0 } = {}) => {
   const p = {
     key,
-    code: key,
-    windowsVirtualKeyCode: { Enter: 13, Escape: 27, Tab: 9, ArrowDown: 40 }[key] ?? 0,
-    modifiers: 0,
+    code,
+    windowsVirtualKeyCode: { Enter: 13, Escape: 27, Tab: 9, ArrowDown: 40, 2: 50 }[key] ?? 0,
+    modifiers,
   };
   await wc.debugger.sendCommand("Input.dispatchKeyEvent", {
     type: "keyDown",
@@ -62,6 +64,8 @@ const key = async (key) => {
   await wc.debugger.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", ...p });
   await wait(180);
 };
+/** ⌘2 opens Harness: its sidebar row is hidden for now (#654). */
+const openHarness = () => key("2", { code: "Digit2", modifiers: CDP_META });
 const type = async (text) => {
   await click('[aria-label="Prompt"]');
   await wc.debugger.sendCommand("Input.insertText", { text });
@@ -89,7 +93,7 @@ async function acceptance() {
     });
     if (!wc.debugger.isAttached()) wc.debugger.attach("1.3");
     await until(`!!document.querySelector('nav [data-thread="studio"]')`);
-    await click('nav [data-thread="studio"]');
+    await openHarness();
     check(
       "feed loads runs from both games beyond the bootstrap tail",
       await until(`document.querySelectorAll('[data-activity-kind="run"]').length===3`),
@@ -270,7 +274,7 @@ async function acceptance() {
         `!!document.querySelector('[data-promptbar] [aria-label="Model settings"]') && !document.querySelector('[data-studio-composer]')`,
       ),
     );
-    await click('nav [data-thread="studio"]');
+    await openHarness();
     check(
       "Studio draft survives navigation",
       await until(`document.querySelector('[aria-label="Prompt"]')?.value==='Keep this Studio draft'`),

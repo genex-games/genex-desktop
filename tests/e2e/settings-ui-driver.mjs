@@ -219,10 +219,14 @@ async function acceptance() {
     await hover('[aria-label="Prompt"]');
     await until(`!document.querySelector('${TOOLTIP}')`);
     await capture("sidebar");
-    const nav = await js(`Array.from(document.querySelectorAll('.sidebar-action')).map(e=>e.textContent.trim())`);
+    // The rows a person can reach: Play's folded shelves are inert, and Items and Harness are
+    // hidden for now (#654).
+    const nav = await js(
+      `Array.from(document.querySelectorAll('.sidebar-action')).filter(e=>!e.hidden&&!e.closest('[inert]')).map(e=>e.textContent.trim())`,
+    );
     check(
-      "Settings is fourth after New game, Plugins and Harness",
-      nav.slice(0, 4).join("|") === "New game|Plugins|Harness|Settings",
+      "Create's sidebar shows New game, Plugins and Settings, in that order",
+      nav.slice(0, 3).join("|") === "New game|Plugins|Settings",
       nav,
     );
     await click('[aria-label="Settings"]');

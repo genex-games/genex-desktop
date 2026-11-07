@@ -2,7 +2,8 @@
  * The Genex editor helper's eyes (genex_build's capture_shot, capture_play and motion_strip, and
  * character_check's picture sheet) answer at once with the files Unreal writes a frame or more
  * later. The bridge waits for those files and hands the agent the picture itself, with the tone
- * numbers it can't judge by eye: a still or a play shot as its PNG, a motion strip as one contact
+ * numbers it can't judge by eye: a still or a play shot as its PNG (a copy at most
+ * {@link LIFTED_MAX_SIDE} pixels on its longest side, the file keeping every pixel), a motion strip as one contact
  * sheet with each frame's pose and how far it moved, a character sheet as one contact sheet with
  * each shot's view.
  *
@@ -21,6 +22,7 @@ import {
   encodePng,
   frameDifference,
   type RgbImage,
+  resize,
   type Tone,
   toneGate,
   looksUnlit,
@@ -59,6 +61,13 @@ const SHEET_COLUMNS = 3;
 const SHEET_CELL_WIDTH = 480;
 /** Consecutive frames closer than this (mean abs difference, 0 to 1) show the same picture. */
 const SAME_FRAME = 8 / 255;
+/**
+ * The longest side of a still or a play shot handed to the agent: a bigger one goes as a copy this
+ * size, and its file keeps every pixel. A 4K PNG is about 13 MB as an answer's text, and an engine's
+ * tool call carrying one lost its connection to Genex (three 4K covers in a row, each time), while
+ * 1920x1080 shots came through; no model looks at more pixels than this anyway.
+ */
+export const LIFTED_MAX_SIDE = 1920;
 
 /** The bridge's clock for waits: `sleep` ends early, without throwing, once the call is cancelled. */
 export type CaptureClock = { now: () => number; sleep: (ms: number, signal: AbortSignal) => Promise<void> };
@@ -71,6 +80,8 @@ const MESSAGE = {
   NeverCame: "never arrived",
   Unreadable: (why: string) => `could not be read (${why})`,
   ShotHeader: (name: string, image: RgbImage) => `[capture ${name}, ${image.width}x${image.height}, attached]`,
+  ScaledShotHeader: (name: string, image: RgbImage, sent: RgbImage) =>
+    `[capture ${name}, ${image.width}x${image.height}, attached at ${sent.width}x${sent.height}; the file keeps every pixel]`,
   StripHeader: (count: number, interval: unknown) =>
     `[motion strip: ${count} frames, ${interval} game s apart, attached as one sheet, left to right then down]`,
   StripError: (why: string) => `The strip stopped early: ${why}.`,
@@ -221,7 +232,17 @@ export async function landedShot(
   return "why" in read ? read : { file: landed.file, ...read };
 }
 
-/** A still or a play shot: its PNG and its tone line. */
+/** The picture the agent is handed: the PNG as Unreal wrote it, or a copy scaled to fit {@link LIFTED_MAX_SIDE}. */
+export function liftedPicture(bytes: Buffer, image: RgbImage): { data: string; sent: RgbImage } {
+  const scale = LIFTED_MAX_SIDE / Math.max(image.width, image.height);
+  if (scale >= 1) return { data: bytes.toString("base64"), sent: image };
+  const width = Math.max(1, Math.round(image.width * scale));
+  const height = Math.max(1, Math.round(image.height * scale));
+  const sent = resize(image, width, height);
+  return { data: encodePng(sent).toString("base64"), sent };
+}
+
+/** A still or a play shot: its PNG (a smaller copy of a big one) and its tone line. */
 async function liftShot(
   tool: CaptureTool,
   answer: Record<string, unknown>,
@@ -232,10 +253,13 @@ async function liftShot(
   const read = await landedShot(tool, answer, projectFile, clock, signal);
   if ("why" in read) return notRead(answer.file, read.why);
   const fps = typeof answer.fps === "number" ? MESSAGE.Fps(answer.fps) : "";
-  const header = `${MESSAGE.ShotHeader(path.basename(read.file), read.image)}${fps}`;
+  const name = path.basename(read.file);
+  const picture = liftedPicture(read.bytes, read.image);
+  const scaled = picture.sent !== read.image;
+  const shot = scaled ? MESSAGE.ScaledShotHeader(name, read.image, picture.sent) : MESSAGE.ShotHeader(name, read.image);
   return [
-    { type: "image", mimeType: "image/png", data: read.bytes.toString("base64") },
-    { type: "text", text: `${header}\n${toneLine(toneOf(read.image))}` },
+    { type: "image", mimeType: "image/png", data: picture.data },
+    { type: "text", text: `${shot}${fps}\n${toneLine(toneOf(read.image))}` },
   ];
 }
 
