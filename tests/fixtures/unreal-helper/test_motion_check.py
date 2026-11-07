@@ -93,6 +93,16 @@ class Sliding(unittest.TestCase):
         self.assertGreater(report['slide']['ratio'], maths.SLIDE_MAX)
         self.assertEqual(codes(report), [maths.SLIDING])
 
+    def test_a_planted_foot_that_glides_a_little_like_a_lunges_is_not_sliding(self) -> None:
+        # The duel's fixed slash read 0.18 to 0.24 in Unreal, its bug 1.0.
+        def glide(frame: dict) -> None:
+            for side, (x, y, z) in frame['feet'].items():
+                frame['feet'][side] = (x + 0.3 * SPEED * frame['t'], y, z)
+        frames = walk(glide=glide)
+        report = maths.report(frames)
+        self.assertAlmostEqual(report['slide']['ratio'], 0.3, delta=0.05)
+        self.assertEqual(codes(report), [])
+
     def test_a_body_standing_still_is_not_measured_as_sliding(self) -> None:
         report = maths.report(walk(speed=0.0, legs='skating'))
         self.assertIsNone(report['slide']['ratio'])

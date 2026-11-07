@@ -9,7 +9,9 @@ its pose shows none), feet
 position s, length s, blend-out s, rate) or None}, and the flags hidden, ragdoll and falling.
 
 The numbers were set on a sword duel whose fighters slid: a run whose stance foot rode along with
-the body (its speed over the body's about 1.2) against the same run stepping (about 0.04).
+the body (its speed over the body's about 1.2) against the same run stepping (about 0.04). In Unreal
+5.8 on that duel the slide ratio read 0.14 to 0.23 for the fixed run and 0.18 to 0.24 for its
+lunging slash, against 1.0 with the bug back and 0.49 with a run montage played again every frame.
 """
 
 import math
@@ -22,8 +24,9 @@ MOVING_CM_S = 50.0
 GROUND_CM = 6.0
 FLOOR_SHARE = 0.1
 # Feet slide when, over the frames the body travels, the slowest foot on the ground moves at least
-# this share of the body's speed (median): a stepping foot stands still while the body passes over it.
-SLIDE_MAX = 0.25
+# this share of the body's speed (median): a stepping foot stands still while the body passes over it,
+# and a lunge's front foot glides a little.
+SLIDE_MAX = 0.35
 # A frame whose grounded foot moves at least this share of the body's speed is a sliding frame.
 SLIDING_FRAME = 0.5
 # Steps longer than this (s) are not read for sliding: a stride's stance changes inside one, so a
