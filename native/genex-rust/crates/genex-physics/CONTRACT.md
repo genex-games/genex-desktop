@@ -214,7 +214,7 @@ interface JointDesc {
 
 `addStaticWorld({ boxes, ramps })` takes PROTOCOL §17.7's *World* exactly. Quoted verbatim from §17.7:
 
-> *World.* `{ boxes: [[minX, minY, minZ, maxX, maxY, maxZ], …], ramps: [[minX, minY, minZ, maxX, maxY, maxZ, axis, lo, hi], …] }`. A ramp is a box whose top is a plane rising along x (`axis` 0) or y (`axis` 1), at height `lo` at that axis's min end and `hi` at its max end. A world is refused unless it has at most 4096 boxes and 512 ramps, each an array of exactly six (box) or nine (ramp) numbers, every value is a float32 (`float32(v) = v`) of magnitude at most 1e9 (−0 is read as 0), min < max on every axis, and each ramp has `axis` 0 or 1, `minZ ≤ lo`, `minZ ≤ hi` and `maxZ = max(lo, hi)`. Its order is the order given: solids are indexed boxes first (0 … B−1), then ramps (B … B+R−1). The world is fixed for a room's life and never enters the state or crosses the wire.
+> *World.* `{ boxes: [[minX, minY, minZ, maxX, maxY, maxZ], …], ramps: [[minX, minY, minZ, maxX, maxY, maxZ, axis, lo, hi], …] }`. A ramp is a box whose top is a plane rising along x (`axis` 0) or y (`axis` 1), at height `lo` at that axis's min end and `hi` at its max end. A world is refused unless it has at most 32768 boxes and 4096 ramps, each an array of exactly six (box) or nine (ramp) numbers, every value is a float32 (`float32(v) = v`) of magnitude at most 1e9 (−0 is read as 0), min < max on every axis, and each ramp has `axis` 0 or 1, `minZ ≤ lo`, `minZ ≤ hi` and `maxZ = max(lo, hi)`. Its order is the order given: solids are indexed boxes first (0 … B−1), then ramps (B … B+R−1). The world is fixed for a room's life and never enters the state or crosses the wire.
 
 - **Validation:** the same rules as §17.7, so a world §17.7 refuses is refused here, with `OutOfRange`,
   `NonFinite` or `BadShape`.
@@ -223,16 +223,20 @@ interface JointDesc {
 - **Once per world.** A second call gives `DuplicateKey`.
 - **Pieces:** one fixed body per solid, with one collider. Its body key and collider key are both
   `static:box:NNNN` or `static:ramp:NNNN`, where `NNNN` is the solid's index within its own list,
-  zero-padded to 4 digits. Key order then equals §17.7's index order, and events, queries and `overlap`
-  name a piece the same way. `remove`, `setPose` and every other command on a static key give `UnknownKey`.
+  zero-padded to 4 digits (an index past 9999 is simply longer). Below index 10000 key order equals §17.7's
+  index order, and events, queries and `overlap` name a piece the same way. `remove`, `setPose` and every other command on a static key give `UnknownKey`.
   - A **box** is a `box` collider centred on its middle.
   - A **ramp** is a `hull` of 8 points: its 4 bottom corners at `minZ`, its 2 top corners at the `axis` min
     end at height `lo`, and its 2 top corners at the max end at height `hi`. Corners that coincide (`lo = minZ`
     or `hi = minZ`) are merged, leaving a 6-point wedge. Because `maxZ = max(lo, hi) > minZ`, the hull is
     never flat. (The ramp's top at a point is `lo + (hi − lo) / (m1 − m0) · (u − m0)`, with `m0`, `m1` its min
     and max along `axis`.)
+- **A large world's tree.** A world past the default `staticPieces`, imported before any body, has its broad
+  phase built by this call, which reports nothing and moves nothing, so the first `step()` doesn't pay for every
+  solid. A smaller world's steps are as they always were.
 - **Limits:** static pieces don't count toward `limits.bodies` or `collidersPerBody`; they count toward
-  `limits.staticPieces` (default 4608 = 4096 + 512), so any world §17.7 accepts is accepted here.
+  `limits.staticPieces` (default 4608, raised to at most 36864 = 32768 + 4096), so any world §17.7 accepts
+  is accepted here by a world created for it.
 - **How the host gets the world:** today the world is validated and compiled inside the sandbox prelude
   only, and a full world is far over the 32 KiB InitOut cap. PROTOCOL §17.10 defines the host's path.
 - **Same geometry, different shapes:** presets collide against an axis-aligned sweep of their own hull (box or
@@ -442,7 +446,7 @@ interface Limits {
                            // steps count against the next step's quota
   eventsPerStep: number;   // default 64
   heightfieldSamples: number; // default 1_048_576
-  staticPieces: number;    // default 4608 (§17.7's 4096 boxes + 512 ramps); not counted in bodies/collidersPerBody
+  staticPieces: number;    // default 4608, ceiling 36864 (§17.7's 32768 boxes + 4096 ramps); not counted in bodies/collidersPerBody
   memoryBytes: number;     // default 64 MiB per world (§11.1)
   worldExtent: number;     // default 100_000 · lengthUnit: |coordinate| bound per axis, caller units (§4.1, §8.2)
   maxSpeed: number;        // default 1_000 · lengthUnit per second: the largest linear speed a command may set
@@ -451,7 +455,7 @@ interface Limits {
 ```
 
 - A limit can be **lowered** by the caller, and **raised** only up to a compile-time ceiling of 4× each
-  default, which a paid tier uses.
+  default, which a paid tier uses. `staticPieces`' ceiling is 36864 instead, §17.7's largest world.
 - Exceeding a limit gives the matching `Limit*` error, and the command doesn't apply.
 
 ### 11.1 Memory per world
@@ -634,7 +638,7 @@ A vector file is JSON:
   - escaped bodies (one past `worldExtent`);
   - a snapshot/restore round trip, mid-scene;
   - a body with a key at the 64-byte maximum;
-  - the full §17.7 static world: 4096 boxes and 512 ramps;
+  - the full §17.7 static world of release 1: 4096 boxes and 512 ramps;
   - **worst case at default limits** (§11.2), at both schedules, reporting p99 per target;
   - a memory-limit scene: spawning past `limits.memoryBytes` gives `LimitMemory` with the world unchanged.
 

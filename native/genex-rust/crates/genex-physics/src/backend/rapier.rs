@@ -492,6 +492,10 @@ impl Backend for RapierBackend {
         self.mark_stale(body);
     }
 
+    fn settle(&mut self) {
+        self.world.detect_collisions(&(), &());
+    }
+
     /// Rapier quarantines a body whose state went non-finite (disabled, rolled back, still), and
     /// disables a collider whose bounds went non-finite; the core reads either as §8.2's
     /// non-finite case of the body that owns it.

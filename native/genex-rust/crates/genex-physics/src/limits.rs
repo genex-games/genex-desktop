@@ -33,6 +33,9 @@ pub const DEFAULT_MAX_SPEED_PER_UNIT: f32 = 1_000.0;
 pub const DEFAULT_MAX_ANGULAR_SPEED: f32 = 1_000.0;
 /// The ceiling a limit may be raised to, as a multiple of its default.
 pub const CEILING_FACTOR: u32 = 4;
+/// The ceiling of `staticPieces`: every piece §17.7's largest world holds (32,768 boxes and 4,096
+/// ramps), above the factor's 18,432 because a world is the module's map, not a paid tier's extra.
+pub const CEILING_STATIC_PIECES: u32 = 36_864;
 
 /// The resolved limits of one world (§11).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -88,7 +91,7 @@ impl Limits {
         }
     }
 
-    /// The compile-time ceiling for a world of `length_unit`: 4x each default.
+    /// The compile-time ceiling for a world of `length_unit`: 4x each default, `staticPieces` apart.
     pub fn ceiling(length_unit: f32) -> Self {
         let d = Self::defaults(length_unit);
         let factor = CEILING_FACTOR as f32;
@@ -102,7 +105,7 @@ impl Limits {
             queries_per_step: d.queries_per_step * CEILING_FACTOR,
             events_per_step: d.events_per_step * CEILING_FACTOR,
             heightfield_samples: d.heightfield_samples * CEILING_FACTOR,
-            static_pieces: d.static_pieces * CEILING_FACTOR,
+            static_pieces: CEILING_STATIC_PIECES,
             memory_bytes: d.memory_bytes * CEILING_FACTOR,
             world_extent: d.world_extent * factor,
             max_speed: d.max_speed * factor,

@@ -79,8 +79,8 @@ const BULK_ITEMS_MAX = BATCH_COMMANDS_MAX;
 /** The largest snapshot `restore` hands over: above any world the 4x memory ceiling admits. */
 const MAX_SNAPSHOT_BYTES = 512 * 1024 * 1024;
 /** §17.7's caps on the static world, refused here with the core's code before flattening. */
-const STATIC_BOXES_MAX = 4096;
-const STATIC_RAMPS_MAX = 512;
+const STATIC_BOXES_MAX = 32768;
+const STATIC_RAMPS_MAX = 4096;
 /** One more than a static row's longest valid length (a ramp's 9): longer rows are the core's to refuse. */
 const STATIC_ROW_PASS = 10;
 /**
@@ -142,7 +142,7 @@ const Detail = Object.freeze({
   BadMode: 'mode is "atomic" or "each"',
   BadOptions: "setPose options are an object of resetVelocity and wake",
   BadStatic: "a static world is { boxes: number[][], ramps: number[][] }",
-  StaticCaps: "more than 4096 boxes or 512 ramps",
+  StaticCaps: "more than 32768 boxes or 4096 ramps",
 });
 
 /**
