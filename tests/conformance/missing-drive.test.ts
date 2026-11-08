@@ -3,8 +3,8 @@
  * longer mapped) still starts. On Windows the drive is a letter no volume holds, so every walk up
  * from a game's folder ends at a root that does not exist either: 0.1.35 could not start there
  * (`ENOENT: no such file or directory, realpath 'J:\'`). Elsewhere it is a mount folder that went
- * away. The games on the drive are not listed meanwhile, and the chosen games folder is kept for
- * the launch that finds the drive again.
+ * away. The games in the chosen games folder are not listed meanwhile, and that folder stays
+ * chosen for the launch that finds the drive again.
  */
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
@@ -62,8 +62,9 @@ describe("a drive that is gone", () => {
       sandbox: false,
       execPath: process.execPath,
     });
-    await core.init();
+    // Stopping is safe on a core that never started, so a failed start is stopped too.
     t.after(() => core.stop());
+    await core.init();
 
     assert.equal(core.layout.gamesRoot, localRoot, "this launch makes its games in the default folder");
     assert.deepEqual(
