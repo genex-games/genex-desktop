@@ -394,6 +394,22 @@ describe("chat_turn_ended", () => {
     assert.equal(memory.lastFailureAt, T0 + 42_000);
   });
 
+  it("says a turn ran on an Ollama copy raised to 16K, never naming the model", () => {
+    const { sent, log } = hearing();
+    const failed = { type: EventKind.TurnEnded, status: "error", metadata: { outcome: TurnOutcome.None } } as const;
+    log(record({ type: EventKind.TurnStarted, metadata: { engine: EngineId.Ollama, model: "qwen3:8b-16k" } }, T0));
+    log(record(failed, T0 + 50));
+    log(record({ type: EventKind.TurnStarted, metadata: { engine: EngineId.Ollama, model: "qwen3:8b" } }, T0 + 60));
+    log(record(failed, T0 + 110));
+    log(record({ type: EventKind.TurnStarted, metadata: { engine: EngineId.Codex, model: "gpt-16k" } }, T0 + 120));
+    log(record(failed, T0 + 170));
+    assert.deepEqual(
+      sent.map((item) => item.properties.raised_context),
+      [true, undefined, undefined],
+    );
+    assertClean(sent);
+  });
+
   it("leaves a build's turns out, counts a restart's interrupted close, and never sends an unknown outcome", () => {
     const { sent, log } = hearing();
     log(record({ type: EventKind.TurnStarted, metadata: { engine: EngineId.Codex, runId: "run-1" } }, T0));

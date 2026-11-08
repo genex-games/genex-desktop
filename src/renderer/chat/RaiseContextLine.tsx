@@ -1,10 +1,11 @@
 /** Ollama's small default context refused a turn: one quiet line offering Raise context to 16K. */
 import { type JSX, useState } from "react";
 import type { Entry, EntryKind } from "../chat-entries.ts";
-import { modelKey } from "../model-key.ts";
-import { EngineId } from "../../shared/providers.ts";
+import { parseModelKey } from "../model-key.ts";
+import { studio } from "../state/studio.ts";
 import { type Notify, notifyProblem } from "../state/toasts.ts";
 import { ResultButton } from "../ui/ResultButton.tsx";
+import { appRaiseContextDeps, raiseContext } from "./raise-context.ts";
 import { raisedContextDone, TRANSCRIPT_WORDS } from "../words.ts";
 
 /**
@@ -28,9 +29,12 @@ export function RaiseContextLine({
     if (!model || raising) return;
     setRaising(true);
     try {
-      const raised = await window.studio.raiseModelContext(model);
-      onUseModel?.(modelKey(EngineId.Ollama, raised));
-      setCopy(raised);
+      const key = await raiseContext(
+        model,
+        appRaiseContextDeps(() => studio().engines.refresh()),
+      );
+      onUseModel?.(key);
+      setCopy(parseModelKey(key).model);
     } catch (err) {
       notifyProblem(onNotice)(err);
     } finally {

@@ -31,6 +31,7 @@ import type {
   ComposerRoom,
   CompactTrigger,
   ContextBucket,
+  ContextRaiseOutcome,
   LeftTo,
   ModelMenuFrom,
   ModelReplaced,
@@ -93,6 +94,7 @@ export const ChatEvent = {
   ModelSettingsChanged: "model_settings_changed",
   ModelPickReplaced: "model_pick_replaced",
   ModelListReread: "model_list_reread",
+  ContextRaiseFinished: "context_raise_finished",
   ChatSignInNeeded: "chat_sign_in_needed",
   SignInCardAction: "sign_in_card_action",
   GenexNoticeShown: "genex_notice_shown",
@@ -167,6 +169,8 @@ export type ChatTurnEndedProperties = {
   limit_kind?: LimitKind;
   retry_after_bucket?: RetryAfterBucket;
   launched_build: boolean;
+  /** The turn ran on an Ollama copy raised to 16K (`ollama-context.ts`); absent otherwise. */
+  raised_context?: true;
 };
 
 /** A message that did not go: its send rejected (`rejected`, with the send's facts and its code). */
@@ -299,6 +303,8 @@ export type ChatEventProperties = {
   [ChatEvent.ModelPickReplaced]: { engine: EngineRef; reason: ModelReplaced; listed_again: boolean };
   /** A provider's list left out a chat's saved pick, so its models are listed again before the pick counts as gone. */
   [ChatEvent.ModelListReread]: { engine: EngineRef };
+  /** A Raise context to 16K press under an Ollama turn its context refused: whether the copy was made, and how long it took. */
+  [ChatEvent.ContextRaiseFinished]: { outcome: ContextRaiseOutcome; duration_ms: number };
   [ChatEvent.ChatSignInNeeded]: { engine: EngineRef; from: SignInFrom };
   [ChatEvent.SignInCardAction]: { action: SignInAction; engine: EngineRef };
   /** The blue Genex notice came up: what Genex needs, the engine it offered instead (null: none) and how many plans are connected. */

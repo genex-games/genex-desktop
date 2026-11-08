@@ -603,6 +603,9 @@ Resetting policy also refreshes the displayed threshold to its effective inherit
   sets it. Under it the chat offers Raise context to 16K (`chat/RaiseContextLine.tsx`): Ollama
   copies the model with `num_ctx` 16384 (`/api/create`, weights shared, `shared/ollama-context.ts`)
   and the chat switches to the copy, whose Modelfile context counts as measured before it loads.
+  The engines' list is read again first (`chat/raise-context.ts`), so the pick is never taken for a
+  dropped model; `context_raise_finished` counts the presses and `chat_turn_ended`'s
+  `raised_context` marks turns on a copy, so a 16K copy that is still too small shows up.
 
 ### Compact now
 

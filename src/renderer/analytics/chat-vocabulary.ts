@@ -208,6 +208,10 @@ export const ModelMenuFrom = {
 } as const;
 export type ModelMenuFrom = (typeof ModelMenuFrom)[keyof typeof ModelMenuFrom];
 
+/** How a Raise context to 16K press ended: Ollama made the copy, or refused. */
+export const ContextRaiseOutcome = { Raised: "raised", Failed: "failed" } as const;
+export type ContextRaiseOutcome = (typeof ContextRaiseOutcome)[keyof typeof ContextRaiseOutcome];
+
 /** Which composer model setting changed. */
 export const ModelSetting = { Roles: "roles", Effort: "effort" } as const;
 export type ModelSetting = (typeof ModelSetting)[keyof typeof ModelSetting];

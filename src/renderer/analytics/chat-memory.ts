@@ -44,6 +44,8 @@ export interface AwaitingReply {
 export interface OpenTurn {
   at: number;
   engine: string;
+  /** It runs on an Ollama copy raised to 16K. */
+  raised?: boolean;
   failure?: string;
   streamed: boolean;
   streamFailed: boolean;

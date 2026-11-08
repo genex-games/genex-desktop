@@ -15,6 +15,8 @@ import { DAY_MS, HOUR_MS, MINUTE_MS } from "../../shared/duration.ts";
 import { EngineFailureKind, harnessTurnFailure, isLimitKind, type LimitKind } from "../../shared/engine-requests.ts";
 import { type EventData, type EventEnvelope, EventKind } from "../../shared/event-log.ts";
 import { SteerDelivery } from "../../shared/message-queue.ts";
+import { isRaisedContextName } from "../../shared/ollama-context.ts";
+import { EngineId } from "../../shared/providers.ts";
 import {
   isPlanRequest,
   ToolPermissionBy,
@@ -202,6 +204,7 @@ export function turnEndedProperties(
     ...harnessFailureProperties(end.metadata?.harnessFailure),
     ...limit,
     launched_build: outcome === TurnOutcome.LaunchRun,
+    ...(turn?.raised ? { raised_context: true as const } : {}),
   };
 }
 
@@ -233,7 +236,8 @@ function turnStarted(hearing: Hearing, thread: string, metadata: Record<string, 
   const engine = text(metadata?.engine);
   // A build's turn names its run; only a chat's turn is the person's wait.
   if (!engine || metadata?.runId !== undefined) return;
-  hearing.memory.turns.set(thread, { at, engine, streamed: false, streamFailed: false });
+  const raised = engine === EngineId.Ollama && isRaisedContextName(text(metadata?.model) ?? "");
+  hearing.memory.turns.set(thread, { at, engine, streamed: false, streamFailed: false, ...(raised ? { raised } : {}) });
 }
 
 /** The work a Stop asked to stop recorded its end: how long that took. */
