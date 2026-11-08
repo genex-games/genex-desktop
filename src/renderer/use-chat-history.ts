@@ -8,13 +8,18 @@ import {
   useRef,
   useState,
 } from "react";
-import { chatContext, mergeChatEvents, type ChatPage } from "../shared/chat-history.ts";
+import { CHAT_PAGE_SIZE, chatContext, mergeChatEvents, type ChatPage } from "../shared/chat-history.ts";
 import { CustomEvent, customRecord } from "../shared/custom-events.ts";
 import type { EventEnvelope } from "./types.ts";
 import { errorMessage } from "../shared/errors.ts";
 import { elapsedMs } from "./analytics/properties.ts";
 import { track } from "./analytics/client.ts";
 import { AnalyticsEvent } from "./analytics/events.ts";
+
+/** A chat whose reader follows its newest line holds at most this many records before it drops its earliest. */
+export const FOLLOWING_HOLDS = 8 * CHAT_PAGE_SIZE;
+/** The newest records a following chat keeps when it drops its earliest: a few pages, as it opens with one. */
+export const FOLLOWING_KEEPS = 4 * CHAT_PAGE_SIZE;
 
 /**
  * The events of this thread in `log` (in log order) that come after the loaded tail. They are the
@@ -41,6 +46,26 @@ export function withLiveTail(
 }
 
 type History = ChatPage & { threadId: string; loading: boolean; error?: string; paging: boolean; pageError?: string };
+
+/**
+ * The loaded history once a batch of live records is in it (`rendered`, the loaded events and
+ * their live tail). Every batch re-reads all the chat holds (its transcript, queue, run and work
+ * rows), and an open chat kept every record since it opened: through a Loop of hours each of its
+ * builders' traces cost the whole session again. So a chat whose reader follows its newest line
+ * keeps its newest pages only, as when it opens: the current-state facts already hold what the
+ * dropped records say about now, and scrolling up reads them back a page at a time.
+ */
+export function withLiveBatch<H extends ChatPage>(
+  history: H,
+  rendered: EventEnvelope[],
+  fresh: EventEnvelope[],
+  following: boolean,
+): H {
+  const next = { ...history, events: rendered, context: chatContext(history.context, fresh) };
+  if (!following || rendered.length <= FOLLOWING_HOLDS) return next;
+  const kept = rendered.slice(-FOLLOWING_KEEPS);
+  return { ...next, events: kept, before: kept[0]?.id ?? null, hasMore: true };
+}
 const empty = (threadId = ""): History => ({
   threadId,
   events: [],
@@ -114,9 +139,12 @@ export function useChatHistory(threadId: string | null, live: EventEnvelope[], a
   const pageRequest = useRef(false);
   // Earlier pages read in this chat, for `chat_history_paged`.
   const pages = useRef(0);
+  // Whether the reader follows the newest line: the transcript's scroll keeps it (`useFollowScroll`).
+  const following = useRef(true);
   useEffect(() => {
     const version = ++generation.current;
     pages.current = 0;
+    following.current = true;
     pageRequest.current = false;
     setHistory(empty(threadId ?? ""));
     if (!threadId) return;
@@ -190,18 +218,12 @@ export function useChatHistory(threadId: string | null, live: EventEnvelope[], a
     if (current.loading || current.events === renderedEvents) return;
     const fresh = freshFor(renderedEvents, threadId, current.events.at(-1)?.id);
     setHistory((previous) =>
-      previous === history
-        ? {
-            ...previous,
-            events: renderedEvents,
-            context: chatContext(previous.context, fresh),
-          }
-        : previous,
+      previous === history ? withLiveBatch(previous, renderedEvents, fresh, following.current) : previous,
     );
   }, [history, current.loading, current.events, renderedEvents, threadId]);
   const stateEvents = useMemo(
     () => mergeChatEvents(current.context, renderedEvents),
     [current.context, renderedEvents],
   );
-  return { ...current, events: renderedEvents, stateEvents, loadEarlier };
+  return { ...current, events: renderedEvents, stateEvents, loadEarlier, following };
 }

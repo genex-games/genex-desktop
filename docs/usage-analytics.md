@@ -119,6 +119,9 @@ stops recording, opts out and resets the id.
   so the next launch's `welcome_shown` says it resumed and where. A CLI install whose installer
   download failed says what answered it (`cli_install_finished`'s `http_status`, or Chromium's
   `net_error`), so a vendor refusing a region (403) reads apart from a machine that is offline.
+- **Long tasks**: `ui_stall_summarized` sums each five minutes of the window's long tasks per
+  screen, with `chat_log_events`, the size of the open chat's log then, so a stall that grows
+  with a long Loop reads apart from one that does not.
 - **A dead Send** counts presses in a row (`message_send_blocked`'s `attempts_in_row`) until a
   message actually goes: a send refused for its model is noted first and still counts as dead.
   The composer holds a send whose model cannot take it (`model_unavailable`) and lights the model

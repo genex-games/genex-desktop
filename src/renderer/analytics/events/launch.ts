@@ -24,6 +24,7 @@ import { EngineStatusCode } from "../../../shared/engine-descriptor.ts";
 import { isStudioErrorCode, type StudioErrorCode } from "../../../shared/error-codes.ts";
 import { isInvokeChannel, type StudioInvokeChannel } from "../../../shared/ipc-channels.ts";
 import { UiEvent } from "../../../shared/ui-events.ts";
+import { threadLog } from "../../state/event-log.ts";
 import { type SessionState, SessionStatus } from "../../state/session.ts";
 import type { Studio } from "../../state/studio.ts";
 import { ToastTone, type ToastsState } from "../../state/toasts.ts";
@@ -388,8 +389,18 @@ function reportMainDiagnostic(payload: unknown): void {
   if (hang) track(LaunchEvent.WindowUnresponsive, hang);
 }
 
-/** `ui_stall_summarized`'s properties. */
-export type StallSummaryProperties = { screen: string; long_tasks: number; total_ms: number; max_ms: number };
+/**
+ * `ui_stall_summarized`'s properties. `chat_log_events` is how many records of the open chat's log
+ * the window holds when the summary is sent (null with no chat open): what each batch of a long
+ * Loop is read against.
+ */
+export type StallSummaryProperties = {
+  screen: string;
+  long_tasks: number;
+  total_ms: number;
+  max_ms: number;
+  chat_log_events: number | null;
+};
 
 /** The long tasks seen since the last summary. */
 export interface StallTally {
@@ -409,13 +420,29 @@ export const stallAdded = (tally: StallTally, duration: number): StallTally => (
 });
 
 /** The summary to send, or null when nothing was slow. */
-export function stallSummary(tally: StallTally, screen: string): StallSummaryProperties | null {
+export function stallSummary(
+  tally: StallTally,
+  screen: string,
+  chatLogEvents: number | null = null,
+): StallSummaryProperties | null {
   if (tally.count === 0) return null;
-  return { screen, long_tasks: tally.count, total_ms: Math.round(tally.total), max_ms: Math.round(tally.max) };
+  return {
+    screen,
+    long_tasks: tally.count,
+    total_ms: Math.round(tally.total),
+    max_ms: Math.round(tally.max),
+    chat_log_events: chatLogEvents,
+  };
+}
+
+/** How many records of the open chat's log the window holds, or null with no chat open. */
+function openChatLogEvents(app: Studio): number | null {
+  const threadId = app.threads.getState().activeThreadId;
+  return threadId ? threadLog(app.eventLog.getState(), threadId).length : null;
 }
 
 /** Sum the window's long tasks and send them every `STALL_SUMMARY_MS`; nothing where the page cannot see them. */
-function watchStalls(): () => void {
+function watchStalls(app: Studio): () => void {
   const supported =
     typeof PerformanceObserver !== "undefined" && PerformanceObserver.supportedEntryTypes?.includes("longtask");
   if (!supported) return () => undefined;
@@ -428,7 +455,7 @@ function watchStalls(): () => void {
   observer.observe({ type: "longtask", buffered: true });
   const timer = setInterval(
     guarded(() => {
-      const summary = stallSummary(tally, currentScreen());
+      const summary = stallSummary(tally, currentScreen(), openChatLogEvents(app));
       tally = NO_STALLS;
       if (summary) track(LaunchEvent.UiStallSummarized, summary);
     }),
@@ -694,7 +721,7 @@ export function createLaunchObservers(
         followPreviousSession(app),
         followUpdate(app, announced, clock, later),
         watchErrors(),
-        watchStalls(),
+        watchStalls(app),
         watchErrorToasts(app),
       ];
       return () => {

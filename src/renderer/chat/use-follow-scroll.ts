@@ -45,10 +45,12 @@ export function useFollowScroll({
   count: number;
   working: boolean;
   loading: boolean;
-  history: EarlierHistory & { loadEarlier: () => Promise<void> };
+  /** `following`, when given, is where the reader's place is kept, so the history can read it too. */
+  history: EarlierHistory & { loadEarlier: () => Promise<void>; following?: RefObject<boolean> };
 }): FollowScroll {
   const scroller = useRef<HTMLDivElement>(null);
-  const atBottom = useRef(true);
+  const ownPlace = useRef(true);
+  const atBottom = history.following ?? ownPlace;
   const holding = useRef(false);
   const inspectingHistory = useRef(false);
   const lastCount = useRef(0);

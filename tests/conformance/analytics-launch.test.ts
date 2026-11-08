@@ -142,7 +142,12 @@ describe("long tasks", () => {
       long_tasks: 3,
       total_ms: 786,
       max_ms: 611,
+      chat_log_events: null,
     });
+  });
+  it("says how long the open chat's log was, so a long Loop's stalls read against it", () => {
+    const tally = stallAdded(NO_STALLS, 140);
+    assert.equal(stallSummary(tally, "/game/builds", 36_800)?.chat_log_events, 36_800);
   });
 });
 

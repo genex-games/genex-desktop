@@ -15,7 +15,8 @@ import { EventKind } from "../../src/shared/event-log.ts";
 import { EngineId } from "../../src/shared/providers.ts";
 import { EntryKind, toEntries } from "../../src/renderer/chat-entries.ts";
 import { compactedWords } from "../../src/renderer/words.ts";
-import { withLiveTail } from "../../src/renderer/use-chat-history.ts";
+import { FOLLOWING_HOLDS, withLiveBatch, withLiveTail } from "../../src/renderer/use-chat-history.ts";
+import { RunState, runExecution } from "../../src/shared/run-state.ts";
 import { removeTree } from "../helpers/tmp.ts";
 import type { EventData, EventEnvelope } from "../../src/substrate/types.ts";
 const event = (id: number, data: EventData): EventEnvelope => ({
@@ -774,6 +775,80 @@ test("the live tail keeps the loaded array when nothing new arrived for this thr
     withLiveTail(loaded, [other, fresh], "game").map((e) => e.id),
     [loaded[0]!.id, loaded[1]!.id, fresh.id],
   );
+});
+
+test("a chat following a long Loop holds its newest pages, keeps the run's facts and pages the rest back gap-free", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "studio-chat-follow-"));
+  try {
+    const store = await EventStore.open(root);
+    const thread = await store.createThread();
+    await store.appendEvents(thread, [
+      { type: "messages", messages: [{ role: "user", content: "Build the racing game for three hours" }] },
+      { type: "custom", event_type: CustomEvent.RunStarted, payload: { runId: "loop", project: "game" } },
+    ]);
+    const opened = await store.chatPage(thread);
+    // The window's copy of the log, as the feed hands it over: one builder trace at a time.
+    const live = [...opened.events];
+    const trace = (n: number): EventData => ({
+      type: "custom",
+      event_type: `delegated.${EngineId.ClaudeCode}`,
+      payload: {
+        runId: "loop",
+        delegationId: "builder",
+        kind: "assistant",
+        data: { parts: [{ type: "text", text: `step ${n}` }] },
+      },
+    });
+    const follow = async (records: number, following: boolean) => {
+      let history = { ...opened, threadId: thread, loading: false, paging: false };
+      let most = 0;
+      for (let n = 0; n < records; n += 20) {
+        const { events } = await store.appendEvents(
+          thread,
+          Array.from({ length: 20 }, (_, i) => trace(n + i)),
+        );
+        for (const record of events) {
+          live.push(record);
+          const loaded = new Set(history.events);
+          const rendered = withLiveTail(history.events, live, thread);
+          history = withLiveBatch(
+            history,
+            rendered,
+            rendered.filter((e) => !loaded.has(e)),
+            following,
+          );
+          most = Math.max(most, history.events.length);
+        }
+      }
+      return { history, most };
+    };
+
+    const { history, most } = await follow(2 * FOLLOWING_HOLDS, true);
+    assert.ok(most <= FOLLOWING_HOLDS, `a following chat held ${most} records`);
+    assert.equal(history.hasMore, true);
+    assert.equal(history.events.at(-1)?.id, live.at(-1)?.id, "the newest record stays");
+    const state = mergeChatEvents(history.context, history.events);
+    assert.equal(runExecution(state)?.state, RunState.Running, "the run's start outlives the records dropped after it");
+
+    const earlier = await store.chatPage(thread, history.before ?? undefined);
+    const paged = mergeChatEvents(earlier.events, history.events);
+    const all = await store.listEvents(thread);
+    const from = all.findIndex((e) => e.id === paged[0]?.id);
+    assert.deepEqual(
+      paged.map((e) => e.id),
+      all.slice(from).map((e) => e.id),
+      "scrolling up reads the dropped records back with no gap",
+    );
+
+    const reading = await follow(100, false);
+    assert.equal(
+      reading.history.events.length,
+      live.length,
+      "a reader scrolled up keeps every record since the chat opened",
+    );
+  } finally {
+    await removeTree(root);
+  }
 });
 
 test("routine narration folds by what its record says, not by the words written about it", () => {

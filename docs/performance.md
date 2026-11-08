@@ -139,6 +139,11 @@ counters carry the regression gates.
   whose drawn records and facts did not change keeps its revision, and the feed hands it to no
   view (`shared/run-summary-feed.ts`); the chat settles running tool rows from the ones still
   open, never every row it made (`openCalls` in `chat-entries.ts`).
+- An open chat re-reads all it holds with every batch (its transcript, queue, run and work rows),
+  and it held every record since it opened, so through a Loop of hours each builder trace cost
+  the whole session. A chat whose reader follows its newest line keeps its newest few pages
+  (`withLiveBatch` in `use-chat-history.ts`, `FOLLOWING_HOLDS`); the current-state facts keep
+  what the dropped records say about now, and scrolling up pages them back as on open.
 - Concurrent run-summary readers share a matching evidence-version scan; a subsequent read
   still validates the files. Toolbar status batches run one at a time, with at most one queued
   refresh after a burst; teardown cancels timers and ignores late answers.

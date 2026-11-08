@@ -4,8 +4,18 @@ import type { Notify } from "../state/toasts.ts";
 import type { ConversationRecord, EngineDescriptor, EventEnvelope, GameProject } from "../types.ts";
 import type { PromptBarHandle } from "../ui/PromptBar.tsx";
 
-/** The open chat's paging: whether earlier messages exist, and loading them. */
-export type ChatHistory = { hasMore: boolean; paging: boolean; pageError?: string; loadEarlier: () => Promise<void> };
+/**
+ * The open chat's paging: whether earlier messages exist, and loading them. `following` is the
+ * history's own record of whether the reader follows the newest line, which the transcript's
+ * scroll keeps: a following chat drops its earliest records (`withLiveBatch`).
+ */
+export type ChatHistory = {
+  hasMore: boolean;
+  paging: boolean;
+  pageError?: string;
+  loadEarlier: () => Promise<void>;
+  following?: RefObject<boolean>;
+};
 
 /** What the shell hands the chat panel: the open thread, its slice of the log, and the shell's actions. */
 export interface ChatPanelProps {
