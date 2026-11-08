@@ -163,6 +163,7 @@
   "tests/conformance/mcp-session-lock.test.ts",
   "tests/conformance/message-queue.test.ts",
   "tests/conformance/message-replay.test.ts",
+  "tests/conformance/missing-drive.test.ts",
   "tests/conformance/model-catalog.test.ts",
   "tests/conformance/model-choices.test.ts",
   "tests/conformance/model-progress.test.ts",
