@@ -18,16 +18,17 @@ use crate::shape::ShapeFacts;
 use crate::types::{BodyType, UpAxis};
 
 /// §17.7's most boxes.
-pub const STATIC_BOXES_MAX: usize = 4096;
+pub const STATIC_BOXES_MAX: usize = 32_768;
 /// §17.7's most ramps.
-pub const STATIC_RAMPS_MAX: usize = 512;
+pub const STATIC_RAMPS_MAX: usize = 4_096;
 /// §17.7's largest magnitude of any value.
 pub const STATIC_MAGNITUDE_MAX: f32 = 1e9;
 /// The numbers of one box: `[minX, minY, minZ, maxX, maxY, maxZ]`.
 pub const BOX_VALUES: usize = 6;
 /// The numbers of one ramp: a box, then `axis, lo, hi`.
 pub const RAMP_VALUES: usize = 9;
-/// The digits of a piece's index in its key.
+/// The digits a piece's index is padded to in its key: an index past 9999 is simply longer, so past
+/// it key order is not index order (`core::snapshot::check_static` reads them as a set).
 const INDEX_DIGITS: usize = 4;
 
 /// PROTOCOL §17.7's World, z-up: boxes `[minX, minY, minZ, maxX, maxY, maxZ]`; ramps add
@@ -64,7 +65,7 @@ pub(crate) fn empty_canon() -> Canon {
 /// Checks `world` by §17.7's rules and builds its pieces for a z-up world.
 pub(crate) fn validate_static(world: &StaticWorld) -> Result<ValidStatic, PhysicsFailure> {
     if world.boxes.len() > STATIC_BOXES_MAX || world.ramps.len() > STATIC_RAMPS_MAX {
-        return fail(PhysicsError::OutOfRange, "more than 4096 boxes or 512 ramps");
+        return fail(PhysicsError::OutOfRange, "more than 32768 boxes or 4096 ramps");
     }
     let boxes = world.boxes.iter().map(|v| entry(v, BOX_VALUES)).collect::<Result<Vec<_>, _>>()?;
     let ramps = world.ramps.iter().map(|v| entry(v, RAMP_VALUES)).collect::<Result<Vec<_>, _>>()?;

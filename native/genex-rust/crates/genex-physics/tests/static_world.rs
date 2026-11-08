@@ -113,8 +113,8 @@ fn hostile_worlds() -> Vec<(&'static str, StaticWorld, PhysicsError)> {
     let unit_box = vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0];
     let ramp = |axis: f64, lo: f64, hi: f64, max_z: f64| vec![0.0, 0.0, 0.0, 4.0, 4.0, max_z, axis, lo, hi];
     vec![
-        ("4097 boxes", StaticWorld { boxes: vec![unit_box.clone(); 4097], ramps: vec![] }, PhysicsError::OutOfRange),
-        ("513 ramps", StaticWorld { boxes: vec![], ramps: vec![ramp(0.0, 0.0, 1.0, 1.0); 513] }, PhysicsError::OutOfRange),
+        ("32769 boxes", StaticWorld { boxes: vec![unit_box.clone(); 32_769], ramps: vec![] }, PhysicsError::OutOfRange),
+        ("4097 ramps", StaticWorld { boxes: vec![], ramps: vec![ramp(0.0, 0.0, 1.0, 1.0); 4_097] }, PhysicsError::OutOfRange),
         ("a box of five", with_box(vec![0.0, 0.0, 0.0, 1.0, 1.0]), PhysicsError::OutOfRange),
         ("a box of seven", with_box(vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0]), PhysicsError::OutOfRange),
         ("a ramp of eight", with_ramp(vec![0.0, 0.0, 0.0, 4.0, 4.0, 1.0, 0.0, 1.0]), PhysicsError::OutOfRange),
@@ -255,3 +255,104 @@ fn a_ball_lands_on_a_ramp_as_wide_as_the_world() {
     let z = w.body("ball").expect("there").pose.p[2];
     assert!(z > 10.0 && z < 11.5, "on the ramp's top near its middle (11): {z}");
 }
+
+/// The world's module caps (§17.7, §6.5): 32,768 boxes and 4,096 ramps on a plain grid.
+fn world_at(boxes: usize, ramps: usize) -> StaticWorld {
+    let cell = |i: usize| {
+        let (x, y) = ((i % 256) as f64 * 4.0, (i / 256) as f64 * 4.0);
+        (x, y)
+    };
+    StaticWorld {
+        boxes: (0..boxes)
+            .map(|i| {
+                let (x, y) = cell(i);
+                vec![x, y, -1.0, x + 4.0, y + 4.0, 0.0]
+            })
+            .collect(),
+        ramps: (0..ramps)
+            .map(|i| {
+                let (x, y) = cell(i);
+                vec![x, y, 10.0, x + 4.0, y + 4.0, 12.0, 0.0, 10.0, 12.0]
+            })
+            .collect(),
+    }
+}
+
+fn big_desc(pieces: u32) -> WorldDesc {
+    let mut desc = WorldDesc::new(1.0 / 60.0, 1.0, [0.0, 0.0, -9.81], UpAxis::Z, 1.0);
+    desc.limits.static_pieces = Some(f64::from(pieces));
+    desc.limits.memory_bytes = Some(128.0 * 1024.0 * 1024.0);
+    desc
+}
+
+#[test]
+fn a_world_at_the_module_caps_imports_and_stands_a_body_on_its_last_box() {
+    let at_caps = world_at(32_768, 4_096);
+    let mut w = World::create(&big_desc(36_864)).expect("the ceiling holds the module caps");
+    w.add_static_world(&at_caps).expect("imports");
+    let last = &at_caps.boxes[32_767];
+    let (x, y) = (f64::midpoint(last[0], last[3]), f64::midpoint(last[1], last[4]));
+    w.spawn(&body("ball", BodyType::Dynamic, [x, y, 2.0], ball(0.25))).expect("ball");
+    for _ in 0..120 {
+        w.step().expect("steps");
+    }
+    assert!((w.body("ball").expect("there").pose.p[2] - 0.25).abs() < 0.01, "on the last box");
+}
+
+#[test]
+fn a_box_or_ramp_past_the_module_caps_is_refused_with_nothing_changed() {
+    for (name, boxes, ramps) in [("a box", 32_769, 0), ("a ramp", 0, 4_097)] {
+        let mut w = World::create(&big_desc(36_864)).expect("valid");
+        let before = observe(&w);
+        let code = w.add_static_world(&world_at(boxes, ramps)).err().map(|f| f.code);
+        assert_eq!(code, Some(PhysicsError::OutOfRange), "{name} past the cap");
+        assert_eq!(observe(&w), before);
+    }
+}
+
+#[test]
+fn past_ten_thousand_pieces_a_snapshot_restores_and_keys_stay_distinct() {
+    // Five digits sort before four as text: the snapshot's check must not read key order as index order.
+    let mut w = World::create(&big_desc(12_000)).expect("valid");
+    w.add_static_world(&world_at(11_000, 1_000)).expect("imports");
+    let hash = w.physics_hash();
+    let bytes = w.snapshot().expect("snapshot");
+    let mut again = World::create(&big_desc(12_000)).expect("valid");
+    again.restore(&bytes).expect("restores");
+    assert_eq!(again.physics_hash(), hash);
+}
+
+#[test]
+fn a_large_world_steps_alike_from_its_import_and_from_a_snapshot_and_a_landing_still_begins() {
+    let large = world_at(11_000, 1_000);
+    let mut w = World::create(&big_desc(12_000)).expect("valid");
+    w.add_static_world(&large).expect("imports");
+    // Over the last box's middle, past index 9999.
+    let mut landing = body("ball", BodyType::Dynamic, [990.0, 170.0, 1.0], ball(0.25));
+    landing.colliders[0].events = true;
+    w.spawn(&landing).expect("ball");
+    let bytes = w.snapshot().expect("snapshot");
+    let mut again = World::create(&big_desc(12_000)).expect("valid");
+    again.restore(&bytes).expect("restores");
+    let mut began = 0;
+    for _ in 0..120 {
+        let stepped = w.step().expect("steps");
+        again.step().expect("steps");
+        began += stepped.events.iter().filter(|event| matches!(event, genex_physics::PhysicsEvent::ContactBegin { .. })).count();
+        assert_eq!(w.state_hash(), again.state_hash());
+    }
+    assert!(began > 0, "the settled tree reports the landing");
+    assert!(w.body("ball").expect("there").pose.p[2] < 0.5, "and holds the ball up on the floor");
+}
+
+#[test]
+fn a_world_the_old_caps_held_keeps_its_hash_under_the_default_limits() {
+    // The bytes of physicsHash for a 4,096 + 512 world under default limits, read from the pinned
+    // core 0.1.0 (ae524c44): raising the caps changes no world a smaller cap took.
+    let mut w = world(UpAxis::Z);
+    w.add_static_world(&world_at(4_096, 512)).expect("imports");
+    assert_eq!(w.physics_hash(), OLD_CAPS_HASH);
+}
+// This branch's own hash for that world (release 2 core, 1.1.0-dev.0), measured on origin/claude/physics-r2 a711b1a3f
+// before this change; on the 0.1.x line (ae524c44) the same world hashes 239b3446fab2a2d0.
+const OLD_CAPS_HASH: &str = "a62beb184f62baab";

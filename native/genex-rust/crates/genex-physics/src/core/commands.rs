@@ -14,6 +14,7 @@ use crate::body::ValidBody;
 use crate::command::Command;
 use crate::error::{PhysicsError, PhysicsFailure, fail};
 use crate::joint::{ValidJoint, ValidMotor};
+use crate::limits::DEFAULT_STATIC_PIECES;
 use crate::memory::body_bytes;
 use crate::static_world::{StaticWorld, validate_static};
 use crate::types::{BodyType, UpAxis};
@@ -184,6 +185,12 @@ impl<B: Backend> Core<B> {
             if self.backend.insert(&piece.spec, tag).is_err() {
                 return fail(PhysicsError::Internal, "the backend refused a piece it had accepted");
             }
+        }
+        // A world past the old default is new to this build, so its steps have no earlier results to keep:
+        // its tree is built here, in a setup frame, or the first step pays for every solid (23 ms at the
+        // caps on an M4 Max). With a body already in the world a pair could begin unreported: the step builds it.
+        if valid.pieces.len() > DEFAULT_STATIC_PIECES as usize && self.ledger.bodies.is_empty() {
+            self.backend.settle();
         }
         self.ledger.add_static(valid.pieces.len(), bytes);
         self.static_canon = Some(valid.canon);

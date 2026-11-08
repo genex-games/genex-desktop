@@ -239,7 +239,10 @@ fn check_static<H, J>(image: &Image<'_, H, J>, desc: &ResolvedWorldDesc) -> Resu
     };
     let world = StaticWorld { boxes: boxes.clone(), ramps: ramps.clone() };
     let valid = validate_static(&world).map_err(|_| bad("the snapshot's static world is invalid"))?;
-    let keys_ok = valid.pieces.iter().map(|piece| &piece.key).eq(image.static_tags.keys());
+    // A set, not a sequence: the tags are in text order, the pieces in index order, and the two
+    // part at index 10000 (`static:box:10000` sorts before `static:box:9999`).
+    let piece_keys: std::collections::BTreeSet<&String> = valid.pieces.iter().map(|piece| &piece.key).collect();
+    let keys_ok = piece_keys.len() == valid.pieces.len() && piece_keys.into_iter().eq(image.static_tags.keys());
     let names_ok = image.static_tags.iter().all(|(key, tag)| image.names.get(tag) == Some(key));
     let ledger_ok = image.ledger.static_added && image.ledger.static_pieces == valid.pieces.len();
     if !(desc.up_axis == UpAxis::Z && keys_ok && names_ok && ledger_ok) {

@@ -254,6 +254,9 @@ pub(crate) trait Backend: Sized {
     fn drive(&mut self, body: Self::Body, linvel: [f32; 3], angvel: [f32; 3]);
     /// Places a kinematic body exactly, keeping its velocities.
     fn place(&mut self, body: Self::Body, translation: [f32; 3], rotation: [f32; 4]);
+    /// Builds the broad phase over what is inserted, ahead of the next step: nothing moves and nothing
+    /// is reported, so a large static world's tree is paid for at its import, not by the first step.
+    fn settle(&mut self);
     /// Advances one inner step; reports the bodies whose state went non-finite in it and its events.
     fn step(&mut self) -> InnerStep<Self::Body, Self::Pair>;
     /// The total normal impulse a pair's contacts applied in the last inner step.
