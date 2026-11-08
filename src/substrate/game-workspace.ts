@@ -288,9 +288,16 @@ async function presentationPath(dir: string): Promise<string> {
     return await realpath(absolute);
   } catch (error) {
     const parent = path.dirname(absolute);
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT" || parent === absolute) throw error;
+    // A drive that is not plugged in (`J:\`) has no root to resolve: the path stays as written.
+    if (parent === absolute) return absolute;
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     return path.join(await presentationPath(parent), path.basename(absolute));
   }
+}
+
+/** The key a saved look is read back under; one whose folder cannot be resolved keeps it as written. */
+async function savedPresentationPath(dir: string): Promise<string> {
+  return presentationPath(dir).catch(() => path.resolve(dir));
 }
 const MAX_RECENTS = 16;
 
@@ -501,7 +508,7 @@ export class GameWorkspaces {
       .filter((row) => row && PROJECT_NAME_RE.test(row.name) && typeof row.dir === "string")
       .map((row) => ({ name: row.name, dir: path.resolve(row.dir), openedAt: row.openedAt }));
     for (const [dir, entry] of Object.entries(stored.presentation ?? {}))
-      this.#presentation.set(await presentationPath(dir), entry);
+      this.#presentation.set(await savedPresentationPath(dir), entry);
   }
 
   async #saveIndex(): Promise<void> {

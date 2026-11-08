@@ -178,6 +178,16 @@ describe("creating a game in a chosen folder", () => {
     assert.deepEqual((await games.list()).map((game) => game.name).sort(), [a.name, b.name].sort());
   });
 
+  it("a game whose chosen folder cannot be reached any more (an unplugged drive) still lets the library open", async () => {
+    const { games, places, options } = await workspaces();
+    await games.create("Far away", { parent: places });
+    // A path through a file cannot be resolved, the way one on a drive that is gone cannot.
+    await rename(places, `${places}-moved`);
+    await writeFile(places, "");
+    const reopened = new GameWorkspaces(options);
+    assert.deepEqual(await reopened.list(), []);
+  });
+
   it("a link to an ordinary folder creates the game in the folder it points at", { skip: posixOnly }, async () => {
     const { games, base, places } = await workspaces();
     await mkdir(path.join(places, "real"));
