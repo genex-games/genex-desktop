@@ -2,7 +2,9 @@
 import type { Dirent } from "node:fs";
 import { readFile, readdir, realpath } from "node:fs/promises";
 import path from "node:path";
+import { LoopProfile } from "../shared/project-facts.ts";
 import { InteractionSource, type RunSummary } from "../shared/run-summary.ts";
+import { ExecutionStatus } from "../shared/run-state.ts";
 import { isBelow } from "../substrate/paths.ts";
 import { t } from "../shared/i18n.ts";
 
@@ -12,6 +14,8 @@ const REPORT_MAX_CHARS = 2_000_000;
 const BASE_REPORT_MAX_CHARS = REPORT_MAX_CHARS - 1;
 /** A run id that is also a folder name. */
 const RUN_ID = /^[a-zA-Z0-9_-]+$/;
+/** The page a Loop led in its folder photographed at its finish (the seed's `director/finish` health check). */
+const OPEN_FINISH_PICTURE = "finish.jpg";
 /** Where a director kept the build it started from, newest layout first. */
 const BASE_STAGES = ["base", "contract", "start"] as const;
 
@@ -182,6 +186,19 @@ async function supplementHealthCapture(summary: RunSummary, dir: string, entries
   }
 }
 
+/**
+ * A Loop led in its folder that closed on its finish: the page its finish's health check
+ * photographed is the build it closed on, when nothing else named the current build. A run still
+ * going, or one the person stopped, may have changed since that picture, so it never gets it.
+ */
+async function supplementOpenFinish(summary: RunSummary, dir: string): Promise<void> {
+  if (summary.captures?.current) return;
+  const closedInFolder = summary.profile === LoopProfile.Open && summary.execution === ExecutionStatus.Completed;
+  if (!closedInFolder) return;
+  const picture = await realpath(path.join(dir, OPEN_FINISH_PICTURE)).catch(() => null);
+  if (picture && isBelow(dir, picture)) summary.captures = { ...summary.captures, current: picture };
+}
+
 export async function supplementRunEvidence(summary: RunSummary, runsRoot: string): Promise<void> {
   if (!RUN_ID.test(summary.runId)) return;
   const root = await realpath(runsRoot).catch(() => null);
@@ -193,4 +210,5 @@ export async function supplementRunEvidence(summary: RunSummary, runsRoot: strin
   await supplementPlaytests(summary, dir, entries);
   await supplementJudges(summary, dir, entries);
   await supplementHealthCapture(summary, dir, entries);
+  await supplementOpenFinish(summary, dir);
 }

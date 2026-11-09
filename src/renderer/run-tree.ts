@@ -21,6 +21,7 @@ import {
   healthPicture,
   type LeadNode,
   type RunGraph,
+  roundShot,
   runIdOf,
 } from "./run-graph.ts";
 import type { JobInfo } from "./run-graph-workers.ts";
@@ -137,17 +138,27 @@ const AT_REST: ReadonlySet<LeadFace> = new Set([LeadFace.Done, LeadFace.Paused])
 /** What a lead at rest wears: the run's last save point, whose card picks its picture, or a build's screenshot. */
 export type LeadRest = { save: Step } | { build: string };
 
+/** Whether a save point kept a picture its card can wear. */
+const pictured = (save: Step): boolean => save.shown !== null && roundShot(save.shown) !== null;
+
 /**
  * What the lead wears once it is done or paused: its work is where the run's last save point left
- * it, or in a Loop without save points where its newest build stands (the newest screenshot a
- * health check kept). Null while it works, waits or after a stop, and in a run with neither.
+ * it, or where its newest build stands (the newest screenshot a health check kept, else `build`,
+ * the build's own picture) in a Loop without save points or whose last one kept no picture. Null
+ * while it works, waits or after a stop, and in a run with none of them.
  */
-export function leadRest(graph: RunGraph, rows: PartRow[], face: LeadFace): LeadRest | null {
+export function leadRest(
+  graph: RunGraph,
+  rows: PartRow[],
+  face: LeadFace,
+  build: string | null = null,
+): LeadRest | null {
   if (!AT_REST.has(face)) return null;
   const save = lastSavePoint(rows);
-  if (save) return { save };
-  const build = healthPicture(graph, null)?.path;
-  return build ? { build } : null;
+  if (save && pictured(save)) return { save };
+  const built = healthPicture(graph, null)?.path ?? build;
+  if (built) return { build: built };
+  return save ? { save } : null;
 }
 
 /** Whole minutes a job has run by `now`, 0 when its start is unknown or ahead of the clock. */

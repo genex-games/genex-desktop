@@ -41,7 +41,8 @@ versions) only where pixels differ, else say nothing visibly changed.
 Agents test hidden (Godot too), never Live. A finished worker, its merge and Live's revision
 differ; chat shows a delivery's capture, failures too. A web game's finish first loads its page
 once (`?genex-shot=1` a game may read); unless it loads, throws nothing uncaught and is not blank,
-the Loop goes on.
+the Loop goes on. That look is Your build's picture, and a save point that kept no picture
+gets such a look of its own.
 
 ## Continuation and interruption
 

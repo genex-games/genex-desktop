@@ -159,3 +159,44 @@ test("a judge that agrees with a recorded visual answer lends it its note and th
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("a closed Loop led in its folder shows the page its finish photographed as its build; nothing else does", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "run-open-finish-"));
+  try {
+    const dir = path.join(root, "run_open", "director");
+    await mkdir(dir, { recursive: true });
+    const picture = path.join(dir, "finish.jpg");
+    await writeFile(picture, "jpeg");
+    const closed = () => {
+      const summary = summarizeRun([], "game", "run_open");
+      summary.profile = "open";
+      summary.execution = "completed";
+      return summary;
+    };
+    const summary = closed();
+    await supplementRunEvidence(summary, root);
+    assert.equal(summary.captures?.current, await realpath(picture));
+    const cases: Array<[string, (s: ReturnType<typeof closed>) => void]> = [
+      ["still running", (s) => (s.execution = "running")],
+      ["stopped by the person", (s) => (s.execution = "cancelled")],
+      ["not led in its folder", (s) => delete s.profile],
+      ["already has its build's capture", (s) => (s.captures = { current: "/elsewhere/judge.jpg" })],
+    ];
+    for (const [why, change] of cases) {
+      const other = closed();
+      change(other);
+      const before = other.captures?.current;
+      await supplementRunEvidence(other, root);
+      assert.equal(other.captures?.current, before, why);
+    }
+    await rm(picture);
+    const outside = path.join(root, "outside.jpg");
+    await writeFile(outside, "jpeg");
+    await symlink(outside, picture);
+    const linked = closed();
+    await supplementRunEvidence(linked, root);
+    assert.equal(linked.captures?.current, undefined, "a link out of the run's folder is never the build's picture");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

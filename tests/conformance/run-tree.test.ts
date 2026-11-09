@@ -430,6 +430,26 @@ describe("the lead says what it is doing", () => {
     ]);
   });
 
+  it("done with a last save point that kept no picture, the lead wears its build's picture instead of nothing", () => {
+    const log = readLog("lead-in-place-run.json").map((event) => {
+      const payload = (event.data as { payload?: Record<string, unknown> }).payload;
+      return payload?.facetId === "lead"
+        ? { ...event, data: { ...event.data, payload: { ...payload, shots: [] } } }
+        : event;
+    }) as EventEnvelope[];
+    const { graph, rows } = fold(log);
+    const build = "/runs/run_x/director/finish.jpg";
+    assert.deepEqual(leadRest(graph, rows, LeadFace.Done, build), { build });
+    assert.equal(
+      savedAt(leadRest(graph, rows, LeadFace.Done)),
+      "step:lead:11",
+      "with no build picture either, its save point",
+    );
+    const pictured = fold(readLog("lead-in-place-run.json"));
+    assert.equal(savedAt(leadRest(pictured.graph, pictured.rows, LeadFace.Done, build)), "step:lead:11");
+    assert.equal(leadRest(graph, rows, LeadFace.Stopped, build), null);
+  });
+
   it("done in a Loop without save points, the lead wears its newest build's screenshot", () => {
     // Two turns of one Loop: the first's checks were recorded before checks named their pictures.
     const { graph, summary, rows } = fold(readLog("loop-two-turns-run.json"));

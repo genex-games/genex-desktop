@@ -29,18 +29,27 @@ export async function gameNow(loopRun: LoopRun): Promise<FactsOfDescriptor> {
   return listed ?? { facts: gameFacts, holds: open.holds };
 }
 
-/**
- * Genex's picture of the page at save point `round`, filed in the run's folder beside the save
- * point's other pictures; null for a game that is no web page, or when no picture could be taken.
- * Never throws.
- */
-export async function savePointPagePicture(
-  loopRun: LoopRun,
-  round: number,
-): Promise<{ camera: string; path: string } | null> {
+/** Genex's picture of the page at save point `round`, or null for a game that is no web page. */
+async function pageAt(loopRun: LoopRun, round: number): Promise<{ camera: string; path: string } | null> {
   const { ctx, run } = loopRun;
   if (!pageChecked(await gameNow(loopRun))) return null;
   const target = { project: run.project, runId: run.runId, label: `open/save-${round}/${PAGE_CAMERA}` };
   const path = await pagePicture(ctx, target, { sleep: loopRun.open.clock.sleep });
   return path ? { camera: PAGE_CAMERA, path } : null;
+}
+
+/**
+ * Genex's picture of the page at save point `round`, filed in the run's folder beside the save
+ * point's other pictures; null for a game that is no web page, or when no picture could be taken.
+ * Never throws: a picture that could not be taken never costs the save point its record.
+ */
+export async function savePointPagePicture(
+  loopRun: LoopRun,
+  round: number,
+): Promise<{ camera: string; path: string } | null> {
+  try {
+    return await pageAt(loopRun, round);
+  } catch {
+    return null;
+  }
 }
