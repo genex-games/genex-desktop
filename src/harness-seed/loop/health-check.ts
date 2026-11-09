@@ -6,7 +6,8 @@
  * screenshot of the whole page. A screenshot is kept as the check's picture. The page is loaded once,
  * with the `genex-shot` parameter on its address (`preview.load` `shot`): a game may read it, and
  * one that ignores it loses nothing. Nothing is asked of the game's code. It never throws: a window
- * that never came is a check that could not be made, said so.
+ * that never came is a check that could not be made, said so. A save point of a web game whose lead
+ * named no picture gets its picture the same way, with no check (`pagePicture`).
  */
 import { WINDOW_RETRIES_MS } from "./config.ts";
 import { HostMethod } from "./host-methods.ts";
@@ -81,12 +82,17 @@ async function keepPicture(ctx: HarnessCtx, target: HealthTarget, handle: string
   return typeof shot?.path === "string" ? shot.path : null;
 }
 
-/** The look itself, in a window of its own. */
-async function lookIn(ctx: HarnessCtx, target: HealthTarget, handle: string, wait: Wait): Promise<HealthCheck> {
+/** The page loaded once in the window as a build's picture is taken (`genex-shot`), ready and settled. */
+async function loadAsShot(ctx: HarnessCtx, target: HealthTarget, handle: string, wait: Wait): Promise<void> {
   const where = { ...(target.root ? { root: target.root } : {}), ...(target.entry ? { entry: target.entry } : {}) };
   await ctx.call(HostMethod.PreviewLoad, { project: target.project, ...where, handle, shot: true });
   await ctx.call(HostMethod.PreviewReady, { handle, timeoutMs: READY_TIMEOUT_MS }).catch(() => null);
   await wait(SETTLE_MS);
+}
+
+/** The look itself, in a window of its own. */
+async function lookIn(ctx: HarnessCtx, target: HealthTarget, handle: string, wait: Wait): Promise<HealthCheck> {
+  await loadAsShot(ctx, target, handle, wait);
   const observed = await ctx.call(HostMethod.PreviewObserve, { handle });
   if (!observed || typeof observed.ok !== "boolean") return unchecked(HEALTH_WORDS.noAnswer);
   const problems = (Array.isArray(observed.reasons) ? observed.reasons : []).map((reason) =>
@@ -117,6 +123,28 @@ export async function checkHealth(
     return await lookIn(ctx, target, handle, wait);
   } catch (err) {
     return unchecked(HEALTH_WORDS.failed(clip(String((err as Error)?.message ?? err), CLIP_DETAIL)));
+  } finally {
+    await ctx.call(HostMethod.PreviewRelease, { handle }).catch(() => {});
+  }
+}
+
+/**
+ * A picture of the page in `target` as a build's picture is taken, with no check: the screenshot's
+ * file under the run, or null when no window came or the host kept none. Never throws, and the
+ * window is given back whatever happened.
+ */
+export async function pagePicture(
+  ctx: HarnessCtx,
+  target: HealthTarget,
+  { sleep: wait = sleep }: HealthOptions = {},
+): Promise<string | null> {
+  const handle = await leaseWindow(ctx, target.label, wait);
+  if (!handle) return null;
+  try {
+    await loadAsShot(ctx, target, handle, wait);
+    return await keepPicture(ctx, target, handle);
+  } catch {
+    return null;
   } finally {
     await ctx.call(HostMethod.PreviewRelease, { handle }).catch(() => {});
   }
