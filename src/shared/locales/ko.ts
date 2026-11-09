@@ -462,6 +462,7 @@ export default {
   Better: "개선",
   Beta: "베타",
   "Between builds": "빌드 사이",
+  "Bigger than the graphics card, so part of it runs on the CPU": "그래픽카드보다 커서 일부는 CPU에서 실행돼요",
   "Billed by each provider you use": "사용하는 제공자마다 따로 청구돼요",
   "Billed by each provider you use.": "사용하는 제공자마다 따로 청구돼요.",
   "Billed by each provider you use. Free models stay in the model menu too.":
@@ -1141,6 +1142,7 @@ export default {
   "Delete every row shared from this computer?": "이 컴퓨터에서 공유한 모든 행을 삭제할까요?",
   "Delete game": "게임 삭제",
   "Delete it from this Mac? You can download it again.": "이 Mac에서 삭제할까요? 다시 다운로드할 수 있어요.",
+  "Delete it from this PC? You can download it again.": "이 PC에서 삭제할까요? 다시 다운로드할 수 있어요.",
   "Delete what I shared": "공유한 데이터 삭제",
   "Delete your comment": "내 댓글 삭제",
   "Delete {model}": "{model} 삭제",
@@ -1170,6 +1172,7 @@ export default {
   Details: "자세히",
   "Details for MCP {name}": "MCP {name} 세부 정보",
   "Detecting this Mac…": "이 Mac을 확인하는 중…",
+  "Detecting this PC…": "이 PC를 확인하는 중…",
   Developer: "개발자",
   "Development build": "개발 빌드",
   "Development builds and builds packaged under another name update from source.":
@@ -2240,6 +2243,7 @@ export default {
   "Needs a key": "키 필요",
   "Needs a {ram} GB Mac": "{ram}GB Mac 필요",
   "Needs setup": "설정 필요",
+  "Needs ~{need} GB to run": "실행하려면 약 {need}GB 필요",
   "Neon rings": "네온 링",
   "Never asks, stays sandboxed": "묻지 않고 샌드박스 안에서 작업",
   "Never asks, works anywhere": "묻지 않고, 어디서나 작동해요",
@@ -2318,6 +2322,8 @@ export default {
   "No published games yet.": "아직 게시한 게임이 없어요.",
   "No recommended model fits this Mac. More models lists what bigger Macs can run.":
     "이 Mac에 맞는 추천 모델이 없어요. ‘더 많은 모델’에서 더 큰 Mac에서 실행할 수 있는 모델을 볼 수 있어요.",
+  "No recommended model fits this PC. More models lists what each one needs.":
+    "이 PC에 맞는 추천 모델이 없어요. ‘더 많은 모델’에서 모델마다 필요한 용량을 볼 수 있어요.",
   "No reviewer compared it": "비교한 리뷰어가 없어요",
   "No reviewer saw it; the lead merged the part's work into your build.":
     "리뷰어는 보지 않았어요. 메인 에이전트가 파트 작업을 빌드에 합쳤어요.",
@@ -4985,6 +4991,7 @@ export default {
   "since {when}": "{when}부터",
   sixth: "여섯 번째",
   slit: "실눈",
+  slower: "느림",
   squint: "찡그린",
   started: "시작",
   "started a new game": "새 게임을 만들었어요",
@@ -5339,6 +5346,8 @@ export default {
   "{count} selected": "{count}개 선택됨",
   "{cpu} · {memory} GB memory · about {usable} GB available for models":
     "{cpu} · 메모리 {memory}GB · 모델에 쓸 수 있는 용량 약 {usable}GB",
+  "{cpu} · {memory} GB memory · {gpu} ({gpuMemory} GB) · about {usable} GB available for models":
+    "{cpu} · 메모리 {memory}GB · {gpu}({gpuMemory}GB) · 모델에 쓸 수 있는 용량 약 {usable}GB",
   "{days} days": "{days}일",
   "{days}d": "{days}일",
   "{day} {value}": "{day}: {value}",

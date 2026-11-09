@@ -488,6 +488,8 @@ export default {
   Better: "Улучшение",
   Beta: "Бета",
   "Between builds": "Между сборками",
+  "Bigger than the graphics card, so part of it runs on the CPU":
+    "Больше памяти видеокарты, поэтому часть работает на процессоре",
   "Billed by each provider you use": "Оплата — отдельно у каждого провайдера",
   "Billed by each provider you use.": "Оплата у каждого провайдера, которым пользуешься.",
   "Billed by each provider you use. Free models stay in the model menu too.":
@@ -1179,6 +1181,7 @@ export default {
   "Delete every row shared from this computer?": "Удалить все строки, отправленные с этого компьютера?",
   "Delete game": "Удалить игру",
   "Delete it from this Mac? You can download it again.": "Удалить модель с этого Mac? Её можно скачать снова.",
+  "Delete it from this PC? You can download it again.": "Удалить модель с этого ПК? Её можно скачать снова.",
   "Delete what I shared": "Удалить отправленное",
   "Delete your comment": "Удалить свой комментарий",
   "Delete {model}": "Удалить {model}",
@@ -1210,6 +1213,7 @@ export default {
   Details: "Подробности",
   "Details for MCP {name}": "Подробнее об MCP {name}",
   "Detecting this Mac…": "Проверяем этот Mac…",
+  "Detecting this PC…": "Проверяем этот ПК…",
   Developer: "Разработчик",
   "Development build": "Сборка для разработки",
   "Development builds and builds packaged under another name update from source.":
@@ -2295,6 +2299,7 @@ export default {
   "Needs a key": "Нужен ключ",
   "Needs a {ram} GB Mac": "Нужен Mac с {ram} ГБ",
   "Needs setup": "Нужна настройка",
+  "Needs ~{need} GB to run": "Для запуска нужно ~{need} ГБ",
   "Neon rings": "Неоновые кольца",
   "Never asks, stays sandboxed": "Не спрашивает, работает в песочнице",
   "Never asks, works anywhere": "Не спрашивает, работает везде",
@@ -2372,6 +2377,8 @@ export default {
   "No published games yet.": "Опубликованных игр пока нет.",
   "No recommended model fits this Mac. More models lists what bigger Macs can run.":
     "Ни одна из рекомендуемых моделей не подходит для этого Mac. В разделе «Ещё модели» — те, что пойдут на Mac помощнее.",
+  "No recommended model fits this PC. More models lists what each one needs.":
+    "Ни одна из рекомендуемых моделей не подходит для этого ПК. В разделе «Ещё модели» видно, сколько нужно каждой.",
   "No reviewer compared it": "Проверяющие не сравнивали",
   "No reviewer saw it; the lead merged the part's work into your build.":
     "Проверяющие это не видели; главный агент добавил работу части в твою сборку.",
@@ -5074,6 +5081,7 @@ export default {
   "since {when}": "в друзьях: {when}",
   sixth: "шестую",
   slit: "щёлки",
+  slower: "медленнее",
   squint: "прищур",
   started: "начато",
   "started a new game": "создал новую игру",
@@ -5501,6 +5509,8 @@ export default {
   "{count} selected": "Выбрано: {count}",
   "{cpu} · {memory} GB memory · about {usable} GB available for models":
     "{cpu} · {memory} ГБ памяти · для моделей доступно около {usable} ГБ",
+  "{cpu} · {memory} GB memory · {gpu} ({gpuMemory} GB) · about {usable} GB available for models":
+    "{cpu} · {memory} ГБ памяти · {gpu} ({gpuMemory} ГБ) · для моделей доступно около {usable} ГБ",
   "{days} days": "{days, plural, one {# день} few {# дня} many {# дней} other {# дня}}",
   "{days}d": "{days} дн.",
   "{day} {value}": "{day}: {value}",

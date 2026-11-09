@@ -792,6 +792,8 @@ describe("local model hardware in isolated acceptance", () => {
       ramBytes: 32 * 1024 ** 3,
       ramGb: 32,
       usableModelGb: 23,
+      gpus: [],
+      gpuModelGb: 0,
       platform: "darwin",
       arch: "arm64",
       appleSilicon: true,

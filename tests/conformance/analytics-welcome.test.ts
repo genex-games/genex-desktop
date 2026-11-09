@@ -169,6 +169,7 @@ function choice(model: string, patch: Partial<LocalModelChoice> = {}): LocalMode
     fits: true,
     needGb: 5,
     needsRamGb: null,
+    split: false,
     reason: "",
     ...patch,
   };
@@ -176,7 +177,7 @@ function choice(model: string, patch: Partial<LocalModelChoice> = {}): LocalMode
 
 function hardware(patch: Partial<HardwareReport["recommendation"]> = {}, ramGb = 18): HardwareReport {
   return {
-    hardware: { cpu: "Apple M3", ramGb, usableModelGb: 12 },
+    hardware: { cpu: "Apple M3", ramGb, usableModelGb: 12, gpus: [], gpuModelGb: 0 },
     recommendation: {
       tier: { label: "", expectation: "" },
       defaultModel: "bonsai-8b",
@@ -734,7 +735,15 @@ describe("usage analytics: local models and servers", () => {
       fits: null,
       size_bucket: null,
     });
-    const found = { ok: true as const, id: "qwen3.5:9b", sizeGb: 6.1, fits: true, needGb: 7, needsRamGb: null };
+    const found = {
+      ok: true as const,
+      id: "qwen3.5:9b",
+      sizeGb: 6.1,
+      fits: true,
+      needGb: 7,
+      needsRamGb: null,
+      split: false,
+    };
     assert.deepEqual(ollamaLookedUp(found), { ok: true, reason: null, fits: true, size_bucket: SizeBucket.Large });
     assert.deepEqual(ollamaLookedUp(null), { ok: false, reason: null, fits: null, size_bucket: null });
     const servers = [
@@ -923,7 +932,25 @@ describe("usage analytics: nothing a person wrote or owns leaves", () => {
       () =>
         hardwareChecked(
           ProviderSurface.Settings,
-          { ...hardware(), hardware: { cpu: HOSTILE[9], ramGb: 16, usableModelGb: 9 } },
+          { ...hardware(), hardware: { cpu: HOSTILE[9], ramGb: 16, usableModelGb: 9, gpus: [], gpuModelGb: 0 } },
+          1,
+        ),
+    ],
+    [
+      "a PC's graphics card by its name",
+      () =>
+        hardwareChecked(
+          ProviderSurface.Settings,
+          {
+            ...hardware(),
+            hardware: {
+              cpu: "AMD Ryzen 9",
+              ramGb: 32,
+              usableModelGb: 44.3,
+              gpus: [{ name: HOSTILE[9], memoryGb: 24 }],
+              gpuModelGb: 23,
+            },
+          },
           1,
         ),
     ],

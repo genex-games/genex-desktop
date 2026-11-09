@@ -519,6 +519,8 @@ export default {
   Better: "Mejora",
   Beta: "Beta",
   "Between builds": "Entre builds",
+  "Bigger than the graphics card, so part of it runs on the CPU":
+    "Es más grande que la tarjeta gráfica, así que una parte va en la CPU",
   "Billed by each provider you use": "Cada proveedor que uses te cobra aparte",
   "Billed by each provider you use.": "Te cobra cada proveedor que uses.",
   "Billed by each provider you use. Free models stay in the model menu too.":
@@ -1220,6 +1222,7 @@ export default {
   "Delete every row shared from this computer?": "¿Borrar todas las filas compartidas desde este equipo?",
   "Delete game": "Eliminar juego",
   "Delete it from this Mac? You can download it again.": "¿Eliminarlo de este Mac? Puedes volver a descargarlo.",
+  "Delete it from this PC? You can download it again.": "¿Eliminarlo de este PC? Puedes volver a descargarlo.",
   "Delete what I shared": "Borrar lo que compartí",
   "Delete your comment": "Eliminar tu comentario",
   "Delete {model}": "Eliminar {model}",
@@ -1251,6 +1254,7 @@ export default {
   Details: "Detalles",
   "Details for MCP {name}": "Detalles del MCP {name}",
   "Detecting this Mac…": "Detectando este Mac…",
+  "Detecting this PC…": "Detectando este PC…",
   Developer: "Desarrollador",
   "Development build": "Versión de desarrollo",
   "Development builds and builds packaged under another name update from source.":
@@ -2342,6 +2346,7 @@ export default {
   "Needs a key": "Necesita una clave",
   "Needs a {ram} GB Mac": "Necesita un Mac de {ram} GB",
   "Needs setup": "Falta configurar",
+  "Needs ~{need} GB to run": "Necesita ~{need} GB para funcionar",
   "Neon rings": "Anillos de neón",
   "Never asks, stays sandboxed": "Nunca pregunta, siempre en sandbox",
   "Never asks, works anywhere": "Nunca pregunta, funciona en todas partes",
@@ -2423,6 +2428,8 @@ export default {
   "No published games yet.": "Aún no hay juegos publicados.",
   "No recommended model fits this Mac. More models lists what bigger Macs can run.":
     "Ningún modelo recomendado cabe en este Mac. En Más modelos verás lo que pueden ejecutar Macs más potentes.",
+  "No recommended model fits this PC. More models lists what each one needs.":
+    "Ningún modelo recomendado cabe en este PC. En Más modelos verás lo que necesita cada uno.",
   "No reviewer compared it": "Ningún revisor lo comparó",
   "No reviewer saw it; the lead merged the part's work into your build.":
     "Ningún revisor lo vio; el agente principal añadió el trabajo de la parte a tu build.",
@@ -5161,6 +5168,7 @@ export default {
   "since {when}": "desde {when}",
   sixth: "sexto",
   slit: "rasgados",
+  slower: "más lento",
   squint: "entrecerrados",
   started: "iniciado",
   "started a new game": "creó un juego nuevo",
@@ -5547,6 +5555,8 @@ export default {
   "{count} selected": "{count, plural, one {# seleccionado} other {# seleccionados}}",
   "{cpu} · {memory} GB memory · about {usable} GB available for models":
     "{cpu} · {memory} GB de memoria · unos {usable} GB disponibles para modelos",
+  "{cpu} · {memory} GB memory · {gpu} ({gpuMemory} GB) · about {usable} GB available for models":
+    "{cpu} · {memory} GB de memoria · {gpu} ({gpuMemory} GB) · unos {usable} GB disponibles para modelos",
   "{days} days": "{days} días",
   "{days}d": "{days} d",
   "{day} {value}": "{day}: {value}",

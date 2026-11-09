@@ -9,10 +9,21 @@ one-line `about` of at most 60 characters. Measurement evidence lives in `notes`
 displayed. Each RAM tier ranks model ids; `recommendModels` shows the ranked models that fit, and
 the first is Best fit. From 128 GB, Best fit is Qwen 3.5 122B (vision and tools); 192 GB adds
 Qwen 3.8 Flash Next. Every other model the architecture can run is under More models, smallest
-first, with "Needs a N GB Mac" when it does not fit. One build per model is shown: MLX on Apple
-Silicon, the portable GGUF elsewhere. The fit rule is weights + KV cache (0.5–3 GB) + 1.5 GB
-within 72% of unified memory on Apple Silicon (⅔ elsewhere). Recommendations are estimates; the
-large-Mac models have not been measured in Studio yet.
+first, with "Needs a N GB Mac" when it does not fit (on a PC, "Needs ~N GB to run"). Download is
+offered only for a model that fits. One build per model is shown: MLX on Apple Silicon, the
+portable GGUF elsewhere. The fit rule is weights + KV cache (0.5–3 GB) + 1.5 GB within 72% of
+unified memory on Apple Silicon (⅔ of RAM elsewhere).
+
+On Windows and Linux the graphics cards count too (`substrate/gpu-memory.ts`, read once a
+session): each card's memory less 1 GB joins RAM's share, since Ollama runs a model on the card
+and splits a larger one between the card and RAM. Windows reads each display adapter's
+`HardwareInformation.qwMemorySize` with `reg.exe` and counts only the largest card, because the
+registry keeps the keys of cards swapped out; Linux reads `nvidia-smi` and amdgpu's
+`mem_info_vram_total`. Cards under 2 GB and anything unreadable count as no card. A model larger
+than the cards that still fits is marked "slower: part runs on the CPU". A PC's tier is chosen as
+if its graphics memory were RAM giving the same budget, so a 24 GB card ranks the 32 GB tier's
+models. The hardware line names the cards. Recommendations are estimates; the large-Mac models
+have not been measured in Studio yet.
 
 An installed model's row offers Delete (a trash button, then Cancel or Delete on the row). A Bonsai
 delete removes the receipt first, stops a server loaded with that model, then deletes its weights
@@ -176,9 +187,10 @@ installed state, local worker selection under Codex and subscription roles under
 `bonsai.test.ts` and `engine-ollama.test.ts` also cover Delete: what goes, what another model
 keeps, and refusals that remove nothing.
 
-`model-catalog.test.ts` covers ranking, Best fit per tier, one build per architecture and
-"Needs a N GB Mac"; `ollama-registry.test.ts` covers name validation, manifest URLs and size sums
-without network.
+`model-catalog.test.ts` covers ranking, Best fit per tier, one build per architecture, graphics
+memory in a PC's budget, tier and split, and "Needs a N GB Mac"; `gpu-memory.test.ts` covers the
+registry, `nvidia-smi` and amdgpu readings and every unreadable answer; `ollama-registry.test.ts`
+covers name validation, manifest URLs and size sums without network.
 
 `mcp-plumbing.test.ts` and `genex-plumbing.test.ts` include the direct Bonsai session provider
 in their host schema, asset inspection, event and consent matrices, using fixtures only.

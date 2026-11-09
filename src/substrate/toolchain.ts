@@ -296,7 +296,7 @@ function queryRegistryValue(regExe: string, key: string, name: string): Promise<
 }
 
 /** `reg.exe` by its full path, so a PATH entry can never stand in for it. */
-const regExeOf = (env: NodeJS.ProcessEnv): string =>
+export const regExeOf = (env: NodeJS.ProcessEnv): string =>
   path.win32.join(envValue(env, "SystemRoot") || "C:\\Windows", "System32", "reg.exe");
 
 /**

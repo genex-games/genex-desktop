@@ -441,6 +441,7 @@ export default {
   Better: "改进",
   Beta: "测试版",
   "Between builds": "构建间隙",
+  "Bigger than the graphics card, so part of it runs on the CPU": "超出显卡显存，部分在 CPU 上运行",
   "Billed by each provider you use": "由你使用的各提供方分别计费",
   "Billed by each provider you use.": "由你使用的各提供方分别计费。",
   "Billed by each provider you use. Free models stay in the model menu too.":
@@ -1096,6 +1097,7 @@ export default {
   "Delete every row shared from this computer?": "要删除从这台电脑分享的所有数据行吗？",
   "Delete game": "删除游戏",
   "Delete it from this Mac? You can download it again.": "要从这台 Mac 中删除吗？你可以再次下载。",
+  "Delete it from this PC? You can download it again.": "要从这台电脑中删除吗？你可以再次下载。",
   "Delete what I shared": "删除我分享的内容",
   "Delete your comment": "删除你的评论",
   "Delete {model}": "删除 {model}",
@@ -1125,6 +1127,7 @@ export default {
   Details: "详情",
   "Details for MCP {name}": "MCP {name} 的详情",
   "Detecting this Mac…": "正在检测这台 Mac…",
+  "Detecting this PC…": "正在检测这台电脑…",
   Developer: "开发者",
   "Development build": "开发版本",
   "Development builds and builds packaged under another name update from source.":
@@ -2162,6 +2165,7 @@ export default {
   "Needs a key": "需要密钥",
   "Needs a {ram} GB Mac": "需要 {ram} GB 内存的 Mac",
   "Needs setup": "需要设置",
+  "Needs ~{need} GB to run": "运行需要约 {need} GB",
   "Neon rings": "霓虹环",
   "Never asks, stays sandboxed": "从不询问，始终在沙盒中",
   "Never asks, works anywhere": "从不询问，可在任意位置操作",
@@ -2237,6 +2241,8 @@ export default {
   "No published games yet.": "还没有已发布的游戏。",
   "No recommended model fits this Mac. More models lists what bigger Macs can run.":
     "没有适合这台 Mac 的推荐模型。“更多模型”中列出了配置更高的 Mac 可运行的模型。",
+  "No recommended model fits this PC. More models lists what each one needs.":
+    "没有适合这台电脑的推荐模型。“更多模型”中列出了每个模型的需求。",
   "No reviewer compared it": "没有审查员对比过",
   "No reviewer saw it; the lead merged the part's work into your build.":
     "没有审查员看过；主智能体把这个部分的工作合入了你的构建。",
@@ -4817,6 +4823,7 @@ export default {
   "since {when}": "{when}起",
   sixth: "第六",
   slit: "细缝",
+  slower: "较慢",
   squint: "眯眼",
   started: "开始时间",
   "started a new game": "创建了新游戏",
@@ -5162,6 +5169,8 @@ export default {
   "{count} selected": "已选择 {count} 个",
   "{cpu} · {memory} GB memory · about {usable} GB available for models":
     "{cpu} · {memory} GB 内存 · 约 {usable} GB 可用于模型",
+  "{cpu} · {memory} GB memory · {gpu} ({gpuMemory} GB) · about {usable} GB available for models":
+    "{cpu} · {memory} GB 内存 · {gpu}（{gpuMemory} GB） · 约 {usable} GB 可用于模型",
   "{days} days": "{days} 天",
   "{days}d": "{days} 天",
   "{day} {value}": "{day}：{value}",

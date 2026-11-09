@@ -1,9 +1,10 @@
 /** Settings → Local Models: hardware-aware downloads and their durable installation status. */
 import type { FormEvent, JSX } from "react";
 import { useEffect, useId, useRef, useState } from "react";
+import { StudioPlatform } from "../../shared/boot.ts";
 import { EngineStatusCode } from "../../shared/engine-descriptor.ts";
 import { errorMessage } from "../../shared/errors.ts";
-import { t } from "../../shared/i18n.ts";
+import { formatList, t } from "../../shared/i18n.ts";
 import { EngineId } from "../../shared/providers.ts";
 import type { LocalModelChoice } from "../../shared/studio-api.ts";
 import { UiEvent, type UiEventMap } from "../../shared/ui-events.ts";
@@ -22,6 +23,7 @@ import {
 } from "../analytics/welcome-report.ts";
 import { ProviderSurface } from "../analytics/welcome-vocabulary.ts";
 import { needsOllama, ollamaDownloadPage, stoppedDownload, type StoppedDownload } from "../model-download.ts";
+import { hostPlatform } from "../platform.ts";
 import { Button } from "../ui/Button.tsx";
 import { Icon } from "../ui/icons.tsx";
 import type { ModelSettingsProps } from "./ModelsSection.tsx";
@@ -33,16 +35,35 @@ import { ModelPullStatus } from "../../shared/model-install.ts";
 /** Where the Add from Ollama hint sends the user to find a model's name. */
 const OLLAMA_LIBRARY_URL = "https://ollama.com/search";
 
-/** What deleting an installed model says, and where Ollama keeps its models. */
+/** What deleting an installed model says, where Ollama keeps its models, and how a model fits this Mac or PC. */
 const WORDS = {
   /** Ollama stores what it downloads itself; its own Settings moves it to another drive. */
   ollamaModelsFolder: t("Ollama keeps its models in its own folder: move them in Ollama → Settings → Model location."),
   delete: t("Delete"),
   deleteModel: (title: string) => t("Delete {model}", { model: title }),
-  deleteAsk: t("Delete it from this Mac? You can download it again."),
+  deleteAsk: (mac: boolean) =>
+    mac
+      ? t("Delete it from this Mac? You can download it again.")
+      : t("Delete it from this PC? You can download it again."),
   deleteCancel: t("Cancel"),
   deleting: t("Deleting…"),
+  detecting: (mac: boolean) => (mac ? t("Detecting this Mac…") : t("Detecting this PC…")),
+  nothingFits: (mac: boolean) =>
+    mac
+      ? t("No recommended model fits this Mac. More models lists what bigger Macs can run.")
+      : t("No recommended model fits this PC. More models lists what each one needs."),
+  /** A model too large for this PC: what it needs, against the budget its hardware line names. */
+  needsOnPc: (need: number) => t("Needs ~{need} GB to run", { need }),
+  /** It fits only with part of it on the CPU, as Ollama loads a model larger than the graphics card. */
+  split: t("slower"),
+  splitWhy: t("Bigger than the graphics card, so part of it runs on the CPU"),
 } as const;
+
+/** Whether main runs on a Mac: a Mac's words until main has said. */
+function onMac(): boolean {
+  const platform = hostPlatform();
+  return !platform || platform === StudioPlatform.Mac;
+}
 
 type Hardware = Awaited<ReturnType<typeof window.studio.hardware>>;
 type Lookup = Awaited<ReturnType<typeof window.studio.lookupModel>>;
@@ -56,25 +77,27 @@ const openOllamaDownload = (): void => {
   void window.studio.bootState().then(({ platform }) => window.studio.openUrl(ollamaDownloadPage(platform)));
 };
 
-/** "uses ~22 of 23 GB" with a small meter, or the Mac it needs. */
+/** Why a model does not fit: the Mac it needs, or on a PC the memory it needs. */
+function tooLarge(needGb: number, needsRamGb: number | null): string {
+  if (needsRamGb) return t("Needs a {ram} GB Mac", { ram: needsRamGb });
+  return onMac() ? t("Too large to run locally") : WORDS.needsOnPc(Math.round(needGb));
+}
+
+/** "uses ~22 of 23 GB" with a small meter, slower when it is split off a PC's graphics card, or what it needs. */
 function Fit({
   fits,
   needGb,
   needsRamGb,
+  split,
   usable,
 }: {
   fits: boolean;
   needGb: number;
   needsRamGb: number | null;
+  split: boolean;
   usable: number;
 }): JSX.Element {
-  if (!fits) {
-    return (
-      <span className="text-orange">
-        {needsRamGb ? t("Needs a {ram} GB Mac", { ram: needsRamGb }) : t("Too large to run locally")}
-      </span>
-    );
-  }
+  if (!fits) return <span className="text-orange">{tooLarge(needGb, needsRamGb)}</span>;
   return (
     <>
       <span aria-hidden="true" className="inline-flex h-1 w-14 overflow-hidden rounded-full bg-hover">
@@ -84,6 +107,12 @@ function Fit({
         />
       </span>
       <span>{t("uses ~{need} of {usable} GB", { need: Math.round(needGb), usable: Math.round(usable) })}</span>
+      {split && (
+        <>
+          <span aria-hidden="true">·</span>
+          <span title={WORDS.splitWhy}>{WORDS.split}</span>
+        </>
+      )}
     </>
   );
 }
@@ -182,7 +211,7 @@ function InstalledAction({ title, deletion }: { title: string; deletion: RowDele
 
 /** The question an installed row asks before Delete. */
 function DeleteQuestion(): JSX.Element {
-  return <p className="text-body-sm text-ink">{WORDS.deleteAsk}</p>;
+  return <p className="text-body-sm text-ink">{WORDS.deleteAsk(onMac())}</p>;
 }
 
 /** A stopped download's saved share beside Resume, which continues from the saved bytes. */
@@ -353,7 +382,7 @@ function ModelRow(props: {
           <span aria-hidden="true">·</span>
           <span className="tabular-nums">{t("{size} GB", { size: pick.sizeGb })}</span>
           <span aria-hidden="true">·</span>
-          <Fit fits={pick.fits} needGb={pick.needGb} needsRamGb={pick.needsRamGb} usable={usable} />
+          <Fit fits={pick.fits} needGb={pick.needGb} needsRamGb={pick.needsRamGb} split={pick.split} usable={usable} />
         </div>
         {pulling && <ProgressBar label={t("Downloading {model}", { model: title })} percent={percent} animated />}
         {saved?.resumable && (
@@ -566,17 +595,27 @@ function HardwareLine({
     );
   if (!hardware)
     return (
-      <Pending label={t("Detecting this Mac…")} className="py-1.5">
+      <Pending label={WORDS.detecting(onMac())} className="py-1.5">
         <SkeletonLines widths={["56%"]} />
       </Pending>
     );
+  const { cpu, ramGb, gpus } = hardware.hardware;
+  const memory = Math.round(ramGb);
   return (
     <p className="text-body-sm text-muted-foreground">
-      {t("{cpu} · {memory} GB memory · about {usable} GB available for models", {
-        cpu: hardware.hardware.cpu,
-        memory: Math.round(hardware.hardware.ramGb),
-        usable: Math.round(usable),
-      })}
+      {gpus.length
+        ? t("{cpu} · {memory} GB memory · {gpu} ({gpuMemory} GB) · about {usable} GB available for models", {
+            cpu,
+            memory,
+            gpu: formatList(gpus.map((gpu) => gpu.name)),
+            gpuMemory: Math.round(gpus.reduce((sum, gpu) => sum + gpu.memoryGb, 0)),
+            usable: Math.round(usable),
+          })
+        : t("{cpu} · {memory} GB memory · about {usable} GB available for models", {
+            cpu,
+            memory,
+            usable: Math.round(usable),
+          })}
     </p>
   );
 }
@@ -628,7 +667,13 @@ function FoundModel({
         <div className="flex flex-wrap items-center gap-2 font-mono text-xs text-muted-foreground">
           <span className="tabular-nums">{t("{size} GB", { size: found.sizeGb })}</span>
           <span aria-hidden="true">·</span>
-          <Fit fits={found.fits} needGb={found.needGb} needsRamGb={found.needsRamGb} usable={usable} />
+          <Fit
+            fits={found.fits}
+            needGb={found.needGb}
+            needsRamGb={found.needsRamGb}
+            split={found.split}
+            usable={usable}
+          />
         </div>
         {downloading && (
           <ProgressBar label={t("Downloading {model}", { model: found.id })} percent={percent} animated={false} />
@@ -904,9 +949,7 @@ export function LocalModelsSection({
       <HardwareLine hardware={hardware} hardwareError={installs.hardwareError} usable={usable} />
 
       {recommendation && recommendation.picks.length === 0 && (
-        <p className="py-3 text-body-sm text-muted-foreground">
-          {t("No recommended model fits this Mac. More models lists what bigger Macs can run.")}
-        </p>
+        <p className="py-3 text-body-sm text-muted-foreground">{WORDS.nothingFits(onMac())}</p>
       )}
       {recommendation?.picks.map((pick) => row(pick, pick.model === recommendation.defaultModel))}
 
