@@ -504,7 +504,7 @@ the folder that shows the change (a PNG or JPEG really inside it, read before th
 the round's `shown` picture, apart from the thumbnails; a save point without one is fine, and one naming no readable picture says why.
 A web game's save point left with no picture from its steps or `shows` gets Genex's own: the page
 loaded once with `genex-shot` in a pooled window, as the finish's health check loads it
-(`pagePicture`, `open/page-picture.ts`), filed as the `default` camera's thumbnail. `pause {why}` is for what only the person
+(`pagePicture`, `loop/page-look.ts`), filed as the `default` camera's thumbnail. `pause {why}` is for what only the person
 can do (a tool, editor or app the work needs is gone, an install, a permission): it sets
 `OpenLoop.halted` to the lead's words, so the Loop closes paused with them as the reason once the
 turn ends, and its acts are refused meanwhile, as below. `rewind {label}` and

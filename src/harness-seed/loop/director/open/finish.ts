@@ -47,7 +47,7 @@ import { finishTooSoon, workedLine } from "../work-time.ts";
 import { finishAsked } from "../wrap-up.ts";
 import { closeInPlace, type OpenEnd } from "./close.ts";
 import { asksPending, OPEN_CLOSE_MS } from "./contract.ts";
-import { gameNow } from "./page-picture.ts";
+import { FINISH_PICTURE_LABEL, gameNow } from "./page-picture.ts";
 import { OPEN_WORDS } from "./prompts.ts";
 import { writersInPlace } from "./writers.ts";
 
@@ -197,7 +197,7 @@ async function checked(loopRun: LoopRun, claim: FinishClaim, started: number): P
 async function pageProblems(loopRun: LoopRun): Promise<string | null> {
   const { ctx, run } = loopRun;
   if (!pageChecked(await gameNow(loopRun))) return null;
-  const target = { project: run.project, runId: run.runId, label: "director/finish" };
+  const target = { project: run.project, runId: run.runId, label: FINISH_PICTURE_LABEL };
   const check = await checkHealth(ctx, target, { sleep: loopRun.open.clock.sleep });
   return check.ok || check.unchecked ? null : OPEN_WORDS.unhealthy(healthLine(check));
 }

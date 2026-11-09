@@ -167,10 +167,20 @@ test("a closed Loop led in its folder shows the page its finish photographed as 
     await mkdir(dir, { recursive: true });
     const picture = path.join(dir, "finish.jpg");
     await writeFile(picture, "jpeg");
+    const close = (victory: boolean) =>
+      ({
+        id: "e1",
+        thread_id: "t1",
+        session_id: null,
+        turn_id: null,
+        created_at: new Date(0).toISOString(),
+        data: { type: "custom", event_type: "run_finished", payload: { runId: "run_open", victory } },
+      }) as never;
     const closed = () => {
       const summary = summarizeRun([], "game", "run_open");
       summary.profile = "open";
       summary.execution = "completed";
+      summary.graphEvents = [close(true)];
       return summary;
     };
     const summary = closed();
@@ -181,6 +191,8 @@ test("a closed Loop led in its folder shows the page its finish photographed as 
       ["stopped by the person", (s) => (s.execution = "cancelled")],
       ["not led in its folder", (s) => delete s.profile],
       ["already has its build's capture", (s) => (s.captures = { current: "/elsewhere/judge.jpg" })],
+      ["closed some other way, its claim refused before", (s) => (s.graphEvents = [close(false)])],
+      ["no close on record", (s) => (s.graphEvents = [])],
     ];
     for (const [why, change] of cases) {
       const other = closed();

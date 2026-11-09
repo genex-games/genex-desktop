@@ -2,8 +2,9 @@
 import type { Dirent } from "node:fs";
 import { readFile, readdir, realpath } from "node:fs/promises";
 import path from "node:path";
+import { CustomEvent, customEvent } from "../shared/custom-events.ts";
 import { LoopProfile } from "../shared/project-facts.ts";
-import { InteractionSource, type RunSummary } from "../shared/run-summary.ts";
+import { InteractionSource, OPEN_FINISH_PICTURE_LABEL, type RunSummary } from "../shared/run-summary.ts";
 import { ExecutionStatus } from "../shared/run-state.ts";
 import { isBelow } from "../substrate/paths.ts";
 import { t } from "../shared/i18n.ts";
@@ -14,8 +15,6 @@ const REPORT_MAX_CHARS = 2_000_000;
 const BASE_REPORT_MAX_CHARS = REPORT_MAX_CHARS - 1;
 /** A run id that is also a folder name. */
 const RUN_ID = /^[a-zA-Z0-9_-]+$/;
-/** The page a Loop led in its folder photographed at its finish (the seed's `director/finish` health check). */
-const OPEN_FINISH_PICTURE = "finish.jpg";
 /** Where a director kept the build it started from, newest layout first. */
 const BASE_STAGES = ["base", "contract", "start"] as const;
 
@@ -186,17 +185,24 @@ async function supplementHealthCapture(summary: RunSummary, dir: string, entries
   }
 }
 
+/** Whether the run's last close was its lead's claim, accepted: the finish's look at the page came right before it. */
+function closedOnClaim(summary: RunSummary): boolean {
+  const closes = (summary.graphEvents ?? []).map((event) => customEvent(event, CustomEvent.RunFinished));
+  return closes.findLast((close) => close !== null)?.victory === true;
+}
+
 /**
- * A Loop led in its folder that closed on its finish: the page its finish's health check
- * photographed is the build it closed on, when nothing else named the current build. A run still
- * going, or one the person stopped, may have changed since that picture, so it never gets it.
+ * A Loop led in its folder that closed on its lead's accepted claim: the page its finish photographed
+ * (`OPEN_FINISH_PICTURE_LABEL`) is the build it closed on, when nothing else named the current build.
+ * A run still going, stopped, or closed some other way may have changed since that picture (a claim
+ * refused, then more work), so it never gets it.
  */
-async function supplementOpenFinish(summary: RunSummary, dir: string): Promise<void> {
+async function supplementOpenFinish(summary: RunSummary, runDir: string): Promise<void> {
   if (summary.captures?.current) return;
   const closedInFolder = summary.profile === LoopProfile.Open && summary.execution === ExecutionStatus.Completed;
-  if (!closedInFolder) return;
-  const picture = await realpath(path.join(dir, OPEN_FINISH_PICTURE)).catch(() => null);
-  if (picture && isBelow(dir, picture)) summary.captures = { ...summary.captures, current: picture };
+  if (!closedInFolder || !closedOnClaim(summary)) return;
+  const picture = await realpath(path.join(runDir, `${OPEN_FINISH_PICTURE_LABEL}.jpg`)).catch(() => null);
+  if (picture && isBelow(runDir, picture)) summary.captures = { ...summary.captures, current: picture };
 }
 
 export async function supplementRunEvidence(summary: RunSummary, runsRoot: string): Promise<void> {
@@ -210,5 +216,5 @@ export async function supplementRunEvidence(summary: RunSummary, runsRoot: strin
   await supplementPlaytests(summary, dir, entries);
   await supplementJudges(summary, dir, entries);
   await supplementHealthCapture(summary, dir, entries);
-  await supplementOpenFinish(summary, dir);
+  await supplementOpenFinish(summary, path.dirname(dir));
 }

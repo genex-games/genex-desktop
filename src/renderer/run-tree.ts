@@ -143,8 +143,8 @@ const pictured = (save: Step): boolean => save.shown !== null && roundShot(save.
 
 /**
  * What the lead wears once it is done or paused: its work is where the run's last save point left
- * it, or where its newest build stands (the newest screenshot a health check kept, else `build`,
- * the build's own picture) in a Loop without save points or whose last one kept no picture. Null
+ * it, or where its newest build stands (`build`, the build's own picture, else the newest screenshot
+ * a health check kept) in a Loop without save points or whose last one kept no picture. Null
  * while it works, waits or after a stop, and in a run with none of them.
  */
 export function leadRest(
@@ -156,7 +156,7 @@ export function leadRest(
   if (!AT_REST.has(face)) return null;
   const save = lastSavePoint(rows);
   if (save && pictured(save)) return { save };
-  const built = healthPicture(graph, null)?.path ?? build;
+  const built = build ?? healthPicture(graph, null)?.path;
   if (built) return { build: built };
   return save ? { save } : null;
 }

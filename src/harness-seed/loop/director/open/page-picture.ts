@@ -2,13 +2,13 @@
  * Genex's own picture of a web game's page at a save point. A web game has no plugin whose
  * checkpoint steps take pictures, so a save point whose lead named none (`save_point {shows}`) would
  * keep no picture at all, and the Builds graph would draw its card, the lead's and the build's blank.
- * Genex looks at the page as it takes a build's picture (`pagePicture`, loop/health-check.ts): in a
+ * Genex looks at the page as it takes a build's picture (`pagePicture`, loop/page-look.ts): in a
  * window of its own, never the person's Live. A module of its own, so the shipped tools need no new
  * name from a module an agent may have kept.
  */
 import type { FactsOfDescriptor } from "../../folder-facts.ts";
 import { pageChecked } from "../../folder-facts.ts";
-import { pagePicture } from "../../health-check.ts";
+import { pagePicture } from "../../page-look.ts";
 import { HostMethod } from "../../host-methods.ts";
 import type { LoopRun } from "../loop-run.ts";
 
@@ -17,6 +17,13 @@ import type { LoopRun } from "../loop-run.ts";
  * (`thumbShot`). Persisted in `facet_iteration.shots`: never rename the value.
  */
 export const PAGE_CAMERA = "default";
+
+/**
+ * The name the finish's look at the page files its picture under in the run's folder (a JPEG): the
+ * build a Loop that closed on its lead's claim closed on. The app reads it there for a past run's
+ * build (`OPEN_FINISH_PICTURE_LABEL`, shared/run-summary.ts). Persisted: never rename the value.
+ */
+export const FINISH_PICTURE_LABEL = "director/finish";
 
 /**
  * The game as the host lists it now: the Loop may have changed what its folder holds (an engine's

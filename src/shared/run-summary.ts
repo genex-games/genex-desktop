@@ -133,6 +133,12 @@ export interface RunSummary {
 
 /** `RunSummary.execution` for a run whose history has no lifecycle record yet. */
 export const UNKNOWN_EXECUTION = "unknown";
+/**
+ * The name, under a run's folder, of the JPEG a Loop led in its folder keeps of its page as its lead
+ * finishes: the seed's `FINISH_PICTURE_LABEL` (`director/open/page-picture.ts`), held to it by
+ * `seed-contracts.test.ts`. Persisted: never rename the value.
+ */
+export const OPEN_FINISH_PICTURE_LABEL = "director/finish";
 /** The worker a plain (not directed) build's rounds belong to. */
 const BUILD_WORKER = "build";
 /** The worker a merge that names none is counted against. */
