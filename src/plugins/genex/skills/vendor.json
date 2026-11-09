@@ -1,17 +1,17 @@
 {
-  "cliVersion": "1.40.0",
-  "skillMdVersion": "1.40.0",
+  "cliVersion": "1.40.1",
+  "skillMdVersion": "1.40.1",
   "url": "https://genex.games/SKILL.md",
   "files": {
     "genex/SKILL.md": {
       "source": "https://genex.games/SKILL.md",
-      "sha256": "df89029d58e8ecccd6333fde4dfadf1b5072f18ccf31d67294a3df626c486f85",
+      "sha256": "034a2ba37a335bd8a8bf7026b941efa2e26df318d5655824b2d1d8337875918d",
       "bytes": 5698
     },
     "genex-threejs-multiplayer/SKILL.md": {
       "source": "@genex-ai/cli-demo/templates/skills/genex-threejs-multiplayer/SKILL.md",
-      "sha256": "3fb4e5e35afccc492e28c7e16820e46ccb8781ac465b40b7337d6be594473b98",
-      "bytes": 37295
+      "sha256": "828a133e60acfadb48467315d9bfaefcdcbc11643b29b78eef58984c019502ed",
+      "bytes": 37581
     },
     "genex-threejs-multiplayer/references/realtime-patterns.md": {
       "source": "@genex-ai/cli-demo/templates/skills/genex-threejs-multiplayer/references/realtime-patterns.md",
