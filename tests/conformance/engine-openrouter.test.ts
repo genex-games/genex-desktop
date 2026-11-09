@@ -254,6 +254,37 @@ describe("OpenRouter completions", () => {
     }
   });
 
+  it("asks again for the reply the credits still cover, once, and never below a useful reply", async () => {
+    const short = (afford: number) => ({
+      httpStatus: 402,
+      body: `{"error":{"message":"This request requires more credits, or fewer max_tokens. You requested up to 32768 tokens, but can only afford ${afford}. To increase, visit https://openrouter.ai/settings/credits"}}`,
+    });
+    const server = await fake({ replies: [short(9000), { text: "still building" }] });
+    const engine = await engineFor(server);
+    const response = await engine.complete({ model: SONNET, messages: [{ role: "user", content: "go" }] });
+    assert.equal(response.message.content, "still building");
+    const asked = server.requests
+      .filter((request) => request.path === "/api/v1/chat/completions")
+      .map((request) => {
+        const body = request.body as { max_tokens?: number; max_completion_tokens?: number };
+        return body.max_tokens ?? body.max_completion_tokens;
+      });
+    assert.equal(asked.length, 2);
+    assert.ok((asked[1] ?? 0) <= 9000 && (asked[1] ?? 0) < (asked[0] ?? 0), `asked ${asked.join(" then ")}`);
+
+    for (const replies of [[short(300)], [short(9000), short(5000)]]) {
+      const broke = await fake({ replies });
+      await assert.rejects(
+        (await engineFor(broke)).complete({ model: SONNET, messages: [{ role: "user", content: "go" }] }),
+        (err) => err instanceof EngineError && err.kind === "usage_limit",
+      );
+      assert.equal(
+        broke.requests.filter((request) => request.path === "/api/v1/chat/completions").length,
+        Math.min(replies.length, 2),
+      );
+    }
+  });
+
   it("never puts the key in an error, even when the provider echoes it back", async () => {
     const echo = `{"error":{"message":"bad header Bearer ${GOOD_KEY}"}}`;
     const engine = await engineFor(await fake({ replies: [{ httpStatus: 400, body: echo }] }));

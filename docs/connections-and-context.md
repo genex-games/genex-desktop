@@ -162,7 +162,8 @@ pick seeds the first game's chat (`rememberWelcomeModel`). A locked store saves 
 the key; only tool-calling models are listed, with their context, reply cap, vision, reasoning
 efforts and price. OpenRouter picks no default model. Context is estimated from characters before
 each request (compaction runs early rather than late); 401/403 is a sign-in failure, 402 a usage
-limit, 429 a rate limit. Errors are redacted before they are logged.
+limit (when it says the balance can only afford a shorter reply of at least 1,024 tokens, the
+request is sent once more asking for 90% of that), 429 a rate limit. Errors are redacted before they are logged.
 
 **OpenCode** ([opencode.ts](../src/substrate/engines/opencode.ts)) is a delegated engine that runs
 `opencode run --format json` with the brief on stdin, resumed by `--session`. Two command lines are
