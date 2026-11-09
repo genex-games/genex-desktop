@@ -86,17 +86,19 @@ export async function keepPicture(ctx: HarnessCtx, target: PageTarget, handle: s
 
 /**
  * A picture of the page in `target`, with no check: the screenshot's file under the run, or null
- * when no window came or the host kept none. Never throws, and the window is given back whatever
- * happened.
+ * when no window came, the run was stopped meanwhile or the host kept none. Never throws, and the
+ * window is given back whatever happened.
  */
 export async function pagePicture(
   ctx: HarnessCtx,
   target: PageTarget,
   { sleep: wait = sleep }: { sleep?: Wait } = {},
 ): Promise<string | null> {
+  // A Stop or a pause while the window came, or while the page loaded, takes no picture.
   const photographed = async (handle: string) => {
+    if (ctx.cancelled) return null;
     await loadAsShot(ctx, target, handle, wait);
-    return keepPicture(ctx, target, handle);
+    return ctx.cancelled ? null : keepPicture(ctx, target, handle);
   };
   return inPageWindow(ctx, target.label, wait, photographed, { noWindow: () => null, failed: () => null });
 }

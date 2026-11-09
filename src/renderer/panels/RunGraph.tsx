@@ -638,11 +638,9 @@ const GraphNodes = memo(function GraphNodes({
   onSelect: (id: string) => void;
 }): JSX.Element {
   const { graph, layout, leadNode, finishCheck } = model;
-  // Only a picture of the build itself, shown and not borrowed from an earlier one, is the resting lead's.
-  const build = stills.resultSrc && !stills.borrowed ? stills.resultPath : null;
   const rest = useMemo(
-    () => (model.face ? leadRest(model.graph, model.rows, model.face, build) : null),
-    [model.graph, model.rows, model.face, build],
+    () => (model.face ? leadRest(model.graph, model.rows, model.face, stills.finalPath) : null),
+    [model.graph, model.rows, model.face, stills.finalPath],
   );
   const jobsRect = layout.rects[GraphSelection.Jobs];
   const finishRect = layout.rects[GraphSelection.FinishCheck];

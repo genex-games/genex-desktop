@@ -39,7 +39,7 @@ export async function gameNow(loopRun: LoopRun): Promise<FactsOfDescriptor> {
 /** Genex's picture of the page at save point `round`, or null for a game that is no web page. */
 async function pageAt(loopRun: LoopRun, round: number): Promise<{ camera: string; path: string } | null> {
   const { ctx, run } = loopRun;
-  if (!pageChecked(await gameNow(loopRun))) return null;
+  if (ctx.cancelled || !pageChecked(await gameNow(loopRun))) return null;
   const target = { project: run.project, runId: run.runId, label: `open/save-${round}/${PAGE_CAMERA}` };
   const path = await pagePicture(ctx, target, { sleep: loopRun.open.clock.sleep });
   return path ? { camera: PAGE_CAMERA, path } : null;
