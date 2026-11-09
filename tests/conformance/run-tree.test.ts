@@ -448,6 +448,17 @@ describe("the lead says what it is doing", () => {
     const pictured = fold(readLog("lead-in-place-run.json"));
     assert.equal(savedAt(leadRest(pictured.graph, pictured.rows, LeadFace.Done, build)), "step:lead:11");
     assert.equal(leadRest(graph, rows, LeadFace.Stopped, build), null);
+    // A health check's picture may predate the save point: it never stands in for one.
+    graph.health.push({
+      head: null,
+      ok: true,
+      picture: "/runs/run_x/director/older.jpg",
+      worker: null,
+      problems: [],
+      findings: null,
+      seq: 0,
+    });
+    assert.equal(savedAt(leadRest(graph, rows, LeadFace.Done)), "step:lead:11");
   });
 
   it("done in a Loop without save points, the lead wears its newest build's screenshot", () => {

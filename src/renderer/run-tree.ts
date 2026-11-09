@@ -143,9 +143,9 @@ const pictured = (save: Step): boolean => save.shown !== null && roundShot(save.
 
 /**
  * What the lead wears once it is done or paused: its work is where the run's last save point left
- * it, or where its newest build stands (`build`, the build's own picture, else the newest screenshot
- * a health check kept) in a Loop without save points or whose last one kept no picture. Null
- * while it works, waits or after a stop, and in a run with none of them.
+ * it; where its build stands (`build`, the build's own picture) when that save point kept no picture;
+ * and in a Loop without save points, that picture or else the newest screenshot a health check kept.
+ * Null while it works, waits or after a stop, and in a run with none of them.
  */
 export function leadRest(
   graph: RunGraph,
@@ -155,10 +155,10 @@ export function leadRest(
 ): LeadRest | null {
   if (!AT_REST.has(face)) return null;
   const save = lastSavePoint(rows);
-  if (save && pictured(save)) return { save };
+  // A health check's picture may be older than the save point: only the build's own stands in for it.
+  if (save) return pictured(save) || !build ? { save } : { build };
   const built = build ?? healthPicture(graph, null)?.path;
-  if (built) return { build: built };
-  return save ? { save } : null;
+  return built ? { build: built } : null;
 }
 
 /** Whole minutes a job has run by `now`, 0 when its start is unknown or ahead of the clock. */

@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { supplementRunEvidence } from "../../src/main/run-evidence.ts";
 import { summarizeRun } from "../../src/shared/run-summary.ts";
+import type { EventEnvelope } from "../../src/shared/event-log.ts";
 
 test("historical playtest stays incomplete with unknown revision; escaping report links are ignored", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "run-evidence-"));
@@ -167,15 +168,16 @@ test("a closed Loop led in its folder shows the page its finish photographed as 
     await mkdir(dir, { recursive: true });
     const picture = path.join(dir, "finish.jpg");
     await writeFile(picture, "jpeg");
-    const close = (victory: boolean) =>
+    const record = (eventType: string, payload: Record<string, unknown>, at = new Date(0)): EventEnvelope =>
       ({
-        id: "e1",
+        id: eventType,
         thread_id: "t1",
         session_id: null,
         turn_id: null,
-        created_at: new Date(0).toISOString(),
-        data: { type: "custom", event_type: "run_finished", payload: { runId: "run_open", victory } },
-      }) as never;
+        created_at: at.toISOString(),
+        data: { type: "custom", event_type: eventType, payload: { runId: "run_open", ...payload } },
+      }) as EventEnvelope;
+    const close = (victory: boolean) => record("run_finished", { victory });
     const closed = () => {
       const summary = summarizeRun([], "game", "run_open");
       summary.profile = "open";
@@ -193,6 +195,10 @@ test("a closed Loop led in its folder shows the page its finish photographed as 
       ["already has its build's capture", (s) => (s.captures = { current: "/elsewhere/judge.jpg" })],
       ["closed some other way, its claim refused before", (s) => (s.graphEvents = [close(false)])],
       ["no close on record", (s) => (s.graphEvents = [])],
+      [
+        "older than the newest save point: left by a refused claim when the accepted one could not look",
+        (s) => (s.graphEvents = [record("facet_iteration", {}, new Date(Date.now() + 60_000)), close(true)]),
+      ],
     ];
     for (const [why, change] of cases) {
       const other = closed();
@@ -208,6 +214,16 @@ test("a closed Loop led in its folder shows the page its finish photographed as 
     const linked = closed();
     await supplementRunEvidence(linked, root);
     assert.equal(linked.captures?.current, undefined, "a link out of the run's folder is never the build's picture");
+    // A director folder that is another run's: its picture is that run's, never this one's.
+    await rm(picture);
+    const other = path.join(root, "run_other", "director");
+    await mkdir(other, { recursive: true });
+    await writeFile(path.join(other, "finish.jpg"), "jpeg");
+    await rm(dir, { recursive: true });
+    await symlink(other, dir);
+    const borrowed = closed();
+    await supplementRunEvidence(borrowed, root);
+    assert.equal(borrowed.captures?.current, undefined, "another run's director folder is never this run's build");
   } finally {
     await rm(root, { recursive: true, force: true });
   }

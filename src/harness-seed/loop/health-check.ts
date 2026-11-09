@@ -10,7 +10,7 @@
  * are Genex's look at a page (`page-look.ts`).
  */
 import { HostMethod } from "./host-methods.ts";
-import { keepPicture, leaseWindow, loadAsShot, type PageTarget, type Wait } from "./page-look.ts";
+import { inPageWindow, keepPicture, loadAsShot, type PageTarget, type Wait } from "./page-look.ts";
 import { CLIP_DETAIL, clip } from "./text.ts";
 import { sleep } from "./time.ts";
 import type { HarnessCtx } from "../types/harness.d.ts";
@@ -70,15 +70,10 @@ export async function checkHealth(
   target: HealthTarget,
   { sleep: wait = sleep }: HealthOptions = {},
 ): Promise<HealthCheck> {
-  const handle = await leaseWindow(ctx, target.label, wait);
-  if (!handle) return unchecked(HEALTH_WORDS.noWindow);
-  try {
-    return await lookIn(ctx, target, handle, wait);
-  } catch (err) {
-    return unchecked(HEALTH_WORDS.failed(clip(String((err as Error)?.message ?? err), CLIP_DETAIL)));
-  } finally {
-    await ctx.call(HostMethod.PreviewRelease, { handle }).catch(() => {});
-  }
+  return inPageWindow(ctx, target.label, wait, (handle) => lookIn(ctx, target, handle, wait), {
+    noWindow: () => unchecked(HEALTH_WORDS.noWindow),
+    failed: (err) => unchecked(HEALTH_WORDS.failed(clip(String((err as Error)?.message ?? err), CLIP_DETAIL))),
+  });
 }
 
 /** A check in one line for the lead: healthy, or what is wrong. */

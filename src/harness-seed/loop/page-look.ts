@@ -32,7 +32,7 @@ export interface PageTarget {
 }
 
 /** A leased window, or null when none came after the retries. */
-export async function leaseWindow(ctx: HarnessCtx, label: string, wait: Wait): Promise<string | null> {
+async function leaseWindow(ctx: HarnessCtx, label: string, wait: Wait): Promise<string | null> {
   for (let attempt = 0; ; attempt++) {
     const lease = await ctx.call(HostMethod.PreviewAcquire, { label }).catch(() => null);
     if (lease?.handle) return lease.handle;
@@ -47,6 +47,28 @@ export async function loadAsShot(ctx: HarnessCtx, target: PageTarget, handle: st
   await ctx.call(HostMethod.PreviewLoad, { project: target.project, ...where, handle, shot: true });
   await ctx.call(HostMethod.PreviewReady, { handle, timeoutMs: READY_TIMEOUT_MS }).catch(() => null);
   await wait(SETTLE_MS);
+}
+
+/**
+ * `look` in a leased window of Genex's own, given back whatever happened: its answer, else
+ * `noWindow()` when none came after the retries, or `failed(error)` when the look threw.
+ */
+export async function inPageWindow<T>(
+  ctx: HarnessCtx,
+  label: string,
+  wait: Wait,
+  look: (handle: string) => Promise<T>,
+  otherwise: { noWindow: () => T; failed: (error: unknown) => T },
+): Promise<T> {
+  const handle = await leaseWindow(ctx, label, wait);
+  if (!handle) return otherwise.noWindow();
+  try {
+    return await look(handle);
+  } catch (error) {
+    return otherwise.failed(error);
+  } finally {
+    await ctx.call(HostMethod.PreviewRelease, { handle }).catch(() => {});
+  }
 }
 
 /** The page's screenshot as a file for the record, or null when the host kept none. */
@@ -72,14 +94,9 @@ export async function pagePicture(
   target: PageTarget,
   { sleep: wait = sleep }: { sleep?: Wait } = {},
 ): Promise<string | null> {
-  const handle = await leaseWindow(ctx, target.label, wait);
-  if (!handle) return null;
-  try {
+  const photographed = async (handle: string) => {
     await loadAsShot(ctx, target, handle, wait);
-    return await keepPicture(ctx, target, handle);
-  } catch {
-    return null;
-  } finally {
-    await ctx.call(HostMethod.PreviewRelease, { handle }).catch(() => {});
-  }
+    return keepPicture(ctx, target, handle);
+  };
+  return inPageWindow(ctx, target.label, wait, photographed, { noWindow: () => null, failed: () => null });
 }
