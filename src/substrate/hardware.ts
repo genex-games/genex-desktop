@@ -18,7 +18,8 @@
  * A PC's graphics cards (`gpu-memory.ts`) add their own memory, less 1 GB each for the desktop and
  * the driver. A model within that runs entirely on the card; a larger one that still fits the whole
  * budget runs split between the card and RAM, slower, as Ollama loads it. A 24 GB card with 32 GB
- * of RAM holds 23 + 21.3 GB: before the card was counted, a 21.7 GB model did not "fit" it.
+ * of RAM holds 23 + 21.3 GB: before the card was counted, a 21.7 GB model did not "fit" it. Best
+ * fit is the first ranked model that runs on the card, ahead of any that runs split.
  */
 import { execFile } from "node:child_process";
 import os from "node:os";
@@ -115,12 +116,17 @@ export interface CatalogChoice extends Omit<CatalogModel, "notes" | "mlx" | "min
   reason: string;
 }
 
-/** The graphics cards, read once a session: a card does not come or go while the app runs. */
-let gpuProbe: Promise<GpuInfo[]> | null = null;
-const sessionGpus = (): Promise<GpuInfo[]> => {
-  gpuProbe ??= detectGpus();
-  return gpuProbe;
-};
+/**
+ * The graphics cards, kept once found: a card does not come or go while the app runs. No card is
+ * asked again next time, so a slow first answer (a cold `nvidia-smi`) is not kept for the session.
+ */
+let foundGpus: GpuInfo[] | null = null;
+async function sessionGpus(): Promise<GpuInfo[]> {
+  if (foundGpus) return foundGpus;
+  const gpus = await detectGpus();
+  if (gpus.length) foundGpus = gpus;
+  return gpus;
+}
 
 /** The model budget on a PC's graphics cards: each card's memory less what it keeps for itself. */
 function gpuBudget(gpus: readonly GpuInfo[]): number {
@@ -178,11 +184,12 @@ export function catalogModels(): Record<string, CatalogModel> {
 }
 
 /**
- * The RAM a machine's tier is chosen by: a PC's graphics memory counts as the RAM that would give
- * the same model budget, so a 24 GB card with 16 GB of RAM ranks models as a 50 GB machine would.
+ * The RAM a machine's tier is chosen by: its own, or a PC's graphics memory taken as the RAM that
+ * would give the same budget, whichever is larger. A 24 GB card with 16 GB of RAM ranks the 32 GB
+ * tier's models, which run on the card; a small card leaves a large-RAM PC's tier as it was.
  */
 function tierRamGb(hw: HardwareInfo): number {
-  return hw.ramGb + hw.gpuModelGb / budgetShare(hw.appleSilicon);
+  return Math.max(hw.ramGb, hw.gpuModelGb / budgetShare(hw.appleSilicon));
 }
 
 /** The tier whose RAM requirement this machine meets (highest match). */
@@ -269,12 +276,14 @@ export async function recommendModels(hardware?: HardwareInfo): Promise<Recommen
   const models = catalogModels();
   const available = Object.entries(models).filter(([id, model]) => offered(id, model, hw));
   const offeredById = new Map(available);
-  const picks = tier.picks
+  const ranked = tier.picks
     .flatMap((id) => {
       const model = offeredById.get(id);
       return model ? [choice(id, model, hw)] : [];
     })
     .filter((pick) => pick.fits);
+  // A model on the card answers many times faster than one split with RAM: those rank first.
+  const picks = [...ranked.filter((pick) => !pick.split), ...ranked.filter((pick) => pick.split)];
   const shown = new Set(picks.map((pick) => pick.model));
   const more = available
     .filter(([id]) => !shown.has(id))

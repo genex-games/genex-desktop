@@ -57,8 +57,14 @@ function recording(answers: (file: string, args: readonly string[]) => string) {
   return { run, runs };
 }
 
-const registryAnswers = (memory: string, names: string) => (_file: string, args: readonly string[]) =>
-  args.includes("DriverDesc") ? names : memory;
+/** A PC without NVIDIA's tool answering: the registry's two queries get `memory` and `names`. */
+const registryAnswers = (memory: string, names: string) => (file: string, args: readonly string[]) => {
+  if (file.endsWith("nvidia-smi.exe")) return "";
+  return args.includes("DriverDesc") ? names : memory;
+};
+
+/** `nvidia-smi --query-gpu=name,memory.total --format=csv,noheader,nounits`: MiB, one card a line. */
+const SMI = "NVIDIA GeForce RTX 4090, 24564\nNVIDIA GeForce RTX 3090, 24576\nNVIDIA T400, [N/A]\n";
 
 describe("graphics memory on Windows", () => {
   it("reads each adapter's dedicated memory and driver name from the registry", () => {
@@ -69,12 +75,28 @@ describe("graphics memory on Windows", () => {
     ]);
   });
 
-  it("counts only the largest card, by reg.exe's full path, and leaves out an integrated GPU", async () => {
+  it("counts NVIDIA's cards from nvidia-smi in System32, and then never reads the registry", async () => {
+    // The registry keeps a swapped-out card's key; nvidia-smi lists only the cards in the machine.
+    const { run, runs } = recording((file) => (file.endsWith("nvidia-smi.exe") ? SMI : REG_MEMORY));
+    const gpus = await detectGpus({ platform: "win32", env: { SystemRoot: "D:\\Win" }, run });
+    assert.deepEqual(gpus, [
+      { name: "NVIDIA GeForce RTX 4090", memoryGb: 24 },
+      { name: "NVIDIA GeForce RTX 3090", memoryGb: 24 },
+    ]);
+    assert.deepEqual(
+      runs.map((r) => r.file),
+      ["D:\\Win\\System32\\nvidia-smi.exe"],
+      "a PATH entry never stands in for nvidia-smi",
+    );
+  });
+
+  it("without NVIDIA, counts only the largest registry card, by reg.exe's full path", async () => {
     const { run, runs } = recording(registryAnswers(REG_MEMORY, REG_NAMES));
     const gpus = await detectGpus({ platform: "win32", env: { SystemRoot: "D:\\Win" }, run });
     assert.deepEqual(gpus, [{ name: "NVIDIA GeForce RTX 4090", memoryGb: 24 }]);
-    assert.equal(runs.length, 2);
-    for (const { file, args } of runs) {
+    const registry = runs.filter((r) => !r.file.endsWith("nvidia-smi.exe"));
+    assert.equal(registry.length, 2);
+    for (const { file, args } of registry) {
       assert.equal(file, "D:\\Win\\System32\\reg.exe", "a PATH entry never stands in for reg.exe");
       assert.equal(args[0], "query");
       assert.ok(args.includes("/s"));
@@ -110,8 +132,6 @@ describe("graphics memory on Windows", () => {
 });
 
 describe("graphics memory on Linux", () => {
-  const SMI = "NVIDIA GeForce RTX 4090, 24564\nNVIDIA GeForce RTX 3090, 24576\nNVIDIA T400, [N/A]\n";
-
   it("reads NVIDIA's cards from nvidia-smi, in MiB", () => {
     assert.deepEqual(parseNvidiaSmi(SMI), [
       { name: "NVIDIA GeForce RTX 4090", memoryGb: 24 },
@@ -120,7 +140,8 @@ describe("graphics memory on Linux", () => {
     assert.deepEqual(parseNvidiaSmi("NVIDIA-SMI has failed because it couldn't communicate with the driver.\n"), []);
   });
 
-  it("counts every card in the machine: NVIDIA's and the amdgpu driver's", async () => {
+  /** A drm folder with an AMD card, an integrated carve-out, an unnamed AMD card and a connector. */
+  async function drmFolder(): Promise<string> {
     const drm = await tmpDir("gpu-drm-");
     const card = async (name: string, files: Record<string, string>) => {
       await mkdir(path.join(drm, name, "device"), { recursive: true });
@@ -131,18 +152,28 @@ describe("graphics memory on Linux", () => {
     await card("card2", { mem_info_vram_total: `${20 * 1024 ** 3}\n` });
     await card("card3", { vendor: "0x8086\n" });
     await card("card0-DP-1", { mem_info_vram_total: `${64 * 1024 ** 3}\n` });
+    return drm;
+  }
+
+  it("counts NVIDIA's cards alone where there are any: Ollama does not split a model across vendors", async () => {
     const { run, runs } = recording((file) => (file === "nvidia-smi" ? SMI : ""));
-    const gpus = await detectGpus({ platform: "linux", run, drmRoot: drm });
+    const gpus = await detectGpus({ platform: "linux", run, drmRoot: await drmFolder() });
     assert.deepEqual(gpus, [
       { name: "NVIDIA GeForce RTX 4090", memoryGb: 24 },
       { name: "NVIDIA GeForce RTX 3090", memoryGb: 24 },
-      { name: "AMD Radeon", memoryGb: 20 },
-      { name: "AMD Radeon RX 7800 XT", memoryGb: 16 },
     ]);
     assert.deepEqual(
       runs.map((r) => r.file),
       ["nvidia-smi"],
     );
+  });
+
+  it("without NVIDIA, counts every amdgpu card in the machine, leaving out a small carve-out", async () => {
+    const { run } = recording(() => "");
+    assert.deepEqual(await detectGpus({ platform: "linux", run, drmRoot: await drmFolder() }), [
+      { name: "AMD Radeon", memoryGb: 20 },
+      { name: "AMD Radeon RX 7800 XT", memoryGb: 16 },
+    ]);
   });
 
   it("finds no card where neither nvidia-smi nor the drm folder answers", async () => {
@@ -152,6 +183,13 @@ describe("graphics memory on Linux", () => {
       [],
     );
   });
+});
+
+it("answers no card when a probe never finishes, at its deadline", async () => {
+  // nvidia-smi stuck on a card that fell off the bus ignores the timeout's kill and never exits.
+  const stuck: ProbeRun = () => new Promise<string>(() => {});
+  for (const platform of ["linux", "win32"] as const)
+    assert.deepEqual(await detectGpus({ platform, env: {}, run: stuck, deadlineMs: 20 }), [], platform);
 });
 
 it("never probes a Mac: Apple Silicon memory is already counted as RAM", async () => {

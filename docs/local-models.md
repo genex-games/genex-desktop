@@ -14,16 +14,17 @@ offered only for a model that fits. One build per model is shown: MLX on Apple S
 portable GGUF elsewhere. The fit rule is weights + KV cache (0.5–3 GB) + 1.5 GB within 72% of
 unified memory on Apple Silicon (⅔ of RAM elsewhere).
 
-On Windows and Linux the graphics cards count too (`substrate/gpu-memory.ts`, read once a
-session): each card's memory less 1 GB joins RAM's share, since Ollama runs a model on the card
-and splits a larger one between the card and RAM. Windows reads each display adapter's
-`HardwareInformation.qwMemorySize` with `reg.exe` and counts only the largest card, because the
-registry keeps the keys of cards swapped out; Linux reads `nvidia-smi` and amdgpu's
-`mem_info_vram_total`. Cards under 2 GB and anything unreadable count as no card. A model larger
-than the cards that still fits is marked "slower: part runs on the CPU". A PC's tier is chosen as
-if its graphics memory were RAM giving the same budget, so a 24 GB card ranks the 32 GB tier's
-models. The hardware line names the cards. Recommendations are estimates; the large-Mac models
-have not been measured in Studio yet.
+On Windows and Linux the graphics cards count too (`substrate/gpu-memory.ts`): each card's memory
+less 1 GB joins RAM's share, since Ollama runs a model on the card and splits a larger one between
+the card and RAM. NVIDIA's cards come from `nvidia-smi` (System32 on Windows) and add up. Without
+one, Windows reads each display adapter's `HardwareInformation.qwMemorySize` with `reg.exe` and
+counts only the largest, because the registry keeps the keys of cards swapped out; Linux reads
+amdgpu's `mem_info_vram_total`. Cards under 2 GB, and anything unreadable within 5 seconds, count
+as no card; found cards are kept for the session. A model larger than the cards that still fits
+says "slower" (the tooltip says why). A PC's tier is the larger of its RAM's and its graphics
+memory taken as RAM, and models that run on the card rank before split ones, so Best fit runs on
+the card when any ranked model does. The hardware line names the cards. Recommendations are
+estimates; the large-Mac models have not been measured in Studio yet.
 
 An installed model's row offers Delete (a trash button, then Cancel or Delete on the row). A Bonsai
 delete removes the receipt first, stops a server loaded with that model, then deletes its weights
@@ -188,9 +189,10 @@ installed state, local worker selection under Codex and subscription roles under
 keeps, and refusals that remove nothing.
 
 `model-catalog.test.ts` covers ranking, Best fit per tier, one build per architecture, graphics
-memory in a PC's budget, tier and split, and "Needs a N GB Mac"; `gpu-memory.test.ts` covers the
-registry, `nvidia-smi` and amdgpu readings and every unreadable answer; `ollama-registry.test.ts`
-covers name validation, manifest URLs and size sums without network.
+memory in a PC's budget, tier, split and Best fit on the card, and "Needs a N GB Mac";
+`gpu-memory.test.ts` covers the registry, `nvidia-smi` and amdgpu readings, every unreadable
+answer and a probe that never ends; `ollama-registry.test.ts` covers name validation, manifest
+URLs and size sums without network.
 
 `mcp-plumbing.test.ts` and `genex-plumbing.test.ts` include the direct Bonsai session provider
 in their host schema, asset inspection, event and consent matrices, using fixtures only.

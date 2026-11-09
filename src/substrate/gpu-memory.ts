@@ -7,26 +7,32 @@
  * Apple Silicon memory is unified and already counted as RAM, and Ollama does not use an Intel
  * Mac's graphics card.
  *
+ * NVIDIA's cards come first, from `nvidia-smi`, which comes with NVIDIA's driver (in System32 on
+ * Windows) and lists only the cards in the machine; they add up, as Ollama spreads a model over
+ * them. Ollama does not split one model between vendors, so other cards count only without one:
  * - Windows: each display adapter's driver key holds `HardwareInformation.qwMemorySize`, its
  *   dedicated memory in bytes, read with `reg.exe` (on every Windows, by its full path). The class
  *   keeps the key of a card that was swapped out, so only the largest card counts.
- * - Linux: `nvidia-smi`, which comes with NVIDIA's driver, for NVIDIA cards; the amdgpu driver's
- *   `mem_info_vram_total` for AMD cards. Both list only the cards that are in the machine.
+ * - Linux: the amdgpu driver's `mem_info_vram_total` for each AMD card in the machine.
  *
  * A card under 2 GB (an integrated GPU's small carve-out) is left out. Anything that cannot be
- * read counts as no graphics card: the fit then rests on RAM alone, as it did before.
+ * read in 5 seconds counts as no graphics card: the fit then rests on RAM alone, as it did before.
+ * The deadline holds even when a program never exits (an `nvidia-smi` stuck on a card that fell off
+ * the bus ignores the kill a timeout sends).
  */
 import { execFile } from "node:child_process";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { StudioPlatform } from "../shared/boot.ts";
 import { SECOND_MS } from "../shared/duration.ts";
-import { regExeOf } from "./toolchain.ts";
+import { envValue, regExeOf } from "./toolchain.ts";
 
 const BYTES_PER_GB = 1024 ** 3;
 const MIB_PER_GB = 1024;
-/** How long one probe command may take, and how much it may print. */
-const PROBE_TIMEOUT_MS = 3 * SECOND_MS;
+/** How long one probe command may take, how long the whole probe may, and how much a command may print. */
+const PROBE_TIMEOUT_MS = 4 * SECOND_MS;
+const PROBE_DEADLINE_MS = 5 * SECOND_MS;
 const PROBE_MAX_BYTES = 1024 * 1024;
 /** A card with less memory than this is an integrated GPU's carve-out, too small to hold a model. */
 const MIN_GPU_MEMORY_GB = 2;
@@ -35,6 +41,8 @@ const MIN_GPU_MEMORY_GB = 2;
 const DISPLAY_CLASS_KEY = "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Class\\{4d36e968-e325-11ce-bfc1-08002be10318}";
 const REGISTRY_MEMORY = "HardwareInformation.qwMemorySize";
 const REGISTRY_NAME = "DriverDesc";
+const NVIDIA_SMI_ARGS = ["--query-gpu=name,memory.total", "--format=csv,noheader,nounits"] as const;
+const WINDOWS_ROOT = "C:\\Windows";
 /** Where Linux lists its graphics cards, one `cardN` folder each. */
 const DRM_ROOT = "/sys/class/drm";
 const DRM_CARD = /^card\d+$/;
@@ -59,6 +67,8 @@ export interface GpuProbeDeps {
   run?: ProbeRun;
   /** Linux's `/sys/class/drm`. */
   drmRoot?: string;
+  /** How long the whole probe may take before it counts as no card. */
+  deadlineMs?: number;
 }
 
 /**
@@ -122,17 +132,29 @@ export function parseNvidiaSmi(output: string): GpuInfo[] {
   return gpus;
 }
 
-async function windowsGpus(run: ProbeRun, env: NodeJS.ProcessEnv): Promise<GpuInfo[]> {
+/** The cards worth counting: an integrated GPU's small carve-out holds no model. */
+const usable = (gpus: GpuInfo[]): GpuInfo[] => gpus.filter((gpu) => gpu.memoryGb >= MIN_GPU_MEMORY_GB);
+
+/** The largest card alone: Windows' class keeps the keys of cards no longer in the machine. */
+function largest(gpus: GpuInfo[]): GpuInfo[] {
+  const [first, ...rest] = gpus;
+  if (!first) return [];
+  return [rest.reduce((big, gpu) => (gpu.memoryGb > big.memoryGb ? gpu : big), first)];
+}
+
+async function registryGpus(run: ProbeRun, env: NodeJS.ProcessEnv): Promise<GpuInfo[]> {
   const reg = regExeOf(env);
   const [memory, names] = await Promise.all([
     run(reg, ["query", DISPLAY_CLASS_KEY, "/s", "/v", REGISTRY_MEMORY]),
     run(reg, ["query", DISPLAY_CLASS_KEY, "/s", "/v", REGISTRY_NAME]),
   ]);
-  return parseRegistryGpus(memory, names);
+  return largest(usable(parseRegistryGpus(memory, names)));
 }
 
-async function nvidiaGpus(run: ProbeRun): Promise<GpuInfo[]> {
-  return parseNvidiaSmi(await run("nvidia-smi", ["--query-gpu=name,memory.total", "--format=csv,noheader,nounits"]));
+/** `nvidia-smi`: by its full path in System32 on Windows, so a PATH entry never stands in for it. */
+function nvidiaSmiOf(platform: NodeJS.Platform, env: NodeJS.ProcessEnv): string {
+  if (platform !== StudioPlatform.Windows) return "nvidia-smi";
+  return path.win32.join(envValue(env, "SystemRoot") || WINDOWS_ROOT, "System32", "nvidia-smi.exe");
 }
 
 /** A file's trimmed text, or null when it cannot be read. */
@@ -155,31 +177,23 @@ async function amdGpus(drmRoot: string): Promise<GpuInfo[]> {
       return { name, memoryGb: gbOf(bytes) };
     }),
   );
-  return found.filter((gpu): gpu is GpuInfo => gpu !== null);
+  return usable(found.filter((gpu): gpu is GpuInfo => gpu !== null));
 }
 
-/** The cards on this platform, before the small ones are left out. */
+/** NVIDIA's cards when the machine has one, else the other vendor's; none off Windows and Linux. */
 async function platformGpus(deps: GpuProbeDeps): Promise<GpuInfo[]> {
   const platform = deps.platform ?? process.platform;
+  if (platform !== StudioPlatform.Windows && platform !== StudioPlatform.Linux) return [];
   const run = deps.run ?? runQuietly;
-  if (platform === StudioPlatform.Windows) return windowsGpus(run, deps.env ?? process.env);
-  if (platform !== StudioPlatform.Linux) return [];
-  const [nvidia, amd] = await Promise.all([nvidiaGpus(run), amdGpus(deps.drmRoot ?? DRM_ROOT)]);
-  return [...nvidia, ...amd];
+  const env = deps.env ?? process.env;
+  const nvidia = usable(parseNvidiaSmi(await run(nvidiaSmiOf(platform, env), NVIDIA_SMI_ARGS)));
+  if (nvidia.length) return nvidia;
+  return platform === StudioPlatform.Windows ? registryGpus(run, env) : amdGpus(deps.drmRoot ?? DRM_ROOT);
 }
 
-/** The largest card alone: Windows' class keeps the keys of cards no longer in the machine. */
-function largest(gpus: GpuInfo[]): GpuInfo[] {
-  const [first, ...rest] = gpus;
-  if (!first) return [];
-  return [rest.reduce((big, gpu) => (gpu.memoryGb > big.memoryGb ? gpu : big), first)];
-}
-
-/** The graphics cards a local model can run on, largest first; empty on a Mac or when none can be read. */
+/** The graphics cards a local model can run on, largest first; empty on a Mac or when none can be read in time. */
 export async function detectGpus(deps: GpuProbeDeps = {}): Promise<GpuInfo[]> {
-  const gpus = (await platformGpus(deps).catch(() => [] as GpuInfo[])).filter(
-    (gpu) => gpu.memoryGb >= MIN_GPU_MEMORY_GB,
-  );
-  const counted = (deps.platform ?? process.platform) === StudioPlatform.Windows ? largest(gpus) : gpus;
-  return counted.sort((a, b) => b.memoryGb - a.memoryGb);
+  const deadline = sleep(deps.deadlineMs ?? PROBE_DEADLINE_MS, [] as GpuInfo[], { ref: false });
+  const gpus = await Promise.race([platformGpus(deps).catch(() => [] as GpuInfo[]), deadline]);
+  return [...gpus].sort((a, b) => b.memoryGb - a.memoryGb);
 }

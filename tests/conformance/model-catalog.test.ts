@@ -173,6 +173,23 @@ describe("model catalog", () => {
     // RAM alone ranks 16 GB's small models first; a 24 GB card runs the 32 GB tier's Best fit.
     assert.equal((await recommendModels(pc(16, []))).defaultModel, "gemma4:12b");
     assert.equal((await recommendModels(pc(16, [RTX_24]))).defaultModel, "qwen3.8:27b");
+    // A small card never lowers a large-RAM PC's tier below what its RAM ranks.
+    assert.equal(
+      (await recommendModels(pc(32, [{ name: "GeForce RTX 3060 Ti", memoryGb: 8 }]))).defaultModel,
+      "qwen3.8:27b",
+    );
+  });
+
+  it("makes Best fit a model that runs on the card, ahead of one that runs split", async () => {
+    // Split with RAM, a 27B model answers many times slower than a 12B one on a 12 GB card.
+    const small = await recommendModels(pc(16, [{ name: "GeForce RTX 3060", memoryGb: 12 }]));
+    assert.equal(small.defaultModel, "gemma4:12b");
+    assert.equal(small.picks[0]?.split, false);
+    const big = await recommendModels(pc(64, [RTX_24]));
+    assert.equal(big.defaultModel, "qwen3.8:27b", "gemma4:31b needs 23.8 GB: split on a 24 GB card");
+    const firstSplit = big.picks.findIndex((p) => p.split);
+    assert.ok(firstSplit > 0, "the split picks come after the ones on the card");
+    assert.ok(big.picks.slice(firstSplit).every((p) => p.split));
   });
 
   it("keeps a PC without a graphics card on RAM alone, and never names a Mac", async () => {
