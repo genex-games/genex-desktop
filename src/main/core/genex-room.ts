@@ -432,6 +432,8 @@ export class GenexRoomService {
   readonly #rooms = new Map<string, Room>();
   /** The studio is stopping: its preview goes with it, so no room reloads it on the way out. */
   #closing = false;
+  /** How many starts and stops each game's room was asked for: a start goes on only while it is the latest. */
+  readonly #asks = new Map<string, number>();
   constructor(deps: GenexRoomDeps) {
     this.#deps = deps;
   }
@@ -486,8 +488,21 @@ export class GenexRoomService {
     };
   }
 
-  /** End the game's room: its last report, then its process tree. */
-  async stop(project: string): Promise<RoomStatus> {
+  /** End the game's room: its last report, then its process tree. A start still under way starts nothing again. */
+  stop(project: string): Promise<RoomStatus> {
+    this.#ask(project);
+    return this.#end(project);
+  }
+
+  /** Count one more start or stop asked of the game's room; its number is the latest ask from now on. */
+  #ask(project: string): number {
+    const ask = (this.#asks.get(project) ?? 0) + 1;
+    this.#asks.set(project, ask);
+    return ask;
+  }
+
+  /** The game's room ended, as a stop and the start of its next room both need it. */
+  async #end(project: string): Promise<RoomStatus> {
     const room = this.#rooms.get(project);
     if (!room) return this.status(project);
     const last = { ...this.status(project), running: false, url: null, reachable: false, previewJoined: false };
@@ -611,11 +626,13 @@ export class GenexRoomService {
    * The game's room once it listens, and its address; the last room of the game ends first. Where
    * the room's ports are named for it, another program (a second room starting at the same moment)
    * can take one between the look that found it free and the room's own listen: the room is then
-   * started again on ports free by then, {@link ROOM_PORT_TRIES} times at most.
+   * started again on ports free by then, {@link ROOM_PORT_TRIES} starts in all. Not behind a stop
+   * or a later start of the game, though: that ask decides how the room stands.
    */
   async #listen(start: RoomStart): Promise<{ room: Room; url: string }> {
+    const ask = this.#ask(start.project);
     for (let tries = 1; ; tries += 1) {
-      await this.stop(start.project);
+      await this.#end(start.project);
       const ports = await this.#ports(start.call.latencyMs);
       const room = await this.#serve(start, ports);
       try {
@@ -624,7 +641,9 @@ export class GenexRoomService {
         return { room, url };
       } catch (error) {
         const portTaken = ports !== null && error instanceof ListenerRefused;
-        if (!portTaken || tries >= ROOM_PORT_TRIES) throw error;
+        const latest = !this.#closing && this.#asks.get(start.project) === ask;
+        const again = portTaken && latest && tries < ROOM_PORT_TRIES;
+        if (!again) throw error;
       }
     }
   }

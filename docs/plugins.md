@@ -4009,8 +4009,8 @@ with the working dot, Checking fixes; none for a game Genex doesn't know) comes 
   the range's highest free ports) for its own bots, takes no delay (the toolchain's delay proxies
   pick their own ports) and is stopped through the live-input relay; nothing else is opened. A port
   another program took before the room could listen on it (the toolchain's `listen_failed`, two
-  rooms starting at once) starts the room again on the ports free by then, three times at most
-  (`ROOM_PORT_TRIES`). On
+  rooms starting at once) starts the room again on the ports free by then, three starts in all
+  (`ROOM_PORT_TRIES`), and never behind a stop or a later start of the game. On
   Linux the sandbox gives the room a network namespace of its own, so it listens on ports free on
   this computer too and the loopback bridge opens them here: this computer's connections and
   datagrams go in, the room reaches nothing out. The preview is loaded into a room only once this

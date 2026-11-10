@@ -18,6 +18,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 import { describe, it } from "node:test";
+import { setImmediate as turn } from "node:timers/promises";
 import { GenexRoomService, type RoomStatus } from "../../src/main/core/genex-room.ts";
 import { StudioPlatform } from "../../src/shared/boot.ts";
 import { ProcessSandbox, type SandboxPolicy } from "../../src/substrate/spawn.ts";
@@ -75,6 +76,24 @@ function refusedRoom(error?: unknown): { child: ChildProcess; input: PassThrough
     child.emit("close", 1, null);
   });
   queueMicrotask(() => stdout.end(error === undefined ? "" : `ERROR ${JSON.stringify(error)}\n`));
+  return { child, input };
+}
+
+/**
+ * A room that is refused its port as it is asked to stop: once its input closes it prints the
+ * toolchain's ERROR line and ends.
+ */
+function refusedOnStop(error: unknown): { child: ChildProcess; input: PassThrough } {
+  const child = new EventEmitter() as ChildProcess;
+  const stdout = new PassThrough();
+  const input = new PassThrough();
+  Object.assign(child, { stdout, stderr: new PassThrough(), exitCode: null, signalCode: null });
+  stdout.once("end", () => {
+    Object.assign(child, { exitCode: 1 });
+    child.emit("close", 1, null);
+  });
+  input.on("finish", () => stdout.end(`ERROR ${JSON.stringify(error)}\n`));
+  input.resume();
   return { child, input };
 }
 
@@ -185,6 +204,65 @@ describe("a room on Windows listens where its sandboxed bots may connect, and is
     }
   });
 
+  it("leaves macOS and Linux rooms on any port, with a delay", async () => {
+    for (const platform of [StudioPlatform.Mac, StudioPlatform.Linux]) {
+      const { rooms, sandbox, spawned, binding } = await setup(platform);
+      assert.equal(sandbox.loopbackPorts(), null, platform);
+      await rooms.call({ action: "start", latencyMs: 80 }, binding);
+      const command = spawned[0]?.command ?? "";
+      assert.equal(option(command, "--port"), null, `${platform}: the room picks its own port`);
+      assert.equal(option(command, "--latency"), 80);
+      await rooms.stopAll();
+    }
+  });
+});
+
+/** Starts the toolchain refuses: what each spawn does, how many starts it takes, what the last one says. */
+const REFUSED_STARTS: Array<{
+  name: string;
+  platform: StudioPlatform;
+  room: (command: string) => { child: ChildProcess; input: PassThrough };
+  starts: number;
+  refused: RegExp;
+}> = [
+  {
+    name: "a port taken at every start",
+    platform: StudioPlatform.Windows,
+    room: (command) => refusedRoom(fastPortTaken(command)),
+    starts: 3,
+    refused: /did not start: .*EADDRINUSE/,
+  },
+  {
+    name: "a refusal that is no listener's",
+    platform: StudioPlatform.Windows,
+    room: () => refusedRoom({ reason: "module_failed", detail: "the module threw in init" }),
+    starts: 1,
+    refused: /did not start: .*module_failed/,
+  },
+  {
+    name: "an error that names no reason",
+    platform: StudioPlatform.Windows,
+    room: () => refusedRoom("listen_failed"),
+    starts: 1,
+    refused: /did not start/,
+  },
+  {
+    name: "an exit with no word",
+    platform: StudioPlatform.Windows,
+    room: () => refusedRoom(),
+    starts: 1,
+    refused: /did not start: the toolchain exited \(1\)/,
+  },
+  {
+    name: "a listener the room picked itself (macOS names none)",
+    platform: StudioPlatform.Mac,
+    room: () => refusedRoom({ reason: "listen_failed", detail: "listen EACCES 127.0.0.1" }),
+    starts: 1,
+    refused: /did not start: .*EACCES/,
+  },
+];
+
+describe("a room whose port another program took before the room could listen on it", () => {
   it("starts on other ports when another program took one before the room could listen on it", async () => {
     // The incident: two rooms started at the same moment on one PC. Each found 60089 free for fast@1;
     // the second to open it was refused (EADDRINUSE) and its start failed, with 60088 free.
@@ -211,50 +289,7 @@ describe("a room on Windows listens where its sandboxed bots may connect, and is
   });
 
   it("starts again only for a listener Studio named, a few times, and says why the last start failed", async () => {
-    const cases: Array<{
-      name: string;
-      platform: StudioPlatform;
-      room: (command: string) => { child: ChildProcess; input: PassThrough };
-      starts: number;
-      refused: RegExp;
-    }> = [
-      {
-        name: "a port taken at every start",
-        platform: StudioPlatform.Windows,
-        room: (command) => refusedRoom(fastPortTaken(command)),
-        starts: 3,
-        refused: /did not start: .*EADDRINUSE/,
-      },
-      {
-        name: "a refusal that is no listener's",
-        platform: StudioPlatform.Windows,
-        room: () => refusedRoom({ reason: "module_failed", detail: "the module threw in init" }),
-        starts: 1,
-        refused: /did not start: .*module_failed/,
-      },
-      {
-        name: "an error that names no reason",
-        platform: StudioPlatform.Windows,
-        room: () => refusedRoom("listen_failed"),
-        starts: 1,
-        refused: /did not start/,
-      },
-      {
-        name: "an exit with no word",
-        platform: StudioPlatform.Windows,
-        room: () => refusedRoom(),
-        starts: 1,
-        refused: /did not start: the toolchain exited \(1\)/,
-      },
-      {
-        name: "a listener the room picked itself (macOS names none)",
-        platform: StudioPlatform.Mac,
-        room: () => refusedRoom({ reason: "listen_failed", detail: "listen EACCES 127.0.0.1" }),
-        starts: 1,
-        refused: /did not start: .*EACCES/,
-      },
-    ];
-    for (const { name, platform, room, starts, refused } of cases) {
+    for (const { name, platform, room, starts, refused } of REFUSED_STARTS) {
       const { rooms, spawned, binding } = await setup(platform, () => true, room);
       await assert.rejects(rooms.call({ action: "start" }, binding), refused, name);
       assert.equal(spawned.length, starts, `${name}: started ${starts} time(s)`);
@@ -262,15 +297,54 @@ describe("a room on Windows listens where its sandboxed bots may connect, and is
     }
   });
 
-  it("leaves macOS and Linux rooms on any port, with a delay", async () => {
-    for (const platform of [StudioPlatform.Mac, StudioPlatform.Linux]) {
-      const { rooms, sandbox, spawned, binding } = await setup(platform);
-      assert.equal(sandbox.loopbackPorts(), null, platform);
-      await rooms.call({ action: "start", latencyMs: 80 }, binding);
-      const command = spawned[0]?.command ?? "";
-      assert.equal(option(command, "--port"), null, `${platform}: the room picks its own port`);
-      assert.equal(option(command, "--latency"), 80);
-      await rooms.stopAll();
+  it("starts no room again behind a stop or a later start of the game", async () => {
+    // An ask that lands while a start is being refused its port ends that start: no room comes up
+    // behind a stop that already answered "not running", none takes the place of a later start's.
+    type Ask = (rooms: GenexRoomService, binding: { project: string; directory: string }) => unknown;
+    const asks: Array<{ name: string; ask: Ask; starts: number; running: boolean }> = [
+      { name: "genex__room stop", ask: (rooms, at) => rooms.call({ action: "stop" }, at), starts: 1, running: false },
+      { name: "the studio stopping", ask: (rooms) => rooms.stopAll(), starts: 1, running: false },
+      { name: "a later start", ask: (rooms, at) => rooms.call({ action: "start" }, at), starts: 2, running: true },
+    ];
+    for (const { name, ask, starts, running } of asks) {
+      let spawnedOnce = () => {};
+      const firstSpawn = new Promise<void>((resolve) => {
+        spawnedOnce = resolve;
+      });
+      const { rooms, spawned, binding } = await setup(
+        StudioPlatform.Windows,
+        () => true,
+        (command) => {
+          if (spawned.length > 1) return listeningRoom(command);
+          spawnedOnce();
+          return refusedOnStop(fastPortTaken(command));
+        },
+      );
+      const refused = assert.rejects(rooms.call({ action: "start" }, binding), /did not start: .*EADDRINUSE/, name);
+      await firstSpawn;
+      await turn();
+      try {
+        await ask(rooms, binding);
+        await refused;
+        assert.equal(spawned.length, starts, `${name}: the refused start runs nothing more`);
+        assert.equal(rooms.status(binding.project).running, running, name);
+      } finally {
+        await rooms.stopAll();
+      }
     }
+  });
+
+  it("starts no room again while the studio stops, though the stop found no room yet to end", async () => {
+    const { rooms, spawned, binding } = await setup(
+      StudioPlatform.Windows,
+      () => true,
+      (command) => (spawned.length > 1 ? listeningRoom(command) : refusedRoom(fastPortTaken(command))),
+    );
+    const starting = rooms.call({ action: "start" }, binding);
+    // Before the room's process runs: the studio's stop has nothing to end.
+    await rooms.stopAll();
+    await assert.rejects(starting, /did not start: .*EADDRINUSE/);
+    assert.equal(spawned.length, 1, "the room refused its port is not started again");
+    assert.equal(rooms.status(binding.project).running, false);
   });
 });
