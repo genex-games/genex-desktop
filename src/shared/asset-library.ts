@@ -157,7 +157,9 @@ export const SHARE_NAME_MAX = 40;
 export const LIBRARY_TITLE_MAX = 80;
 /** A clause or phrase that stands as a whole name is at least this long: "Fire, a huge jet…" is not "Fire". */
 const SHARE_WHOLE_MIN = 12;
-/** Where a clause ends. */
+/** A run this short after a joining word dangles and is cut off with it: "with a tall twisted". */
+const DANGLING_WORDS_MAX = 2;
+/** Punctuation that ends a clause when a space or the end follows it: "1.5" and "16:9" stay whole. */
 const CLAUSE_END = /[,;:.!?]/;
 /** Punctuation a shortened name never ends on. */
 const TRAILING_PUNCTUATION = /[\s,;:.!?\-\u2013\u2014]+$/;
@@ -273,10 +275,16 @@ function tidyEnd(text: string): string {
   return endsOnJoiningWord ? tidyEnd(name.slice(0, lastSpace)) : name;
 }
 
+/** Whether a clause of `name` ends just before `index`. */
+function endsClause(name: string, index: number): boolean {
+  const after = name.charAt(index + 1);
+  return CLAUSE_END.test(name.charAt(index)) && (after === "" || after === " ");
+}
+
 /** `name` ended at its last whole clause that fits Play, or null when none stands as a name. */
 function lastClause(name: string): string | null {
   for (let end = SHARE_NAME_MAX; end >= SHARE_WHOLE_MIN; end--) {
-    const clause = CLAUSE_END.test(name.charAt(end)) ? tidyEnd(name.slice(0, end)) : "";
+    const clause = endsClause(name, end) ? tidyEnd(name.slice(0, end)) : "";
     if (clause.length >= SHARE_WHOLE_MIN) return clause;
   }
   return null;
@@ -285,29 +293,36 @@ function lastClause(name: string): string | null {
 /**
  * `head`, the whole words that fit, ended where a phrase does; `cutOff` is the first word that did
  * not fit. Words that stop mid-phrase ("Giant mushroom tree with a tall twisted", and "stem" is cut
- * off) go back to before their last joining word ("Giant mushroom tree"), unless that leaves too
- * little to be a name.
+ * off) go back to before their last joining word ("Giant mushroom tree"). Only a short dangling run
+ * is given up, and never so much that too little is left to be a name.
  */
 function lastPhrase(head: string, cutOff: string): string {
   const whole = tidyEnd(head);
   if (whole.length < head.length || isJoiningWord(cutOff)) return whole;
   const words = whole.split(" ");
   const joining = words.findLastIndex((word, index) => index > 0 && isJoiningWord(word));
-  const phrase = joining > 0 ? tidyEnd(words.slice(0, joining).join(" ")) : "";
+  const dangling = words.length - 1 - joining;
+  if (joining <= 0 || dangling > DANGLING_WORDS_MAX) return whole;
+  const phrase = tidyEnd(words.slice(0, joining).join(" "));
   return phrase.length >= SHARE_WHOLE_MIN ? phrase : whole;
 }
 
 /**
- * A name as Play keeps it, the way genex.games shortens one itself: whole when it fits, else ended
- * at its last whole clause that fits, else at its last whole phrase or word, else at the limit.
+ * A name as Play keeps it, the way genex.games shortens one itself: accents folded to plain
+ * letters, whole when it fits, else ended at its last whole clause that fits, else at its last
+ * whole phrase or word, else at the limit and never through a character pair.
  */
 function fitShareName(text: string): string {
-  const name = text.replace(/\s+/g, " ").trim();
+  const name = text
+    .normalize("NFKD")
+    .replace(/\p{M}+/gu, "")
+    .replace(/\s+/g, " ")
+    .trim();
   if (name.length <= SHARE_NAME_MAX) return name;
   const clause = lastClause(name);
   if (clause) return clause;
-  const wordEnd = name.charAt(SHARE_NAME_MAX) === " " ? SHARE_NAME_MAX : name.lastIndexOf(" ", SHARE_NAME_MAX);
-  if (wordEnd <= 0) return name.slice(0, SHARE_NAME_MAX);
+  const wordEnd = name.lastIndexOf(" ", SHARE_NAME_MAX);
+  if (wordEnd <= 0) return name.slice(0, SHARE_NAME_MAX).replace(/[\uD800-\uDBFF]$/, "");
   return lastPhrase(name.slice(0, wordEnd), name.slice(wordEnd + 1).split(" ", 1)[0] ?? "");
 }
 

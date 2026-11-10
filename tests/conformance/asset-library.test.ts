@@ -500,7 +500,12 @@ describe("share names", () => {
       ["Dragon with enormous leathery wings spread wide open flying", "Dragon with enormous leathery wings"],
       ["Low poly wooden treasure chest with golden trim and an open lid", "Low poly wooden treasure chest"],
       ["Fire, a huge roaring jet of flame blasting out of the cave mouth", "Fire, a huge roaring jet"],
+      ["Medieval castle on hill fortress rampart tower stonework brick", "Medieval castle on hill fortress rampart"],
+      ["A stylized wooden barrel 1.5 meters tall with iron bands", "A stylized wooden barrel 1.5 meters tall"],
+      ["Sci-fi poster in 16:9 widescreen ratio with neon city lights", "Sci-fi poster in 16:9 widescreen ratio"],
+      ["Café table with a red checkered cloth and two wine glasses", "Cafe table with a red checkered cloth"],
       ["a".repeat(200), `A${"a".repeat(SHARE_NAME_MAX - 1)}`],
+      [`${"x".repeat(SHARE_NAME_MAX - 1)}\u{1F409}\u{1F409}`, `X${"x".repeat(SHARE_NAME_MAX - 2)}`],
     ];
     for (const [prompt, name] of made) {
       assert.equal(shareNameOf(prompt, "x.glb"), name);
