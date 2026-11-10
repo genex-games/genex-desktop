@@ -373,20 +373,46 @@ function merged(first: ModelFacts, later: ModelFacts | undefined): ModelFacts {
   return { ...first, ...Object.fromEntries(known) };
 }
 
+interface KnownModelSpec {
+  pattern: RegExp;
+  contextTokens: number;
+  vision?: boolean;
+}
+
+/** Standard cloud models commonly accessed through OpenAI-compatible proxies without reported context. */
+const KNOWN_CLOUD_MODELS: readonly KnownModelSpec[] = [
+  { pattern: /\bclaude-(?:3|3\.5)\b/i, contextTokens: 200_000, vision: true },
+  { pattern: /\b(?:gpt-4o|chatgpt-4o)\b/i, contextTokens: 128_000, vision: true },
+  { pattern: /\bgpt-4-turbo\b/i, contextTokens: 128_000, vision: true },
+  { pattern: /\b(?:o1|o3-mini)\b/i, contextTokens: 128_000, vision: true },
+  { pattern: /\bgemini-(?:1\.5|2\.0)\b/i, contextTokens: 128_000, vision: true },
+  { pattern: /\bdeepseek-(?:chat|reasoner)\b/i, contextTokens: 128_000, vision: false },
+];
+
+const VISION_MODEL_PATTERN = /[-_](?:vision|vl|vlm)\b|\b(?:llava|pixtral|minicpm-v|qwen.*vl|internvl)\b/i;
+
+function findKnownModel(id: string): KnownModelSpec | undefined {
+  return KNOWN_CLOUD_MODELS.find((spec) => spec.pattern.test(id));
+}
+
 /** A model as a picker row: unknown context planned for, tool calling taken as given unless refused. */
 function modelRow(id: string, facts: ModelFacts): EngineModel {
-  const context = facts.context ?? { tokens: UNKNOWN_CONTEXT_TOKENS, source: ModelContextSource.Unknown };
+  const known = findKnownModel(id);
+  const contextTokens = facts.context?.tokens ?? known?.contextTokens ?? UNKNOWN_CONTEXT_TOKENS;
+  const contextSource = facts.context?.source ?? (known ? ModelContextSource.Configured : ModelContextSource.Unknown);
+  const supportsVision = facts.vision ?? known?.vision ?? VISION_MODEL_PATTERN.test(id);
+
   return {
     id,
     label: facts.label ?? id,
-    contextWindow: context.tokens,
-    contextSource: context.source,
-    maxTokens: Math.min(MAX_REPLY_TOKENS, Math.floor(context.tokens / 4)),
+    contextWindow: contextTokens,
+    contextSource,
+    maxTokens: Math.min(MAX_REPLY_TOKENS, Math.floor(contextTokens / 4)),
     supportsTools: facts.tools ?? true,
-    supportsVision: facts.vision ?? false,
+    supportsVision,
     supportsThinking: false,
     installed: true,
-    ...(facts.context ? {} : { note: MESSAGE.UnknownContext() }),
+    ...(facts.context || known ? {} : { note: MESSAGE.UnknownContext() }),
   };
 }
 

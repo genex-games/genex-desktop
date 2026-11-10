@@ -272,7 +272,6 @@ async function readFileTool(args: ToolArgs, context: ToolContext): Promise<LiveT
   if (mime) return { text: file, images: [{ mimeType: mime, data: (await readFile(file)).toString("base64") }] };
   const readKey = `${file}:${args.offset ?? 0}:${args.limit ?? LOCAL_TOOL_LIMITS.defaultReadLines}`;
   const version = `${info.mtimeMs}:${info.size}`;
-  if (context.seenReads.get(readKey) === version) throw new Error(LOCAL_NOTE.alreadyRead);
   context.seenReads.set(readKey, version);
   return textSection(args, (await readFile(file, "utf8")).split("\n"));
 }
@@ -306,10 +305,19 @@ async function editFileTool(args: ToolArgs, context: ToolContext): Promise<LiveT
   const validEdit = typeof oldText === "string" && oldText !== "" && typeof newText === "string";
   if (!validEdit) throw new Error(MESSAGE.InvalidEdit);
   if ((await stat(file)).size > LOCAL_TOOL_LIMITS.maxFileBytes) throw new Error(MESSAGE.TooLargeToEdit);
-  const source = await readFile(file, "utf8");
-  const at = source.indexOf(oldText);
-  if (at < 0 || source.indexOf(oldText, at + 1) >= 0) throw new Error(MESSAGE.AmbiguousEdit);
-  await writeFile(file, source.slice(0, at) + newText + source.slice(at + oldText.length));
+  const rawSource = await readFile(file, "utf8");
+  let source = rawSource;
+  let targetOld = oldText;
+  let targetNew = newText;
+  let at = source.indexOf(targetOld);
+  if (at < 0 && (source.includes("\r\n") || targetOld.includes("\r\n"))) {
+    source = rawSource.replace(/\r\n/g, "\n");
+    targetOld = oldText.replace(/\r\n/g, "\n");
+    targetNew = newText.replace(/\r\n/g, "\n");
+    at = source.indexOf(targetOld);
+  }
+  if (at < 0 || source.indexOf(targetOld, at + 1) >= 0) throw new Error(MESSAGE.AmbiguousEdit);
+  await writeFile(file, source.slice(0, at) + targetNew + source.slice(at + targetOld.length));
   return "Edited one matching block";
 }
 

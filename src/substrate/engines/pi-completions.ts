@@ -185,8 +185,19 @@ export function piContext(request: CompleteRequest, provider: string = EngineId.
   };
 }
 
+function cleanSchema(schema: unknown): unknown {
+  if (!schema || typeof schema !== "object") return schema;
+  if (Array.isArray(schema)) return schema.map(cleanSchema);
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(schema as Record<string, unknown>)) {
+    if (key === "acceptJsonString") continue;
+    result[key] = cleanSchema(value);
+  }
+  return result;
+}
+
 function toPiTool(tool: ToolDefinition): unknown {
-  return { name: tool.name, description: tool.description, parameters: tool.parameters };
+  return { name: tool.name, description: tool.description, parameters: cleanSchema(tool.parameters) };
 }
 
 /** Does the request carry a picture the model would have to see? */
