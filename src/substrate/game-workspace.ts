@@ -1250,13 +1250,14 @@ export class GameWorkspaces {
   /**
    * Whether the starter's code folder holds nothing but the starter's own code file: the folder is
    * gone or empty, or that file is all it holds. A game written in other files there (`src/game.js`,
-   * `src/main.ts`) is somebody's, and so is a folder that can't be listed.
+   * `src/main.ts`) is somebody's, and so is a folder that can't be listed. A hidden name is nobody's
+   * game: Finder leaves `.DS_Store` in a folder it showed, and an editor its own.
    */
   async #onlyStarterCode(dir: string): Promise<boolean> {
     const names = await readdir(path.join(dir, path.dirname(STARTER_CODE))).catch((error: NodeJS.ErrnoException) =>
       error.code === "ENOENT" ? [] : null,
     );
-    return names?.every((name) => name === path.basename(STARTER_CODE)) ?? false;
+    return names?.every((name) => name === path.basename(STARTER_CODE) || name.startsWith(".")) ?? false;
   }
 
   /**

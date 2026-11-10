@@ -569,6 +569,15 @@ describe("a listed game's facts", () => {
     const godot = await pageGone("godot-page-gone", ["godot/project.godot", "web/index.html", "web/index.pck"]);
     assert.deepEqual(await factsOf(godot), ["godot-project@godot:core", "web-game@web:core"]);
     assert.equal(webFolderOf(await listed(godot)), "web");
+    // A hidden file beside the starter's untouched code (Finder's, an editor's) is nobody's game.
+    const finder = await pageGone("unity-page-gone-finder", [
+      "unity/ProjectSettings/ProjectVersion.txt",
+      "web/index.html",
+      "web/Build/web.loader.js",
+      "src/.DS_Store",
+    ]);
+    assert.deepEqual(await factsOf(finder), ["unity-project@unity:core", "web-game@web:core"]);
+    assert.equal(webFolderOf(await listed(finder)), "web");
 
     // With no web build to take its place, the record still makes the folder a web game, as it did.
     const noBuild = await pageGone("unity-page-gone-no-web", ["unity/ProjectSettings/ProjectVersion.txt"]);

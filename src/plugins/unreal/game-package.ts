@@ -191,8 +191,12 @@ const MESSAGE = {
   WebPackaged: (seconds: number) => `The web build was made in ${seconds} s.`,
   /** What of a web build is past what Genex's hosting takes as a rule, in a sentence that stands alone. */
   PastHostLimits: (what: string) => `The site is past Genex hosting's usual limits: ${what}.`,
-  FileTooLarge: (file: string, megabytes: number, most: number) =>
-    `${file} is ${megabytes} MB, and a file may be ${most} MB at most`,
+  /** The largest file past the file limit, and how many `others` are past it too: splitting one alone wouldn't do. */
+  FileTooLarge: (file: string, megabytes: number, most: number, others: number) => {
+    const largest = `${file} is ${megabytes} MB, and a file may be ${most} MB at most`;
+    if (others === 0) return largest;
+    return others === 1 ? `${largest} (1 more file is past that)` : `${largest} (${others} more files are past that)`;
+  },
   SiteTooLarge: (megabytes: number, most: number) =>
     `it is ${megabytes} MB in all, and a game may be ${most} MB at most`,
   TooManyFiles: (files: number, most: number) => `it has ${files} files, and a game may have ${most} at most`,
@@ -618,7 +622,7 @@ async function pastHostLimits(target: Target, site: string): Promise<string[]> {
     if (over.limit === HostLimit.Site)
       return MESSAGE.SiteTooLarge(megabytes(over.amount), megabytes(HOST_LIMITS.SiteBytes));
     const file = shownIn(target.gameDir, path.join(site, over.file ?? ""));
-    return MESSAGE.FileTooLarge(file, megabytes(over.amount), megabytes(HOST_LIMITS.FileBytes));
+    return MESSAGE.FileTooLarge(file, megabytes(over.amount), megabytes(HOST_LIMITS.FileBytes), over.others ?? 0);
   });
   return [MESSAGE.PastHostLimits(said.join("; "))];
 }

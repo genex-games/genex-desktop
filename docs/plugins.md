@@ -2896,8 +2896,8 @@ The whole site is staged into `unreal/Builds/Wasm/`, which then becomes the game
 `web/index.html`. Its line also says what of the finished site is past Genex hosting's usual
 limits, so that is known before an upload is tried (`siteExcess` against `HOST_LIMITS`: 500 MiB a
 file, 2 GiB a site, 200 files; an account's own limits can differ, and the upload decides): the
-largest file past the file limit by its path in the game, the site's whole size, its number of
-files. Such a build is still done and still the game's `web/`, and after a restart the idle status
+largest file past the file limit by its path in the game with how many more files are past it,
+the site's whole size, its number of files. Such a build is still done and still the game's `web/`, and after a restart the idle status
 of the build in `web/` says the same. A stage with a page but no `wasm-manifest.json` fails the package and never
 becomes `web/`. `package-game`, `plugin-build`, `plugin-test`,
 `plugin-package`, `add-cpp-module` and `add-motion-matching` name their status tool as `jobStatus`,

@@ -149,33 +149,40 @@ export type HostLimits = { [Limit in keyof typeof HOST_LIMITS]: number };
 export const HostLimit = { File: "file", Site: "site", Files: "files" } as const;
 export type HostLimit = (typeof HostLimit)[keyof typeof HostLimit];
 
-/** One limit of the host's a site is past: by how much it stands (bytes, or files), and for a file its path in the site. */
-export type SiteExcess = { limit: HostLimit; amount: number; file?: string };
+/**
+ * One limit of the host's a site is past: by how much it stands (bytes, or files). For a file, its
+ * path in the site and how many more files are past the file limit too.
+ */
+export type SiteExcess = { limit: HostLimit; amount: number; file?: string; others?: number };
 
 /**
  * What of the site in `folder` is past what Genex's hosting takes ({@link HOST_LIMITS}): its largest file when
- * that is past the file limit, its whole size and its number of files, each only when past its limit;
- * none for a site the host takes, and for a folder that can't be read. A link is no file of the site:
- * it is neither followed nor counted.
+ * that is past the file limit, with how many more are, its whole size and its number of files, each only
+ * when past its limit; none for a site the host takes, and for a folder that can't be read. A link is
+ * no file of the site: it is neither followed nor counted.
  */
 export async function siteExcess(folder: string, limits: HostLimits = HOST_LIMITS): Promise<SiteExcess[]> {
   const entries = await readdir(folder, { withFileTypes: true, recursive: true }).catch(() => []);
-  let bytes = 0;
-  let files = 0;
-  let largest = { file: "", bytes: 0 };
-  for (const entry of entries) {
-    if (!entry.isFile()) continue;
-    const file = path.join(entry.parentPath, entry.name);
-    const size = (await lstat(file).catch(() => null))?.size ?? 0;
-    files += 1;
-    bytes += size;
-    if (size > largest.bytes) largest = { file: path.relative(folder, file).split(path.sep).join("/"), bytes: size };
-  }
+  const sizes = await Promise.all(
+    entries
+      .filter((entry) => entry.isFile())
+      .map(async (entry) => {
+        const file = path.join(entry.parentPath, entry.name);
+        return { file, bytes: (await lstat(file).catch(() => null))?.size ?? 0 };
+      }),
+  );
+  const bytes = sizes.reduce((sum, size) => sum + size.bytes, 0);
+  // Largest first; of two the same size, the one whose path sorts first, so the answer never depends on the listing's order.
+  const [largest, ...others] = sizes
+    .filter((size) => size.bytes > limits.FileBytes)
+    .sort((a, b) => b.bytes - a.bytes || (a.file < b.file ? -1 : 1));
   const excess: SiteExcess[] = [];
-  if (largest.bytes > limits.FileBytes)
-    excess.push({ limit: HostLimit.File, amount: largest.bytes, file: largest.file });
+  if (largest) {
+    const file = path.relative(folder, largest.file).split(path.sep).join("/");
+    excess.push({ limit: HostLimit.File, amount: largest.bytes, file, others: others.length });
+  }
   if (bytes > limits.SiteBytes) excess.push({ limit: HostLimit.Site, amount: bytes });
-  if (files > limits.Files) excess.push({ limit: HostLimit.Files, amount: files });
+  if (sizes.length > limits.Files) excess.push({ limit: HostLimit.Files, amount: sizes.length });
   return excess;
 }
 

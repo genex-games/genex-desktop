@@ -665,7 +665,7 @@ describe("packaging an Unreal game for the web", () => {
       const paks = path.join(found?.[1] ?? found?.[2] ?? "", "Wasm", "Dust", "Content", "Paks");
       await mkdir(paks, { recursive: true });
       await writeFile(path.join(paks, "pakchunk0-Wasm.ucas"), "");
-      await truncate(path.join(paks, "pakchunk0-Wasm.ucas"), 500 * 1024 * 1024 + 1);
+      await truncate(path.join(paks, "pakchunk0-Wasm.ucas"), 500 * 1024 * 1024 + 9);
       return outcome;
     };
     const emsdk = await emsdkOf("6.0.10");
@@ -682,6 +682,23 @@ describe("packaging an Unreal game for the web", () => {
     // After a restart the build's own line is gone; the build in web/ still says it.
     const later = await createGamePackageTools(deps).handlers["package-status"](web, context, "/s");
     assert.deepEqual([later.state, later.app, later.line], [GamePackageState.Idle, "web/index.html", past]);
+    // With more files past the limit, the line names the largest and counts the rest (one at the limit is inside it).
+    const paks = path.join(game, "web", "Dust", "Content", "Paks");
+    const status = async (file: string, extra: number) => {
+      await writeFile(path.join(paks, file), "");
+      await truncate(path.join(paks, file), 500 * 1024 * 1024 + extra);
+      return (await createGamePackageTools(deps).handlers["package-status"](web, context, "/s")).line;
+    };
+    assert.equal(await status("pakchunk1-Wasm.ucas", 0), past);
+    const largest = "web/Dust/Content/Paks/pakchunk0-Wasm.ucas is 501 MB, and a file may be 500 MB at most";
+    assert.equal(
+      await status("pakchunk2-Wasm.ucas", 1),
+      `The site is past Genex hosting's usual limits: ${largest} (1 more file is past that).`,
+    );
+    assert.equal(
+      await status("pakchunk3-Wasm.ucas", 1),
+      `The site is past Genex hosting's usual limits: ${largest} (2 more files are past that).`,
+    );
   });
 
   it("packages nothing, and names no path of this computer, when the project's config can't be written safely", async () => {

@@ -389,9 +389,19 @@ describe("what of a web build's site Genex's hosting won't take", () => {
     assert.deepEqual(await siteExcess(site, LIMITS), []);
   });
 
-  it("is the largest file past the file limit, by its path in the site", async () => {
-    const site = await siteOf({ "index.html": 1, "Dust/Paks/a.ucas": 11, "Dust/Paks/b.ucas": 12 });
-    assert.deepEqual(await siteExcess(site, LIMITS), [{ limit: HostLimit.File, amount: 12, file: "Dust/Paks/b.ucas" }]);
+  it("is the largest file past the file limit, by its path in the site, and how many more are past it", async () => {
+    const one = await siteOf({ "index.html": 1, "Dust/Paks/a.ucas": 10, "Dust/Paks/b.ucas": 12 });
+    assert.deepEqual(await siteExcess(one, LIMITS), [
+      { limit: HostLimit.File, amount: 12, file: "Dust/Paks/b.ucas", others: 0 },
+    ]);
+    // Splitting the largest alone would leave the next one past the limit: the count says so.
+    const three = await siteOf({ "Dust/Paks/a.ucas": 11, "Dust/Paks/b.ucas": 12, "Dust/Paks/c.ucas": 11 });
+    assert.deepEqual((await siteExcess(three, { ...LIMITS, SiteBytes: 100 }))[0], {
+      limit: HostLimit.File,
+      amount: 12,
+      file: "Dust/Paks/b.ucas",
+      others: 2,
+    });
   });
 
   it("is the whole site's size and its number of files, each past its limit", async () => {
