@@ -433,7 +433,10 @@ export class GenexRoomService {
   readonly #rooms = new Map<string, Room>();
   /** The studio is stopping: its preview goes with it, so no room reloads it on the way out. */
   #closing = false;
-  /** How many starts and stops each game's room was asked for: a start goes on only while it is the latest (`#latest`). */
+  /**
+   * How many starts and stops each game's room was asked for, a start counted once its game was
+   * read (`#listen`): a start goes on only while it is the latest (`#latest`).
+   */
   readonly #asks = new Map<string, number>();
   constructor(deps: GenexRoomDeps) {
     this.#deps = deps;
@@ -489,7 +492,7 @@ export class GenexRoomService {
     };
   }
 
-  /** End the game's room: its last report, then its process tree. A start of it still under way ends there. */
+  /** End the game's room: its last report, then its process tree. A start of it under way (`#listen`) ends there. */
   stop(project: string): Promise<RoomStatus> {
     this.#ask(project);
     return this.#end(project);

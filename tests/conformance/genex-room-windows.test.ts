@@ -12,17 +12,20 @@
  * any machine; tests/conformance/genex-room.test.ts runs the real thing (in the Windows suite).
  */
 import assert from "node:assert/strict";
-import type { ChildProcess } from "node:child_process";
-import { EventEmitter } from "node:events";
+import { type ChildProcess, spawn } from "node:child_process";
+import { EventEmitter, once } from "node:events";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 import { describe, it } from "node:test";
-import { setImmediate as turn } from "node:timers/promises";
+import { setTimeout as sleep, setImmediate as turn } from "node:timers/promises";
 import { GenexRoomService, type RoomStatus } from "../../src/main/core/genex-room.ts";
 import { StudioPlatform } from "../../src/shared/boot.ts";
 import { ProcessSandbox, type SandboxPolicy } from "../../src/substrate/spawn.ts";
 import { tmpDir } from "../helpers/tmp.ts";
+
+/** How long an ended process may take to be seen gone; only a failing test waits this long. */
+const GONE_WITHIN_MS = 10_000;
 
 const ROOM_JS = "export default { contract: 1, init: () => ({}), onJoin() {}, onLeave() {}, onInput() {}, step() {} };";
 
@@ -101,6 +104,15 @@ function refusedOnStop(error: unknown): RoomProcess {
   input.on("finish", () => stdout.end(`ERROR ${JSON.stringify(error)}\n`));
   input.resume();
   return { child, input };
+}
+
+/**
+ * A real process that never reads its input, as a room on Windows whose input was closed before the
+ * live-input relay took it: only the end of its process tree ends it.
+ */
+function deafRoom(): RoomProcess {
+  const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: ["ignore", "pipe", "pipe"] });
+  return { child, input: new PassThrough() };
 }
 
 /** What the toolchain says when another program holds the fast@1 port its command names. */
@@ -297,10 +309,14 @@ const OVERTAKEN_AT: Array<{ name: string; nth: number; starting: boolean; refuse
 
 /**
  * A start under way up to `moment`, there for an ask to overtake it: `refused` settles once the
- * start failed as the moment says, `letGo` lets a process that is still being started come up, and
- * `children` are the processes started so far.
+ * start failed as the moment says, `letGo` lets a process that is still being started come up (as
+ * `late`, a room that would listen by default), and `children` are the processes started so far.
  */
-async function overtaken(moment: (typeof OVERTAKEN_AT)[number], label: string) {
+async function overtaken(
+  moment: (typeof OVERTAKEN_AT)[number],
+  label: string,
+  late: (command: string) => RoomProcess = listeningRoom,
+) {
   const children: ChildProcess[] = [];
   let arrive = () => {};
   const arrived = new Promise<void>((resolve) => {
@@ -310,19 +326,19 @@ async function overtaken(moment: (typeof OVERTAKEN_AT)[number], label: string) {
   const held = new Promise<void>((resolve) => {
     letGo = resolve;
   });
-  const process = async (nth: number, command: string): Promise<RoomProcess> => {
+  const roomAt = async (nth: number, command: string): Promise<RoomProcess> => {
     if (nth < moment.nth) return refusedRoom(fastPortTaken(command));
     if (nth > moment.nth) return listeningRoom(command);
     arrive();
     if (!moment.starting) return refusedOnStop(fastPortTaken(command));
     await held;
-    return listeningRoom(command);
+    return late(command);
   };
   const made = await setup(
     StudioPlatform.Windows,
     () => true,
     async (command) => {
-      const room = await process(made.spawned.length, command);
+      const room = await roomAt(made.spawned.length, command);
       children.push(room.child);
       return room;
     },
@@ -386,6 +402,24 @@ describe("a room whose port another program took before the room could listen on
         const running = children.filter((child) => child.exitCode === null).length;
         assert.equal(running, 0, `${label}: every process the game's room started has ended`);
       }
+    }
+  });
+
+  it("ends an overtaken process that never hears its input close", async () => {
+    const starting = OVERTAKEN_AT.find((moment) => moment.starting);
+    assert.ok(starting);
+    const { rooms, binding, refused, children, letGo } = await overtaken(starting, "a deaf process", deafRoom);
+    await rooms.call({ action: "stop" }, binding);
+    letGo();
+    await refused;
+    const [deaf] = children;
+    assert.ok(deaf);
+    const gone = () => deaf.exitCode !== null || deaf.signalCode !== null;
+    try {
+      if (!gone()) await Promise.race([once(deaf, "exit"), sleep(GONE_WITHIN_MS, undefined, { ref: false })]);
+      assert.equal(gone(), true, "the process itself was ended, not only its input closed");
+    } finally {
+      deaf.kill("SIGKILL");
     }
   });
 });
