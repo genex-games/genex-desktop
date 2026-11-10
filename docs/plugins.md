@@ -2861,7 +2861,12 @@ isolation headers, so the page's own service worker adds them. BuildCookRun adds
 beside it. The whole site is staged into `unreal/Builds/Wasm/`, which then becomes the game's
 `web/` in one move (`placeWebBuild`), where Publish and Live find it; `package-status` names
 `web/index.html`. A stage with a page but no `wasm-manifest.json` fails the package and never
-becomes `web/`. `package-game`, `plugin-build`, `plugin-test`,
+becomes `web/`. What the game itself needs changed for a browser is the `unreal-web` skill, which
+the `unreal-editor` skill sends an agent to before a game's first web version: the web-only
+`Config/Wasm/` settings, what a browser build can't run (sockets and the online plugins, video,
+post-process materials that fail to translate, online play through `GenexMultiplayer`), the three
+renderers Unreal's page picks from (no Lumen in a Mac's browser), sharpness and size. It records
+one real port on Unreal 5.9.0 Preview on Windows and says so. `package-game`, `plugin-build`, `plugin-test`,
 `plugin-package`, `add-cpp-module` and `add-motion-matching` name their status tool as `jobStatus`,
 and each status answers `jobRunning`, so the chat that started a job is woken when it ends. Publish
 then finds the app: `main/core/native-builds.ts` takes an Unreal Windows package's starter at its root as the whole

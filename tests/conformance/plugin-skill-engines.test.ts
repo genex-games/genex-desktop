@@ -282,6 +282,7 @@ const ENGINE_GUIDES: Array<{ plugin: string; skill: string; facts: FactRef[] }> 
   { plugin: "godot", skill: "godot", facts: [{ id: CoreFact.GodotProject, path: "godot" }] },
   { plugin: "roblox", skill: "roblox-studio", facts: [{ id: CoreFact.RobloxProject, path: "." }] },
   { plugin: "unreal", skill: "unreal-editor", facts: [{ id: CoreFact.UnrealProject, path: "unreal" }] },
+  { plugin: "unreal", skill: "unreal-web", facts: [{ id: CoreFact.UnrealProject, path: "unreal" }] },
   {
     plugin: "unreal",
     skill: "unreal-plugin",
@@ -363,7 +364,9 @@ const UNREAL_PLUGIN_SKILL = "unreal/unreal-plugin";
 const UNREAL_ONLY_TOOLS = [...UNREAL_EDITOR_TOOLS, ...UNREAL_PLUGIN_TOOLS, "unreal__skill"];
 /** The Unreal plugin's multiplayer skill, for a game that holds an Unreal project only. */
 const UNREAL_MULTIPLAYER_SKILL = "unreal/unreal-multiplayer";
-const UNREAL_ONLY_SKILLS = [UNREAL_SKILL, UNREAL_MULTIPLAYER_SKILL, UNREAL_PLUGIN_SKILL];
+/** The Unreal plugin's skill on a game's web version, for a game that holds an Unreal project only. */
+const UNREAL_WEB_SKILL = "unreal/unreal-web";
+const UNREAL_ONLY_SKILLS = [UNREAL_SKILL, UNREAL_MULTIPLAYER_SKILL, UNREAL_WEB_SKILL, UNREAL_PLUGIN_SKILL];
 /** The Roblox plugin's skills, in manifest order: they reach a game that holds a Roblox place only. */
 const ROBLOX_SKILLS = [
   "roblox/roblox-studio",

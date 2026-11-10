@@ -1,7 +1,7 @@
 {
   "apiVersion": 3,
   "id": "unreal",
-  "version": "0.56.2",
+  "version": "0.56.3",
   "icon": "icon.svg",
   "name": "Unreal Engine",
   "publisher": "Genex",
@@ -730,6 +730,13 @@
       "tools": ["multiplayer", "cpp-status", "add-cpp-module", "quit-editor", "open-editor", "package-game"],
       "summary": "Server-authoritative (competitive) multiplayer for this Unreal game: unreal__multiplayer adds Genex's Unreal plugin, then a server/room.ts room module, the Genex Authority Subsystem client, genex__room with bots and publish. MANDATORY before any online or multiplayer code.",
       "file": "skills/unreal-multiplayer.md"
+    },
+    {
+      "name": "unreal-web",
+      "facts": ["unreal-project"],
+      "tools": ["package-game", "package-status"],
+      "summary": "What this Unreal game needs changed before its web version (package-game with system: \"web\") builds and looks right in a browser: web-only settings, what a browser can't run (sockets, video, online play), the renderers it gets (no Lumen on a Mac), sharpness and size.",
+      "file": "skills/unreal-web.md"
     },
     {
       "name": "unreal-plugin",
