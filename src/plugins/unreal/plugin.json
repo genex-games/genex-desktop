@@ -296,7 +296,7 @@
     {
       "name": "package-status",
       "facts": ["unreal-project"],
-      "description": "How this game's package for a system stands (system: \"linux\" for a Linux package on Windows, \"web\" for the web version; this computer's own system when left out): running, done (with the app's path inside the game and how long it took), failed (with its first error lines) or stopped; idle names an app already in that system's build folder.",
+      "description": "How this game's package for a system stands (system: \"linux\" for a Linux package on Windows, \"web\" for the web version; this computer's own system when left out): running, done (with the app's path inside the game and how long it took), failed (with its first error lines) or stopped; idle names an app already in that system's build folder. A finished web build's line also says what of it Genex's hosting won't take (a file over 500 MB, a site over 2,048 MB or of more than 200 files): make the web build smaller and package again before Publish.",
       "parameters": {
         "type": "object",
         "properties": {

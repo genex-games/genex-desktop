@@ -13,7 +13,11 @@ import {
   emsdkHolds,
   engineBuildsWeb,
   ensureWebSettings,
+  HOST_LIMITS,
+  HostLimit,
   placeWebBuild,
+  siteExcess,
+  WEB_CHUNK_BYTES,
   WebFolder,
   webFolderOf,
 } from "../../src/plugins/unreal/web-build.ts";
@@ -349,4 +353,50 @@ describe("the project settings of a web build go into the project's own plain fi
       assert.deepEqual({ project: await filesBelow(project), outside: await filesBelow(outside) }, before);
     });
   }
+});
+
+describe("what of a web build's site Genex's hosting won't take", () => {
+  /** Small stand-ins for the host's limits, so no test writes hundreds of megabytes. */
+  const LIMITS = { FileBytes: 10, SiteBytes: 25, Files: 4 } as const;
+  /** A site folder holding `files`, each of the given size in bytes. */
+  async function siteOf(files: Record<string, number>) {
+    const site = await tmpDir("unreal-web-site-");
+    for (const [file, bytes] of Object.entries(files)) {
+      await mkdir(path.dirname(path.join(site, file)), { recursive: true });
+      await writeFile(path.join(site, file), Buffer.alloc(bytes));
+    }
+    return site;
+  }
+
+  it("is nothing for a site inside every limit, each met exactly", async () => {
+    const site = await siteOf({ "index.html": 5, "Dust/a.ucas": 10, "Dust/b.ucas": 5, "Dust/c.utoc": 5 });
+    assert.deepEqual(await siteExcess(site, LIMITS), []);
+  });
+
+  it("is the largest file past the file limit, by its path in the site", async () => {
+    const site = await siteOf({ "index.html": 1, "Dust/Paks/a.ucas": 11, "Dust/Paks/b.ucas": 12 });
+    assert.deepEqual(await siteExcess(site, LIMITS), [{ limit: HostLimit.File, amount: 12, file: "Dust/Paks/b.ucas" }]);
+  });
+
+  it("is the whole site's size and its number of files, each past its limit", async () => {
+    const site = await siteOf({ "a.pak": 6, "b.pak": 6, "c.pak": 6, "d.pak": 6, "e.pak": 2 });
+    assert.deepEqual(await siteExcess(site, LIMITS), [
+      { limit: HostLimit.Site, amount: 26 },
+      { limit: HostLimit.Files, amount: 5 },
+    ]);
+  });
+
+  it("never follows or counts a link, and says nothing of a folder that isn't there", async () => {
+    const site = await siteOf({ "index.html": 1 });
+    const outside = await siteOf({ "huge.ucas": 100, "1": 1, "2": 1, "3": 1, "4": 1 });
+    await symlink(outside, path.join(site, "Linked"), "dir");
+    await symlink(path.join(outside, "huge.ucas"), path.join(site, "huge.ucas"));
+    assert.deepEqual(await siteExcess(site, LIMITS), []);
+    assert.deepEqual(await siteExcess(path.join(site, "missing"), LIMITS), []);
+  });
+
+  it("measures by the host's own limits, and the split leaves every file room under the largest", () => {
+    assert.deepEqual(HOST_LIMITS, { FileBytes: 500 * 1024 * 1024, SiteBytes: 2 * 1024 * 1024 * 1024, Files: 200 });
+    assert.equal(WEB_CHUNK_BYTES, HOST_LIMITS.FileBytes / 2);
+  });
 });

@@ -50,9 +50,12 @@ import {
   engineBuildsWeb,
   ensureWebSettings,
   GAME_WEB_FOLDER,
+  HOST_LIMITS,
+  HostLimit,
   holdsWebBuild,
   PROJECT_CONFIG_FOLDER,
   placeWebBuild,
+  siteExcess,
   WEB_PAGE,
   WEB_PLATFORM,
   WebFolder,
@@ -98,6 +101,8 @@ const MAX_ERRORS = 12;
 const ERROR_CHARS = 400;
 /** How many of a failed package's last output lines it keeps when no line reads as an error. */
 const LAST_LINES = 8;
+/** The megabyte a size is said in: 1024 × 1024 bytes, as the host counts its limits. */
+const MEGABYTE_BYTES = 1024 * 1024;
 
 const MAC = "darwin";
 const WINDOWS = "win32";
@@ -184,6 +189,13 @@ const MESSAGE = {
     `Genex couldn't write the web build's settings into ${config}/ (${code}). The folders and config files there have to be the project's own plain ones, which Genex can read and write, never links. Genex packaged nothing.`,
   Packaged: (system: string, seconds: number) => `The ${system} app was packaged in ${seconds} s.`,
   WebPackaged: (seconds: number) => `The web build was made in ${seconds} s.`,
+  /** What of a finished web build Genex's hosting won't take, said after the line that it was made. */
+  HostRefuses: (what: string) => `Genex's hosting won't take it yet: ${what}.`,
+  FileTooLarge: (file: string, megabytes: number, most: number) =>
+    `${file} is ${megabytes} MB, and a file may be ${most} MB at most`,
+  SiteTooLarge: (megabytes: number, most: number) =>
+    `the site is ${megabytes} MB in all, and a game may be ${most} MB at most`,
+  TooManyFiles: (files: number, most: number) => `the site has ${files} files, and a game may have ${most} at most`,
   /** The site was made, but `web/` came to hold other files meanwhile, so it stays where Unreal staged it. */
   WebStaged: (seconds: number) =>
     `The web build was made in ${seconds} s, but the game's web/ folder now holds other files, so the site stays in the build folder.`,
@@ -580,13 +592,35 @@ async function runPackage(
   throw new PackageFailed(line, errors, seconds);
 }
 
-/** A finished web build made the game's web version (`web/`), named by its page; left staged when `web/` is taken. */
+/**
+ * A finished web build made the game's web version (`web/`), named by its page; left staged when
+ * `web/` is taken. Its line also says what of the site Genex's hosting won't take, so that is known
+ * before an upload is tried.
+ */
 async function webPackaged(target: Target, staged: string, page: string, seconds: number) {
   // A staged page without its file list never starts, and as web/ it would read as someone else's folder.
   if (!(await holdsWebBuild(staged))) throw new PackageFailed(MESSAGE.NoApp(target.system.folder), [], seconds);
   const placed = await placeWebBuild(target.gameDir, staged);
-  const line = placed ? MESSAGE.WebPackaged(seconds) : MESSAGE.WebStaged(seconds);
-  return { line, app: shownIn(target.gameDir, placed ?? page), seconds };
+  const made = placed ? MESSAGE.WebPackaged(seconds) : MESSAGE.WebStaged(seconds);
+  const refused = await hostRefuses(target, path.dirname(placed ?? page));
+  return { line: [made, ...refused].join(" "), app: shownIn(target.gameDir, placed ?? page), seconds };
+}
+
+/** How many megabytes (of 1024 × 1024 bytes) `bytes` are, rounded up: a file a byte past a limit reads as past it. */
+const megabytes = (bytes: number) => Math.ceil(bytes / MEGABYTE_BYTES);
+
+/** What of the site in `site` Genex's hosting won't take (`siteExcess`), in one sentence; none when it takes it all. */
+async function hostRefuses(target: Target, site: string): Promise<string[]> {
+  const excess = await siteExcess(site);
+  if (excess.length === 0) return [];
+  const said = excess.map((over) => {
+    if (over.limit === HostLimit.Files) return MESSAGE.TooManyFiles(over.amount, HOST_LIMITS.Files);
+    if (over.limit === HostLimit.Site)
+      return MESSAGE.SiteTooLarge(megabytes(over.amount), megabytes(HOST_LIMITS.SiteBytes));
+    const file = shownIn(target.gameDir, path.join(site, over.file ?? ""));
+    return MESSAGE.FileTooLarge(file, megabytes(over.amount), megabytes(HOST_LIMITS.FileBytes));
+  });
+  return [MESSAGE.HostRefuses(said.join("; "))];
 }
 
 /** Lets the packaged Mac app reach the network, or fails the package: an app that stays offline is not offered to Publish. */

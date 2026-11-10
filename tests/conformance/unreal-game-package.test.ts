@@ -7,7 +7,7 @@
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { copyFile, mkdir, readFile, readdir, symlink, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, readdir, symlink, truncate, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
 import type { PluginContext } from "../../src/plugin-sdk/index.d.ts";
@@ -652,6 +652,32 @@ describe("packaging an Unreal game for the web", () => {
     // After a restart the build in web/ is still named.
     const later = await createGamePackageTools(deps).handlers["package-status"](web, context, "/s");
     assert.deepEqual([later.state, later.app], [GamePackageState.Idle, "web/index.html"]);
+  });
+
+  it("says which file of a finished web build Genex's hosting won't take, before any upload", async () => {
+    const { game, project } = await gameWithCpp();
+    /** A site whose content came in one file just past the host's 500 MiB (a sparse file: no disk is used). */
+    const stagesOneBigFile: RunUat = async (launch, options) => {
+      const outcome = await stagesWeb(launch, options);
+      const found = /-stagingdirectory=(?:"([^"]+)"|(\S+))/.exec(launch.args.join(" "));
+      const paks = path.join(found?.[1] ?? found?.[2] ?? "", "Wasm", "Dust", "Content", "Paks");
+      await mkdir(paks, { recursive: true });
+      await writeFile(path.join(paks, "pakchunk0-Wasm.ucas"), "");
+      await truncate(path.join(paks, "pakchunk0-Wasm.ucas"), 500 * 1024 * 1024 + 1);
+      return outcome;
+    };
+    const emsdk = await emsdkOf("6.0.10");
+    const { deps } = depsFor(project, stagesOneBigFile, { engine: await engineFor(true), emsdk });
+    const tools = createGamePackageTools(deps);
+    const context = contextIn(game);
+    await tools.handlers["package-game"](web, context, "/s");
+    const done = await settled(() => tools.handlers["package-status"](web, context, "/s"));
+    // The build is made and is the game's web version; its line says what to fix before Publish.
+    assert.deepEqual([done.state, done.app], [GamePackageState.Done, "web/index.html"]);
+    assert.equal(
+      done.line,
+      "The web build was made in 0 s. Genex's hosting won't take it yet: web/Dust/Content/Paks/pakchunk0-Wasm.ucas is 501 MB, and a file may be 500 MB at most.",
+    );
   });
 
   it("packages nothing, and names no path of this computer, when the project's config can't be written safely", async () => {

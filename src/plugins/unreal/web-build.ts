@@ -14,7 +14,7 @@
  * hosts also take no file past a size, and Unreal packs a game's whole content into one, so the
  * project's web-only config gets Epic's settings that split it into several.
  */
-import { lstat, mkdir, readFile, rename, rm } from "node:fs/promises";
+import { lstat, mkdir, readdir, readFile, rename, rm } from "node:fs/promises";
 import path from "node:path";
 import { atomicWriteText, readRegularFile } from "../../substrate/fsx.ts";
 import { UNREAL_WEB_BUILD_MARKER } from "../../shared/project-facts.ts";
@@ -137,6 +137,45 @@ export async function placeWebBuild(gameDir: string, staged: string): Promise<st
   return path.join(folder, WEB_PAGE);
 }
 
+/** What Genex's hosting takes of one game's site: its largest file and the whole site, in bytes, and how many files. */
+export const HOST_LIMITS = { FileBytes: 500 * 1024 * 1024, SiteBytes: 2 * 1024 * 1024 * 1024, Files: 200 } as const;
+/** The measures of a site the host limits, as {@link HOST_LIMITS} names them. */
+export type HostLimits = { [Limit in keyof typeof HOST_LIMITS]: number };
+
+/** Which of the host's limits a site is past: one file's size, the whole site's, or its number of files. */
+export const HostLimit = { File: "file", Site: "site", Files: "files" } as const;
+export type HostLimit = (typeof HostLimit)[keyof typeof HostLimit];
+
+/** One limit of the host's a site is past: by how much it stands (bytes, or files), and for a file its path in the site. */
+export type SiteExcess = { limit: HostLimit; amount: number; file?: string };
+
+/**
+ * What of the site in `folder` Genex's hosting won't take ({@link HOST_LIMITS}): its largest file when
+ * that is past the file limit, its whole size and its number of files, each only when past its limit;
+ * none for a site the host takes, and for a folder that can't be read. A link is no file of the site:
+ * it is neither followed nor counted.
+ */
+export async function siteExcess(folder: string, limits: HostLimits = HOST_LIMITS): Promise<SiteExcess[]> {
+  const entries = await readdir(folder, { withFileTypes: true, recursive: true }).catch(() => []);
+  let bytes = 0;
+  let files = 0;
+  let largest = { file: "", bytes: 0 };
+  for (const entry of entries) {
+    if (!entry.isFile()) continue;
+    const file = path.join(entry.parentPath, entry.name);
+    const size = (await lstat(file).catch(() => null))?.size ?? 0;
+    files += 1;
+    bytes += size;
+    if (size > largest.bytes) largest = { file: path.relative(folder, file).split(path.sep).join("/"), bytes: size };
+  }
+  const excess: SiteExcess[] = [];
+  if (largest.bytes > limits.FileBytes)
+    excess.push({ limit: HostLimit.File, amount: largest.bytes, file: largest.file });
+  if (bytes > limits.SiteBytes) excess.push({ limit: HostLimit.Site, amount: bytes });
+  if (files > limits.Files) excess.push({ limit: HostLimit.Files, amount: files });
+  return excess;
+}
+
 /** The folder of a project's own config, beside its `.uproject`. */
 export const PROJECT_CONFIG_FOLDER = "Config";
 const MAX_CONFIG_BYTES = 1024 * 1024;
@@ -145,14 +184,12 @@ const CRLF = "\r\n";
 const sameText = (a: string, b: string) => a.trim().toLowerCase() === b.toLowerCase();
 const NOT_OWN_FOLDER = "A folder on the way to the project's config is a link or a file.";
 
-/** The largest file Genex's hosting takes, in bytes. */
-const HOST_FILE_CAP_BYTES = 500 * 1024 * 1024;
 /**
  * The most cooked content Unreal puts in one file of a web build, in bytes: half of what the host
- * takes per file ({@link HOST_FILE_CAP_BYTES}). Unreal measures a chunk before it is packed into its
+ * takes per file ({@link HOST_LIMITS}). Unreal measures a chunk before it is packed into its
  * container, and shader code and padding come on top, so each file is left room.
  */
-export const WEB_CHUNK_BYTES = HOST_FILE_CAP_BYTES / 2;
+export const WEB_CHUNK_BYTES = HOST_LIMITS.FileBytes / 2;
 
 /** What Genex adds to one of a project's configs: the folders to the file below the project, its section and the settings. */
 type WebConfig = {

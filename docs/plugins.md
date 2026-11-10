@@ -2882,7 +2882,10 @@ BuildCookRun adds `-platform=Wasm
 beside it, and only with `-manifests` does the cook write the chunk lists the split is made from.
 The whole site is staged into `unreal/Builds/Wasm/`, which then becomes the game's
 `web/` in one move (`placeWebBuild`), where Publish and Live find it; `package-status` names
-`web/index.html`. A stage with a page but no `wasm-manifest.json` fails the package and never
+`web/index.html`. Its line also says what of the finished site Genex's hosting won't take, so that
+is known before an upload is tried (`siteExcess` against `HOST_LIMITS`: 500 MiB a file, 2 GiB a
+site, 200 files): the largest file past the file limit by its path in the game, the site's whole
+size, its number of files. Such a build is still done and still the game's `web/`. A stage with a page but no `wasm-manifest.json` fails the package and never
 becomes `web/`. `package-game`, `plugin-build`, `plugin-test`,
 `plugin-package`, `add-cpp-module` and `add-motion-matching` name their status tool as `jobStatus`,
 and each status answers `jobRunning`, so the chat that started a job is woken when it ends. Publish
