@@ -276,18 +276,7 @@ function registerLocalServerIpc(
     const dir = path.dirname(filePath);
     await fs.mkdir(dir, { recursive: true });
     if (!fsSync.existsSync(filePath)) {
-      await fs.writeFile(
-        filePath,
-        JSON.stringify(
-          {
-            "//说明": "在此为本地服务器模型配置自定义参数。保存后在界面点击刷新即可生效。",
-            models: {},
-          },
-          null,
-          2,
-        ),
-        "utf8",
-      );
+      await fs.writeFile(filePath, "{}\n", "utf8");
     }
     await shell.openPath(filePath);
   });
