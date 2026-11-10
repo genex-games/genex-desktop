@@ -2857,9 +2857,15 @@ from the registry, so one set after Genex started is seen), handed to RunUAT as 
 the first variable Unreal's build tool reads; neither Xcode nor Microsoft's tools are asked for. It
 is also refused while the game's `web/` holds anything but an earlier Unreal web build
 (`webFolderOf`: free, ours by `wasm-manifest.json`, or taken), which is never replaced. Before the
-run `ensureWebSettings` writes two settings of Epic's into the project's own config. Its
-`Config/DefaultEngine.ini` gets `bInjectIsolationHeaders=True` (only where the project doesn't say
-either way): Genex's hosts send no isolation headers, so the page's own service worker adds them.
+run `ensureWebSettings` writes settings of Epic's into the project's own config. Its
+`Config/DefaultEngine.ini`, where Unreal's own Project Settings keep them, gets
+`bInjectIsolationHeaders=True` and `StartMode=Click` under
+`[/Script/WasmTargetPlatform.WasmTargetSettings]` (each only where the project doesn't say either
+way): Genex's hosts send no isolation headers, so the page's own service worker adds them, and the
+page waits for a click before the game starts, since a browser lets a page play sound and take the
+mouse only after one. The page's title and loading cover show the Unreal project's name unless the
+project sets `PageTitle` there; Genex does not write it (the title it keeps for a game can be an
+older one), and the tool's description tells the agent to.
 The web platform's own config, `Config/Wasm/WasmGame.ini`, which no Mac, Windows or Linux package
 reads, gets `bGenerateChunks=True` and `MaxChunkSize=262144000` under
 `[/Script/UnrealEd.ProjectPackagingSettings]` (each only where that file doesn't set the key):

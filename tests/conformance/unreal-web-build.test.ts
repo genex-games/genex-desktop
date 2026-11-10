@@ -164,7 +164,7 @@ describe("the game's web folder for an Unreal web build", () => {
   });
 });
 
-describe("the setting that lets an Unreal web build run on a plain host", () => {
+describe("the page settings that let an Unreal web build run on a plain host and start on a click", () => {
   const SECTION = "[/Script/WasmTargetPlatform.WasmTargetSettings]";
   const config = (project: string) => path.join(project, "Config", "DefaultEngine.ini");
   /** A project folder whose `Config/DefaultEngine.ini` is `text`; none when undefined. */
@@ -183,11 +183,11 @@ describe("the setting that lets an Unreal web build run on a plain host", () => 
     await ensureWebSettings(project);
     assert.equal(
       await readFile(config(project), "utf8"),
-      `${before}\r\n${SECTION}\r\nbInjectIsolationHeaders=True\r\n`,
+      `${before}\r\n${SECTION}\r\nbInjectIsolationHeaders=True\r\nStartMode=Click\r\n`,
     );
     const none = await projectWith();
     await ensureWebSettings(none);
-    assert.equal(await readFile(config(none), "utf8"), `${SECTION}\nbInjectIsolationHeaders=True\n`);
+    assert.equal(await readFile(config(none), "utf8"), `${SECTION}\nbInjectIsolationHeaders=True\nStartMode=Click\n`);
   });
 
   it("joins the section when the project has it, after its last setting", async () => {
@@ -201,11 +201,18 @@ describe("the setting that lets an Unreal web build run on a plain host", () => 
 
   it("leaves a project that already says either way as it is", async () => {
     for (const value of ["True", "False", "true"]) {
-      const text = `${SECTION}\nbInjectIsolationHeaders=${value}\n`;
+      const text = `${SECTION}\nbInjectIsolationHeaders=${value}\nStartMode=Auto\n`;
       const project = await projectWith(text);
       await ensureWebSettings(project);
       assert.equal(await readFile(config(project), "utf8"), text, value);
     }
+    // Each setting on its own: the project's way to start stays, and only what it doesn't say is added.
+    const startsItself = await projectWith(`${SECTION}\nstartmode=Auto\n`);
+    await ensureWebSettings(startsItself);
+    assert.equal(
+      await readFile(config(startsItself), "utf8"),
+      `${SECTION}\nstartmode=Auto\nbInjectIsolationHeaders=True\n`,
+    );
   });
 });
 

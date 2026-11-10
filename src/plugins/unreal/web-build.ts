@@ -200,12 +200,21 @@ type WebConfig = {
   settings: ReadonlyArray<readonly [key: string, value: string]>;
 };
 
-/** Epic's setting for a host that can't send the isolation headers: the page's service worker adds them. */
-const ISOLATION: WebConfig = {
+/**
+ * Epic's settings of the web build's page, in the config Unreal's own Project Settings write them
+ * to: for a host that can't send the isolation headers, the page's service worker adds them; and
+ * the page waits for a click before the game starts, since a browser lets a page play sound and
+ * take the mouse only after one (Unreal's default lifts the cover by itself and starts sound on the
+ * first click or key).
+ */
+const PAGE: WebConfig = {
   folders: [PROJECT_CONFIG_FOLDER],
   file: "DefaultEngine.ini",
   section: "[/Script/WasmTargetPlatform.WasmTargetSettings]",
-  settings: [["bInjectIsolationHeaders", "True"]],
+  settings: [
+    ["bInjectIsolationHeaders", "True"],
+    ["StartMode", "Click"],
+  ],
 };
 
 /**
@@ -299,7 +308,8 @@ async function withWebSettings(projectDir: string, config: WebConfig): Promise<C
  * Gives the project what its web build needs to run on, and be taken by, a plain host that caps a
  * file's size, each setting only where the project's config doesn't say either way:
  *
- * - in `Config/DefaultEngine.ini`, the setting that has the page add the isolation headers itself;
+ * - in `Config/DefaultEngine.ini`, the settings that have the page add the isolation headers itself
+ *   and wait for a click before the game starts;
  * - in the web platform's own `Config/Wasm/WasmGame.ini`, the settings that split the content into
  *   files of at most {@link WEB_CHUNK_BYTES} of cooked data.
  *
@@ -308,7 +318,7 @@ async function withWebSettings(projectDir: string, config: WebConfig): Promise<C
  */
 export async function ensureWebSettings(projectDir: string): Promise<void> {
   const edits: ConfigEdit[] = [];
-  for (const config of [ISOLATION, CHUNKS]) {
+  for (const config of [PAGE, CHUNKS]) {
     const edit = await withWebSettings(projectDir, config);
     if (edit) edits.push(edit);
   }

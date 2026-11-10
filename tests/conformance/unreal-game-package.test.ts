@@ -638,10 +638,11 @@ describe("packaging an Unreal game for the web", () => {
     assert.ok(launches[0]?.includes("-platform=Wasm"));
     assert.deepEqual(envs[0], { WASM_EMSDK_ROOT: emsdk });
     assert.deepEqual((await readdir(path.join(game, "web"))).sort(), ["Dust", "index.html", "wasm-manifest.json"]);
-    // The project says its page adds the isolation headers itself: Genex's hosts send none.
+    // The project says its page adds the isolation headers itself: Genex's hosts send none. And the
+    // page waits for a click, which a browser needs before it plays sound or gives the game the mouse.
     assert.match(
       await readFile(path.join(game, "unreal", "Config", "DefaultEngine.ini"), "utf8"),
-      /\[\/Script\/WasmTargetPlatform\.WasmTargetSettings\]\nbInjectIsolationHeaders=True/,
+      /\[\/Script\/WasmTargetPlatform\.WasmTargetSettings\]\nbInjectIsolationHeaders=True\nStartMode=Click\n/,
     );
     // And its content comes in files a host takes one by one: set for the web alone, before the cook reads it.
     assert.equal(
