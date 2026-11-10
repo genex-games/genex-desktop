@@ -7,6 +7,7 @@ import { SECOND_MS } from "../../shared/duration.ts";
 import type { StudioErrorCode } from "../../shared/error-codes.ts";
 import { errorCode } from "../../shared/errors.ts";
 import { failedChannel, type StudioInvokeChannel } from "../../shared/ipc-channels.ts";
+import { LiveLoadFailure } from "../../shared/preview-contract.ts";
 import { problemWords } from "../words.ts";
 
 export const TOAST_MS = 4 * SECOND_MS;
@@ -47,11 +48,18 @@ export type Notify = (
   channel?: StudioInvokeChannel | null,
 ) => void;
 
-/** A `.catch` handler that says what went wrong in the user's words, with the failure's code and call. */
+/**
+ * A `.catch` handler that says what went wrong in the user's words, with the failure's code and call.
+ * A Live load another navigation took the place of (`LiveLoadFailure.Aborted`) says nothing: the
+ * load that replaced it reports itself.
+ */
 export const notifyProblem =
   (notify: Notify) =>
-  (error: unknown): void =>
-    notify(problemWords(error), ToastTone.Error, errorCode(error), failedChannel(error));
+  (error: unknown): void => {
+    const code = errorCode(error);
+    if (code === LiveLoadFailure.Aborted) return;
+    notify(problemWords(error), ToastTone.Error, code, failedChannel(error));
+  };
 
 export interface ToastsState {
   items: ToastItem[];

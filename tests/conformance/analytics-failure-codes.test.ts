@@ -82,6 +82,7 @@ import { assertClean, HOSTILE, HOSTILE_THREAD, HOSTILE_THROWS } from "../helpers
 import { exposedInMainWorld, installedInMainWorld } from "../helpers/context-bridge.ts";
 import { crossableCalls } from "../../src/preload/main-world.ts";
 import { failedChannel } from "../../src/shared/ipc-channels.ts";
+import { LiveLoadFailure } from "../../src/shared/preview-contract.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 const T0 = Date.parse("2026-10-27T10:00:00.000Z");
@@ -148,6 +149,18 @@ describe("phase 2 analytics: a failure's code crosses IPC", () => {
         return true;
       });
     }
+  });
+
+  it("a Live load another navigation took the place of says nothing: the load that replaced it reports itself", () => {
+    const toasts = createToastsStore(() => undefined);
+    const refused = (code: LiveLoadFailure) =>
+      Object.assign(new CodedError(code, "ERR_ABORTED (-3) loading 'genex-game://x/'"), {
+        channel: "studio:preview.load",
+      });
+    notifyProblem(toasts.notify)(refused(LiveLoadFailure.Aborted));
+    assert.deepEqual(toasts.getState().items, []);
+    notifyProblem(toasts.notify)(refused(LiveLoadFailure.ServerDown));
+    assert.equal(toasts.getState().items[0]?.code, LiveLoadFailure.ServerDown);
   });
 
   it("an error toast keeps its failure's code and call, and error_toast_shown counts it by both and screen", () => {
