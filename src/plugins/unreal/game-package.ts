@@ -5,7 +5,8 @@
  * `unreal/Builds/<Mac|Windows|Linux>/`, where Publish finds it (`main/core/native-builds.ts`). A web
  * build (`system: "web"`, Unreal's Wasm platform) is the whole site, staged in `unreal/Builds/Wasm/`
  * and then made the game's web version in `web/`, on either system by an engine that builds for the
- * web (`web-build.ts`), from a game with a C++ module, with the emsdk the person installed. Unreal
+ * web (`web-build.ts`), from a game with a C++ module, with the emsdk the person installed, its
+ * content split into files a host that caps a file's size takes. Unreal
  * makes a Mac app only on a Mac and a Windows one only on Windows; Linux it cross-compiles from
  * Windows with Epic's Linux toolchain, which the person installs (Epic's installer sets
  * `LINUX_MULTIARCH_ROOT`, read from the registry so no restart is needed) and RunUAT is handed.
@@ -47,9 +48,10 @@ import {
   emscriptenFor,
   emsdkHolds,
   engineBuildsWeb,
-  ensureWebIsolation,
+  ensureWebSettings,
   GAME_WEB_FOLDER,
   holdsWebBuild,
+  PROJECT_CONFIG_FOLDER,
   placeWebBuild,
   WEB_PAGE,
   WEB_PLATFORM,
@@ -178,6 +180,8 @@ const MESSAGE = {
     `A web build needs emscripten ${version}, exactly, in an emsdk folder this computer names. Give the user these steps: clone https://github.com/emscripten-core/emsdk to a plain local folder, run "emsdk install ${version}" and "emsdk activate ${version}" in it, and set the ${EMSDK_VARIABLE} environment variable to that folder; then package again. Genex packaged nothing.`,
   WebFolderTaken:
     "The game's web/ folder holds other files, and a web build is the game's whole web/ folder. Move or remove what is in web/ (ask the user first), then package again. Genex packaged nothing.",
+  NoWebSettings: (config: string, code: string) =>
+    `Genex couldn't write the web build's settings into ${config}/ (${code}). The folders and config files there have to be the project's own plain ones, which Genex can read and write, never links. Genex packaged nothing.`,
   Packaged: (system: string, seconds: number) => `The ${system} app was packaged in ${seconds} s.`,
   WebPackaged: (seconds: number) => `The web build was made in ${seconds} s.`,
   /** The site was made, but `web/` came to hold other files meanwhile, so it stays where Unreal staged it. */
@@ -273,10 +277,12 @@ export function linuxToolchainFor(version: string): { name: string; url: string 
  * What a web build asks of BuildCookRun beyond an app's: IoStore containers, as Epic's own command
  * line for the platform has; the package step, the only one that writes the page's file list
  * (`wasm-manifest.json`, without which the page never starts) and moves the files no host may serve
- * (the symbol map, UAT's manifests) out of the site; and no Brotli copy beside each file, which
- * helps only on a host that serves it in the file's place, and Genex's serve each file as it is.
+ * (the symbol map, UAT's manifests) out of the site; no Brotli copy beside each file, which
+ * helps only on a host that serves it in the file's place, and Genex's serve each file as it is;
+ * and chunk lists from the cook, without which the game's whole content is one file however the
+ * project's config says to split it (`ensureWebSettings`), too large for a host that caps a file.
  */
-const WEB_ONLY_ARGS = ["-iostore", "-package", "-WasmNoBrotli"] as const;
+const WEB_ONLY_ARGS = ["-iostore", "-package", "-WasmNoBrotli", "-manifests"] as const;
 
 /**
  * What an app asks of BuildCookRun beyond a web build's: its paks compressed and no debug files
@@ -473,6 +479,21 @@ async function linuxToolchainRoot(deps: GamePackageDeps, version: string): Promi
   return set;
 }
 
+/**
+ * What Genex's hosts need of a web build, set in the project's own config before the cook reads it:
+ * they send no isolation headers, so the page adds them itself, and they take no file past a size,
+ * so the content comes in several. A config Genex can't write as a plain file of the project's own
+ * refuses the package, by its folder inside the game and the failure's code alone.
+ */
+async function webSettings(target: Target): Promise<void> {
+  try {
+    await ensureWebSettings(target.projectDir);
+  } catch (failure) {
+    const config = shownIn(target.gameDir, path.join(target.projectDir, PROJECT_CONFIG_FOLDER));
+    throw new Error(MESSAGE.NoWebSettings(config, errorCode(failure)));
+  }
+}
+
 /** Saves the person's open Unreal first; one that doesn't answer has nothing unsaved to lose. */
 async function saveFirst(deps: GamePackageDeps, storage: string, game: string): Promise<void> {
   if (!(await deps.editorAnswers(storage, game).catch(() => false))) return;
@@ -655,8 +676,7 @@ export function createGamePackageTools(deps: GamePackageDeps) {
     try {
       if (context.signal?.aborted) throw new Error(MESSAGE.Stopped);
       await saveFirst(deps, storage, target.game);
-      // Genex's hosts send no isolation headers, so the page adds them itself.
-      if (target.system.id === PackageSystem.Web) await ensureWebIsolation(target.projectDir);
+      if (target.system.id === PackageSystem.Web) await webSettings(target);
       return await freshStage(target);
     } catch (failure) {
       stops.delete(target.projectFile);

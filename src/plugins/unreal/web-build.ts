@@ -10,7 +10,9 @@
  * The finished site is the game's web version in `web/` at the game's root, where Publish and Live
  * find an engine's web build; a `web/` that holds anything but an earlier Unreal web build is never
  * replaced. A web build runs only on a cross-origin isolated page, and Genex's hosts are plain ones,
- * so the project gets Epic's setting that has the page's own service worker add the headers.
+ * so the project gets Epic's setting that has the page's own service worker add the headers. Those
+ * hosts also take no file past a size, and Unreal packs a game's whole content into one, so the
+ * project's web-only config gets Epic's settings that split it into several.
  */
 import { lstat, mkdir, readFile, rename, rm } from "node:fs/promises";
 import path from "node:path";
@@ -135,14 +137,59 @@ export async function placeWebBuild(gameDir: string, staged: string): Promise<st
   return path.join(folder, WEB_PAGE);
 }
 
-const PROJECT_CONFIG = ["Config", "DefaultEngine.ini"];
-const WEB_SETTINGS = "[/Script/WasmTargetPlatform.WasmTargetSettings]";
-/** Epic's setting for a host that can't send the isolation headers: the page's service worker adds them. */
-const ISOLATION_KEY = "bInjectIsolationHeaders";
+/** The folder of a project's own config, beside its `.uproject`. */
+export const PROJECT_CONFIG_FOLDER = "Config";
 const MAX_CONFIG_BYTES = 1024 * 1024;
 const LINE_BREAK = /\r\n|\r|\n/;
 const CRLF = "\r\n";
 const sameText = (a: string, b: string) => a.trim().toLowerCase() === b.toLowerCase();
+const NOT_OWN_FOLDER = "A folder on the way to the project's config is a link or a file.";
+
+/** The largest file Genex's hosting takes, in bytes. */
+const HOST_FILE_CAP_BYTES = 500 * 1024 * 1024;
+/**
+ * The most cooked content Unreal puts in one file of a web build, in bytes: half of what the host
+ * takes per file ({@link HOST_FILE_CAP_BYTES}). Unreal measures a chunk before it is packed into its
+ * container, and shader code and padding come on top, so each file is left room.
+ */
+export const WEB_CHUNK_BYTES = HOST_FILE_CAP_BYTES / 2;
+
+/** What Genex adds to one of a project's configs: the folders to the file below the project, its section and the settings. */
+type WebConfig = {
+  folders: readonly string[];
+  file: string;
+  section: string;
+  /** Each setting's key and the value written where the project doesn't set that key. */
+  settings: ReadonlyArray<readonly [key: string, value: string]>;
+};
+
+/** Epic's setting for a host that can't send the isolation headers: the page's service worker adds them. */
+const ISOLATION: WebConfig = {
+  folders: [PROJECT_CONFIG_FOLDER],
+  file: "DefaultEngine.ini",
+  section: "[/Script/WasmTargetPlatform.WasmTargetSettings]",
+  settings: [["bInjectIsolationHeaders", "True"]],
+};
+
+/**
+ * Epic's settings that split a package's content into chunks of at most a size, which the cook does
+ * when BuildCookRun is given `-manifests`. They go in the web platform's own config, which no Mac,
+ * Windows or Linux package reads, and which is the only place asked whether the project sets them:
+ * what the project says for every platform (`Config/DefaultGame.ini`) is for its other packages, and
+ * a web build has to fit the host whatever they are.
+ */
+const CHUNKS: WebConfig = {
+  folders: [PROJECT_CONFIG_FOLDER, WEB_PLATFORM],
+  file: `${WEB_PLATFORM}Game.ini`,
+  section: "[/Script/UnrealEd.ProjectPackagingSettings]",
+  settings: [
+    ["bGenerateChunks", "True"],
+    ["MaxChunkSize", String(WEB_CHUNK_BYTES)],
+  ],
+};
+
+/** A config's whole new text, to be written to `file`. */
+type ConfigEdit = { file: string; text: string };
 
 /** The project's config as text; "" when it has none. Never read through a link. */
 async function projectConfig(file: string): Promise<string> {
@@ -154,41 +201,79 @@ async function projectConfig(file: string): Promise<string> {
   }
 }
 
-/** Where the web settings stand in the config's lines: the section's last line, and whether it sets the key. */
-function webSettingsIn(lines: readonly string[]): { end: number | null; set: boolean } {
+/**
+ * The folder `folders` names below the project, made where missing: each on the way a folder of the
+ * project's own, never a link or a file, which is refused (ELOOP) before anything is made or
+ * written through it. Each is asked what it is by its own name, not by comparing spelled paths, so
+ * a `config` in another case, the same folder on a Mac or Windows, is taken as it is.
+ */
+async function ownFolder(projectDir: string, folders: readonly string[]): Promise<string> {
+  let dir = projectDir;
+  for (const folder of folders) {
+    dir = path.join(dir, folder);
+    await mkdir(dir).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== "EEXIST") throw error;
+    });
+    if (!(await lstat(dir)).isDirectory()) throw Object.assign(new Error(NOT_OWN_FOLDER), { code: "ELOOP" });
+  }
+  return dir;
+}
+
+/** Where `section` stands in a config's lines: its last line, and the keys it sets, in lower case. */
+function sectionIn(lines: readonly string[], section: string): { end: number | null; keys: Set<string> } {
   let inside = false;
   let end: number | null = null;
-  let set = false;
+  const keys = new Set<string>();
   lines.forEach((line, index) => {
     const trimmed = line.trim();
-    if (trimmed.startsWith("[")) inside = sameText(trimmed, WEB_SETTINGS);
+    if (trimmed.startsWith("[")) inside = sameText(trimmed, section);
     if (!inside || trimmed === "") return;
     end = index;
-    if (sameText(trimmed.split("=")[0] ?? "", ISOLATION_KEY)) set = true;
+    keys.add((trimmed.split("=")[0] ?? "").trim().toLowerCase());
   });
-  return { end, set };
+  return { end, keys };
 }
 
 /**
- * Turns on, in the project's own config, the setting that lets its web build run on a host that
- * sends no isolation headers. A project that already sets it, either way, is left as it is. Every
- * other line stays. Answers whether it wrote.
+ * One of the project's own configs with each setting its section doesn't set added: a key the
+ * project sets, either way, is left as it is, and so is every other line. Undefined when the project
+ * sets them all. The folders to the config are the project's own and the config a plain file: a link
+ * in either's place is refused. Nothing is written yet, though a missing folder is made.
  */
-export async function ensureWebIsolation(projectDir: string): Promise<boolean> {
-  const file = path.join(projectDir, ...PROJECT_CONFIG);
+async function withWebSettings(projectDir: string, config: WebConfig): Promise<ConfigEdit | undefined> {
+  const file = path.join(await ownFolder(projectDir, config.folders), config.file);
   const text = await projectConfig(file);
   const eol = text.includes(CRLF) ? CRLF : "\n";
   const lines = text === "" ? [] : text.split(LINE_BREAK);
-  const { end, set } = webSettingsIn(lines);
-  if (set) return false;
-  const setting = `${ISOLATION_KEY}=True`;
-  if (end !== null) lines.splice(end + 1, 0, setting);
+  const { end, keys } = sectionIn(lines, config.section);
+  const missing = config.settings.filter(([key]) => !keys.has(key.toLowerCase()));
+  if (missing.length === 0) return undefined;
+  const added = missing.map(([key, value]) => `${key}=${value}`);
+  if (end !== null) lines.splice(end + 1, 0, ...added);
   else {
     // A config that ends with its final line break keeps one blank line before the new section.
     if (lines.at(-1) === "") lines.pop();
-    lines.push(...(lines.length ? [""] : []), WEB_SETTINGS, setting, "");
+    lines.push(...(lines.length ? [""] : []), config.section, ...added, "");
   }
-  await mkdir(path.dirname(file), { recursive: true });
-  await atomicWriteText(file, lines.join(eol));
-  return true;
+  return { file, text: lines.join(eol) };
+}
+
+/**
+ * Gives the project what its web build needs to run on, and be taken by, a plain host that caps a
+ * file's size, each setting only where the project's config doesn't say either way:
+ *
+ * - in `Config/DefaultEngine.ini`, the setting that has the page add the isolation headers itself;
+ * - in the web platform's own `Config/Wasm/WasmGame.ini`, the settings that split the content into
+ *   files of at most {@link WEB_CHUNK_BYTES} of cooked data.
+ *
+ * Both configs are read and checked before either is written, so a project whose config can't be
+ * written safely (a link where a folder or a config belongs) keeps both as they were.
+ */
+export async function ensureWebSettings(projectDir: string): Promise<void> {
+  const edits: ConfigEdit[] = [];
+  for (const config of [ISOLATION, CHUNKS]) {
+    const edit = await withWebSettings(projectDir, config);
+    if (edit) edits.push(edit);
+  }
+  for (const edit of edits) await atomicWriteText(edit.file, edit.text);
 }

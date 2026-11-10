@@ -613,6 +613,17 @@ describe("packaging an Unreal game for the web", () => {
     }
   });
 
+  it("asks Unreal to split the content into files, each small enough for a host that caps a file's size", () => {
+    const game = { projectFile: "/g/unreal/Dust.uproject", stagingDir: "/g/unreal/Builds", engineDir: ENGINE };
+    for (const platform of ["darwin", "win32"] as const) {
+      // Without it the cook writes no chunk lists, and the whole game's content is one file.
+      assert.ok(buildCookRunArgs({ ...game, platform, system: PackageSystem.Web }).includes("-manifests"), platform);
+      assert.ok(!buildCookRunArgs({ ...game, platform }).includes("-manifests"), `${platform}'s own app stays whole`);
+    }
+    const linux = buildCookRunArgs({ ...game, platform: "win32", system: PackageSystem.Linux });
+    assert.ok(!linux.includes("-manifests"), "a Linux app stays whole");
+  });
+
   it("makes the site the game's web version in web/, with the checked emsdk handed to RunUAT", async () => {
     const { game, project } = await gameWithCpp();
     const emsdk = await emsdkOf("6.0.10");
@@ -632,9 +643,38 @@ describe("packaging an Unreal game for the web", () => {
       await readFile(path.join(game, "unreal", "Config", "DefaultEngine.ini"), "utf8"),
       /\[\/Script\/WasmTargetPlatform\.WasmTargetSettings\]\nbInjectIsolationHeaders=True/,
     );
+    // And its content comes in files a host takes one by one: set for the web alone, before the cook reads it.
+    assert.equal(
+      await readFile(path.join(game, "unreal", "Config", "Wasm", "WasmGame.ini"), "utf8"),
+      "[/Script/UnrealEd.ProjectPackagingSettings]\nbGenerateChunks=True\nMaxChunkSize=262144000\n",
+    );
+    assert.deepEqual((await readdir(path.join(game, "unreal", "Config"))).sort(), ["DefaultEngine.ini", "Wasm"]);
     // After a restart the build in web/ is still named.
     const later = await createGamePackageTools(deps).handlers["package-status"](web, context, "/s");
     assert.deepEqual([later.state, later.app], [GamePackageState.Idle, "web/index.html"]);
+  });
+
+  it("packages nothing, and names no path of this computer, when the project's config can't be written safely", async () => {
+    const { game, project } = await gameWithCpp();
+    const outside = await tmpDir("unreal-package-outside-");
+    await mkdir(path.join(game, "unreal", "Config"));
+    await symlink(outside, path.join(game, "unreal", "Config", "Wasm"), "dir");
+    const emsdk = await emsdkOf("6.0.10");
+    const { deps, launches } = depsFor(project, stagesWeb, { engine: await engineFor(true), emsdk });
+    const tools = createGamePackageTools(deps);
+    const failure = await tools.handlers["package-game"](web, contextIn(game), "/s").then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    assert.ok(failure instanceof Error);
+    assert.match(failure.message, /couldn't write the web build's settings.*unreal\/Config.*packaged nothing/);
+    assert.ok(!failure.message.includes(game) && !failure.message.includes(outside), failure.message);
+    assert.deepEqual([launches, await readdir(outside)], [[], []]);
+    // No half of the settings is left behind: the config Genex could have written stays unwritten.
+    assert.deepEqual(await readdir(path.join(game, "unreal", "Config")), ["Wasm"]);
+    // The game's slot is free again: nothing reads as a package still running.
+    const status = await tools.handlers["package-status"](web, contextIn(game), "/s");
+    assert.deepEqual([status.state, status.jobRunning], [GamePackageState.Idle, false]);
   });
 
   it("never makes a staged page without its file list the game's web version", async () => {
