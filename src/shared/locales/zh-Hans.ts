@@ -6082,4 +6082,12 @@ export default {
   "Send to agent": "发给代理",
   "{platform} app didn’t send": "{platform} 应用未发送",
   "{platform} build error": "{platform} 构建错误",
+  "Genex reads no settings of this game, so genex.json's authority block is ignored: it needs an index.html, a package.json, or Genex's multiplayer in its engine project":
+    "Genex 读不到这个游戏的任何设置，所以 genex.json 里的 authority 块会被忽略：需要 index.html、package.json，或引擎项目里的 Genex 多人联机",
+  "Genex reads this game's package.json, not its genex.json, so genex.json's authority block is ignored. Move the block into package.json as genex.authority, or remove package.json":
+    "Genex 读取的是这个游戏的 package.json，而不是 genex.json，所以 genex.json 里的 authority 块会被忽略。把这个块移到 package.json 的 genex.authority，或者删掉 package.json",
+  "package.json's genex is not an object, so no authority block reaches Genex and the game would publish with no room":
+    "package.json 里的 genex 不是对象，所以没有 authority 块能到达 Genex，游戏会在没有房间的情况下发布",
+  "{file} is not a JSON object, so its authority block never reaches Genex and the game would publish with no room. Fix {file}":
+    "{file} 不是 JSON 对象，所以它的 authority 块永远到不了 Genex，游戏会在没有房间的情况下发布。请修复 {file}",
 } satisfies LocaleCatalog;

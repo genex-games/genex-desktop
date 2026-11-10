@@ -6440,4 +6440,12 @@ export default {
   "Send to agent": "エージェントに送る",
   "{platform} app didn’t send": "{platform}アプリを送信できませんでした",
   "{platform} build error": "{platform}のビルドエラー",
+  "Genex reads no settings of this game, so genex.json's authority block is ignored: it needs an index.html, a package.json, or Genex's multiplayer in its engine project":
+    "Genexはこのゲームの設定を読み取れないため、genex.jsonのauthorityブロックは無視されます。index.html、package.json、またはエンジンプロジェクト内のGenexマルチプレイヤーが必要です",
+  "Genex reads this game's package.json, not its genex.json, so genex.json's authority block is ignored. Move the block into package.json as genex.authority, or remove package.json":
+    "Genexはこのゲームのgenex.jsonではなくpackage.jsonを読むため、genex.jsonのauthorityブロックは無視されます。ブロックをgenex.authorityとしてpackage.jsonに移すか、package.jsonを削除してください",
+  "package.json's genex is not an object, so no authority block reaches Genex and the game would publish with no room":
+    "package.jsonのgenexがオブジェクトではないため、authorityブロックがGenexに届かず、ゲームはルームなしで公開されます",
+  "{file} is not a JSON object, so its authority block never reaches Genex and the game would publish with no room. Fix {file}":
+    "{file}がJSONオブジェクトではないため、authorityブロックがGenexに届かず、ゲームはルームなしで公開されます。{file}を直してください",
 } satisfies LocaleCatalog;

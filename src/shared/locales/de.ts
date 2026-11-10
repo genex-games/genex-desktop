@@ -6594,4 +6594,12 @@ export default {
   "Send to agent": "An Agenten senden",
   "{platform} app didn’t send": "Die {platform}-App wurde nicht gesendet",
   "{platform} build error": "{platform}-Build-Fehler",
+  "Genex reads no settings of this game, so genex.json's authority block is ignored: it needs an index.html, a package.json, or Genex's multiplayer in its engine project":
+    "Genex liest keine Einstellungen dieses Spiels, daher wird der authority-Block in genex.json ignoriert: Es braucht eine index.html, eine package.json oder Genex-Multiplayer im Engine-Projekt",
+  "Genex reads this game's package.json, not its genex.json, so genex.json's authority block is ignored. Move the block into package.json as genex.authority, or remove package.json":
+    "Genex liest die package.json dieses Spiels, nicht die genex.json, daher wird der authority-Block in genex.json ignoriert. Verschieb den Block als genex.authority in die package.json oder entferne die package.json",
+  "package.json's genex is not an object, so no authority block reaches Genex and the game would publish with no room":
+    "genex in der package.json ist kein Objekt, daher erreicht kein authority-Block Genex und das Spiel würde ohne Raum veröffentlicht",
+  "{file} is not a JSON object, so its authority block never reaches Genex and the game would publish with no room. Fix {file}":
+    "{file} ist kein JSON-Objekt, daher erreicht sein authority-Block Genex nie und das Spiel würde ohne Raum veröffentlicht. Korrigier {file}",
 } satisfies LocaleCatalog;

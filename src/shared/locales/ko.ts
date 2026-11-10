@@ -6293,4 +6293,12 @@ export default {
   "Send to agent": "에이전트에게 보내기",
   "{platform} app didn’t send": "{platform} 앱을 보내지 못했어요",
   "{platform} build error": "{platform} 빌드 오류",
+  "Genex reads no settings of this game, so genex.json's authority block is ignored: it needs an index.html, a package.json, or Genex's multiplayer in its engine project":
+    "Genex가 이 게임의 설정을 읽지 않아서 genex.json의 authority 블록은 무시돼요. index.html, package.json, 또는 엔진 프로젝트의 Genex 멀티플레이어가 필요해요",
+  "Genex reads this game's package.json, not its genex.json, so genex.json's authority block is ignored. Move the block into package.json as genex.authority, or remove package.json":
+    "Genex는 이 게임의 genex.json이 아니라 package.json을 읽어서 genex.json의 authority 블록은 무시돼요. 블록을 package.json의 genex.authority로 옮기거나 package.json을 지우세요",
+  "package.json's genex is not an object, so no authority block reaches Genex and the game would publish with no room":
+    "package.json의 genex가 객체가 아니어서 authority 블록이 Genex에 닿지 않고, 게임은 룸 없이 게시돼요",
+  "{file} is not a JSON object, so its authority block never reaches Genex and the game would publish with no room. Fix {file}":
+    "{file}이(가) JSON 객체가 아니어서 authority 블록이 Genex에 닿지 않고, 게임은 룸 없이 게시돼요. {file}을(를) 고치세요",
 } satisfies LocaleCatalog;
