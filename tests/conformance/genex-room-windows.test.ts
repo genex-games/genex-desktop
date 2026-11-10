@@ -59,8 +59,41 @@ function listeningRoom(command: string): { child: ChildProcess; input: PassThrou
   return { child, input };
 }
 
-/** A game with a room, a sandbox built for `platform` (not started), and a service recording its spawns. */
-async function setup(platform: StudioPlatform, portFree: (port: number) => boolean = () => true) {
+/**
+ * A room the toolchain refuses before it listens: its ERROR line, then its exit (`error` undefined:
+ * the exit alone).
+ */
+function refusedRoom(error?: unknown): { child: ChildProcess; input: PassThrough } {
+  const child = new EventEmitter() as ChildProcess;
+  const stdout = new PassThrough();
+  const input = new PassThrough();
+  Object.assign(child, { stdout, stderr: new PassThrough(), exitCode: null, signalCode: null });
+  input.resume();
+  // A process closes once its output was read to its end.
+  stdout.once("end", () => {
+    Object.assign(child, { exitCode: 1 });
+    child.emit("close", 1, null);
+  });
+  queueMicrotask(() => stdout.end(error === undefined ? "" : `ERROR ${JSON.stringify(error)}\n`));
+  return { child, input };
+}
+
+/** What the toolchain says when another program holds the fast@1 port its command names. */
+const fastPortTaken = (command: string) => {
+  const port = option(command, "--fast-port");
+  const detail = `cannot bind the fast@1 UDP endpoint on 127.0.0.1:${port}: bind EADDRINUSE 127.0.0.1:${port}`;
+  return { reason: "listen_failed", detail };
+};
+
+/**
+ * A game with a room, a sandbox built for `platform` (not started), and a service recording its
+ * spawns; `room` is what each spawn starts (a room that listens, by default).
+ */
+async function setup(
+  platform: StudioPlatform,
+  portFree: (port: number) => boolean = () => true,
+  room: (command: string) => { child: ChildProcess; input: PassThrough } = listeningRoom,
+) {
   const root = await tmpDir("studio-room-windows-");
   const game = path.join(root, "games", "arena");
   const toolDir = path.join(root, "tool");
@@ -82,7 +115,7 @@ async function setup(platform: StudioPlatform, portFree: (port: number) => boole
     run: () => Promise.reject(new Error("no validation here")),
     spawn: async (request) => {
       spawned.push(request);
-      return listeningRoom(request.command);
+      return room(request.command);
     },
     toolDir,
     scratch: path.join(root, "runs"),
@@ -149,6 +182,83 @@ describe("a room on Windows listens where its sandboxed bots may connect, and is
       await assert.rejects(rooms.call(args, binding), refused, name);
       assert.deepEqual(spawned, [], `${name}: nothing ran`);
       assert.equal(rooms.status(binding.project).running, false);
+    }
+  });
+
+  it("starts on other ports when another program took one before the room could listen on it", async () => {
+    // The incident: two rooms started at the same moment on one PC. Each found 60089 free for fast@1;
+    // the second to open it was refused (EADDRINUSE) and its start failed, with 60088 free.
+    const taken = new Set<number>();
+    const { rooms, spawned, binding } = await setup(
+      StudioPlatform.Windows,
+      (port) => !taken.has(port),
+      (command) => {
+        if (option(command, "--fast-port") !== 60089) return listeningRoom(command);
+        taken.add(60089);
+        return refusedRoom(fastPortTaken(command));
+      },
+    );
+    const started = (await rooms.call({ action: "start" }, binding)) as RoomStatus;
+    assert.deepEqual(
+      spawned.map((request) => option(request.command, "--fast-port")),
+      [60089, 60088],
+      "started again, on a port free by then",
+    );
+    assert.equal(started.running, true);
+    assert.equal(started.url, `ws://127.0.0.1:${option(spawned[1]?.command ?? "", "--port")}`);
+    assert.deepEqual(started.errors, [], "the room that runs carries no error of the start before it");
+    await rooms.stopAll();
+  });
+
+  it("starts again only for a listener Studio named, a few times, and says why the last start failed", async () => {
+    const cases: Array<{
+      name: string;
+      platform: StudioPlatform;
+      room: (command: string) => { child: ChildProcess; input: PassThrough };
+      starts: number;
+      refused: RegExp;
+    }> = [
+      {
+        name: "a port taken at every start",
+        platform: StudioPlatform.Windows,
+        room: (command) => refusedRoom(fastPortTaken(command)),
+        starts: 3,
+        refused: /did not start: .*EADDRINUSE/,
+      },
+      {
+        name: "a refusal that is no listener's",
+        platform: StudioPlatform.Windows,
+        room: () => refusedRoom({ reason: "module_failed", detail: "the module threw in init" }),
+        starts: 1,
+        refused: /did not start: .*module_failed/,
+      },
+      {
+        name: "an error that names no reason",
+        platform: StudioPlatform.Windows,
+        room: () => refusedRoom("listen_failed"),
+        starts: 1,
+        refused: /did not start/,
+      },
+      {
+        name: "an exit with no word",
+        platform: StudioPlatform.Windows,
+        room: () => refusedRoom(),
+        starts: 1,
+        refused: /did not start: the toolchain exited \(1\)/,
+      },
+      {
+        name: "a listener the room picked itself (macOS names none)",
+        platform: StudioPlatform.Mac,
+        room: () => refusedRoom({ reason: "listen_failed", detail: "listen EACCES 127.0.0.1" }),
+        starts: 1,
+        refused: /did not start: .*EACCES/,
+      },
+    ];
+    for (const { name, platform, room, starts, refused } of cases) {
+      const { rooms, spawned, binding } = await setup(platform, () => true, room);
+      await assert.rejects(rooms.call({ action: "start" }, binding), refused, name);
+      assert.equal(spawned.length, starts, `${name}: started ${starts} time(s)`);
+      assert.equal(rooms.status(binding.project).running, false, name);
     }
   });
 

@@ -3845,7 +3845,9 @@ with the working dot, Checking fixes; none for a game Genex doesn't know) comes 
   before anyone presses Publish. A release Genex
   can't do right now (it can't read the build, or the build is changing) is said in Genex's words
   too and changes nothing: the build is still kept (`unansweredRelease`). Two answers about
-  one build never take it back a step (`latestOf`). Each job is kept in the workspace's
+  one build never take it back a step (`latestOf`), and each change of the record is read and
+  written back in a turn of its own (`changeRecord`), so answers that cross (a status read, a
+  release, a send that starts) never drop one another. Each job is kept in the workspace's
   `cloud-build.json` (apart from `native.json`, which every publish writes anew) and followed with
   `genex native build-status <job> --json`, waiting 15 s, 30 s, 1 and then 2 min between reads; a job
   still running when Studio starts is followed again when the record is next read. The record
@@ -4005,7 +4007,10 @@ with the working dot, Checking fixes; none for a game Genex doesn't know) comes 
   profiles too. On Windows srt-win's egress filter lets a sandboxed process reach only its proxies'
   loopback range (60080-60089), machine-wide, so the room listens there (WebSocket and fast@1 on
   the range's highest free ports) for its own bots, takes no delay (the toolchain's delay proxies
-  pick their own ports) and is stopped through the live-input relay; nothing else is opened. On
+  pick their own ports) and is stopped through the live-input relay; nothing else is opened. A port
+  another program took before the room could listen on it (the toolchain's `listen_failed`, two
+  rooms starting at once) starts the room again on the ports free by then, three times at most
+  (`ROOM_PORT_TRIES`). On
   Linux the sandbox gives the room a network namespace of its own, so it listens on ports free on
   this computer too and the loopback bridge opens them here: this computer's connections and
   datagrams go in, the room reaches nothing out. The preview is loaded into a room only once this

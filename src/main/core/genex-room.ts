@@ -73,6 +73,8 @@ export const RoomWarning = { Split: "rooms_split" } as const;
 export type RoomWarning = (typeof RoomWarning)[keyof typeof RoomWarning];
 /** What went wrong on this computer's side of a running room, kept with its errors. */
 const RoomHostFault = { FastUnreachable: "fast_unreachable" } as const;
+/** The toolchain's reasons for refusing a start (an ERROR's `reason`) that the service acts on. */
+const RoomStartRefusal = { ListenFailed: "listen_failed" } as const;
 /** The toolchain's FAST state while its fast@1 channel is on. */
 const FAST_ON = "on";
 
@@ -88,6 +90,11 @@ const ROOM_SEATS_BESIDE_BOTS = 2;
 const ROOM_MAX_SEATS = 64;
 /** The most one-way delay a room adds: a long intercontinental link. */
 export const ROOM_MAX_LATENCY_MS = 300;
+/**
+ * How many times a room is started on ports named for it: another program can take one between the
+ * look that found it free and the room's own listen, and the next start names ports free by then.
+ */
+const ROOM_PORT_TRIES = 3;
 /** How long a starting room may take to listen before it is ended. */
 const ROOM_LISTEN_TIMEOUT_MS = 30 * SECOND_MS;
 /** How long validation may take: 30 simulated seconds fuzzed and replayed twice, physics included. */
@@ -229,6 +236,16 @@ export interface GenexRoomDeps {
   reaches?: (url: string) => Promise<boolean>;
 }
 
+/** A room the toolchain refused to start because it could not open a listener it was told to. */
+class ListenerRefused extends Error {}
+
+/** What a start fails with for the toolchain's ERROR `value`: a {@link ListenerRefused} when its reason says so. */
+function startRefused(value: unknown): Error {
+  const words = MESSAGE.NoListen(JSON.stringify(value).slice(0, 2000));
+  const reason = typeof value === "object" && value !== null ? Reflect.get(value, "reason") : undefined;
+  return reason === RoomStartRefusal.ListenFailed ? new ListenerRefused(words) : new Error(words);
+}
+
 /** A call's checked arguments. */
 interface RoomCall {
   action: GenexRoomAction;
@@ -251,6 +268,15 @@ interface ReportedRoom {
 interface DeclaredRoom {
   file: string;
   seatsPerRoom: number | null;
+}
+
+/** What one start of a game's room is given: the game, its module, the call's choices and its bots. */
+interface RoomStart {
+  project: string;
+  game: string;
+  declared: DeclaredRoom;
+  call: RoomCall;
+  bots: number;
 }
 
 const isWhole = (value: unknown, max: number): value is number =>
@@ -570,9 +596,42 @@ export class GenexRoomService {
   /** Serve the module with bots, once it listens; the last room of the game ends first. */
   async #start(project: string, game: string, declared: DeclaredRoom, call: RoomCall): Promise<RoomStatus> {
     const bots = roomBots(call.bots, declared.seatsPerRoom);
+    const { room, url } = await this.#listen({ project, game, declared, call, bots });
+    room.reachable = await this.#reach(room, url);
+    // A room this computer cannot reach is never handed to the preview: it would load into nothing.
+    if (!room.reachable) return this.status(project);
+    // An editor's Play (Unreal's GenexMultiplayer) joins it from here; a link in the way names it nowhere.
+    await nameRoom(game, url).catch(() => undefined);
+    room.told = true;
+    room.previewJoined = (await this.#deps.onRoom?.(project, url).catch(() => false)) ?? false;
+    return this.status(project);
+  }
+
+  /**
+   * The game's room once it listens, and its address; the last room of the game ends first. Where
+   * the room's ports are named for it, another program (a second room starting at the same moment)
+   * can take one between the look that found it free and the room's own listen: the room is then
+   * started again on ports free by then, {@link ROOM_PORT_TRIES} times at most.
+   */
+  async #listen(start: RoomStart): Promise<{ room: Room; url: string }> {
+    for (let tries = 1; ; tries += 1) {
+      await this.stop(start.project);
+      const ports = await this.#ports(start.call.latencyMs);
+      const room = await this.#serve(start, ports);
+      try {
+        const url = await this.#listening(room);
+        room.url = url;
+        return { room, url };
+      } catch (error) {
+        const portTaken = ports !== null && error instanceof ListenerRefused;
+        if (!portTaken || tries >= ROOM_PORT_TRIES) throw error;
+      }
+    }
+  }
+
+  /** Start the toolchain on the game's module, on `ports` where they are named: the game's room from now on. */
+  async #serve({ project, game, declared, call, bots }: RoomStart, ports: RoomPorts | null): Promise<Room> {
     const module = declared.file;
-    await this.stop(project);
-    const ports = await this.#ports(call.latencyMs);
     const listeners = ports ? ["--port", String(ports.port), "--fast-port", String(ports.fastPort)] : [];
     const command = await this.#command([
       "start",
@@ -623,15 +682,7 @@ export class GenexRoomService {
     };
     room.ended = closed.then(() => this.#ended(project, room));
     this.#rooms.set(project, room);
-    room.url = await this.#listening(room);
-    room.reachable = await this.#reach(room, room.url);
-    // A room this computer cannot reach is never handed to the preview: it would load into nothing.
-    if (!room.reachable) return this.status(project);
-    // An editor's Play (Unreal's GenexMultiplayer) joins it from here; a link in the way names it nowhere.
-    await nameRoom(game, room.url).catch(() => undefined);
-    room.told = true;
-    room.previewJoined = (await this.#deps.onRoom?.(project, room.url).catch(() => false)) ?? false;
-    return this.status(project);
+    return room;
   }
 
   /** Open the room's WebSocket on this computer's loopback where it has its own, then ask it at `url`. */
@@ -689,7 +740,7 @@ export class GenexRoomService {
     else if (line?.kind === RoomLine.Log) keep(room.logs, line.value);
     else if (line?.kind === RoomLine.Error) {
       keep(room.errors, line.value);
-      if (room.url === null) fail(new Error(MESSAGE.NoListen(JSON.stringify(line.value).slice(0, 2000))));
+      if (room.url === null) fail(startRefused(line.value));
     }
   }
 

@@ -9,8 +9,9 @@ import { execFileSync } from "node:child_process";
 import { mkdir, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { after, describe, it } from "node:test";
-import { setTimeout as wait } from "node:timers/promises";
+import { setImmediate as turn, setTimeout as wait } from "node:timers/promises";
 import {
+  beginCloudSend,
   buildReleaseArgs,
   buildStatusArgs,
   CLOUD_BUILD_FILE,
@@ -68,6 +69,43 @@ function fakeDeps(answers: unknown[]) {
     read: readJson,
   };
   return { deps, calls, waits, staged };
+}
+
+/** `fakeDeps` that count their reads of the record. */
+function countingReader(answers: unknown[]) {
+  const { deps } = fakeDeps(answers);
+  let reads = 0;
+  deps.read = (file) => {
+    reads += 1;
+    return readJson(file);
+  };
+  return { deps, reads: () => reads };
+}
+
+/**
+ * `fakeDeps` whose first read of the record has it in hand (`inHand`) and gives it only after
+ * `letGo`: an answer on its way into the record while another one arrives.
+ */
+function heldReader(answers: unknown[]) {
+  const { deps } = fakeDeps(answers);
+  let reached = () => {};
+  let letGo = () => {};
+  const inHand = new Promise<void>((resolve) => {
+    reached = resolve;
+  });
+  const held = new Promise<void>((resolve) => {
+    letGo = resolve;
+  });
+  let first = true;
+  deps.read = async (file) => {
+    const value = await readJson(file);
+    if (!first) return value;
+    first = false;
+    reached();
+    await held;
+    return value;
+  };
+  return { deps, inHand, letGo: () => letGo() };
 }
 
 describe("asking Genex to build an app", () => {
@@ -232,6 +270,46 @@ describe("a build on Genex in the publish workspace", () => {
     const finished = { ...BUILD, state: CloudBuildState.Done };
     await watchCloudBuild(dir, "job_1", fakeDeps([{ build: finished }]).deps, new AbortController().signal);
     assert.deepEqual(await readJson(path.join(dir, CLOUD_BUILD_FILE)), { builds: [finished], send });
+  });
+
+  it("keeps a release's answer when a status read of the same build is still on its way into the record", async () => {
+    // The incident: a publish gave players a kept build while its status read was being written. Each
+    // read the record, then wrote it back; the status wrote last, from what it read first, and the
+    // record said "built, kept" of an app players already had.
+    const dir = await tmpDir("cloud-build");
+    const file = path.join(dir, CLOUD_BUILD_FILE);
+    await writeFile(file, JSON.stringify({ builds: [{ ...BUILD, held: true }] }));
+    const signal = new AbortController().signal;
+    const status = heldReader([{ build: KEPT }]);
+    const read = refreshCloudBuild(dir, "job_1", status.deps, signal);
+    await status.inHand;
+    const live = { ...BUILD, state: CloudBuildState.Done, finishedAt: STARTED, installedBytes: 2048 };
+    const release = countingReader([{ build: live }]);
+    const released = releaseCloudBuild(dir, "job_1", release.deps, signal);
+    await turn();
+    assert.equal(release.reads(), 0, "the release waits for the status read to write the record back");
+    status.letGo();
+    await Promise.all([read, released]);
+    assert.deepEqual(await readJson(file), { builds: [live] }, "players have it, and the record says so");
+  });
+
+  it("keeps a send that starts while a status read is still on its way into the record", async () => {
+    // The incident: Build was pressed while a kept app's status was being written. The status read
+    // the record before the send was in it and wrote it back after: the send was gone from the record
+    // while the project was still going up.
+    const dir = await tmpDir("cloud-build");
+    const file = path.join(dir, CLOUD_BUILD_FILE);
+    await writeFile(file, JSON.stringify({ builds: [KEPT] }));
+    const status = heldReader([{ build: KEPT }]);
+    const read = refreshCloudBuild(dir, "job_1", status.deps, new AbortController().signal);
+    await status.inHand;
+    const press = countingReader([]);
+    const begun = beginCloudSend(dir, "windows", press.deps.read, true, new Date(STARTED));
+    await turn();
+    assert.equal(press.reads(), 0, "the send waits for the status read to write the record back");
+    status.letGo();
+    const [, send] = await Promise.all([read, begun]);
+    assert.deepEqual(await readJson(file), { builds: [KEPT], send }, "the build and the send are both there");
   });
 
   it("keeps a send only when all of it is whole", () => {

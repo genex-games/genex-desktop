@@ -32,7 +32,7 @@ import {
   type GenexCloudSend,
 } from "../../shared/genex.ts";
 import { NativePlatform } from "../../shared/play-native.ts";
-import { atomicWriteJson } from "../../substrate/fsx.ts";
+import { AsyncLock, atomicWriteJson } from "../../substrate/fsx.ts";
 import type { StagedSource } from "./remix-source.ts";
 
 /** The first Genex CLI whose `genex native build` holds a build (`--hold`) and that has `build-release`. */
@@ -282,32 +282,67 @@ export async function loadCloudSend(
   return readCloudSend(await read(path.join(dir, CLOUD_BUILD_FILE)));
 }
 
+/** A workspace's record as kept: its builds, and its send when one is under way or stopped. */
+interface CloudRecord {
+  builds: GenexCloudBuild[];
+  send: GenexCloudSend | null;
+}
+
+/** Each publish workspace's lock: its record changes one change at a time (`changeRecord`). */
+const recordLocks = new Map<string, AsyncLock>();
+
+/**
+ * Change the record of workspace `dir`: read, changed by `change` (null leaves it as it is) and
+ * written back in a turn of its own. Answers about one game cross, each from a CLI run of its own
+ * (a status read, a release, a send that starts or arrives): without turns, the one that wrote last
+ * wrote from what it read first and dropped what the other had kept.
+ */
+function changeRecord(
+  dir: string,
+  read: (file: string) => Promise<unknown>,
+  change: (record: CloudRecord) => CloudRecord | null,
+): Promise<void> {
+  const file = path.join(dir, CLOUD_BUILD_FILE);
+  const lock = recordLocks.get(file) ?? new AsyncLock();
+  recordLocks.set(file, lock);
+  return lock.run(async () => {
+    const kept = await read(file);
+    const next = change({ builds: readCloudBuilds(kept), send: readCloudSend(kept) });
+    if (next) await atomicWriteJson(file, { builds: next.builds, ...(next.send ? { send: next.send } : {}) });
+  });
+}
+
 /** Keep `build` in the workspace's record; a send under way stays, unless this is the build it became. */
-async function keepBuild(
+function keepBuild(
   dir: string,
   build: GenexCloudBuild,
   read: (file: string) => Promise<unknown>,
   arrived = false,
-) {
-  const builds = withBuild(await loadCloudBuilds(dir, read), build);
-  const send = arrived ? null : await loadCloudSend(dir, read);
-  await atomicWriteJson(path.join(dir, CLOUD_BUILD_FILE), { builds, ...(send ? { send } : {}) });
+): Promise<void> {
+  return changeRecord(dir, read, ({ builds, send }) => ({
+    builds: withBuild(builds, build),
+    send: arrived ? null : send,
+  }));
 }
 
 /**
  * Forget every build of `platform` in the workspace's record: its app was taken off Genex, so none is
  * what players have. A send under way stays.
  */
-export async function forgetCloudBuilds(dir: string, platform: string, read: (file: string) => Promise<unknown>) {
-  const builds = (await loadCloudBuilds(dir, read)).filter((build) => build.platform !== platform);
-  const send = await loadCloudSend(dir, read);
-  await atomicWriteJson(path.join(dir, CLOUD_BUILD_FILE), { builds, ...(send ? { send } : {}) });
+export function forgetCloudBuilds(
+  dir: string,
+  platform: string,
+  read: (file: string) => Promise<unknown>,
+): Promise<void> {
+  return changeRecord(dir, read, ({ builds, send }) => ({
+    builds: builds.filter((build) => build.platform !== platform),
+    send,
+  }));
 }
 
 /** Keep `send` as the workspace's send, beside its builds. */
-async function keepSend(dir: string, send: GenexCloudSend, read: (file: string) => Promise<unknown>) {
-  const builds = await loadCloudBuilds(dir, read);
-  await atomicWriteJson(path.join(dir, CLOUD_BUILD_FILE), { builds, send });
+function keepSend(dir: string, send: GenexCloudSend, read: (file: string) => Promise<unknown>): Promise<void> {
+  return changeRecord(dir, read, ({ builds }) => ({ builds, send }));
 }
 
 /**
@@ -419,18 +454,21 @@ function unansweredRelease(answer: unknown): string {
  * Say in the record that Genex has nothing of kept build `jobId` to give. A build the record no
  * longer calls kept stays as it is: it ended already, or is followed to its own end.
  */
-async function endKeptBuild(
+function endKeptBuild(
   dir: string,
   jobId: string,
   failure: CloudBuildFailure,
   read: (file: string) => Promise<unknown>,
   now: Date,
 ): Promise<void> {
-  const kept = (await loadCloudBuilds(dir, read)).find((build) => build.jobId === jobId);
-  if (!kept || !isHeld(kept)) return;
-  const { platform, startedAt } = kept;
-  const ended = { platform, jobId, startedAt, state: CloudBuildState.Failed, failure, finishedAt: now.toISOString() };
-  await keepBuild(dir, ended, read);
+  return changeRecord(dir, read, ({ builds, send }) => {
+    const kept = builds.find((build) => build.jobId === jobId);
+    if (!kept || !isHeld(kept)) return null;
+    const { platform, startedAt } = kept;
+    const finishedAt = now.toISOString();
+    const ended = { platform, jobId, startedAt, state: CloudBuildState.Failed, failure, finishedAt };
+    return { builds: withBuild(builds, ended), send };
+  });
 }
 
 /**
