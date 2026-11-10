@@ -138,6 +138,7 @@
   "Unreal setup",
   "Unreal {engine} builds with Xcode {min} to {max}. Keep Xcode {version} and add Xcode {newMajor} from Apple's downloads: put it in Applications beside Xcode {major}; this page then shows the one command to select it.",
   "Unreal {engine} builds with Xcode {min} to {max}; this Mac has Xcode {version}.",
+  "Unreal's build accelerator keeps its lock files here",
   "Unreal's build tool writes its log here",
   "Use in this game",
   "Use {name} in this game",

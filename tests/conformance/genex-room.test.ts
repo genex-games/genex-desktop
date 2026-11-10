@@ -15,7 +15,14 @@ import os from "node:os";
 import path from "node:path";
 import { after, before, describe, it } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
-import { GenexRoomService, ROOM_MAX_BOTS, roomCall, type RoomStatus } from "../../src/main/core/genex-room.ts";
+import {
+  GenexRoomRefusal,
+  GenexRoomService,
+  ROOM_MAX_BOTS,
+  RoomWarning,
+  roomCall,
+  type RoomStatus,
+} from "../../src/main/core/genex-room.ts";
 import { authorityDevDir } from "../../src/plugins/genex/cli.ts";
 import { ProcessSandbox } from "../../src/substrate/spawn.ts";
 import { running } from "../helpers/processes.ts";
@@ -256,7 +263,8 @@ describe("genex__room checks its call before anything runs", () => {
       ["too much delay", { action: "start", latencyMs: 301 }],
     ];
     for (const [name, args] of cases) assert.throws(() => roomCall(args), Error, name);
-    assert.deepEqual(roomCall({ action: "start" }), { action: "start", bots: 3, latencyMs: 0 });
+    // Flipped from `bots: 3`: the default now depends on the game's seats, so the call leaves it unset.
+    assert.deepEqual(roomCall({ action: "start" }), { action: "start", bots: null, latencyMs: 0 });
   });
 
   it("refuses a game with no room, or a module that leads out of it, and runs nothing", async () => {
@@ -375,6 +383,107 @@ describe("genex__room runs the toolchain Studio ships, in the sandbox", () => {
     await assert.rejects(rooms.call({ action: "start" }, binding), /did not start/);
     assert.deepEqual(told, []);
     await until(rooms, binding.project, (status) => !status.running);
+  });
+});
+
+/**
+ * A 4-seat game's local room took 3 bots by default, the preview made 4 of 4, and the builder's own
+ * test client opened a second room the bots were not in, without a word in `status`. Now the
+ * default leaves a seat free once the preview joins, a bot count that leaves none is refused by
+ * name, and `status` says how many rooms are open and how many seats each has.
+ */
+describe("the local room is honest about its seats", () => {
+  /** A room module seating `seats`. */
+  const seatedRoom = (seats: number) => ROOM_JS.replace("maxPlayers: 8", `maxPlayers: ${seats}`);
+
+  it("leaves a 4-seat game's room a free seat after the preview joins, by default", async () => {
+    const dir = await game(
+      "seats-four",
+      { "server/room.js": seatedRoom(4) },
+      { module: "server/room.js", maxPlayers: 4 },
+    );
+    const { rooms, runs, binding } = service(dir);
+    const started = (await rooms.call({ action: "start" }, binding)) as RoomStatus;
+    try {
+      assert.equal(option(runs.at(-1), "--bots"), 2, "two bots: the preview takes the third seat, the fourth is free");
+      assert.equal(started.bots, 2);
+      assert.equal(started.seatsPerRoom, 4, "each room's seats, from the authority block");
+      const playing = await until(
+        rooms,
+        binding.project,
+        (status) => (status.rooms ?? 0) >= 1 && ((status.report as { players?: number } | null)?.players ?? 0) >= 2,
+      );
+      assert.equal(playing.rooms, 1, "the bots are in one room");
+      assert.equal(playing.warning, null);
+    } finally {
+      await rooms.stopAll();
+    }
+  });
+
+  it("refuses a bot count that leaves no seat free, naming maxPlayers, and runs nothing", async () => {
+    const table: Array<[string, number, number]> = [
+      ["4 seats, 3 bots and the preview fill it", 4, 3],
+      ["4 seats, 5 bots overflow into a second room", 4, 5],
+      ["2 seats take the preview and one more", 2, 1],
+    ];
+    for (const [name, seats, bots] of table) {
+      const dir = await game(
+        `seats-full-${seats}-${bots}`,
+        { "server/room.js": seatedRoom(seats) },
+        { module: "server/room.js", maxPlayers: seats },
+      );
+      const { rooms, runs, told, binding } = service(dir);
+      await assert.rejects(
+        rooms.call({ action: "start", bots }, binding),
+        (error: Error & { code?: unknown }) =>
+          error.code === GenexRoomRefusal.NoFreeSeat && error.message.includes(`maxPlayers ${seats}`),
+        name,
+      );
+      assert.deepEqual([runs, told], [[], []], `${name}: nothing ran and the preview was not told`);
+      assert.equal(rooms.status(binding.project).running, false, name);
+    }
+  });
+
+  it("starts no bots by default where the preview fills a small room, and takes as many as leave a seat", async () => {
+    const table: Array<[number, number | undefined, number]> = [
+      [1, undefined, 0],
+      [2, undefined, 0],
+      [3, undefined, 1],
+      [4, 2, 2],
+      [64, undefined, 3],
+    ];
+    for (const [seats, bots, expected] of table) {
+      const dir = await game(
+        `seats-default-${seats}`,
+        { "server/room.js": seatedRoom(seats) },
+        { module: "server/room.js", maxPlayers: seats },
+      );
+      const { rooms, runs, binding } = service(dir);
+      const args = bots === undefined ? { action: "start" } : { action: "start", bots };
+      try {
+        const started = (await rooms.call(args, binding)) as RoomStatus;
+        assert.equal(option(runs.at(-1), "--bots"), expected, `${seats} seats`);
+        assert.equal(started.bots, expected, `${seats} seats`);
+      } finally {
+        await rooms.stopAll();
+      }
+    }
+  });
+
+  it("names a second room in status when the module seats fewer than the bots", async () => {
+    // No maxPlayers in the authority block: only the module's config (2 seats) says, which this
+    // computer cannot read before the room runs, so the toolchain's REPORT is what tells.
+    const dir = await game("seats-split", { "server/room.js": seatedRoom(2) });
+    const { rooms, binding } = service(dir);
+    const started = (await rooms.call({ action: "start", bots: 3 }, binding)) as RoomStatus;
+    try {
+      assert.equal(started.seatsPerRoom, null, "the block names no seats");
+      const split = await until(rooms, binding.project, (status) => (status.rooms ?? 0) >= 2);
+      assert.equal(split.warning?.code, RoomWarning.Split);
+      assert.match(split.warning?.detail ?? "", /2 rooms/);
+    } finally {
+      await rooms.stopAll();
+    }
   });
 });
 

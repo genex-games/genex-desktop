@@ -25,6 +25,8 @@ Then `unreal__cpp-status`: a game that uses the plugin must have a C++ module to
   authoritative card describes. Pick its preset by the game: `firstperson` for a shooter on foot,
   `vehicle`, `projectile`, or `topdown`. Rooms measure in metres.
 - `genex.json` at the game folder's root: `{"authority": {"module": "server/room.ts", "tickHz": 60, "maxPlayers": 8}}`.
+  Keep it valid JSON, and put no package.json at the game's root: Genex would read that instead,
+  and refuses the publish and `genex__room` by name.
 - `genex__room {"action":"validate"}` after every change; fix each failure before anything else.
 
 ## 3. Write the client
@@ -59,10 +61,11 @@ Never write a local room's address into the game.
 
 1. After adding the plugin or changing C++, rebuild with Unreal closed (in a chat `unreal__quit-editor`,
    then `unreal__open-editor` with build: true; in a Loop, Genex's restart): Unreal builds the plugin.
-2. `genex__room {"action":"start","bots":3}`. While it runs, Genex names the room in the game's
+2. `genex__room {"action":"start"}`: its bots leave a seat free for the editor's Play beside the
+   preview (a `bots` count that fills the room is refused by name). While it runs, Genex names the room in the game's
    `.studio/authority.json`; the plugin hands it to Play, which joins it with no account.
 3. Play in the editor (2 to 4 players), then `genex__room {"action":"status"}` for the room's
-   report, logs and errors. `genex__room {"action":"stop"}` when done.
+   report, logs and errors; `rooms` above 1 means a player did not fit and is in another room. `genex__room {"action":"stop"}` when done.
 
 Say what you saw. Never report the game as online before a published draft of it passed.
 

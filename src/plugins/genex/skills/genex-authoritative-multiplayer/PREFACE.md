@@ -22,10 +22,13 @@ preface, this preface wins.
   `npx genex-authority-dev` commands (a game's commands cannot download it):
   - `genex__room {"action":"validate"}` is the publish gate's own check: `{passed, failures}`.
     Run it after every change to the module, and fix each failure before anything else.
-  - `genex__room {"action":"start","bots":3,"latencyMs":75}` serves the room on this computer with
-    bots and loads the game's preview into it, so the person plays against the bots there.
-    `genex__room {"action":"status"}` answers the room's last REPORT, its `ctx.log` lines and
-    errors; read it while the room runs, as the card's testing reference describes. Stop it with
+  - `genex__room {"action":"start","latencyMs":75}` serves the room on this computer with bots
+    and loads the game's preview into it, so the person plays against the bots there. The preview
+    takes a seat and your own test client needs another: with the authority block's `maxPlayers`
+    the default is that less 2 bots (at most 3), and a `bots` count that leaves no seat free is
+    refused by name. `genex__room {"action":"status"}` answers the room's last REPORT, its `ctx.log`
+    lines and errors, and `rooms`: more than 1 (its `warning`) means players did not all fit and
+    opened another room, so start with fewer bots. Read it while the room runs, as the card's testing reference describes. Stop it with
     `genex__room {"action":"stop"}`. The preview hands the game the room's address through the
     embed SDK's local test mode (`getAuthorityUrls()`): never write the address into the game.
 - Before a publish, validate, then play it in a local room with bots, and say what you saw. Never
@@ -45,6 +48,10 @@ preface, this preface wins.
 
 - It has no `package.json`: the `authority` block goes in `genex.json` at the game's root, beside
   any other setting: `{"authority": {"module": "server/room.js", "tickHz": 30, "maxPlayers": 8}}`.
+  Keep `genex.json` valid JSON and add no package.json beside it: Genex reads a package.json first,
+  so a stray one, or a `genex.json` that does not parse, would drop the block. The publish and
+  `genex__room` refuse such a game by name (`export_room_manifest_shadowed`,
+  `export_room_manifest_broken`) rather than ship it with no room.
 - The same `genex__package` call maps `@genex-ai/multiplayer/authority` in its import map; a game
   that mapped multiplayer earlier gets it by making the call again. Never copy the SDK by hand.
 - It has no TypeScript build: write the room module and every file it shares with the client in

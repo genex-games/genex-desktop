@@ -138,6 +138,7 @@
   "Unreal setup": "Unreal 설정",
   "Unreal {engine} builds with Xcode {min} to {max}. Keep Xcode {version} and add Xcode {newMajor} from Apple's downloads: put it in Applications beside Xcode {major}; this page then shows the one command to select it.": "Unreal {engine} 버전은 Xcode {min}~{max} 버전으로 빌드해요. Xcode {version} 버전은 그대로 두고 Apple 다운로드에서 Xcode {newMajor} 버전을 추가하세요. 응용 프로그램 폴더의 Xcode {major} 옆에 넣으면 이 페이지에 선택용 명령어가 표시돼요.",
   "Unreal {engine} builds with Xcode {min} to {max}; this Mac has Xcode {version}.": "Unreal {engine} 버전은 Xcode {min}~{max} 버전으로 빌드하는데, 이 Mac의 Xcode는 {version} 버전이에요.",
+  "Unreal's build accelerator keeps its lock files here": "Unreal의 빌드 가속기가 잠금 파일을 여기에 둬요",
   "Unreal's build tool writes its log here": "Unreal 빌드 도구가 여기에 로그를 기록해요",
   "Use in this game": "이 게임에서 사용",
   "Use {name} in this game": "이 게임에서 {name} 사용",

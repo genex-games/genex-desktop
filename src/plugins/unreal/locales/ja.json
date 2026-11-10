@@ -138,6 +138,7 @@
   "Unreal setup": "Unrealのセットアップ",
   "Unreal {engine} builds with Xcode {min} to {max}. Keep Xcode {version} and add Xcode {newMajor} from Apple's downloads: put it in Applications beside Xcode {major}; this page then shows the one command to select it.": "Unreal {engine}はXcode {min}〜{max}でビルドします。Xcode {version}は残したまま、AppleのダウンロードからXcode {newMajor}を追加してください。Xcode {major}と同じ「アプリケーション」フォルダーに入れると、このページに選択用のコマンドが表示されます。",
   "Unreal {engine} builds with Xcode {min} to {max}; this Mac has Xcode {version}.": "Unreal {engine}はXcode {min}〜{max}でビルドしますが、このMacのXcodeは{version}です。",
+  "Unreal's build accelerator keeps its lock files here": "Unrealのビルドアクセラレーターがロックファイルをここに置きます",
   "Unreal's build tool writes its log here": "Unrealのビルドツールがここにログを書き込みます",
   "Use in this game": "このゲームで使う",
   "Use {name} in this game": "このゲームで{name}を使う",

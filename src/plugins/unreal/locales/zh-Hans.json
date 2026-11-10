@@ -138,6 +138,7 @@
   "Unreal setup": "Unreal 设置",
   "Unreal {engine} builds with Xcode {min} to {max}. Keep Xcode {version} and add Xcode {newMajor} from Apple's downloads: put it in Applications beside Xcode {major}; this page then shows the one command to select it.": "Unreal {engine} 需要用 Xcode {min} 到 {max} 构建。保留 Xcode {version}，再从 Apple 下载页面添加 Xcode {newMajor}：把它放到“应用程序”中 Xcode {major} 旁边；之后此页面会显示选择它所需的那条命令。",
   "Unreal {engine} builds with Xcode {min} to {max}; this Mac has Xcode {version}.": "Unreal {engine} 需要用 Xcode {min} 到 {max} 构建；这台 Mac 上是 Xcode {version}。",
+  "Unreal's build accelerator keeps its lock files here": "Unreal 的构建加速器在这里存放锁文件",
   "Unreal's build tool writes its log here": "Unreal 的构建工具在这里写入日志",
   "Use in this game": "在这个游戏中使用",
   "Use {name} in this game": "在这个游戏中使用 {name}",

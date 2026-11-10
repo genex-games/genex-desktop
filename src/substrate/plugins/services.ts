@@ -17,7 +17,7 @@ import {
 import { VIEWPORT_MAX, VIEWPORT_MIN } from "../preview-pool.ts";
 import type { ExportResult } from "../game-export.ts";
 import type { GenexGameManifest } from "../../shared/genex.ts";
-import { readGenexGameManifest } from "../genex-game-manifest.ts";
+import { readGenexGameManifest, readRoomGameManifest } from "../genex-game-manifest.ts";
 import { clearStagedRoom, roomModulePath, stageRoom } from "../genex-room-stage.ts";
 import { SecretStore } from "../secrets.ts";
 import { atomicWriteJson } from "../fsx.ts";
@@ -524,6 +524,8 @@ export class PluginServices {
   }: ServiceCall): Promise<ExportResult & { genex?: GenexGameManifest }> {
     const bound = requireBinding(binding);
     if (!PROJECT_NAME.test(bound.project)) throw new Error(MESSAGE.InvalidProjectName);
+    // A room the game's manifest drops is refused before anything is copied or shown to the person.
+    await readRoomGameManifest(bound.directory);
     if (!this.exportStage) throw new Error(MESSAGE.ExportUnavailable);
     const target = path.join(root, "publish", bound.project, "dist");
     await mkdir(path.dirname(target), { recursive: true, mode: 0o700 });

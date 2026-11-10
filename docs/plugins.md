@@ -1025,7 +1025,9 @@ Then it compiles the copy with UnrealBuildTool (`ubt.ts`, at most two at once; t
 as `<file>:<line>: <message>`; an error in a file outside the game and the engine names only where
 it is. UBT runs under `sandbox-exec` (`ubt-sandbox.ts`): of the home folder it reads only the copy,
 the engine, Xcode and its own folders (its configuration read-only), it writes only the copy's
-`Intermediate/`, `Binaries/` and `Saved/`, its log folder and a private scratch, never a sign-in home,
+`Intermediate/`, `Binaries/` and `Saved/`, its log folder, a private scratch and the build accelerator's
+lock folder `/private/tmp/uba_shm_locks` (files only, no link: UBT 5.8 starts the accelerator's trace
+even with `-NoUBA`, and its lock loop never ends where it can't create one), never a sign-in home,
 with no network, no Apple Events (no scripting or typing into another app) and a fresh environment. It builds with `-NoUBA`: the build accelerator lists the
 folders above the copy, which the sandbox closes in the home folder (a full build took 26.7 s). On
 Windows `Build.bat <Target> Win64 Development -Project=… -NoMutex -NoUBA -NoHotReloadFromIDE` runs through `cmd.exe`
@@ -1945,7 +1947,13 @@ Available services are capability checked and scoped to the calling plugin:
   exporter the Export button uses does the copying. The copy carries no package.json, so the
   result's `genex` field holds what the game's own one tells Genex (its Genex SDK versions and
   `genex` settings, a server-authoritative `authority` block as written), read only when that
-  file lives inside the game. For a game with a usable `authority` block the host also stages its
+  file lives inside the game. A dropped block is refused by name before the export runs
+  (`readRoomGameManifest`, `substrate/genex-game-manifest.ts`), never published as a game with no
+  room: a `genex.json` declaring one that Genex does not read (a package.json comes first, or the
+  game has no page, package.json or engine multiplayer: `export_room_manifest_shadowed`), or a
+  `server/room.js`/`.ts` beside a `genex.json` or package.json that is not a JSON object, or a
+  package.json whose `genex` is not one (`export_room_manifest_broken`); `genex__room` refuses the
+  same. For a game with a usable `authority` block the host also stages its
   room (`substrate/genex-room-stage.ts`) beside `dist/`, never in it: `server/` and every game file
   the module imports by a relative path, at their paths in the game, each staged folder ignored by
   git. A link on the way, a file outside the game or at its top level, a hidden or reserved folder,
@@ -2187,8 +2195,8 @@ refused when a folder is `/`, the home folder or a folder holding it, `~/Library
 inside a login or Genex's own data (`~/.claude`, `~/.codex`, `~/.genex`, `~/.ssh`, `~/.aws`,
 `~/Library/Keychains`, `~/Library/HTTPStorages`, `~/Library/Roblox`,
 `~/Library/Application Support/Genex`), compared case-blind. The Unreal
-plugin names the two its build tool writes: `~/Library/Application Support/Epic/UnrealBuildTool`
-and `/private/tmp/.dotnet`.
+plugin names the three its build tool writes: `~/Library/Application Support/Epic/UnrealBuildTool`,
+`/private/tmp/.dotnet` and `/private/tmp/uba_shm_locks`.
 
 ### Hooks: Genex's moments
 
@@ -3859,7 +3867,13 @@ with the working dot, Checking fixes; none for a game Genex doesn't know) comes 
   computer gets an answer from it (`reachable`); `previewJoined` is never true otherwise. A reachable
   room is also named in the game's `.studio/authority.json` (`{"url":"ws://127.0.0.1:<port>"}`,
   `genex-room-handoff.ts`), which an engine editor's Play joins (Unreal's GenexMultiplayer); it is
-  removed when the room ends, and never written or removed through a link.
+  removed when the room ends, and never written or removed through a link. Seats are honest: the
+  preview takes one seat and the builder's own test client needs another, so with the authority
+  block's `maxPlayers` a start's default is min(3, maxPlayers - 2) bots and a bot count that leaves
+  no seat free is refused by name (`room_no_free_seat`); without it, 3 bots. `status` answers the
+  room's `bots`, `seatsPerRoom` (that `maxPlayers`, or null) and `rooms` (the REPORT's count), and a
+  `warning` (`rooms_split`) while the room server holds more than one room, as it does when a module
+  seats fewer than its bots: the toolchain's REPORT counts rooms and players, not each room's seats.
 - `genex__asset` accepts only each lane's own options (`LANE_OPTIONS`, `plugins/genex/request.ts`),
   and a refusal names them (`Unsupported Genex option for <op>`). Each lane's provider is fixed and
   its description says which (the `model` lanes are Tripo; `character` and `creature` are Meshy;

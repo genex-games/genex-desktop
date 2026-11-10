@@ -120,6 +120,10 @@ export const ExportRefusal = {
   RoomReserved: "export_room_reserved",
   /** The room module's files are more, or larger, than a room module could be. */
   RoomTooLarge: "export_room_too_large",
+  /** A `server/room.*` sits beside a `genex.json` or package.json that is not JSON, or whose `genex` is not an object. */
+  RoomManifestBroken: "export_room_manifest_broken",
+  /** `genex.json` declares the room, but Genex reads another manifest (a package.json) or none for this game. */
+  RoomManifestShadowed: "export_room_manifest_shadowed",
 } as const;
 export type ExportRefusal = (typeof ExportRefusal)[keyof typeof ExportRefusal];
 

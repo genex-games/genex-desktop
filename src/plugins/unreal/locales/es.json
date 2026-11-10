@@ -138,6 +138,7 @@
   "Unreal setup": "Configuración de Unreal",
   "Unreal {engine} builds with Xcode {min} to {max}. Keep Xcode {version} and add Xcode {newMajor} from Apple's downloads: put it in Applications beside Xcode {major}; this page then shows the one command to select it.": "Unreal {engine} compila con Xcode de {min} a {max}. Conserva Xcode {version} y añade Xcode {newMajor} desde las descargas de Apple: ponlo en Aplicaciones junto a Xcode {major}; luego esta página te mostrará el comando para seleccionarlo.",
   "Unreal {engine} builds with Xcode {min} to {max}; this Mac has Xcode {version}.": "Unreal {engine} compila con Xcode de {min} a {max}; este Mac tiene Xcode {version}.",
+  "Unreal's build accelerator keeps its lock files here": "Aquí el acelerador de compilación de Unreal guarda sus archivos de bloqueo",
   "Unreal's build tool writes its log here": "Aquí escribe su registro la herramienta de compilación de Unreal",
   "Use in this game": "Usar en este juego",
   "Use {name} in this game": "Usar {name} en este juego",

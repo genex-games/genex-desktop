@@ -1,7 +1,7 @@
 {
   "apiVersion": 3,
   "id": "unreal",
-  "version": "0.55.1",
+  "version": "0.55.3",
   "icon": "icon.svg",
   "name": "Unreal Engine",
   "publisher": "Genex",
@@ -880,7 +880,11 @@
   ],
   "folders": [
     { "path": "~/Library/Application Support/Epic/UnrealBuildTool", "why": "Unreal's build tool writes its log here" },
-    { "path": "/private/tmp/.dotnet", "why": ".NET keeps the build tool's configuration lock here" }
+    { "path": "/private/tmp/.dotnet", "why": ".NET keeps the build tool's configuration lock here" },
+    {
+      "path": "/private/tmp/uba_shm_locks",
+      "why": "Unreal's build accelerator keeps its lock files here"
+    }
   ],
   "observers": [{ "id": "viewport", "facts": ["unreal-project"], "tool": "hero-shots", "live": "unreal-card" }],
   "scaffolds": [

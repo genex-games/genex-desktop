@@ -21,7 +21,7 @@ import type { Writable } from "node:stream";
 import { SECOND_MS, MINUTE_MS } from "../../shared/duration.ts";
 import { errorMessage } from "../../shared/errors.ts";
 import type { PluginBinding } from "../../shared/plugins.ts";
-import { readGenexGameManifest } from "../../substrate/genex-game-manifest.ts";
+import { readRoomGameManifest } from "../../substrate/genex-game-manifest.ts";
 import { nameRoom, unnameRoom } from "./genex-room-handoff.ts";
 import { roomModulePath } from "../../substrate/genex-room-stage.ts";
 import { LoopbackProtocol } from "../../substrate/linux-loopback-bridge.ts";
@@ -63,6 +63,14 @@ const ROOM_HOST = "127.0.0.1";
 export const RoomPortProtocol = LoopbackProtocol;
 /** One of {@link RoomPortProtocol}. */
 export type RoomPortProtocol = LoopbackProtocol;
+/** Why `genex__room` refused a call, beside its words. */
+export const GenexRoomRefusal = { NoFreeSeat: "room_no_free_seat" } as const;
+/** One of {@link GenexRoomRefusal}. */
+export type GenexRoomRefusal = (typeof GenexRoomRefusal)[keyof typeof GenexRoomRefusal];
+/** What `status` warns of in a running room. */
+export const RoomWarning = { Split: "rooms_split" } as const;
+/** One of {@link RoomWarning}. */
+export type RoomWarning = (typeof RoomWarning)[keyof typeof RoomWarning];
 /** What went wrong on this computer's side of a running room, kept with its errors. */
 const RoomHostFault = { FastUnreachable: "fast_unreachable" } as const;
 /** The toolchain's FAST state while its fast@1 channel is on. */
@@ -72,8 +80,12 @@ const FAST_ON = "on";
 const CLI_IN_PACKAGE = "dist/cli.js";
 /** The most bots a local room takes: a room module seats at most 64, a Mac runs a handful well. */
 export const ROOM_MAX_BOTS = 8;
-/** Bots when the call names none: enough to see a fight. */
+/** Bots when the call names none: enough to see a fight, where the room has the seats. */
 const ROOM_DEFAULT_BOTS = 3;
+/** Seats a room keeps beside its bots: the preview's, and one free for the builder's own test client. */
+const ROOM_SEATS_BESIDE_BOTS = 2;
+/** The most seats a room module's room has (the authority block's `maxPlayers`, 1 to 64). */
+const ROOM_MAX_SEATS = 64;
 /** The most one-way delay a room adds: a long intercontinental link. */
 export const ROOM_MAX_LATENCY_MS = 300;
 /** How long a starting room may take to listen before it is ended. */
@@ -111,6 +123,10 @@ const MESSAGE = {
   NoFreePort: "This computer has no free loopback port for the room",
   NoPort: (range: readonly [number, number]) =>
     `No port in ${range.join("-")} is free for the room: close another game's room and try again`,
+  NoFreeSeat: (bots: number, seats: number, most: number) =>
+    `${bots} bots leave no seat free: this game's authority block has maxPlayers ${seats}, the preview takes one seat and your own test client needs another, or it opens a second room the bots are not in. Start with at most ${most} bots`,
+  Split: (rooms: number, seats: number | null) =>
+    `The room server holds ${rooms} rooms${seats === null ? "" : ` of ${seats} seats`}: players who did not fit opened another room, so not everyone meets. Start with fewer bots`,
 } as const;
 
 /** A validation's verdict, as the toolchain printed it (`passed`, `moduleSha256`, typed `failures`). */
@@ -130,6 +146,14 @@ export interface RoomStatus {
   /** Its last `ctx.log` lines and errors, oldest first. */
   logs: unknown[];
   errors: unknown[];
+  /** The bots it was started with. */
+  bots: number;
+  /** Seats in each room: the authority block's `maxPlayers`; null where only the module's config names them. */
+  seatsPerRoom: number | null;
+  /** How many rooms the room server holds now, from its last REPORT; null before the first. */
+  rooms: number | null;
+  /** Set while players are split across more than one room, so they do not all meet. */
+  warning: { code: RoomWarning; detail: string } | null;
 }
 
 /** One running room. */
@@ -148,6 +172,8 @@ interface Room {
   report: unknown;
   logs: unknown[];
   errors: unknown[];
+  bots: number;
+  seatsPerRoom: number | null;
   closed: Promise<void>;
   /** Settles once the room is forgotten and the preview is out of it. */
   ended: Promise<void>;
@@ -199,8 +225,15 @@ export interface GenexRoomDeps {
 /** A call's checked arguments. */
 interface RoomCall {
   action: GenexRoomAction;
-  bots: number;
+  /** The bots the call names; null for the default, which depends on the room's seats. */
+  bots: number | null;
   latencyMs: number;
+}
+
+/** The room module a game declares, and the seats of each of its rooms where the block names them. */
+interface DeclaredRoom {
+  file: string;
+  seatsPerRoom: number | null;
 }
 
 const isWhole = (value: unknown, max: number): value is number =>
@@ -212,11 +245,36 @@ export function roomCall(args: Record<string, unknown>): RoomCall {
   if (unknown !== undefined) throw new Error(MESSAGE.UnknownKey(unknown));
   const action = Object.values(GenexRoomAction).find((value) => value === args.action);
   if (!action) throw new Error(MESSAGE.Action);
-  const bots = args.bots ?? ROOM_DEFAULT_BOTS;
+  const bots = args.bots ?? null;
   const latencyMs = args.latencyMs ?? 0;
-  if (!isWhole(bots, ROOM_MAX_BOTS)) throw new Error(MESSAGE.Bots);
+  if (bots !== null && !isWhole(bots, ROOM_MAX_BOTS)) throw new Error(MESSAGE.Bots);
   if (!isWhole(latencyMs, ROOM_MAX_LATENCY_MS)) throw new Error(MESSAGE.Latency);
   return { action, bots, latencyMs };
+}
+
+/**
+ * The bots a room starts with: the call's, or the default, so that one seat stays free once the
+ * preview joins (for the builder's own test client). Refused when the call's leave none; where the
+ * block names no seats, the call's or {@link ROOM_DEFAULT_BOTS}.
+ */
+export function roomBots(bots: number | null, seatsPerRoom: number | null): number {
+  if (seatsPerRoom === null) return bots ?? ROOM_DEFAULT_BOTS;
+  const most = Math.max(0, seatsPerRoom - ROOM_SEATS_BESIDE_BOTS);
+  if (bots === null) return Math.min(ROOM_DEFAULT_BOTS, most);
+  if (bots <= most) return bots;
+  throw Object.assign(new Error(MESSAGE.NoFreeSeat(bots, seatsPerRoom, most)), { code: GenexRoomRefusal.NoFreeSeat });
+}
+
+/** The seats the authority block names (`maxPlayers`, a whole number from 1 to 64), else null. */
+function declaredSeats(block: unknown): number | null {
+  const seats = typeof block === "object" && block !== null ? Reflect.get(block, "maxPlayers") : undefined;
+  return typeof seats === "number" && Number.isInteger(seats) && seats >= 1 && seats <= ROOM_MAX_SEATS ? seats : null;
+}
+
+/** The rooms a REPORT counts, or null. */
+function reportedRooms(report: unknown): number | null {
+  const rooms = typeof report === "object" && report !== null ? Reflect.get(report, "rooms") : undefined;
+  return typeof rooms === "number" && Number.isInteger(rooms) && rooms >= 0 ? rooms : null;
 }
 
 /** A protocol line's kind and its JSON (or text) value; null for any other line. */
@@ -321,18 +379,45 @@ export class GenexRoomService {
     if (call.action === GenexRoomAction.Status) return this.status(binding.project);
     if (call.action === GenexRoomAction.Stop) return this.stop(binding.project);
     const game = await this.#deps.boundGame(binding);
-    const module = await this.#module(game);
-    if (call.action === GenexRoomAction.Validate) return this.#validate(game, module);
-    return this.#start(binding.project, game, module, call);
+    const room = await this.#module(game);
+    if (call.action === GenexRoomAction.Validate) return this.#validate(game, room.file);
+    return this.#start(binding.project, game, room, call);
   }
 
   /** How the game's room stands. */
   status(project: string): RoomStatus {
     const room = this.#rooms.get(project);
     if (!room)
-      return { running: false, url: null, reachable: false, previewJoined: false, report: null, logs: [], errors: [] };
-    const { url, reachable, previewJoined, report, logs, errors } = room;
-    return { running: true, url, reachable, previewJoined, report, logs: [...logs], errors: [...errors] };
+      return {
+        running: false,
+        url: null,
+        reachable: false,
+        previewJoined: false,
+        report: null,
+        logs: [],
+        errors: [],
+        bots: 0,
+        seatsPerRoom: null,
+        rooms: null,
+        warning: null,
+      };
+    const { url, reachable, previewJoined, report, logs, errors, bots, seatsPerRoom } = room;
+    const rooms = reportedRooms(report);
+    const split = rooms !== null && rooms > 1;
+    const warning = split ? { code: RoomWarning.Split, detail: MESSAGE.Split(rooms, seatsPerRoom) } : null;
+    return {
+      running: true,
+      url,
+      reachable,
+      previewJoined,
+      report,
+      logs: [...logs],
+      errors: [...errors],
+      bots,
+      seatsPerRoom,
+      rooms,
+      warning,
+    };
   }
 
   /** End the game's room: its last report, then its process tree. */
@@ -353,15 +438,18 @@ export class GenexRoomService {
     await Promise.all([...this.#rooms.keys()].map((project) => this.stop(project)));
   }
 
-  /** The room module the game declares, a real file in it; refused when there is none. */
-  async #module(game: string): Promise<string> {
-    const manifest = await readGenexGameManifest(game);
-    const module = roomModulePath(manifest?.genex?.authority);
+  /**
+   * The room module the game declares, a real file in it, and its rooms' seats; refused when there
+   * is none, or when the game's manifest drops its authority block (`readRoomGameManifest`).
+   */
+  async #module(game: string): Promise<DeclaredRoom> {
+    const block = (await readRoomGameManifest(game))?.genex?.authority;
+    const module = roomModulePath(block);
     if (module === null) throw new Error(MESSAGE.NoRoom);
     const file = await containedReal(game, module).catch(() => null);
     const info = file ? await lstat(file).catch(() => null) : null;
     if (!file || !info?.isFile()) throw new Error(MESSAGE.NoModule(module));
-    return file;
+    return { file, seatsPerRoom: declaredSeats(block) };
   }
 
   /**
@@ -440,7 +528,9 @@ export class GenexRoomService {
   }
 
   /** Serve the module with bots, once it listens; the last room of the game ends first. */
-  async #start(project: string, game: string, module: string, call: RoomCall): Promise<RoomStatus> {
+  async #start(project: string, game: string, declared: DeclaredRoom, call: RoomCall): Promise<RoomStatus> {
+    const bots = roomBots(call.bots, declared.seatsPerRoom);
+    const module = declared.file;
     await this.stop(project);
     const ports = await this.#ports(call.latencyMs);
     const listeners = ports ? ["--port", String(ports.port), "--fast-port", String(ports.fastPort)] : [];
@@ -451,7 +541,7 @@ export class GenexRoomService {
       "--root",
       game,
       "--bots",
-      String(call.bots),
+      String(bots),
       "--latency",
       String(call.latencyMs),
       "--report",
@@ -485,6 +575,8 @@ export class GenexRoomService {
       report: null,
       logs: [],
       errors: [],
+      bots,
+      seatsPerRoom: declared.seatsPerRoom,
       closed,
       ended: Promise.resolve(),
     };

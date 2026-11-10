@@ -26,6 +26,8 @@ type World = {
   unreal: string;
   engine: string;
   moved: string;
+  /** A stand-in for the build accelerator's lock folder (`/private/tmp/uba_shm_locks`). */
+  locks: string;
   sandbox: BuildSandbox & { dispose(): Promise<void> };
 };
 
@@ -36,6 +38,7 @@ async function makeWorld(): Promise<World> {
   const unreal = path.join(home, "AI Games", "rush-copy", "unreal");
   const engine = path.join(root, "engine");
   const moved = path.join(root, "moved-claude-home");
+  const locks = path.join(root, "uba_shm_locks");
   const ubtLog = path.join(home, "Library", "Application Support", "Epic", "UnrealBuildTool");
   for (const dir of [path.join(unreal, "Source"), path.join(unreal, "Intermediate"), engine, moved, ubtLog])
     await mkdir(dir, { recursive: true });
@@ -55,8 +58,9 @@ async function makeWorld(): Promise<World> {
     xcodeApp: null,
     home,
     denied: [moved],
+    acceleratorLocks: locks,
   });
-  return { root, home, unreal, engine, moved, sandbox };
+  return { root, home, unreal, engine, moved, locks, sandbox };
 }
 
 /** Runs a shell script in the sandbox; its exit code and output. */
@@ -196,6 +200,69 @@ describe("the build sandbox's profile", () => {
     const deniedMach = rules.find((rule) => rule.startsWith("(deny mach-lookup")) ?? "";
     for (const name of ["com.apple.coreservices.appleevents", "com.apple.lsd.open", "com.apple.pasteboard.1"])
       assert.ok(deniedMach.includes(`"${name}"`), `the build cannot reach ${name}`);
+  });
+});
+
+describe("the build accelerator's lock folder", { skip: SKIP }, () => {
+  let world: World;
+  before(async () => {
+    world = await makeWorld();
+  });
+  after(async () => {
+    await world?.sandbox.dispose();
+  });
+
+  it("lets UnrealBuildTool's build accelerator make its lock folder and take a lock file in it", async () => {
+    // UBT 5.8 starts the accelerator's trace even with -NoUBA, and its libUbaHost retries a lock
+    // file it can't create forever: the build stalls before it compiles anything.
+    const lock = path.join(world.locks, "0100000000000000");
+    const outcome = await confined(world.sandbox, `mkdir "${world.locks}" && (set -C; : > "${lock}") && rm "${lock}"`);
+    assert.equal(outcome.code, 0, outcome.output);
+  });
+
+  it("never writes outside the accelerator's lock folder through a link it plants there", async () => {
+    const { home, locks, root } = world;
+    const notes = path.join(home, "notes.txt");
+    await mkdir(locks, { recursive: true });
+    const rows: Array<[string, string]> = [
+      ["a symbolic link to a home file", `ln -s "${notes}" "${locks}/soft" && echo planted > "${locks}/soft"`],
+      ["a hard link to a home file", `ln "${notes}" "${locks}/hard" && echo planted > "${locks}/hard"`],
+      ["a folder beside the lock folder", `echo planted > "${locks}-evil"`],
+    ];
+    for (const [label, script] of rows) {
+      const outcome = await confined(world.sandbox, script);
+      assert.notEqual(outcome.code, 0, label);
+    }
+    assert.equal(await readFile(notes, "utf8"), `${MARK}-notes`);
+    for (const file of [
+      path.join(locks, "soft"),
+      path.join(locks, "hard"),
+      `${locks}-evil`,
+      path.join(root, "planted"),
+    ])
+      assert.ok(!existsSync(file), `nothing at ${file}`);
+  });
+
+  it("is macOS's shared /private/tmp/uba_shm_locks unless a test names another", async () => {
+    const root = await realpath(await tmpDir("studio-ubt-sandbox-locks-"));
+    const unreal = path.join(root, "home", "unreal");
+    await mkdir(unreal, { recursive: true });
+    const sandbox = await prepareBuildSandbox({
+      projectDir: unreal,
+      engineDir: path.join(root, "engine"),
+      xcodeApp: null,
+      home: path.join(root, "home"),
+      denied: [],
+    });
+    try {
+      // The profile is the sandbox's output; the real folder is shared with the person's own builds, so no test writes it.
+      assert.match(
+        await readFile(sandbox.profile, "utf8"),
+        /\(allow file-write\* [^\n]*\(subpath "\/private\/tmp\/uba_shm_locks"\)/,
+      );
+    } finally {
+      await sandbox.dispose();
+    }
   });
 });
 

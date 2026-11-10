@@ -10,8 +10,11 @@
  * Studio connects a template game itself and names the SDK it ships then (`workspaceManifest`).
  */
 import { readFile, stat } from "node:fs/promises";
+import { CodedError } from "../shared/errors.ts";
+import { ExportRefusal } from "../shared/game-library.ts";
 import { GENEX_GAME_PACKAGES, type GenexGameManifest, type GenexGamePackage } from "../shared/genex.ts";
 import { pageStudioSdkPackages } from "../shared/genex-page.ts";
+import { t } from "../shared/i18n.ts";
 import { containedReal } from "./paths.ts";
 
 /** A package.json, genex.json or template page larger than this is not read. */
@@ -43,6 +46,8 @@ const UNREAL_MULTIPLAYER_PLUGINS = [
 const MAX_MATCHMAKING_CHARS = 4096;
 /** The `genex` setting that names a game's server-authoritative room module. */
 const AUTHORITY_SETTING = "authority";
+/** The room module files whose presence says a game meant to declare a room. */
+const ROOM_MODULE_FILES = ["server/room.js", "server/room.ts"];
 /** A version range as npm writes one for a registry package; links, paths and URLs are left out. */
 const VERSION_RANGE = /^[0-9A-Za-z.^~<>=*+| -]{1,64}$/;
 
@@ -170,4 +175,75 @@ export async function readGenexGameManifest(dir: string): Promise<GenexGameManif
 export async function usesGenexMultiplayer(dir: string): Promise<boolean> {
   const manifest = await readGenexGameManifest(dir);
   return manifest?.dependencies[MULTIPLAYER_PACKAGE] !== undefined;
+}
+
+/** Why a game's `authority` block never reaches Genex, as the builder reads it. */
+const DROPPED = {
+  NotJson: (file: string) =>
+    t(
+      "{file} is not a JSON object, so its authority block never reaches Genex and the game would publish with no room. Fix {file}",
+      { file },
+    ),
+  GenexNotObject: () =>
+    t(
+      "package.json's genex is not an object, so no authority block reaches Genex and the game would publish with no room",
+    ),
+  ShadowedByPackage: () =>
+    t(
+      "Genex reads this game's package.json, not its genex.json, so genex.json's authority block is ignored. Move the block into package.json as genex.authority, or remove package.json",
+    ),
+  Unread: () =>
+    t(
+      "Genex reads no settings of this game, so genex.json's authority block is ignored: it needs an index.html, a package.json, or Genex's multiplayer in its engine project",
+    ),
+} as const;
+
+/** Whether the game in `dir` holds a room module file in `server/` (a real file, no link out). */
+async function holdsRoomModule(dir: string): Promise<boolean> {
+  for (const rel of ROOM_MODULE_FILES) {
+    const file = await containedReal(dir, rel).catch(() => null);
+    if (file && (await stat(file).catch(() => null))?.isFile()) return true;
+  }
+  return false;
+}
+
+/** Whether `text` is present but is not a JSON object. */
+const notJsonObject = (text: string | null): boolean => text !== null && !isRecord(parsedJson(text));
+
+/**
+ * The game's `authority` block dropped on the way to Genex, as a refusal; null when it is read, or
+ * when nothing says the game meant one. A `genex.json` that declares one is meant, wherever it is;
+ * a manifest that is not JSON is taken as meant when a room module (`server/room.*`) is beside it.
+ */
+async function droppedAuthority(dir: string, manifest: GenexGameManifest | undefined): Promise<CodedError | null> {
+  if (manifest?.genex && Object.hasOwn(manifest.genex, AUTHORITY_SETTING)) return null;
+  const pkg = await readOwnFile(dir, "package.json");
+  const settings = await readOwnFile(dir, TEMPLATE_GENEX_SETTINGS);
+  const settingsJson = parsedJson(settings);
+  if (isRecord(settingsJson) && Object.hasOwn(settingsJson, AUTHORITY_SETTING))
+    return new CodedError(
+      ExportRefusal.RoomManifestShadowed,
+      pkg === null ? DROPPED.Unread() : DROPPED.ShadowedByPackage(),
+    );
+  if (!(await holdsRoomModule(dir))) return null;
+  const pkgJson = parsedJson(pkg);
+  if (pkg !== null && !isRecord(pkgJson))
+    return new CodedError(ExportRefusal.RoomManifestBroken, DROPPED.NotJson("package.json"));
+  if (isRecord(pkgJson) && pkgJson.genex !== undefined && !isRecord(pkgJson.genex))
+    return new CodedError(ExportRefusal.RoomManifestBroken, DROPPED.GenexNotObject());
+  if (pkg === null && notJsonObject(settings))
+    return new CodedError(ExportRefusal.RoomManifestBroken, DROPPED.NotJson(TEMPLATE_GENEX_SETTINGS));
+  return null;
+}
+
+/**
+ * The game's Genex manifest for a publish or a local room: {@link readGenexGameManifest}, refused
+ * by name (`ExportRefusal.RoomManifestBroken`, `RoomManifestShadowed`) when the game's `authority`
+ * block is dropped on the way, which would otherwise ship a game with no room.
+ */
+export async function readRoomGameManifest(dir: string): Promise<GenexGameManifest | undefined> {
+  const manifest = await readGenexGameManifest(dir);
+  const dropped = await droppedAuthority(dir, manifest);
+  if (dropped) throw dropped;
+  return manifest;
 }

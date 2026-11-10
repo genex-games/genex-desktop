@@ -14,6 +14,7 @@ import { lstat, mkdir, readdir, readFile, readlink, symlink, writeFile } from "n
 import path from "node:path";
 import { describe, it } from "node:test";
 import { pathToFileURL } from "node:url";
+import { GenexRoomService } from "../../src/main/core/genex-room.ts";
 import { linkAuthorityToolchain } from "../../src/plugins/genex/authority-toolchain.ts";
 import { authorityDevDir } from "../../src/plugins/genex/cli.ts";
 import { workspaceManifest } from "../../src/plugins/genex/publish.ts";
@@ -257,6 +258,128 @@ describe("the room is staged beside the public copy, never in it", () => {
     await writeFile(path.join(game, "genex.json"), "{}");
     await services.call("genex", PluginService.ExportStage, {}, binding);
     assert.deepEqual((await readdir(workspace)).sort(), [".genex", "dist"], "a game without a room leaves none");
+  });
+});
+
+/**
+ * A `genex.json` that was not JSON, or a stray package.json at an engine game's root, dropped the
+ * `authority` block without a word, and the game published with no room: every join refused (424).
+ * Now a game whose `server/room.*` sits beside such a manifest is refused by name, at the export
+ * before anything is copied or shown, and at `genex__room` before anything runs.
+ */
+describe("a dropped authority block is refused, never published without its room", () => {
+  const UNITY = {
+    "unity/Packages/com.genex.multiplayer/package.json": JSON.stringify({ name: "com.genex.multiplayer" }),
+  };
+  const block = JSON.stringify({ authority: ROOM });
+  const table: Array<[string, Record<string, string>, ExportRefusal]> = [
+    [
+      "a template game's genex.json with a trailing comma",
+      { "index.html": "<!doctype html>", "genex.json": block.replace(/}}$/, ",}}"), "server/room.js": ROOM_JS },
+      ExportRefusal.RoomManifestBroken,
+    ],
+    [
+      "a genex.json that is a list",
+      { "index.html": "<!doctype html>", "genex.json": `[${block}]`, "server/room.js": ROOM_JS },
+      ExportRefusal.RoomManifestBroken,
+    ],
+    [
+      "a Unity game's cut-off genex.json",
+      { ...UNITY, "genex.json": block.slice(0, -3), "server/room.ts": "export default { contract: 1 };" },
+      ExportRefusal.RoomManifestBroken,
+    ],
+    [
+      "a package.json that is not JSON",
+      { "package.json": '{ "name": "game", }', "server/room.js": ROOM_JS },
+      ExportRefusal.RoomManifestBroken,
+    ],
+    [
+      "a package.json whose genex is not an object",
+      { "package.json": JSON.stringify({ genex: "server/room.js" }), "server/room.js": ROOM_JS },
+      ExportRefusal.RoomManifestBroken,
+    ],
+    [
+      "a stray package.json at a Unity game's root, read before its genex.json",
+      { ...UNITY, "package.json": JSON.stringify({ name: "tools" }), "genex.json": block, "server/room.js": ROOM_JS },
+      ExportRefusal.RoomManifestShadowed,
+    ],
+    [
+      "an engine game's genex.json that nothing reads (no page, no Genex multiplayer)",
+      { "unreal/Game.uproject": "{}", "genex.json": block, "server/room.js": ROOM_JS },
+      ExportRefusal.RoomManifestShadowed,
+    ],
+  ];
+
+  it("export.stage refuses each by name before the export runs, and changes nothing", async () => {
+    for (const [name, files, code] of table) {
+      const { root, game } = await gameWith(files);
+      const services = new PluginServices(path.join(root, "data"), {}, async () => null);
+      let exported = 0;
+      services.exportStage = async (_binding, target) => {
+        exported++;
+        return { dir: target, files: 0, included: [], excluded: [] };
+      };
+      const workspace = path.join(services.root("genex"), "publish", "game");
+      const before = await tree(workspace);
+      const gameBefore = await tree(game);
+      await assert.rejects(
+        services.call("genex", PluginService.ExportStage, {}, { project: "game", directory: game }),
+        (error: Error & { code?: unknown }) => error.code === code && /authority/.test(error.message),
+        name,
+      );
+      assert.equal(exported, 0, `${name}: the export never ran`);
+      assert.deepEqual(await tree(workspace), before, `${name}: the publish copy is unchanged`);
+      assert.deepEqual(await tree(game), gameBefore, `${name}: the game is unchanged`);
+    }
+  });
+
+  it("genex__room refuses each by name and runs nothing", async () => {
+    for (const [name, files, code] of table) {
+      const { root, game } = await gameWith(files);
+      const runs: string[] = [];
+      const rooms = new GenexRoomService({
+        run: async (request) => {
+          runs.push(request.command);
+          throw new Error("ran");
+        },
+        spawn: async (request) => {
+          runs.push(request.command);
+          throw new Error("ran");
+        },
+        toolDir: path.join(root, "tool"),
+        scratch: path.join(root, "runs"),
+        boundGame: async () => game,
+      });
+      for (const action of ["validate", "start"])
+        await assert.rejects(
+          rooms.call({ action }, { project: "game", directory: game }),
+          (error: Error & { code?: unknown }) => error.code === code,
+          `${name}: ${action}`,
+        );
+      assert.deepEqual(runs, [], `${name}: nothing ran`);
+    }
+  });
+
+  it("still exports a game whose genex.json declares no room, or whose broken genex.json has no room beside it", async () => {
+    const cases: Array<[string, Record<string, string>]> = [
+      [
+        "no block, a server/ folder",
+        { "index.html": "<!doctype html>", "genex.json": "{}", "server/room.js": ROOM_JS },
+      ],
+      ["a broken genex.json, no room", { "index.html": "<!doctype html>", "genex.json": "{ nope" }],
+    ];
+    for (const [name, files] of cases) {
+      const { root, game } = await gameWith(files);
+      const services = new PluginServices(path.join(root, "data"), {}, async () => null);
+      services.exportStage = async (_binding, target) => {
+        await mkdir(target, { recursive: true });
+        return { dir: target, files: 0, included: [], excluded: [] };
+      };
+      await assert.doesNotReject(
+        services.call("genex", PluginService.ExportStage, {}, { project: "game", directory: game }),
+        name,
+      );
+    }
   });
 });
 
