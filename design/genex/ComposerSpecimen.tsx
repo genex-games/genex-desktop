@@ -38,7 +38,7 @@ if(!window.studio)Object.defineProperty(window,'studio',{value:{
  // A dropped file's place on disk, as the preload answers it.
  pathOfFile:(file:File)=>`/Users/you/Downloads/${file.name}`,
  // Two subscriptions with fixed plan limits: one high, one nearly spent, and an exhausted model
- // bucket the panel leaves out.
+ // bucket of its own.
  providerUsage:async()=>[
   {engine:'claude-code',state:'ready',account:'terminal',usage:{measuredAt:new Date().toISOString(),plan:'max',windows:[
    {id:'five_hour',label:'5-hour limit',percent:0,resetsAt:new Date(Date.now()+(3*60+54)*60_000+30_000).toISOString()},

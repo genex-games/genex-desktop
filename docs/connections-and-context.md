@@ -716,8 +716,8 @@ throws when they could not be read; each engine reuses a reading under a minute 
 in-flight read; a Recheck clears it. The composer asks when its ring panel opens or the ring is
 hovered, and every minute while open; until the first answer it draws each plan this setup uses
 at full size with shimmering bars, and a plan being read with no numbers yet does the same. A
-failed read shows one orange line with Try again, a signed-out plan Sign in again. The panel leaves the
-`model_scoped` windows out (`shownLimits`; `SHOW_MODEL_LIMITS` in `usage-words.ts` brings them back). Its
+failed read shows one orange line with Try again, a signed-out plan Sign in again. The panel draws
+every window a plan reports, a `model_scoped` one (Weekly · Fable) after the plan's own. Its
 last row opens Settings → Model Providers. Genex is read after the plans: a Pro member's monthly
 credits, one window under the plan's name from `GET /api/plans/me` (its allowance and renewal) and
 the balance from `GET /api/credits/me`; without Pro there is no month to show and the panel leaves

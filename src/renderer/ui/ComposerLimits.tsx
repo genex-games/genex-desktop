@@ -11,7 +11,6 @@ import {
   PLAN_PROVIDERS,
   planWords,
   resetWords,
-  shownLimits,
   shownPlans,
 } from "./usage-words.ts";
 import { MINUTE_MS } from "../../shared/duration.ts";
@@ -166,9 +165,12 @@ function PlanProblem({
   );
 }
 
-/** What a plan shows under its name, by where its limits stand. */
-function PlanBody({ report, onRetry }: { report: ProviderUsageReport; onRetry: () => void }): JSX.Element {
-  const limits = shownLimits(report.usage?.windows ?? []);
+/**
+ * What a plan shows under its name, by where its limits stand: every limit the account reports, a
+ * model's own weekly limit (such as Fable's) among them.
+ */
+export function PlanBody({ report, onRetry }: { report: ProviderUsageReport; onRetry: () => void }): JSX.Element {
+  const limits = report.usage?.windows ?? [];
   const brand = PLAN_PROVIDERS[report.engine]?.brand ?? report.engine;
   if (report.state === UsageState.SignedOut)
     return (

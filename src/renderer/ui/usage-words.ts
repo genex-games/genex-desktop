@@ -6,7 +6,7 @@ import { MINUTE_MS } from "../../shared/duration.ts";
 import { intlLocale, t } from "../../shared/i18n.ts";
 import { type ContextUsage, measuresPick } from "../../shared/context.ts";
 import { EngineId } from "../../shared/providers.ts";
-import { MODEL_LIMIT_PREFIX, type ProviderUsage, type ProviderUsageReport } from "../../shared/provider-usage.ts";
+import type { ProviderUsageReport } from "../../shared/provider-usage.ts";
 import { MODEL_KEY_SEPARATOR } from "../model-key.ts";
 import { MINUTES_PER_HOUR } from "../words.ts";
 
@@ -23,8 +23,6 @@ const LIMIT_HIGH = 75;
 const COUNTDOWN_MINUTES = 24 * MINUTES_PER_HOUR;
 /** A reset further off than this is said by its date: a weekday would name the wrong week. */
 const WEEK_MINUTES = 7 * COUNTDOWN_MINUTES;
-/** Model-scoped weekly limits (such as Fable's) stay off the panel for now; true shows them again. */
-const SHOW_MODEL_LIMITS = false;
 
 /** 150 → "2 h 30 m", 120 → "2 h", 45 → "45 m" in the reader's language. */
 function durationText(minutes: number): string {
@@ -75,12 +73,6 @@ export function resetWords(resetsAt: string | undefined, now = Date.now()): stri
     });
   const when = new Date(at).toLocaleString(intlLocale(), { weekday: "short", hour: "numeric", minute: "2-digit" });
   return t("Resets {when}", { when });
-}
-
-/** The limits a plan shows: all it reports, less the model-scoped ones while those stay hidden. */
-export function shownLimits(windows: ProviderUsage["windows"]): ProviderUsage["windows"] {
-  if (SHOW_MODEL_LIMITS) return windows;
-  return windows.filter((window) => !window.id.startsWith(MODEL_LIMIT_PREFIX));
 }
 
 /** How close a limit is: full, high, or unremarkable (undefined). */

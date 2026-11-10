@@ -8,10 +8,9 @@ import {
   pendingPlans,
   planWords,
   resetWords,
-  shownLimits,
   shownPlans,
 } from "../../src/renderer/ui/usage-words.ts";
-import { normalizeClaudeUsage, type ProviderUsageReport, UsageState } from "../../src/shared/provider-usage.ts";
+import { type ProviderUsageReport, UsageState } from "../../src/shared/provider-usage.ts";
 
 const context = (over: Partial<ContextUsage>): ContextUsage => ({ ...over }) as ContextUsage;
 
@@ -131,22 +130,6 @@ describe("a plan's limits", () => {
 
   it("marks a limit high from three quarters and full from nine tenths", () => {
     assert.deepEqual([null, 10, 75, 89, 90].map(limitLevel), [undefined, undefined, "high", "high", "full"]);
-  });
-
-  it("leaves model-scoped weekly limits off the panel and keeps the plan's own", () => {
-    const usage = normalizeClaudeUsage({
-      rate_limits_available: true,
-      rate_limits: {
-        five_hour: { utilization: 12 },
-        seven_day: { utilization: 40 },
-        seven_day_sonnet: { utilization: 20 },
-        model_scoped: [{ display_name: "Fable", utilization: 0 }],
-      },
-    });
-    assert.deepEqual(
-      shownLimits(usage?.windows ?? []).map((window) => window.label),
-      ["5-hour limit", "Weekly · all models", "Weekly · Sonnet"],
-    );
   });
 });
 
