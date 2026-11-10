@@ -6,6 +6,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import path from "node:path";
 import { test } from "node:test";
 import { GAME_LINK_SCHEME } from "../../src/main/play/game-links.ts";
 
@@ -51,4 +52,21 @@ test("the app declares the genex:// scheme it answers, on the Mac and in each Li
   );
   for (const maker of linuxMakers)
     assert.deepEqual(maker.config.options.mimeType, [`x-scheme-handler/${GAME_LINK_SCHEME}`], maker.name);
+});
+
+test("the rpm is built without stripping, so a Windows library the app ships cannot fail the build", () => {
+  const config = require("../../forge.config.cjs");
+  const rpm = config.makers.find((maker: { name: string }) => maker.name === "@electron-forge/maker-rpm");
+  const template = rpm.config.options.specTemplate;
+  // The rpm installer is not installed on Windows, where no rpm is built.
+  if (process.platform === "win32") return;
+  assert.ok(template, "the rpm maker gets Genex's spec template");
+  const spec = readFileSync(template, "utf8");
+  const upstream = readFileSync(
+    path.join(path.dirname(require.resolve("electron-installer-redhat")), "..", "resources", "spec.ejs"),
+    "utf8",
+  );
+  // rpmbuild's strip step stops on an archive it cannot read (a Windows import library): no strip.
+  assert.match(spec, /^%global __strip \/bin\/true$/m);
+  assert.ok(spec.endsWith(upstream), "the rest is the installer's own template, unchanged");
 });

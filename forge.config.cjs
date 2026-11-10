@@ -28,6 +28,7 @@ const {
 const { APP_BUNDLE_ID, localSigningHook, macSigning, windowsSigning } = require("./scripts/package-signing.cjs");
 const { copyBundledGit } = require("./scripts/package-git.cjs");
 const { copyVcRuntime } = require("./scripts/package-vc-runtime.cjs");
+const { rpmSpecTemplate } = require("./scripts/package-rpm-spec.cjs");
 const { version } = require("./package.json");
 
 const PRODUCT_NAME = "Genex";
@@ -252,6 +253,8 @@ module.exports = {
           requires: LINUX_DEPENDS,
           license: "MIT",
           scripts: RPM_SCRIPTS,
+          // No strip step: it fails on the Windows library the app ships (scripts/package-rpm-spec.cjs).
+          specTemplate: rpmSpecTemplate(),
           mimeType: [`x-scheme-handler/${GAME_LINK_SCHEME}`],
         },
       },

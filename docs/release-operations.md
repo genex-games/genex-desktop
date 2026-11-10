@@ -24,7 +24,7 @@ license. Keep provenance for copied sources and runtime downloads.
 ## Package and authorize
 
 `npm run package` creates a local app; `npm run make` creates installers: dmg and zip on macOS;
-deb, rpm and zip on Linux, which needs `rpm` installed; a Squirrel `Setup.exe` on Windows. Use a
+deb, rpm and zip on Linux, which needs `rpm` installed (the rpm skips rpmbuild's strip step, which fails on a Windows library the app ships: `scripts/package-rpm-spec.cjs`); a Squirrel `Setup.exe` on Windows. Use a
 checkout with its own `node_modules` (a symlinked one is refused). Check free disk first. Run `npm run test:packaged` against the exact app.
 An ad-hoc macOS package is not Developer ID/notarization acceptance. The release workflow has
 separate macOS and Windows signing paths; an unsigned artifact must be labelled unsigned.
