@@ -2129,7 +2129,7 @@ though a page at the root is above it; that root page is then left out when it i
 starter's page nobody built on (its `index.html` and `src/main.js` are the template's), or when the
 page is gone, only `studio.json`'s record of the starter still makes the root a web game and the
 starter's `src/` holds nothing of anyone's (it is gone or empty, or `main.js` as it was made is all
-it holds; `#nobodysPageAtRoot`: Publish would look for a root `index.html` in vain), whether or not
+it holds, hidden files such as Finder's `.DS_Store` aside; `#nobodysPageAtRoot`: Publish would look for a root `index.html` in vain), whether or not
 the port was recorded, and any other root page, or code somebody wrote there, keeps its place
 (`withEngineWebVersion`). An
 Unreal game's `web/` counts the same way only while it holds the build Unreal staged for the web
