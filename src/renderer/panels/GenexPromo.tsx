@@ -110,9 +110,11 @@ function useSettledFlag(on: boolean, delay: number): boolean {
   return settled;
 }
 
-/** The film: muted, looping, decorative; a still under Reduce Motion. */
-/** The film, or its still under Reduce Motion; `onReady` fires once there is a picture (or none will come). */
-function PromoFilm({ onReady }: { onReady: () => void }): JSX.Element {
+/**
+ * The film (muted, looping, decorative), or its still under Reduce Motion; `onReady` fires once
+ * there is a picture (or none will come). First launch's Genex screen plays it too.
+ */
+export function PromoFilm({ onReady }: { onReady?: () => void }): JSX.Element {
   const still = useRef(prefersReducedMotion()).current;
   return (
     <div className="genex-promo-media" aria-hidden="true">
@@ -147,7 +149,8 @@ function useFilmReady(): [boolean, () => void] {
   return [ready, reveal];
 }
 
-function Features(): JSX.Element {
+/** What Genex does, in three rows: models, sound and art, publishing. First launch's Genex screen lists them too. */
+export function PromoFeatures(): JSX.Element {
   return (
     <ul className="genex-promo-features">
       {FEATURES.map(([icon, words]) => (
@@ -257,7 +260,7 @@ function Body({ phase }: { phase: PromoPhase }): JSX.Element {
     <div className="genex-promo-body">
       <p className="genex-promo-eyebrow">{WORDS.eyebrow}</p>
       <h2 className="genex-promo-title">{WORDS.title}</h2>
-      <Features />
+      <PromoFeatures />
     </div>
   );
 }

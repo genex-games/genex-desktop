@@ -743,7 +743,15 @@ hugs its words, quiet links under it, and OpenCode's sign-in as a terminal card 
 Cancel over the terminal). While OpenCode's free models are all a person can build with, its ready
 screen lists them under a small-caps **build with** as one radio group of 36px rows (the picked one
 on a surface with an accent dot), OpenCode default first and picked; a short window drops the mark
-for it. The marks are the vendors' own paths, unaltered (`ui/provider-marks.ts`). All art is canvas in the empty states' wireframe
+for it. **Use Genex** opens Genex's screen in the same pattern, with the promo card's own pieces in
+place of a mark: the title and its 380px line, the card's 19:10 film at 400px with 16px corners
+(28px under the words; its poster under Reduce Motion), the card's three 18px-glyph rows in the
+same 400px column (20px under the film, text left-aligned), then one accent-tint **Sign in in
+browser ↗** 28px under the rows. Waiting, the button gives way to **Finish in your browser** with
+the LoaderGrid and a cancel ✕, and a quiet **Open sign-in again** under it; signed in, a green
+check and **Genex ready**, with Start building below. The control's place is 80px tall, so
+nothing moves between the three. A window under 860px tall narrows the column to 320px, and under
+760px the film goes. The marks are the vendors' own paths, unaltered (`ui/provider-marks.ts`). All art is canvas in the empty states' wireframe
 language, reads theme colours from CSS and holds a still frame under Reduce Motion. Skip for now
 and Start building fade into home, the welcome's idea waiting in its composer.
 

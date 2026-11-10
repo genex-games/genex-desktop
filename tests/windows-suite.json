@@ -181,6 +181,7 @@
   "tests/conformance/native-sandbox.test.ts",
   "tests/conformance/notifications.test.ts",
   "tests/conformance/ollama-registry.test.ts",
+  "tests/conformance/onboarding-genex-screen.test.ts",
   "tests/conformance/onboarding-ways-row.test.ts",
   "tests/conformance/onboarding.test.ts",
   "tests/conformance/package-linked-modules.test.ts",

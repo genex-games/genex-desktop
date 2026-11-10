@@ -580,6 +580,7 @@ export default {
   "Build the {players} app of {title} again so I can publish it.":
     "Vuelve a crear la app para {players} de {title}, así podré publicarla.",
   "Build updated": "Build actualizado",
+  "Build with Genex": "Crear con Genex",
   "Build with the Cursor plan you already have.": "Crea con el plan de Cursor que ya tienes.",
   "Build with the Grok account you already have.": "Crea con la cuenta de Grok que ya tienes.",
   "Changes Harness made to its own instructions. Undo any of them.":
@@ -2578,6 +2579,8 @@ export default {
   "On this Mac · {size}": "En este Mac · {size}",
   "Once on, it runs at Genex's moments: {steps}; those steps don't ask you first.":
     "Una vez activado, se ejecuta en momentos de Genex: {steps}; esos pasos no te preguntan antes.",
+  "One account for frontier AI models and game dev tools. Pay with Genex credits.":
+    "Una cuenta para los modelos de IA más avanzados y herramientas para crear juegos. Pagas con créditos de Genex.",
   "One account for hundreds of models. You pay OpenRouter for what you use.":
     "Una cuenta para cientos de modelos. Le pagas a OpenRouter solo lo que usas.",
   "One key for hundreds of models. Pay as you go.": "Una clave para cientos de modelos. Pagas solo lo que usas.",

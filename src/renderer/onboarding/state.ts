@@ -1,15 +1,17 @@
 /**
- * First launch, as pure decisions: whether to welcome, and what each subscription's one-line
- * button says for the engine and sign-in state it is in. The screens render these; they never
- * work the answer out again.
+ * First launch, as pure decisions: whether to welcome, what each subscription's one-line
+ * button says for the engine and sign-in state it is in, and the step building with Genex is at.
+ * The screens render these; they never work the answer out again.
  */
 import type { ClaudeLoginState } from "../../shared/claude-login.ts";
 import type { CodexLoginState } from "../../shared/codex-login.ts";
 import { CodingCliState } from "../../shared/coding-cli.ts";
 import { EngineStatusCode } from "../../shared/engine-descriptor.ts";
+import { GenexAccountStatus } from "../../shared/genex-account.ts";
 import { t } from "../../shared/i18n.ts";
 import { ModelCatalogState } from "../../shared/model-catalog.ts";
 import { EngineId, type SubscriptionId } from "../../shared/providers.ts";
+import { SignInOutcome } from "../analytics/welcome-vocabulary.ts";
 import type { EngineDescriptor } from "../types.ts";
 import { MarkState } from "./art.ts";
 import { STORAGE_KEYS } from "../storage.ts";
@@ -24,10 +26,11 @@ export function shouldWelcome(allowed: boolean | undefined, games: number, stora
   return allowed === true && games === 0 && storage.getItem(WELCOMED_KEY) !== "1";
 }
 
-/** The onboarding screens: the welcome, Connect, and one for each of Connect's other ways. */
+/** The onboarding screens: the welcome, Connect, Genex's, and one for each of Connect's other ways. */
 export const WelcomeScreen = {
   Welcome: "welcome",
   Connect: "connect",
+  Genex: "genex",
   Local: "local",
   OpenRouter: "openrouter",
   OpenCode: "opencode",
@@ -204,17 +207,81 @@ export function markState(view: ConnectView): MarkState {
 }
 
 /**
- * Building with Genex's button (owner, 2026-10-28): Use Genex, then a Genex ready status once
- * picked. Picking asks nothing: the first message says what is missing (a sign-in, Pro or credits)
- * and waits for it. While the Claude Code Genex runs is set up, it says so.
+ * Where building with Genex stands in first launch: the offer, its sign-in waiting in the browser,
+ * the Claude Code Genex runs still being set up, or ready.
  */
-export function genexChoiceView(choice: {
+export const GenexStep = {
+  Offer: "offer",
+  Browser: "browser",
+  Setup: "setup",
+  On: "on",
+} as const;
+export type GenexStep = (typeof GenexStep)[keyof typeof GenexStep];
+
+/** The Genex screen's words: its title and line, each step's control, and its troubles. */
+export const GENEX_SCREEN_WORDS = {
+  use: t("Use Genex"),
+  title: t("Build with Genex"),
+  lede: t("One account for frontier AI models and game dev tools. Pay with Genex credits."),
+  signIn: t("Sign in in browser"),
+  browser: t("Finish in your browser"),
+  openAgain: t("Open sign-in again"),
+  cancel: t("Cancel sign-in"),
+  setup: t("Getting Genex ready…"),
+  on: t("Genex ready"),
+  failed: t("Couldn’t start signing in. Check your connection and try again."),
+  unfinished: t("Sign-in didn’t finish."),
+  cancelFailed: t("Couldn’t stop signing in. Try again in a moment."),
+} as const;
+
+/**
+ * The step Genex is at, read from the app's Genex account as main last said it (null before it
+ * did). A sign-in genex.games ended signs in again. Claude Code is set up behind the sign-in, so
+ * its setup shows only once the account is signed in.
+ */
+export function genexStep(genex: { account: GenexAccountStatus | null; installing: boolean }): GenexStep {
+  if (genex.account === GenexAccountStatus.SigningIn) return GenexStep.Browser;
+  if (genex.account !== GenexAccountStatus.SignedIn) return GenexStep.Offer;
+  return genex.installing ? GenexStep.Setup : GenexStep.On;
+}
+
+/** Whether Use Genex was pressed in this welcome, and the step Genex is at. */
+export interface GenexChoice {
   picked: boolean;
-  installing: boolean;
-}): Exclude<ConnectView, { kind: typeof ConnectViewKind.Code }> {
-  if (!choice.picked) return { kind: ConnectViewKind.Action, action: ConnectAction.Connect, label: t("Use Genex") };
-  if (choice.installing) return { kind: ConnectViewKind.Busy, label: t("Getting Genex ready…"), cancel: false };
-  return { kind: ConnectViewKind.On, label: t("Genex ready") };
+  step: GenexStep;
+}
+
+/**
+ * Building with Genex's button on the connect screen (owner, 2026-11-10): Use Genex opens Genex's
+ * screen, which signs in to Genex in the browser. Once picked, the button follows that sign-in:
+ * the wait with its cancel, the setup, then Genex ready. An account signed in before the welcome
+ * still offers Use Genex: the press is what chooses Genex to build with.
+ */
+export function genexChoiceView(choice: GenexChoice): Exclude<ConnectView, { kind: typeof ConnectViewKind.Code }> {
+  const words = GENEX_SCREEN_WORDS;
+  if (!choice.picked || choice.step === GenexStep.Offer)
+    return { kind: ConnectViewKind.Action, action: ConnectAction.Connect, label: words.use };
+  if (choice.step === GenexStep.Browser) return { kind: ConnectViewKind.Busy, label: words.browser, cancel: true };
+  if (choice.step === GenexStep.Setup) return { kind: ConnectViewKind.Busy, label: words.setup, cancel: false };
+  return { kind: ConnectViewKind.On, label: words.on };
+}
+
+/**
+ * Is Genex something to build with: picked here and signed in. The first message asks for
+ * whatever Genex still needs (Pro or credits, a setup still running) and waits for it.
+ */
+export function buildsWithGenex(choice: GenexChoice): boolean {
+  return choice.picked && (choice.step === GenexStep.Setup || choice.step === GenexStep.On);
+}
+
+/**
+ * How a sign-in Genex's screen started ended, or null while it is still open. `answered`: main
+ * answered the press, so an account that is not signing in by then gave the sign-in up.
+ */
+export function genexSignInEnd(account: GenexAccountStatus | null, answered: boolean): SignInOutcome | null {
+  if (account === GenexAccountStatus.SignedIn) return SignInOutcome.Connected;
+  if (account === GenexAccountStatus.SigningIn || !answered) return null;
+  return SignInOutcome.Failed;
 }
 
 /** Ollama names an untagged pull `:latest`; installed models are compared the same way. */

@@ -1,6 +1,7 @@
 /**
- * The Genex promo, as pure decisions: a finished welcome queues it once, it shows while Genex can
- * still be connected, and it settles for good once it is dismissed or a Genex account is connected.
+ * The Genex promo, as pure decisions: a finished welcome queues it once (unless the welcome itself
+ * signed in to Genex), it shows while Genex can still be connected, and it settles for good once it
+ * is dismissed or a Genex account is connected.
  * `panels/GenexPromo.tsx` draws the card these decide.
  */
 import type { ConnectionSnapshot } from "../shared/connections.ts";
@@ -27,6 +28,15 @@ export function queueGenexPromo(storage: KeyValueStorage | null = browserStorage
 /** Settle the promo for good: dismissed, connected, or no longer needed. */
 export function finishGenexPromo(storage: KeyValueStorage | null = browserStorage()): void {
   writeText(STORAGE_KEYS.genexPromo, GenexPromoState.Done, storage);
+}
+
+/**
+ * The welcome just ended. Signed in to Genex there (first launch's Genex screen), the promo has
+ * nothing left to offer and settles before any card; anyone else meets it once.
+ */
+export function promoAfterWelcome(signedIn: boolean, storage: KeyValueStorage | null = browserStorage()): void {
+  if (signedIn) finishGenexPromo(storage);
+  else queueGenexPromo(storage);
 }
 
 /** The promo's stored state, or null when the welcome never queued it. */

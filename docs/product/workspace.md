@@ -11,7 +11,7 @@ conversation beside the stage (Live, Builds once planned, Assets), Harness its c
 and Activity; Plugins fills the workspace; Items and Harness rows are
 [hidden for now](https://github.com/genex-games/genex-desktop/issues/654).
 
-Settings is a modal (narrow windows: a drawer).
+Settings is a modal (narrow: drawer).
 
 The bell keeps unanswered questions, plans, permissions and Genex reviews (taken down, not
 approved: **Fix**), then build endings, sign-outs and review news, each opening where answered;
@@ -24,13 +24,14 @@ nickname (kept offline), **Friends** with invites, profiles and **Stats** ([Play
 ## First launch
 
 An empty, never-welcomed profile opens a full-window welcome connecting a
-[model provider](models-context.md) or Genex credits; Skip or Start building opens home, keeping a
-typed idea. [Usage analytics](../usage-analytics.md) ask first, once.
+[model provider](models-context.md) or Genex credits (**Use Genex**: browser sign-in); Skip or
+Start building opens home, keeping a typed idea.
+[Usage analytics](../usage-analytics.md) ask first, once.
 
-A Genex card then offers **Connect Genex plugin** once.
+Signed out, a card offers **Connect Genex plugin** once.
 
 A sandbox that cannot start opens **Set up the protected workspace** (Windows: one
-administrator prompt, two if Secondary Logon is off).
+administrator prompt, two with Secondary Logon off).
 
 ## Main actions
 

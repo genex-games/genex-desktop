@@ -6,8 +6,9 @@
  * Clicking the composer takes the person's own idea, which waits in the real composer afterwards.
  * Connect: Claude Code and ChatGPT sign in through the same flows as Settings → Model Providers.
  * Each has one button that hugs its words and changes them as the sign-in moves on. Where
- * genex.games offers it, Use Genex beside them builds with Genex credits: it asks for nothing here
- * (the first message asks for the sign-in and a plan), and becomes Genex ready. Under them,
+ * genex.games offers it, Use Genex beside them builds with Genex credits: it opens Genex's screen
+ * (GenexScreen.tsx), which signs in to Genex in the browser and becomes Genex ready; the first
+ * message asks for a plan when the account has none. Under them,
  * "or use" offers local models (the Best fit for this Mac downloads), OpenRouter (browser sign-in
  * or a pasted key), OpenCode (installs, then its free models run), Grok Build and Cursor (each
  * installs, then signs in to the person's account), each on its own screen. The first connection
@@ -29,8 +30,6 @@ import { SECOND_MS } from "../../shared/duration.ts";
 import { t } from "../../shared/i18n.ts";
 import type { CodexLoginState } from "../../shared/codex-login.ts";
 import { EngineStatusCode } from "../../shared/engine-descriptor.ts";
-import { GENEX_HELPER_MODEL } from "../../shared/genex-build.ts";
-import { offersGenex } from "../genex-build.ts";
 import { type ModelInstallJob, ModelPullStatus } from "../../shared/model-install.ts";
 import { errorCode } from "../../shared/errors.ts";
 import { EngineId } from "../../shared/providers.ts";
@@ -56,16 +55,12 @@ import {
 import {
   DownloadSource,
   FilmAction,
-  ProviderAction,
   ProviderSurface,
   SignInHelper,
   WelcomeExit,
 } from "../analytics/welcome-vocabulary.ts";
 import { preloadHomeBackdrop } from "../home-backdrop/preload.ts";
 import { defaultModelKey } from "../model-choices.ts";
-import { modelKey } from "../model-key.ts";
-import { safeStorage } from "../storage.ts";
-import { rememberWelcomeModel } from "../stored-model.ts";
 import { Button } from "../ui/Button.tsx";
 import { GenexLogo } from "../ui/GenexLogo.tsx";
 import { Icon } from "../ui/icons.tsx";
@@ -80,6 +75,7 @@ import { prefersReducedMotion, REDUCED_MOTION_QUERY } from "../ui/media-queries.
 import { ArtCanvas, type Draw } from "./ArtCanvas.tsx";
 import { CliScreen } from "./CliScreen.tsx";
 import { useCli } from "./cli-way.tsx";
+import { type Genex, GenexScreen, useGenex } from "./GenexScreen.tsx";
 import { OpenCodeScreen, useFreeModel, useOpenCode } from "./OpenCodeScreen.tsx";
 import { OpenRouterScreen, useOpenRouter } from "./OpenRouterScreen.tsx";
 import { OtherWays } from "./OtherWays.tsx";
@@ -109,7 +105,6 @@ import {
   ConnectAction,
   connectView,
   ConnectViewKind,
-  genexChoiceView,
   installsCli,
   markState,
   startTrouble,
@@ -903,49 +898,30 @@ function ConnectButton({
   );
 }
 
-/** Building with Genex's button: Use Genex, then its status. */
+/** Building with Genex's button: Use Genex, which opens Genex's screen, then that screen's sign-in as it stands. */
 function GenexChoice({
   genex,
   slot,
+  onOpen,
 }: {
-  genex: GenexChoiceModel;
+  genex: Genex;
   slot: RefObject<HTMLDivElement | null>;
+  /** Use Genex was pressed: Genex's screen opens. */
+  onOpen: () => void;
 }): JSX.Element {
   const { view } = genex;
+  const use = (): void => {
+    genex.pick();
+    onOpen();
+  };
   return (
     <div ref={slot} className="onboarding-choice" data-genex-choice={view.kind}>
       <Hug swap={`${view.kind}:${"label" in view ? view.label : ""}`}>
-        <ConnectContent id={EngineId.Genex} view={view} onAct={genex.pick} onCancel={() => {}} />
+        <ConnectContent id={EngineId.Genex} view={view} onAct={use} onCancel={genex.cancel} />
       </Hug>
     </div>
   );
 }
-
-/**
- * Building with Genex's choice, offered where genex.games offers it. Use Genex asks for nothing:
- * it makes Genex's Sonnet the model new games start on, and sets up the Claude Code Genex runs when
- * it is missing. The first message then asks for the sign-in and a plan, and waits for them.
- */
-function useGenexChoice(engines: EngineDescriptor[]) {
-  const engine = engines.find((candidate) => candidate.id === EngineId.Genex);
-  const install = useCliInstall(EngineId.ClaudeCode);
-  const [picked, setPicked] = useState(false);
-  const pick = (): void => {
-    reportProviderPress(EngineId.Genex, ProviderAction.Connect, ProviderSurface.Onboarding);
-    setPicked(true);
-    rememberWelcomeModel(safeStorage(), modelKey(EngineId.Genex, GENEX_HELPER_MODEL));
-    if (engine?.status.code === EngineStatusCode.NotInstalled) void install.install();
-  };
-  return {
-    offered: offersGenex(engine),
-    picked,
-    view: genexChoiceView({ picked, installing: install.installing }),
-    problem: picked ? install.problem : null,
-    pick,
-  };
-}
-
-type GenexChoiceModel = ReturnType<typeof useGenexChoice>;
 
 /** Both subscriptions' sign-in state, the button each shows, and the actions behind them. */
 function useSubscriptions(engines: EngineDescriptor[], onEnginesRefresh: () => void, onTerminal: () => void) {
@@ -1142,6 +1118,7 @@ function Connect({
   back,
   onBack,
   onWay,
+  onGenex,
   onSkip,
   onStart,
   onTerminal,
@@ -1150,7 +1127,9 @@ function Connect({
   engines: EngineDescriptor[];
   onEnginesRefresh: () => void;
   /** Building with Genex's choice beside the subscriptions. */
-  genex: GenexChoiceModel;
+  genex: Genex;
+  /** Use Genex was pressed: Genex's screen opens. */
+  onGenex: () => void;
   /** The row's buttons under the subscriptions: local models, OpenRouter, OpenCode, Grok Build and Cursor. */
   ways: Record<OtherWay, WayView>;
   anyOn: boolean;
@@ -1209,7 +1188,7 @@ function Connect({
               onPasteCode={codeFallback.pasteCode}
             />
           ))}
-          {genex.offered && <GenexChoice genex={genex} slot={slots[Provider.Genex]} />}
+          {genex.offered && <GenexChoice genex={genex} slot={slots[Provider.Genex]} onOpen={onGenex} />}
         </div>
       </div>
       <OtherWays views={ways} onOpen={onWay} />
@@ -1457,14 +1436,14 @@ const problemLine = (problem: string | null | undefined): string => (problem ? p
 
 /**
  * Whether anything is ready to build with, and whether anything besides OpenCode's free models is.
- * Genex, once picked, counts: its first message asks for what it still needs.
+ * Genex counts once its screen signed in: its first message asks for what it still needs.
  */
 function readiness(
   engines: EngineDescriptor[],
-  chosen: { localInstalled: boolean; genexPicked: boolean },
+  chosen: { localInstalled: boolean; genexOn: boolean },
 ): { othersOn: boolean; anyOn: boolean } {
   const ready = (id: string) => engines.find((engine) => engine.id === id)?.status.code === EngineStatusCode.Ready;
-  const othersOn = chosen.localInstalled || chosen.genexPicked || BUILDS_WITH.some(ready);
+  const othersOn = chosen.localInstalled || chosen.genexOn || BUILDS_WITH.some(ready);
   // OpenCode's free models count: a ready OpenCode is something to build with.
   return { othersOn, anyOn: othersOn || ready(EngineId.OpenCode) };
 }
@@ -1500,15 +1479,16 @@ function useWelcomeEnd(
 }
 
 /**
- * Focus comes to the welcome once nothing waits above it, each of its screens is reported as it
- * shows, and past the first, home's background gets ready behind them.
+ * Focus comes to the welcome's layer (the ref it answers with) once nothing waits above it, each
+ * of its screens is reported as it shows, and past the first, home's background gets ready behind
+ * them.
  */
 function useWelcomePresence(
-  root: RefObject<HTMLDivElement | null>,
   held: boolean,
   screen: WelcomeScreen,
   onScreen: ((screen: WelcomeScreen) => void) | undefined,
-): void {
+): RefObject<HTMLDivElement | null> {
+  const root = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!held) root.current?.focus({ preventScroll: true });
   }, [held, root]);
@@ -1519,11 +1499,19 @@ function useWelcomePresence(
   useEffect(() => {
     if (screen !== WelcomeScreen.Welcome) void preloadHomeBackdrop();
   }, [screen]);
+  return root;
 }
 
 /** The welcome's local-server link: Model Providers, where a server is added. */
 const openServerSettings = (): void =>
   openSettings(SettingsSection.Providers, undefined, SettingsOpenedFrom.WelcomeServer);
+
+/** The screen the welcome shows, and whether it was reached by going back (it enters from the other side). */
+interface ScreenShown {
+  id: WelcomeScreen;
+  back: boolean;
+}
+const FIRST_SCREEN: ScreenShown = { id: WelcomeScreen.Welcome, back: false };
 
 export function Onboarding({
   engines,
@@ -1544,20 +1532,16 @@ export function Onboarding({
   /** The welcome's screen changed (usage analytics names it). */
   onScreen?: (screen: WelcomeScreen) => void;
 }): JSX.Element {
-  const [screen, setScreen] = useState<{ id: WelcomeScreen; back: boolean }>({
-    id: WelcomeScreen.Welcome,
-    back: false,
-  });
+  const [screen, setScreen] = useState<ScreenShown>(FIRST_SCREEN);
   const [idea, setIdea] = useState("");
-  const root = useRef<HTMLDivElement>(null);
   const { local, router, code, grok, cursor, ways } = useOtherWays(engines, onEnginesRefresh);
-  const genex = useGenexChoice(engines);
+  const genex = useGenex(engines);
   const { closing, leaving, finish } = useWelcomeExit(idea, onReady, onFinish);
-  const { othersOn, anyOn } = readiness(engines, { localInstalled: local.installed, genexPicked: genex.picked });
+  const { othersOn, anyOn } = readiness(engines, { localInstalled: local.installed, genexOn: genex.on });
   const freeModel = useFreeModel(code, engines, othersOn);
   const { end, next } = useWelcomeEnd({ engines, idea, anyOn, held, screen }, freeModel, finish);
 
-  useWelcomePresence(root, held, screen.id, onScreen);
+  const root = useWelcomePresence(held, screen.id, onScreen);
   const go = (id: WelcomeScreen, back = false) => setScreen({ id, back });
   // Every screen after Connect goes back to it, and skips or starts the same way.
   const after = {
@@ -1596,11 +1580,14 @@ export function Onboarding({
             back={screen.back}
             onBack={() => go(WelcomeScreen.Welcome, true)}
             onWay={(way) => go(WAY_SCREEN[way])}
+            onGenex={() => go(WelcomeScreen.Genex)}
             onSkip={() => end(WelcomeExit.Skip)}
             onStart={() => end(WelcomeExit.Start)}
             onTerminal={() => end(WelcomeExit.Terminal, () => window.dispatchEvent(new Event(SHOW_TERMINAL_EVENT)))}
           />
         );
+      case WelcomeScreen.Genex:
+        return <GenexScreen key={WelcomeScreen.Genex} genex={genex} {...after} />;
       case WelcomeScreen.OpenRouter:
         return <OpenRouterScreen key={WelcomeScreen.OpenRouter} router={router} {...after} />;
       case WelcomeScreen.OpenCode:

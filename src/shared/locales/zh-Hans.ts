@@ -500,6 +500,7 @@ export default {
   "Build the {players} app of {title} again so I can publish it.":
     "重新构建 {title} 的 {players} 应用，这样我就能发布它。",
   "Build updated": "构建已更新",
+  "Build with Genex": "用 Genex 制作",
   "Build with the Cursor plan you already have.": "用你已有的 Cursor 套餐来制作。",
   "Build with the Grok account you already have.": "用你已有的 Grok 账号来制作。",
   "Changes Harness made to its own instructions. Undo any of them.":
@@ -2379,6 +2380,8 @@ export default {
   "On this Mac · {size}": "在这台 Mac 上 · {size}",
   "Once on, it runs at Genex's moments: {steps}; those steps don't ask you first.":
     "启用后，它会在 Genex 的这些时刻运行：{steps}；这些步骤不会事先询问你。",
+  "One account for frontier AI models and game dev tools. Pay with Genex credits.":
+    "一个账号，用上前沿 AI 模型和游戏开发工具。用 Genex 积分付费。",
   "One account for hundreds of models. You pay OpenRouter for what you use.":
     "一个账号，数百个模型。用多少就付给 OpenRouter 多少。",
   "One key for hundreds of models. Pay as you go.": "一个密钥，数百个模型。按量付费。",

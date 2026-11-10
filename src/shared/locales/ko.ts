@@ -521,6 +521,7 @@ export default {
   "Build the {players} app of {title} again so I can publish it.":
     "{title}의 {players} 앱을 다시 빌드해 주세요. 게시하고 싶어요.",
   "Build updated": "빌드가 업데이트됐어요",
+  "Build with Genex": "Genex로 만들기",
   "Build with the Cursor plan you already have.": "이미 있는 Cursor 요금제로 만들어요.",
   "Build with the Grok account you already have.": "이미 있는 Grok 계정으로 만들어요.",
   "Changes Harness made to its own instructions. Undo any of them.":
@@ -2468,6 +2469,8 @@ export default {
   "On this Mac · {size}": "이 Mac에 있음 · {size}",
   "Once on, it runs at Genex's moments: {steps}; those steps don't ask you first.":
     "켜면 Genex의 다음 시점에 실행돼요: {steps}. 이 단계들은 미리 확인을 요청하지 않아요.",
+  "One account for frontier AI models and game dev tools. Pay with Genex credits.":
+    "계정 하나로 최신 AI 모델과 게임 개발 도구를 써요. Genex 크레딧으로 결제해요.",
   "One account for hundreds of models. You pay OpenRouter for what you use.":
     "계정 하나로 수백 개 모델을 써요. 쓴 만큼만 OpenRouter에 내요.",
   "One key for hundreds of models. Pay as you go.": "키 하나로 수백 개 모델을 써요. 쓴 만큼만 내요.",

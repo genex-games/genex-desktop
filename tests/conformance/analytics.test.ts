@@ -220,6 +220,7 @@ describe("usage analytics: screens and properties", () => {
       [{ welcoming: true, playViewer: true }, "/welcome"],
       [{ welcoming: true, welcomeScreen: WelcomeScreen.Welcome }, "/welcome"],
       [{ welcoming: true, welcomeScreen: WelcomeScreen.Connect }, "/welcome/connect"],
+      [{ welcoming: true, welcomeScreen: WelcomeScreen.Genex }, "/welcome/genex"],
     ];
     for (const [over, screen] of screens) assert.equal(analyticsScreen({ ...place, ...over }), screen, screen);
   });

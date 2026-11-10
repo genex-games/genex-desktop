@@ -499,6 +499,42 @@
 .onboarding-mark {
   margin-top: 24px;
 }
+/* Genex's screen: the promo card's film and its three rows in one column under the words, then
+   the sign-in. The control's place keeps the link under the wait, so nothing moves between steps. */
+.onboarding-genex {
+  --genex-column: 400px;
+}
+.onboarding-genex .genex-promo-media {
+  flex: none;
+  width: var(--genex-column);
+  max-width: 100%;
+  margin-top: 28px;
+  overflow: hidden;
+  border-radius: 16px;
+}
+.onboarding-genex .genex-promo-features {
+  width: var(--genex-column);
+  max-width: 100%;
+  margin-block-start: 20px;
+  padding-inline: 4px;
+}
+.onboarding-genex .onboarding-choice {
+  min-height: 80px;
+  margin-top: 28px;
+}
+/* A window shorter than the default keeps Start building in view: a narrower column first, then
+   (down to the app's 680px) no film. */
+@media (max-height: 860px) {
+  .onboarding-genex {
+    --genex-column: 320px;
+    padding-block: 80px 32px;
+  }
+}
+@media (max-height: 760px) {
+  .onboarding-genex .genex-promo-media {
+    display: none;
+  }
+}
 .onboarding-key input {
   width: 240px;
 }

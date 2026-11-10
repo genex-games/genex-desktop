@@ -11,6 +11,7 @@ import {
   genexPromoSettled,
   genexPromoVisible,
   PromoPhase,
+  promoAfterWelcome,
   promoPhase,
   queueGenexPromo,
   type PromoInput,
@@ -48,6 +49,23 @@ describe("Genex promo", () => {
     assert.equal(dismissed.values.get(STORAGE_KEYS.genexPromo), GenexPromoState.Done, "a dismissed promo stays gone");
     finishGenexPromo(fresh);
     assert.equal(fresh.values.get(STORAGE_KEYS.genexPromo), GenexPromoState.Done);
+  });
+
+  it("is settled, not queued, by a welcome that signed in to Genex", () => {
+    const signedIn = memory();
+    promoAfterWelcome(true, signedIn);
+    assert.equal(signedIn.values.get(STORAGE_KEYS.genexPromo), GenexPromoState.Done, "nothing left to offer");
+    assert.equal(
+      visible({ stored: signedIn.values.get(STORAGE_KEYS.genexPromo) }),
+      false,
+      "even before an account read",
+    );
+    const skipped = memory();
+    promoAfterWelcome(false, skipped);
+    assert.equal(skipped.values.get(STORAGE_KEYS.genexPromo), GenexPromoState.Pending, "the card still meets the rest");
+    const dismissed = memory(GenexPromoState.Done);
+    promoAfterWelcome(false, dismissed);
+    assert.equal(dismissed.values.get(STORAGE_KEYS.genexPromo), GenexPromoState.Done, "a settled promo stays settled");
   });
 
   it("shows only for a queued promo while Genex can still be connected", () => {

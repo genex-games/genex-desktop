@@ -382,13 +382,20 @@ credits, the step is **Get credits**. Claude Code missing or too old is **Set up
 `genex_notice_shown` says what the notice needed and offered, `genex_notice_action` which way was
 taken, and `message_send_blocked`'s `genex_need` tells a missing plan from a real sign-in.
 
-First launch offers **Use Genex** beside the two plans where genex.games offers it; it asks for
-nothing then and becomes Genex ready (setting up Claude Code first when it is missing). Settings →
+First launch offers **Use Genex** beside the two plans where genex.games offers it. It opens Genex's
+screen ([GenexScreen](../src/renderer/onboarding/GenexScreen.tsx)): the promo card's film and three
+rows, then **Sign in in browser**, the app's Genex account's own sign-in
+(`studio:genex-account.sign-in`), which waits as **Finish in your browser** with a cancel and
+**Open sign-in again**. Signed in, it reads Genex ready (setting up Claude Code first when it is
+missing), new games start on Genex's Sonnet, and the promo card after the welcome never shows; the
+first message asks for Pro or credits when the account has neither. Skipping, or going back
+without signing in, connects nothing. Settings →
 Model Providers shows Genex's row after the plans ([GenexBuildRow](../src/renderer/panels/GenexBuildRow.tsx)):
 the notice's line and step while something is missing; once ready, Connected, an Account menu
 (Check connection, Get credits) and its models. A Genex Pro member's monthly credits show in the
 usage panel ([Plan limits](#plan-limits)). Tests: `genex-relay.test.ts`, `genex-engine.test.ts`,
-`genex-notice.test.ts`, `genex-settings-row.test.ts`, `onboarding.test.ts`.
+`genex-notice.test.ts`, `genex-settings-row.test.ts`, `onboarding.test.ts`,
+`onboarding-genex-screen.test.ts`.
 
 ## Your own model server
 
