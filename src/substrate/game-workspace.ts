@@ -1233,8 +1233,8 @@ export class GameWorkspaces {
    * the page boots are still the web starter's, nothing built on them. Or the page is gone, only
    * studio.json's record of the starter makes the root a web game (`detectFoundFacts`: the core
    * table's fact with no file behind it), which Publish and Live would look for in vain, and the
-   * starter's code is gone too or as it was made. Code somebody wrote keeps the root theirs, and so
-   * does a web game a plugin's or a scaffold's rule found by other files.
+   * starter's code folder holds nothing of anyone's (`#onlyStarterCode`). Code somebody wrote keeps
+   * the root theirs, and so does a web game a plugin's or a scaffold's rule found by other files.
    */
   async #nobodysPageAtRoot(dir: string, rootWebGame: ProjectFact): Promise<boolean> {
     const [page, code] = await Promise.all([
@@ -1243,7 +1243,20 @@ export class GameWorkspaces {
     ]);
     if (page === StarterFile.Template) return code === StarterFile.Template;
     const recordOnly = page === StarterFile.Missing && rootWebGame.source === FactSource.Core;
-    return recordOnly && code !== StarterFile.Own;
+    if (!recordOnly || code === StarterFile.Own) return false;
+    return this.#onlyStarterCode(dir);
+  }
+
+  /**
+   * Whether the starter's code folder holds nothing but the starter's own code file: the folder is
+   * gone or empty, or that file is all it holds. A game written in other files there (`src/game.js`,
+   * `src/main.ts`) is somebody's, and so is a folder that can't be listed.
+   */
+  async #onlyStarterCode(dir: string): Promise<boolean> {
+    const names = await readdir(path.join(dir, path.dirname(STARTER_CODE))).catch((error: NodeJS.ErrnoException) =>
+      error.code === "ENOENT" ? [] : null,
+    );
+    return names?.every((name) => name === path.basename(STARTER_CODE)) ?? false;
   }
 
   /**

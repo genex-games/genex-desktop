@@ -137,7 +137,10 @@ export async function placeWebBuild(gameDir: string, staged: string): Promise<st
   return path.join(folder, WEB_PAGE);
 }
 
-/** What Genex's hosting takes of one game's site: its largest file and the whole site, in bytes, and how many files. */
+/**
+ * What Genex's hosting takes of one game's site as a rule: its largest file and the whole site, in
+ * bytes, and how many files. An account's own limits can differ, and the upload is what decides.
+ */
 export const HOST_LIMITS = { FileBytes: 500 * 1024 * 1024, SiteBytes: 2 * 1024 * 1024 * 1024, Files: 200 } as const;
 /** The measures of a site the host limits, as {@link HOST_LIMITS} names them. */
 export type HostLimits = { [Limit in keyof typeof HOST_LIMITS]: number };
@@ -150,7 +153,7 @@ export type HostLimit = (typeof HostLimit)[keyof typeof HostLimit];
 export type SiteExcess = { limit: HostLimit; amount: number; file?: string };
 
 /**
- * What of the site in `folder` Genex's hosting won't take ({@link HOST_LIMITS}): its largest file when
+ * What of the site in `folder` is past what Genex's hosting takes ({@link HOST_LIMITS}): its largest file when
  * that is past the file limit, its whole size and its number of files, each only when past its limit;
  * none for a site the host takes, and for a folder that can't be read. A link is no file of the site:
  * it is neither followed nor counted.
@@ -205,7 +208,8 @@ type WebConfig = {
  * to: for a host that can't send the isolation headers, the page's service worker adds them; and
  * the page waits for a click before the game starts, since a browser lets a page play sound and
  * take the mouse only after one (Unreal's default lifts the cover by itself and starts sound on the
- * first click or key).
+ * first click or key); and the picture is drawn at up to two device pixels a CSS pixel, sharp on a
+ * Retina screen, which Unreal's default of one draws at half its sharpness.
  */
 const PAGE: WebConfig = {
   folders: [PROJECT_CONFIG_FOLDER],
@@ -214,6 +218,7 @@ const PAGE: WebConfig = {
   settings: [
     ["bInjectIsolationHeaders", "True"],
     ["StartMode", "Click"],
+    ["MaxDevicePixelRatio", "2.0"],
   ],
 };
 
@@ -248,24 +253,33 @@ async function projectConfig(file: string): Promise<string> {
 }
 
 /**
- * The folder `folders` names below the project, made where missing: each on the way a folder of the
- * project's own, never a link or a file, which is refused (ELOOP) before anything is made or
- * written through it. Each is asked what it is by its own name, not by comparing spelled paths, so
- * a `config` in another case, the same folder on a Mac or Windows, is taken as it is.
+ * The folder `folders` names below the project, checked and not made: each on the way is a folder
+ * of the project's own or not there yet, never a link or a file, which is refused (ELOOP) before
+ * anything is written through it. Each is asked what it is by its own name, not by comparing
+ * spelled paths, so a `config` in another case, the same folder on a Mac or Windows, is taken as it
+ * is.
  */
 async function ownFolder(projectDir: string, folders: readonly string[]): Promise<string> {
   let dir = projectDir;
   for (const folder of folders) {
     dir = path.join(dir, folder);
-    await mkdir(dir).catch((error: NodeJS.ErrnoException) => {
-      if (error.code !== "EEXIST") throw error;
+    const there = await lstat(dir).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== "ENOENT") throw error;
+      return null;
     });
-    if (!(await lstat(dir)).isDirectory()) throw Object.assign(new Error(NOT_OWN_FOLDER), { code: "ELOOP" });
+    if (there && !there.isDirectory()) throw Object.assign(new Error(NOT_OWN_FOLDER), { code: "ELOOP" });
   }
   return dir;
 }
 
-/** Where `section` stands in a config's lines: its last line, and the keys it sets, in lower case. */
+/** Unreal's marks before a key: add to a list, add even when there, remove a value, clear the key. */
+const KEY_MARK = /^[+.\-!]/;
+
+/**
+ * Where `section` stands in a config's lines: its last line, and the keys it speaks of, in lower
+ * case. A line that adds to a key or takes it away (`+Key=`, `-Key=`, `!Key=`) speaks of it too:
+ * the project has said what it wants there.
+ */
 function sectionIn(lines: readonly string[], section: string): { end: number | null; keys: Set<string> } {
   let inside = false;
   let end: number | null = null;
@@ -275,7 +289,7 @@ function sectionIn(lines: readonly string[], section: string): { end: number | n
     if (trimmed.startsWith("[")) inside = sameText(trimmed, section);
     if (!inside || trimmed === "") return;
     end = index;
-    keys.add((trimmed.split("=")[0] ?? "").trim().toLowerCase());
+    keys.add((trimmed.split("=")[0] ?? "").trim().replace(KEY_MARK, "").toLowerCase());
   });
   return { end, keys };
 }
@@ -284,7 +298,7 @@ function sectionIn(lines: readonly string[], section: string): { end: number | n
  * One of the project's own configs with each setting its section doesn't set added: a key the
  * project sets, either way, is left as it is, and so is every other line. Undefined when the project
  * sets them all. The folders to the config are the project's own and the config a plain file: a link
- * in either's place is refused. Nothing is written yet, though a missing folder is made.
+ * in either's place is refused. Nothing is written or made yet.
  */
 async function withWebSettings(projectDir: string, config: WebConfig): Promise<ConfigEdit | undefined> {
   const file = path.join(await ownFolder(projectDir, config.folders), config.file);
@@ -308,13 +322,15 @@ async function withWebSettings(projectDir: string, config: WebConfig): Promise<C
  * Gives the project what its web build needs to run on, and be taken by, a plain host that caps a
  * file's size, each setting only where the project's config doesn't say either way:
  *
- * - in `Config/DefaultEngine.ini`, the settings that have the page add the isolation headers itself
- *   and wait for a click before the game starts;
+ * - in `Config/DefaultEngine.ini`, the settings that have the page add the isolation headers itself,
+ *   wait for a click before the game starts and draw sharp on a Retina screen;
  * - in the web platform's own `Config/Wasm/WasmGame.ini`, the settings that split the content into
  *   files of at most {@link WEB_CHUNK_BYTES} of cooked data.
  *
- * Both configs are read and checked before either is written, so a project whose config can't be
- * written safely (a link where a folder or a config belongs) keeps both as they were.
+ * Both configs are read and checked before either is written or a folder is made, so a project
+ * whose config can't be written safely (a link where a folder or a config belongs) keeps both as
+ * they were. A write that fails on the way (a full disk) can leave the first written: each setting
+ * is harmless alone, and the next package adds the rest.
  */
 export async function ensureWebSettings(projectDir: string): Promise<void> {
   const edits: ConfigEdit[] = [];
@@ -322,5 +338,8 @@ export async function ensureWebSettings(projectDir: string): Promise<void> {
     const edit = await withWebSettings(projectDir, config);
     if (edit) edits.push(edit);
   }
-  for (const edit of edits) await atomicWriteText(edit.file, edit.text);
+  for (const edit of edits) {
+    await mkdir(path.dirname(edit.file), { recursive: true });
+    await atomicWriteText(edit.file, edit.text);
+  }
 }

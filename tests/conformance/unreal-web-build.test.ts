@@ -164,8 +164,10 @@ describe("the game's web folder for an Unreal web build", () => {
   });
 });
 
-describe("the page settings that let an Unreal web build run on a plain host and start on a click", () => {
+describe("the page settings that let an Unreal web build run on a plain host, start on a click and draw sharp", () => {
   const SECTION = "[/Script/WasmTargetPlatform.WasmTargetSettings]";
+  /** Unreal's own defaults: no headers added, a game that starts by itself, one device pixel a CSS pixel. */
+  const PAGE = ["bInjectIsolationHeaders=True", "StartMode=Click", "MaxDevicePixelRatio=2.0"];
   const config = (project: string) => path.join(project, "Config", "DefaultEngine.ini");
   /** A project folder whose `Config/DefaultEngine.ini` is `text`; none when undefined. */
   async function projectWith(text?: string) {
@@ -177,31 +179,28 @@ describe("the page settings that let an Unreal web build run on a plain host and
     return project;
   }
 
-  it("is added to a project without it, in its own section, the rest kept byte for byte", async () => {
+  it("are added to a project without them, in their own section, the rest kept byte for byte", async () => {
     const before = "[/Script/Engine.RendererSettings]\r\nr.RayTracing=False\r\n";
     const project = await projectWith(before);
     await ensureWebSettings(project);
-    assert.equal(
-      await readFile(config(project), "utf8"),
-      `${before}\r\n${SECTION}\r\nbInjectIsolationHeaders=True\r\nStartMode=Click\r\n`,
-    );
+    assert.equal(await readFile(config(project), "utf8"), `${before}\r\n${SECTION}\r\n${PAGE.join("\r\n")}\r\n`);
     const none = await projectWith();
     await ensureWebSettings(none);
-    assert.equal(await readFile(config(none), "utf8"), `${SECTION}\nbInjectIsolationHeaders=True\nStartMode=Click\n`);
+    assert.equal(await readFile(config(none), "utf8"), `${SECTION}\n${PAGE.join("\n")}\n`);
   });
 
-  it("joins the section when the project has it, after its last setting", async () => {
+  it("join the section when the project has it, after its last setting", async () => {
     const project = await projectWith(`${SECTION}\nStartMode=Click\n\n[Other]\nA=1\n`);
     await ensureWebSettings(project);
     assert.equal(
       await readFile(config(project), "utf8"),
-      `${SECTION}\nStartMode=Click\nbInjectIsolationHeaders=True\n\n[Other]\nA=1\n`,
+      `${SECTION}\nStartMode=Click\nbInjectIsolationHeaders=True\nMaxDevicePixelRatio=2.0\n\n[Other]\nA=1\n`,
     );
   });
 
-  it("leaves a project that already says either way as it is", async () => {
+  it("leave a project that already says either way as it is", async () => {
     for (const value of ["True", "False", "true"]) {
-      const text = `${SECTION}\nbInjectIsolationHeaders=${value}\nStartMode=Auto\n`;
+      const text = `${SECTION}\nbInjectIsolationHeaders=${value}\nStartMode=Auto\nMaxDevicePixelRatio=1.0\n`;
       const project = await projectWith(text);
       await ensureWebSettings(project);
       assert.equal(await readFile(config(project), "utf8"), text, value);
@@ -211,7 +210,7 @@ describe("the page settings that let an Unreal web build run on a plain host and
     await ensureWebSettings(startsItself);
     assert.equal(
       await readFile(config(startsItself), "utf8"),
-      `${SECTION}\nstartmode=Auto\nbInjectIsolationHeaders=True\n`,
+      `${SECTION}\nstartmode=Auto\nbInjectIsolationHeaders=True\nMaxDevicePixelRatio=2.0\n`,
     );
   });
 });
@@ -270,6 +269,15 @@ describe("the settings that split an Unreal web build's content into files a hos
     );
   });
 
+  it("leave a key the project adds to or takes away with Unreal's marks: it has said what it wants there", async () => {
+    for (const own of ["+bGenerateChunks=False\n-MaxChunkSize=1", "!MaxChunkSize=ClearArray\n.bGenerateChunks=True"]) {
+      const text = `${SECTION}\n${own}\n`;
+      const project = await projectWith(text);
+      await ensureWebSettings(project);
+      assert.equal(await readFile(config(project), "utf8"), text, own);
+    }
+  });
+
   it("are the web's own: what the project says for every platform stays, and the web build is still split", async () => {
     const everyPlatform = `${SECTION}\nbGenerateChunks=False\nMaxChunkSize=0\n`;
     const project = await projectWith();
@@ -286,12 +294,13 @@ describe("the project settings of a web build go into the project's own plain fi
   const ENGINE_CONFIG = ["Config", "DefaultEngine.ini"] as const;
   const WEB_CONFIG = ["Config", "Wasm", "WasmGame.ini"] as const;
 
-  /** Every file below `dir` with its text, by path; a link is no file and is not followed. */
+  /** Every file below `dir` with its text and every folder, by path; a link is neither and is not followed. */
   async function filesBelow(dir: string): Promise<Record<string, string>> {
     const found: Record<string, string> = {};
     for (const entry of await readdir(dir, { withFileTypes: true, recursive: true })) {
       const file = path.join(entry.parentPath, entry.name);
       if (entry.isFile()) found[path.relative(dir, file)] = await readFile(file, "utf8");
+      if (entry.isDirectory()) found[path.relative(dir, file)] = "a folder";
     }
     return found;
   }
@@ -351,7 +360,7 @@ describe("the project settings of a web build go into the project's own plain fi
   ];
 
   for (const hostile of IN_THE_WAY) {
-    it(`${hostile.name} is refused, and no file changes: the project's own or where a link leads`, async () => {
+    it(`${hostile.name} is refused, and nothing is written or made: in the project or where a link leads`, async () => {
       const project = await tmpDir("unreal-web-linked-");
       const outside = await tmpDir("unreal-web-outside-");
       await hostile.plant(project, outside);

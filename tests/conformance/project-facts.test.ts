@@ -583,6 +583,15 @@ describe("a listed game's facts", () => {
     ]);
     assert.deepEqual(await factsOf(ownCode), ["web-game@.:core", "unity-project@unity:core"]);
     assert.equal(webFolderOf(await listed(ownCode)), null);
+    // So is a game written in other files of the starter's code folder, its own page made by a build step.
+    const otherCode = await pageGone("unity-page-gone-other-code", [
+      "unity/ProjectSettings/ProjectVersion.txt",
+      "web/index.html",
+      "web/Build/web.loader.js",
+      "src/game.ts",
+    ]);
+    assert.deepEqual(await factsOf(otherCode), ["web-game@.:core", "unity-project@unity:core"]);
+    assert.equal(webFolderOf(await listed(otherCode)), null);
     // And a page that is there and built on keeps its place (the case above this one).
   });
 

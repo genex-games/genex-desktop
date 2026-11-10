@@ -2128,9 +2128,10 @@ Godot game's web version in `web/` (`ENGINE_WEB_FOLDER`, `Web/` too) is listed a
 though a page at the root is above it; that root page is then left out when it is still the web
 starter's page nobody built on (its `index.html` and `src/main.js` are the template's), or when the
 page is gone, only `studio.json`'s record of the starter still makes the root a web game and the
-starter's `src/main.js` is gone too or as it was made (`#nobodysPageAtRoot`: Publish would look for
-a root `index.html` in vain), whether or not the port was recorded, and any other root page, or
-code somebody wrote there, keeps its place (`withEngineWebVersion`). An
+starter's `src/` holds nothing of anyone's (it is gone or empty, or `main.js` as it was made is all
+it holds; `#nobodysPageAtRoot`: Publish would look for a root `index.html` in vain), whether or not
+the port was recorded, and any other root page, or code somebody wrote there, keeps its place
+(`withEngineWebVersion`). An
 Unreal game's `web/` counts the same way only while it holds the build Unreal staged for the web
 (the Unreal plugin's `detect` gives the folder `unreal-web-build` by the `wasm-manifest.json` Unreal
 writes at such a build's root; `exportsToWebFolder`), so a page of mockups in an Unreal game's
@@ -2859,11 +2860,14 @@ is also refused while the game's `web/` holds anything but an earlier Unreal web
 (`webFolderOf`: free, ours by `wasm-manifest.json`, or taken), which is never replaced. Before the
 run `ensureWebSettings` writes settings of Epic's into the project's own config. Its
 `Config/DefaultEngine.ini`, where Unreal's own Project Settings keep them, gets
-`bInjectIsolationHeaders=True` and `StartMode=Click` under
+`bInjectIsolationHeaders=True`, `StartMode=Click` and `MaxDevicePixelRatio=2.0` under
 `[/Script/WasmTargetPlatform.WasmTargetSettings]` (each only where the project doesn't say either
-way): Genex's hosts send no isolation headers, so the page's own service worker adds them, and the
-page waits for a click before the game starts, since a browser lets a page play sound and take the
-mouse only after one. The page's title and loading cover show the Unreal project's name unless the
+way, a line with one of Unreal's marks before the key included): Genex's hosts send no isolation
+headers, so the page's own service worker adds them; the page waits for a click before the game
+starts, since a browser lets a page play sound and take the mouse only after one; and the picture
+is drawn at up to two device pixels a CSS pixel, sharp on a Retina screen, where Unreal's default
+of one draws at half its sharpness (four times the pixels to draw: a game too heavy for it sets its
+own). The page's title and loading cover show the Unreal project's name unless the
 project sets `PageTitle` there; Genex does not write it (the title it keeps for a game can be an
 older one), and the tool's description tells the agent to.
 The web platform's own config, `Config/Wasm/WasmGame.ini`, which no Mac, Windows or Linux package
@@ -2878,9 +2882,10 @@ chunk as cooked data, before its container is packed, and shader code and paddin
 content then comes as `pakchunk0`, `pakchunk0_s1`, … each a `.pak`, `.ucas` and `.utoc`, and one
 asset larger than the size stays whole. With chunks, a `PakFileRules` section of the project's
 that leaves content out applies only with `bOverrideChunkManifest=true`. Both configs are read and
-checked before either is written, and written only as plain files in the project's own folders: a
-link or a file in a folder's or the config's place refuses the package with neither changed
-(`NoWebSettings`, naming `unreal/Config/` and the failure's code, never a path of the computer).
+checked before either is written or a folder is made, and written only as plain files in the
+project's own folders: a link or a file in a folder's or the config's place refuses the package
+with neither changed (`NoWebSettings`, naming `unreal/Config/` and the failure's code, never a path
+of the computer).
 BuildCookRun adds `-platform=Wasm
 -iostore -package -WasmNoBrotli -manifests`: Unreal's package step is the one that writes `wasm-manifest.json`
 (the page starts nothing without it) and moves the files no host may serve to
@@ -2888,10 +2893,12 @@ BuildCookRun adds `-platform=Wasm
 beside it, and only with `-manifests` does the cook write the chunk lists the split is made from.
 The whole site is staged into `unreal/Builds/Wasm/`, which then becomes the game's
 `web/` in one move (`placeWebBuild`), where Publish and Live find it; `package-status` names
-`web/index.html`. Its line also says what of the finished site Genex's hosting won't take, so that
-is known before an upload is tried (`siteExcess` against `HOST_LIMITS`: 500 MiB a file, 2 GiB a
-site, 200 files): the largest file past the file limit by its path in the game, the site's whole
-size, its number of files. Such a build is still done and still the game's `web/`. A stage with a page but no `wasm-manifest.json` fails the package and never
+`web/index.html`. Its line also says what of the finished site is past Genex hosting's usual
+limits, so that is known before an upload is tried (`siteExcess` against `HOST_LIMITS`: 500 MiB a
+file, 2 GiB a site, 200 files; an account's own limits can differ, and the upload decides): the
+largest file past the file limit by its path in the game, the site's whole size, its number of
+files. Such a build is still done and still the game's `web/`, and after a restart the idle status
+of the build in `web/` says the same. A stage with a page but no `wasm-manifest.json` fails the package and never
 becomes `web/`. `package-game`, `plugin-build`, `plugin-test`,
 `plugin-package`, `add-cpp-module` and `add-motion-matching` name their status tool as `jobStatus`,
 and each status answers `jobRunning`, so the chat that started a job is woken when it ends. Publish
