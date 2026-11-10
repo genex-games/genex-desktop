@@ -127,6 +127,7 @@ const MESSAGE = {
   NoListen: (detail: string) => `The room did not start: ${detail}`,
   TimedOut: `The room did not start within ${ROOM_LISTEN_TIMEOUT_MS / SECOND_MS} s`,
   Exited: (code: number | null) => `the toolchain exited (${code})`,
+  Overtaken: "it was asked to stop, or to start again, while it was starting",
   NoVerdict: (detail: string) => `Validation gave no verdict: ${detail}`,
   NoDelay:
     "A room on Windows adds no delay yet: its sandbox lets the room's bots reach only the room's own ports. Start it with latencyMs 0",
@@ -432,7 +433,7 @@ export class GenexRoomService {
   readonly #rooms = new Map<string, Room>();
   /** The studio is stopping: its preview goes with it, so no room reloads it on the way out. */
   #closing = false;
-  /** How many starts and stops each game's room was asked for: a start goes on only while it is the latest. */
+  /** How many starts and stops each game's room was asked for: a start goes on only while it is the latest (`#latest`). */
   readonly #asks = new Map<string, number>();
   constructor(deps: GenexRoomDeps) {
     this.#deps = deps;
@@ -488,7 +489,7 @@ export class GenexRoomService {
     };
   }
 
-  /** End the game's room: its last report, then its process tree. A start still under way starts nothing again. */
+  /** End the game's room: its last report, then its process tree. A start of it still under way ends there. */
   stop(project: string): Promise<RoomStatus> {
     this.#ask(project);
     return this.#end(project);
@@ -499,6 +500,11 @@ export class GenexRoomService {
     const ask = (this.#asks.get(project) ?? 0) + 1;
     this.#asks.set(project, ask);
     return ask;
+  }
+
+  /** Whether start `ask` of the game's room is still what was asked last: no stop, later start or studio stop since. */
+  #latest(project: string, ask: number): boolean {
+    return !this.#closing && this.#asks.get(project) === ask;
   }
 
   /** The game's room ended, as a stop and the start of its next room both need it. */
@@ -627,29 +633,37 @@ export class GenexRoomService {
    * the room's ports are named for it, another program (a second room starting at the same moment)
    * can take one between the look that found it free and the room's own listen: the room is then
    * started again on ports free by then, {@link ROOM_PORT_TRIES} starts in all. Not behind a stop
-   * or a later start of the game, though: that ask decides how the room stands.
+   * or a later start of the game, though: that ask decides how the room stands (`#serve` too).
    */
   async #listen(start: RoomStart): Promise<{ room: Room; url: string }> {
     const ask = this.#ask(start.project);
     for (let tries = 1; ; tries += 1) {
       await this.#end(start.project);
       const ports = await this.#ports(start.call.latencyMs);
-      const room = await this.#serve(start, ports);
+      const room = await this.#serve(start, ports, ask);
       try {
         const url = await this.#listening(room);
         room.url = url;
         return { room, url };
       } catch (error) {
         const portTaken = ports !== null && error instanceof ListenerRefused;
-        const latest = !this.#closing && this.#asks.get(start.project) === ask;
-        const again = portTaken && latest && tries < ROOM_PORT_TRIES;
+        const again = portTaken && this.#latest(start.project, ask) && tries < ROOM_PORT_TRIES;
         if (!again) throw error;
       }
     }
   }
 
-  /** Start the toolchain on the game's module, on `ports` where they are named: the game's room from now on. */
-  async #serve({ project, game, declared, call, bots }: RoomStart, ports: RoomPorts | null): Promise<Room> {
+  /**
+   * Start the toolchain on the game's module, on `ports` where they are named: the game's room from
+   * now on. A process that came up after a stop or a later start of the game (start `ask` is no
+   * longer the latest) is ended instead: it would run behind a stop that already answered, or take
+   * the place of the later start's room, which nothing would end then.
+   */
+  async #serve(
+    { project, game, declared, call, bots }: RoomStart,
+    ports: RoomPorts | null,
+    ask: number,
+  ): Promise<Room> {
     const module = declared.file;
     const listeners = ports ? ["--port", String(ports.port), "--fast-port", String(ports.fastPort)] : [];
     const command = await this.#command([
@@ -681,6 +695,11 @@ export class GenexRoomService {
       liveInput: true,
       loopbackServer: true,
     });
+    if (!this.#latest(project, ask)) {
+      input.end();
+      await treeKiller(child)();
+      throw new Error(MESSAGE.NoListen(MESSAGE.Overtaken));
+    }
     const closed = new Promise<void>((resolve) => child.once("close", () => resolve()));
     const room: Room = {
       child,

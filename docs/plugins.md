@@ -4010,7 +4010,9 @@ with the working dot, Checking fixes; none for a game Genex doesn't know) comes 
   pick their own ports) and is stopped through the live-input relay; nothing else is opened. A port
   another program took before the room could listen on it (the toolchain's `listen_failed`, two
   rooms starting at once) starts the room again on the ports free by then, three starts in all
-  (`ROOM_PORT_TRIES`), and never behind a stop or a later start of the game. On
+  (`ROOM_PORT_TRIES`). A start that a stop, the studio's stop or a later start of the game
+  overtakes ends there, on any system: it starts nothing again, and a process of it still coming
+  up is ended, never left as the game's room. On
   Linux the sandbox gives the room a network namespace of its own, so it listens on ports free on
   this computer too and the loopback bridge opens them here: this computer's connections and
   datagrams go in, the room reaches nothing out. The preview is loaded into a room only once this

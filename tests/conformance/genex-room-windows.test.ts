@@ -35,6 +35,12 @@ interface SpawnRequest {
   liveInput?: boolean;
 }
 
+/** What a spawn hands the service: the room's process and its input. */
+interface RoomProcess {
+  child: ChildProcess;
+  input: PassThrough;
+}
+
 /** The value after `flag` on a command line of single-quoted or bare words. */
 function option(command: string, flag: string): number | null {
   const match = new RegExp(`${flag}'? '?(\\d+)'?`).exec(command);
@@ -45,7 +51,7 @@ function option(command: string, flag: string): number | null {
  * A room that says it listens on the port its command names (or 41234) and ends once its input
  * closes, as `--stop-on-stdin-close` does. It has no pid: nothing here may signal a real process.
  */
-function listeningRoom(command: string): { child: ChildProcess; input: PassThrough } {
+function listeningRoom(command: string): RoomProcess {
   const child = new EventEmitter() as ChildProcess;
   const stdout = new PassThrough();
   const input = new PassThrough();
@@ -64,7 +70,7 @@ function listeningRoom(command: string): { child: ChildProcess; input: PassThrou
  * A room the toolchain refuses before it listens: its ERROR line, then its exit (`error` undefined:
  * the exit alone).
  */
-function refusedRoom(error?: unknown): { child: ChildProcess; input: PassThrough } {
+function refusedRoom(error?: unknown): RoomProcess {
   const child = new EventEmitter() as ChildProcess;
   const stdout = new PassThrough();
   const input = new PassThrough();
@@ -83,7 +89,7 @@ function refusedRoom(error?: unknown): { child: ChildProcess; input: PassThrough
  * A room that is refused its port as it is asked to stop: once its input closes it prints the
  * toolchain's ERROR line and ends.
  */
-function refusedOnStop(error: unknown): { child: ChildProcess; input: PassThrough } {
+function refusedOnStop(error: unknown): RoomProcess {
   const child = new EventEmitter() as ChildProcess;
   const stdout = new PassThrough();
   const input = new PassThrough();
@@ -111,7 +117,7 @@ const fastPortTaken = (command: string) => {
 async function setup(
   platform: StudioPlatform,
   portFree: (port: number) => boolean = () => true,
-  room: (command: string) => { child: ChildProcess; input: PassThrough } = listeningRoom,
+  room: (command: string) => RoomProcess | Promise<RoomProcess> = listeningRoom,
 ) {
   const root = await tmpDir("studio-room-windows-");
   const game = path.join(root, "games", "arena");
@@ -221,7 +227,7 @@ describe("a room on Windows listens where its sandboxed bots may connect, and is
 const REFUSED_STARTS: Array<{
   name: string;
   platform: StudioPlatform;
-  room: (command: string) => { child: ChildProcess; input: PassThrough };
+  room: (command: string) => RoomProcess;
   starts: number;
   refused: RegExp;
 }> = [
@@ -262,6 +268,71 @@ const REFUSED_STARTS: Array<{
   },
 ];
 
+/** What can be asked of a game's room while a start of it is under way, and how many rooms the ask itself starts. */
+const ASKS: Array<{
+  name: string;
+  ask: (rooms: GenexRoomService, binding: { project: string; directory: string }) => unknown;
+  starts: number;
+}> = [
+  { name: "genex__room stop", ask: (rooms, at) => rooms.call({ action: "stop" }, at), starts: 0 },
+  { name: "the studio stopping", ask: (rooms) => rooms.stopAll(), starts: 0 },
+  { name: "a later start", ask: (rooms, at) => rooms.call({ action: "start" }, at), starts: 1 },
+];
+
+/**
+ * Where an ask overtakes a start: at its `nth` process, which either runs and is refused its port
+ * as the ask ends it, or is still being started (`starting`) when the ask comes. Each process
+ * before it was refused its port.
+ */
+const OVERTAKEN_AT: Array<{ name: string; nth: number; starting: boolean; refused: RegExp }> = [
+  { name: "as its room is refused its port", nth: 1, starting: false, refused: /did not start: .*EADDRINUSE/ },
+  {
+    name: "as its first room is being started",
+    nth: 1,
+    starting: true,
+    refused: /did not start: it was asked to stop/,
+  },
+  { name: "as its next room is being started", nth: 2, starting: true, refused: /did not start: it was asked to stop/ },
+];
+
+/**
+ * A start under way up to `moment`, there for an ask to overtake it: `refused` settles once the
+ * start failed as the moment says, `letGo` lets a process that is still being started come up, and
+ * `children` are the processes started so far.
+ */
+async function overtaken(moment: (typeof OVERTAKEN_AT)[number], label: string) {
+  const children: ChildProcess[] = [];
+  let arrive = () => {};
+  const arrived = new Promise<void>((resolve) => {
+    arrive = resolve;
+  });
+  let letGo = () => {};
+  const held = new Promise<void>((resolve) => {
+    letGo = resolve;
+  });
+  const process = async (nth: number, command: string): Promise<RoomProcess> => {
+    if (nth < moment.nth) return refusedRoom(fastPortTaken(command));
+    if (nth > moment.nth) return listeningRoom(command);
+    arrive();
+    if (!moment.starting) return refusedOnStop(fastPortTaken(command));
+    await held;
+    return listeningRoom(command);
+  };
+  const made = await setup(
+    StudioPlatform.Windows,
+    () => true,
+    async (command) => {
+      const room = await process(made.spawned.length, command);
+      children.push(room.child);
+      return room;
+    },
+  );
+  const refused = assert.rejects(made.rooms.call({ action: "start" }, made.binding), moment.refused, label);
+  await arrived;
+  await turn();
+  return { ...made, refused, children, letGo };
+}
+
 describe("a room whose port another program took before the room could listen on it", () => {
   it("starts on other ports when another program took one before the room could listen on it", async () => {
     // The incident: two rooms started at the same moment on one PC. Each found 60089 free for fast@1;
@@ -297,54 +368,24 @@ describe("a room whose port another program took before the room could listen on
     }
   });
 
-  it("starts no room again behind a stop or a later start of the game", async () => {
-    // An ask that lands while a start is being refused its port ends that start: no room comes up
-    // behind a stop that already answered "not running", none takes the place of a later start's.
-    type Ask = (rooms: GenexRoomService, binding: { project: string; directory: string }) => unknown;
-    const asks: Array<{ name: string; ask: Ask; starts: number; running: boolean }> = [
-      { name: "genex__room stop", ask: (rooms, at) => rooms.call({ action: "stop" }, at), starts: 1, running: false },
-      { name: "the studio stopping", ask: (rooms) => rooms.stopAll(), starts: 1, running: false },
-      { name: "a later start", ask: (rooms, at) => rooms.call({ action: "start" }, at), starts: 2, running: true },
-    ];
-    for (const { name, ask, starts, running } of asks) {
-      let spawnedOnce = () => {};
-      const firstSpawn = new Promise<void>((resolve) => {
-        spawnedOnce = resolve;
-      });
-      const { rooms, spawned, binding } = await setup(
-        StudioPlatform.Windows,
-        () => true,
-        (command) => {
-          if (spawned.length > 1) return listeningRoom(command);
-          spawnedOnce();
-          return refusedOnStop(fastPortTaken(command));
-        },
-      );
-      const refused = assert.rejects(rooms.call({ action: "start" }, binding), /did not start: .*EADDRINUSE/, name);
-      await firstSpawn;
-      await turn();
-      try {
+  it("ends a start that a stop or a later start of the game overtook, and leaves no process of it running", async () => {
+    // No room comes up behind a stop that already answered "not running", and none takes the place
+    // of a later start's room, which nothing would end then.
+    for (const moment of OVERTAKEN_AT) {
+      for (const { name, ask, starts } of ASKS) {
+        const label = `${name}, ${moment.name}`;
+        const { rooms, spawned, binding, refused, children, letGo } = await overtaken(moment, label);
         await ask(rooms, binding);
+        letGo();
         await refused;
-        assert.equal(spawned.length, starts, `${name}: the refused start runs nothing more`);
-        assert.equal(rooms.status(binding.project).running, running, name);
-      } finally {
+        assert.equal(spawned.length, moment.nth + starts, `${label}: the overtaken start runs nothing more`);
+        assert.equal(rooms.status(binding.project).running, starts > 0, label);
         await rooms.stopAll();
+        // A process whose input was closed ends on the stream's next tick.
+        await turn();
+        const running = children.filter((child) => child.exitCode === null).length;
+        assert.equal(running, 0, `${label}: every process the game's room started has ended`);
       }
     }
-  });
-
-  it("starts no room again while the studio stops, though the stop found no room yet to end", async () => {
-    const { rooms, spawned, binding } = await setup(
-      StudioPlatform.Windows,
-      () => true,
-      (command) => (spawned.length > 1 ? listeningRoom(command) : refusedRoom(fastPortTaken(command))),
-    );
-    const starting = rooms.call({ action: "start" }, binding);
-    // Before the room's process runs: the studio's stop has nothing to end.
-    await rooms.stopAll();
-    await assert.rejects(starting, /did not start: .*EADDRINUSE/);
-    assert.equal(spawned.length, 1, "the room refused its port is not started again");
-    assert.equal(rooms.status(binding.project).running, false);
   });
 });
