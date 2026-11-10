@@ -204,7 +204,11 @@ the setup screen opens on `git-missing`. What differs from macOS:
   sandbox user can open nothing at the path or under it, the start goes on without that deny, and
   the log says so (`left … as it is`). The deny stays recorded, so every start asks for it and
   checks again. A deny refused on a path the sandbox user could open, or refused for any other
-  reason, still stops the start. A per-command
+  reason, still stops the start. A read grant refused so (Genex run from `C:\Program Files\Genex`,
+  whose entries a standard user may not change: a field PC's agents never started) goes on the
+  same way where the path's own entries already let Everyone, Authenticated Users, BUILTIN\Users or
+  the group read and run it and pass that down to its files and folders, and hold no deny but
+  SYSTEM's, the Administrators' or the person's (`OpenAt`). A per-command
   deny Genex already sets is not sent again. Without the group, where PowerShell cannot run the
   batch or the running user holds the SID, srt-win sets every grant and deny as before, and the
   log says so (`own entries off`). srt-win keeps a missing deny path (it makes its placeholder), a

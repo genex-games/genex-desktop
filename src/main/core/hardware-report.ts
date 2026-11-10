@@ -2,8 +2,6 @@
 import { detectHardware, recommendModels } from "../../substrate/hardware.ts";
 
 export async function hardwareReport() {
-  return {
-    hardware: await detectHardware(),
-    recommendation: await recommendModels(),
-  };
+  const hardware = await detectHardware();
+  return { hardware, recommendation: await recommendModels(hardware) };
 }

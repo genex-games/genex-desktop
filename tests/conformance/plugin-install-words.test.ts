@@ -56,12 +56,13 @@ test("characterization: a first install from the catalog gives one block each, i
       "• blender — the Genex CLI, given GENEX_API_URL, GENEX_BLENDER_URL, GENEX_ENV_FILE",
     ].join("\n"),
     [
-      "Genex runs 3 tools for it:",
+      "Genex runs 4 tools for it:",
       "• cli — runs the Genex CLI",
       "• cli-paid — runs the Genex CLI, asks you each time",
       "• package — installs Genex packages in the game",
+      "• room — runs the game's multiplayer room on this computer",
     ].join("\n"),
-    "Adds 19 skills for agents: creator-mcp, publishing, publishing-apps, cover, genex, genex-threejs-multiplayer, genex-threejs-embed-auth, genex-llm-in-games, genex-tool-llm, genex-monetization, genex-items, genex-tool-publish, genex-tool-model, genex-tool-character, genex-tool-texture, genex-tool-audio, genex-tool-image, genex-updates, plugin-author.",
+    "Adds 20 skills for agents: creator-mcp, publishing, publishing-apps, cover, genex, genex-threejs-multiplayer, genex-authoritative-multiplayer, genex-threejs-embed-auth, genex-llm-in-games, genex-tool-llm, genex-monetization, genex-items, genex-tool-publish, genex-tool-model, genex-tool-character, genex-tool-texture, genex-tool-audio, genex-tool-image, genex-updates, plugin-author.",
     "Scan: caution, 1 finding: child-process in backend.mjs:12.",
   ]);
 });

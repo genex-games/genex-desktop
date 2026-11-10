@@ -56,9 +56,10 @@ const WINDOWS_LAUNCH_CODES: ReadonlyMap<string, SandboxLaunchCode> = new Map([
 
 /**
  * The loopback ports srt-win's egress filter lets the sandbox user reach, where its network proxies
- * must listen: sandbox-runtime's default, which Genex's install keeps.
+ * must listen: sandbox-runtime's default, which Genex's install keeps (lowest and highest, inclusive).
  */
-const SRT_PROXY_PORTS = "60080-60089";
+export const SRT_PROXY_PORT_RANGE: readonly [number, number] = [60080, 60089];
+const SRT_PROXY_PORTS = SRT_PROXY_PORT_RANGE.join("-");
 /** What Windows answers a listen on a port it reserved (EACCES) or another program holds. */
 const PORT_REFUSED: ReadonlySet<string> = new Set(["EACCES", "EADDRINUSE"]);
 const LISTEN_SYSCALL = "listen";

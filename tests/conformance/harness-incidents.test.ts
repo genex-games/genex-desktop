@@ -5681,6 +5681,59 @@ describe("pictures of a Loop's builds (Loop phase 5)", () => {
     assert.equal(loads.length, 1, "one load, no second pass");
     assert.equal(loads[0]?.shot, true, "the load whose screenshot is the build's picture says so");
   });
+
+  /** A Loop on a game in `dir` whose lead makes a save point naming no picture, then one naming `shows`. */
+  async function savePointLoop(dir: string, facts: Array<{ id: string; path: string }>) {
+    const { gameRepo, loopHost } = await import("../helpers/loop-host.ts");
+    await mkdir(path.join(dir, "shots"), { recursive: true });
+    await writeFile(path.join(dir, "shots/hero.png"), Buffer.from(ONE_PIXEL_PNG, "base64"));
+    await gameRepo(dir);
+    const host = loopHost({
+      dir,
+      facts,
+      turns: [
+        async ({ tool }) => {
+          await writeFile(path.join(dir, "a.txt"), "a");
+          await tool("save_point", { label: "Corridor", summary: "the corridor is playable" });
+          await writeFile(path.join(dir, "b.txt"), "b");
+          await tool("save_point", { label: "Hero", summary: "the hero", shows: "shots/hero.png" });
+          await tool("finish", { summary: "Built.", proof: "a.txt" });
+          return undefined;
+        },
+      ],
+    });
+    host.rec.handle(HostMethod.PreviewLoad, () => ({ ok: true }));
+    host.rec.handle(HostMethod.PreviewReady, () => ({ ready: true }));
+    host.rec.handle(HostMethod.PreviewObserve, () => ({ ok: true, reasons: [] }));
+    host.rec.handle(HostMethod.PreviewScreenshot, (p) => ({ path: `/runs/${String(p.runId)}/${String(p.label)}.jpg` }));
+    await host.start();
+    return host;
+  }
+
+  it("GP3. a web game's save point that named no picture kept none, so its card, the lead's and the build's stayed blank", async () => {
+    const dir = await tmpDir("save-own-picture-");
+    await writeFile(path.join(dir, "index.html"), "<canvas></canvas>\n");
+    const host = await savePointLoop(dir, [{ id: "web-game", path: "." }]);
+    const [corridor, hero] = host.appended("facet_iteration");
+    assert.deepEqual(corridor?.shots, [{ camera: "default", path: "/runs/run-open/open/save-1/default.jpg" }]);
+    assert.deepEqual(hero?.shots, [], "a save point that names its picture gets no look of Genex's own");
+    assert.match(String((hero?.shown as { path?: string } | undefined)?.path), /save-2\/shows/);
+    const looks = host.rec.paramsOf(HostMethod.PreviewScreenshot).map((p) => p.label);
+    assert.deepEqual(looks, ["open/save-1/default", "director/finish"]);
+    const loads = host.rec.paramsOf(HostMethod.PreviewLoad);
+    assert.ok(
+      loads.every((load) => load.shot === true && typeof load.handle === "string"),
+      "a window of Genex's own, loaded as a build's picture",
+    );
+  });
+
+  it("GP3. a save point of an engine's game takes no look at a page", async () => {
+    const dir = await tmpDir("save-no-page-");
+    const host = await savePointLoop(dir, [{ id: "godot-project", path: "." }]);
+    const [corridor] = host.appended("facet_iteration");
+    assert.deepEqual(corridor?.shots, []);
+    assert.deepEqual(host.rec.paramsOf(HostMethod.PreviewScreenshot), []);
+  });
 });
 describe("an engine app the chat finds not ready", () => {
   // Flipped: the agent was also told to get the app ready with its own tools before it used it.

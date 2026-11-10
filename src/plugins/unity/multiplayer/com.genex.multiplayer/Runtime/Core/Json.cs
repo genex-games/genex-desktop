@@ -115,7 +115,7 @@ namespace Genex.Multiplayer
             {
                 case null: sb.Append("null"); return;
                 case bool b: sb.Append(b ? "true" : "false"); return;
-                case double d: sb.Append(d.ToString("R", CultureInfo.InvariantCulture)); return;
+                case double d: sb.Append(NumberText(d)); return;
                 case string s: WriteString(sb, s); return;
                 case Dictionary<string, object> o:
                 {
@@ -145,6 +145,26 @@ namespace Genex.Multiplayer
                 }
                 default: WriteString(sb, v.ToString()); return;
             }
+        }
+
+        /// <summary>
+        /// A finite double as JSON text that reads back to the same double. "R" is the shortest such text on .NET Core, but
+        /// Unity's BCL (Mono) writes 15 digits for some values that need 17 (it wrote 6.02337499297543E-238 for
+        /// 0x0eaf60ca4fa159a1), so the text is read back with the package's own correctly rounded reader and, when it
+        /// misses, written with 17 significant digits. Zero is "0" whatever its sign, as JSON.stringify writes it.
+        /// </summary>
+        internal static string NumberText(double d)
+        {
+            if (d == 0) return "0";
+            var text = d.ToString("R", CultureInfo.InvariantCulture);
+            if (ReadsBack(text, d)) return text;
+            return d.ToString("G17", CultureInfo.InvariantCulture);
+        }
+
+        private static bool ReadsBack(string text, double d)
+        {
+            try { return BitConverter.DoubleToInt64Bits(DecimalNumber.Parse(text, 0, text.Length)) == BitConverter.DoubleToInt64Bits(d); }
+            catch (FormatException) { return false; }
         }
 
         private static void WriteString(StringBuilder sb, string s)
@@ -311,9 +331,261 @@ namespace Genex.Multiplayer
                 var start = i;
                 while (i < s.Length && "+-0123456789.eE".IndexOf(s[i]) >= 0) i++;
                 if (i == start) throw new FormatException("value");
-                if (!double.TryParse(s.Substring(start, i - start), NumberStyles.Float, CultureInfo.InvariantCulture, out var d))
-                    throw new FormatException("number");
-                return Finite(d);
+                return Finite(DecimalNumber.Parse(s, start, i));
+            }
+        }
+
+        /// <summary>
+        /// Decimal text to the nearest double, ties to even: what JSON.parse gives, on every runtime. Unity's BCL
+        /// <c>double.Parse</c> (Mono and IL2CPP) is not correctly rounded: it read the float32 "-0.3616481423377991" one
+        /// ulp off (no longer a float32), so a firstperson world a JS exporter wrote was refused. Short inputs (at most
+        /// 2^53 in the digits, a power of ten up to 1e22) take one IEEE multiply or divide, which is exact; the rest start
+        /// from an estimate and step to the neighbour while the text's exact value is past the midpoint, compared
+        /// exactly in integers (<see cref="Nat"/>). Accepts an optional sign, digits with an optional fraction and an
+        /// optional exponent; anything else is malformed. A result past the range is ±infinity, below it ±0.
+        /// </summary>
+        internal static class DecimalNumber
+        {
+            private static readonly double[] ExactPow10 =
+            {
+                1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11, 1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22,
+            };
+
+            public static double Parse(string s, int start, int end)
+            {
+                var at = start;
+                var negative = false;
+                if (at < end && (s[at] == '-' || s[at] == '+')) negative = s[at++] == '-';
+                // Significant digits (leading zeros dropped) and the decimal exponent of the last one.
+                var digits = new StringBuilder();
+                var exponent = 0L;
+                var seenDigit = false;
+                for (; at < end && s[at] >= '0' && s[at] <= '9'; at++)
+                {
+                    seenDigit = true;
+                    if (digits.Length > 0 || s[at] != '0') digits.Append(s[at]);
+                }
+                if (at < end && s[at] == '.')
+                {
+                    at++;
+                    for (; at < end && s[at] >= '0' && s[at] <= '9'; at++)
+                    {
+                        seenDigit = true;
+                        exponent--;
+                        if (digits.Length > 0 || s[at] != '0') digits.Append(s[at]);
+                    }
+                }
+                if (!seenDigit) throw new FormatException("number");
+                if (at < end && (s[at] == 'e' || s[at] == 'E'))
+                {
+                    at++;
+                    var expNegative = false;
+                    if (at < end && (s[at] == '-' || s[at] == '+')) expNegative = s[at++] == '-';
+                    if (at >= end) throw new FormatException("number");
+                    var e = 0L;
+                    for (; at < end && s[at] >= '0' && s[at] <= '9'; at++) e = Math.Min(e * 10 + (s[at] - '0'), 1L << 40);
+                    exponent += expNegative ? -e : e;
+                }
+                if (at != end) throw new FormatException("number");
+                // Trailing zeros of the digits move into the exponent.
+                var length = digits.Length;
+                while (length > 0 && digits[length - 1] == '0') { length--; exponent++; }
+                var zero = negative ? -0.0 : 0.0;
+                if (length == 0) return zero;
+                var magnitude = Magnitude(digits.ToString(0, length), exponent);
+                return negative ? -magnitude : magnitude;
+            }
+
+            private static double Magnitude(string digits, long exponent)
+            {
+                // The value is digits · 10^exponent, with digits.Length significant digits.
+                var order = exponent + digits.Length; // value < 10^order, ≥ 10^(order-1)
+                if (order > 310) return double.PositiveInfinity;
+                if (order < -330) return 0;
+                var e = (int)exponent;
+                if (digits.Length <= 15 && e >= -22 && e <= 22)
+                {
+                    var d = (double)ulong.Parse(digits, NumberStyles.None, CultureInfo.InvariantCulture);
+                    return e >= 0 ? d * ExactPow10[e] : d / ExactPow10[-e];
+                }
+                // An estimate within a few ulps: the leading 19 digits, scaled.
+                var lead = Math.Min(digits.Length, 19);
+                var estimate = (double)ulong.Parse(digits.Substring(0, lead), NumberStyles.None, CultureInfo.InvariantCulture);
+                var scale = e + (digits.Length - lead);
+                if (scale < -290) estimate = estimate * Pow10(scale + 290) * 1e-290;
+                else if (scale > 290) estimate = estimate * Pow10(scale - 290) * 1e290;
+                else estimate *= Pow10(scale);
+                if (double.IsInfinity(estimate)) estimate = double.MaxValue;
+                return Nearest(Nat.FromDigits(digits), e, estimate);
+            }
+
+            private static double Pow10(int n) => n >= 0 && n <= 22 ? ExactPow10[n] : n < 0 && n >= -22 ? 1 / ExactPow10[-n] : Math.Pow(10, n);
+
+            /// <summary>The double nearest digits · 10^exponent, ties to even, stepping from a finite non-negative estimate.</summary>
+            private static double Nearest(Nat digits, int exponent, double c)
+            {
+                for (var guard = 0; guard < 4096; guard++)
+                {
+                    var raw = BitConverter.DoubleToInt64Bits(c);
+                    var biased = (int)((raw >> 52) & 0x7ff);
+                    var m = (ulong)raw & 0xfffffffffffffUL;
+                    int k;
+                    if (biased == 0) k = -1074;
+                    else
+                    {
+                        m |= 1UL << 52;
+                        k = biased - 1075;
+                    }
+                    var odd = (m & 1) == 1;
+                    // Up: the midpoint to the next double is (2m + 1) · 2^(k-1) in every binade (and to 2^1024 past the top).
+                    var up = Compare(digits, exponent, Nat.FromULong(2 * m + 1), k - 1);
+                    if (up > 0 || (up == 0 && odd))
+                    {
+                        if (raw == 0x7fefffffffffffffL) return double.PositiveInfinity;
+                        c = BitConverter.Int64BitsToDouble(raw + 1);
+                        continue;
+                    }
+                    if (raw == 0) return c;
+                    // Down: at the bottom of a binade (not the lowest normal one) the double below is half an ulp closer.
+                    var bottom = m == 1UL << 52 && biased > 1;
+                    var down = bottom
+                        ? Compare(digits, exponent, Nat.FromULong(4 * m - 1), k - 2)
+                        : Compare(digits, exponent, Nat.FromULong(2 * m - 1), k - 1);
+                    if (down < 0 || (down == 0 && odd))
+                    {
+                        c = BitConverter.Int64BitsToDouble(raw - 1);
+                        continue;
+                    }
+                    return c;
+                }
+                return c;
+            }
+
+            /// <summary>Sign of digits · 10^exponent − mid · 2^shift, exactly.</summary>
+            private static int Compare(Nat digits, int exponent, Nat mid, int shift)
+            {
+                var left = digits.Copy();
+                var right = mid;
+                if (exponent >= 0) left.MulPow10(exponent);
+                else right.MulPow10(-exponent);
+                if (shift >= 0) right.ShiftLeft(shift);
+                else left.ShiftLeft(-shift);
+                return Nat.Compare(left, right);
+            }
+        }
+
+        /// <summary>A non-negative integer of any size (little-endian 32-bit limbs), only what <see cref="DecimalNumber"/> needs.</summary>
+        internal sealed class Nat
+        {
+            private uint[] limbs;
+            private int count;
+
+            private Nat(int capacity) { limbs = new uint[Math.Max(capacity, 4)]; }
+
+            public static Nat FromULong(ulong v)
+            {
+                var n = new Nat(4);
+                n.limbs[0] = (uint)v;
+                n.limbs[1] = (uint)(v >> 32);
+                n.count = 2;
+                n.Trim();
+                return n;
+            }
+
+            public static Nat FromDigits(string digits)
+            {
+                var n = new Nat(digits.Length / 9 + 2);
+                for (var at = 0; at < digits.Length;)
+                {
+                    var take = Math.Min(9, digits.Length - at);
+                    uint chunk = 0, factor = 1;
+                    for (var j = 0; j < take; j++)
+                    {
+                        chunk = chunk * 10 + (uint)(digits[at + j] - '0');
+                        factor *= 10;
+                    }
+                    n.MulAdd(factor, chunk);
+                    at += take;
+                }
+                return n;
+            }
+
+            public Nat Copy()
+            {
+                var n = new Nat(count + 1);
+                Array.Copy(limbs, n.limbs, count);
+                n.count = count;
+                return n;
+            }
+
+            private void Ensure(int size)
+            {
+                if (limbs.Length >= size) return;
+                var grown = new uint[Math.Max(size, limbs.Length * 2)];
+                Array.Copy(limbs, grown, count);
+                limbs = grown;
+            }
+
+            private void Trim()
+            {
+                while (count > 0 && limbs[count - 1] == 0) count--;
+            }
+
+            /// <summary>this = this · factor + add.</summary>
+            private void MulAdd(uint factor, uint add)
+            {
+                ulong carry = add;
+                for (var j = 0; j < count; j++)
+                {
+                    var p = (ulong)limbs[j] * factor + carry;
+                    limbs[j] = (uint)p;
+                    carry = p >> 32;
+                }
+                if (carry != 0)
+                {
+                    Ensure(count + 1);
+                    limbs[count++] = (uint)carry;
+                }
+            }
+
+            public void MulPow10(int n)
+            {
+                for (; n >= 9; n -= 9) MulAdd(1000000000, 0);
+                uint rest = 1;
+                for (; n > 0; n--) rest *= 10;
+                if (rest != 1) MulAdd(rest, 0);
+            }
+
+            public void ShiftLeft(int bits)
+            {
+                if (count == 0 || bits == 0) return;
+                var words = bits >> 5;
+                var r = bits & 31;
+                Ensure(count + words + 1);
+                limbs[count + words] = 0;
+                if (r == 0)
+                {
+                    for (var j = count - 1; j >= 0; j--) limbs[j + words] = limbs[j];
+                }
+                else
+                {
+                    for (var j = count - 1; j >= 0; j--)
+                    {
+                        limbs[j + words + 1] |= limbs[j] >> (32 - r);
+                        limbs[j + words] = limbs[j] << r;
+                    }
+                }
+                for (var j = 0; j < words; j++) limbs[j] = 0;
+                count += words + 1;
+                Trim();
+            }
+
+            public static int Compare(Nat a, Nat b)
+            {
+                if (a.count != b.count) return a.count < b.count ? -1 : 1;
+                for (var j = a.count - 1; j >= 0; j--)
+                    if (a.limbs[j] != b.limbs[j]) return a.limbs[j] < b.limbs[j] ? -1 : 1;
+                return 0;
             }
         }
     }

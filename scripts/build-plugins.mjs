@@ -4,6 +4,7 @@ import { pathToFileURL } from "node:url";
 import { cp, mkdir, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { build } from "esbuild";
 import { bridgeLicenses } from "./vendor-genex-multiplayer.ts";
+import { GENEX_STUDIO_TOOLS } from "../src/shared/genex.ts";
 import { inlinePanelFonts, inlinePanelSdk } from "../src/plugin-sdk/inline-panel-sdk.mjs";
 const require = createRequire(import.meta.url);
 
@@ -57,6 +58,16 @@ const unloaded = (relative) => {
 const outsideModules = (relative) =>
   !relative || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative);
 
+/**
+ * The packages `meta` needs at run time: its dependencies and, when `peers` is set, the peers it
+ * does not mark optional (Colyseus's WebSocket transport imports `express` as one).
+ */
+const runtimeDependencies = (meta, peers) => {
+  const optional = meta.peerDependenciesMeta ?? {};
+  const required = peers ? Object.keys(meta.peerDependencies ?? {}).filter((name) => !optional[name]?.optional) : [];
+  return [...new Set([...Object.keys(meta.dependencies ?? {}), ...required])];
+};
+
 /** Copies a runtime dependency and everything it depends on into the plugin's own node_modules. */
 async function copyDependencyTree(copying, name, from) {
   const pkg = await packageJsonOf(name, from);
@@ -69,7 +80,7 @@ async function copyDependencyTree(copying, name, from) {
     recursive: true,
     filter: (source) => !unloaded(path.relative(copying.dependencyRoot, source)),
   });
-  for (const dep of Object.keys(meta.dependencies ?? {})) await copyDependencyTree(copying, dep, pkg);
+  for (const dep of runtimeDependencies(meta, copying.peers)) await copyDependencyTree(copying, dep, pkg);
 }
 
 /** The plugin module that knows the SDK's files and writes the preview's connect module. */
@@ -134,6 +145,12 @@ async function buildGenex(root, resources, { dependencies }) {
   if (!dependencies) return;
   const copying = { target, dependencyRoot: await realpath(path.join(root, "node_modules")), seen: new Set() };
   await copyDependencyTree(copying, "@genex-ai/cli-demo", require.resolve("@genex-ai/cli-demo/package.json"));
+  for (const [name, pin] of Object.entries(GENEX_STUDIO_TOOLS)) {
+    const manifest = require.resolve(`${name}/package.json`);
+    const { version } = JSON.parse(await readFile(manifest, "utf8"));
+    if (version !== pin) throw new Error(`${name} ${version} is installed, but Studio pins ${pin}`);
+    await copyDependencyTree({ ...copying, peers: true }, name, manifest);
+  }
 }
 
 /** Genex's optional advice: skills only, with a backend that answers nothing (Studio reads the skills). */
@@ -187,6 +204,8 @@ async function buildUnreal(root, resources, sdk) {
     path.join(unreal, "panel.html"),
     await inlinePanelFonts(panel, path.join(root, "src/renderer/fonts")),
   );
+  // Genex's multiplayer plugin for Unreal (vendor-unreal-multiplayer.ts), copied whole into a game by `multiplayer`.
+  await cp(path.join(root, "src/plugins/unreal/multiplayer"), path.join(unreal, "multiplayer"), { recursive: true });
   // The editor helper is Unreal's own plugin, copied whole into a game's Plugins folder at setup.
   await cp(path.join(root, "src/plugins/unreal/GenexEditorHelper"), path.join(unreal, "GenexEditorHelper"), {
     recursive: true,

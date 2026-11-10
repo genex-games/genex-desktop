@@ -201,6 +201,9 @@ const MESSAGE = {
   /** A deny Windows refused where the sandbox user can open nothing anyway ({@link FolderAceOutcome}). */
   UnneededDeny: (dir: string, refused: string) =>
     `own entries: left ${dir} as it is: Windows refused the deny (${refused}), and the sandbox user can open nothing in it`,
+  /** A read grant Windows refused where the sandbox user may read everything it would open anyway ({@link FolderAceOutcome}). */
+  UnneededGrant: (dir: string, refused: string) =>
+    `own entries: left ${dir} as it is: Windows refused the grant (${refused}), and the sandbox user may already read everything in it`,
   /** srt-win's grant and stamp walk each folder again, so a later grant or stamp timeout reads as this. */
   OwnEntriesOff: (count: number) =>
     `own entries off: srt-win sets all ${count} grants and denies (no sandbox users' group, or PowerShell could not set them)`,
@@ -1102,14 +1105,17 @@ function setsEntry(edit: FolderOwnEdit): boolean {
 }
 
 /**
- * What the log says about one batch: each deny Windows refused where none was needed, and each
- * other edit Windows took long over (a first walk of a large folder).
+ * What the log says about one batch: each deny or read grant Windows refused where none was
+ * needed, and each other edit Windows took long over (a first walk of a large folder).
  */
 function editNotes(edits: readonly FolderOwnEdit[], outcomes: readonly FolderAceOutcome[]): string[] {
   return edits.flatMap((one, i) => {
     const outcome = outcomes[i];
     if (!outcome?.ok) return [];
-    if (outcome.refused !== undefined) return [MESSAGE.UnneededDeny(one.dir, outcome.refused)];
+    if (outcome.refused !== undefined) {
+      const unneeded = one.deny === null ? MESSAGE.UnneededGrant : MESSAGE.UnneededDeny;
+      return [unneeded(one.dir, outcome.refused)];
+    }
     const slow = (outcome.ms ?? 0) >= SLOW_OWN_EDIT_MS;
     return slow ? [MESSAGE.SlowOwnEdit(one.dir, outcome.ms ?? 0)] : [];
   });

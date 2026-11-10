@@ -180,5 +180,125 @@ namespace Genex.Multiplayer
 
         /// <summary>The typed pose keys (§6.6), in schema order.</summary>
         public static readonly string[] PoseKeys = { "x", "y", "z", "yaw", "vx", "vy", "vz", "anim" };
+
+        /// <summary>
+        /// §17: server-authoritative rooms (protocol 4). A separate window: relay rooms refuse 4 and
+        /// authority rooms refuse 3, so neither client lands in the other kind of room.
+        /// </summary>
+        public static class Authority
+        {
+            /// <summary>Sent as the <c>protocol</c> join option of an authority join.</summary>
+            public const int ProtocolVersion = 4;
+            public const int MinProtocolVersion = 4;
+            /// <summary>The room an authority client joins (served by the authority cluster, never a relay).</summary>
+            public const string RoomType = "authority";
+
+            /// <summary>Authority join options beyond §3's (§17.10 *Joining*).</summary>
+            public static class JoinOption
+            {
+                /// <summary>The capabilities this client implements: at most <see cref="Caps.MaxCaps"/> strings of at most <see cref="Caps.MaxCapChars"/> characters.</summary>
+                public const string Caps = "caps";
+                /// <summary>The SDK and version, <c>unity/0.8.0</c>: telemetry, never refused.</summary>
+                public const string Sdk = "sdk";
+                /// <summary>The pool this join asks for (§17.2 *Choosing a room*); absent = the game's one pool.</summary>
+                public const string MatchKey = "matchKey";
+                /// <summary><c>true</c> on a <c>create</c> makes a private room, reached only by its code.</summary>
+                public const string Private = "private";
+                /// <summary>The room this seat lost (§17.13 *Drain and rejoin*): its successor is found by it.</summary>
+                public const string SuccessorOf = "successorOf";
+                /// <summary><c>true</c>: the lost room was private, so its successor stays closed to the game's pool.</summary>
+                public const string SuccessorClosed = "successorClosed";
+            }
+
+            /// <summary>What this package sends as <see cref="JoinOption.Sdk"/>.</summary>
+            public const string SdkLabel = "unity/0.8.0";
+
+            /// <summary>AuthorityCaps (§17.10): what a client declares in its <c>caps</c> join option.</summary>
+            public static class Caps
+            {
+                /// <summary>Decodes and draws §17.10's physics bodies. A physics room refuses a join without it with 426.</summary>
+                public const string Physics = "physics@1";
+                /// <summary>Predicts a predicting room's bodies (§17.11 *Joining*); sent with <see cref="Physics"/>, never alone.</summary>
+                public const string PhysicsPredict = "physics@2";
+                /// <summary>Reconciles a predicting room's repeated inputs (§17.11 *Input pacing*, InputRepeat.cs): the room repeats a
+                /// starved seat's held input and writes <c>inRep</c>, <c>inStarve</c> and <c>inBuf</c> for it.</summary>
+                public const string InputRepeat = "repeat@1";
+                /// <summary>Writes into each input the server tick its prediction steps it at (§17.11 *The input's tick*); sent with
+                /// <see cref="Fast"/>, whose every slot carries it.</summary>
+                public const string InputTick = "tick@1";
+                /// <summary>Moves the seat's inputs and motion records onto the fast channel (§17.12, FastSeat.cs) when the room
+                /// offers it; sent only with <see cref="InputTick"/>.</summary>
+                public const string Fast = "fast@1";
+                /// <summary>The seat can come back to the fast channel after a fallback (§17.12 <i>Return to the channel</i>).</summary>
+                public const string FastReturn = "fast-return@1";
+                public const int MaxCaps = 16;
+                public const int MaxCapChars = 32;
+            }
+
+            /// <summary>§17.2 refusals only an authority room answers (the §3.4 ones apply too).</summary>
+            public static class JoinError
+            {
+                /// <summary>A join by code entered through another region than the room's: try the next region.</summary>
+                public const int WrongRegion = 421;
+                /// <summary>The game's owner is not entitled to authority rooms. Terminal: never retried.</summary>
+                public const int NotEntitled = 402;
+                /// <summary>The owner's quota, concurrency cap or credits refused a NEW room. MAY retry later.</summary>
+                public const int RoomQuota = 429;
+                /// <summary>No published room module on this channel, or it could not be loaded. Terminal.</summary>
+                public const int ModuleUnavailable = 424;
+                /// <summary>No authority server can take the room, or admission could not be checked. Retried with backoff.</summary>
+                public const int Capacity = 503;
+            }
+
+            /// <summary>§17.6 terminal close codes.</summary>
+            public static class CloseCode
+            {
+                /// <summary>The operator or the platform halted the room (kill switch, takedown, disabled game).</summary>
+                public const int ModuleHalted = 4500;
+                /// <summary>The game's room module broke its limits or threw; the room is gone.</summary>
+                public const int ModuleFault = 4501;
+            }
+
+            /// <summary>AuthorityTiming (§17.6): the server's defaults.</summary>
+            public static class Timing
+            {
+                public const int TickHz = 30;
+                /// <summary>How far behind the server clock other entities are drawn.</summary>
+                public const double RenderDelayMs = 100;
+                public const double MaxRewindMs = 500;
+                public const int InputBuffer = 32;
+                public const double PatchIntervalMs = 50;
+            }
+
+            /// <summary>Join options the authority server owns (§17.2); sending one is refused with 400, so the layer drops them.</summary>
+            public static readonly string[] ServerOwnedJoinOptions =
+            {
+                "clients", "preset", "winCondition", "config", "matchmade",
+                "moduleSha", "tickHz", "maxPlayers", "lagComp", "seed", "units", "leaseId",
+            };
+
+            /// <summary>Events the session raises itself; a module event of the same name is not delivered.</summary>
+            public static class SessionEvent
+            {
+                public const string Reconnecting = "reconnecting";
+                public const string Reconnected = "reconnected";
+                public const string Disconnect = "disconnect";
+                public const string Draining = "draining";
+                public const string Rejoining = "rejoining";
+                public const string Rejoined = "rejoined";
+
+                /// <summary>Whether a name is the session's own, which a module event of that name never reaches.</summary>
+                public static bool IsOne(string type) =>
+                    type == Reconnecting || type == Reconnected || type == Disconnect || type == Draining || type == Rejoining || type == Rejoined;
+            }
+
+            /// <summary>The environment variable a launcher (Genex Studio) names a local authority server with.</summary>
+            public const string UrlEnvironmentVariable = "GENEX_AUTHORITY_URL";
+            /// <summary>
+            /// The fixed credential a LOOPBACK authority server is joined with when the game supplied no token
+            /// (embed-sdk's local test mode sends the same placeholder; a real server refuses it).
+            /// </summary>
+            public const string LocalToken = "local:test";
+        }
     }
 }

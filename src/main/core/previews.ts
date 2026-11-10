@@ -281,6 +281,20 @@ function sourceEntry(game: GameProject | undefined, shape: ProjectShape): string
 }
 
 /** The page the health check loads: the served entry with the shot parameter (`SHOT_QUERY`) on its address. */
+/**
+ * The query the Genex SDK's local test mode reads on a loopback page (embed-sdk 0.35): test mode on,
+ * and the local room's address, which `getAuthorityUrls()` then answers.
+ */
+const LOCAL_TEST_PARAM = "genex_local_test";
+const AUTHORITY_URL_PARAM = "genex_authority_url";
+
+/** `entry` with the local room's address for the SDK, when the game has a room running. */
+function withLocalRoom(entry: string, url: string | undefined): string {
+  if (url === undefined) return entry;
+  const query = new URLSearchParams({ [LOCAL_TEST_PARAM]: "1", [AUTHORITY_URL_PARAM]: url });
+  return `${entry}${entry.includes("?") ? "&" : "?"}${query}`;
+}
+
 function shotEntry(entry: string): string {
   return `${entry}${entry.includes("?") ? "&" : "?"}${SHOT_QUERY}=1`;
 }
@@ -383,6 +397,8 @@ export class PreviewService {
   #liveWebBuild: WebBuildSeen | null = null;
   /** The person stopped Live's game (`stopLive`): nothing loads into it until Play or a load of theirs. */
   #liveStopped = false;
+  /** Each game's local room address (`genex__room`), which its loopback page is loaded with. */
+  readonly #localRooms = new Map<string, string>();
 
   constructor(core: StudioCore, x: CoreInternals) {
     this.#core = core;
@@ -522,12 +538,27 @@ export class PreviewService {
     // Serving the source folder itself needs no override: the preview resolves the project on
     // its own, and a review worktree keeps the root its caller passed.
     const asSource = path.resolve(served.dir) === path.resolve(base);
+    const plain = entry ?? (asSource ? sourceEntry(descriptor, shape) : path.basename(shape.entry));
     return {
-      entry: entry ?? (asSource ? sourceEntry(descriptor, shape) : path.basename(shape.entry)),
+      // Only a loopback page's SDK takes a local room's address.
+      entry: loopback ? withLocalRoom(plain, this.#localRooms.get(project)) : plain,
       root: asSource ? (root ?? undefined) : served.dir,
       loopback,
       stale: served.stale ? note : null,
     };
+  }
+
+  /**
+   * A game's local room started (its address) or ended (null). Live, when it shows that game, is
+   * loaded again, into the room or out of it; true when Live now plays in the room.
+   */
+  async joinLocalRoom(project: string, url: string | null): Promise<boolean> {
+    if (url === null) this.#localRooms.delete(project);
+    else this.#localRooms.set(project, url);
+    const showing = this.#x.servedRoots.get(LIVE_HANDLE);
+    if (showing?.project !== project || this.#liveStopped) return false;
+    const loaded = await this.loadPreview({ project, ...(showing.root ? { root: showing.root } : {}) });
+    return url !== null && new URL(loaded).searchParams.get(AUTHORITY_URL_PARAM) === url;
   }
 
   /** `preview.load`: serve a game (or a checked worktree of it) into a preview, one load per handle at a time. */

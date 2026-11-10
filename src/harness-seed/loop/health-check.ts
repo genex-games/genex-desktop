@@ -6,21 +6,14 @@
  * screenshot of the whole page. A screenshot is kept as the check's picture. The page is loaded once,
  * with the `genex-shot` parameter on its address (`preview.load` `shot`): a game may read it, and
  * one that ignores it loses nothing. Nothing is asked of the game's code. It never throws: a window
- * that never came is a check that could not be made, said so.
+ * that never came is a check that could not be made, said so. The window, the load and the picture
+ * are Genex's look at a page (`page-look.ts`).
  */
-import { WINDOW_RETRIES_MS } from "./config.ts";
 import { HostMethod } from "./host-methods.ts";
+import { inPageWindow, keepPicture, loadAsShot, type PageTarget, type Wait } from "./page-look.ts";
 import { CLIP_DETAIL, clip } from "./text.ts";
-import { SECOND_MS, sleep } from "./time.ts";
+import { sleep } from "./time.ts";
 import type { HarnessCtx } from "../types/harness.d.ts";
-
-/** How long the page has to say it is ready before the check reads it anyway. */
-const READY_TIMEOUT_MS = 20 * SECOND_MS;
-/** A page that said it is ready runs this long before it is checked, so an error in its first frames counts. */
-const SETTLE_MS = 2 * SECOND_MS;
-
-/** A wait of `ms` milliseconds. */
-type Wait = (ms: number) => Promise<void>;
 
 /** What a health check found: whether the build is healthy, and each thing that is wrong in words. */
 export interface HealthCheck {
@@ -36,15 +29,7 @@ export interface HealthCheck {
 }
 
 /** What a check looks at: the project, the folder whose page it serves (a worktree), and the run that files its picture. */
-export interface HealthTarget {
-  project: string;
-  /** The folder to serve; absent: the project's own folder. */
-  root?: string | null;
-  /** The page to load in it, when it is not the folder's own index.html. */
-  entry?: string;
-  runId?: string;
-  label: string;
-}
+export type HealthTarget = PageTarget;
 
 /** How a check waits: the run's own clock, so a test's clock moves its waits; the wall clock otherwise. */
 export interface HealthOptions {
@@ -58,35 +43,9 @@ export const HEALTH_WORDS = {
   failed: (why: string) => `the health check could not run: ${why}`,
 } as const;
 
-/** A leased window, or null when none came after the retries. */
-async function leaseWindow(ctx: HarnessCtx, label: string, wait: Wait): Promise<string | null> {
-  for (let attempt = 0; ; attempt++) {
-    const lease = await ctx.call(HostMethod.PreviewAcquire, { label }).catch(() => null);
-    if (lease?.handle) return lease.handle;
-    if (attempt >= WINDOW_RETRIES_MS.length || ctx.cancelled) return null;
-    await wait(WINDOW_RETRIES_MS[attempt]);
-  }
-}
-
-/** The page's screenshot as a file for the record, or null when the host kept none. */
-async function keepPicture(ctx: HarnessCtx, target: HealthTarget, handle: string): Promise<string | null> {
-  const shot = await ctx
-    .call(HostMethod.PreviewScreenshot, {
-      handle,
-      surface: "page",
-      label: target.label,
-      ...(target.runId ? { runId: target.runId } : {}),
-    })
-    .catch(() => null);
-  return typeof shot?.path === "string" ? shot.path : null;
-}
-
 /** The look itself, in a window of its own. */
 async function lookIn(ctx: HarnessCtx, target: HealthTarget, handle: string, wait: Wait): Promise<HealthCheck> {
-  const where = { ...(target.root ? { root: target.root } : {}), ...(target.entry ? { entry: target.entry } : {}) };
-  await ctx.call(HostMethod.PreviewLoad, { project: target.project, ...where, handle, shot: true });
-  await ctx.call(HostMethod.PreviewReady, { handle, timeoutMs: READY_TIMEOUT_MS }).catch(() => null);
-  await wait(SETTLE_MS);
+  await loadAsShot(ctx, target, handle, wait);
   const observed = await ctx.call(HostMethod.PreviewObserve, { handle });
   if (!observed || typeof observed.ok !== "boolean") return unchecked(HEALTH_WORDS.noAnswer);
   const problems = (Array.isArray(observed.reasons) ? observed.reasons : []).map((reason) =>
@@ -111,15 +70,10 @@ export async function checkHealth(
   target: HealthTarget,
   { sleep: wait = sleep }: HealthOptions = {},
 ): Promise<HealthCheck> {
-  const handle = await leaseWindow(ctx, target.label, wait);
-  if (!handle) return unchecked(HEALTH_WORDS.noWindow);
-  try {
-    return await lookIn(ctx, target, handle, wait);
-  } catch (err) {
-    return unchecked(HEALTH_WORDS.failed(clip(String((err as Error)?.message ?? err), CLIP_DETAIL)));
-  } finally {
-    await ctx.call(HostMethod.PreviewRelease, { handle }).catch(() => {});
-  }
+  return inPageWindow(ctx, target.label, wait, (handle) => lookIn(ctx, target, handle, wait), {
+    noWindow: () => unchecked(HEALTH_WORDS.noWindow),
+    failed: (err) => unchecked(HEALTH_WORDS.failed(clip(String((err as Error)?.message ?? err), CLIP_DETAIL))),
+  });
 }
 
 /** A check in one line for the lead: healthy, or what is wrong. */

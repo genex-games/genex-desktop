@@ -1,8 +1,11 @@
 /** Read-only supplementation for durable reports predating structured evidence events. */
 import type { Dirent } from "node:fs";
-import { readFile, readdir, realpath } from "node:fs/promises";
+import { readFile, readdir, realpath, stat } from "node:fs/promises";
 import path from "node:path";
-import { InteractionSource, type RunSummary } from "../shared/run-summary.ts";
+import { CustomEvent, customEvent } from "../shared/custom-events.ts";
+import { LoopProfile } from "../shared/project-facts.ts";
+import { InteractionSource, OPEN_FINISH_PICTURE_LABEL, type RunSummary } from "../shared/run-summary.ts";
+import { ExecutionStatus } from "../shared/run-state.ts";
 import { isBelow } from "../substrate/paths.ts";
 import { t } from "../shared/i18n.ts";
 
@@ -182,6 +185,38 @@ async function supplementHealthCapture(summary: RunSummary, dir: string, entries
   }
 }
 
+/** Whether the run's last close was its lead's claim, accepted: the finish's look at the page came right before it. */
+function closedOnClaim(summary: RunSummary): boolean {
+  const closes = (summary.graphEvents ?? []).map((event) => customEvent(event, CustomEvent.RunFinished));
+  return closes.findLast((close) => close !== null)?.victory === true;
+}
+
+/** When the run's newest save point was recorded (ms), or 0 when it made none. */
+function lastSavePointAt(summary: RunSummary): number {
+  const saves = (summary.graphEvents ?? []).filter((event) => customEvent(event, CustomEvent.FacetIteration) !== null);
+  return Math.max(0, ...saves.map((event) => Date.parse(event.created_at) || 0));
+}
+
+/**
+ * A Loop led in its folder that closed on its lead's accepted claim: the page its finish photographed
+ * (`OPEN_FINISH_PICTURE_LABEL`) is the build it closed on, when nothing else named the current build.
+ * A run still going, stopped, or closed some other way may have changed since that picture (a claim
+ * refused, then more work), so it never gets it; nor does a picture older than the run's newest save
+ * point, left by a refused claim when the accepted one could not look.
+ */
+async function supplementOpenFinish(summary: RunSummary, root: string): Promise<void> {
+  if (summary.captures?.current) return;
+  const closedInFolder = summary.profile === LoopProfile.Open && summary.execution === ExecutionStatus.Completed;
+  if (!closedInFolder || !closedOnClaim(summary)) return;
+  const runDir = await realpath(path.join(root, summary.runId)).catch(() => null);
+  if (!runDir || !isBelow(root, runDir)) return;
+  const picture = await realpath(path.join(runDir, `${OPEN_FINISH_PICTURE_LABEL}.jpg`)).catch(() => null);
+  if (!picture || !isBelow(runDir, picture)) return;
+  const taken = await stat(picture).catch(() => null);
+  if (!taken?.isFile() || taken.mtimeMs < lastSavePointAt(summary)) return;
+  summary.captures = { ...summary.captures, current: picture };
+}
+
 export async function supplementRunEvidence(summary: RunSummary, runsRoot: string): Promise<void> {
   if (!RUN_ID.test(summary.runId)) return;
   const root = await realpath(runsRoot).catch(() => null);
@@ -193,4 +228,5 @@ export async function supplementRunEvidence(summary: RunSummary, runsRoot: strin
   await supplementPlaytests(summary, dir, entries);
   await supplementJudges(summary, dir, entries);
   await supplementHealthCapture(summary, dir, entries);
+  await supplementOpenFinish(summary, root);
 }

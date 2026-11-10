@@ -466,6 +466,8 @@ export default {
   Better: "改善",
   Beta: "ベータ",
   "Between builds": "ビルドの合間",
+  "Bigger than the graphics card, so part of it runs on the CPU":
+    "グラフィックカードに収まらないため、一部をCPUで動かします",
   "Billed by each provider you use": "使うプロバイダーごとに請求されます",
   "Billed by each provider you use.": "使ったプロバイダーごとに請求されます。",
   "Billed by each provider you use. Free models stay in the model menu too.":
@@ -1168,6 +1170,7 @@ export default {
   "Delete every row shared from this computer?": "このコンピューターから共有したすべての行を削除しますか？",
   "Delete game": "ゲームを削除",
   "Delete it from this Mac? You can download it again.": "このMacから削除しますか？もう一度ダウンロードできます。",
+  "Delete it from this PC? You can download it again.": "このPCから削除しますか？もう一度ダウンロードできます。",
   "Delete what I shared": "共有したデータを削除",
   "Delete your comment": "自分のコメントを削除",
   "Delete {model}": "{model}を削除",
@@ -1197,6 +1200,7 @@ export default {
   Details: "詳細",
   "Details for MCP {name}": "MCP {name}の詳細",
   "Detecting this Mac…": "このMacを確認中…",
+  "Detecting this PC…": "このPCを確認中…",
   Developer: "開発者",
   "Development build": "開発ビルド",
   "Development builds and builds packaged under another name update from source.":
@@ -2293,6 +2297,7 @@ export default {
   "Needs a key": "キーが必要",
   "Needs a {ram} GB Mac": "{ram} GBのMacが必要",
   "Needs setup": "セットアップが必要",
+  "Needs ~{need} GB to run": "動かすには約{need} GBが必要",
   "Neon rings": "ネオンリング",
   "Never asks, stays sandboxed": "確認なし、サンドボックス内で動作",
   "Never asks, works anywhere": "確認せず、どこでも動きます",
@@ -2374,6 +2379,8 @@ export default {
   "No published games yet.": "公開済みのゲームはまだありません。",
   "No recommended model fits this Mac. More models lists what bigger Macs can run.":
     "このMacに合うおすすめモデルはありません。「その他のモデル」で、より大きなMacで動くモデルを確認できます。",
+  "No recommended model fits this PC. More models lists what each one needs.":
+    "このPCに合うおすすめモデルはありません。「その他のモデル」で、それぞれに必要な容量を確認できます。",
   "No reviewer compared it": "レビュアーの比較なし",
   "No reviewer saw it; the lead merged the part's work into your build.":
     "レビュアーは見ていません。メインエージェントがパートの作業をビルドに追加しました。",
@@ -4927,6 +4934,15 @@ export default {
   "in {game} and {count} more": "{game}ほか{count}本でプレイ中",
   "install and run the apps it names, such as Blender": "Blenderなど、指定したアプリをインストールして実行する",
   "installs Genex packages in the game": "ゲームにGenexパッケージをインストールする",
+  "The room module imports {file}, in a folder the publish copy keeps for itself; move it to src/":
+    "ルームモジュールが、公開用コピーが自分用に使うフォルダーにある {file} をインポートしています。src/ に移動してください",
+  "The room module imports {file}, outside the game's folders; keep shared code in a folder like src/":
+    "ルームモジュールが、ゲームのフォルダー外にある {file} をインポートしています。共有コードは src/ などのフォルダーに置いてください",
+  "The room module reaches {file} through a link; publish needs the real file":
+    "ルームモジュールがリンク経由で {file} を参照しています。公開には実際のファイルが必要です",
+  "The room module's server/ folder and imports are too large to publish as a room module":
+    "ルームモジュールの server/ フォルダーとインポートが大きすぎて、ルームモジュールとして公開できません",
+  "runs the game's multiplayer room on this computer": "このコンピューターでゲームのマルチプレイヤールームを実行する",
   integrations: "統合",
   "it finished": "終了しました",
   "it landed": "反映されました",
@@ -5097,6 +5113,7 @@ export default {
   "since {when}": "{when}から",
   sixth: "6回目",
   slit: "細目",
+  slower: "低速",
   squint: "ジト目",
   started: "開始",
   "started a new game": "新しいゲームをつくりました",
@@ -5457,6 +5474,8 @@ export default {
   "{count} selected": "{count}件選択中",
   "{cpu} · {memory} GB memory · about {usable} GB available for models":
     "{cpu} · メモリ{memory} GB · モデルに使えるのは約{usable} GB",
+  "{cpu} · {memory} GB memory · {gpu} ({gpuMemory} GB) · about {usable} GB available for models":
+    "{cpu} · メモリ{memory} GB · {gpu}（{gpuMemory} GB） · モデルに使えるのは約{usable} GB",
   "{days} days": "{days}日間",
   "{days}d": "{days}日",
   "{day} {value}": "{day}：{value}",

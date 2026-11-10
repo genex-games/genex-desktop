@@ -12,9 +12,11 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using Colyseus;
+using Genex.Multiplayer.Authority;
 
 namespace Genex.Multiplayer
 {
@@ -45,11 +47,19 @@ namespace Genex.Multiplayer
         private double expiresAtMs = double.NaN;
         private double mintedAtMs;
 
-        /// <summary>The last session payload (user, project, colyseus.{url, urls}) without the token.</summary>
+        /// <summary>The last session payload (user, project, colyseus.{url, urls, authorityUrls}) without the token.</summary>
         public Dictionary<string, object> Session { get; private set; }
         public bool HasToken => !string.IsNullOrEmpty(token);
         /// <summary>The relay URLs the API returned with the token (pass them as GenexConnectOptions.Urls).</summary>
         public string[] RelayUrls { get; private set; } = Array.Empty<string>();
+
+        /// <summary>The authority cluster's URLs (colyseus.authorityUrls, PROTOCOL.md §17): pass them as
+        /// GenexAuthorityOptions.Urls. Empty where the stand runs no server-authoritative rooms.</summary>
+        public string[] AuthorityUrls { get; private set; } = Array.Empty<string>();
+
+        /// <summary>The authority cluster by region (colyseus.authorityRegions, PROTOCOL.md §17.1 *Regions*): pass them as
+        /// GenexAuthorityOptions.Regions beside Urls. Empty where the stand names no regions.</summary>
+        public GenexAuthorityRegion[] AuthorityRegions { get; private set; } = Array.Empty<GenexAuthorityRegion>();
 
         /// <summary>The API base every call goes to: GENEX_API_URL when the launcher set it, else the one passed in.</summary>
         public string ApiBase => apiBase;
@@ -93,6 +103,11 @@ namespace Genex.Multiplayer
         /// <summary>Door 2: a guest token for a PUBLISHED game (404 for drafts). Guests refresh for at most 12 h.</summary>
         public Task SignInAsGuest() =>
             Mint("/api/embed/guest-session", new Dictionary<string, object> { ["slug"] = slug }, null);
+
+        /// <summary>Door 2's preview form: a guest on a draft's PREVIEW (the staging channel), how a native test client joins a
+        /// game that is not published. The token only reaches the preview's own rooms; a game with no preview answers 404.</summary>
+        public Task SignInAsPreviewGuest() =>
+            Mint("/api/embed/guest-session", new Dictionary<string, object> { ["slug"] = slug, ["probe"] = true, ["channel"] = "staging" }, null);
 
         /// <summary>Door 3, step 1: start a device-code sign-in. Show UserCode and VerificationUri to the player.</summary>
         public async Task<DeviceCode> StartDeviceSignIn()
@@ -156,15 +171,32 @@ namespace Genex.Multiplayer
             var copy = new Dictionary<string, object>(r);
             copy.Remove("embedToken");
             if (copy.ContainsKey("user") || copy.ContainsKey("project") || Session == null) Session = copy;
+            var (relay, authority) = ColyseusUrls(r);
+            if (relay.Length > 0) RelayUrls = relay;
             var coly = GenexJson.Map(r, "colyseus");
-            var urls = GenexJson.List(coly, "urls");
-            if (urls != null && urls.Count > 0)
+            if (coly != null)
+            {
+                AuthorityUrls = authority;
+                AuthorityRegions = GenexAuthorityRegions.Normalize(coly.TryGetValue("authorityRegions", out var regions) ? regions : null, null).ToArray();
+            }
+        }
+
+        /// <summary>The URLs a sign-in answer carries: the relay's colyseus.urls (else colyseus.url) and the
+        /// authority cluster's colyseus.authorityUrls. Only non-empty strings count; a value that is not a
+        /// list is no list (as Godot's identity.gd reads them).</summary>
+        public static (string[] Relay, string[] Authority) ColyseusUrls(Dictionary<string, object> answer)
+        {
+            var coly = GenexJson.Map(answer, "colyseus");
+            string[] Strings(string key)
             {
                 var list = new List<string>();
-                foreach (var u in urls) if (u is string s) list.Add(s);
-                RelayUrls = list.ToArray();
+                var items = GenexJson.List(coly, key);
+                if (items != null) foreach (var u in items) if (u is string s && s.Length > 0) list.Add(s);
+                return list.ToArray();
             }
-            else if (GenexJson.Str(coly, "url") is string one) RelayUrls = new[] { one };
+            var relay = Strings("urls");
+            if (relay.Length == 0 && GenexJson.Str(coly, "url") is string one && one.Length > 0) relay = new[] { one };
+            return (relay, Strings("authorityUrls"));
         }
 
         private static double ParseExpiry(object v)

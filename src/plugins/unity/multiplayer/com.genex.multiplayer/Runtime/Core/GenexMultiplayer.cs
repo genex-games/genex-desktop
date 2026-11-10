@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Colyseus;
+using Genex.Multiplayer.Authority;
 using Genex.Multiplayer.Wire;
 using P = Genex.Multiplayer.GenexProtocol;
 
@@ -27,6 +28,16 @@ namespace Genex.Multiplayer
         public Func<Task<string>> GetEmbedToken;
         /// <summary>EXPERIMENTAL typed pose (§6.6), off by default. Opt in for every client of the game at once.</summary>
         public bool Pose;
+        /// <summary>
+        /// Run the SDK's reconnect attempts when it does not (see <see cref="GenexReconnectWatchdog"/>). Default: on
+        /// in a WebGL player, where the Colyseus C# SDK's retry waits on Task.Delay, which never resumes there.
+        /// </summary>
+        public bool DriveReconnects =
+#if UNITY_WEBGL && !UNITY_EDITOR
+            true;
+#else
+            false;
+#endif
 
         // Test seams: the smoke test's 426 path, and the conformance driver's extra join options. Not for games.
         internal int? ProtocolOverride { get; set; }
@@ -61,19 +72,22 @@ namespace Genex.Multiplayer
 
         internal static async Task<GenexSession> Attach(Room<RoomState> room, GenexConnectOptions options)
         {
-            var session = new GenexSession(room, options.Pose);
+            var session = new GenexSession(room, options.Pose, options.DriveReconnects);
             await session.FirstState;
             return session;
         }
 
-        /// <summary>§3.1: an explicit URL wins; one URL is used as is; several are raced by latency.</summary>
+        /// <summary>§3.1: an explicit URL wins; one URL is used as is; several are probed by latency with the tolerant probe
+        /// (several samples, a 4 s ceiling, a 1 s grace once one answers): a probe is a preference, never a gate, so a relay
+        /// that answers none still joins, the first URL.</summary>
         internal static async Task<Client> SelectClient(GenexConnectOptions options)
         {
             if (!string.IsNullOrEmpty(options.Url)) return new Client(options.Url);
             var urls = options.Urls ?? Array.Empty<string>();
             if (urls.Length == 0) throw new ArgumentException("GenexConnectOptions needs Url or Urls");
             if (urls.Length == 1) return new Client(urls[0]);
-            return await Client.SelectByLatency(urls);
+            var ranked = await GenexAuthorityRegions.Select(GenexAuthorityRegions.Normalize(Array.Empty<GenexAuthorityRegion>(), urls));
+            return new Client(ranked[0].Url);
         }
 
         /// <summary>Build the join options with a token read NOW (§3.2) and map refusals to GenexJoinException.</summary>
@@ -81,7 +95,14 @@ namespace Genex.Multiplayer
             where T : Colyseus.Schema.Schema
         {
             var joinOptions = await BuildJoinOptions(options);
-            try { return await joinCall(joinOptions); }
+            return await MapRefusals(() => joinCall(joinOptions));
+        }
+
+        /// <summary>Run a matchmaking call, turning the SDK's refusals into <see cref="GenexJoinException"/>(code).</summary>
+        internal static async Task<Room<T>> MapRefusals<T>(Func<Task<Room<T>>> joinCall)
+            where T : Colyseus.Schema.Schema
+        {
+            try { return await joinCall(); }
             catch (MatchMakeException e) { throw new GenexJoinException(e.Code, e.Message, e); }
             catch (HttpException e) { throw new GenexJoinException(ErrorCode(e), ErrorMessage(e), e); }
         }

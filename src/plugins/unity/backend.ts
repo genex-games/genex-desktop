@@ -216,6 +216,7 @@ const MESSAGE = {
         : `It has no Genex project yet, and builds don't need one: GenexGame.Slug (Assets/Genex/GenexGame.cs) takes it from Genex's Play and from the published web page, so the copies a publish sends join their rooms with no second build. To test online in the editor or in a build you start yourself, publish first, then call unity__multiplayer again with slug (genex__publish-status names it).`,
       kept.length ? `Kept your changed ${kept.join(", ")} beside the new ones as .mine~.` : "",
       "Write the game's online play now, as the unity-multiplayer skill says (unity__skill): GenexMultiplayer.Connect or GenexMatchmaker with GameId = GenexGame.Slug (never a slug read from GenexSettings.json alone), WebGL identity from the page and native identity through GenexNativeIdentity(GenexGame.ApiUrl, slug); then check it compiles in the editor.",
+      "For competitive play, write a server-authoritative room instead, as the skill's section 5 says: server/room.ts, its authority block in genex.json, GenexAuthority.Connect, and genex__room to validate and play it with bots; never mix it with the relay.",
     ]
       .filter(Boolean)
       .join("\n"),

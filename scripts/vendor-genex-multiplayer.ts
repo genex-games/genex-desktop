@@ -2,9 +2,9 @@
  * Build Studio's own copy of Genex's multiplayer SDK into the app's vendor folder, for games made
  * from the template (`GENEX_MULTIPLAYER_VENDOR` in src/shared/genex.ts names the files,
  * `GENEX_GAME_PACKAGES` the version; the embed SDK is copied as it ships by
- * `scripts/build-plugins.mjs`). One esbuild pass with shared chunks: the multiplayer entry and its
- * schema entry must share one copy of Colyseus's schema, or a state class defined with one is
- * unknown to the other. Beside the code: LICENSES.md, every bundled package's license text, which
+ * `scripts/build-plugins.mjs`). One esbuild pass with shared chunks: the multiplayer entry, its
+ * schema entry and its server-authoritative client must share one copy of Colyseus's schema, or a
+ * state class defined with one is unknown to the other. Beside the code: LICENSES.md, every bundled package's license text, which
  * an exported game carries with the files it uses, and VERSION.json.
  *
  * Built from what `npm ci` installed, never downloaded; a version that is not the pinned one
@@ -23,6 +23,7 @@ const MULTIPLAYER: GenexGamePackage = "@genex-ai/multiplayer";
 const ENTRY_POINTS = {
   [path.posix.basename(GENEX_MULTIPLAYER_VENDOR.Entry, ".js")]: MULTIPLAYER,
   [path.posix.basename(GENEX_MULTIPLAYER_VENDOR.Schema, ".js")]: `${MULTIPLAYER}/schema`,
+  [path.posix.basename(GENEX_MULTIPLAYER_VENDOR.Authority, ".js")]: `${MULTIPLAYER}/authority`,
 };
 
 export interface VendoredGenexSdk {

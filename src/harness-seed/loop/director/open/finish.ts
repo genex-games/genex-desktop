@@ -34,9 +34,8 @@ import { fireHooks, HookEvent, runScope } from "../../hooks.ts";
 import { HOOK_PROMPTS } from "../../hooks-prompts.ts";
 import { CLIP_REASON, clipMarked, hasText } from "../../text.ts";
 import { SECOND_MS } from "../../time.ts";
-import { type FactsOfDescriptor, pageChecked } from "../../folder-facts.ts";
+import { pageChecked } from "../../folder-facts.ts";
 import { checkHealth, healthLine } from "../../health-check.ts";
-import { HostMethod } from "../../host-methods.ts";
 import { yes } from "../args.ts";
 import { closeUnderWay, holdFinish, releaseFinish } from "../close-latch.ts";
 import { CLAIM_WORDS } from "../second-opinion-prompts.ts";
@@ -48,6 +47,7 @@ import { finishTooSoon, workedLine } from "../work-time.ts";
 import { finishAsked } from "../wrap-up.ts";
 import { closeInPlace, type OpenEnd } from "./close.ts";
 import { asksPending, OPEN_CLOSE_MS } from "./contract.ts";
+import { FINISH_PICTURE_LABEL, gameNow } from "./page-picture.ts";
 import { OPEN_WORDS } from "./prompts.ts";
 import { writersInPlace } from "./writers.ts";
 
@@ -190,25 +190,14 @@ async function checked(loopRun: LoopRun, claim: FinishClaim, started: number): P
 }
 
 /**
- * The game as the host lists it as the lead finishes: the Loop may have changed what its folder holds
- * (an engine's project made in it). The Loop's start's reading when the host can't list it.
- */
-async function gameAtFinish(loopRun: LoopRun): Promise<FactsOfDescriptor> {
-  const { ctx, gameFacts, open, run } = loopRun;
-  const games = await ctx.call(HostMethod.GameList).catch(() => null);
-  const listed = Array.isArray(games) ? games.find((game) => game.name === run.project) : undefined;
-  return listed ?? { facts: gameFacts, holds: open.holds };
-}
-
-/**
  * A web game's page, checked once in the game folder before its Loop closes: what is wrong with it,
  * or null when it is healthy, the project is no web game or an engine's game as the lead finishes
  * (`pageChecked`), or no check could be made.
  */
 async function pageProblems(loopRun: LoopRun): Promise<string | null> {
   const { ctx, run } = loopRun;
-  if (!pageChecked(await gameAtFinish(loopRun))) return null;
-  const target = { project: run.project, runId: run.runId, label: "director/finish" };
+  if (!pageChecked(await gameNow(loopRun))) return null;
+  const target = { project: run.project, runId: run.runId, label: FINISH_PICTURE_LABEL };
   const check = await checkHealth(ctx, target, { sleep: loopRun.open.clock.sleep });
   return check.ok || check.unchecked ? null : OPEN_WORDS.unhealthy(healthLine(check));
 }

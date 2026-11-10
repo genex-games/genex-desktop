@@ -30,10 +30,18 @@ namespace Genex.Multiplayer
         /// This client's send clock (ms): monotonic, arbitrary origin, never exactly 0 (§6.1). Every
         /// stamp this session sends (__t, obj t, pose t) uses it.
         /// </summary>
-        public static double Now() => Watch.Elapsed.TotalMilliseconds + 1 + TestClockSkewMs;
+        public static double Now() => (TestClock != null ? TestClock() : Watch.Elapsed.TotalMilliseconds + 1) + TestClockSkewMs;
 
         // Test seam (the conformance driver's `skew`, DRIVER.md): a deliberate clock-origin offset. Not for games.
         internal static double TestClockSkewMs { get; set; }
+
+        // Test seam (the conformance driver's `advance`, DRIVER.md §Virtual clock): the stepped clock every Now() reads
+        // instead of the stopwatch. Null (the default) is real time. Not for games.
+        internal static Func<double> TestClock { get; set; }
+
+        // Test seam (the stepped driver, whose loop drops timer continuations as a WebGL player's does): how far past due
+        // the reconnect watchdog runs the SDK's attempt, ms. Null (the default) is GenexReconnectWatchdog.StallMs. Not for games.
+        internal static double? TestReconnectStallMs { get; set; }
 
         // ---------------- state ----------------
 
@@ -41,6 +49,8 @@ namespace Genex.Multiplayer
         private readonly bool poseEnabled;
         private readonly Interpolator interp = new Interpolator();
         private readonly string requestPrefix;
+        private readonly bool driveReconnects;
+        private readonly GenexReconnectWatchdog<RoomState> watchdog;
         private int requestCounter;
 
         private sealed class PlayerMirror
@@ -177,10 +187,11 @@ namespace Genex.Multiplayer
 
         // ---------------- construction ----------------
 
-        internal GenexSession(Room<RoomState> room, bool pose)
+        internal GenexSession(Room<RoomState> room, bool pose, bool driveReconnects = false)
         {
             this.room = room;
             poseEnabled = pose;
+            this.driveReconnects = driveReconnects;
             requestPrefix = Guid.NewGuid().ToString("N").Substring(0, 8);
 
             var r = room.Reconnection;
@@ -191,6 +202,7 @@ namespace Genex.Multiplayer
             r.MaxDelay = P.Reconnection.MaxDelay;
             r.MaxRetries = P.Reconnection.MaxRetries;
             r.MaxEnqueuedMessages = P.Reconnection.MaxEnqueuedMessages;
+            watchdog = new GenexReconnectWatchdog<RoomState>(room, () => OnLeave(P.CloseCode.FailedToReconnect));
 
             room.OnStateChange += OnStateChange;
             room.OnDrop += OnDrop;
@@ -612,6 +624,7 @@ namespace Genex.Multiplayer
             }
 
             if (awaitingResync && now >= resyncDeadline) FinishReconnect(resyncGeneration);
+            if (driveReconnects && reconnecting && !awaitingResync && !dead && !intentionalLeave) watchdog.Tick(now);
 
             if (hostTicks.Count == 0 || runningHostTicks) return;
             var isHost = IsHost;
@@ -661,6 +674,7 @@ namespace Genex.Multiplayer
         {
             if (intentionalLeave || dead) return;
             dropGeneration++;
+            watchdog.Reset();
             if (!reconnecting)
             {
                 reconnecting = true;

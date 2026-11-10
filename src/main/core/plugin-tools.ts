@@ -7,7 +7,7 @@ import { STUDIO_CONSENT_NAMES, type StudioConsentSource } from "../../shared/plu
  */
 import { PluginConsentDeclined, type PluginMcpLaunch } from "../../substrate/plugins/registry.ts";
 import { shownCardTool } from "../../substrate/plugins/manifest-words.ts";
-import { PluginCallCutOff, PluginCallNotSent } from "../../substrate/plugins/process.ts";
+import { PluginCallCutOff, PluginCallNotSent, type PluginInvocation } from "../../substrate/plugins/process.ts";
 import { containedReal } from "../../substrate/paths.ts";
 import { finishedPayload, roleOf, startedPayload } from "../plugin-activity.ts";
 import type { PluginToolStartedPayload } from "../../shared/game-assets.ts";
@@ -553,11 +553,16 @@ export class PluginToolService {
     );
   }
 
-  /** A plugin gets the staged public copy only after the person reviews its exact file set. */
+  /**
+   * A plugin gets the staged public copy only after the person reviews its exact file set. Asked
+   * inside a plugin call (`call`), the card closes when the call ends, and the call's own deadline
+   * stands still while it is up: reading the list is the person's time, never the plugin's.
+   */
   async reviewExport(
     pluginId: string,
     binding: PluginBinding,
     result: { included: string[]; excluded: string[] },
+    call?: Pick<PluginInvocation, "signal" | "personAnswers">,
   ): Promise<void> {
     const tool: PluginTool = {
       name: "export_review",
@@ -566,7 +571,8 @@ export class PluginToolService {
       parameters: { type: "object", properties: {} },
     };
     const review = { included: [...result.included].sort(), excluded: [...result.excluded].sort() };
-    const grant = await this.requestConsent(pluginId, tool, { files: review.included }, binding, undefined, review);
+    const ask = () => this.requestConsent(pluginId, tool, { files: review.included }, binding, call?.signal, review);
+    const grant = call ? await call.personAnswers(ask) : await ask();
     if (!grant.approved) throw new PluginConsentDeclined(tool.name, grant.by);
   }
 

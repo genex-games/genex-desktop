@@ -21,6 +21,7 @@ import {
 } from "../../src/main/core/genex-cli.ts";
 import { GenexCliRefusal } from "../../src/main/core/genex-cli-policy.ts";
 import { GenexPackageService } from "../../src/main/core/genex-package.ts";
+import { GenexRoomService } from "../../src/main/core/genex-room.ts";
 import { GameBuilds, REGISTRY_DOMAIN } from "../../src/main/game-build.ts";
 import { GENEX_GAME_PACKAGES } from "../../src/shared/genex.ts";
 import { PluginHostTool } from "../../src/shared/plugins.ts";
@@ -57,6 +58,17 @@ async function profile() {
   return { root, userData, resources, genexStorage, gamesRoot, game };
 }
 type Profile = Awaited<ReturnType<typeof profile>>;
+
+/** A room service these calls must never reach. */
+function unusedRoom(dir: string): GenexRoomService {
+  return new GenexRoomService({
+    run: async () => assert.fail("no room runs"),
+    spawn: async () => assert.fail("no room runs"),
+    toolDir: dir,
+    scratch: dir,
+    boundGame: async () => dir,
+  });
+}
 
 /** The hosted project the publish workspace records, apiUrl included, as the CLI writes it. */
 async function publishedDraft(p: Profile, project: string) {
@@ -167,7 +179,7 @@ describe("a Studio-run Genex CLI command, through an injected sandbox", () => {
       gameDir: () => p.game,
       scratch: p.root,
     });
-    const hook = genexHostTool({ cli: service(p, sandbox), packages });
+    const hook = genexHostTool({ cli: service(p, sandbox), packages, room: unusedRoom(p.root) });
     const args = { command: "llm bench", args: "Say hi", options: { "max-coins": 5 } };
     await assert.rejects(hook("genex", PluginHostTool.GenexCli, args, binding(p)), GenexCliRefusal);
     assert.equal(sandbox.seen.length, 0, "the free tool starts nothing for a paid command");
@@ -436,7 +448,8 @@ describe("genex__package: a pinned Genex SDK install into the bound game", () =>
 
   it("reaches the package service only through genex__package", async () => {
     const lib = await packageLibrary();
-    const hook = genexHostTool({ cli: service(await profile(), fakeSandbox()), packages: lib.packages });
+    const p = await profile();
+    const hook = genexHostTool({ cli: service(p, fakeSandbox()), packages: lib.packages, room: unusedRoom(p.root) });
     await hook(
       "genex",
       PluginHostTool.GenexPackage,
@@ -576,10 +589,13 @@ describe("fixture profiles", () => {
       return "ran";
     };
     const fixture = gatedHostTool(hook, true);
-    for (const host of Object.values(PluginHostTool)) {
+    const accountOrDownload = Object.values(PluginHostTool).filter((host) => host !== PluginHostTool.GenexRoom);
+    for (const host of accountOrDownload) {
       await assert.rejects(fixture("genex", host, {}, { project: "g", directory: "/x" }), /unsupported-in-fixture/);
     }
     assert.equal(ran, 0);
+    // A local room touches no account and downloads nothing: a fixture profile runs it, as it runs a build.
+    assert.equal(await fixture("genex", PluginHostTool.GenexRoom, {}, { project: "g", directory: "/x" }), "ran");
     assert.equal(
       await gatedHostTool(hook, false)("genex", PluginHostTool.GenexCli, {}, { project: "g", directory: "/x" }),
       "ran",

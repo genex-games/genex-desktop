@@ -42,6 +42,7 @@ import {
 import { GENEX_CLI_PROMPT } from "./genex-cli-prompts.ts";
 import { deliverSharedItem, ItemNotDelivered, resolveGamePath, stageGamePaths } from "./genex-game-paths.ts";
 import { type GenexPackageService, genexPackageConsentArgs } from "./genex-package.ts";
+import { type GenexRoomService, roomCall } from "./genex-room.ts";
 import { draftInCliAnswer, itemSyncOf, type SyncedItem } from "./item-draft.ts";
 import { isLocalDraft, type ListingRecord, type LocalListingDraft } from "../../shared/item-draft.ts";
 import {
@@ -596,17 +597,27 @@ export type GenexHostTool = (
   signal?: AbortSignal,
 ) => Promise<unknown>;
 
-/** Each host program's native step: a fixture profile runs neither the CLI nor an install. */
+/**
+ * Each host program's native step: a fixture profile runs neither the CLI nor an install. A local
+ * room has none: it touches no account, downloads nothing and opens no app, only a sandboxed
+ * process on this Mac's loopback, as a fixture profile's game builds are.
+ */
 export const GENEX_HOST_STEP = {
   [PluginHostTool.GenexCli]: "studio:plugins.host-cli",
   [PluginHostTool.GenexCliPaid]: "studio:plugins.host-cli",
   [PluginHostTool.GenexPackage]: "studio:plugins.host-package",
-} as const satisfies Record<PluginHostTool, NativeStep>;
+  [PluginHostTool.GenexRoom]: null,
+} as const satisfies Record<PluginHostTool, NativeStep | null>;
 
 /** The registry hook for the bundled Genex plugin's host tools. */
-export function genexHostTool(services: { cli: GenexCliService; packages: GenexPackageService }): GenexHostTool {
+export function genexHostTool(services: {
+  cli: GenexCliService;
+  packages: GenexPackageService;
+  room: GenexRoomService;
+}): GenexHostTool {
   return async (_id, host, args, binding, signal) => {
     if (host === PluginHostTool.GenexPackage) return services.packages.add(args, binding);
+    if (host === PluginHostTool.GenexRoom) return services.room.call(args, binding);
     return services.cli.run(args, binding, {
       paid: host === PluginHostTool.GenexCliPaid,
       ...(signal ? { signal } : {}),
@@ -624,6 +635,7 @@ export function genexHostConsent(
   args: Record<string, unknown>,
 ): Record<string, string> {
   if (host === PluginHostTool.GenexPackage) return genexPackageConsentArgs(args);
+  if (host === PluginHostTool.GenexRoom) return { action: String(roomCall(args).action) };
   return genexCliConsentArgs(args, { paid: host === PluginHostTool.GenexCliPaid });
 }
 
@@ -647,7 +659,8 @@ export function genexHostPreflight(packages: GenexPackageService, cli?: GenexCli
 /** `hook`, refused in a fixture profile before anything runs, as every native step is. */
 export function gatedHostTool(hook: GenexHostTool, fixture: boolean): GenexHostTool {
   return async (id, host, args, binding, signal) => {
-    assertNativeActionAllowed(fixture, GENEX_HOST_STEP[host]);
+    const step = GENEX_HOST_STEP[host];
+    if (step !== null) assertNativeActionAllowed(fixture, step);
     return hook(id, host, args, binding, signal);
   };
 }

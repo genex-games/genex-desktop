@@ -819,5 +819,10 @@
     {
       "section": "## Hard rules"
     }
+  ],
+  "genex-authoritative-multiplayer/SKILL.md": [
+    {
+      "section": "## Test it on this machine — CLI lane"
+    }
   ]
 }

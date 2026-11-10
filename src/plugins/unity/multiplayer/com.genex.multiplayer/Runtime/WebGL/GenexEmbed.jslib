@@ -1,7 +1,7 @@
 // WebGL bridge to the page's @genex-ai/embed-sdk (PROTOCOL.md §3.2). The page must expose the SDK
 // module as `window.genexEmbed` after calling initEmbed(...) — see the package README. The token is
 // read fresh on every request and is never stored or logged here.
-// Unverified outside a Unity WebGL build (no Unity on the machine that wrote it).
+// Run by the WebGL authority probe (Tests~/AuthorityProbe) against a stubbed window.genexEmbed.
 mergeInto(LibraryManager.library, {
   GenexEmbed_RequestAuth: function (requestId, callback) {
     function reply(obj) {

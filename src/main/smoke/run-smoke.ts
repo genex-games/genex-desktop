@@ -736,6 +736,8 @@ async function checkModelRoles(buildSmoke: BuildSmoke): Promise<void> {
     ramBytes: 32 * 1024 ** 3,
     ramGb: 32,
     usableModelGb: 23,
+    gpus: [],
+    gpuModelGb: 0,
     platform: StudioPlatform.Mac,
     arch: "arm64",
     appleSilicon: true,

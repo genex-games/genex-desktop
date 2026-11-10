@@ -39,11 +39,13 @@ const words = (text: string | undefined): string[] => (text ?? "").toLowerCase()
 /** The words of a search that can name a plugin: every word but the generic ones. */
 const distinctiveWords = (text: string | undefined): string[] => words(text).filter((word) => !GENERIC_WORDS.has(word));
 
-/** Every fact a plugin detects, scopes its tools, skills and connectors to, or makes; sorted, each once. */
+/** Every fact a plugin detects, scopes its own tools (not the host tools it carries), skills and connectors to, or makes; sorted, each once. */
 export function pluginFacts(manifest: PluginManifest): string[] {
   const facts = [
     ...(manifest.detect ?? []).map((rule) => rule.fact),
-    ...manifest.tools.flatMap((tool) => [...(tool.facts ?? []), ...(tool.makes ?? [])]),
+    // A host tool is Studio's own service a bundled plugin carries (Genex's room, say): where it
+    // reaches says where Studio offers it, never that the plugin is for that kind of project.
+    ...manifest.tools.flatMap((tool) => [...(tool.host ? [] : (tool.facts ?? [])), ...(tool.makes ?? [])]),
     ...manifest.skills.flatMap((skill) => skillScope(skill) ?? []),
     ...(manifest.mcpServers ?? []).flatMap((server) => server.facts ?? []),
   ];

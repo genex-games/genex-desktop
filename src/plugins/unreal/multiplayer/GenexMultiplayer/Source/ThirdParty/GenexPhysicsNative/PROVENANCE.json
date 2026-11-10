@@ -1,0 +1,20 @@
+{
+  "what": "Genex Physics' C ABI (crate genex-physics-capi, abiVersion 1, contract 1.0 + the 1.1 draft): the same core the TypeScript SDK vendors as WebAssembly (packages/authority-host/vendor, wasm sha256 5efaabef194869c7ba4420c14063fa853855da31d2b2ca8b848a7629cb9da35d). Loaded at run time by GenexCore/GenexPhysicsNative.h; nothing links against it.",
+  "source": {
+    "repository": "github.com/genex-games/genex-desktop",
+    "commit": "ae524c44f39a2d392a8b2c0a23f277d437e37cc4",
+    "crate": "native/genex-rust/crates/genex-physics-capi",
+    "build": "scripts/physics-capi.ts (profile native-physics), copied unchanged from that build's PROVENANCE.json artifacts; not rebuilt here"
+  },
+  "files": {
+    "include/genex_physics.h": { "sha256": "9ef732351e0c138e378115f34cfe754bcf37af8dae3ef6986ab51d2eb8746b93", "bytes": 11205 },
+    "lib/Mac/libgenex_physics_capi.dylib": { "sha256": "17c1f37c40e467b38c34dea64297ed12b5268240ebc4ce5b40297ffbd3a202ff", "bytes": 7297648, "target": "macos-universal (x86_64 arm64), install name @rpath/libgenex_physics_capi.dylib" },
+    "lib/Win64/genex_physics_capi.dll": { "sha256": "c10bcf6e9b51654ab4695b82381fd490c59022855bc1f5231a03f54578cb1d92", "bytes": 4162560, "target": "windows-x64 (x86_64-pc-windows-gnullvm, UCRT imports only)" },
+    "lib/Linux/libgenex_physics_capi.so": { "sha256": "1c8265cdec0bfd295cd5ea7fc6e76181f02e489f55c17a6294aa66b7438d118c", "bytes": 4331552, "target": "linux-x64-gnu (glibc 2.28): the CMake build's tools on Linux" }
+  },
+  "notVendored": {
+    "ios": "GenexPhysics.xcframework (100 MB of static archives): the plugin's PlatformAllowList is Mac and Win64",
+    "android-arm64": "libgenex_physics_capi.so: the plugin's PlatformAllowList is Mac and Win64",
+    "windows-x64 import library": "libgenex_physics_capi.dll.a: unused, the library is loaded by name at run time"
+  }
+}

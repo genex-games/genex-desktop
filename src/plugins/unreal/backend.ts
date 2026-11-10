@@ -1130,6 +1130,7 @@ function loopTools(deps: UnrealBackendDeps) {
     },
     ...(deps.processes ? { processes: deps.processes } : {}),
     ...(deps.stopped ? { stopped: deps.stopped } : {}),
+    ...(deps.install ? { multiplayer: { fetch: deps.install.fetch, platform: deps.env.platform } } : {}),
     ...deps.programs,
     now: deps.launch.now,
     sleep: (ms, signal) => sleep(ms, undefined, signal ? { signal } : undefined),

@@ -639,8 +639,8 @@ const GraphNodes = memo(function GraphNodes({
 }): JSX.Element {
   const { graph, layout, leadNode, finishCheck } = model;
   const rest = useMemo(
-    () => (model.face ? leadRest(model.graph, model.rows, model.face) : null),
-    [model.graph, model.rows, model.face],
+    () => (model.face ? leadRest(model.graph, model.rows, model.face, stills.finalPath) : null),
+    [model.graph, model.rows, model.face, stills.finalPath],
   );
   const jobsRect = layout.rects[GraphSelection.Jobs];
   const finishRect = layout.rects[GraphSelection.FinishCheck];

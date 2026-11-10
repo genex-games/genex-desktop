@@ -13,7 +13,7 @@
  */
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { after, before, describe, it } from "node:test";
 import { pathToFileURL } from "node:url";
@@ -33,6 +33,9 @@ import {
   readGenexGameManifest,
   usesGenexMultiplayer,
 } from "../../src/substrate/genex-game-manifest.ts";
+import { PluginService } from "../../src/shared/plugins.ts";
+import { clearStagedRoom, roomModulePath, stageRoom } from "../../src/substrate/genex-room-stage.ts";
+import { PluginServices } from "../../src/substrate/plugins/services.ts";
 import { startGenexFixtureApi } from "../helpers/genex-fixture-api.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
@@ -80,6 +83,12 @@ interface Seen {
   events: string[];
   deploys: Array<Record<string, unknown>>;
   listings: Array<Record<string, unknown>>;
+  /** Room modules stored in Genex's private module store, by sha256: the module's text. */
+  modules: Map<string, string>;
+  /** Room modules released on their own (`authority-release`), with their bodies. */
+  releases: Array<Record<string, unknown>>;
+  /** Apps made live (`native-builds`), with their bodies. */
+  apps: Array<Record<string, unknown>>;
 }
 
 /**
@@ -94,7 +103,7 @@ async function genexFixture(options: { broken?: boolean; failFirstDeploy?: boole
   await mkdir(bare, { recursive: true });
   assert.ok(await run("git", ["init", "--bare", "-q", bare]));
   const pushUrl = pathToFileURL(bare).href;
-  const seen: Seen = { events: [], deploys: [], listings: [] };
+  const seen: Seen = { events: [], deploys: [], listings: [], modules: new Map(), releases: [], apps: [] };
   const hosted = new Map<string, string>();
   let status = "draft",
     stagingCommitSha = "",
@@ -109,6 +118,42 @@ async function genexFixture(options: { broken?: boolean; failFirstDeploy?: boole
     if (url.startsWith("/upload/") && method === "PUT") {
       hosted.set(decodeURIComponent(url.slice("/upload/".length)), body);
       return reply.json({ ok: true });
+    }
+    if (url === "/api/games/p1/authority-module" && method === "POST") {
+      const asked = JSON.parse(body || "{}");
+      const signed = (what: string, bytes: number) => ({
+        url: `${api}/authority/${what}/${asked.sha256}`,
+        headers: { "Content-Length": String(bytes) },
+      });
+      return reply.json({ module: signed("module", asked.bytes), report: signed("report", asked.reportBytes) });
+    }
+    if (url.startsWith("/authority/module/") && method === "PUT") {
+      seen.modules.set(url.slice("/authority/module/".length), body);
+      return reply.json({ ok: true });
+    }
+    if (url.startsWith("/authority/report/") && method === "PUT") return reply.json({ ok: true });
+    if (url === "/api/games/p1/authority-release" && method === "POST") {
+      const release = JSON.parse(body || "{}");
+      note("release");
+      seen.releases.push(release);
+      const sha = release.authority?.moduleSha256;
+      return reply.json({ channel: release.channel, authority: sha ? { moduleSha256: sha } : null });
+    }
+    if (url === "/api/games/p1/native-upload-token" && method === "POST")
+      return reply.json({
+        token: "fixture-native-token",
+        uploadUrl: `${api}/native-upload`,
+        uploadPath: "p1/app.zip",
+        // Genex already holds these bytes: nothing goes up, as for an app sent before.
+        uploaded: true,
+        limits: { maxArchiveBytes: 1_000_000_000, partSizeBytes: 5_000_000, singlePutMaxBytes: 5_000_000 },
+      });
+    if (url === "/api/games/p1/native-builds" && method === "POST") {
+      const app = JSON.parse(body || "{}");
+      note("app");
+      seen.apps.push(app);
+      const build = { ...app, url: `${api}/apps/${app.platform}`, publishedAt: "2026-11-10T00:00:00.000Z" };
+      return reply.json({ build: { ...build, review: "approved" } });
     }
     if (url.startsWith("/live/")) {
       note("test");
@@ -152,7 +197,8 @@ async function genexFixture(options: { broken?: boolean; failFirstDeploy?: boole
       seen.deploys.push(deploy);
       stagingCommitSha = deploy.commit;
       if (typeof deploy.embedSdkVersion === "string") draftEmbedSdkVersion = deploy.embedSdkVersion;
-      return reply.json({ url: `${api}/live`, channel: deploy.channel ?? "production" });
+      const authority = deploy.authority ? { authority: { moduleSha256: deploy.authority.moduleSha256 } } : {};
+      return reply.json({ url: `${api}/live`, channel: deploy.channel ?? "production", ...authority });
     }
     if (url === "/api/games/p1/promote" && method === "POST") {
       note("promote");
@@ -383,6 +429,266 @@ describe("a publish a restart stopped while its draft was tested", () => {
     const after = await genex.publishStatus(PROJECT);
     assert.equal(after.job?.state, "failed");
     assert.equal(after.job?.error, PUBLISH_MESSAGE.OnlyDraftUpdated);
+  });
+});
+
+/** A room module as a template game writes one, sharing a constant with its client in `src/`. */
+const ROOM_MODULE = [
+  'import { SPEED } from "../src/world.js";',
+  "export default {",
+  "  contract: 1,",
+  '  config: { tickHz: 30, maxPlayers: 4, preset: { name: "topdown" } },',
+  "  init: () => ({ joins: 0 }),",
+  '  onJoin(ctx, player) { ctx.state.joins += SPEED > 0 ? 1 : 0; ctx.entities.spawn({ kind: "player", owner: player.id, hp: 3 }); },',
+  "  onLeave(ctx, player) { const me = ctx.entities.ownedBy(player.id); if (me) ctx.entities.remove(me.id); },",
+  "  onInput() {},",
+  "  step() {},",
+  "};",
+].join("\n");
+
+/** A room module the gate refuses: every tick throws. */
+const BROKEN_ROOM_MODULE = [
+  "export default {",
+  "  contract: 1,",
+  '  config: { tickHz: 30, maxPlayers: 4, preset: { name: "topdown" } },',
+  "  init: () => ({}),",
+  "  onJoin() {},",
+  "  onLeave() {},",
+  "  onInput() {},",
+  '  step() { throw new Error("broken room"); },',
+  "};",
+].join("\n");
+
+describe("a server-authoritative game publishes its room module", () => {
+  const room = { module: "server/room.js", tickHz: 30, maxPlayers: 4 };
+
+  /** The host's `export.stage` for the fixture's game: its public page, and its room staged beside it. */
+  const stageWithRoom = (fx: { game: string; workspace: string }, manifest: GenexGameManifest) => async () => {
+    const dist = path.join(fx.workspace, "dist");
+    await mkdir(dist, { recursive: true });
+    await writeFile(path.join(dist, "index.html"), BARE_PAGE);
+    const module = roomModulePath(manifest.genex?.authority);
+    if (module) await stageRoom(fx.game, fx.workspace, module);
+    else await clearStagedRoom(fx.workspace);
+    return { dir: dist, files: 1, included: ["index.html"], excluded: [], genex: manifest };
+  };
+
+  it("bundles, validates and stores the module with Studio's toolchain, and the go-live names it", async (t) => {
+    if (!hasGit) return t.skip("git is not installed on this machine; the Genex publish path requires it");
+    const fx = await genexFixture();
+    try {
+      await mkdir(path.join(fx.game, "server"), { recursive: true });
+      await mkdir(path.join(fx.game, "src"), { recursive: true });
+      await writeFile(path.join(fx.game, "server", "room.js"), ROOM_MODULE);
+      await writeFile(path.join(fx.game, "src", "world.js"), "export const SPEED = 4;");
+      const manifest: GenexGameManifest = { dependencies: {}, genex: { authority: room } };
+      const started = await fx.genex.publishGallery(PROJECT, stageWithRoom(fx, manifest), "Arena");
+      const done = await fx.genex.publishWait(PROJECT, started.job?.id);
+      assert.equal(done.job?.state, "done", done.job?.error);
+      const goLive = fx.seen.deploys[0]?.authority as { moduleSha256?: string; tickHz?: number } | undefined;
+      assert.ok(goLive?.moduleSha256, "the go-live names the room module");
+      assert.equal(goLive.tickHz, 30);
+      assert.match(
+        fx.seen.modules.get(goLive.moduleSha256) ?? "",
+        /SPEED/,
+        "the stored module carries its shared file",
+      );
+      assert.ok(
+        [...fx.hosted.keys()].every((file) => !file.toLowerCase().startsWith("server/")),
+        "no server file is served at the game's address",
+      );
+      assert.deepEqual(
+        done.job?.room,
+        { module: room.module, validated: true, uploaded: true, moduleSha256: goLive.moduleSha256 },
+        "the publish says the room module passed the gate and went up with this build",
+      );
+    } finally {
+      await fx.close();
+    }
+  });
+
+  it("says a room module that fails the gate was neither validated nor uploaded, with the gate's reasons", async (t) => {
+    if (!hasGit) return t.skip("git is not installed on this machine; the Genex publish path requires it");
+    const fx = await genexFixture();
+    try {
+      await mkdir(path.join(fx.game, "server"), { recursive: true });
+      await writeFile(path.join(fx.game, "server", "room.js"), BROKEN_ROOM_MODULE);
+      const manifest: GenexGameManifest = { dependencies: {}, genex: { authority: room } };
+      const started = await fx.genex.publishDraft(PROJECT, stageWithRoom(fx, manifest));
+      const done = await fx.genex.publishWait(PROJECT, started.job?.id);
+      assert.equal(done.job?.state, "failed");
+      assert.equal(done.job?.room?.module, room.module);
+      assert.equal(done.job?.room?.validated, false);
+      assert.equal(done.job?.room?.uploaded, false);
+      assert.ok(done.job?.room?.failures?.length, "the gate's typed reasons ride along");
+      assert.equal(fx.seen.modules.size, 0, "nothing was stored");
+    } finally {
+      await fx.close();
+    }
+  });
+
+  it("publishes a game with no room exactly as before: no module, no toolchain, no staged room", async (t) => {
+    if (!hasGit) return t.skip("git is not installed on this machine; the Genex publish path requires it");
+    const fx = await genexFixture();
+    try {
+      await mkdir(path.join(fx.game, "server"), { recursive: true });
+      await writeFile(path.join(fx.game, "server", "room.js"), ROOM_MODULE);
+      const withRoom: GenexGameManifest = { dependencies: {}, genex: { authority: room } };
+      await mkdir(path.join(fx.game, "src"), { recursive: true });
+      await writeFile(path.join(fx.game, "src", "world.js"), "export const SPEED = 4;");
+      await fx.genex.publishWait(PROJECT, (await fx.genex.publishDraft(PROJECT, stageWithRoom(fx, withRoom))).job?.id);
+      const plain = await fx.genex.publishWait(
+        PROJECT,
+        (await fx.genex.publishDraft(PROJECT, stageWithRoom(fx, SIGN_IN_GAME))).job?.id,
+      );
+      assert.equal(plain.job?.state, "done", plain.job?.error);
+      assert.equal(plain.job?.room, undefined, "a publish with no room says nothing of one");
+      assert.equal(
+        Object.hasOwn(fx.seen.deploys.at(-1) ?? {}, "authority"),
+        false,
+        "the deploy body is the one it always was",
+      );
+      const copy = (await readdir(fx.workspace)).filter((name) => ["node_modules", "server", "src"].includes(name));
+      assert.deepEqual(copy, [], "the earlier room and its toolchain are gone from the copy");
+      assert.deepEqual(JSON.parse(await readFile(path.join(fx.workspace, "package.json"), "utf8")).genex, undefined);
+    } finally {
+      await fx.close();
+    }
+  });
+});
+
+describe("an Unreal game's room module goes with its apps", () => {
+  const room = { module: "server/room.ts", tickHz: 30, maxPlayers: 4 };
+  /** A room module in TypeScript, as the Unreal multiplayer skill has the builder write one. */
+  const ROOM_TS = ROOM_MODULE.replace('"../src/world.js"', '"./rules.ts"').replace(
+    "onJoin(ctx, player)",
+    "onJoin(ctx: any, player: { id: string })",
+  );
+  /** A 64-bit arm64 Mach-O executable's first bytes. */
+  const machO = () => {
+    const head = Buffer.alloc(32);
+    head.writeUInt32LE(0xfeedfacf, 0);
+    head.writeUInt32LE(0x0100000c, 4);
+    return head;
+  };
+  const PLIST = [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<plist version="1.0"><dict>',
+    "<key>CFBundleExecutable</key><string>Duel</string>",
+    "<key>CFBundleShortVersionString</key><string>1.0</string>",
+    "</dict></plist>",
+  ].join("");
+
+  /**
+   * The Unreal game Genex's New game makes, with Genex's multiplayer plugin, its room in `server/`,
+   * the block in `genex.json` (`authority` null leaves it out) and a packaged Mac app.
+   */
+  async function unrealGame(game: string, module: string, authority: unknown = room): Promise<string> {
+    const files: Record<string, string | Buffer> = {
+      "studio.json": "{}",
+      "unreal/Duel.uproject": JSON.stringify({
+        FileVersion: 3,
+        Plugins: [{ Name: "GenexMultiplayer", Enabled: true }],
+      }),
+      "unreal/Plugins/GenexMultiplayer/GenexMultiplayer.uplugin": JSON.stringify({ FileVersion: 3 }),
+      "server/room.ts": module,
+      "server/rules.ts": "export const SPEED = 4;",
+      "genex.json": JSON.stringify(authority === null ? {} : { authority }),
+      "Builds/Mac/Duel.app/Contents/Info.plist": PLIST,
+      "Builds/Mac/Duel.app/Contents/MacOS/Duel": machO(),
+    };
+    for (const [rel, data] of Object.entries(files)) {
+      await mkdir(path.dirname(path.join(game, rel)), { recursive: true });
+      await writeFile(path.join(game, rel), data);
+    }
+    return path.join(game, "Builds", "Mac", "Duel.app");
+  }
+
+  /** The stage strip's Publish with the Mac app: the host's own `export.room`, no stand-in for it. */
+  async function publishApps(fx: Awaited<ReturnType<typeof genexFixture>>, app: string) {
+    const services = new PluginServices(
+      path.join(fx.game, "..", "plugins"),
+      { genex: fx.genex.root },
+      async () => null,
+    );
+    const binding = { project: PROJECT, directory: fx.game };
+    const roomStage = () => services.call("genex", PluginService.ExportRoom, {}, binding);
+    const started = await fx.genex.publishAppsOnly(PROJECT, [{ target: app, platform: "mac" }], "Duel", {}, roomStage);
+    return fx.genex.publishWait(PROJECT, started.job?.id);
+  }
+
+  it("bundles, validates and releases the room to the rooms its app joins before the app goes", async (t) => {
+    if (!hasGit) return t.skip("git is not installed on this machine; the Genex publish path requires it");
+    const fx = await genexFixture();
+    try {
+      const done = await publishApps(fx, await unrealGame(fx.game, ROOM_TS));
+      assert.equal(done.job?.state, "done", done.job?.error);
+      const release = fx.seen.releases[0] as {
+        channel?: string;
+        authority?: { moduleSha256?: string; tickHz?: number };
+      };
+      assert.equal(release?.channel, "production", "installed apps join the live rooms");
+      const sha = release.authority?.moduleSha256;
+      assert.ok(sha, "the release names the module");
+      assert.equal(release.authority?.tickHz, 30);
+      assert.match(fx.seen.modules.get(sha) ?? "", /SPEED/, "the stored module carries its shared file");
+      assert.deepEqual(
+        fx.seen.apps.map((app) => app.platform),
+        ["mac"],
+      );
+      assert.ok(
+        fx.seen.events.indexOf("release") < fx.seen.events.indexOf("app"),
+        "the room is live before any player can install the app",
+      );
+      assert.deepEqual(
+        done.job?.room,
+        { module: room.module, validated: true, uploaded: true, moduleSha256: sha },
+        "the publish says the room module passed the gate and went up",
+      );
+      assert.equal(await readdir(path.join(fx.workspace, "unreal")).catch(() => null), null, "the project stays out");
+    } finally {
+      await fx.close();
+    }
+  });
+
+  it("fails the publish on a room module the gate refuses, and sends no app", async (t) => {
+    if (!hasGit) return t.skip("git is not installed on this machine; the Genex publish path requires it");
+    const fx = await genexFixture();
+    try {
+      const done = await publishApps(fx, await unrealGame(fx.game, BROKEN_ROOM_MODULE));
+      assert.equal(done.job?.state, "failed");
+      assert.equal(done.job?.room?.module, room.module);
+      assert.equal(done.job?.room?.validated, false);
+      assert.equal(done.job?.room?.uploaded, false);
+      assert.ok(done.job?.room?.failures?.length, "the gate's typed reasons ride along");
+      assert.equal(fx.seen.modules.size, 0, "nothing was stored");
+      assert.deepEqual(fx.seen.releases, []);
+      assert.deepEqual(fx.seen.apps, [], "an app whose room would refuse every join never goes");
+    } finally {
+      await fx.close();
+    }
+  });
+
+  it("publishes the apps of a game with no room block exactly as before", async (t) => {
+    if (!hasGit) return t.skip("git is not installed on this machine; the Genex publish path requires it");
+    const fx = await genexFixture();
+    try {
+      const done = await publishApps(fx, await unrealGame(fx.game, ROOM_TS, null));
+      assert.equal(done.job?.state, "done", done.job?.error);
+      assert.equal(done.job?.room, undefined, "a publish with no room says nothing of one");
+      assert.deepEqual(fx.seen.releases, []);
+      assert.equal(fx.seen.modules.size, 0);
+      assert.deepEqual(
+        fx.seen.apps.map((app) => app.platform),
+        ["mac"],
+      );
+      const copy = (await readdir(fx.workspace)).filter((name) =>
+        ["node_modules", "server", "package.json"].includes(name),
+      );
+      assert.deepEqual(copy, [], "no room, toolchain or manifest in the copy");
+    } finally {
+      await fx.close();
+    }
   });
 });
 

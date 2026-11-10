@@ -120,6 +120,7 @@ undeclared method is a compile error.
 | `events.emit` | `jobs` | Sanitized progress, attributed to the bound project/thread. `{kind:'toolbar', …}` updates a toolbar badge |
 | `observe` | `observe` | Loading/capture/audio evidence for authorized files in the bound worktree. API 3: with `still: { camera?, width, height, maxBytes? }` and `files: []`, a plain frame of the game's page on a hidden window at that size (nothing is asked of the game: `camera` may only be `default`, any other name answers `view_unknown` with `available: ["default"]`, and a `demo` is refused), as a PNG (or JPEG past `maxBytes`) with exposure numbers, or a `stillProblem` code; a picture that is still a blank or loading screen is taken again up to three times, two seconds of play apart, and the last one is answered; an older host ignores `still` and answers a plain observation (`PluginStillIgnored`), so check for each. `observe` records no clip: a call with a `clip` is refused |
 | `export.stage` | `export` | Studio writes the public export of the bound game under `storage.root/publish/<project>/dist` and returns the result |
+| `export.room` | `export` | A server-authoritative game's room module alone, staged into `storage.root/publish/<project>` with no web export, for a game whose apps go without one; returns `{genex}` as `export.stage` does |
 | `credentials.session` | `credentials`, API 3 | Reuse an explicitly unlocked host-memory lease; never opens the OS store |
 | `runtime.detect` / `runtime.installation` | `native-runtime`, API 3 | Read declared native runtime readiness and durable installation progress |
 | `runtime.install` / `runtime.cancelInstall` | `native-runtime`, API 3 | Fixed pinned installation through a real declared user action, or an agent tool of the same name with a `confirmation` card the person answers (the call answers once the download starts); cancelling is the person's action only |
@@ -389,6 +390,7 @@ Two different things, both asked by the host and never by the plugin or the agen
   offers **Allow in this chat**, covering that tool for the rest of the chat.
 - **`tools[].timeoutMs`** (API 3) — whole milliseconds, 1,000 to 540,000: how long one call may
   run when that is longer than the host's 190-second ceiling, such as an engine's import or export.
+  A card the host shows inside the call (`export.stage`'s file list) does not count against it.
 - **`actions[].confirmation`** — a user-invoked action behind a Studio-owned review and a native
   dialog. Your optional `review` returns `{message, detail, images:[{label, dataUrl}]}`: `message`
   (at most 2,000 characters) is the dialog's question instead of the manifest's `confirmation`, and

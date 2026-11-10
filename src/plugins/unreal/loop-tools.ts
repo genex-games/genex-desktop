@@ -75,6 +75,7 @@ import { createEditorControl, EditorControlToolName } from "./editor-control.ts"
 import { createReopenTools, type ProcessEnv } from "./editor-reopen.ts";
 import type { RunProgram } from "./automation-tests.ts";
 import { createMotionTools, MotionToolName } from "./motion-tools.ts";
+import { addMultiplayer, MultiplayerToolName, type UnrealMultiplayerDeps } from "./multiplayer-tools.ts";
 import { createShipTools, type ShipToolName } from "./plugin-ship.ts";
 import { createGamePackageTools, type GamePackageToolName, type RunUat } from "./game-package.ts";
 import type { EditorRestart } from "./editor-restart.ts";
@@ -291,6 +292,7 @@ const MESSAGE = {
   NoSaveAnswer: "The Genex editor helper didn't answer save_all with what it saved.",
   StillPlaying: "This game's Unreal is still in a play session after Genex asked it to stop, so Genex saved nothing.",
   NoLinkedProject: "This game isn't linked to an Unreal project.",
+  NoMultiplayer: "Genex multiplayer can't be added from here.",
   BadSince: "since must be a byte offset a log-errors call answered: a whole number, 0 or more.",
   HelperWhileOpen:
     "Unreal is open on this game, so Genex didn't update its editor helper. Save (save-all), end the editor (end-editor), then update.",
@@ -426,6 +428,8 @@ export type LoopToolsDeps = {
   runUat?: RunUat;
   /** Aborts once the backend stops: a plugin's running jobs end with it. */
   stopped?: AbortSignal;
+  /** What `multiplayer` reaches (the network and `unzip` for the Colyseus core); without it the tool refuses. */
+  multiplayer?: UnrealMultiplayerDeps;
 };
 
 type Handler = (args: Record<string, unknown>, context: PluginContext, storage: string) => Promise<unknown>;
@@ -796,8 +800,8 @@ export function createLoopTools(deps: LoopToolsDeps) {
     ...leadHandlers(set, moments),
     ...ship.handlers,
     ...packageHandlers(deps),
-    [MotionToolName.Status]: (_args, context, storage) => motion.status(storage, game(context)),
-    [MotionToolName.Add]: (_args, context, storage) => motion.add(storage, game(context), context.directory),
+    ...motionHandlers(motion),
+    ...multiplayerHandlers(deps),
     ...controlHandlers(deps, reopen, warm),
     ...play.handlers,
   };
@@ -807,6 +811,21 @@ export function createLoopTools(deps: LoopToolsDeps) {
       every[name](args, context, storage),
   };
 }
+
+/** `motion-status` and `add-motion-matching`: the Game Animation Sample's content in the game's project. */
+const motionHandlers = (motion: ReturnType<typeof createMotionTools>): Record<MotionToolName, Handler> => ({
+  [MotionToolName.Status]: (_args, context, storage) => motion.status(storage, gameOf(context)),
+  [MotionToolName.Add]: (_args, context, storage) => motion.add(storage, gameOf(context), context.directory),
+});
+
+/** `multiplayer`: Genex's Unreal plugin into the game's linked project. */
+const multiplayerHandlers = (deps: LoopToolsDeps): Record<MultiplayerToolName, Handler> => ({
+  [MultiplayerToolName.Multiplayer]: async (_args, context, storage) => {
+    if (!deps.multiplayer) throw new Error(MESSAGE.NoMultiplayer);
+    const project = await linkedOrThrow(deps, storage, gameOf(context));
+    return addMultiplayer(deps.multiplayer, storage, project, context.signal);
+  },
+});
 
 /** `package-game` and `package-status`, saving the game's open Unreal with the agent's own save. */
 const packageHandlers = (deps: LoopToolsDeps) =>
@@ -867,6 +886,7 @@ export type AnyLoopToolName =
   | ShipToolName
   | GamePackageToolName
   | MotionToolName
+  | MultiplayerToolName
   | EnginePlayTool;
 
 /** The tools' dependencies with setup's chosen: a test's, or this computer's. */

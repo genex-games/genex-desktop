@@ -1,6 +1,6 @@
 /**
  * Genex multiplayer in a Unity game: Genex's Unity package (`com.genex.multiplayer`, copied from
- * the Genex SDK's `sdks/unity`) embedded in the project's `Packages/` folder, the official Colyseus
+ * the Genex SDK's `sdks/unity`: the relay client and the server-authoritative room client) embedded in the project's `Packages/` folder, the official Colyseus
  * Unity SDK it runs on asked for in `Packages/manifest.json` at the commit the Genex SDK is tested
  * with (Unity fetches it from Colyseus's own repository; Studio ships none of it), and the game's
  * Genex project in `Assets/Resources/GenexSettings.json`, which the game reads with
@@ -20,8 +20,12 @@ import { readManifest, writeManifest } from "./setup.ts";
 
 /** Genex's Unity package, and where a project embeds it. */
 export const MULTIPLAYER_PACKAGE = "com.genex.multiplayer";
-/** The Genex SDK commit `multiplayer/com.genex.multiplayer` is a copy of (`sdks/unity`). */
-export const MULTIPLAYER_PACKAGE_SOURCE = "me-ai-org/genex-demo@91cc3409919cbc89bba08b664274b71a96198f27";
+/**
+ * The Genex SDK commit `multiplayer/com.genex.multiplayer` is a copy of (`sdks/unity`, without its
+ * tests and native physics core): `scripts/refresh-unity-multiplayer.ts` writes it and its
+ * `vendor.json`, and refuses anything else.
+ */
+export const MULTIPLAYER_PACKAGE_SOURCE = "me-ai-org/genex-demo@b02c47adbbc19c0a47e8c0e7852b20d235d589e6";
 /** The Colyseus Unity SDK the Genex package runs on, at the `upm` commit of 0.18.8 it is tested with. */
 export const COLYSEUS_PACKAGE = "io.colyseus.sdk";
 export const COLYSEUS_PACKAGE_URL =

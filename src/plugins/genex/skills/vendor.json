@@ -18,6 +18,46 @@
       "sha256": "7e2adcb04fa3a764362acf2e8f9c525c51ee078392d32fe9c7ffb7b71c252302",
       "bytes": 10840
     },
+    "genex-authoritative-multiplayer/SKILL.md": {
+      "source": "@genex-ai/cli-demo/templates/skills/genex-authoritative-multiplayer/SKILL.md",
+      "sha256": "956e9e2600339ce919fadee720d61e6aa018fb778068fd10acc735be7472a002",
+      "bytes": 11893
+    },
+    "genex-authoritative-multiplayer/references/module-api.md": {
+      "source": "@genex-ai/cli-demo/templates/skills/genex-authoritative-multiplayer/references/module-api.md",
+      "sha256": "a7608f04aee823c1bb22cb56d8b19a5db5aa849e6fa6e1f3a7fc27ec5d5c36d5",
+      "bytes": 11827
+    },
+    "genex-authoritative-multiplayer/references/physics.md": {
+      "source": "@genex-ai/cli-demo/templates/skills/genex-authoritative-multiplayer/references/physics.md",
+      "sha256": "c86e756e229adbfdcab6947bb3a60ea819d0c15c47c4b831701a9f3a84d6dbcb",
+      "bytes": 7844
+    },
+    "genex-authoritative-multiplayer/references/presets.md": {
+      "source": "@genex-ai/cli-demo/templates/skills/genex-authoritative-multiplayer/references/presets.md",
+      "sha256": "d60d822bdc9adedaade942428a5032666ff441754f2a22e53fa0035772ce0f4c",
+      "bytes": 25143
+    },
+    "genex-authoritative-multiplayer/references/projectiles.md": {
+      "source": "@genex-ai/cli-demo/templates/skills/genex-authoritative-multiplayer/references/projectiles.md",
+      "sha256": "49269790e85b96c41f4988ba895a939b9513bc8d60d832bbf169dd72bb69cac4",
+      "bytes": 10645
+    },
+    "genex-authoritative-multiplayer/references/room-template.md": {
+      "source": "@genex-ai/cli-demo/templates/skills/genex-authoritative-multiplayer/references/room-template.md",
+      "sha256": "5ed473946c57659ad953c7ef0caabe76ba203e21946e5587613895a030c0a247",
+      "bytes": 50536
+    },
+    "genex-authoritative-multiplayer/references/settings.md": {
+      "source": "@genex-ai/cli-demo/templates/skills/genex-authoritative-multiplayer/references/settings.md",
+      "sha256": "d6edc93412fdbd2a221c9b3e304286c63c79fb73a310acd11eb126b9f1bd72ae",
+      "bytes": 8224
+    },
+    "genex-authoritative-multiplayer/references/testing.md": {
+      "source": "@genex-ai/cli-demo/templates/skills/genex-authoritative-multiplayer/references/testing.md",
+      "sha256": "13556441d31cdaa7fd9cf9874e31aab0f424373b8afb0ccb4f7528701f28d258",
+      "bytes": 8914
+    },
     "genex-threejs-embed-auth/SKILL.md": {
       "source": "@genex-ai/cli-demo/templates/skills/genex-threejs-embed-auth/SKILL.md",
       "sha256": "ec5bee74f3da305399cdab46d856703ed06b0851e97e62948a6b4ccafd172a50",

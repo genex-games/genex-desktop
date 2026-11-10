@@ -12,6 +12,7 @@ import path from "node:path";
 import { test } from "node:test";
 import { LiveLoopToolName, LoopToolName } from "../../src/plugins/unreal/loop-tools.ts";
 import { MotionToolName } from "../../src/plugins/unreal/motion-tools.ts";
+import { MultiplayerToolName } from "../../src/plugins/unreal/multiplayer-tools.ts";
 import { EditorControlToolName } from "../../src/plugins/unreal/editor-control.ts";
 import { GamePackageToolName } from "../../src/plugins/unreal/game-package.ts";
 import { type PluginManifest, PluginToolAudience } from "../../src/shared/plugins.ts";
@@ -126,6 +127,7 @@ const UNREAL_PROJECT_TOOLS = [
   `unreal__${LoopToolName.AddCppModule}`,
   `unreal__${MotionToolName.Status}`,
   `unreal__${MotionToolName.Add}`,
+  `unreal__${MultiplayerToolName.Multiplayer}`,
   ...Object.values(EditorControlToolName).map((name) => `unreal__${name}`),
   ...Object.values(GamePackageToolName).map((name) => `unreal__${name}`),
   "unreal__click-interface",

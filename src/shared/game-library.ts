@@ -112,6 +112,14 @@ export const ExportRefusal = {
   ScopedImportMap: "export_scoped_import_map",
   UnresolvedModule: "export_unresolved_module",
   MissingReference: "export_missing_reference",
+  /** The room module, or a file it imports, is reached through a link. */
+  RoomLink: "export_room_link",
+  /** The room module imports a file outside the game, or one at its top level. */
+  RoomOutside: "export_room_outside",
+  /** The room module's files would land on a folder the publish copy keeps for itself. */
+  RoomReserved: "export_room_reserved",
+  /** The room module's files are more, or larger, than a room module could be. */
+  RoomTooLarge: "export_room_too_large",
 } as const;
 export type ExportRefusal = (typeof ExportRefusal)[keyof typeof ExportRefusal];
 

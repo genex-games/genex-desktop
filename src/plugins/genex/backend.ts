@@ -378,7 +378,9 @@ const ACTIONS: Record<string, Action> = {
   [GenexAction.PublishApps]: async (genex, args, ctx, service) => {
     if (!ctx.project) throw new Error(MESSAGE.OpenProject());
     const apps = await appsToSend(ctx, args.native, service);
-    return genex.publishAppsOnly(ctx.project, apps, args.title, remixChoice(args, ctx));
+    // The room is staged inside this invocation: a detached upload gets no answer from host services.
+    const roomStage = () => service(PluginService.ExportRoom, {});
+    return genex.publishAppsOnly(ctx.project, apps, args.title, remixChoice(args, ctx), roomStage);
   },
   [GenexAction.CloudBuild]: async (genex, args, ctx) => {
     if (!ctx.project) throw new Error(MESSAGE.OpenProject());

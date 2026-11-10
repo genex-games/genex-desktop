@@ -1,0 +1,28 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "0.1.0",
+	"FriendlyName": "Genex Multiplayer",
+	"Description": "Genex multiplayer for Unreal: the casual relay (protocol 3) and server-authoritative rooms (protocol 4), on the official Colyseus native core.",
+	"Category": "Networking",
+	"CreatedBy": "Genex",
+	"CreatedByURL": "https://genex.games",
+	"DocsURL": "https://github.com/genex-games/genex-demo/blob/main/sdks/unreal/README.md",
+	"EngineVersion": "5.8.0",
+	"CanContainContent": false,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "GenexMultiplayer",
+			"Type": "Runtime",
+			"LoadingPhase": "Default",
+			"PlatformAllowList": [ "Mac", "Win64", "Linux" ]
+		},
+		{
+			"Name": "GenexMultiplayerEditor",
+			"Type": "Editor",
+			"LoadingPhase": "PostEngineInit",
+			"PlatformAllowList": [ "Mac", "Win64", "Linux" ]
+		}
+	]
+}

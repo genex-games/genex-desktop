@@ -1095,6 +1095,13 @@ export interface SteerMessage {
 export type SteerDelivery = 'prompt' | 'native' | 'interrupt' | 'lead';
 // ↑ src/shared/message-queue.ts
 
+/** One graphics card a local model can run on (`HardwareReport.hardware.gpus`). */
+export interface GraphicsCard {
+  name: string;
+  memoryGb: number;
+}
+// ↑ src/shared/studio-api.ts
+
 /** One catalog model judged against this Mac (Settings → Local Models). */
 export interface LocalModelChoice {
   model: string;
@@ -1107,14 +1114,26 @@ export interface LocalModelChoice {
   about: string;
   fits: boolean;
   needGb: number;
+  /** On a Mac, the smallest common Mac memory size that holds it; null when none does, and on a PC. */
   needsRamGb: number | null;
+  /** It fits only split between a PC's graphics card and RAM: it runs, slower. */
+  split: boolean;
   reason: string;
 }
 // ↑ src/shared/studio-api.ts
 
 /** This Mac's hardware and the local models it can run (`StudioApi.hardware`, harness `engine.hardware`). */
 export interface HardwareReport {
-  hardware: { cpu: string; ramGb: number; usableModelGb: number };
+  hardware: {
+    cpu: string;
+    ramGb: number;
+    /** The model budget: RAM's share plus `gpuModelGb`. */
+    usableModelGb: number;
+    /** A PC's graphics cards a model can run on, largest first; empty on a Mac or without one. */
+    gpus: GraphicsCard[];
+    /** The part of `usableModelGb` on those cards: a model within it runs entirely there. */
+    gpuModelGb: number;
+  };
   recommendation: {
     tier: { label: string; expectation: string };
     defaultModel: string | null;

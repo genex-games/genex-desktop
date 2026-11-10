@@ -1,7 +1,7 @@
 {
   "apiVersion": 3,
   "id": "unreal",
-  "version": "0.54.1",
+  "version": "0.55.1",
   "icon": "icon.svg",
   "name": "Unreal Engine",
   "publisher": "Genex",
@@ -261,6 +261,16 @@
         "properties": {}
       },
       "confirmation": "Add Epic's Game Animation Sample content (Motion Matching characters, about 2 GB, cloned from the sample on this Mac) to this Unreal game: Genex saves your open work in Unreal, quits it, adds the content and opens Unreal again; the first open takes about ten minutes."
+    },
+    {
+      "name": "multiplayer",
+      "timeoutMs": 540000,
+      "facts": ["unreal-project"],
+      "description": "Make this Unreal game playable online with Genex multiplayer, for server-authoritative (competitive) rooms above all: adds Genex's GenexMultiplayer plugin, shipped with Genex at a pinned version, to the game's project (Plugins/GenexMultiplayer), turns it on in the .uproject, and adds the Colyseus core it links (on a Mac a one-time download Genex checks and keeps; Windows has none yet). Call it once when the person wants people to play together, then read the unreal-multiplayer skill and write the room and the client. Never download the plugin or its core yourself.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
     },
     {
       "name": "package-game",
@@ -712,6 +722,13 @@
       ],
       "summary": "How to build this Unreal game in the person's open editor: the unreal-editor toolsets, linking the project with use-project, Blueprints (guides and node lookups first), C++, play-testing with the computer tool, saving and checkpoints.",
       "file": "skills/unreal-editor.md"
+    },
+    {
+      "name": "unreal-multiplayer",
+      "facts": ["unreal-project"],
+      "tools": ["multiplayer", "cpp-status", "add-cpp-module", "quit-editor", "open-editor", "package-game"],
+      "summary": "Server-authoritative (competitive) multiplayer for this Unreal game: unreal__multiplayer adds Genex's Unreal plugin, then a server/room.ts room module, the Genex Authority Subsystem client, genex__room with bots and publish. MANDATORY before any online or multiplayer code.",
+      "file": "skills/unreal-multiplayer.md"
     },
     {
       "name": "unreal-plugin",

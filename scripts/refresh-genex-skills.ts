@@ -39,6 +39,7 @@ export const SKILL_MD_URL = "https://genex.games/SKILL.md";
 /** The CLI's platform cards Studio vendors, by folder name under `templates/skills`. */
 export const GENEX_CARDS = [
   "genex-threejs-multiplayer",
+  "genex-authoritative-multiplayer",
   "genex-threejs-embed-auth",
   "genex-llm-in-games",
   "genex-tool-llm",

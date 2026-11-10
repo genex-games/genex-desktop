@@ -30,7 +30,7 @@ import {
   splitVendoredSkill,
   writeManifest,
 } from "../../scripts/refresh-genex-skills.ts";
-import { GENEX_GAME_PACKAGES } from "../../src/shared/genex.ts";
+import { GENEX_GAME_PACKAGES, type GenexGamePackage as GenexGamePackageName } from "../../src/shared/genex.ts";
 import type { PluginManifest } from "../../src/shared/plugins.ts";
 import { inspectPackage } from "../../src/substrate/plugins/manifest.ts";
 import { tmpDir } from "../helpers/tmp.ts";
@@ -211,6 +211,25 @@ test("Studio's embed SDK pin is at least the version the monetization card's pay
   assert.ok(order >= 0, `Studio pins ${pinned.join(".")}; the card needs ${minimum.join(".")}`);
 });
 
+test("Studio's SDK pins are at least what the server-authoritative card asks for", async () => {
+  const card = await readFile(path.join(CARDS, "genex-authoritative-multiplayer", "SKILL.md"), "utf8");
+  const atLeast = (pin: string, minimum: string) => {
+    const [a, b] = [pin, minimum].map((version) => version.split(".").map(Number));
+    const order = (a ?? []).map((part, i) => part - (b?.[i] ?? 0)).find((difference) => difference !== 0) ?? 0;
+    return order >= 0;
+  };
+  const rows: Array<[GenexGamePackageName, RegExp]> = [
+    ["@genex-ai/embed-sdk", /an embed SDK at (\d+\.\d+\.\d+) or newer/],
+    ["@genex-ai/multiplayer", /Projectiles need `@genex-ai\/multiplayer` (\d+\.\d+\.\d+) or newer/],
+  ];
+  for (const [name, asks] of rows) {
+    const minimum = asks.exec(card.replace(/\s+/g, " "))?.[1];
+    assert.ok(minimum, `the card names the ${name} it needs`);
+    const pin = GENEX_GAME_PACKAGES[name];
+    assert.ok(atLeast(pin, minimum), `Studio pins ${name} ${pin}; the card needs ${minimum}`);
+  }
+});
+
 test("a Genex payload built without dependencies carries the skills, without prefaces, within the skill caps", async () => {
   const resources = await tmpDir("studio-genex-skills-");
   await buildPlugins(process.cwd(), resources, { dependencies: false });
@@ -230,6 +249,18 @@ test("a Genex payload built without dependencies carries the skills, without pre
 test("plugin.json declares every vendored file, and vendors every file it declares", async () => {
   const manifest = JSON.parse(await readFile("src/plugins/genex/plugin.json", "utf8"));
   assert.deepEqual(manifestDisagreements(manifest, Object.keys((await vendor()).files)), []);
+});
+
+test("every `$genex-…` skill a vendored card sends the builder to is a skill the Genex plugin ships", async () => {
+  const manifest: PluginManifest = JSON.parse(await readFile("src/plugins/genex/plugin.json", "utf8"));
+  const shipped = new Set(manifest.skills.map((skill) => skill.name));
+  const missing: string[] = [];
+  for (const file of Object.keys((await vendor()).files)) {
+    const text = await readFile(path.join(SKILLS, file), "utf8");
+    for (const [, name = ""] of text.matchAll(/\$(genex-[a-z0-9-]+)/g))
+      if (!shipped.has(name)) missing.push(`${file} names $${name}`);
+  }
+  assert.deepEqual([...new Set(missing)], []);
 });
 
 test("a manifest and a vendored set disagree exactly where a file is on one side only", () => {

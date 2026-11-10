@@ -1,22 +1,19 @@
 {
   "name": "com.genex.multiplayer",
-  "version": "0.1.0",
+  "version": "0.8.0",
   "displayName": "Genex Multiplayer",
-  "description": "Genex relay protocol 3 client for Unity: players, shared state, owned objects, host, inputs, game events, chat, reconnection, sender-clock interpolation and matchmaking — a thin layer over the official Colyseus Unity SDK 0.18.8.",
+  "description": "Genex multiplayer for Unity, a thin layer over the official Colyseus Unity SDK 0.18.8: the relay (protocol 3: players, shared state, owned objects, host, inputs, game events, chat, reconnection, sender-clock interpolation, matchmaking) and server-authoritative rooms (protocol 4: typed input per fixed step, own-entity prediction with the room's movement preset (topdown, firstperson Source movement or a vehicle arcade car through the room's collision world), lag-compensated rendering of everyone else, projectiles drawn from their flight with the shooter's own predicted, and a physics room's bodies drawn at the server's present, or predicted near you on the native physics core it ships).",
   "unity": "2021.3",
   "license": "MIT",
   "category": "Networking",
-  "keywords": [
-    "genex",
-    "multiplayer",
-    "colyseus",
-    "netcode"
-  ],
-  "author": {
-    "name": "Genex",
-    "url": "https://genex.games"
+  "keywords": ["genex", "multiplayer", "colyseus", "netcode"],
+  "author": { "name": "Genex", "url": "https://genex.games" },
+  "dependencies": {
+    "com.unity.modules.animation": "1.0.0",
+    "com.unity.modules.physics": "1.0.0",
+    "com.unity.modules.terrain": "1.0.0",
+    "com.unity.modules.terrainphysics": "1.0.0"
   },
-  "dependencies": {},
   "samples": [
     {
       "displayName": "Quickstart",

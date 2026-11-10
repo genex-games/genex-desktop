@@ -40,6 +40,11 @@ const SHA256_HEX = /^[0-9a-f]{64}$/i;
 
 const MESSAGE = { NotABuild: "Genex answered without the build it published" } as const;
 
+/** The rooms the apps players install join: Genex's live ones, as an app is live once it goes. */
+const APPS_ROOM_CHANNEL = "production";
+/** The CLI's words that bundle, check, upload and release a room module with no build (`genex native module`). */
+export const NATIVE_MODULE_ARGS = ["native", "module", "--channel", APPS_ROOM_CHANNEL] as const;
+
 /** Whether CLI `version` has `genex native`. */
 export const hasNativeCommand = (version: string): boolean => isAtLeast(version, NATIVE_CLI);
 

@@ -29,6 +29,10 @@ licenses and terms of included third-party software.
   self-edit type gate runs keep their license and notice files under `dist/resources/tsc`.
 - The Genex asset CLI (`@genex-ai/cli-demo`, MIT) and its dependencies keep their license files
   in the Genex plugin payload under `dist/resources/plugins/genex/node_modules`.
+- Genex's room-module toolchain (`@genex-ai/authority-dev` 0.1.5, MIT), which a publish copy and a
+  local room use, ships in the same payload with its dependencies and the peers they import
+  (Colyseus, express, esbuild-wasm, QuickJS and `@genex-ai/physics`: MIT, ISC, BSD-3-Clause and
+  0BSD), each keeping its license files there. The two that ship none have sections below.
 
 ## Bundled plugin icons
 
@@ -71,8 +75,8 @@ tile. `genex.svg` is Genex's own G, from the startup loader.
 text behind a Studio-written preface; `vendor.json` records each source, version and sha256, and
 `npm run genex:skills` refreshes them.
 
-- Eight platform cards and their references, copied unchanged from
-  `@genex-ai/cli-demo` 1.40.0 `templates/skills` (MIT, Copyright (c) 2026 me-ai-org). The
+- Fourteen platform cards and their references, copied with Studio's cuts (`cuts.json`) taken out
+  from `@genex-ai/cli-demo` 1.40.0 `templates/skills` (MIT, Copyright (c) 2026 me-ai-org). The
   license text ships beside them as `skills/LICENSE-cards`, copied from the CLI's `LICENSE`.
 - `genex/SKILL.md` wraps https://genex.games/SKILL.md (v1.40.0), which is not part of the npm
   package. It is attributed to Genex here; its license is not yet confirmed (see "Status not yet
@@ -163,10 +167,28 @@ bundled program imports ships the same way, and the packaged smoke fails when on
 ## Vendored Genex embed SDK (@genex-ai/embed-sdk)
 
 Template games and published games that bring no SDK of their own use Genex's player-identity SDK,
-`@genex-ai/embed-sdk` 0.33.0 (MIT, as its package.json declares; the package ships no license
+`@genex-ai/embed-sdk` 0.35.0 (MIT, as its package.json declares; the package ships no license
 file). Its browser modules are copied unchanged to `dist/resources/vendor/genex/embed-sdk` and to
 `dist/resources/plugins/genex/embed-sdk`, and from there into a published game's
 `vendor/genex/embed-sdk`.
+
+## Vendored Genex Unreal multiplayer plugin (GenexMultiplayer)
+
+`src/plugins/unreal/multiplayer/GenexMultiplayer` is Genex's own Unreal plugin, copied unchanged
+from the Genex SDK (`sdks/unreal/GenexMultiplayer`, commit pinned in `vendor.json`) and from the app
+into a game's `unreal/Plugins/` by `unreal__multiplayer`. Its `Source/ThirdParty/GenexPhysicsNative`
+libraries (`PROVENANCE.json`) are Genex Physics' C ABI built from this repository's
+`native/genex-rust` (commit ae524c44), which statically links these Rust crates, each under the
+permissive terms its Cargo.toml states (MIT, Apache-2.0, Zlib or Unlicense, alone or as a choice;
+cargo-deny holds the workspace to them): rapier3d 0.36.0, parry3d 0.31.1, nalgebra 0.35.0,
+simba 0.10.2, glam, glamx 0.3.1, spade 2.15.1, rstar 0.13.0, robust 1.2.0, wide 1.7.1,
+safe_arch 1.2.0, ordered-float 5.5.0, serde 1.0.229, serde_json 1.0.151, postcard 1.1.3,
+libm 0.2.16, hashbrown, indexmap 2.14.2, smallvec 1.16.2, arrayvec 0.7.8, bytemuck 1.25.2,
+num-traits 0.2.19 and the num, heapless, approx and small utility crates they pull in.
+
+The Colyseus native core (`colyseus/native-sdk` 0.18.10, MIT) the plugin links is not shipped in
+the app: `unreal__multiplayer` downloads its pinned release into the game's plugin with its
+license (`src/plugins/unreal/multiplayer/COLYSEUS-LICENSE`) beside it.
 
 ## Cover orb shaders from orbkit
 
@@ -337,7 +359,7 @@ SOFTWARE.
 
 These npm packages ship in the app without a license file of their own; their notices follow.
 
-### @genex-ai/embed-sdk 0.33.0
+### @genex-ai/embed-sdk 0.35.0
 
 Bundled into `vendor/genex/`, the player-identity SDK a game made from Studio's template maps in its import
 map. Its package and repository (https://github.com/genex-games/genex) declare the MIT license
@@ -363,7 +385,60 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-### @genex-ai/multiplayer 0.17.1
+### @genex-ai/authority-dev 0.1.5
+
+Shipped in the Genex plugin payload (`plugins/genex/node_modules`), the toolchain that bundles,
+validates and runs a server-authoritative game's room module on this machine. Its package and
+repository (https://github.com/genex-games/genex) declare the MIT license without a license file.
+The MIT terms:
+
+Copyright (c) 2026 Genex
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+### @better-auth/utils 0.3.1
+
+Shipped in the Genex plugin payload as a dependency of `@colyseus/core`, which the room-module
+toolchain runs. Its package and repository (https://github.com/better-auth/utils) declare the MIT
+license without a license file; the author is Bereket Engida. The MIT terms:
+
+Copyright (c) Bereket Engida
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+### @genex-ai/multiplayer 0.17.9
 
 Bundled into `vendor/genex/`, the multiplayer SDK a game made from Studio's template maps in its import
 map, and shipped as `genex-multiplayer-bridge.js` (its `dist/bridge.global.js`) beside a multiplayer

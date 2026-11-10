@@ -342,6 +342,7 @@ const UNREAL_EDITOR_TOOLS = [
   "unreal__add-cpp-module",
   "unreal__motion-status",
   "unreal__add-motion-matching",
+  "unreal__multiplayer",
   "unreal__package-game",
   "unreal__package-status",
   "unreal__open-editor",
@@ -360,7 +361,9 @@ const UNREAL_PLUGIN_TOOLS = [
 const UNREAL_PLUGIN_SKILL = "unreal/unreal-plugin";
 /** What a web game no longer gets from the Unreal plugin: its editor's and its plugin projects' tools, their skills and the reader of those. */
 const UNREAL_ONLY_TOOLS = [...UNREAL_EDITOR_TOOLS, ...UNREAL_PLUGIN_TOOLS, "unreal__skill"];
-const UNREAL_ONLY_SKILLS = [UNREAL_SKILL, UNREAL_PLUGIN_SKILL];
+/** The Unreal plugin's multiplayer skill, for a game that holds an Unreal project only. */
+const UNREAL_MULTIPLAYER_SKILL = "unreal/unreal-multiplayer";
+const UNREAL_ONLY_SKILLS = [UNREAL_SKILL, UNREAL_MULTIPLAYER_SKILL, UNREAL_PLUGIN_SKILL];
 /** The Roblox plugin's skills, in manifest order: they reach a game that holds a Roblox place only. */
 const ROBLOX_SKILLS = [
   "roblox/roblox-studio",

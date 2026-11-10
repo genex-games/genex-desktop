@@ -31,8 +31,18 @@ const UNITY_MULTIPLAYER_PACKAGES = [
   "Packages/com.genex.multiplayer/package.json",
   "unity/Packages/com.genex.multiplayer/package.json",
 ];
+/**
+ * The descriptor an Unreal game's project holds once Genex's GenexMultiplayer plugin is in it (the
+ * Unreal plugin's `unreal__multiplayer`), in the game's `unreal/` project or one at its root.
+ */
+const UNREAL_MULTIPLAYER_PLUGINS = [
+  "unreal/Plugins/GenexMultiplayer/GenexMultiplayer.uplugin",
+  "Plugins/GenexMultiplayer/GenexMultiplayer.uplugin",
+];
 /** A `genex.matchmaking` block larger than this, as JSON, is left out. */
 const MAX_MATCHMAKING_CHARS = 4096;
+/** The `genex` setting that names a game's server-authoritative room module. */
+const AUTHORITY_SETTING = "authority";
 /** A version range as npm writes one for a registry package; links, paths and URLs are left out. */
 const VERSION_RANGE = /^[0-9A-Za-z.^~<>=*+| -]{1,64}$/;
 
@@ -49,7 +59,12 @@ function versionOf(pkg: Record<string, unknown>, name: GenexGamePackage): string
   return undefined;
 }
 
-/** The `genex` settings the CLI sends with an upload: a matchmaking block and the mobile-controls flag. */
+/**
+ * The `genex` settings the CLI sends with an upload: a matchmaking block, the mobile-controls flag
+ * and the server-authoritative room block. The room block goes as written, malformed or not: the
+ * CLI checks it and refuses a bad one by name, where leaving it out would ship a game whose every
+ * join is refused (424, no room module).
+ */
 function genexSettings(pkg: Record<string, unknown>): GenexGameManifest["genex"] {
   const genex = pkg.genex;
   if (!isRecord(genex)) return undefined;
@@ -58,6 +73,7 @@ function genexSettings(pkg: Record<string, unknown>): GenexGameManifest["genex"]
   if (isRecord(matchmaking) && JSON.stringify(matchmaking).length <= MAX_MATCHMAKING_CHARS)
     settings.matchmaking = matchmaking;
   if (genex.mobileControls === true) settings.mobileControls = true;
+  if (Object.hasOwn(genex, AUTHORITY_SETTING)) settings.authority = genex[AUTHORITY_SETTING];
   return Object.keys(settings).length > 0 ? settings : undefined;
 }
 
@@ -95,7 +111,7 @@ export function templateGenexManifest(html: string, settings: unknown): GenexGam
 
 /**
  * An engine game's Genex manifest once its project carries Genex's multiplayer (Godot's addon,
- * Unity's package): multiplayer at the version Studio ships, and its `genex.json` settings.
+ * Unity's package, Unreal's plugin): multiplayer at the version Studio ships, and its `genex.json` settings.
  */
 function engineGenexManifest(settings: unknown): GenexGameManifest {
   const dependencies: GenexGameManifest["dependencies"] = {
@@ -105,9 +121,9 @@ function engineGenexManifest(settings: unknown): GenexGameManifest {
   return genex ? { dependencies, genex } : { dependencies };
 }
 
-/** Whether a game's engine project carries Genex's multiplayer: Godot's addon or Unity's package. */
+/** Whether a game's engine project carries Genex's multiplayer: Godot's addon, Unity's package or Unreal's plugin. */
 async function carriesEngineMultiplayer(dir: string): Promise<boolean> {
-  for (const file of [GODOT_MULTIPLAYER_ADDON, ...UNITY_MULTIPLAYER_PACKAGES])
+  for (const file of [GODOT_MULTIPLAYER_ADDON, ...UNITY_MULTIPLAYER_PACKAGES, ...UNREAL_MULTIPLAYER_PLUGINS])
     if ((await readOwnFile(dir, file)) !== null) return true;
   return false;
 }
@@ -135,8 +151,8 @@ function parsedJson(text: string | null): unknown {
 }
 
 /**
- * The game's Genex manifest: from `dir/package.json` when the game has one, else, for a Godot or
- * Unity game whose project carries Genex's multiplayer, from that and its `genex.json`, else, for a game
+ * The game's Genex manifest: from `dir/package.json` when the game has one, else, for a Godot,
+ * Unity or Unreal game whose project carries Genex's multiplayer, from that and its `genex.json`, else, for a game
  * made from the template, from its `index.html` import map and `genex.json`. Undefined when there
  * is none to read.
  */

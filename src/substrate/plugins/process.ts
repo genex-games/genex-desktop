@@ -180,6 +180,53 @@ export interface PluginInvocation {
   name: string;
   signal: AbortSignal;
   confirmed?: true;
+  /** Runs `answer`, a wait on the person (a card the host shows), with the call's own deadline stood still meanwhile. */
+  personAnswers: PersonWait;
+}
+
+/** Runs `answer`, a wait on the person, outside the time its call may take; answers what it answers. */
+export type PersonWait = <T>(answer: () => Promise<T>) => Promise<T>;
+
+/**
+ * One call's local deadline: `end` runs once `ms` of the call's own time passed. While the person
+ * answers a card the call asked for (`hold`, until its release) the time stands still: a person
+ * reading a file list is no plugin work, and the time before and after the card still counts.
+ */
+interface CallDeadline {
+  hold(): () => void;
+  clear(): void;
+}
+
+function callDeadline(ms: number, end: () => void, now: () => number = () => performance.now()): CallDeadline {
+  let left = ms;
+  let since = now();
+  let holds = 0;
+  let cleared = false;
+  let timer: NodeJS.Timeout | undefined = setTimeout(end, left);
+  const run = () => {
+    since = now();
+    timer = setTimeout(end, Math.max(0, left));
+  };
+  const pause = () => {
+    clearTimeout(timer);
+    timer = undefined;
+    left -= now() - since;
+  };
+  return {
+    hold() {
+      if (holds++ === 0 && !cleared) pause();
+      let released = false;
+      return () => {
+        if (released) return;
+        released = true;
+        if (--holds === 0 && !cleared) run();
+      };
+    },
+    clear() {
+      cleared = true;
+      clearTimeout(timer);
+    },
+  };
 }
 
 /** How one call is made beyond its name and arguments. */
@@ -205,6 +252,7 @@ export class PluginProcess {
       name: string;
       controller: AbortController;
       confirmed: boolean;
+      deadline: CallDeadline;
     }
   >();
   readonly bootstrap: string;
@@ -280,6 +328,14 @@ export class PluginProcess {
         name: p.name,
         signal: p.controller.signal,
         ...(p.confirmed ? { confirmed: true as const } : {}),
+        personAnswers: async (answer) => {
+          const release = p.deadline.hold();
+          try {
+            return await answer();
+          } finally {
+            release();
+          }
+        },
       });
       reply({ result });
     } catch (e) {
@@ -361,7 +417,7 @@ export class PluginProcess {
           new Error("Stopped local plugin wait; accepted remote jobs may continue. Do not repeat unresolved creation."),
         );
       };
-      const timer = setTimeout(cancel, timeoutMs);
+      const deadline = callDeadline(timeoutMs, cancel);
       this.#pending.set(id, {
         resolve,
         reject,
@@ -370,9 +426,10 @@ export class PluginProcess {
         name,
         controller,
         confirmed: options.confirmed === true,
+        deadline,
         cleanup: () => {
           controller.abort();
-          clearTimeout(timer);
+          deadline.clear();
           signal?.removeEventListener("abort", cancel);
         },
       });

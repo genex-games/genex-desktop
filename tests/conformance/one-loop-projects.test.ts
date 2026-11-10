@@ -415,3 +415,30 @@ describe("a Loop on a project with no plugin, through the real studio", () => {
     assert.match(answers.finish ?? "", /Accepted/);
   });
 });
+
+describe("a web game's Loop, through the real studio", () => {
+  it("a save point whose lead named no picture keeps Genex's own picture of the page, a file in the run's folder the Builds cards read", {
+    timeout: RIG_TIMEOUT_MS,
+  }, async () => {
+    const { rig, threadId } = await openedProject(Project.WebFolder);
+    const answers: Record<string, string> = {};
+    const engine = loopEngine(rig, {
+      lead: [
+        async (request, call) => {
+          await writeFile(path.join(String(request.director?.root), "corridor.js"), "// the corridor\n");
+          answers.saved = await call("save_point", { label: "Corridor", summary: "the corridor is playable" });
+          answers.finish = await call("finish", { summary: "The corridor is in.", proof: "corridor.js" });
+        },
+      ],
+      worker: async () => {},
+    });
+    const { events, finished } = await loopUntilClosed(rig, threadId, engine);
+    assert.equal(finished.length, 1, JSON.stringify(answers));
+    const [saved] = customEvents(events, "facet_iteration");
+    const shots = (saved?.shots ?? []) as Array<{ camera: string; path: string }>;
+    assert.equal(shots.length, 1, JSON.stringify(saved));
+    assert.equal(shots[0]?.camera, "default");
+    const still = await rig.core.readRunStill(String(shots[0]?.path));
+    assert.equal(still?.mimeType, "image/jpeg", "the card reads the picture through the run folder's gate");
+  });
+});

@@ -79,14 +79,14 @@ const PREVIEW_CONNECTION: GenexConnection = {
 
 /**
  * What the published module adds after `initEmbed`: the game's project on the page (an engine's
- * export reads it there), the page's one player for a Unity WebGL build's Genex package
- * (`window.genexEmbed`, a page's own kept), and that player handed to Genex's multiplayer bridge
+ * export reads it there), the page's one player and its server-authoritative room servers for a
+ * Unity WebGL build's Genex package (`window.genexEmbed`, a page's own kept), and that player handed to Genex's multiplayer bridge
  * when the page loads one (a Godot web export's), which would otherwise start a second embed SDK.
  */
 const PUBLISHED_TAIL = (slug: string) => [
   "",
   `window.__GENEX__ = { ...window.__GENEX__, slug: ${JSON.stringify(slug)} };`,
-  "window.genexEmbed ??= { waitForPlayer, getColyseusAuth, getColyseusUrls };",
+  "window.genexEmbed ??= { waitForPlayer, getColyseusAuth, getColyseusUrls, getAuthorityUrls };",
   "window.GenexMultiplayerBridge?.setIdentity({",
   "  ready: () => waitForPlayer(),",
   "  auth: () => getColyseusAuth(),",
@@ -100,7 +100,9 @@ function connectModule(
   tail: readonly string[] = [],
 ): string {
   const sdk = path.posix.relative(path.posix.dirname(GENEX_EMBED_VENDOR.Connect), GENEX_EMBED_VENDOR.Entry);
-  const imports = tail.length ? "getColyseusAuth, getColyseusUrls, initEmbed, waitForPlayer" : "initEmbed";
+  const imports = tail.length
+    ? "getAuthorityUrls, getColyseusAuth, getColyseusUrls, initEmbed, waitForPlayer"
+    : "initEmbed";
   return [
     ...heading,
     `import { ${imports} } from "./${sdk}";`,

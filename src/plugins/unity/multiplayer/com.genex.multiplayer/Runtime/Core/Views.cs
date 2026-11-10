@@ -101,5 +101,13 @@ namespace Genex.Multiplayer
         public bool ProtocolUnsupported => Code == GenexProtocol.JoinError.ProtocolUnsupported;
         /// <summary>401: get a fresh token; if it repeats, the player must sign in again.</summary>
         public bool AuthRequired => Code == GenexProtocol.JoinError.AuthRequired;
+        /// <summary>402 (authority rooms): the game's owner is not entitled to them. Final; never retried.</summary>
+        public bool NotEntitled => Code == GenexProtocol.Authority.JoinError.NotEntitled;
+        /// <summary>424 (authority rooms): the game has no room module on this channel. Final until it is republished.</summary>
+        public bool ModuleUnavailable => Code == GenexProtocol.Authority.JoinError.ModuleUnavailable;
+        /// <summary>429 (authority rooms): the owner's quota refused a new room. You MAY try again later.</summary>
+        public bool RoomQuota => Code == GenexProtocol.Authority.JoinError.RoomQuota;
+        /// <summary>503 (authority rooms): no server could take the room; already retried per the session's backoff.</summary>
+        public bool CapacityRefused => Code == GenexProtocol.Authority.JoinError.Capacity;
     }
 }

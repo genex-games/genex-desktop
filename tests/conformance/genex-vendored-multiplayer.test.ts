@@ -16,7 +16,7 @@ import {
   studioSdkImports,
   studioSdkPackages,
 } from "../../src/shared/genex.ts";
-import { pageStudioSdkPackages, withGenexSdkImport } from "../../src/shared/genex-page.ts";
+import { pageStudioSdkPackages, withConnectScript, withGenexSdkImport } from "../../src/shared/genex-page.ts";
 import { templateGenexManifest } from "../../src/substrate/genex-game-manifest.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
@@ -54,7 +54,11 @@ describe("Studio's vendored Genex multiplayer SDK", () => {
     const built = await vendorGenexMultiplayer(repo, vendor);
     const folder = path.join(vendor, GENEX_MULTIPLAYER_VENDOR.Dir);
     const files = await readdir(folder);
-    for (const served of [GENEX_MULTIPLAYER_VENDOR.Entry, GENEX_MULTIPLAYER_VENDOR.Schema])
+    for (const served of [
+      GENEX_MULTIPLAYER_VENDOR.Entry,
+      GENEX_MULTIPLAYER_VENDOR.Schema,
+      GENEX_MULTIPLAYER_VENDOR.Authority,
+    ])
       assert.ok(files.includes(path.posix.basename(served)), `${served} is built`);
     assert.deepEqual(JSON.parse(await readFile(path.join(folder, "VERSION.json"), "utf8")), {
       "@genex-ai/multiplayer": GENEX_GAME_PACKAGES["@genex-ai/multiplayer"],
@@ -67,11 +71,17 @@ describe("Studio's vendored Genex multiplayer SDK", () => {
     // One copy of Colyseus's schema, shared: a state class one entry defines must be the other's.
     const multiplayer = await readFile(path.join(vendor, GENEX_MULTIPLAYER_VENDOR.Entry), "utf8");
     const schema = await readFile(path.join(vendor, GENEX_MULTIPLAYER_VENDOR.Schema), "utf8");
-    const chunks = (text: string) => [...text.matchAll(/from "\.\/(chunk-[^"]+\.js)"/g)].map(([, name]) => name);
+    // A chunk is imported for its bindings (`… from "./chunk-…"`) or for its effect alone (`import "./chunk-…"`).
+    const chunks = (text: string) =>
+      [...text.matchAll(/(?:from|import) "\.\/(chunk-[^"]+\.js)"/g)].map(([, name]) => name);
     assert.ok(
       chunks(schema).some((chunk) => chunks(multiplayer).includes(chunk)),
       "the schema entry imports a chunk the multiplayer entry also imports",
     );
+    // The server-authoritative client is its own entry: a game that never imports it never loads it.
+    const authority = await readFile(path.join(vendor, GENEX_MULTIPLAYER_VENDOR.Authority), "utf8");
+    assert.match(authority, /export\s*\{[^}]*\bconnectAuthority\b/, "the authority entry exports connectAuthority");
+    assert.ok(!/from "(?:three|@genex-ai\/[^"]+)"/.test(authority), "it imports no bare package the page must map");
   });
 
   it("is the version package.json pins, so the agent, Genex and the game agree", async () => {
@@ -85,6 +95,7 @@ describe("Studio's vendored Genex multiplayer SDK", () => {
     assert.deepEqual(Object.keys(studioSdkImports("@genex-ai/multiplayer")), [
       "@genex-ai/multiplayer",
       "@genex-ai/multiplayer/schema",
+      "@genex-ai/multiplayer/authority",
       "@genex-ai/embed-sdk",
     ]);
     assert.deepEqual(studioSdkImports("@genex-ai/embed-sdk"), {
@@ -99,6 +110,7 @@ describe("Studio's vendored Genex multiplayer SDK", () => {
       ["the game's own file", { "@genex-ai/multiplayer": "/src/multiplayer.js" }],
       ["a path that only starts like Studio's", { "@genex-ai/embed-sdk": "/vendor/genex/embed-sdk/index.js?x" }],
       ["multiplayer without its schema", { "@genex-ai/multiplayer": "/vendor/genex/multiplayer/index.js" }],
+      ["the authority client alone", { "@genex-ai/multiplayer/authority": "/vendor/genex/multiplayer/authority.js" }],
       ["an inherited key", Object.create({ "@genex-ai/embed-sdk": "/vendor/genex/embed-sdk/index.js" })],
     ];
     for (const [name, imports] of hostile) assert.deepEqual(studioSdkPackages(imports), [], name);
@@ -120,6 +132,25 @@ describe("Studio's vendored Genex multiplayer SDK", () => {
       "adds to identity",
     );
     assert.equal(added.match(/\/vendor\/genex\/connect\.js/g)?.length, 1);
+  });
+
+  it("adds the server-authoritative client to a page mapped before Studio served it, which stays turned on", () => {
+    const before = {
+      "@genex-ai/embed-sdk": "/vendor/genex/embed-sdk/index.js",
+      "@genex-ai/multiplayer": "/vendor/genex/multiplayer/index.js",
+      "@genex-ai/multiplayer/schema": "/vendor/genex/multiplayer/schema.js",
+    };
+    const page = TEMPLATE_PAGE.replace('"three": "/vendor/three.module.js"', JSON.stringify(before).slice(1, -1));
+    assert.deepEqual(pageStudioSdkPackages(page), ["@genex-ai/embed-sdk", "@genex-ai/multiplayer"], "still on");
+    const mapped = withGenexSdkImport(page, "@genex-ai/multiplayer") ?? "";
+    assert.match(mapped, /"@genex-ai\/multiplayer\/authority": "\/vendor\/genex\/multiplayer\/authority\.js"/);
+    assert.deepEqual(pageStudioSdkPackages(mapped), ["@genex-ai/embed-sdk", "@genex-ai/multiplayer"]);
+    const own = { ...before, "@genex-ai/multiplayer/authority": "/src/my-authority.js" };
+    const kept = TEMPLATE_PAGE.replace('"three": "/vendor/three.module.js"', JSON.stringify(own).slice(1, -1));
+    assert.equal(
+      withGenexSdkImport(kept, "@genex-ai/multiplayer"),
+      withConnectScript(kept, "/vendor/genex/connect.js"),
+    );
   });
 
   it("names multiplayer, never the SDK Studio connects with, in a template game's manifest", () => {

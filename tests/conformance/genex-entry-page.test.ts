@@ -99,6 +99,7 @@ describe("the connect script in a published page", () => {
         "export const waitForPlayer = async () => ({ user: { id: 'p1' }, guest: true });",
         "export const getColyseusAuth = () => ({ embedToken: 'token-1' });",
         "export const getColyseusUrls = () => ['wss://relay-asia.genex.games'];",
+        "export const getAuthorityUrls = () => ['wss://authority-asia.genex.games'];",
       ].join("\n"),
     );
     const connection = {
@@ -127,9 +128,15 @@ describe("the connect script in a published page", () => {
         "the host's environment stays, with the game's project beside it",
       );
       // A Unity WebGL build's Genex package reads the same player through `window.genexEmbed`.
-      const embed = page.window.genexEmbed as { waitForPlayer: () => Promise<unknown>; getColyseusAuth: () => unknown };
+      const embed = page.window.genexEmbed as {
+        waitForPlayer: () => Promise<unknown>;
+        getColyseusAuth: () => unknown;
+        getAuthorityUrls: () => unknown;
+      };
       assert.deepEqual(await embed.waitForPlayer(), { user: { id: "p1" }, guest: true });
       assert.deepEqual(embed.getColyseusAuth(), { embedToken: "token-1" });
+      // Its server-authoritative rooms are joined at the page's authority servers (GenexGame.AuthorityUrls).
+      assert.deepEqual(embed.getAuthorityUrls(), ["wss://authority-asia.genex.games"]);
     } finally {
       delete page.window;
     }
@@ -140,7 +147,7 @@ describe("the connect script in a published page", () => {
     await mkdir(path.join(dir, "embed-sdk"));
     await writeFile(
       path.join(dir, "embed-sdk/index.js"),
-      "export const initEmbed = (o) => { globalThis.__inited = o.slug; };\nexport const waitForPlayer = () => {};\nexport const getColyseusAuth = () => {};\nexport const getColyseusUrls = () => [];\n",
+      "export const initEmbed = (o) => { globalThis.__inited = o.slug; };\nexport const waitForPlayer = () => {};\nexport const getColyseusAuth = () => {};\nexport const getColyseusUrls = () => [];\nexport const getAuthorityUrls = () => [];\n",
     );
     const connection = {
       slug: "rain-circuit",

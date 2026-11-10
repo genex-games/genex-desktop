@@ -99,6 +99,7 @@ const HOST_TOOL_WORDS = {
   [PluginHostTool.GenexCli]: () => t("runs the Genex CLI"),
   [PluginHostTool.GenexCliPaid]: () => t("runs the Genex CLI"),
   [PluginHostTool.GenexPackage]: () => t("installs Genex packages in the game"),
+  [PluginHostTool.GenexRoom]: () => t("runs the game's multiplayer room on this computer"),
 } as const satisfies Record<PluginHostTool, () => string>;
 
 const bulleted = (heading: string, lines: string[]): string =>

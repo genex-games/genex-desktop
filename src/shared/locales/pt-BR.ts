@@ -519,6 +519,7 @@ export default {
   Better: "Melhoria",
   Beta: "Beta",
   "Between builds": "Entre builds",
+  "Bigger than the graphics card, so part of it runs on the CPU": "Maior que a placa de vídeo, então parte roda na CPU",
   "Billed by each provider you use": "Cobrado por cada provedor que você usar",
   "Billed by each provider you use.": "Cobrado por cada provedor que você usar.",
   "Billed by each provider you use. Free models stay in the model menu too.":
@@ -1220,6 +1221,7 @@ export default {
   "Delete every row shared from this computer?": "Excluir todas as linhas compartilhadas deste computador?",
   "Delete game": "Excluir jogo",
   "Delete it from this Mac? You can download it again.": "Excluir deste Mac? Você pode baixá-lo de novo.",
+  "Delete it from this PC? You can download it again.": "Excluir deste PC? Você pode baixá-lo de novo.",
   "Delete what I shared": "Excluir o que compartilhei",
   "Delete your comment": "Excluir seu comentário",
   "Delete {model}": "Excluir {model}",
@@ -1250,6 +1252,7 @@ export default {
   Details: "Detalhes",
   "Details for MCP {name}": "Detalhes do MCP {name}",
   "Detecting this Mac…": "Detectando este Mac…",
+  "Detecting this PC…": "Detectando este PC…",
   Developer: "Desenvolvedor",
   "Development build": "Versão de desenvolvimento",
   "Development builds and builds packaged under another name update from source.":
@@ -2341,6 +2344,7 @@ export default {
   "Needs a key": "Precisa de chave",
   "Needs a {ram} GB Mac": "Precisa de um Mac com {ram} GB",
   "Needs setup": "Precisa configurar",
+  "Needs ~{need} GB to run": "Precisa de ~{need} GB para rodar",
   "Neon rings": "Anéis de neon",
   "Never asks, stays sandboxed": "Nunca pergunta, fica no sandbox",
   "Never asks, works anywhere": "Nunca pergunta, funciona em qualquer lugar",
@@ -2421,6 +2425,8 @@ export default {
   "No published games yet.": "Nenhum jogo publicado ainda.",
   "No recommended model fits this Mac. More models lists what bigger Macs can run.":
     "Nenhum modelo recomendado cabe neste Mac. Em Mais modelos você vê o que Macs maiores conseguem rodar.",
+  "No recommended model fits this PC. More models lists what each one needs.":
+    "Nenhum modelo recomendado cabe neste PC. Em Mais modelos você vê do que cada um precisa.",
   "No reviewer compared it": "Nenhum revisor comparou",
   "No reviewer saw it; the lead merged the part's work into your build.":
     "Nenhum revisor viu; o agente principal adicionou o trabalho da parte ao seu build.",
@@ -4971,6 +4977,15 @@ export default {
   "in {game} and {count} more": "em {game} e mais {count}",
   "install and run the apps it names, such as Blender": "instalar e executar os apps que ele indica, como o Blender",
   "installs Genex packages in the game": "instala pacotes do Genex no jogo",
+  "The room module imports {file}, in a folder the publish copy keeps for itself; move it to src/":
+    "O módulo de sala importa {file}, de uma pasta que a cópia de publicação reserva para si; mova o arquivo para src/",
+  "The room module imports {file}, outside the game's folders; keep shared code in a folder like src/":
+    "O módulo de sala importa {file}, fora das pastas do jogo; mantenha o código compartilhado em uma pasta como src/",
+  "The room module reaches {file} through a link; publish needs the real file":
+    "O módulo de sala chega a {file} por um link; a publicação precisa do arquivo real",
+  "The room module's server/ folder and imports are too large to publish as a room module":
+    "A pasta server/ do módulo de sala e suas importações são grandes demais para publicar como módulo de sala",
+  "runs the game's multiplayer room on this computer": "executa a sala multijogador do jogo neste computador",
   integrations: "integrações",
   "it finished": "terminou",
   "it landed": "chegou ao jogo",
@@ -5142,6 +5157,7 @@ export default {
   "since {when}": "desde {when}",
   sixth: "sexta",
   slit: "em fenda",
+  slower: "mais lento",
   squint: "semicerrados",
   started: "iniciado",
   "started a new game": "criou um jogo novo",
@@ -5528,6 +5544,8 @@ export default {
   "{count} selected": "{count, plural, one {# selecionado} other {# selecionados}}",
   "{cpu} · {memory} GB memory · about {usable} GB available for models":
     "{cpu} · {memory} GB de memória · cerca de {usable} GB disponíveis para modelos",
+  "{cpu} · {memory} GB memory · {gpu} ({gpuMemory} GB) · about {usable} GB available for models":
+    "{cpu} · {memory} GB de memória · {gpu} ({gpuMemory} GB) · cerca de {usable} GB disponíveis para modelos",
   "{days} days": "{days} dias",
   "{days}d": "{days} d",
   "{day} {value}": "{day}: {value}",

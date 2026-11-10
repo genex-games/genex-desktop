@@ -104,8 +104,9 @@ export interface FolderOwnEdit {
  * What became of one edit: done (and how long Windows took, for an edit that passed entries
  * down, and `deferred` when it left that walk for later, {@link OwnWalk}), or the reason it was
  * refused; `timedOut` when the batch ran out of time before it. A deny Windows refused with
- * ERROR_ACCESS_DENIED on a path the sandbox user can open nothing at or under anyway is done
- * without it, and `refused` carries Windows' words.
+ * ERROR_ACCESS_DENIED on a path the sandbox user can open nothing at or under anyway, or a read
+ * grant refused so where it may already read everything the grant would open (Program Files), is
+ * done without it, and `refused` carries Windows' words.
  */
 export type FolderAceOutcome =
   | { ok: true; ms?: number; deferred?: true; refused?: string }
@@ -203,6 +204,13 @@ $DELETE_CHILD = 0x40
 $ACCESS_DENIED = 5
 # ObjectInherit | ContainerInherit: an entry the path passes down.
 $INHERITS = 3
+$OBJECT_INHERIT = 1
+$CONTAINER_INHERIT = 2
+$NO_PROPAGATE = 4
+$INHERIT_ONLY = 8
+# What an entry's generic rights come to on a file or folder: GENERIC_READ (0x80000000, the sign
+# bit of the Int32 mask), GENERIC_EXECUTE and GENERIC_ALL as FILE_GENERIC_READ, _EXECUTE and FILE_ALL_ACCESS.
+$GENERIC = @(@([int]::MinValue, 0x120089), @(0x20000000, 0x1200A0), @(0x10000000, 0x1F01FF))
 $PASSED_DOWN = [Security.AccessControl.AceFlags]'ObjectInherit, ContainerInherit'
 $SE_FILE_OBJECT = 1
 # DACL_SECURITY_INFORMATION with PROTECTED_DACL_SECURITY_INFORMATION (inheritance stays cut off),
@@ -319,15 +327,62 @@ function ClosedAt($dir) {
   if ($script:closedBelow) { return $true }
   try { return ClosedBelow $dir } catch { return $false }
 }
-# Whether a refused edit was not needed: Windows refused a deny with ERROR_ACCESS_DENIED (the
-# person may not change that path's entries, as security software or another owner can leave a
-# browser profile), and the sandbox user can open nothing at or under the path
-# anyway (ClosedAt). The deny stays wanted, so every later start tries it again and checks again.
+# An entry's mask with its generic rights mapped to the file rights they come to.
+function Mapped($mask) {
+  $mapped = $mask
+  foreach ($pair in $GENERIC) { if (($mask -band $pair[0]) -ne 0) { $mapped = $mapped -bor $pair[1] } }
+  return $mapped
+}
+# Whether the sandbox user may already read and run everything a read grant on the path would
+# open: allows for anyone it is (Everyone, Authenticated Users, BUILTIN\\Users, the edit's group)
+# give read and execute on the path itself and pass them down to every file and folder under it,
+# and the path holds no deny but for SYSTEM, the Administrators or the person running Genex
+# (Unreached). A child that inherits nothing would get no grant from the path either. An entry of a
+# kind not judged here (a conditional or an object entry) opens nothing; one that is not even a
+# qualified entry answers no. Program Files is so: BUILTIN\\Users read and run what is installed there.
+function OpenAt($dir, $sid) {
+  $needed = 0
+  if (-not $api::GetFileSecurityW($dir, $OWNER_AND_DACL, $SCAN_BUFFER, $SCAN_BUFFER.Length, [ref]$needed)) { return $false }
+  $acl = (New-Object Security.AccessControl.RawSecurityDescriptor($SCAN_BUFFER, 0)).DiscretionaryAcl
+  if ($null -eq $acl) { return $false }
+  $reaches = $REACHES + @(New-Object Security.Principal.SecurityIdentifier ([string]$sid))
+  $self = 0; $files = 0; $folders = 0
+  foreach ($ace in $acl) {
+    if ($ace -isnot [Security.AccessControl.QualifiedAce]) { return $false }
+    if ($ace.AceQualifier -ne [Security.AccessControl.AceQualifier]::AccessAllowed) {
+      if (Unreached $ace.SecurityIdentifier) { continue }
+      return $false
+    }
+    if ($ace.AceType -ne [Security.AccessControl.AceType]::AccessAllowed) { continue }
+    if ($reaches -notcontains $ace.SecurityIdentifier) { continue }
+    $mask = Mapped $ace.AccessMask
+    $flags = [int]$ace.AceFlags
+    if (($flags -band $INHERIT_ONLY) -eq 0) { $self = $self -bor $mask }
+    if (($flags -band $NO_PROPAGATE) -ne 0) { continue }
+    if (($flags -band $OBJECT_INHERIT) -ne 0) { $files = $files -bor $mask }
+    if (($flags -band $CONTAINER_INHERIT) -ne 0) { $folders = $folders -bor $mask }
+  }
+  $read = $GRANTED.read
+  return (($self -band $read) -eq $read) -and (($files -band $read) -eq $read) -and (($folders -band $read) -eq $read)
+}
+# Whether a refused edit was not needed: Windows refused it with ERROR_ACCESS_DENIED (the person
+# may not change that path's entries, as security software or another owner can leave a browser
+# profile, and as Program Files is for every standard user), and either it denies where the
+# sandbox user can open nothing at or under the path anyway (ClosedAt), or it grants reading where
+# the sandbox user may already read everything the grant would open (OpenAt). The edit stays
+# wanted, so every later start tries it again and checks again.
 function Unneeded($edit, $refusal) {
-  $deny = ($edit.op -eq '${FolderAceOp.Own}') -and $edit.deny -and -not $edit.grant
   $accessDenied = ($refusal -is [ComponentModel.Win32Exception]) -and $refusal.NativeErrorCode -eq $ACCESS_DENIED
-  if (-not ($deny -and $accessDenied)) { return $false }
-  try { return ClosedAt $edit.dir } catch { return $false }
+  if (-not ($accessDenied -and $edit.op -eq '${FolderAceOp.Own}')) { return $false }
+  $deny = $edit.deny -and -not $edit.grant
+  $read = ($edit.grant -eq '${GrantAccess.Read}') -and -not $edit.deny -and -not $edit.guard
+  try {
+    if ($deny) { return ClosedAt $edit.dir }
+    if ($read) { return OpenAt $edit.dir $edit.sid }
+  } catch {
+    return $false
+  }
+  return $false
 }
 # Whether the walk under the path can wait: the path passes no allow down to anyone the sandbox
 # user may be, before or after the edit, and nothing under it is open to them either
@@ -413,6 +468,8 @@ $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $held = @($identity.User) + @($identity.Groups)
 # SYSTEM, the Administrators and the person running Genex: no allow of theirs reaches the sandbox user (Unreached).
 $UNREACHED = @((New-Object Security.Principal.SecurityIdentifier 'S-1-5-18'), (New-Object Security.Principal.SecurityIdentifier 'S-1-5-32-544'), $identity.User)
+# Everyone, Authenticated Users and BUILTIN\\Users: an allow for them reaches the sandbox user (OpenAt).
+$REACHES = @('S-1-1-0', 'S-1-5-11', 'S-1-5-32-545' | ForEach-Object { New-Object Security.Principal.SecurityIdentifier $_ })
 foreach ($edit in @($request)) {
   if ($edit.op -eq '${FolderAceOp.Own}' -and ($held -contains (New-Object Security.Principal.SecurityIdentifier ([string]$edit.sid)))) {
     Answer '{"refused":"the running user holds this SID"}'

@@ -10,6 +10,7 @@ import { windowsBaseEnv } from "../../substrate/child-env.ts";
 import { envPath } from "../../substrate/toolchain.ts";
 import { SECOND_MS } from "../../shared/duration.ts";
 import { PLUGIN_SEED_ENV } from "../../substrate/plugins/process.ts";
+import { AUTHORITY_DEV_PACKAGE } from "../../shared/genex.ts";
 
 const require = createRequire(import.meta.url);
 
@@ -89,12 +90,24 @@ export function genexCliPath(seed = process.env[PLUGIN_SEED_ENV]): string {
 const CLI_PACKAGE_JSON = "@genex-ai/cli-demo/package.json";
 
 /** Where `require` finds the pinned CLI's package.json, if it does. */
-function resolveCliPackage(from: NodeJS.Require): string | undefined {
+function resolveCliPackage(from: NodeJS.Require, manifest = CLI_PACKAGE_JSON): string | undefined {
   try {
-    return from.resolve(CLI_PACKAGE_JSON);
+    return from.resolve(manifest);
   } catch {
     return undefined;
   }
+}
+
+/**
+ * The folder of Studio's pinned `@genex-ai/authority-dev`, which ships in this plugin's payload
+ * beside the CLI (outside the asar archive when packaged); null when this build carries none.
+ */
+export function authorityDevDir(seed = process.env[PLUGIN_SEED_ENV]): string | null {
+  const manifest = `${AUTHORITY_DEV_PACKAGE}/package.json`;
+  const pkg =
+    (seed ? resolveCliPackage(createRequire(path.join(seed, "package.json")), manifest) : undefined) ??
+    resolveCliPackage(require, manifest);
+  return pkg ? path.dirname(pkg).replace(/app\.asar([\\/])/, "app.asar.unpacked$1") : null;
 }
 
 /** One CLI run. `parse` asks for `--json` and returns the parsed answer; otherwise `{ out }`. */

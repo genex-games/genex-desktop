@@ -240,15 +240,18 @@ export function useRunStills(model: ReturnType<typeof useBuildsModel>) {
   const borrowed = (result.state === StepState.Judging && !finalSrc) || checked.borrowed;
   // Only the final capture is taken as the starting one was: any other picture is no pair for it.
   const pairsWithBase = finalSrc !== null;
+  // The build's own picture, once shown: its final capture, never a check's or a try's.
+  const finalPath = finalSrc ? finalStillPath : null;
   return useMemo(
     () => ({
       baseSrc,
       resultSrc,
       resultPath,
+      finalPath,
       result,
       borrowed,
       pairsWithBase,
     }),
-    [baseSrc, resultSrc, resultPath, result, borrowed, pairsWithBase],
+    [baseSrc, resultSrc, resultPath, finalPath, result, borrowed, pairsWithBase],
   );
 }

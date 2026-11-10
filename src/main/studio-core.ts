@@ -176,6 +176,7 @@ import {
   genexHostTool,
   standCredentialFile,
 } from "./core/genex-cli.ts";
+import { GenexRoomService } from "./core/genex-room.ts";
 import { isLocalDraft, type ListingRecord } from "../shared/item-draft.ts";
 import { type CreatorItem, type Selling, type StoreRefused, StoreRefusal } from "../shared/store-items.ts";
 import { ITEM_APPROVALS_FILE, ItemApprovals } from "./core/item-approvals.ts";
@@ -280,6 +281,10 @@ const HARNESS_CRASH_LOOP = { count: 3, windowMs: 5 * MINUTE_MS } as const;
 const GAMES_ROOT_FILE = "games-root.json";
 /** The folder in the sandbox's scratch where each engine plugin's sandbox job keeps its own. */
 const PLUGIN_JOBS_FOLDER = "plugin-jobs";
+/** The folder in the sandbox's scratch where a local room's validation keeps its own. */
+const GENEX_ROOM_FOLDER = "genex-room";
+/** The room-module toolchain in the Genex plugin's build, beside its pinned CLI. */
+const AUTHORITY_DEV_IN_RESOURCES = "plugins/genex/node_modules/@genex-ai/authority-dev";
 /** The Genex engine's Claude Code config home under the engine homes; `genex` is the Genex plugin's. */
 const GENEX_BUILD_HOME = "genex-build";
 /** The folder in the sandbox's scratch where Node keeps the harness's compiled modules between boots. */
@@ -460,6 +465,8 @@ export interface StudioCoreOptions {
   previewPoolMax?: number;
   /** `process.execPath`; in Electron this needs `runAsNode`. */
   execPath?: string;
+  /** The room-module toolchain's folder: the Genex plugin's build in resources unless a test names one. */
+  authorityDev?: string;
   runAsNode?: boolean;
   /** The app's version, stamped into the harness seed manifest (substrate/seed-upgrade.ts `writer`). */
   appVersion?: string;
@@ -610,6 +617,8 @@ export class StudioCore {
   readonly #x: CoreInternals;
   readonly #connections: ConnectionService;
   readonly #previews: PreviewService;
+  /** The games' local rooms; set with the plugin programs. */
+  #genexRoom: GenexRoomService | null = null;
   readonly #delegation: DelegationService;
   readonly #recovery: RecoveryService;
   /** Resumes a paused build on its own once its limit resets or its loop runs again. */
@@ -1190,7 +1199,8 @@ export class StudioCore {
    * package on Windows), which keeps its scratch in the sandbox's own scratch folder.
    */
   #wirePluginPrograms(): void {
-    const genex = { cli: this.#genexCli(), packages: this.#genexPackages() };
+    this.#genexRoom = this.#genexRooms();
+    const genex = { cli: this.#genexCli(), packages: this.#genexPackages(), room: this.#genexRoom };
     this.plugins.hostTool = genexHostTool(genex);
     this.plugins.hostToolConsent = genexHostPreflight(genex.packages, genex.cli);
     this.plugins.sandboxJobs = new PluginSandboxJobs({
@@ -1290,13 +1300,13 @@ export class StudioCore {
     // A Finder-launched app has a bare PATH: Genex's publish found no git-lfs from Homebrew there.
     this.plugins.toolPath = async () => (await toolchain()).path;
     this.#wirePluginPrograms();
-    this.pluginServices.exportStage = async (binding, target, pluginId) => {
+    this.pluginServices.exportStage = async (binding, target, pluginId, call) => {
       // A panel's or toolbar's own publish reaches only here: refused as the dialog and agent tool refuse it.
       await assertPublishable(this, binding.project);
       const result = await this.exportPublicCopy(binding.project, target);
       // The person saw and approved exactly these files in Studio's Publish dialog moments ago.
       if (!this.#exportApprovals.take(pluginId, binding.project, result))
-        await this.#pluginTools.reviewExport(pluginId, binding, result);
+        await this.#pluginTools.reviewExport(pluginId, binding, result, call);
       return result;
     };
     await this.#initPlugins();
@@ -1329,6 +1339,22 @@ export class StudioCore {
    * agent can write, never in a game, which it may not write either. Studio itself copies a store
    * item's files in from the bound game and moves a shared item's folder into it.
    */
+  /** A server-authoritative game's room on this Mac (`genex__room`), its preview joining it. */
+  #genexRooms(): GenexRoomService {
+    return new GenexRoomService({
+      run: (request) => this.sandbox.run(request),
+      spawn: (request) => this.sandbox.spawnLongLived(request),
+      toolDir: this.options.authorityDev ?? path.join(this.options.paths.resources, AUTHORITY_DEV_IN_RESOURCES),
+      scratch: path.join(this.layout.scratch, GENEX_ROOM_FOLDER),
+      boundGame: (binding) =>
+        boundGameFolder(binding, { gameDir: (project) => this.games.dirFor(project), scratch: this.layout.scratch }),
+      ...(this.options.execPath ? { execPath: this.options.execPath } : {}),
+      onRoom: (project, url) => this.#previews.joinLocalRoom(project, url),
+      loopbackPorts: () => this.sandbox.loopbackPorts(),
+      ownLoopback: () => this.sandbox.ownLoopback(),
+    });
+  }
+
   #genexCli(): GenexCliService {
     const stand = this.options.genexStand;
     return new GenexCliService({
@@ -1822,6 +1848,7 @@ export class StudioCore {
     this.plugins?.cancel();
     // Engine plugins' sandbox jobs are the studio's own: none outlives it.
     await this.plugins?.sandboxJobs?.stopAll().catch(() => {});
+    await this.#genexRoom?.stopAll().catch(() => {});
     this.#consent.cancel({}, "stop");
     this.#permissions.cancel({}, ToolPermissionBy.Stop);
     if (this.#activityWarmup) clearTimeout(this.#activityWarmup);

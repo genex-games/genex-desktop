@@ -19,6 +19,7 @@ import {
   LINK_FILE,
   SETTINGS_FILE,
 } from "../../src/plugins/unity/multiplayer.ts";
+import { readSkillFile } from "../../src/substrate/plugins/manifest.ts";
 import { backendOn, MULTIPLAYER_PACKAGE_SOURCE, manifestOf, realTmp, withProject } from "../helpers/unity-backend.ts";
 
 const UNITY_6 = "6000.0.30f1";
@@ -160,5 +161,43 @@ describe("Genex multiplayer in a Unity game", () => {
       await assert.rejects(game.call({ slug: "tank-arena" }), /link/, at);
       assert.deepEqual(await readdir(outside), [], `${at}: nothing written outside the project`);
     }
+  });
+});
+
+describe("a server-authoritative Unity game", () => {
+  it("keeps a server-authoritative game's room block when it writes the matchmaking", async () => {
+    const game = await unityGame();
+    const authority = { module: "server/room.ts", tickHz: 30, maxPlayers: 8 };
+    await writeFile(path.join(game.game, "genex.json"), JSON.stringify({ authority }));
+    const matchmaking = { preset: "open", config: { minPlayers: 2, maxPlayers: 8 } };
+    await game.call({ matchmaking });
+    assert.deepEqual(JSON.parse(await readFile(path.join(game.game, "genex.json"), "utf8")), {
+      authority,
+      matchmaking,
+    });
+  });
+});
+
+describe("the unity-multiplayer skill the builder reads", () => {
+  /** The skill as the host hands it to the agent: the file plugin.json declares for it, read through the host. */
+  async function skill(): Promise<string> {
+    const plugin = path.resolve("src/plugins/unity");
+    const manifest = JSON.parse(await readFile(path.join(plugin, "plugin.json"), "utf8"));
+    const declared = manifest.skills.find((entry: { name: string }) => entry.name === "unity-multiplayer");
+    return (await readSkillFile(plugin, declared.file)).toString("utf8");
+  }
+
+  it("picks server rooms for competitive play and names their whole path: the room, its block, the client, the local room", async () => {
+    const text = await skill();
+    for (const step of [
+      "server/room.ts", // the room module
+      '"authority"', // its block in genex.json
+      "GenexAuthority.Connect", // the Unity client
+      "GenexGame.LocalRoomUrl", // joining Studio's local room
+      'genex__room {"action":"validate"}',
+      'genex__room {"action":"start"',
+      "genex-authoritative-multiplayer", // the module API it is written against
+    ])
+      assert.ok(text.includes(step), step);
   });
 });

@@ -160,7 +160,7 @@ export interface PluginTool {
  * A program Studio itself runs for a manifest tool instead of your backend. Reserved for the
  * bundled Genex plugin on API 3; any other plugin that names one is refused.
  */
-export type PluginHostTool = "genex-cli" | "genex-cli-paid" | "genex-package";
+export type PluginHostTool = "genex-cli" | "genex-cli-paid" | "genex-package" | "genex-room";
 
 /**
  * Who may call a tool (API 3): `agents`, the default, or `harness`: only Genex's own harness loop
@@ -611,6 +611,8 @@ export interface PluginHostCall {
   (method: "project.write", args: { path: string; text: string }): Promise<{ file: string }>;
   (method: "assets.deliver", args: { output: string; jobId: string }): Promise<string[]>;
   (method: "export.stage"): Promise<PluginExportResult>;
+  /** The bound game's room module alone, staged beside where its public copy would go, with no web export. */
+  (method: "export.room"): Promise<Pick<PluginExportResult, "genex">>;
   (method: "jobs.read", args: { id: string }): Promise<unknown>;
   (method: "jobs.write", args: { id: string; value: unknown }): Promise<true>;
   (method: "events.emit", args: PluginEvent): Promise<true>;

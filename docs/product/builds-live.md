@@ -39,9 +39,9 @@ per point fold into “+N workers”. Compares show one frame (consecutive point
 versions) only where pixels differ, else say nothing visibly changed.
 
 Agents test hidden (Godot too), never Live. A finished worker, its merge and Live's revision
-differ; chat shows a delivery's capture, failures too. A web game's finish first loads its page
-once (`?genex-shot=1` a game may read); unless it loads, throws nothing uncaught and is not blank,
-the Loop goes on.
+differ; chat shows a delivery's capture, failures too. A web game's finish loads its page once
+(`?genex-shot=1`); unless clean (loads, no uncaught error, not blank), the Loop goes on. That look
+pictures Your build and pictureless save points.
 
 ## Continuation and interruption
 
@@ -49,7 +49,7 @@ After a chat-led build, its session takes follow-ups: edits, resuming a paused r
 new Loop for more work than a reply holds. **Stop** interrupts at once, keeping finished
 work: a stopped Loop shows one Stopped line with Resume. Resume refuses an earlier Genex's
 paused web Loop; its card names the git ref keeping the work, for the chat to bring in. Limit, outage and crash pauses resume twice unless stopped (Settings → Harness); sign-in
-pauses wait. A crash or restart settles abandoned activity from saved state.
+pauses wait. A crash or restart settles leftover activity.
 
 ## Where to work
 

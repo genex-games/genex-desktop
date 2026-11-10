@@ -14,12 +14,20 @@
  * Ollama reported `gpu memory available 24.5 GiB` — 76.5% of the machine — and an 18.2 GB model
  * loaded with all 66 layers on the GPU at 18.0 GiB peak, with 22.5 GiB still free. At ⅔ the studio
  * would have told the user that its own verified default model did not fit.
+ *
+ * A PC's graphics cards (`gpu-memory.ts`) add their own memory, less 1 GB each for the desktop and
+ * the driver. A model within that runs entirely on the card; a larger one that still fits the whole
+ * budget runs split between the card and RAM, slower, as Ollama loads it. A 24 GB card with 32 GB
+ * of RAM holds 23 + 21.3 GB: before the card was counted, a 21.7 GB model did not "fit" it. Best
+ * fit is the first ranked model that runs on the card, ahead of any that runs split.
  */
 import { execFile } from "node:child_process";
 import os from "node:os";
 import { promisify } from "node:util";
 import catalog from "./models-catalog.json" with { type: "json" };
 import { SECOND_MS } from "../shared/duration.ts";
+import { StudioPlatform } from "../shared/boot.ts";
+import { detectGpus, type GpuInfo } from "./gpu-memory.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -28,6 +36,8 @@ const BYTES_PER_MB = 1024 ** 2;
 /** The share of RAM the model may take: 0.72 on Apple Silicon (see the header), ⅔ elsewhere. */
 const APPLE_SILICON_MODEL_SHARE = 0.72;
 const OTHER_MODEL_SHARE = 2 / 3;
+/** What each graphics card keeps for the desktop and its driver, out of a model's reach. */
+const GPU_RESERVE_GB = 1;
 /** Runtime overhead added to weights and KV cache (the plan's 1–2 GB). */
 const MODEL_OVERHEAD_GB = 1.5;
 /** KV cache: this share of the weights, clamped to the plan's 0.5–3 GB. */
@@ -55,8 +65,12 @@ export interface HardwareInfo {
   cpu: string;
   ramBytes: number;
   ramGb: number;
-  /** Rough budget for model weights + KV cache. */
+  /** Rough budget for model weights + KV cache: RAM's share plus `gpuModelGb`. */
   usableModelGb: number;
+  /** A PC's graphics cards a model can run on, largest first; empty on a Mac or without one. */
+  gpus: GpuInfo[];
+  /** The part of `usableModelGb` on those cards: a model within it runs entirely there. */
+  gpuModelGb: number;
   platform: string;
   arch: string;
   appleSilicon: boolean;
@@ -95,13 +109,59 @@ export interface CatalogChoice extends Omit<CatalogModel, "notes" | "mlx" | "min
   fits: boolean;
   /** Weights + context + overhead, the figure compared with the machine's model budget. */
   needGb: number;
-  /** The smallest common Mac memory size whose budget holds this model; null when none does. */
+  /** On a Mac, the smallest common Mac memory size whose budget holds this model; null when none does, and on a PC. */
   needsRamGb: number | null;
+  /** It fits only split between a PC's graphics card and RAM: it runs, slower. */
+  split: boolean;
   reason: string;
 }
 
-export async function detectHardware(): Promise<HardwareInfo> {
-  const ramBytes = os.totalmem();
+/**
+ * The graphics cards, kept once found: a card does not come or go while the app runs. No card is
+ * asked again next time, so a slow first answer (a cold `nvidia-smi`) is not kept for the session.
+ */
+let foundGpus: GpuInfo[] | null = null;
+async function sessionGpus(): Promise<GpuInfo[]> {
+  if (foundGpus) return foundGpus;
+  const gpus = await detectGpus();
+  if (gpus.length) foundGpus = gpus;
+  return gpus;
+}
+
+/** The model budget on a PC's graphics cards: each card's memory less what it keeps for itself. */
+function gpuBudget(gpus: readonly GpuInfo[]): number {
+  return gpus.reduce((sum, gpu) => sum + Math.max(0, gpu.memoryGb - GPU_RESERVE_GB), 0);
+}
+
+/** What detection finds on a machine, before its model budget is worked out. */
+export interface DetectedMachine {
+  cpu: string;
+  ramBytes: number;
+  platform: string;
+  arch: string;
+  gpus: GpuInfo[];
+}
+
+/** A machine's hardware and the model budget it makes: RAM's share plus its graphics cards'. */
+export function hardwareOf({ cpu, ramBytes, platform, arch, gpus }: DetectedMachine): HardwareInfo {
+  const ramGb = ramBytes / BYTES_PER_GB;
+  const appleSilicon = platform === StudioPlatform.Mac && arch === "arm64";
+  const gpuModelGb = oneDecimal(gpuBudget(gpus));
+  return {
+    cpu,
+    ramBytes,
+    ramGb: oneDecimal(ramGb),
+    usableModelGb: oneDecimal(ramGb * budgetShare(appleSilicon) + gpuModelGb),
+    gpus,
+    gpuModelGb,
+    platform,
+    arch,
+    appleSilicon,
+  };
+}
+
+/** This machine: its processor, RAM and graphics cards, and the model budget they make. */
+export async function detectHardware(gpusOf: () => Promise<GpuInfo[]> = sessionGpus): Promise<HardwareInfo> {
   let cpu = os.cpus()[0]?.model ?? "unknown";
   if (process.platform === "darwin") {
     try {
@@ -111,17 +171,8 @@ export async function detectHardware(): Promise<HardwareInfo> {
       /* keep the os.cpus() value */
     }
   }
-  const ramGb = ramBytes / BYTES_PER_GB;
-  const appleSilicon = process.platform === "darwin" && process.arch === "arm64";
-  return {
-    cpu,
-    ramBytes,
-    ramGb: oneDecimal(ramGb),
-    usableModelGb: oneDecimal(ramGb * budgetShare(appleSilicon)),
-    platform: process.platform,
-    arch: process.arch,
-    appleSilicon,
-  };
+  const gpus = await gpusOf().catch(() => [] as GpuInfo[]);
+  return hardwareOf({ cpu, ramBytes: os.totalmem(), platform: process.platform, arch: process.arch, gpus });
 }
 
 export function tiers(): CatalogTier[] {
@@ -130,6 +181,15 @@ export function tiers(): CatalogTier[] {
 
 export function catalogModels(): Record<string, CatalogModel> {
   return catalog.models as unknown as Record<string, CatalogModel>;
+}
+
+/**
+ * The RAM a machine's tier is chosen by: its own, or a PC's graphics memory taken as the RAM that
+ * would give the same budget, whichever is larger. A 24 GB card with 16 GB of RAM ranks the 32 GB
+ * tier's models, which run on the card; a small card leaves a large-RAM PC's tier as it was.
+ */
+function tierRamGb(hw: HardwareInfo): number {
+  return Math.max(hw.ramGb, hw.gpuModelGb / budgetShare(hw.appleSilicon));
 }
 
 /** The tier whose RAM requirement this machine meets (highest match). */
@@ -163,21 +223,36 @@ function neededGb(sizeGb: number): number {
   return sizeGb + kvCacheGb(sizeGb) + MODEL_OVERHEAD_GB;
 }
 
+/** The smallest common Mac memory size whose budget holds `needed` GB; a PC is told the size itself. */
+function macNeeded(needed: number, hw: HardwareInfo): number | null {
+  if (hw.platform !== StudioPlatform.Mac) return null;
+  return MEMORY_SIZES_GB.find((ram) => oneDecimal(ram * budgetShare(hw.appleSilicon)) >= needed) ?? null;
+}
+
+/** Why a model fits or not, in the words the harness reads (never shown to the person). */
+function fitReason(sizeGb: number, needed: number, hw: HardwareInfo, split: boolean): string {
+  const weights = `${sizeGb} GB weights + ~${kvCacheGb(sizeGb)} GB context`;
+  if (needed > hw.usableModelGb)
+    return `needs ~${Math.round(needed)} GB, this machine has ~${hw.usableModelGb} GB usable`;
+  if (split) return `${weights} fits in ~${hw.usableModelGb} GB usable, split between the GPU and RAM (slower)`;
+  if (hw.gpuModelGb > 0) return `${weights} fits in ~${hw.gpuModelGb} GB of GPU memory`;
+  return `${weights} fits in ~${hw.usableModelGb} GB usable`;
+}
+
 /** Fit of any model size (catalog or a looked-up Ollama tag) on this machine. */
 export function fitFor(
   sizeGb: number,
   hw: HardwareInfo,
-): Pick<CatalogChoice, "fits" | "needGb" | "needsRamGb" | "reason"> {
+): Pick<CatalogChoice, "fits" | "needGb" | "needsRamGb" | "split" | "reason"> {
   const needed = neededGb(sizeGb);
   const fits = needed <= hw.usableModelGb;
-  const needsRamGb = MEMORY_SIZES_GB.find((ram) => oneDecimal(ram * budgetShare(hw.appleSilicon)) >= needed) ?? null;
+  const split = fits && hw.gpuModelGb > 0 && needed > hw.gpuModelGb;
   return {
     fits,
     needGb: oneDecimal(needed),
-    needsRamGb,
-    reason: fits
-      ? `${sizeGb} GB weights + ~${kvCacheGb(sizeGb)} GB context fits in ~${hw.usableModelGb} GB usable`
-      : `needs ~${Math.round(needed)} GB, this machine has ~${hw.usableModelGb} GB usable`,
+    needsRamGb: macNeeded(needed, hw),
+    split,
+    reason: fitReason(sizeGb, needed, hw, split),
   };
 }
 
@@ -197,16 +272,18 @@ function choice(id: string, model: CatalogModel, hw: HardwareInfo): CatalogChoic
 
 export async function recommendModels(hardware?: HardwareInfo): Promise<Recommendation> {
   const hw = hardware ?? (await detectHardware());
-  const tier = tierFor(hw.ramGb);
+  const tier = tierFor(tierRamGb(hw));
   const models = catalogModels();
   const available = Object.entries(models).filter(([id, model]) => offered(id, model, hw));
   const offeredById = new Map(available);
-  const picks = tier.picks
+  const ranked = tier.picks
     .flatMap((id) => {
       const model = offeredById.get(id);
       return model ? [choice(id, model, hw)] : [];
     })
     .filter((pick) => pick.fits);
+  // A model on the card answers many times faster than one split with RAM: those rank first.
+  const picks = [...ranked.filter((pick) => !pick.split), ...ranked.filter((pick) => pick.split)];
   const shown = new Set(picks.map((pick) => pick.model));
   const more = available
     .filter(([id]) => !shown.has(id))

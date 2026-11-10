@@ -14,6 +14,7 @@ import { WorkerMode, WorkerState } from "../../outcomes.ts";
 import { RunEvent } from "../../run-events.ts";
 import type { LoopRun } from "../loop-run.ts";
 import type { OpenJournal, OpenSavePoint } from "./contract.ts";
+import { savePointPagePicture } from "./page-picture.ts";
 
 /** The lead's own part on the graph, as a lead that builds in place names it. Never rename a value. */
 export const OPEN_LEAD_PART = "lead";
@@ -66,7 +67,8 @@ const SHOWN_CAMERA = "shows";
  * A save point on the graph: the lead's row at work at the first one, a kept round of the lead's part
  * with its label, summary, snapshot and thumbnails (the picture the lead named as showing the change
  * apart, as `shown`: the graph's picture of the save point), and its merge into the game folder (the
- * live project), which names its snapshot and no build of its own.
+ * live project), which names its snapshot and no build of its own. A web game's save point that has
+ * no picture from its checkpoint or its lead gets Genex's own picture of the page (`page-picture.ts`).
  */
 export async function savePointRound(
   loopRun: LoopRun,
@@ -82,6 +84,8 @@ export async function savePointRound(
     if (shot) shots.push(shot);
   }
   const shown = shownImage ? await thumbnailOf(loopRun, round, { ...shownImage, name: SHOWN_CAMERA }) : null;
+  const page = shots.length || shown ? null : await savePointPagePicture(loopRun, round);
+  if (page) shots.push(page);
   const iteration = {
     facetId: OPEN_LEAD_PART,
     facetTitle: WORDS.lead,

@@ -1,7 +1,7 @@
 // Unity-only glue: the browser identity provider for WebGL builds. It asks the page's
 // @genex-ai/embed-sdk (exposed as window.genexEmbed, see README) for a FRESH embed token and the relay
 // URLs, through Runtime/WebGL/GenexEmbed.jslib. NOT compiled by Tests~/GenexSmoke (needs Unity + a
-// WebGL build), so it is unverified outside Unity.
+// WebGL build); the WebGL authority probe runs it against a stubbed window.genexEmbed.
 #if UNITY_5_3_OR_NEWER
 using System;
 using System.Collections.Generic;

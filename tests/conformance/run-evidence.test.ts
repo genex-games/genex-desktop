@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { supplementRunEvidence } from "../../src/main/run-evidence.ts";
 import { summarizeRun } from "../../src/shared/run-summary.ts";
+import type { EventEnvelope } from "../../src/shared/event-log.ts";
 
 test("historical playtest stays incomplete with unknown revision; escaping report links are ignored", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "run-evidence-"));
@@ -155,6 +156,74 @@ test("a judge that agrees with a recorded visual answer lends it its note and th
     assert.equal(sign?.note, "Lit from the top");
     assert.equal(sign?.capture, await realpath(frame));
     assert.equal(summary.captures?.current, undefined, "a worker's judge never becomes the delivered capture");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a closed Loop led in its folder shows the page its finish photographed as its build; nothing else does", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "run-open-finish-"));
+  try {
+    const dir = path.join(root, "run_open", "director");
+    await mkdir(dir, { recursive: true });
+    const picture = path.join(dir, "finish.jpg");
+    await writeFile(picture, "jpeg");
+    const record = (eventType: string, payload: Record<string, unknown>, at = new Date(0)): EventEnvelope =>
+      ({
+        id: eventType,
+        thread_id: "t1",
+        session_id: null,
+        turn_id: null,
+        created_at: at.toISOString(),
+        data: { type: "custom", event_type: eventType, payload: { runId: "run_open", ...payload } },
+      }) as EventEnvelope;
+    const close = (victory: boolean) => record("run_finished", { victory });
+    const closed = () => {
+      const summary = summarizeRun([], "game", "run_open");
+      summary.profile = "open";
+      summary.execution = "completed";
+      summary.graphEvents = [close(true)];
+      return summary;
+    };
+    const summary = closed();
+    await supplementRunEvidence(summary, root);
+    assert.equal(summary.captures?.current, await realpath(picture));
+    const cases: Array<[string, (s: ReturnType<typeof closed>) => void]> = [
+      ["still running", (s) => (s.execution = "running")],
+      ["stopped by the person", (s) => (s.execution = "cancelled")],
+      ["not led in its folder", (s) => delete s.profile],
+      ["already has its build's capture", (s) => (s.captures = { current: "/elsewhere/judge.jpg" })],
+      ["closed some other way, its claim refused before", (s) => (s.graphEvents = [close(false)])],
+      ["no close on record", (s) => (s.graphEvents = [])],
+      [
+        "older than the newest save point: left by a refused claim when the accepted one could not look",
+        (s) => (s.graphEvents = [record("facet_iteration", {}, new Date(Date.now() + 60_000)), close(true)]),
+      ],
+    ];
+    for (const [why, change] of cases) {
+      const other = closed();
+      change(other);
+      const before = other.captures?.current;
+      await supplementRunEvidence(other, root);
+      assert.equal(other.captures?.current, before, why);
+    }
+    await rm(picture);
+    const outside = path.join(root, "outside.jpg");
+    await writeFile(outside, "jpeg");
+    await symlink(outside, picture);
+    const linked = closed();
+    await supplementRunEvidence(linked, root);
+    assert.equal(linked.captures?.current, undefined, "a link out of the run's folder is never the build's picture");
+    // A director folder that is another run's: its picture is that run's, never this one's.
+    await rm(picture);
+    const other = path.join(root, "run_other", "director");
+    await mkdir(other, { recursive: true });
+    await writeFile(path.join(other, "finish.jpg"), "jpeg");
+    await rm(dir, { recursive: true });
+    await symlink(other, dir);
+    const borrowed = closed();
+    await supplementRunEvidence(borrowed, root);
+    assert.equal(borrowed.captures?.current, undefined, "another run's director folder is never this run's build");
   } finally {
     await rm(root, { recursive: true, force: true });
   }

@@ -18,6 +18,7 @@ import { VIEWPORT_MAX, VIEWPORT_MIN } from "../preview-pool.ts";
 import type { ExportResult } from "../game-export.ts";
 import type { GenexGameManifest } from "../../shared/genex.ts";
 import { readGenexGameManifest } from "../genex-game-manifest.ts";
+import { clearStagedRoom, roomModulePath, stageRoom } from "../genex-room-stage.ts";
 import { SecretStore } from "../secrets.ts";
 import { atomicWriteJson } from "../fsx.ts";
 import { createHash } from "node:crypto";
@@ -284,8 +285,19 @@ export class PluginServices {
   onDelivered:
     | ((id: string, delivered: { jobId: string; files: string[] }, binding: PluginBinding) => Promise<void>)
     | undefined;
-  /** Host export: writes the public copy of the bound game into `target`. Unset → `export.stage` reports 'Export unavailable'. */
-  exportStage: ((binding: PluginBinding, target: string, pluginId: string) => Promise<ExportResult>) | undefined;
+  /**
+   * Host export: writes the public copy of the bound game into `target`. Unset → `export.stage`
+   * reports 'Export unavailable'. `call` is the plugin call it runs in: its review card closes with
+   * it and stands its deadline still (`personAnswers`).
+   */
+  exportStage:
+    | ((
+        binding: PluginBinding,
+        target: string,
+        pluginId: string,
+        call?: Pick<PluginInvocation, "signal" | "personAnswers">,
+      ) => Promise<ExportResult>)
+    | undefined;
   assetRoot: ((binding: PluginBinding) => Promise<string>) | undefined;
   assetLimits: ((id: string) => AssetLimits | undefined) | undefined;
   /** Host engine links (`game.engine.*`). Unset → those services report 'Engine links unavailable'. */
@@ -354,6 +366,7 @@ export class PluginServices {
     [PluginService.CredentialsClear]: async ({ id, root }) => (await credentialStore(root)).delete(id),
     [PluginService.AssetsDeliver]: (call) => this.#deliver(call),
     [PluginService.ExportStage]: (call) => this.#exportStage(call),
+    [PluginService.ExportRoom]: (call) => this.#exportRoom(call),
     [PluginService.Observe]: (call) => this.#observeFiles(call),
     [PluginService.ProjectRead]: readProjectFile,
     [PluginService.ProjectWrite]: writeProjectFile,
@@ -503,15 +516,35 @@ export class PluginServices {
     return files;
   }
   /** The public copy, plus what the game's package.json tells Genex (the copy itself carries no package.json). */
-  async #exportStage({ id, root, binding }: ServiceCall): Promise<ExportResult & { genex?: GenexGameManifest }> {
+  async #exportStage({
+    id,
+    root,
+    binding,
+    invocation,
+  }: ServiceCall): Promise<ExportResult & { genex?: GenexGameManifest }> {
     const bound = requireBinding(binding);
     if (!PROJECT_NAME.test(bound.project)) throw new Error(MESSAGE.InvalidProjectName);
     if (!this.exportStage) throw new Error(MESSAGE.ExportUnavailable);
     const target = path.join(root, "publish", bound.project, "dist");
     await mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
-    const result = await this.exportStage(bound, target, id);
+    const result = await this.exportStage(bound, target, id, invocation);
     const genex = await readGenexGameManifest(bound.directory);
+    await stageRoomFor(bound.directory, path.dirname(target), genex);
     return genex ? { ...result, genex } : result;
+  }
+  /**
+   * The room module alone, staged into the publish copy as `export.stage` stages it, with no web
+   * export: for a game whose apps go without a web build. A game with no room block clears the last
+   * stage; the answer is what the game's package.json tells Genex, as `export.stage`'s `genex`.
+   */
+  async #exportRoom({ root, binding }: ServiceCall): Promise<{ genex?: GenexGameManifest }> {
+    const bound = requireBinding(binding);
+    if (!PROJECT_NAME.test(bound.project)) throw new Error(MESSAGE.InvalidProjectName);
+    const workspace = path.join(root, "publish", bound.project);
+    await mkdir(workspace, { recursive: true, mode: 0o700 });
+    const genex = await readGenexGameManifest(bound.directory);
+    await stageRoomFor(bound.directory, workspace, genex);
+    return genex ? { genex } : {};
   }
   /**
    * `observe`: every argument is checked before the host looks: the bound game's own project and
@@ -532,6 +565,16 @@ export class PluginServices {
       });
     return this.observe(binding, args.files, still);
   }
+}
+
+/**
+ * The room module a server-authoritative game declares, staged beside the public copy in the
+ * publish workspace (never in it); a game that declares none leaves no staged room behind.
+ */
+async function stageRoomFor(gameDir: string, workspace: string, genex: GenexGameManifest | undefined): Promise<void> {
+  const module = roomModulePath(genex?.genex?.authority);
+  if (module === null) await clearStagedRoom(workspace);
+  else await stageRoom(gameDir, workspace, module);
 }
 
 /**

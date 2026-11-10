@@ -321,7 +321,7 @@ function capabilityFor(method: string): PluginCapability | undefined {
   if (method.startsWith(PluginService.ProjectWrite) || method === PluginService.AssetsDeliver)
     return PluginCapability.ProjectWrite;
   if (method.startsWith("jobs.") || method === PluginService.EventsEmit) return PluginCapability.Jobs;
-  if (method === PluginService.ExportStage) return PluginCapability.Export;
+  if (method === PluginService.ExportStage || method === PluginService.ExportRoom) return PluginCapability.Export;
   if (ENGINE_SERVICES.has(method) || isSandboxService(method)) return PluginCapability.GameEngine;
   return undefined;
 }

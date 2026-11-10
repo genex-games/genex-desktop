@@ -85,14 +85,29 @@ export const GENEX_ACCOUNT_ACTIONS: readonly GenexAction[] = [
 
 /**
  * The Genex SDK packages a game may add, each at the exact version Studio installs. The agent names
- * a package; the version always comes from here. Multiplayer's card asks for `^0.16.0`.
+ * a package; the version always comes from here. Multiplayer's card asks for `^0.17.0`; the
+ * server-authoritative card for an embed SDK with `getAuthorityUrls` (0.35.0).
  */
 export const GENEX_GAME_PACKAGES = {
-  "@genex-ai/multiplayer": "0.17.1",
-  "@genex-ai/embed-sdk": "0.33.0",
+  "@genex-ai/multiplayer": "0.17.9",
+  "@genex-ai/embed-sdk": "0.35.0",
 } as const;
 /** A Genex SDK package a game may add. */
 export type GenexGamePackage = keyof typeof GENEX_GAME_PACKAGES;
+
+/**
+ * Genex's game-maker tools Studio ships pinned in the Genex plugin's payload, beside the CLI: never
+ * a game's dependency and never served to a player. `@genex-ai/authority-dev` bundles, validates
+ * and runs a server-authoritative room module; a publish copy resolves it from there, so the CLI's
+ * room check runs for a game that installed nothing.
+ */
+export const GENEX_STUDIO_TOOLS = {
+  "@genex-ai/authority-dev": "0.1.5",
+} as const;
+/** A Genex tool Studio ships. */
+export type GenexStudioTool = keyof typeof GENEX_STUDIO_TOOLS;
+/** The package that checks and runs a room module. */
+export const AUTHORITY_DEV_PACKAGE: GenexStudioTool = "@genex-ai/authority-dev";
 
 /**
  * Where Studio's copy of `@genex-ai/embed-sdk` sits under a vendor folder (the app's, served as
@@ -107,14 +122,16 @@ export const GENEX_EMBED_VENDOR = {
 } as const;
 
 /**
- * Where Studio's copy of `@genex-ai/multiplayer` sits under the vendor folder: its entry and its
- * schema entry, built together so both share one copy of Colyseus's schema (a state class defined
- * with one is unknown to the other). A template game maps both in its import map.
+ * Where Studio's copy of `@genex-ai/multiplayer` sits under the vendor folder: its entry, its
+ * schema entry and its server-authoritative client, built together so they share one copy of
+ * Colyseus's schema (a state class defined with one is unknown to the other). A template game maps
+ * all three in its import map.
  */
 export const GENEX_MULTIPLAYER_VENDOR = {
   Dir: "genex/multiplayer",
   Entry: "genex/multiplayer/index.js",
   Schema: "genex/multiplayer/schema.js",
+  Authority: "genex/multiplayer/authority.js",
 } as const;
 
 /**
@@ -129,6 +146,18 @@ export const GENEX_STUDIO_IMPORTS = {
   },
 } as const satisfies Record<GenexGamePackage, Readonly<Record<string, string>>>;
 
+/**
+ * What a template game's import map also maps for each package, beside {@link GENEX_STUDIO_IMPORTS},
+ * without its being needed to count the package as Studio's: a page mapped before Studio served
+ * these keeps its package turned on, and asking for the package again maps them.
+ */
+export const GENEX_STUDIO_EXTRA_IMPORTS = {
+  "@genex-ai/embed-sdk": {},
+  "@genex-ai/multiplayer": {
+    "@genex-ai/multiplayer/authority": `/vendor/${GENEX_MULTIPLAYER_VENDOR.Authority}`,
+  },
+} as const satisfies Record<GenexGamePackage, Readonly<Record<string, string>>>;
+
 /** The packages a request installs: multiplayer always brings its player-identity dependency. */
 export function genexPackageSet(name: GenexGamePackage): GenexGamePackage[] {
   return name === "@genex-ai/multiplayer" ? [name, "@genex-ai/embed-sdk"] : [name];
@@ -136,7 +165,10 @@ export function genexPackageSet(name: GenexGamePackage): GenexGamePackage[] {
 
 /** The import-map entries a template game needs for `name`, its dependency included. */
 export function studioSdkImports(name: GenexGamePackage): Record<string, string> {
-  return Object.assign({}, ...genexPackageSet(name).map((pkg) => GENEX_STUDIO_IMPORTS[pkg]));
+  return Object.assign(
+    {},
+    ...genexPackageSet(name).map((pkg) => ({ ...GENEX_STUDIO_IMPORTS[pkg], ...GENEX_STUDIO_EXTRA_IMPORTS[pkg] })),
+  );
 }
 
 /**
@@ -163,7 +195,15 @@ export function isGenexGamePackage(name: unknown): name is GenexGamePackage {
  */
 export interface GenexGameManifest {
   dependencies: Partial<Record<GenexGamePackage, string>>;
-  genex?: { matchmaking?: Record<string, unknown>; mobileControls?: boolean };
+  genex?: {
+    matchmaking?: Record<string, unknown>;
+    mobileControls?: boolean;
+    /**
+     * The game's server-authoritative room block, exactly as it wrote it: the CLI checks it and
+     * refuses a malformed one by name, where dropping it would publish a game every join refuses.
+     */
+    authority?: unknown;
+  };
 }
 
 /** The longest name a game is listed under on Genex. */
@@ -426,6 +466,23 @@ export interface GenexPublishJob {
   embedSdkVersion?: string;
   /** How many times this attempt uploaded the build: a draft that fails its test is uploaded once more. */
   uploads?: number;
+  /** A server-authoritative game's room module in this publish; absent for a game with no room block. */
+  room?: GenexPublishRoom;
+}
+/**
+ * What one publish made of a game's room module, from the CLI's own record of its gate (the report
+ * it keeps in the publish copy), never from its words. `validated`: this attempt's bundle passed
+ * the gate (`moduleSha256` is that bundle's). `uploaded`: it went up with this build, which the
+ * CLI finishes only once Genex stored the module and its go-live named that very sha.
+ */
+export interface GenexPublishRoom {
+  /** The module the game's `authority` block names (`server/room.ts`), or null for a block that names none. */
+  module: string | null;
+  validated: boolean;
+  uploaded: boolean;
+  moduleSha256?: string;
+  /** The gate's typed reasons (`module_threw`, …) when it did not pass. */
+  failures?: string[];
 }
 /**
  * How a Genex cover send ended (`GenexCoverSent.kind`). The first five are the CLI's own answers

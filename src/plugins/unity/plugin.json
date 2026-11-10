@@ -1,7 +1,7 @@
 {
   "apiVersion": 3,
   "id": "unity",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "icon": "icon.svg",
   "name": "Unity",
   "publisher": "Genex",
@@ -38,7 +38,7 @@
     {
       "name": "multiplayer",
       "facts": ["unity-project"],
-      "description": "Make this Unity game playable online with Genex multiplayer, in its WebGL build and its Mac and Windows builds alike (web and native players meet in the same rooms): embeds Genex's package (Packages/com.genex.multiplayer), asks for the Colyseus Unity SDK it runs on in Packages/manifest.json, writes Assets/Genex/link.xml, Assets/Genex/GenexGame.cs (GenexGame.Slug: the game's Genex project from Genex's Play, the published page or GenexSettings.json, so builds made before the first publish join once published) and the game's Genex project in Assets/Resources/GenexSettings.json, and its matchmaking in genex.json. Call it once when the person wants people to play together, then read the unity-multiplayer skill and write the online play; call it again with slug after the first publish only to test online in the editor or a build started by hand. Never add npm or a package.json for this.",
+      "description": "Make this Unity game playable online with Genex multiplayer, in its WebGL build and its Mac and Windows builds alike (web and native players meet in the same rooms): embeds Genex's package (Packages/com.genex.multiplayer), asks for the Colyseus Unity SDK it runs on in Packages/manifest.json, writes Assets/Genex/link.xml, Assets/Genex/GenexGame.cs (GenexGame.Slug: the game's Genex project from Genex's Play, the published page or GenexSettings.json, so builds made before the first publish join once published) and the game's Genex project in Assets/Resources/GenexSettings.json, and its matchmaking in genex.json. Its package holds both the relay client and the server-authoritative room client. Call it once when the person wants people to play together, then read the unity-multiplayer skill and write the online play (the relay, or a server room for competitive play); call it again with slug after the first publish only to test online in the editor or a build started by hand. Never add npm or a package.json for this.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -293,7 +293,7 @@
       "name": "unity-multiplayer",
       "facts": ["unity-project"],
       "tools": ["multiplayer"],
-      "summary": "Genex multiplayer for this Unity game, WebGL and native builds in the same rooms: unity__multiplayer sets it up, then GenexMultiplayer joins, syncs players, shared state and host-run objects. MANDATORY before any online or multiplayer code.",
+      "summary": "Genex multiplayer for this Unity game, WebGL and native builds alike: unity__multiplayer sets it up, then the relay (GenexMultiplayer) or, for competitive play, a server-authoritative room (server/room.ts, GenexAuthority.Connect, genex__room). MANDATORY before any online or multiplayer code.",
       "file": "skills/unity-multiplayer.md"
     },
     {

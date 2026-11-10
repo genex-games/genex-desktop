@@ -10,6 +10,8 @@ import { describe, it } from "node:test";
 import { endsSessions as seedEndsSessions } from "../../src/harness-seed/loop/compaction-log.ts";
 import * as seedDelegatedTurn from "../../src/harness-seed/loop/delegated-turn.ts";
 import * as seedFolderFacts from "../../src/harness-seed/loop/folder-facts.ts";
+import * as seedPagePicture from "../../src/harness-seed/loop/director/open/page-picture.ts";
+import { OPEN_FINISH_PICTURE_LABEL } from "../../src/shared/run-summary.ts";
 import * as seedEngineGame from "../../src/harness-seed/loop/engine-game.ts";
 import * as seedGameEngine from "../../src/harness-seed/loop/game-engine.ts";
 import {
@@ -470,6 +472,10 @@ describe("vocabularies (src/shared ↔ the seed's copies)", () => {
   it("tells an engine game from a web game as the app does", () => {
     for (const kind of [GameEngine.Web, GameEngine.Unreal, "toy-engine", undefined, null, "", "Toy Engine", 3])
       assert.equal(seedEngineGame.isEngineGame(kind), isEngineGame(kind), String(kind));
+  });
+
+  it("files a Loop's finish picture where the app reads a past run's build", () => {
+    assert.equal(seedPagePicture.FINISH_PICTURE_LABEL, OPEN_FINISH_PICTURE_LABEL);
   });
 
   it("names a run journal's phases as the harness writes them", () => {

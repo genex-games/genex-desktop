@@ -1074,6 +1074,67 @@ Set-Acl -LiteralPath $env:GENEX_ACL_PATH -AclObject $acl`,
     }
   });
 
+  // A field PC ran Genex from C:\Program Files\Genex, whose entries a standard user may not change:
+  // the read grant on the install folder stopped every start, though BUILTIN\Users read and run
+  // everything there. Program Files passes Users its read in two entries, one for the folder itself
+  // and one, in generic rights, for everything under it.
+  /** One shape of a folder the person may not change: its name, its extra allows and denies, whether the start goes on. */
+  type RefusedGrant = [string, string[], boolean, string[]?];
+  const refusedGrants: RefusedGrant[] = [
+    ["Users may read and run everything in it", [`*${USERS}:(OI)(CI)(RX)`], true],
+    [
+      "Program Files' two entries let Users read and run everything",
+      [`*${USERS}:(RX)`, `*${USERS}:(OI)(CI)(IO)(GR,GE)`],
+      true,
+    ],
+    [
+      "the sandbox users' group may read and run everything in it, in generic rights",
+      [`*${GUESTS}:(OI)(CI)(GR,GE)`],
+      true,
+    ],
+    ["Users may read and run the folder alone", [`*${USERS}:(RX)`], false],
+    ["Users may read and run what is in it, not the folder", [`*${USERS}:(OI)(CI)(IO)(RX)`], false],
+    ["Users may read its files, not its folders", [`*${USERS}:(OI)(RX)`], false],
+    ["Users may only read, not run, what is in it", [`*${USERS}:(OI)(CI)(R)`], false],
+    [
+      "Users may open it, and the sandbox users' group is denied reading",
+      [`*${USERS}:(OI)(CI)(RX)`],
+      false,
+      [`*${GUESTS}:(OI)(CI)(R)`],
+    ],
+  ];
+  for (const [shape, also, goesOn, denies = []] of refusedGrants) {
+    it(`${goesOn ? "goes on past" : "still stops at"} a read grant Windows refuses where ${shape}`, async () => {
+      const root = realpathSync.native(await tmpDir("folder-grant-refused-open-"));
+      const install = path.join(root, "Genex");
+      await mkdir(path.join(install, "resources"), { recursive: true });
+      await writeFile(path.join(install, "Genex.exe"), "app");
+      if (denies.length > 0) icacls(install, "/deny", ...denies);
+      refusesChanges(install, ...also);
+      const before = ownerAndDacl(install);
+      try {
+        const outcomes = await folderOwnEditor({ powershell: withoutPrivileges })([
+          {
+            dir: install,
+            sid: GUESTS,
+            op: FolderAceOp.Own,
+            deny: null,
+            guard: false,
+            grant: GrantAccess.Read,
+            allows: true,
+          },
+        ]);
+        const [outcome] = outcomes ?? [];
+        const unneeded = outcome?.ok === true && typeof outcome.refused === "string";
+        assert.equal(unneeded, goesOn, JSON.stringify(outcomes));
+        assert.equal(outcome?.ok, goesOn, JSON.stringify(outcomes));
+        assert.equal(ownerAndDacl(install), before, "the folder is left as it was");
+      } finally {
+        giveBack(install);
+      }
+    });
+  }
+
   it("passes a deny down at once where the folder itself passes Users an allow", async () => {
     const root = realpathSync.native(await tmpDir("folder-deny-open-"));
     const secret = path.join(root, "User Data");
@@ -2688,6 +2749,30 @@ describe("Genex's own deny entries", () => {
       assert.deepEqual(asked.at(-1)?.walk, [OwnWalk.Again, OwnWalk.Again]);
       assert.equal(asked.at(-1)?.timeoutMs, WALK_MS);
       assert.deepEqual(own.walks(), [], "passed down once the start was past");
+    });
+
+    it("starts past a grant Windows refused where the sandbox user may already read everything, and says so", async () => {
+      // A field PC ran Genex from C:\Program Files\Genex: the person may not change its entries,
+      // and BUILTIN\Users already read and run everything in it. The script answers so only there.
+      const programFiles = "C:\\Program Files\\Genex";
+      const logged: string[] = [];
+      const asked: string[][] = [];
+      const own = holder(await tmpDir("windows-denies-"), 1, [], {
+        urgent: (dir) => dir === programFiles,
+        log: (line) => logged.push(line),
+        edit: async (edits) => {
+          asked.push(edits.map((edit) => edit.dir));
+          return edits.map((edit) =>
+            edit.dir === programFiles ? ({ ok: true, refused: "Access is denied." } as const) : ({ ok: true } as const),
+          );
+        },
+      });
+      assert.equal(await own.sync([guard, grantOf(programFiles)]), true, "the start goes on");
+      assert.deepEqual(logged, [
+        `own entries: left ${programFiles} as it is: Windows refused the grant (Access is denied.), and the sandbox user may already read everything in it`,
+      ]);
+      assert.equal(await own.sync([guard, grantOf(programFiles)]), true);
+      assert.ok(asked.at(-1)?.includes(programFiles), "the next start asks for the grant again");
     });
 
     it("leaves nothing to walk for a grant the budget finished", async () => {

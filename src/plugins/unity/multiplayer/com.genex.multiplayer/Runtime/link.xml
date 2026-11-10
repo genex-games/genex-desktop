@@ -1,0 +1,21 @@
+<!-- IL2CPP: members of the Colyseus SDK that the package reaches by reflection. GenexShadowInput (Core/Authority/InputRepeat.cs,
+     PROTOCOL.md §17.11 *Input pacing*) makes a shadow input handle and acknowledges it; GenexFastSeat (Core/Authority/FastSeat.cs,
+     §17.12) starts the handle's encoder and stamp baseline over at a fallback, reaches the room's decoder through its
+     Serializer and raises its OnStateChange after writing a snapshot. The SDK uses each itself, so the linker keeps them
+     anyway; this file says so for a stripping level that would not. GenexShadowInput.SelfCheck fails at startup when either
+     of its members is gone, and a build without GenexFastSeat's never claims fast@1 (GenexFastSeat.Missing). A project that
+     strips its Packages' link.xml copies this one into Assets. -->
+<linker>
+  <assembly fullname="ColyseusSDK">
+    <type fullname="Colyseus.InputHandle">
+      <method name=".ctor" />
+      <method name="AckInput" />
+      <field name="encoder" />
+      <field name="lastStamp" />
+    </type>
+    <type fullname="Colyseus.Room`1">
+      <field name="Serializer" />
+      <field name="OnStateChange" />
+    </type>
+  </assembly>
+</linker>
