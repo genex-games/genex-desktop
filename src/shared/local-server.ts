@@ -87,3 +87,10 @@ export interface FoundLocalServer {
   /** How many models it lists; zero while it asks for a key. */
   models: number;
 }
+
+/** User-customized model overrides for local server models. */
+export interface ModelOverride {
+  contextWindow?: number;
+  supportsVision?: boolean;
+  supportsTools?: boolean;
+}

@@ -1,3 +1,8 @@
+import { t } from "../../shared/i18n.ts";
+import type { ModelOverride } from "../../shared/local-server.ts";
+import { DialogSurface } from "../ui/dialog.tsx";
+import { Checkbox } from "../ui/Checkbox.tsx";
+import { Icon } from "../ui/icons.tsx";
 /**
  * Settings → Model Providers, the local server row: a model server the person runs (LM Studio,
  * llama.cpp, TabbyAPI, vLLM, KoboldCpp). It keeps a provider row's shape (`provider-row.tsx`): one
@@ -54,6 +59,12 @@ function ServerMenu({ act }: { act: RowActions }): JSX.Element {
       onCheck={() => act.recheck(ProviderAction.CheckConnection)}
     >
       <>
+        <DropdownMenuItem onSelect={() => void window.studio.localServerOpenConfig()}>
+          <ItemWords
+            title={t("Open model settings (models.json)…")}
+            line={t("Edit context and vision configuration file")}
+          />
+        </DropdownMenuItem>
         <DropdownMenuItem onSelect={act.change}>
           <ItemWords title={WORDS.change} line={WORDS.changeLine} />
         </DropdownMenuItem>
@@ -288,11 +299,129 @@ function KeyEntry({ busy, onSave }: { busy: boolean; onSave: (key: string) => vo
   );
 }
 
+const PRESET_CONTEXTS = [
+  { label: "32K", value: 32_768 },
+  { label: "64K", value: 65_536 },
+  { label: "128K", value: 131_072 },
+  { label: "200K", value: 200_000 },
+  { label: "1M", value: 1_048_576 },
+];
+
+function ModelConfigDialog({
+  model,
+  onClose,
+  onSave,
+}: {
+  model: EngineDescriptor["models"][number];
+  onClose: () => void;
+  onSave: (override: ModelOverride | null) => Promise<void>;
+}): JSX.Element {
+  const [contextWindow, setContextWindow] = useState(String(model.contextWindow || 131072));
+  const [supportsVision, setSupportsVision] = useState(Boolean(model.supportsVision));
+  const [supportsTools, setSupportsTools] = useState(model.supportsTools !== false);
+  const [saving, setSaving] = useState(false);
+
+  const save = async (): Promise<void> => {
+    setSaving(true);
+    try {
+      const parsed = Number.parseInt(contextWindow, 10);
+      await onSave({
+        contextWindow: Number.isFinite(parsed) && parsed > 0 ? parsed : 131072,
+        supportsVision,
+        supportsTools,
+      });
+      onClose();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const reset = async (): Promise<void> => {
+    setSaving(true);
+    try {
+      await onSave(null);
+      onClose();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <DialogSurface
+      title={t("Configure: {name}", { name: model.label })}
+      description={t("Custom context length and vision for this model on your local server. Saved to models.json.")}
+      onDismiss={onClose}
+      size="md"
+    >
+      <div className="flex flex-col gap-4 py-2">
+        <div className="flex flex-col gap-1.5">
+          <label className="text-xs font-medium text-foreground">{t("Context window (tokens)")}</label>
+          <input
+            type="number"
+            min={1024}
+            max={2097152}
+            step={1024}
+            value={contextWindow}
+            onChange={(e) => setContextWindow(e.target.value)}
+            className="h-8 rounded border border-input bg-field px-2.5 font-mono text-xs text-foreground focus:outline-none focus:border-accent-ink"
+          />
+          <div className="flex flex-wrap gap-1.5 pt-1">
+            {PRESET_CONTEXTS.map((preset) => (
+              <button
+                type="button"
+                key={preset.value}
+                onClick={() => setContextWindow(String(preset.value))}
+                className={`rounded border px-2 py-0.5 text-micro transition-colors ${
+                  contextWindow === String(preset.value)
+                    ? "border-accent bg-accent/10 font-medium text-accent"
+                    : "border-input bg-surface-raised text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-2.5 pt-2 border-t border-line">
+          <label className="flex items-center gap-2 cursor-pointer text-xs text-foreground select-none">
+            <Checkbox checked={supportsVision} onChange={(e) => setSupportsVision(e.target.checked)} />
+            <span>{t("Supports vision (image understanding)")}</span>
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer text-xs text-foreground select-none">
+            <Checkbox checked={supportsTools} onChange={(e) => setSupportsTools(e.target.checked)} />
+            <span>{t("Supports tool calling (file editing, terminal)")}</span>
+          </label>
+        </div>
+
+        <div className="flex items-center justify-between gap-2 pt-4 border-t border-line">
+          <Button variant="ghost" size="sm" onClick={reset} disabled={saving}>
+            {t("Reset to default")}
+          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={onClose} disabled={saving}>
+              {t("Cancel")}
+            </Button>
+            <Button variant="default" size="sm" onClick={save} disabled={saving}>
+              {saving ? t("Saving…") : t("Save")}
+            </Button>
+          </div>
+        </div>
+      </div>
+    </DialogSurface>
+  );
+}
+
 /** The saved server's models: each with its context, and whether it sees or cannot build. */
-function ServerModels({ models }: { models: EngineDescriptor["models"] }): JSX.Element | null {
+function ServerModels({
+  models,
+  onConfigure,
+}: {
+  models: EngineDescriptor["models"];
+  onConfigure: (model: EngineDescriptor["models"][number]) => void;
+}): JSX.Element | null {
   if (models.length === 0) return null;
   return (
-    // The person's own server names its models: a replay shows them masked.
     <ul
       aria-label={WORDS.models}
       className="mt-1 -mx-2.5 flex flex-col border-t border-line pt-2"
@@ -300,17 +429,34 @@ function ServerModels({ models }: { models: EngineDescriptor["models"] }): JSX.E
       data-analytics-mask
     >
       {models.map((model) => (
-        <li key={model.id} className="flex min-h-8 flex-wrap items-baseline gap-x-2.5 px-2.5 py-1">
-          <span className="min-w-0 break-all font-mono text-xs text-ink">{model.label}</span>
-          <span className={`text-micro ${model.supportsTools ? "text-muted-foreground" : "text-orange"}`}>
-            {modelDetails(model)}
-          </span>
+        <li
+          key={model.id}
+          className="group flex min-h-8 flex-wrap items-center justify-between gap-x-2.5 px-2.5 py-1.5 rounded-md hover:bg-surface-raised cursor-pointer transition-colors"
+          onClick={() => onConfigure(model)}
+          title={t("Click to configure context window and vision")}
+        >
+          <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2.5">
+            <span className="min-w-0 break-all font-mono text-xs text-ink">{model.label}</span>
+            <span className={`text-micro ${model.supportsTools ? "text-muted-foreground" : "text-orange"}`}>
+              {modelDetails(model)}
+            </span>
+          </div>
+          <button
+            type="button"
+            className="opacity-0 group-hover:opacity-100 p-1 text-ink-3 hover:text-ink transition-opacity rounded"
+            aria-label={t("Configure")}
+            onClick={(e) => {
+              e.stopPropagation();
+              onConfigure(model);
+            }}
+          >
+            <Icon name="settings" size={13} />
+          </button>
         </li>
       ))}
     </ul>
   );
 }
-
 /** Connect and disconnect: each refreshes the engines, and a refusal keeps why. */
 function useServerActions(onEnginesRefresh: () => Promise<void> | void) {
   const { run, error } = useRun();
@@ -354,6 +500,7 @@ export function LocalServerRow({
   const actions = useServerActions(onEnginesRefresh);
   const { checking, recheck } = useRecheck(EngineId.LocalServer, onEnginesRefresh);
   const [editing, setEditing] = useState(false);
+  const [configModel, setConfigModel] = useState<EngineDescriptor["models"][number] | null>(null);
   const server = engine.server ?? null;
   const state = localServerRowState(engine, { connecting: actions.connecting });
   useRowViewed(EngineId.LocalServer, state, ProviderSurface.Settings, null);
@@ -400,7 +547,20 @@ export function LocalServerRow({
           onSave={(key) => void actions.connect(server.url, key, LocalServerVia.SavedKey, () => {})}
         />
       )}
-      {state === LocalServerRowState.Connected && !editing && <ServerModels models={engine.models} />}
+      {state === LocalServerRowState.Connected && !editing && (
+        <ServerModels models={engine.models} onConfigure={setConfigModel} />
+      )}
+      {configModel && (
+        <ModelConfigDialog
+          model={configModel}
+          onClose={() => setConfigModel(null)}
+          onSave={async (override) => {
+            await window.studio.localServerSetModelOverride(configModel.id, override);
+            setConfigModel(null);
+            await onEnginesRefresh();
+          }}
+        />
+      )}
       {problem && (
         <p role="alert" className="text-body-sm text-red">
           {problem}

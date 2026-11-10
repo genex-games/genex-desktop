@@ -567,6 +567,8 @@ export interface StudioApi {
    * and save both only when it answers. The key never comes back.
    */
   localServerConnect(url: string, key?: string): Promise<import("./local-server.ts").LocalServerConnectResult>;
+  localServerSetModelOverride(id: string, override: import("./local-server.ts").ModelOverride | null): Promise<void>;
+  localServerOpenConfig(): Promise<void>;
   /** Forget the saved local server's address and key. */
   localServerForget(): Promise<import("./engine-descriptor.ts").EngineStatus>;
   /** The model servers answering on this computer's usual ports, for Settings to offer. */

@@ -1,3 +1,4 @@
+import type { ModelOverride } from "./local-server.ts";
 /**
  * The IPC contract between the preload (`window.studio`) and main's `handle()` table.
  *
@@ -170,6 +171,8 @@ export const STUDIO_INVOKE_CHANNELS = {
   "studio:local-server.connect": "localServerConnect",
   "studio:local-server.forget": "localServerForget",
   "studio:local-server.find": "localServerFind",
+  "studio:local-server.set-model-override": "localServerSetModelOverride",
+  "studio:local-server.open-config": "localServerOpenConfig",
   "studio:terminal.list": "terminalList",
   "studio:terminal.accessibility": "terminalAccessibility",
   "studio:terminal.open": "terminalOpen",
@@ -489,6 +492,8 @@ export interface StudioInvokePayloads {
   "studio:local-server.connect": { url: string; key?: string };
   "studio:local-server.forget": undefined;
   "studio:local-server.find": undefined;
+  "studio:local-server.set-model-override": { id: string; override: ModelOverride | null };
+  "studio:local-server.open-config": undefined;
   "studio:terminal.list": undefined;
   "studio:terminal.accessibility": undefined;
   "studio:terminal.open": { project: string };

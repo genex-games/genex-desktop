@@ -6,7 +6,7 @@
  */
 import { rm } from "node:fs/promises";
 import { atomicWriteJson, isJsonObject, readJsonIfExists } from "../fsx.ts";
-import { LocalServerKind } from "../../shared/local-server.ts";
+import { LocalServerKind, type ModelOverride } from "../../shared/local-server.ts";
 import { readServerAddress } from "./address.ts";
 
 /** The saved server: the API's base URL and, when known, which software answers there. */
@@ -52,6 +52,44 @@ export function memoryServerSettings(initial: SavedServer | null = null): Server
     },
     clear: async () => {
       value = null;
+    },
+  };
+}
+
+export interface ModelOverridesStore {
+  readonly file: string;
+  read(): Promise<Record<string, ModelOverride>>;
+  write(id: string, override: ModelOverride | null): Promise<void>;
+}
+
+export function modelOverridesStore(file: string): ModelOverridesStore {
+  return {
+    file,
+    read: async () => {
+      const data = await readJsonIfExists<Record<string, ModelOverride>>(file).catch(() => null);
+      return data && typeof data === "object" ? data : {};
+    },
+    write: async (id: string, override: ModelOverride | null) => {
+      const data = await readJsonIfExists<Record<string, ModelOverride>>(file).catch(() => null);
+      const current: Record<string, ModelOverride> = data && typeof data === "object" ? { ...data } : {};
+      if (override === null) {
+        delete current[id];
+      } else {
+        current[id] = { ...current[id], ...override };
+      }
+      await atomicWriteJson(file, current);
+    },
+  };
+}
+
+export function memoryModelOverridesStore(): ModelOverridesStore {
+  let value: Record<string, ModelOverride> = {};
+  return {
+    file: ":memory:",
+    read: async () => ({ ...value }),
+    write: async (id, override) => {
+      if (override === null) delete value[id];
+      else value[id] = { ...value[id], ...override };
     },
   };
 }

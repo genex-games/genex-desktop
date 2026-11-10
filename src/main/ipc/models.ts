@@ -1,3 +1,7 @@
+import { shell } from "electron";
+import fs from "node:fs/promises";
+import fsSync from "node:fs";
+import path from "node:path";
 /** Engines and local models: what is available, re-checking sign-ins, and downloading or deleting a model. */
 import { modelProgress } from "../model-progress.ts";
 import { SUBSCRIPTION_ENGINES, type StudioCore } from "../studio-core.ts";
@@ -263,4 +267,28 @@ function registerLocalServerIpc(
     return status;
   });
   handle("studio:local-server.find", async () => localServer().find());
+  handle("studio:local-server.set-model-override", async (payload) => {
+    await localServer().setModelOverride(payload.id, payload.override);
+    changed();
+  });
+  handle("studio:local-server.open-config", async () => {
+    const filePath = localServer().overridesPath;
+    const dir = path.dirname(filePath);
+    await fs.mkdir(dir, { recursive: true });
+    if (!fsSync.existsSync(filePath)) {
+      await fs.writeFile(
+        filePath,
+        JSON.stringify(
+          {
+            "//说明": "在此为本地服务器模型配置自定义参数。保存后在界面点击刷新即可生效。",
+            models: {},
+          },
+          null,
+          2,
+        ),
+        "utf8",
+      );
+    }
+    await shell.openPath(filePath);
+  });
 }
