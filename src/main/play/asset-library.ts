@@ -11,6 +11,7 @@ import {
   LibraryFileMiss,
   libraryFileUrl,
   LIBRARY_QUERY_MAX,
+  LIBRARY_TITLE_MAX,
   type LibraryAsset,
   LibraryKind,
   type LibraryPage,
@@ -316,7 +317,7 @@ export function assetLibrary(deps: LibraryDeps) {
       filename: file.filename,
       contentType: file.contentType,
       bytes: file.bytes.byteLength,
-      title: file.title.trim().slice(0, SHARE_NAME_MAX),
+      title: file.title.trim().slice(0, LIBRARY_TITLE_MAX),
       save: true,
     };
     const started = await call(LibraryRoute.Import, { method: "POST", body });

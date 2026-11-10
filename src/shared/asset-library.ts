@@ -151,8 +151,27 @@ export async function shareInBatches(
 export const LIBRARY_IDS_MAX = 100;
 /** The longest search a library read sends. */
 export const LIBRARY_QUERY_MAX = 100;
-/** The longest name a shared asset may have on Play. */
-export const SHARE_NAME_MAX = 80;
+/** The longest name a shared asset keeps on Play: genex.games shortens a longer one. */
+export const SHARE_NAME_MAX = 40;
+/** The longest title a file sent to the library carries. */
+export const LIBRARY_TITLE_MAX = 80;
+/** A clause or phrase that stands as a whole name is at least this long: "Fire, a huge jet…" is not "Fire". */
+const SHARE_WHOLE_MIN = 12;
+/** Where a clause ends. */
+const CLAUSE_END = /[,;:.!?]/;
+/** Punctuation a shortened name never ends on. */
+const TRAILING_PUNCTUATION = /[\s,;:.!?\-\u2013\u2014]+$/;
+/**
+ * Articles, conjunctions and prepositions: words that join what follows to what came before. A
+ * shortened name never ends on one, and a phrase ends before one.
+ */
+const JOINING_WORDS = new Set(
+  (
+    "a an the and or but nor that which while " +
+    "about above across after against along around as at before behind below beneath beside between by during " +
+    "for from in inside into near of off on onto over through to toward towards under upon with within without"
+  ).split(" "),
+);
 
 /** A genex.games generation id as the app accepts one. */
 const GENERATION_ID = /^[A-Za-z0-9_-]{8,64}$/;
@@ -244,14 +263,61 @@ export const isSendable = (file: string, bytes = 0): boolean =>
 /** A file's library kind, or null for one the library takes no kind of. */
 export const libraryKindOf = (asset: Pick<ProjectAsset, "kind">): LibraryKind | null => LIBRARY_KIND_OF[asset.kind];
 
-/** A name for Play from what an asset was made from: its first line, trimmed to fit. */
+const isJoiningWord = (word: string): boolean => JOINING_WORDS.has(word.toLowerCase());
+
+/** `text` without the punctuation and joining words a cut left at its end. */
+function tidyEnd(text: string): string {
+  const name = text.replace(TRAILING_PUNCTUATION, "");
+  const lastSpace = name.lastIndexOf(" ");
+  const endsOnJoiningWord = lastSpace >= 0 && isJoiningWord(name.slice(lastSpace + 1));
+  return endsOnJoiningWord ? tidyEnd(name.slice(0, lastSpace)) : name;
+}
+
+/** `name` ended at its last whole clause that fits Play, or null when none stands as a name. */
+function lastClause(name: string): string | null {
+  for (let end = SHARE_NAME_MAX; end >= SHARE_WHOLE_MIN; end--) {
+    const clause = CLAUSE_END.test(name.charAt(end)) ? tidyEnd(name.slice(0, end)) : "";
+    if (clause.length >= SHARE_WHOLE_MIN) return clause;
+  }
+  return null;
+}
+
+/**
+ * `head`, the whole words that fit, ended where a phrase does; `cutOff` is the first word that did
+ * not fit. Words that stop mid-phrase ("Giant mushroom tree with a tall twisted", and "stem" is cut
+ * off) go back to before their last joining word ("Giant mushroom tree"), unless that leaves too
+ * little to be a name.
+ */
+function lastPhrase(head: string, cutOff: string): string {
+  const whole = tidyEnd(head);
+  if (whole.length < head.length || isJoiningWord(cutOff)) return whole;
+  const words = whole.split(" ");
+  const joining = words.findLastIndex((word, index) => index > 0 && isJoiningWord(word));
+  const phrase = joining > 0 ? tidyEnd(words.slice(0, joining).join(" ")) : "";
+  return phrase.length >= SHARE_WHOLE_MIN ? phrase : whole;
+}
+
+/**
+ * A name as Play keeps it, the way genex.games shortens one itself: whole when it fits, else ended
+ * at its last whole clause that fits, else at its last whole phrase or word, else at the limit.
+ */
+function fitShareName(text: string): string {
+  const name = text.replace(/\s+/g, " ").trim();
+  if (name.length <= SHARE_NAME_MAX) return name;
+  const clause = lastClause(name);
+  if (clause) return clause;
+  const wordEnd = name.charAt(SHARE_NAME_MAX) === " " ? SHARE_NAME_MAX : name.lastIndexOf(" ", SHARE_NAME_MAX);
+  if (wordEnd <= 0) return name.slice(0, SHARE_NAME_MAX);
+  return lastPhrase(name.slice(0, wordEnd), name.slice(wordEnd + 1).split(" ", 1)[0] ?? "");
+}
+
+/** A name for Play from what an asset was made from: its first line, shortened to what Play keeps. */
 export function shareNameOf(prompt: string | undefined, file: string): string {
   const fromPrompt = (prompt ?? "").split("\n")[0]?.trim() ?? "";
   const stem = (file.split("/").at(-1) ?? file)
     .replace(/\.[^.]+$/, "")
     .replace(/[-_]+/g, " ")
     .trim();
-  const name = fromPrompt || stem || t("Asset");
-  const capped = name.length > SHARE_NAME_MAX ? `${name.slice(0, SHARE_NAME_MAX - 1).trimEnd()}…` : name;
-  return capped.charAt(0).toUpperCase() + capped.slice(1);
+  const name = fitShareName(fromPrompt || stem || t("Asset"));
+  return name.charAt(0).toUpperCase() + name.slice(1);
 }

@@ -200,7 +200,7 @@ describe("the share window's names", () => {
   });
 
   it("trims a typed name to what Play takes, and sends nothing while one is empty", () => {
-    assert.equal(cleanName(`  ${"a".repeat(100)}  `).length, 80);
+    assert.equal(cleanName(`  ${"a".repeat(100)}  `).length, 40);
     assert.equal(shareItemsOf([{ file: "a", name: "  " }]), null);
     assert.deepEqual(shareItemsOf([{ file: "a", name: " Hut " }]), [{ file: "a", name: "Hut" }]);
   });

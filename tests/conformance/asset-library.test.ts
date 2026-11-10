@@ -28,9 +28,11 @@ import {
 } from "../../src/main/play/asset-library.ts";
 import { type GalleryAnswer, type GalleryRequest, SignInNeeded } from "../../src/main/play/gallery.ts";
 import {
+  LIBRARY_TITLE_MAX,
   LibraryFileMiss,
   LibraryKind,
   libraryFileUrl,
+  SHARE_NAME_MAX,
   shareNameOf,
   ShareMiss,
 } from "../../src/shared/asset-library.ts";
@@ -181,6 +183,18 @@ describe("the library's calls", () => {
     assert.deepEqual(uploads, [{ url: "https://r2.example/put", bytes: 5, type: "image/png" }]);
     assert.deepEqual(calls.at(-1)?.route, LibraryRoute.importDone(GEN));
     assert.equal((calls[0]?.body as { save?: boolean } | undefined)?.save, true);
+  });
+
+  it("keeps a library title longer than a name on Play: each call cuts to its own limit", async () => {
+    const { library, calls } = rig((route) =>
+      route === LibraryRoute.Import ? ok({ id: GEN, uploadUrl: "https://r2.example/put" }) : ok({}),
+    );
+    const long = "a".repeat(200);
+    await library.send({ filename: "a.png", contentType: "image/png", bytes: new Uint8Array(1), title: long });
+    assert.deepEqual((calls[0]?.body as { title?: string } | undefined)?.title, "a".repeat(LIBRARY_TITLE_MAX));
+    await library.share(GEN, long);
+    assert.deepEqual(calls.at(-1)?.body, { name: "a".repeat(SHARE_NAME_MAX) });
+    assert.ok(LIBRARY_TITLE_MAX > SHARE_NAME_MAX);
   });
 });
 
@@ -464,7 +478,35 @@ describe("share names", () => {
   it("takes the first line of what it was made from, else the file's name", () => {
     assert.equal(shareNameOf("giant mushroom tree\nmore", "assets/x.glb"), "Giant mushroom tree");
     assert.equal(shareNameOf(undefined, "assets/genex/1/stone_wall-texture.png"), "Stone wall texture");
-    assert.equal(shareNameOf("a".repeat(200), "x.glb").length, 80);
+  });
+
+  it("offers a name genex.games keeps whole: a long one ends at its last clause, phrase or word that fits", () => {
+    const made: Array<[string, string]> = [
+      [
+        "Enormous dragon roar from the sky, deep guttural bellow rising into a terrifying shriek, echoing over water",
+        "Enormous dragon roar from the sky",
+      ],
+      ["Dragon fire breath, a huge roaring jet of flame blasting out, deep whoosh", "Dragon fire breath"],
+      [
+        "Giant leathery wings beating slowly overhead, heavy deep whoosh of air with each wingbeat",
+        "Giant leathery wings beating slowly",
+      ],
+      [
+        "a huge fearsome European dragon in mid-flight, wings fully spread out flat to both sides",
+        "A huge fearsome European dragon",
+      ],
+      ["Giant mushroom tree with a tall twisted stem", "Giant mushroom tree"],
+      ["Dragon wings beating in the wind over a dark stormy sea at night", "Dragon wings beating in the wind"],
+      ["Dragon with enormous leathery wings spread wide open flying", "Dragon with enormous leathery wings"],
+      ["Low poly wooden treasure chest with golden trim and an open lid", "Low poly wooden treasure chest"],
+      ["Fire, a huge roaring jet of flame blasting out of the cave mouth", "Fire, a huge roaring jet"],
+      ["a".repeat(200), `A${"a".repeat(SHARE_NAME_MAX - 1)}`],
+    ];
+    for (const [prompt, name] of made) {
+      assert.equal(shareNameOf(prompt, "x.glb"), name);
+      assert.ok(name.length <= SHARE_NAME_MAX);
+    }
+    assert.equal(SHARE_NAME_MAX, 40, "what genex.games keeps of a page's name");
   });
 });
 

@@ -548,10 +548,12 @@ In a game's Assets tab, signed in, cards wear **Saved** or **Shared**; the opene
 (bookmark) and Share (Play's tint) beside Reveal, and Cmd/Shift-click picks several for a bar (Save,
 Share, Clear). Save marks a generation Saved, or sends a file Genex did not make (GLB, PNG/JPEG/WebP,
 MP3/WAV/OGG, MP4) to the library through genex.games' import; such a file can be saved but not
-shared. Share opens one window (a name per asset, one line of what sharing means), then each card shows
-a step line (Send · Check · Live), a bare ✓ On Play, or an orange refusal with Try again or Send a
-report; a shared one offers Open on Play and Stop sharing. genex.games keeps one page per asset: a
-second share answers the page it has and puts back one taken off Play.
+shared. Share opens one window (a name per asset, one line of what sharing means). The name offered
+is the first line of what the asset was made from, shortened to the 40 characters a page's name
+keeps on Play: at its last whole clause that fits, else its last whole phrase or word. Then each
+card shows a step line (Send · Check · Live), a bare ✓ On Play, or an orange refusal with Try again
+or Send a report; a shared one offers Open on Play and Stop sharing. genex.games keeps one page per
+asset: a second share answers the page it has and puts back one taken off Play.
 
 The Assets tab's search answers from the game, My library and Community; Add copies a library asset
 into `assets/library/<id>/` and a shared one into `assets/community/<id>/` (a code-only asset into
