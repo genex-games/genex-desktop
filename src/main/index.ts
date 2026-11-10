@@ -189,7 +189,7 @@ import {
   type PlayWorld,
   TicketDelivery,
 } from "./play/gallery.ts";
-import { relayHostsOf, startGenexGateway } from "./play/genex-gateway.ts";
+import { authorityHostsOf, fastHostsOf, relayHostsOf, startGenexGateway } from "./play/genex-gateway.ts";
 import { GAME_LINK_SCHEME, gameLinkIn, gameLinks } from "./play/game-links.ts";
 import { thisComputer } from "./play/native-host.ts";
 import { type InstallOutcome, type NativeInstaller, nativeInstalls } from "./play/native-installs.ts";
@@ -1433,7 +1433,7 @@ function playsFor(studio: StudioCore): NonNullable<NativeSessionsDeps["presence"
 }
 
 /**
- * A native game's way to Genex while it plays: its own gateway to Genex's API and relays, and a
+ * A native game's way to Genex while it plays: its own gateway to Genex's API, relays, authority servers and their fast@1 UDP, and a
  * single-use sign-in ticket for it while the person's Genex account is unlocked (a guest otherwise).
  * A Windows game has no gateway, since its AppContainer reaches no loopback port: it is told the
  * API's own address and its container gets the internet as a client (`windows-game.ts`).
@@ -1443,12 +1443,15 @@ async function openGameGenex(studio: StudioCore, slug: string): Promise<GameGene
     const env = { GENEX_API_URL: playOrigin.api, ...(await gameTicket(studio, slug)) };
     return { ports: [], env, close: async () => {} };
   }
+  const apiHost = new URL(playOrigin.api).hostname;
   const gateway = await startGenexGateway({
     api: playOrigin.api,
-    relay: relayHostsOf(new URL(playOrigin.api).hostname),
+    relay: relayHostsOf(apiHost),
+    authority: authorityHostsOf(apiHost),
+    fast: fastHostsOf(apiHost),
   });
   const env = { GENEX_API_URL: gateway.apiUrl, ...(await gameTicket(studio, slug)) };
-  return { ports: gateway.ports, env, close: gateway.close };
+  return { ports: gateway.ports, datagramPorts: gateway.datagramPorts, env, close: gateway.close };
 }
 
 /** A native game's single-use sign-in ticket while the person's Genex account is unlocked; none otherwise. */

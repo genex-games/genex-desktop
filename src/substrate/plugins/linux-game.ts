@@ -7,16 +7,20 @@
  * gamepads. Its network is a namespace of its own with nothing in it but loopback: when it has a
  * Genex gateway (`main/play/genex-gateway.ts`), socat inside listens on the gateway's ports on
  * 127.0.0.1 and passes each connection through a unix socket to the gateway outside, so Genex is
- * all it can reach. It shares the session's IPC namespace, which X11's shared memory needs. It is
+ * all it can reach. Its fast@1 datagrams cross the same way: socat inside listens on each datagram
+ * port and gives each game socket a SOCK_SEQPACKET connection of its own (`u<port>`), whose
+ * messages keep each datagram whole; socat outside, Genex's own and run with fixed arguments,
+ * passes each connection on as a UDP socket of its own to the gateway's datagram port. It shares the session's IPC namespace, which X11's shared memory needs. It is
  * its own process group (Node's `detached` starts a new session, so it has no terminal either), and
  * dies with Genex.
  */
-import { spawn, type ChildProcessByStdio } from "node:child_process";
+import { type ChildProcess, type ChildProcessByStdio, spawn } from "node:child_process";
 import { constants, existsSync } from "node:fs";
 import { access, lstat, mkdtemp, readdir, realpath, rm } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import type { Readable } from "node:stream";
 import { ownBubblewrap } from "../linux-bubblewrap.ts";
 import { gameGenexEnv, type NativeGameRequest, treeKiller } from "./native-process.ts";
@@ -51,26 +55,44 @@ const BUBBLEWRAP_PATHS = ["/usr/bin/bwrap", "/bin/bwrap", "/usr/local/bin/bwrap"
 /** How long the bridge waits for socat to listen before the game starts anyway, in tries of `BRIDGE_TRY_S`. */
 const BRIDGE_TRIES = 100;
 const BRIDGE_TRY_S = "0.02";
+/** The game sockets one datagram port carries at once, each a socat child on both sides. */
+const DATAGRAM_PEERS_MAX = 16;
+/** How long a datagram flow may be silent, in seconds, before its socat children end and free their place. */
+const DATAGRAM_IDLE_S = 30;
+/** How long the outside waits for its datagram sockets to be there before the game starts anyway. */
+const DATAGRAM_LISTEN_WAIT_MS = 2_000;
+const DATAGRAM_LISTEN_POLL_MS = 20;
+/** A datagram port's unix socket in the bridge's folder: `u` and the port, beside the TCP ports' bare numbers. */
+const datagramSocket = (port: number) => `u${port}`;
 
 const MESSAGE = { NoBubblewrap: "bubblewrap is not installed" } as const;
 
 /**
  * Inside the sandbox, before the game: socat listening on each gateway port on 127.0.0.1 and
- * passing each connection on to the port's unix socket, then (for a moment, until each listens)
- * a wait, then the game in its place. Its arguments: socat, the ports, `--`, the game and its own.
+ * passing each connection on to the port's unix socket, and on each datagram port, each game
+ * socket's datagrams to the port's SOCK_SEQPACKET socket; then (for a moment, until each listens)
+ * a wait, then the game in its place. Its arguments: socat, the ports, `--`, the datagram ports,
+ * `--`, the game and its own.
  */
-const BRIDGE_SCRIPT = `socat=$1; shift; ports=
+const BRIDGE_SCRIPT = `socat=$1; shift; ports=; datagrams=
 while [ "$1" != "--" ]; do
   "$socat" -lf /dev/null TCP-LISTEN:"$1",bind=127.0.0.1,fork,reuseaddr UNIX-CONNECT:${GAME_NET_DIR}/"$1" &
   ports="$ports $1"; shift
 done
 shift
-for port in $ports; do
-  hex=$(printf '%04X' "$port"); tries=0
-  while [ "$tries" -lt ${BRIDGE_TRIES} ] && ! grep -q ":$hex 00000000:0000 0A" /proc/net/tcp; do
+while [ "$1" != "--" ]; do
+  "$socat" -lf /dev/null -T ${DATAGRAM_IDLE_S} UDP4-LISTEN:"$1",bind=127.0.0.1,fork,reuseaddr,max-children=${DATAGRAM_PEERS_MAX} UNIX-CONNECT:${GAME_NET_DIR}/u"$1",type=5 &
+  datagrams="$datagrams $1"; shift
+done
+shift
+await() {
+  hex=$(printf '%04X' "$2"); tries=0
+  while [ "$tries" -lt ${BRIDGE_TRIES} ] && ! grep -q ":$hex 00000000:0000 $3" "$1"; do
     sleep ${BRIDGE_TRY_S}; tries=$((tries + 1))
   done
-done
+}
+for port in $ports; do await /proc/net/tcp "$port" 0A; done
+for port in $datagrams; do await /proc/net/udp "$port" 07; done
 exec "$@"`;
 
 /** A port a game may reach its gateway on: an unprivileged one, a plain number. */
@@ -92,8 +114,8 @@ export interface LinuxGameHost {
   wayland?: string;
   /** The sound servers' sockets there are, relative to the runtime folder. */
   sound: string[];
-  /** The bridge to the gateway: socat, and the folder of unix sockets outside, one per port. */
-  bridge?: { socat: string; dir: string; ports: number[] };
+  /** The bridge to the gateway: socat, and the folder of unix sockets outside, one per port and datagram port. */
+  bridge?: { socat: string; dir: string; ports: number[]; datagramPorts?: number[] };
 }
 
 /** One game's start: the program, its arguments and environment, and its folder. */
@@ -147,12 +169,15 @@ function sound(host: LinuxGameHost): { args: string[]; env: Record<string, strin
   };
 }
 
-/** The gateway's ports a game may reach, and the bridge's mount; none without a bridge. */
-function bridgePorts(host: LinuxGameHost, request: NativeGameRequest): number[] {
+/** The gateway's ports and datagram ports a game may reach through the bridge; none without a bridge. */
+function bridgePorts(host: LinuxGameHost, request: NativeGameRequest): { tcp: number[]; udp: number[] } {
   const bridge = host.bridge;
-  if (!bridge || !isPlainAbsolute(bridge.dir) || !isPlainAbsolute(bridge.socat)) return [];
-  const asked = new Set(request.genex?.ports ?? []);
-  return bridge.ports.filter((port) => isGatewayPort(port) && asked.has(port));
+  if (!bridge || !isPlainAbsolute(bridge.dir) || !isPlainAbsolute(bridge.socat)) return { tcp: [], udp: [] };
+  const given = (bridged: readonly number[], asked: readonly number[] | undefined) =>
+    bridged.filter((port) => isGatewayPort(port) && (asked ?? []).includes(port));
+  const tcp = given(bridge.ports, request.genex?.ports);
+  // A datagram port goes with the gateway it belongs to: none without a TCP port to reach Genex by.
+  return { tcp, udp: tcp.length ? given(bridge.datagramPorts ?? [], request.genex?.datagramPorts) : [] };
 }
 
 /**
@@ -164,13 +189,24 @@ function bridgePorts(host: LinuxGameHost, request: NativeGameRequest): number[] 
 export function linuxGameCommand(request: NativeGameRequest, host: LinuxGameHost): LinuxGameCommand {
   const shown = display(host);
   const heard = sound(host);
-  const ports = bridgePorts(host, request);
+  const { tcp: ports, udp: datagramPorts } = bridgePorts(host, request);
   const runtime = host.runtimeDir && isPlainAbsolute(host.runtimeDir) ? host.runtimeDir : null;
   const game = [request.binary, ...(request.args ?? [])];
   const bridge = host.bridge;
   const command =
     ports.length && bridge
-      ? ["/bin/sh", "-c", BRIDGE_SCRIPT, "sh", bridge.socat, ...ports.map(String), "--", ...game]
+      ? [
+          "/bin/sh",
+          "-c",
+          BRIDGE_SCRIPT,
+          "sh",
+          bridge.socat,
+          ...ports.map(String),
+          "--",
+          ...datagramPorts.map(String),
+          "--",
+          ...game,
+        ]
       : game;
   const args = [
     "--die-with-parent",
@@ -255,10 +291,48 @@ async function x11Of(env: NodeJS.ProcessEnv): Promise<LinuxGameHost["x11"]> {
 }
 
 /**
- * The bridge's outside: one unix socket per port in a fresh folder of the person's own, each
- * connection passed on to the gateway's port on 127.0.0.1. Closing it ends every connection.
+ * The bridge's outside for datagrams: socat on a SOCK_SEQPACKET socket `u<port>` in `dir`, each
+ * connection (one game socket inside) its own UDP socket to the gateway's datagram port, in a
+ * process group of its own so closing ends its children too. Answers once the socket is there.
  */
-async function openBridge(ports: readonly number[]): Promise<{ dir: string; close(): Promise<void> }> {
+async function openDatagramSocket(socat: string, dir: string, port: number): Promise<ChildProcess> {
+  const at = path.join(dir, datagramSocket(port));
+  const child = spawn(
+    socat,
+    [
+      "-lf",
+      "/dev/null",
+      "-T",
+      String(DATAGRAM_IDLE_S),
+      `UNIX-LISTEN:${at},type=5,fork,max-children=${DATAGRAM_PEERS_MAX}`,
+      `UDP4:127.0.0.1:${port}`,
+    ],
+    { detached: true, stdio: "ignore" },
+  );
+  child.on("error", () => {});
+  const until = Date.now() + DATAGRAM_LISTEN_WAIT_MS;
+  while (!existsSync(at) && child.exitCode === null && Date.now() < until) await sleep(DATAGRAM_LISTEN_POLL_MS);
+  return child;
+}
+
+/** Ends a datagram socket's socat and every child it forked. */
+function endGroup(child: ChildProcess): void {
+  try {
+    if (child.pid) process.kill(-child.pid, "SIGTERM");
+  } catch {
+    // Gone already.
+  }
+}
+
+/**
+ * The bridge's outside: one unix socket per port in a fresh folder of the person's own, each
+ * connection passed on to the gateway's port on 127.0.0.1, and (with socat) one per datagram port
+ * (`openDatagramSocket`). Closing it ends every connection.
+ */
+async function openBridge(
+  ports: readonly number[],
+  datagrams: { socat: string; ports: readonly number[] } | null,
+): Promise<{ dir: string; datagramPorts: number[]; close(): Promise<void> }> {
   const dir = await mkdtemp(path.join(os.tmpdir(), "genex-net-"));
   const sockets = new Set<net.Socket>();
   const servers = await Promise.all(
@@ -282,9 +356,14 @@ async function openBridge(ports: readonly number[]): Promise<{ dir: string; clos
         }),
     ),
   );
+  const relays = datagrams
+    ? await Promise.all(datagrams.ports.map((port) => openDatagramSocket(datagrams.socat, dir, port)))
+    : [];
   return {
     dir,
+    datagramPorts: datagrams ? [...datagrams.ports] : [],
     close: async () => {
+      for (const relay of relays) endGroup(relay);
       for (const socket of sockets) socket.destroy();
       await Promise.all(servers.map((server) => new Promise((resolve) => server.close(resolve))));
       await rm(dir, { recursive: true, force: true });
@@ -303,10 +382,13 @@ function runtimeOf(env: NodeJS.ProcessEnv): Pick<LinuxGameHost, "runtimeDir" | "
 }
 
 /** This session's display, sound, GPU and system as a game is given them, and its bridge when it reaches Genex. */
-async function hostFor(request: NativeGameRequest, bridgeDir: string | null): Promise<LinuxGameHost> {
+async function hostFor(
+  request: NativeGameRequest,
+  socat: string | null,
+  bridge: { dir: string; datagramPorts: number[] } | null,
+): Promise<LinuxGameHost> {
   const bubblewrap = ownBubblewrap() ?? (await firstProgram(BUBBLEWRAP_PATHS));
   if (!bubblewrap) throw new Error(MESSAGE.NoBubblewrap);
-  const socat = bridgeDir ? await firstProgram(SOCAT_PATHS) : null;
   const x11 = await x11Of(process.env);
   return {
     bubblewrap,
@@ -314,7 +396,16 @@ async function hostFor(request: NativeGameRequest, bridgeDir: string | null): Pr
     devices: await deviceNodes(),
     ...runtimeOf(process.env),
     ...(x11 ? { x11 } : {}),
-    ...(socat && bridgeDir ? { bridge: { socat, dir: bridgeDir, ports: [...(request.genex?.ports ?? [])] } } : {}),
+    ...(socat && bridge
+      ? {
+          bridge: {
+            socat,
+            dir: bridge.dir,
+            ports: [...(request.genex?.ports ?? [])],
+            datagramPorts: bridge.datagramPorts,
+          },
+        }
+      : {}),
   };
 }
 
@@ -332,9 +423,12 @@ export async function spawnLinuxGame(p: NativeGameRequest): Promise<ChildProcess
     scratch: await realpath(p.scratch),
   };
   const ports = (p.genex?.ports ?? []).filter(isGatewayPort);
-  const bridge = ports.length ? await openBridge(ports) : null;
+  const datagramPorts = (p.genex?.datagramPorts ?? []).filter(isGatewayPort);
+  const socat = ports.length ? await firstProgram(SOCAT_PATHS) : null;
+  const datagrams = socat && datagramPorts.length ? { socat, ports: datagramPorts } : null;
+  const bridge = ports.length ? await openBridge(ports, datagrams) : null;
   try {
-    const command = linuxGameCommand(request, await hostFor(request, bridge?.dir ?? null));
+    const command = linuxGameCommand(request, await hostFor(request, socat, bridge));
     const child = spawn(command.file, command.args, {
       cwd: command.cwd,
       env: command.env,

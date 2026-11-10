@@ -141,6 +141,7 @@ async function rig(
     gateways.opened.push(slug);
     return {
       ports: [41000, 41001],
+      datagramPorts: [42000],
       env: { GENEX_API_URL: "http://127.0.0.1:41000", GENEX_EMBED_TICKET: TICKET },
       close: async () => {
         gateways.closed++;
@@ -407,11 +408,12 @@ describe("native game sessions", () => {
 });
 
 describe("a native game's way to Genex", () => {
-  it("gives a game its gateway's ports, Genex's address and ticket and its own name on Genex, and closes the gateway once it ends", async () => {
+  it("gives a game its gateway's ports, its datagram ports, Genex's address and ticket and its own name on Genex, and closes the gateway once it ends", async () => {
     const { sessions, games, requests, gateways } = await rig({ genex: "open" });
     await sessions.launch("dust-runners");
     assert.deepEqual(requests[0]?.genex, {
       ports: [41000, 41001],
+      datagramPorts: [42000],
       env: { GENEX_API_URL: "http://127.0.0.1:41000", GENEX_EMBED_TICKET: TICKET, GENEX_GAME: "dust-runners" },
     });
     assert.equal(gateways.closed, 0, "open while it plays");
@@ -494,22 +496,43 @@ describe("what a game's sandbox and environment take of its way to Genex", () =>
       assert.deepEqual(gameGenexEnv({ ...good, GENEX_GAME: name }), rest, `${JSON.stringify(name)}: no name`);
   });
 
-  it("names only unprivileged local ports in its profile, after the network is denied", () => {
-    const profile = (genexPorts: number[]) =>
+  it("names only unprivileged local ports in its profile, each by its protocol, after the network is denied", () => {
+    const profile = (genexPorts: number[], genexDatagramPorts: number[] = []) =>
       nativeSandboxProfile({
         binaryRoot: "/Applications/Game.app",
         reads: [],
         writes: [],
         denied: [],
         gpu: true,
-        game: { bundleId: "games.genex.play.dust", bundleName: "Dust", userTemp: "/private/var/folders/x", genexPorts },
+        game: {
+          bundleId: "games.genex.play.dust",
+          bundleName: "Dust",
+          userTemp: "/private/var/folders/x",
+          genexPorts,
+          genexDatagramPorts,
+        },
       });
     const lines = profile([41000, 80, 70000, 1.5, Number.NaN, 41001]).split("\n");
     const deny = lines.indexOf("(deny network*)");
     const allow = lines.findIndex((line) => line.startsWith("(allow network-outbound"));
     assert.ok(deny >= 0 && allow > deny, "the allow narrows the deny, after it");
-    assert.equal(lines[allow], '(allow network-outbound (remote ip "localhost:41000") (remote ip "localhost:41001"))');
+    assert.equal(
+      lines[allow],
+      '(allow network-outbound (remote tcp "localhost:41000") (remote tcp "localhost:41001"))',
+    );
+    assert.ok(!lines.some((line) => line.includes("network-bind")), "no datagram ports, no socket of its own");
+    const fast = profile([41000], [42000, 53, 42001]).split("\n");
+    assert.equal(
+      fast.find((line) => line.startsWith("(allow network-outbound")),
+      '(allow network-outbound (remote tcp "localhost:41000") (remote udp "localhost:42000") (remote udp "localhost:42001"))',
+    );
+    assert.equal(
+      fast.at(-1),
+      '(allow network-bind (local udp "localhost:*"))',
+      "a UDP socket of its own, after the deny",
+    );
     assert.ok(!profile([]).includes("network-outbound"), "no gateway, no network at all");
+    assert.ok(!profile([], [42000]).includes("network-"), "datagram ports alone open nothing");
   });
 });
 

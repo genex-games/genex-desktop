@@ -193,19 +193,31 @@ export interface GameSandbox {
   userTemp: string;
   /** Its Genex gateway's ports on 127.0.0.1 (`main/play/genex-gateway.ts`): its only network. */
   genexPorts?: readonly number[];
+  /** Its gateway's datagram ports there, for an authority room's fast@1 channel (`gateway-datagrams.ts`). */
+  genexDatagramPorts?: readonly number[];
 }
 
 /** A port a game's profile may name: an unprivileged one, written as a plain number. */
 const isGatewayPort = (port: number) => Number.isInteger(port) && port >= 1024 && port <= 65535;
 
 /**
- * A game's one way onto the network: TCP to its Genex gateway's ports on this Mac. It comes after
- * the profile's `(deny network*)`, which it narrows, since Seatbelt's last matching rule wins.
+ * A game's one way onto the network: TCP to its Genex gateway's ports on this Mac and UDP to its
+ * datagram ports, each by its own protocol, so another program holding the other protocol's port
+ * of the same number stays out of reach. A game with datagram ports may bind a UDP socket of its
+ * own on this Mac (Node, Rust and .NET bind before they connect; Seatbelt names no port 0); it
+ * still sends only to those ports. The rules come after the profile's `(deny network*)`, which
+ * they narrow, since Seatbelt's last matching rule wins.
  */
 function gameNetwork(game: GameSandbox | undefined): string[] {
-  const ports = (game?.genexPorts ?? []).filter(isGatewayPort);
-  if (!ports.length) return [];
-  return [`(allow network-outbound ${ports.map((port) => `(remote ip "localhost:${port}")`).join(" ")})`];
+  const named = (protocol: string, ports: readonly number[] | undefined) =>
+    (ports ?? []).filter(isGatewayPort).map((port) => `(remote ${protocol} "localhost:${port}")`);
+  const tcp = named("tcp", game?.genexPorts);
+  if (!tcp.length) return [];
+  const udp = named("udp", game?.genexDatagramPorts);
+  return [
+    `(allow network-outbound ${[...tcp, ...udp].join(" ")})`,
+    ...(udp.length ? ['(allow network-bind (local udp "localhost:*"))'] : []),
+  ];
 }
 
 /** A game's own preference domain: Genex's prefix and a slug. */
@@ -628,10 +640,11 @@ export interface NativeGameRequest {
   /** Arguments for the game: a game from Play gets its engine's full-screen one (`launchArgs`), or none. */
   args?: string[];
   /**
-   * Its way to Genex: its gateway's ports and what it tells the game (`GameGenexEnv`); none, no
-   * network at all. On Windows there is no gateway: no ports, and the API's own https address.
+   * Its way to Genex: its gateway's ports, its datagram ports and what it tells the game
+   * (`GameGenexEnv`); none, no network at all. On Windows there is no gateway: no ports, and the
+   * API's own https address.
    */
-  genex?: { ports: readonly number[]; env: GameGenexEnv };
+  genex?: { ports: readonly number[]; datagramPorts?: readonly number[]; env: GameGenexEnv };
 }
 
 /**
@@ -696,7 +709,13 @@ export async function spawnNativeGame(p: NativeGameRequest): Promise<ChildProces
   );
   const reads = await aliases([binaryRoot, ...SYSTEM_READS, ...GAME_SYSTEM_READS]);
   const writes = await aliases([p.saves, p.scratch, ...extensions]);
-  const game = { bundleId: p.bundleId, bundleName: p.bundleName, userTemp, genexPorts: p.genex?.ports ?? [] };
+  const game = {
+    bundleId: p.bundleId,
+    bundleName: p.bundleName,
+    userTemp,
+    genexPorts: p.genex?.ports ?? [],
+    genexDatagramPorts: p.genex?.datagramPorts ?? [],
+  };
   const profile = path.join(p.scratch, "game.sb");
   await writeFile(
     profile,

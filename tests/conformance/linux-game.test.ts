@@ -7,6 +7,7 @@
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { createSocket } from "node:dgram";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { chmod, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
@@ -32,6 +33,7 @@ const GAME: NativeGameRequest = {
   args: ["-screen-fullscreen", "1"],
   genex: {
     ports: [41000, 41001],
+    datagramPorts: [42000],
     env: { GENEX_API_URL: "http://127.0.0.1:41000", GENEX_EMBED_TICKET: "t".repeat(32) },
   },
 };
@@ -44,7 +46,7 @@ const SESSION: LinuxGameHost = {
   runtimeDir: "/run/user/1000",
   wayland: "wayland-0",
   sound: ["pulse/native", "pipewire-0"],
-  bridge: { socat: "/usr/bin/socat", dir: "/tmp/genex-net-abc", ports: [41000, 41001] },
+  bridge: { socat: "/usr/bin/socat", dir: "/tmp/genex-net-abc", ports: [41000, 41001], datagramPorts: [42000] },
 };
 
 /** Every `[flag, source, destination]` mount a command names. */
@@ -59,7 +61,7 @@ function mounts(args: readonly string[]): string[][] {
 }
 
 describe("a Linux game's bubblewrap command", () => {
-  it("names every mount, its own process table and network, and bridges only the gateway's ports", () => {
+  it("names every mount, its own process table and network, and bridges only the gateway's ports and datagram ports", () => {
     const command = linuxGameCommand(GAME, SESSION);
     assert.equal(command.file, "/usr/bin/bwrap");
     for (const flag of ["--unshare-net", "--unshare-pid", "--die-with-parent"]) assert.ok(command.args.includes(flag));
@@ -87,6 +89,8 @@ describe("a Linux game's bubblewrap command", () => {
       "/usr/bin/socat",
       "41000",
       "41001",
+      "--",
+      "42000",
       "--",
       GAME.binary,
       "-screen-fullscreen",
@@ -137,6 +141,11 @@ describe("a Linux game's bubblewrap command", () => {
         { genex: { ports: [41000], env: { GENEX_API_URL: "http://127.0.0.1:41000" } } },
       ],
       ["a relative socat", { bridge: { socat: "socat", dir: "/tmp/n", ports: [41000] } }, {}],
+      [
+        "datagram ports with no gateway port to reach Genex by",
+        { bridge: { socat: "/usr/bin/socat", dir: "/tmp/n", ports: [], datagramPorts: [42000] } },
+        { genex: { ports: [], datagramPorts: [42000], env: { GENEX_API_URL: "http://127.0.0.1:41000" } } },
+      ],
     ];
     const clean = linuxGameCommand(GAME, { bubblewrap: "/usr/bin/bwrap", system: [], devices: [], sound: [] });
     for (const [why, session, request] of hostile) {
@@ -158,6 +167,28 @@ describe("a Linux game's bubblewrap command", () => {
       assert.equal(command.env.WAYLAND_DISPLAY, undefined, `${why}: no Wayland`);
       assert.equal(command.env.PULSE_SERVER, undefined, `${why}: no sound socket`);
       if (!kept.length) assert.deepEqual(command.args, clean.args, `${why}: as if the session had none`);
+    }
+  });
+});
+
+describe("a Linux game's datagram bridge", () => {
+  it("bridges only the datagram ports the game was given, unprivileged, beside its gateway's", () => {
+    const rows: Array<[string, number[], number[], string[]]> = [
+      ["given", [42000, 42001], [42000, 42001], ["42000", "42001"]],
+      ["one the game was not given", [42000, 5353], [42000], ["42000"]],
+      ["a privileged port", [53, 42000], [53, 42000], ["42000"]],
+      ["none", [], [], []],
+    ];
+    for (const [why, bridged, given, expected] of rows) {
+      const command = linuxGameCommand(
+        { ...GAME, genex: { ...(GAME.genex as NonNullable<NativeGameRequest["genex"]>), datagramPorts: given } },
+        { ...SESSION, bridge: { socat: "/usr/bin/socat", dir: "/tmp/n", ports: [41000], datagramPorts: bridged } },
+      );
+      const game = command.args.slice(command.args.indexOf("--") + 1);
+      const tcpEnd = game.indexOf("--");
+      const udpEnd = game.indexOf("--", tcpEnd + 1);
+      assert.deepEqual(game.slice(tcpEnd + 1, udpEnd), expected, why);
+      assert.equal(game[udpEnd + 1], GAME.binary, `${why}: then the game`);
     }
   });
 });
@@ -203,7 +234,7 @@ const SKIP = canSandbox() ? false : "needs Linux with a working bubblewrap and s
 
 /** The probe a game runs: what it can reach of the computer, a line per step. */
 const PROBE = `#!/bin/bash
-outside=$1; other=$2
+outside=$1; other=$2; dport=$3; dother=$4
 echo "home=$HOME"
 plays=$(( $(cat "$HOME/plays" 2>/dev/null || echo 0) + 1 )); echo "$plays" > "$HOME/plays" && echo "save=$plays"
 touch "$(dirname "$0")/written" 2>/dev/null && echo "install=written" || echo "install=read-only"
@@ -214,10 +245,16 @@ echo "gateway=$( [ -n "$port" ] && reach 127.0.0.1 "$port" || echo unreached)"
 echo "other=$(reach 127.0.0.1 "$other")"
 echo "internet=$(timeout 3 bash -c 'exec 3<>/dev/tcp/1.1.1.1/80' 2>/dev/null && echo reached || echo unreached)"
 echo "ticket=\${GENEX_EMBED_TICKET:+yes}"
+udp() { (exec 3<>"/dev/udp/127.0.0.1/$1" && printf '%s-1\\n' "$2" >&3 && printf '%s-2\\n' "$2" >&3 && timeout 1 cat <&3 | tr '\\n' ' ') 2>/dev/null; }
+[ -n "$dport" ] && echo "datagram=$(udp "$dport" a)" && echo "datagram-second-socket=$(udp "$dport" b)"
+[ -n "$dother" ] && echo "other-datagram=$(udp "$dother" c)"
 `;
 
 /** Run the probe as an installed game would run, with `genex` its way to Genex; its lines as a map. */
-async function probe(root: string, more: { outside: string; other: number; genex?: NativeGameRequest["genex"] }) {
+async function probe(
+  root: string,
+  more: { outside: string; other: number; datagrams?: number[]; genex?: NativeGameRequest["genex"] },
+) {
   const app = path.join(root, "probe", "1.0");
   const binary = path.join(app, "Probe", "probe.sh");
   await mkdir(path.dirname(binary), { recursive: true });
@@ -234,7 +271,7 @@ async function probe(root: string, more: { outside: string; other: number; genex
     scratch,
     bundleId: "games.genex.play.probe",
     bundleName: "probe.sh",
-    args: [more.outside, String(more.other)],
+    args: [more.outside, String(more.other), ...(more.datagrams ?? []).map(String)],
     ...(more.genex ? { genex: more.genex } : {}),
   });
   let out = "";
@@ -293,6 +330,42 @@ describe("the game sandbox on this Linux computer", { skip: SKIP }, () => {
     } finally {
       gateway.server.close();
       other.server.close();
+    }
+  });
+
+  it("carries each game socket's datagrams whole to its gateway's datagram port and back, and no other", async () => {
+    const root = await realpath(await tmpDir("linux-game-datagram-"));
+    const gateway = http.createServer((_req, res) => res.writeHead(200).end("gateway"));
+    await new Promise<void>((resolve) => gateway.listen(0, "127.0.0.1", () => resolve()));
+    const echo = async () => {
+      const socket = createSocket("udp4");
+      socket.on("message", (bytes, from) =>
+        socket.send(Buffer.concat([Buffer.from("echo:"), bytes]), from.port, from.address),
+      );
+      await new Promise<void>((resolve) => socket.bind(0, "127.0.0.1", () => resolve()));
+      return { socket, port: socket.address().port };
+    };
+    const datagrams = await echo();
+    const other = await echo();
+    try {
+      const port = (gateway.address() as AddressInfo).port;
+      const lines = await probe(root, {
+        outside: "/nonexistent",
+        other: 9,
+        datagrams: [datagrams.port, other.port],
+        genex: {
+          ports: [port],
+          datagramPorts: [datagrams.port],
+          env: { GENEX_API_URL: `http://127.0.0.1:${port}` },
+        },
+      });
+      assert.equal(lines.get("datagram"), "echo:a-1 echo:a-2 ", "each datagram whole, both answered");
+      assert.equal(lines.get("datagram-second-socket"), "echo:b-1 echo:b-2 ", "a second socket of the game too");
+      assert.equal(lines.get("other-datagram"), "", "a datagram port it was not given stays out");
+    } finally {
+      gateway.close();
+      datagrams.socket.close();
+      other.socket.close();
     }
   });
 });

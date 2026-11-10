@@ -302,19 +302,34 @@ is.
   process. A web game's Mac app is offered in the viewer's bar (install, progress, play: the viewer
   gives way), and opening a game whose app runs brings the app forward.
 - Genex from a native game (`main/play/genex-gateway.ts`).
-  - **The gateway.** Each launch opens a gateway on 127.0.0.1: one port for Genex's API, and six for
-    relays as answers name them (`relayHostsOf`: `relay[-<region>].<api's domain>`).
-  - **The sandbox.** The game's profile allows outbound TCP to those ports only. Seatbelt names no
-    host but `localhost`, so the gateway is how "Genex only" is enforced. On Linux the game's own
-    network namespace holds only loopback: socat inside listens on the gateway's ports on 127.0.0.1
-    and passes each connection through a unix socket to the gateway outside (no socat, no network).
-    Windows has no gateway (an AppContainer reaches no loopback port): the game is told the API's
-    own address (`directGenexEnv`: an https origin, nothing after it) and reaches it, and the relays
-    its answers name, over the internet (`internetClient`); there "Genex only" is not enforced.
-  - **What goes through.** Requests and WebSockets go on to their own Genex host over TLS. Relay
-    addresses in JSON answers (relay lists, a seat's `publicAddress`) are rewritten to their local
-    port, so the next connection comes back through the gateway. Anything else is refused: a port
-    with no host yet, a relay once the ports are full, a request over 1 MB.
+  - **The gateway.** Each launch opens a gateway on 127.0.0.1: one port for Genex's API, six for
+    relays and twelve for authority servers as answers name them (`relayHostsOf`:
+    `relay[-<region>].<api's domain>`; `authorityHostsOf`: `authority[-<region>[-<node>]].<domain>`),
+    and eight UDP ports for fast@1 endpoints (`gateway-datagrams.ts`).
+  - **The sandbox.** The game's profile allows outbound TCP to the TCP ports and UDP to the datagram
+    ports, each by its own protocol (`remote tcp`/`remote udp`), plus binding a UDP socket of its own
+    (Node, Rust and .NET bind before they connect; Unreal's connected socket needs no bind). Seatbelt
+    names no host but `localhost`, so the gateway is how "Genex only" is enforced. On Linux the
+    game's own network namespace holds only loopback: socat inside listens on the gateway's ports on
+    127.0.0.1 and passes each connection through a unix socket to the gateway outside, and on each
+    datagram port gives each game socket a SOCK_SEQPACKET connection (`u<port>`) that Genex's own
+    socat outside turns into a UDP socket to the gateway (no socat, no network). Windows has no
+    gateway (an AppContainer reaches no loopback port): the game is told the API's own address
+    (`directGenexEnv`: an https origin, nothing after it) and reaches it, and the relays, authority
+    servers and fast endpoints its answers name, over the internet (`internetClient`, outbound TCP
+    and UDP); there "Genex only" is not enforced.
+  - **What goes through.** Requests and WebSockets go on to their own Genex host over TLS. Relay and
+    authority addresses in JSON answers (relay lists, `authorityUrls`, `authorityRegions`, a seat's
+    `publicAddress`) are rewritten to their local port, so region probes, joins and room sockets
+    come back through the gateway. An authority room names its fast@1 endpoint inside its WebSocket
+    (`__fast`, multiplayer PROTOCOL.md §17.12): the gateway reads the room's frames (never the
+    game's), rewrites that url to a datagram port (`gateway-frames.ts`) and drops the compression
+    offer so it can. Each game socket on a datagram port gets its own UDP socket to the endpoint, so
+    the room's path check and the seat's key work unchanged; about 0.07 ms is added on loopback.
+    Anything else is refused: a port with no host yet, a host once its pool is full, a request over
+    1 MB, a fast host that is neither `fast[-<region>].<domain>` nor a public address (or a name that
+    resolves to this computer or its network), a datagram over 1,200 bytes. Past eight senders a
+    datagram port drops the one the room answered least lately.
   - **What the game is told.** Its environment carries `GENEX_API_URL` (the gateway; on Windows the
     API), `GENEX_GAME` (its slug, so a build made before its first publish knows which rooms to
     join) and, while the Genex account is unlocked, `GENEX_EMBED_TICKET`. That is a single-use

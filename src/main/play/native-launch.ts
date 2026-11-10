@@ -60,6 +60,8 @@ export interface GameProcess {
  */
 export interface GameGenex {
   ports: readonly number[];
+  /** Its datagram ports, for an authority room's fast@1 channel; none where the gateway carries no UDP. */
+  datagramPorts?: readonly number[];
   env: GameGenexEnv;
   close(): Promise<void>;
 }
@@ -269,7 +271,15 @@ export class NativeSessions {
       bundleName,
       args: [...(chosen?.args ?? []), ...launchArgs(record)],
       // The game's own name on Genex too: a build made before its first publish knows no other.
-      ...(genex ? { genex: { ports: genex.ports, env: { ...genex.env, GENEX_GAME: slug } } } : {}),
+      ...(genex
+        ? {
+            genex: {
+              ports: genex.ports,
+              datagramPorts: genex.datagramPorts ?? [],
+              env: { ...genex.env, GENEX_GAME: slug },
+            },
+          }
+        : {}),
     };
     try {
       const child = await this.#deps.spawn(request);
