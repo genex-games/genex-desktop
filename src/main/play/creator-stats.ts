@@ -5,7 +5,7 @@
  * the gallery.
  */
 import { MINUTE_MS } from "../../shared/duration.ts";
-import { type PlayCreator, creatorScore } from "../../shared/play-people.ts";
+import type { PlayCreator } from "../../shared/play-people.ts";
 import { isPlaySlug } from "../../shared/play.ts";
 import { type PlayGameStats, type PlayStats, type StatsPeriod, isStatsPeriod } from "../../shared/play-stats.ts";
 import { type GalleryDeps, GalleryError, imageUrl, isRecord, SignInNeeded, text } from "./gallery.ts";
@@ -79,7 +79,10 @@ export function toStats(body: unknown, days: StatsPeriod, local = false): PlaySt
   };
 }
 
-/** Top creators as Play shows them, best first by {@link creatorScore}. */
+/**
+ * Top creators as Play shows them: in the order genex.games sent, which is its ranking (people who
+ * played, time, likes and new games). The row never sorts them again by the two numbers a tile shows.
+ */
 export function toCreators(body: unknown, local = false): PlayCreator[] {
   const list = isRecord(body) && Array.isArray(body.creators) ? body.creators : [];
   const seen = new Set<string>();
@@ -92,9 +95,7 @@ export function toCreators(body: unknown, local = false): PlayCreator[] {
     seen.add(person.id);
     creators.push({ ...person, games, hours });
   }
-  return creators
-    .toSorted((a, b) => creatorScore(b.games, b.hours) - creatorScore(a.games, a.hours))
-    .slice(0, CREATORS_MAX);
+  return creators.slice(0, CREATORS_MAX);
 }
 
 /** The creator reads over `deps`. */
