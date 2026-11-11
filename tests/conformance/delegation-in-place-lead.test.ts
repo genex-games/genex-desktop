@@ -22,7 +22,7 @@ import type {
 import { type CoreLite, coreLite } from "../helpers/core-lite.ts";
 import { copyProject, Project } from "../helpers/project-fixtures.ts";
 import { tmpDir } from "../helpers/tmp.ts";
-import { Changes, until } from "../helpers/worker-chat.ts";
+import { Changes, until } from "../helpers/changes.ts";
 
 const ENGINE = "claude-code";
 /** An engine that cannot ask about every call (Codex's own modes), as the world registers it too. */

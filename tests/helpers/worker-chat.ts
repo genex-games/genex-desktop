@@ -20,6 +20,7 @@ import type {
 } from "../../src/substrate/engines/types.ts";
 import type { AppLookPort, ScreenAccess } from "../../src/substrate/app-look.ts";
 import type { JobSpawn } from "../../src/substrate/jobs.ts";
+import { Changes, until } from "./changes.ts";
 import { type CoreLite, type CoreLiteOptions, coreLite } from "./core-lite.ts";
 import { tmpDir } from "./tmp.ts";
 
@@ -49,28 +50,6 @@ const lites: CoreLite[] = [];
 /** Stop every core a worker chat started; a test file calls it in its `after`. */
 export async function closeWorkerChats(): Promise<void> {
   for (const lite of lites.splice(0)) await lite.close();
-}
-
-/** Something a test waits to be told of: a promise for the next change, and its signal. */
-export class Changes {
-  #waiters: Array<() => void> = [];
-  /** The next change. Ask for it before reading the state it changes, so none is missed. */
-  next(): Promise<void> {
-    return new Promise((resolve) => this.#waiters.push(resolve));
-  }
-  /** A change happened: everyone waiting hears it. */
-  notify(): void {
-    for (const resolve of this.#waiters.splice(0)) resolve();
-  }
-}
-
-/** Wait until `done` holds, reading it again on each change. */
-export async function until(changes: Changes, done: () => boolean | Promise<boolean>): Promise<void> {
-  for (;;) {
-    const next = changes.next();
-    if (await done()) return;
-    await next;
-  }
 }
 
 /** What kind of engine a fake is: a delegated one carries a worker's seat; a direct one (a local model) does not. */
