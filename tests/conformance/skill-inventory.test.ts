@@ -35,3 +35,8 @@ test("missing skills and redirected skills root expose no inventory", async () =
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("a non-existent workspace returns an empty skills array without throwing", async () => {
+  const missing = path.join(os.tmpdir(), `studio-skills-missing-${Date.now()}`);
+  assert.deepEqual(await studioSkills(missing), []);
+});

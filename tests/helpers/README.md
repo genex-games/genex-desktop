@@ -79,6 +79,10 @@ folder listing wins. Rules for tests are in [tests/AGENTS.md](../AGENTS.md).
   `chat-workers`), agent jobs through a `jobSpawn` the test gives it (`job-tools`), and `app_look`
   through the stub port and a recording `screenAccess` (`app-look-tool`). Its waits are on what
   happened (`untilSeen`, `nextCard`), never on a clock.
+- `changes.ts`: how a test waits on what happened: a fake tells a `Changes` of each thing a test
+  may wait for, and `until` reads the state again on each. Use it instead of a wait on a clock or
+  on a count of event-loop turns, which fails at random on a busy machine (`worker-chat.ts`,
+  `chat-permissions`, `project-use-cases`, `delegation-in-place-lead`, `unreal-first-use`).
 - `worker-pool-host.ts`: a fake host for the seed's worker pool (real git in a temporary game and
   its copies, worker sessions the test ends, every record the pool appends), for `worker-pool` and
   `worker-events`.

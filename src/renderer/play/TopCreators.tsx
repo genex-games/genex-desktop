@@ -1,7 +1,7 @@
 /**
  * Top creators at the top of Play's Games: the same row as a profile's friends, each creator with
- * their games and the hours people played them over the last 30 days ("this month"), ranked by
- * `creatorScore`. Read once; while the read is on its way the row holds its place with tiles of
+ * their games and the hours people played them over the last 30 days ("this month"), in the order
+ * genex.games ranks them. Read once; while the read is on its way the row holds its place with tiles of
  * the same size, so nothing under it moves; while genex.games does not rank creators the row is
  * not there.
  */

@@ -15,6 +15,7 @@ export function PluginPanelDialog({
   document,
   title,
   project,
+  narrow = false,
   onDismiss,
 }: {
   plugin: PluginInfo;
@@ -22,6 +23,8 @@ export function PluginPanelDialog({
   /** The manifest's name for the panel: the title until the panel tells its own heading. */
   title: string;
   project: string | null | undefined;
+  /** The panel is one short list (its manifest's `width`): Studio's narrow dialog holds it. */
+  narrow?: boolean;
   onDismiss: () => void;
 }): JSX.Element {
   const [head, setHead] = useState<PanelHead | null>(null);
@@ -31,7 +34,7 @@ export function PluginPanelDialog({
       title={head?.title ?? title}
       description={head?.description ?? undefined}
       onBack={head?.back ? () => back.current?.() : undefined}
-      size="2xl"
+      size={narrow ? "lg" : "2xl"}
       onDismiss={onDismiss}
     >
       {/* A panel that tells no height (an older SDK) keeps a fixed frame that scrolls inside. */}

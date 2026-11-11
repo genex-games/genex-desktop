@@ -1,7 +1,7 @@
 {
   "apiVersion": 3,
   "id": "roblox",
-  "version": "0.1.35",
+  "version": "0.1.36",
   "icon": "icon.svg",
   "name": "Roblox Studio",
   "publisher": "Genex",
@@ -781,7 +781,9 @@
       "probe": "phone-check"
     }
   ],
-  "panels": [{ "id": "setup", "title": "Roblox Studio", "file": "panel.html", "placement": "settings" }],
+  "panels": [
+    { "id": "setup", "title": "Roblox Studio", "file": "panel.html", "placement": "settings", "width": "narrow" }
+  ],
   "settings": [],
   "actions": [
     { "name": "status", "label": "Roblox Studio status" },
@@ -790,7 +792,7 @@
     { "name": "setup", "label": "Set up", "native": true },
     {
       "name": "undo-setup",
-      "label": "Undo Set up",
+      "label": "Remove Genex",
       "confirmation": "Take back what Genex set up in Roblox Studio: the Genex helper in its Plugins folder (and that folder, if Genex made it) and the MCP server switch Genex turned on. Anything changed since stays as it is.",
       "native": true
     },

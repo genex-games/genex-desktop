@@ -210,27 +210,35 @@ describe("The Roblox Studio panel", { skip }, () => {
       }
     });
 
-  it("every step is its own rounded block with a 1px outline, 8px apart", async () => {
+  it("the steps are one list under the game's row: one outline around all, a line between rows, words in one font", async () => {
     const c = await computer({ setUp: false, running: false });
     const tab = await open(c);
     try {
-      const blocks = await tab.evaluate(() => {
+      const list = await tab.evaluate(() => {
         const steps = [...document.querySelectorAll<HTMLElement>("#steps > li")];
+        const box = getComputedStyle(document.getElementById("list") as HTMLElement);
+        const family = (el: Element) => getComputedStyle(el).fontFamily.split(",")[0]?.trim() ?? "";
         return {
           count: steps.length,
-          gap: getComputedStyle(document.getElementById("steps") as HTMLElement).rowGap,
-          looks: steps.map((step) => {
-            const style = getComputedStyle(step);
-            return { radius: Number.parseFloat(style.borderTopLeftRadius), outline: style.boxShadow };
-          }),
+          radius: Number.parseFloat(box.borderTopLeftRadius),
+          outline: box.boxShadow,
+          lines: steps.map((step) => getComputedStyle(step).boxShadow),
+          radii: steps.map((step) => Number.parseFloat(getComputedStyle(step).borderTopLeftRadius)),
+          fonts: [
+            ...new Set([...document.querySelectorAll("#list :is(h2, .step-name, .detail, #state-word)")].map(family)),
+          ],
+          state: document.getElementById("state-word")?.textContent,
+          menu: (document.getElementById("more") as HTMLElement).hidden,
         };
       });
-      assert.equal(blocks.gap, "8px");
-      assert.ok(blocks.count >= 4);
-      for (const look of blocks.looks) {
-        assert.ok(look.radius >= 12, "rounded");
-        assert.match(look.outline, /0px 0px 0px 1px inset/, "a 1px outline");
-      }
+      assert.ok(list.count >= 4);
+      assert.ok(list.radius >= 12, "the list is one rounded block");
+      assert.match(list.outline, /0px 0px 0px 1px inset/, "with one 1px outline");
+      for (const line of list.lines) assert.match(line, /0px 1px 0px 0px inset/, "a line above each step");
+      assert.deepEqual([...new Set(list.radii)], [0], "no step is a block of its own");
+      assert.equal(list.fonts.length, 1, `every word in one font (${list.fonts.join(", ")})`);
+      assert.equal(list.state, "Not ready yet");
+      assert.equal(list.menu, true, "nothing behind the dots before Genex is in Studio");
     } finally {
       await tab.close();
     }
@@ -299,12 +307,15 @@ describe("The Roblox Studio panel", { skip }, () => {
     }
   });
 
-  it("offers Add Luau checks under the steps once Studio is set up, and its press sends it", async () => {
+  it("offers Add Luau checks behind the three dots once Studio is set up, and its press sends it", async () => {
     const c = await computer({ game: true });
     const tab = await open(c);
     try {
+      assert.equal(await tab.isVisible("#luau"), false, "a rare action: behind the dots");
+      await tab.click("#more summary");
       assert.equal(await tab.isVisible("#luau"), true);
       assert.equal(await tab.textContent("#luau"), "Add Luau checks");
+      assert.equal(await tab.textContent("#undo"), "Remove Genex from Studio");
       await tab.click("#luau");
       await sentOnce(tab, c, (names) => names.includes("add-luau-checks"));
       assert.deepEqual(c.sent, [["add-luau-checks", {}]]);
@@ -315,7 +326,7 @@ describe("The Roblox Studio panel", { skip }, () => {
     const before = await computer({ setUp: false, running: false });
     const early = await open(before);
     try {
-      assert.equal(await early.isVisible("#luau"), false, "nothing to add before Studio is set up");
+      assert.equal(await early.isVisible("#more"), false, "nothing to add before Studio is set up");
     } finally {
       await early.close();
     }
@@ -331,7 +342,7 @@ describe("The Roblox Studio panel", { skip }, () => {
     }
   });
 
-  it("Choose your place lists each place as its own block, and Use in this game links it", async () => {
+  it("Choose your place lists the places as rows of one list, and Use in this game links it", async () => {
     const studios: OpenStudio[] = [
       { id: "studio-a", name: "Pet Valley 7781440219", placeId: "7781440219", universeId: "2611231458" },
       { id: "studio-b", name: "Place1" },
@@ -346,8 +357,10 @@ describe("The Roblox Studio panel", { skip }, () => {
           name: row.querySelector(".name")?.textContent,
           where: row.querySelector(".where")?.textContent,
           button: row.querySelector("button")?.textContent,
-          radius: Number.parseFloat(getComputedStyle(row).borderTopLeftRadius),
         })),
+      );
+      const radius = await tab.evaluate(() =>
+        Number.parseFloat(getComputedStyle(document.getElementById("open-places") as HTMLElement).borderTopLeftRadius),
       );
       assert.deepEqual(
         rows.map(({ name, where, button }) => ({ name, where, button })),
@@ -356,7 +369,7 @@ describe("The Roblox Studio panel", { skip }, () => {
           { name: "Place1", where: "Not saved to a file yet", button: "Use in this game" },
         ],
       );
-      for (const row of rows) assert.ok(row.radius >= 12, "each place is a rounded block");
+      assert.ok(radius >= 12, "the places are one rounded list");
       await tab.click("#open-places > li:nth-child(2) button");
       await sentOnce(tab, c, (names) => names.includes("use-place"));
       assert.deepEqual(c.sent.at(-1), ["use-place", { studio: "studio-b" }]);
@@ -509,7 +522,13 @@ describe("The Roblox Studio panel", { skip }, () => {
     assert.equal(((await linked.act("use-place", { studio: "studio-b" })) as { linked: boolean }).linked, true);
     const first = await open(linked);
     try {
-      await first.click('#steps [data-step="place"] button:has-text("Choose another place")');
+      // Flipped: a place already chosen keeps Choose another place behind the three dots, not in its row.
+      assert.equal(
+        await first.locator('#steps [data-step="place"] button:has-text("Choose another place")').count(),
+        0,
+      );
+      await first.click("#more summary");
+      await first.click("#change-place");
       await first.waitForSelector("#places:not([hidden])");
       assert.equal(await first.locator("#places-new").isVisible(), false, "a game with a place can't make another");
       assert.equal(await first.locator("#places-file").isVisible(), true);

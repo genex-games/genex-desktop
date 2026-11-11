@@ -3,15 +3,15 @@
 :root{--bg:#0e0d0f;--fg:#dee0e2;--accent:#3c44c4;--accent-fill:var(--accent);--accent-text:#fff;--accent-hover:color-mix(in srgb,var(--accent) 88%,#fff);--ok:#7cd194;--warn:#efbe72;--err:#f08287;--outline:rgb(255 255 255/.1);color-scheme:dark;
   --quiet:color-mix(in srgb,var(--fg) 64%,var(--bg));--line:color-mix(in srgb,var(--fg) 9%,var(--bg));--hover:color-mix(in srgb,var(--fg) 10%,var(--bg));--field:color-mix(in srgb,var(--fg) 7%,var(--bg));--menu:color-mix(in srgb,var(--fg) 6%,var(--bg));--shadow:0 0 0 1px var(--line),0 16px 48px rgb(0 0 0/.26);
   /* Genex's engine panels group what belongs together in outlined blocks: an edge, a fill one step above the page, a foot a half step, and the tiles and row hovers inside them. */
-  --edge:color-mix(in srgb,var(--fg) 12%,var(--bg));--block:color-mix(in srgb,var(--fg) 3%,var(--bg));--foot:color-mix(in srgb,var(--fg) 1.5%,var(--bg));--tile:color-mix(in srgb,var(--fg) 8%,var(--bg));--row-hover:color-mix(in srgb,var(--fg) 7%,var(--bg));
-  /* Genex's type: words in Zalando Sans SemiExpanded, actions and machine text in Geist Mono (inlinePanelFonts). */
+    --tint-share:16%;--tint-edge-share:55%;--edge:color-mix(in srgb,var(--fg) 12%,var(--bg));--block:color-mix(in srgb,var(--fg) 3%,var(--bg));--foot:color-mix(in srgb,var(--fg) 1.5%,var(--bg));--tile:color-mix(in srgb,var(--fg) 8%,var(--bg));--row-hover:color-mix(in srgb,var(--fg) 7%,var(--bg));
+  /* Genex's type: every word in Zalando Sans SemiExpanded; Geist Mono only on buttons (inlinePanelFonts). */
   --sans:"Zalando Sans SemiExpanded","TikTok Sans Genex",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;--mono:"Geist Mono",ui-monospace,"SF Mono",Menlo,monospace;
   /* A mark drawn in the current colour: the arrow of a button that opens another app or page, a warning's sign, and a tick. */
   --arrow:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M7 17L17 7M9 7h8v8'/%3E%3C/svg%3E");
   --warning:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10.3 4.8 3.4 17a2 2 0 0 0 1.7 3h13.8a2 2 0 0 0 1.7-3L13.7 4.8a2 2 0 0 0-3.4 0z'/%3E%3Cpath d='M12 10v3.5M12 16.6v.1'/%3E%3C/svg%3E");
   --tick:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5'/%3E%3C/svg%3E")}
 /* Chosen for at least 4.5:1 on every light theme's background. */
-:root[data-scheme="light"]{--ok:#1d7f46;--warn:#95570b;--err:#b3303d;--outline:rgb(0 0 0/.1);--menu:color-mix(in srgb,#fff 70%,var(--bg));--shadow:0 0 0 1px var(--line),0 16px 48px rgb(0 0 0/.12);color-scheme:light}
+:root[data-scheme="light"]{--tint-share:10%;--tint-edge-share:35%;--ok:#1d7f46;--warn:#95570b;--err:#b3303d;--outline:rgb(0 0 0/.1);--menu:color-mix(in srgb,#fff 70%,var(--bg));--shadow:0 0 0 1px var(--line),0 16px 48px rgb(0 0 0/.12);color-scheme:light}
 *{box-sizing:border-box}
 body{margin:0;padding:20px;font:14px/20px var(--sans);color:var(--fg);background:var(--bg);-webkit-font-smoothing:antialiased}
 @media (max-width:480px){body{padding:16px}}
@@ -47,9 +47,9 @@ button.quiet:disabled:hover{background:transparent;color:var(--quiet)}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 svg{flex:none;fill:none;stroke:currentColor;stroke-linecap:round;stroke-linejoin:round}
 /*
- * A block: one subject (this game's project, this computer, the list) in an outlined box. Its
- * label sits above it; inside, a rule divides each shown part from the one before, and its actions
- * sit in its foot, the main one first and Change project and ⋯ at its end.
+ * A block: one subject (the list of projects, a new project's name) in an outlined box. Its label
+ * sits above it; inside, a rule divides each shown part from the one before, and its actions sit
+ * in its foot.
  */
 .group{display:grid;gap:8px;min-width:0}
 .label{margin:0;padding-inline-start:2px;font-size:13px;line-height:18px;font-weight:400;color:var(--quiet)}
@@ -57,40 +57,56 @@ svg{flex:none;fill:none;stroke:currentColor;stroke-linecap:round;stroke-linejoin
 .block > :not([hidden]) ~ :not([hidden]){border-top:1px solid var(--line)}
 .pad{padding:14px 16px}
 .foot{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:12px 12px 12px 16px;background:var(--foot);border-radius:0 0 13px 13px}
-.foot .end{display:flex;align-items:center;gap:2px;margin-inline-start:auto;margin-inline-end:-4px}
 .tile{width:44px;height:44px;flex:none;display:grid;place-items:center;border-radius:11px;background:var(--tile);color:var(--quiet)}
 .tile.small{width:32px;height:32px;border-radius:9px}
 .tile.new{background:color-mix(in srgb,var(--accent) 22%,var(--bg));color:var(--fg)}
-.path{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--mono);font-size:12px;line-height:18px;letter-spacing:-.02em;color:var(--quiet)}
-/* A fact: its name in the quiet ink, its value at the end in mono; in This computer, the thing in ink and its version quiet. */
-.fact{display:flex;align-items:center;gap:12px;min-height:44px;padding:0 16px}
-.fact .k{flex:1;min-width:0;color:var(--quiet)}
-.fact .v{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--mono);font-size:12px;line-height:18px;letter-spacing:-.02em;text-align:end}
-.mac .fact .k{color:var(--fg)}
-.mac .fact .v{color:var(--quiet)}
-/* A fact that is in order: a tick in a green disc; one that isn't yet: an empty ring. */
-.ticked{width:20px;height:20px;flex:none;border-radius:50%;display:grid;place-items:center;background:color-mix(in srgb,var(--ok) 16%,transparent);color:var(--ok)}
-.ticked::before{content:"";width:11px;height:11px;background:currentColor;-webkit-mask:var(--tick) center/contain no-repeat;mask:var(--tick) center/contain no-repeat}
-.ticked.not{background:none;box-shadow:inset 0 0 0 1.5px color-mix(in srgb,var(--fg) 22%,var(--bg))}
-.ticked.not::before{content:none}
-/* The project's head: its picture, name and place, and where it stands. */
-.head{display:flex;align-items:center;gap:14px;padding:16px}
-.who{flex:1;min-width:0;display:grid;gap:2px}
-.who h2{font-size:16px;line-height:22px}
-/* Where the project stands, a dot and one word as the toolbar button says it; Ready is the green dot alone, its word for screen readers. */
-.state{display:inline-flex;align-items:center;gap:6px;flex:none;height:24px;padding:0 9px;border-radius:12px;background:color-mix(in srgb,currentColor 12%,transparent);font-family:var(--mono);font-size:12px;line-height:18px;letter-spacing:-.02em;color:var(--quiet)}
-.state:has(> #state-word:empty){display:none}
-.state::before{content:"";width:6px;height:6px;flex:none;border-radius:50%;background:currentColor}
-.state[data-tone="unset"]::before{background:none;box-shadow:inset 0 0 0 1.5px currentColor}
-.state[data-tone="ok"]{color:var(--ok);padding:0;background:none}
-.state[data-tone="ok"]::before{width:9px;height:9px}
-.state[data-tone="ok"] #state-word{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
-.msg{display:grid;gap:6px;padding:14px 16px}
-@media (max-width:480px){.head .tile{display:none}}
+.path{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12.5px;line-height:18px;color:var(--quiet)}
+/*
+ * The project view is one list. Its first row is the project: Godot's mark, the name, where it
+ * stands in a dot and a word beside its Godot, the one button for the next step, and ⋯ for the
+ * rare actions. Each row after it is one thing with at most one control: something that needs the
+ * person (a warning sign leads it), the web version. No overflow clipping, so the menu can leave
+ * the list.
+ */
+.rows{min-width:0;border-radius:12px;box-shadow:inset 0 0 0 1px var(--line)}
+.line{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;min-height:60px;padding:8px 14px}
+.rows .line:not(.head){box-shadow:inset 0 1px 0 var(--line)}
+.words{flex:1 1 150px;min-width:0;display:grid;gap:2px;font-size:14px;line-height:20px;font-weight:500;overflow-wrap:anywhere}
+.sub{font-size:12.5px;line-height:18px;font-weight:400;color:var(--quiet)}
+.logo{width:28px;height:28px;flex:none;color:color-mix(in oklab,var(--accent) 55%,var(--fg))}
+.who{flex:1 1 120px;min-width:0;display:grid;gap:2px}
+.who h2{font-size:14px;line-height:20px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* Where the project stands: a dot, one word in its tone's colour, and the Godot it was made with in the quiet ink. */
+.state{display:flex;align-items:center;gap:7px;min-width:0;font-size:12.5px;line-height:18px;color:var(--quiet)}
+.state-text{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dot{width:7px;height:7px;flex:none;border-radius:50%;box-shadow:inset 0 0 0 1.5px currentColor}
+.state[data-tone="ok"] .dot{background:var(--ok);box-shadow:none}
+/* A row's buttons: 28px, the label in Geist Mono; the row's own action in the soft blue, the list's one next step filled. */
+.rows button{flex:none;min-height:28px;padding:0 12px;font-size:12.5px;border-radius:10px}
+.rows button.external{padding-inline-end:10px}
+.rows button.external::after{width:13px;height:13px}
+button.soft{background:color-mix(in srgb,var(--accent) var(--tint-share),transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--accent) var(--tint-edge-share),transparent)}
+button.soft:hover{background:color-mix(in srgb,var(--accent) calc(var(--tint-share) + 6%),transparent)}
+/* A warning's sign, in the mark's slot so every row's words start on one line. */
+.sign{width:28px;height:20px;flex:none;background:var(--warn);-webkit-mask:var(--warning) center/20px no-repeat;mask:var(--warning) center/20px no-repeat}
+/* What the project needs said in a sentence: under its name, on the name's own line; gone when there is nothing to say. */
+.msg{display:grid;gap:6px;padding:0 14px 12px 54px;font-size:12.5px;line-height:18px}
+.msg:not(:has(> :not(:empty))){display:none}
+/* What a row is doing now, where its button was: Genex's orb and a word. */
+.doing{display:inline-flex;flex:none;align-items:center;gap:8px;height:28px;font-size:12.5px;color:var(--quiet)}
+/* More: the ⋯ at the end of the project's row opens a small menu of the rare actions; its dots end where a button would. */
+.menu{position:relative;flex:none;margin-inline:-8px -6px}
+.menu summary{display:flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:8px;color:var(--quiet);list-style:none;cursor:pointer}
+.menu summary::-webkit-details-marker{display:none}
+.menu .dots{fill:currentColor;stroke:none}
+.menu summary:hover,.menu[open] summary{background:var(--hover);color:var(--fg)}
+.menu-body{position:absolute;z-index:1;top:calc(100% + 4px);right:0;display:grid;gap:2px;min-width:200px;max-width:min(300px,calc(100vw - 32px));padding:4px;border-radius:12px;background:var(--menu);box-shadow:var(--shadow)}
+.rows .menu-body button{justify-content:flex-start;width:100%;min-height:32px;padding:0 10px;font-family:var(--sans);font-size:13px;letter-spacing:0;background:transparent;border-radius:8px}
+.rows .menu-body button:hover{background:var(--hover)}
 /* The list: rows of the projects on this computer, the whole row the button. */
 .label-row{display:flex;align-items:center;gap:12px;min-height:32px}
 .label-row .label{flex:1}
-.count{margin-inline-start:4px;font-family:var(--mono)}
+.count{margin-inline-start:4px}
 .list{margin:0;padding:0;list-style:none;max-height:min(420px,60vh);overflow:hidden auto}
 .list > li + li{border-top:1px solid var(--line)}
 .row{width:100%;min-height:60px;display:flex;align-items:center;gap:12px;padding:8px 12px 8px 16px;font-family:var(--sans);font-size:15px;line-height:22px;font-weight:400;letter-spacing:0;text-align:start;white-space:normal;background:transparent;border:0;border-radius:0}
@@ -101,13 +117,13 @@ svg{flex:none;fill:none;stroke:currentColor;stroke-linecap:round;stroke-linejoin
 .row:focus-visible{outline-offset:-2px}
 .row-text{flex:1;min-width:0;display:grid;gap:1px}
 .row .name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.row .version{flex:none;min-width:28px;text-align:end;font-family:var(--mono);font-size:12px;letter-spacing:-.02em;color:var(--quiet)}
+.row .version{flex:none;min-width:28px;text-align:end;font-size:12.5px;font-variant-numeric:tabular-nums;color:var(--quiet)}
 .row .chevron{display:flex;flex:none;color:var(--quiet)}
 .row:hover .chevron{color:var(--fg)}
 .tag{flex:none;height:22px;display:inline-flex;align-items:center;padding:0 8px;border-radius:11px;background:var(--tile);color:var(--quiet);font-size:12px;line-height:16px;white-space:nowrap}
 .tag.here{background:color-mix(in srgb,var(--accent) 22%,transparent);color:var(--fg)}
 .filter{display:flex;align-items:center;gap:8px;width:200px;max-width:50%;height:32px;padding:0 10px;border-radius:10px;background:var(--field);color:var(--quiet);cursor:text}
-.filter input{flex:1;min-width:0;padding:0;border:0;outline:0;background:transparent;color:var(--fg);font:13px/18px var(--mono);letter-spacing:-.02em}
+.filter input{flex:1;min-width:0;padding:0;border:0;outline:0;background:transparent;color:var(--fg);font:13px/18px var(--sans)}
 .filter:focus-within{box-shadow:inset 0 0 0 1px var(--edge)}
 .new-row{display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding:14px 12px 14px 16px}
 .new-row .row-name{font-size:15px;line-height:22px}
@@ -118,7 +134,7 @@ svg{flex:none;fill:none;stroke:currentColor;stroke-linecap:round;stroke-linejoin
 .card{position:relative;display:grid;align-content:start;gap:8px;cursor:pointer;font-size:14px;line-height:20px;color:var(--quiet);transition:color 150ms}
 .card:hover,.card:has(input:checked){color:var(--fg)}
 .card input{position:absolute;opacity:0;inset:0;margin:0;cursor:pointer}
-.card .blank{display:grid;place-items:center;width:100%;aspect-ratio:16/10;border-radius:10px;outline:1px solid var(--outline);outline-offset:-1px;background:var(--field);font:500 22px/1 var(--mono);color:var(--quiet)}
+.card .blank{display:grid;place-items:center;width:100%;aspect-ratio:16/10;border-radius:10px;outline:1px solid var(--outline);outline-offset:-1px;background:var(--field);font:500 22px/1 var(--sans);color:var(--quiet)}
 .card:has(input:checked) .blank{outline:2px solid var(--accent);outline-offset:2px;color:var(--fg)}
 .card:has(input:focus-visible) .blank{outline:2px solid var(--fg);outline-offset:2px}
 .card strong{color:var(--fg);font-weight:500}
@@ -127,23 +143,10 @@ svg{flex:none;fill:none;stroke:currentColor;stroke-linecap:round;stroke-linejoin
 .field input[type="text"]{width:100%;max-width:300px;min-height:36px;padding:0 12px;font:15px/22px var(--sans);color:inherit;background:var(--field);border:0;border-radius:10px}
 .field input[type="text"]:focus-visible{outline:2px solid var(--accent);outline-offset:0}
 .field input[aria-invalid="true"]{box-shadow:inset 0 0 0 1px var(--err)}
-/* The ⋯ menu at the foot's end: rarer actions. */
-.menu{position:relative}
-.menu summary{display:flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:11px;color:var(--quiet);list-style:none;cursor:pointer}
-.menu summary::-webkit-details-marker{display:none}
-.menu .dots{fill:currentColor;stroke:none}
-.menu summary:hover,.menu[open] summary{background:var(--hover);color:var(--fg)}
-.menu-body{position:absolute;z-index:1;bottom:calc(100% + 4px);right:0;display:grid;gap:4px;min-width:220px;max-width:min(280px,calc(100vw - 32px));padding:4px;border-radius:12px;background:var(--menu);box-shadow:var(--shadow)}
-.menu-body .actions{display:grid;gap:2px}
-.menu-body button{justify-content:flex-start;width:100%;background:transparent;font-family:var(--sans);letter-spacing:0;padding:0 10px}
-.menu-body button:hover{background:var(--hover)}
-.menu-body p{padding:4px 10px 6px}
 /* Genex's live status: a small orb that breathes, as the chat's status line has. */
 .orb{width:14px;height:14px;flex:none;border-radius:50%;background:radial-gradient(circle at 38% 36%,var(--fg) 0 14%,color-mix(in srgb,var(--accent) 65%,var(--fg)) 40%,var(--accent) 72%,transparent 74%);animation:breathe 2.1s ease-in-out infinite}
 @keyframes breathe{50%{opacity:.5}}
 .waiting{display:flex;align-items:center;gap:8px;font-size:13px;line-height:18px;color:var(--quiet)}
-/* What an action left to say: a row of the block in quiet ink. */
-.note{padding:12px 16px;color:var(--quiet);overflow-wrap:anywhere}
 .error{color:var(--err);white-space:pre-wrap;overflow-wrap:anywhere}
 .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 @media (prefers-reduced-motion:reduce){button{transition:none}button:active:not(:disabled){scale:none}.orb{animation:none}}
@@ -179,7 +182,7 @@ svg{flex:none;fill:none;stroke:currentColor;stroke-linecap:round;stroke-linejoin
       <ul id="projects" class="block list" aria-labelledby="pick-have"></ul>
       <p id="no-projects" class="quiet small" hidden></p>
       <div class="actions"><button type="button" id="choose"><svg width="16" height="16" viewBox="0 0 24 24" stroke-width="1.75" aria-hidden="true"><path d="M3.5 7.5A1.5 1.5 0 0 1 5 6h4l2 2h8a1.5 1.5 0 0 1 1.5 1.5v8A1.5 1.5 0 0 1 19 19H5a1.5 1.5 0 0 1-1.5-1.5z"/></svg><span data-t>Choose a project.godot…</span></button></div>
-      <p id="outside-note" class="quiet small" data-t hidden>Outside game: chats use it, Rewind and Loops can't reach it.</p>
+      <p id="outside-note" class="quiet small" data-t hidden>In another folder: no Rewind or Loops there.</p>
     </div>
   </section>
 
@@ -197,39 +200,24 @@ svg{flex:none;fill:none;stroke:currentColor;stroke-linecap:round;stroke-linejoin
   </section>
 
   <section id="project" hidden aria-labelledby="project-name">
-    <div class="group">
-      <p class="label" data-t>This game's project</p>
-      <div class="block">
-        <div class="head">
-          <span class="tile" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" stroke-width="1.6" aria-hidden="true"><rect x="4" y="7.5" width="16" height="12" rx="4"/><path d="M8.5 7.5 7.5 4.5M15.5 7.5l1-3M10 16h4"/><circle cx="9.5" cy="12.5" r="1.1" fill="currentColor"/><circle cx="14.5" cy="12.5" r="1.1" fill="currentColor"/></svg></span>
-          <div class="who"><h2 id="project-name" tabindex="-1" data-t>Godot project</h2><p id="project-path" class="path"></p></div>
-          <span id="state" class="state" role="status"><span id="state-word"></span></span>
-        </div>
-        <div class="msg"><p id="headline"></p><p id="say" class="quiet"></p></div>
-        <div id="fact-engine" class="fact" hidden><span class="k" data-t>Made with</span><span id="project-engine" class="v"></span></div>
-        <div id="fact-reach" class="fact" hidden><span class="k" data-t>Rewind and Loops</span><span class="v" data-t>Outside game: chats only</span></div>
-        <p id="note" class="note" role="status" hidden></p>
-        <div class="foot">
+    <div class="rows">
+      <div>
+        <div class="line head">
+          <svg class="logo" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true"><rect x="4" y="7.5" width="16" height="12" rx="4"/><path d="M8.5 7.5 7.5 4.5M15.5 7.5l1-3M10 16h4"/><circle cx="9.5" cy="12.5" r="1.1" fill="currentColor"/><circle cx="14.5" cy="12.5" r="1.1" fill="currentColor"/></svg>
+          <div class="who"><h2 id="project-name" tabindex="-1" data-t>Godot project</h2><p id="state" class="state" role="status"><span class="dot" aria-hidden="true"></span><span class="state-text"><span id="state-word"></span><span id="state-engine"></span></span></p></div>
           <button type="button" id="primary" class="primary" hidden></button>
-          <div class="end">
-            <button type="button" id="change" data-t>Change project</button>
-            <details id="more" class="menu">
-              <summary aria-label="More" data-t="aria-label"><svg class="dots" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5.5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="18.5" cy="12" r="1.5"/></svg></summary>
-              <div class="menu-body">
-                <div class="actions"><button type="button" id="web-export" data-t>Export for the web</button><button type="button" id="open-again" data-t hidden>Open in Godot</button></div>
-                <p id="more-hint" class="quiet small"></p>
-              </div>
-            </details>
-          </div>
+          <details id="more" class="menu">
+            <summary aria-label="More" data-t="aria-label"><svg class="dots" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5.5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="18.5" cy="12" r="1.5"/></svg></summary>
+            <div class="menu-body">
+              <button type="button" id="change" data-t>Change project</button>
+              <button type="button" id="open-again" data-t hidden>Open in Godot</button>
+            </div>
+          </details>
         </div>
+        <div class="msg"><p id="say" class="quiet"></p><p id="note" class="quiet" role="status"></p></div>
       </div>
-    </div>
-    <div class="group mac">
-      <p class="label" data-t>This computer</p>
-      <div class="block">
-        <div class="fact"><span class="ticked" aria-hidden="true"></span><span class="k">Godot</span><span id="installed" class="v"></span></div>
-        <div class="fact"><span id="templates-mark" class="ticked" aria-hidden="true"></span><span class="k" data-t>Web export template</span><span id="templates" class="v"></span></div>
-      </div>
+      <div id="outside" class="line" hidden><span class="sign" aria-hidden="true"></span><div class="words"><span data-t>This project is in another folder</span><span id="outside-sub" class="sub"></span></div><button type="button" id="move-in" class="soft" data-t>Move into game</button></div>
+      <div id="web" class="line"><div class="words"><span data-t>Web version</span><span id="web-sub" class="sub"></span></div><button type="button" id="web-export" class="soft" data-t>Export</button><span id="exporting" class="doing" role="status" hidden><span class="orb" aria-hidden="true"></span><span data-t>Exporting…</span></span></div>
     </div>
   </section>
 
@@ -265,6 +253,7 @@ const Action = {
   SetUp: "set-up",
   WebExport: "web-export",
   UseProject: "use-project",
+  MoveIntoGame: "move-into-game",
 };
 const Tone = { Ok: "ok", Unset: "unset", Quiet: "" };
 /** Where Genex's install of Godot is (the backend's `GodotJobState`), and why a request failed (Studio's `PanelErrorCode`). Wire values: never rename. */
@@ -273,8 +262,6 @@ const ErrorCode = { Cancelled: "cancelled" };
 const MEGABYTE = 1024 * 1024;
 /** The folder Godot keeps its projects in, as a path: never translated. */
 const PROJECTS_FOLDER = "Documents › Godot Projects";
-/** Godot's own menus to its export templates, in Godot's English: never translated. */
-const TEMPLATES_CLICKS = "Editor › Manage Export Templates";
 const WORDS = {
   getWhy: t("Genex builds Godot games with Godot 4.3 or newer."),
   getHow: t(
@@ -304,34 +291,25 @@ const WORDS = {
   installing: t("Installing Godot. This page moves on by itself."),
   get: t("Get Godot"),
   tryAgain: t("Try again"),
-  notSetUp: t("Not set up"),
+  notSetUp: t("Genex not added"),
   notOpen: t("Not open"),
   ready: t("Ready"),
-  setUpHead: t("Set up for Genex's play"),
-  setUpSay: t(
-    "Genex adds its addon to the project so its computer tool, playtesters and judges can play it, and your open Godot saves before save points.",
-  ),
-  setUp: t("Set up for Genex"),
-  openHead: t("Open in your Godot"),
-  openSay: t("Opens the project in your own Godot editor. Genex never drives it; it reloads the files Genex changes."),
+  setUpSay: t("Lets Genex's agents play and test the game."),
+  setUp: t("Add Genex"),
   open: t("Open in Godot"),
-  openNowHead: t("Open in Godot now"),
-  openNowSay: t("Your Godot has the project open: it reloads the files Genex changes, and saves for save points."),
   inUse: t("In use"),
-  outside: t("Outside game"),
+  outside: t("Another folder"),
+  outsideSub: t("No Rewind or Loops here."),
+  outsideQuit: t("Quit Godot to move it into this game."),
   newInGame: t("In this game's godot/ folder."),
   newGame: t("Genex makes a new game for it."),
   noProjects: t("No Godot projects in {folder} or Godot's own list yet.", { folder: PROJECTS_FOLDER }),
   badName: t("Use 1 to 40 letters, digits, spaces, dashes or underscores, starting with a letter or digit."),
   creating: t("Creating…"),
   create: t("Create"),
-  installed: (s) => `${s.godot.version}${s.godot.mono ? " .NET" : ""}`,
   projectName: t("Godot project"),
-  templatesReady: t("Installed"),
-  templatesMissing: t("In Godot: {clicks}", { clicks: TEMPLATES_CLICKS }),
-  exportHint: t("Writes web/ at the game's root: Live's Web game tab plays it and Publish puts it online."),
-  exporting: t("Exporting…"),
-  export: t("Export for the web"),
+  engine: (version) => ` · Godot ${version}`,
+  webSub: t("Needed to publish the game online."),
   pickerTitle: t("Choose a Godot project"),
 };
 
@@ -339,7 +317,7 @@ let closed = false;
 let refreshing = false;
 let busy = false;
 let last = null;
-const ui = { view: View.Project, filter: "" };
+const ui = { view: View.Project, filter: "", exported: "" };
 
 const setText = (node, text) => {
   if (node.textContent !== text) node.textContent = text;
@@ -476,38 +454,43 @@ function renderNew(s) {
   $("cancel-new").hidden = !s.game;
 }
 
-/** The project's one step and its words: set it up, open it, or nothing while Godot has it open. */
+/** The project's one step: add Genex to it, open it, or nothing while Godot has it open. */
 function stepOf(s) {
-  if (!isSetUp(s.setup))
-    return { tone: Tone.Unset, word: WORDS.notSetUp, head: WORDS.setUpHead, say: WORDS.setUpSay, act: Action.SetUp, label: WORDS.setUp };
-  if (s.editorOpen)
-    return { tone: Tone.Ok, word: WORDS.ready, head: WORDS.openNowHead, say: WORDS.openNowSay, act: null, label: "" };
-  return { tone: Tone.Quiet, word: WORDS.notOpen, head: WORDS.openHead, say: WORDS.openSay, act: Action.OpenEditor, label: WORDS.open };
+  if (!isSetUp(s.setup)) return { tone: Tone.Unset, word: WORDS.notSetUp, say: WORDS.setUpSay, act: Action.SetUp, label: WORDS.setUp };
+  if (s.editorOpen) return { tone: Tone.Ok, word: WORDS.ready, say: "", act: null, label: "" };
+  return { tone: Tone.Quiet, word: WORDS.notOpen, say: "", act: Action.OpenEditor, label: WORDS.open };
+}
+
+/** The line under the outside row: quit first, what the project misses while it can move, else why it can't. */
+function outsideLine(s) {
+  if (s.editorOpen) return WORDS.outsideQuit;
+  return s.moveIn ? WORDS.outsideSub : (s.moveInWhy ?? WORDS.outsideSub);
+}
+
+/** The row for a project in another folder: what it costs, and Move into game while it can move (Godot closed, on the game's disk). */
+function renderOutside(s) {
+  $("outside").hidden = !s.outside;
+  if (!s.outside) return;
+  setText($("outside-sub"), outsideLine(s));
+  $("move-in").hidden = !s.moveIn || busy;
 }
 
 function renderProject(s) {
   setText($("project-name"), s.projectName ?? WORDS.projectName);
-  setText($("project-path"), s.projectShown ?? "");
-  $("project-path").title = s.project ?? "";
+  $("project-name").title = s.projectShown ?? "";
   const step = stepOf(s);
   $("state").dataset.tone = step.tone;
   setText($("state-word"), step.word);
-  setText($("headline"), step.head);
+  const own = (s.projects ?? []).find((p) => p.inUse);
+  setText($("state-engine"), own?.version ? WORDS.engine(own.version) : "");
   setText($("say"), step.say);
   $("primary").hidden = !step.act;
   $("primary").dataset.act = step.act ?? "";
   $("primary").classList.toggle("external", step.act === Action.OpenEditor);
   setText($("primary"), step.label);
-  const own = (s.projects ?? []).find((p) => p.inUse);
-  $("fact-engine").hidden = !own?.version;
-  setText($("project-engine"), own?.version ? `Godot ${own.version}` : "");
-  $("fact-reach").hidden = !s.outside;
   $("open-again").hidden = !s.editorOpen;
-  setText($("more-hint"), WORDS.exportHint);
-  setText($("installed"), s.godot ? WORDS.installed(s) : "");
-  $("installed").title = s.godot?.binary ?? "";
-  $("templates-mark").classList.toggle("not", !s.webTemplates);
-  setText($("templates"), s.webTemplates ? WORDS.templatesReady : WORDS.templatesMissing);
+  renderOutside(s);
+  setText($("web-sub"), ui.exported || WORDS.webSub);
 }
 
 /** Draws the view the status calls for. */
@@ -604,21 +587,30 @@ async function create() {
   void refresh();
 }
 
+/** Export for the web: the row says it is exporting where its button was, then what the export left to say. */
 async function webExport() {
-  $("more").open = false;
-  $("note").hidden = true;
-  setText($("web-export"), WORDS.exporting);
+  ui.exported = "";
+  $("web-export").hidden = true;
+  $("exporting").hidden = false;
   const done = await act($("web-export"), Action.WebExport, {}, { timeoutMs: LONG_ACTION_MS });
-  setText($("web-export"), WORDS.export);
-  if (!done?.note) return;
-  setText($("note"), done.note);
-  $("note").hidden = false;
+  $("web-export").hidden = false;
+  $("exporting").hidden = true;
+  ui.exported = done?.note ?? "";
+  if (last) render(last);
+}
+
+/** Move into game: the project's folder becomes the game's own, and the view shows it there. */
+async function moveIn() {
+  setText($("note"), "");
+  const moved = await act($("move-in"), Action.MoveIntoGame, {});
+  if (moved) await refresh();
 }
 
 $("get-godot").onclick = () => void (last?.windows ? downloadGodot() : act($("get-godot"), Action.GetGodot));
 $("recheck").onclick = () => void refresh();
 $("back").onclick = () => go(View.Project);
 $("change").onclick = () => go(View.Pick);
+$("move-in").onclick = () => void moveIn();
 $("new-here").onclick = () => go(View.New);
 $("cancel-new").onclick = () => go(last?.project ? View.Project : View.Pick);
 $("choose").onclick = () => void chooseFile();
@@ -637,7 +629,10 @@ $("primary").onclick = async () => {
   await act($("primary"), name, {}, { timeoutMs: LONG_ACTION_MS });
   void refresh();
 };
-$("open-again").onclick = () => void act($("open-again"), Action.OpenEditor);
+$("open-again").onclick = () => {
+  $("more").open = false;
+  void act($("open-again"), Action.OpenEditor);
+};
 $("web-export").onclick = () => void webExport();
 
 /** A CSS colour as sRGB channels 0–255, read through a canvas so any CSS spelling works; black if unreadable. */

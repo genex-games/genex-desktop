@@ -494,14 +494,14 @@ stands (a timer while it opens; "Ready in Unreal" once it answers) and at most o
 step the Unreal panel offers (Get Unreal Engine, Open the Unreal panel, Set up and open, Open in
 Unreal, Switch to <project>, Restart Unreal or Quit Unreal); with two editors open it offers no
 quit, only words. The Unreal panel, a plugin frame, wears Genex's type (both faces inlined as data,
-`inlinePanelFonts`) and controls (32px borderless buttons in Geist Mono) and is built as an
-[engine panel](#engine-panels): the project block's head carries its state in the toolbar's words
-and tone (Not set up, Not open, Starting, Ready as the green dot alone, Unreal busy, Not answering,
-Not connected), its foot one primary (held, not hidden, while Unreal is busy), Change project and a
-⋯ menu (Undo setup, Quit Unreal); This computer's block lists the engine and Xcode. The Unity
-panel is the same: its project block (Unity's mark on the tile, `unity/`, state in the button's
-words, the step, Engine, one primary and a quiet action at the foot's end) and This computer (the
-newest Unity, ticked once it is Unity 6); its header button folds to Unity's mark. While Live or
+`inlinePanelFonts`, one sans face on screen) and controls and is built as an
+[engine panel](#engine-panels): the head row carries its state in the toolbar's words
+and tone (Not set up, Not open, Starting, Ready, Unreal busy, Not answering,
+Not connected), one primary (hidden while it can't act) and a
+⋯ menu (Change project, Remove Genex from this project, Quit Unreal); Xcode and the engine update
+are rows of the same list. The Unity
+panel is the same list (Unity's mark, the state in the button's words with its version, one
+primary, ⋯); its header button folds to Unity's mark. While Live or
 Builds loads, a 52×36 halftone plasma in ink at 62% sits over a shimmering 13px line; it appears
 only after 0.4s, stays at least 0.6s and fades out (150ms) before the native view is uncovered.
 
@@ -701,19 +701,20 @@ once, with no second padding or scrollbar inside. Three views: **this game's pro
 lives, the one next step), **setup** only while something it needs is missing, and **choose a
 project** behind Change project (New project on top, Back to the project).
 
-The panel is built from blocks: one subject per block (the project, this computer, the list), a 1px edge,
-14px corners and a fill one step above the dialog; a 13px third-ink label above each, 24px between
-them, 1px dividers between rows inside, and actions in the block's foot (primary first, Change and
-⋯ at its end). A padded button always has a fill; a rare action for the whole panel (Undo Set up)
-is an underlined link with no padding. A box inside a card (a setup step, in the chat's
-setup card too) has the `line-soft` edge: as quiet as the card's own edge on a light theme, the
-control edge on a dark one. The chat's setup card keeps its buttons in a footer under the steps,
-which scroll above it. List rows are 60px (32px tile, 15px name, 12px mono path, a tag, the version, a
-chevron; the whole row is the button); fact rows 44px, label left and mono value right; 16px side
-padding everywhere. A path starts at `~` with its middle folded to …; a temporary folder says so;
-the full path is the tooltip. Status is a dot and one word, the same in the block's head and on the
-engine's button, except Ready, which is the green dot alone. Tags name the consequence (Outside game),
-explained once under the list.
+The project view is one list in one outlined block (1px edge, 14px corners, a fill one step above
+the dialog, 1px dividers between rows), in a narrow dialog (`panels[].width: "narrow"`, 480px), in
+one font: no mono paths, labels above blocks or fact tables. Its head row carries the engine's own
+mark (never on a disc), the project's name, a dot and one word for its state (the engine's version
+beside it), the one next step as the primary button and ⋯ for the rare actions (Change project,
+Remove Genex, Quit). Each row under it is one thing the person can act on: a short name, at most
+one helper line, and one button at the right; a secondary button has the soft accent tint, and every
+button has a fill. A row or button that cannot act now is hidden, not greyed, and nothing the app
+handles by itself is shown. A choice that is on or off is a switch. A project that lives outside
+its game says so in a row with **Move into game**. Setup steps are rows of the same list: a done
+step shows only its name. Choose a project keeps list rows of 60px (32px tile, 15px name, a tag,
+the version, a chevron; the whole row is the button). A box inside the chat's setup card has the
+`line-soft` edge, and that card keeps its buttons in a footer under the steps, which scroll above
+it. Status is a dot and one word, the same in the head and on the engine's button.
 
 ## First launch
 

@@ -143,7 +143,13 @@ counters carry the regression gates.
   and it held every record since it opened, so through a Loop of hours each builder trace cost
   the whole session. A chat whose reader follows its newest line keeps its newest few pages
   (`withLiveBatch` in `use-chat-history.ts`, `FOLLOWING_HOLDS`); the current-state facts keep
-  what the dropped records say about now, and scrolling up pages them back as on open.
+  what the dropped records say about now, and scrolling up pages them back as on open. It never
+  keeps fewer records than it last paged in to fill its height (`followingWindow`): a Loop's
+  newest pages draw a few short tool rows, and a chat that dropped them read them back after
+  every batch.
+- The Builds stage reads its chat's whole log once (`watchThread` in `state/event-log.ts`). When
+  it leaves a game, that log stays whole while the released logs fit `RELEASED_RECORDS_MAX`
+  records, so switching between two games with long Loops does not read either from disk again.
 - Concurrent run-summary readers share a matching evidence-version scan; a subsequent read
   still validates the files. Toolbar status batches run one at a time, with at most one queued
   refresh after a burst; teardown cancels timers and ignores late answers.

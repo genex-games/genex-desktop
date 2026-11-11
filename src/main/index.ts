@@ -1160,6 +1160,7 @@ async function createWindow(studio: StudioCore): Promise<BrowserWindow> {
   attachPlay(studio, win);
   collectRendererConsole(win);
   keepLinksOutside(studio, win);
+  holdPluginStartsAtSessionEnd(studio, win);
   if (dev) {
     const launch = dev;
     win.on("page-title-updated", (event) => {
@@ -1172,6 +1173,18 @@ async function createWindow(studio: StudioCore): Promise<BrowserWindow> {
   if (parkedFixtureWindow || dev) showWindow(win);
   watchWindowLifecycle(win);
   return win;
+}
+
+/**
+ * Windows is shutting down or signing out (`session-end`, Windows only): it ends the plugins'
+ * backends, and each later call forked a new one that died at once (85 `plugin_failed` in 3 s),
+ * so none starts again. A Mac asks the app to quit instead, and a quit stops them already.
+ */
+function holdPluginStartsAtSessionEnd(studio: StudioCore, win: BrowserWindow): void {
+  win.on("session-end", () => {
+    studioLog.write("main", "the computer's session is ending: plugin backends start no more");
+    studio.plugins.holdStarts();
+  });
 }
 
 /** A window that stops answering is logged and counted, and how long it hung is told once it answers again. */

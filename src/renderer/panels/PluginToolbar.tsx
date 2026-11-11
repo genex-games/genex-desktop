@@ -26,6 +26,7 @@ import {
 } from "../../shared/plugin-toolbar.ts";
 import {
   isToolbarIconName,
+  PanelWidth,
   type PluginInfo,
   type PluginPanelDocument,
   type PluginToolbarStatus,
@@ -113,6 +114,8 @@ type ToolbarPanel = {
   title: string;
   document: PluginPanelDocument | null;
   drawn?: boolean;
+  /** The panel asks for Studio's narrow dialog. */
+  narrow?: boolean;
 };
 
 /** Genex's Publish panel, which Studio draws in its own type and buttons instead of the plugin's frame. */
@@ -370,7 +373,8 @@ async function openToolbarPanel(entry: PluginToolbarEntry, panelId: string, deps
   const started = performance.now();
   try {
     const doc = await window.studio.pluginPanel(plugin.manifest.id, panelId);
-    deps.setPanel({ key: entry.key, plugin, title: doc.title, document: doc });
+    const narrow = plugin.manifest.panels.find((panel) => panel.id === panelId)?.width === PanelWidth.Narrow;
+    deps.setPanel({ key: entry.key, plugin, title: doc.title, document: doc, narrow });
     reportPluginAction(press, ActionOutcome.Ok, started, performance.now());
   } catch (err) {
     notifyProblem(deps.onNotice)(err);
@@ -772,6 +776,7 @@ export function PluginToolbar({
           plugin={livePanelPlugin}
           document={panel.document}
           title={panel.title}
+          narrow={panel.narrow === true}
           project={project}
           onDismiss={() => {
             setPanel(null);

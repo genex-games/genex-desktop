@@ -333,7 +333,7 @@ A panel is served into an opaque-origin sandboxed frame with
   (`inlinePanelFonts` in the same script pastes Genex's own type in at `<!-- STUDIO_PANEL_FONTS -->`), and
   `project.read` is utf8-only, so a panel cannot display a PNG read from the game folder.
 - The whole bridge is `window.studioPlugin`: `call(method, name?, args?)` with
-  `call('context')` → `{project, apiVersion, theme, surface, locale}` (`theme` carries `background`, `foreground`,
+  `call('context')` → `{project, title, apiVersion, theme, surface, locale}` (`title` is the game's name as Genex shows it, or `null`; `theme` carries `background`, `foreground`,
   `accent` and the readable button colours `accentFill`, `accentForeground`, `accentHover`),
   `call('settings')` → your standard settings
   and `call('action', name, args)` → a declared action, plus
@@ -346,7 +346,9 @@ A panel is served into an opaque-origin sandboxed frame with
   title, its first `p` the line under it) and each page's Back `data-panel-back`. On a card the SDK
   hides both (the dialog draws them, and its arrow presses your Back), marks the document
   `data-surface="card"` so you can drop your own padding, and sizes the frame to your content, so
-  the dialog scrolls once. A page without a marked heading keeps the manifest's panel title.
+  the dialog scrolls once. A page without a marked heading keeps the manifest's panel title. A
+  panel that is one short list declares `"width": "narrow"` in its `panels[]` entry, and the dialog
+  is Genex's narrow one (480px).
 - A panel speaks Genex's language (`context.locale`: `en`, `ru`, `es`, `pt-BR`, `de`, `fr`, `ja`,
   `ko`, `zh-Hans`). Write each word once, in English, as `studioPlugin.t("Set up {name}", { name })`
   in the ICU message syntax the app uses (`{count, plural, one {# file} other {# files}}`,

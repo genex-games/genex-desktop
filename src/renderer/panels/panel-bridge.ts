@@ -24,8 +24,8 @@ const SURFACE_BACKGROUND = {
 } as const satisfies Record<PanelSurface, string>;
 
 /**
- * What a panel is told about where it runs: the project, the theme's colours (its background is
- * the surface it sits on) and the plugin API version. `accent` is the raw accent; `accentFill`,
+ * What a panel is told about where it runs: the project and its title as Genex shows it, the
+ * theme's colours (its background is the surface it sits on) and the plugin API version. `accent` is the raw accent; `accentFill`,
  * `accentForeground` and `accentHover` are the readable button colours Studio's own primary
  * buttons use. `surface` says what the frame sits on: in a dialog's card the panel's heading is
  * the dialog's title, so the panel leaves out its own. `locale` is the window's language, which the
@@ -36,10 +36,12 @@ export function panelContext(
   style: StyleReader,
   surface: PanelSurface = PanelSurface.Page,
   locale: Locale = currentLocale(),
+  title: string | null = null,
 ) {
   const read = (name: string) => style.getPropertyValue(name).trim();
   return {
     project: project ?? null,
+    title: project ? title : null,
     theme: {
       background: read(SURFACE_BACKGROUND[surface]),
       foreground: read("--foreground"),

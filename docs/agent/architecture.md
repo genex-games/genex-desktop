@@ -934,7 +934,9 @@ managed local runtime; core has no Blender tool of its own.
 - **Export.** [`src/substrate/game-export.ts`](../../src/substrate/game-export.ts) stages fresh public
   files and replaces only an app-managed destination; hidden files, env files, private-key names,
   dependencies and symlinks are excluded or refused; parsed imports and references prune the
-  vendor folder. Static analysis cannot classify computed URLs, so browser export checks remain
+  vendor folder. `listPublicGame` answers the same two lists, with the same refusals, from the
+  files where they are and writes nothing (Publish's file list for a copy without the vendored
+  library). Static analysis cannot classify computed URLs, so browser export checks remain
   required.
 
 ## Persistence and the event log

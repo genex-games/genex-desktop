@@ -20,7 +20,7 @@ import type { EventEnvelope } from "../../src/substrate/types.ts";
 import { isInside } from "../../src/substrate/paths.ts";
 import { type CoreLite, coreLite } from "../helpers/core-lite.ts";
 import { tmpDir } from "../helpers/tmp.ts";
-import { Changes, until } from "../helpers/worker-chat.ts";
+import { Changes, until } from "../helpers/changes.ts";
 
 type Api = Record<string, (input: unknown) => Promise<unknown>>;
 

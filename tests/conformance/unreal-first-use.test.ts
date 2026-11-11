@@ -26,12 +26,15 @@ import type { EpicInstallDeps } from "../../src/plugins/unreal/epic-install.ts";
 import type { SetupEnv } from "../../src/plugins/unreal/setup.ts";
 import { type VisualStudioStatus, VisualStudioState } from "../../src/plugins/unreal/visual-studio.ts";
 import { XcodeState } from "../../src/plugins/unreal/xcode.ts";
+import { Changes, until } from "../helpers/changes.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 const HELPER = path.resolve("src/plugins/unreal/GenexEditorHelper");
 const GIB = 1024 ** 3;
 const START = Date.UTC(2026, 9, 6, 9, 0, 0);
 const SECOND_MS = 1000;
+/** A case that waits to be told of something would hang on a regression: it fails within this instead. */
+const CASE_TIMEOUT_MS = 60 * SECOND_MS;
 
 /** Microsoft's C++ tools as a PC without them, and with them, reads. */
 const NO_BUILD_TOOLS: VisualStudioStatus = {
@@ -192,8 +195,9 @@ async function computer(
   const game: { link: PluginEngineLink | null } = { link: null };
   /** The games whose Loop is going, as the host's `game.engine.runs` names them. */
   const runs: Array<{ game: string; title: string; project: string }> = [];
-  /** Each task handed to the chat with `game.engine.assist`. */
+  /** Each task handed to the chat with `game.engine.assist`, and the news of each. */
   const assisted: string[] = [];
+  const handed = new Changes();
   const host = async (method: string, args?: { project: string; task?: string }) => {
     if (method === "storage.root") return storage;
     if (method === "game.engine.runs") return runs;
@@ -202,6 +206,7 @@ async function computer(
     if (method === "game.engine.canAssist" && options.assist) return options.assist.can;
     if (method === "game.engine.assist" && options.assist) {
       assisted.push(args?.task ?? "");
+      handed.notify();
       return options.assist.answer;
     }
     if (method !== "game.engine.link") throw new Error(`unexpected host call ${method}`);
@@ -223,6 +228,8 @@ async function computer(
   const actFor = async (other: string, name: string) => backend.action?.(name, {}, inGame(other));
   const toolFor = async (other: string, name: string, args: Record<string, unknown> = {}) =>
     backend.tool?.(name, args as never, inGame(other));
+  /** Waits until the chat has been handed `count` tasks, told of each as the host gets it. */
+  const handedToChat = (count: number) => until(handed, () => assisted.length >= count);
   const lantern = await project("Lantern");
   const harbor = await project("Harbor");
   /** Lantern set up and this game linked to it, as New game leaves it. */
@@ -238,6 +245,7 @@ async function computer(
     clock,
     launched,
     assisted,
+    handedToChat,
     installByRecord,
     addLauncher,
     act,
@@ -573,7 +581,12 @@ describe("Do it for me on the Unreal setup card", () => {
   const EPIC = "CN=Epic Games Inc., O=Epic Games Inc., L=Cary, S=North Carolina, C=US";
   const MICROSOFT = "CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US";
 
-  /** Looks again, a turn of the event loop apart, until `check` holds. */
+  /**
+   * Looks again, a turn of the event loop apart, until `check` holds. Only for a `check` that reads
+   * the card: each look then takes file reads, as the install it waits for does, so the looks keep
+   * pace with it on a busy machine. A `check` that reads nothing uses up its turns in milliseconds:
+   * what the fake host is told of is waited for as a change (`handedToChat`).
+   */
   async function settle(check: () => Promise<boolean>) {
     for (let turn = 0; turn < 500; turn++) {
       if (await check()) return;
@@ -934,12 +947,14 @@ describe("Do it for me on the Unreal setup card", () => {
     assert.deepEqual(unsigned.ran, ["powershell.exe"], "an unsigned installer never runs");
   });
 
-  it("lets another press go on while the chat's install of Unreal waits on the person", async () => {
+  it("lets another press go on while the chat's install of Unreal waits on the person", {
+    timeout: CASE_TIMEOUT_MS,
+  }, async () => {
     const c = await computer({ engines: [], assist: { can: true, answer: new Promise<never>(() => {}) } });
     await c.addLauncher();
     void c.act("install-for-me");
     void c.actFor("harbor-run", "install-for-me");
-    await settle(async () => c.assisted.length === 2);
+    await c.handedToChat(2);
   });
 
   it("starts one install for two presses at once: the card's and the agent's", async () => {

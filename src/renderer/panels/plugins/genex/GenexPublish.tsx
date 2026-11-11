@@ -26,12 +26,14 @@ import {
   GenexPublishJobState,
   type GenexPublishState,
 } from "../../../../shared/genex.ts";
+import { playPageSlug } from "../../../../shared/play.ts";
 import type { PluginInfo } from "../../../../shared/plugins.ts";
 import { GenexAccountStatus } from "../../../../shared/genex-account.ts";
 import { MakingDrawing } from "../../../making-art.ts";
 import { prefersReducedMotion } from "../../../ui/media-queries.ts";
+import { openPlayGame } from "../../../play/open-play.ts";
 import { cancelGenexSignIn, signInToGenex, useGenexSignIn } from "../../../play/use-genex-sign-in.ts";
-import { useLibrary, usePeople } from "../../../state/hooks.ts";
+import { useLibrary, usePeople, usePlayWeb } from "../../../state/hooks.ts";
 import { studio } from "../../../state/studio.ts";
 import { Button } from "../../../ui/Button.tsx";
 import { OPEN_PLUGINS_EVENT } from "../../../ui/ComposerAddMenu.tsx";
@@ -369,19 +371,23 @@ interface LinkChange {
 }
 
 /**
- * The link anyone can play, labelled beside the globe, with Copy and Open. With `change`, the link
- * and its pencil are one press that opens its field, like the name's on the banner; the pencil turns
- * into a ✓ for a moment once the link moved. A game out of link changes shows no pencil.
+ * The link anyone can play, labelled beside the globe, with Copy and Open. Open stays in the app for
+ * a game Play can show (`inApp`: its page in Play, and no arrow out); any other goes to the browser.
+ * With `change`, the link and its pencil are one press that opens its field, like the name's on the
+ * banner; the pencil turns into a ✓ for a moment once the link moved. A game out of link changes
+ * shows no pencil.
  */
 function LinkField({
   link,
   onOpen,
   opening,
+  inApp,
   change,
 }: {
   link: string;
   onOpen: () => void;
   opening: boolean;
+  inApp: boolean;
   change?: LinkChange;
 }): JSX.Element {
   const [copied, copy] = useCopy();
@@ -431,9 +437,9 @@ function LinkField({
         <Icon name={copied ? "check" : "copy"} size={14} className={copied ? "text-green" : undefined} />
         {copied ? WORDS.copied : WORDS.copyLink}
       </Button>
-      <Button aria-label={WORDS.openGameLabel} busy={opening} onClick={onOpen}>
+      <Button aria-label={WORDS.openGameLabel} busy={opening} data-genex-publish-open onClick={onOpen}>
         {WORDS.openGame}
-        <Icon name="arrow-up-right" size={14} />
+        <Icon name={inApp ? "chevron-right" : "arrow-up-right"} size={14} />
       </Button>
     </div>
   );
@@ -1056,22 +1062,27 @@ function useAppsReview(
   };
 }
 
-/** The apps' progress through Genex's check and the review card under the rows; nothing while it celebrates. */
+/**
+ * The apps' progress through Genex's check and the review card under the rows; nothing while it
+ * celebrates. A running publish's steps are left out when the Publish card's web row says them (`onRow`).
+ */
 function AppsReview({
   view,
   review,
   project,
   quiet,
+  onRow,
 }: {
   view: PublishView;
   review: ReturnType<typeof useAppsReview>;
   project: string;
   quiet: boolean;
+  onRow: boolean;
 }): JSX.Element | null {
   if (quiet) return null;
   return (
     <>
-      {(view.running || view.check) && <Progress view={view} />}
+      {((view.running && !onRow) || view.check) && <Progress view={view} />}
       {review.card && !view.running && (
         <ReviewCard
           project={project}
@@ -1240,19 +1251,34 @@ function usePlatformsAndCard(
 
 /**
  * Which press a game's dialog shows: the Publish card's own for a game made in an engine (while nothing
- * celebrates, runs, waits for Genex's terms or a review card's fix), else the dialog's Publish, which the
- * card keeps for a publish under way, Genex's terms, and a review card whose way forward is publishing
- * again (`republish`); and whether the card leaves the foot line out (all but a slow publish's way out).
+ * waits for Genex's terms or a review card's fix; a publish under way is on its row, and a
+ * celebration leaves the card as it is), else the dialog's Publish, which the card keeps for Genex's
+ * terms, a review card whose way forward is publishing again (`republish`) and what they leave
+ * running; and whether the card leaves the foot line out (all but a slow publish's way out).
  */
 function cardMoment(
   engineGame: boolean,
-  moment: { shown: boolean; publishing: boolean; view: PublishView; held: boolean; republish: boolean },
+  moment: { publishing: boolean; view: PublishView; held: boolean; republish: boolean },
 ): { press: boolean; dialogPress: boolean; quiet: boolean } {
   if (!engineGame) return { press: false, dialogPress: true, quiet: false };
-  const { shown, publishing, view, held, republish } = moment;
-  const press = shown && !publishing && !view.terms && !held && !republish;
+  const { publishing, view, held, republish } = moment;
+  const press = !view.terms && !held && !republish;
   const dialogPress = !press && (publishing || view.terms !== null || republish);
   return { press, dialogPress, quiet: !(publishing && view.slow) };
+}
+
+/**
+ * What stays on screen while the dialog celebrates: a game made in an engine keeps its rows and its
+ * button under the banner, since its other platforms go on (`pressShown`), and the celebration's foot
+ * line stands only when that button has nothing to say (`footShown`).
+ */
+function underCelebration(
+  engineGame: boolean,
+  celebrate: boolean,
+  card: Pick<ReturnType<typeof usePublishCard>, "plan" | "bar">,
+): { pressShown: boolean; footShown: boolean } {
+  const cardPresses = card.plan !== null || card.bar !== null;
+  return { pressShown: engineGame || !celebrate, footShown: celebrate && !cardPresses };
 }
 
 /** The game's platforms: the Publish card's rows for a game made in an engine, else the list a web game with apps keeps. */
@@ -1320,10 +1346,9 @@ function PressSection({
     return (
       <PublishCardPress
         plan={card.plan}
-        busy={card.busy}
-        note={card.note}
-        pressing={card.acting}
-        onPress={card.press}
+        bar={card.bar}
+        acting={card.acting}
+        onPress={(plan) => void card.press(plan)}
       />
     );
   if (!moment.dialogPress || !shown) return null;
@@ -1343,6 +1368,7 @@ function PressSection({
  * The read record: the banner with the game's name and where it is, then what the moment needs:
  * the platforms a game with an app is built for, the running attempt's progress, the celebration
  * and link once it just went live, the link of a live game, or a failed attempt's line, and the presses.
+ * The celebration of a game made in an engine is the banner's alone: its rows and button stay under it.
  */
 function PublishBody({
   view: plain,
@@ -1364,10 +1390,10 @@ function PublishBody({
   const publishing = record.pressing === Pressing.Publish || view.running;
   const { celebrate, went } = useCelebration(view, publishing, inReview, review.record);
   const failure = record.error ? { text: record.error, details: record.error } : view.failure;
-  const pressShown = !celebrate;
+  const { pressShown, footShown } = underCelebration(engineGame, celebrate, card);
+  const playSlug = playPageSlug(usePlayWeb(), view.link);
   const pressNeeded = pressHasWork(pressShown, view, publishing, { upToDate, inReview }) && !review.holdsPress;
   const card$ = cardMoment(engineGame, {
-    shown: pressShown,
     publishing,
     view,
     held: review.holdsPress,
@@ -1401,7 +1427,7 @@ function PublishBody({
         ))}
         <PlatformsSection
           engineGame={engineGame}
-          shown={!celebrate}
+          shown={pressShown}
           project={project}
           card={card}
           platforms={platforms}
@@ -1409,14 +1435,14 @@ function PublishBody({
           replacesApps={replacesApps}
           reviewed={review.card !== null || view.check !== null}
         />
-        <AppsReview view={view} review={review} project={project} quiet={celebrate} />
+        <AppsReview view={view} review={review} project={project} quiet={celebrate} onRow={card$.press} />
         {celebrate && <LiveUpdateLine went={went} />}
         {failure && !publishing && <p className="genex-publish-failure">{failure.text}</p>}
         <WhoPlays
           project={project}
           shown={pressShown && saysWhoPlays(view, publishing, Boolean(cover.making), Boolean(view.testLink))}
         />
-        {!publishing && <Links view={view} project={project} {...linksOf(record)} />}
+        {!publishing && <Links view={view} project={project} {...linksOf(record, playSlug, onClose)} />}
         <PressSection
           moment={card$}
           parts={parts}
@@ -1444,7 +1470,7 @@ function PublishBody({
           record={record}
           name={name}
           appsLine={appsHint(view, review, { publishing, celebrate, appsOnly: apps !== null, pressed: pressNeeded })}
-          quiet={card$.quiet && !celebrate}
+          quiet={card$.quiet && !footShown}
         />
       </div>
     </div>
@@ -1469,10 +1495,22 @@ const pressHasWork = (
 const settled = (view: PublishView, publishing: boolean, inReview: boolean): boolean =>
   (view.stage === PublishStage.Public || inReview) && !publishing && !view.failure && !view.terms;
 
-/** The public link's Open and its pencil, from the record: what `Links` takes besides the view. */
-const linksOf = (record: ReturnType<typeof usePublishRecord>) => ({
-  onOpen: () => void record.act(GenexAction.PublishOpen, { target: LinkTarget.Gallery }),
+/**
+ * The public link's Open and its pencil, from the record: what `Links` takes besides the view. Open
+ * closes the dialog onto the game's page in Play for a game Play can show (`playSlug`); a game on
+ * another Genex goes to the browser, through the plugin's checked link.
+ */
+const linksOf = (record: ReturnType<typeof usePublishRecord>, playSlug: string | null, onClose: () => void) => ({
+  onOpen: () => {
+    if (playSlug === null) {
+      void record.act(GenexAction.PublishOpen, { target: LinkTarget.Gallery });
+      return;
+    }
+    onClose();
+    openPlayGame(playSlug);
+  },
   opening: record.pressing === Pressing.Action,
+  inApp: playSlug !== null,
   change: { left: record.state?.renamesLeft, save: record.changeLink },
 });
 
@@ -1482,19 +1520,22 @@ function Links({
   project,
   onOpen,
   opening,
+  inApp,
   change,
 }: {
   view: PublishView;
   project: string;
   onOpen: () => void;
   opening: boolean;
+  /** Open shows the game's page in Play, inside the app. */
+  inApp: boolean;
   /** The public link's pencil, for a game on Genex while nothing runs. */
   change?: LinkChange;
 }): JSX.Element {
   const multiplayer = useLibrary((s) => s.games.find((g) => g.name === project)?.multiplayer === true);
   return (
     <>
-      {view.link && <LinkField link={view.link} onOpen={onOpen} opening={opening} change={change} />}
+      {view.link && <LinkField link={view.link} onOpen={onOpen} opening={opening} inApp={inApp} change={change} />}
       {view.testLink && (
         <TestLinkField link={view.testLink} listed={view.stage === PublishStage.Public} multiplayer={multiplayer} />
       )}

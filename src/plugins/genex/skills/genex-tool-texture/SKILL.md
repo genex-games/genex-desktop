@@ -12,7 +12,7 @@ this preface wins.
   generationId.
 - Operation `status` names the lanes that are live.
 
-<!-- upstream @genex-ai/cli-demo/templates/skills/genex-tool-texture/SKILL.md v1.41.1 sha256 d89a284d5b05fe24f69aecee1f860f18e2aeed607be27983168f1a9eaa402829 -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-tool-texture/SKILL.md v1.42.0 sha256 d89a284d5b05fe24f69aecee1f860f18e2aeed607be27983168f1a9eaa402829 -->
 ---
 name: genex-tool-texture
 description: Generate a tiling PBR texture set with `npx genex texture` — ground, floors, walls, rock, bark, metal, fabric, any repeating surface. Produces several maps (base colour, normal, roughness and friends) as separate files in ./assets, and `--terrain` makes the result seamless for large ground planes.

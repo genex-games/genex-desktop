@@ -19,7 +19,7 @@ import {
   MacNotarizeFailure,
 } from "../../src/shared/genex.ts";
 import { MINUTE_MS } from "../../src/shared/duration.ts";
-import { CoreFact } from "../../src/shared/project-facts.ts";
+import { CoreFact, UNREAL_WEB_BUILD_FACT } from "../../src/shared/project-facts.ts";
 import { NativeArch } from "../../src/shared/play-native.ts";
 import {
   linuxBuildOf,
@@ -142,6 +142,29 @@ describe("Publish's platform rows from the game folder", () => {
       [changed, changed, changed, changed],
       "every row says when the game last changed, so an app Genex built can be judged against it",
     );
+  });
+
+  it("says when a game's web build in a folder was made: the newest file in it, and no change of the game's", async () => {
+    const root = await tmpDir("publish-platforms-");
+    await source(root, "Source/Dust/Player.cpp", T0);
+    await source(root, "web/index.html", T0 + 20 * MINUTE_MS);
+    await source(root, "web/wasm-manifest.json", T0 + 30 * MINUTE_MS);
+    await source(root, "web/Dust/Binaries/Dust.wasm", T0 + 25 * MINUTE_MS);
+    const unrealWithWeb = [
+      { id: CoreFact.UnrealProject, path: "." },
+      { id: CoreFact.WebGame, path: "web" },
+      { id: UNREAL_WEB_BUILD_FACT, path: "web" },
+    ];
+    const rows = byTarget(await publishPlatforms(coreWith("dust", root, unrealWithWeb), "dust", false));
+    assert.deepEqual([rows.web.state, rows.web.uploads], [PublishPlatformState.Ready, true]);
+    assert.equal(
+      rows.web.builtAt,
+      new Date(T0 + 30 * MINUTE_MS).toISOString(),
+      "a build put in web/ is new by itself, whatever the sources say",
+    );
+    assert.equal(rows.web.changedAt, new Date(T0).toISOString(), "and it is no change of the game's sources");
+    const plain = byTarget(await publishPlatforms(coreWith("dust", root, []), "dust", false));
+    assert.equal(plain.web.builtAt, null, "a web game at its root is its own sources: it has no build time");
   });
 
   it("never offers an Unreal game's page of design mockups as its web build", async () => {

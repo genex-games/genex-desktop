@@ -2,7 +2,9 @@
  * The Publish dialog's test link, in a disposable Electron profile with a fake `window.studio`: it
  * shows under "Publish to the web" before the first publish and under the public link once live
  * changes wait, never when the draft is the live build; its line names a second player only for a
- * multiplayer game; nothing overflows the dialog; and the main press still publishes once.
+ * multiplayer game; nothing overflows the dialog; and the main press still publishes once. The public
+ * link's Open closes the dialog onto the game's page in Play, and goes to the browser only for a game
+ * on another Genex.
  */
 import { build } from "esbuild";
 import { spawn } from "node:child_process";
@@ -102,8 +104,19 @@ app.whenReady().then(async()=>{
   const pressedUpdate=await step('pressedUpdate','window.testLink.press()');
   assert.equal(pressedUpdate.publishes.length,2,'Publish update publishes too');
   assert.deepEqual(pressedUpdate.publishes[1],{game:'cathedral-chess',title:'Cathedral Chess'});
+  // The public link's Open: the game's page in Play, inside the app, and the dialog closes.
+  await step('beforeOpen','window.testLink.open("same")');
+  const opened=await step('opened','window.testLink.openPublic()');
+  assert.equal(opened.leaves,'chevron-right','no arrow out of the app');
+  assert.equal(opened.view.page+':'+opened.view.slug,'game:cathedral-chess');
+  assert.deepEqual([opened.closed,opened.playAsked,opened.toBrowser],[1,1,0],'the dialog closes, Play comes up, nothing goes to the browser');
+  // A game on another Genex has no page in this Play: its Open goes to the browser, and the dialog stays.
+  await step('beforeOpenElsewhere','window.testLink.open("elsewhere")');
+  const away=await step('openedElsewhere','window.testLink.openPublic()');
+  assert.equal(away.leaves,'arrow-up-right');
+  assert.deepEqual([away.closed,away.playAsked,away.toBrowser],[1,1,1]);
   assert.deepEqual(report.errors,[]);
-  console.log('PASS Publish dialog test link: shown only for builds players lack, labelled, fits, and Publish still publishes once');
+  console.log("PASS Publish dialog test link: shown only for builds players lack, labelled, fits, and Publish still publishes once; the public link's Open shows the game's page in Play, or the browser for a game on another Genex");
  } catch(error) { report.failure=error.stack; console.error(error); await capture('failure').catch(()=>{}); }
  fs.writeFileSync(path.join(evidence,'report.json'),JSON.stringify(report,null,2));
  app.exit(report.failure?1:0);

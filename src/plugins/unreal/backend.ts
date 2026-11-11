@@ -65,6 +65,7 @@ import {
 import { editorLogPath, startCrashCheck } from "./editor-log.ts";
 import {
   chosenProject,
+  gamesLinkedTo,
   linkedProject,
   linkedToAGame,
   listSetUpProjects,
@@ -116,6 +117,7 @@ import {
   readGameIgnore,
   undoGameProjectFolder,
 } from "./game-folder.ts";
+import { type MoveInPlan, MoveInRefusal, moveIntoGame, planMoveIn } from "./move-into-game.ts";
 import { engineAssociation, isProjectPath, UPROJECT_EXTENSION } from "./project-file.ts";
 import { BuildToolsPlan, VisualStudioState, type VisualStudioStatus, visualStudioLacking } from "./visual-studio.ts";
 import { xcodeDownloadsLaunch } from "./xcode.ts";
@@ -202,6 +204,8 @@ const UnrealAction = {
   MoveEngine: MoveCardAction.Move,
   /** The chat card's Not now: the game's move is offered in its chat no more. */
   MoveLater: MoveCardAction.Later,
+  /** The panel's Move into game: the open game's own project in another folder becomes the game's `unreal/`. */
+  MoveIntoGame: "move-into-game",
   Templates: "templates",
   Create: "create",
   OpenEditor: "open-editor",
@@ -364,9 +368,9 @@ const WORDS = {
   NoGame: () => t("Open a game in Genex first: an Unreal project is used by a game."),
   NotSetUp: (name: string) => t("{name} isn't set up for Genex yet. Set it up first.", { name }),
   XcodeMacOnly: () => t("Xcode is for a Mac. On Windows, Unreal builds C++ with Visual Studio."),
-  SetupQuestion: (name: string) => t("Set up {name} for Genex?", { name }),
+  SetupQuestion: (name: string) => t("Add Genex to {name}?", { name }),
   SetupIntro: (name: string, file: string) => t("Genex will change {name} ({file}):", { name, file }),
-  UndoQuestion: (name: string) => t("Undo setup for {name}?", { name }),
+  UndoQuestion: (name: string) => t("Remove Genex from {name}?", { name }),
   MoveQuestion: (name: string, to: string) => t("Move {name} to Unreal {to}?", { name, to }),
   MoveOpens: (name: string, to: string) => t("{name} opens in Unreal {to} from now on.", { name, to }),
   MoveTools: (to: string) => t("Agents get Unreal {to}’s tools.", { to }),
@@ -375,6 +379,22 @@ const WORDS = {
     savePoint
       ? t("Genex makes a save point of this game first. What Unreal {to} saves won’t open in {from}.", { from, to })
       : t("Genex keeps a copy of the project file first. What Unreal {to} saves won’t open in {from}.", { from, to }),
+  MoveInQuestion: (name: string) => t("Move {name} into this game?", { name }),
+  MoveInDetail: (from: string, to: string) =>
+    t("Genex moves its folder from {from} to {to}. Rewind, Loops and Publish reach it there.", { from, to }),
+  /** Why Move into game was refused, when the panel's button was pressed after things changed. */
+  MoveInRefused: {
+    [MoveInRefusal.NoGame]: () => t("Open a game in Genex first: an Unreal project is used by a game."),
+    [MoveInRefusal.NotOwn]: () => t("Only the project this game builds in can move into it."),
+    [MoveInRefusal.Inside]: () => t("This project is already in this game's folder."),
+    [MoveInRefusal.HoldsGame]: () => t("This project's folder holds other things too, so Genex leaves it where it is."),
+    [MoveInRefusal.NotProjectFolder]: () =>
+      t("This project's folder holds other things too, so Genex leaves it where it is."),
+    [MoveInRefusal.Shared]: () => t("Another Genex game builds in this project too, so it stays where it is."),
+    [MoveInRefusal.InUse]: () => t("Quit Unreal first: a project can't move while it is open."),
+    [MoveInRefusal.Taken]: () => t("This game already has an unreal folder."),
+    [MoveInRefusal.OtherDisk]: () => t("This project is on another disk, so Genex leaves it there."),
+  } satisfies Record<MoveInRefusal, () => string>,
   RayTracingQuestion: (name: string) => t("Turn off ray tracing in {name}?", { name }),
   RayTracingDetail: (name: string) =>
     t(
@@ -885,8 +905,7 @@ async function busyRunOf(
   open: OpenFacts,
 ): Promise<BusyRun | null> {
   if (!open.running) return null;
-  const answer: unknown = await context.host(HostService.EngineRuns).catch(() => []);
-  const runs = Array.isArray(answer) ? answer.filter(isEngineRun) : [];
+  const runs = await engineRuns(context);
   const here = (run: PluginEngineRun) => run.game === context.project;
   for (const run of [...runs.filter(here), ...runs.filter((r) => !here(r))])
     if (await runHoldsEditor(deps, storage, run, open))
@@ -913,6 +932,12 @@ const isEngineRun = (value: unknown): value is PluginEngineRun =>
   typeof (value as Partial<PluginEngineRun>).game === "string" &&
   typeof (value as Partial<PluginEngineRun>).title === "string" &&
   typeof (value as Partial<PluginEngineRun>).project === "string";
+
+/** The Loops going now, as the host names them; none when it can't say. */
+async function engineRuns(context: PluginContext): Promise<PluginEngineRun[]> {
+  const answer: unknown = await context.host(HostService.EngineRuns).catch(() => []);
+  return Array.isArray(answer) ? answer.filter(isEngineRun) : [];
+}
 
 /**
  * The Live card's status for the open game's own project: the step it offers (the panel's, from
@@ -1002,6 +1027,8 @@ async function status(
      * confirmation names no setup changes.
      */
     move: (isSetUp(state) && real ? await planMove(real, options, engines) : undefined) ?? null,
+    /** Whether Move into game can move the shown project into the open game's folder now, and the words for why not. */
+    ...moveInStatus(state ? await moveInPlan(deps, state, context, editor.projectOpen) : null),
     firstStart: firstStart(opened, where.opening),
     /** Whether Epic's launcher is installed, asked only while no supported Unreal is (the Get Unreal view); else null. */
     launcher: engine ? null : Boolean(await findLauncher(env.platform, deps.launch)),
@@ -1297,9 +1324,7 @@ const MAY_QUIT: QuitPolicy = { check: async () => {} };
  * project: `use-project` needs no lock of its own, which would reach every game, web games too.
  */
 async function refuseWhileLooped(context: PluginContext, file: string, name: string): Promise<void> {
-  const answer: unknown = await context.host(HostService.EngineRuns).catch(() => []);
-  const runs = Array.isArray(answer) ? answer.filter(isEngineRun) : [];
-  for (const run of runs)
+  for (const run of await engineRuns(context))
     if (await sameProject(file, run.project)) throw new Error(MESSAGE.SetUpLooped(run.title, name));
 }
 
@@ -2114,6 +2139,85 @@ async function moveEngine(deps: UnrealBackendDeps, file: string, context: Plugin
   return state;
 }
 
+/** Whether a Loop going now builds in `file`; yes when the host can't say, so nothing moves under a Loop. */
+async function loopUses(context: PluginContext, file: string): Promise<boolean> {
+  const answer: unknown = await context.host(HostService.EngineRuns).catch(() => null);
+  if (!Array.isArray(answer)) return true;
+  for (const run of answer.filter(isEngineRun)) if (await sameProject(file, run.project)) return true;
+  return false;
+}
+
+/** Status's `moveIn` (Move into game can move it now) and `moveInWhy` (the words for why it can't), from a plan. */
+function moveInStatus(plan: MoveInPlan | null): { moveIn: boolean; moveInWhy: string | null } {
+  if (!plan) return { moveIn: false, moveInWhy: null };
+  return "refusal" in plan
+    ? { moveIn: false, moveInWhy: WORDS.MoveInRefused[plan.refusal]() }
+    : { moveIn: true, moveInWhy: null };
+}
+
+/**
+ * What Move into game would do with `state`'s project: its folder and the game's `unreal/`, or
+ * why it stays. `open` says Unreal has it open, when the caller already knows; else it is asked.
+ */
+async function moveInPlan(
+  deps: UnrealBackendDeps,
+  state: ProjectState,
+  context: PluginContext,
+  open?: boolean,
+): Promise<MoveInPlan> {
+  const { env } = deps;
+  const storage = await context.host(HostService.StorageRoot);
+  const real = realProjectFile(state);
+  // Asked only for the open game's own project: no other one moves, and status asks on every refresh.
+  const own = await isGamesOwn(real, storage, context);
+  if (!own)
+    return planMoveIn({
+      game: gameFolderOf(context),
+      home: env.home,
+      directory: state.directory,
+      own,
+      shared: false,
+      inUse: false,
+    });
+  const others = (await gamesLinkedTo(storage, real)).filter((game) => game !== context.project);
+  const held = open ?? ((await env.editorRunning()) && (await editorHasProject(env, state, state.port)));
+  return planMoveIn({
+    game: gameFolderOf(context),
+    home: env.home,
+    directory: state.directory,
+    own,
+    shared: others.length > 0,
+    inUse: held || (await loopUses(context, real)),
+  });
+}
+
+/**
+ * The panel's Move into game: the open game's own project, in another folder, becomes the game's
+ * `unreal/`. Refused in the person's words when it can't move; answers its new `.uproject`.
+ */
+async function moveIn(deps: UnrealBackendDeps, file: string, context: PluginContext): Promise<{ project: string }> {
+  const options = await setupOptions(deps, context);
+  const state = await inspectProject(file, options);
+  const plan = await moveInPlan(deps, state, context);
+  if ("refusal" in plan) throw new Error(WORDS.MoveInRefused[plan.refusal]());
+  const project = await moveIntoGame({
+    plan,
+    file: realProjectFile(state),
+    game: path.dirname(plan.target),
+    storage: options.storage,
+    link: (moved) => context.host(HostService.EngineLink, { project: moved }),
+  });
+  return { project };
+}
+
+/** Studio's confirmation before Move into game: the folder that moves and where it goes. */
+async function describeMoveIn(deps: UnrealBackendDeps, file: string, context: PluginContext): Promise<PluginReview> {
+  const state = await inspectProject(file, await setupOptions(deps, context));
+  const plan = await moveInPlan(deps, state, context);
+  if ("refusal" in plan) return { message: WORDS.MoveInRefused[plan.refusal]() };
+  return { message: WORDS.MoveInQuestion(state.name), detail: WORDS.MoveInDetail(plan.from, plan.target) };
+}
+
 /** Studio's confirmation before a move: what changes, what keeps the game as it was, and what can't be taken back. */
 async function describeMove(file: string, options: SetupOptions, context: PluginContext): Promise<PluginReview> {
   const state = await inspectProject(file, options);
@@ -2280,6 +2384,7 @@ export function createUnrealBackend(deps: UnrealBackendDeps): PluginActivation {
     [UnrealAction.UndoSetup]: async (args, context) =>
       undo(projectArg(args), await setupOptions(deps, context), args.ifSetUp === true),
     [UnrealAction.MoveEngine]: (args, context) => moveEngine(deps, projectArg(args), context),
+    [UnrealAction.MoveIntoGame]: (args, context) => moveIn(deps, projectArg(args), context),
     [UnrealAction.Templates]: (_args, context) => templates(deps, context),
     [UnrealAction.Create]: (args, context) => create(deps, args, context),
     [UnrealAction.OpenEditor]: (args, context) => openForUser(deps, projectArg(args), context),
@@ -2342,6 +2447,7 @@ export function createUnrealBackend(deps: UnrealBackendDeps): PluginActivation {
         return { message: WORDS.UndoQuestion(project), detail: WORDS.Undo(project) };
       }
       if (name === UnrealAction.MoveEngine) return describeMove(projectArg(args), options, context);
+      if (name === UnrealAction.MoveIntoGame) return describeMoveIn(deps, projectArg(args), context);
       if (name === UnrealAction.RayTracingOff) {
         const project = (await inspectProject(projectArg(args), options)).name;
         return { message: WORDS.RayTracingQuestion(project), detail: WORDS.RayTracingDetail(project) };

@@ -216,6 +216,7 @@
   "tests/conformance/plugin-panel-context.test.ts",
   "tests/conformance/plugin-payload-paths.test.ts",
   "tests/conformance/plugin-process-stop.test.ts",
+  "tests/conformance/plugin-restart-pause.test.ts",
   "tests/conformance/plugin-sandbox-jobs-windows.test.ts",
   "tests/conformance/plugin-sandbox-jobs.test.ts",
   "tests/conformance/plugin-scan.test.ts",

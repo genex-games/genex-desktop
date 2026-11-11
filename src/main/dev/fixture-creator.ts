@@ -121,7 +121,10 @@ function stats(days: number, account: FixtureAccount, catalog: FixtureCatalog): 
   });
 }
 
-/** Top creators from the fixture catalog: their games and hours played in the last 30 days. */
+/**
+ * Top creators from the fixture catalog, best first as genex.games sends them: their games and
+ * hours played in the last 30 days.
+ */
 function topCreators(catalog: FixtureCatalog): GalleryAnswer {
   const creators = fixturePeople()
     .map((person) => {
@@ -129,7 +132,8 @@ function topCreators(catalog: FixtureCatalog): GalleryAnswer {
       const plays = games.reduce((sum, game) => sum + game.playsCount, 0);
       return { ...person, games: games.length, hours: Math.round((plays * 11) / 60) };
     })
-    .filter((creator) => creator.games > 0);
+    .filter((creator) => creator.games > 0)
+    .toSorted((a, b) => b.hours - a.hours);
   return ok({ creators });
 }
 

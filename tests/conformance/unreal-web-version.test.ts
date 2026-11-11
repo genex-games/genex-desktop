@@ -5,7 +5,7 @@
  */
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { buildFinished, BUILD_SETTLE_MS } from "../../src/main/core/live-gate.ts";
@@ -30,6 +30,7 @@ import {
 } from "../../src/renderer/panels/plugins/genex/publish-platforms-view.ts";
 import { publishPlatforms } from "../../src/main/core/publish-platforms.ts";
 import { type PublishPlatform, PublishPlatformState, PublishTarget } from "../../src/shared/publish-platforms.ts";
+import { coreLite } from "../helpers/core-lite.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 const PLUGIN = pluginFactSource("unreal");
@@ -73,6 +74,37 @@ describe("an Unreal game's web version", () => {
       assert.deepEqual(withEngineWebVersion([unreal, page(".")], found, true), [unreal, page(folder)].sort(byPath));
     }
     assert.equal(engineWebVersion([unreal], [unreal, page("web")]), null, "mockups in web/ are not listed as it");
+  });
+
+  it("is the web game of a game that began as Genex's web starter, once the starter's page is gone", async () => {
+    const lite = await coreLite();
+    try {
+      await lite.core.plugins.setEnabled("unreal", true);
+      const game = await lite.core.games.scaffold("strike");
+      for (const file of ["unreal/Strike.uproject", "web/index.html", `web/${UNREAL_WEB_BUILD_MARKER}`]) {
+        await mkdir(path.dirname(path.join(game.dir, file)), { recursive: true });
+        await writeFile(path.join(game.dir, file), "{}\n");
+      }
+      const listed = async () => (await lite.core.games.list()).find((entry) => entry.name === game.name);
+      // The starter's own page, nothing built on it, gives way to the build.
+      assert.equal(webFolderOf({ facts: (await listed())?.facts ?? [] }), "web");
+      // With the page gone only studio.json still records the starter: Publish looked for index.html
+      // at the root and refused ("Selected public path is missing or unreadable: index.html").
+      await unlink(path.join(game.dir, "index.html"));
+      const facts = (await listed())?.facts ?? [];
+      assert.deepEqual(
+        facts.map((fact) => `${fact.id}@${fact.path}`),
+        [`${CoreFact.UnrealProject}@unreal`, `${UNREAL_WEB_BUILD_FACT}@web`, `${CoreFact.WebGame}@web`],
+      );
+      assert.equal(webFolderOf({ facts }), "web");
+      assert.equal(publishesAsWebGame({ facts }), true);
+      // The same with the starter's code gone too, as in the folder this was found in.
+      await unlink(path.join(game.dir, "src", "main.js"));
+      assert.equal(webFolderOf({ facts: (await listed())?.facts ?? [] }), "web");
+    } finally {
+      lite.core.plugins.cancel();
+      await lite.close();
+    }
   });
 
   it("the Unreal plugin's manifest finds the build by the file Unreal writes at its root", () => {

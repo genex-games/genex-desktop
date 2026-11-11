@@ -3,8 +3,8 @@
  * Chrome. The panel's `window.studioPlugin` is a stand-in whose `call("action", …)` runs
  * `createUnityBackend` over a fake computer (`helpers/unity-backend.ts`): installed editors in a
  * temporary Applications folder, a game folder, a stand-in editor, and an opener that records what
- * it would start and starts nothing. Every step the backend names must give the panel a headline
- * and words, and its main button must send its action for the open game with no arguments.
+ * it would start and starts nothing. Every step the backend names must give the panel's list a
+ * named first row, and its one button must send its action for the open game with no arguments.
  * Opt-in: it launches a browser, so it runs only with `STUDIO_BROWSER_TESTS=1` and Chrome or a
  * Playwright Chromium already installed.
  */
@@ -60,26 +60,43 @@ async function setUpGame(replies: Reply[] = []) {
 /** An editor's main thread answering every look the panel takes. */
 const looks = (reply: () => Reply) => Array.from({ length: LOOKS }, reply);
 
-/** One step the backend can name: how to reach it, its headline, and its main button's words and action. */
-const STEPS: Record<
-  PanelStep,
-  { arrange: () => Promise<Computer>; binding?: Record<string, never>; title: RegExp; main?: [string, UnityAction] }
-> = {
+/** The game the stand-in bridge names: the panel's first row carries it. */
+const GAME = "lantern";
+
+/**
+ * One step the backend can name: how to reach it, what the list's first row is called, the word
+ * beside its dot, the row that needs the person, and the button that acts with its words and action.
+ */
+type Shown = {
+  arrange: () => Promise<Computer>;
+  binding?: Record<string, never>;
+  name: string;
+  state?: string;
+  lead?: string;
+  /** The id of the line that says the step in a sentence. */
+  says?: "text" | "lead-sub" | "hint";
+  main?: ["primary" | "lead-act", string, UnityAction];
+};
+const STEPS: Record<PanelStep, Shown> = {
   [PanelStep.GetUnity]: {
     arrange: () => backendOn([]),
-    title: /^Get Unity 6$/,
-    main: ["Get Unity", UnityAction.GetUnity],
+    name: "Get Unity 6",
+    says: "text",
+    main: ["primary", "Get Unity", UnityAction.GetUnity],
   },
-  [PanelStep.NoGame]: { arrange: () => backendOn([UNITY_6]), binding: {}, title: /^No game open$/ },
-  [PanelStep.NoProject]: { arrange: () => backendOn([UNITY_6]), title: /^No Unity project in this game$/ },
+  [PanelStep.NoGame]: { arrange: () => backendOn([UNITY_6]), binding: {}, name: "No game open", says: "text" },
+  [PanelStep.NoProject]: { arrange: () => backendOn([UNITY_6]), name: "This game has no Unity project", says: "text" },
   [PanelStep.OldProject]: {
     arrange: async () => {
       const computer = await backendOn(["2022.3.13f1", UNITY_6]);
       await withProject(computer.game, "2022.3.13f1");
       return computer;
     },
-    title: /^This project needs Unity 6$/,
-    main: ["Open Unity Hub", UnityAction.GetUnity],
+    name: GAME,
+    state: "Genex not added",
+    lead: "This project needs Unity 6",
+    says: "lead-sub",
+    main: ["lead-act", "Open Unity Hub", UnityAction.GetUnity],
   },
   [PanelStep.NotSetUp]: {
     arrange: async () => {
@@ -87,8 +104,9 @@ const STEPS: Record<
       await withProject(computer.game, UNITY_6);
       return computer;
     },
-    title: /^Set up this project$/,
-    main: ["Set up", UnityAction.Setup],
+    name: GAME,
+    state: "Genex not added",
+    main: ["primary", "Open in Unity", UnityAction.Setup],
   },
   [PanelStep.NoEditor]: {
     arrange: async () => {
@@ -96,13 +114,17 @@ const STEPS: Record<
       await withProject(computer.game, UNITY_6, SET_UP);
       return computer;
     },
-    title: /^Unity 6000\.3\.10f1 isn't installed$/,
-    main: ["Open Unity Hub", UnityAction.GetUnity],
+    name: GAME,
+    state: "Not open",
+    lead: "Unity 6.3 isn't installed",
+    says: "lead-sub",
+    main: ["lead-act", "Open Unity Hub", UnityAction.GetUnity],
   },
   [PanelStep.NotOpen]: {
     arrange: async () => (await setUpGame([ready(), ...looks(look)])).computer,
-    title: /^Unity isn't open$/,
-    main: ["Open in Unity", UnityAction.OpenEditor],
+    name: GAME,
+    state: "Not open",
+    main: ["primary", "Open in Unity", UnityAction.OpenEditor],
   },
   [PanelStep.Opening]: {
     arrange: async () => {
@@ -110,7 +132,9 @@ const STEPS: Record<
       computer.table.start(editorRow(55, root));
       return computer;
     },
-    title: /^Unity is starting$/,
+    name: GAME,
+    state: "Opening",
+    says: "hint",
   },
   [PanelStep.Ready]: {
     arrange: async () => {
@@ -118,7 +142,8 @@ const STEPS: Record<
       await computer.openIn(root);
       return computer;
     },
-    title: /^Unity is ready$/,
+    name: GAME,
+    state: "Ready",
   },
   [PanelStep.Terms]: {
     arrange: async () => {
@@ -127,7 +152,10 @@ const STEPS: Record<
       computer.table.start(editorRow(55, root));
       return computer;
     },
-    title: /^Unity is waiting for you$/,
+    name: GAME,
+    state: "Waiting for you",
+    lead: "Accept Unity's terms",
+    says: "lead-sub",
   },
   [PanelStep.Stalled]: {
     arrange: async () => {
@@ -136,8 +164,11 @@ const STEPS: Record<
       computer.deps.timeout = () => AbortSignal.abort();
       return computer;
     },
-    title: /^Unity isn't answering$/,
-    main: ["Restart Unity", UnityAction.RestartEditor],
+    name: GAME,
+    state: "Not answering",
+    lead: "Unity isn't answering",
+    says: "lead-sub",
+    main: ["lead-act", "Restart Unity", UnityAction.RestartEditor],
   },
 };
 
@@ -166,6 +197,8 @@ describe("The Unity panel", { skip }, () => {
   /** What the panel sent besides its looks, and how each press is answered when the test says. */
   interface Wire {
     sent: Array<[string, Record<string, unknown>, number | null]>;
+    /** Calls the backend has not answered yet. */
+    open?: number;
     answer?: (name: string) => { error: string; code?: string } | undefined;
   }
 
@@ -178,10 +211,13 @@ describe("The Unity panel", { skip }, () => {
       if (!look) wire.sent.push([name, args, wait]);
       const scripted = look ? undefined : wire.answer?.(name);
       if (scripted) return scripted;
+      wire.open = (wire.open ?? 0) + 1;
       try {
         return { value: await computer.act(name, args, binding) };
       } catch (error) {
         return { error: error instanceof Error ? error.message : String(error) };
+      } finally {
+        wire.open -= 1;
       }
     };
     await tab.exposeFunction("__backend", backend);
@@ -192,23 +228,32 @@ describe("The Unity panel", { skip }, () => {
 
   const textOf = (tab: Page, id: string) => tab.locator(`#${id}`).innerText();
   const shown = (tab: Page, id: string) => tab.locator(`#${id}`).isVisible();
+  /** A press has been sent, and the panel has drawn what the backend answered to it and to the look after. */
+  async function settled(tab: Page, wire: Wire, presses = 1) {
+    await tab.waitForFunction(() => document.getElementById("app")?.dataset.running === "");
+    assert.equal(wire.sent.length, presses);
+  }
 
-  for (const [step, { arrange, binding, title, main }] of Object.entries(STEPS)) {
-    it(`shows ${step} with a headline, its words and ${main ? `"${main[0]}"` : "no main button"}`, async () => {
+  for (const [step, { arrange, binding, name, state, lead, says, main }] of Object.entries(STEPS)) {
+    it(`shows ${step} as a named row${state ? ` that says "${state}"` : ""} with ${main ? `"${main[1]}"` : "no button"}`, async () => {
       const { tab, wire } = await open(await arrange(), binding);
       try {
-        assert.match(await textOf(tab, "title"), title);
-        assert.ok((await textOf(tab, "text")).length > 20, "the step says what it means in a sentence");
-        assert.equal(await shown(tab, "primary"), Boolean(main));
+        assert.equal(await textOf(tab, "name"), name);
+        assert.equal(await shown(tab, "state"), Boolean(state), "a project says where it stands in a dot and a word");
+        if (state) assert.equal(await tab.locator("#state-word").textContent(), state);
+        assert.equal(await shown(tab, "lead"), Boolean(lead), "a row is added only for what needs the person");
+        if (lead) assert.equal(await textOf(tab, "lead-title"), lead);
+        if (says) assert.ok((await textOf(tab, says)).length > 20, "the step says what it means in a sentence");
+        for (const id of ["primary", "lead-act"]) assert.equal(await shown(tab, id), main?.[0] === id, id);
         const overflow = await tab.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
         assert.ok(overflow <= 0, `nothing is wider than a ${VIEWPORT.width}px panel (${overflow}px over)`);
         if (!main) return;
-        assert.equal(await textOf(tab, "primary"), main[0]);
-        await tab.locator("#primary").click();
-        await tab.waitForFunction(() => !(document.getElementById("primary") as HTMLButtonElement).disabled);
+        assert.equal(await textOf(tab, main[0]), main[1]);
+        await tab.locator(`#${main[0]}`).click();
+        await settled(tab, wire);
         assert.deepEqual(
-          wire.sent.map(([name, args]) => [name, args]),
-          [[main[1], {}]],
+          wire.sent.map(([sent, args]) => [sent, args]),
+          [[main[2], {}]],
           "the press sends its action for the open game, with nothing of the panel's own",
         );
       } finally {
@@ -217,29 +262,24 @@ describe("The Unity panel", { skip }, () => {
     });
   }
 
-  it("names the game's project folder, where it stands and its Unity, and outwaits the host's limit for an action that opens Unity", async () => {
+  it("names the game, where it stands and its Unity in one line, in one font, and outwaits the host's limit for an action that opens Unity", async () => {
     const { computer } = await setUpGame([ready(), ...looks(look)]);
     const { tab, wire } = await open(computer);
     try {
-      assert.equal(await textOf(tab, "where"), "unity/");
-      assert.equal(await textOf(tab, "version"), `Unity ${UNITY_6}`);
-      assert.equal(await textOf(tab, "state"), "Not open", "the strip button's own word");
-      assert.equal(await textOf(tab, "installed"), UNITY_6, "This computer names the Unity installed");
-      await tab.locator("#primary").click();
-      await tab.waitForFunction(() => document.getElementById("title")?.textContent === "Unity is ready");
-      const ready = await tab.evaluate(() => {
-        const word = document.getElementById("state-word");
-        return {
-          tone: document.getElementById("state")?.dataset.tone,
-          word: word?.textContent,
-          width: word?.getBoundingClientRect().width,
-        };
+      assert.equal(await textOf(tab, "name"), GAME);
+      assert.equal(await textOf(tab, "state"), "Not open · Unity 6.3", "the word, then the project's Unity in short");
+      assert.equal(await tab.locator("#state").getAttribute("title"), UNITY_6, "the whole version on hover");
+      const fonts = await tab.evaluate(() => {
+        const family = (el: Element) => getComputedStyle(el).fontFamily.split(",")[0]?.trim() ?? "";
+        const words = [...document.querySelectorAll("#list :is(h2, p, span):not(:empty)")].map(family);
+        return { words: [...new Set(words)], button: family(document.querySelector("#primary") ?? document.body) };
       });
-      assert.deepEqual(
-        ready,
-        { tone: "ok", word: "Ready", width: 1 },
-        "Ready is the green dot alone, its word for screen readers",
-      );
+      assert.equal(fonts.words.length, 1, `every word in one font (${fonts.words.join(", ")})`);
+      assert.notEqual(fonts.button, fonts.words[0], "the code font is the button's alone");
+      await tab.locator("#primary").click();
+      await tab.waitForFunction(() => document.getElementById("state-word")?.textContent === "Ready");
+      assert.equal(await tab.locator("#state").getAttribute("data-tone"), "ok", "a green dot beside Ready");
+      assert.equal(await shown(tab, "primary"), false, "an open, ready Unity needs no button");
       assert.deepEqual(wire.sent, [[UnityAction.OpenEditor, {}, 200_000]]);
       assert.ok(200_000 > PLUGIN_CALL_TIMEOUT_MS, "the host's own answer reaches the panel before its wait ends");
       assert.equal(computer.launches.length, 1);
@@ -249,16 +289,44 @@ describe("The Unity panel", { skip }, () => {
     }
   });
 
-  it("shows whether agents may use Unity while the person plays, on unless turned off, and keeps the person's choice", async () => {
+  it("keeps the rare actions behind the three dots: Remove Genex while Unity is closed, Restart Unity while it is open", async () => {
+    const closedGame = await open((await setUpGame([ready(), ...looks(look)])).computer);
+    try {
+      assert.equal(await shown(closedGame.tab, "undo"), false, "closed until the dots are pressed");
+      await closedGame.tab.locator("#more summary").click();
+      assert.equal(await textOf(closedGame.tab, "undo"), "Remove Genex from this project");
+      assert.equal(await shown(closedGame.tab, "restart"), false);
+      await closedGame.tab.locator("#undo").click();
+      await settled(closedGame.tab, closedGame.wire);
+      assert.deepEqual(closedGame.wire.sent[0]?.slice(0, 2), [UnityAction.UndoSetup, {}]);
+      // The stand-in project was set up by hand, so Genex's record has nothing of its own to take back.
+      assert.equal(await textOf(closedGame.tab, "done"), "Nothing of Genex's was left to remove.");
+    } finally {
+      await closedGame.tab.close();
+    }
+
+    const { computer, root } = await setUpGame(looks(look));
+    await computer.openIn(root);
+    const openGame = await open(computer);
+    try {
+      await openGame.tab.locator("#more summary").click();
+      assert.equal(await textOf(openGame.tab, "restart"), "Restart Unity");
+      assert.equal(await shown(openGame.tab, "undo"), false);
+    } finally {
+      await openGame.tab.close();
+    }
+  });
+
+  it("shows whether agents may use Unity while the person plays as a switch, on unless turned off, and keeps the person's choice", async () => {
     const { computer, root } = await setUpGame(looks(look));
     await computer.openIn(root);
     const { tab, wire } = await open(computer);
     try {
       const box = tab.locator("#while-playing");
       assert.equal(await shown(tab, "agents"), true);
-      assert.match(await textOf(tab, "agents"), /Agents may use Unity while you play/);
+      assert.equal(await textOf(tab, "agents"), "Agents can use Unity while you play\nThis can stop your play.");
       assert.equal(await box.isChecked(), true, "on unless the person turned it off");
-      await tab.getByText("Agents may use Unity while you play").click();
+      await tab.getByText("Agents can use Unity while you play").click();
       await tab.waitForFunction(() => !(document.getElementById("while-playing") as HTMLInputElement).disabled);
       assert.equal(await box.isChecked(), false);
       assert.deepEqual(wire.sent, [[UnityAction.AgentsWait, {}, null]]);
@@ -294,10 +362,10 @@ describe("The Unity panel", { skip }, () => {
     });
     try {
       await declined.tab.locator("#primary").click();
-      await declined.tab.waitForFunction(() => !(document.getElementById("primary") as HTMLButtonElement).disabled);
-      assert.equal(declined.wire.sent.length, 1);
+      await settled(declined.tab, declined.wire);
       assert.equal(await shown(declined.tab, "error"), false, "a declined question is no error");
-      assert.equal(await textOf(declined.tab, "title"), "Set up this project");
+      assert.equal(await declined.tab.locator("#state-word").textContent(), "Genex not added");
+      assert.equal(await shown(declined.tab, "primary"), true, "the button is back");
     } finally {
       await declined.tab.close();
     }
@@ -321,7 +389,8 @@ describe("The Unity panel", { skip }, () => {
     stubborn.table.start(editorRow(8, await withProject(stubborn.game, UNITY_6, SET_UP)));
     const held = await open(stubborn);
     try {
-      await held.tab.locator("#quiet").click();
+      await held.tab.locator("#more summary").click();
+      await held.tab.locator("#restart").click();
       await held.tab.waitForFunction(() => document.getElementById("error")?.textContent !== "");
       assert.match(await textOf(held.tab, "error"), /could not be ended\. Quit it yourself/);
       assert.deepEqual(stubborn.launches, [], "no second editor beside the one that would not end");

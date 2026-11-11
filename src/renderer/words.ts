@@ -3858,7 +3858,6 @@ export const REVIEW_WORDS = {
     buildAgain: t("Build again"),
     signIn: t("Sign in"),
     copyLink: t("Copy link"),
-    openOnGenex: t("Open on Genex"),
     dontPublish: t("Don't publish it automatically"),
     dontAsk: t("Don't ask automatically"),
     showMore: (n: number) => t("Show {n} more", { n }),
@@ -4105,31 +4104,24 @@ export const PUBLISH_PLATFORM_WORDS = {
 } as const;
 
 /**
- * The Publish card of a game made in an engine (canvas "Publish to every platform", round 4): each
- * row says only what is true now, and the one button says what pressing it does.
+ * The Publish card of a game made in an engine (canvas "Publish to every platform", round 3 of the
+ * redesign): each row says only what is true now and ends in its own button, and the one big button
+ * builds and publishes everything.
  */
 export const PUBLISH_CARD_WORDS = {
   /** The rows' list, for a screen reader. */
   listLabel: t("Platforms"),
-  /** A row's title. */
+  /** A row's title, and a platform inside a line: "Publishes Web now, Windows once it is built." */
   name: {
     [PublishTarget.Web]: t("Web"),
     [PublishTarget.Mac]: "Mac",
     [PublishTarget.Windows]: "Windows",
     [PublishTarget.Linux]: "Linux",
   } satisfies Record<PublishTarget, string>,
-  /** A platform inside the button's words: "Update Mac and web". */
-  inPress: {
-    [PublishTarget.Web]: t("web"),
-    [PublishTarget.Mac]: "Mac",
-    [PublishTarget.Windows]: "Windows",
-    [PublishTarget.Linux]: "Linux",
-  } satisfies Record<PublishTarget, string>,
   /** What is on Genex for a platform now. */
-  live: t("Live"),
   liveCurrent: t("Live · up to date"),
   liveOlder: t("Live · older than your game"),
-  /** Players have an older one, and a newer one is built: Publish gives it to them. */
+  /** Players have an older one, and a newer one is built: Update gives it to them. */
   liveUpdateReady: t("Live · update ready"),
   /** Players don't have it. No app of it is made, one is made but the game changed since, or one waits for Publish. */
   notBuilt: t("Not built"),
@@ -4140,14 +4132,14 @@ export const PUBLISH_CARD_WORDS = {
   sendFailed: t("Couldn’t send"),
   buildFailed: t("Couldn’t build"),
   buildFailedLive: t("Couldn’t build · the older one is still live"),
-  /** The work going on for a platform now; its clock is at the row's end. */
+  /** Where the work under way happens; the row's loader says what it is. */
   sending: t("Sending to Genex"),
   sendingCloud: t("Sending to Genex Cloud"),
-  buildingCloud: t("Building on Genex Cloud"),
-  buildingHere: (mac: boolean) => (mac ? t("Building on this Mac") : t("Building on this PC")),
-  /** The row's end: where the press builds it. */
-  buildsHere: (mac: boolean) => (mac ? t("builds on this Mac") : t("builds on this PC")),
-  buildsCloud: t("builds on Genex Cloud"),
+  onCloud: t("On Genex Cloud"),
+  onThisComputer: (mac: boolean) => (mac ? t("On this Mac") : t("On this PC")),
+  /** An app that waits for another's build: a computer builds one at a time. */
+  buildsAfter: (platform: string) => t("Builds after {platform}", { platform }),
+  queued: t("Queued"),
   /** A ready app the pinned CLI can't send yet. */
   soon: t("coming soon"),
   /** When the version players have went live: "just now", "5 min ago", "2 days ago". */
@@ -4159,29 +4151,55 @@ export const PUBLISH_CARD_WORDS = {
       return t("{count, plural, one {# hour ago} other {# hours ago}}", { count: Math.floor(ms / HOUR_MS) });
     return t("{count, plural, one {# day ago} other {# days ago}}", { count: Math.floor(ms / DAY_MS) });
   },
-  /** The button: what pressing it does. */
-  update: (platforms: string) => t("Update {platforms}", { platforms }),
-  updateCount: (count: number) => t("Update {count} platforms", { count }),
-  publishTo: (platforms: string) => t("Publish to {platforms}", { platforms }),
-  publishToCount: (count: number) => t("Publish to {count} platforms", { count }),
+  /** A row's own button: where it builds the app, or what it gives players. */
+  buildHere: (mac: boolean) => (mac ? t("Build on Mac") : t("Build on PC")),
+  buildOnCloud: t("Build on Genex Cloud"),
+  publish: t("Publish"),
+  update: t("Update"),
+  tryAgain: t("Try again"),
+  /** The loader in a row's button's place while it works; its clock follows. */
+  building: t("Building"),
+  publishing: t("Publishing"),
+  updating: t("Updating"),
+  /** The loader's clock while an app is sent and its speed is known: "2m left", "1h 20m left". */
+  minutesLeft: (minutes: number) => t("{minutes}m left", { minutes }),
+  hoursLeft: (hours: number, minutes: number) => t("{hours}h {minutes}m left", { hours, minutes }),
+  /** The menu at the end of a row players have, and its one item. */
+  more: (platform: string) => t("More for {platform}", { platform }),
   takeDown: (platforms: string) => t("Take {platforms} down", { platforms }),
-  updateAndTakeDown: (platforms: string, down: string) =>
-    t("Update {platforms} and take {down} down", { platforms, down }),
-  publishAndTakeDown: (platforms: string, down: string) =>
-    t("Publish to {platforms} and take {down} down", { platforms, down }),
-  /** The button when apps must be built first, here and on Genex Cloud at once: a second press publishes them. */
-  build: (platforms: string) => t("Build {platforms}", { platforms }),
-  buildCount: (count: number) => t("Build {count} apps", { count }),
-  /** The button while it works. */
-  building: (platforms: string) => t("Building {platforms}", { platforms }),
-  updating: (platforms: string) => t("Updating {platforms}", { platforms }),
-  publishing: (platforms: string) => t("Publishing to {platforms}", { platforms }),
-  /** Under the button while Genex Cloud builds: so a long wait doesn't scare anyone. */
-  cloudTakesLong: t("It can take up to an hour."),
-  /** The same, when the button names more than the app Genex Cloud builds: "Windows can take up to an hour." */
-  cloudTakesLongFor: (platforms: string) => t("{platforms} can take up to an hour.", { platforms }),
-  /** A row's switch, for a screen reader. */
-  switchLabel: (name: string) => t("Publish to {name}", { name }),
+  /** The big button: it builds what isn't built and publishes each platform as soon as it is ready. */
+  publishAll: t("Publish to all platforms"),
+  updateAll: t("Update all platforms"),
+  /** The line under the big button: what it does now and what by itself later. */
+  publishNowAndLater: (now: string, later: string, count: number) =>
+    t("Publishes {now} now, {later} once {count, plural, one {it is} other {they are}} built.", { now, later, count }),
+  updateNowAndLater: (now: string, later: string, count: number) =>
+    t("Updates {now} now, {later} once {count, plural, one {it is} other {they are}} built.", { now, later, count }),
+  publishOnceBuilt: (platforms: string, count: number) =>
+    t("Publishes {platforms} once {count, plural, one {it is} other {they are}} built.", { platforms, count }),
+  updateOnceBuilt: (platforms: string, count: number) =>
+    t("Updates {platforms} once {count, plural, one {it is} other {they are}} built.", { platforms, count }),
+  buildThenPublish: (platforms: string, count: number) =>
+    t("Builds {platforms}, then publishes {count, plural, one {it} other {them}} by itself.", { platforms, count }),
+  buildThenUpdate: (platforms: string, count: number) =>
+    t("Builds {platforms} again, then updates {count, plural, one {it} other {them}} by itself.", {
+      platforms,
+      count,
+    }),
+  /** The same when Genex Cloud builds one of them (`slow`): the line says how long that can take. */
+  buildFirstSlow: (platforms: string, slow: string) =>
+    t("Builds {platforms} first. {slow} can take up to an hour.", { platforms, slow }),
+  buildOneFirstSlow: (platform: string) => t("Builds {platform} first. It can take up to an hour.", { platform }),
+  /** And when another app is being built already. */
+  buildTooSlow: (platforms: string, slow: string) =>
+    t("Builds {platforms} too. {slow} can take up to an hour.", { platforms, slow }),
+  buildOneTooSlow: (platform: string) => t("Builds {platform} too. It can take up to an hour.", { platform }),
+  /** The big button while its press is under way: how many platforms players have of all the card's. */
+  publishingAll: (live: number, count: number) =>
+    t("Publishing to all platforms · {live} of {count} live", { live, count }),
+  updatingAll: (done: number, count: number) =>
+    t("Updating all platforms · {done} of {count} updated", { done, count }),
+  goesLiveWhenReady: t("Each one goes live as soon as it’s ready. You can close this window."),
   /** An error block under the rows: what failed, never the log itself. */
   buildError: (platform: string) => t("{platform} build error", { platform }),
   /** The game's project never reached Genex Cloud, or it refused it: nothing is being built. */
@@ -4191,7 +4209,6 @@ export const PUBLISH_CARD_WORDS = {
   fixing: (platform: string) => t("Agent is fixing the {platform} build", { platform }),
   sendToAgent: t("Send to agent"),
   sendToAgentLabel: (platform: string) => t("Send the {platform} error to the agent", { platform }),
-  tryAgain: t("Try again"),
   copyError: t("Copy the error"),
   copied: t("Copied"),
 } as const;

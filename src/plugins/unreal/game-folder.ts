@@ -81,7 +81,7 @@ export async function readGameIgnore(gameDir: string): Promise<string | null> {
 }
 
 /** Puts the game's ignore file back to `before` (null: none); never through a link. */
-async function restoreGameIgnore(gameDir: string, before: string | null): Promise<void> {
+export async function restoreGameIgnore(gameDir: string, before: string | null): Promise<void> {
   const file = path.join(gameDir, IGNORE_FILE);
   if (!(await lstatOrNull(file))?.isFile()) return;
   if (before === null) await rm(file, { force: true });

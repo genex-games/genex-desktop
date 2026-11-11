@@ -2,17 +2,20 @@
  * Test-owned chat review cards over a fake `window.studio` (mockups A2, C2, C3, C4, D2): each game's
  * live card as Genex's word now draws it (checking, checking fixes, live with its cover and link, an
  * update live, public again, not approved, taken down, a fix on its way, a fix that stopped) and the
- * settled history lines, one opened to what it said then. Each scene is its own game, so each card
- * reads its own review. Beside them, the toast a game's review raises while another game is open
- * (C5), made by the feed's own rules from a `genex_review` record, with its [Open].
+ * settled history lines, one opened to what its record says. Each scene is its own game, so each card
+ * reads its own review. A live card's Open shows the game's page in Play. Beside them, the toast a
+ * game's review raises while another game is open (C5), made by the feed's own rules from a
+ * `genex_review` record, with its [Open].
  */
 import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
+import manifest from "../../src/plugins/genex/plugin.json" with { type: "json" };
 import { initializeAppearance, updateAppearance } from "../../src/renderer/appearance/store.ts";
 import { AppearanceMode } from "../../src/renderer/appearance/themes.ts";
 import { EntryKind, type GenexReviewEntry } from "../../src/renderer/chat-entries.ts";
 import { GenexReviewCard } from "../../src/renderer/chat/GenexReviewCard.tsx";
 import { applyEvents, EMPTY_NOTICES, reviewToasts } from "../../src/renderer/notifications.ts";
+import { OPEN_PLAY_EVENT } from "../../src/renderer/play/open-play.ts";
 import { useToasts } from "../../src/renderer/state/hooks.ts";
 import { studio } from "../../src/renderer/state/studio.ts";
 import { ToastStack } from "../../src/renderer/ui/Toast.tsx";
@@ -21,6 +24,7 @@ import { CustomEvent as LogEvent, customEventData } from "../../src/shared/custo
 import type { EventEnvelope } from "../../src/shared/event-log.ts";
 import type { GameProject } from "../../src/shared/game-project.ts";
 import { GenexAction } from "../../src/shared/genex.ts";
+import type { PluginInfo } from "../../src/shared/plugins.ts";
 import { CoreFact } from "../../src/shared/project-facts.ts";
 import {
   GenexAppReview,
@@ -108,13 +112,17 @@ fake.stub("genexFixReview", async (project, options) => {
   pressed.push(`${options.autoPublish ? "fix" : "manual"}:${project}`);
   return { fixId: `fix-${project}` };
 });
+/** Each game's page on genex.games, but the restored one's: it is on another Genex, a development stand's. */
+const pageOf = (project: string) => `https://${project === "restored" ? "dev.genex.games" : "genex.games"}/${project}`;
 fake.stub("pluginAction", async (_id, name, _args, project) =>
-  name === GenexAction.PublishStatus ? { version: 1, project, connected: true, slug: project, galleryUrl: `https://genex.games/${project}` } : {},
+  name === GenexAction.PublishStatus ? { version: 1, project, connected: true, slug: project, galleryUrl: pageOf(project ?? "") } : {},
 );
 fake.stub("readProjectAsset", async () => null);
 window.studio = fake.api;
 document.documentElement.dataset.platform = "darwin";
 initializeAppearance();
+const genex = { manifest, source: "bundled", enabled: true, removed: false, state: "enabled" } as unknown as PluginInfo;
+studio().plugins.setState((plugins) => ({ ...plugins, list: [genex] }), true);
 
 const toastOpened: string[] = [];
 
@@ -182,6 +190,9 @@ function sample() {
   const scenes = [...document.querySelectorAll<HTMLElement>("[data-chat-review-scene]")].map((scene) => ({
     scene: scene.dataset.chatReviewScene,
     live: scene.querySelector<HTMLElement>("[data-genex-review]")?.dataset.genexReview ?? null,
+    // Everything the newest card says, as one run of text.
+    card: scene.querySelector<HTMLElement>("[data-genex-review]")?.textContent ?? null,
+    address: scene.querySelector("[data-genex-review-address]")?.textContent ?? null,
     title: scene.querySelector(".genex-review-title")?.textContent ?? null,
     lines: [...scene.querySelectorAll(".genex-review-line, .genex-review-after")].map((el) => el.textContent ?? ""),
     history: [...scene.querySelectorAll(".genex-review-history-line")].map((el) => el.textContent ?? ""),
@@ -214,6 +225,21 @@ async function openToast() {
   return sample();
 }
 
+let playAsked = 0;
+window.addEventListener(OPEN_PLAY_EVENT, () => {
+  playAsked += 1;
+});
+
+/** Press a scene's Open: its mark, what Play shows then, how often Play was asked up, and what went to the browser. */
+async function openGame(scene: string) {
+  const button = document.querySelector<HTMLButtonElement>(`[data-chat-review-scene="${scene}"] [data-genex-review-open]`);
+  const leaves = button?.querySelector("svg")?.getAttribute("data-icon") ?? null;
+  button?.click();
+  for (let i = 0; i < 10; i++) await frame();
+  const toBrowser = fake.callsOf("pluginAction").filter(([, name]) => name === GenexAction.PublishOpen).map(([, , , project]) => project);
+  return { leaves, view: studio().play.getState().view, playAsked, toBrowser };
+}
+
 /** Press a scene's review button. */
 async function press(scene: string, which: string) {
   document.querySelector<HTMLButtonElement>(`[data-chat-review-scene="${scene}"] [data-genex-review-press="${which}"]`)?.click();
@@ -221,4 +247,4 @@ async function press(scene: string, which: string) {
   return sample();
 }
 
-Object.assign(window, { chatReviewRig: { open, sample, press, expand, openToast } });
+Object.assign(window, { chatReviewRig: { open, sample, press, expand, openToast, openGame } });

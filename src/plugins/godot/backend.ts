@@ -15,7 +15,7 @@ import { promisify } from "node:util";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 import { errorMessage } from "../../shared/errors.ts";
 import { t, tc } from "../../shared/i18n.ts";
-import { writeFileNoFollow } from "../../substrate/fsx.ts";
+import { isJsonObject, writeFileNoFollow } from "../../substrate/fsx.ts";
 import { type HookAnswer, HookEvent, HOOK_RECORDING_MAX } from "../../shared/plugin-hooks.ts";
 import { OBSERVE_CALL_MS } from "../../shared/observers.ts";
 import type { Activate, PluginActivation, PluginContext, PluginReview } from "../../plugin-sdk/index.d.ts";
@@ -73,7 +73,8 @@ import {
   godotSetupCard,
   windowsJob,
 } from "./godot-setup.ts";
-import { linkProject, outsideGame, projectOf, requireProject } from "./project-link.ts";
+import { gamesLinkedTo, type MoveInPlan, MoveInRefusal, moveIntoGame, planMoveIn } from "./move-into-game.ts";
+import { linkedProject, linkProject, outsideGame, projectOf, requireProject } from "./project-link.ts";
 import { findProjects, readProject } from "./find-projects.ts";
 import { createProject, GodotTemplate } from "./new-project.ts";
 import { addonState, isSetUp, setUpGame } from "./genex-addon.ts";
@@ -97,6 +98,7 @@ const HostService = {
   StorageRoot: "storage.root",
   GameCreate: "game.create",
   EngineSteps: "game.engine.steps",
+  EngineRuns: "game.engine.runs",
   RuntimeDetect: "runtime.detect",
   RuntimeInstall: "runtime.install",
   RuntimeInstallation: "runtime.installation",
@@ -116,6 +118,7 @@ const GodotAction = {
   SetUp: "set-up",
   WebExport: "web-export",
   UseProject: "use-project",
+  MoveIntoGame: "move-into-game",
   Steps: GodotSetupAction.Steps,
   InstallGodot: GodotSetupAction.Install,
   DownloadGodot: GodotSetupAction.Download,
@@ -229,7 +232,7 @@ const MESSAGE = {
     NoTemplateCopy: (why: string) =>
       `Genex couldn't put Godot's Web export template where its sandbox reads it (${why}). Export again; if it keeps failing, install the template again in Godot (Editor → Manage Export Templates).`,
     NothingSaid: "Godot said nothing",
-    Exported: () => t("Exported for the web into web/: Live's Web game tab plays it, and Publish puts it online."),
+    Exported: () => t("Exported. Play it in Live's Web game tab, or publish it."),
     NotKept: (why: string) => `Godot's web build in web/ wasn't refreshed (${why}); it plays the game as it was.`,
     Done: (files: number) =>
       `Exported the game for the web into ${WEB_EXPORT_FOLDER}/ (${files} files): Live's Web game tab plays it and Publish puts it online. It is Godot's build: never edit its files; export again after changing the project.`,
@@ -270,6 +273,22 @@ const MESSAGE = {
         .filter(Boolean)
         .join(" "),
   },
+  MoveInQuestion: (name: string) => t("Move {name} into this game?", { name }),
+  MoveInDetail: (from: string, to: string) =>
+    t("Genex moves its folder from {from} to {to}. Rewind and Loops reach it there.", { from, to }),
+  /** Why Move into game was refused, when the panel's button was pressed after things changed. */
+  MoveInRefused: {
+    [MoveInRefusal.NoGame]: () => t("Open a game in Genex first: a Godot project is made in a game's folder."),
+    [MoveInRefusal.NotOwn]: () => t("Only the project this game builds in can move into it."),
+    [MoveInRefusal.Inside]: () => t("This project is already in this game's folder."),
+    [MoveInRefusal.HoldsGame]: () => t("This project's folder holds other things too, so Genex leaves it where it is."),
+    [MoveInRefusal.NotProjectFolder]: () =>
+      t("This project's folder holds other things too, so Genex leaves it where it is."),
+    [MoveInRefusal.Shared]: () => t("Another Genex game builds in this project too, so it stays where it is."),
+    [MoveInRefusal.InUse]: () => t("Quit Godot first: a project can't move while it is open."),
+    [MoveInRefusal.Taken]: () => t("This game already has a godot folder."),
+    [MoveInRefusal.OtherDisk]: () => t("This project is on another disk, so Genex leaves it there."),
+  } satisfies Record<MoveInRefusal, () => string>,
   SetUpQuestion: () => t("Set this Godot game up for Genex's play?"),
   SetUpDetail: (where: string) =>
     t(
@@ -910,9 +929,73 @@ async function status(deps: GodotBackendDeps, setup: Setup, context: PluginConte
     webTemplates: install ? await hasWebTemplate(deps.env.dataHome, install) : false,
     projectName: project ? ((await readProject(project))?.name ?? path.basename(project)) : null,
     outside: place?.outside ?? false,
+    /** `moveIn` and `moveInWhy` (`move-into-game.ts`); asked only for a project outside the game. */
+    ...(await moveInStatus(project && place?.outside ? await moveInPlan(deps, project, context) : null)),
     editorOpen: project ? await editorOpen(deps.editor, project) : false,
     setup: project && context.directory ? await addonState(context.directory, project, deps.addon) : null,
     projects: await chooserProjects(deps, context, project),
+  };
+}
+
+/** Status's `moveIn` (Move into game can move it now) and `moveInWhy` (the words for why it can't), from a plan. */
+function moveInStatus(plan: MoveInPlan | null): { moveIn: boolean; moveInWhy: string | null } {
+  if (!plan) return { moveIn: false, moveInWhy: null };
+  return "refusal" in plan
+    ? { moveIn: false, moveInWhy: MESSAGE.MoveInRefused[plan.refusal]() }
+    : { moveIn: true, moveInWhy: null };
+}
+
+/** Whether a Loop going now builds in the project in `folder`; yes when the host can't say, so nothing moves under a Loop. */
+async function loopUses(context: PluginContext, folder: string): Promise<boolean> {
+  const runs: unknown = await context.host(HostService.EngineRuns).catch(() => null);
+  if (!Array.isArray(runs)) return true;
+  const file = path.join(folder, PROJECT_FILE);
+  return runs.some((run) => isJsonObject(run) && run.project === file);
+}
+
+/** What Move into game would do with the game's project in `folder`: its folder and the game's `godot/`, or why it stays. */
+async function moveInPlan(deps: GodotBackendDeps, folder: string, context: PluginContext): Promise<MoveInPlan> {
+  const facts = { game: gameFolderOf(context), home: deps.env.home, directory: folder };
+  // Asked only for the open game's own linked project: no other one moves, and status asks on every refresh.
+  const own = (await linkedProject(context)) === folder;
+  if (!own) return planMoveIn({ ...facts, own, shared: false, inUse: false });
+  const others = (await gamesLinkedTo(await storageOf(context), folder)).filter((game) => game !== context.project);
+  const inUse = (await editorOpen(deps.editor, folder)) || (await loopUses(context, folder));
+  return planMoveIn({ ...facts, own, shared: others.length > 0, inUse });
+}
+
+/**
+ * The panel's Move into game: the open game's own project, in another folder, becomes the game's
+ * `godot/`, and a project Genex was added to is set up again there, since the game's launcher
+ * names the project by its path. Refused in the person's words when it can't move.
+ */
+async function moveIn(deps: GodotBackendDeps, context: PluginContext): Promise<{ project: string }> {
+  const game = gameFolderOf(context);
+  const before = await requireProject(context);
+  const plan = await moveInPlan(deps, before, context);
+  if (!game || "refusal" in plan)
+    throw new Error(MESSAGE.MoveInRefused["refusal" in plan ? plan.refusal : MoveInRefusal.NoGame]());
+  const wasSetUp = isSetUp(await addonState(game, before, deps.addon));
+  const project = await moveIntoGame({ plan, link: (folder) => linkProject(context, folder) });
+  if (wasSetUp) {
+    const install = usableGodot(await godots(deps, context));
+    // The move is done and linked: a setup that fails here leaves Add Genex on the panel, never an error over a moved project.
+    await setUpGame(game, project, deps.addon, install?.binary ?? null).catch(() => undefined);
+  }
+  return { project };
+}
+
+/** Studio's confirmation before Move into game: the folder that moves and where it goes. */
+async function describeMoveIn(deps: GodotBackendDeps, context: PluginContext): Promise<PluginReview> {
+  const project = await projectOf(context);
+  if (!project) return {};
+  const plan = await moveInPlan(deps, project, context);
+  if ("refusal" in plan) return { message: MESSAGE.MoveInRefused[plan.refusal]() };
+  const name = (await readProject(project))?.name ?? path.basename(project);
+  const { home } = deps.env;
+  return {
+    message: MESSAGE.MoveInQuestion(name),
+    detail: MESSAGE.MoveInDetail(shownPath(plan.from, home), shownPath(plan.target, home)),
   };
 }
 
@@ -1181,6 +1264,7 @@ export function createGodotBackend(deps: GodotBackendDeps): PluginActivation {
     [GodotAction.StageStatus]: (_args, context) => stageStatus(deps, context),
     [GodotAction.SetUp]: (_args, context) => setUp(deps, context),
     [GodotAction.UseProject]: (args, context) => useProject(deps, args, context),
+    [GodotAction.MoveIntoGame]: (_args, context) => moveIn(deps, context),
     [GodotAction.WebExport]: async (_args, context) => {
       await webExport(deps, context);
       return { note: MESSAGE.Web.Exported() };
@@ -1217,6 +1301,7 @@ export function createGodotBackend(deps: GodotBackendDeps): PluginActivation {
       return tools[name](args, context);
     },
     async review(name, _args, context): Promise<PluginReview> {
+      if (name === GodotAction.MoveIntoGame) return describeMoveIn(deps, context);
       return name === GodotAction.SetUp ? describeSetUp(context) : {};
     },
   };

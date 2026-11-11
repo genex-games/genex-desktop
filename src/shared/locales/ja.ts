@@ -1372,8 +1372,6 @@ export default {
   "Export target must be an ordinary directory": "エクスポート先は通常のフォルダーにする必要があります",
   "Export validation does not yet support scoped import maps; build this project before export":
     "エクスポートの検証はまだscoped import mapsに対応していません。エクスポートする前にこのプロジェクトをビルドしてください",
-  "Exported for the web into web/: Live's Web game tab plays it, and Publish puts it online.":
-    "web/にWeb向けにエクスポートしました。ライブの「Webゲーム」タブでプレイでき、「公開」でオンラインにできます。",
   "Exported {count} public files. Included: {included}. Excluded from selected roots: {excluded}.":
     "公開ファイルを{count}個書き出しました。含まれるファイル：{included}。選んだルートから除外：{excluded}。",
   "Exporting…": "エクスポート中…",
@@ -3364,7 +3362,6 @@ export default {
   "Set up the protected workspace": "保護されたワークスペースをセットアップ",
   "Set up this game's Unity project": "このゲームのUnityプロジェクトをセットアップしてください",
   "Set up {name} for Genex.": "{name}をGenex用にセットアップします。",
-  "Set up {name} for Genex?": "{name}をGenex用にセットアップしますか？",
   "Set up {project} after it ends.": "Loopが終わったら{project}をセットアップしてください。",
   "Set up {project} for Genex · {game} now builds in {engine}":
     "{project}をGenex用にセットアップしました · {game}は{engine}でつくるようになりました",
@@ -4321,7 +4318,6 @@ export default {
   "Unclosed TOML string": "TOMLの文字列が閉じられていません",
   "Undid {count, plural, one {# try} other {# tries}} before it": "それまでに{count, plural, other {#回}}取り消し",
   Undo: "元に戻す",
-  "Undo setup for {name}?": "{name}のセットアップを元に戻しますか？",
   "Undo this change": "この変更を元に戻す",
   Undone: "取り消し済み",
   "Undone because {reason}.": "取り消した理由：{reason}。",
@@ -6333,7 +6329,6 @@ export default {
   "Nothing went public. After the fix, it publishes by itself and Genex checks it again.":
     "何も公開されていません。修正後は自動で公開され、Genexがもう一度チェックします。",
   "Open a game": "ゲームを開いてね",
-  "Open on Genex": "Genexで開く",
   "Players keep the version they have. After the fix, it publishes by itself and Genex checks it again.":
     "プレイヤーは今のバージョンのままです。修正後は自動で公開され、Genexがもう一度チェックします。",
   "Players keep the {date} version.": "プレイヤーは{date}のバージョンのままです。",
@@ -6429,37 +6424,54 @@ export default {
     "Genexは「{title}」の{players}アプリをつくれませんでした。そこでつくれるようにゲームのコードのエラーを直し、ほかのシステムでの動きは今のままにしてください。このコンピュータでは{players}向けにつくれないので、修正はひとつずつ慎重に確認してください。終わったら、もう一度Build on Genexを押すよう教えてください。\n\n{errors}",
   "The same project fails the same way: change it first, then try again.":
     "同じプロジェクトは同じように失敗します。先に変更してから、もう一度試してください。",
-  "Build {count} apps": "{count}個のアプリをビルド",
-  "Build {platforms}": "{platforms}をビルド",
-  "Building on Genex Cloud": "Genex Cloudでビルド中",
-  "Building on this Mac": "このMacでビルド中",
-  "Building on this PC": "このPCでビルド中",
-  "Building {platforms}": "{platforms}をビルド中",
+  "Build on Genex Cloud": "Genex Cloudでビルド",
+  "Build on Mac": "Macでビルド",
+  "Build on PC": "PCでビルド",
+  "Builds after {platform}": "{platform}のあとにビルド",
+  "Builds {platforms} again, then updates {count, plural, one {it} other {them}} by itself.":
+    "{platforms}をビルドし直して、{count, plural, other {自動で更新します}}。",
+  "Builds {platforms} first. {slow} can take up to an hour.":
+    "まず{platforms}をビルドします。{slow}は最大1時間ほどかかることがあります。",
+  "Builds {platforms} too. {slow} can take up to an hour.":
+    "{platforms}もビルドします。{slow}は最大1時間ほどかかることがあります。",
+  "Builds {platforms}, then publishes {count, plural, one {it} other {them}} by itself.":
+    "{platforms}をビルドして、{count, plural, other {自動で公開します}}。",
+  "Builds {platform} first. It can take up to an hour.":
+    "まず{platform}をビルドします。最大1時間ほどかかることがあります。",
+  "Builds {platform} too. It can take up to an hour.": "{platform}もビルドします。最大1時間ほどかかることがあります。",
+  "Each one goes live as soon as it’s ready. You can close this window.":
+    "準備ができたものから公開されます。このウィンドウは閉じても大丈夫です。",
+  "More for {platform}": "{platform}のその他の操作",
+  "On Genex Cloud": "Genex Cloudで",
+  "On this PC": "このPCで",
+  "Publish to all platforms": "すべてのプラットフォームに公開",
+  "Publishes {now} now, {later} once {count, plural, one {it is} other {they are}} built.":
+    "{now}は今すぐ、{later}は{count, plural, other {ビルドができたら}}公開します。",
+  "Publishes {platforms} once {count, plural, one {it is} other {they are}} built.":
+    "{platforms}は{count, plural, other {ビルドができたら}}公開します。",
+  "Publishing to all platforms · {live} of {count} live":
+    "すべてのプラットフォームに公開中 · {count}件中{live}件が公開中",
+  "Update all platforms": "すべてのプラットフォームを更新",
+  "Updates {now} now, {later} once {count, plural, one {it is} other {they are}} built.":
+    "{now}は今すぐ、{later}は{count, plural, other {ビルドができたら}}更新します。",
+  "Updates {platforms} once {count, plural, one {it is} other {they are}} built.":
+    "{platforms}は{count, plural, other {ビルドができたら}}更新します。",
+  Updating: "更新中",
+  "Updating all platforms · {done} of {count} updated":
+    "すべてのプラットフォームを更新中 · {count}件中{done}件を更新済み",
+  "{hours}h {minutes}m left": "残り{hours}時間{minutes}分",
+  "{minutes}m left": "残り{minutes}分",
   "Couldn’t build": "ビルドできませんでした",
   "Couldn’t build · the older one is still live": "ビルドできませんでした · 以前の版が公開中のままです",
   "Couldn’t send": "送信できませんでした",
-  "It can take up to an hour.": "最大1時間ほどかかることがあります。",
   "Live · older than your game": "公開中 · ゲームより古い版",
   "Live · up to date": "公開中 · 最新",
   "Only a Mac, Windows or Linux app can be taken off Genex this way.":
     "この方法でGenexから外せるのはMac・Windows・Linuxのアプリだけです。",
-  "Publish to {count} platforms": "{count}つのプラットフォームに公開",
-  "Publish to {name}": "{name}に公開",
-  "Publish to {platforms}": "{platforms}に公開",
-  "Publish to {platforms} and take {down} down": "{platforms}に公開し、{down}を取り下げ",
-  "Publishing to {platforms}": "{platforms}に公開中",
   "Sending to Genex": "Genexに送信中",
   "Sending to Genex Cloud": "Genex Cloudに送信中",
   "Take {platforms} down": "{platforms}を取り下げ",
-  "Update {count} platforms": "{count}つのプラットフォームを更新",
-  "Update {platforms}": "{platforms}を更新",
-  "Update {platforms} and take {down} down": "{platforms}を更新し、{down}を取り下げ",
-  "Updating {platforms}": "{platforms}を更新中",
-  "builds on Genex Cloud": "Genex Cloudでビルド",
-  "builds on this Mac": "このMacでビルド",
-  "builds on this PC": "このPCでビルド",
   "coming soon": "近日対応",
-  web: "Web",
   "{minutes} min ago": "{minutes}分前",
   "Agent is fixing the {platform} build": "エージェントが{platform}のビルドを修正中",
   "Copy the error": "エラーをコピー",
@@ -6483,7 +6495,6 @@ export default {
   "Not built": "未ビルド",
   "Built · older than your game": "ビルド済み · ゲームより古い版",
   "Ready to publish": "公開できます",
-  "{platforms} can take up to an hour.": "{platforms}は最大1時間ほどかかることがあります。",
   "{platform} build didn’t start": "{platform}のビルドを開始できませんでした",
   "Checking the archive": "アーカイブを確認中",
   Packing: "まとめています",
@@ -6501,4 +6512,30 @@ export default {
   "Installing… {percent}% · {speed} · about {minutes} min left":
     "インストール中… {percent}% · {speed} · 残り約{minutes}分",
   "Installing… {percent}% · {speed} · under a minute left": "インストール中… {percent}% · {speed} · 残り1分未満",
+  "This plugin stopped several times in a row, so it starts again in {seconds, plural, one {# second} other {# seconds}}. Try again then.":
+    "このプラグインが何度も続けて止まったため、{seconds, plural, other {#秒}}後に再起動します。そのあとでもう一度試してね。",
+  "Add Genex to {name}?": "{name}にGenexを追加しますか？",
+  "Another Genex game builds in this project too, so it stays where it is.":
+    "このプロジェクトでは別のGenexゲームもつくられているため、そのままにします。",
+  "Exported. Play it in Live's Web game tab, or publish it.":
+    "エクスポートしました。ライブの「Webゲーム」タブでプレイするか、公開してください。",
+  "Genex moves its folder from {from} to {to}. Rewind and Loops reach it there.":
+    "Genexがフォルダーを{from}から{to}に移動します。そこなら巻き戻しとLoopが届きます。",
+  "Genex moves its folder from {from} to {to}. Rewind, Loops and Publish reach it there.":
+    "Genexがフォルダーを{from}から{to}に移動します。そこなら巻き戻し、Loop、公開が届きます。",
+  "Move {name} into this game?": "{name}をこのゲームに移動しますか？",
+  "Only the project this game builds in can move into it.":
+    "移動できるのは、このゲームをつくっているプロジェクトだけです。",
+  "Quit Godot first: a project can't move while it is open.":
+    "先にGodotを終了してください。開いているプロジェクトは移動できません。",
+  "Quit Unreal first: a project can't move while it is open.":
+    "先にUnrealを終了してください。開いているプロジェクトは移動できません。",
+  "Remove Genex from {name}?": "{name}からGenexを削除しますか？",
+  "This game already has a godot folder.": "このゲームにはすでにgodotフォルダーがあります。",
+  "This game already has an unreal folder.": "このゲームにはすでにunrealフォルダーがあります。",
+  "This project is already in this game's folder.": "このプロジェクトはすでにこのゲームのフォルダーにあります。",
+  "This project is on another disk, so Genex leaves it there.":
+    "このプロジェクトは別のディスクにあるため、Genexはそのままにします。",
+  "This project's folder holds other things too, so Genex leaves it where it is.":
+    "このプロジェクトのフォルダーには他のものも入っているため、Genexはそのままにします。",
 } satisfies LocaleCatalog;

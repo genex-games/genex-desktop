@@ -431,7 +431,8 @@ export interface PluginManifest {
   capabilities: string[];
   tools: PluginManifestTool[];
   skills: PluginSkill[];
-  panels: Array<{ id: string; title: string; file: string; placement: "settings" | "project" }>;
+  /** `width: "narrow"`: the panel is one short list, so the dialog that opens it from the stage strip is Studio's narrow one. */
+  panels: Array<{ id: string; title: string; file: string; placement: "settings" | "project"; width?: "narrow" }>;
   settings: Array<{
     key: string;
     label: string;
@@ -861,6 +862,8 @@ export type Activate = (host: PluginHost) => PluginActivation | Promise<PluginAc
 /** What `studioPlugin.call('context')` answers inside a panel frame. */
 export interface PluginPanelContext {
   project: string | null;
+  /** The open game's title as Genex shows it; null with no game, absent from older hosts. */
+  title?: string | null;
   apiVersion: PluginApiVersion;
   theme: {
     background: string;

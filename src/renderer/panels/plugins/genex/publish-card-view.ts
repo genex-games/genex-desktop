@@ -1,13 +1,14 @@
 /**
  * The Publish card of a game made in an engine, as words and a plan (canvas "Publish to every
- * platform", round 4): one row per platform the person can do something about, each saying only
- * what is true now (a dot and a line), with a switch for whether players get it; and the one button,
- * whose words say what pressing it does. Pure: the dialog draws it, tests read it.
+ * platform", round 3 of its redesign): one row per platform the person can do something about, each
+ * saying only what is true now (a dot and a line) and ending in its own control: a button that builds
+ * it, publishes it or tries again, the loader of the work under way, or the menu that takes it down.
+ * And the one big button, which does everything. Pure: the dialog draws it, tests read it.
  *
- * Build and Publish are two presses (canvas "Publish: Mac and Windows together", flow A). Build makes
- * every switched-on app that isn't made, here and on Genex Cloud at once, and gives players nothing:
- * Genex Cloud keeps what it builds. Publish gives players every switched-on app that is made, and
- * one Genex Cloud still builds as soon as it is built.
+ * A row's own Build only builds: players get nothing until its Publish, or the big button. The big
+ * button builds what isn't built (on this computer one app after another, on Genex Cloud beside
+ * them) and gives players each platform as soon as it is ready (`followStep`); a build that fails
+ * stops only its own platform.
  */
 import { sizeWords } from "../../../../shared/byte-size.ts";
 import { HOUR_MS, MINUTE_MS } from "../../../../shared/duration.ts";
@@ -17,12 +18,15 @@ import {
   CloudSendState,
   GenexBuildReview,
   type GenexCloudBuild,
+  GenexHostedStatus,
   type GenexNativeRecord,
   type GenexNativeSent,
+  type GenexPublishState,
   type GenexSendProgress,
 } from "../../../../shared/genex.ts";
 import { type PublishPlatform, PublishPlatformState, PublishTarget } from "../../../../shared/publish-platforms.ts";
 import { NATIVE_WORDS, PUBLISH_CARD_WORDS } from "../../../words.ts";
+import { publishView } from "./genex-publish-view.ts";
 import {
   CLOUD_TARGETS,
   cloudErrors,
@@ -49,7 +53,7 @@ export const CardTone = {
   None: "none",
   /** Players don't have it: its app is built and waits for Publish. */
   Ready: "ready",
-  /** Something is happening to it now: a clock is at its end. */
+  /** Something is happening to it now: its loader stands in its button's place. */
   Working: "working",
   /** On Genex, waiting for Genex's review. */
   Review: "review",
@@ -58,7 +62,7 @@ export const CardTone = {
 } as const;
 export type CardTone = (typeof CardTone)[keyof typeof CardTone];
 
-/** What the button does for a row. */
+/** What a press does for a row. */
 export const CardWork = {
   /** Send the build the folder holds. */
   Publish: "publish",
@@ -73,30 +77,49 @@ export const CardWork = {
 } as const;
 export type CardWork = (typeof CardWork)[keyof typeof CardWork];
 
+/** A row's own button: what pressing it does, and its words. */
+export interface RowAct {
+  work: CardWork;
+  label: string;
+}
+
 /** One platform's row. */
 export interface CardRow {
   target: PublishTarget;
   name: string;
   tone: CardTone;
   status: string;
-  /** The row's end: when it went live, how big it is, or where the button builds it. */
+  /** The row's end note: when it went live, or how big what its button sends is. */
   side: string | null;
-  /** When the work the row shows began, for its clock. */
+  /** When the work the row shows began, for its loader's clock. */
   since?: string;
   /** How far the send the row shows is; absent when nothing is being sent or the CLI says nothing of it. */
   progress?: GenexSendProgress;
   /** Genex Cloud is working on it now: the wait can be long. */
   cloud: boolean;
-  /** The agent is building it on this computer now. */
+  /** The agent was asked to build it on this computer, and hasn't yet. */
   here: boolean;
   /** The work under way only makes the app: players get nothing when it ends. */
   making: boolean;
-  /** On Genex now (for players or for review): switching it off takes it down. */
+  /** It waits for another app's build on this computer: "Queued" stands in its button's place. */
+  queued: boolean;
+  /** On Genex now (for players or for review): its menu takes it down. */
   live: boolean;
-  /** Where its switch starts. */
-  on: boolean;
-  /** What the button does for it while its switch is on; null when nothing needs doing. */
+  /** The loader's word while the row works ("Building", "Publishing"); null at rest. */
+  busy: string | null;
+  /** The row's own button; null while it works or waits, and when nothing can be done about it. */
+  act: RowAct | null;
+  /** What the big button does for it; null when nothing. */
   work: CardWork | null;
+}
+
+/** The web version on its way to Genex now: the dialog's own publish. */
+export interface WebSend {
+  /** What the attempt is doing, in the publish's own words ("Uploading", "Testing"); empty before it says. */
+  status: string;
+  /** When the attempt began; null when it hasn't said. */
+  since: string | null;
+  progress?: GenexSendProgress | undefined;
 }
 
 /** What the card is read from. */
@@ -112,11 +135,18 @@ export interface CardInput {
   madeHere: ReadonlySet<PublishTarget> | null;
   /** Whether Genex's page plays a web version; absent while unknown. */
   hostedWeb?: boolean | undefined;
+  /**
+   * Whether Genex lists the game (`GenexHostedStatus.Published`); absent while unknown. Genex keeps
+   * serving the build of a game taken back to a draft, on no page players reach.
+   */
+  listed?: boolean | undefined;
   /** When the web version last went out from here (`lastPublishAt`), to tell it from the game's last change. */
   webPublishedAt?: string | undefined;
+  /** The web version is being published now; absent when it is not. */
+  webSend?: WebSend | undefined;
   /** Apps the agent was asked to build from this card, by when it was asked. */
   asked?: ReadonlyMap<PublishTarget, string>;
-  /** This computer is a Mac: the words say "this Mac", else "this PC". */
+  /** This computer is a Mac: the words say "Mac", else "PC". */
   mac: boolean;
 }
 
@@ -193,7 +223,7 @@ const builtBeforeChange = (row: PublishPlatform, build: GenexCloudBuild): boolea
 /**
  * The app Genex Cloud built and keeps for a publish, when it is the game as it is now and newer than
  * the one players have. One built before the game's last change stays with Genex, as a build in the
- * folder that is older than the game stays there: the button builds it again.
+ * folder that is older than the game stays there: its row builds it again.
  */
 function keptBuild(
   row: PublishPlatform,
@@ -211,8 +241,8 @@ const SENDS: ReadonlySet<CardWork | null> = new Set([CardWork.Publish, CardWork.
 const MAKES: ReadonlySet<CardWork | null> = new Set([CardWork.Build, CardWork.Cloud]);
 
 /**
- * What the button does to bring a platform's app up to the game: send the build the folder holds or
- * the one Genex Cloud keeps, else build it on Genex Cloud or here.
+ * What brings a platform's app up to the game: send the build the folder holds or the one Genex
+ * Cloud keeps (`side`: how big it is), else build it on Genex Cloud or here.
  */
 function updateWork(
   row: PublishPlatform,
@@ -223,20 +253,37 @@ function updateWork(
     return row.uploads ? { work: CardWork.Publish, side: sizeWords(row.bytes) } : { work: null, side: WORDS.soon };
   const kept = keptBuild(row, input.native, live);
   if (kept) return { work: CardWork.Release, side: kept.installedBytes ? sizeWords(kept.installedBytes) : null };
-  if (cloudBuilds(row, input)) return { work: CardWork.Cloud, side: WORDS.buildsCloud };
-  if (makesHere(row, input)) return { work: CardWork.Build, side: WORDS.buildsHere(input.mac) };
+  if (cloudBuilds(row, input)) return { work: CardWork.Cloud, side: null };
+  if (makesHere(row, input)) return { work: CardWork.Build, side: null };
   return { work: null, side: null };
 }
 
-/** What a row says, before its switch and work. */
-type RowState = Pick<CardRow, "tone" | "status" | "side" | "since" | "progress" | "cloud" | "here" | "making">;
+/**
+ * A row's own button for `work`: Build says where it builds ("Build on Mac", "Build on Genex Cloud"),
+ * a send says Publish, or Update when players have an older one.
+ */
+function actFor(work: CardWork | null, live: boolean, input: CardInput): RowAct | null {
+  if (work === null) return null;
+  if (work === CardWork.Cloud) return { work, label: WORDS.buildOnCloud };
+  if (work === CardWork.Build) return { work, label: WORDS.buildHere(input.mac) };
+  return { work, label: live ? WORDS.update : WORDS.publish };
+}
+
+/** What a row says, before its button and what the big button does for it. */
+type RowState = Pick<
+  CardRow,
+  "tone" | "status" | "side" | "since" | "progress" | "cloud" | "here" | "making" | "queued" | "busy"
+>;
+
+/** A row's state with its presses: its own button, and the big button's work. */
+type RowPresses = RowState & Pick<CardRow, "act" | "work">;
 
 /** The app a send's progress names (`mac-universal`, `windows-x64`) is `row`'s. */
 const namesRow = (progress: GenexSendProgress | undefined, row: PublishPlatform): boolean =>
   progress?.target?.split("-")[0] === row.target;
 
 /** A row at rest: nothing is under way for it. */
-const AT_REST = { cloud: false, here: false, making: false } as const;
+const AT_REST = { cloud: false, here: false, making: false, queued: false, busy: null } as const;
 
 const progressOf = (progress: GenexSendProgress | undefined): Pick<CardRow, "progress"> =>
   progress ? { progress } : {};
@@ -245,8 +292,64 @@ const progressOf = (progress: GenexSendProgress | undefined): Pick<CardRow, "pro
 const appProgress = (native: GenexNativeRecord, row: PublishPlatform): Pick<CardRow, "progress"> =>
   namesRow(native.progress, row) ? progressOf(native.progress) : {};
 
-/** The work under way for a native platform now, if any: Genex Cloud's, a send, or the agent's. */
-function workingNow(row: PublishPlatform, input: CardInput): RowState | null {
+/** The loader's word of a send: an update of what players have, or something new. */
+const sendWord = (live: boolean): string => (live ? WORDS.updating : WORDS.publishing);
+
+/**
+ * Whether the agent was asked for `row`'s build from this card and hasn't made it: no build newer
+ * than the ask has landed, and the ask is not so old that it was never built.
+ */
+function askedStill(row: PublishPlatform, input: CardInput): boolean {
+  const asked = input.asked?.get(row.target);
+  if (asked === undefined) return false;
+  // A build whose time can't be read counts as landed: the folder has one, and the ask is answered.
+  const landed = row.state === PublishPlatformState.Ready && !(ms(row.builtAt) <= ms(asked));
+  return !landed && input.now - ms(asked) < ASK_HOLD_MS;
+}
+
+/**
+ * The builds the agent was asked for and hasn't made, in the order it makes them: by when each was
+ * asked, then as the folder lists them. A computer builds one at a time, so the first is building
+ * and each other waits for the one before it.
+ */
+function hereQueue(input: CardInput): PublishTarget[] {
+  const waiting = input.platforms.filter((row) => askedStill(row, input));
+  const askedAt = (row: PublishPlatform): number => ms(input.asked?.get(row.target));
+  return waiting.sort((a, b) => askedAt(a) - askedAt(b)).map((row) => row.target);
+}
+
+/** The row of a build the agent was asked for: building on this computer, or waiting for the one before it. */
+function askedRow(row: PublishPlatform, input: CardInput, queue: readonly PublishTarget[]): RowState | null {
+  const turn = queue.indexOf(row.target);
+  if (turn < 0) return null;
+  const before = queue[turn - 1];
+  if (before !== undefined)
+    return {
+      tone: CardTone.None,
+      status: WORDS.buildsAfter(WORDS.name[before]),
+      side: null,
+      cloud: false,
+      here: true,
+      making: true,
+      queued: true,
+      busy: null,
+    };
+  const since = input.asked?.get(row.target);
+  return {
+    tone: CardTone.Working,
+    status: WORDS.onThisComputer(input.mac),
+    side: null,
+    ...(since ? { since } : {}),
+    cloud: false,
+    here: true,
+    making: true,
+    queued: false,
+    busy: WORDS.building,
+  };
+}
+
+/** The work Genex Cloud or a send has under way for a native platform now, if any. */
+function workingNow(row: PublishPlatform, input: CardInput, live: boolean): RowState | null {
   const { native } = input;
   const send = native?.cloud?.send;
   if (send?.platform === row.target && send.state === CloudSendState.Sending)
@@ -256,36 +359,32 @@ function workingNow(row: PublishPlatform, input: CardInput): RowState | null {
       side: null,
       since: send.startedAt,
       ...progressOf(send.progress),
+      ...AT_REST,
       cloud: true,
-      here: false,
       // Only a build Genex keeps is just being made: any other goes to players once built.
       making: send.held === true && send.released !== true,
+      busy: WORDS.building,
     };
   const build = newestCloudBuild(row, native);
   if (build && RUNNING_CLOUD.has(build.state))
     return {
       tone: CardTone.Working,
-      status: WORDS.buildingCloud,
+      status: WORDS.onCloud,
       side: null,
       since: build.startedAt,
+      ...AT_REST,
       cloud: true,
-      here: false,
       making: build.held === true,
+      busy: WORDS.building,
     };
   if (native?.sending && row.uploads && !currentSent(row, native))
-    return { tone: CardTone.Working, status: WORDS.sending, side: null, ...appProgress(native, row), ...AT_REST };
-  const asked = input.asked?.get(row.target);
-  const landed = row.state === PublishPlatformState.Ready && ms(row.builtAt) > ms(asked);
-  const waiting = asked !== undefined && input.now - ms(asked) < ASK_HOLD_MS;
-  if (asked !== undefined && waiting && !landed)
     return {
       tone: CardTone.Working,
-      status: WORDS.buildingHere(input.mac),
+      status: WORDS.sending,
       side: null,
-      since: asked,
-      cloud: false,
-      here: true,
-      making: true,
+      ...appProgress(native, row),
+      ...AT_REST,
+      busy: sendWord(live),
     };
   return null;
 }
@@ -295,33 +394,10 @@ const cloudSendFailed = (row: PublishPlatform, native: GenexNativeRecord | undef
   native?.cloud?.send?.platform === row.target && native.cloud.send.state === CloudSendState.Failed;
 
 /**
- * Why a native platform's last try went wrong, if it did and nothing newer went: an app or a project
- * that didn't reach Genex, or a failed cloud build.
- */
-function failedNow(row: PublishPlatform, input: CardInput, live: Live | null): RowState | null {
-  const { native } = input;
-  const appFailed = native?.failed.some((one) => one.platform === row.target) && !currentSent(row, native);
-  if (appFailed || cloudSendFailed(row, native))
-    return { tone: CardTone.Bad, status: WORDS.sendFailed, side: null, ...AT_REST };
-  const build = newestCloudBuild(row, native);
-  if (build?.state !== CloudBuildState.Failed) return null;
-  if (live && ms(live.at) > ms(build.startedAt)) return null;
-  return { tone: CardTone.Bad, status: live ? WORDS.buildFailedLive : WORDS.buildFailed, side: null, ...AT_REST };
-}
-
-/** What Genex's review says of the app on Genex, when it holds it back. */
-function reviewNow(live: Live | null): RowState | null {
-  if (live?.review === GenexBuildReview.Pending)
-    return { tone: CardTone.Review, status: WORDS.inReview, side: null, ...AT_REST };
-  if (live?.review === GenexBuildReview.Rejected)
-    return { tone: CardTone.Bad, status: WORDS.notApproved, side: null, ...AT_REST };
-  return null;
-}
-
-/**
- * Whether building `row`'s app on Genex Cloud again can't help: the account's builds are used up, or
- * the game hasn't changed since the build failed (the same project fails the same way: the agent fixes
- * it first).
+ * Whether building `row`'s app on Genex Cloud again by itself can't help: the account's builds are
+ * used up, or the game hasn't changed since the build failed (the same project fails the same way:
+ * the agent fixes it first). The big button leaves such a build alone; the row's own Try again is
+ * the person's call, and is there unless the builds are used up.
  */
 function retryUseless(row: PublishPlatform, native: GenexNativeRecord | undefined): boolean {
   const build = newestCloudBuild(row, native);
@@ -330,21 +406,52 @@ function retryUseless(row: PublishPlatform, native: GenexNativeRecord | undefine
   return !(ms(row.changedAt) - ms(build.finishedAt ?? build.startedAt) > SAME_BUILD_MS);
 }
 
-/** The system this computer runs, among the apps: what its own Build makes first. */
-const ownTarget = (input: CardInput): PublishTarget => (input.mac ? PublishTarget.Mac : PublishTarget.Windows);
+/** A row whose last try went wrong: what it says, and Try again for `again` when trying can help. */
+function failedRow(status: string, again: CardWork | null, work: CardWork | null): RowPresses {
+  const act = again === null ? null : { work: again, label: WORDS.tryAgain };
+  return { tone: CardTone.Bad, status, side: null, ...AT_REST, act, work };
+}
 
 /**
- * Whether an app that isn't ready starts switched on. Before the first publish of a game whose apps
- * are made per computer (Unreal), the ones a first Build makes do: this computer's own and Genex
- * Cloud's. Every other app starts off, as a game whose apps the agent makes any of always did.
+ * Why a native platform's last try went wrong, if it did and nothing newer went: an app or a project
+ * that didn't reach Genex (the row's Try again sends it again, never the big button), or a failed
+ * cloud build.
  */
-function startsOn(row: PublishPlatform, input: CardInput, work: CardWork | null, firstPublish: boolean): boolean {
-  if (!firstPublish || input.madeHere === null) return false;
-  return work === CardWork.Cloud || row.target === ownTarget(input);
+function failedNow(row: PublishPlatform, input: CardInput, live: Live | null): RowPresses | null {
+  const { native } = input;
+  if (native?.failed.some((one) => one.platform === row.target) && !currentSent(row, native))
+    return failedRow(WORDS.sendFailed, CardWork.Publish, null);
+  if (cloudSendFailed(row, native)) return failedRow(WORDS.sendFailed, CardWork.Cloud, null);
+  const build = newestCloudBuild(row, native);
+  if (build?.state !== CloudBuildState.Failed) return null;
+  if (live && ms(live.at) > ms(build.startedAt)) return null;
+  const again = build.failure === CloudBuildFailure.Quota ? null : updateWork(row, input, live).work;
+  const work = retryUseless(row, native) ? null : again;
+  return failedRow(live ? WORDS.buildFailedLive : WORDS.buildFailed, again, work);
+}
+
+/**
+ * What Genex's review says of the app on Genex, when it holds it back. A turned-down app goes again
+ * only as a newer build (the same one would be turned down again), and as a Publish: players never
+ * had it.
+ */
+function reviewNow(row: PublishPlatform, input: CardInput, live: Live | null): RowPresses | null {
+  if (live?.review === GenexBuildReview.Pending)
+    return { tone: CardTone.Review, status: WORDS.inReview, side: null, ...AT_REST, act: null, work: null };
+  if (live?.review !== GenexBuildReview.Rejected) return null;
+  const work = isOlder(row, live) ? updateWork(row, input, live).work : null;
+  return {
+    tone: CardTone.Bad,
+    status: WORDS.notApproved,
+    side: null,
+    ...AT_REST,
+    act: actFor(work, false, input),
+    work,
+  };
 }
 
 /** The row of a platform players have: up to date, or older than the game with what brings it up. */
-function liveRow(row: PublishPlatform, input: CardInput, live: Live): RowState & Pick<CardRow, "on" | "work"> {
+function liveRow(row: PublishPlatform, input: CardInput, live: Live): RowPresses {
   const update = updateWork(row, input, live);
   const older = isOlder(row, live) || update.work === CardWork.Release;
   if (!older)
@@ -353,225 +460,309 @@ function liveRow(row: PublishPlatform, input: CardInput, live: Live): RowState &
       status: WORDS.liveCurrent,
       side: WORDS.ago(live.at, input.now),
       ...AT_REST,
-      on: true,
+      act: null,
       work: null,
     };
   const status = SENDS.has(update.work) ? WORDS.liveUpdateReady : WORDS.liveOlder;
-  return { tone: CardTone.Old, status, side: update.side, ...AT_REST, on: true, work: update.work };
+  const act = actFor(update.work, true, input);
+  return { tone: CardTone.Old, status, side: update.side, ...AT_REST, act, work: update.work };
 }
 
 /** The row of a platform players don't have: its app is ready, was built before the game's last change, or isn't built. */
-function unpublishedRow(
-  row: PublishPlatform,
-  input: CardInput,
-  firstPublish: boolean,
-): (RowState & Pick<CardRow, "on" | "work">) | null {
+function unpublishedRow(row: PublishPlatform, input: CardInput): RowPresses | null {
   const update = updateWork(row, input, null);
   if (!update.work) return null;
+  const act = actFor(update.work, false, input);
   if (SENDS.has(update.work))
     return {
       tone: CardTone.Ready,
       status: WORDS.readyToPublish,
       side: update.side,
       ...AT_REST,
-      on: true,
+      act,
       work: update.work,
     };
   const kept = keptApp(row, input.native);
   const older = row.state === PublishPlatformState.Stale || (kept !== null && builtBeforeChange(row, kept));
   const status = older ? WORDS.builtOlder : WORDS.notBuilt;
-  const on = startsOn(row, input, update.work, firstPublish);
-  return { tone: CardTone.None, status, side: update.side, ...AT_REST, on, work: update.work };
+  return { tone: CardTone.None, status, side: null, ...AT_REST, act, work: update.work };
 }
 
 /** A native platform's row, or null when nothing can be done about it from here. */
-function nativeRow(row: PublishPlatform, input: CardInput, firstPublish: boolean): CardRow | null {
+function nativeRow(row: PublishPlatform, input: CardInput, queue: readonly PublishTarget[]): CardRow | null {
   const live = liveApp(row, input.native);
   const base = { target: row.target, name: WORDS.name[row.target], live: live !== null };
-  const update = updateWork(row, input, live);
-  const working = workingNow(row, input);
+  const working = workingNow(row, input, live !== null) ?? askedRow(row, input, queue);
   // What Genex Cloud makes and keeps can be published while it is made: it goes to players once built.
   if (working)
-    return { ...base, ...working, on: true, work: working.cloud && working.making ? CardWork.Release : null };
-  const held = reviewNow(live);
-  // A turned-down app goes again only as a newer build: the same one would be turned down again.
-  const resend = held?.tone === CardTone.Bad && live && isOlder(row, live) ? update.work : null;
-  if (held) return { ...base, ...held, on: true, work: resend };
-  const failed = failedNow(row, input, live);
-  if (failed) {
-    // What didn't reach Genex is tried again from its error block, never by the main button.
-    const blockRetries = failed.status === WORDS.sendFailed;
-    const work = blockRetries || retryUseless(row, input.native) ? null : update.work;
-    return { ...base, ...failed, on: true, work };
-  }
+    return { ...base, ...working, act: null, work: working.cloud && working.making ? CardWork.Release : null };
+  const state = reviewNow(row, input, live) ?? failedNow(row, input, live);
+  if (state) return { ...base, ...state };
   if (live) return { ...base, ...liveRow(row, input, live) };
-  const unpublished = unpublishedRow(row, input, firstPublish);
+  const unpublished = unpublishedRow(row, input);
   return unpublished ? { ...base, ...unpublished } : null;
 }
 
-/** The web row: live on Genex's page, ready to send, or one the agent can make; null when the game can't have one. */
-function webRow(row: PublishPlatform, input: CardInput): CardRow | null {
-  const live = input.hostedWeb === true;
-  const base = { target: row.target, name: WORDS.name[row.target], live, ...AT_REST };
+/**
+ * Whether the web version that went out at `publishedAt` is older than the game: the game changed
+ * after it, or the web build in the game's folder was made after it (a build put there is new by
+ * itself, with no source changed).
+ */
+function webOlder(row: PublishPlatform, publishedAt: string): boolean {
+  const published = ms(publishedAt);
+  return ms(row.changedAt) - published > SAME_BUILD_MS || ms(row.builtAt) - published > SAME_BUILD_MS;
+}
+
+/**
+ * Whether players have the game's web version: Genex plays one on a page it lists. The build of a
+ * game that is a draft again reaches nobody, so its row offers Publish as a first publish would.
+ */
+const webLive = (input: CardInput): boolean => input.hostedWeb === true && input.listed !== false;
+
+/** The web row while the web version is on its way to Genex: the publish's own step, its clock and how far it is. */
+function webSending(send: WebSend, live: boolean): RowState {
+  return {
+    tone: CardTone.Working,
+    status: send.status || WORDS.sending,
+    side: null,
+    ...(send.since ? { since: send.since } : {}),
+    ...progressOf(send.progress),
+    ...AT_REST,
+    busy: sendWord(live),
+  };
+}
+
+/** The web row at rest: live on Genex's page, ready to send, or one the agent can make; null when the game can't have one. */
+function webAtRest(row: PublishPlatform, input: CardInput, live: boolean): RowPresses | null {
   const ready = row.state === PublishPlatformState.Ready;
+  const send = { act: actFor(CardWork.Publish, live, input), work: CardWork.Publish };
   if (live) {
     const at = input.webPublishedAt;
-    const older = ready && (!at || ms(row.changedAt) - ms(at) > SAME_BUILD_MS);
+    if (ready && (!at || webOlder(row, at)))
+      return { tone: CardTone.Old, status: WORDS.liveUpdateReady, side: null, ...AT_REST, ...send };
     const side = at ? WORDS.ago(at, input.now) : null;
-    return older
-      ? { ...base, tone: CardTone.Old, status: WORDS.liveOlder, side: null, on: true, work: CardWork.Publish }
-      : { ...base, tone: CardTone.Live, status: WORDS.liveCurrent, side, on: true, work: null };
+    return { tone: CardTone.Live, status: WORDS.liveCurrent, side, ...AT_REST, act: null, work: null };
   }
-  if (ready)
-    return {
-      ...base,
-      tone: CardTone.Ready,
-      status: WORDS.readyToPublish,
-      side: null,
-      on: true,
-      work: CardWork.Publish,
-    };
+  if (ready) return { tone: CardTone.Ready, status: WORDS.readyToPublish, side: null, ...AT_REST, ...send };
   if (input.webOffer !== WebOffer.Make) return null;
-  const side = WORDS.buildsHere(input.mac);
-  return { ...base, side, tone: CardTone.None, status: WORDS.notBuilt, on: false, work: CardWork.Build };
+  const act = actFor(CardWork.Build, false, input);
+  return { tone: CardTone.None, status: WORDS.notBuilt, side: null, ...AT_REST, act, work: CardWork.Build };
+}
+
+/** The web row: on its way to Genex, being built, or as it rests; null when the game can't have one. */
+function webRow(row: PublishPlatform, input: CardInput, queue: readonly PublishTarget[]): CardRow | null {
+  const live = webLive(input);
+  const base = { target: row.target, name: WORDS.name[row.target], live };
+  const working = input.webSend ? webSending(input.webSend, live) : askedRow(row, input, queue);
+  if (working) return { ...base, ...working, act: null, work: null };
+  const rest = webAtRest(row, input, live);
+  return rest ? { ...base, ...rest } : null;
 }
 
 /** The card's rows, in the folder's order, leaving out every platform nothing can be done about from here. */
 export function cardRows(input: CardInput): CardRow[] {
-  const anyLive = input.platforms.some((row) =>
-    row.target === PublishTarget.Web ? input.hostedWeb === true : liveApp(row, input.native) !== null,
-  );
+  const queue = hereQueue(input);
   return input.platforms
-    .map((row) => (row.target === PublishTarget.Web ? webRow(row, input) : nativeRow(row, input, !anyLive)))
+    .map((row) => (row.target === PublishTarget.Web ? webRow(row, input, queue) : nativeRow(row, input, queue)))
     .filter((row): row is CardRow => row !== null);
 }
 
-/** One thing the button does. */
+/** What the rows are read with besides the game's folder and its record: this computer, and what the card asked for. */
+export type CardContext = Pick<CardInput, "now" | "webOffer" | "madeHere" | "asked" | "mac">;
+
+/** The card's rows for a game's publish record (`state`) and its folder's platforms. */
+export function recordRows(
+  platforms: readonly PublishPlatform[],
+  state: GenexPublishState,
+  context: CardContext,
+): CardRow[] {
+  const view = publishView(state, context.now);
+  const webSend = view.running ? { status: view.phase, since: view.startedAt, progress: view.progress } : undefined;
+  return cardRows({
+    ...context,
+    platforms,
+    native: state.native,
+    hostedWeb: state.hostedWeb,
+    ...(state.status ? { listed: state.status === GenexHostedStatus.Published } : {}),
+    webPublishedAt: state.lastPublishAt,
+    webSend,
+  });
+}
+
+/** One thing a press does. */
 export interface PlanStep {
   target: PublishTarget;
   work: CardWork;
 }
 
-/** What the button does and says. */
+/** What the big button does and says. */
 export interface PressPlan {
   label: string;
-  steps: PlanStep[];
-  /** It only takes platforms down: the button warns. */
-  warn: boolean;
-}
-
-/** Whether a row's switch is on: the person's choice, else where it starts. */
-export const switchedOn = (row: CardRow, switches: ReadonlyMap<PublishTarget, boolean>): boolean =>
-  switches.get(row.target) ?? row.on;
-
-/** "Mac", "Mac and Windows", "Mac, Windows and web". */
-const listed = (rows: readonly CardRow[]): string =>
-  NATIVE_WORDS.platforms(rows.map((row) => WORDS.inPress[row.target]));
-
-/** The words for the platforms that get something: named up to two, counted from three. */
-function sendWords(updates: readonly CardRow[], news: readonly CardRow[]): string | null {
-  const all = [...updates, ...news];
-  if (all.length === 0) return null;
-  const onlyUpdates = news.length === 0;
-  if (all.length >= 3) return onlyUpdates ? WORDS.updateCount(all.length) : WORDS.publishToCount(all.length);
-  return onlyUpdates ? WORDS.update(listed(all)) : WORDS.publishTo(listed(all));
-}
-
-/** The words for platforms that get something, with the ones taken down after them. */
-function planLabel(updates: readonly CardRow[], news: readonly CardRow[], downs: readonly CardRow[]): string {
-  const send = sendWords(updates, news);
-  if (downs.length === 0) return send ?? "";
-  if (!send) return WORDS.takeDown(listed(downs));
-  return news.length === 0
-    ? WORDS.updateAndTakeDown(listed(updates), listed(downs))
-    : WORDS.publishAndTakeDown(listed([...updates, ...news]), listed(downs));
-}
-
-/** The button for apps that aren't made: it makes them, here and on Genex Cloud at once, and a second press publishes them. */
-function buildPlan(builds: readonly CardRow[]): PressPlan {
-  const label = builds.length >= 3 ? WORDS.buildCount(builds.length) : WORDS.build(listed(builds));
-  const steps = builds.map((row) => ({ target: row.target, work: row.work ?? CardWork.Build }));
-  return { label, steps, warn: false };
-}
-
-/**
- * The rows a Publish gives players: each switched-on one whose app is made, and one Genex Cloud still
- * builds and keeps, which then goes to players once built. That one goes only with the game: beside
- * an app that is made, or to a game players have already, because a game with nothing to play can't
- * be published. While the agent builds an app here it waits with it: one Build asked for both, and
- * Publish comes once the first is ready.
- */
-function sendingRows(rows: readonly CardRow[], switches: ReadonlyMap<PublishTarget, boolean>): CardRow[] {
-  const sends = rows.filter((row) => switchedOn(row, switches) && SENDS.has(row.work));
-  const made = sends.filter((row) => row.tone !== CardTone.Working);
-  const playable = made.length > 0 || rows.some((row) => row.live && switchedOn(row, switches));
-  const agentBuilds = rows.some((row) => row.here);
-  return playable && !agentBuilds ? sends : made;
-}
-
-/**
- * What the button does for the rows as switched, or null when nothing needs doing. Apps that aren't
- * made come first and alone, the agent's and Genex Cloud's in one press: building never sends
- * anything to players, so a second press does.
- */
-export function pressPlan(rows: readonly CardRow[], switches: ReadonlyMap<PublishTarget, boolean>): PressPlan | null {
-  const atRest = rows.filter((row) => row.tone !== CardTone.Working);
-  const builds = atRest.filter((row) => switchedOn(row, switches) && MAKES.has(row.work));
-  if (builds.length > 0) return buildPlan(builds);
-  const sending = sendingRows(rows, switches);
-  const downs = atRest.filter((row) => !switchedOn(row, switches) && row.live);
-  if (sending.length === 0 && downs.length === 0) return null;
-  const steps: PlanStep[] = [
-    ...sending.map((row) => ({ target: row.target, work: row.work ?? CardWork.Publish })),
-    ...downs.map((row) => ({ target: row.target, work: CardWork.TakeDown })),
-  ];
-  const updates = sending.filter((row) => row.live);
-  const news = sending.filter((row) => !row.live);
-  return { label: planLabel(updates, news, downs), steps, warn: sending.length === 0 };
-}
-
-/**
- * The line under the button while Genex Cloud works, for a button that names `named`: the wait can
- * be long. It names whose wait when the button names anything else.
- */
-export function pressNote(rows: readonly CardRow[], named: readonly PublishTarget[]): string | null {
-  const slow = rows.filter((row) => row.tone === CardTone.Working && row.cloud);
-  if (slow.length === 0) return null;
-  const onlySlow = named.length === slow.length && slow.every((row) => named.includes(row.target));
-  return onlySlow && slow.length === 1 ? WORDS.cloudTakesLong : WORDS.cloudTakesLongFor(listed(slow));
-}
-
-/** The button while rows work: what it says, the clock of the longest wait, and the line under it. */
-export interface BusyPress {
-  label: string;
-  since: string | null;
-  /** Under the button while Genex Cloud works (`pressNote`). */
+  /** The one line under it: what it does now and what by itself later; null when it only sends what is ready. */
   note: string | null;
+  /** What the press starts at once: the builds, and what is ready for players. */
+  steps: PlanStep[];
+  /** The platforms it then follows (`followStep`): each goes to players as soon as it is ready. */
+  follow: PublishTarget[];
+  /** Players have every platform it names: it updates them. */
+  update: boolean;
+}
+
+/** Whether nothing is under way for a row: it neither works nor waits its turn. */
+export const atRest = (row: CardRow): boolean => row.busy === null && !row.queued;
+
+/** Whether a row's app is being made now, for nobody yet: a build a row's own button or the big one started. */
+const beingMade = (row: CardRow): boolean => !atRest(row) && row.making;
+
+/** "Mac", "Mac and Windows", "Web, Mac and Windows". */
+const listed = (rows: readonly CardRow[]): string => NATIVE_WORDS.platforms(rows.map((row) => row.name));
+
+/** The line for a press that must build first, when Genex Cloud builds one of the apps: the wait can be long. */
+function slowBuildNote(builds: readonly CardRow[], slow: readonly CardRow[], another: boolean): string {
+  const [only] = builds;
+  if (builds.length === 1 && only)
+    return another ? WORDS.buildOneTooSlow(only.name) : WORDS.buildOneFirstSlow(only.name);
+  return another
+    ? WORDS.buildTooSlow(listed(builds), listed(slow))
+    : WORDS.buildFirstSlow(listed(builds), listed(slow));
 }
 
 /**
- * The rows the busy button names and what it says of them: building while every one is only being
- * made, else the ones on their way to players, as an update of what they have or something new.
+ * The line under the big button: what it gives players now (`sends`) and what once built, the apps
+ * it builds (`builds`) and the ones being built already (`coming`), named in the rows' order (`later`
+ * is both). None when all it does is send.
  */
-function busyWords(working: readonly CardRow[]): { named: readonly CardRow[]; label: string } {
-  if (working.every((row) => row.making)) return { named: working, label: WORDS.building(listed(working)) };
-  const going = working.filter((row) => !row.making);
-  const words = going.every((row) => row.live) ? WORDS.updating : WORDS.publishing;
-  return { named: going, label: words(listed(going)) };
+function planNote(
+  sends: readonly CardRow[],
+  builds: readonly CardRow[],
+  coming: readonly CardRow[],
+  later: readonly CardRow[],
+  update: boolean,
+): string | null {
+  if (later.length === 0) return null;
+  if (sends.length > 0) {
+    const words = update ? WORDS.updateNowAndLater : WORDS.publishNowAndLater;
+    return words(listed(sends), listed(later), later.length);
+  }
+  if (builds.length === 0)
+    return (update ? WORDS.updateOnceBuilt : WORDS.publishOnceBuilt)(listed(coming), coming.length);
+  if (update) return WORDS.buildThenUpdate(listed(later), later.length);
+  const slow = builds.filter((row) => row.work === CardWork.Cloud);
+  if (slow.length === 0) return WORDS.buildThenPublish(listed(later), later.length);
+  return slowBuildNote(builds, slow, coming.length > 0);
 }
 
-/** The busy button for the rows at work now, or null when none is. */
-export function busyPress(rows: readonly CardRow[]): BusyPress | null {
-  const working = rows.filter((row) => row.tone === CardTone.Working);
-  if (working.length === 0) return null;
-  const { named, label } = busyWords(working);
-  const starts = named.map((row) => row.since).filter((at): at is string => at !== undefined);
-  const since = starts.reduce<string | null>((first, at) => (first === null || ms(at) < ms(first) ? at : first), null);
-  const note = pressNote(
-    rows,
-    named.map((row) => row.target),
-  );
-  return { label, since, note };
+/**
+ * Whether a game is there to play, so an app Genex Cloud still builds can be given to its players:
+ * players have a platform already, or one goes to them now (`sends`). A game with nothing to play
+ * can't be published.
+ */
+const playable = (rows: readonly CardRow[], sends: readonly CardRow[]): boolean =>
+  sends.length > 0 || rows.some((row) => row.live);
+
+const stepsOf = (rows: readonly CardRow[]): PlanStep[] =>
+  rows.map((row) => ({ target: row.target, work: row.work ?? CardWork.Publish }));
+
+/**
+ * What the big button does for the rows as they are, or null when nothing needs doing. It builds
+ * every app that isn't built, gives players what is ready, and follows the rest, the builds a row's
+ * own button started too. A row whose last try failed is left to its own Try again.
+ */
+export function pressPlan(rows: readonly CardRow[]): PressPlan | null {
+  const idle = rows.filter(atRest);
+  const sends = idle.filter((row) => SENDS.has(row.work));
+  const builds = idle.filter((row) => MAKES.has(row.work));
+  const coming = rows.filter(beingMade);
+  const named = rows.filter((row) => sends.includes(row) || builds.includes(row) || coming.includes(row));
+  if (named.length === 0) return null;
+  const update = named.every((row) => row.live);
+  const released = playable(rows, sends) ? coming.filter((row) => row.work === CardWork.Release) : [];
+  const later = named.filter((row) => !sends.includes(row));
+  return {
+    label: update ? WORDS.updateAll : WORDS.publishAll,
+    note: planNote(sends, builds, coming, later, update),
+    steps: stepsOf([...builds, ...sends, ...released]),
+    follow: named.map((row) => row.target),
+    update,
+  };
+}
+
+/** A press's sends as the calls that make them. */
+export interface SendCalls {
+  /** The web publish, with the apps that go behind it; null when the web version doesn't go. */
+  web: PublishTarget[] | null;
+  /** The apps that go on their own, and the ones Genex Cloud made or makes (`release`); null when none does. */
+  apps: { platforms: PublishTarget[]; release: PublishTarget[] } | null;
+}
+
+/**
+ * The calls that give players what `steps` name: the web publish carries the apps that are ready
+ * with it, and what Genex Cloud made goes with the apps, or on its own after a web publish.
+ */
+export function sendCalls(steps: readonly PlanStep[]): SendCalls {
+  const of = (work: CardWork): PublishTarget[] => steps.filter((step) => step.work === work).map((step) => step.target);
+  const published = of(CardWork.Publish);
+  const ready = published.filter((target) => target !== PublishTarget.Web);
+  const release = of(CardWork.Release);
+  const web = published.includes(PublishTarget.Web);
+  const alone = release.length > 0 || (!web && ready.length > 0);
+  return { web: web ? ready : null, apps: alone ? { platforms: web ? [] : ready, release } : null };
+}
+
+/** What a followed press does next. */
+export interface FollowStep {
+  /** What goes to players now. */
+  send: PlanStep[];
+  /** The platforms still on their way; none ends the follow. */
+  left: PublishTarget[];
+}
+
+/**
+ * The next step of a big-button press that follows `targets`, from the rows as they are now: each
+ * app that is ready goes to players, and one Genex Cloud still builds is promised to them once a
+ * game is there to play. A platform is left while it is being built or sent, or is ready to go: one
+ * that was just sent (`settling`) may still read as ready, since the record takes a moment to say it
+ * is on its way, and is not sent again. It leaves the follow once players have it, or once nothing
+ * more comes by itself (its build failed or never landed).
+ */
+export function followStep(
+  rows: readonly CardRow[],
+  targets: readonly PublishTarget[],
+  settling: ReadonlySet<PublishTarget> = new Set(),
+): FollowStep {
+  const followed = rows.filter((row) => targets.includes(row.target));
+  const fresh = followed.filter((row) => !settling.has(row.target));
+  const sendable = (row: CardRow): boolean => atRest(row) && SENDS.has(row.work);
+  const ready = fresh.filter(sendable);
+  const promised = playable(rows, ready) ? fresh.filter((row) => !atRest(row) && row.work === CardWork.Release) : [];
+  const waits = (row: CardRow): boolean => !atRest(row) || sendable(row);
+  return { send: stepsOf([...ready, ...promised]), left: followed.filter(waits).map((row) => row.target) };
+}
+
+/** The big button while its press is followed: a status, never a press. */
+export interface FollowBar {
+  label: string;
+  note: string;
+}
+
+/**
+ * The status in the big button's place while its press is followed: how many of the card's platforms
+ * players have as the game is now, and that each goes live by itself.
+ */
+export function followBar(rows: readonly CardRow[], update: boolean): FollowBar {
+  const done = rows.filter((row) => row.tone === CardTone.Live).length;
+  const label = update ? WORDS.updatingAll(done, rows.length) : WORDS.publishingAll(done, rows.length);
+  return { label, note: WORDS.goesLiveWhenReady };
+}
+
+/** An hour, in the minutes a time left is said in. */
+const MINUTES_PER_HOUR = HOUR_MS / MINUTE_MS;
+
+/** How long a send has left, for its row's loader: "2m left", "1h 20m left"; to the minute, never less than one. */
+export function leftWords(leftMs: number): string {
+  const minutes = Math.max(1, Math.ceil(leftMs / MINUTE_MS));
+  const hours = Math.floor(minutes / MINUTES_PER_HOUR);
+  return hours === 0 ? WORDS.minutesLeft(minutes) : WORDS.hoursLeft(hours, minutes % MINUTES_PER_HOUR);
 }
 
 /**
@@ -600,8 +791,8 @@ function startError(platforms: readonly PublishPlatform[], native: GenexNativeRe
 
 /**
  * The card's error blocks: a failed Genex Cloud build with its log, which the agent can fix, one that
- * never started, and each app whose last send didn't reach Genex (and hasn't gone since), which a
- * press tries again.
+ * never started, and each app whose last send didn't reach Genex (and hasn't gone since). Trying
+ * again is the row's own button.
  */
 export function cardErrors(platforms: readonly PublishPlatform[], native: GenexNativeRecord | undefined): CardError[] {
   const errors: CardError[] = [];

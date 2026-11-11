@@ -557,10 +557,16 @@ const LINK_SUFFIX = ".json";
  * keeps in the plugin's storage. Only reads.
  */
 export async function linkedToAGame(storage: string, project: string): Promise<boolean> {
+  return (await gamesLinkedTo(storage, project)).length > 0;
+}
+
+/** The Genex games whose link names `project`, by id. */
+export async function gamesLinkedTo(storage: string, project: string): Promise<string[]> {
   const names = await readdir(path.join(storage, SetupStorage.Links)).catch(() => [] as string[]);
-  for (const name of names.filter((n) => n.endsWith(LINK_SUFFIX)))
-    if ((await linkedProject(storage, name.slice(0, -LINK_SUFFIX.length))) === project) return true;
-  return false;
+  const games = names.filter((n) => n.endsWith(LINK_SUFFIX)).map((n) => n.slice(0, -LINK_SUFFIX.length));
+  const linked: string[] = [];
+  for (const game of games) if ((await linkedProject(storage, game)) === project) linked.push(game);
+  return linked;
 }
 
 /**

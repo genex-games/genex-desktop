@@ -1385,8 +1385,6 @@ export default {
   "Export target must be an ordinary directory": "Для экспорта нужна обычная папка",
   "Export validation does not yet support scoped import maps; build this project before export":
     "Проверка экспорта пока не поддерживает scoped import maps; сначала собери проект, потом экспортируй",
-  "Exported for the web into web/: Live's Web game tab plays it, and Publish puts it online.":
-    "Экспортировано для веба в web/: во вкладке «Веб-игра» в Live в неё можно играть, а «Опубликовать» выкладывает её в сеть.",
   "Exported {count} public files. Included: {included}. Excluded from selected roots: {excluded}.":
     "Экспортировано публичных файлов: {count}. Включено: {included}. Исключено из выбранных корневых папок: {excluded}.",
   "Exporting…": "Экспорт…",
@@ -3350,7 +3348,6 @@ export default {
   "Set up the protected workspace": "Настрой защищённое рабочее пространство",
   "Set up this game's Unity project": "Настрой проект Unity для этой игры",
   "Set up {name} for Genex.": "Настроить проект {name} для Genex.",
-  "Set up {name} for Genex?": "Настроить проект {name} для Genex?",
   "Set up {project} after it ends.": "Настрой проект {project}, когда Loop закончится.",
   "Set up {project} for Genex · {game} now builds in {engine}":
     "Проект {project} настроен для Genex · {game} теперь собирается в {engine}",
@@ -4288,7 +4285,6 @@ export default {
   "Undid {count, plural, one {# try} other {# tries}} before it":
     "До этого {count, plural, one {отменена # попытка} few {отменены # попытки} many {отменено # попыток} other {отменено # попытки}}",
   Undo: "Отменить",
-  "Undo setup for {name}?": "Отменить настройку проекта {name}?",
   "Undo this change": "Отменить это изменение",
   Undone: "Отменено",
   "Undone because {reason}.": "Отменено: {reason}.",
@@ -6375,7 +6371,6 @@ export default {
   "Nothing went public. After the fix, it publishes by itself and Genex checks it again.":
     "Ничего не опубликовано. После исправления она опубликуется сама, и Genex проверит её снова.",
   "Open a game": "Открой игру",
-  "Open on Genex": "Открыть на Genex",
   "Players keep the version they have. After the fix, it publishes by itself and Genex checks it again.":
     "У игроков остаётся их версия. После исправления она опубликуется сама, и Genex проверит её снова.",
   "Players keep the {date} version.": "У игроков остаётся версия от {date}.",
@@ -6474,40 +6469,50 @@ export default {
     "Genex не смог собрать приложение {players} для «{title}». Исправь эти ошибки в коде игры, чтобы она там собиралась, и сохрани работу игры на других системах. На этом компьютере нельзя собрать для {players}, поэтому внимательно проверь каждое исправление. Потом скажи мне снова нажать Build on Genex.\n\n{errors}",
   "The same project fails the same way: change it first, then try again.":
     "Тот же проект упадёт так же: сначала измени его, потом пробуй снова.",
-  "Build {count} apps":
-    "Собрать {count, plural, one {# приложение} few {# приложения} many {# приложений} other {# приложения}}",
-  "Build {platforms}": "Собрать {platforms}",
-  "Building on Genex Cloud": "Собирается в Genex Cloud",
-  "Building on this Mac": "Собирается на этом Mac",
-  "Building on this PC": "Собирается на этом ПК",
-  "Building {platforms}": "Собираю {platforms}",
+  "Build on Genex Cloud": "Собрать в Genex Cloud",
+  "Build on Mac": "Собрать на Mac",
+  "Build on PC": "Собрать на ПК",
+  "Builds after {platform}": "Соберётся после {platform}",
+  "Builds {platforms} again, then updates {count, plural, one {it} other {them}} by itself.":
+    "Соберёт {platforms} заново, потом сам {count, plural, one {её обновит} few {их обновит} many {их обновит} other {их обновит}}.",
+  "Builds {platforms} first. {slow} can take up to an hour.":
+    "Сначала соберёт {platforms}. {slow} может занять до часа.",
+  "Builds {platforms} too. {slow} can take up to an hour.": "Соберёт ещё и {platforms}. {slow} может занять до часа.",
+  "Builds {platforms}, then publishes {count, plural, one {it} other {them}} by itself.":
+    "Соберёт {platforms}, потом сам {count, plural, one {её опубликует} few {их опубликует} many {их опубликует} other {их опубликует}}.",
+  "Builds {platform} first. It can take up to an hour.": "Сначала соберёт {platform}. Это может занять до часа.",
+  "Builds {platform} too. It can take up to an hour.": "Соберёт ещё и {platform}. Это может занять до часа.",
+  "Each one goes live as soon as it’s ready. You can close this window.":
+    "Каждая выходит, как только готова. Это окно можно закрыть.",
+  "More for {platform}": "Ещё для {platform}",
+  "On Genex Cloud": "В Genex Cloud",
+  "On this PC": "На этом ПК",
+  "Publish to all platforms": "Опубликовать на всех платформах",
+  "Publishes {now} now, {later} once {count, plural, one {it is} other {they are}} built.":
+    "Опубликует {now} сейчас, а {later}, {count, plural, one {когда соберётся} few {когда соберутся} many {когда соберутся} other {когда соберутся}}.",
+  "Publishes {platforms} once {count, plural, one {it is} other {they are}} built.":
+    "Опубликует {platforms}, {count, plural, one {когда соберётся} few {когда соберутся} many {когда соберутся} other {когда соберутся}}.",
+  "Publishing to all platforms · {live} of {count} live": "Публикация на всех платформах · {live} из {count} в игре",
+  "Update all platforms": "Обновить все платформы",
+  "Updates {now} now, {later} once {count, plural, one {it is} other {they are}} built.":
+    "Обновит {now} сейчас, а {later}, {count, plural, one {когда соберётся} few {когда соберутся} many {когда соберутся} other {когда соберутся}}.",
+  "Updates {platforms} once {count, plural, one {it is} other {they are}} built.":
+    "Обновит {platforms}, {count, plural, one {когда соберётся} few {когда соберутся} many {когда соберутся} other {когда соберутся}}.",
+  Updating: "Обновление",
+  "Updating all platforms · {done} of {count} updated": "Обновление всех платформ · обновлено {done} из {count}",
+  "{hours}h {minutes}m left": "ещё {hours} ч {minutes} мин",
+  "{minutes}m left": "ещё {minutes} мин",
   "Couldn’t build": "Не собралось",
   "Couldn’t build · the older one is still live": "Не собралось · старая версия всё ещё в игре",
   "Couldn’t send": "Не отправилось",
-  "It can take up to an hour.": "Это может занять до часа.",
   "Live · older than your game": "В игре · старее твоей игры",
   "Live · up to date": "В игре · актуальная",
   "Only a Mac, Windows or Linux app can be taken off Genex this way.":
     "Так с Genex можно убрать только приложение для Mac, Windows или Linux.",
-  "Publish to {count} platforms":
-    "Опубликовать на {count, plural, one {# платформе} few {# платформах} many {# платформах} other {# платформах}}",
-  "Publish to {name}": "Публиковать на {name}",
-  "Publish to {platforms}": "Опубликовать на {platforms}",
-  "Publish to {platforms} and take {down} down": "Опубликовать на {platforms} и убрать {down}",
-  "Publishing to {platforms}": "Публикую на {platforms}",
   "Sending to Genex": "Отправляется в Genex",
   "Sending to Genex Cloud": "Отправляется в Genex Cloud",
   "Take {platforms} down": "Убрать {platforms}",
-  "Update {count} platforms":
-    "Обновить {count, plural, one {# платформу} few {# платформы} many {# платформ} other {# платформы}}",
-  "Update {platforms}": "Обновить {platforms}",
-  "Update {platforms} and take {down} down": "Обновить {platforms} и убрать {down}",
-  "Updating {platforms}": "Обновляю {platforms}",
-  "builds on Genex Cloud": "соберёт Genex Cloud",
-  "builds on this Mac": "соберётся на этом Mac",
-  "builds on this PC": "соберётся на этом ПК",
   "coming soon": "скоро",
-  web: "веб",
   "{minutes} min ago": "{minutes} мин назад",
   "Agent is fixing the {platform} build": "Агент чинит сборку {platform}",
   "Copy the error": "Скопировать ошибку",
@@ -6531,7 +6536,6 @@ export default {
   "Not built": "Не собрано",
   "Built · older than your game": "Собрано · старее твоей игры",
   "Ready to publish": "Готово к публикации",
-  "{platforms} can take up to an hour.": "{platforms} может занять до часа.",
   "{platform} build didn’t start": "Сборка {platform} не началась",
   "Checking the archive": "Проверяем архив",
   Packing: "Упаковываем",
@@ -6549,4 +6553,29 @@ export default {
   "Installing… {percent}% · {speed} · about {minutes} min left":
     "Установка… {percent}% · {speed} · осталось около {minutes} мин",
   "Installing… {percent}% · {speed} · under a minute left": "Установка… {percent}% · {speed} · осталось меньше минуты",
+  "This plugin stopped several times in a row, so it starts again in {seconds, plural, one {# second} other {# seconds}}. Try again then.":
+    "Плагин остановился несколько раз подряд, поэтому запустится снова через {seconds, plural, one {# секунду} few {# секунды} many {# секунд} other {# секунды}}. Попробуй тогда ещё раз.",
+  "Add Genex to {name}?": "Добавить Genex в {name}?",
+  "Another Genex game builds in this project too, so it stays where it is.":
+    "В этом проекте собирается ещё одна игра Genex, поэтому он остаётся на месте.",
+  "Exported. Play it in Live's Web game tab, or publish it.":
+    "Экспорт готов. Играй во вкладке «Веб-игра» в Live или опубликуй.",
+  "Genex moves its folder from {from} to {to}. Rewind and Loops reach it there.":
+    "Genex перенесёт его папку из {from} в {to}. Там до него достают откат и Loop.",
+  "Genex moves its folder from {from} to {to}. Rewind, Loops and Publish reach it there.":
+    "Genex перенесёт его папку из {from} в {to}. Там до него достают откат, Loop и публикация.",
+  "Move {name} into this game?": "Перенести {name} в эту игру?",
+  "Only the project this game builds in can move into it.":
+    "Перенести можно только проект, в котором собирается эта игра.",
+  "Quit Godot first: a project can't move while it is open.": "Сначала закрой Godot: открытый проект нельзя перенести.",
+  "Quit Unreal first: a project can't move while it is open.":
+    "Сначала закрой Unreal: открытый проект нельзя перенести.",
+  "Remove Genex from {name}?": "Убрать Genex из {name}?",
+  "This game already has a godot folder.": "В этой игре уже есть папка godot.",
+  "This game already has an unreal folder.": "В этой игре уже есть папка unreal.",
+  "This project is already in this game's folder.": "Этот проект уже в папке этой игры.",
+  "This project is on another disk, so Genex leaves it there.":
+    "Этот проект на другом диске, поэтому Genex оставит его там.",
+  "This project's folder holds other things too, so Genex leaves it where it is.":
+    "В папке проекта лежит и другое, поэтому Genex оставит его на месте.",
 } satisfies LocaleCatalog;

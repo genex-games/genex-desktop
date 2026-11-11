@@ -76,7 +76,13 @@ import {
 } from "../shared/project-workspace.ts";
 import { readEngineBinding } from "./game-engine-binding.ts";
 import { usesGenexMultiplayer } from "./genex-game-manifest.ts";
-import { exportPublicGame, type ExportOptions, type ExportResult } from "./game-export.ts";
+import {
+  exportPublicGame,
+  listPublicGame,
+  type ExportListing,
+  type ExportOptions,
+  type ExportResult,
+} from "./game-export.ts";
 import { ownRules, REFERENCES_README } from "./game-workspace-prompts.ts";
 import { type GameValidation, validateGameDir } from "./game-validation.ts";
 import {
@@ -375,7 +381,12 @@ interface FactRecord {
  * The web starter's files that tell its page from a game built on it: the page, and the game code it
  * boots, which every build of a web game changes. Neither has changed in the template since 0.1.0.
  */
-const STARTER_PAGE_FILES = ["index.html", "src/main.js"] as const;
+const STARTER_PAGE = "index.html";
+const STARTER_CODE = "src/main.js";
+
+/** What a game's folder holds where the web starter put a file: the starter's still, nothing, or the game's own. */
+const StarterFile = { Template: "template", Missing: "missing", Own: "own" } as const;
+type StarterFile = (typeof StarterFile)[keyof typeof StarterFile];
 
 /** The placeholder New game fills with the game's title (`fillTemplateTitle`). */
 const TITLE_PLACEHOLDER = "__GAME_TITLE__";
@@ -1185,9 +1196,10 @@ export class GameWorkspaces {
   /**
    * The facts a game lists: its raw facts minus what a port replaced (`portedFrom`), minus the web
    * template an engine link left beside its project (a link with no `portedFrom` is an older
-   * record), with a Unity or Godot game's web version in web/ as its web game
-   * (`withEngineWebVersion`), and none at all for a starter nothing has been built in yet (no kind
-   * picked). With no facts, what the folder holds besides (`folderHolds`).
+   * record), with an engine game's web version in web/ as its web game where the root holds no page
+   * of anyone's (`withEngineWebVersion`, `#nobodysPageAtRoot`), and none at all for a starter nothing
+   * has been built in yet (no kind picked). With no facts, what the folder holds besides
+   * (`folderHolds`).
    */
   async #kind(dir: string, record: FactRecord): Promise<FolderKind> {
     const found = await this.#foundFacts(dir, record.engine);
@@ -1197,8 +1209,10 @@ export class GameWorkspaces {
       if (hasFact(record.portedFrom, fact.id, fact.path)) return false;
       return !(linkedLegacy && fact.id === CoreFact.WebGame && fact.path === ".");
     });
-    const besideWebVersion = engineWebVersion(counted, found) !== null && hasFact(counted, CoreFact.WebGame, ".");
-    const facts = withEngineWebVersion(counted, found, besideWebVersion && (await this.#starterPageAtRoot(dir)));
+    const rootWebGame = counted.find((fact) => fact.id === CoreFact.WebGame && fact.path === ".");
+    const besideWebVersion = engineWebVersion(counted, found) !== null && rootWebGame !== undefined;
+    const nobodys = besideWebVersion && (await this.#nobodysPageAtRoot(dir, rootWebGame));
+    const facts = withEngineWebVersion(counted, found, nobodys);
     // New game's untouched starter is the template as it was made: nothing of the person's yet.
     if (await this.#untouchedStarter(dir, raw, record.scaffoldStamp)) return { facts: [], holds: FolderHolds.Nothing };
     if (facts.length > 0) return { facts };
@@ -1220,16 +1234,53 @@ export class GameWorkspaces {
     return false;
   }
 
-  /** Whether the folder's root page is still the web starter's (`STARTER_PAGE_FILES`), nothing built on it. */
-  async #starterPageAtRoot(dir: string): Promise<boolean> {
-    for (const file of STARTER_PAGE_FILES) {
-      const [own, template] = await Promise.all([
-        readFile(path.join(dir, file), "utf8").catch(() => null),
-        readFile(path.join(this.templateDir, file), "utf8").catch(() => null),
-      ]);
-      if (own === null || template === null || !filledTemplate(template, own)) return false;
+  /**
+   * Whether the web game at the folder's root (`rootWebGame`) is nobody's work. Its page and the code
+   * the page boots are still the web starter's, nothing built on them. Or the page is gone, only
+   * studio.json's record of the starter makes the root a web game (`detectFoundFacts`: the core
+   * table's fact with no file behind it), which Publish and Live would look for in vain, and the
+   * starter's code folder holds nothing of anyone's (`#onlyStarterCode`). Code somebody wrote keeps
+   * the root theirs, and so does a web game a plugin's or a scaffold's rule found by other files.
+   */
+  async #nobodysPageAtRoot(dir: string, rootWebGame: ProjectFact): Promise<boolean> {
+    const [page, code] = await Promise.all([
+      this.#starterFile(dir, STARTER_PAGE),
+      this.#starterFile(dir, STARTER_CODE),
+    ]);
+    if (page === StarterFile.Template) return code === StarterFile.Template;
+    const recordOnly = page === StarterFile.Missing && rootWebGame.source === FactSource.Core;
+    if (!recordOnly || code === StarterFile.Own) return false;
+    return this.#onlyStarterCode(dir);
+  }
+
+  /**
+   * Whether the starter's code folder holds nothing but the starter's own code file: the folder is
+   * gone or empty, or that file is all it holds. A game written in other files there (`src/game.js`,
+   * `src/main.ts`) is somebody's, and so is a folder that can't be listed. A hidden name is nobody's
+   * game: Finder leaves `.DS_Store` in a folder it showed, and an editor its own.
+   */
+  async #onlyStarterCode(dir: string): Promise<boolean> {
+    const names = await readdir(path.join(dir, path.dirname(STARTER_CODE))).catch((error: NodeJS.ErrnoException) =>
+      error.code === "ENOENT" ? [] : null,
+    );
+    return names?.every((name) => name === path.basename(STARTER_CODE) || name.startsWith(".")) ?? false;
+  }
+
+  /**
+   * What the folder holds where the web starter put `file` ({@link StarterFile}): the template's
+   * text with any title filled in is the starter's still, and anything else that is there, a folder
+   * or a link that leads nowhere included, is the game's own.
+   */
+  async #starterFile(dir: string, file: string): Promise<StarterFile> {
+    const [own, template] = await Promise.all([
+      readFile(path.join(dir, file), "utf8").catch(() => null),
+      readFile(path.join(this.templateDir, file), "utf8").catch(() => null),
+    ]);
+    if (own !== null) {
+      return template !== null && filledTemplate(template, own) ? StarterFile.Template : StarterFile.Own;
     }
-    return true;
+    const there = await lstat(path.join(dir, file)).catch(() => null);
+    return there ? StarterFile.Own : StarterFile.Missing;
   }
 
   /** Write a detected shape into studio.json once, so the folder's way of running is explicit and editable. */
@@ -1569,16 +1620,36 @@ export class GameWorkspaces {
     builtOutput?: string,
     options: ExportOptions = {},
   ): Promise<ExportResult> {
+    const from = await this.#publicSource(name, builtOutput);
+    return exportPublicGame(from.dir, targetDir, from.roots, from.vendor, options);
+  }
+
+  /**
+   * The files {@link export} would put in the bundle and leave out, read where they are: nothing is
+   * copied. Undefined for a game that carries the vendored library, whose bundle has to be made to
+   * know which of the library's files it keeps.
+   */
+  async exportListing(
+    name: string,
+    builtOutput?: string,
+    options: ExportOptions = {},
+  ): Promise<ExportListing | undefined> {
+    const from = await this.#publicSource(name, builtOutput);
+    return from.vendor ? undefined : listPublicGame(from.dir, from.roots, options);
+  }
+
+  /** What a game's public copy is made from: the folder, its public paths, and the vendored library a template game adds. */
+  async #publicSource(name: string, builtOutput?: string): Promise<{ dir: string; roots: string[]; vendor?: string }> {
     const dir = this.dirFor(name);
     const shape = await detectProjectShape(dir);
     const config = await readJsonIfExists<{ exportFiles?: string[] }>(path.join(dir, "studio.json"));
-    if (builtOutput) return exportPublicGame(builtOutput, targetDir, await readdir(builtOutput), undefined, options);
+    if (builtOutput) return { dir: builtOutput, roots: await readdir(builtOutput) };
     if (shape?.build) throw new CodedError(ExportRefusal.NeedsBuild, MESSAGE.BuildBeforeExport());
     if (shape && !config?.exportFiles)
       throw new CodedError(ExportRefusal.FilesUndeclared, MESSAGE.DeclareExportFiles());
     const roots = config?.exportFiles ?? (await defaultExportRoots(dir));
     if (!isExportList(roots)) throw new CodedError(ExportRefusal.FilesInvalid, MESSAGE.BadExportFiles());
-    return exportPublicGame(dir, targetDir, roots, shape ? undefined : this.vendorDir, options);
+    return { dir, roots, vendor: shape ? undefined : this.vendorDir };
   }
 }
 

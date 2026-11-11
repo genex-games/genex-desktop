@@ -1291,8 +1291,6 @@ export default {
   "Export target must be an ordinary directory": "导出目标必须是普通文件夹",
   "Export validation does not yet support scoped import maps; build this project before export":
     "导出校验暂不支持 scoped import maps；请先构建此项目再导出",
-  "Exported for the web into web/: Live's Web game tab plays it, and Publish puts it online.":
-    "已导出网页版到 web/：“实时”中的“网页游戏”标签页可以运行它，“发布”会将其上线。",
   "Exported {count} public files. Included: {included}. Excluded from selected roots: {excluded}.":
     "已导出 {count} 个公开文件。包含：{included}。从所选根目录中排除：{excluded}。",
   "Exporting…": "正在导出…",
@@ -3180,7 +3178,6 @@ export default {
   "Set up the protected workspace": "设置受保护的工作区",
   "Set up this game's Unity project": "设置这个游戏的 Unity 项目",
   "Set up {name} for Genex.": "为 Genex 设置 {name}。",
-  "Set up {name} for Genex?": "要为 Genex 设置 {name} 吗？",
   "Set up {project} after it ends.": "等 Loop 结束后再设置 {project}。",
   "Set up {project} for Genex · {game} now builds in {engine}":
     "已为 Genex 设置 {project} · {game} 现在在 {engine} 中制作",
@@ -4056,7 +4053,6 @@ export default {
   "Unclosed TOML string": "未闭合的 TOML 字符串",
   "Undid {count, plural, one {# try} other {# tries}} before it": "此前撤销了 {count, plural, other {# 次尝试}}",
   Undo: "撤销",
-  "Undo setup for {name}?": "要撤销 {name} 的设置吗？",
   "Undo this change": "撤销这项更改",
   Undone: "已撤销",
   "Undone because {reason}.": "已撤销，原因：{reason}。",
@@ -5976,7 +5972,6 @@ export default {
   "Nothing went public. After the fix, it publishes by itself and Genex checks it again.":
     "什么都没有公开。修复后会自动发布，Genex 会再检查一次。",
   "Open a game": "打开一个游戏",
-  "Open on Genex": "在 Genex 上打开",
   "Players keep the version they have. After the fix, it publishes by itself and Genex checks it again.":
     "玩家会继续使用现有版本。修复后会自动发布，Genex 会再检查一次。",
   "Players keep the {date} version.": "玩家继续使用 {date} 的版本。",
@@ -6070,37 +6065,49 @@ export default {
     "Genex 无法构建“{title}”的 {players} 应用。请修复游戏代码中的这些错误，让它能在那里构建，并保持游戏在其他系统上的表现不变。这台电脑无法为 {players} 构建，所以请仔细检查每处修复。完成后告诉我再按一次 Build on Genex。\n\n{errors}",
   "The same project fails the same way: change it first, then try again.":
     "同一个项目会以同样的方式失败：请先修改，再试一次。",
-  "Build {count} apps": "构建 {count} 个应用",
-  "Build {platforms}": "构建 {platforms}",
-  "Building on Genex Cloud": "正在 Genex Cloud 上构建",
-  "Building on this Mac": "正在这台 Mac 上构建",
-  "Building on this PC": "正在这台电脑上构建",
-  "Building {platforms}": "正在构建 {platforms}",
+  "Build on Genex Cloud": "在 Genex Cloud 上构建",
+  "Build on Mac": "在 Mac 上构建",
+  "Build on PC": "在电脑上构建",
+  "Builds after {platform}": "{platform} 之后构建",
+  "Builds {platforms} again, then updates {count, plural, one {it} other {them}} by itself.":
+    "重新构建 {platforms}，然后{count, plural, other {自动更新}}。",
+  "Builds {platforms} first. {slow} can take up to an hour.": "先构建 {platforms}。{slow} 最多可能需要一小时。",
+  "Builds {platforms} too. {slow} can take up to an hour.": "还会构建 {platforms}。{slow} 最多可能需要一小时。",
+  "Builds {platforms}, then publishes {count, plural, one {it} other {them}} by itself.":
+    "构建 {platforms}，然后{count, plural, other {自动发布}}。",
+  "Builds {platform} first. It can take up to an hour.": "先构建 {platform}。最多可能需要一小时。",
+  "Builds {platform} too. It can take up to an hour.": "还会构建 {platform}。最多可能需要一小时。",
+  "Each one goes live as soon as it’s ready. You can close this window.":
+    "每个平台准备好后就会上线。可以关闭这个窗口。",
+  "More for {platform}": "{platform} 的更多操作",
+  "On Genex Cloud": "在 Genex Cloud 上",
+  "On this PC": "在这台电脑上",
+  "Publish to all platforms": "发布到所有平台",
+  "Publishes {now} now, {later} once {count, plural, one {it is} other {they are}} built.":
+    "现在发布 {now}，{later} {count, plural, other {构建好后发布}}。",
+  "Publishes {platforms} once {count, plural, one {it is} other {they are}} built.":
+    "{platforms} {count, plural, other {构建好后发布}}。",
+  "Publishing to all platforms · {live} of {count} live": "正在发布到所有平台 · {count} 个中 {live} 个已上线",
+  "Update all platforms": "更新所有平台",
+  "Updates {now} now, {later} once {count, plural, one {it is} other {they are}} built.":
+    "现在更新 {now}，{later} {count, plural, other {构建好后更新}}。",
+  "Updates {platforms} once {count, plural, one {it is} other {they are}} built.":
+    "{platforms} {count, plural, other {构建好后更新}}。",
+  Updating: "更新中",
+  "Updating all platforms · {done} of {count} updated": "正在更新所有平台 · {count} 个中 {done} 个已更新",
+  "{hours}h {minutes}m left": "还剩 {hours} 小时 {minutes} 分钟",
+  "{minutes}m left": "还剩 {minutes} 分钟",
   "Couldn’t build": "构建失败",
   "Couldn’t build · the older one is still live": "构建失败 · 旧版本仍在线",
   "Couldn’t send": "发送失败",
-  "It can take up to an hour.": "最多可能需要一小时。",
   "Live · older than your game": "已上线 · 比你的游戏旧",
   "Live · up to date": "已上线 · 最新",
   "Only a Mac, Windows or Linux app can be taken off Genex this way.":
     "这种方式只能从 Genex 下架 Mac、Windows 或 Linux 应用。",
-  "Publish to {count} platforms": "发布到 {count} 个平台",
-  "Publish to {name}": "发布到 {name}",
-  "Publish to {platforms}": "发布到 {platforms}",
-  "Publish to {platforms} and take {down} down": "发布到 {platforms} 并下架 {down}",
-  "Publishing to {platforms}": "正在发布到 {platforms}",
   "Sending to Genex": "正在发送到 Genex",
   "Sending to Genex Cloud": "正在发送到 Genex Cloud",
   "Take {platforms} down": "下架 {platforms}",
-  "Update {count} platforms": "更新 {count} 个平台",
-  "Update {platforms}": "更新 {platforms}",
-  "Update {platforms} and take {down} down": "更新 {platforms} 并下架 {down}",
-  "Updating {platforms}": "正在更新 {platforms}",
-  "builds on Genex Cloud": "在 Genex Cloud 构建",
-  "builds on this Mac": "在这台 Mac 上构建",
-  "builds on this PC": "在这台电脑上构建",
   "coming soon": "即将推出",
-  web: "网页",
   "{minutes} min ago": "{minutes} 分钟前",
   "Agent is fixing the {platform} build": "代理正在修复 {platform} 构建",
   "Copy the error": "复制错误",
@@ -6124,7 +6131,6 @@ export default {
   "Not built": "未构建",
   "Built · older than your game": "已构建 · 比你的游戏旧",
   "Ready to publish": "可以发布",
-  "{platforms} can take up to an hour.": "{platforms} 最多可能需要一小时。",
   "{platform} build didn’t start": "{platform} 构建未开始",
   "Checking the archive": "正在检查压缩包",
   Packing: "正在打包",
@@ -6142,4 +6148,25 @@ export default {
   "Installing… {percent}% · {speed} · about {minutes} min left":
     "正在安装… {percent}% · {speed} · 剩余约 {minutes} 分钟",
   "Installing… {percent}% · {speed} · under a minute left": "正在安装… {percent}% · {speed} · 剩余不到 1 分钟",
+  "This plugin stopped several times in a row, so it starts again in {seconds, plural, one {# second} other {# seconds}}. Try again then.":
+    "这个插件连续停止了好几次，所以会在 {seconds, plural, other {# 秒}}后重新启动。到时候再试一次吧。",
+  "Add Genex to {name}?": "把 Genex 添加到 {name}？",
+  "Another Genex game builds in this project too, so it stays where it is.":
+    "还有一个 Genex 游戏也在这个项目里制作，所以它留在原处。",
+  "Exported. Play it in Live's Web game tab, or publish it.": "已导出。在实时的“网页游戏”标签里游玩，或者发布它。",
+  "Genex moves its folder from {from} to {to}. Rewind and Loops reach it there.":
+    "Genex 会把它的文件夹从 {from} 移到 {to}。在那里回退和 Loop 都能用到它。",
+  "Genex moves its folder from {from} to {to}. Rewind, Loops and Publish reach it there.":
+    "Genex 会把它的文件夹从 {from} 移到 {to}。在那里回退、Loop 和发布都能用到它。",
+  "Move {name} into this game?": "把 {name} 移到这个游戏里？",
+  "Only the project this game builds in can move into it.": "只有这个游戏所用的项目才能移进来。",
+  "Quit Godot first: a project can't move while it is open.": "请先退出 Godot：打开着的项目无法移动。",
+  "Quit Unreal first: a project can't move while it is open.": "请先退出 Unreal：打开着的项目无法移动。",
+  "Remove Genex from {name}?": "从 {name} 移除 Genex？",
+  "This game already has a godot folder.": "这个游戏已经有 godot 文件夹了。",
+  "This game already has an unreal folder.": "这个游戏已经有 unreal 文件夹了。",
+  "This project is already in this game's folder.": "这个项目已经在这个游戏的文件夹里了。",
+  "This project is on another disk, so Genex leaves it there.": "这个项目在另一个磁盘上，所以 Genex 让它留在那里。",
+  "This project's folder holds other things too, so Genex leaves it where it is.":
+    "这个项目的文件夹里还有别的东西，所以 Genex 让它留在原处。",
 } satisfies LocaleCatalog;

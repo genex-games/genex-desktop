@@ -1,7 +1,7 @@
 {
   "apiVersion": 3,
   "id": "unreal",
-  "version": "0.56.2",
+  "version": "0.56.5",
   "icon": "icon.svg",
   "name": "Unreal Engine",
   "publisher": "Genex",
@@ -277,7 +277,7 @@
       "name": "package-game",
       "jobStatus": "package-status",
       "facts": ["unreal-project"],
-      "description": "Package this Unreal game as the app its players install: a Mac app on a Mac; on Windows, a Windows program, or a Linux one with system: \"linux\" (Unreal makes no Mac app off a Mac and no Windows app off Windows). A Linux package needs Epic's free Linux cross-compile toolchain for this Unreal: without it the call refuses with the installer's link, which you give the user, then package again once they ran it. system: \"web\" makes the game's web version instead (Unreal 5.9's web platform), on a Mac or Windows: the whole site, made the game's web/ folder, where Publish and Live find it. It needs an Unreal whose install includes the web platform, the game's C++ module (add-cpp-module) and emscripten in exactly the version that Unreal names, in an emsdk folder the user installs; each one missing refuses the call with what to do, and so does a web/ folder that holds other files. Genex saves the open work in Unreal first (Unreal stays open), then runs Epic's BuildCookRun (Shipping) in the background into unreal/Builds/Mac/, unreal/Builds/Windows/ or unreal/Builds/Linux/, where Publish finds it. One package runs at a time per game. A first package compiles every shader and takes minutes. Answers {started, system} at once; Genex starts this chat's next turn once it has ended, so you may end your turn meanwhile; package-status (with the same system) says how it went. stop: true ends a running package.",
+      "description": "Package this Unreal game as the app its players install: a Mac app on a Mac; on Windows, a Windows program, or a Linux one with system: \"linux\" (Unreal makes no Mac app off a Mac and no Windows app off Windows). A Linux package needs Epic's free Linux cross-compile toolchain for this Unreal: without it the call refuses with the installer's link, which you give the user, then package again once they ran it. system: \"web\" makes the game's web version instead (Unreal 5.9's web platform), on a Mac or Windows: the whole site, made the game's web/ folder, where Publish and Live find it. It needs an Unreal whose install includes the web platform, the game's C++ module (add-cpp-module) and emscripten in exactly the version that Unreal names, in an emsdk folder the user installs; each one missing refuses the call with what to do, and so does a web/ folder that holds other files. A web build's content comes split into files of about 250 MB at most (one asset larger than that stays whole), because Genex's hosting caps a file's size: Genex adds bGenerateChunks and MaxChunkSize to the project's Config/Wasm/WasmGame.ini, each where that file doesn't set it; what Config/DefaultGame.ini says for every platform doesn't count for the web build, so a project that wants another split sets it in WasmGame.ini. In such a build a PakFileRules section that leaves content out works only with bOverrideChunkManifest=true. The page waits for a click before the game starts and draws sharp on Retina screens (Genex adds StartMode=Click and MaxDevicePixelRatio=2.0 under [/Script/WasmTargetPlatform.WasmTargetSettings] in Config/DefaultEngine.ini, each where the project doesn't set it; a game too heavy to draw at 2x sets a lower MaxDevicePixelRatio there). The page's title and loading cover show the Unreal project's name unless that section sets PageTitle: set it to the game's title before packaging. Genex saves the open work in Unreal first (Unreal stays open), then runs Epic's BuildCookRun (Shipping) in the background into unreal/Builds/Mac/, unreal/Builds/Windows/ or unreal/Builds/Linux/, where Publish finds it. One package runs at a time per game. A first package compiles every shader and takes minutes. Answers {started, system} at once; Genex starts this chat's next turn once it has ended, so you may end your turn meanwhile; package-status (with the same system) says how it went. stop: true ends a running package.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -296,7 +296,7 @@
     {
       "name": "package-status",
       "facts": ["unreal-project"],
-      "description": "How this game's package for a system stands (system: \"linux\" for a Linux package on Windows, \"web\" for the web version; this computer's own system when left out): running, done (with the app's path inside the game and how long it took), failed (with its first error lines) or stopped; idle names an app already in that system's build folder.",
+      "description": "How this game's package for a system stands (system: \"linux\" for a Linux package on Windows, \"web\" for the web version; this computer's own system when left out): running, done (with the app's path inside the game and how long it took), failed (with its first error lines) or stopped; idle names an app already in that system's build folder. A web build's line also says what of it is past Genex hosting's usual limits (a file over 500 MB, a site over 2,048 MB or of more than 200 files): make the web build smaller and package again before Publish.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -732,6 +732,13 @@
       "file": "skills/unreal-multiplayer.md"
     },
     {
+      "name": "unreal-web",
+      "facts": ["unreal-project"],
+      "tools": ["package-game", "package-status"],
+      "summary": "What this Unreal game needs changed before its web version (package-game with system: \"web\") builds and looks right in a browser: web-only settings, what a browser can't run (sockets, video, online play), the renderers it gets (no Lumen in a Mac's browser) and how to keep the site small.",
+      "file": "skills/unreal-web.md"
+    },
+    {
       "name": "unreal-plugin",
       "facts": ["unreal-plugin"],
       "tools": ["plugin-build", "plugin-test", "plugin-package", "plugin-status"],
@@ -744,7 +751,8 @@
       "id": "setup",
       "title": "Unreal",
       "file": "panel.html",
-      "placement": "settings"
+      "placement": "settings",
+      "width": "narrow"
     }
   ],
   "settings": [],
@@ -755,8 +763,8 @@
     },
     {
       "name": "setup",
-      "label": "Set up project",
-      "confirmation": "Set up this Unreal project for Genex: turn on Epic's MCP plugins and toolsets in its .uproject, start the MCP server on the project's own port when it opens, and add the Genex editor helper to its Plugins folder. Genex keeps a copy of each file first."
+      "label": "Add Genex",
+      "confirmation": "Add Genex to this Unreal project: turn on Epic's MCP plugins and toolsets in its .uproject, start the MCP server on the project's own port when it opens, and add the Genex editor helper to its Plugins folder. Genex keeps a copy of each file first."
     },
     {
       "name": "templates",
@@ -802,7 +810,7 @@
     },
     {
       "name": "undo-setup",
-      "label": "Undo setup",
+      "label": "Remove Genex",
       "confirmation": "Take back what Genex added to this Unreal project: its plugin entries, the MCP server start-up lines and the Genex editor helper. Anything else you changed stays."
     },
     {
@@ -813,6 +821,12 @@
     {
       "name": "move-later",
       "label": "Not now"
+    },
+    {
+      "name": "move-into-game",
+      "label": "Move into game",
+      "confirmation": "Move this Unreal project's folder into this game's folder, as unreal/, where Rewind, Loops and Publish reach it. Nothing is copied or replaced.",
+      "native": true
     },
     {
       "name": "use-project",

@@ -1,7 +1,7 @@
 {
   "apiVersion": 3,
   "id": "unity",
-  "version": "0.8.5",
+  "version": "0.8.6",
   "icon": "icon.svg",
   "name": "Unity",
   "publisher": "Genex",
@@ -62,7 +62,7 @@
         "type": "object",
         "properties": {}
       },
-      "confirmation": "Set this Unity project up for Genex: add Unity's Pipeline package to its Packages/manifest.json, which lets agents work in its open editor, and open the project in Unity. Genex keeps a copy of the manifest first."
+      "confirmation": "Add Genex to this Unity project: add Unity's Pipeline package to its Packages/manifest.json, which lets agents work in its open editor, and open the project in Unity. Genex keeps a copy of the manifest first."
     },
     {
       "name": "undo-setup",
@@ -314,7 +314,7 @@
       "status": "toolbar-status"
     }
   ],
-  "panels": [{ "id": "editor", "title": "Unity", "file": "panel.html", "placement": "settings" }],
+  "panels": [{ "id": "editor", "title": "Unity", "file": "panel.html", "placement": "settings", "width": "narrow" }],
   "settings": [
     {
       "key": "close-idle-editor",
@@ -329,13 +329,13 @@
     { "name": "open-editor", "label": "Open in Unity", "native": true },
     {
       "name": "setup",
-      "label": "Set up project",
+      "label": "Add Genex",
       "native": true,
-      "confirmation": "Set this Unity project up for Genex: add Unity's Pipeline package to its Packages/manifest.json, which lets agents work in its open editor, and open the project in Unity. Genex keeps a copy of the manifest first."
+      "confirmation": "Add Genex to this Unity project: add Unity's Pipeline package to its Packages/manifest.json, which lets agents work in its open editor, and open the project in Unity. Genex keeps a copy of the manifest first."
     },
     {
       "name": "undo-setup",
-      "label": "Undo setup",
+      "label": "Remove Genex",
       "native": true,
       "confirmation": "Take back what Genex added to this Unity project: the Pipeline package's line in its Packages/manifest.json. Anything else you changed stays, and agents can no longer reach its editor."
     },

@@ -1424,8 +1424,6 @@ export default {
   "Export target must be an ordinary directory": "O destino da exportação precisa ser uma pasta comum",
   "Export validation does not yet support scoped import maps; build this project before export":
     "A validação da exportação ainda não suporta scoped import maps; crie o build deste projeto antes de exportar",
-  "Exported for the web into web/: Live's Web game tab plays it, and Publish puts it online.":
-    "Exportado para a web em web/: a aba Jogo web do Live roda o jogo, e Publicar coloca ele online.",
   "Exported {count} public files. Included: {included}. Excluded from selected roots: {excluded}.":
     "{count} arquivos públicos exportados. Incluídos: {included}. Excluídos das pastas raiz escolhidas: {excluded}.",
   "Exporting…": "Exportando…",
@@ -3415,7 +3413,6 @@ export default {
   "Set up the protected workspace": "Configure o espaço de trabalho protegido",
   "Set up this game's Unity project": "Configure o projeto do Unity deste jogo",
   "Set up {name} for Genex.": "Configurar {name} para o Genex.",
-  "Set up {name} for Genex?": "Configurar {name} para o Genex?",
   "Set up {project} after it ends.": "Configure {project} depois que o Loop terminar.",
   "Set up {project} for Genex · {game} now builds in {engine}":
     "{project} configurado para o Genex · {game} agora é criado no {engine}",
@@ -4360,7 +4357,6 @@ export default {
   "Undid {count, plural, one {# try} other {# tries}} before it":
     "Antes, {count, plural, one {# tentativa foi desfeita} other {# tentativas foram desfeitas}}",
   Undo: "Desfazer",
-  "Undo setup for {name}?": "Desfazer a configuração de {name}?",
   "Undo this change": "Desfazer esta mudança",
   Undone: "Desfeito",
   "Undone because {reason}.": "Desfeito porque {reason}.",
@@ -6405,7 +6401,6 @@ export default {
   "Nothing went public. After the fix, it publishes by itself and Genex checks it again.":
     "Nada foi publicado. Depois da correção, ele é publicado sozinho e a Genex verifica de novo.",
   "Open a game": "Abra um jogo",
-  "Open on Genex": "Abrir na Genex",
   "Players keep the version they have. After the fix, it publishes by itself and Genex checks it again.":
     "Os jogadores continuam com a versão que têm. Depois da correção, ele é publicado sozinho e a Genex verifica de novo.",
   "Players keep the {date} version.": "Os jogadores continuam com a versão de {date}.",
@@ -6506,37 +6501,52 @@ export default {
     "O Genex não conseguiu criar o app de {players} de “{title}”. Corrija estes erros no código do jogo para ele ser criado lá, e mantenha o jogo funcionando como nos outros sistemas. Este computador não cria para {players}, então confira bem cada correção. Depois me diga para apertar Build on Genex de novo.\n\n{errors}",
   "The same project fails the same way: change it first, then try again.":
     "O mesmo projeto falha do mesmo jeito: mude ele primeiro e tente de novo.",
-  "Build {count} apps": "Gerar {count} apps",
-  "Build {platforms}": "Gerar {platforms}",
-  "Building on Genex Cloud": "Gerando no Genex Cloud",
-  "Building on this Mac": "Gerando neste Mac",
-  "Building on this PC": "Gerando neste PC",
-  "Building {platforms}": "Gerando {platforms}",
+  "Build on Genex Cloud": "Gerar no Genex Cloud",
+  "Build on Mac": "Gerar no Mac",
+  "Build on PC": "Gerar no PC",
+  "Builds after {platform}": "Gera depois de {platform}",
+  "Builds {platforms} again, then updates {count, plural, one {it} other {them}} by itself.":
+    "Gera {platforms} de novo e depois {count, plural, one {atualiza} other {atualiza todas}} sozinho.",
+  "Builds {platforms} first. {slow} can take up to an hour.":
+    "Primeiro gera {platforms}. {slow} pode levar até uma hora.",
+  "Builds {platforms} too. {slow} can take up to an hour.": "Também gera {platforms}. {slow} pode levar até uma hora.",
+  "Builds {platforms}, then publishes {count, plural, one {it} other {them}} by itself.":
+    "Gera {platforms} e depois {count, plural, one {publica} other {publica todas}} sozinho.",
+  "Builds {platform} first. It can take up to an hour.": "Primeiro gera {platform}. Pode levar até uma hora.",
+  "Builds {platform} too. It can take up to an hour.": "Também gera {platform}. Pode levar até uma hora.",
+  "Each one goes live as soon as it’s ready. You can close this window.":
+    "Cada uma vai ao ar assim que fica pronta. Pode fechar esta janela.",
+  "More for {platform}": "Mais opções de {platform}",
+  "On Genex Cloud": "No Genex Cloud",
+  "On this PC": "Neste PC",
+  "Publish to all platforms": "Publicar em todas as plataformas",
+  "Publishes {now} now, {later} once {count, plural, one {it is} other {they are}} built.":
+    "Publica {now} agora e {later} quando {count, plural, one {ficar pronta} other {ficarem prontas}}.",
+  "Publishes {platforms} once {count, plural, one {it is} other {they are}} built.":
+    "Publica {platforms} quando {count, plural, one {ficar pronta} other {ficarem prontas}}.",
+  "Publishing to all platforms · {live} of {count} live":
+    "Publicando em todas as plataformas · {live} de {count} no ar",
+  "Update all platforms": "Atualizar todas as plataformas",
+  "Updates {now} now, {later} once {count, plural, one {it is} other {they are}} built.":
+    "Atualiza {now} agora e {later} quando {count, plural, one {ficar pronta} other {ficarem prontas}}.",
+  "Updates {platforms} once {count, plural, one {it is} other {they are}} built.":
+    "Atualiza {platforms} quando {count, plural, one {ficar pronta} other {ficarem prontas}}.",
+  Updating: "Atualização",
+  "Updating all platforms · {done} of {count} updated":
+    "Atualizando todas as plataformas · {done} de {count} atualizadas",
+  "{hours}h {minutes}m left": "faltam {hours} h {minutes} min",
+  "{minutes}m left": "faltam {minutes} min",
   "Couldn’t build": "Não deu para gerar",
   "Couldn’t build · the older one is still live": "Não deu para gerar · a anterior continua no ar",
   "Couldn’t send": "Não deu para enviar",
-  "It can take up to an hour.": "Pode levar até uma hora.",
   "Live · older than your game": "No ar · mais antiga que o seu jogo",
   "Live · up to date": "No ar · atualizada",
   "Only a Mac, Windows or Linux app can be taken off Genex this way.":
     "Assim só dá para tirar do Genex um app de Mac, Windows ou Linux.",
-  "Publish to {count} platforms": "Publicar em {count} plataformas",
-  "Publish to {name}": "Publicar em {name}",
-  "Publish to {platforms}": "Publicar em {platforms}",
-  "Publish to {platforms} and take {down} down": "Publicar em {platforms} e tirar {down}",
-  "Publishing to {platforms}": "Publicando em {platforms}",
   "Sending to Genex": "Enviando para o Genex",
   "Sending to Genex Cloud": "Enviando para o Genex Cloud",
   "Take {platforms} down": "Tirar {platforms}",
-  "Update {count} platforms": "Atualizar {count} plataformas",
-  "Update {platforms}": "Atualizar {platforms}",
-  "Update {platforms} and take {down} down": "Atualizar {platforms} e tirar {down}",
-  "Updating {platforms}": "Atualizando {platforms}",
-  "builds on Genex Cloud": "gera no Genex Cloud",
-  "builds on this Mac": "gera neste Mac",
-  "builds on this PC": "gera neste PC",
   "coming soon": "em breve",
-  web: "web",
   "{minutes} min ago": "há {minutes} min",
   "Agent is fixing the {platform} build": "O agente está corrigindo a versão de {platform}",
   "Copy the error": "Copiar o erro",
@@ -6560,7 +6570,6 @@ export default {
   "Not built": "Não gerada",
   "Built · older than your game": "Gerada · mais antiga que o seu jogo",
   "Ready to publish": "Pronta para publicar",
-  "{platforms} can take up to an hour.": "{platforms} pode levar até uma hora.",
   "{platform} build didn’t start": "A geração de {platform} não começou",
   "Checking the archive": "Conferindo o arquivo",
   Packing: "Empacotando",
@@ -6580,4 +6589,29 @@ export default {
     "Instalando… {percent}% · {speed} · faltam uns {minutes} min",
   "Installing… {percent}% · {speed} · under a minute left":
     "Instalando… {percent}% · {speed} · falta menos de um minuto",
+  "This plugin stopped several times in a row, so it starts again in {seconds, plural, one {# second} other {# seconds}}. Try again then.":
+    "Este plugin parou várias vezes seguidas, então ele volta a iniciar em {seconds, plural, one {# segundo} other {# segundos}}. Tente de novo depois disso.",
+  "Add Genex to {name}?": "Adicionar o Genex a {name}?",
+  "Another Genex game builds in this project too, so it stays where it is.":
+    "Outro jogo do Genex também é criado neste projeto, então ele fica onde está.",
+  "Exported. Play it in Live's Web game tab, or publish it.": "Exportado. Jogue na aba Jogo web do Live ou publique.",
+  "Genex moves its folder from {from} to {to}. Rewind and Loops reach it there.":
+    "O Genex move a pasta de {from} para {to}. Lá Voltar e Loop alcançam.",
+  "Genex moves its folder from {from} to {to}. Rewind, Loops and Publish reach it there.":
+    "O Genex move a pasta de {from} para {to}. Lá Voltar, Loop e Publicar alcançam.",
+  "Move {name} into this game?": "Mover {name} para este jogo?",
+  "Only the project this game builds in can move into it.":
+    "Só o projeto em que este jogo é criado pode ser movido para ele.",
+  "Quit Godot first: a project can't move while it is open.":
+    "Feche o Godot primeiro: um projeto aberto não pode ser movido.",
+  "Quit Unreal first: a project can't move while it is open.":
+    "Feche o Unreal primeiro: um projeto aberto não pode ser movido.",
+  "Remove Genex from {name}?": "Remover o Genex de {name}?",
+  "This game already has a godot folder.": "Este jogo já tem uma pasta godot.",
+  "This game already has an unreal folder.": "Este jogo já tem uma pasta unreal.",
+  "This project is already in this game's folder.": "Este projeto já está na pasta deste jogo.",
+  "This project is on another disk, so Genex leaves it there.":
+    "Este projeto está em outro disco, então o Genex deixa ele lá.",
+  "This project's folder holds other things too, so Genex leaves it where it is.":
+    "A pasta deste projeto tem outras coisas, então o Genex deixa onde está.",
 } satisfies LocaleCatalog;

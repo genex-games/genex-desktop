@@ -135,8 +135,58 @@ Three options on `connectAuthority` change this, and most games need none:
 | `regionRule` | `'players'` | `'nearest'` joins the nearest region only, whoever is elsewhere. |
 | `region` | none | A region the player picked by name (`'asia'`, `'eu'`, `'us'`): only it is joined. Offer it as a setting when players ask to choose. |
 
-`session.url` is the server the player landed on. Two players who start at the same moment in two empty
-regions each open their own room; the next player to join either finds one of them.
+A player who ends up alone keeps looking. Two players who start at the same moment in two regions each
+open a room; within a few seconds one of them is moved into the other's room. The session object stays
+the same and fires `rejoined` with `moved: true`: the room is a new one, so redraw from its state and
+say so ("Found players, joining their room"). `regroup: false` keeps a player where they are; use it
+when a player alone still has something to lose, such as a run against the room's own enemies.
+
+### A region picker
+
+Most games need none: Auto finds the players. Add one when players ask to choose, or when ping matters
+more than company. It is a setting, not a screen before every match.
+
+```ts
+import { authorityRegionOf, connectAuthority, measureAuthorityRegions } from '@genex-ai/multiplayer/authority';
+
+const regions = getAuthorityRegions();
+const NAMES: Record<string, string> = { asia: 'Asia', eu: 'Europe', us: 'North America' };
+
+// In settings: Auto first, then each region with its ping. No join is made.
+const pings = await measureAuthorityRegions(regions); // [{ region: 'asia', pingMs: 38 }, …] in list order
+const rows = [{ value: '', label: 'Auto (recommended)' }, ...pings.map((p) => ({
+  value: p.region,
+  label: `${NAMES[p.region] ?? p.region} · ${p.pingMs === null ? 'no answer' : `${Math.round(p.pingMs)} ms`}`,
+}))];
+
+// The choice is the player's: keep it, and pass it on the next join. '' is Auto.
+const picked = localStorage.getItem('genex-region') ?? '';
+const session = await connectAuthority({
+  urls: getAuthorityUrls(), regions, room: GENEX.slug, auth: () => getColyseusAuth(),
+  ...(picked === '' ? {} : { region: picked }),
+});
+
+// Show where the player is, and say when they were moved.
+const here = authorityRegionOf(regions, session.url); // 'asia' | 'eu' | 'us' | undefined
+session.on('rejoined', (info) => { if (info.moved) showToast('Found players, joining their room'); });
+```
+
+- A picked region is the only one joined: no search and no move. Say what that costs beside the
+  choice ("Only players in Europe"), and keep Auto the default.
+- Measure when the settings open, not on every frame; show the number the player will feel.
+- A change applies to the next join. Offer "Find a new match" rather than moving a player mid-match.
+
+### Playing with a friend
+
+A room's code brings a friend into it from any region. Show `session.code` with a copy button; the
+friend enters it and joins by it. A private room is one nobody else can find:
+
+```ts
+const mine = await createPrivateAuthority(options);            // a room only a code opens
+const theirs = await joinPrivateAuthority(code, options);      // any room by its code, pool or private
+```
+
+A code that names no room is refused; show "That room is gone" and offer a new one.
 
 ## The fast channel (`fast@1`)
 

@@ -304,6 +304,17 @@ test("parallel first calls share one backend activation", async () => {
 
 const manifestOf = async () =>
   JSON.parse(await readFile(path.join(source, "plugin.json"), "utf8")) as PluginManifest & Record<string, unknown>;
+test("a panel may ask for Studio's narrow dialog; any other width is refused, and none stays unset", async () => {
+  const manifest = await manifestOf();
+  const [panel] = manifest.panels;
+  assert.ok(panel, "the fixture declares a panel");
+  assert.deepEqual(validateManifest({ ...manifest, panels: [{ ...panel, width: "narrow" }] }).panels, [
+    { ...panel, width: "narrow" },
+  ]);
+  assert.deepEqual(validateManifest({ ...manifest, panels: [panel] }).panels, [panel]);
+  for (const width of ["wide", "", 480, null, true])
+    assert.throws(() => validateManifest({ ...manifest, panels: [{ ...panel, width }] }), /Invalid panel/);
+});
 test("validateManifest returns a canonical manifest in fixed key order and drops unknown top-level keys", async () => {
   const manifest = await manifestOf();
   const shuffled = {

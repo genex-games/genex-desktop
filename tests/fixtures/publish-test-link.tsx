@@ -2,11 +2,14 @@
  * Test-owned production Publish dialog over a fake `window.studio`: the test link shows only while
  * it holds a build players do not have, the public link is labelled after the main press, and the
  * main press still publishes exactly as before (one `genexPublish` call with the game and its name).
+ * The public link's Open closes the dialog onto the game's page in Play; a game on another Genex
+ * goes to the browser through the plugin's `publish-open`, and the dialog stays.
  */
 import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
 import manifest from "../../src/plugins/genex/plugin.json" with { type: "json" };
 import { GenexPublishDialog } from "../../src/renderer/panels/plugins/genex/GenexPublish.tsx";
+import { OPEN_PLAY_EVENT } from "../../src/renderer/play/open-play.ts";
 import { studio } from "../../src/renderer/state/studio.ts";
 import type { GameProject } from "../../src/shared/game-project.ts";
 import { GenexAction, type GenexPublishState } from "../../src/shared/genex.ts";
@@ -47,6 +50,8 @@ const SCENARIOS: Record<string, GenexPublishState> = {
     readyDraft: draft("2026-10-16T09:59:00.000Z"),
     job: { ...done, kind: "gallery", expectedStagingRevision: "r2" },
   },
+  /** Live on another Genex (a development stand's), whose page this app's Play cannot show. */
+  elsewhere: { ...base, ...live, galleryUrl: `https://dev.genex.games/${GAME}` },
 };
 
 let scenario: GenexPublishState = SCENARIOS.fresh;
@@ -96,13 +101,33 @@ function sample() {
   };
 }
 
+let closed = 0;
+let playAsked = 0;
+window.addEventListener(OPEN_PLAY_EVENT, () => {
+  playAsked += 1;
+});
+
+/** Press the public link's Open: its mark, what Play shows then, and what closed, came up or went to the browser. */
+async function openPublic() {
+  const button = document.querySelector<HTMLButtonElement>("[data-public] [data-genex-publish-open]");
+  if (!button) throw new Error("No Open on the public link");
+  const leaves = button.querySelector("svg")?.getAttribute("data-icon") ?? null;
+  button.click();
+  await settle();
+  const toBrowser = fake.callsOf("pluginAction").filter(([, name]) => name === GenexAction.PublishOpen).length;
+  return { leaves, view: studio().play.getState().view, closed, playAsked, toBrowser };
+}
+
 /** Open the dialog with the plugin answering `name`, for a multiplayer game or not. */
 async function open(name: string, options: { multiplayer?: boolean } = {}) {
   scenario = SCENARIOS[name] ?? SCENARIOS.fresh;
   setGame(options.multiplayer === true);
   flushSync(() => root.render(null));
   await settle(2);
-  flushSync(() => root.render(<GenexPublishDialog plugin={genex} project={GAME} onClose={() => {}} />));
+  const onClose = () => {
+    closed += 1;
+  };
+  flushSync(() => root.render(<GenexPublishDialog plugin={genex} project={GAME} onClose={onClose} />));
   for (let i = 0; i < 100 && !document.querySelector("[data-genex-publish-status]"); i++) await frame();
   await settle();
   return sample();
@@ -117,4 +142,4 @@ async function press() {
   return sample();
 }
 
-Object.assign(window, { testLink: { open, press, sample } });
+Object.assign(window, { testLink: { open, press, sample, openPublic } });

@@ -2571,11 +2571,18 @@ export class StudioCore {
     await assertOwnedProject(this.options.executionPolicy?.allowedProjectRoot, projectDir);
   }
 
-  /** The files a public copy of `project` holds now: exported into scratch, listed and removed. */
+  /**
+   * The files a public copy of `project` holds now. They are listed where they are, with nothing
+   * copied; only a game that carries the vendored library is exported into scratch, listed and removed.
+   */
   async publicCopyFiles(project: string): Promise<ExportReview> {
+    const output = await this.#publicOutput(project);
+    const options = { secretValues: this.knownSecretValues() };
+    const listed = await this.games.exportListing(project, output, options);
+    if (listed) return sortedReview(listed);
     const target = path.join(this.layout.scratch, "publish-review", shortId("export"));
     try {
-      return sortedReview(await this.exportPublicCopy(project, target));
+      return sortedReview(await this.games.export(project, target, output, options));
     } finally {
       await rm(target, { recursive: true, force: true });
     }
@@ -2604,17 +2611,24 @@ export class StudioCore {
    * by the same audited exporter the Export button uses. Plugins reach it as `export.stage`.
    */
   async exportPublicCopy(project: string, targetDir: string): Promise<ExportResult> {
+    const output = await this.#publicOutput(project);
+    return this.games.export(project, targetDir, output, { secretValues: this.knownSecretValues() });
+  }
+
+  /**
+   * The folder `project`'s public copy is made from when that is not the game's own: an engine's
+   * web export, or what its build puts out, built now when its shape builds.
+   */
+  async #publicOutput(project: string): Promise<string | undefined> {
     const game = (await this.games.list()).find((g) => g.name === project);
     if (!game) throw new CodedError(WorkspaceRefusal.GameNotFound, MESSAGE.gameNotFound());
     // A game whose web game is in a folder of it (an engine's web export) publishes that folder.
     const folder = webFolderOf(game);
-    let output: string | undefined = folder ? path.join(game.dir, folder) : undefined;
-    if (!folder && game.shape?.build) {
-      const built = await this.builds.ensure({ project: game.name, dir: game.dir, shape: game.shape });
-      if (!built.ok || !built.output) throw new CodedError(ExportRefusal.BuildFailed, MESSAGE.exportBuildFailed());
-      output = built.output;
-    }
-    return this.games.export(project, targetDir, output, { secretValues: this.knownSecretValues() });
+    if (folder) return path.join(game.dir, folder);
+    if (!game.shape?.build) return undefined;
+    const built = await this.builds.ensure({ project: game.name, dir: game.dir, shape: game.shape });
+    if (!built.ok || !built.output) throw new CodedError(ExportRefusal.BuildFailed, MESSAGE.exportBuildFailed());
+    return built.output;
   }
 
   async #setGameCoverShader(

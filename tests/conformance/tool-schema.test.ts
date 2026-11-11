@@ -1,3 +1,4 @@
+import { piContext } from "../../src/substrate/engines/pi-completions.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { z } from "zod";
@@ -86,4 +87,30 @@ test("a tool name an engine would refuse is sanitised, and never becomes empty",
   assert.equal(exposedToolName("plain_tool-1"), "plain_tool-1");
   assert.equal(exposedToolName("..."), "tool");
   assert.equal(exposedToolName("x".repeat(80)).length, 48);
+});
+
+test("piContext drops acceptJsonString from tool parameter schemas", () => {
+  const context = piContext({
+    systemPrompt: "sys",
+    messages: [{ role: "user", content: "hello" }],
+    tools: [
+      {
+        name: "test_tool",
+        description: "A test tool",
+        parameters: {
+          type: "object",
+          acceptJsonString: true,
+          properties: {
+            code: { type: "string", acceptJsonString: false },
+          },
+        },
+      },
+    ],
+  });
+  const tool = (context.tools as Array<{ name: string; parameters: Record<string, unknown> }>)?.[0];
+  assert.equal(tool?.name, "test_tool");
+  assert.equal("acceptJsonString" in (tool?.parameters ?? {}), false);
+  const props = tool?.parameters?.properties as Record<string, unknown>;
+  assert.equal("acceptJsonString" in ((props?.code as Record<string, unknown>) ?? {}), false);
+  assert.equal((props?.code as Record<string, unknown>)?.type, "string");
 });

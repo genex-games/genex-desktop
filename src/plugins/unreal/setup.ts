@@ -15,7 +15,7 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import type { Dirent } from "node:fs";
-import { cp, lstat, readdir, readFile, realpath, rm, rmdir, statfs } from "node:fs/promises";
+import { cp, lstat, readdir, readFile, realpath, rename, rm, rmdir, statfs } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -1037,7 +1037,7 @@ async function assertProjectClosed(env: SetupEnv, project: Project, port: number
   if (open) throw new SetupError(SetupErrorCode.EditorRunning, MESSAGE.EditorRunning());
 }
 
-const recordFolder = (storage: string, project: Project) =>
+const recordFolder = (storage: string, project: Pick<Project, "file">) =>
   path.join(
     storage,
     SetupStorage.Folder,
@@ -1544,6 +1544,22 @@ async function restoreSettings(project: Project, record: SetupRecord, env: Setup
   const madeBySetup = record.ini?.fileExisted === false && withoutSection.trim() === "";
   if (madeBySetup) await rm(settingsFile, { force: true });
   else if (withoutSection !== settings) await atomicWriteText(settingsFile, withoutSection);
+}
+
+/**
+ * Carries setup's record of a project whose folder moved (`from` and `to` are its real
+ * `.uproject` before and after): its port and the copies of what setup replaced follow it, so the
+ * bridge still finds the project and undo still takes setup back. An older record at `to`'s place
+ * is replaced. Nothing for a project that was never set up.
+ */
+export async function moveSetupRecord(from: string, to: string, storage: string): Promise<void> {
+  const old = recordFolder(storage, { file: from });
+  const record = await readRecord(old);
+  if (!record) return;
+  const moved = recordFolder(storage, { file: to });
+  await rm(moved, { recursive: true, force: true });
+  await rename(old, moved);
+  await atomicWriteJson(path.join(moved, SetupStorage.Record), { ...record, project: to });
 }
 
 /**

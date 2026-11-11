@@ -12,6 +12,7 @@ import { useEffect, useRef, useState } from "react";
 import type { PluginInfo, PluginPanelDocument } from "../../shared/plugins.ts";
 import { UiEvent } from "../../shared/ui-events.ts";
 import type { PluginReviewRequest } from "../plugin-actions.ts";
+import { useLibrary } from "../state/hooks.ts";
 import { type PanelHead, PanelSurface } from "./panel-bridge.ts";
 import { type PanelBridge, PanelMessage, openPanelBridge } from "./panel-host-bridge.ts";
 import { PluginApproval } from "./PluginApproval.tsx";
@@ -40,6 +41,8 @@ type BridgeDeps = {
   frame: RefObject<HTMLIFrameElement | null>;
   plugin: PluginInfo;
   project: string | null | undefined;
+  /** The open game's title, for the panel's context. */
+  title: string | null;
   surface: PanelSurface;
   onHead?: (head: PanelHead | null) => void;
   setReview: (update: (r: PluginReviewRequest | null) => PluginReviewRequest | null) => void;
@@ -51,9 +54,9 @@ type BridgeDeps = {
  * are read as they are at each request, without re-subscribing per change; another game or surface
  * cancels a review still waiting (it is the old game's) and tells the panel to read its context again.
  */
-function usePanelBridge({ frame, plugin, project, surface, onHead, setReview, setHeight }: BridgeDeps): void {
-  const now = useRef({ plugin, project, surface, onHead });
-  now.current = { plugin, project, surface, onHead };
+function usePanelBridge({ frame, plugin, project, title, surface, onHead, setReview, setHeight }: BridgeDeps): void {
+  const now = useRef({ plugin, project, title, surface, onHead });
+  now.current = { plugin, project, title, surface, onHead };
   const bridge = useRef<PanelBridge | null>(null);
   const id = plugin.manifest.id;
   useEffect(() => {
@@ -61,6 +64,7 @@ function usePanelBridge({ frame, plugin, project, surface, onHead, setReview, se
       frame: () => frame.current?.contentWindow ?? null,
       plugin: () => now.current.plugin,
       project: () => now.current.project,
+      title: () => now.current.title,
       surface: () => now.current.surface,
       style: () => getComputedStyle(window.document.documentElement),
       review: (request) => setReview(() => request),
@@ -92,6 +96,13 @@ function usePanelBridge({ frame, plugin, project, surface, onHead, setReview, se
     setReview(cancelReview);
     bridge.current?.contextChanged();
   }, [project, surface, setReview]);
+  // The game was renamed under the open panel: it reads its context again, and no review is the old game's.
+  const named = useRef(title);
+  useEffect(() => {
+    if (named.current === title) return;
+    named.current = title;
+    bridge.current?.contextChanged();
+  }, [title]);
 }
 
 export function PluginPanelHost({
@@ -107,7 +118,8 @@ export function PluginPanelHost({
   const [review, setReview] = useState<PluginReviewRequest | null>(null);
   // The panel's own height once it tells one: the frame grows with it, so its dialog scrolls once.
   const [height, setHeight] = useState<number | null>(null);
-  usePanelBridge({ frame, plugin, project, surface, onHead, setReview, setHeight });
+  const title = useLibrary((s) => s.games.find((game) => game.name === project)?.title ?? null);
+  usePanelBridge({ frame, plugin, project, title, surface, onHead, setReview, setHeight });
   useEffect(() => {
     if (!backRef) return;
     backRef.current = () => frame.current?.contentWindow?.postMessage({ type: PanelMessage.Back }, "*");

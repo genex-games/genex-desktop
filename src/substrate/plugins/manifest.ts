@@ -33,6 +33,7 @@ import {
   isToolbarIconName,
   PLUGIN_SKILL_TOOL,
   isPluginSetup,
+  PanelWidth,
   PLUGIN_SETUP_STEP_CHARS,
   PLUGIN_SETUP_STEPS,
   PLUGIN_TOOL_MAX_TIMEOUT_MS,
@@ -516,11 +517,13 @@ function validatePanels(m: PluginManifest): PluginManifest["panels"] {
       id.test(p.id) &&
       !names.has(p.id) &&
       isText(p.title, 1, LIMIT.LabelChars) &&
-      ["settings", "project"].includes(p.placement);
+      ["settings", "project"].includes(p.placement) &&
+      (p.width === undefined || p.width === PanelWidth.Narrow);
     if (!valid) throw new Error(MESSAGE.InvalidPanel);
     names.add(p.id);
     assertRelativePath(p.file);
-    return { id: p.id, title: p.title, file: p.file, placement: p.placement };
+    const panel = { id: p.id, title: p.title, file: p.file, placement: p.placement };
+    return p.width ? { ...panel, width: p.width } : panel;
   });
 }
 

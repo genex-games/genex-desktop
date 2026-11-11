@@ -164,7 +164,7 @@ and the Plugins page — no polling is needed for a change to show.
 | `tools[].host` | 3 | A program Studio runs for the tool instead of the backend; reserved for the bundled Genex plugin (see [First-party privileges](#first-party-privileges)) |
 | `tools[].facts`, `tools[].makes` | 3 | The facts of the games whose sessions get the tool, and (agent tools) the facts it makes in a game's folder; see [Scope by facts](#scope-by-facts) |
 | `skills[]` | 1 | Guidance for agents while the plugin is enabled: inline `{name, text}`, or (API 3) a file skill `{name, summary, file, references?}`, either (API 3) with `facts` (or the older `engines`) and `tools`; see [Skills](#skills) |
-| `panels[]` | 1 | `{id, title, file, placement: settings \| project}` isolated HTML panels |
+| `panels[]` | 1 | `{id, title, file, placement: settings \| project, width?: narrow}` isolated HTML panels; `narrow` opens it in the narrow dialog |
 | `settings[]` | 1 | `{key, label, type, default}` host-owned standard settings |
 | `actions[]` | 1 | `{name, label, confirmation?, native?}` UI-invoked backend actions; never agent tools. `native: true` marks an action that starts, quits or opens a desktop app or the browser, or writes outside the plugin's storage: a fixture profile refuses it in main before the backend runs (`unsupported-in-fixture`); any other value is refused. Sensitive names (`unlock`, `connect`, `disconnect`, `approve`, `allowance`, `enable-paid`, `publish-draft`, `publish-gallery`) must carry a `confirmation` |
 | `network` | 2 | `{hosts: string[]}` (at most 32 hostnames): the hosts the backend talks to, disclosed at install and checked by the static scan |
@@ -1071,12 +1071,19 @@ Types come from `lstat`, never from `readdir`, so Windows OneDrive placeholders 
 and folders while real links are still skipped or refused. There is no path box: **Choose a project
 file…** calls `studioPlugin.chooseFile({title, extensions: ["uproject"]})`.
 
-The panel groups what belongs together in outlined blocks: a quiet label above each, a rule between
-the rows inside, the actions in the block's foot. It opens on the shown project: its block holds the
-name, its place and where it stands (a dot and a word; Ready is the green dot alone, its word for
-screen readers and the tooltip), the step's words, the Engine it was made with and, in a game,
-whether Rewind and Loops reach it, then the step's buttons, **Change project** and ⋯ More; a second
-block, This computer, holds the engine, Xcode and the disk and memory notes. Change project opens
+The panel opens on the shown project as one list ([engine panels](../design/genex/README.md#engine-panels)):
+the head row holds the name, where it stands (a dot and a word, the engine's version beside it), the
+step's button and ⋯ (**Change project**, Remove Genex from this project, Quit Unreal; an action that
+can't run now is hidden and a line in the menu says why). Under it come only the rows that apply:
+the step's lead (Get Unreal, Xcode), Use in this game, the engine update, ray tracing, Xcode, and
+the Agents can use Unreal while you play switch. A game's project that lives outside the game's
+folder gets **This project is in another folder** with **Move into game** (action `move-into-game`,
+`move-into-game.ts` on `substrate/plugins/engine-move.ts`): with Unreal closed it renames the
+project's folder into the game's `unreal/` and links the game to it there. It is refused, changing
+nothing, when the project is open or used by a run, another game is linked to it, the folder holds
+the game, is another game's own folder or is no project folder, `unreal/` is taken, it sits on
+another disk, or the host can't say which Loops run; the row then shows that reason (status
+`moveInWhy`) and no button. A failed link moves the folder back. Change project opens
 "Choose a project" (in a web game with no Unreal project, "Make this game in Unreal") with Back: a
 New Unreal project row leads (in a web game: what was made for the web stays, and Undo in the chat
 switches back), then the projects on this computer with their count and, past six, a name filter.
@@ -1156,10 +1163,9 @@ Mac is made without it (`create-project.ts`, after Epic's own values), and the b
 queue, the computer's play and the helper's stills, strips and checks lift the background throttle on a
 Mac only for an editor that says `r.RayTracing` is 0 (`editor-throttle.ts`, `genex_build/shots.py`). Xcode
 is recommended to every Mac user, since without it Genex works in Blueprints only: status's `xcode`
-(`xcode.ts`) gives This computer an Xcode row, only under a shown project, that says to get
+(`xcode.ts`) gives the panel's list an Xcode row, only under a shown project, that says to get
 Xcode, to open it once to finish its setup, to run one Terminal command (with Copy) when another
-developer folder is selected, or the range the engine builds with (once ready, a ticked row with its
-version under the engine's): one too new
+developer folder is selected, or the range the engine builds with (once ready, no row): one too new
 (`tooNew`) is kept and an older one added from Apple's downloads, and a second installed Xcode in
 range is judged instead of the selected one. It warns
 about an engine mismatch and under 16 GB of memory, and about free disk below
@@ -1258,13 +1264,13 @@ with no Unreal running asks for it and keeps `engine-setup/move-offers/<game>` (
 card again; once the game moved the card closes and tells the agent nothing. `move-engine`
 (confirmed: what changes, then what keeps the game as it was) runs `moveProject`: the descriptor
 names the newer Unreal, toolsets it lacks go (the user's own kept in the record's `dropped`, so
-Undo setup puts them back) and its own come, the port and the helper stay, and the project is set
+Remove Genex puts them back) and its own come, the port and the helper stay, and the project is set
 up for it. The open game's own project gets a game snapshot first (`game.snapshot`), and a snapshot
 that fails stops the move; any other project keeps only setup's copy of the descriptor. It is
 refused, changing nothing, while that Unreal isn't installed and while Unreal has the project
 open. A moved game's C++ targets (`Source/*.Target.cs`) that name 5.8's build settings and include
 order get 5.9's (`retargetProject` in `cpp-module.ts`; the record's `engine.targets` names them, and
-Undo setup gives them back): 5.9 compiles the editor target with 5.8's settings, but its launcher
+Remove Genex gives them back): 5.9 compiles the editor target with 5.8's settings, but its launcher
 build refuses the game target, which every package needs. A target naming anything else stays, and
 none is written through a link.
 
@@ -1369,7 +1375,7 @@ other than a folder or file where one belongs, an unreadable or oversize setting
 running Studio refuses the whole step before anything is written. On a Mac the panel notes before
 Set up that macOS may ask to let Genex use the Documents folder, where Roblox keeps its plugins. The record
 `setup/record.json` lists each write with its bytes' hash or the switch value it replaced, and keeps
-a copy of a helper file that was there before; Undo Set up takes back only what still holds Genex's
+a copy of a helper file that was there before; Remove Genex (`undo-setup`) takes back only what still holds Genex's
 bytes, and the Plugins folder only when Genex made it and it is empty. The helper carries
 `GENEX_HELPER_VERSION`: an older or unmarked one is replaced, a newer one is kept, and at the same
 version the bytes decide (an earlier Genex's recorded write that isn't the shipped helper is
@@ -1439,7 +1445,7 @@ Restart Studio while Studio is open; Do it for me, or Restart Studio, while the 
 only signing in left it runs nothing and says so. The card offers it only then, never while Studio
 is being got; `doneSays` tells the agent once every row is ticked, so the chat goes on by itself,
 and `stuckSays` when Get Roblox Studio stopped by itself. Get Roblox Studio, Set up and Restart
-Studio ask on no card; Undo Set up, Add Luau checks, Quit Studio (as a tool) and publishing still do.
+Studio ask on no card; Remove Genex, Add Luau checks, Quit Studio (as a tool) and publishing still do.
 
 Its connection `studio` (connector `roblox-studio`; the plugin page names it "Roblox Studio",
 "Your open Roblox Studio, where agents build Roblox games.") is Studio's own MCP server passed through. The node bridge (`studio-mcp.ts`, run per game in
@@ -1967,6 +1973,13 @@ Its `PATH` is the user's login-shell PATH Studio resolves for builds (`toolchain
 own: an app started from the Finder has only `/usr/bin:/bin:/usr/sbin:/sbin`, where a backend
 finds none of the user's tools (Genex's publish found no Homebrew `git-lfs` there).
 
+A backend starts on its plugin's first call and, after it exited, again on the next one. One that
+keeps exiting waits first (`restart-pause.ts`): its second exit within a minute of the last asks a
+1 s pause, each further one doubles it, up to 30 s. A call during the pause is refused with
+`PluginRestartPaused` and starts nothing; turning the plugin on or loading a new copy starts the
+count again. Once Windows ends the session (`session-end`), no backend starts at all
+(`holdStarts`): it ends the backends then, and each call forked one that died at once.
+
 Available services are capability checked and scoped to the calling plugin:
 
 - `settings.read`: defaults plus host-owned settings; edits come from Studio's standard controls.
@@ -2126,8 +2139,12 @@ what a port replaced (`portedFrom` in `studio.json`, kept as the reference), and
 New game wrote that nothing has been built in yet (its `scaffoldStamp` still matching). A Unity or
 Godot game's web version in `web/` (`ENGINE_WEB_FOLDER`, `Web/` too) is listed as its web game even
 though a page at the root is above it; that root page is then left out when it is still the web
-starter's page nobody built on (its `index.html` and `src/main.js` are the template's), whether or
-not the port was recorded, and any other root page keeps its place (`withEngineWebVersion`). An
+starter's page nobody built on (its `index.html` and `src/main.js` are the template's), or when the
+page is gone, only `studio.json`'s record of the starter still makes the root a web game and the
+starter's `src/` holds nothing of anyone's (it is gone or empty, or `main.js` as it was made is all
+it holds, hidden files such as Finder's `.DS_Store` aside; `#nobodysPageAtRoot`: Publish would look for a root `index.html` in vain), whether or not
+the port was recorded, and any other root page, or code somebody wrote there, keeps its place
+(`withEngineWebVersion`). An
 Unreal game's `web/` counts the same way only while it holds the build Unreal staged for the web
 (the Unreal plugin's `detect` gives the folder `unreal-web-build` by the `wasm-manifest.json` Unreal
 writes at such a build's root; `exportsToWebFolder`), so a page of mockups in an Unreal game's
@@ -2840,8 +2857,10 @@ computer's paths taken out, and `jobRunning`; after a restart, idle with the app
 Linux package's starter `<Game>.sh`). On Windows the Publish dialog's Linux row of an Unreal game
 offers Make with agent (`appsMadeHere`).
 
-`system: "web"` makes the game's web version on either system (`web-build.ts`; not yet run against
-a real web-capable Unreal: no Mac install has the platform). It is refused, saving and running
+`system: "web"` makes the game's web version on either system (`web-build.ts`; the tool itself has
+not yet run against a real web-capable Unreal: no Mac install has the platform. Its BuildCookRun
+switches and split settings, with a larger chunk size, were run by hand on Windows with Unreal
+5.9.0 Preview, and that build published and plays). It is refused, saving and running
 nothing, unless the game's Unreal builds for the web (`engineBuildsWeb`: an installed engine's
 `[InstalledPlatforms]` in `BaseEngine.ini` lists a Shipping game for `Wasm` whose required file is
 there; an engine with no such list by its `Engine/Platforms/Wasm`), the game has its C++ module
@@ -2852,16 +2871,55 @@ from the registry, so one set after Genex started is seen), handed to RunUAT as 
 the first variable Unreal's build tool reads; neither Xcode nor Microsoft's tools are asked for. It
 is also refused while the game's `web/` holds anything but an earlier Unreal web build
 (`webFolderOf`: free, ours by `wasm-manifest.json`, or taken), which is never replaced. Before the
-run the project's `Config/DefaultEngine.ini` gets Epic's `bInjectIsolationHeaders=True`
-(`ensureWebIsolation`, only where the project doesn't say either way): Genex's hosts send no
-isolation headers, so the page's own service worker adds them. BuildCookRun adds `-platform=Wasm
--iostore -package -WasmNoBrotli`: Unreal's package step is the one that writes `wasm-manifest.json`
+run `ensureWebSettings` writes settings of Epic's into the project's own config. Its
+`Config/DefaultEngine.ini`, where Unreal's own Project Settings keep them, gets
+`bInjectIsolationHeaders=True`, `StartMode=Click` and `MaxDevicePixelRatio=2.0` under
+`[/Script/WasmTargetPlatform.WasmTargetSettings]` (each only where the project doesn't say either
+way, a line with one of Unreal's marks before the key included): Genex's hosts send no isolation
+headers, so the page's own service worker adds them; the page waits for a click before the game
+starts, since a browser lets a page play sound and take the mouse only after one; and the picture
+is drawn at up to two device pixels a CSS pixel, sharp on a Retina screen, where Unreal's default
+of one draws at half its sharpness (four times the pixels to draw: a game too heavy for it sets its
+own). The page's title and loading cover show the Unreal project's name unless the
+project sets `PageTitle` there; Genex does not write it (the title it keeps for a game can be an
+older one), and the tool's description tells the agent to.
+The web platform's own config, `Config/Wasm/WasmGame.ini`, which no Mac, Windows or Linux package
+reads, gets `bGenerateChunks=True` and `MaxChunkSize=262144000` under
+`[/Script/UnrealEd.ProjectPackagingSettings]` (each only where that file doesn't set the key):
+Unreal otherwise packs a game's whole content into one file (1.25 GB for the first game tried), and
+Genex's hosting takes no file over 500 MiB. Only the web's own file is asked: what
+`Config/DefaultGame.ini` says for every platform is for the project's other packages and is
+overridden for the web, which has to fit the host; a project that wants another split says so in
+`WasmGame.ini`. The size is half of the host's cap (`WEB_CHUNK_BYTES`), because Unreal measures a
+chunk as cooked data, before its container is packed, and shader code and padding come on top; the
+content then comes as `pakchunk0`, `pakchunk0_s1`, … each a `.pak`, `.ucas` and `.utoc`, and one
+asset larger than the size stays whole. With chunks, a `PakFileRules` section of the project's
+that leaves content out applies only with `bOverrideChunkManifest=true`. Both configs are read and
+checked before either is written or a folder is made, and written only as plain files in the
+project's own folders: a link or a file in a folder's or the config's place refuses the package
+with neither changed (`NoWebSettings`, naming `unreal/Config/` and the failure's code, never a path
+of the computer).
+BuildCookRun adds `-platform=Wasm
+-iostore -package -WasmNoBrotli -manifests`: Unreal's package step is the one that writes `wasm-manifest.json`
 (the page starts nothing without it) and moves the files no host may serve to
-`unreal/Builds/Wasm-Debug/`, and Genex's hosts serve each file as it is, so no `.br` copy is made
-beside it. The whole site is staged into `unreal/Builds/Wasm/`, which then becomes the game's
+`unreal/Builds/Wasm-Debug/`, Genex's hosts serve each file as it is, so no `.br` copy is made
+beside it, and only with `-manifests` does the cook write the chunk lists the split is made from.
+The whole site is staged into `unreal/Builds/Wasm/`, which then becomes the game's
 `web/` in one move (`placeWebBuild`), where Publish and Live find it; `package-status` names
-`web/index.html`. A stage with a page but no `wasm-manifest.json` fails the package and never
-becomes `web/`. `package-game`, `plugin-build`, `plugin-test`,
+`web/index.html`. Its line also says what of the finished site is past Genex hosting's usual
+limits, so that is known before an upload is tried (`siteExcess` against `HOST_LIMITS`: 500 MiB a
+file, 2 GiB a site, 200 files; an account's own limits can differ, and the upload decides): the
+largest file past the file limit by its path in the game with how many more files are past it,
+the site's whole size, its number of files. Such a build is still done and still the game's `web/`, and after a restart the idle status
+of the build in `web/` says the same. A stage with a page but no `wasm-manifest.json` fails the package and never
+becomes `web/`. What the game itself needs changed for a browser is the `unreal-web` skill, which
+the `unreal-editor` skill sends an agent to before a game's first web version: the web-only
+`Config/Wasm/` settings beside the ones Genex writes, what a browser build can't run (sockets and
+the online plugins, video, post-process materials that fail to translate, online play through
+`GenexMultiplayer`), the three renderers Unreal's page picks from (no Lumen in a Mac's browser) and
+how to make the site smaller. It records one real port on Unreal 5.9.0 Preview on Windows, built by
+hand with Epic's tools and not through `package-game`, and says where that port left a point
+unchecked. `package-game`, `plugin-build`, `plugin-test`,
 `plugin-package`, `add-cpp-module` and `add-motion-matching` name their status tool as `jobStatus`,
 and each status answers `jobRunning`, so the chat that started a job is woken when it ends. Publish
 then finds the app: `main/core/native-builds.ts` takes an Unreal Windows package's starter at its root as the whole
@@ -3134,9 +3192,9 @@ the online play) puts Genex multiplayer into the game's Unity project, WebGL and
 
 The toolbar button (`unity:editor`, labelled Unity with the `unity` icon, only on a game with a
 Unity project: `facts`) opens the plugin's one panel (`panel.html`, also on the plugin's page), an
-[engine panel](../design/genex/README.md#engine-panels): the project's block (its folder, the state
-in the button's words, the step, Engine, the step's buttons in the foot) and This computer (the
-newest Unity installed). The button's status action `toolbar-status`
+[engine panel](../design/genex/README.md#engine-panels): one list whose head holds the project's name, the state
+in the button's words with the Unity version, the step's button and ⋯, then the Agents can use
+Unity while you play switch. The button's status action `toolbar-status`
 and the panel's `status` answer the same look (`panel-status.ts`), which only reads: the installed
 editors, the project the game's folder holds and whether its manifest asks for the Pipeline
 package, whether an editor has it open, and one `GET /api/editor_status`. It sends the editor no
@@ -3149,7 +3207,7 @@ command, so the toolbar may ask as often as it does.
 | `old-project` | The project was saved with a Unity older than 6 | Not set up | Open Unity Hub |
 | `not-set-up` | Its manifest does not ask for the Pipeline package | Not set up | Set up |
 | `no-editor` | The Unity it was saved with is not installed | Not open | Open Unity Hub |
-| `not-open` | No editor has it open | Not open | Open in Unity, Undo setup |
+| `not-open` | No editor has it open | Not open | Open in Unity, Remove Genex |
 | `opening` | An editor has it open and does not answer yet | Starting | Restart Unity |
 | `ready` | Its main thread answers (the panel says when it plays or compiles) | Ready | Restart Unity |
 | `stalled` | Its server is there and its main thread runs nothing | Stalled, `warn`, `attention` | Restart Unity |
@@ -3315,7 +3373,7 @@ image data URLs are supported. Use `src/plugin-sdk/panel.js` for request/respons
 same host (`PluginPanelHost`) serves a panel opened from the Plugins page and one opened from a
 toolbar button.
 
-`studioPlugin.call('context')` returns the selected project, host API version (`3`), the window's
+`studioPlugin.call('context')` returns the selected project and its title as Genex shows it, host API version (`3`), the window's
 language (`locale`, from `panelContext` in `renderer/panels/panel-bridge.ts`) and theme tokens:
 `background`, `foreground`, the raw `accent`, and the readable button colours Studio's own primary
 buttons use (`accentFill` under `accentForeground` text, at least 5:1, and `accentHover`);
@@ -3586,8 +3644,12 @@ Genex:
   plugin's own `node` server gets the bare token on fd 3 instead.
 - The MCP launcher seeds `.genex/workspace.json` in a Genex server's working directory.
 - Publish in Studio's own Publish dialog (`main/core/genex-publish.ts`) first lists the files a
-  public copy would hold (`studio:plugins.genex-publish-review`: the same export, into scratch,
-  removed), then `studio:plugins.genex-publish` runs `publish-gallery` with that list approved.
+  public copy would hold (`studio:plugins.genex-publish-review`), then
+  `studio:plugins.genex-publish` runs `publish-gallery` with that list approved. The list comes
+  from the export's own walk, refusals and checks over the files where they are, with nothing
+  copied (`listPublicGame`), so an engine's web export or a build's output is copied once, for the
+  upload. Only a game that carries the vendored library is still exported into scratch, listed and
+  removed: which of the library's files it keeps is settled in the copy.
   Studio draws the dialog, so that press is the consent: no native dialog, and no chat card when
   the staged export holds exactly the approved files (`main/core/export-approvals.ts`: one use,
   only during that publish, five minutes at most). Other files are asked about in chat as usual.
@@ -3616,47 +3678,61 @@ Genex:
   the game went, the publish fails and keeps the link, never making a second game. A publish
   under way on Genex (`release_conflict`) is said in plain words.
 - A game made in an engine gets the Publish card (`PublishCard.tsx`, `publish-card-view.ts`,
-  `use-publish-card.ts`): one row per platform the person can act on (an Unreal game has a Web row only once its web build exists,
+  `use-publish-card.ts`, `publish-follow.ts`): one row per platform the person can act on (an Unreal game has a Web row only once its web build exists,
   and a Mac shows no Linux row for it unless that app is live), each with a dot and one line saying
   only what is true now ("Live · up to date", "Live · older than your game" against the folder's
-  `changedAt`, "Live · update ready" once a newer app is made, "Not built", "Built · older than your
+  `changedAt` and, for the web, against when the web build in a folder of the game was made
+  (`builtAt`, its newest file: a build put into `web/` is new with no source changed, since that
+  folder is no source; the web version is live only while Genex lists the game, so the build Genex
+  still serves of a game taken back to a draft reads "Ready to publish"), "Live · update ready" once a newer app or web build is made, "Not built", "Built · older than your
   game", "Ready to publish", "In review", "Not approved", "Couldn't build · the older one is still
   live"; a Windows app Genex Cloud built counts as live once a publish gave it to players), its end
-  saying when it went live, its size, or where it gets built ("builds on this Mac", "builds on Genex
-  Cloud"), and a switch: players get it. Before a game's first publish the apps a first Build makes
-  start switched on (`startsOn`: this computer's own and Genex Cloud's, for a game whose apps are
-  made per computer). Work under way shows in the row with a clock in the switch's place ("Building
-  on this Mac", "Sending to Genex Cloud", "Building on Genex Cloud"). Build and Publish are two
-  presses, and the one button says what pressing it does (`pressPlan`). Apps that aren't made go
-  first and alone, the agent's and Genex Cloud's in one press ("Build Mac and Windows"): the chat is
-  asked for the ones this computer makes and Genex Cloud for the ones it can't (`buildOnCloud` →
-  `genexCloudBuild` with `keep`), both at once. Nothing reaches players: Genex Cloud keeps what it
-  builds, so the game needs no page on Genex. The folder is read again until the agent's build lands,
-  an ask nothing came of is let go after two hours, and the switches stay as set for the Publish
-  after it. Then "Update Mac and Windows" / "Publish to Mac and Windows" ("… 3 platforms" from three)
-  sends the switched-on ready apps (`platforms` on `genex-publish-apps` and `genex-publish`,
-  `publishedApps`' `platforms` choice) and gives players the app Genex Cloud keeps (`CardWork.Release`,
-  `release` on `genex-publish-apps`). A kept app built before the game's last change is no such app:
-  like a build in the folder that is older than the game it stays where it is, its row says "Built ·
-  older than your game" and the button builds it again (`keptBuild`, `builtBeforeChange`). One Genex
-  Cloud still builds goes with them and reaches players
-  as soon as it is built (`sendingRows`: only beside an app that is made, or for a game players have
-  already, and not while the agent still builds here); its row then stays at work and the busy
-  button names only what is on its way to players (`busyWords`). A live platform switched off is
-  taken down ("Take Windows down", amber, confirmed: `publish-remove-app` →
+  note (when it went live, or its size) and its own control. No row has a switch. The control is a
+  button in Play's soft blue ("Build on Mac" or "Build on PC" for an app this computer makes, "Build
+  on Genex Cloud" for the one it can't, "Publish", "Update", "Try again"); the row's loader while
+  work is under way (Genex's orb, "Building", "Publishing" or "Updating", and a clock), with the
+  status line saying where ("On this Mac", "On Genex Cloud", "Sending to Genex Cloud") or, for a send,
+  how much went and how fast over a hairline bar, the loader then saying how long is left
+  (`sendStatus`, `leftWords`); "Queued" for an app the agent builds after another ("Builds after
+  Windows": a computer builds one app at a time, `hereQueue`); and on a row players have, a "…" menu
+  whose one item takes the platform down (`publish-remove-app` →
   `DELETE /api/games/<id>/native-builds/<platform>/<arch>` for each build Genex holds, the record
-  forgetting it; the Web row's is `publish-remove-web`). While Genex Cloud works a line stands under
-  the button (`pressNote`): "It can take up to an hour." when the button names only that app,
-  "Windows can take up to an hour." when it names more. What failed gets a block of its own under the
-  rows, above the link (`cardErrors`): its name in a few words ("Windows build error", "Windows build
-  didn't start", "Mac app didn't send"), never the log, with Send to agent (a failed Genex Cloud
-  build: the whole log goes to the game's chat, and the block then says the agent is fixing it, with
-  a clock) or Try again (a build that didn't start, because the game's project never reached Genex
-  Cloud or it refused it; a send that didn't reach Genex), and a Copy icon when there are words to
-  copy. Genex Cloud builds again only once the game changed since it failed. Until the folder and Genex's record
-  both answered the rows are skeletons and there is no button. The card has no Share assets line and no
-  explanation lines; the public link carries its mark inside the address, no word before it ("Test"
-  names the test link). A review card whose way forward is publishing again keeps the dialog's Publish.
+  forgetting it; the Web row's is `publish-remove-web`). A row's own button does one thing
+  (`RowAct`). Build asks the chat for the app this computer makes, or Genex Cloud for the one it
+  can't (`buildOnCloud` → `genexCloudBuild` with `keep`), and gives players nothing: Genex Cloud
+  keeps what it builds, so the game needs no page on Genex. The folder is read again until the
+  agent's build lands, an ask nothing came of is let go after two hours. Publish and Update send that
+  row's build (`platforms` on `genex-publish-apps` and `genex-publish`, `publishedApps`' `platforms`
+  choice) or give players the app Genex Cloud keeps (`CardWork.Release`, `release` on
+  `genex-publish-apps`). A kept app built before the game's last change is no such app: like a build
+  in the folder that is older than the game it stays where it is, its row says "Built · older than
+  your game" and its button builds it again (`keptBuild`, `builtBeforeChange`). Under the rows one
+  big button does all of it (`pressPlan`): "Publish to all platforms", or "Update all platforms"
+  when players have every platform it names, over one line saying what it does now and what by
+  itself later ("Publishes Web now, Windows and Linux once they are built.", "Builds Mac and Windows
+  first. Windows can take up to an hour."). Its press starts every build that isn't made (the chat
+  is asked once for all the apps this computer makes), sends what is ready, and is then followed for
+  as long as the app runs (`publish-follow.ts`, `followStep`): the game's folder and record are read
+  every few seconds, with the dialog open or closed, and each platform the press named goes to
+  players once, as soon as it is ready; an app Genex Cloud still builds is promised to them as soon
+  as a game is there to play (`playable`). A platform whose build failed or never landed, or whose
+  send was refused (the refusal shows under the rows), leaves the follow alone, and the follow ends
+  when none is left; quitting the app ends it too. Meanwhile the button is a grey status,
+  "Publishing to all platforms · 1 of 3 live" (`followBar`), over "Each one goes live as soon as
+  it's ready. You can close this window." A row whose last try failed is left to its own Try again,
+  and with nothing to build, send or follow there is no big button. A web publish that goes live
+  celebrates in the banner while the rows and the button stay under it. What failed gets a block of
+  its own under the rows, above the link (`cardErrors`): its name in a few words ("Windows build
+  error", "Windows build didn't start", "Mac app didn't send"), never the log, with Send to agent (a
+  failed Genex Cloud build: the whole log goes to the game's chat, and the block then says the agent
+  is fixing it, with a clock) and a Copy icon when there are words to copy; trying again is the
+  row's button, offered unless the account's Genex Cloud builds are used up. Until the folder and
+  Genex's record both answered the rows are skeletons and there is no button. The card has no Share
+  assets line and no explanation lines; the public link carries its mark inside the address, no word
+  before it ("Test" names the test link). Its Open closes the dialog onto the game's page in Play,
+  inside the app, and goes to the browser only for a game on another Genex
+  ([Play](play.md#native-builds)). A review card whose way forward is publishing again keeps the
+  dialog's Publish.
 - A web game whose folder also holds a player build lists its platforms above the presses
   (`PublishPlatforms.tsx`, `publish-platforms-view.ts`; read by
   `studio:plugins.genex-publish-platforms` from `main/core/publish-platforms.ts`): Web, Mac app,
@@ -3749,7 +3825,10 @@ Genex:
   clock from `sentAt` (slow line at 15 min), the chips In review, Not approved and Taken down, and the
   review card under the rows (`review-card-view.ts`, `ReviewCard.tsx`, the same card in the chat's
   `EntryKind.GenexReview`, whose game's newest record is live and older ones settle into history
-  lines). It reads `studio:plugins.genex-review-status` (fixture-safe; `refresh` at most once a 30 s),
+  lines). A live game's card in the chat (`chat/GenexReviewCard.tsx`) is Publish's banner in small:
+  the cover with "Live" and "{name} is live!" (or "is public again") on it, then the address, Copy
+  link and Open, which shows the game's page in Play; it says nothing else, and its history line
+  keeps the version and who gets it. It reads `studio:plugins.genex-review-status` (fixture-safe; `refresh` at most once a 30 s),
   asks Genex again once a publish of the apps ends and while a sent app waits, and the watch follows
   an apps publish from the dialog's press (`genexReviewFollow`: read while it runs, then the check's
   cadence). The dialog celebrates only a check it watched end live (`wentLive`), never an app live
@@ -3812,7 +3891,7 @@ with the working dot, Checking fixes; none for a game Genex doesn't know) comes 
 - A row nothing can be done about from here is left out (`outOfReach`, `shownRows`): an Unreal
   game's web row, and its rows for a system this computer doesn't package, except the Windows row on
   a Mac once Genex can build it (`cloudWords`, `CLOUD_TARGETS`). The Publish card's Build asks for it
-  beside the Mac app with `keep`: Genex keeps what it builds for the Publish after it, and a game
+  with `keep`: Genex keeps what it builds for the Publish after it, and a game
   that was never published gets its hosted project here, a draft nobody sees (`#hostForBuild`). The
   platform list's row asks without it: while the game has no page on Genex it says to publish first,
   then it offers Build on Genex, whose app goes on the game's page once built. Both run
@@ -4256,9 +4335,10 @@ project's `.godot/genex/` (`editor-bridge.ts`; no port): the editor writes a hea
 scripts left unsaved or an editor that didn't answer; at `restore.before` either one blocks, so a
 restore never replaces work the editor still holds. `reload-editor` at `restore.after` rescans and
 reloads the open scenes. With no editor beating, each answers nothing.
-Its panel is an engine panel (design README): This game's project (state, the step: Set up for
-Genex or Open in Godot, Change project, ⋯ Export for the web) and This computer (Godot, the Web
-template), and Choose a project behind Change project: New project on top, then the person's Godot
+Its panel is an engine panel (design README): one list for this game's project (state, the step:
+Add Genex or Open in Godot, ⋯ with Change project and Export for the web; the Web template has no
+row, since Export fetches it; a project outside the game gets **Move into game**, action
+`move-into-game`, the same rules as Unreal's into `godot/`), and Choose a project behind Change project: New project on top, then the person's Godot
 projects (`find-projects.ts`: Godot's own `projects.cfg` and Documents › Godot Projects or
 GodotProjects one level down, each once by real path, at most 12) tagged In use or Outside game,
 and Choose a project.godot…. `use-project {folder}` links the game to that project

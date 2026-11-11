@@ -92,7 +92,9 @@ import {
   type PluginHostEnv,
   type PluginInvocation,
   PluginProcess,
+  PluginRestartPaused,
 } from "./process.ts";
+import { createRestartPause, type RestartPause } from "./restart-pause.ts";
 import { MAX_ARTIFACT_BYTES, packageCopyFilter, unpackEnvelope } from "./pack.ts";
 import { asInstallProblem, refusedAs } from "./install-problem.ts";
 import { CodedError } from "../../shared/errors.ts";
@@ -286,6 +288,11 @@ const MESSAGE = {
     t("{plugin} was loaded from a folder on this Mac and runs with your access. {question}", { plugin, question }),
   LocalTool: (plugin: string, tool: string) =>
     t("{plugin} was loaded from a folder on this Mac and runs with your access. Let it run {tool}?", { plugin, tool }),
+  RestartPaused: (ms: number) =>
+    t(
+      "This plugin stopped several times in a row, so it starts again in {seconds, plural, one {# second} other {# seconds}}. Try again then.",
+      { seconds: Math.ceil(ms / SECOND_MS) },
+    ),
   UnknownAction: "Unknown plugin action",
   UnknownPanel: "Unknown panel",
   InvalidSetting: "Invalid plugin setting",
@@ -717,7 +724,10 @@ export class PluginRegistry {
   /** Where each bundled seed lives, by plugin id: its picture outlives an installed copy made before it had one. */
   #seedDirectories = new Map<string, string>();
   #processes = new Map<string, PluginProcess>();
-  /** Set by quitting (`cancel()`): no backend starts after it, or it would outlive the app. */
+  /**
+   * Set by quitting (`cancel()`) or the computer's session ending (`holdStarts()`): no backend
+   * starts after it, or it would outlive the app.
+   */
   #quit = false;
   /** Each host tool call in flight, by the controller `abortCalls` cuts it off with, and whose call it is. */
   #hostCalls = new Map<AbortController, PluginBinding>();
@@ -940,6 +950,8 @@ export class PluginRegistry {
    * `unlock`, because that is what decides whether a server may have the credential at all.
    */
   mcpHost: PluginMcpHost | undefined;
+  /** How soon each plugin's backend may start again after it ended; a test gives it its own clock. */
+  restarts: RestartPause = createRestartPause();
   constructor(
     root: string,
     seeds: string,
@@ -1655,6 +1667,8 @@ export class PluginRegistry {
       await this.#erase(id, previous);
     this.#installed.set(id, p);
     this.#errors.delete(id);
+    // A new copy is a new backend: it starts at once.
+    this.restarts.forget(id);
     this.#unlisted.delete(id);
     await this.#save();
     if (previous?.removed) await this.#restoreSavedAccount(id);
@@ -1698,17 +1712,19 @@ export class PluginRegistry {
       this.#refuseUnderHood(id);
       const p = this.#installed.get(id);
       if (!p || p.removed) throw new CodedError(PluginStateRefusal.InstallFirst, MESSAGE.InstallFirst());
-      const wasEnabled = p.enabled;
+      const turnsOn = enabled && !p.enabled;
       // A local plugin loaded off ran none of its code: its backend is proven as the person turns it on.
-      if (enabled && !wasEnabled && p.source === PluginSourceKind.Local) await this.#probe(p.directory, p.manifest);
+      if (turnsOn && p.source === PluginSourceKind.Local) await this.#probe(p.directory, p.manifest);
       p.enabled = enabled;
       if (enabled) delete p.turnedOff;
       else p.turnedOff = true;
+      // The person turning it on again asks for its backend now, whatever its last ends were.
+      if (turnsOn) this.restarts.forget(id);
       const pending = this.#pending.get(id);
       if (pending) pending.enabled = enabled;
       if (!enabled) this.#turnOff(id, p);
       await this.#save();
-      if (enabled && !wasEnabled) await this.#restoreSavedAccount(id);
+      if (turnsOn) await this.#restoreSavedAccount(id);
       await this.#mcpSync(id);
       this.#fire({ id, reason: enabled ? PluginChangeReason.Enabled : PluginChangeReason.Disabled });
     });
@@ -2128,6 +2144,9 @@ export class PluginRegistry {
     const p = this.#running(id);
     let process = this.#processes.get(id);
     if (!process) {
+      // A backend that keeps ending waits out its pause: no start, so no end, until it passed.
+      const pause = this.restarts.remaining(id);
+      if (pause > 0) throw new PluginRestartPaused(MESSAGE.RestartPaused(pause), pause);
       process = new PluginProcess(
         this.bootstrap,
         path.join(p.directory, p.manifest.backend),
@@ -2136,6 +2155,7 @@ export class PluginRegistry {
           if (this.#processes.get(id) === process) {
             this.#errors.set(id, error);
             this.#processes.delete(id);
+            this.restarts.ended(id);
             // A backend that ended takes its jobs with it: nobody is left to read or stop them.
             void this.sandboxJobs?.stopAll(id).catch(() => {});
             this.#fire({ id, reason: PluginChangeReason.Failed, failure });
@@ -2570,6 +2590,14 @@ export class PluginRegistry {
     for (const process of this.#processes.values()) process.cutOff(reason);
     for (const [controller, binding] of this.#hostCalls)
       if (!outlivesHarness(binding.hook)) controller.abort(new PluginCallCutOff(reason));
+  }
+  /**
+   * The computer is shutting down or signing out: no backend starts again. Windows ends the
+   * backends then, and each later call forked a new one that died at once. The running ones are
+   * left to the system, which ends the app too.
+   */
+  holdStarts() {
+    this.#quit = true;
   }
   cancel(binding?: Partial<PluginBinding>) {
     if (binding) {

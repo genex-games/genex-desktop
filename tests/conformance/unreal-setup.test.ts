@@ -2369,7 +2369,7 @@ describe("a game's own Unreal project and the steps card", () => {
   it("the setup question is short, and what changes sits under it", async () => {
     const b = await linkFixture();
     const review = await b.backend.review!("setup", { project: b.project.file }, b.context);
-    assert.equal(review.message, "Set up Drift for Genex?");
+    assert.equal(review.message, "Add Genex to Drift?");
     assert.match(review.detail ?? "", /Drift\.uproject/);
     assert.doesNotMatch(review.detail ?? "", /[{}]/, "no JSON");
   });
@@ -2472,7 +2472,7 @@ describe("Studio's confirmation for the Genex editor helper", () => {
   it("updating an older helper says so, naming the shipped version, and keeps the dialog's other lines", async () => {
     const shipped = JSON.parse(await readFile(path.join(HELPER, "GenexEditorHelper.uplugin"), "utf8")).VersionName;
     const review = await setupReview(HELPER);
-    assert.equal(review.message, "Set up Drift for Genex?");
+    assert.equal(review.message, "Add Genex to Drift?");
     assert.match(review.lines[0] ?? "", /^Genex will change Drift \(/);
     assert.deepEqual(review.lines.slice(1, -1), [
       `• ${HELPER_IN_PROJECT}: update the Genex editor helper to ${shipped}, a few changed Python files.`,

@@ -147,3 +147,13 @@ test("a panel in a dialog is told the dialog card's colour as its background, so
   assert.equal(panelContext(null, style, PanelSurface.Card).theme.background, "#ffffff");
   assert.equal(panelContext(null, style).theme.background, "#f9faf9", "a panel on the page keeps the page's");
 });
+
+test("a panel is told the open game's title, so it names the game as the person does; no game, no title", () => {
+  const style = { getPropertyValue: () => "" };
+  assert.equal(
+    panelContext("lantern-valley", style, PanelSurface.Card, undefined, "Lantern Valley").title,
+    "Lantern Valley",
+  );
+  assert.equal(panelContext("lantern-valley", style).title, null, "a title the library doesn't know yet");
+  assert.equal(panelContext(null, style, PanelSurface.Card, undefined, "Lantern Valley").title, null);
+});

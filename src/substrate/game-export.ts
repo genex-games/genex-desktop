@@ -21,6 +21,9 @@ const excluded = (name: string) =>
 /** `game.export` answers this to the harness, so it lives in `shared/game-project.ts`. */
 export type { ExportResult };
 
+/** The two lists of an export: the public paths a copy holds and the ones it leaves out. */
+export type ExportListing = Pick<ExportResult, "included" | "excluded">;
+
 export interface ExportOptions {
   /**
    * The credential values Studio holds (the same set its log redactor uses). A public file that
@@ -67,14 +70,14 @@ const MESSAGE = {
     t("Export is missing a referenced public file: {file} in {from}", { file: ref, from }),
 } as const;
 
-/** The first staged file that contains a held credential, byte for byte (text or binary). */
-async function fileWithSecret(staging: string, files: string[], values: Iterable<string>): Promise<string | undefined> {
+/** The first of `files` (public paths below `root`) that contains a held credential, byte for byte (text or binary). */
+async function fileWithSecret(root: string, files: string[], values: Iterable<string>): Promise<string | undefined> {
   const needles = [...new Set(values)]
     .filter((v) => typeof v === "string" && v.length >= MIN_SECRET_LENGTH)
     .map((v) => Buffer.from(v));
   if (!needles.length) return undefined;
   for (const rel of files) {
-    const file = path.join(staging, rel);
+    const file = path.join(root, rel);
     if ((await lstat(file)).size > MAX_SCANNED_BYTES) continue;
     const bytes = await readFile(file);
     if (needles.some((needle) => bytes.includes(needle))) return rel;
@@ -115,19 +118,35 @@ async function resolveExportTarget(
   return { target, parent, existing };
 }
 
-/** Reject interior symlinks as well as symlink leaves, including a selected nested root. */
-async function refuseSymlinkOnTheWay(base: string, parts: string[], rel: string): Promise<void> {
+/** Whether the path `parts` name below `base` is a link or goes through one: interior links, leaves and a nested root alike. */
+async function hasLinkOnTheWay(base: string, parts: string[]): Promise<boolean> {
   let parentPath = base;
   for (const part of parts) {
     parentPath = path.join(parentPath, part);
-    if ((await lstat(parentPath)).isSymbolicLink()) throw new CodedError(ExportRefusal.Symlink, MESSAGE.Symlink(rel));
+    if ((await lstat(parentPath)).isSymbolicLink()) return true;
   }
+  return false;
 }
 
-/** Copy one approved public path (a file, or a folder walked recursively) into staging. */
-async function stagePath(
-  staging: string,
-  result: ExportResult,
+/** What a walk does with each public file it reaches, given where it is and its public path. */
+type TakeFile = (src: string, destRel: string) => Promise<void>;
+
+/** Copies each public file to its place under `staging`. */
+function copyInto(staging: string): TakeFile {
+  return async (src, destRel) => {
+    const dest = path.join(staging, destRel);
+    await mkdir(path.dirname(dest), { recursive: true });
+    await copyFile(src, dest);
+  };
+}
+
+/** Leaves each public file where it is: the walk only lists it. */
+const leaveInPlace: TakeFile = async () => {};
+
+/** Walk one approved public path (a file, or a folder walked recursively): each public file is taken and listed. */
+async function walkPublicPath(
+  take: TakeFile,
+  result: ExportListing,
   base: string,
   rel: string,
   destRel = rel,
@@ -142,19 +161,56 @@ async function stagePath(
   const src = path.join(base, rel);
   const st = await lstat(src).catch(() => null);
   if (!st) throw new CodedError(ExportRefusal.PublicPathMissing, MESSAGE.MissingPublicPath(rel));
-  await refuseSymlinkOnTheWay(base, parts, rel);
+  if (await hasLinkOnTheWay(base, parts)) throw new CodedError(ExportRefusal.Symlink, MESSAGE.Symlink(rel));
   if (st.isDirectory()) {
     for (const name of await readdir(src)) {
       // `/`-joined on every platform: these are the export's own names, listed and compared as such.
-      await stagePath(staging, result, base, path.posix.join(rel, name), path.posix.join(destRel, name));
+      await walkPublicPath(take, result, base, path.posix.join(rel, name), path.posix.join(destRel, name));
     }
     return;
   }
   if (!st.isFile()) throw new CodedError(ExportRefusal.NotAFile, MESSAGE.NotAFile(rel));
-  const dest = path.join(staging, destRel);
-  await mkdir(path.dirname(dest), { recursive: true });
-  await copyFile(src, dest);
+  await take(src, destRel);
   result.included.push(destRel);
+}
+
+/**
+ * The files of a public copy as its checks read them: a staged copy, or a game's own folder with
+ * the list of what a copy of it would hold.
+ */
+interface PublicTree {
+  /** The folder the public paths are below. */
+  root: string;
+  /** Whether the copy holds `file` as a regular file. */
+  holds: (file: string) => Promise<boolean>;
+}
+
+/** A staged copy holds what is on the disk below it. */
+function stagedTree(staging: string): PublicTree {
+  return {
+    root: staging,
+    holds: async (file) => isInside(staging, file) && (await lstat(file).catch(() => null))?.isFile() === true,
+  };
+}
+
+/**
+ * The copy `included` (public paths below `root`) would make, with every file still where it is.
+ * A disk that takes `Main.js` for `main.js` answers a staged copy by both names, so a name that is
+ * not listed is asked of the disk: the copy holds it when it reaches a listed file, through no link.
+ */
+function listedTree(root: string, included: readonly string[]): PublicTree {
+  const relOf = (file: string): string => toPosixRelative(path.relative(root, file));
+  const listed = new Set(included.map((rel) => relOf(path.join(root, rel))));
+  return {
+    root,
+    holds: async (file) => {
+      if (!isInside(root, file)) return false;
+      if (listed.has(relOf(file))) return true;
+      const onDisk = await lstat(file).catch(() => null);
+      if (!onDisk?.isFile() || (await hasLinkOnTheWay(root, relOf(file).split("/")))) return false;
+      return listed.has(relOf(await realpath(file)));
+    },
+  };
 }
 
 /** Whether `rel` is a staged file of the vendored library (only when one was staged). */
@@ -162,14 +218,12 @@ function isVendorFile(rel: string, vendor: string | undefined): boolean {
   return Boolean(vendor) && rel.startsWith(`${VENDOR_DIR}/`);
 }
 
-/** Stage the page, rewritten so root-relative vendor and source URLs work from any folder. */
-async function rewriteEntry(staging: string): Promise<{ entry: string; html: string }> {
-  const entry = path.join(staging, "index.html");
-  const original = await readFile(entry, "utf8").catch(() => null);
+/** The copy's page as it is published: rewritten so root-relative vendor and source URLs work from any folder. */
+async function publishedPage(tree: PublicTree): Promise<{ entry: string; html: string }> {
+  const entry = path.join(tree.root, "index.html");
+  const original = (await tree.holds(entry)) ? await readFile(entry, "utf8").catch(() => null) : null;
   if (original === null) throw new CodedError(ExportRefusal.NoEntry, MESSAGE.NoEntry());
-  const html = original.replaceAll('"/vendor/', '"./vendor/').replaceAll('"/src/', '"./src/');
-  await writeFile(entry, html);
-  return { entry, html };
+  return { entry, html: original.replaceAll('"/vendor/', '"./vendor/').replaceAll('"/src/', '"./src/') };
 }
 
 /** The page's import map (`imports` only; a scoped map is refused). */
@@ -184,7 +238,6 @@ function importMapOf(html: string): Record<string, string> {
   return imports;
 }
 
-/** What the reference check walks with: the staged page, its import map, and the modules still to read. */
 /**
  * How a file names another: an address in a page or an import map is a URL (`File`, or `Script` to
  * follow), and only a module's own import specifier (`Import`) may be a bare name for the import map.
@@ -192,9 +245,11 @@ function importMapOf(html: string): Record<string, string> {
 const ReferenceKind = { File: "file", Script: "script", Import: "import" } as const;
 type ReferenceKind = (typeof ReferenceKind)[keyof typeof ReferenceKind];
 
+/** What the reference check walks with: the copy's files, its page as published, the page's import map, and the modules still to read. */
 interface ReferenceCheck {
-  staging: string;
+  tree: PublicTree;
   entry: string;
+  html: string;
   imports: Record<string, string>;
   queue: string[];
   visited: Set<string>;
@@ -213,7 +268,7 @@ function mapBareSpecifier(imports: Record<string, string>, ref: string): string 
 }
 
 /**
- * One reference from a staged file: it must name a regular file inside the export. A script or
+ * One reference from a public file: it must name a regular file inside the export. A script or
  * import is followed (queued); a vendored file it reaches is kept. Remote URLs, fragments and a
  * bare specifier the map sends off-machine are not the export's to check.
  */
@@ -234,19 +289,16 @@ async function checkReference(
   }
   const pathname = decodeURIComponent(ref.split(/[?#]/)[0] ?? "");
   if (!pathname) return;
-  const { staging } = check;
+  const { root } = check.tree;
   const file = pathname.startsWith("/")
-    ? path.resolve(staging, `.${pathname}`)
+    ? path.resolve(root, `.${pathname}`)
     : path.resolve(path.dirname(from), pathname);
-  const st = await lstat(file).catch(() => null);
-  const publicFile = isInside(staging, file) && st?.isFile() === true;
-  if (!publicFile)
+  if (!(await check.tree.holds(file)))
     throw new CodedError(
       ExportRefusal.MissingReference,
-      MESSAGE.MissingReference(ref, toPosixRelative(path.relative(staging, from))),
+      MESSAGE.MissingReference(ref, toPosixRelative(path.relative(root, from))),
     );
-  if (isBelow(path.join(staging, VENDOR_DIR), file))
-    check.neededVendor.add(toPosixRelative(path.relative(staging, file)));
+  if (isBelow(path.join(root, VENDOR_DIR), file)) check.neededVendor.add(toPosixRelative(path.relative(root, file)));
   if (kind !== ReferenceKind.File && /\.m?js$/i.test(file)) check.queue.push(file);
 }
 
@@ -263,11 +315,11 @@ async function scanHtml(check: ReferenceCheck, text: string, file: string): Prom
     await scanModule(check, body, file);
 }
 
-/** One staged game file: HTML and CSS references are checked, modules queued. */
-async function scanStagedFile(check: ReferenceCheck, rel: string): Promise<void> {
+/** One of the game's public files: HTML and CSS references are checked, modules queued. The page is read as published. */
+async function scanPublicFile(check: ReferenceCheck, rel: string): Promise<void> {
   if (!/\.(html|m?js|css)$/i.test(rel)) return;
-  const file = path.join(check.staging, rel);
-  const text = await readFile(file, "utf8");
+  const file = path.join(check.tree.root, rel);
+  const text = file === check.entry ? check.html : await readFile(file, "utf8");
   if (/\.html$/i.test(rel)) await scanHtml(check, text, file);
   if (/\.m?js$/i.test(rel)) check.queue.push(file);
   if (/\.css$/i.test(rel))
@@ -276,20 +328,21 @@ async function scanStagedFile(check: ReferenceCheck, rel: string): Promise<void>
 }
 
 /**
- * Follow actual module specifiers, not strings in comments/examples: every reference the staged
+ * Follow actual module specifiers, not strings in comments/examples: every reference the copy's
  * page, its styles and its modules make must be a file in the export. Returns the vendored files
  * those references reach.
  */
 async function checkReferences(
-  staging: string,
+  tree: PublicTree,
   page: { entry: string; html: string },
   included: string[],
   vendor: string | undefined,
 ): Promise<Set<string>> {
   await init;
   const check: ReferenceCheck = {
-    staging,
+    tree,
     entry: page.entry,
+    html: page.html,
     imports: importMapOf(page.html),
     queue: [],
     visited: new Set(),
@@ -299,7 +352,7 @@ async function checkReferences(
     if (!ref.endsWith("/")) await checkReference(check, ref, page.entry, ReferenceKind.Script);
   for (const rel of included) {
     if (isVendorFile(rel, vendor)) continue;
-    await scanStagedFile(check, rel);
+    await scanPublicFile(check, rel);
   }
   for (let file = check.queue.pop(); file !== undefined; file = check.queue.pop()) {
     if (check.visited.has(file)) continue;
@@ -352,6 +405,47 @@ async function swapIntoPlace(staging: string, target: string, existing: Stats | 
   if (existing) await rm(backup, { recursive: true, force: true });
 }
 
+/**
+ * What every public copy passes, staged or only listed: no file of the game holds a credential
+ * Studio keeps, there is a page, and every reference is a file of the copy. Answers the page as
+ * published and the vendored files the references reach.
+ */
+async function checkPublicCopy(
+  tree: PublicTree,
+  included: string[],
+  vendor: string | undefined,
+  options: ExportOptions,
+): Promise<{ page: { entry: string; html: string }; neededVendor: Set<string> }> {
+  // Studio's own vendored library is not the game's to leak into; everything else is checked.
+  const leaked = options.secretValues
+    ? await fileWithSecret(
+        tree.root,
+        included.filter((rel) => !isVendorFile(rel, vendor)),
+        options.secretValues,
+      )
+    : undefined;
+  if (leaked) throw new CodedError(ExportRefusal.SecretLeaked, MESSAGE.SecretLeaked(leaked));
+  const page = await publishedPage(tree);
+  return { page, neededVendor: await checkReferences(tree, page, included, vendor) };
+}
+
+/**
+ * The lists an export of the same public paths answers, by the same walk, refusals and checks, with
+ * nothing copied or written: every file is read where it is. For a copy that carries no vendored
+ * library; which of that library's files a game needs is settled in the staged copy.
+ */
+export async function listPublicGame(
+  sourceDir: string,
+  roots: string[],
+  options: ExportOptions = {},
+): Promise<ExportListing> {
+  const source = await realpath(sourceDir);
+  const listing: ExportListing = { included: [], excluded: [] };
+  for (const root of roots) await walkPublicPath(leaveInPlace, listing, source, root);
+  await checkPublicCopy(listedTree(source, listing.included), listing.included, undefined, options);
+  return listing;
+}
+
 /** Assemble only approved public roots, never a recursive copy of a development project. */
 export async function exportPublicGame(
   sourceDir: string,
@@ -364,24 +458,16 @@ export async function exportPublicGame(
   const { target, parent, existing } = await resolveExportTarget(source, targetDir);
   const staging = await mkdtemp(path.join(parent, STAGING_PREFIX));
   const result: ExportResult = { dir: target, files: 0, included: [], excluded: [] };
+  const take = copyInto(staging);
   try {
-    for (const root of roots) await stagePath(staging, result, source, root);
+    for (const root of roots) await walkPublicPath(take, result, source, root);
     if (vendor) {
       const names = await readdir(vendor);
       for (const name of names)
-        await stagePath(staging, result, await realpath(vendor), name, path.posix.join(VENDOR_DIR, name));
+        await walkPublicPath(take, result, await realpath(vendor), name, path.posix.join(VENDOR_DIR, name));
     }
-    // Studio's own vendored library is not the game's to leak into; everything else is checked.
-    const leaked = options.secretValues
-      ? await fileWithSecret(
-          staging,
-          result.included.filter((rel) => !isVendorFile(rel, vendor)),
-          options.secretValues,
-        )
-      : undefined;
-    if (leaked) throw new CodedError(ExportRefusal.SecretLeaked, MESSAGE.SecretLeaked(leaked));
-    const page = await rewriteEntry(staging);
-    const neededVendor = await checkReferences(staging, page, result.included, vendor);
+    const { page, neededVendor } = await checkPublicCopy(stagedTree(staging), result.included, vendor, options);
+    await writeFile(page.entry, page.html);
     if (vendor) await pruneUnusedVendor(staging, result, neededVendor);
     result.files = result.included.length;
     await writeFile(

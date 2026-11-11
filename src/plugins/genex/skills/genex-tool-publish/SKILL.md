@@ -31,7 +31,7 @@ this preface wins.
 - `npx genex doctor` is `genex__cli {"command":"doctor"}`. Other commands map onto Studio tools as
   the `genex` skill describes (`genex__skill {"name":"genex"}`).
 
-<!-- upstream @genex-ai/cli-demo/templates/skills/genex-tool-publish/SKILL.md v1.41.1 sha256 5374af3bbaca06cb48605fd67e88a252624beaa27c97c952b9bc6f03f1a4595e -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-tool-publish/SKILL.md v1.42.0 sha256 616e167a6471ea6d4ea536ce4061ff1f8e46da6aa690a636e82797c9c73a969a -->
 ---
 name: genex-tool-publish
 description: Put the game in this folder on the web with Genex — the draft page, `npx genex preview`, then `promote` / `publish`; the link you hand the user, the size limits, and what to do with the preflight lines. Installed once the folder is connected to a hosted Genex game (`npx genex init --convert`). Load it before the first preview.
@@ -105,7 +105,8 @@ anything changed since the last `preview`, preview again before promoting.
 
 ## Limits and refusals
 
-- **Upload size**: ~95 MB per file, ~500 MB in total. Over that, tell the user
+- **Upload size**: 500 MB per file, 2 GB in total, 200 files; the CLI prints
+  the account's own numbers when a build is over one. Over that, tell the user
   plainly which part is too large (usually a video, model or audio file) and by
   roughly how much; ask before compressing or removing anything.
 - **Terms refusal**: the CLI prints a link, waits for the user's click and

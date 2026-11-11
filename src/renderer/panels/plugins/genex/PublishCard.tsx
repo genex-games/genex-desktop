@@ -1,26 +1,37 @@
 /**
- * The Publish card of a game made in an engine (canvas "Publish to every platform", round 4): one row
- * per platform the person can act on, each with a dot and one line saying what is true now, a switch
- * for whether players get it (a clock in its place while it works), and one button whose words say
- * what pressing it does. While the game folder or Genex has not answered, the rows are skeletons and
- * there is no button, so nothing claims a state it doesn't know.
+ * The Publish card of a game made in an engine (canvas "Publish to every platform", round 3 of its
+ * redesign): one row per platform the person can act on, each with a dot and one line saying what is
+ * true now, and its own control at its end: a button (Build on this computer or on Genex Cloud,
+ * Publish, Update, Try again), that platform's loader with its clock while it works, "Queued" while
+ * it waits for another build, and the menu that takes down a platform players have. Under the rows,
+ * one big button does everything. While the game folder or Genex has not answered, the rows are
+ * skeletons and there is no button, so nothing claims a state it doesn't know.
  */
 import type { JSX } from "react";
-import { Button } from "../../../ui/Button.tsx";
+import { Button, buttonVariants } from "../../../ui/Button.tsx";
+import { cn } from "../../../ui/cn.ts";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "../../../ui/dropdown-menu.tsx";
 import { Icon, type IconName } from "../../../ui/icons.tsx";
 import { Elapsed } from "../../../ui/LoadingState.tsx";
 import { Skeleton } from "../../../ui/Skeleton.tsx";
-import { Toggle } from "../../../ui/Toggle.tsx";
+import { StatusOrb } from "../../../ui/StatusOrb.tsx";
 import { PUBLISH_CARD_WORDS, PUBLISH_PLATFORM_WORDS } from "../../../words.ts";
 import type { GenexNativeRecord } from "../../../../shared/genex.ts";
 import { type PublishPlatform, PublishTarget } from "../../../../shared/publish-platforms.ts";
-import { type BusyPress, type CardRow, CardTone, type PressPlan, switchedOn } from "./publish-card-view.ts";
+import { atRest, type CardRow, CardTone, type FollowBar, leftWords, type PressPlan } from "./publish-card-view.ts";
 import { failureLines } from "./publish-platforms-view.ts";
-import { SendProgress } from "./SendProgress.tsx";
-import type { ErrorBlock, usePublishCard } from "./use-publish-card.ts";
+import { type SendStatus, sendStatus } from "./send-progress-view.ts";
+import { ALL_PLATFORMS, type ErrorBlock, type usePublishCard } from "./use-publish-card.ts";
 import { useCopy } from "../../../use-copy.ts";
 
 const WORDS = PUBLISH_CARD_WORDS;
+
+type Card = ReturnType<typeof usePublishCard>;
 
 /** Each platform's mark. */
 const MARK: Readonly<Record<PublishTarget, IconName>> = {
@@ -32,56 +43,136 @@ const MARK: Readonly<Record<PublishTarget, IconName>> = {
 
 /** How many skeleton rows stand in while the card reads: an engine game has at least two. */
 const SKELETON_ROWS = 2;
+const PERCENT = 100;
 
-/** A row's end: its switch, or the clock of the work under way. */
-function RowEnd({
-  row,
-  on,
-  onSwitch,
-}: {
-  row: CardRow;
-  on: boolean;
-  onSwitch: (target: PublishTarget, on: boolean) => void;
-}): JSX.Element {
-  if (row.tone === CardTone.Working)
-    return (
-      <span className="genex-publish-card-clock" data-publish-platform-clock={row.target}>
-        {row.since ? <Elapsed since={Date.parse(row.since)} /> : null}
-      </span>
-    );
-  return <Toggle on={on} onChange={(next) => onSwitch(row.target, next)} ariaLabel={WORDS.switchLabel(row.name)} />;
+/** Whether a row ends in the menu that takes its platform down: players have it, and nothing is under way for it. */
+const hasMenu = (row: CardRow): boolean => row.live && atRest(row);
+
+/** The menu at the end of a row players have: the one place its platform is taken down. */
+function RowMenu({ row, card }: { row: CardRow; card: Card }): JSX.Element {
+  return (
+    <DropdownMenu modal={false}>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          className="genex-publish-card-more"
+          aria-label={WORDS.more(row.name)}
+          data-publish-platform-more={row.target}
+          disabled={card.acting !== null}
+        >
+          <Icon name="more" size={16} />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" sideOffset={6}>
+        <DropdownMenuItem
+          className="genex-publish-card-down"
+          data-publish-platform-down={row.target}
+          onSelect={() => void card.takeDown(row.target)}
+        >
+          <Icon name="trash" size={15} />
+          {WORDS.takeDown(row.name)}
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
 }
 
-/** One platform: its mark, name and status line, then its end note and switch. */
-function Row({
-  row,
-  on,
-  onSwitch,
-}: {
-  row: CardRow;
-  on: boolean;
-  onSwitch: (target: PublishTarget, on: boolean) => void;
-}): JSX.Element {
-  const working = row.tone === CardTone.Working;
+/** The loader's clock: how long a send has left when its speed is known, else how long the work has run. */
+function LoaderClock({ row, send }: { row: CardRow; send: SendStatus | null }): JSX.Element | null {
+  if (send && send.leftMs !== null)
+    return <span className="genex-publish-card-pill-clock">{leftWords(send.leftMs)}</span>;
+  if (!row.since) return null;
   return (
-    <li className="genex-publish-card-row" data-publish-platform={row.target} data-tone={row.tone} data-on={on}>
+    <span className="genex-publish-card-pill-clock" data-publish-platform-clock={row.target}>
+      <Elapsed since={Date.parse(row.since)} />
+    </span>
+  );
+}
+
+/**
+ * A row's control: its loader while it works (Genex's own, the work's word and its clock, in the
+ * button's shape so nothing jumps), "Queued" while it waits for another build, else its button.
+ */
+function RowControl({ row, send, card }: { row: CardRow; send: SendStatus | null; card: Card }): JSX.Element | null {
+  if (row.busy)
+    return (
+      <span
+        role="status"
+        className={cn(
+          buttonVariants({ variant: "play-tint", size: "sm" }),
+          "genex-publish-card-build genex-publish-card-working",
+        )}
+        data-publish-platform-busy={row.target}
+      >
+        <StatusOrb />
+        <span data-shimmer className="chat-status-shimmer">
+          {row.busy}
+        </span>
+        <LoaderClock row={row} send={send} />
+      </span>
+    );
+  if (row.queued)
+    return (
+      <span className="genex-publish-card-queued" data-publish-platform-queued={row.target}>
+        {WORDS.queued}
+      </span>
+    );
+  if (!row.act) return null;
+  return (
+    <Button
+      variant="play-tint"
+      size="sm"
+      className="genex-publish-card-build"
+      data-publish-platform-act={row.act.work}
+      disabled={card.acting !== null}
+      aria-busy={card.acting === row.target || undefined}
+      onClick={() => void card.act(row)}
+    >
+      {row.act.label}
+    </Button>
+  );
+}
+
+/** How far the row's send is: a hairline bar under its status. */
+function SendBar({ send }: { send: SendStatus | null }): JSX.Element | null {
+  if (!send || send.fraction === null) return null;
+  const percent = Math.round(send.fraction * PERCENT);
+  return (
+    <span
+      className="genex-send-progress-bar genex-publish-card-bar"
+      role="progressbar"
+      aria-label={WORDS.sending}
+      aria-valuemin={0}
+      aria-valuemax={PERCENT}
+      aria-valuenow={percent}
+      data-send-progress
+    >
+      <i style={{ width: `${percent}%` }} />
+    </span>
+  );
+}
+
+/**
+ * One platform: its mark, name and status line, then its end note, its control and, when players
+ * have it, its menu. A send says how much went and how fast in the status line, over its bar. Read
+ * at each render: the publish record is read again every couple of seconds while a send is going.
+ */
+function Row({ row, card }: { row: CardRow; card: Card }): JSX.Element {
+  const send = row.busy ? sendStatus(row.progress, Date.now()) : null;
+  return (
+    <li className="genex-publish-card-row" data-publish-platform={row.target} data-tone={row.tone}>
       <Icon name={MARK[row.target]} size={18} />
       <span className="genex-publish-card-text">
         <span>{row.name}</span>
-        <span className="genex-publish-card-status" data-publish-platform-status>
-          {!working && <span className="genex-publish-card-dot" aria-hidden />}
-          {working ? (
-            <span data-shimmer className="chat-status-shimmer">
-              {row.status}
-            </span>
-          ) : (
-            row.status
-          )}
+        <span className="genex-publish-card-status" data-publish-platform-status data-stage={row.progress?.stage}>
+          {row.tone !== CardTone.Working && <span className="genex-publish-card-dot" aria-hidden />}
+          <span className="genex-publish-card-words">{send?.words ?? row.status}</span>
         </span>
-        {working && <SendProgress progress={row.progress} />}
+        <SendBar send={send} />
       </span>
-      {row.side && !working && <span className="genex-publish-card-side">{row.side}</span>}
-      <RowEnd row={row} on={on} onSwitch={onSwitch} />
+      {row.side && <span className="genex-publish-card-side">{row.side}</span>}
+      <RowControl row={row} send={send} card={card} />
+      {hasMenu(row) && <RowMenu row={row} card={card} />}
     </li>
   );
 }
@@ -104,56 +195,52 @@ function SkeletonRows(): JSX.Element {
   );
 }
 
-/** The platforms' rows, or their skeletons while `rows` is null. */
-export function PublishCardRows({
-  rows,
-  switches,
-  onSwitch,
-}: {
-  rows: readonly CardRow[] | null;
-  switches: ReadonlyMap<PublishTarget, boolean>;
-  onSwitch: (target: PublishTarget, on: boolean) => void;
-}): JSX.Element {
+/** The platforms' rows, or their skeletons while the card has none yet. */
+export function PublishCardRows({ card }: { card: Card }): JSX.Element {
+  const { rows } = card;
   if (!rows) return <SkeletonRows />;
   return (
     <ul className="genex-publish-card-rows" aria-label={WORDS.listLabel} data-genex-publish-platforms>
       {rows.map((row) => (
-        <Row key={row.target} row={row} on={switchedOn(row, switches)} onSwitch={onSwitch} />
+        <Row key={row.target} row={row} card={card} />
       ))}
     </ul>
   );
 }
 
-/** The card's one button: what pressing it does, or what is under way and its clock; nothing when all is done. */
+/**
+ * The card's big button: what pressing it does, with the one line under it; while its press is
+ * followed, the status in its place; nothing when all is done.
+ */
 export function PublishCardPress({
   plan,
-  busy,
-  note,
-  pressing,
+  bar,
+  acting,
   onPress,
 }: {
   plan: PressPlan | null;
-  busy: BusyPress | null;
-  /** The line under the button while Genex Cloud works. */
-  note: string | null;
-  /** A press is being sent now. */
-  pressing: boolean;
+  /** The status in the button's place while its press is followed. */
+  bar: FollowBar | null;
+  /** The press being carried out now, or null. */
+  acting: Card["acting"];
   onPress: (plan: PressPlan) => void;
 }): JSX.Element | null {
-  if (busy && !plan)
+  if (bar)
     return (
       <div className="genex-publish-card-press">
-        <Button variant="secondary" size="default" className="genex-publish-primary" aria-busy disabled>
+        <Button
+          variant="secondary"
+          size="default"
+          className="genex-publish-primary"
+          aria-busy
+          disabled
+          data-genex-publish-following
+        >
           <span data-shimmer className="chat-status-shimmer">
-            {busy.label}
+            {bar.label}
           </span>
-          {busy.since && (
-            <span className="genex-publish-clock">
-              <Elapsed since={Date.parse(busy.since)} />
-            </span>
-          )}
         </Button>
-        {note && <p className="genex-publish-card-note">{note}</p>}
+        <p className="genex-publish-card-note">{bar.note}</p>
       </div>
     );
   if (!plan) return null;
@@ -163,15 +250,14 @@ export function PublishCardPress({
         variant="default"
         size="default"
         className="genex-publish-primary"
-        data-warn={plan.warn || undefined}
         data-genex-publish-press
-        disabled={pressing}
-        aria-busy={pressing || undefined}
+        disabled={acting !== null}
+        aria-busy={acting === ALL_PLATFORMS || undefined}
         onClick={() => onPress(plan)}
       >
         {plan.label}
       </Button>
-      {note && <p className="genex-publish-card-note">{note}</p>}
+      {plan.note && <p className="genex-publish-card-note">{plan.note}</p>}
     </div>
   );
 }
@@ -200,8 +286,9 @@ function CopyError({ text }: { text: string }): JSX.Element {
 }
 
 /**
- * One error block under the rows: what failed in a few words (never the log), then its press (Send to
- * agent, or Try again) and Copy. Once the agent has it, the block says the agent is fixing it, with a clock.
+ * One error block under the rows: what failed in a few words (never the log), then Send to agent for
+ * a failed build, and Copy. Trying again is the row's own button. Once the agent has it, the block
+ * says the agent is fixing it, with a clock.
  */
 function ErrorBlockRow({ block }: { block: ErrorBlock }): JSX.Element {
   const name = WORDS.name[block.target];
@@ -234,20 +321,15 @@ function ErrorBlockRow({ block }: { block: ErrorBlock }): JSX.Element {
           {WORDS.sendToAgent}
         </button>
       )}
-      {block.onRetry && (
-        <button type="button" className="genex-publish-card-action" data-publish-error-retry onClick={block.onRetry}>
-          {WORDS.tryAgain}
-        </button>
-      )}
       {block.text !== "" && <CopyError text={block.text} />}
     </div>
   );
 }
 
 /**
- * The card's rows, then what went wrong (a failed Genex Cloud build's errors with Fix with agent, why a
+ * The card's rows, then what went wrong (a failed Genex Cloud build's errors with Send to agent, why a
  * send was refused or Genex turned an app down) and, when it applies, that this web build takes the
- * place of a page of apps: the facts the press needs, and no other line.
+ * place of a page of apps: the facts a press needs, and no other line.
  */
 export function EngineCardRows({
   card,
@@ -256,7 +338,7 @@ export function EngineCardRows({
   reviewed,
   replacesApps,
 }: {
-  card: ReturnType<typeof usePublishCard>;
+  card: Card;
   platforms: PublishPlatform[] | null;
   native: GenexNativeRecord | undefined;
   /** Genex's review card or check says how the apps stand: no line repeats it. */
@@ -266,13 +348,18 @@ export function EngineCardRows({
   const failures = platforms ? failureLines(platforms, native, reviewed, false) : [];
   return (
     <div className="genex-publish-card" data-genex-publish-card>
-      <PublishCardRows rows={card.rows} switches={card.switches} onSwitch={card.onSwitch} />
+      <PublishCardRows card={card} />
       {card.rows && card.errors.map((block) => <ErrorBlockRow key={`${block.target}-${block.kind}`} block={block} />)}
       {failures.map((line) => (
         <p key={line} className="genex-publish-platform-failure">
           {line}
         </p>
       ))}
+      {card.followError && (
+        <p className="genex-publish-failure" data-publish-follow-error>
+          {card.followError}
+        </p>
+      )}
       {replacesApps && card.rows && (
         <p className="genex-publish-reach" data-publish-replaces-apps>
           {PUBLISH_PLATFORM_WORDS.replacesApps}

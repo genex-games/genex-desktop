@@ -1,19 +1,19 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><!-- STUDIO_PANEL_FONTS --><style>
-:root{--bg:#0e0d0f;--fg:#dee0e2;--accent:#3c44c4;--accent-fill:var(--accent);--accent-text:#fff;--accent-hover:color-mix(in srgb,var(--accent) 88%,#fff);--warn:#efbe72;--err:#f08287;color-scheme:dark;
-  --quiet:color-mix(in srgb,var(--fg) 64%,var(--bg));--line:color-mix(in srgb,var(--fg) 9%,var(--bg));--outline:color-mix(in srgb,var(--fg) 14%,var(--bg));--hover:color-mix(in srgb,var(--fg) 10%,var(--bg));--field:color-mix(in srgb,var(--fg) 7%,var(--bg));
-  /* Genex's type: words in Zalando Sans SemiExpanded, actions and machine text in Geist Mono (inlinePanelFonts). */
+:root{--bg:#0e0d0f;--fg:#dee0e2;--accent:#3c44c4;--accent-fill:var(--accent);--accent-text:#fff;--accent-hover:color-mix(in srgb,var(--accent) 88%,#fff);--ok:#7cd194;--warn:#efbe72;--err:#f08287;color-scheme:dark;
+  --quiet:color-mix(in srgb,var(--fg) 64%,var(--bg));--line:color-mix(in srgb,var(--fg) 9%,var(--bg));--outline:color-mix(in srgb,var(--fg) 14%,var(--bg));--hover:color-mix(in srgb,var(--fg) 10%,var(--bg));--field:color-mix(in srgb,var(--fg) 7%,var(--bg));--menu:color-mix(in srgb,var(--fg) 6%,var(--bg));--shadow:0 0 0 1px var(--line),0 16px 48px rgb(0 0 0/.26);--tint-share:16%;--tint-edge-share:40%;
+  /* Genex's type: every word in Zalando Sans SemiExpanded; Geist Mono only on buttons and Studio's own clicks (inlinePanelFonts). */
   --sans:"Zalando Sans SemiExpanded","TikTok Sans Genex",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;--mono:"Geist Mono",ui-monospace,"SF Mono",Menlo,monospace;
   --tick:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5'/%3E%3C/svg%3E");
   --warning:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10.3 4.8 3.4 17a2 2 0 0 0 1.7 3h13.8a2 2 0 0 0 1.7-3L13.7 4.8a2 2 0 0 0-3.4 0z'/%3E%3Cpath d='M12 10v3.5M12 16.6v.1'/%3E%3C/svg%3E")}
 /* Chosen for at least 4.5:1 on every light theme's background. */
-:root[data-scheme="light"]{--warn:#95570b;--err:#b3303d;--outline:rgb(0 0 0/.1);color-scheme:light}
+:root[data-scheme="light"]{--ok:#1d7f46;--warn:#95570b;--err:#b3303d;--outline:rgb(0 0 0/.1);--menu:color-mix(in srgb,#fff 70%,var(--bg));--shadow:0 0 0 1px var(--line),0 16px 48px rgb(0 0 0/.12);--tint-share:10%;--tint-edge-share:35%;color-scheme:light}
 *{box-sizing:border-box}
-body{margin:0;padding:24px 28px 22px;font:14px/20px var(--sans);color:var(--fg);background:var(--bg);-webkit-font-smoothing:antialiased}
+body{margin:0;padding:20px;font:14px/20px var(--sans);color:var(--fg);background:var(--bg);-webkit-font-smoothing:antialiased}
 @media (max-width:480px){body{padding:20px 16px}}
-main{max-width:640px;display:grid;gap:20px}
+main{display:grid;gap:16px;min-width:0}
 section{display:grid;gap:16px;min-width:0}
-h2{margin:0;font-size:20px;line-height:28px;font-weight:500}
+h2{margin:0;font-size:14px;line-height:20px;font-weight:500}
 h2:focus,.step-name:focus{outline:none}
 .intro{display:grid;gap:6px}
 p,ol,ul{margin:0}
@@ -22,12 +22,15 @@ p,li{text-wrap:pretty}
 .small{font-size:13px;line-height:18px}
 .mono{font-family:var(--mono);font-size:12px;line-height:18px;letter-spacing:-.02em}
 .actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
-/* Genex's buttons: 32px, a rounded fill and no border, the label in Geist Mono. */
-button{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:32px;padding:0 14px;font-family:var(--mono);font-size:14px;font-weight:400;letter-spacing:-.02em;white-space:nowrap;color:inherit;cursor:pointer;background:var(--field);border:0;border-radius:11px;-webkit-tap-highlight-color:transparent;transition-property:scale,background-color,color;transition-duration:150ms;transition-timing-function:cubic-bezier(.22,1,.36,1)}
+/* Genex's buttons in a row: 28px, a rounded fill and no border, the label in Geist Mono. */
+button{display:inline-flex;align-items:center;justify-content:center;gap:6px;flex:none;min-height:28px;padding:0 12px;font-family:var(--mono);font-size:12.5px;font-weight:400;letter-spacing:-.02em;white-space:nowrap;color:inherit;cursor:pointer;background:var(--field);border:0;border-radius:10px;-webkit-tap-highlight-color:transparent;transition-property:scale,background-color,color;transition-duration:150ms;transition-timing-function:cubic-bezier(.22,1,.36,1)}
 button:hover{background:var(--hover)}
 button:active:not(:disabled,[aria-disabled="true"]){scale:.96}
 button.primary{background:var(--accent-fill,var(--accent));color:var(--accent-text,#fff)}
 button.primary:hover{background:var(--accent-hover,var(--accent-fill,var(--accent)))}
+/* A second action: the accent's soft tint with its edge, so it reads as a button beside the one blue one. */
+button.soft{background:color-mix(in srgb,var(--accent) var(--tint-share),var(--bg));box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--accent) var(--tint-edge-share),var(--bg))}
+button.soft:hover{background:color-mix(in srgb,var(--accent) calc(var(--tint-share) + 6%),var(--bg))}
 button.quiet{background:transparent;color:var(--quiet);padding:0 10px}
 button.quiet:hover{background:var(--hover);color:var(--fg)}
 /* A quiet button lines its text up with the edge when it leads its row. */
@@ -42,17 +45,51 @@ button svg{width:14px;height:14px;flex:none;fill:none;stroke:currentColor;stroke
 @keyframes breathe{50%{opacity:.5}}
 .waiting{display:flex;align-items:center;gap:8px;font-size:12px;line-height:18px;color:var(--quiet)}
 .step .waiting:not(.detail){margin-top:6px}
-/* The steps: each its own rounded block with a 1px outline, 8px apart. */
-.steps{padding:0;list-style:none;display:grid;gap:8px}
-.step{display:flex;align-items:flex-start;gap:12px;padding:14px 16px;border-radius:14px;box-shadow:inset 0 0 0 1px var(--outline)}
-.step .mark{width:16px;height:16px;flex:none;margin-top:3px;border-radius:50%;box-shadow:inset 0 0 0 1.5px color-mix(in srgb,var(--fg) 22%,var(--bg));position:relative}
-.step.done .mark{box-shadow:none;background:color-mix(in srgb,var(--accent) 34%,var(--bg))}
-.step.done .mark::after{content:"";position:absolute;inset:3px;background:var(--fg);-webkit-mask:var(--tick) center/contain no-repeat;mask:var(--tick) center/contain no-repeat}
-.step.now .mark{box-shadow:inset 0 0 0 1.5px var(--accent)}
-.step-body{flex:1;display:grid;gap:4px;min-width:0}
-.step-name{font-size:15px;line-height:22px}
-.step.done .step-name,.step.later .step-name{color:var(--quiet)}
-.step .actions{margin-top:8px}
+/*
+ * The panel is one list. Its first row is the game: Roblox's mark, the game's name, where Studio
+ * stands in a dot and a word, and ⋯ for the rare actions. Each row after it is one step: a done or
+ * later step is its name alone, the step that is next says what to do. Once every step is done only
+ * the game's place stays, with its publish button. No overflow clipping, so the menu can leave the list.
+ */
+.rows{min-width:0;border-radius:12px;box-shadow:inset 0 0 0 1px var(--line)}
+.line{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;min-height:60px;padding:8px 14px}
+.logo{width:28px;height:28px;flex:none;fill:currentColor;color:color-mix(in oklab,var(--accent) 55%,var(--fg))}
+.who{flex:1 1 120px;min-width:0;display:grid;gap:2px}
+.who h2{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.state{display:flex;align-items:center;gap:7px;min-width:0;font-size:12.5px;line-height:18px;color:var(--quiet)}
+.dot{width:7px;height:7px;flex:none;border-radius:50%;box-shadow:inset 0 0 0 1.5px currentColor}
+.state[data-tone="ok"] .dot{background:var(--ok);box-shadow:none}
+.menu{position:relative;flex:none;margin-inline:-8px -6px}
+.menu summary{display:flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:8px;color:var(--quiet);list-style:none;cursor:pointer}
+.menu summary::-webkit-details-marker{display:none}
+.menu .dots{fill:currentColor}
+.menu summary:hover,.menu[open] summary{background:var(--hover);color:var(--fg)}
+.menu-body{position:absolute;z-index:1;top:calc(100% + 4px);right:0;display:grid;gap:2px;min-width:200px;max-width:min(300px,calc(100vw - 32px));padding:4px;border-radius:12px;background:var(--menu);box-shadow:var(--shadow)}
+.menu-body button{justify-content:flex-start;width:100%;min-height:32px;padding:0 10px;font-family:var(--sans);font-size:13px;letter-spacing:0;background:transparent;border-radius:8px}
+.menu-body button:hover{background:var(--hover)}
+.steps{margin:0;padding:0;list-style:none}
+.step{display:flex;align-items:flex-start;gap:12px;padding:12px 14px;box-shadow:inset 0 1px 0 var(--line)}
+/* The mark sits in the logo's slot, so every row's words start on one line. */
+.step .mark{width:28px;height:20px;flex:none;position:relative}
+.step .mark::before{content:"";position:absolute;inset:2px 6px;border-radius:50%;box-shadow:inset 0 0 0 1.5px color-mix(in srgb,var(--fg) 22%,var(--bg))}
+.step.done .mark::before{box-shadow:none;background:color-mix(in srgb,var(--accent) 34%,var(--bg))}
+.step.done .mark::after{content:"";position:absolute;inset:5px 9px;background:var(--fg);-webkit-mask:var(--tick) center/contain no-repeat;mask:var(--tick) center/contain no-repeat}
+.step.now .mark::before{box-shadow:inset 0 0 0 1.5px var(--accent)}
+.step-body{flex:1;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 12px;min-width:0}
+.step-body > *{grid-column:1/-1}
+.step-name{font-size:14px;line-height:20px;font-weight:500}
+.step.done .step-name,.step.later .step-name{font-weight:400;color:var(--quiet)}
+/* A done step is its name alone: nothing is said while it works. */
+.step.done .detail{display:none}
+.step .actions{margin-top:6px}
+/* Ready: the steps before the place are gone, and the place is a row with its button at the end. */
+.ready .step.done:not([data-step="place"]){display:none}
+.ready .step .mark{visibility:hidden}
+.ready .step-name{grid-column:1;align-self:center;font-weight:500;color:var(--fg)}
+.ready .step-body > .actions{grid-column:2;grid-row:1;margin-top:0}
+.ready .step-body > .actions:empty{display:none}
+/* A first publish's name comes before its button. */
+.ready .step-body:has(> .field) > .actions{grid-column:1/-1;grid-row:auto;margin-top:6px}
 .say{font-size:13px;line-height:18px}
 .say:empty{display:none}
 .say[data-tone="err"]{color:var(--err)}
@@ -72,37 +109,53 @@ button svg{width:14px;height:14px;flex:none;fill:none;stroke:currentColor;stroke
 /* A first publish's name: a label over a 32px field, as wide as the block allows. */
 .field{display:grid;gap:4px;margin-top:8px}
 .field label{font-size:13px;line-height:18px;color:var(--quiet)}
-.field input{min-height:32px;width:100%;max-width:320px;padding:0 10px;font:14px/20px var(--sans);color:var(--fg);background:var(--field);border:0;border-radius:11px;box-shadow:inset 0 0 0 1px var(--outline)}
+.field input{min-height:28px;width:100%;max-width:320px;padding:0 10px;font:13px/18px var(--sans);color:var(--fg);background:var(--field);border:0;border-radius:10px;box-shadow:inset 0 0 0 1px var(--outline)}
 /* Places: each its own rounded block, its name and where it is, its button at the end. */
-.places{padding:0;list-style:none;display:grid;gap:8px}
-.place{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:2px 12px;padding:12px 14px;border-radius:14px;box-shadow:inset 0 0 0 1px var(--outline)}
-.place .name{font-size:15px;line-height:22px;overflow-wrap:anywhere}
-.place .where{grid-column:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:12px/18px var(--mono);letter-spacing:-.02em;color:var(--quiet)}
+.places{margin:0;padding:0;list-style:none;border-radius:12px;box-shadow:inset 0 0 0 1px var(--line)}
+.places:empty{display:none}
+.place{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:2px 12px;min-height:60px;padding:10px 14px}
+.place + .place{box-shadow:inset 0 1px 0 var(--line)}
+.place .name{font-size:14px;line-height:20px;font-weight:500;overflow-wrap:anywhere}
+.place .where{grid-column:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12.5px;line-height:18px;color:var(--quiet)}
 .place button{grid-column:2;grid-row:1/span 2}
 @media (max-width:400px){.place{grid-template-columns:minmax(0,1fr)}.place button{grid-column:1;grid-row:auto;justify-self:start;margin-top:8px}}
-.sub-h{font:13px/18px var(--mono);letter-spacing:-.02em;color:var(--quiet)}
-.legal{padding-top:14px;border-top:1px solid var(--line);color:var(--quiet);font-size:12px;line-height:18px}
+.sub-h{font-size:12.5px;line-height:18px;color:var(--quiet)}
+.legal{color:var(--quiet);font-size:12px;line-height:18px}
 .problem{color:var(--err);white-space:pre-wrap;overflow-wrap:anywhere}
 .problem:empty{display:none}
 @media (prefers-reduced-motion:reduce){button{transition:none}button:active:not(:disabled){scale:none}.orb{animation:none}}
 /* On a dialog's card the dialog holds the heading and the padding: the page keeps a thin edge for focus rings. */
 :root[data-surface="card"] body{padding:4px}
-/* A rare action for the whole page: words with a line under them, no padding, no fill. */
-button.link{min-height:0;padding:0;border-radius:4px;background:none;color:var(--quiet);font:13px/18px var(--sans);letter-spacing:0;text-decoration:underline;text-decoration-color:color-mix(in srgb,currentColor 40%,transparent);text-underline-offset:3px}
-button.link:hover,button.link:disabled:hover{background:none;color:var(--fg);text-decoration-color:currentColor}
 /* Last, so it wins over every class that sets a display. */
 [hidden]{display:none}
 </style></head><body>
 <main id="app" aria-busy="true">
 <section id="setup" aria-labelledby="title">
-  <div class="intro" data-panel-head><h2 id="title" tabindex="-1" data-t>Set up Roblox Studio</h2><p class="quiet" id="intro" data-t>Looking for Roblox Studio…</p></div>
+  <div class="intro" data-panel-head><h2 id="title" tabindex="-1" data-t>Roblox Studio</h2></div>
   <p class="problem" id="problem" role="alert"></p>
-  <ol class="steps" id="steps" aria-label="Setup steps" data-t="aria-label"></ol>
-  <div class="actions" id="setup-more" hidden><button type="button" class="link" id="undo" data-action="undo-setup" data-t>Undo Set up</button><button type="button" class="link" id="luau" data-action="add-luau-checks" data-t hidden>Add Luau checks</button></div>
+  <p class="waiting" id="checking"><span class="orb" aria-hidden="true"></span><span data-t>Looking for Roblox Studio…</span></p>
+  <div class="rows" id="list" hidden>
+    <div class="line head">
+      <svg class="logo" viewBox="0 0 256 256" aria-hidden="true"><path transform="rotate(15 128 128)" fill-rule="evenodd" d="M40 40h176v176H40zM104 104v48h48v-48z"/></svg>
+      <div class="who">
+        <h2 id="name">Roblox Studio</h2>
+        <p id="state" class="state"><span class="dot" aria-hidden="true"></span><span id="state-word"></span></p>
+      </div>
+      <details id="more" class="menu" hidden>
+        <summary aria-label="More" data-t="aria-label"><svg class="dots" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5.5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="18.5" cy="12" r="1.5"/></svg></summary>
+        <div class="menu-body">
+          <button type="button" id="change-place" data-t hidden>Choose another place</button>
+          <button type="button" id="luau" data-action="add-luau-checks" data-t hidden>Add Luau checks</button>
+          <button type="button" id="undo" data-action="undo-setup" data-t>Remove Genex from Studio</button>
+        </div>
+      </details>
+    </div>
+    <ol class="steps" id="steps" aria-label="Setup steps" data-t="aria-label"></ol>
+  </div>
   <p class="say quiet" id="setup-say" role="status"></p>
 </section>
 <section id="places" aria-labelledby="places-title" hidden>
-  <div class="intro" data-panel-head><h2 id="places-title" tabindex="-1" data-t>Choose your place</h2><p class="quiet" data-t>Places open in Studio right now.</p></div>
+  <div class="intro" data-panel-head><h2 id="places-title" tabindex="-1" data-t>Choose your place</h2></div>
   <p class="waiting" id="places-loading"><span class="orb" aria-hidden="true"></span><span data-t>Looking for places</span></p>
   <p class="quiet" id="places-none" data-t hidden>No place is open in Roblox Studio.</p>
   <ul class="places" id="open-places" aria-label="Places open in Studio" data-t="aria-label"></ul>
@@ -111,7 +164,7 @@ button.link:hover,button.link:disabled:hover{background:none;color:var(--fg);tex
   <p class="sub-h" id="places-start" data-t>Or start one</p>
   <div class="actions"><button type="button" id="places-new" data-action="create"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span data-t>New Roblox game</span></button><button type="button" id="places-file" data-t>Open a place file…</button></div>
   <p class="say" id="places-say" role="status"></p>
-  <div class="actions"><button type="button" class="link" id="places-back" data-panel-back data-t>Back</button></div>
+  <div class="actions"><button type="button" id="places-back" data-panel-back data-t>Back</button></div>
 </section>
 <p class="sr-only" id="announce" role="status"></p>
 <footer class="legal" data-t>Not affiliated with Roblox Corporation. For people 18 and over.</footer>
@@ -172,8 +225,9 @@ const WAITS = {
 };
 /** The panel's own words; each step's words come from the backend, as the chat's steps card shows them. */
 const WORDS = {
-  intro: t("Genex sets up what it can and checks each step by itself."),
-  allDone: t("Everything Roblox Studio needs from you is done."),
+  studio: t("Roblox Studio"),
+  ready: t("Ready"),
+  notReady: t("Not ready yet"),
   done: t("Done:"),
   orInStudio: t("Or in Studio:"),
   choosePlace: t("Choose your place"),
@@ -206,7 +260,7 @@ const MAX_GAME_NAME_CHARS = 50;
  * What the panel shows: the last status, the open game, a step's answer in words, the press under
  * way, and the name typed for a first publish (kept across redraws).
  */
-const ui = { status: null, game: null, said: null, pending: null, view: "setup", drawn: "", publishName: null };
+const ui = { status: null, game: null, title: null, said: null, pending: null, view: "setup", drawn: "", publishName: null };
 let closed = false;
 
 const text = (tag, className, value) => {
@@ -374,10 +428,8 @@ function publishParts(actions, body) {
 /** The place step's own buttons: Choose your place in a game, and New Roblox game anywhere. */
 function placeButtons(row) {
   const actions = text("div", "actions");
-  if (row.done) {
-    if (ui.game) actions.append(actionButton(WORDS.chooseAnother, showPlaces, { key: "change-place" }));
-    return actions;
-  }
+  // A place already chosen: Choose another place is a rare action, behind ⋯.
+  if (row.done) return actions;
   if (ui.game)
     actions.append(
       actionButton(WORDS.choosePlace, showPlaces, { className: "primary", key: "choose-place", action: Action.Places }),
@@ -482,13 +534,13 @@ function draw(force = false) {
   const focused = document.activeElement?.dataset?.key;
   const rows = Array.isArray(status.rows) ? status.rows : [];
   $("steps").replaceChildren(...rows.map((row) => stepItem(row, status.now)));
-  $("intro").textContent = status.now ? WORDS.intro : WORDS.allDone;
-  $("setup-more").hidden = !status.steps?.helper;
+  drawHead(status);
   const undo = $("undo");
   if (ui.pending === "undo") undo.setAttribute("aria-disabled", "true");
   else undo.removeAttribute("aria-disabled");
   const luau = $("luau");
   luau.hidden = status.luau?.offered !== true;
+  $("change-place").hidden = !(ui.game && status.steps?.place);
   if (ui.pending === "luau") luau.setAttribute("aria-disabled", "true");
   else luau.removeAttribute("aria-disabled");
   $("setup-say").textContent = ui.said?.at === "setup" ? ui.said.text : "";
@@ -497,6 +549,18 @@ function draw(force = false) {
   const same = document.querySelector(`[data-key="${CSS.escape(focused)}"]`);
   const next = status.now ? document.querySelector(`[data-key="name:${CSS.escape(status.now)}"]`) : null;
   (same ?? next ?? $("title")).focus();
+}
+
+/** The list's first row: the game's name, whether Studio is ready for it, and ⋯ once Genex is in Studio. */
+function drawHead(status) {
+  const ready = !status.now;
+  $("checking").hidden = true;
+  $("list").hidden = false;
+  $("list").classList.toggle("ready", ready);
+  $("name").textContent = ui.title ?? ui.game ?? WORDS.studio;
+  $("state").dataset.tone = ready ? "ok" : "";
+  $("state-word").textContent = ready ? WORDS.ready : WORDS.notReady;
+  $("more").hidden = !status.steps?.helper;
 }
 
 async function refresh() {
@@ -628,7 +692,11 @@ async function newGameFromPlaces() {
   }
 }
 
-$("places-back").onclick = () => showSetup(ui.status?.steps?.place ? "change-place" : "choose-place");
+$("places-back").onclick = () => showSetup(ui.status?.steps?.place ? "more" : "choose-place");
+$("more").querySelector("summary").dataset.key = "more";
+// A menu action closes the menu it was chosen from.
+for (const item of $("more").querySelectorAll("button")) item.addEventListener("click", () => ($("more").open = false));
+$("change-place").onclick = () => void showPlaces();
 $("places-file").onclick = () => void choosePlaceFile();
 $("places-new").onclick = () => void newGameFromPlaces();
 $("luau").dataset.key = "luau";
@@ -713,6 +781,7 @@ function readContext() {
     .then((c) => {
       if (c?.theme) applyTheme(c);
       ui.game = c?.project ?? null;
+      ui.title = c?.title ?? null;
       draw(true);
     })
     .catch(() => {});

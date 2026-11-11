@@ -3,8 +3,8 @@
  * headless Chrome. The panel's `window.studioPlugin` is a stand-in whose `call("action", …)` runs
  * `createUnrealBackend` over a fake computer: a temporary home with Epic's launcher list and a fake
  * engine, a temporary storage, and an opener that records what it would start and starts nothing.
- * Every step the backend names must give the project view a headline or a primary button, and the
- * primary must send its action for the shown project. Opt-in: it launches a browser, so it runs only
+ * Every step the backend names must give the project's row a word for where it stands, and a
+ * primary, when it has one, must send its action for the shown project. Opt-in: it launches a browser, so it runs only
  * with `STUDIO_BROWSER_TESTS=1` and Chrome or a Playwright Chromium already installed.
  */
 import assert from "node:assert/strict";
@@ -185,9 +185,10 @@ async function computer(options: { game?: string } = {}) {
 
 type Computer = Awaited<ReturnType<typeof computer>>;
 
-/** One step the backend can name, how to reach it, and the action its primary sends (none for a headline). */
-const STEPS: Record<string, { arrange: (c: Computer) => Promise<string>; sends?: string }> = {
+/** One step the backend can name, how to reach it, the word beside its dot, and the action its primary sends (none without a button). */
+const STEPS: Record<string, { arrange: (c: Computer) => Promise<string>; word: string; sends?: string }> = {
   [PanelStep.QuitFirst]: {
+    word: "Genex not added",
     arrange: async (c) => {
       c.live.running = true;
       // Unreal has Drift itself open: its own log is open.
@@ -196,8 +197,9 @@ const STEPS: Record<string, { arrange: (c: Computer) => Promise<string>; sends?:
     },
     sends: "quit-editor",
   },
-  [PanelStep.SetUp]: { arrange: async (c) => c.drift, sends: "setup" },
+  [PanelStep.SetUp]: { arrange: async (c) => c.drift, word: "Not open", sends: "setup" },
   [PanelStep.Open]: {
+    word: "Not open",
     arrange: async (c) => {
       await c.act("setup", { project: c.drift });
       return c.drift;
@@ -205,6 +207,7 @@ const STEPS: Record<string, { arrange: (c: Computer) => Promise<string>; sends?:
     sends: "open-editor",
   },
   [PanelStep.Starting]: {
+    word: "Opening",
     arrange: async (c) => {
       await c.act("setup", { project: c.drift });
       await c.act("open-editor", { project: c.drift });
@@ -213,6 +216,7 @@ const STEPS: Record<string, { arrange: (c: Computer) => Promise<string>; sends?:
     },
   },
   [PanelStep.Connected]: {
+    word: "Ready",
     arrange: async (c) => {
       await c.act("setup", { project: c.drift });
       c.live.running = true;
@@ -221,6 +225,7 @@ const STEPS: Record<string, { arrange: (c: Computer) => Promise<string>; sends?:
     },
   },
   [PanelStep.Switch]: {
+    word: "Not open",
     arrange: async (c) => {
       await c.act("setup", { project: c.cave });
       await c.act("setup", { project: c.drift });
@@ -232,6 +237,7 @@ const STEPS: Record<string, { arrange: (c: Computer) => Promise<string>; sends?:
     sends: "quit-editor",
   },
   [PanelStep.NotAnswering]: {
+    word: "Not answering",
     arrange: async (c) => {
       await c.act("setup", { project: c.drift });
       c.live.running = true;
@@ -242,6 +248,7 @@ const STEPS: Record<string, { arrange: (c: Computer) => Promise<string>; sends?:
     sends: "quit-editor",
   },
   [PanelStep.OpenWhenFree]: {
+    word: "Unreal busy",
     arrange: async (c) => {
       await c.act("setup", { project: c.drift });
       // Unreal has another project open: Drift's own log isn't, so nothing here quits Unreal.
@@ -250,6 +257,7 @@ const STEPS: Record<string, { arrange: (c: Computer) => Promise<string>; sends?:
     },
   },
   [PanelStep.PortBlocked]: {
+    word: "Not connected",
     arrange: async (c) => {
       await c.act("setup", { project: c.drift });
       c.live.running = true;
@@ -259,6 +267,7 @@ const STEPS: Record<string, { arrange: (c: Computer) => Promise<string>; sends?:
     sends: "quit-editor",
   },
   [PanelStep.Crashed]: {
+    word: "Not connected",
     arrange: async (c) => {
       const { port } = (await c.act("setup", { project: c.drift })) as { port: number };
       c.live.listening = new Set([port]);
@@ -324,7 +333,7 @@ describe("The Set up Unreal panel", { skip }, () => {
   });
 
   for (const [step, row] of Object.entries(STEPS))
-    it(`shows ${step} with a headline, a line or a primary that sends its action for the shown project`, async () => {
+    it(`shows ${step} as "${row.word}" beside the project's name, with a primary that sends its action for the shown project when it has one`, async () => {
       const c = await computer();
       const file = await row.arrange(c);
       // The panel opens on the project chosen last, as after a person picked it.
@@ -335,15 +344,21 @@ describe("The Set up Unreal panel", { skip }, () => {
         await tab.waitForSelector("#project:not([hidden])");
         const view = await tab.evaluate(() => {
           const primary = document.getElementById("primary") as HTMLButtonElement | null;
-          const shown = !document.getElementById("primary-row")?.hidden;
+          const shown = primary?.hidden === false;
           return {
-            headline: document.getElementById("headline")?.textContent ?? "",
+            name: document.getElementById("project-name")?.textContent ?? "",
+            word: document.getElementById("state-word")?.textContent ?? "",
             say: document.getElementById("say")?.hidden ? "" : (document.getElementById("say")?.textContent ?? ""),
             primary: shown ? (primary?.textContent ?? "") : "",
             pressable: shown && !primary?.disabled,
           };
         });
-        assert.ok(view.headline || view.primary || view.say, `${step} shows something to do or to read`);
+        assert.deepEqual([view.name, view.word], ["Drift", row.word]);
+        assert.equal(
+          view.primary !== "",
+          Boolean(row.sends),
+          `${step}: a button only when there is something to press`,
+        );
         if (!row.sends) {
           assert.equal(view.pressable, false, `${step} has no primary button it can press`);
           return;
@@ -359,15 +374,20 @@ describe("The Set up Unreal panel", { skip }, () => {
       }
     });
 
-  it("says plainly that Unreal couldn't use the port Genex gave the project, without its number", async () => {
+  it("a project whose port Unreal couldn't use says Not connected in its row, and its button restarts Unreal", async () => {
     const c = await computer();
     const file = await STEPS[PanelStep.PortBlocked].arrange(c);
     await c.act("status", { project: file });
     const tab = await open(c);
     try {
       await tab.waitForSelector("#project:not([hidden])");
-      const say = await tab.evaluate(() => document.getElementById("say")?.textContent ?? "");
-      assert.equal(say, "Unreal couldn't use the port Genex gave Drift.");
+      // Flipped: the row's own word says it; no sentence about a port under the name.
+      const view = await tab.evaluate(() => ({
+        word: document.getElementById("state-word")?.textContent,
+        tone: document.getElementById("state")?.dataset.tone,
+        say: document.getElementById("say")?.textContent ?? "",
+      }));
+      assert.deepEqual(view, { word: "Not connected", tone: "err", say: "" });
       // Restart quits Unreal, then opens the project again, as Switch does.
       assert.equal(await tab.evaluate(() => document.getElementById("primary")?.textContent), "Restart Unreal");
     } finally {
@@ -386,7 +406,8 @@ describe("The Set up Unreal panel", { skip }, () => {
     try {
       await tab.waitForSelector("#ray-tracing:not([hidden])");
       const text = await tab.evaluate(() => document.getElementById("ray-tracing-text")?.textContent ?? "");
-      assert.match(text, /^Ray tracing is on in Drift\./);
+      assert.equal(text, "Ray tracing can crash Unreal");
+      assert.equal(await tab.textContent("#ray-tracing-off"), "Turn off");
       c.sent.length = 0;
       await tab.click("#ray-tracing-off");
       for (let i = 0; i < WAIT_TRIES && c.sent.length === 0; i++) await tab.waitForTimeout(WAIT_STEP_MS);
@@ -398,28 +419,29 @@ describe("The Set up Unreal panel", { skip }, () => {
     }
   });
 
-  it("a set-up project made with an older Unreal offers the move on its Engine row, and the press moves it", async () => {
+  it("a set-up project made with an older Unreal has an Update row while the newer one is installed, and the press moves it", async () => {
     const c = await computer();
     const file = await STEPS[PanelStep.Open].arrange(c);
     await c.act("status", { project: file });
     const tab = await open(c);
     const engineRow = () =>
-      tab.evaluate(() => ["project-engine", "move-engine"].map((id) => document.getElementById(id)?.textContent ?? ""));
+      tab.evaluate(() => ["state-engine", "move-engine"].map((id) => document.getElementById(id)?.textContent ?? ""));
     try {
       await tab.waitForSelector("#move-engine:not([hidden])");
-      assert.deepEqual(await engineRow(), [`Unreal ${OLDEST_ENGINE}`, `Move to ${NEW_GAMES_ENGINE}`]);
+      assert.deepEqual(await engineRow(), [` · Unreal ${OLDEST_ENGINE}`, `Update to ${NEW_GAMES_ENGINE}`]);
+      assert.equal(await tab.textContent("#update-title"), `Unreal ${NEW_GAMES_ENGINE} is installed`);
       c.sent.length = 0;
       await tab.click("#move-engine");
       for (let i = 0; i < WAIT_TRIES && c.sent.length === 0; i++) await tab.waitForTimeout(WAIT_STEP_MS);
       assert.deepEqual(c.sent[0], ["move-engine", { project: file }]);
-      await tab.waitForSelector("#move-engine[hidden]", { state: "attached" });
-      assert.equal((await engineRow())[0], `Unreal ${NEW_GAMES_ENGINE}`);
+      await tab.waitForSelector("#update[hidden]", { state: "attached" });
+      assert.equal((await engineRow())[0], ` · Unreal ${NEW_GAMES_ENGINE}`);
     } finally {
       await tab.close();
     }
   });
 
-  it("a set-up project Unreal doesn't have open offers no restart, says which project holds Unreal and holds Open", async () => {
+  it("a set-up project Unreal doesn't have open offers no restart and no button, and says which project holds Unreal", async () => {
     const c = await computer();
     const file = await STEPS[PanelStep.OpenWhenFree].arrange(c);
     c.live.held = ["Harbor"];
@@ -429,21 +451,21 @@ describe("The Set up Unreal panel", { skip }, () => {
       await tab.waitForSelector("#project:not([hidden])");
       const view = await tab.evaluate(() => ({
         say: document.getElementById("say")?.textContent ?? "",
-        primary: document.getElementById("primary-row")?.hidden ? "" : document.getElementById("primary")?.textContent,
-        held: (document.getElementById("primary") as HTMLButtonElement | null)?.disabled,
+        word: document.getElementById("state-word")?.textContent,
+        primary: (document.getElementById("primary") as HTMLButtonElement).hidden,
       }));
+      // Flipped: a button that can't act is hidden, not shown held.
       assert.deepEqual(view, {
         say: "Unreal has Harbor open. Open Drift once Unreal is free.",
-        primary: "Open in Unreal",
-        held: true,
+        word: "Unreal busy",
+        primary: true,
       });
     } finally {
       await tab.close();
     }
   });
 
-  it("a project whose helper is newer than this Genex's says so in one line and offers no update", async () => {
-    const newer = "This project's Genex editor helper is newer than this Genex's, so Genex leaves it as it is.";
+  it("a project whose helper is newer than this Genex's opens as any other: the panel says nothing about the helper", async () => {
     const c = await computer();
     await c.act("setup", { project: c.drift });
     const descriptor = path.join(path.dirname(c.drift), "Plugins/GenexEditorHelper/GenexEditorHelper.uplugin");
@@ -454,29 +476,27 @@ describe("The Set up Unreal panel", { skip }, () => {
     const view = () =>
       tab.evaluate(() => ({
         say: document.getElementById("say")?.textContent ?? "",
-        primary: document.getElementById("primary-row")?.hidden
+        primary: (document.getElementById("primary") as HTMLButtonElement).hidden
           ? ""
           : (document.getElementById("primary")?.textContent ?? ""),
-        hint: document.getElementById("hint")?.hidden ? "" : (document.getElementById("hint")?.textContent ?? ""),
       }));
     try {
       await tab.waitForSelector("#project:not([hidden])");
-      const closed = await view();
-      assert.deepEqual([closed.say, closed.primary], [newer, "Open in Unreal"]);
+      // Flipped: Genex leaves a newer helper as it is by itself, so the panel has nothing to tell.
+      assert.deepEqual(await view(), { say: "", primary: "Open in Unreal" });
       c.live.running = true;
       c.live.answering = true;
       // No press: the panel's own refresh notices the editor answering.
-      await tab.waitForFunction(() => document.getElementById("state")?.textContent === "Ready", null, {
+      await tab.waitForFunction(() => document.getElementById("state-word")?.textContent === "Ready", null, {
         timeout: CONNECTED_WAIT_MS,
       });
-      const connected = await view();
-      assert.deepEqual([connected.primary, connected.hint], ["", newer]);
+      assert.deepEqual(await view(), { say: "", primary: "" });
     } finally {
       await tab.close();
     }
   });
 
-  it("an older helper in the open game's project: Open says it updates the helper first, waits for a build, and names the files it kept", async () => {
+  it("an older helper in the open game's project: Open updates the helper without a word before, waits for a build, and names the files it kept", async () => {
     const c = await computer({ game: "dirt-track" });
     await c.act("setup", { project: c.drift });
     await c.act("use-project", { project: c.drift });
@@ -487,8 +507,8 @@ describe("The Set up Unreal panel", { skip }, () => {
     const tab = await open(c);
     try {
       await tab.waitForSelector("#project:not([hidden])");
-      const say = await tab.evaluate(() => document.getElementById("say")?.textContent ?? "");
-      assert.match(say, /Open in Unreal updates it first/);
+      // Flipped: Genex updates the helper by itself, so nothing announces it before the press.
+      assert.equal(await tab.evaluate(() => document.getElementById("message")?.textContent?.trim()), "");
       c.sent.length = 0;
       await tab.click("#primary");
       await tab.waitForFunction(() => /as \.mine/.test(document.getElementById("kept")?.textContent ?? ""));
@@ -504,7 +524,7 @@ describe("The Set up Unreal panel", { skip }, () => {
     }
   });
 
-  it("an older helper in a project no open game builds in: the panel promises no update, and Open leaves the helper", async () => {
+  it("an older helper in a project no open game builds in: the panel says nothing of it, and Open leaves the helper", async () => {
     const c = await computer();
     await c.act("setup", { project: c.drift });
     const tools = path.join(path.dirname(c.drift), "Plugins/GenexEditorHelper/Content/Python/genex_play/tools.py");
@@ -513,9 +533,8 @@ describe("The Set up Unreal panel", { skip }, () => {
     const tab = await open(c);
     try {
       await tab.waitForSelector("#project:not([hidden])");
-      const say = await tab.evaluate(() => document.getElementById("say")?.textContent ?? "");
-      assert.doesNotMatch(say, /Open in Unreal updates it/);
-      assert.match(say, /Opening it from its Genex game updates it/);
+      // Flipped: no line about where the helper would be updated.
+      assert.equal(await tab.evaluate(() => document.getElementById("message")?.textContent?.trim()), "");
       c.sent.length = 0;
       await tab.click("#primary");
       for (let i = 0; i < WAIT_TRIES && c.sent.length === 0; i++) await tab.waitForTimeout(WAIT_STEP_MS);
@@ -526,7 +545,7 @@ describe("The Set up Unreal panel", { skip }, () => {
     }
   });
 
-  it("Undo setup waits while Unreal has the project open, and Quit Unreal is sent once and stays pressed while it quits", async () => {
+  it("Remove Genex is out of the menu while Unreal has the project open, which says why; Quit Unreal is sent once and stays pressed while it quits", async () => {
     const c = await computer();
     await c.act("setup", { project: c.drift });
     c.live.running = true;
@@ -536,7 +555,9 @@ describe("The Set up Unreal panel", { skip }, () => {
     try {
       await tab.waitForSelector("#project:not([hidden])");
       await tab.evaluate(() => document.getElementById("more")?.setAttribute("open", ""));
-      assert.equal(await tab.evaluate(() => document.getElementById("undo")?.hasAttribute("disabled")), true);
+      // Flipped: an action that can't act is hidden, not greyed, and the menu says what frees it.
+      assert.equal(await tab.isVisible("#undo"), false);
+      assert.equal(await tab.textContent("#more-hint"), "Quit Unreal to remove Genex.");
       c.sent.length = 0;
       await tab.click("#quit");
       await tab.waitForFunction(() => document.getElementById("app")?.getAttribute("aria-busy") === "false");
@@ -604,6 +625,7 @@ describe("The Set up Unreal panel", { skip }, () => {
     const tab = await open(c);
     try {
       await tab.waitForSelector("#project:not([hidden])");
+      await tab.click("#more summary");
       await tab.click("#change");
       await tab.click(`#projects button.row[data-file="${neon}"]`);
       await tab.waitForFunction(
@@ -614,13 +636,18 @@ describe("The Set up Unreal panel", { skip }, () => {
       assert.deepEqual(await projectView(tab), {
         name: "Neon",
         primary: "Open in Unreal",
-        inGame: "This game builds in Drift. Use this project instead?",
+        inGame: "",
         use: "Use in this game",
       });
+      // The question is a row of its own, its button beside it.
+      assert.equal(
+        await tab.locator("#use").innerText(),
+        "This game builds in Drift.\nUse this project instead?\nUse in this game",
+      );
       c.sent.length = 0;
       await tab.click("#use-here");
       assert.deepEqual(await firstSent(c, tab), ["use-project", { project: neon }]);
-      await tab.waitForFunction(() => document.getElementById("use-row")?.hidden === true);
+      await tab.waitForFunction(() => document.getElementById("use")?.hidden === true);
       assert.deepEqual(
         [(await projectView(tab)).use, (await projectView(tab)).inGame],
         ["", ""],
@@ -661,20 +688,24 @@ describe("The Set up Unreal panel", { skip }, () => {
       await tab.waitForSelector("#project:not([hidden])");
       assert.deepEqual(await projectView(tab), {
         name: "Drift",
-        primary: "Use Drift in this game",
+        primary: "Open in Unreal",
         inGame: "",
-        use: "",
+        use: "Use in this game",
       });
-      assert.equal(await tab.textContent("#secondary"), "Open in Unreal", "opening it follows, quieter");
+      const filled = await tab.evaluate(() =>
+        ["use-here", "primary"].map((id) => document.getElementById(id)?.classList.contains("primary")),
+      );
+      assert.deepEqual(filled, [true, false], "using it leads as the one filled button; opening it follows, quieter");
+      assert.equal(await tab.textContent("#use-title"), "This game has no Unreal project");
       c.sent.length = 0;
-      await tab.click("#primary");
+      await tab.click("#use-here");
       assert.deepEqual(await firstSent(c, tab), ["use-project", { project: c.drift }]);
     } finally {
       await tab.close();
     }
   });
 
-  it("while a Loop is using Unreal, a step that would quit it offers only Open, held until then, and More has no Quit", async () => {
+  it("while a Loop is using Unreal, a step that would quit it offers no button, says to open after it ends, and More has no Quit", async () => {
     const c = await computer();
     const file = await STEPS[PanelStep.Switch].arrange(c);
     c.runs.push({ game: "cave-night", title: "Cave Night", project: c.cave });
@@ -684,14 +715,13 @@ describe("The Set up Unreal panel", { skip }, () => {
       await tab.waitForSelector("#project:not([hidden])");
       const view = await tab.evaluate(() => ({
         say: document.getElementById("say")?.textContent,
-        primary: document.getElementById("primary-row")?.hidden ? "" : document.getElementById("primary")?.textContent,
-        held: (document.getElementById("primary") as HTMLButtonElement | null)?.disabled,
+        primary: (document.getElementById("primary") as HTMLButtonElement).hidden,
         quit: document.getElementById("quit")?.hidden,
       }));
+      // Flipped: a button that can't act is hidden, not shown held.
       assert.deepEqual(view, {
         say: "A Loop in Cave Night is using Unreal. Open Drift after it ends.",
-        primary: "Open in Unreal",
-        held: true,
+        primary: true,
         quit: true,
       });
     } finally {
@@ -710,7 +740,7 @@ describe("The Set up Unreal panel", { skip }, () => {
     );
   const byName = (rows: Array<{ name: string }>) => [...rows].sort((a, b) => a.name.localeCompare(b.name));
 
-  it("a path reads from ~ in home, keeps a long one's ends, names a temporary folder, and the list tags what lies outside the open game", async () => {
+  it("the row keeps the folder for its tooltip; in the list a path reads from ~ in home, keeps a long one's ends, names a temporary folder, and what lies outside the open game is tagged", async () => {
     const c = await computer({ game: "lantern" });
     const home = path.dirname(path.dirname(c.newGames));
     const neon = await writeProject(path.join(c.newGames, "Neon", "Neon.uproject"));
@@ -725,17 +755,19 @@ describe("The Set up Unreal panel", { skip }, () => {
     try {
       await tab.waitForSelector("#project:not([hidden])");
       const head = await tab.evaluate(() => ({
-        where: document.getElementById("project-path")?.textContent,
-        full: document.getElementById("project-path")?.title,
-        reach: document.getElementById("fact-reach")?.hidden
-          ? ""
-          : document.getElementById("project-reach")?.textContent,
+        full: document.getElementById("project-name")?.title,
+        folder: document.getElementById("project")?.textContent?.includes("manual"),
+        outside: document.getElementById("outside")?.hidden,
       }));
-      assert.deepEqual(head, { where: "~/work/…/manual/Deep", full: deep, reach: "No, outside this game's folder" });
+      // Flipped: the folder is not on the screen, and only the game's own project gets the row about its folder.
+      assert.deepEqual(head, { full: deep, folder: false, outside: true });
+      await tab.click("#more summary");
       await tab.click("#change");
       await tab.waitForSelector("#pick:not([hidden])");
       const temporary =
-        process.platform === "win32" ? [] : [{ name: "Drift", where: "Temporary folder › Drift", tag: "Outside game" }];
+        process.platform === "win32"
+          ? []
+          : [{ name: "Drift", where: "Temporary folder › Drift", tag: "Another folder" }];
       assert.deepEqual(
         byName(await listRows(tab)).filter((row) => process.platform !== "win32" || row.name !== "Drift"),
         byName([
@@ -744,10 +776,7 @@ describe("The Set up Unreal panel", { skip }, () => {
           ...temporary,
         ]),
       );
-      assert.equal(
-        await tab.textContent("#outside-note"),
-        "Outside game: chats use it, Rewind and Loops can't reach it.",
-      );
+      assert.equal(await tab.textContent("#outside-note"), "In another folder: no Rewind, Loops or Publish there.");
       await tab.click("#back");
       await tab.waitForSelector("#project:not([hidden])");
       assert.equal(
@@ -760,7 +789,80 @@ describe("The Set up Unreal panel", { skip }, () => {
     }
   });
 
-  it("Ready is the green dot alone, its word kept for screen readers; another state shows its word", async () => {
+  it("the open game's own project in another folder gets a row, and its Move into game moves the folder into the game", async () => {
+    const c = await computer({ game: "dirt-track" });
+    const game = path.join(path.dirname(path.dirname(c.newGames)), "AI Games", "dirt-track");
+    await mkdir(game, { recursive: true });
+    Object.assign(c.context, { directory: game });
+    for (const folder of ["Config", "Content"]) await mkdir(path.join(path.dirname(c.drift), folder));
+    await c.act("setup", { project: c.drift });
+    await c.act("use-project", { project: c.drift });
+    const tab = await open(c);
+    try {
+      await tab.waitForSelector("#outside:not([hidden])");
+      assert.equal(
+        await tab.locator("#outside").innerText(),
+        "This project is in another folder\nNo Rewind, Loops or Publish here.\nMove into game",
+      );
+      c.sent.length = 0;
+      await tab.click("#move-in");
+      assert.deepEqual(await firstSent(c, tab), ["move-into-game", { project: c.drift }]);
+      await tab.waitForSelector("#outside[hidden]", { state: "attached" });
+      const moved = path.join(game, "unreal", "Drift.uproject");
+      assert.match(
+        await readFile(moved, "utf8"),
+        /EngineAssociation/,
+        "the project file is in the game's unreal folder",
+      );
+      assert.equal(c.game.link?.project, moved, "the game builds in the project where it now is");
+      assert.equal(await tab.textContent("#project-name"), "Drift");
+      assert.equal(await tab.evaluate(() => document.getElementById("project-name")?.title), moved);
+    } finally {
+      await tab.close();
+    }
+  });
+
+  it("the row about another folder says why the project can't move, with no button, when the game already has an unreal folder", async () => {
+    const c = await computer({ game: "dirt-track" });
+    const game = path.join(path.dirname(path.dirname(c.newGames)), "AI Games", "dirt-track");
+    await mkdir(path.join(game, "unreal"), { recursive: true });
+    Object.assign(c.context, { directory: game });
+    for (const folder of ["Config", "Content"]) await mkdir(path.join(path.dirname(c.drift), folder));
+    await c.act("setup", { project: c.drift });
+    await c.act("use-project", { project: c.drift });
+    const tab = await open(c);
+    try {
+      await tab.waitForSelector("#outside:not([hidden])");
+      assert.equal(await tab.textContent("#outside-sub"), "This game already has an unreal folder.");
+      assert.equal(await tab.isVisible("#move-in"), false, "a button that can't act is hidden");
+    } finally {
+      await tab.close();
+    }
+  });
+
+  it("the row about another folder offers no button while Unreal has the project open, and says to quit Unreal", async () => {
+    const c = await computer({ game: "dirt-track" });
+    const game = path.join(path.dirname(path.dirname(c.newGames)), "AI Games", "dirt-track");
+    await mkdir(game, { recursive: true });
+    Object.assign(c.context, { directory: game });
+    for (const folder of ["Config", "Content"]) await mkdir(path.join(path.dirname(c.drift), folder));
+    await c.act("setup", { project: c.drift });
+    await c.act("use-project", { project: c.drift });
+    c.live.running = true;
+    c.live.answering = true;
+    const tab = await open(c);
+    try {
+      await tab.waitForSelector("#outside:not([hidden])");
+      assert.equal(await tab.textContent("#outside-sub"), "Quit Unreal to move it into this game.");
+      assert.equal(await tab.isVisible("#move-in"), false, "a button that can't act is hidden");
+      await assert.rejects(c.act("move-into-game", { project: c.drift }), /Quit Unreal first/);
+      assert.equal(c.game.link?.project, c.drift, "nothing moved");
+    } finally {
+      await tab.close();
+    }
+  });
+
+  it("Ready is a green dot and its word beside the project's Unreal; another state shows its own word", async () => {
     const c = await computer();
     const file = await STEPS[PanelStep.Connected].arrange(c);
     await c.act("status", { project: file });
@@ -769,22 +871,27 @@ describe("The Set up Unreal panel", { skip }, () => {
       tab.evaluate(() => {
         const chip = document.getElementById("state");
         const word = document.getElementById("state-word");
+        const dot = chip?.querySelector(".dot");
         return {
-          word: word?.textContent,
-          title: chip?.title,
+          line: chip?.textContent,
           wordSeen: (word?.getBoundingClientRect().width ?? 0) > 1,
-          dot: chip ? getComputedStyle(chip, "::before").backgroundColor : "",
+          dot: dot ? getComputedStyle(dot).backgroundColor : "",
         };
       });
     try {
-      await tab.waitForFunction(() => document.getElementById("state")?.textContent === "Ready", null, {
+      await tab.waitForFunction(() => document.getElementById("state-word")?.textContent === "Ready", null, {
         timeout: CONNECTED_WAIT_MS,
       });
       // The light theme's green, chosen for 4.5:1 on white.
-      assert.deepEqual(await state(), { word: "Ready", title: "Ready", wordSeen: false, dot: "rgb(29, 127, 70)" });
+      // Flipped: the word is shown, not only read out.
+      assert.deepEqual(await state(), {
+        line: `Ready · Unreal ${OLDEST_ENGINE}`,
+        wordSeen: true,
+        dot: "rgb(29, 127, 70)",
+      });
       c.live.running = false;
       c.live.answering = false;
-      await tab.waitForFunction(() => document.getElementById("state")?.textContent === "Not open", null, {
+      await tab.waitForFunction(() => document.getElementById("state-word")?.textContent === "Not open", null, {
         timeout: CONNECTED_WAIT_MS,
       });
       assert.equal((await state()).wordSeen, true);
@@ -801,9 +908,9 @@ describe("The Set up Unreal panel", { skip }, () => {
     try {
       const box = tab.locator("#while-playing");
       await tab.waitForFunction(() => !document.getElementById("agents")?.hidden);
-      assert.match(await tab.locator("#agents").innerText(), /Agents may use Unreal while you play/);
+      assert.match(await tab.locator("#agents").innerText(), /Agents can use Unreal while you play/);
       assert.equal(await box.isChecked(), true, "on unless the person turned it off");
-      await tab.getByText("Agents may use Unreal while you play").click();
+      await tab.getByText("Agents can use Unreal while you play").click();
       await tab.waitForFunction(() => !(document.getElementById("while-playing") as HTMLInputElement).disabled);
       assert.equal(await box.isChecked(), false);
       assert.deepEqual(c.sent.at(-1), ["agents-wait", {}]);
@@ -1010,27 +1117,28 @@ describe("The Set up Unreal panel in Studio's sandboxed frame", { skip }, () => 
     const p = await open(c);
     try {
       await p.frame.waitForSelector("#project:not([hidden])");
-      assert.equal(await p.frame.textContent("#primary"), "Open the Epic Games Launcher");
-      assert.equal(await p.frame.textContent("#secondary"), "Set up Later");
-      await p.frame.focus("#secondary");
+      assert.equal(await p.frame.textContent("#lead-title"), "Unreal 5.10 isn't installed");
+      assert.equal(await p.frame.textContent("#lead-act"), "Open Launcher");
+      assert.equal(await p.frame.textContent("#primary"), "Add Genex");
+      await p.frame.focus("#primary");
       await p.tab.keyboard.press("Enter");
-      await p.answered("secondary", "Open in Unreal");
-      assert.deepEqual(await p.focused(), { id: "secondary", text: "Open in Unreal" });
+      await p.answered("primary", "Open in Unreal");
+      assert.deepEqual(await p.focused(), { id: "primary", text: "Open in Unreal" });
     } finally {
       await p.tab.close();
     }
   });
 
-  it("Set up and open sends setup, then open-editor, and focus goes to the project's heading while it opens", async () => {
+  it("Open in Unreal on a project without Genex sends setup, then open-editor, and focus goes to the project's heading while it opens", async () => {
     const c = await computer();
     await c.act("status", { project: c.drift });
     const p = await open(c);
     try {
       await p.frame.waitForSelector("#project:not([hidden])");
-      assert.equal(await p.frame.textContent("#primary"), "Set up and open Drift");
+      assert.equal(await p.frame.textContent("#primary"), "Open in Unreal");
       await p.frame.focus("#primary");
       await p.tab.keyboard.press("Enter");
-      await p.answered("headline", "Opening in Unreal");
+      await p.answered("state-word", "Opening");
       assert.deepEqual(
         ((await p.requests()) as Array<[string]>).map(([name]) => name),
         ["setup", "open-editor"],
@@ -1052,7 +1160,7 @@ describe("The Set up Unreal panel in Studio's sandboxed frame", { skip }, () => 
     const p = await open(c);
     try {
       await p.frame.waitForSelector("#project:not([hidden])");
-      assert.equal(await p.frame.textContent("#primary"), "Switch to Drift");
+      assert.equal(await p.frame.textContent("#primary"), "Switch to this one");
       // The keyboard, not a pointer: a refresh that moves the layout under a click lost the press.
       await p.frame.focus("#primary");
       await p.tab.keyboard.press("Enter");
@@ -1091,7 +1199,7 @@ describe("The Set up Unreal panel in Studio's sandboxed frame", { skip }, () => 
     }
   });
 
-  it("Restart onto a port another app now holds shows Set up again instead of opening", async () => {
+  it("Restart onto a port another app now holds says so and offers Open again instead of opening", async () => {
     const c = await computer();
     await c.act("setup", { project: c.drift });
     c.live.running = true;
@@ -1107,7 +1215,8 @@ describe("The Set up Unreal panel in Studio's sandboxed frame", { skip }, () => 
       c.live.running = false;
       c.live.listening = new Set([status.port]);
       await p.frame.waitForFunction(
-        () => document.getElementById("primary")?.textContent === "Set up and open Drift",
+        () =>
+          /^Another app is using the port Genex gave Drift\./.test(document.getElementById("say")?.textContent ?? ""),
         null,
         { timeout: CONNECTED_WAIT_MS },
       );
@@ -1139,7 +1248,7 @@ describe("The Set up Unreal panel in Studio's sandboxed frame", { skip }, () => 
     }
   });
 
-  it("after Undo setup, focus is on the primary, Set up again", async () => {
+  it("after Remove Genex, focus is on the primary, Open in Unreal again", async () => {
     const c = await computer();
     await c.act("setup", { project: c.drift });
     await c.act("status", { project: c.drift });
@@ -1149,8 +1258,9 @@ describe("The Set up Unreal panel in Studio's sandboxed frame", { skip }, () => 
       await p.frame.evaluate(() => document.getElementById("more")?.setAttribute("open", ""));
       await p.frame.focus("#undo");
       await p.tab.keyboard.press("Enter");
-      await p.answered("primary", "Set up and open Drift");
-      assert.deepEqual(await p.focused(), { id: "primary", text: "Set up and open Drift" });
+      await p.answered("primary", "Open in Unreal");
+      assert.equal(await p.frame.textContent("#state-word"), "Not open");
+      assert.deepEqual(await p.focused(), { id: "primary", text: "Open in Unreal" });
     } finally {
       await p.tab.close();
     }
@@ -1209,7 +1319,11 @@ describe("The Set up Unreal panel in Studio's sandboxed frame", { skip }, () => 
         (window as unknown as { __picked: string }).__picked = file;
       }, picked);
       await p.frame.click("#choose-new");
-      await p.frame.waitForFunction(() => document.getElementById("primary")?.textContent === "Set up and open Picked");
+      await p.frame.waitForFunction(
+        () =>
+          !document.getElementById("project")?.hidden &&
+          document.getElementById("project-name")?.textContent === "Picked",
+      );
       const status = (await c.act("status", {})) as { project: { file: string } };
       assert.equal(status.project.file, picked, "the picked project is the chosen one");
     } finally {
@@ -1231,7 +1345,7 @@ describe("The Set up Unreal panel in Studio's sandboxed frame", { skip }, () => 
       await p.frame.waitForFunction(
         () =>
           document.getElementById("project-name")?.textContent === "GxNew" &&
-          /^Opening in Unreal/.test(document.getElementById("headline")?.textContent ?? ""),
+          document.getElementById("state-word")?.textContent === "Opening",
       );
       const made = path.join(c.newGames, "GxNew", "GxNew.uproject");
       const sent = ((await p.requests()) as Array<[string, Record<string, unknown>]>).filter(
@@ -1248,7 +1362,7 @@ describe("The Set up Unreal panel in Studio's sandboxed frame", { skip }, () => 
       await p.frame.waitForFunction(
         () =>
           document.getElementById("project-name")?.textContent === "GxNew" &&
-          document.getElementById("state")?.textContent === "Ready",
+          document.getElementById("state-word")?.textContent === "Ready",
         null,
         { timeout: CONNECTED_WAIT_MS },
       );

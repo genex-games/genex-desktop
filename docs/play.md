@@ -58,7 +58,7 @@ What Play sends is in [PRIVACY](../PRIVACY.md#play).
   Recent row takes the newest cover any card or page shows for its game; one still without a cover,
   or whose cover no longer loads, reads its game's page once a window. A game with no cover shows a
   still wire floor (`NoCover.tsx`) on its row and card. Top creators (the last 30 days) above
-  Games' tabs. The promo card shows until the first sign-in or
+  Games' tabs, in the order genex.games ranks them. The promo card shows until the first sign-in or
   its ×.
 - Assets are square tiles under two switchers: kind (All · 3D · Images · Sounds · Videos, a kind
   read from the whole catalog) and Everyone · Mine (the account's library, Saved/Shared tags, signed
@@ -377,6 +377,11 @@ is.
   takes it once (`studio:play.take-game-link`, announced by `play.game-link`); the page then opens
   the game's own page in Play (`use-game-links.ts`), which shows its own error when the game
   cannot be read. Developer and test launches register nothing.
+- A creator's own published game opens there too: Open on the chat's live card and on Publish's
+  public link shows the game's page in Play (`openPlayGame` in `play/open-play.ts`; Publish closes
+  first), for a game whose public address is on this Play's website (`playPageSlug` in
+  `shared/play.ts`). A game on another Genex (a development stand's) has no page here, so its Open
+  goes to the browser through the plugin's checked `publish-open`.
 - Notices: an install finished or failed, and a newer build of an installed game (checked at start
   and every six hours, once per version), are written to the log (`play_install_finished`,
   `play_install_failed`, `play_update_available`); the feed shows them as Play rows that open the

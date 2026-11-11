@@ -7,7 +7,7 @@
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { copyFile, mkdir, readFile, readdir, symlink, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, readdir, symlink, truncate, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
 import type { PluginContext } from "../../src/plugin-sdk/index.d.ts";
@@ -613,6 +613,17 @@ describe("packaging an Unreal game for the web", () => {
     }
   });
 
+  it("asks Unreal to split the content into files, each small enough for a host that caps a file's size", () => {
+    const game = { projectFile: "/g/unreal/Dust.uproject", stagingDir: "/g/unreal/Builds", engineDir: ENGINE };
+    for (const platform of ["darwin", "win32"] as const) {
+      // Without it the cook writes no chunk lists, and the whole game's content is one file.
+      assert.ok(buildCookRunArgs({ ...game, platform, system: PackageSystem.Web }).includes("-manifests"), platform);
+      assert.ok(!buildCookRunArgs({ ...game, platform }).includes("-manifests"), `${platform}'s own app stays whole`);
+    }
+    const linux = buildCookRunArgs({ ...game, platform: "win32", system: PackageSystem.Linux });
+    assert.ok(!linux.includes("-manifests"), "a Linux app stays whole");
+  });
+
   it("makes the site the game's web version in web/, with the checked emsdk handed to RunUAT", async () => {
     const { game, project } = await gameWithCpp();
     const emsdk = await emsdkOf("6.0.10");
@@ -627,14 +638,90 @@ describe("packaging an Unreal game for the web", () => {
     assert.ok(launches[0]?.includes("-platform=Wasm"));
     assert.deepEqual(envs[0], { WASM_EMSDK_ROOT: emsdk });
     assert.deepEqual((await readdir(path.join(game, "web"))).sort(), ["Dust", "index.html", "wasm-manifest.json"]);
-    // The project says its page adds the isolation headers itself: Genex's hosts send none.
+    // The project says its page adds the isolation headers itself: Genex's hosts send none. The page
+    // waits for a click, which a browser needs before it plays sound or gives the game the mouse,
+    // and draws at two device pixels a CSS pixel, sharp on a Retina screen.
     assert.match(
       await readFile(path.join(game, "unreal", "Config", "DefaultEngine.ini"), "utf8"),
-      /\[\/Script\/WasmTargetPlatform\.WasmTargetSettings\]\nbInjectIsolationHeaders=True/,
+      /\[\/Script\/WasmTargetPlatform\.WasmTargetSettings\]\nbInjectIsolationHeaders=True\nStartMode=Click\nMaxDevicePixelRatio=2\.0\n/,
     );
-    // After a restart the build in web/ is still named.
+    // And its content comes in files a host takes one by one: set for the web alone, before the cook reads it.
+    assert.equal(
+      await readFile(path.join(game, "unreal", "Config", "Wasm", "WasmGame.ini"), "utf8"),
+      "[/Script/UnrealEd.ProjectPackagingSettings]\nbGenerateChunks=True\nMaxChunkSize=262144000\n",
+    );
+    assert.deepEqual((await readdir(path.join(game, "unreal", "Config"))).sort(), ["DefaultEngine.ini", "Wasm"]);
+    // After a restart the build in web/ is still named, with nothing to say of a site the host takes.
     const later = await createGamePackageTools(deps).handlers["package-status"](web, context, "/s");
-    assert.deepEqual([later.state, later.app], [GamePackageState.Idle, "web/index.html"]);
+    assert.deepEqual([later.state, later.app, later.line], [GamePackageState.Idle, "web/index.html", undefined]);
+  });
+
+  it("says which file of a finished web build is past the host's limits, before any upload and after a restart", async () => {
+    const { game, project } = await gameWithCpp();
+    /** A site whose content came in one file just past the host's 500 MiB (a sparse file: no disk is used). */
+    const stagesOneBigFile: RunUat = async (launch, options) => {
+      const outcome = await stagesWeb(launch, options);
+      const found = /-stagingdirectory=(?:"([^"]+)"|(\S+))/.exec(launch.args.join(" "));
+      const paks = path.join(found?.[1] ?? found?.[2] ?? "", "Wasm", "Dust", "Content", "Paks");
+      await mkdir(paks, { recursive: true });
+      await writeFile(path.join(paks, "pakchunk0-Wasm.ucas"), "");
+      await truncate(path.join(paks, "pakchunk0-Wasm.ucas"), 500 * 1024 * 1024 + 9);
+      return outcome;
+    };
+    const emsdk = await emsdkOf("6.0.10");
+    const { deps } = depsFor(project, stagesOneBigFile, { engine: await engineFor(true), emsdk });
+    const tools = createGamePackageTools(deps);
+    const context = contextIn(game);
+    await tools.handlers["package-game"](web, context, "/s");
+    const done = await settled(() => tools.handlers["package-status"](web, context, "/s"));
+    // The build is made and is the game's web version; its line says what to fix before Publish.
+    assert.deepEqual([done.state, done.app], [GamePackageState.Done, "web/index.html"]);
+    const past =
+      "The site is past Genex hosting's usual limits: web/Dust/Content/Paks/pakchunk0-Wasm.ucas is 501 MB, and a file may be 500 MB at most.";
+    assert.equal(done.line, `The web build was made in 0 s. ${past}`);
+    // After a restart the build's own line is gone; the build in web/ still says it.
+    const later = await createGamePackageTools(deps).handlers["package-status"](web, context, "/s");
+    assert.deepEqual([later.state, later.app, later.line], [GamePackageState.Idle, "web/index.html", past]);
+    // With more files past the limit, the line names the largest and counts the rest (one at the limit is inside it).
+    const paks = path.join(game, "web", "Dust", "Content", "Paks");
+    const status = async (file: string, extra: number) => {
+      await writeFile(path.join(paks, file), "");
+      await truncate(path.join(paks, file), 500 * 1024 * 1024 + extra);
+      return (await createGamePackageTools(deps).handlers["package-status"](web, context, "/s")).line;
+    };
+    assert.equal(await status("pakchunk1-Wasm.ucas", 0), past);
+    const largest = "web/Dust/Content/Paks/pakchunk0-Wasm.ucas is 501 MB, and a file may be 500 MB at most";
+    assert.equal(
+      await status("pakchunk2-Wasm.ucas", 1),
+      `The site is past Genex hosting's usual limits: ${largest} (1 more file is past that).`,
+    );
+    assert.equal(
+      await status("pakchunk3-Wasm.ucas", 1),
+      `The site is past Genex hosting's usual limits: ${largest} (2 more files are past that).`,
+    );
+  });
+
+  it("packages nothing, and names no path of this computer, when the project's config can't be written safely", async () => {
+    const { game, project } = await gameWithCpp();
+    const outside = await tmpDir("unreal-package-outside-");
+    await mkdir(path.join(game, "unreal", "Config"));
+    await symlink(outside, path.join(game, "unreal", "Config", "Wasm"), "dir");
+    const emsdk = await emsdkOf("6.0.10");
+    const { deps, launches } = depsFor(project, stagesWeb, { engine: await engineFor(true), emsdk });
+    const tools = createGamePackageTools(deps);
+    const failure = await tools.handlers["package-game"](web, contextIn(game), "/s").then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    assert.ok(failure instanceof Error);
+    assert.match(failure.message, /couldn't write the web build's settings.*unreal\/Config.*packaged nothing/);
+    assert.ok(!failure.message.includes(game) && !failure.message.includes(outside), failure.message);
+    assert.deepEqual([launches, await readdir(outside)], [[], []]);
+    // No half of the settings is left behind: the config Genex could have written stays unwritten.
+    assert.deepEqual(await readdir(path.join(game, "unreal", "Config")), ["Wasm"]);
+    // The game's slot is free again: nothing reads as a package still running.
+    const status = await tools.handlers["package-status"](web, contextIn(game), "/s");
+    assert.deepEqual([status.state, status.jobRunning], [GamePackageState.Idle, false]);
   });
 
   it("never makes a staged page without its file list the game's web version", async () => {

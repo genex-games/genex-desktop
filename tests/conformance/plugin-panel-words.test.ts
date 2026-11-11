@@ -253,6 +253,7 @@ describe("pasting a plugin's translations into its panel", () => {
       frame: () => frame,
       plugin: () => ({ manifest: { id: "toy-engine", actions: [] } }) as unknown as PluginInfo,
       project: () => "valley",
+      title: () => null,
       surface: () => PanelSurface.Page,
       style: () => style,
       review: () => {},

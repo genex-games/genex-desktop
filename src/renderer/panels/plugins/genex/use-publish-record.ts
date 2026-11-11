@@ -20,6 +20,13 @@ const FILES_FRESH_MS = 60 * SECOND_MS;
 const CANCELLED = /Cancelled/;
 const words = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
+/** The game's publish record as the plugin keeps it now. */
+export async function readPublishState(pluginId: string, project?: string): Promise<GenexPublishState> {
+  const args = { operation: GenexPublishStatusOperation.Status };
+  const state = await window.studio.pluginAction(pluginId, GenexAction.PublishStatus, args, project);
+  return state as GenexPublishState;
+}
+
 /** What is being pressed right now: Publish (listing files, then starting the upload), a rename, or another action. */
 export const Pressing = { None: "none", Publish: "publish", Files: "files", Action: "action", Name: "name" } as const;
 export type Pressing = (typeof Pressing)[keyof typeof Pressing];
@@ -37,15 +44,7 @@ export function usePublishRecord(plugin: PluginInfo, project: string | null) {
   const game = project ?? "";
   const refresh = useCallback(async (): Promise<void> => {
     try {
-      const args = { operation: GenexPublishStatusOperation.Status };
-      setState(
-        (await window.studio.pluginAction(
-          id,
-          GenexAction.PublishStatus,
-          args,
-          project ?? undefined,
-        )) as GenexPublishState,
-      );
+      setState(await readPublishState(id, project ?? undefined));
       setReadError("");
     } catch (e) {
       setReadError(words(e));
@@ -131,7 +130,7 @@ export function usePublishRecord(plugin: PluginInfo, project: string | null) {
       ),
     /**
      * Publish a game's apps on their own under `title`: the press is the consent to the apps its rows
-     * name, or only the `platforms` the Publish card's switches send, and to the apps Genex Cloud
+     * name, or only the `platforms` the Publish card's press names, and to the apps Genex Cloud
      * built or builds for the platforms `release` names.
      */
     publishApps: (title: string, remix?: boolean, platforms?: string[], release?: string[]): Promise<void> =>

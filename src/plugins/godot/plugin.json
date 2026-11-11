@@ -1,7 +1,7 @@
 {
   "apiVersion": 3,
   "id": "godot",
-  "version": "0.12.2",
+  "version": "0.12.3",
   "icon": "icon.svg",
   "name": "Godot",
   "publisher": "Genex",
@@ -268,7 +268,8 @@
       "id": "setup",
       "title": "Godot",
       "file": "panel.html",
-      "placement": "settings"
+      "placement": "settings",
+      "width": "narrow"
     }
   ],
   "settings": [],
@@ -302,8 +303,8 @@
     },
     {
       "name": "set-up",
-      "label": "Set up for Genex",
-      "confirmation": "Set this Godot game up for Genex's play?",
+      "label": "Add Genex",
+      "confirmation": "Add Genex to this Godot game, so its agents can play and test it?",
       "native": true
     },
     {
@@ -314,6 +315,12 @@
     {
       "name": "use-project",
       "label": "Use this project"
+    },
+    {
+      "name": "move-into-game",
+      "label": "Move into game",
+      "confirmation": "Move this Godot project's folder into this game's folder, as godot/, where Rewind and Loops reach it. Nothing is copied or replaced.",
+      "native": true
     },
     { "name": "steps", "label": "Godot setup" },
     { "name": "install-godot", "label": "Install Godot", "native": true },

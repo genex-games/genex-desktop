@@ -64,7 +64,7 @@ import { gitFile } from "../helpers/git.ts";
 import { copyOfExample, PLUGIN_SDK_BACKEND, personAllowsLocalTools } from "../helpers/plugins.ts";
 import { writeSkillExample } from "../helpers/plugin-author.ts";
 import { tmpDir } from "../helpers/tmp.ts";
-import { Changes, until } from "../helpers/worker-chat.ts";
+import { Changes, until } from "../helpers/changes.ts";
 import {
   CHAT_SESSION,
   gameRepo,

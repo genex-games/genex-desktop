@@ -57,6 +57,8 @@ export type PanelBridgeHost = {
   frame(): PanelFrame | null;
   plugin(): PluginInfo;
   project(): string | null | undefined;
+  /** The open game's title as Genex shows it; null with no game. */
+  title(): string | null;
   surface(): PanelSurface;
   /** The theme's properties, for the panel's context. */
   style(): StyleReader;
@@ -85,7 +87,13 @@ function takesRequest(
 }
 
 /** What one request is answered in: the game and surface it was asked in. */
-type Asked = { id: string; plugin: PluginInfo; project: string | null | undefined; surface: PanelSurface };
+type Asked = {
+  id: string;
+  plugin: PluginInfo;
+  project: string | null | undefined;
+  title: string | null;
+  surface: PanelSurface;
+};
 
 /** Answer one bridge request: the panel's context, its plugin's settings, one of its declared actions, or a chosen file. */
 async function answerRequest(
@@ -94,7 +102,9 @@ async function answerRequest(
   host: PanelBridgeHost,
   review: (request: PluginReviewRequest) => void,
 ): Promise<unknown> {
-  if (m.method === PanelMethod.Context) return panelContext(asked.project, host.style(), asked.surface);
+  // The language is the window's own (the default); the title is the game's the request was asked in.
+  if (m.method === PanelMethod.Context)
+    return panelContext(asked.project, host.style(), asked.surface, undefined, asked.title);
   if (m.method === PanelMethod.Settings) return await window.studio.pluginSettings(asked.id);
   // Checked here before it leaves the renderer, and again in main before the picker opens.
   if (m.method === PanelMethod.ChooseFile)
@@ -127,7 +137,13 @@ export function openPanelBridge(host: PanelBridgeHost): PanelBridge {
     if (told(m) || !takesRequest(m, active)) return;
     active.add(m.id);
     const plugin = host.plugin();
-    const asked = { id: plugin.manifest.id, plugin, project: host.project(), surface: host.surface() };
+    const asked = {
+      id: plugin.manifest.id,
+      plugin,
+      project: host.project(),
+      title: host.title(),
+      surface: host.surface(),
+    };
     let body: { result: unknown } | PanelErrorReply;
     try {
       body = { result: await answerRequest(m, asked, host, review) };

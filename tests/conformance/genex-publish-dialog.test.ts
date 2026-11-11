@@ -5,7 +5,7 @@
  * the bundled Genex plugin, on or off, and only for the very files the person saw.
  */
 import assert from "node:assert/strict";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
@@ -62,16 +62,16 @@ async function dialogRig() {
   const binding: PluginBinding = { project: GAME, directory: game.dir };
   let stages = 0;
   /** What the Genex backend does once its publish starts: the host stages the public copy. */
-  const exportStage = () => {
+  const exportStage = (bound: PluginBinding = binding) => {
     const stage = lite.core.pluginServices.exportStage;
     assert.ok(stage);
-    return stage(binding, path.join(lite.userData, "publish-stage", String(++stages)), "genex");
+    return stage(bound, path.join(lite.userData, "publish-stage", String(++stages)), "genex");
   };
   const calls: Array<{ id: string; name: string; args: unknown; binding?: PluginBinding }> = [];
   const staged: ExportReview[] = [];
   lite.core.plugins.action = async (id, name, args, bound) => {
     calls.push({ id, name, args, binding: bound });
-    if (name === "publish-gallery") staged.push(await exportStage());
+    if (name === "publish-gallery") staged.push(await exportStage(bound));
     return {};
   };
   /** The file-list card the host asks in chat. */
@@ -505,26 +505,54 @@ test("Publish refuses a folder that holds another kind of project and no web gam
   }
 });
 
+/** Ember Run, a Godot game: its project in `godot/`, its web export in `web/`, no page at its root. */
+async function addGodotGame(rig: Awaited<ReturnType<typeof dialogRig>>) {
+  const godot = await rig.core.games.scaffold("ember-run", { title: "Ember Run" });
+  await rm(path.join(godot.dir, "index.html"));
+  const meta = path.join(godot.dir, "studio.json");
+  const { contractVersion: _starter, ...kept } = JSON.parse(await readFile(meta, "utf8")) as Record<string, unknown>;
+  await writeFile(meta, JSON.stringify(kept));
+  await mkdir(path.join(godot.dir, "godot"), { recursive: true });
+  await writeFile(path.join(godot.dir, "godot", "project.godot"), "config_version=5\n");
+  await mkdir(path.join(godot.dir, "web"), { recursive: true });
+  await writeFile(
+    path.join(godot.dir, "web", "index.html"),
+    "<!doctype html><title>Ember Run</title><script src=index.js></script>",
+  );
+  for (const file of ["index.js", "index.wasm", "index.pck"]) await writeFile(path.join(godot.dir, "web", file), file);
+  await writeFile(path.join(godot.dir, "web", ".gdignore"), "");
+  return godot;
+}
+
 test("Publish puts a Godot game's web export online: its web/ folder in the root's place", async () => {
   const rig = await dialogRig();
   try {
-    const godot = await rig.core.games.scaffold("ember-run", { title: "Ember Run" });
-    await rm(path.join(godot.dir, "index.html"));
-    const meta = path.join(godot.dir, "studio.json");
-    const { contractVersion: _starter, ...kept } = JSON.parse(await readFile(meta, "utf8")) as Record<string, unknown>;
-    await writeFile(meta, JSON.stringify(kept));
-    await mkdir(path.join(godot.dir, "godot"), { recursive: true });
-    await writeFile(path.join(godot.dir, "godot", "project.godot"), "config_version=5\n");
-    await mkdir(path.join(godot.dir, "web"), { recursive: true });
-    await writeFile(
-      path.join(godot.dir, "web", "index.html"),
-      "<!doctype html><title>Ember Run</title><script src=index.js></script>",
-    );
-    for (const file of ["index.js", "index.wasm", "index.pck"])
-      await writeFile(path.join(godot.dir, "web", file), file);
-    await writeFile(path.join(godot.dir, "web", ".gdignore"), "");
+    await addGodotGame(rig);
     const review = await publishReview(rig.core, "ember-run");
     assert.deepEqual([...review.included].sort(), ["index.html", "index.js", "index.pck", "index.wasm"]);
+  } finally {
+    await rig.close();
+  }
+});
+
+test("an engine's web export is listed where it is: no copy is made to show its files, and the publish stages exactly those", async () => {
+  const rig = await dialogRig();
+  try {
+    await addGodotGame(rig);
+    const review = await publishReview(rig.core, "ember-run");
+    assert.deepEqual(review, {
+      included: ["index.html", "index.js", "index.pck", "index.wasm"],
+      excluded: [".gdignore"],
+    });
+    await assert.rejects(
+      access(path.join(rig.core.layout.scratch, "publish-review")),
+      "nothing was copied to list them",
+    );
+    await publishFromDialog(rig.core, "ember-run", review);
+    assert.equal(rig.staged.length, 1, "Genex staged the public copy");
+    assert.deepEqual([...rig.staged[0]!.included].sort(), review.included);
+    assert.deepEqual([...rig.staged[0]!.excluded].sort(), review.excluded);
+    assert.deepEqual(rig.consents, [], "the staged copy holds the listed files, so nobody is asked again");
   } finally {
     await rig.close();
   }

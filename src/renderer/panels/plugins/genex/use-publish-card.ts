@@ -1,12 +1,13 @@
 /**
- * The Publish card's state and its one press, for a game made in an engine. The rows wait for both
- * the game folder and Genex's record; the switches are the person's until the press; a press does
- * what its plan says. Build: the agent builds apps here and Genex Cloud builds the ones this
- * computer can't, both at once, and players get nothing (Genex Cloud keeps what it builds). Publish:
- * the card sends what is ready, gives players what Genex Cloud built (or still builds, once built),
- * and takes switched-off platforms down.
+ * The Publish card's state and its presses, for a game made in an engine. The rows wait for both the
+ * game folder and Genex's record. A row's own button does one thing: Build asks the agent for the app
+ * here, or Genex Cloud for the one this computer can't make, and gives players nothing (Genex Cloud
+ * keeps what it builds); Publish and Update send what is ready; the menu of a platform players have
+ * takes it down. The big button does all of it: it builds what isn't built, sends what is ready, and
+ * hands the rest to the follow (`publish-follow.ts`), which gives players each platform as soon as it
+ * is ready, whether this dialog stays open or not.
  */
-import { useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { GenexAction, type GenexNativeRecord } from "../../../../shared/genex.ts";
 import type { FactRef } from "../../../../shared/project-facts.ts";
 import { type PublishPlatform, PublishTarget } from "../../../../shared/publish-platforms.ts";
@@ -19,12 +20,14 @@ import {
   type CardRow,
   CardWork,
   cardErrors,
-  cardRows,
+  followBar,
+  type PlanStep,
   type PressPlan,
-  busyPress,
-  pressNote,
   pressPlan,
+  recordRows,
+  sendCalls,
 } from "./publish-card-view.ts";
+import { publishFollow } from "./publish-follow.ts";
 import {
   appsMadeHere,
   cloudFixAsk,
@@ -37,11 +40,9 @@ import type { usePublishRecord } from "./use-publish-record.ts";
 
 type PublishRecord = ReturnType<typeof usePublishRecord>;
 
-/**
- * The apps the agent was asked to build from a game's card, by when, for this run of the app: the
- * card says so again when it opens while the agent still builds.
- */
-const ASKED = new Map<string, ReadonlyMap<PublishTarget, string>>();
+/** The press being carried out now: a row's own (its platform), or the big button's. */
+export const ALL_PLATFORMS = "all";
+export type CardPress = PublishTarget | typeof ALL_PLATFORMS;
 
 const NO_FACTS: readonly FactRef[] = [];
 
@@ -51,9 +52,13 @@ function buildAsk(row: CardRow | undefined, target: PublishTarget, title: string
   return row?.live ? rebuildAsk(target, title) : makeAppAsk(target, title);
 }
 
-/** The targets of a plan's steps of one kind. */
-const targetsOf = (plan: PressPlan, work: CardWork): PublishTarget[] =>
-  plan.steps.filter((step) => step.work === work).map((step) => step.target);
+/** The targets of the steps of one kind. */
+const targetsOf = (steps: readonly PlanStep[], work: CardWork): PublishTarget[] =>
+  steps.filter((step) => step.work === work).map((step) => step.target);
+
+/** The steps that give players something. */
+const sendsOf = (steps: readonly PlanStep[]): PlanStep[] =>
+  steps.filter((step) => step.work === CardWork.Publish || step.work === CardWork.Release);
 
 /** One error block as the card draws it: what failed, when the agent was handed it, and its press. */
 export interface ErrorBlock extends CardError {
@@ -61,38 +66,25 @@ export interface ErrorBlock extends CardError {
   sentAt: string | null;
   /** A failed build: hand its log to the agent. */
   onSend?: () => void;
-  /** A send that didn't reach Genex, or a build that didn't start: do it again. */
-  onRetry?: () => void;
 }
 
-/** What Try again does for a block: start the build again, or send the app again. */
-const RETRY_WORK = { [CardErrorKind.Start]: CardWork.Cloud, [CardErrorKind.Send]: CardWork.Publish } as const;
-
 /**
- * The card's error blocks, each with its press: Send to agent for a failed Genex Cloud build (the block
- * then says the agent is fixing it, until the error changes), Try again for a build that didn't start
- * or an app that didn't reach Genex.
+ * The card's error blocks: Send to agent for a failed Genex Cloud build (the block then says the agent
+ * is fixing it, until the error changes). A build that didn't start and an app that didn't reach Genex
+ * are tried again from their row.
  */
 function useErrorBlocks(
   project: string,
   title: string,
   platforms: PublishPlatform[] | null,
   native: GenexNativeRecord | undefined,
-  press: (plan: PressPlan) => Promise<void>,
 ): ErrorBlock[] {
   const [sent, setSent] = useState<ReadonlyMap<string, string>>(() => new Map());
   const errors = platforms ? cardErrors(platforms, native) : [];
   return errors.map((error) => {
     const key = `${error.target}\n${error.kind}\n${error.text}`;
     const block: ErrorBlock = { ...error, sentAt: sent.get(key) ?? null };
-    if (error.kind !== CardErrorKind.Build) {
-      const retry: PressPlan = {
-        label: "",
-        steps: [{ target: error.target, work: RETRY_WORK[error.kind] }],
-        warn: false,
-      };
-      return { ...block, onRetry: () => void press(retry) };
-    }
+    if (error.kind !== CardErrorKind.Build) return block;
     const onSend = (): void => {
       composeInChat({
         project,
@@ -103,6 +95,34 @@ function useErrorBlocks(
     };
     return { ...block, onSend };
   });
+}
+
+/**
+ * What the app keeps for `project` outside this dialog: the builds the card asked the agent for, the
+ * big button's press under way, and why its last send was refused.
+ */
+function useFollowed(project: string) {
+  const asked = useSyncExternalStore(publishFollow.subscribe, () => publishFollow.asked(project));
+  const following = useSyncExternalStore(publishFollow.subscribe, () => publishFollow.following(project));
+  const error = useSyncExternalStore(publishFollow.subscribe, () => publishFollow.error(project));
+  return { asked, following, error };
+}
+
+/**
+ * Keep the dialog and the follow in step: the record is read again each time the follow gives players
+ * something, and the follow looks again when the rows change, so a build that lands while the dialog
+ * is open goes at once.
+ */
+function useFollowInStep(project: string, record: PublishRecord, rows: readonly CardRow[] | null, sends: number) {
+  const { refresh } = record;
+  useEffect(() => {
+    if (sends > 0) void refresh();
+  }, [refresh, sends]);
+  const seen = rows?.map((row) => `${row.target}:${row.tone}:${row.work}`).join() ?? "";
+  // biome-ignore lint/correctness/useExhaustiveDependencies: rows that changed are the reason to look again.
+  useEffect(() => {
+    void publishFollow.tick(project);
+  }, [project, seen]);
 }
 
 /** What the card shows and does for `project`, from its record and the folder's platforms (null until read). */
@@ -126,31 +146,17 @@ export function usePublishCard({
 }) {
   const facts = useLibrary((s) => s.games.find((g) => g.name === project)?.facts) ?? NO_FACTS;
   const title = useLibrary((s) => s.games.find((g) => g.name === project)?.title) || project;
-  const [switches, setSwitches] = useState<ReadonlyMap<PublishTarget, boolean>>(() => new Map());
-  const [asked, setAsked] = useState<ReadonlyMap<PublishTarget, string>>(() => ASKED.get(project) ?? new Map());
-  const [acting, setActing] = useState(false);
+  const [acting, setActing] = useState<CardPress | null>(null);
   const state = record.state;
-  const rows =
-    platforms && state
-      ? cardRows({
-          platforms,
-          native: state.native,
-          now: Date.now(),
-          webOffer: webOfferFor(facts),
-          madeHere: appsMadeHere(facts, hostPlatform()),
-          hostedWeb: state.hostedWeb,
-          webPublishedAt: state.lastPublishAt,
-          asked,
-          mac: hostPlatform() === "darwin",
-        })
-      : null;
-  const remember = (targets: readonly PublishTarget[]): void => {
-    const at = new Date().toISOString();
-    const next = new Map(asked);
-    for (const target of targets) next.set(target, at);
-    ASKED.set(project, next);
-    setAsked(next);
+  const here = {
+    webOffer: webOfferFor(facts),
+    madeHere: appsMadeHere(facts, hostPlatform()),
+    mac: hostPlatform() === "darwin",
   };
+  const follow = useFollowed(project);
+  const rows =
+    platforms && state ? recordRows(platforms, state, { ...here, now: Date.now(), asked: follow.asked }) : null;
+  useFollowInStep(project, record, rows, follow.following?.sends ?? 0);
   const ask = (targets: readonly PublishTarget[]): void => {
     if (targets.length === 0) return;
     const text = targets.map((target) =>
@@ -161,13 +167,7 @@ export function usePublishCard({
       ),
     );
     composeInChat({ project, text: text.join("\n\n"), send: true });
-    remember(targets);
-  };
-  const takeDown = async (targets: readonly PublishTarget[]): Promise<void> => {
-    for (const target of targets)
-      await (target === PublishTarget.Web
-        ? record.act(GenexAction.PublishRemoveWeb)
-        : record.act(GenexAction.PublishRemoveApp, { platform: target }));
+    publishFollow.remember(project, targets);
   };
   /**
    * Genex Cloud builds each app and keeps it. A build Genex refuses before anything goes is the record's
@@ -176,49 +176,60 @@ export function usePublishCard({
   const buildOnCloud = async (targets: readonly PublishTarget[]): Promise<void> => {
     for (const target of targets) await record.buildOnCloud(target);
   };
-  const send = async (plan: PressPlan): Promise<void> => {
-    const published = targetsOf(plan, CardWork.Publish);
-    const apps = published.filter((target) => target !== PublishTarget.Web);
-    const released = targetsOf(plan, CardWork.Release);
-    const web = published.includes(PublishTarget.Web);
-    if (web) await record.publish(name, remix, replacesApps, apps);
-    // What Genex Cloud made goes with the apps; after a web publish, on its own.
-    if (released.length > 0 || (!web && apps.length > 0))
-      await record.publishApps(name, remix, web ? [] : apps, released);
+  /** Give players what `steps` name: the web publish with the apps behind it, then what goes on its own. */
+  const send = async (steps: readonly PlanStep[]): Promise<void> => {
+    const calls = sendCalls(steps);
+    if (calls.web) await record.publish(name, remix, replacesApps, calls.web);
+    if (calls.apps) await record.publishApps(name, remix, calls.apps.platforms, calls.apps.release);
   };
-  const press = async (plan: PressPlan): Promise<void> => {
-    setActing(true);
+  /** Do `steps` now: the builds first (they only start), then the sends. */
+  const run = async (by: CardPress, steps: readonly PlanStep[], after?: () => void): Promise<void> => {
+    setActing(by);
     try {
-      const built = targetsOf(plan, CardWork.Build);
-      const onCloud = targetsOf(plan, CardWork.Cloud);
-      ask(built);
-      await buildOnCloud(onCloud);
-      await takeDown(targetsOf(plan, CardWork.TakeDown));
-      await send(plan);
-      // A Build changes nothing for players: the switches stay as the person set them for the Publish after it.
-      if (built.length + onCloud.length === 0) setSwitches(new Map());
+      ask(targetsOf(steps, CardWork.Build));
+      await buildOnCloud(targetsOf(steps, CardWork.Cloud));
+      await send(sendsOf(steps));
+      after?.();
     } finally {
-      setActing(false);
+      setActing(null);
       await record.refresh();
     }
   };
-  const errors = useErrorBlocks(project, title, platforms, state?.native, press);
-  const plan = rows ? pressPlan(rows, switches) : null;
-  const busy = rows ? busyPress(rows) : null;
-  const named = plan?.steps.map((step) => step.target) ?? [];
+  const press = (plan: PressPlan): Promise<void> =>
+    run(ALL_PLATFORMS, plan.steps, () =>
+      publishFollow.start({
+        project,
+        targets: plan.follow,
+        sent: sendsOf(plan.steps).map((step) => step.target),
+        update: plan.update,
+        name,
+        remix,
+        replacesApps,
+        card: here,
+      }),
+    );
+  const takeDown = (target: PublishTarget): Promise<void> =>
+    target === PublishTarget.Web
+      ? record.act(GenexAction.PublishRemoveWeb)
+      : record.act(GenexAction.PublishRemoveApp, { platform: target });
   return {
-    /** The error blocks under the rows, each with its press. */
-    errors,
+    /** The error blocks under the rows: a failed build's goes to the agent. */
+    errors: useErrorBlocks(project, title, platforms, state?.native),
     rows,
-    switches,
-    onSwitch: (target: PublishTarget, on: boolean) => setSwitches((before) => new Map(before).set(target, on)),
-    plan,
-    busy,
-    /** The line under the button while Genex Cloud works: the active button's, else the busy one's. */
-    note: rows && plan ? pressNote(rows, named) : (busy?.note ?? null),
+    /** The big button: what it does and says; null while its press is followed, and when nothing needs doing. */
+    plan: rows && !follow.following ? pressPlan(rows) : null,
+    /** The status in the big button's place while its press is followed. */
+    bar: rows && follow.following ? followBar(rows, follow.following.update) : null,
+    /** Why the follow's last send was refused; empty when none was. */
+    followError: follow.error,
     /** The agent is building an app here: the folder is read again until it lands. */
     building: rows?.some((row) => row.here) ?? false,
     press,
+    /** A row's own button: its one step. */
+    act: (row: CardRow): Promise<void> =>
+      row.act ? run(row.target, [{ target: row.target, work: row.act.work }]) : Promise.resolve(),
+    takeDown,
+    /** The press being carried out now, or null: no other is taken meanwhile. */
     acting,
   };
 }

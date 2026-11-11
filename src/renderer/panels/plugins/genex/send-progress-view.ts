@@ -1,6 +1,7 @@
 /**
  * How a send on its way reads on the publish card: how much went, how fast, how long is left
- * (`GenexSendProgress`, from the Genex CLI's progress lines). Pure: the card calls it on each tick.
+ * (`GenexSendProgress`, from the Genex CLI's progress lines), as one line (`sendProgressView`) or
+ * with the time left apart for the row's loader (`sendStatus`). Pure: the card calls it on each tick.
  */
 import { sizeWords } from "../../../../shared/byte-size.ts";
 import { HOUR_MS, MINUTE_MS, SECOND_MS } from "../../../../shared/duration.ts";
@@ -54,16 +55,33 @@ function withTimeLeft(done: string, total: string, speed: string, leftMs: number
     : WORDS.hoursMinutesLeft(done, total, speed, hours, minutes);
 }
 
-/** How much went of a send whose size is known. */
-function amountsOf(progress: GenexSendProgress, now: number): string {
+/** The speed of a send whose size is known, when it was read lately enough to say anything of now; else 0. */
+function freshSpeed(progress: GenexSendProgress, now: number): number {
+  const speed = progress.bytesPerSecond ?? 0;
+  return speed > 0 && now - progress.at <= SPEED_FRESH_MS ? speed : 0;
+}
+
+/** How long a send whose size is known has left at its speed; null when the speed is not known, or all of it went. */
+function leftMsOf(progress: GenexSendProgress, now: number): number | null {
+  const speed = freshSpeed(progress, now);
+  const left = Math.max(0, progress.totalBytes - progress.doneBytes);
+  return speed > 0 && left > 0 ? (left / speed) * SECOND_MS : null;
+}
+
+/** How much went of a send whose size is known, and how fast: the line without the time left. */
+function soFar(progress: GenexSendProgress, now: number): string {
   const done = sizeWords(Math.min(progress.doneBytes, progress.totalBytes));
   const total = sizeWords(progress.totalBytes);
-  const speed = progress.bytesPerSecond ?? 0;
-  const fresh = now - progress.at <= SPEED_FRESH_MS;
-  if (speed <= 0 || !fresh) return WORDS.sent(done, total);
-  const left = Math.max(0, progress.totalBytes - progress.doneBytes);
-  if (left === 0) return WORDS.atSpeed(done, total, sizeWords(speed));
-  return withTimeLeft(done, total, sizeWords(speed), (left / speed) * SECOND_MS);
+  const speed = freshSpeed(progress, now);
+  return speed > 0 ? WORDS.atSpeed(done, total, sizeWords(speed)) : WORDS.sent(done, total);
+}
+
+/** How much went of a send whose size is known. */
+function amountsOf(progress: GenexSendProgress, now: number): string {
+  const leftMs = leftMsOf(progress, now);
+  if (leftMs === null) return soFar(progress, now);
+  const done = sizeWords(Math.min(progress.doneBytes, progress.totalBytes));
+  return withTimeLeft(done, sizeWords(progress.totalBytes), sizeWords(freshSpeed(progress, now)), leftMs);
 }
 
 /** What a row shows of the send `progress` describes, as of `now`; null without one. */
@@ -75,4 +93,27 @@ export function sendProgressView(progress: GenexSendProgress | undefined, now: n
   }
   const fraction = Math.min(1, progress.doneBytes / progress.totalBytes);
   return { label, amounts: amountsOf(progress, now), fraction };
+}
+
+/** A send as a row of the Publish card reads it: its status line, its bar, and the time left for the row's loader. */
+export interface SendStatus {
+  /** What is going on and how much went ("Packing", "1.3 of 3.2 GB · 16 MB/s"); null when there is nothing to say. */
+  words: string | null;
+  /** How full the bar is, 0 to 1; null when the size is not known. */
+  fraction: number | null;
+  /** How long is left at the send's speed; null when that is not known. */
+  leftMs: number | null;
+}
+
+/** What a working row shows of the send `progress` describes, as of `now`; null without one. */
+export function sendStatus(progress: GenexSendProgress | undefined, now: number): SendStatus | null {
+  if (!progress) return null;
+  const label = WORDS.stage[progress.stage];
+  if (progress.totalBytes <= 0) {
+    const went = progress.doneBytes > 0 ? sizeWords(progress.doneBytes) : null;
+    return { words: [label, went].filter(Boolean).join(" · ") || null, fraction: null, leftMs: null };
+  }
+  const fraction = Math.min(1, progress.doneBytes / progress.totalBytes);
+  const words = [label, soFar(progress, now)].filter(Boolean).join(" · ");
+  return { words, fraction, leftMs: leftMsOf(progress, now) };
 }

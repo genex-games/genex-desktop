@@ -27,8 +27,20 @@ registerHooks({
 const { createIpcHandle } = await import("../../src/main/ipc-handle.ts");
 const { registerPluginsIpc } = await import("../../src/main/ipc/plugins.ts");
 
-/** Get Xcode opens the App Store page or the Xcode app, so it is native too. */
-const NATIVE = ["create", "open-editor", "quit-editor", "get-unreal", "skip", "install-for-me", "get-xcode"];
+/**
+ * Get Xcode opens the App Store page or the Xcode app, so it is native too. Move into game moves
+ * the person's Unreal project folder, a write outside the plugin's storage.
+ */
+const NATIVE = [
+  "create",
+  "open-editor",
+  "quit-editor",
+  "get-unreal",
+  "skip",
+  "install-for-me",
+  "move-into-game",
+  "get-xcode",
+];
 
 /**
  * Roblox's actions that quit, open or click in Studio, write its Plugins folder and settings,
@@ -107,8 +119,10 @@ describe("A native plugin action", () => {
 
   it("a live profile runs every action", async () => {
     const { act, reached } = await actionChannel(false);
-    for (const name of NATIVE) assert.equal((await act(name)).ok, true, name);
-    assert.deepEqual(reached, NATIVE);
+    // Move into game asks for a review first, so a bare press is not how it runs.
+    const pressed = NATIVE.filter((name) => name !== "move-into-game");
+    for (const name of pressed) assert.equal((await act(name)).ok, true, name);
+    assert.deepEqual(reached, pressed);
   });
 });
 

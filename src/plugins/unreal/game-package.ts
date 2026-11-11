@@ -5,7 +5,8 @@
  * `unreal/Builds/<Mac|Windows|Linux>/`, where Publish finds it (`main/core/native-builds.ts`). A web
  * build (`system: "web"`, Unreal's Wasm platform) is the whole site, staged in `unreal/Builds/Wasm/`
  * and then made the game's web version in `web/`, on either system by an engine that builds for the
- * web (`web-build.ts`), from a game with a C++ module, with the emsdk the person installed. Unreal
+ * web (`web-build.ts`), from a game with a C++ module, with the emsdk the person installed, its
+ * content split into files a host that caps a file's size takes. Unreal
  * makes a Mac app only on a Mac and a Windows one only on Windows; Linux it cross-compiles from
  * Windows with Epic's Linux toolchain, which the person installs (Epic's installer sets
  * `LINUX_MULTIARCH_ROOT`, read from the registry so no restart is needed) and RunUAT is handed.
@@ -47,10 +48,14 @@ import {
   emscriptenFor,
   emsdkHolds,
   engineBuildsWeb,
-  ensureWebIsolation,
+  ensureWebSettings,
   GAME_WEB_FOLDER,
+  HOST_LIMITS,
+  HostLimit,
   holdsWebBuild,
+  PROJECT_CONFIG_FOLDER,
   placeWebBuild,
+  siteExcess,
   WEB_PAGE,
   WEB_PLATFORM,
   WebFolder,
@@ -96,6 +101,8 @@ const MAX_ERRORS = 12;
 const ERROR_CHARS = 400;
 /** How many of a failed package's last output lines it keeps when no line reads as an error. */
 const LAST_LINES = 8;
+/** The megabyte a size is said in: 1024 × 1024 bytes, as the host counts its limits. */
+const MEGABYTE_BYTES = 1024 * 1024;
 
 const MAC = "darwin";
 const WINDOWS = "win32";
@@ -178,8 +185,21 @@ const MESSAGE = {
     `A web build needs emscripten ${version}, exactly, in an emsdk folder this computer names. Give the user these steps: clone https://github.com/emscripten-core/emsdk to a plain local folder, run "emsdk install ${version}" and "emsdk activate ${version}" in it, and set the ${EMSDK_VARIABLE} environment variable to that folder; then package again. Genex packaged nothing.`,
   WebFolderTaken:
     "The game's web/ folder holds other files, and a web build is the game's whole web/ folder. Move or remove what is in web/ (ask the user first), then package again. Genex packaged nothing.",
+  NoWebSettings: (config: string, code: string) =>
+    `Genex couldn't write the web build's settings into ${config}/ (${code}). The folders and config files there have to be the project's own plain ones, which Genex can read and write, never links. Genex packaged nothing.`,
   Packaged: (system: string, seconds: number) => `The ${system} app was packaged in ${seconds} s.`,
   WebPackaged: (seconds: number) => `The web build was made in ${seconds} s.`,
+  /** What of a web build is past what Genex's hosting takes as a rule, in a sentence that stands alone. */
+  PastHostLimits: (what: string) => `The site is past Genex hosting's usual limits: ${what}.`,
+  /** The largest file past the file limit, and how many `others` are past it too: splitting one alone wouldn't do. */
+  FileTooLarge: (file: string, megabytes: number, most: number, others: number) => {
+    const largest = `${file} is ${megabytes} MB, and a file may be ${most} MB at most`;
+    if (others === 0) return largest;
+    return others === 1 ? `${largest} (1 more file is past that)` : `${largest} (${others} more files are past that)`;
+  },
+  SiteTooLarge: (megabytes: number, most: number) =>
+    `it is ${megabytes} MB in all, and a game may be ${most} MB at most`,
+  TooManyFiles: (files: number, most: number) => `it has ${files} files, and a game may have ${most} at most`,
   /** The site was made, but `web/` came to hold other files meanwhile, so it stays where Unreal staged it. */
   WebStaged: (seconds: number) =>
     `The web build was made in ${seconds} s, but the game's web/ folder now holds other files, so the site stays in the build folder.`,
@@ -273,10 +293,12 @@ export function linuxToolchainFor(version: string): { name: string; url: string 
  * What a web build asks of BuildCookRun beyond an app's: IoStore containers, as Epic's own command
  * line for the platform has; the package step, the only one that writes the page's file list
  * (`wasm-manifest.json`, without which the page never starts) and moves the files no host may serve
- * (the symbol map, UAT's manifests) out of the site; and no Brotli copy beside each file, which
- * helps only on a host that serves it in the file's place, and Genex's serve each file as it is.
+ * (the symbol map, UAT's manifests) out of the site; no Brotli copy beside each file, which
+ * helps only on a host that serves it in the file's place, and Genex's serve each file as it is;
+ * and chunk lists from the cook, without which the game's whole content is one file however the
+ * project's config says to split it (`ensureWebSettings`), too large for a host that caps a file.
  */
-const WEB_ONLY_ARGS = ["-iostore", "-package", "-WasmNoBrotli"] as const;
+const WEB_ONLY_ARGS = ["-iostore", "-package", "-WasmNoBrotli", "-manifests"] as const;
 
 /**
  * What an app asks of BuildCookRun beyond a web build's: its paks compressed and no debug files
@@ -473,6 +495,21 @@ async function linuxToolchainRoot(deps: GamePackageDeps, version: string): Promi
   return set;
 }
 
+/**
+ * What Genex's hosts need of a web build, set in the project's own config before the cook reads it:
+ * they send no isolation headers, so the page adds them itself, and they take no file past a size,
+ * so the content comes in several. A config Genex can't write as a plain file of the project's own
+ * refuses the package, by its folder inside the game and the failure's code alone.
+ */
+async function webSettings(target: Target): Promise<void> {
+  try {
+    await ensureWebSettings(target.projectDir);
+  } catch (failure) {
+    const config = shownIn(target.gameDir, path.join(target.projectDir, PROJECT_CONFIG_FOLDER));
+    throw new Error(MESSAGE.NoWebSettings(config, errorCode(failure)));
+  }
+}
+
 /** Saves the person's open Unreal first; one that doesn't answer has nothing unsaved to lose. */
 async function saveFirst(deps: GamePackageDeps, storage: string, game: string): Promise<void> {
   if (!(await deps.editorAnswers(storage, game).catch(() => false))) return;
@@ -559,13 +596,35 @@ async function runPackage(
   throw new PackageFailed(line, errors, seconds);
 }
 
-/** A finished web build made the game's web version (`web/`), named by its page; left staged when `web/` is taken. */
+/**
+ * A finished web build made the game's web version (`web/`), named by its page; left staged when
+ * `web/` is taken. Its line also says what of the site is past the host's usual limits, so that is
+ * known before an upload is tried.
+ */
 async function webPackaged(target: Target, staged: string, page: string, seconds: number) {
   // A staged page without its file list never starts, and as web/ it would read as someone else's folder.
   if (!(await holdsWebBuild(staged))) throw new PackageFailed(MESSAGE.NoApp(target.system.folder), [], seconds);
   const placed = await placeWebBuild(target.gameDir, staged);
-  const line = placed ? MESSAGE.WebPackaged(seconds) : MESSAGE.WebStaged(seconds);
-  return { line, app: shownIn(target.gameDir, placed ?? page), seconds };
+  const made = placed ? MESSAGE.WebPackaged(seconds) : MESSAGE.WebStaged(seconds);
+  const past = await pastHostLimits(target, path.dirname(placed ?? page));
+  return { line: [made, ...past].join(" "), app: shownIn(target.gameDir, placed ?? page), seconds };
+}
+
+/** How many megabytes (of 1024 × 1024 bytes) `bytes` are, rounded up: a file a byte past a limit reads as past it. */
+const megabytes = (bytes: number) => Math.ceil(bytes / MEGABYTE_BYTES);
+
+/** What of the site in `site` is past the host's usual limits (`siteExcess`), in one sentence; none when it is inside them all. */
+async function pastHostLimits(target: Target, site: string): Promise<string[]> {
+  const excess = await siteExcess(site);
+  if (excess.length === 0) return [];
+  const said = excess.map((over) => {
+    if (over.limit === HostLimit.Files) return MESSAGE.TooManyFiles(over.amount, HOST_LIMITS.Files);
+    if (over.limit === HostLimit.Site)
+      return MESSAGE.SiteTooLarge(megabytes(over.amount), megabytes(HOST_LIMITS.SiteBytes));
+    const file = shownIn(target.gameDir, path.join(site, over.file ?? ""));
+    return MESSAGE.FileTooLarge(file, megabytes(over.amount), megabytes(HOST_LIMITS.FileBytes), over.others ?? 0);
+  });
+  return [MESSAGE.PastHostLimits(said.join("; "))];
 }
 
 /** Lets the packaged Mac app reach the network, or fails the package: an app that stays offline is not offered to Publish. */
@@ -655,8 +714,7 @@ export function createGamePackageTools(deps: GamePackageDeps) {
     try {
       if (context.signal?.aborted) throw new Error(MESSAGE.Stopped);
       await saveFirst(deps, storage, target.game);
-      // Genex's hosts send no isolation headers, so the page adds them itself.
-      if (target.system.id === PackageSystem.Web) await ensureWebIsolation(target.projectDir);
+      if (target.system.id === PackageSystem.Web) await webSettings(target);
       return await freshStage(target);
     } catch (failure) {
       stops.delete(target.projectFile);
@@ -702,10 +760,13 @@ export function createGamePackageTools(deps: GamePackageDeps) {
       ? path.join(target.gameDir, GAME_WEB_FOLDER)
       : path.join(target.projectDir, BUILDS_FOLDER, target.system.folder);
     const app = (await isPlain(dir)) ? await appIn(dir, target.system.id) : undefined;
+    // After a restart the build's own line is gone: a web build still says what the host won't take.
+    const past = web && app ? await pastHostLimits(target, path.dirname(app)) : [];
     return {
       state: GamePackageState.Idle,
       system: target.system.folder,
       ...(app ? { app: shownIn(target.gameDir, app) } : {}),
+      ...(past.length > 0 ? { line: past.join(" ") } : {}),
       jobRunning: false,
     };
   }

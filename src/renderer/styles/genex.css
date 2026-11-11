@@ -1378,7 +1378,8 @@ button.genex-publish-banner-name:hover {
   text-align: center;
 }
 /* The Publish card of a game made in an engine: one framed list, a hairline between rows, a dot and
-   one line saying what is true now, the row's end note, then its switch (a clock while it works). */
+   one line saying what is true now, the row's end note, then its own control: a button, the loader of
+   the work under way, "Queued", and the menu of a platform players have. */
 .genex-publish-card {
   display: grid;
   gap: 12px;
@@ -1430,6 +1431,12 @@ button.genex-publish-banner-name:hover {
   line-height: 18px;
   white-space: nowrap;
 }
+/* A line longer than its row (a long platform button in another language) ends in an ellipsis. */
+.genex-publish-card-words {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 /* The dot speaks the banner chip's language: green live, amber older than the game, hollow not on
    Genex; filled in the text's own colour once its app is built and waits for Publish. */
 .genex-publish-card-dot {
@@ -1475,6 +1482,70 @@ button.genex-publish-banner-name:hover {
 .genex-publish-card-clock {
   min-width: 36px;
   text-align: end;
+}
+/* A row's own button (Build on PC, Publish, Update, Try again): Play's soft blue, a step under the
+   card's one filled button. It keeps its look while its press is sent. */
+.genex-publish-card-build {
+  flex: none;
+  height: 28px;
+  padding-inline: 12px;
+  font-size: 12.5px;
+}
+.genex-publish-card-build[aria-busy]:disabled {
+  opacity: 1;
+}
+/* The row's loader in its button's place: Genex's own orb, the work's word, then its clock in
+   smaller, quieter figures. It is a status, never a press. */
+.genex-publish-card-working {
+  cursor: default;
+}
+.genex-publish-card-pill-clock {
+  color: var(--ink-3);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+/* An app that waits for another's build: a quiet outline where its button was. */
+.genex-publish-card-queued {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  height: 28px;
+  padding-inline: 12px;
+  border-radius: var(--radius-button);
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--ink-3);
+  font: 12.5px / 1 var(--font-family-mono);
+}
+/* The menu of a platform players have, at the row's very end: its dots end where a button would,
+   and stand as near what is before them as the row's other parts do. */
+.genex-publish-card-more {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin-inline: -8px -6px;
+  border-radius: 8px;
+  color: var(--ink-3);
+  transition: background var(--duration-quick);
+}
+.genex-publish-card-more:hover,
+.genex-publish-card-more[data-state="open"] {
+  background: color-mix(in srgb, var(--ink) 9%, transparent);
+  color: var(--ink);
+}
+.genex-publish-card-more:disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+.genex-publish-card-down {
+  color: color-mix(in oklab, var(--red) 80%, var(--ink));
+}
+/* How far a row's send is: a hairline under its status line. */
+.genex-publish-card-bar {
+  margin-top: 4px;
+  max-width: 220px;
 }
 /* A send on its way: a hairline bar over one line of numbers, in the status line's own type. */
 .genex-send-progress {
@@ -1589,12 +1660,6 @@ button.genex-publish-banner-name:hover {
   display: grid;
   gap: 10px;
 }
-/* A press that only takes platforms down warns in amber. */
-.genex-publish-primary[data-warn] {
-  background: color-mix(in srgb, var(--orange) 22%, var(--background));
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--orange) 45%, transparent);
-  color: color-mix(in oklab, var(--orange) 85%, var(--ink));
-}
 .genex-publish-card-note {
   color: var(--ink-3);
   font-size: 13px;
@@ -1608,9 +1673,12 @@ button.genex-publish-banner-name:hover {
   font-family: var(--font-family-mono);
   font-variant-numeric: tabular-nums;
 }
-/* While it publishes the main press is its status: readable, not greyed out. */
+/* While it works the main press is not greyed out: the blue press keeps its own label while it is
+ * sent, and the grey status in its place says the step at work in quieter ink. */
 .genex-publish-primary[aria-busy]:disabled {
   opacity: 1;
+}
+.genex-publish-primary[data-variant="secondary"][aria-busy]:disabled {
   color: var(--ink-2);
 }
 /* Send report beside Try again, at its height. */
@@ -2352,21 +2420,58 @@ button.genex-publish-banner-name:hover {
   color: color-mix(in oklab, var(--orange) 70%, var(--ink-2));
   font-size: 12px;
 }
-/* The chat's live card: its cover at 16:9 over the words, the link beside Copy link and Open on Genex. */
-.genex-review-live-cover {
+/* The chat's live card (canvas "Live card in chat", D): the Publish banner in small inside one edge,
+ * with "{name} is live!" on the cover, and under it the link's row: the address on a grey chip, then
+ * Copy link and Open in Play's tint. Two text styles: the name's and the controls' mono. */
+.genex-review-live {
   width: 100%;
-  aspect-ratio: 16 / 9;
-  border-radius: 10px;
-  object-fit: cover;
-  background: var(--inset);
+  max-width: 32rem;
+  overflow: hidden;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-card);
+  background: var(--card);
+  color: var(--ink);
 }
-.genex-review-link-text {
-  flex: 1 1 0;
+.genex-review-live .genex-review-title > span {
   min-width: 0;
   overflow: hidden;
-  color: var(--ink-2);
-  font-family: var(--font-family-mono);
-  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* One row while the address and both presses fit; in a narrower chat the presses go under the
+ * address together, so it is cut ("…") only when it is longer than the whole card. */
+.genex-review-live-link {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
+}
+.genex-review-live-address {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+  height: 32px;
+  margin-inline-end: auto;
+  padding-inline: 10px;
+  border-radius: 9px;
+  background: var(--field);
+  font: 13px / 20px var(--font-family-mono);
+}
+.genex-review-live-presses {
+  display: flex;
+  flex: none;
+  gap: 8px;
+}
+.genex-review-live-address > svg {
+  flex: none;
+  color: var(--ink-3);
+}
+.genex-review-live-address > span {
+  min-width: 0;
+  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

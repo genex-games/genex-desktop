@@ -338,11 +338,12 @@ export function engineWebVersion(listed: readonly FactRef[], found: readonly Pro
 }
 
 /**
- * A Unity or Godot game's listed facts with its web version (`engineWebVersion`) as its web game. A
- * web game at the root beside it is left out when it is Genex's web starter page nobody built on
- * (`starterAtRoot`), whether or not the game's port was recorded; a root page of the folder's own,
- * or a web game built from the starter, keeps its place and the facts are returned as they are, as
- * are any other game's.
+ * An engine game's listed facts with its web version (`engineWebVersion`) as its web game. A web
+ * game at the root beside it is left out when it is Genex's web starter nobody built on
+ * (`starterAtRoot`: the starter's page as it was made, or only the starter's record with the page
+ * gone), whether or not the game's port was recorded; a root page of the folder's own, or a web game
+ * built from the starter, keeps its place and the facts are returned as they are, as are any other
+ * game's.
  */
 export function withEngineWebVersion(
   listed: readonly ProjectFact[],

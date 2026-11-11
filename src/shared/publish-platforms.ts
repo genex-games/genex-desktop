@@ -33,7 +33,10 @@ export interface PublishPlatform {
   arch: NativeArch | null;
   /** The space the build takes; 0 for none. */
   bytes: number;
-  /** When it was built, ISO 8601, or null. */
+  /**
+   * When it was built, ISO 8601, or null. The web row has one only for a build in a folder of the
+   * game (an engine's web export): a web game at its root is its own sources.
+   */
   builtAt: string | null;
   /** Whether Publish sends it now: the web build does, a native build not until genex.games takes them. */
   uploads: boolean;

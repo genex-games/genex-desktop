@@ -1,152 +1,124 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><!-- STUDIO_PANEL_FONTS --><style>
 :root{--bg:#0e0d0f;--fg:#dee0e2;--accent:#3c44c4;--accent-fill:var(--accent);--accent-text:#fff;--accent-hover:color-mix(in srgb,var(--accent) 88%,#fff);--ok:#7cd194;--warn:#efbe72;--err:#f08287;color-scheme:dark;
-  --quiet:color-mix(in srgb,var(--fg) 64%,var(--bg));--line:color-mix(in srgb,var(--fg) 9%,var(--bg));--hover:color-mix(in srgb,var(--fg) 10%,var(--bg));--field:color-mix(in srgb,var(--fg) 7%,var(--bg));
-  /* Genex's engine panels group what belongs together in outlined blocks: an edge, a fill one step above the page, a foot a half step, and the tile inside them. */
-  --edge:color-mix(in srgb,var(--fg) 12%,var(--bg));--block:color-mix(in srgb,var(--fg) 3%,var(--bg));--foot:color-mix(in srgb,var(--fg) 1.5%,var(--bg));--tile:color-mix(in srgb,var(--fg) 8%,var(--bg));
-  /* Genex's type: words in Zalando Sans SemiExpanded, actions and machine text in Geist Mono (inlinePanelFonts). */
+  --quiet:color-mix(in srgb,var(--fg) 64%,var(--bg));--line:color-mix(in srgb,var(--fg) 9%,var(--bg));--hover:color-mix(in srgb,var(--fg) 10%,var(--bg));--field:color-mix(in srgb,var(--fg) 7%,var(--bg));--menu:color-mix(in srgb,var(--fg) 6%,var(--bg));--shadow:0 0 0 1px var(--line),0 16px 48px rgb(0 0 0/.26);
+  /* Genex's type: every word in Zalando Sans SemiExpanded; Geist Mono only on buttons (inlinePanelFonts). */
   --sans:"Zalando Sans SemiExpanded","TikTok Sans Genex",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;--mono:"Geist Mono",ui-monospace,"SF Mono",Menlo,monospace;
-  /* A mark drawn in the current colour: the arrow of a button that opens another app or page, a warning's sign, and a tick. */
+  /* A mark drawn in the current colour: the arrow of a button that opens another app or page, and a warning's sign. */
   --arrow:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M7 17L17 7M9 7h8v8'/%3E%3C/svg%3E");
-  --warning:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10.3 4.8 3.4 17a2 2 0 0 0 1.7 3h13.8a2 2 0 0 0 1.7-3L13.7 4.8a2 2 0 0 0-3.4 0zM12 10v4M12 17.2v.1'/%3E%3C/svg%3E");
-  --tick:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5'/%3E%3C/svg%3E")}
+  --warning:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10.3 4.8 3.4 17a2 2 0 0 0 1.7 3h13.8a2 2 0 0 0 1.7-3L13.7 4.8a2 2 0 0 0-3.4 0z'/%3E%3Cpath d='M12 10v3.5M12 16.6v.1'/%3E%3C/svg%3E")}
 /* Chosen for at least 4.5:1 on every light theme's background. */
-:root[data-scheme="light"]{--ok:#1d7f46;--warn:#95570b;--err:#b3303d;color-scheme:light}
+:root[data-scheme="light"]{--ok:#1d7f46;--warn:#95570b;--err:#b3303d;--menu:color-mix(in srgb,#fff 70%,var(--bg));--shadow:0 0 0 1px var(--line),0 16px 48px rgb(0 0 0/.12);color-scheme:light}
 *{box-sizing:border-box}
 body{margin:0;padding:20px;font:14px/20px var(--sans);color:var(--fg);background:var(--bg);-webkit-font-smoothing:antialiased}
 @media (max-width:480px){body{padding:16px}}
-main{display:grid;gap:24px;min-width:0}
-h2,h3{margin:0;font-size:15px;line-height:22px;font-weight:500;overflow-wrap:anywhere}
-h3:focus{outline:none}
+main{display:grid;gap:16px;min-width:0}
+h2{margin:0;font-size:14px;line-height:20px;font-weight:500}
+h2:focus{outline:none}
 p{margin:0;text-wrap:pretty}
 p:empty{display:none}
 .quiet{color:var(--quiet)}
-.small{font-size:13px;line-height:18px}
-.actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
-/* Genex's buttons: 32px, a rounded fill and no border, the label in Geist Mono. */
-button{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:32px;padding:0 14px;font-family:var(--mono);font-size:14px;font-weight:400;letter-spacing:-.02em;white-space:nowrap;color:inherit;background:var(--field);border:0;border-radius:11px;cursor:pointer;transition:scale 120ms,background 120ms;-webkit-tap-highlight-color:transparent}
+button,summary{font:inherit;color:inherit;cursor:pointer;-webkit-tap-highlight-color:transparent}
+/* Genex's buttons in a row: 28px, a rounded fill and no border, the label in Geist Mono. */
+button{display:inline-flex;align-items:center;justify-content:center;gap:6px;flex:none;min-height:28px;padding:0 12px;font-family:var(--mono);font-size:12.5px;font-weight:400;letter-spacing:-.02em;white-space:nowrap;background:var(--field);border:0;border-radius:10px;transition:scale 120ms,background 120ms}
 button:hover{background:var(--hover)}
-button:active:not(:disabled){scale:.96}
+button:active{scale:.96}
 button.primary{background:var(--accent-fill);color:var(--accent-text)}
 button.primary:hover{background:var(--accent-hover)}
-button.quiet{background:transparent;color:var(--quiet);padding:0 10px}
-button.quiet:hover{background:var(--hover);color:var(--fg)}
-button.external{padding-inline-end:12px}
-button.external::after{content:"";width:14px;height:14px;flex:none;background:currentColor;-webkit-mask:var(--arrow) center/contain no-repeat;mask:var(--arrow) center/contain no-repeat}
-button:disabled{opacity:.5;cursor:not-allowed;scale:none}
-button:disabled:hover{background:var(--field)}
-button.primary:disabled:hover{background:var(--accent-fill)}
-button.quiet:disabled:hover{background:transparent;color:var(--quiet)}
+button.external{padding-inline-end:10px}
+button.external::after{content:"";width:13px;height:13px;flex:none;background:currentColor;-webkit-mask:var(--arrow) center/contain no-repeat;mask:var(--arrow) center/contain no-repeat}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-svg{flex:none;fill:none;stroke:currentColor;stroke-linecap:round;stroke-linejoin:round}
+svg{flex:none}
 /*
- * A block: one subject (this game's project, this computer) in an outlined box. Its label sits
- * above it; inside, a rule divides each shown part from the one before, and its actions sit in its
- * foot, the main one first and the rarer, quiet one at its end, even alone.
+ * The panel is one list. Its first row is the game's project: Unity's mark, the game's name, where
+ * it stands in a dot and a word beside its Unity, the one button for the next step, and ⋯ for the
+ * rare actions. Each row after it is one thing with at most one control: something that needs the
+ * person (a warning sign leads it), a choice. No overflow clipping, so the menu can leave the list.
  */
-.group{display:grid;gap:8px;min-width:0}
-.label{margin:0;padding-inline-start:2px;font-size:13px;line-height:18px;font-weight:400;color:var(--quiet)}
-.block{min-width:0;background:var(--block);border:1px solid var(--edge);border-radius:14px}
-.block > :not([hidden]) ~ :not([hidden]){border-top:1px solid var(--line)}
-.foot{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:12px 12px 12px 16px;background:var(--foot);border-radius:0 0 13px 13px}
-.foot .end{display:flex;align-items:center;margin-inline-start:auto;margin-inline-end:-4px}
-.foot .end:not(:has(button:not([hidden]))){display:none}
-.tile{width:44px;height:44px;flex:none;display:grid;place-items:center;border-radius:11px;background:var(--tile);color:var(--quiet)}
-.path{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--mono);font-size:12px;line-height:18px;letter-spacing:-.02em;color:var(--quiet)}
-/* A fact: its name in the quiet ink, its value at the end in mono; in This computer, the thing in ink and its version quiet. */
-.fact{display:flex;align-items:center;gap:12px;min-height:44px;padding:0 16px}
-.fact .k{flex:1;min-width:0;color:var(--quiet)}
-.fact .v{font-family:var(--mono);font-size:12px;line-height:18px;letter-spacing:-.02em;text-align:end}
-.mac .fact .k{color:var(--fg)}
-.mac .fact .v{color:var(--quiet)}
-/* A fact that is in order: a tick in a green disc; one that isn't yet: an empty ring. */
-.ticked{width:20px;height:20px;flex:none;border-radius:50%;display:grid;place-items:center;background:color-mix(in srgb,var(--ok) 16%,transparent);color:var(--ok)}
-.ticked::before{content:"";width:11px;height:11px;background:currentColor;-webkit-mask:var(--tick) center/contain no-repeat;mask:var(--tick) center/contain no-repeat}
-.ticked.not{background:none;box-shadow:inset 0 0 0 1.5px color-mix(in srgb,var(--fg) 22%,var(--bg))}
-.ticked.not::before{content:none}
-/* The project's head: its picture, name and place, and where it stands. */
-.head{display:flex;align-items:center;gap:14px;padding:16px}
-.who{flex:1;min-width:0;display:grid;gap:2px}
-.who h2{font-size:16px;line-height:22px}
-/* Where the project stands, a dot and one word as the toolbar button says it; Ready is the green dot alone, its word for screen readers. */
-.state{display:inline-flex;align-items:center;gap:6px;flex:none;height:24px;padding:0 9px;border-radius:12px;background:color-mix(in srgb,currentColor 12%,transparent);font-family:var(--mono);font-size:12px;line-height:18px;letter-spacing:-.02em;color:var(--quiet)}
-.state:has(> #state-word:empty){display:none}
-.state::before{content:"";width:6px;height:6px;flex:none;border-radius:50%;background:currentColor}
-.state[data-tone="unset"]::before{background:none;box-shadow:inset 0 0 0 1.5px currentColor}
-.state[data-tone="starting"]::before{background:var(--accent);animation:breathe 2.1s ease-in-out infinite}
-.state[data-tone="ok"]{color:var(--ok);padding:0;background:none}
-.state[data-tone="ok"]::before{width:9px;height:9px}
-.state[data-tone="ok"] #state-word{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
-.state[data-tone="warn"]{color:var(--warn)}
-/* The message: the step's headline, what it means, and what the last action left to say. */
-.msg{display:grid;gap:6px;padding:14px 16px}
-.status{display:flex;align-items:center;gap:10px}
-/* Narrow, the picture goes so the name and place keep their room. */
-@media (max-width:480px){.head .tile{display:none}}
-/* Genex's live status: a small orb that breathes, as the chat's status line has. */
-.orb{width:14px;height:14px;flex:none;border-radius:50%;background:radial-gradient(circle at 38% 36%,var(--fg) 0 14%,color-mix(in srgb,var(--accent) 65%,var(--fg)) 40%,var(--accent) 72%,transparent 74%);animation:breathe 2.1s ease-in-out infinite}
+.rows{min-width:0;border-radius:12px;box-shadow:inset 0 0 0 1px var(--line)}
+.line{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;min-height:60px;padding:8px 14px}
+.rows .line:not(.head){box-shadow:inset 0 1px 0 var(--line)}
+.words{flex:1 1 150px;min-width:0;display:grid;gap:2px;font-size:14px;line-height:20px;font-weight:500;overflow-wrap:anywhere}
+.sub{font-size:12.5px;line-height:18px;font-weight:400;color:var(--quiet)}
+.sub:empty{display:none}
+.logo{width:28px;height:28px;flex:none;fill:currentColor;color:color-mix(in oklab,var(--accent) 55%,var(--fg))}
+.who{flex:1 1 120px;min-width:0;display:grid;gap:2px}
+.who h2{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* With no project to name, the row's heading says the step and may take two lines. */
+.who h2.plain{white-space:normal;overflow-wrap:anywhere}
+/* Where the project stands: a dot, one word in its tone's colour, and the Unity it uses in the quiet ink. */
+.state{display:flex;align-items:center;gap:7px;min-width:0;font-size:12.5px;line-height:18px;color:var(--quiet)}
+.state-text{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dot{width:7px;height:7px;flex:none;border-radius:50%;box-shadow:inset 0 0 0 1.5px currentColor}
+.state[data-tone="ok"] .dot{background:var(--ok);box-shadow:none}
+.state[data-tone="warn"] .dot{background:var(--warn);box-shadow:none}
+.state[data-tone="warn"] #state-word{color:var(--warn)}
+/* While it opens, the dot is Genex's orb, which breathes as the chat's status line does. */
+.state[data-tone="starting"] .dot{width:12px;height:12px;margin-inline:-2px -3px;box-shadow:none;background:radial-gradient(circle at 38% 36%,var(--fg) 0 14%,color-mix(in srgb,var(--accent) 65%,var(--fg)) 40%,var(--accent) 72%,transparent 74%);animation:breathe 2.1s ease-in-out infinite}
 @keyframes breathe{50%{opacity:.5}}
-.waiting{display:flex;align-items:center;gap:8px;font-size:12px;line-height:18px;color:var(--quiet)}
-/* What to know after an action: a row of the block, a sign and the words in the warning's colour. */
-.note{display:flex;gap:10px;padding:12px 16px;color:var(--warn);overflow-wrap:anywhere}
-.note::before{content:"";width:16px;height:16px;flex:none;margin-top:2px;background:currentColor;-webkit-mask:var(--warning) center/contain no-repeat;mask:var(--warning) center/contain no-repeat}
+/* A warning's sign, in the mark's slot so every row's words start on one line. */
+.sign{width:28px;height:20px;flex:none;background:var(--warn);-webkit-mask:var(--warning) center/20px no-repeat;mask:var(--warning) center/20px no-repeat}
+/* What the row above needs said in a sentence: under the name, on the name's own line; gone when there is nothing to say. */
+.msg{display:grid;gap:6px;padding:0 14px 12px 54px;font-size:12.5px;line-height:18px}
+.msg:not(:has(> :not(:empty))){display:none}
+/* A choice: Genex's switch at the row's end, the whole row its target. */
+label.line{cursor:pointer}
+.switch{appearance:none;-webkit-appearance:none;position:relative;width:36px;height:20px;flex:none;margin:0;border-radius:10px;background:color-mix(in srgb,var(--fg) 24%,var(--bg));cursor:pointer;transition:background-color 150ms}
+.switch::before{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgb(0 0 0/.25);transition:translate 150ms cubic-bezier(.22,1,.36,1)}
+.switch:checked{background:var(--accent-fill)}
+.switch:checked::before{translate:16px 0}
+.switch:disabled,label.line:has(.switch:disabled){cursor:not-allowed}
+/* More: the ⋯ at the end of the project's row opens a small menu of the rare actions; its dots end where a button would. */
+.menu{position:relative;flex:none;margin-inline:-8px -6px}
+.menu summary{display:flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:8px;color:var(--quiet);list-style:none}
+.menu summary::-webkit-details-marker{display:none}
+.menu .dots{fill:currentColor}
+.menu summary:hover,.menu[open] summary{background:var(--hover);color:var(--fg)}
+.menu-body{position:absolute;z-index:1;top:calc(100% + 4px);right:0;display:grid;gap:2px;min-width:200px;max-width:min(300px,calc(100vw - 32px));padding:4px;border-radius:12px;background:var(--menu);box-shadow:var(--shadow)}
+.menu-body button{justify-content:flex-start;width:100%;min-height:32px;padding:0 10px;font-family:var(--sans);font-size:13px;letter-spacing:0;background:transparent;border-radius:8px}
+.menu-body button:hover{background:var(--hover)}
 .error{color:var(--err);white-space:pre-wrap;overflow-wrap:anywhere}
-@media (prefers-reduced-motion:reduce){button,.choice input{transition:none}button:active:not(:disabled){scale:none}.orb,.state[data-tone="starting"]::before{animation:none}}
-/* A choice in a block: its box, then its name and what it means, the whole row one target. */
-.choice{display:flex;align-items:flex-start;gap:12px;padding:14px 16px;cursor:pointer}
-/* Genex's own box: two points rounder than the system's, filled with the accent and ticked when on. */
-.choice input{appearance:none;-webkit-appearance:none;display:grid;place-items:center;width:18px;height:18px;flex:none;margin:1px 0 0;border:1.5px solid color-mix(in srgb,var(--fg) 32%,var(--bg));border-radius:6px;background:var(--field);cursor:pointer;transition:background 120ms,border-color 120ms}
-.choice input:checked{background:var(--accent-fill);border-color:var(--accent-fill)}
-.choice input:checked::before{content:"";width:12px;height:12px;background:var(--accent-text);-webkit-mask:var(--tick) center/contain no-repeat;mask:var(--tick) center/contain no-repeat}
-.choice input:disabled,.choice:has(input:disabled){cursor:not-allowed}
-.choice .words{display:grid;gap:4px;min-width:0}
+/* While the panel first asks, the line saying so stands alone. */
+#app[aria-busy="false"] #checking{display:none}
+@media (prefers-reduced-motion:reduce){button,.switch,.switch::before{transition:none}button:active{scale:none}.state[data-tone="starting"] .dot{animation:none}}
 /* On a dialog's card the dialog holds the heading and the padding: the page keeps a thin edge for focus rings. */
 :root[data-surface="card"] body{padding:4px}
 /* Last, so it wins over every class that sets a display. */
 [hidden]{display:none}
 </style></head><body>
 <main id="app" aria-busy="true">
-  <div class="group">
-    <p id="label" class="label" data-t hidden>This game's project</p>
-    <div class="block">
-      <div id="head" class="head" hidden>
-        <span class="tile" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><path transform="translate(3.6 3.6) scale(.7)" d="m12.9288 4.2939 3.7997 2.1929c.1366.077.1415.2905 0 .3675l-4.515 2.6076a.4192.4192 0 0 1-.4246 0L7.274 6.8543c-.139-.0745-.1415-.293 0-.3675l3.7972-2.193V0L1.3758 5.5977V16.793l3.7177-2.1456v-4.3858c-.0025-.1565.1813-.2682.318-.1838l4.5148 2.6076a.4252.4252 0 0 1 .2136.3676v5.2127c.0025.1565-.1813.2682-.3179.1838l-3.7996-2.1929-3.7178 2.1457L12 24l9.6954-5.5977-3.7178-2.1457-3.7996 2.1929c-.1341.082-.3229-.0248-.3179-.1838V13.053c0-.1565.087-.2956.2136-.3676l4.5149-2.6076c.134-.082.3228.0224.3179.1838v4.3858l3.7177 2.1456V5.5977L12.9288 0Z" fill="currentColor" stroke="none"/></svg></span>
-        <div class="who"><h2 id="name" data-t>Unity project</h2><p id="where" class="path"></p></div>
-        <span id="state" class="state"><span id="state-word"></span></span>
+  <p id="checking" class="quiet" role="status" data-t>Checking Unity…</p>
+  <div id="list" class="rows" hidden>
+    <div>
+      <div class="line head">
+        <svg class="logo" viewBox="-2 -2 28 28" aria-hidden="true"><path d="m12.9288 4.2939 3.7997 2.1929c.1366.077.1415.2905 0 .3675l-4.515 2.6076a.4192.4192 0 0 1-.4246 0L7.274 6.8543c-.139-.0745-.1415-.293 0-.3675l3.7972-2.193V0L1.3758 5.5977V16.793l3.7177-2.1456v-4.3858c-.0025-.1565.1813-.2682.318-.1838l4.5148 2.6076a.4252.4252 0 0 1 .2136.3676v5.2127c.0025.1565-.1813.2682-.3179.1838l-3.7996-2.1929-3.7178 2.1457L12 24l9.6954-5.5977-3.7178-2.1457-3.7996 2.1929c-.1341.082-.3229-.0248-.3179-.1838V13.053c0-.1565.087-.2956.2136-.3676l4.5149-2.6076c.134-.082.3228.0224.3179.1838v4.3858l3.7177 2.1456V5.5977L12.9288 0Z"/></svg>
+        <div class="who">
+          <h2 id="name" tabindex="-1">Unity</h2>
+          <p id="state" class="state" role="status" hidden><span class="dot" aria-hidden="true"></span><span class="state-text"><span id="state-word"></span><span id="state-engine"></span></span></p>
+          <p id="text" class="sub"></p>
+        </div>
+        <button type="button" id="primary" class="primary" hidden></button>
+        <details id="more" class="menu" hidden>
+          <summary aria-label="More" data-t="aria-label"><svg class="dots" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5.5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="18.5" cy="12" r="1.5"/></svg></summary>
+          <div class="menu-body">
+            <button type="button" id="restart" data-action="restart-editor" data-t>Restart Unity</button>
+            <button type="button" id="undo" data-action="undo-setup" data-t>Remove Genex from this project</button>
+          </div>
+        </details>
       </div>
       <div class="msg">
-        <div class="status"><span id="orb" class="orb" aria-hidden="true" hidden></span><h3 id="title" tabindex="-1">Unity</h3></div>
-        <p id="text" class="quiet" role="status" data-t>Checking Unity…</p>
-        <p id="working" class="waiting" role="status" hidden><span class="orb" aria-hidden="true"></span><span id="working-text"></span></p>
-        <p id="done" class="quiet small" role="status"></p>
-      </div>
-      <div id="fact-engine" class="fact" hidden><span class="k" data-t>Engine</span><span id="version" class="v"></span></div>
-      <p id="note" class="note" role="status" hidden></p>
-      <div id="foot" class="foot" hidden>
-        <button type="button" id="primary" class="primary" hidden></button>
-        <div class="end"><button type="button" id="quiet" hidden></button></div>
+        <p id="hint" class="quiet"></p>
+        <p id="done" class="quiet" role="status"></p>
       </div>
     </div>
-  </div>
-  <div id="agents" class="group" hidden>
-    <p class="label" data-t>Agents</p>
-    <div class="block">
-      <label class="choice" for="while-playing">
-        <input type="checkbox" id="while-playing">
-        <span class="words">
-          <span data-t>Agents may use Unity while you play</span>
-          <span class="quiet small" data-t>They go ahead even in Play mode, and may stop your play. Turn off to have them wait until you stop.</span>
-        </span>
-      </label>
-    </div>
+    <div id="lead" class="line" hidden><span class="sign" aria-hidden="true"></span><div class="words"><span id="lead-title"></span><span id="lead-sub" class="sub"></span></div><button type="button" id="lead-act" class="primary" hidden></button></div>
+    <div id="note" class="line" role="status" hidden><span class="sign" aria-hidden="true"></span><p id="note-text" class="words sub"></p></div>
+    <label id="agents" class="line" for="while-playing" hidden>
+      <span class="words"><span data-t>Agents can use Unity while you play</span><span class="sub" data-t>This can stop your play.</span></span>
+      <input type="checkbox" id="while-playing" class="switch">
+    </label>
   </div>
   <p id="error" class="error" role="alert"></p>
-  <div id="computer" class="group mac" hidden>
-    <p class="label" data-t>This computer</p>
-    <div class="block">
-      <div class="fact"><span id="unity-mark" class="ticked" aria-hidden="true"></span><span class="k">Unity</span><span id="installed" class="v"></span></div>
-    </div>
-  </div>
 </main>
 <!-- STUDIO_PANEL_SDK -->
 <script type="module">
@@ -165,6 +137,9 @@ const QUIET_SHARE_MIN = 64;
 const TEXT_CONTRAST_MIN = 4.5;
 /** The background brightness above which a theme is a light one. */
 const LIGHT_FROM = 0.5;
+/** Unity numbers its versions in thousands since 6: 6000.3 is Unity 6.3. */
+const UNITY_6_MAJOR = 6000;
+const MAJOR_STEP = 1000;
 
 /** The backend's steps (`PanelStep`) and actions (`UnityAction`), by their wire names. */
 const Step = {
@@ -195,21 +170,39 @@ const Action = {
 const Opened = { Answers: "answers", SeemsOpen: "seems-open", NoEditor: "no-editor", Failed: "failed" };
 const Source = { Hub: "hub" };
 
+/**
+ * A Unity version as people say it: 6000.3.10f1 is 6.3 and 2022.3.13f1 is 2022.3. A version of
+ * another shape stays as it is.
+ */
+function shortVersion(version) {
+  const [major, minor] = version.split(".");
+  const number = Number.parseInt(major, 10);
+  if (!Number.isFinite(number) || minor === undefined) return version;
+  return `${number >= UNITY_6_MAJOR ? Math.floor(number / MAJOR_STEP) : number}.${minor}`;
+}
+
 const WORDS = {
-  ready: {
-    playing: t("It is playing the game."),
-    compiling: t("It is compiling scripts."),
-    idle: t("Agents can work in it."),
+  /** The row's name while the game's own is unknown. */
+  project: t("Unity project"),
+  state: {
+    notAdded: t("Genex not added"),
+    notOpen: t("Not open"),
+    opening: t("Opening"),
+    restarting: t("Restarting"),
+    ready: t("Ready"),
+    playing: t("Playing"),
+    compiling: t("Compiling"),
+    notAnswering: t("Not answering"),
+    waiting: t("Waiting for you"),
   },
-  gameFolder: t("This game's folder"),
-  engine: (version) => `Unity ${version}`,
-  /** The installed Unity that leads This computer, and how many more there are. */
-  installed: (newest, more) => (more > 0 ? `${newest} +${more}` : newest),
+  engine: (version) => `Unity ${shortVersion(version)}`,
+  openIn: t("Open in Unity"),
+  openHub: t("Open Unity Hub"),
   openedHub: t("Opened Unity Hub."),
   openedDownload: t("Opened Unity's download page in your browser."),
-  undone: t("Took Unity's Pipeline package back out of this project."),
-  nothingToUndo: t("Nothing of Genex's was left to take back."),
-  loadsWhenForward: t("Unity has this project open: bring Unity to the front so it loads the package."),
+  undone: t("Removed Genex from this project."),
+  nothingToUndo: t("Nothing of Genex's was left to remove."),
+  loadsWhenForward: t("Unity has this project open. Bring Unity to the front to finish."),
   notEnded: t("Unity could not be ended. Quit it yourself, then open the project again."),
   noEditor: (version) => t("Unity {version} isn't installed, so the project was not opened.", { version }),
   failed: (why) => t("Unity didn't open: {why}", { why }),
@@ -220,205 +213,193 @@ const WORDS = {
     ),
 };
 
-/** Each step's headline, its words, and its one main and one quiet action. */
+/** How a state word is coloured (the CSS's data-tone): nothing to say, opening, ready or waiting on the person. */
+const Tone = { Quiet: "quiet", Starting: "starting", Ok: "ok", Warn: "warn" };
+
+/** What a ready Unity is doing, in the one word beside its dot. */
+function readyWord(status) {
+  if (status.playing) return WORDS.state.playing;
+  return status.compiling ? WORDS.state.compiling : WORDS.state.ready;
+}
+
+/**
+ * Each step as the list shows it. With no project to name, the first row says the step itself
+ * (`title`, `text`); with one, it names the game with where it stands (`state`), and a step that
+ * needs the person adds a row that leads (`lead`). `primary` is the first row's one button and
+ * `menu` the rare actions behind ⋯.
+ */
 const STEPS = {
   [Step.GetUnity]: {
     title: t("Get Unity 6"),
     text: (s) =>
       s.installed.length > 0
-        ? t(
-            "This computer has Unity {version}, and Genex builds Unity games in Unity 6 or later. Install it in Unity Hub: Installs, then Install Editor.",
-            { version: s.installed[0] },
-          )
-        : t(
-            "Genex builds Unity games in the Unity 6 editor on this computer. Install it in Unity Hub: Installs, then Install Editor.",
-          ),
+        ? t("This computer has Unity {version}, and Genex needs Unity 6 or later. In Unity Hub: Installs, then Install Editor.", {
+            version: shortVersion(s.installed[0]),
+          })
+        : t("Genex builds Unity games in it. In Unity Hub: Installs, then Install Editor."),
     primary: { action: Action.GetUnity, label: t("Get Unity") },
   },
   [Step.NoGame]: { title: t("No game open"), text: () => t("Open a game to see its Unity project.") },
   [Step.NoProject]: {
-    title: t("No Unity project in this game"),
+    title: t("This game has no Unity project"),
     text: () =>
-      t(
-        "Ask for a Unity game in the chat and Genex makes its project here. To work on a project you already have, choose Open a folder… on Home.",
-      ),
+      t("Ask for a Unity game in the chat and Genex makes one here. To use a project you already have, choose Open a folder… on Home."),
   },
   [Step.OldProject]: {
-    title: t("This project needs Unity 6"),
-    text: (s) =>
-      s.version
-        ? t(
-            "It was saved with Unity {version}, and Genex works with Unity 6 or later. Upgrade the project in Unity Hub.",
-            { version: s.version },
-          )
-        : t(
-            "It was saved with Unity an older version, and Genex works with Unity 6 or later. Upgrade the project in Unity Hub.",
-          ),
-    primary: { action: Action.GetUnity, label: t("Open Unity Hub") },
+    state: () => [WORDS.state.notAdded, Tone.Quiet],
+    lead: {
+      title: () => t("This project needs Unity 6"),
+      sub: (s) =>
+        s.version
+          ? t("It was saved with Unity {version}. Upgrade it in Unity Hub.", { version: shortVersion(s.version) })
+          : t("It was saved with an older Unity. Upgrade it in Unity Hub."),
+      act: { action: Action.GetUnity, label: WORDS.openHub },
+    },
   },
   [Step.NotSetUp]: {
-    title: t("Set up this project"),
-    text: () =>
-      t(
-        "Agents reach the editor through Unity's Pipeline package. Set up adds it to Packages/manifest.json and keeps a copy of the file first.",
-      ),
-    primary: { action: Action.Setup, label: t("Set up") },
+    state: () => [WORDS.state.notAdded, Tone.Quiet],
+    primary: { action: Action.Setup, label: WORDS.openIn },
   },
   [Step.NoEditor]: {
-    title: (s) =>
-      s.version ? t("Unity {version} isn't installed", { version: s.version }) : t("This project's Unity isn't installed"),
-    text: () =>
-      t(
-        "This project was saved with it. Install that version in Unity Hub, or open the project from Hub to move it to a Unity you have.",
-      ),
-    primary: { action: Action.GetUnity, label: t("Open Unity Hub") },
+    state: () => [WORDS.state.notOpen, Tone.Quiet],
+    lead: {
+      title: (s) =>
+        s.version
+          ? t("Unity {version} isn't installed", { version: shortVersion(s.version) })
+          : t("This project's Unity isn't installed"),
+      sub: () => t("Install it in Unity Hub, or open the project from Hub to use a Unity you have."),
+      act: { action: Action.GetUnity, label: WORDS.openHub },
+    },
   },
   [Step.NotOpen]: {
-    title: t("Unity isn't open"),
-    text: () => t("Genex opens it when an agent needs it."),
-    primary: { action: Action.OpenEditor, label: t("Open in Unity") },
-    quiet: { action: Action.UndoSetup, label: t("Undo setup") },
+    state: () => [WORDS.state.notOpen, Tone.Quiet],
+    primary: { action: Action.OpenEditor, label: WORDS.openIn },
+    menu: [Action.UndoSetup],
   },
   [Step.Opening]: {
-    title: t("Unity is starting"),
-    text: () =>
-      t("A first start imports the project and downloads its packages. If it stays here, bring Unity to the front."),
-    quiet: { action: Action.RestartEditor, label: t("Restart Unity") },
+    state: () => [WORDS.state.opening, Tone.Starting],
+    hint: t("A first start takes longer. If it stays here, bring Unity to the front."),
+    menu: [Action.RestartEditor],
   },
   [Step.Ready]: {
-    title: t("Unity is ready"),
-    text: (s) => readyWords(s),
-    quiet: { action: Action.RestartEditor, label: t("Restart Unity") },
+    state: (s) => [readyWord(s), Tone.Ok],
+    menu: [Action.RestartEditor],
   },
   [Step.Terms]: {
-    title: t("Unity is waiting for you"),
-    text: () =>
-      t(
-        "The first time it starts, Unity shows its Software Terms in a window of its own. Bring Unity to the front and accept them; Genex goes on once Unity answers.",
-      ),
+    state: () => [WORDS.state.waiting, Tone.Warn],
+    lead: {
+      title: () => t("Accept Unity's terms"),
+      sub: () => t("Unity shows them in a window of its own the first time. Bring Unity to the front."),
+    },
   },
   [Step.Stalled]: {
-    title: t("Unity isn't answering"),
-    text: () =>
-      t(
-        "A dialog may be waiting in Unity: bring it to the front and answer it. If nothing is there, restart Unity. Work not saved in the editor is lost.",
-      ),
-    primary: { action: Action.RestartEditor, label: t("Restart Unity") },
+    state: () => [WORDS.state.notAnswering, Tone.Warn],
+    lead: {
+      title: () => t("Unity isn't answering"),
+      sub: () => t("A window in Unity may be waiting for you. If none is, restart Unity: unsaved work is lost."),
+      act: { action: Action.RestartEditor, label: t("Restart Unity") },
+    },
   },
 };
 
-/** How a state word is coloured (the CSS's data-tone): not set up, quiet, starting, ready or waiting on the person. */
-const Tone = { Unset: "unset", Quiet: "quiet", Starting: "starting", Ok: "ok", Warn: "warn" };
-/** Each project step's state word beside the project, in the toolbar button's own words (`panel-status.ts`). */
-const STATE = {
-  [Step.OldProject]: [t("Not set up"), Tone.Unset],
-  [Step.NotSetUp]: [t("Not set up"), Tone.Unset],
-  [Step.NoEditor]: [t("Not open"), Tone.Quiet],
-  [Step.NotOpen]: [t("Not open"), Tone.Quiet],
-  [Step.Opening]: [t("Starting"), Tone.Starting],
-  [Step.Ready]: [t("Ready"), Tone.Ok],
-  [Step.Stalled]: [t("Stalled"), Tone.Warn],
-  [Step.Terms]: [t("Waiting for you"), Tone.Warn],
-};
-/** The first Unity that Genex builds with: 6, numbered 6000 by Unity. */
-const UNITY_6_MAJOR = 6000;
-
-/** What an action shows while it runs, how long the panel waits for it, and whether it leaves Genex. */
+/** Whether an action leaves Genex, how long the panel waits for it, and the word beside the dot while it runs. */
 const ACTIONS = {
   [Action.GetUnity]: { external: true },
-  [Action.OpenEditor]: { external: true, working: t("Opening Unity…"), waitMs: OPEN_WAIT_MS },
-  [Action.Setup]: { working: t("Setting up and opening Unity…"), waitMs: OPEN_WAIT_MS },
-  [Action.RestartEditor]: { working: t("Restarting Unity…"), waitMs: OPEN_WAIT_MS },
+  [Action.OpenEditor]: { external: true, running: WORDS.state.opening, waitMs: OPEN_WAIT_MS },
+  [Action.Setup]: { external: true, running: WORDS.state.opening, waitMs: OPEN_WAIT_MS },
+  [Action.RestartEditor]: { running: WORDS.state.restarting, waitMs: OPEN_WAIT_MS },
   [Action.UndoSetup]: {},
 };
+/** The actions behind ⋯, by the button that sends each. */
+const MENU = { restart: Action.RestartEditor, undo: Action.UndoSetup };
 
-/** What the panel knows: the last status, the agents' setting, the action that runs, and what the last action left to say. */
-const ui = { status: null, agents: null, running: null, done: "", note: "", error: "", statusError: "" };
+/** What the panel knows: the last status, the game's name, the agents' setting, the action that runs, and what the last action left to say. */
+const ui = { status: null, name: "", agents: null, running: null, done: "", note: "", error: "", statusError: "" };
 let refreshing = false;
 let closed = false;
-
-function readyWords(status) {
-  if (status.playing) return WORDS.ready.playing;
-  return status.compiling ? WORDS.ready.compiling : WORDS.ready.idle;
-}
-
-const worded = (words, status) => (typeof words === "function" ? words(status) : words);
 
 function setText(el, value) {
   if (el.textContent !== value) el.textContent = value;
 }
 
-/** One of the two buttons as the step asks for it, or hidden; it stays the same element so focus stays on it. */
+/** A button as its step asks for it, or hidden: while an action runs no button shows. It stays the same element so focus stays on it. */
 function showButton(el, spec) {
-  el.hidden = !spec;
-  if (!spec) return;
+  const shown = Boolean(spec) && ui.running === null;
+  el.hidden = !shown;
+  if (!shown) return;
   setText(el, spec.label);
   el.dataset.action = spec.action;
   el.classList.toggle("external", Boolean(ACTIONS[spec.action].external));
-  el.disabled = ui.running !== null;
 }
 
-/** The project's place in the game's folder. */
-const whereWords = (folder) => (folder === "." ? WORDS.gameFolder : `${folder}/`);
+/** The dot and word beside the name: the step's own, or the running action's while one opens or restarts Unity. */
+function stateOf(status, step) {
+  const running = ui.running ? ACTIONS[ui.running].running : undefined;
+  return running ? [running, Tone.Starting] : step.state(status);
+}
 
-/** The head and facts of this game's project: its place, where it stands and its Unity, for the steps that have one. */
-function renderProject(status) {
-  const project = Boolean(status.folder) && Boolean(STATE[status.step]);
-  $("label").hidden = !project;
-  $("head").hidden = !project;
-  $("fact-engine").hidden = !(project && status.version);
+/** The first row: the game by its name with where it stands and its Unity, or the step itself when there is no project. */
+function renderHead(status, step) {
+  const project = Boolean(step.state);
+  const name = $("name");
+  name.classList.toggle("plain", !project);
+  setText(name, project ? ui.name || WORDS.project : step.title);
+  setText($("text"), project ? "" : step.text(status));
+  $("state").hidden = !project;
+  showButton($("primary"), step.primary);
   if (!project) return;
-  setText($("where"), whereWords(status.folder));
-  const [word, tone] = STATE[status.step];
+  const [word, tone] = stateOf(status, step);
   $("state").dataset.tone = tone;
   setText($("state-word"), word);
-  setText($("version"), status.version ? WORDS.engine(status.version) : "");
+  setText($("state-engine"), status.version ? ` · ${WORDS.engine(status.version)}` : "");
+  $("state").title = status.version ?? "";
 }
 
-/** This computer: the newest Unity installed, ticked once it is a Unity 6; gone while none is. */
-function renderComputer(status) {
-  const [newest] = status.installed ?? [];
-  $("computer").hidden = !newest;
-  if (!newest) return;
-  const unity6 = Number.parseInt(newest, 10) >= UNITY_6_MAJOR;
-  $("unity-mark").classList.toggle("not", !unity6);
-  setText($("installed"), WORDS.installed(newest, status.installed.length - 1));
-  $("installed").title = status.installed.join(", ");
+/** The row that leads when the step needs the person: a sign, what is wrong, how to mend it, and its button. */
+function renderLead(status, step) {
+  const lead = ui.running ? undefined : step.lead;
+  $("lead").hidden = !lead;
+  showButton($("lead-act"), lead?.act);
+  if (!lead) return;
+  setText($("lead-title"), lead.title(status));
+  setText($("lead-sub"), lead.sub(status));
 }
 
-/** The Agents block: whether agents may use Unity while the person plays, for every game; gone until it is known. */
-function renderAgents() {
-  $("agents").hidden = !ui.agents;
-  if (!ui.agents) return;
-  $("while-playing").checked = ui.agents.whilePlaying;
+/** ⋯ and the rare actions the step has; gone with none, and while an action runs. */
+function renderMenu(step) {
+  const offered = ui.running ? [] : (step.menu ?? []);
+  for (const [id, action] of Object.entries(MENU)) $(id).hidden = !offered.includes(action);
+  $("more").hidden = offered.length === 0;
+  if (offered.length === 0) $("more").open = false;
+}
+
+/** The Agents row: whether agents may use Unity while the person plays, for every game; gone with no project, and until it is known. */
+function renderAgents(step) {
+  const shown = Boolean(ui.agents) && Boolean(step?.state);
+  $("agents").hidden = !shown;
+  if (shown) $("while-playing").checked = ui.agents.whilePlaying;
 }
 
 function render() {
-  renderAgents();
   const status = ui.status;
-  if (!status) return;
-  const step = STEPS[status.step];
+  const step = status ? STEPS[status.step] : undefined;
   if (!step) return;
   const held = document.activeElement;
   $("app").setAttribute("aria-busy", "false");
-  setText($("title"), worded(step.title, status));
-  setText($("text"), step.text(status));
-  renderProject(status);
-  renderComputer(status);
-  $("orb").hidden = status.step !== Step.Opening;
-  showButton($("primary"), step.primary);
-  showButton($("quiet"), step.quiet);
-  $("foot").hidden = !step.primary && !step.quiet;
-  // Unity starting says it in the headline already: the running action's own line would say it twice.
-  const working = ui.running && status.step !== Step.Opening ? ACTIONS[ui.running].working : undefined;
-  $("working").hidden = !working;
-  setText($("working-text"), working ?? "");
+  // The action under way, for what watches the panel from outside; empty when none is.
+  $("app").dataset.running = ui.running ?? "";
+  $("list").hidden = false;
+  renderHead(status, step);
+  renderLead(status, step);
+  renderMenu(step);
+  renderAgents(step);
+  setText($("hint"), ui.running ? "" : (step.hint ?? ""));
   setText($("done"), ui.done);
   $("note").hidden = !ui.note;
-  setText($("note"), ui.note);
+  setText($("note-text"), ui.note);
   setText($("error"), ui.error || ui.statusError);
-  // The pressed button went with its step: the headline takes the focus it held.
-  if (held instanceof HTMLButtonElement && held.hidden) $("title").focus();
+  // The pressed button went with its step: the row's name takes the focus it held.
+  if (held instanceof HTMLButtonElement && held.getClientRects().length === 0) $("name").focus();
 }
 
 async function refresh() {
@@ -435,9 +416,8 @@ async function refresh() {
   } catch (error) {
     if (closed) return;
     ui.statusError = error instanceof Error ? error.message : String(error);
-    $("app").setAttribute("aria-busy", "false");
     // Nothing was ever learned: the line that says it is checking gives way to why it could not.
-    if (!ui.status) setText($("text"), "");
+    $("app").setAttribute("aria-busy", "false");
     setText($("error"), ui.error || ui.statusError);
   } finally {
     refreshing = false;
@@ -487,9 +467,13 @@ async function run(action) {
   }
 }
 
-for (const id of ["primary", "quiet"]) $(id).addEventListener("click", (event) => void run(event.currentTarget.dataset.action));
+for (const id of ["primary", "lead-act", ...Object.keys(MENU)])
+  $(id).addEventListener("click", (event) => {
+    $("more").open = false;
+    void run(event.currentTarget.dataset.action);
+  });
 
-/** The person's choice for the Agents box, kept by the backend; the box shows what it kept. */
+/** The person's choice for the Agents switch, kept by the backend; the switch shows what it kept. */
 async function chooseAgents(whilePlaying) {
   const box = $("while-playing");
   box.disabled = true;
@@ -555,10 +539,15 @@ function applyTheme({ theme }) {
   root.dataset.scheme = 0.2126 * r + 0.7152 * g + 0.0722 * b > LIGHT_FROM ? "light" : "dark";
 }
 
+/** The host's context: its theme, and the open game's name as Genex shows it (its title; an older host names only its folder). */
 const readContext = () =>
   api
     .call("context")
-    .then(applyTheme)
+    .then((context) => {
+      applyTheme(context);
+      ui.name = context.title ?? context.project ?? "";
+      render();
+    })
     .catch(() => {});
 
 void readContext();

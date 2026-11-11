@@ -169,6 +169,20 @@ export type PluginApiVersion = 1 | 2 | 3;
  * `cancelled` when the person declined Studio's confirmation. Wire values: never rename.
  */
 export const PanelErrorCode = { Cancelled: "cancelled" } as const;
+
+/** How wide the dialog of a panel opened from the stage strip is: Studio's wide dialog unless the panel asks for the narrow one. Wire values: never rename. */
+export const PanelWidth = { Narrow: "narrow" } as const;
+export type PanelWidth = (typeof PanelWidth)[keyof typeof PanelWidth];
+
+/** One panel a plugin's manifest declares. */
+export type PluginPanel = {
+  id: string;
+  title: string;
+  file: string;
+  placement: "settings" | "project";
+  /** `narrow`: the panel is one short list, so its dialog is Studio's narrow one. */
+  width?: PanelWidth;
+};
 export type PanelErrorCode = (typeof PanelErrorCode)[keyof typeof PanelErrorCode];
 export type PluginScalar = string | number | boolean;
 export interface PluginTool {
@@ -593,7 +607,7 @@ export interface PluginManifest {
   capabilities: string[];
   tools: PluginManifestTool[];
   skills: PluginSkill[];
-  panels: Array<{ id: string; title: string; file: string; placement: "settings" | "project" }>;
+  panels: PluginPanel[];
   settings: Array<{
     key: string;
     label: string;

@@ -179,7 +179,9 @@ describe("the bundled Unity plugin", () => {
         status: UnityAction.ToolbarStatus,
       },
     ]);
-    assert.deepEqual(unity.panels, [{ id: "editor", title: "Unity", file: "panel.html", placement: "settings" }]);
+    assert.deepEqual(unity.panels, [
+      { id: "editor", title: "Unity", file: "panel.html", placement: "settings", width: "narrow" },
+    ]);
     const action = (name: string) => unity.actions.find((declared) => declared.name === name);
     assert.deepEqual(unity.actions.map((declared) => declared.name).sort(), Object.values(UnityAction).sort());
     for (const looks of [UnityAction.Status, UnityAction.ToolbarStatus]) {

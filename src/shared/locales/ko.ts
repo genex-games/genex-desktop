@@ -1342,8 +1342,6 @@ export default {
   "Export target must be an ordinary directory": "내보낼 대상은 일반 폴더여야 해요",
   "Export validation does not yet support scoped import maps; build this project before export":
     "내보내기 검사는 아직 scoped import maps를 지원하지 않아요. 내보내기 전에 이 프로젝트를 빌드하세요",
-  "Exported for the web into web/: Live's Web game tab plays it, and Publish puts it online.":
-    "web/에 웹용으로 내보냈어요. 라이브의 ‘웹 게임’ 탭에서 플레이할 수 있고, ‘게시하기’로 온라인에 올릴 수 있어요.",
   "Exported {count} public files. Included: {included}. Excluded from selected roots: {excluded}.":
     "공개 파일 {count}개를 내보냈어요. 포함: {included}. 선택한 루트에서 제외: {excluded}.",
   "Exporting…": "내보내는 중…",
@@ -3286,7 +3284,6 @@ export default {
   "Set up the protected workspace": "보호된 작업 공간 설정",
   "Set up this game's Unity project": "이 게임의 Unity 프로젝트를 설정하세요",
   "Set up {name} for Genex.": "{name} 프로젝트를 Genex용으로 설정하세요.",
-  "Set up {name} for Genex?": "{name} 프로젝트를 Genex용으로 설정할까요?",
   "Set up {project} after it ends.": "Loop가 끝나면 {project} 프로젝트를 설정하세요.",
   "Set up {project} for Genex · {game} now builds in {engine}":
     "{project} 프로젝트를 Genex용으로 설정했어요 · {game} 게임은 이제 {engine}에서 만들어져요",
@@ -4210,7 +4207,6 @@ export default {
   "Unclosed TOML string": "닫히지 않은 TOML 문자열",
   "Undid {count, plural, one {# try} other {# tries}} before it": "그 전에 {count, plural, other {#번}} 되돌렸어요",
   Undo: "실행 취소",
-  "Undo setup for {name}?": "{name} 프로젝트의 설정을 되돌릴까요?",
   "Undo this change": "이 변경 되돌리기",
   Undone: "되돌림",
   "Undone because {reason}.": "되돌린 이유: {reason}.",
@@ -6188,7 +6184,6 @@ export default {
   "Nothing went public. After the fix, it publishes by itself and Genex checks it again.":
     "아무것도 게시되지 않았어요. 수정 후 자동으로 게시되고 Genex가 다시 확인해요.",
   "Open a game": "게임을 여세요",
-  "Open on Genex": "Genex에서 열기",
   "Players keep the version they have. After the fix, it publishes by itself and Genex checks it again.":
     "플레이어는 지금 버전을 그대로 써요. 수정 후 자동으로 게시되고 Genex가 다시 확인해요.",
   "Players keep the {date} version.": "플레이어는 {date} 버전을 그대로 써요.",
@@ -6282,37 +6277,52 @@ export default {
     "Genex가 “{title}”의 {players} 앱을 만들지 못했어요. 거기서 만들어지도록 게임 코드의 오류를 고치고, 다른 시스템에서는 지금처럼 동작하게 유지해 주세요. 이 컴퓨터로는 {players}용으로 만들 수 없으니 수정마다 꼼꼼히 확인해 주세요. 끝나면 Build on Genex를 다시 누르라고 알려 주세요.\n\n{errors}",
   "The same project fails the same way: change it first, then try again.":
     "같은 프로젝트는 똑같이 실패해요. 먼저 고친 뒤 다시 시도해 주세요.",
-  "Build {count} apps": "앱 {count}개 빌드",
-  "Build {platforms}": "{platforms} 빌드",
-  "Building on Genex Cloud": "Genex Cloud에서 빌드 중",
-  "Building on this Mac": "이 Mac에서 빌드 중",
-  "Building on this PC": "이 PC에서 빌드 중",
-  "Building {platforms}": "{platforms} 빌드 중",
+  "Build on Genex Cloud": "Genex Cloud에서 빌드",
+  "Build on Mac": "Mac에서 빌드",
+  "Build on PC": "PC에서 빌드",
+  "Builds after {platform}": "{platform} 다음에 빌드",
+  "Builds {platforms} again, then updates {count, plural, one {it} other {them}} by itself.":
+    "{platforms} 다시 빌드 후 {count, plural, other {알아서 업데이트해요}}.",
+  "Builds {platforms} first. {slow} can take up to an hour.":
+    "먼저 {platforms} 빌드부터 해요. {slow} 빌드는 최대 한 시간까지 걸릴 수 있어요.",
+  "Builds {platforms} too. {slow} can take up to an hour.":
+    "{platforms}도 빌드해요. {slow} 빌드는 최대 한 시간까지 걸릴 수 있어요.",
+  "Builds {platforms}, then publishes {count, plural, one {it} other {them}} by itself.":
+    "{platforms} 빌드 후 {count, plural, other {알아서 게시해요}}.",
+  "Builds {platform} first. It can take up to an hour.":
+    "먼저 {platform} 빌드부터 해요. 최대 한 시간까지 걸릴 수 있어요.",
+  "Builds {platform} too. It can take up to an hour.": "{platform}도 빌드해요. 최대 한 시간까지 걸릴 수 있어요.",
+  "Each one goes live as soon as it’s ready. You can close this window.":
+    "준비되는 대로 하나씩 공개돼요. 이 창은 닫아도 괜찮아요.",
+  "More for {platform}": "{platform} 더 보기",
+  "On Genex Cloud": "Genex Cloud",
+  "On this PC": "이 PC",
+  "Publish to all platforms": "모든 플랫폼에 게시",
+  "Publishes {now} now, {later} once {count, plural, one {it is} other {they are}} built.":
+    "{now} 버전은 지금, {later} 버전은 {count, plural, other {빌드되면}} 게시해요.",
+  "Publishes {platforms} once {count, plural, one {it is} other {they are}} built.":
+    "{platforms} 버전은 {count, plural, other {빌드되면}} 게시해요.",
+  "Publishing to all platforms · {live} of {count} live": "모든 플랫폼에 게시 중 · {count}곳 중 {live}곳 공개",
+  "Update all platforms": "모든 플랫폼 업데이트",
+  "Updates {now} now, {later} once {count, plural, one {it is} other {they are}} built.":
+    "{now} 버전은 지금, {later} 버전은 {count, plural, other {빌드되면}} 업데이트해요.",
+  "Updates {platforms} once {count, plural, one {it is} other {they are}} built.":
+    "{platforms} 버전은 {count, plural, other {빌드되면}} 업데이트해요.",
+  Updating: "업데이트 중",
+  "Updating all platforms · {done} of {count} updated": "모든 플랫폼 업데이트 중 · {count}곳 중 {done}곳 완료",
+  "{hours}h {minutes}m left": "{hours}시간 {minutes}분 남음",
+  "{minutes}m left": "{minutes}분 남음",
   "Couldn’t build": "빌드하지 못했어요",
   "Couldn’t build · the older one is still live": "빌드하지 못했어요 · 이전 버전이 계속 공개 중이에요",
   "Couldn’t send": "보내지 못했어요",
-  "It can take up to an hour.": "최대 한 시간까지 걸릴 수 있어요.",
   "Live · older than your game": "공개 중 · 게임보다 오래된 버전",
   "Live · up to date": "공개 중 · 최신",
   "Only a Mac, Windows or Linux app can be taken off Genex this way.":
     "이 방법으로는 Mac, Windows, Linux 앱만 Genex에서 내릴 수 있어요.",
-  "Publish to {count} platforms": "플랫폼 {count}곳에 게시",
-  "Publish to {name}": "{name}에 게시",
-  "Publish to {platforms}": "{platforms}에 게시",
-  "Publish to {platforms} and take {down} down": "{platforms}에 게시하고 {down} 내리기",
-  "Publishing to {platforms}": "{platforms}에 게시 중",
   "Sending to Genex": "Genex로 보내는 중",
   "Sending to Genex Cloud": "Genex Cloud로 보내는 중",
   "Take {platforms} down": "{platforms} 내리기",
-  "Update {count} platforms": "플랫폼 {count}곳 업데이트",
-  "Update {platforms}": "{platforms} 업데이트",
-  "Update {platforms} and take {down} down": "{platforms} 업데이트하고 {down} 내리기",
-  "Updating {platforms}": "{platforms} 업데이트 중",
-  "builds on Genex Cloud": "Genex Cloud에서 빌드",
-  "builds on this Mac": "이 Mac에서 빌드",
-  "builds on this PC": "이 PC에서 빌드",
   "coming soon": "곧 지원",
-  web: "웹",
   "{minutes} min ago": "{minutes}분 전",
   "Agent is fixing the {platform} build": "에이전트가 {platform} 빌드를 고치는 중",
   "Copy the error": "오류 복사",
@@ -6336,7 +6346,6 @@ export default {
   "Not built": "빌드 안 됨",
   "Built · older than your game": "빌드됨 · 게임보다 오래된 버전",
   "Ready to publish": "게시 준비됨",
-  "{platforms} can take up to an hour.": "{platforms} 빌드는 최대 한 시간까지 걸릴 수 있어요.",
   "{platform} build didn’t start": "{platform} 빌드가 시작되지 않았어요",
   "Checking the archive": "아카이브 확인 중",
   Packing: "묶는 중",
@@ -6353,4 +6362,29 @@ export default {
   "Unpacking…": "압축 푸는 중…",
   "Installing… {percent}% · {speed} · about {minutes} min left": "설치 중… {percent}% · {speed} · 약 {minutes}분 남음",
   "Installing… {percent}% · {speed} · under a minute left": "설치 중… {percent}% · {speed} · 1분 미만 남음",
+  "This plugin stopped several times in a row, so it starts again in {seconds, plural, one {# second} other {# seconds}}. Try again then.":
+    "이 플러그인이 여러 번 연달아 멈춰서 {seconds, plural, other {#초}} 후에 다시 시작해요. 그때 다시 시도해 줘.",
+  "Add Genex to {name}?": "{name}에 Genex를 추가할까요?",
+  "Another Genex game builds in this project too, so it stays where it is.":
+    "이 프로젝트에서 다른 Genex 게임도 만들고 있어서 그대로 둡니다.",
+  "Exported. Play it in Live's Web game tab, or publish it.":
+    "내보냈습니다. 라이브의 '웹 게임' 탭에서 플레이하거나 게시하세요.",
+  "Genex moves its folder from {from} to {to}. Rewind and Loops reach it there.":
+    "Genex가 폴더를 {from}에서 {to}(으)로 옮깁니다. 거기서는 되감기와 Loop가 닿습니다.",
+  "Genex moves its folder from {from} to {to}. Rewind, Loops and Publish reach it there.":
+    "Genex가 폴더를 {from}에서 {to}(으)로 옮깁니다. 거기서는 되감기, Loop, 게시가 닿습니다.",
+  "Move {name} into this game?": "{name}을(를) 이 게임으로 옮길까요?",
+  "Only the project this game builds in can move into it.": "이 게임을 만드는 프로젝트만 옮길 수 있습니다.",
+  "Quit Godot first: a project can't move while it is open.":
+    "먼저 Godot를 종료하세요. 열려 있는 프로젝트는 옮길 수 없습니다.",
+  "Quit Unreal first: a project can't move while it is open.":
+    "먼저 Unreal을 종료하세요. 열려 있는 프로젝트는 옮길 수 없습니다.",
+  "Remove Genex from {name}?": "{name}에서 Genex를 제거할까요?",
+  "This game already has a godot folder.": "이 게임에는 이미 godot 폴더가 있습니다.",
+  "This game already has an unreal folder.": "이 게임에는 이미 unreal 폴더가 있습니다.",
+  "This project is already in this game's folder.": "이 프로젝트는 이미 이 게임의 폴더에 있습니다.",
+  "This project is on another disk, so Genex leaves it there.":
+    "이 프로젝트는 다른 디스크에 있어서 Genex가 그대로 둡니다.",
+  "This project's folder holds other things too, so Genex leaves it where it is.":
+    "이 프로젝트의 폴더에 다른 것도 있어서 Genex가 그대로 둡니다.",
 } satisfies LocaleCatalog;

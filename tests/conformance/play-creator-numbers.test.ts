@@ -1,6 +1,6 @@
 /**
  * A creator's numbers from genex.games: the account's own stats (per-game daily series, read only
- * with its token), Play's Top creators (ranked by games and hours, on a log scale) and the Credits
+ * with its token), Play's Top creators (in the order genex.games ranks them) and the Credits
  * tab (balance, plan, live prices, recent spends and refunds). What the API answers is hostile input:
  * a series of the wrong length, a negative count or a row off Genex's hosts never reaches the page,
  * and a route genex.games does not have yet answers null instead of failing.
@@ -15,7 +15,6 @@ import { CreditsRoute, genexCredits, toPlan, toPrices, toRecent } from "../../sr
 import { type GalleryAnswer, type GalleryRequest, PlayRoute, SignInNeeded } from "../../src/main/play/gallery.ts";
 import { GenexOperation } from "../../src/shared/genex.ts";
 import { canAfford, CreditKind, operationPrice } from "../../src/shared/play-credits.ts";
-import { creatorScore } from "../../src/shared/play-people.ts";
 import { statsTotals } from "../../src/shared/play-stats.ts";
 
 const TOKEN = "genex-cli-token";
@@ -105,13 +104,7 @@ describe("the account's stats", () => {
 });
 
 describe("Top creators", () => {
-  it("ranks by games and hours on a log scale, hours counted double, and needs a published game", () => {
-    assert.equal(creatorScore(0, 500), Number.NEGATIVE_INFINITY);
-    assert.ok(creatorScore(6, 640) > creatorScore(31, 120), "hours played weigh more than a pile of games");
-    assert.ok(creatorScore(19, 420) > creatorScore(1, 420), "games still count");
-  });
-
-  it("orders the row by that score, whatever order genex.games sends", () => {
+  it("keeps the order genex.games ranks them in, which counts more than games and hours", () => {
     const creators = toCreators({
       creators: [
         { id: "yuki", name: "Yuki", image: null, games: 31, hours: 120 },
@@ -124,7 +117,23 @@ describe("Top creators", () => {
     });
     assert.deepEqual(
       creators.map((creator) => creator.id),
-      ["omar", "ben", "yuki"],
+      ["yuki", "ben", "omar"],
+      "as sent, without anyone who has no published game, a bad id or a second row",
+    );
+  });
+
+  it("shows at most 24 creators, the first genex.games sent", () => {
+    const sent = Array.from({ length: 30 }, (_, place) => ({
+      id: `maker-${place}`,
+      name: `Maker ${place}`,
+      games: 1,
+      hours: place,
+    }));
+    const creators = toCreators({ creators: sent });
+    assert.equal(creators.length, 24);
+    assert.deepEqual(
+      creators.map((creator) => creator.id),
+      sent.slice(0, 24).map((creator) => creator.id),
     );
   });
 

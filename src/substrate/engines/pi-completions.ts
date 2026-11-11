@@ -185,8 +185,20 @@ export function piContext(request: CompleteRequest, provider: string = EngineId.
   };
 }
 
+/** Drop acceptJsonString because strict proxies answer 400 to schema keys they do not know. */
+function cleanToolParameters(schema: unknown): unknown {
+  if (!schema || typeof schema !== "object") return schema;
+  if (Array.isArray(schema)) return schema.map(cleanToolParameters);
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(schema as Record<string, unknown>)) {
+    if (key === "acceptJsonString") continue;
+    result[key] = cleanToolParameters(value);
+  }
+  return result;
+}
+
 function toPiTool(tool: ToolDefinition): unknown {
-  return { name: tool.name, description: tool.description, parameters: tool.parameters };
+  return { name: tool.name, description: tool.description, parameters: cleanToolParameters(tool.parameters) };
 }
 
 /** Does the request carry a picture the model would have to see? */

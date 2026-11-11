@@ -153,22 +153,12 @@ export interface PlayFoundPerson extends PlayPerson {
   games: number | null;
 }
 
-/** A creator on Play's Top creators row. */
+/** A creator on Play's Top creators row. genex.games ranks the row; these two numbers are what a tile shows. */
 export interface PlayCreator extends PlayPerson {
   /** Games they have published. */
   games: number;
   /** Hours people played their games in the last 30 days. */
   hours: number;
-}
-
-/**
- * How Top creators are ranked: published games and hours played in their games over the last 30
- * days, each on a log scale so neither a pile of tiny games nor one viral hit runs away with it,
- * hours counted double. Nobody without a published game is ranked.
- */
-export function creatorScore(games: number, hours: number): number {
-  if (!(games > 0)) return Number.NEGATIVE_INFINITY;
-  return Math.log1p(games) + 2 * Math.log1p(Math.max(0, hours));
 }
 
 /** Friends in a profile's row: the viewer's friends first, then everyone else, each by name. */

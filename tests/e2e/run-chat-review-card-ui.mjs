@@ -1,9 +1,12 @@
 /**
  * The chat's review cards (mockups A2, C2, C3, C4, D2) in a disposable Electron profile over a fake
  * `window.studio`: each game's newest record is its live card as Genex's word now draws it, every
- * older one a history line, which opens read only to what it said then; Fix with agent presses through
- * the native IPC; a review of another game raises a toast with [Open]. Dark and light screens. No card
- * says the check takes seconds or that Genex checks public games again.
+ * older one a history line, which opens read only to what its record says; a live game's card says
+ * "Live", "{name} is live!" (or "is public again"), its link, Copy link and Open, and nothing else, and
+ * its Open shows the game's page in Play, with nothing sent to the browser (a game on another Genex
+ * still goes there); Fix with agent presses through the native IPC; a review of another game raises a
+ * toast with [Open]. Dark and light screens. No card says the check takes seconds or that Genex
+ * checks public games again.
  */
 import { build } from "esbuild";
 import { spawn } from "node:child_process";
@@ -63,10 +66,12 @@ app.whenReady().then(async()=>{
    assert.deepEqual(scene('checking-fixes').history.map((line)=>line.split('·')[0].trim()),['Not approved','3 fixes sent']);
    assert.equal(scene('live').live,'live');
    assert.equal(scene('live').title,'Midnight Asphalt is live!');
-   assert.deepEqual(scene('live').presses,['Copy link','Open on Genex']);
-   assert.equal(scene('live-update').title,'Version 1.3.0 is live');
-   assert.equal(scene('restored').title,'Midnight Asphalt is public again');
-   assert.deepEqual(scene('restored').lines,["Someone from the Genex team agreed it's fine."]);
+   assert.deepEqual(scene('live').presses,['Copy link','Open']);
+   assert.equal(scene('live').address,'genex.games/live');
+   assert.equal(scene('live').card,'LiveMidnight Asphalt is live!genex.games/liveCopy linkOpen','the live card says nothing else');
+   assert.equal(scene('live-update').live,'live-update');
+   assert.equal(scene('live-update').card,'LiveMidnight Asphalt is live!genex.games/live-updateCopy linkOpen','an update names the game, never its version');
+   assert.equal(scene('restored').card,'LiveMidnight Asphalt is public againdev.genex.games/restoredCopy linkOpen');
    assert.equal(scene('not-approved').title,"Can't publish yet: 1 thing to fix");
    assert.deepEqual(scene('not-approved').presses,['Fix with agent','Request human review']);
    assert.equal(scene('taken-down').title,'Taken down: 3 things to fix');
@@ -84,8 +89,17 @@ app.whenReady().then(async()=>{
   assert.deepEqual(toasted.toasts,[],'pressed, the toast goes');
   const fixed=await js('window.chatReviewRig.press("not-approved","fix")');
   assert.deepEqual(fixed.pressed,['fix:not-approved']);
+  const played=await js('window.chatReviewRig.openGame("live")');
+  assert.equal(played.leaves,'chevron-right','no arrow out of the app');
+  assert.equal(played.view.page+':'+played.view.slug,'game:live',"Open shows the game's page in Play");
+  assert.equal(played.playAsked,1,'and brings Play up once');
+  assert.deepEqual(played.toBrowser,[],'nothing goes to the browser');
+  // The restored game is on another Genex, whose page this Play cannot show: the browser, as before.
+  const away=await js('window.chatReviewRig.openGame("restored")');
+  assert.equal(away.leaves,'arrow-up-right');
+  assert.deepEqual([away.view.slug,away.playAsked,away.toBrowser],['live',1,['restored']]);
   assert.deepEqual(report.errors,[]);
-  console.log('PASS Chat review cards: checking, checking fixes, live with its link, an update, public again, not approved, taken down, a fix on its way and one that stopped, with history lines that open read only; Fix with agent presses through the native IPC; another game public again toasts with Open');
+  console.log("PASS Chat review cards: checking, checking fixes, live with its link and nothing else, an update, public again, not approved, taken down, a fix on its way and one that stopped, with history lines that open read only; a live card's Open shows the game's page in Play; Fix with agent presses through the native IPC; another game public again toasts with Open");
  } catch(error) { report.failure=error.stack; console.error(error); await capture('failure').catch(()=>{}); }
  fs.writeFileSync(path.join(evidence,'report.json'),JSON.stringify(report,null,2));
  app.exit(report.failure?1:0);

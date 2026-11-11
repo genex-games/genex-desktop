@@ -16,7 +16,8 @@ function isActiveSkillName(name: string): boolean {
 export async function studioSkills(
   workspace: string,
 ): Promise<Array<{ name: string; text: string; description: string }>> {
-  const parent = await realpath(workspace);
+  const parent = await realpath(workspace).catch(() => null);
+  if (!parent) return [];
   const dir = path.join(parent, "skills");
   const root = await realpath(dir).catch(() => null);
   if (!root || root !== dir) return [];

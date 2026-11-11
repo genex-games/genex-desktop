@@ -35,6 +35,7 @@ function panelOn(project: string) {
     frame: () => host.frame,
     plugin: () => plugin,
     project: () => host.project,
+    title: () => null,
     surface: () => PanelSurface.Page,
     style: () => ({ getPropertyValue: () => "" }),
     review: () => {},
