@@ -6353,4 +6353,6 @@ export default {
   "Unpacking…": "압축 푸는 중…",
   "Installing… {percent}% · {speed} · about {minutes} min left": "설치 중… {percent}% · {speed} · 약 {minutes}분 남음",
   "Installing… {percent}% · {speed} · under a minute left": "설치 중… {percent}% · {speed} · 1분 미만 남음",
+  "This plugin stopped several times in a row, so it starts again in {seconds, plural, one {# second} other {# seconds}}. Try again then.":
+    "이 플러그인이 여러 번 연달아 멈춰서 {seconds, plural, other {#초}} 후에 다시 시작해요. 그때 다시 시도해 줘.",
 } satisfies LocaleCatalog;

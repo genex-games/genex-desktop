@@ -6549,4 +6549,6 @@ export default {
   "Installing… {percent}% · {speed} · about {minutes} min left":
     "Установка… {percent}% · {speed} · осталось около {minutes} мин",
   "Installing… {percent}% · {speed} · under a minute left": "Установка… {percent}% · {speed} · осталось меньше минуты",
+  "This plugin stopped several times in a row, so it starts again in {seconds, plural, one {# second} other {# seconds}}. Try again then.":
+    "Плагин остановился несколько раз подряд, поэтому запустится снова через {seconds, plural, one {# секунду} few {# секунды} many {# секунд} other {# секунды}}. Попробуй тогда ещё раз.",
 } satisfies LocaleCatalog;

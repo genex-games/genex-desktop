@@ -48,24 +48,49 @@ export function withLiveTail(
 type History = ChatPage & { threadId: string; loading: boolean; error?: string; paging: boolean; pageError?: string };
 
 /**
+ * How many records a following chat keeps when it drops its earliest, and how many it holds
+ * before it does. `filled` is how many it held when it last paged earlier history in to fill its
+ * height (`filledAfterPage`): a Loop draws its builders' traces as a few short tool rows, so its
+ * newest pages could leave the chat too short to scroll. It then paged them back, the next batch
+ * dropped them again, and the chat read about seven pages for every batch of a long Loop.
+ */
+export function followingWindow(filled: number): { holds: number; keeps: number } {
+  const keeps = Math.max(FOLLOWING_KEEPS, filled);
+  return { keeps, holds: Math.max(FOLLOWING_HOLDS, 2 * keeps) };
+}
+
+/**
  * The loaded history once a batch of live records is in it (`rendered`, the loaded events and
  * their live tail). Every batch re-reads all the chat holds (its transcript, queue, run and work
  * rows), and an open chat kept every record since it opened: through a Loop of hours each of its
  * builders' traces cost the whole session again. So a chat whose reader follows its newest line
  * keeps its newest pages only, as when it opens: the current-state facts already hold what the
- * dropped records say about now, and scrolling up reads them back a page at a time.
+ * dropped records say about now, and scrolling up reads them back a page at a time. It never keeps
+ * fewer than it needed to fill its height (`followingWindow`).
  */
 export function withLiveBatch<H extends ChatPage>(
   history: H,
   rendered: EventEnvelope[],
   fresh: EventEnvelope[],
   following: boolean,
+  filled = 0,
 ): H {
   const next = { ...history, events: rendered, context: chatContext(history.context, fresh) };
-  if (!following || rendered.length <= FOLLOWING_HOLDS) return next;
-  const kept = rendered.slice(-FOLLOWING_KEEPS);
+  const bounds = followingWindow(filled);
+  if (!following || rendered.length <= bounds.holds) return next;
+  const kept = rendered.slice(-bounds.keeps);
   return { ...next, events: kept, before: kept[0]?.id ?? null, hasMore: true };
 }
+
+/**
+ * What a following chat needed to fill its height, once a page of earlier history landed: a page
+ * a following reader asked for was asked because the chat was too short to scroll
+ * (`loadsEarlier`), so it needed every record it now `held`. A reader scrolled up pages by
+ * choice, which says nothing about the chat's height.
+ */
+export const filledAfterPage = (filled: number, held: number, following: boolean): number =>
+  following ? Math.max(filled, held) : filled;
+
 const empty = (threadId = ""): History => ({
   threadId,
   events: [],
@@ -141,10 +166,13 @@ export function useChatHistory(threadId: string | null, live: EventEnvelope[], a
   const pages = useRef(0);
   // Whether the reader follows the newest line: the transcript's scroll keeps it (`useFollowScroll`).
   const following = useRef(true);
+  // How many records this chat held when it last paged in to fill its height (`filledAfterPage`).
+  const filled = useRef(0);
   useEffect(() => {
     const version = ++generation.current;
     pages.current = 0;
     following.current = true;
+    filled.current = 0;
     pageRequest.current = false;
     setHistory(empty(threadId ?? ""));
     if (!threadId) return;
@@ -179,6 +207,7 @@ export function useChatHistory(threadId: string | null, live: EventEnvelope[], a
     if (!older || pageRequest.current) return;
     pageRequest.current = true;
     const version = generation.current;
+    const filling = following.current;
     setHistory((current) => ({ ...current, paging: true, pageError: undefined }));
     const startedAt = Date.now();
     const paged = (failed: boolean): void =>
@@ -192,13 +221,11 @@ export function useChatHistory(threadId: string | null, live: EventEnvelope[], a
       pages.current += 1;
       paged(false);
       if (version === generation.current)
-        setHistory((current) => ({
-          ...current,
-          events: mergeChatEvents(page.events, current.events),
-          before: page.before,
-          hasMore: page.hasMore,
-          paging: false,
-        }));
+        setHistory((current) => {
+          const events = mergeChatEvents(page.events, current.events);
+          filled.current = filledAfterPage(filled.current, events.length, filling);
+          return { ...current, events, before: page.before, hasMore: page.hasMore, paging: false };
+        });
     } catch (error) {
       paged(true);
       if (version === generation.current)
@@ -218,7 +245,9 @@ export function useChatHistory(threadId: string | null, live: EventEnvelope[], a
     if (current.loading || current.events === renderedEvents) return;
     const fresh = freshFor(renderedEvents, threadId, current.events.at(-1)?.id);
     setHistory((previous) =>
-      previous === history ? withLiveBatch(previous, renderedEvents, fresh, following.current) : previous,
+      previous === history
+        ? withLiveBatch(previous, renderedEvents, fresh, following.current, filled.current)
+        : previous,
     );
   }, [history, current.loading, current.events, renderedEvents, threadId]);
   const stateEvents = useMemo(

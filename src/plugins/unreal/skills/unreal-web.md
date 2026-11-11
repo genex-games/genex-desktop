@@ -3,7 +3,7 @@
 Players open a web version in a browser with nothing to install. `unreal__package-game` with
 `system: "web"` makes it, and the unreal-editor skill's Publishing part says how to call it. This
 skill is what the game itself needs changed first, so the build compiles and the browser shows the
-game instead of a pink or blurry frame.
+game instead of a pink frame.
 
 Everything below comes from one real port of a 5.8 game, with Unreal 5.9.0 Preview on a Windows PC;
 where that port did not check a point, the line says so. A later Unreal may differ: trust a build's
@@ -37,8 +37,13 @@ Put every setting the web alone needs in the project's `Config/Wasm/` folder: `W
 `WasmGame.ini`, `WasmDeviceProfiles.ini`, `WasmPakFileRules.ini`. Only a web build reads them, so
 the Mac and Windows apps keep their settings and their look. Never change a shared setting,
 material or level for the browser's sake without the user's yes. A package reads its settings once
-as it starts: change them first, then package. Genex itself writes `bInjectIsolationHeaders=True`
-into `Config/DefaultEngine.ini` before a web package: leave it there.
+as it starts: change them first, then package.
+
+Genex writes a few settings itself before a web package, each only where the project doesn't set
+it: the isolation headers, the click to start and Retina sharpness under
+`[/Script/WasmTargetPlatform.WasmTargetSettings]` in `Config/DefaultEngine.ini`, and the split of
+the content into files in `Config/Wasm/WasmGame.ini`. Leave them, and change one only the way
+`unreal__package-game`'s description says.
 
 ## 3. What a browser can't run
 
@@ -112,28 +117,25 @@ Not the web's doing, but a 5.8 game meets both on its first 5.9 build:
   offers it ends on forward, the plainest of the three, so leave `bTargetDesktopTier` off unless the
   user asks for Lumen on PCs. Judge the web version on deferred and on forward, and tell the user up
   front that a Mac's browser won't show the app's Lumen lighting.
-- **Sharpness and the first click**, in `Config/Wasm/WasmEngine.ini`. Unreal's page draws 1 pixel
-  per screen point by default, which is blurry on a Retina Mac, and `MaxDevicePixelRatio=2.0` is the
-  setting for it. The port built with it but never saw it on a Retina screen, and its cost in speed
-  was not measured: look at it on one and check the frame rate before you tell the user it is
-  sharp. Sound and mouse capture need a click in a browser, which `StartMode=Click` asks for:
-
-  ```ini
-  [/Script/WasmTargetPlatform.WasmTargetSettings]
-  MaxDevicePixelRatio=2.0
-  StartMode=Click
-  ```
-
+- **Sharpness and the first click are Genex's settings.** Unreal's page draws 1 pixel per screen
+  point by default, which is blurry on a Retina Mac, so a web package sets
+  `MaxDevicePixelRatio=2.0`; a browser gives a page sound and the mouse only after a click, so it
+  sets `StartMode=Click`. Drawing at 2.0 is four times the pixels, and the port never measured what
+  that costs: check the frame rate on a Retina screen before you tell the user it is sharp and
+  smooth, and lower the value when the game is too heavy for it.
 - **Where it runs.** The page starts only over https or on localhost, so another computer can't
   test it from this PC's address over http: ask the user to publish it for that.
 
 ## 6. Size
 
-A smaller site loads sooner, so leave out what the web version doesn't show.
+A smaller site loads sooner, and `unreal__package-status` says when a finished web build is past
+what Genex's hosting usually takes: make it smaller and package again before Publish. Leave out what
+the web version doesn't show.
 
 - The project's `DirectoriesToAlwaysCook` applies to the web too and brings whole folders in. To
-  leave content out for the web alone: a section of the pak file rules with `Platforms="Wasm"` and
-  `bExcludeFromPaks=true` (in a chunked build also `bOverrideChunkManifest=true`).
+  leave content out for the web alone: a section of the pak file rules with `Platforms="Wasm"`,
+  `bExcludeFromPaks=true` and `bOverrideChunkManifest=true` (Genex's web builds come in chunks,
+  where the rule works only with it).
 - A start map for the web alone is `GameDefaultMap=` under `[/Script/EngineSettings.GameMapsSettings]`
   in `Config/Wasm/WasmEngine.ini`. Code that offers maps by name checks first that the map is in
   the build (`FPackageName::DoesPackageExist`).

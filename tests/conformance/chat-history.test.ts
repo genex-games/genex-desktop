@@ -1,6 +1,6 @@
 import { appendedEntryIds } from "../../src/renderer/chat/transcript-motion.ts";
 import { learningParts } from "../../src/renderer/chat/learning-parts.ts";
-import { anchorShift, mountedRange, rowOffsets } from "../../src/renderer/chat/transcript-window.ts";
+import { anchorShift, loadsEarlier, mountedRange, rowOffsets } from "../../src/renderer/chat/transcript-window.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
@@ -15,7 +15,7 @@ import { EventKind } from "../../src/shared/event-log.ts";
 import { EngineId } from "../../src/shared/providers.ts";
 import { EntryKind, toEntries } from "../../src/renderer/chat-entries.ts";
 import { compactedWords } from "../../src/renderer/words.ts";
-import { FOLLOWING_HOLDS, withLiveBatch, withLiveTail } from "../../src/renderer/use-chat-history.ts";
+import { filledAfterPage, FOLLOWING_HOLDS, withLiveBatch, withLiveTail } from "../../src/renderer/use-chat-history.ts";
 import { RunState, runExecution } from "../../src/shared/run-state.ts";
 import { removeTree } from "../helpers/tmp.ts";
 import type { EventData, EventEnvelope } from "../../src/substrate/types.ts";
@@ -849,6 +849,48 @@ test("a chat following a long Loop holds its newest pages, keeps the run's facts
   } finally {
     await removeTree(root);
   }
+});
+
+test("a following chat whose newest pages draw too few rows to fill it stops paging them back after every batch", () => {
+  // A Loop's log as the chat draws it: one short row per eighty records (a builder's trace folds
+  // into its tool row), and a chat that needs twenty rows to fill its height. Its newest pages
+  // were too short, so it paged earlier ones back; the next batch dropped them again.
+  const RECORDS_PER_ROW = 80;
+  const ROW_PX = 40;
+  const VIEW_PX = 800;
+  const log = Array.from({ length: 20_000 }, (_, n) => custom(n, "delegated.claude-code", { step: n }));
+  const pageBefore = (before: string | null) => {
+    const end = before ? log.findIndex((e) => e.id === before) : log.length;
+    const start = Math.max(0, end - CHAT_PAGE_SIZE);
+    return { events: log.slice(start, end), before: log[start]?.id ?? null, hasMore: start > 0 };
+  };
+  const first = pageBefore(null);
+  let history = { ...first, context: [] as EventEnvelope[], paging: false };
+  let filled = 0;
+  let pages = 0;
+  const fill = (): void => {
+    for (;;) {
+      const rows = Math.ceil(history.events.length / RECORDS_PER_ROW);
+      const position = { scrollTop: 0, scrollHeight: Math.max(VIEW_PX, rows * ROW_PX), clientHeight: VIEW_PX };
+      if (rows * ROW_PX > VIEW_PX || !loadsEarlier(position, history, true)) return;
+      const page = pageBefore(history.before);
+      pages++;
+      history = { ...history, ...page, events: mergeChatEvents(page.events, history.events) };
+      filled = filledAfterPage(filled, history.events.length, true);
+    }
+  };
+  fill();
+  const toFill = pages;
+  assert.ok(toFill > 0, "the chat paged to fill its height once");
+  pages = 0;
+  for (let batch = 0; batch < 100; batch++) {
+    const fresh = Array.from({ length: 6 }, (_, i) => custom(log.length + i, "delegated.claude-code", { step: i }));
+    log.push(...fresh);
+    const rendered = withLiveTail(history.events, log, "game");
+    history = withLiveBatch(history, rendered, fresh, true, filled);
+    fill();
+  }
+  assert.ok(pages <= toFill, `a hundred batches paged ${pages} pages back after the chat filled with ${toFill}`);
 });
 
 test("routine narration folds by what its record says, not by the words written about it", () => {

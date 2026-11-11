@@ -77,25 +77,80 @@ describe("renderer performance behavior", () => {
   });
 });
 
-it("backfill viewers release complete logs and stale reads cannot repin after StrictMode cleanup", async () => {
-  const { createEventLogStore } = await import("../../src/renderer/state/event-log.ts");
+it("a viewer back before its read landed takes that read, and released logs are kept within a budget", async () => {
+  const { createEventLogStore, RELEASED_RECORDS_MAX } = await import("../../src/renderer/state/event-log.ts");
+  const { FEED_WINDOW } = await import("../../src/renderer/event-feed.ts");
   const reads: Array<(events: EventEnvelope[]) => void> = [];
   const store = createEventLogStore({
     events: async () => ({ events: [], cursor: null }),
     threadEvents: () => new Promise((resolve) => reads.push(resolve)),
   });
+  const logOf = (thread: string, length: number) =>
+    Array.from({ length }, (_, index) => ({ ...event(String(index).padStart(8, "0")), thread_id: thread }));
+  // StrictMode mounts, cleans up and mounts again: the second viewer waits for the first read.
   const first = store.watchThread("lead");
   first();
   const second = store.watchThread("lead");
-  reads[0]?.([event("old")]);
-  await Promise.resolve();
-  assert.equal(store.getState().byThread.lead?.length ?? 0, 0);
-  reads[1]?.(Array.from({ length: 5_000 }, (_, index) => event(String(index).padStart(8, "0"))));
+  assert.equal(reads.length, 1, "a viewer back during the read does not read again");
+  reads[0]?.(logOf("lead", 5_000));
   await Promise.resolve();
   assert.equal(store.getState().byThread.lead?.length, 5_000);
   second();
-  assert.equal(store.getState().backfill.lead, undefined);
-  assert.equal(store.getState().byThread.lead?.length, 4_000);
+  assert.equal(store.getState().backfill.lead, "done", "the log left a moment ago stays whole");
+  assert.equal(store.getState().byThread.lead?.length, 5_000);
+
+  const half = Math.ceil(RELEASED_RECORDS_MAX / 2) + 1;
+  for (const [index, thread] of ["older", "newer"].entries()) {
+    const stop = store.watchThread(thread);
+    reads[index + 1]?.(logOf(thread, half));
+    await Promise.resolve();
+    stop();
+  }
+  assert.equal(store.getState().byThread.newer?.length, half, "the newest released log is kept");
+  assert.equal(store.getState().backfill.older, undefined, "an older one past the budget is not");
+  assert.equal(store.getState().byThread.older?.length, FEED_WINDOW);
+  assert.equal(store.getState().byThread.lead?.length, 5_000, "a smaller one released before it still fits");
+
+  const late = store.watchThread("late");
+  late();
+  const huge = store.watchThread("huge");
+  huge();
+  reads[3]?.(logOf("late", 10));
+  reads[4]?.(logOf("huge", RELEASED_RECORDS_MAX + 1));
+  await Promise.resolve();
+  assert.equal(store.getState().byThread.late?.length, 10, "a read landing after its viewer left is kept");
+  assert.equal(store.getState().byThread.huge?.length, FEED_WINDOW, "a log larger than the budget is not kept");
+  assert.equal(store.getState().backfill.huge, undefined);
+});
+
+it("a game opened again keeps the whole log it read, so switching between two long Loops reads neither again", async () => {
+  const { createEventLogStore } = await import("../../src/renderer/state/event-log.ts");
+  const reads: string[] = [];
+  const logOf = (thread: string, length: number) =>
+    Array.from({ length }, (_, index) => ({
+      ...event(`${thread}-${String(index).padStart(8, "0")}`),
+      thread_id: thread,
+    }));
+  const store = createEventLogStore({
+    events: async () => ({ events: [], cursor: null }),
+    threadEvents: async (threadId) => {
+      reads.push(threadId);
+      return logOf(threadId, 6_000);
+    },
+  });
+  const settle = () => new Promise((resolve) => setImmediate(resolve));
+  // The Builds stage watches the open game's chat; another game's opens it in its place.
+  let stop = store.watchThread("racing");
+  await settle();
+  for (const game of ["puzzle", "racing", "puzzle", "racing"]) {
+    stop();
+    stop = store.watchThread(game);
+    await settle();
+  }
+  assert.deepEqual(reads, ["racing", "puzzle"], "each game's whole log is read once");
+  assert.equal(store.getState().byThread.racing?.length, 6_000);
+  assert.equal(store.getState().byThread.puzzle?.length, 6_000, "the game left a moment ago keeps its whole log");
+  stop();
 });
 
 it("a thousand-step graph folds once when workers add no missing lifecycle", async () => {

@@ -2,7 +2,8 @@
  * The renderer's copy of the event log: the all-threads feed main hands out after a cursor, and a
  * per-thread map built from it. A view that needs one thread's whole story (the Builds stage and
  * its workers) asks for a backfill, and that thread's slice then holds its full log, not just
- * what the bounded feed still carries.
+ * what the bounded feed still carries. Once no view watches it, the full log is kept within a
+ * budget (`RELEASED_RECORDS_MAX`) for the next viewer.
  *
  * Actions are pure `(state, input) => state`; `createEventLogStore` binds them to a `StudioApi`.
  */
@@ -21,6 +22,13 @@ export type BackfillState = (typeof BackfillState)[keyof typeof BackfillState];
 
 /** Recent unobserved thread slices retained alongside the active views. */
 export const THREAD_SLICES_MAX = 64;
+/**
+ * The records of whole logs kept after their last viewer left (`released`): enough for the long
+ * Loop of the game left a moment ago. Opening that game again read its whole log from disk again,
+ * every one of its records (a Loop of hours writes a hundred thousand), and the window froze for
+ * seconds on each switch between two games.
+ */
+export const RELEASED_RECORDS_MAX = 120_000;
 
 export interface EventLogState {
   pins: Record<string, number>;
@@ -36,6 +44,8 @@ export interface EventLogState {
   deferred: boolean;
   /** Threads whose whole log was read: their slices are not trimmed to the window. */
   backfill: Record<string, BackfillState>;
+  /** Threads no view watches whose whole log (or its read) is kept, the most recently released last. */
+  released: string[];
 }
 
 export const initialEventLog = (): EventLogState => ({
@@ -46,6 +56,7 @@ export const initialEventLog = (): EventLogState => ({
   bootstrapped: false,
   deferred: false,
   backfill: {},
+  released: [],
 });
 
 /** Merge events into the per-thread map; threads that got nothing keep their array. */
@@ -104,7 +115,7 @@ export function threadBackfilled(
   events: readonly EventEnvelope[],
 ): EventLogState {
   const current = state.byThread[threadId] ?? [];
-  return {
+  const next: EventLogState = {
     ...state,
     byThread: {
       ...state.byThread,
@@ -115,12 +126,14 @@ export function threadBackfilled(
     },
     backfill: { ...state.backfill, [threadId]: BackfillState.Done },
   };
+  // A read that lands after its viewer left is held like any released log, within the budget.
+  return state.pins[threadId] ? next : keptReleased(next);
 }
 
 /** A backfill that failed is asked for again by the next view that wants it. */
 export function backfillFailed(state: EventLogState, threadId: string): EventLogState {
   const { [threadId]: _dropped, ...rest } = state.backfill;
-  return { ...state, backfill: rest };
+  return { ...state, backfill: rest, released: state.released.filter((id) => id !== threadId) };
 }
 
 /** Forget a removed thread and every reference to its retained history. */
@@ -128,7 +141,7 @@ export function threadForgotten(state: EventLogState, threadId: string): EventLo
   const { [threadId]: _events, ...byThread } = state.byThread;
   const { [threadId]: _backfill, ...backfill } = state.backfill;
   const { [threadId]: _pin, ...pins } = state.pins;
-  return { ...state, byThread, backfill, pins };
+  return { ...state, byThread, backfill, pins, released: state.released.filter((id) => id !== threadId) };
 }
 
 function pruneSlices(state: EventLogState): EventLogState {
@@ -144,15 +157,49 @@ function pruneSlices(state: EventLogState): EventLogState {
   return next;
 }
 
-/** Last observer releases full history, retaining only the bounded recent tail. */
+/** A thread's slice back to the window's recent tail, its whole log no longer held. */
+function trimmedToWindow(state: EventLogState, threadId: string): EventLogState {
+  const { [threadId]: _backfill, ...backfill } = state.backfill;
+  const current = state.byThread[threadId];
+  const byThread = current ? { ...state.byThread, [threadId]: current.slice(-FEED_WINDOW) } : state.byThread;
+  return { ...state, backfill, byThread, released: state.released.filter((id) => id !== threadId) };
+}
+
+/** The released whole logs that fit `RELEASED_RECORDS_MAX`, newest first; the rest go back to the window. */
+function keptReleased(state: EventLogState): EventLogState {
+  let records = 0;
+  let next = state;
+  for (const threadId of [...state.released].reverse()) {
+    records += state.byThread[threadId]?.length ?? 0;
+    if (records > RELEASED_RECORDS_MAX) {
+      records -= state.byThread[threadId]?.length ?? 0;
+      next = trimmedToWindow(next, threadId);
+    }
+  }
+  return next;
+}
+
+/**
+ * The last viewer of a thread left. Its whole log, or the read of it still on its way, is kept
+ * for the next viewer (`RELEASED_RECORDS_MAX`), so a game opened again does not read it again.
+ */
 export function threadReleased(state: EventLogState, threadId: string): EventLogState {
   const count = state.pins[threadId] ?? 0;
   if (count > 1) return { ...state, pins: { ...state.pins, [threadId]: count - 1 } };
   const { [threadId]: _pin, ...pins } = state.pins;
-  const { [threadId]: _backfill, ...backfill } = state.backfill;
-  const current = state.byThread[threadId];
-  const byThread = current ? { ...state.byThread, [threadId]: current.slice(-FEED_WINDOW) } : state.byThread;
-  return pruneSlices({ ...state, pins, backfill, byThread });
+  const unpinned = { ...state, pins };
+  if (!state.backfill[threadId]) return pruneSlices(trimmedToWindow(unpinned, threadId));
+  const released = [...state.released.filter((id) => id !== threadId), threadId];
+  return pruneSlices(keptReleased({ ...unpinned, released }));
+}
+
+/** A viewer watches a thread again: its whole log is no longer one of the released. */
+export function threadWatched(state: EventLogState, threadId: string): EventLogState {
+  return {
+    ...state,
+    pins: { ...state.pins, [threadId]: (state.pins[threadId] ?? 0) + 1 },
+    released: state.released.filter((id) => id !== threadId),
+  };
 }
 
 /** A new bootstrap is on its way: nothing reads until it has set the cursor again. */
@@ -212,6 +259,8 @@ export function createEventLogStore(
       (events) => {
         if (generations.get(threadId) !== generation) return;
         generations.delete(threadId);
+        // Released past the budget while on its way: nobody keeps it.
+        if (store.getState().backfill[threadId] !== BackfillState.Loading) return;
         store.setState((state) => threadBackfilled(state, threadId, events), true);
       },
       () => {
@@ -247,13 +296,12 @@ export function createEventLogStore(
     },
     backfill,
     watchThread(threadId: string): () => void {
-      store.setState((state) => ({ pins: { ...state.pins, [threadId]: (state.pins[threadId] ?? 0) + 1 } }));
+      store.setState((state) => threadWatched(state, threadId), true);
       backfill(threadId);
       let released = false;
       return () => {
         if (released) return;
         released = true;
-        if ((store.getState().pins[threadId] ?? 0) <= 1) generations.delete(threadId);
         store.setState((state) => threadReleased(state, threadId), true);
       };
     },

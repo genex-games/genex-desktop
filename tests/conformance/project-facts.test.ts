@@ -3,7 +3,7 @@
  */
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { chmod, mkdir, readdir, readFile, realpath, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readdir, readFile, realpath, symlink, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { after, before, describe, it } from "node:test";
 import {
@@ -545,6 +545,63 @@ describe("a listed game's facts", () => {
     );
     assert.deepEqual(await factsOf(cased.name), ["web-game@Web:core", "unity-project@unity:core"]);
     assert.equal(webFolderOf(await listed(cased.name)), "Web", "Web/ is the same folder");
+  });
+
+  it("a web starter whose page is gone leaves only its record: an engine's web build is the game's web game", async () => {
+    /** A game New game made from the web starter, an engine's files written into it, then the starter's page removed. */
+    const pageGone = async (name: string, files: string[]) => {
+      const game = await lite.core.games.scaffold(name);
+      for (const file of files) {
+        await mkdir(path.dirname(path.join(game.dir, file)), { recursive: true });
+        await writeFile(path.join(game.dir, file), "made by the engine\n");
+      }
+      await unlink(path.join(game.dir, "index.html"));
+      return game.name;
+    };
+    const unity = await pageGone("unity-page-gone", [
+      "unity/ProjectSettings/ProjectVersion.txt",
+      "web/index.html",
+      "web/Build/web.loader.js",
+    ]);
+    // Publish sent the root page before, which is not there: "Selected public path is missing: index.html".
+    assert.deepEqual(await factsOf(unity), ["unity-project@unity:core", "web-game@web:core"]);
+    assert.equal(webFolderOf(await listed(unity)), "web", "the page Live plays and Publish sends");
+    const godot = await pageGone("godot-page-gone", ["godot/project.godot", "web/index.html", "web/index.pck"]);
+    assert.deepEqual(await factsOf(godot), ["godot-project@godot:core", "web-game@web:core"]);
+    assert.equal(webFolderOf(await listed(godot)), "web");
+    // A hidden file beside the starter's untouched code (Finder's, an editor's) is nobody's game.
+    const finder = await pageGone("unity-page-gone-finder", [
+      "unity/ProjectSettings/ProjectVersion.txt",
+      "web/index.html",
+      "web/Build/web.loader.js",
+      "src/.DS_Store",
+    ]);
+    assert.deepEqual(await factsOf(finder), ["unity-project@unity:core", "web-game@web:core"]);
+    assert.equal(webFolderOf(await listed(finder)), "web");
+
+    // With no web build to take its place, the record still makes the folder a web game, as it did.
+    const noBuild = await pageGone("unity-page-gone-no-web", ["unity/ProjectSettings/ProjectVersion.txt"]);
+    assert.deepEqual(await factsOf(noBuild), ["web-game@.:core", "unity-project@unity:core"]);
+    assert.equal(webFolderOf(await listed(noBuild)), null);
+    // The starter's code somebody built on is still their web game, page or no page: the root keeps it.
+    const ownCode = await pageGone("unity-page-gone-own-code", [
+      "unity/ProjectSettings/ProjectVersion.txt",
+      "web/index.html",
+      "web/Build/web.loader.js",
+      "src/main.js",
+    ]);
+    assert.deepEqual(await factsOf(ownCode), ["web-game@.:core", "unity-project@unity:core"]);
+    assert.equal(webFolderOf(await listed(ownCode)), null);
+    // So is a game written in other files of the starter's code folder, its own page made by a build step.
+    const otherCode = await pageGone("unity-page-gone-other-code", [
+      "unity/ProjectSettings/ProjectVersion.txt",
+      "web/index.html",
+      "web/Build/web.loader.js",
+      "src/game.ts",
+    ]);
+    assert.deepEqual(await factsOf(otherCode), ["web-game@.:core", "unity-project@unity:core"]);
+    assert.equal(webFolderOf(await listed(otherCode)), null);
+    // And a page that is there and built on keeps its place (the case above this one).
   });
 
   it("a link to a project outside the game is one absolute fact, and stands for the game's Unreal project", async () => {
