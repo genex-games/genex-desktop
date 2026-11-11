@@ -1967,6 +1967,13 @@ Its `PATH` is the user's login-shell PATH Studio resolves for builds (`toolchain
 own: an app started from the Finder has only `/usr/bin:/bin:/usr/sbin:/sbin`, where a backend
 finds none of the user's tools (Genex's publish found no Homebrew `git-lfs` there).
 
+A backend starts on its plugin's first call and, after it exited, again on the next one. One that
+keeps exiting waits first (`restart-pause.ts`): its second exit within a minute of the last asks a
+1 s pause, each further one doubles it, up to 30 s. A call during the pause is refused with
+`PluginRestartPaused` and starts nothing; turning the plugin on or loading a new copy starts the
+count again. Once Windows ends the session (`session-end`), no backend starts at all
+(`holdStarts`): it ends the backends then, and each call forked one that died at once.
+
 Available services are capability checked and scoped to the calling plugin:
 
 - `settings.read`: defaults plus host-owned settings; edits come from Studio's standard controls.

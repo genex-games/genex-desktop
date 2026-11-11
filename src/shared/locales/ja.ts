@@ -6501,4 +6501,6 @@ export default {
   "Installing… {percent}% · {speed} · about {minutes} min left":
     "インストール中… {percent}% · {speed} · 残り約{minutes}分",
   "Installing… {percent}% · {speed} · under a minute left": "インストール中… {percent}% · {speed} · 残り1分未満",
+  "This plugin stopped several times in a row, so it starts again in {seconds, plural, one {# second} other {# seconds}}. Try again then.":
+    "このプラグインが何度も続けて止まったため、{seconds, plural, other {#秒}}後に再起動します。そのあとでもう一度試してね。",
 } satisfies LocaleCatalog;

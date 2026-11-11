@@ -3845,6 +3845,7 @@ export const MESSAGES = [
   "This plan is no longer waiting for approval.",
   "This plugin has no releases, so Studio takes the newest code. It stays as installed until you update it.",
   "This plugin runs trusted code on your computer.",
+  "This plugin stopped several times in a row, so it starts again in {seconds, plural, one {# second} other {# seconds}}. Try again then.",
   "This plugin's package is missing; remove the plugin and install it again",
   "This plugin’s plugin.json can’t be used.",
   "This profile cannot store secrets: Studio has no OS encryption here.",

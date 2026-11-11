@@ -6142,4 +6142,6 @@ export default {
   "Installing… {percent}% · {speed} · about {minutes} min left":
     "正在安装… {percent}% · {speed} · 剩余约 {minutes} 分钟",
   "Installing… {percent}% · {speed} · under a minute left": "正在安装… {percent}% · {speed} · 剩余不到 1 分钟",
+  "This plugin stopped several times in a row, so it starts again in {seconds, plural, one {# second} other {# seconds}}. Try again then.":
+    "这个插件连续停止了好几次，所以会在 {seconds, plural, other {# 秒}}后重新启动。到时候再试一次吧。",
 } satisfies LocaleCatalog;

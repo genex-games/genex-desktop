@@ -69,6 +69,19 @@ export class PluginCallNotSent extends Error {
 }
 
 /**
+ * A call refused while its plugin's backend waits out its pause after ending again and again
+ * (`restart-pause.ts`): it never ran, and no backend was started for it. `retryInMs` says when
+ * the backend may start again.
+ */
+export class PluginRestartPaused extends Error {
+  readonly retryInMs: number;
+  constructor(message: string, retryInMs: number) {
+    super(message);
+    this.retryInMs = retryInMs;
+  }
+}
+
+/**
  * Names a bundled plugin's seed folder in the app's resources to its backend. A first launch copies
  * the seed without its `node_modules` (Windows 11 held each first write of the Genex seed's
  * thousands of dependency files for minutes), so the backend resolves its dependencies there.
