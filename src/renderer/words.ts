@@ -3858,7 +3858,6 @@ export const REVIEW_WORDS = {
     buildAgain: t("Build again"),
     signIn: t("Sign in"),
     copyLink: t("Copy link"),
-    openOnGenex: t("Open on Genex"),
     dontPublish: t("Don't publish it automatically"),
     dontAsk: t("Don't ask automatically"),
     showMore: (n: number) => t("Show {n} more", { n }),

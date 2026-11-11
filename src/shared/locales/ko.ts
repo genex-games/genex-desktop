@@ -6188,7 +6188,6 @@ export default {
   "Nothing went public. After the fix, it publishes by itself and Genex checks it again.":
     "아무것도 게시되지 않았어요. 수정 후 자동으로 게시되고 Genex가 다시 확인해요.",
   "Open a game": "게임을 여세요",
-  "Open on Genex": "Genex에서 열기",
   "Players keep the version they have. After the fix, it publishes by itself and Genex checks it again.":
     "플레이어는 지금 버전을 그대로 써요. 수정 후 자동으로 게시되고 Genex가 다시 확인해요.",
   "Players keep the {date} version.": "플레이어는 {date} 버전을 그대로 써요.",

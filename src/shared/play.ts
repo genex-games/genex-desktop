@@ -187,6 +187,20 @@ export function playGameUrl(slug: string, games: string = PLAY_ORIGIN.games): st
 /** The game's page on the website at `web` (genex.games' unless a development profile says): what Share hands out. */
 export const playPageUrl = (web: string, slug: string): string => `${web}/${slug}`;
 
+/**
+ * The game whose page on the website at `web` is `address` ({@link playPageUrl} read back): null for
+ * anything else, such as a game's page on another Genex (a development stand's), which the Play of
+ * this app cannot show.
+ */
+export function playPageSlug(web: string, address: unknown): string | null {
+  if (typeof address !== "string" || !URL.canParse(address) || !URL.canParse(web)) return null;
+  const page = new URL(address);
+  const extras = page.username || page.password || page.search || page.hash;
+  if (page.origin !== new URL(web).origin || extras) return null;
+  const slug = page.pathname.replace(/^\//, "").replace(/\/$/, "");
+  return isPlaySlug(slug) ? slug : null;
+}
+
 /** The website's page of what Genex gives a game and its maker: where Learn goes. */
 export const playToolsUrl = (web: string): string => `${web}/tools`;
 

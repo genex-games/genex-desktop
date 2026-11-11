@@ -1,14 +1,18 @@
 /**
  * Genex's review in the game's chat (mockups A2, C2, C3, C4, D2). The game's newest review record or
  * fix press is its live card, drawn from Genex's word now (so "Checking your fixes" turns into "is
- * public again" in place); a live game's card shows its cover, "is live!", its link with Copy link and
- * Open on Genex, and that a takedown would be heard of here. Every older one settles into one line,
- * "{label} · {when} ›", which opens to what it said then, read only.
+ * public again" in place); a live game's card is the Publish window's banner in small (canvas "Live
+ * card in chat", D, and round 2, version 4): the cover with "Live" and "{name} is live!" on it, and
+ * under it the game's link with Copy link and Open, which shows the game's page in Play. It says
+ * nothing else. Every older one settles into one line, "{label} · {when} ›", which opens to what its
+ * record says, read only.
  */
 import type { JSX } from "react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { gameCoverUrl } from "../../shared/game-cover.ts";
 import { GENEX_PLUGIN_ID, GenexAction } from "../../shared/genex.ts";
 import { intlLocale } from "../../shared/i18n.ts";
+import { playPageSlug } from "../../shared/play.ts";
 import { publishesAsWebGame } from "../../shared/project-workspace.ts";
 import type { GenexReviewEntry } from "../chat-entries.ts";
 import { readGenexShot } from "../panels/plugins/genex/genex-cover-shot.ts";
@@ -25,8 +29,9 @@ import {
 } from "../panels/plugins/genex/review-card-view.ts";
 import { useGenexPublishState } from "../panels/plugins/genex/use-genex-publishing.ts";
 import { useGenexFix, useGenexReview } from "../panels/plugins/genex/use-genex-review.ts";
+import { openPlayGame } from "../play/open-play.ts";
 import { runPluginAction } from "../plugin-actions.ts";
-import { useLibrary, usePlugins } from "../state/hooks.ts";
+import { useLibrary, usePlayWeb, usePlugins } from "../state/hooks.ts";
 import { Button } from "../ui/Button.tsx";
 import { Icon } from "../ui/icons.tsx";
 import { useAsyncEffect } from "../use-async-effect.ts";
@@ -89,23 +94,35 @@ function HistoryLine({ entry, title }: { entry: GenexReviewEntry; title: string 
   );
 }
 
-/** The live game's card: its cover, that it is live, its link with Copy link and Open on Genex. */
-function LiveCard({ project, view }: { project: string; view: ReviewCardView }): JSX.Element {
-  const [src, setSrc] = useState<string | null>(null);
-  const [copied, copy] = useCopy();
-  const plugin = usePlugins((s) => s.list.find((one) => one.manifest.id === GENEX_PLUGIN_ID));
-  const reading = useGenexPublishState(project, true);
-  const link = reading.state?.galleryUrl ?? null;
+/** The live card's picture: the game's kept Genex cover, else its own cover in Studio, which the banner blurs. */
+function useLiveCover(project: string): { src: string; shot: boolean } {
+  const [shot, setShot] = useState<string | null>(null);
+  const cover = useLibrary((s) => s.games.find((one) => one.name === project)?.cover);
+  const fallback = useMemo(() => gameCoverUrl(cover, project), [cover, project]);
   useAsyncEffect(
     (alive) => {
-      void readGenexShot(project, CARD_PICTURE_PX).then((shot) => {
-        if (alive()) setSrc(shot);
+      void readGenexShot(project, CARD_PICTURE_PX).then((read) => {
+        if (alive()) setShot(read);
       });
       return undefined;
     },
     [project],
   );
-  const open = () => {
+  return { src: shot ?? fallback, shot: shot !== null };
+}
+
+/**
+ * What the live game's Open does: the game's page in Play, inside the app (`inApp`), for a game Play
+ * can show; a game on another Genex goes to the browser, through the plugin's checked link.
+ */
+function useOpenLive(project: string, link: string): { inApp: boolean; run: () => void } {
+  const slug = playPageSlug(usePlayWeb(), link);
+  const plugin = usePlugins((s) => s.list.find((one) => one.manifest.id === GENEX_PLUGIN_ID));
+  const run = () => {
+    if (slug !== null) {
+      openPlayGame(slug);
+      return;
+    }
     if (plugin)
       void runPluginAction({
         plugin,
@@ -115,41 +132,68 @@ function LiveCard({ project, view }: { project: string; view: ReviewCardView }):
         review: () => {},
       });
   };
+  return { inApp: slug !== null, run };
+}
+
+/** The live game's link: its address, Copy link, and Open ({@link useOpenLive}). */
+function LiveLink({ project, link }: { project: string; link: string }): JSX.Element {
+  const [copied, copy] = useCopy();
+  const open = useOpenLive(project, link);
+  return (
+    <div className="genex-review-live-link">
+      <span className="genex-review-live-address" data-genex-review-address data-analytics-mask title={link}>
+        <Icon name="link" size={15} />
+        <span>{link.replace(/^https:\/\//, "")}</span>
+      </span>
+      {/* The two presses stay together: in a narrow chat they go under the address, which is never cut for them. */}
+      <span className="genex-review-live-presses">
+        <Button variant="play-tint" data-genex-review-copy onClick={() => copy(link)}>
+          <Icon name={copied ? "check" : "copy"} size={14} className={copied ? "text-green" : undefined} />
+          {REVIEW_WORDS.press.copyLink}
+        </Button>
+        {/* Heard by assistive tech: the press keeps its words, and only its icon turns into a check.
+            Not a `status` role, which smoke runners count as a toast. */}
+        <span className="sr-only" aria-live="polite">
+          {copied ? GENEX_WORDS.publish.copied : ""}
+        </span>
+        <Button
+          variant="play-tint"
+          data-genex-review-open
+          aria-label={GENEX_WORDS.publish.openGameLabel}
+          onClick={open.run}
+        >
+          {GENEX_WORDS.publish.openGame}
+          <Icon name={open.inApp ? "chevron-right" : "arrow-up-right"} size={14} />
+        </Button>
+      </span>
+    </div>
+  );
+}
+
+/** The live game's card: its cover as a banner that says it is live, and its link with Copy link and Open. */
+function LiveCard({ project, view }: { project: string; view: ReviewCardView }): JSX.Element {
+  const cover = useLiveCover(project);
+  const link = useGenexPublishState(project, true).state?.galleryUrl;
   return (
     <section
-      className="genex-review-card genex-review-live"
+      className="genex-review-live"
       data-genex-review={view.kind}
       data-tone="done"
       aria-label={REVIEW_WORDS.label}
     >
-      {src && (
-        <img src={src} alt={GENEX_WORDS.publish.coverCardAlt} className="genex-review-live-cover" draggable={false} />
-      )}
-      <p className="genex-review-title">
-        <Icon name="check" size={14} />
-        <span>{view.title}</span>
-      </p>
-      {view.lines.map((line) => (
-        <p key={line} className="genex-review-line">
-          {line}
-        </p>
-      ))}
-      {link && (
-        <div className="genex-review-presses">
-          <span className="genex-review-link-text" data-analytics-mask>
-            {link.replace(/^https:\/\//, "")}
-          </span>
-          <Button variant="secondary" size="sm" data-genex-review-copy onClick={() => copy(link)}>
-            <Icon name={copied ? "check" : "copy"} size={12} />
-            {copied ? GENEX_WORDS.publish.copied : REVIEW_WORDS.press.copyLink}
-          </Button>
-          <Button variant="default" size="sm" data-genex-review-open onClick={open}>
-            <Icon name="arrow-up-right" size={12} />
-            {REVIEW_WORDS.press.openOnGenex}
-          </Button>
+      <div className="genex-publish-banner" data-shot={cover.shot || undefined}>
+        <img src={cover.src} alt={GENEX_WORDS.publish.coverCardAlt} draggable={false} />
+        <span className="genex-publish-banner-shade" aria-hidden />
+        <span className="genex-publish-chip" data-tone="live">
+          {GENEX_WORDS.publish.chipLiveUndated}
+        </span>
+        <div className="genex-publish-banner-foot">
+          <p className="genex-publish-banner-line genex-review-title">
+            <span>{view.title}</span>
+          </p>
         </div>
-      )}
-      <p className="genex-review-footer">{REVIEW_WORDS.dialog.liveFooter}</p>
+      </div>
+      {link && <LiveLink project={project} link={link} />}
     </section>
   );
 }

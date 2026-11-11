@@ -2420,21 +2420,58 @@ button.genex-publish-banner-name:hover {
   color: color-mix(in oklab, var(--orange) 70%, var(--ink-2));
   font-size: 12px;
 }
-/* The chat's live card: its cover at 16:9 over the words, the link beside Copy link and Open on Genex. */
-.genex-review-live-cover {
+/* The chat's live card (canvas "Live card in chat", D): the Publish banner in small inside one edge,
+ * with "{name} is live!" on the cover, and under it the link's row: the address on a grey chip, then
+ * Copy link and Open in Play's tint. Two text styles: the name's and the controls' mono. */
+.genex-review-live {
   width: 100%;
-  aspect-ratio: 16 / 9;
-  border-radius: 10px;
-  object-fit: cover;
-  background: var(--inset);
+  max-width: 32rem;
+  overflow: hidden;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-card);
+  background: var(--card);
+  color: var(--ink);
 }
-.genex-review-link-text {
-  flex: 1 1 0;
+.genex-review-live .genex-review-title > span {
   min-width: 0;
   overflow: hidden;
-  color: var(--ink-2);
-  font-family: var(--font-family-mono);
-  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* One row while the address and both presses fit; in a narrower chat the presses go under the
+ * address together, so it is cut ("…") only when it is longer than the whole card. */
+.genex-review-live-link {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
+}
+.genex-review-live-address {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+  height: 32px;
+  margin-inline-end: auto;
+  padding-inline: 10px;
+  border-radius: 9px;
+  background: var(--field);
+  font: 13px / 20px var(--font-family-mono);
+}
+.genex-review-live-presses {
+  display: flex;
+  flex: none;
+  gap: 8px;
+}
+.genex-review-live-address > svg {
+  flex: none;
+  color: var(--ink-3);
+}
+.genex-review-live-address > span {
+  min-width: 0;
+  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

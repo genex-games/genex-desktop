@@ -59,9 +59,12 @@ interface ReviewGame {
   slug: string;
 }
 
-/** The fixture's other games on Genex; the fixture game itself is Midnight Asphalt. */
+/**
+ * The fixture's other games on Genex; the fixture game itself is Midnight Asphalt. Each link is the
+ * one the Play fixture lists the game under, so a live card's Open lands on the game's page in Play.
+ */
 const SKATE: ReviewGame = { name: "review-skate", title: "Skate Dog", slug: "skate-dog" };
-const STICK: ReviewGame = { name: "review-stick", title: "Stick & Steel", slug: "stick-and-steel" };
+const STICK: ReviewGame = { name: "review-stick", title: "Stick & Steel", slug: "stick-steel" };
 const CATHEDRAL: ReviewGame = { name: "review-cathedral", title: "Lost Cathedral", slug: "lost-cathedral" };
 const SILENCE: ReviewGame = { name: "review-silence", title: "The Long Silence", slug: "the-long-silence" };
 

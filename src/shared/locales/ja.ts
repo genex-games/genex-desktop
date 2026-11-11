@@ -6333,7 +6333,6 @@ export default {
   "Nothing went public. After the fix, it publishes by itself and Genex checks it again.":
     "何も公開されていません。修正後は自動で公開され、Genexがもう一度チェックします。",
   "Open a game": "ゲームを開いてね",
-  "Open on Genex": "Genexで開く",
   "Players keep the version they have. After the fix, it publishes by itself and Genex checks it again.":
     "プレイヤーは今のバージョンのままです。修正後は自動で公開され、Genexがもう一度チェックします。",
   "Players keep the {date} version.": "プレイヤーは{date}のバージョンのままです。",

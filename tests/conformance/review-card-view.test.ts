@@ -286,20 +286,26 @@ describe("an app Genex checks, a person reviews, or players get", () => {
     assert.deepEqual(card?.lines, ["Usually within a day. You'll hear here and by email."]);
   });
 
-  it("celebrates in the chat: first, update, public again, and approved after a request", () => {
+  it("celebrates in the chat with the game's name and nothing under it: first, update, public again, approved after a request", () => {
     const liveStatus = status([app(GenexAppReview.Live)]);
-    assert.equal(view(liveStatus)?.title, "Midnight Asphalt is live!");
+    const first = view(liveStatus);
+    assert.equal(first?.kind, ReviewCardKind.Live);
+    assert.equal(first?.title, "Midnight Asphalt is live!");
+    assert.deepEqual(first?.lines, []);
     assert.equal(view(liveStatus, { place: ReviewPlace.Dialog }), null);
     const update = view(liveStatus, { latest: { change: GenexReviewChange.Live, update: true } });
-    assert.equal(update?.title, "Version 1.3.0 is live");
-    assert.deepEqual(update?.lines, ["Mac players get it now."]);
+    assert.equal(update?.kind, ReviewCardKind.LiveUpdate);
+    assert.equal(update?.title, "Midnight Asphalt is live!", "an update names the game, never a version number");
+    assert.deepEqual(update?.lines, []);
     const back = view(liveStatus, { latest: { change: GenexReviewChange.Restored, requested: true } });
     assert.equal(back?.title, "Midnight Asphalt is public again");
-    assert.deepEqual(back?.lines, ["Someone from the Genex team agreed it's fine."]);
+    assert.deepEqual(back?.lines, []);
     const agreed = view(
       status([app(GenexAppReview.Live, { humanReview: { state: GenexHumanReview.Answered, canRequest: false } })]),
     );
-    assert.deepEqual(agreed?.lines, ["Someone from the Genex team agreed it's fine."]);
+    assert.equal(agreed?.title, "Midnight Asphalt is live!");
+    assert.deepEqual(agreed?.lines, []);
+    for (const card of [first, update, back, agreed]) assert.equal(card?.footer, null);
   });
 });
 

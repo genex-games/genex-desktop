@@ -3723,8 +3723,10 @@ Genex:
   row's button, offered unless the account's Genex Cloud builds are used up. Until the folder and
   Genex's record both answered the rows are skeletons and there is no button. The card has no Share
   assets line and no explanation lines; the public link carries its mark inside the address, no word
-  before it ("Test" names the test link). A review card whose way forward is publishing again keeps
-  the dialog's Publish.
+  before it ("Test" names the test link). Its Open closes the dialog onto the game's page in Play,
+  inside the app, and goes to the browser only for a game on another Genex
+  ([Play](play.md#native-builds)). A review card whose way forward is publishing again keeps the
+  dialog's Publish.
 - A web game whose folder also holds a player build lists its platforms above the presses
   (`PublishPlatforms.tsx`, `publish-platforms-view.ts`; read by
   `studio:plugins.genex-publish-platforms` from `main/core/publish-platforms.ts`): Web, Mac app,
@@ -3817,7 +3819,10 @@ Genex:
   clock from `sentAt` (slow line at 15 min), the chips In review, Not approved and Taken down, and the
   review card under the rows (`review-card-view.ts`, `ReviewCard.tsx`, the same card in the chat's
   `EntryKind.GenexReview`, whose game's newest record is live and older ones settle into history
-  lines). It reads `studio:plugins.genex-review-status` (fixture-safe; `refresh` at most once a 30 s),
+  lines). A live game's card in the chat (`chat/GenexReviewCard.tsx`) is Publish's banner in small:
+  the cover with "Live" and "{name} is live!" (or "is public again") on it, then the address, Copy
+  link and Open, which shows the game's page in Play; it says nothing else, and its history line
+  keeps the version and who gets it. It reads `studio:plugins.genex-review-status` (fixture-safe; `refresh` at most once a 30 s),
   asks Genex again once a publish of the apps ends and while a sent app waits, and the watch follows
   an apps publish from the dialog's press (`genexReviewFollow`: read while it runs, then the check's
   cadence). The dialog celebrates only a check it watched end live (`wentLive`), never an app live

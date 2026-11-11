@@ -323,29 +323,21 @@ function appsCard(record: GenexReviewRecord, input: ReviewCardInput): ReviewCard
   return null;
 }
 
-/** The chat's live card: live after a fix (an update or a first), public again, or approved after a request. */
+/**
+ * The chat's live card: live after a fix (an update or a first), public again, or approved after a
+ * request. It says the game's name and that it is live, or public again, and nothing under that: no
+ * version number, no line. Its history line keeps the rest ({@link settledCardView}).
+ */
 function liveCard(apps: readonly GenexReviewApp[], input: ReviewCardInput): ReviewCardView {
   const latest = input.latest;
   if (latest?.change === GenexReviewChange.Restored)
-    return {
-      ...blank(ReviewCardKind.Restored, "done"),
-      title: WORDS.title.publicAgain(input.title),
-      lines: [latest.requested ? WORDS.line.teamAgreed : WORDS.line.anyone],
-      live: true,
-    };
+    return { ...blank(ReviewCardKind.Restored, "done"), title: WORDS.title.publicAgain(input.title), live: true };
   const app = apps[0];
   const asked = app?.humanReview.state === GenexHumanReview.Answered || latest?.requested === true;
-  if (latest?.update && app && !asked)
-    return {
-      ...blank(ReviewCardKind.LiveUpdate, "done"),
-      title: WORDS.title.versionLive(app.version),
-      lines: [WORDS.line.platformPlayers(appNoun([app]))],
-      live: true,
-    };
+  const update = latest?.update === true && app !== undefined && !asked;
   return {
-    ...blank(ReviewCardKind.Live, "done"),
+    ...blank(update ? ReviewCardKind.LiveUpdate : ReviewCardKind.Live, "done"),
     title: WORDS.title.live(input.title),
-    lines: [asked ? WORDS.line.teamAgreed : WORDS.line.anyone],
     live: true,
   };
 }

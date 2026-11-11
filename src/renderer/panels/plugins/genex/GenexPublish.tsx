@@ -26,12 +26,14 @@ import {
   GenexPublishJobState,
   type GenexPublishState,
 } from "../../../../shared/genex.ts";
+import { playPageSlug } from "../../../../shared/play.ts";
 import type { PluginInfo } from "../../../../shared/plugins.ts";
 import { GenexAccountStatus } from "../../../../shared/genex-account.ts";
 import { MakingDrawing } from "../../../making-art.ts";
 import { prefersReducedMotion } from "../../../ui/media-queries.ts";
+import { openPlayGame } from "../../../play/open-play.ts";
 import { cancelGenexSignIn, signInToGenex, useGenexSignIn } from "../../../play/use-genex-sign-in.ts";
-import { useLibrary, usePeople } from "../../../state/hooks.ts";
+import { useLibrary, usePeople, usePlayWeb } from "../../../state/hooks.ts";
 import { studio } from "../../../state/studio.ts";
 import { Button } from "../../../ui/Button.tsx";
 import { OPEN_PLUGINS_EVENT } from "../../../ui/ComposerAddMenu.tsx";
@@ -369,19 +371,23 @@ interface LinkChange {
 }
 
 /**
- * The link anyone can play, labelled beside the globe, with Copy and Open. With `change`, the link
- * and its pencil are one press that opens its field, like the name's on the banner; the pencil turns
- * into a ✓ for a moment once the link moved. A game out of link changes shows no pencil.
+ * The link anyone can play, labelled beside the globe, with Copy and Open. Open stays in the app for
+ * a game Play can show (`inApp`: its page in Play, and no arrow out); any other goes to the browser.
+ * With `change`, the link and its pencil are one press that opens its field, like the name's on the
+ * banner; the pencil turns into a ✓ for a moment once the link moved. A game out of link changes
+ * shows no pencil.
  */
 function LinkField({
   link,
   onOpen,
   opening,
+  inApp,
   change,
 }: {
   link: string;
   onOpen: () => void;
   opening: boolean;
+  inApp: boolean;
   change?: LinkChange;
 }): JSX.Element {
   const [copied, copy] = useCopy();
@@ -431,9 +437,9 @@ function LinkField({
         <Icon name={copied ? "check" : "copy"} size={14} className={copied ? "text-green" : undefined} />
         {copied ? WORDS.copied : WORDS.copyLink}
       </Button>
-      <Button aria-label={WORDS.openGameLabel} busy={opening} onClick={onOpen}>
+      <Button aria-label={WORDS.openGameLabel} busy={opening} data-genex-publish-open onClick={onOpen}>
         {WORDS.openGame}
-        <Icon name="arrow-up-right" size={14} />
+        <Icon name={inApp ? "chevron-right" : "arrow-up-right"} size={14} />
       </Button>
     </div>
   );
@@ -1385,6 +1391,7 @@ function PublishBody({
   const { celebrate, went } = useCelebration(view, publishing, inReview, review.record);
   const failure = record.error ? { text: record.error, details: record.error } : view.failure;
   const { pressShown, footShown } = underCelebration(engineGame, celebrate, card);
+  const playSlug = playPageSlug(usePlayWeb(), view.link);
   const pressNeeded = pressHasWork(pressShown, view, publishing, { upToDate, inReview }) && !review.holdsPress;
   const card$ = cardMoment(engineGame, {
     publishing,
@@ -1435,7 +1442,7 @@ function PublishBody({
           project={project}
           shown={pressShown && saysWhoPlays(view, publishing, Boolean(cover.making), Boolean(view.testLink))}
         />
-        {!publishing && <Links view={view} project={project} {...linksOf(record)} />}
+        {!publishing && <Links view={view} project={project} {...linksOf(record, playSlug, onClose)} />}
         <PressSection
           moment={card$}
           parts={parts}
@@ -1488,10 +1495,22 @@ const pressHasWork = (
 const settled = (view: PublishView, publishing: boolean, inReview: boolean): boolean =>
   (view.stage === PublishStage.Public || inReview) && !publishing && !view.failure && !view.terms;
 
-/** The public link's Open and its pencil, from the record: what `Links` takes besides the view. */
-const linksOf = (record: ReturnType<typeof usePublishRecord>) => ({
-  onOpen: () => void record.act(GenexAction.PublishOpen, { target: LinkTarget.Gallery }),
+/**
+ * The public link's Open and its pencil, from the record: what `Links` takes besides the view. Open
+ * closes the dialog onto the game's page in Play for a game Play can show (`playSlug`); a game on
+ * another Genex goes to the browser, through the plugin's checked link.
+ */
+const linksOf = (record: ReturnType<typeof usePublishRecord>, playSlug: string | null, onClose: () => void) => ({
+  onOpen: () => {
+    if (playSlug === null) {
+      void record.act(GenexAction.PublishOpen, { target: LinkTarget.Gallery });
+      return;
+    }
+    onClose();
+    openPlayGame(playSlug);
+  },
   opening: record.pressing === Pressing.Action,
+  inApp: playSlug !== null,
   change: { left: record.state?.renamesLeft, save: record.changeLink },
 });
 
@@ -1501,19 +1520,22 @@ function Links({
   project,
   onOpen,
   opening,
+  inApp,
   change,
 }: {
   view: PublishView;
   project: string;
   onOpen: () => void;
   opening: boolean;
+  /** Open shows the game's page in Play, inside the app. */
+  inApp: boolean;
   /** The public link's pencil, for a game on Genex while nothing runs. */
   change?: LinkChange;
 }): JSX.Element {
   const multiplayer = useLibrary((s) => s.games.find((g) => g.name === project)?.multiplayer === true);
   return (
     <>
-      {view.link && <LinkField link={view.link} onOpen={onOpen} opening={opening} change={change} />}
+      {view.link && <LinkField link={view.link} onOpen={onOpen} opening={opening} inApp={inApp} change={change} />}
       {view.testLink && (
         <TestLinkField link={view.testLink} listed={view.stage === PublishStage.Public} multiplayer={multiplayer} />
       )}

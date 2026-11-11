@@ -6419,7 +6419,6 @@ export default {
   "Nothing went public. After the fix, it publishes by itself and Genex checks it again.":
     "No se publicó nada. Tras el arreglo, se publica sola y Genex la vuelve a revisar.",
   "Open a game": "Abre un juego",
-  "Open on Genex": "Abrir en Genex",
   "Players keep the version they have. After the fix, it publishes by itself and Genex checks it again.":
     "Los jugadores conservan su versión. Tras el arreglo, se publica sola y Genex la vuelve a revisar.",
   "Players keep the {date} version.": "Los jugadores conservan la versión del {date}.",

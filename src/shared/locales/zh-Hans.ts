@@ -5976,7 +5976,6 @@ export default {
   "Nothing went public. After the fix, it publishes by itself and Genex checks it again.":
     "什么都没有公开。修复后会自动发布，Genex 会再检查一次。",
   "Open a game": "打开一个游戏",
-  "Open on Genex": "在 Genex 上打开",
   "Players keep the version they have. After the fix, it publishes by itself and Genex checks it again.":
     "玩家会继续使用现有版本。修复后会自动发布，Genex 会再检查一次。",
   "Players keep the {date} version.": "玩家继续使用 {date} 的版本。",

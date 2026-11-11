@@ -2406,7 +2406,6 @@ export const MESSAGES = [
   "Open in terminal",
   "Open install guide",
   "Open it in a private window to join as another player.",
-  "Open on Genex",
   "Open on Play",
   "Open on Roblox",
   "Open page",

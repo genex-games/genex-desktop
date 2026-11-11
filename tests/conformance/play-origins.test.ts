@@ -5,7 +5,8 @@
  * Mac. Anything else is ignored and that side stays on genex.games, so a typo never sends the
  * account's token anywhere new. A stand's games, the Genex host tools' CLI and the trust of a stand's
  * own CA follow the stand only while its API is the stand's. Links the app hands to the browser
- * follow the same website.
+ * follow the same website. A published game's Open shows its page in Play only for a game on that
+ * website: any other address names no game there.
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
@@ -20,7 +21,7 @@ import {
   playOrigins,
   websitePageOpener,
 } from "../../src/main/play/origins.ts";
-import { PLAY_ORIGIN } from "../../src/shared/play.ts";
+import { PLAY_ORIGIN, playPageSlug, playPageUrl } from "../../src/shared/play.ts";
 
 const LOCAL = {
   [PlayOriginEnv.Api]: "http://localhost:3000",
@@ -248,5 +249,44 @@ describe("what the browser opens for Play", () => {
       ["outside", "https://genex.games/inventory"],
       ["outside", "http://localhost:5173/inventory"],
     ]);
+  });
+});
+
+describe("a game's page on Play's website", () => {
+  it("names the game Play opens, on exactly that website", () => {
+    assert.equal(playPageSlug(PLAY_ORIGIN.web, "https://genex.games/midnight-asphalt"), "midnight-asphalt");
+    assert.equal(playPageSlug(PLAY_ORIGIN.web, "https://genex.games/midnight-asphalt/"), "midnight-asphalt");
+    assert.equal(playPageSlug("http://localhost:5173", "http://localhost:5173/a1"), "a1");
+    assert.equal(playPageSlug(PLAY_ORIGIN.web, playPageUrl(PLAY_ORIGIN.web, "iron-tide")), "iron-tide");
+  });
+
+  it("names no game for a page of another Genex or anything that is not a game's page", () => {
+    const hostile: unknown[] = [
+      "https://dev.genex.games/midnight-asphalt",
+      "http://genex.games/midnight-asphalt",
+      "https://genex.games:8443/midnight-asphalt",
+      "https://genex.games.evil.example/midnight-asphalt",
+      "https://evil.example/genex.games/midnight-asphalt",
+      "https://user:pass@genex.games/midnight-asphalt",
+      "https://genex.games/",
+      "https://genex.games",
+      "https://genex.games/draft/midnight-asphalt",
+      "https://genex.games/world/midnight-asphalt",
+      "https://genex.games/Midnight-Asphalt",
+      "https://genex.games/midnight_asphalt",
+      "https://genex.games/../midnight-asphalt/..",
+      "https://genex.games/midnight-asphalt?next=https://evil.example",
+      "https://genex.games/midnight-asphalt#play",
+      "genex://game/midnight-asphalt",
+      "javascript:alert(1)",
+      "midnight-asphalt",
+      "",
+      null,
+      undefined,
+      42,
+      { href: "https://genex.games/midnight-asphalt" },
+    ];
+    for (const address of hostile) assert.equal(playPageSlug(PLAY_ORIGIN.web, address), null, JSON.stringify(address));
+    assert.equal(playPageSlug("not an origin", "https://genex.games/midnight-asphalt"), null);
   });
 });
