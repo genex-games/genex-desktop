@@ -517,7 +517,8 @@ describe("a chat's own Claude session asks the person", () => {
     assert.ok(!ruleDenies(unattended.deny, "Read", path.join(home, "projects", claudeProjectDirName(cwd), "x")));
     // A person's session also carries the studio's rules for Auto, on their own budget.
     const person = await settingsJson(chat());
-    assert.ok(person.json.length < 2_000 + AUTO_MODE_BUDGET, `person's settings: ${person.json.length} characters`);
+    // Flipped (Antigravity): its home is one more sign-in folder fenced, two rules; still far under the shim's limit.
+    assert.ok(person.json.length < 2_200 + AUTO_MODE_BUDGET, `person's settings: ${person.json.length} characters`);
   });
 
   it("never lets the Claude home's rules pass their budget, and says what it left readable", async () => {

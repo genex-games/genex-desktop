@@ -158,7 +158,7 @@ export class AcpConnection {
   }
 
   /** Tell the agent something it does not answer (`session/cancel`). */
-  notify(method: string, params: Json): void {
+  tell(method: string, params: Json): void {
     if (!this.#closed) this.#write({ jsonrpc: "2.0", method, params });
   }
 

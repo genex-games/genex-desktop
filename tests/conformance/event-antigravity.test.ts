@@ -196,7 +196,7 @@ describe("the ACP wire", () => {
     const asked = connection.request(AcpMethod.SessionPrompt, { sessionId: "s" });
     connection.close(new Error("agy exited with 1"));
     await assert.rejects(asked, /agy exited with 1/);
-    connection.notify(AcpMethod.SessionCancel, { sessionId: "s" });
+    connection.tell(AcpMethod.SessionCancel, { sessionId: "s" });
     await assert.rejects(connection.request(AcpMethod.SessionNew, {}), /agy exited with 1/);
     assert.equal(sent.length, 1, "only the prompt was sent");
   });

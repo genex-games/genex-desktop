@@ -718,7 +718,7 @@ export async function runTurn(
   const reading = readLines(agent, connection, watch);
   let sessionId: string | undefined;
   const cancel = () => {
-    if (sessionId && live) connection.notify(AcpMethod.SessionCancel, { sessionId });
+    if (sessionId && live) connection.tell(AcpMethod.SessionCancel, { sessionId });
     hooks.schedule(() => agent.stop(), sessionId && live ? ANTIGRAVITY_CANCEL_GRACE_MS : 0);
   };
   if (plan.signal.aborted) cancel();
