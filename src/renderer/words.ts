@@ -81,6 +81,7 @@ import type { JobState } from "./panels/plugins/genex/genex-view.ts";
 import { InstallLine, type InstallLineView } from "./play/native-model.ts";
 import { formatList, intlLocale, t, tc } from "../shared/i18n.ts";
 import { JUDGE_PLAY_TOOL_NAME } from "../shared/chat-judge.ts";
+import { ProjectTool } from "../shared/project-tools.ts";
 import {
   APP_LOOK_TOOL_NAME,
   AppLookAccessKind,
@@ -3258,6 +3259,8 @@ const STUDIO_TOOLS: Record<string, ToolWords> = {
   [JobTool.Tail]: { icon: "read", label: t("read background work's output") },
   [JobTool.Stop]: { icon: "run", label: t("stopped background work") },
   [APP_LOOK_TOOL_NAME]: { icon: "see", label: t("looked at an app window"), active: t("Looking at an app window") },
+  // The chat's own timer: it ends the turn and checks back later (`wake_later`).
+  [ProjectTool.WakeLater]: { icon: "think", label: t("set a timer to check back") },
   [JUDGE_PLAY_TOOL_NAME]: {
     icon: "game",
     label: t("had a judge play the game"),

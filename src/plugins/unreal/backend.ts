@@ -314,9 +314,13 @@ const MESSAGE = {
   StepsShown: "The Unreal setup card is in the chat.",
   InstallCardShown: (version: string) =>
     `The Unreal setup card is in the chat, and the Unreal button is above the game: its Do it for me gets Epic's launcher and installs Unreal ${version} in it with computer control (only the user signs in to Epic). Call unreal__install-unreal to start that yourself, or tell them in one line; then end your reply. The chat tells you when Unreal is installed.`,
-  /** The task Do it for me hands the game's chat: one plain line, at most 300 characters. */
+  /**
+   * The task Do it for me hands the game's chat: one plain line, at most 300 characters. Its turn
+   * ends once Install is pressed: the download takes many minutes, and the chat is told when Unreal
+   * is installed, so the person's messages never wait behind a turn that watches it.
+   */
   InstallTask: (version: string) =>
-    `Install Unreal Engine ${version} in the Epic Games Launcher Genex opened: Unreal Engine › Library › + beside Engine Versions › ${version} in the new slot's version list (a preview says so) › Install, confirm, default folder. Ask the person only for Epic's password or a two-step code.`,
+    `Install Unreal Engine ${version} in the Epic Games Launcher Genex opened: Unreal Engine › Library › + beside Engine Versions › ${version} in the new slot's list (a preview says so) › Install, confirm, default folder. Ask the person only for Epic's password or code. Then end your turn; don't watch the download.`,
   ForMeLauncher: (version: string) =>
     `Genex is downloading Epic's launcher from Epic and installing it (Windows asks the person for permission); the setup card shows where it stands. End your reply now. Once the card says the launcher is installed, call unreal__install-unreal again to install Unreal ${version} in it.`,
   ForMeDownloadPage:

@@ -655,6 +655,11 @@ describe("Do it for me on the Unreal setup card", () => {
     const task = c.assisted[0] ?? "";
     assert.match(task, /^Install Unreal Engine 5\.9 in the Epic Games Launcher/);
     assert.match(task, /Engine Versions › 5\.9 /, "the version to pick in the launcher's list");
+    assert.match(
+      task,
+      /Then end your turn; don't watch the download\.$/,
+      "a download of many GB never holds the turn open",
+    );
     assert.ok(task.length <= 300 && !task.includes("\n"), "one plain line, as the host takes a task");
   });
 

@@ -42,6 +42,8 @@ export const ProjectTool = {
   PluginCheck: "plugin_check",
   /** Plays the game folder's own newest app for this computer, for the person (an Unreal game's). The chat's own session's. */
   PlayBuild: "play_build",
+  /** Sets the chat's timer: Genex starts its next turn when it is due, so a wait never holds a turn open. The chat's own session's. */
+  WakeLater: "wake_later",
 } as const;
 export type ProjectTool = (typeof ProjectTool)[keyof typeof ProjectTool];
 

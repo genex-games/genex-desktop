@@ -2705,7 +2705,8 @@ Authenticode calls it Valid and signed by Epic Games Inc., and opens the launche
 (elsewhere the step opens Epic's download page); Unreal itself is handed to the game's chat through
 `game.engine.assist` after Genex opens the launcher, the turn answering it clicking Library › + ›
 5.9 › Install with the desktop tool (the manifest's `engine.apps` names only Epic's launcher, so
-that turn drives nothing else), stopping at Epic's sign-in; the runtime runs from the engine's own
+that turn drives nothing else), stopping at Epic's sign-in, and ending once Install is pressed
+rather than watching the download (the card tells the agent when Unreal is in); the runtime runs from the engine's own
 `vc_redist.x64.exe`, signed by Microsoft Corporation. Windows asks the person for permission each
 time. While an install runs its row is `working` with where it stands and Stop (`stop-install`)
 replaces Don't use Unreal; a failed install is told to the agent once (`stuckSays`), a stop the

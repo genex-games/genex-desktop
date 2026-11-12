@@ -70,7 +70,8 @@ import { renameOnGenex } from "./core/genex-publish.ts";
 import { ToolPermissionBy } from "../shared/permissions.ts";
 import { type JobRecord, JobScopeKind, JobStopper } from "../shared/jobs.ts";
 import { recordJobEnded, recordJobStarted } from "./core/job-records.ts";
-import { coreJobWake, wakeForJob } from "./core/job-wake.ts";
+import { coreJobWake, realSchedule, wakeChat, wakeForJob } from "./core/job-wake.ts";
+import { type WakeLaterDeps, WakeLaterTimers } from "./core/wake-later.ts";
 import { playsItsApp } from "./core/project-tools.ts";
 import { type LocalPlayAnswer, LocalPlayState, NativeEngine } from "../shared/play-native.ts";
 import {
@@ -80,6 +81,7 @@ import {
   DispatchActionType,
   HarnessCapability,
   HarnessState,
+  MessageOrigin,
 } from "../shared/protocol.ts";
 import { EngineId } from "../shared/providers.ts";
 import { ExecutionStatus, isExecutionEvent, JournalPhase, ResumeRefusal, RunState } from "../shared/run-state.ts";
@@ -533,6 +535,8 @@ export interface StudioCoreOptions {
   appLook?: AppLookPort;
   /** macOS access for `app_look` (the desktop app on macOS); none: a look asks nothing first. */
   screenAccess?: ScreenAccess;
+  /** The timers and the clock the chats' `wake_later` timers run on (`core/wake-later.ts`); a test seam. */
+  wakeLater?: Partial<Pick<WakeLaterDeps, "schedule" | "now">>;
   /** The clock, timers and memory reading host auto-resume uses (`core/auto-resume.ts`); a test seam. */
   autoResume?: Partial<Pick<AutoResumeDeps, "now" | "setTimer" | "clearTimer" | "freeMb">>;
   /** A plugin still's budget (default one minute) and the clock it runs on (`core/view-still.ts`); a test seam. */
@@ -588,6 +592,8 @@ export class StudioCore {
    * and a harness restart; stopped when Genex quits.
    */
   jobs!: JobService;
+  /** The chats' `wake_later` timers: each wakes its chat when due; Stop and quitting end them. */
+  readonly wakeLater: WakeLaterTimers;
   /** How agents look at app windows: the port the app was given, else the answer that it is macOS only. */
   readonly appLook: AppLookPort;
   /** macOS access for `app_look`; null where nothing is asked first. */
@@ -694,6 +700,12 @@ export class StudioCore {
       secretKeyStore(path.join(this.layout.secrets, "providers"), TYPESAFE_KEY_SECRET),
     );
     this.appLook = options.appLook ?? unsupportedAppLook();
+    this.wakeLater = new WakeLaterTimers({
+      wake: (threadId, project, text) => wakeChat(this, MessageOrigin.WakeLater, { threadId, project, text }),
+      schedule: options.wakeLater?.schedule ?? realSchedule,
+      now: options.wakeLater?.now ?? Date.now,
+      log: (line) => this.options.onLog?.(line, "stderr"),
+    });
     this.screenAccess = options.screenAccess ?? null;
     if (options.gamesRoot) this.layout.gamesRoot = options.gamesRoot;
     this.snapshots = new SnapshotEngine([{ name: HARNESS_WORKSPACE, dir: this.layout.harnessWs }]);
@@ -1835,6 +1847,7 @@ export class StudioCore {
     this.#reviewWatch?.stop();
     this.#reviewWatch = null;
     this.#pluginTools?.jobWatches.dispose();
+    this.wakeLater.dispose();
     // A pause appended before `start()` may have planned a resume: it, and the hold on the Mac
     // awake that it asked for, end with the core either way.
     this.#autoResume.dispose();

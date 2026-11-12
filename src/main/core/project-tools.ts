@@ -2,7 +2,9 @@
  * Genex's own project tools (`ProjectTool`), handed by seat (`ProjectToolSeat`): `start_web_game`
  * writes the web starter into a game with no kind yet; `plugins_find` looks for a Genex plugin and
  * `plugins_suggest` shows the person a card to turn one on; `plugin_check` checks a plugin the agent
- * wrote in the game, installing nothing (`plugin-check.ts`). They sit beside the cover tool in delegation
+ * wrote in the game, installing nothing (`plugin-check.ts`); `play_build` plays the game's own app;
+ * `wake_later` sets the chat's timer, so its session ends its turn instead of waiting in it
+ * (`wake-later.ts`). They sit beside the cover tool in delegation
  * (`delegation.ts`); the harness's `game.start`, `plugins.find` and `plugins.suggest` do the same
  * for a local model.
  */
@@ -22,6 +24,7 @@ import type { StudioCore } from "../studio-core.ts";
 import type { CoreInternals } from "./internals.ts";
 import { findPlugins, type PluginQuery, suggestable } from "./plugin-finder.ts";
 import { checkPluginFolder } from "./plugin-check.ts";
+import { callWakeLater, WAKE_LATER_TOOL } from "./wake-later.ts";
 import {
   PLAY_BUILD_ANSWER,
   PLAY_BUILD_TOOL,
@@ -68,8 +71,8 @@ export type ProjectToolSeat = (typeof ProjectToolSeat)[keyof typeof ProjectToolS
 /**
  * The project tools a session is handed, by its seat: the chat's own gets the web starter while its
  * game has no kind yet (never for a folder of its own files of a kind Genex can't name), the plugin
- * search, card and check; a lead the search and the card; a worker the search; anyone else (a
- * reviewer included) nothing.
+ * search, card and check, `play_build` on a game that plays as its app, and its timer; a lead the
+ * search and the card; a worker the search; anyone else (a reviewer included) nothing.
  */
 export function projectTools(game: GameKind, seat: ProjectToolSeat): LiveToolSpec[] {
   if (seat === ProjectToolSeat.Worker) return [PLUGINS_FIND_TOOL];
@@ -77,7 +80,7 @@ export function projectTools(game: GameKind, seat: ProjectToolSeat): LiveToolSpe
   if (seat !== ProjectToolSeat.Chat) return [];
   const start = kindPending(game) ? [START_WEB_GAME_TOOL] : [];
   const play = playsItsApp(game) ? [PLAY_BUILD_TOOL] : [];
-  return [...start, PLUGINS_FIND_TOOL, PLUGINS_SUGGEST_TOOL, PLUGIN_CHECK_TOOL, ...play];
+  return [...start, PLUGINS_FIND_TOOL, PLUGINS_SUGGEST_TOOL, PLUGIN_CHECK_TOOL, ...play, WAKE_LATER_TOOL];
 }
 
 /** Whether a game plays as the app its folder holds rather than as a page: an Unreal game. */
@@ -103,6 +106,7 @@ export async function callProjectTool(
     const { state, app } = await core.playGameBuild(call.project);
     return PLAY_BUILD_ANSWER[state](app ?? "");
   }
+  if (name === ProjectTool.WakeLater) return callWakeLater(core.wakeLater, args, call);
   throw new Error(MESSAGE.unknownTool(name));
 }
 

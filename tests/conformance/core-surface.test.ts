@@ -168,6 +168,7 @@ const FIELDS = [
   "snapshots",
   "store",
   "turns",
+  "wakeLater",
 ];
 
 function prototypeSurface() {

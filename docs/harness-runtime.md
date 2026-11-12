@@ -307,6 +307,19 @@ own read answering `false`, a new start or a stop ends the watch with no message
 in a row that say neither and three hours of watching. A run's lead and workers follow their jobs
 themselves.
 
+A chat's own session also sets its own timer, `wake_later {seconds, note?}` (one of Genex's project
+tools, so it loads with the prompt; `main/core/wake-later.ts`), for a wait no command can check: a
+download in Epic's launcher, an app starting. It ends its turn, and when the timer is due Genex
+sends the same kind of hidden message (`MessageOrigin.WakeLater`, the note and how long ago it was
+set) on the chat's last model, which starts the chat's next turn or joins its running one. While
+it waits the turn is over, so the person's messages start turns of their own at once instead of
+waiting for a step of a turn that sleeps, watches with `desktop` `wait` or loops over checks. A
+timer runs 10 seconds to an hour (a time asked outside is clamped, and the answer says so); a chat
+has one, which a new call replaces and `seconds: 0` cancels. The person's Stop in the chat cancels
+it and Genex quitting drops it (nothing is kept on disk); their messages do not. A wait a command
+can check is a `job_start` that loops until it holds, which wakes the chat once with no turns in
+between. A Loop's lead, its workers and a local model's turn have no timer.
+
 What a rollback may assume of a game folder. `snapshot.restore` on a game commits a rescue
 snapshot first and may refuse with a typed `code` (`branch-changed`, `history-changed`,
 `operation-in-progress`, `rescue-failed`, or `hook_blocked` when a plugin's `restore.before` step

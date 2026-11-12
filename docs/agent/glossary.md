@@ -83,6 +83,9 @@ is product copy, not this glossary.
   (`wake-schedule.ts` decides when, from typed `NoteKind` lines): with the person's message as they
   wrote it, or Genex's one-line facts (`director/news.ts`), never a digest. A turn cut short for the
   person's words resumes with those words alone.
+- **Wake later**: the chat's own session's timer (`wake_later`, `main/core/wake-later.ts`): it
+  ends its turn and Genex starts the chat's next one when the timer is due, with its note. Not a
+  Loop's wake, which no timer drives.
 - **Lead / one session**: a Loop's director that is its chat's own session (one per chat),
   building in the game folder with its own hands beside its workers, never read-only
   (`loop/director/lead-session.ts`). After the close the same session answers the chat with its

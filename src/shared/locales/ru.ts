@@ -5094,6 +5094,7 @@ export default {
   "see the running game": "видеть запущенную игру",
   "sees images": "видит изображения",
   session: "сессия",
+  "set a timer to check back": "поставил таймер, чтобы проверить позже",
   "set out the plan": "составил план",
   seventh: "седьмую",
   "showed you a build": "показал тебе сборку",

@@ -5230,6 +5230,7 @@ export default {
   "see the running game": "das laufende Spiel sehen",
   "sees images": "sieht Bilder",
   session: "Sitzung",
+  "set a timer to check back": "Timer gestellt, um später nachzusehen",
   "set out the plan": "Plan aufgestellt",
   seventh: "siebten",
   "showed you a build": "dir einen Build gezeigt",

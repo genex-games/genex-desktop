@@ -60,6 +60,12 @@ export interface LiveToolSpec extends StudioToolSpec {
   alwaysLoad?: boolean;
 }
 
+/** A live tool's number argument as a model sends it (a number, or a string of one); undefined otherwise. */
+export function numberArg(value: unknown): number | undefined {
+  const parsed = typeof value === "string" && value.trim() ? Number(value) : value;
+  return typeof parsed === "number" && Number.isFinite(parsed) ? parsed : undefined;
+}
+
 /** Builder eyes: the serializable capture grant for the workspace a delegation builds in. */
 export interface DelegateCaptureGrant {
   project: string;

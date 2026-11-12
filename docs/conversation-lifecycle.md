@@ -213,7 +213,10 @@ chat turn; messages go to the run's lead ([live chat](#live-chat-during-a-build)
   all be lost. A tool that only waits ends early when one of the
   person's messages is handed over (`loop/person-wrote.ts`: a worker wait, a lead's wait for a busy
   reviewer, a plugin lock wait on the host), so the session reaches its next step in seconds and may
-  wait again; a line of Genex's ends no wait. A message the chat wrote itself (any `origin`) or a
+  wait again; a line of Genex's ends no wait. A wait for something outside the session (a
+  download) is no tool's: the session sets `wake_later` and ends its turn, and Genex wakes it
+  ([timers](harness-runtime.md)), so nothing the person sends waits behind it. A message the chat
+  wrote itself (any `origin`) or a
   plugin's ask it shows (`desktop-assist.ts`) is queued `from: genex`, and every message keeps its
   sender on the way in: the turn it opens, its steer and its `run_steering` say Genex wrote it.
 - **Cut at the next step and resume.** Any other session — Codex (`codex exec` closes stdin at

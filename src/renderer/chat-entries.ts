@@ -4,7 +4,7 @@ import { EngineId, providerInfo } from "../shared/providers.ts";
 import { harnessTurnFailure, TurnFailureCode } from "../shared/engine-requests.ts";
 import { isRaisedContextName } from "../shared/ollama-context.ts";
 import type { ExportReview } from "../shared/plugins.ts";
-import type { PluginSuggestedPayload } from "../shared/project-tools.ts";
+import { type PluginSuggestedPayload, ProjectTool } from "../shared/project-tools.ts";
 import { type ListingRecord, listingDraftOf, listingKey } from "../shared/item-draft.ts";
 import { parseSuggestion } from "./chat/plugin-suggestion.ts";
 import { type JobHandle, type JobStart, jobEndLine, jobStart, missingPanes } from "./chat/job-lines.ts";
@@ -501,9 +501,13 @@ const CHIP_ARGUMENT_KEYS = [
 ] as const;
 /**
  * Tools whose chip names an argument of their own: a job's start reads by its title, never its
- * command. A map, so a tool named like an object's own member (`constructor`) finds nothing here.
+ * command; a timer by what it will check. A map, so a tool named like an object's own member
+ * (`constructor`) finds nothing here.
  */
-const TOOL_CHIP_KEYS: ReadonlyMap<string, readonly string[]> = new Map([[JobTool.Start, ["title"]]]);
+const TOOL_CHIP_KEYS: ReadonlyMap<string, readonly string[]> = new Map([
+  [JobTool.Start, ["title"]],
+  [ProjectTool.WakeLater, ["note"]],
+]);
 /** How much of a tool's result a chip keeps. */
 const TOOL_RESULT_MAX_CHARS = 12000;
 /** How far back a build report looks for the contractor bubble it restates, and how much of it must match. */

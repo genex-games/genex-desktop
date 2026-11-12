@@ -11,7 +11,7 @@ import { realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { errorMessage } from "../../shared/errors.ts";
 import { HOUR_MS, MINUTE_MS } from "../../shared/duration.ts";
-import type { LiveToolResult, LiveToolSpec } from "../../shared/engine-requests.ts";
+import { type LiveToolResult, type LiveToolSpec, numberArg } from "../../shared/engine-requests.ts";
 import {
   type JobOwner,
   type JobRecord,
@@ -92,12 +92,6 @@ export async function callJobTool(
 
 /** A string argument, trimmed; anything else is empty. */
 const text = (value: unknown): string => (typeof value === "string" ? value.trim() : "");
-
-/** A number argument as a model sends it (a number, or a string of one); undefined otherwise. */
-function numberArg(value: unknown): number | undefined {
-  const parsed = typeof value === "string" && value.trim() ? Number(value) : value;
-  return typeof parsed === "number" && Number.isFinite(parsed) ? parsed : undefined;
-}
 
 /**
  * `job_start`: in the chat's mode now. Plan answers before anything else; then the folder is

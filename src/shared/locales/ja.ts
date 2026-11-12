@@ -5126,6 +5126,7 @@ export default {
   "see the running game": "実行中のゲームを見る",
   "sees images": "画像を認識",
   session: "セッション",
+  "set a timer to check back": "あとで確認するタイマーをセットしました",
   "set out the plan": "プランを立てました",
   seventh: "7回目",
   "showed you a build": "ビルドを見せました",

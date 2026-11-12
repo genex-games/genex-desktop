@@ -83,8 +83,9 @@ export interface RunRoles {
 /**
  * Who wrote a message the chat sends when the words are not the user's: the chat reporting how a
  * command the user ran from a reply went, that the person turned on a plugin the agent suggested,
- * what an engine's setup card has to say (done, or a step stopped), or why a Loop didn't start. The agent reads it; the transcript never
- * draws it. Recorded with the queued message: never rename a value.
+ * what an engine's setup card has to say (done, or a step stopped), why a Loop didn't start, that a
+ * job ended, or that the agent's own timer is due. The agent reads it; the transcript never draws
+ * it. Recorded with the queued message: never rename a value.
  */
 export const MessageOrigin = {
   CommandResult: "command-result",
@@ -101,6 +102,8 @@ export const MessageOrigin = {
   CoverStep: "cover-step",
   /** A background job the chat's agent started ended: the agent is told, to carry on (`core/job-wake.ts`). */
   JobEnded: "job-ended",
+  /** The timer the chat's agent set with `wake_later` is due: the agent is woken with its note (`core/wake-later.ts`). */
+  WakeLater: "wake-later",
 } as const;
 export type MessageOrigin = (typeof MessageOrigin)[keyof typeof MessageOrigin];
 const MESSAGE_ORIGINS: ReadonlySet<unknown> = new Set(Object.values(MessageOrigin));

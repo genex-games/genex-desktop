@@ -4835,6 +4835,7 @@ export default {
   "see the running game": "查看运行中的游戏",
   "sees images": "可识图",
   session: "会话",
+  "set a timer to check back": "设了个计时器，稍后再看",
   "set out the plan": "制定了计划",
   seventh: "第七",
   "showed you a build": "向你展示了一个构建",

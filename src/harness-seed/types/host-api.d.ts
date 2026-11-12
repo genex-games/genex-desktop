@@ -2139,7 +2139,7 @@ export interface RunRoles {
 }
 // ↑ src/shared/protocol.ts
 
-export type MessageOrigin = 'command-result' | 'plugin-turned-on' | 'setup-card' | 'tag-retry' | 'loop-held' | 'cover-step' | 'job-ended';
+export type MessageOrigin = 'command-result' | 'plugin-turned-on' | 'setup-card' | 'tag-retry' | 'loop-held' | 'cover-step' | 'job-ended' | 'wake-later';
 // ↑ src/shared/protocol.ts
 
 export interface RunReference {

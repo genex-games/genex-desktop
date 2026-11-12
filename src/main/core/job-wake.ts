@@ -222,11 +222,25 @@ export async function wakeForJob(record: JobRecord, deps: JobEndWakeDeps): Promi
 }
 
 /** The real schedule: a timer that never holds the app open by itself. */
-const realSchedule: WatchSchedule = (fire, ms) => {
+export const realSchedule: WatchSchedule = (fire, ms) => {
   const timer = setTimeout(fire, ms);
   timer.unref();
   return () => clearTimeout(timer);
 };
+
+/**
+ * Start a chat's next turn with Genex's words, or join the turn running: one hidden message from
+ * `origin`, on the chat's last model. A job's end wakes the chat so, and so does a `wake_later`
+ * timer (`wake-later.ts`).
+ */
+export async function wakeChat(
+  core: StudioCore,
+  origin: MessageOrigin,
+  wake: { threadId: string; project: string; text: string },
+): Promise<void> {
+  const choice = await chatChoice(core, wake.threadId);
+  await core.sendUserMessage(wake.text, { thread: wake.threadId, project: wake.project, origin, ...choice });
+}
 
 /**
  * The core's side of waking a chat: the registry's `jobStatus`, Genex's own read of a status tool
@@ -237,10 +251,7 @@ export function coreJobWake(core: StudioCore): JobWakeDeps {
     jobStatusOf: (name) => core.plugins.jobStatusOf(name),
     readStatus: (status, args, binding, signal) =>
       core.plugins.tool(status, args, binding, signal, PluginToolAudience.Harness),
-    wake: async (threadId, project, text) => {
-      const choice = await chatChoice(core, threadId);
-      await core.sendUserMessage(text, { thread: threadId, project, origin: MessageOrigin.JobEnded, ...choice });
-    },
+    wake: (threadId, project, text) => wakeChat(core, MessageOrigin.JobEnded, { threadId, project, text }),
     schedule: realSchedule,
     now: Date.now,
     log: (line) => core.options.onLog?.(line, "stderr"),

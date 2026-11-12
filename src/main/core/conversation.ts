@@ -690,6 +690,8 @@ export class ConversationService {
     this.#x.consent.cancel(project ? { project } : { threadId }, "stop");
     // Stop also ends the chat's yes to computer control: its next turn asks again.
     forgetChatComputerYes(this.#core, threadId);
+    // And the timer its agent set (`wake_later`): nothing wakes the chat to go on with what was stopped.
+    this.#core.wakeLater.cancel(threadId);
     this.#x.permissions.cancel(project ? { project } : { threadId }, ToolPermissionBy.Stop);
     this.#x.permissions.stopPersonMessages(threadId);
     await cancelling;

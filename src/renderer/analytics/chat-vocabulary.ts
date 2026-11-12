@@ -40,6 +40,8 @@ export const SendSource = {
   CoverStep: "cover_step",
   /** Genex telling the agent a background job it started ended (never sent from the renderer). */
   JobEnded: "job_ended",
+  /** Genex waking the agent when the timer it set with `wake_later` is due (never sent from the renderer). */
+  WakeLater: "wake_later",
   /** Play on a game with no app to play yet: "Run the game" sent for the person. */
   RunTheGame: "run_the_game",
   /** Words another surface left for this chat and asked it to send. */

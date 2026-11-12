@@ -5170,6 +5170,7 @@ export default {
   "see the running game": "ver o jogo rodando",
   "sees images": "vê imagens",
   session: "sessão",
+  "set a timer to check back": "colocou um timer para conferir depois",
   "set out the plan": "traçou o plano",
   seventh: "sétima",
   "showed you a build": "mostrou um build para você",

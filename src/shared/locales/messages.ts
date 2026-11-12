@@ -4764,6 +4764,7 @@ export const MESSAGES = [
   "see the running game",
   "sees images",
   "session",
+  "set a timer to check back",
   "set out the plan",
   "seventh",
   "showed you a build",

@@ -5004,6 +5004,7 @@ export default {
   "see the running game": "실행 중인 게임 보기",
   "sees images": "이미지 인식",
   session: "세션",
+  "set a timer to check back": "나중에 확인하려고 타이머를 맞췄어요",
   "set out the plan": "계획을 세웠어요",
   seventh: "일곱 번째",
   "showed you a build": "빌드를 보여 줬어요",
