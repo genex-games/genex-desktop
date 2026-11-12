@@ -11,7 +11,13 @@ import path from "node:path";
 import { describe, it } from "node:test";
 import { EngineStatusCode, EngineStatusReason } from "../../src/shared/engine-descriptor.ts";
 import { EngineFailureKind } from "../../src/shared/engine-requests.ts";
-import { GENEX_HELPER_MODEL, GENEX_MODELS, GenexAccess, GenexBuildRoute } from "../../src/shared/genex-build.ts";
+import {
+  GENEX_DEFAULT_MODEL,
+  GENEX_HELPER_MODEL,
+  GENEX_MODELS,
+  GenexAccess,
+  GenexBuildRoute,
+} from "../../src/shared/genex-build.ts";
 import { EngineId } from "../../src/shared/providers.ts";
 import { ClaudeCodeEngine, type ClaudeGateway } from "../../src/substrate/engines/claude-code.ts";
 import { creditsUsage, createGenexLane, genexStatus } from "../../src/substrate/engines/genex.ts";
@@ -89,7 +95,7 @@ describe("Genex lane", () => {
     assert.equal(signedOut.asked[0]?.auth, null);
   });
 
-  it("offers genex.games's own models once it lists them, and its three until then", async () => {
+  it("offers genex.games's own models once it lists them, and its built-in list until then", async () => {
     const answer = {
       access: "ready",
       models: [{ id: "opus-5.5-medium-or", name: "Opus 5.5" }, { id: 7 }, { id: "", name: "x" }, "bad"],
@@ -99,7 +105,7 @@ describe("Genex lane", () => {
       lane.models().map((model) => model.id),
       GENEX_MODELS.map((model) => model.id),
     );
-    assert.equal(lane.defaultModel(), GENEX_HELPER_MODEL);
+    assert.equal(lane.defaultModel(), GENEX_DEFAULT_MODEL);
     await lane.status();
     assert.deepEqual(
       lane.models().map((model) => [model.id, model.label]),
@@ -218,7 +224,7 @@ function fakeGateway(status = genexStatus(GenexAccess.Ready)) {
     label: "Genex",
     status: async () => status,
     models: () => lane.models(),
-    defaultModel: () => GENEX_HELPER_MODEL,
+    defaultModel: () => GENEX_DEFAULT_MODEL,
     readUsage: async () => null,
     forget: () => {},
     close: async () => {},
@@ -274,7 +280,7 @@ describe("Genex engine", () => {
       (await engine.models()).map((model) => model.id),
       GENEX_MODELS.map((model) => model.id),
     );
-    assert.equal(await engine.defaultModel(), GENEX_HELPER_MODEL);
+    assert.equal(await engine.defaultModel(), GENEX_DEFAULT_MODEL);
     assert.equal((await engine.account()).source, "none");
   });
 

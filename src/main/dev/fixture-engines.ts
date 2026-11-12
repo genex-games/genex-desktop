@@ -10,7 +10,7 @@ import { EngineKind, EngineStatusCode } from "../../shared/engine-descriptor.ts"
 import { EngineFailureKind, StopReason } from "../../shared/engine-requests.ts";
 import { HOUR_MS } from "../../shared/duration.ts";
 import { EngineId } from "../../shared/providers.ts";
-import { GENEX_HELPER_MODEL, GENEX_MODELS, GenexAccess, isGenexAccess } from "../../shared/genex-build.ts";
+import { GENEX_DEFAULT_MODEL, GENEX_MODELS, GenexAccess, isGenexAccess } from "../../shared/genex-build.ts";
 import { genexStatus } from "../../substrate/engines/genex.ts";
 import { MODEL_LIMIT_PREFIX } from "../../shared/provider-usage.ts";
 import { type LocalServerInfo, LocalServerKind } from "../../shared/local-server.ts";
@@ -192,7 +192,7 @@ function fixtureEngine(
         }
       : {}),
     models: async () => (id === EngineId.Genex ? genexFixtureModels() : fixtureModels(direct)),
-    defaultModel: async () => (id === EngineId.Genex ? GENEX_HELPER_MODEL : FIXTURE_MODEL),
+    defaultModel: async () => (id === EngineId.Genex ? GENEX_DEFAULT_MODEL : FIXTURE_MODEL),
     // Deterministic plan limits so the composer's usage panel has something honest to show; only a
     // subscription has a plan, and Genex its monthly credits.
     ...(isSubscriptionFixture(id) || id === EngineId.Genex ? { readUsage: () => readFixtureUsage(id) } : {}),
@@ -219,7 +219,7 @@ function fixtureModels(direct: boolean) {
   ];
 }
 
-/** Genex's three models, as genex.games lists them. */
+/** Genex's models, as genex.games lists them. */
 function genexFixtureModels() {
   return GENEX_MODELS.map((model) => ({
     ...model,

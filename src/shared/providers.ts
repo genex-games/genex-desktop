@@ -192,7 +192,7 @@ export const PROVIDERS = [
   },
   {
     // Claude Code on Genex credits: the app's own relay hands its calls to genex.games, which
-    // runs them on the three models it offers (`shared/genex-build.ts`). Nothing to install or
+    // runs them on the models it offers (`shared/genex-build.ts`). Nothing to install or
     // sign in to beyond the person's Genex account.
     id: EngineId.Genex,
     label: "Genex",

@@ -3,7 +3,7 @@
  * Claude and ChatGPT plans. The same Claude Code runs, its calls go through the app's relay to
  * genex.games, and genex.games bills them to the person's Genex credits. genex.games owns the
  * plan, the price and the models; the app keeps the routes it calls, the access words it reads,
- * and the three models to show before genex.games has answered.
+ * and the models to show before genex.games has answered.
  */
 
 /** What genex.games says the account may do now (`GET /api/desktop/llm/status`). Wire values. */
@@ -43,14 +43,19 @@ export interface GenexModel {
   readonly label: string;
 }
 
-/** Sonnet, the default and every helper's model. */
+/** Gemini 4 Hydrogen, the default (owner, 2026-11-12). */
+export const GENEX_DEFAULT_MODEL = "gemini-4-hydrogen-medium-or";
+
+/** Sonnet, the Loop's workers' and reviewers' model whatever the lead runs on (owner, 2026-10-28). */
 export const GENEX_HELPER_MODEL = "sonnet-5.5-medium-or";
 
 /**
- * The models genex.games offers, in its order (owner: Sonnet by default, then Opus, then GPT-6
- * Sol), for the menu before its first answer. genex.games's own list wins once it has answered.
+ * The models genex.games offers, in its order (owner: Gemini 4 Hydrogen by default, then Sonnet,
+ * Opus and GPT-6 Sol), for the menu before its first answer. genex.games's own list wins once it
+ * has answered.
  */
 export const GENEX_MODELS: readonly GenexModel[] = [
+  { id: GENEX_DEFAULT_MODEL, label: "Gemini 4 Hydrogen" },
   { id: GENEX_HELPER_MODEL, label: "Sonnet 5.5" },
   { id: "opus-5.5-medium-or", label: "Opus 5.5" },
   { id: "gpt-6-sol-medium-or", label: "GPT-6 Sol" },

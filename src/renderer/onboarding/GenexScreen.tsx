@@ -8,7 +8,7 @@
 import { useEffect, useRef, useState, type JSX } from "react";
 import { EngineStatusCode } from "../../shared/engine-descriptor.ts";
 import type { GenexAccountStatus } from "../../shared/genex-account.ts";
-import { GENEX_HELPER_MODEL } from "../../shared/genex-build.ts";
+import { GENEX_DEFAULT_MODEL } from "../../shared/genex-build.ts";
 import { EngineId } from "../../shared/providers.ts";
 import {
   reportProviderPress,
@@ -103,7 +103,7 @@ export function useGenex(engines: EngineDescriptor[]) {
   const choice = { picked, step: genexStep({ account, installing: install.installing }) };
   const on = buildsWithGenex(choice);
   useEffect(() => {
-    if (on) rememberWelcomeModel(safeStorage(), modelKey(EngineId.Genex, GENEX_HELPER_MODEL));
+    if (on) rememberWelcomeModel(safeStorage(), modelKey(EngineId.Genex, GENEX_DEFAULT_MODEL));
   }, [on]);
   const pick = (): void => {
     reportProviderPress(EngineId.Genex, ProviderAction.Connect, ProviderSurface.Onboarding);

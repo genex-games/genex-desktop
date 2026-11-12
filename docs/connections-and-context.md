@@ -357,8 +357,9 @@ gives each session a lease, a key that works for that session only (`ANTHROPIC_B
 are the session's whole account); it takes the key off, puts the person's Genex token on, names the
 model and the chat (`x-genex-model`, `x-genex-chat`) and passes only the two Messages routes
 (`GenexBuildRoute`). The token never enters an agent's environment, and nothing a session holds can
-spend once it ends. genex.games owns the price, the plan and the models; the app shows the three it
-ships with (`GENEX_MODELS`, Sonnet first) until genex.games lists its own, and helpers run on Sonnet.
+spend once it ends. genex.games owns the price, the plan and the models; the app shows the ones it
+ships with (`GENEX_MODELS`, Gemini 4 Hydrogen first) until genex.games lists its own. Claude Code's
+own helpers run on the first model listed; the Loop's workers and reviewers run on Sonnet.
 
 The lane ([genex.ts](../src/substrate/engines/genex.ts)) reads `GET /api/desktop/llm/status` (reused
 for 5 seconds, joined while in flight) and maps its access word to the engine's status: ready, or a
