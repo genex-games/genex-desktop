@@ -86,6 +86,8 @@ export interface FakeOllamaOptions {
   /** `numCtx`: the context the model's Modelfile sets (`PARAMETER num_ctx`), as `/api/show` lists it. */
   models?: Array<{ name: string; size: number; capabilities?: string[]; contextLength?: number; numCtx?: number }>;
   loaded?: Array<{ name: string; context_length?: number; size_vram?: number; expires_at?: string }>;
+  /** The lines `/api/pull` streams, in place of a download that succeeds. */
+  pullLines?: Array<Record<string, unknown>>;
   /** Queue of scripted replies; each completion request consumes one. */
   replies?: FakeReply[];
   /**
@@ -105,6 +107,14 @@ export interface FakeOllama {
   requests: Array<{ path: string; body: unknown; headers: Record<string, string | string[] | undefined> }>;
   pushReply: (reply: NonNullable<FakeOllamaOptions["replies"]>[number]) => void;
 }
+
+/** A download that succeeds, as Ollama streams it. */
+const PULL_SUCCEEDS: ReadonlyArray<Record<string, unknown>> = [
+  { status: "pulling manifest" },
+  { status: "downloading", digest: "sha256:fake", total: 100, completed: 40 },
+  { status: "downloading", digest: "sha256:fake", total: 100, completed: 100 },
+  { status: "success" },
+];
 
 export async function startFakeOllama(options: FakeOllamaOptions = {}): Promise<FakeOllama> {
   const version = options.version ?? "0.32.14";
@@ -179,10 +189,7 @@ export async function startFakeOllama(options: FakeOllamaOptions = {}): Promise<
       }
       if (url === "/api/pull") {
         res.writeHead(200, { "content-type": "application/x-ndjson" });
-        res.write(`${JSON.stringify({ status: "pulling manifest" })}\n`);
-        res.write(`${JSON.stringify({ status: "downloading", digest: "sha256:fake", total: 100, completed: 40 })}\n`);
-        res.write(`${JSON.stringify({ status: "downloading", digest: "sha256:fake", total: 100, completed: 100 })}\n`);
-        res.write(`${JSON.stringify({ status: "success" })}\n`);
+        for (const line of options.pullLines ?? PULL_SUCCEEDS) res.write(`${JSON.stringify(line)}\n`);
         return res.end();
       }
       if (url === "/api/delete") {

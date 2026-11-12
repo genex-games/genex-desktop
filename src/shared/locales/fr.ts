@@ -2592,6 +2592,9 @@ export default {
   "Older messages can still rewind the chat, but not its files.":
     "Les anciens messages peuvent toujours faire revenir le chat en arrière, mais pas ses fichiers.",
   "Older models": "Anciens modèles",
+  "Ollama could not download this model: {reason}": "Ollama n'a pas pu télécharger ce modèle : {reason}",
+  "The download stopped before it finished. Download again to continue.":
+    "Le téléchargement s'est arrêté avant la fin. Relance-le pour continuer.",
   "Ollama is not running at {host}. Install or start Ollama, then download again.":
     "Ollama ne tourne pas sur {host}. Installe ou démarre Ollama, puis relance le téléchargement.",
   "Ollama keeps its models in its own folder: move them in Ollama → Settings → Model location.":

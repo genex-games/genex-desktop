@@ -101,6 +101,37 @@ describe("ollama management API", () => {
     assert.equal(updates.filter((u) => u.status === "downloading").at(-1)?.completed, 100);
   });
 
+  it("fails a download Ollama refuses part way, with Ollama's reason, instead of ending it quietly", async () => {
+    // Ollama answers 200 and streams the refusal as a line: an unknown tag, or a model its version cannot run.
+    const refusal = "pull model manifest: 412: this model requires a newer version of Ollama";
+    const server = await fake({ pullLines: [{ status: "pulling manifest" }, { error: refusal }] });
+    const client = new OllamaClient(server.host);
+    const updates: string[] = [];
+    await assert.rejects(
+      (async () => {
+        for await (const progress of client.pull("qwen3.8:27b")) updates.push(progress.status);
+      })(),
+      (err) => err instanceof EngineError && err.kind === EngineFailureKind.Other && err.message.includes(refusal),
+    );
+    assert.deepEqual(updates, ["pulling manifest"], "the refusal is never passed on as a step");
+  });
+
+  it("fails a download whose stream ends before Ollama says it succeeded", async () => {
+    const server = await fake({
+      pullLines: [{ status: "pulling manifest" }, { status: "downloading", total: 100, completed: 3 }],
+    });
+    const client = new OllamaClient(server.host);
+    await assert.rejects(
+      (async () => {
+        for await (const _progress of client.pull("qwen3.8:27b")) {
+          /* drain */
+        }
+      })(),
+      (err) => err instanceof Error && !(err instanceof EngineError),
+      "a stream cut short is an interrupted download, not a refusal",
+    );
+  });
+
   it("surfaces engine status the UI can act on", async () => {
     const empty = await fake({ models: [] });
     const engineEmpty = new OllamaEngine({ host: empty.host });

@@ -2473,6 +2473,9 @@ export default {
   "Older messages can still rewind the chat, but not its files.":
     "이전 메시지로 채팅을 되감을 수는 있지만 파일은 되돌릴 수 없어요.",
   "Older models": "이전 모델",
+  "Ollama could not download this model: {reason}": "Ollama가 이 모델을 다운로드하지 못했어요: {reason}",
+  "The download stopped before it finished. Download again to continue.":
+    "다운로드가 끝나기 전에 멈췄어요. 다시 다운로드하면 이어서 받아요.",
   "Ollama is not running at {host}. Install or start Ollama, then download again.":
     "{host}에서 Ollama가 실행 중이 아니에요. Ollama를 설치하거나 시작한 뒤 다시 다운로드해 주세요.",
   "Ollama keeps its models in its own folder: move them in Ollama → Settings → Model location.":

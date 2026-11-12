@@ -2383,6 +2383,8 @@ export default {
   "Older builds of {game} and Rewind copies take {size}.": "{game} 的旧构建和回退副本占用了 {size}。",
   "Older messages can still rewind the chat, but not its files.": "仍可将对话回退到较早的消息，但文件不会回退。",
   "Older models": "旧模型",
+  "Ollama could not download this model: {reason}": "Ollama 无法下载这个模型：{reason}",
+  "The download stopped before it finished. Download again to continue.": "下载在完成前停止了。再次下载即可继续。",
   "Ollama is not running at {host}. Install or start Ollama, then download again.":
     "{host} 上的 Ollama 没有运行。请安装或启动 Ollama，然后重新下载。",
   "Ollama keeps its models in its own folder: move them in Ollama → Settings → Model location.":
