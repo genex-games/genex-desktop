@@ -13,7 +13,7 @@
 import { ChatActivityPhase } from "../../shared/chat-activity.ts";
 import { clip } from "./common.ts";
 import { DelegateEventType } from "./types.ts";
-import { studioToolName } from "./studio-tool-prompts.ts";
+import { bridgedStudioTool, studioToolName } from "./studio-tool-prompts.ts";
 import type { Usage } from "../types.ts";
 import { stripTerminalCodes } from "../../shared/terminal.ts";
 
@@ -51,8 +51,6 @@ const TOOL_NAMES: Readonly<Record<string, string>> = {
 const TRACE_TOOL_INPUT_CHARS = 2_000;
 const TRACE_TOOL_RESULT_CHARS = 4_000;
 const TRACE_THINKING_CHARS = 4_000;
-/** A bridge call as a command: `node .studio/bridge/tool.mjs <name> …`. */
-const STUDIO_BRIDGE_COMMAND = /^node \.studio\/bridge\/tool\.mjs ([\w-]+)/;
 /** What a picture in a tool's result reads as in the trace. */
 const IMAGE_PLACEHOLDER = "[image]";
 /** An error line of the CLI's log (`RUST_LOG=error`) and the HTTP status field it carries. */
@@ -184,7 +182,7 @@ function toolCall(event: Record_): Translated {
   const tool = String(event.toolName ?? event.title ?? "tool");
   const id = String(event.toolCallId ?? "");
   const command = typeof input.command === "string" ? input.command : null;
-  const bridged = command ? STUDIO_BRIDGE_COMMAND.exec(command)?.[1] : undefined;
+  const bridged = bridgedStudioTool(command);
   const name = bridged ? studioToolName(bridged) : (TOOL_NAMES[tool] ?? tool);
   const shown = command ?? JSON.stringify(input);
   return {

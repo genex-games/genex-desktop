@@ -15,7 +15,7 @@
 import { ChatActivityPhase } from "../../shared/chat-activity.ts";
 import { clip } from "./common.ts";
 import type { MirroredEvent } from "./opencode-events.ts";
-import { studioToolName } from "./studio-tool-prompts.ts";
+import { bridgedStudioTool, studioToolName } from "./studio-tool-prompts.ts";
 import { DelegateEventType } from "./types.ts";
 import type { Usage } from "../types.ts";
 
@@ -64,8 +64,6 @@ const TOOL_KEY_SUFFIX = "ToolCall";
 const TRACE_TOOL_INPUT_CHARS = 2_000;
 const TRACE_TOOL_RESULT_CHARS = 4_000;
 const TRACE_THINKING_CHARS = 4_000;
-/** A bridge call as a command: `node .studio/bridge/tool.mjs <name> …`. */
-const STUDIO_BRIDGE_COMMAND = /^node \.studio\/bridge\/tool\.mjs ([\w-]+)/;
 
 /** What one event adds to the run. */
 export interface CursorTranslated {
@@ -185,7 +183,7 @@ function toolCall(event: Record_): CursorTranslated {
   const [key, body] = toolEntry(record(event.tool_call));
   const args = record(body.args);
   const command = text(args.command);
-  const bridged = command ? STUDIO_BRIDGE_COMMAND.exec(command)?.[1] : undefined;
+  const bridged = bridgedStudioTool(command);
   const name = bridged ? studioToolName(bridged) : toolName(key);
   if (event.subtype === CursorSubtype.Started) {
     const shown = command || shownArgs(args);

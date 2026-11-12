@@ -19,7 +19,7 @@ import { AcpToolKind, AcpToolStatus, AcpUpdate } from "./acp.ts";
 import { type Json, record, text } from "./antigravity-cli.ts";
 import { clip } from "./common.ts";
 import type { MirroredEvent } from "./opencode-events.ts";
-import { studioToolName } from "./studio-tool-prompts.ts";
+import { bridgedStudioTool, studioToolName } from "./studio-tool-prompts.ts";
 import { DelegateEventType } from "./types.ts";
 
 /** Antigravity's own tools, by the name it gives each, as the chat names the Claude Code tool each one is. */
@@ -43,8 +43,6 @@ const KIND_NAMES: Readonly<Record<string, string>> = {
 const TRACE_TOOL_INPUT_CHARS = 2_000;
 const TRACE_TOOL_RESULT_CHARS = 4_000;
 const TRACE_THINKING_CHARS = 4_000;
-/** A bridge call as a command: `node .studio/bridge/tool.mjs <name> …`. */
-const STUDIO_BRIDGE_COMMAND = /^node \.studio\/bridge\/tool\.mjs ([\w-]+)/;
 
 /** What one update adds to the run. */
 export interface AntigravityTranslated {
@@ -162,7 +160,7 @@ function openCall(update: Json, id: string, stream: AntigravityStream): Antigrav
 function started(update: Json, id: string): MirroredEvent {
   const input = record(update.rawInput);
   const command = text(input.CommandLine);
-  const bridged = command ? STUDIO_BRIDGE_COMMAND.exec(command)?.[1] : undefined;
+  const bridged = bridgedStudioTool(command);
   const name = bridged ? studioToolName(bridged) : toolName(update);
   const shown = command || shownPath(update, input) || JSON.stringify(input);
   return assistant([{ type: "tool_use", name, id, input: clip(shown, TRACE_TOOL_INPUT_CHARS) }]);
