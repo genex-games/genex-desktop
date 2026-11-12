@@ -20,6 +20,10 @@ inline constexpr std::size_t kMaxCodeChars = 32;
 inline constexpr std::size_t kMaxWorlds = 16;
 /** Colyseus's MATCHMAKE_INVALID_ROOM_ID: no room with this id here, or it is full or closing. */
 inline constexpr int kRoomNotFound = 522;
+/** kRoomNotFound as the deployed servers send it: their transport cannot send status 522, so the answer arrives as HTTP
+ *  500 with 522 in its body, and the Colyseus client reports the status. Without it a join by code never left the
+ *  first region asked (PROTOCOL.md §17.2 *Join by code*). */
+inline constexpr int kRoomNotFoundAsSent = 500;
 
 namespace detail {
 inline bool IsLowerOrDigit(char c) { return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'); }
@@ -98,7 +102,7 @@ inline JoinPlan PlanAuthorityJoin(const RoomTarget& target) {
 /** The region a join by code tries after refusal `error` on region `region` of `regions`, or nullopt when the
  *  refusal is final: only another region can hold a room this one refused as elsewhere. */
 inline std::optional<std::size_t> NextCodeRegion(int error, std::size_t region, std::size_t regions) {
-  const bool elsewhere = error == protocol::join_error::kWrongRegion || error == kRoomNotFound;
+  const bool elsewhere = error == protocol::join_error::kWrongRegion || error == kRoomNotFound || error == kRoomNotFoundAsSent;
   if (!elsewhere || region + 1 >= regions) return std::nullopt;
   return region + 1;
 }

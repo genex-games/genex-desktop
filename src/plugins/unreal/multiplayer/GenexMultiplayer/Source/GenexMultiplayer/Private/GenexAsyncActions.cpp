@@ -217,6 +217,34 @@ void UGenexSignInAction::HandleDone(bool bOk, int32 Status, const FString& Messa
 
 // ---- Join Genex Authority ----
 
+// ---- Measure Genex Regions ----
+
+UGenexMeasureRegionsAction* UGenexMeasureRegionsAction::MeasureGenexRegions(UObject* WorldContext, const TArray<FString>& Urls)
+{
+	UGenexMeasureRegionsAction* Action = NewObject<UGenexMeasureRegionsAction>();
+	Action->Subsystem = GenexAsyncDetail::Subsystem<UGenexAuthoritySubsystem>(WorldContext);
+	Action->Urls = Urls;
+	Action->RegisterWithGameInstance(WorldContext);
+	return Action;
+}
+
+void UGenexMeasureRegionsAction::Activate()
+{
+	if (!Subsystem)
+	{
+		Measured.Broadcast(TArray<FGenexRegionPing>());
+		SetReadyToDestroy();
+		return;
+	}
+	TWeakObjectPtr<UGenexMeasureRegionsAction> Weak(this);
+	// The meter answers from a later pump frame and is released with this node, never inside its own answer.
+	Meter = Subsystem->MeasureRegions(Urls, [Weak](const TArray<FGenexRegionPing>& Regions) {
+		if (!Weak.IsValid()) return;
+		Weak->Measured.Broadcast(Regions);
+		Weak->SetReadyToDestroy();
+	});
+}
+
 UGenexJoinAuthorityAction* UGenexJoinAuthorityAction::JoinGenexAuthority(UObject* WorldContext, const FGenexAuthorityOptions& Options)
 {
 	UGenexJoinAuthorityAction* Action = NewObject<UGenexJoinAuthorityAction>();

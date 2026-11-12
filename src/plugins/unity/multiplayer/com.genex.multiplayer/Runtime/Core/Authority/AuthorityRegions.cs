@@ -1,9 +1,10 @@
 // Which authority region a session enters through (PROTOCOL.md §17.1 *Regions*; TypeScript authority/regions.ts):
 // the regions read from the sign-in answer (colyseus.authorityRegions, else one per flat url), the url each probe
 // sample of a region goes to, the order regions are tried in from each url's best sample, and where each attempt of
-// a join refused 503 goes, and which regions a pool join asks for a room with players before it opens one (§17.1
-// *Finding players*). Pure; Tests~/GenexSmoke/RegionsCheck.cs holds authority-regions.json exactly, as every
-// SDK does, so every SDK picks the same region from the same probe results.
+// a join refused 503 goes, which regions a pool join asks for a room with players before it opens one (§17.1
+// *Finding players*), and which regions a player alone in a room keeps asking (§17.1 *Regrouping*). Pure;
+// Tests~/GenexSmoke/RegionsCheck.cs holds authority-regions.json exactly, as every SDK does, so every SDK picks the
+// same region from the same probe results.
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -100,6 +101,20 @@ namespace Genex.Multiplayer.Authority
         }
     }
 
+    /// <summary>One region as a player's settings show it (<see cref="GenexAuthority.MeasureRegions"/>): its name and its round trip in ms.</summary>
+    public sealed class GenexRegionPing
+    {
+        public readonly string Region;
+        /// <summary>The best answered sample of the region's urls, ms; null when none answered (or the cluster has one region, which is not probed).</summary>
+        public readonly double? PingMs;
+
+        public GenexRegionPing(string region, double? pingMs)
+        {
+            Region = region;
+            PingMs = pingMs;
+        }
+    }
+
     public static class GenexAuthorityRegions
     {
         /// <summary>How far a join looks for players by default, as a probe's round trip in ms (§17.1 *Finding players*):
@@ -113,6 +128,8 @@ namespace Genex.Multiplayer.Authority
         public const int ProbeGraceMs = 1000;
         /// <summary>Refusals (503) in a row on one region before the next attempt goes to the next-best region.</summary>
         public const int RefusalsPerRegion = 2;
+        /// <summary>The waits before each ask of a player who is alone in a room (§17.1 *Regrouping*), ms; the last repeats.</summary>
+        public static readonly double[] RegroupWaitsMs = { 2000, 4000, 9000, 15000, 30000 };
 
         private static string[] UrlList(object v)
         {
@@ -170,11 +187,11 @@ namespace Genex.Multiplayer.Authority
         public static List<GenexRegionPick> Rank(IList<GenexAuthorityRegion> regions, IList<double?[]> best) =>
             RankWithLatency(regions, best).Select(x => x.Pick).ToList();
 
-        /// <summary><see cref="Rank"/> with each region's best answered sample kept (null: nothing answered).</summary>
-        private static List<(double? Ms, GenexRegionPick Pick)> RankWithLatency(IList<GenexAuthorityRegion> regions, IList<double?[]> best)
+        /// <summary><see cref="Rank"/> with each region's best answered sample (null: nothing answered) and its place in the list kept.</summary>
+        private static List<(double? Ms, int Index, GenexRegionPick Pick)> RankWithLatency(IList<GenexAuthorityRegion> regions, IList<double?[]> best)
         {
             var heard = new List<(double Ms, int Index, GenexRegionPick Pick)>();
-            var silent = new List<GenexRegionPick>();
+            var silent = new List<(int Index, GenexRegionPick Pick)>();
             for (var i = 0; i < regions.Count; i++)
             {
                 var r = regions[i];
@@ -191,10 +208,10 @@ namespace Genex.Multiplayer.Authority
                     url = r.Urls[j];
                 }
                 if (ms.HasValue) heard.Add((ms.Value, i, new GenexRegionPick(r.Region, url)));
-                else silent.Add(new GenexRegionPick(r.Region, url));
+                else silent.Add((i, new GenexRegionPick(r.Region, url)));
             }
             heard.Sort((a, b) => a.Ms != b.Ms ? a.Ms.CompareTo(b.Ms) : a.Index.CompareTo(b.Index));
-            return heard.Select(h => ((double?)h.Ms, h.Pick)).Concat(silent.Select(p => ((double?)null, p))).ToList();
+            return heard.Select(h => ((double?)h.Ms, h.Index, h.Pick)).Concat(silent.Select(p => ((double?)null, p.Index, p.Pick))).ToList();
         }
 
         /// <summary>Where a pool join goes (§17.1 *Finding players*), from each url's best sample: the answered regions no
@@ -212,9 +229,58 @@ namespace Genex.Multiplayer.Authority
                     if (x.Pick.Region == region) return new GenexAuthoritySearchPlan(new List<GenexRegionPick>(), new List<GenexRegionPick> { x.Pick });
             }
             if (rule == GenexRegionRule.Nearest) return new GenexAuthoritySearchPlan(new List<GenexRegionPick>(), create);
-            var limit = maxPingMs.HasValue && !double.IsNaN(maxPingMs.Value) && !double.IsInfinity(maxPingMs.Value) && maxPingMs.Value >= 0 ? maxPingMs.Value : MaxPingMs;
+            var limit = ReachLimit(maxPingMs);
             var reach = ranked.Where(x => x.Ms.HasValue && x.Ms.Value <= limit).Select(x => x.Pick).ToList();
             return new GenexAuthoritySearchPlan(reach.Count >= 2 ? reach : new List<GenexRegionPick>(), create);
+        }
+
+        /// <summary>The farthest region asked for players, ms: <paramref name="maxPingMs"/> unless it is null, not finite or below 0.</summary>
+        private static double ReachLimit(double? maxPingMs) =>
+            maxPingMs.HasValue && !double.IsNaN(maxPingMs.Value) && !double.IsInfinity(maxPingMs.Value) && maxPingMs.Value >= 0 ? maxPingMs.Value : MaxPingMs;
+
+        /// <summary>Where a player who is alone in a room keeps asking for one that has players (§17.1 *Regrouping*), from each
+        /// url's best sample and the region <paramref name="joined"/> its seat is in. Every client reads the regions in one
+        /// order, so of two players each alone in their own region exactly one moves: only the regions listed BEFORE
+        /// <paramref name="joined"/> are asked, nearest first, among the answered ones no farther than the limit. The rule
+        /// <see cref="GenexRegionRule.Nearest"/>, a pinned region (one the list has) and a region the list does not have ask no one.</summary>
+        public static List<GenexRegionPick> PlanRegroup(IList<GenexAuthorityRegion> regions, IList<double?[]> best, GenexRegionRule rule, double? maxPingMs, string region, string joined)
+        {
+            var none = new List<GenexRegionPick>();
+            if (rule == GenexRegionRule.Nearest) return none;
+            if (region != null && regions.Any(r => r.Region == region)) return none;
+            var at = -1;
+            for (var i = 0; i < regions.Count && at < 0; i++)
+                if (regions[i].Region == joined) at = i;
+            if (at < 0) return none;
+            var limit = ReachLimit(maxPingMs);
+            return RankWithLatency(regions, best).Where(x => x.Index < at && x.Ms.HasValue && x.Ms.Value <= limit).Select(x => x.Pick).ToList();
+        }
+
+        /// <summary>The region <paramref name="url"/> enters, by its name in <paramref name="regions"/>; null when none lists it.</summary>
+        public static string RegionOf(IList<GenexAuthorityRegion> regions, string url)
+        {
+            if (regions == null || url == null) return null;
+            foreach (var r in regions)
+                if (Array.IndexOf(r.Urls, url) >= 0) return r.Region;
+            return null;
+        }
+
+        /// <summary>Every region with its latency, in list order, for a region picker: the probe a join runs, with no join. One
+        /// region is not probed (its ping is null). Never throws on a probe.</summary>
+        public static async Task<List<GenexRegionPing>> Measure(IList<GenexAuthorityRegion> regions, Probe probe = null)
+        {
+            var best = await ProbeBest(regions, probe);
+            var pings = new List<GenexRegionPing>();
+            for (var i = 0; i < regions.Count; i++)
+            {
+                double? ms = null;
+                var row = best != null && i < best.Count ? best[i] : null;
+                if (row != null)
+                    foreach (var v in row)
+                        if (v.HasValue && (!ms.HasValue || v.Value < ms.Value)) ms = v;
+                pings.Add(new GenexRegionPing(regions[i].Region, ms));
+            }
+            return pings;
         }
 
         /// <summary>What an ask for an existing room refused with <paramref name="code"/> does next; 0 or below is a network
@@ -222,6 +288,16 @@ namespace Genex.Multiplayer.Authority
         /// <see cref="GenexSearchRefusal.Next"/>.</summary>
         public static GenexSearchRefusal SearchRefusalKind(int code) =>
             KindOfRefusal(code) == GenexRefusalKind.Final ? GenexSearchRefusal.Final : GenexSearchRefusal.Next;
+
+        /// <summary>What an ask refused with <paramref name="e"/> does next: <see cref="KindOfRefusal(GenexJoinException)"/>'s
+        /// reading of it.</summary>
+        public static GenexSearchRefusal SearchRefusalKind(GenexJoinException e) =>
+            KindOfRefusal(e) == GenexRefusalKind.Final ? GenexSearchRefusal.Final : GenexSearchRefusal.Next;
+
+        /// <summary>What a join refused with <paramref name="e"/> does next. Only a server's answer can be final or a full
+        /// region: a failure that is not one (<see cref="GenexJoinException.Answered"/>) is a path that is down, so the next
+        /// region is tried, whatever status it was reported with.</summary>
+        public static GenexRefusalKind KindOfRefusal(GenexJoinException e) => e.Answered ? KindOfRefusal(e.Code) : GenexRefusalKind.NextRegion;
 
         /// <summary>The attempt after a 503 in <paramref name="state"/> over <paramref name="regionCount"/> ranked regions and
         /// the capacity schedule <paramref name="delays"/>, or null when the join gives up.</summary>
@@ -277,7 +353,7 @@ namespace Genex.Multiplayer.Authority
 
         /// <summary>Every url's best answered sample (<c>best[region][url]</c>; null: silent); null for one region or none, which is
         /// not probed.</summary>
-        private static async Task<List<double?[]>> ProbeBest(IList<GenexAuthorityRegion> regions, Probe probe)
+        internal static async Task<List<double?[]>> ProbeBest(IList<GenexAuthorityRegion> regions, Probe probe)
         {
             if (regions.Count <= 1) return null;
             probe = probe ?? ColyseusProbe;

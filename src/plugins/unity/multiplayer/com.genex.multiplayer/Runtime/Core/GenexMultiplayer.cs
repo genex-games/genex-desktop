@@ -104,7 +104,7 @@ namespace Genex.Multiplayer
         {
             try { return await joinCall(); }
             catch (MatchMakeException e) { throw new GenexJoinException(e.Code, e.Message, e); }
-            catch (HttpException e) { throw new GenexJoinException(ErrorCode(e), ErrorMessage(e), e); }
+            catch (HttpException e) { throw new GenexJoinException(ErrorCode(e), ErrorMessage(e), e, NamesCode(e)); }
         }
 
         internal static async Task<Dictionary<string, object>> BuildJoinOptions(GenexConnectOptions options)
@@ -122,6 +122,10 @@ namespace Genex.Multiplayer
             }
             return o;
         }
+
+        /// <summary>The failed request's body names a code: a server answered. Otherwise the status is a gateway's, or a
+        /// WebGL player's stand-in (500) for a response the browser would not let it read.</summary>
+        private static bool NamesCode(HttpException e) => !double.IsNaN(GenexJson.Num(GenexJson.ParseObject(e.Message), "code", double.NaN));
 
         private static int ErrorCode(HttpException e)
         {

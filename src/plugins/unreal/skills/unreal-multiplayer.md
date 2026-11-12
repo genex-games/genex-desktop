@@ -43,6 +43,16 @@ Blueprint, on the game instance's `Genex Authority Subsystem`:
   and most games set none: `Max Ping Ms` (350, the farthest region asked, as round-trip ping),
   `Region Rule` (`Nearest` keeps a player in their nearest region) and `Region` (a region the
   player picked by name: `asia`, `eu` or `us`; offer it as a setting when players ask to choose).
+- **A player waiting alone is moved to players.** When two people start at the same moment in two
+  empty regions, one of them is moved into the other's room within seconds. **On Rejoined** fires
+  and **Was Moved** is true inside its handler: the room is a new one, so redraw from its state
+  and say so ("Found players, joining their room"). The option `Regroup` off keeps a player where
+  they are; a private room, a join by code, a pinned `Region` and the rule `Nearest` never move
+  anyone. **Get Region** names the region the seat is in.
+- **A region picker** shows what **Measure Genex Regions** returns: its **Measured** pin fires once
+  with every region (`Region`, `Ping Ms`, `Answered`), measured without joining; sign in first.
+  Put the player's choice in `Region`.
+- **A friend's room code works from any region:** the join finds the region that holds the room.
 - Every frame: **Set Input** (`Move X/Y/Z`, `Yaw`, `Pitch`, `Buttons`; for `firstperson` use
   **Make Firstperson Input**), then draw from **Get Me** (your own entity, predicted) and
   **Get Entities** (everyone else, 100 ms behind on the server's timeline). Never move a networked

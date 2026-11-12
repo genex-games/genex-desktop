@@ -35,6 +35,11 @@ namespace Genex.Multiplayer.Authority
         public const int MaxWorlds = 16;
         /// <summary>Colyseus's MATCHMAKE_INVALID_ROOM_ID: no room with this id here, or it is full or closing.</summary>
         public const int RoomNotFound = 522;
+        /// <summary><see cref="RoomNotFound"/> as the deployed servers send it: their transport cannot send status 522, so the
+        /// answer arrives as HTTP 500 with 522 in its body. GenexMultiplayer.MapRefusals reads the body's code first (so a
+        /// body that says 522 is reported as 522) and the status otherwise (a body it cannot read is reported as 500): the walk
+        /// goes on for both, as the TypeScript's does for the status the Colyseus JS client reports.</summary>
+        public const int RoomNotFoundAsSent = 500;
 
         private static bool LowerOrDigit(char c) => (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');
 
@@ -84,7 +89,7 @@ namespace Genex.Multiplayer.Authority
         /// final: only another region can hold a room this one refused as elsewhere.</summary>
         public static int? NextCodeRegion(int error, int region, int regions)
         {
-            var elsewhere = error == GenexProtocol.Authority.JoinError.WrongRegion || error == RoomNotFound;
+            var elsewhere = error == GenexProtocol.Authority.JoinError.WrongRegion || error == RoomNotFound || error == RoomNotFoundAsSent;
             return elsewhere && region + 1 < regions ? region + 1 : (int?)null;
         }
 

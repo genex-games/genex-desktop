@@ -447,7 +447,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-### @genex-ai/multiplayer 0.17.10
+### @genex-ai/multiplayer 0.17.11
 
 Bundled into `vendor/genex/`, the multiplayer SDK a game made from Studio's template maps in its import
 map, and shipped as `genex-multiplayer-bridge.js` (its `dist/bridge.global.js`) beside a multiplayer

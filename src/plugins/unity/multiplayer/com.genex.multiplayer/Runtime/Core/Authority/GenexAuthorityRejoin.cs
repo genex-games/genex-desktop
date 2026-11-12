@@ -3,7 +3,8 @@
 // Tests~/GenexSmoke/RejoinCheck.cs holds authority-rejoin.json exactly, as every SDK does.
 // GenexAuthoritySession is what a game holds: a room that ends for a deploy, or a socket no reconnect restored, swaps a
 // new seat (GenexAuthoritySeat, the room's whole client) in behind it, and the game's object, its handlers and its input
-// stay what they were. Engine-agnostic: no UnityEngine.
+// stay what they were. A player alone in a pool room also moves, behind the same object, into a room that has players
+// (§17.1 *Regrouping*): the session's Regroup loop, beside the rejoin. Engine-agnostic: no UnityEngine.
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
@@ -104,6 +105,8 @@ namespace Genex.Multiplayer.Authority
         private readonly string[] targets;
         private readonly bool closed;
         private readonly Random chance = new Random();
+        private readonly IList<GenexAuthorityRegion> regions;
+        private readonly Func<string, string[]> regroupFrom;
         private readonly Dictionary<string, List<Action<object>>> handlers = new Dictionary<string, List<Action<object>>>();
         private GenexAuthoritySeat seat;
         private bool left;
@@ -126,17 +129,25 @@ namespace Genex.Multiplayer.Authority
         public event Action<double> Draining;
         /// <summary>(attempt from 1, the close that lost the room, ms until the attempt): the seat is on its way back. Say so; there is nothing to do.</summary>
         public event Action<int, int, double> Rejoining;
-        /// <summary>Back in play: a new seat (<see cref="Id"/>) in a new room (<see cref="Code"/>).</summary>
+        /// <summary>Back in play: a new seat (<see cref="Id"/>) in a new room (<see cref="Code"/>). <see cref="Moved"/> tells why.</summary>
         public event Action Rejoined;
 
-        internal GenexAuthoritySession(GenexAuthoritySeat first, GenexAuthorityOptions options, GenexInput input, string[] targets, bool closed)
+        /// <summary>Set while <see cref="Rejoined"/> is raised, and until the next replacement: no room was lost, the player was alone
+        /// and now sits in a room that has players (§17.1 *Regrouping*). False for a seat that came back from a lost room.</summary>
+        public bool Moved { get; private set; }
+
+        internal GenexAuthoritySession(GenexAuthoritySeat first, GenexAuthorityOptions options, GenexInput input, string[] targets, bool closed,
+            IList<GenexAuthorityRegion> regions = null, Func<string, string[]> regroupFrom = null)
         {
             this.options = options;
             this.targets = targets;
             this.closed = closed;
+            this.regions = regions ?? new List<GenexAuthorityRegion>();
+            this.regroupFrom = regroupFrom;
             Input = input;
             world = null;
             Bind(first);
+            if (options.Rejoin && options.Regroup && regroupFrom != null && regroupFrom(first.Url).Length > 0) _ = Regroup();
         }
 
         private void Bind(GenexAuthoritySeat next)
@@ -219,7 +230,8 @@ namespace Genex.Multiplayer.Authority
                 }
                 catch (GenexJoinException e)
                 {
-                    refusal = e.Code > 0 ? e.Code : (int?)null;
+                    // Only a server's answer is a refusal: one the player could not read is a network that failed.
+                    refusal = e.Answered && e.Code > 0 ? e.Code : (int?)null;
                 }
                 catch (Exception)
                 {
@@ -228,13 +240,116 @@ namespace Genex.Multiplayer.Authority
             }
         }
 
-        private void Adopt(GenexAuthoritySeat next)
+        private void Adopt(GenexAuthoritySeat next, bool moved = false)
         {
             Bind(next);
             rejoining = false;
+            Moved = moved;
             if (world != null) next.SetWorld(world);
             if (physicsHash != null) next.SetPhysics(physicsHash);
             Rejoined?.Invoke();
+        }
+
+        /// <summary>How long a regroup's wait is cut into, so a seat that left ends it soon (ms).</summary>
+        private const double RegroupSliceMs = 250;
+
+        /// <summary>§17.1 *Regrouping*: while the player is alone in the room, asks after each wait of the schedule for a room that
+        /// has players, and moves the seat there. With company it only looks again after the first wait, and the schedule starts
+        /// over the next time the player is alone. Nothing is asked while a lost room is being replaced. Time comes through
+        /// <see cref="GenexTime"/>, the clock the rejoin runs on (timer-free, so a WebGL player runs it too).</summary>
+        private async Task Regroup()
+        {
+            try
+            {
+                var waits = options.RegroupWaitsMs != null && options.RegroupWaitsMs.Length > 0 ? options.RegroupWaitsMs : GenexAuthorityRegions.RegroupWaitsMs;
+                var step = 0;
+                while (!left)
+                {
+                    await RegroupWait(waits[Math.Min(step, waits.Length - 1)]);
+                    if (left) return;
+                    if (rejoining || PlayersInRoom() > 1)
+                    {
+                        step = 0;
+                        continue;
+                    }
+                    step += 1;
+                    var next = await AskForPlayers();
+                    if (next == null) continue;
+                    // The ask took time: the seat may have left, a lost room be in replacement, or company have arrived in the
+                    // player's own room, which would leave the newcomer alone in turn. The found seat is given back and the
+                    // schedule starts over.
+                    if (left || rejoining || PlayersInRoom() > 1)
+                    {
+                        await LeaveQuietly(next);
+                        step = 0;
+                        continue;
+                    }
+                    var empty = seat;
+                    try
+                    {
+                        Adopt(next, true);
+                    }
+                    finally
+                    {
+                        await LeaveQuietly(empty);
+                    }
+                    step = 0;
+                }
+            }
+            catch (Exception e)
+            {
+                // A fault here must not take the game's session with it: the player simply stays where they are.
+                ColyseusContext.Logger.LogError("[genex] regrouping stopped: " + e.Message);
+            }
+        }
+
+        /// <summary>The players the room's state lists, the player included. Read from the state itself, not from <see cref="Players"/>,
+        /// which is only refreshed as the game draws a frame.</summary>
+        private int PlayersInRoom()
+        {
+            var listed = seat.Room?.State?.players;
+            var count = 0;
+            if (listed != null)
+                foreach (var entry in listed)
+                    if (entry.Value != null) count++;
+            return count;
+        }
+
+        /// <summary>One wait of the schedule, cut short when the seat leaves.</summary>
+        private async Task RegroupWait(double ms)
+        {
+            var until = GenexTime.Now() + ms;
+            while (!left && GenexTime.Now() < until) await GenexTime.Delay(Math.Min(RegroupSliceMs, Math.Max(0, until - GenexTime.Now())));
+        }
+
+        /// <summary>Asks each server a player alone behind the seat's url may ask for a room that already exists, with the pool's
+        /// options. A refused ask is never an error: the next server is asked. Null when none has a room with players.</summary>
+        private async Task<GenexAuthoritySeat> AskForPlayers()
+        {
+            foreach (var url in regroupFrom(seat.Url))
+            {
+                try
+                {
+                    return await GenexAuthority.JoinPoolSeat(options, url, Input);
+                }
+                catch (Exception)
+                {
+                    // No room there, or no way there: the next server is asked.
+                }
+            }
+            return null;
+        }
+
+        private static async Task LeaveQuietly(GenexAuthoritySeat from)
+        {
+            try
+            {
+                await from.Leave();
+            }
+            catch (Exception)
+            {
+                // Already gone.
+            }
         }
 
         public string Id => seat.Id;
@@ -243,6 +358,9 @@ namespace Genex.Multiplayer.Authority
         public string Code => seat.Code;
         public string MatchKey => seat.MatchKey;
         public string Url => seat.Url;
+        /// <summary>The region this seat enters through (the one whose urls hold <see cref="Url"/>), for a region picker; null for an
+        /// explicit <see cref="GenexAuthorityOptions.Url"/> or a url the cluster does not list. A move (<see cref="Moved"/>) changes it.</summary>
+        public string Region => GenexAuthorityRegions.RegionOf(regions, seat.Url);
         public Room<AuthorityRoomState> Room => seat.Room;
         public bool IsConnected => seat.IsConnected;
         /// <summary>Over for good: a rejoin on its way is not closed, only not connected.</summary>

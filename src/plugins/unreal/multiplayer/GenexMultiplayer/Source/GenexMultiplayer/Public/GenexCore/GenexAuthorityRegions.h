@@ -7,11 +7,14 @@
 // Each region is its own matchmaking pool (the server filters rooms by the region a join entered through), so
 // the order is where a player meets others, not only how far the server is. A pool join therefore looks for
 // players first (§17.1 *Finding players*, PlanSearch): it asks the regions in reach for a room that already
-// exists, nearest first, and opens one in the nearest region only when none has.
+// exists, nearest first, and opens one in the nearest region only when none has. Two players who start at the same
+// moment in two regions still each open one, so a player alone in a room keeps asking the regions listed before its
+// own (§17.1 *Regrouping*, PlanRegroup), and of two lone players exactly one moves.
 #pragma once
 
 #include "GenexCore/GenexConfig.h"
 
+#include <array>
 #include <cstddef>
 #include <optional>
 #include <string>
@@ -35,6 +38,8 @@ inline constexpr int kRefusalsPerRegion = 2;
 /** How far a join looks for players by default, as a probe's round trip in ms (§17.1 *Finding players*): far
  *  enough that a player in one region reaches the others. */
 inline constexpr double kMaxPingMs = 350.0;
+/** The waits before each ask of a player who is alone in a room, ms (§17.1 *Regrouping*); the last repeats. */
+inline constexpr std::array<double, 5> kRegroupWaitsMs = {2000.0, 4000.0, 9000.0, 15000.0, 30000.0};
 
 /** How a pool join picks its region (§17.1 *Finding players*). */
 enum class RegionRule {
@@ -108,6 +113,27 @@ GENEX_CORE_API std::vector<Pick> Rank(const std::vector<Region>& regions, const 
  *  is the rule Nearest. A pinned region is the only one joined and the only one created in, through its best url. */
 GENEX_CORE_API SearchPlan PlanSearch(const std::vector<Region>& regions, const std::vector<std::vector<std::optional<double>>>& best,
                                      const SearchOptions& options);
+
+/** Where a player who is alone in a room keeps asking for one that has players (§17.1 *Regrouping*), from each url's
+ *  best sample (as Rank reads it) and the region its seat is in. Every client reads the regions in one order, so of
+ *  two players each alone in their own region exactly one moves: only the regions listed before `joined` are asked,
+ *  nearest first, among the answered ones no farther than the limit. The rule Nearest, a pinned region and a region
+ *  the list does not have ask no one. */
+GENEX_CORE_API std::vector<Pick> PlanRegroup(const std::vector<Region>& regions, const std::vector<std::vector<std::optional<double>>>& best,
+                                             const SearchOptions& options, const std::string& joined);
+
+/** The region `url` enters, by its name in `regions`; empty when none lists it. */
+GENEX_CORE_API std::string RegionOf(const std::vector<Region>& regions, const std::string& url);
+
+/** One region as a player's settings show it: its name and its round trip in ms (nullopt: no answer). */
+struct RegionPing {
+  std::string region;
+  std::optional<double> pingMs;
+};
+
+/** Every region with its latency, in list order, from each url's best sample (as Rank reads it): a region picker's
+ *  rows (measureAuthorityRegions). A region's latency is its best answered url. */
+GENEX_CORE_API std::vector<RegionPing> Pings(const std::vector<Region>& regions, const std::vector<std::vector<std::optional<double>>>& best);
 
 /** The attempt after a 503 in `state` over `regionCount` ranked regions and the schedule `delays`, or nullopt when
  *  the join gives up. */

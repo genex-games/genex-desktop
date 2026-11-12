@@ -89,7 +89,7 @@ export const GENEX_ACCOUNT_ACTIONS: readonly GenexAction[] = [
  * server-authoritative card for an embed SDK with `getAuthorityUrls` (0.35.0).
  */
 export const GENEX_GAME_PACKAGES = {
-  "@genex-ai/multiplayer": "0.17.10",
+  "@genex-ai/multiplayer": "0.17.11",
   "@genex-ai/embed-sdk": "0.35.0",
 } as const;
 /** A Genex SDK package a game may add. */

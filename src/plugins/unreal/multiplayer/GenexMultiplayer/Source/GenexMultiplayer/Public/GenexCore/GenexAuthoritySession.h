@@ -104,6 +104,7 @@ namespace genex {
 namespace authority_session_detail {
 struct Impl;
 struct RejoinRun;
+struct RegroupRun;
 }  // namespace authority_session_detail
 
 /** How other entities' samples are timed in a predicting room (§17.11 *Drawing other seats*). */
@@ -179,6 +180,12 @@ struct AuthorityOptions {
   /** Whether a seat whose room ended for a deploy, or whose socket no reconnect restored, goes back into play
    *  by itself (§17.13 *Drain and rejoin*). Default true; false makes that close final. */
   bool rejoin = true;
+  /** Whether a player who is alone in a pool room keeps asking for a room that already has players and moves there
+   *  (§17.1 *Regrouping*): only the regions listed before the seat's own, in reach, are asked, after each wait of
+   *  regions::kRegroupWaitsMs, and the game hears Rejoined with `moved`. Default true; false keeps the player where
+   *  they are. Needs `rejoin`; a private room, a join by code, `url`, a pinned region and the rule Nearest never
+   *  regroup. */
+  bool regroup = true;
   /** The `firstperson` collision world, as the room module exports it (SetWorld later, too); nullptr =
    *  the empty world. Your own entity is predicted only while its hash is the room's `params.world`. */
   FirstpersonWorldPtr world;
@@ -255,6 +262,9 @@ struct AuthorityOptions {
   std::optional<std::vector<std::string>> capsOverride;
   /** Read GENEX_AUTHORITY_URL from here instead of the process environment (offline URL tables). */
   std::optional<std::string> environmentAuthorityUrl;
+  /** The waits of §17.1 *Regrouping* instead of regions::kRegroupWaitsMs (the last repeats), so a test runs the
+   *  schedule in seconds. */
+  std::optional<std::vector<double>> regroupWaitsMs;
   /** Also attach the C core's own lerp (colyseus_predict_attach_all, LERP at renderDelayMs) to every
    *  entity, so ProbeRemote can compare it with the session's timeline. Display is unchanged. */
   bool probeCoreLerp = false;
@@ -512,7 +522,8 @@ enum class AuthorityEventType {
   /** The room is gone and the seat is on its way back: attempt `attempt` (from 1) starts in `ms`; `code` is the
    *  close that lost it. Say so; there is nothing to do. */
   Rejoining,
-  /** Back in play: a new seat (SessionId()) in a new room (`name`, the new invite code). */
+  /** Back in play: a new seat (SessionId()) in a new room (`name`, the new invite code). `moved` is set when no
+   *  room was lost: the player was alone and now sits in a room that has players (§17.1 *Regrouping*). */
   Rejoined,
   /** An event the room module emitted (`ctx.emit(type, data)`), or `server:restart`: `name`, `data`. */
   Message,
@@ -533,6 +544,8 @@ struct AuthorityEvent {
   /** Message: its payload (msgpack decoded; ext 0 = absent). */
   Json data;
   std::string message;
+  /** Rejoined: the seat moved out of a room it was alone in (§17.1 *Regrouping*), no room was lost. */
+  bool moved = false;
 };
 
 /** A remote entity drawn both ways (AuthorityOptions::probeCoreLerp): the measurement seam behind
@@ -591,6 +604,9 @@ class GENEX_CORE_API AuthoritySession final : public IPumped {
   const std::string& RoomId() const;
   /** The URL joined (after selection; "" before). */
   const std::string& Url() const;
+  /** The region the seat is in (§17.1 *Regrouping*): the name of the region whose urls hold Url(), by `regions`
+   *  (else each of `urls` is its own region); "" before a server is picked, or when no region lists it. */
+  std::string Region() const;
   /** The room's invite code (§17.2 *Choosing a room*): friends pass it as AuthorityOptions::joinCode. */
   const std::string& Code() const;
   /** The room's match key, empty for none. After a join by code, read it once the first state has landed
@@ -699,10 +715,46 @@ class GENEX_CORE_API AuthoritySession final : public IPumped {
   /** One Update's worth of a rejoin (§17.13): the attempt in the air, or the next one when its wait is over. */
   void DriveRejoin(double nowMs);
   void AdoptRejoin();
+  /** One Update's worth of §17.1 *Regrouping*: the next look when its wait is over, the ask in the air, and the rooms
+   *  the seat moved out of. */
+  void DriveRegroup(double nowMs);
+  void StartRegroupAsk();
+  void DriveRegroupAsk(double nowMs);
+  /** The ask in the air is given back (company arrived, the room was lost or left): its seat, if any, is left. */
+  void GiveBackRegroupAsk(double nowMs);
+  void AdoptRegroup(double nowMs);
+  void SettleLeftRooms(double nowMs);
 
   std::unique_ptr<authority_session_detail::Impl> impl_;
   /** A rejoin on its way: what was lost, where it stands, and the attempt in the air. */
   std::unique_ptr<authority_session_detail::RejoinRun> rejoin_;
+  /** Regrouping, for a pool join that may: the probe it asks by, the schedule, the ask in the air. */
+  std::unique_ptr<authority_session_detail::RegroupRun> regroup_;
+};
+
+/**
+ * What a region picker shows (§17.1 *Regrouping*; measureAuthorityRegions): the regions probed as a join probes them
+ * (3 samples each, 4 s ceiling, 1 s grace after the first answer), with no join. Pumped like a session; `done` is
+ * called once, from an Update, with every region's latency in list order (nullopt: no answer). One region is not
+ * probed: its latency is nullopt.
+ */
+class GENEX_CORE_API AuthorityRegionMeter final : public IPumped {
+ public:
+  /** `regions` as AuthorityOptions::regions; empty, each of `urls` is a region of its own. */
+  AuthorityRegionMeter(const std::vector<regions::Region>& regions, const std::vector<std::string>& urls,
+                       std::function<void(const std::vector<regions::RegionPing>&)> done);
+  ~AuthorityRegionMeter() override;
+  AuthorityRegionMeter(const AuthorityRegionMeter&) = delete;
+  AuthorityRegionMeter& operator=(const AuthorityRegionMeter&) = delete;
+  void Update(double nowMs) override;
+  /** `done` was called. */
+  bool Done() const { return notified_; }
+
+ private:
+  std::unique_ptr<authority_session_detail::Impl> impl_;
+  std::function<void(const std::vector<regions::RegionPing>&)> done_;
+  std::optional<std::vector<regions::RegionPing>> pings_;
+  bool notified_ = false;
 };
 
 // ---- pure pieces, exposed for the offline tables (authority_edge `offline`) ----

@@ -273,6 +273,17 @@ public sealed class Arena : MonoBehaviour
   asked, as round-trip ping), `RegionRule` (`GenexRegionRule.Nearest` keeps a player in their
   nearest region) and `Region` (a region the player picked by name: `"asia"`, `"eu"` or `"us"`;
   offer it as a setting when players ask to choose).
+- **A player waiting alone is moved to players.** When two people start at the same moment in two
+  empty regions, one of them is moved into the other's room within seconds. The session object
+  stays the same and raises `Rejoined` with `Session.Moved` true: the room is a new one, so redraw
+  from its state and say so ("Found players, joining their room"). `Regroup = false` in
+  `GenexAuthorityOptions` keeps a player where they are; a private room, a join by code, a pinned
+  `Region` and `GenexRegionRule.Nearest` never move anyone. `Session.Region` names the region the
+  seat is in.
+- **A region picker** shows `await GenexAuthority.MeasureRegions(options)`: every region with its
+  round trip (`Region`, `PingMs`; null when a region did not answer), measured without joining.
+  Put the player's choice in `Region`.
+- **A friend's room code works from any region:** the join finds the region that holds the room.
 - **Axes.** The room's ground is x/y and +z is up; Unity is y-up. Draw a room point as
   `new Vector3((float)x, (float)z, (float)y)` and send Unity directions back the same way.
 - **Firstperson and vehicle rooms** move bodies through a collision world of boxes and ramps the

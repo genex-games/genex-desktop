@@ -65,10 +65,12 @@ std::vector<std::string> ProbePlan(const std::vector<std::string>& urls, int sam
 
 namespace {
 
-/** A region in the order it is tried, with its best answered sample (nullopt: nothing answered). */
+/** A region in the order it is tried, with its best answered sample (nullopt: nothing answered) and its place in the
+ *  list. */
 struct Ranked {
   std::optional<double> ms;
   Pick pick;
+  std::size_t index = 0;
 };
 
 /** Rank with each region's latency kept. */
@@ -79,7 +81,7 @@ std::vector<Ranked> RankMs(const std::vector<Region>& regions, const std::vector
     Pick pick;
   };
   std::vector<Heard> heard;
-  std::vector<Pick> silent;
+  std::vector<std::pair<std::size_t, Pick>> silent;
   for (std::size_t i = 0; i < regions.size(); ++i) {
     const Region& r = regions[i];
     if (r.urls.empty()) continue;
@@ -94,13 +96,13 @@ std::vector<Ranked> RankMs(const std::vector<Region>& regions, const std::vector
     if (ms.has_value()) {
       heard.push_back(Heard{*ms, i, Pick{r.name, url}});
     } else {
-      silent.push_back(Pick{r.name, url});
+      silent.emplace_back(i, Pick{r.name, url});
     }
   }
   std::stable_sort(heard.begin(), heard.end(), [](const Heard& a, const Heard& b) { return a.ms < b.ms; });
   std::vector<Ranked> out;
-  for (Heard& h : heard) out.push_back(Ranked{h.ms, std::move(h.pick)});
-  for (Pick& p : silent) out.push_back(Ranked{std::nullopt, std::move(p)});
+  for (Heard& h : heard) out.push_back(Ranked{h.ms, std::move(h.pick), h.index});
+  for (auto& [index, p] : silent) out.push_back(Ranked{std::nullopt, std::move(p), index});
   return out;
 }
 
@@ -133,6 +135,46 @@ SearchPlan PlanSearch(const std::vector<Region>& regions, const std::vector<std:
   // Fewer than two in reach is no search: the join-or-create finds its own region's room itself.
   if (reach.size() >= 2) plan.search = std::move(reach);
   return plan;
+}
+
+std::vector<Pick> PlanRegroup(const std::vector<Region>& regions, const std::vector<std::vector<std::optional<double>>>& best,
+                              const SearchOptions& options, const std::string& joined) {
+  if (options.rule == RegionRule::Nearest) return {};
+  const auto named = [&](const std::string& name) {
+    return std::find_if(regions.begin(), regions.end(), [&](const Region& r) { return r.name == name; });
+  };
+  // A pin the list has keeps the player there; an empty name is no pin, as in PlanSearch.
+  if (!options.region.empty() && named(options.region) != regions.end()) return {};
+  const auto at = named(joined);
+  if (joined.empty() || at == regions.end()) return {};
+  const std::size_t joinedAt = static_cast<std::size_t>(at - regions.begin());
+  const double limit = Answered(options.maxPingMs) ? options.maxPingMs : kMaxPingMs;
+  std::vector<Pick> out;
+  for (Ranked& r : RankMs(regions, best)) {
+    // Only the regions listed before this one: of two players each alone in their own region, exactly one moves.
+    if (r.index < joinedAt && r.ms.has_value() && *r.ms <= limit) out.push_back(std::move(r.pick));
+  }
+  return out;
+}
+
+std::string RegionOf(const std::vector<Region>& regions, const std::string& url) {
+  for (const Region& r : regions) {
+    if (std::find(r.urls.begin(), r.urls.end(), url) != r.urls.end()) return r.name;
+  }
+  return {};
+}
+
+std::vector<RegionPing> Pings(const std::vector<Region>& regions, const std::vector<std::vector<std::optional<double>>>& best) {
+  std::vector<RegionPing> out;
+  for (std::size_t i = 0; i < regions.size(); ++i) {
+    RegionPing ping{regions[i].name, std::nullopt};
+    for (std::size_t j = 0; i < best.size() && j < best[i].size(); ++j) {
+      const std::optional<double>& v = best[i][j];
+      if (Answered(v) && (!ping.pingMs.has_value() || *v < *ping.pingMs)) ping.pingMs = v;
+    }
+    out.push_back(std::move(ping));
+  }
+  return out;
 }
 
 SearchRefusal KindOfSearchRefusal(int code) {

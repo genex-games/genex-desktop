@@ -114,6 +114,32 @@ private:
 	EDoor Door = EDoor::Guest;
 };
 
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FGenexRegionsPin, const TArray<FGenexRegionPing>&, Regions);
+
+/** Measure Genex Regions: what a region picker shows (PROTOCOL.md §17.1 *Regrouping*), with no join. Measured fires
+ *  once with every authority region and its round trip, in the list's order (bAnswered false: no answer). */
+UCLASS()
+class GENEXMULTIPLAYER_API UGenexMeasureRegionsAction : public UBlueprintAsyncActionBase
+{
+	GENERATED_BODY()
+
+public:
+	/** Probe the regions a Join would use (Urls, each its own region; empty: the signed-in player's regions) as a join
+	 *  probes them, about a second. Sign in first for a published game's regions; with neither, Measured is empty. */
+	UFUNCTION(BlueprintCallable, Category = "Genex|Authority", meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", DisplayName = "Measure Genex Regions"))
+	static UGenexMeasureRegionsAction* MeasureGenexRegions(UObject* WorldContext, const TArray<FString>& Urls);
+
+	UPROPERTY(BlueprintAssignable) FGenexRegionsPin Measured;
+
+	virtual void Activate() override;
+
+private:
+	UPROPERTY() TObjectPtr<UGenexAuthoritySubsystem> Subsystem;
+	TArray<FString> Urls;
+	/** The probe in flight, held until it answers. */
+	TSharedPtr<genex::AuthorityRegionMeter> Meter;
+};
+
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FGenexRefusedPin, EGenexJoinRefusal, Refusal, int32, Code, const FString&, Message);
 
 /** Join Genex Authority: Connected once the authority room is ready to draw, or Refused with a

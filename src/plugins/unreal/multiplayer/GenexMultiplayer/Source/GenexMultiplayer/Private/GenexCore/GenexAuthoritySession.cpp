@@ -76,6 +76,10 @@ constexpr double kTwoPi = 2.0 * kJsPi;
 /** The close code TestDrop and the stall drop close with (Godot's test_drop: 4010). Reconnectable, so the
  *  core reconnects; and a valid close-frame code (1006 may not be sent: ws refuses the frame). */
 constexpr int kDropClose = cc::kMayTryReconnect;
+/** How long a room a regroup moved out of may take to confirm its leave before it is freed anyway (§17.1
+ *  *Regrouping*): a consented leave lets the server drop the seat at once, where a closed socket keeps it for the
+ *  reconnect grace. */
+constexpr double kRegroupLeaveSettleMs = 5000.0;
 
 double NaN() { return std::numeric_limits<double>::quiet_NaN(); }
 
@@ -311,6 +315,14 @@ void CbRoomError(int code, const char* message, void* ud);
 void CbLatency(const char* best, double latencyMs, void* ud);
 void CbProbe(const char* best, double latencyMs, void* ud);
 
+/** What a pool join's probe found, kept for §17.1 *Regrouping*: the regions, each url's best sample and the join's
+ *  region settings, from which the regions listed before the seat's own are asked (regions::PlanRegroup). */
+struct RegroupBasis {
+  std::vector<regions::Region> regions;
+  std::vector<std::vector<std::optional<double>>> best;
+  regions::SearchOptions options;
+};
+
 struct Impl {
   explicit Impl(AuthorityOptions o) : options(std::move(o)) {
     world = options.world != nullptr ? options.world : FirstpersonWorld::Empty();
@@ -418,6 +430,14 @@ struct Impl {
    *  tries `targets`, and the one being asked; the search runs while searchAt < search.size(). */
   std::vector<std::string> search;
   std::size_t searchAt = 0;
+  /** §17.1 *Regrouping*: set by a pool join's probe when the join may regroup, until the session takes it
+   *  (AuthoritySession::DriveRegroup). */
+  std::optional<RegroupBasis> regroupBasis;
+  /** A regroup's ask: Colyseus's plain join (a room that already exists), never a create. */
+  bool joinOnly = false;
+  /** A region picker's probe (AuthorityRegionMeter): the probe's answer goes to `measured`, and nothing is joined. */
+  bool measureOnly = false;
+  std::optional<std::vector<regions::RegionPing>> measured;
   /** The region probe in flight (§17.1 *Regions*), until the choice is made. */
   struct RegionProbe {
     std::vector<regions::Region> regions;
@@ -693,7 +713,14 @@ struct Impl {
     const bool due = probe->pending == 0 || now >= probe->ceiling || (probe->grace >= 0.0 && now >= probe->grace);
     if (!due) return;
     selecting = false;
+    if (measureOnly) {
+      measured = regions::Pings(probe->regions, probe->best);
+      probe.reset();
+      return;
+    }
     regions::SearchPlan plan = regions::PlanSearch(probe->regions, probe->best, SearchOptionsNow());
+    // §17.1 *Regrouping* uses this join's own probe: no second probe while the player plays.
+    if (MayRegroup()) regroupBasis = RegroupBasis{probe->regions, probe->best, SearchOptionsNow()};
     probe.reset();
     targets.clear();
     for (regions::Pick& p : plan.create) targets.push_back(std::move(p.url));
@@ -717,6 +744,17 @@ struct Impl {
 
   /** A pool join is still asking the regions in reach for a room that already exists. */
   bool Searching() const { return searchAt < search.size(); }
+
+  /** Whether a player alone in this join's room may move (§17.1 *Regrouping*): a pool join of a game that left
+   *  regrouping and rejoining on. A private room and a room joined by code are where the player asked to be. */
+  bool MayRegroup() const {
+    const room_key::JoinMethod method =
+        room_key::PlanAuthorityJoin({options.matchKey, options.createPrivate, options.joinCode}).method;
+    return options.regroup && options.rejoin && method == room_key::JoinMethod::JoinOrCreate;
+  }
+
+  /** Left and nothing of it is still out: its rooms are all freed. */
+  bool Settled() const { return closed && room == nullptr && leavingRooms.empty() && graveyard.empty(); }
 
   Ctx* NewCtx() {
     std::unique_ptr<Ctx> ctx(new Ctx());
@@ -762,7 +800,7 @@ struct Impl {
     }
     // §17.1 *Finding players*: a region asked for players is asked for a room that already exists, with the options
     // the join-or-create would send, and never opens one.
-    if (Searching()) plan.method = room_key::JoinMethod::Join;
+    if (Searching() || joinOnly) plan.method = room_key::JoinMethod::Join;
     JoinSpec spec;
     spec.gameId = options.gameId;
     spec.name = options.name;
@@ -3802,6 +3840,26 @@ const char* AuthorityEventTypeName(AuthorityEventType type) {
   return "warning";
 }
 
+/** §17.1 *Regrouping* for a session whose join may regroup: the probe it asks by, where the schedule stands, the ask
+ *  in the air and the rooms it moved out of, until their leave settles. */
+struct asd::RegroupRun {
+  asd::RegroupBasis basis;
+  std::vector<double> waits;
+  /** The wait before the next look: waits[min(step, last)]. */
+  std::size_t step = 0;
+  /** When the next look is due; empty until the seat's first state. */
+  std::optional<double> nextAt;
+  /** The servers this look asks, nearest first, and the one being asked. */
+  std::vector<std::string> asking;
+  std::size_t askAt = 0;
+  /** The ask in the air: a whole session's insides, which become this one's on their first state. */
+  std::unique_ptr<asd::Impl> next;
+  /** Rooms the seat moved out of, with when it left each. */
+  std::vector<std::pair<std::unique_ptr<asd::Impl>, double>> left;
+
+  double Wait(std::size_t at) const { return waits[std::min(at, waits.size() - 1)]; }
+};
+
 /** A rejoin on its way (§17.13). */
 struct asd::RejoinRun {
   int lostCode = 0;
@@ -3833,11 +3891,15 @@ AuthoritySession::~AuthoritySession() { Pump::Unregister(this); }
 void AuthoritySession::Update(double nowMs) {
   impl_->Update(nowMs);
   DriveRejoin(nowMs);
+  DriveRegroup(nowMs);
 }
 
 void AuthoritySession::BeforePoll() {
   impl_->BeforePoll();
   if (rejoin_ != nullptr && rejoin_->next != nullptr) rejoin_->next->BeforePoll();
+  if (regroup_ == nullptr) return;
+  if (regroup_->next != nullptr) regroup_->next->BeforePoll();
+  for (auto& left : regroup_->left) left.first->BeforePoll();
 }
 
 void AuthoritySession::DriveRejoin(double nowMs) {
@@ -3957,6 +4019,189 @@ void AuthoritySession::AdoptRejoin() {
   impl_->events.swap(carried);
 }
 
+AuthorityRegionMeter::AuthorityRegionMeter(const std::vector<regions::Region>& regions, const std::vector<std::string>& urls,
+                                           std::function<void(const std::vector<regions::RegionPing>&)> done)
+    : done_(std::move(done)) {
+  Pump::EnsurePolled();
+  Pump::Register(this);
+  std::vector<regions::Region> regs = regions::Normalize(regions, urls);
+  if (regs.size() <= 1) {
+    // One region is not probed (measureAuthorityRegions): there is nothing to choose between.
+    pings_ = regions::Pings(regs, {});
+    return;
+  }
+  impl_ = std::make_unique<asd::Impl>(AuthorityOptions{});
+  impl_->measureOnly = true;
+  impl_->ProbeRegions(std::move(regs));
+}
+
+AuthorityRegionMeter::~AuthorityRegionMeter() { Pump::Unregister(this); }
+
+void AuthorityRegionMeter::Update(double nowMs) {
+  if (notified_) return;
+  if (impl_ != nullptr) {
+    impl_->Update(nowMs);
+    if (!impl_->measured.has_value()) return;
+    pings_ = std::move(impl_->measured);
+    impl_.reset();
+  }
+  if (!pings_.has_value()) return;
+  // Always from an Update, never from the constructor: the caller holds the meter before it answers.
+  notified_ = true;
+  if (done_) done_(*pings_);
+}
+
+void AuthoritySession::DriveRegroup(double nowMs) {
+  if (regroup_ == nullptr && impl_->regroupBasis.has_value()) {
+    regroup_ = std::make_unique<asd::RegroupRun>();
+    regroup_->basis = std::move(*impl_->regroupBasis);
+    impl_->regroupBasis.reset();
+    const std::optional<std::vector<double>>& waits = impl_->options.regroupWaitsMs;
+    if (waits && !waits->empty()) regroup_->waits = *waits;
+    else regroup_->waits.assign(regions::kRegroupWaitsMs.begin(), regions::kRegroupWaitsMs.end());
+  }
+  if (regroup_ == nullptr) return;
+  asd::RegroupRun& run = *regroup_;
+  SettleLeftRooms(nowMs);
+  // Nothing is asked while a lost room is being replaced (§17.13): the schedule waits and starts over.
+  const bool rejoining = rejoin_ != nullptr || impl_->lostCode.has_value();
+  if (run.next != nullptr) {
+    if (rejoining || impl_->closed) {
+      GiveBackRegroupAsk(nowMs);
+      return;
+    }
+    DriveRegroupAsk(nowMs);
+    return;
+  }
+  if (impl_->leaving || (impl_->closed && !rejoining)) return;
+  if (!run.nextAt.has_value()) {
+    if (impl_->joined) run.nextAt = nowMs + run.Wait(run.step);
+    return;
+  }
+  if (nowMs < *run.nextAt) return;
+  // With company (the state lists another player) it only looks again after the first wait, and the schedule
+  // starts over the next time the player is alone.
+  if (rejoining || !impl_->joined || impl_->playerViews.size() > 1) {
+    run.step = 0;
+    run.nextAt = nowMs + run.Wait(0);
+    return;
+  }
+  run.step += 1;
+  run.asking.clear();
+  run.askAt = 0;
+  const std::string here = regions::RegionOf(run.basis.regions, impl_->url);
+  for (regions::Pick& p : regions::PlanRegroup(run.basis.regions, run.basis.best, run.basis.options, here)) {
+    run.asking.push_back(std::move(p.url));
+  }
+  if (run.asking.empty()) {
+    run.nextAt = nowMs + run.Wait(run.step);
+    return;
+  }
+  StartRegroupAsk();
+}
+
+void AuthoritySession::StartRegroupAsk() {
+  asd::RegroupRun& run = *regroup_;
+  AuthorityOptions options = impl_->options;
+  options.url = run.asking[run.askAt];
+  // A full region is a refused ask like any other: the next region is asked.
+  options.capacityRetryMs.clear();
+  options.rejoin = false;
+  options.regroup = false;
+  options.createPrivate = false;
+  options.joinCode.reset();
+  options.world = impl_->world;
+  options.physics = impl_->physicsHash;
+  // The pool's options: the game's own match key, as its join-or-create sent.
+  run.next = std::make_unique<asd::Impl>(std::move(options));
+  run.next->joinOnly = true;
+  // The game hears Rejoined with `moved` once the seat is adopted, never a second Ready.
+  run.next->rejoinedSeat = true;
+  run.next->Start();
+}
+
+void AuthoritySession::DriveRegroupAsk(double nowMs) {
+  asd::RegroupRun& run = *regroup_;
+  run.next->Update(nowMs);
+  std::vector<AuthorityEvent> events;
+  events.swap(run.next->events);
+  const bool refused = std::any_of(events.begin(), events.end(), [](const AuthorityEvent& e) {
+    return e.type == AuthorityEventType::JoinFailed || e.type == AuthorityEventType::Disconnected;
+  });
+  if (!refused) {
+    if (!run.next->joined) {
+      run.next->events.swap(events);
+      return;
+    }
+    // Company arrived in the player's own room while the other region was asked: the player stays, so the newcomer
+    // is not left alone in turn, and the seat found is given back. The game hears nothing.
+    if (impl_->playerViews.size() > 1) {
+      GiveBackRegroupAsk(nowMs);
+      return;
+    }
+    // Its first state is enough, as for a rejoin: the seat is adopted before its clock's first round trip.
+    AdoptRegroup(nowMs);
+    return;
+  }
+  // A refused ask is never an error: no room there, or no way there. The next region is asked.
+  run.next.reset();
+  run.askAt += 1;
+  if (run.askAt < run.asking.size()) {
+    StartRegroupAsk();
+    return;
+  }
+  run.asking.clear();
+  run.nextAt = nowMs + run.Wait(run.step);
+}
+
+void AuthoritySession::GiveBackRegroupAsk(double nowMs) {
+  asd::RegroupRun& run = *regroup_;
+  // A leave the server hears, so the room found does not hold the seat for its reconnect grace.
+  run.next->Leave();
+  run.left.emplace_back(std::move(run.next), nowMs);
+  run.asking.clear();
+  run.nextAt = nowMs + run.Wait(run.step);
+}
+
+void AuthoritySession::AdoptRegroup(double nowMs) {
+  asd::RegroupRun& run = *regroup_;
+  std::unique_ptr<asd::Impl> next = std::move(run.next);
+  // The ask's options were its own; what the game asked for stays for the next time.
+  const AuthorityOptions& mine = impl_->options;
+  next->options.rejoin = mine.rejoin;
+  next->options.regroup = mine.regroup;
+  next->options.capacityRetryMs = mine.capacityRetryMs;
+  next->options.url = mine.url;
+  next->joinOnly = false;
+  // A later rejoin walks from the region the seat is in now, then the others (DriveRejoin).
+  next->targets = impl_->targets;
+  std::unique_ptr<asd::Impl> empty = std::move(impl_);
+  impl_ = std::move(next);
+  std::vector<AuthorityEvent> carried;
+  carried.swap(empty->events);
+  for (AuthorityEvent& event : impl_->events) carried.push_back(std::move(event));
+  AuthorityEvent e;
+  e.type = AuthorityEventType::Rejoined;
+  e.name = impl_->roomId;
+  e.moved = true;
+  carried.push_back(std::move(e));
+  impl_->events.swap(carried);
+  // The room the player was alone in is left, with a leave the server hears.
+  empty->Leave();
+  run.left.emplace_back(std::move(empty), nowMs);
+  run.asking.clear();
+  run.step = 0;
+  run.nextAt = nowMs + run.Wait(0);
+}
+
+void AuthoritySession::SettleLeftRooms(double nowMs) {
+  std::vector<std::pair<std::unique_ptr<asd::Impl>, double>>& left = regroup_->left;
+  for (auto& l : left) l.first->Update(nowMs);
+  left.erase(std::remove_if(left.begin(), left.end(),
+                            [nowMs](const auto& l) { return l.first->Settled() || nowMs - l.second >= asd::kRegroupLeaveSettleMs; }),
+             left.end());
+}
+
 int AuthoritySession::OwnPathMissing() const {
   return impl_->OwnPathMissing();
 }
@@ -3977,8 +4222,9 @@ int AuthoritySession::Frame(double nowMs) { return impl_->Frame(nowMs, input); }
 int AuthoritySession::Frame() { return Frame(Clock::NowMs()); }
 
 void AuthoritySession::Leave() {
-  // A rejoin in the air takes no seat: its insides leave whatever they hold as they go.
+  // A rejoin or a regroup's ask in the air takes no seat: its insides leave whatever they hold as they go.
   rejoin_.reset();
+  regroup_.reset();
   impl_->Leave();
 }
 
@@ -3992,6 +4238,10 @@ AuthorityStatus AuthoritySession::Status() const { return impl_->status; }
 const std::string& AuthoritySession::SessionId() const { return impl_->sid; }
 const std::string& AuthoritySession::RoomId() const { return impl_->roomId; }
 const std::string& AuthoritySession::Url() const { return impl_->url; }
+std::string AuthoritySession::Region() const {
+  const AuthorityOptions& o = impl_->options;
+  return regions::RegionOf(regions::Normalize(o.regions, o.urls), impl_->url);
+}
 const std::string& AuthoritySession::Code() const { return impl_->roomId; }
 std::string AuthoritySession::MatchKey() const {
   const authority_wire::AuthorityRoomState* st = impl_->State();

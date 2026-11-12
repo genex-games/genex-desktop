@@ -4,6 +4,19 @@ All notable changes to `com.genex.multiplayer`. Versions follow [semantic versio
 
 ## Unreleased
 
+- **A player alone in a room regroups (PROTOCOL.md §17.1 *Regrouping*).** Two players who start at the same moment in two regions each
+  find no room and each open one, and *Finding players* never ran again for them. While a player is alone in a pool room, the session now
+  asks the regions listed before its own (nearest first, within `MaxPingMs` of the join's probe) for a room that already has players,
+  after 2, 4, 9, 15 and then every 30 s, and moves the seat there: the game keeps its `GenexAuthoritySession`, `Rejoined` is raised with
+  the new `Moved` property set, and the room it was alone in is left. Never for a private room, a join by code, an explicit `Url`, a pinned
+  `Region`, the rule `Nearest` or a game that sets the new option `Regroup = false`. Held to the new `regroup` and `regroups` vectors and
+  to the `regroup` scenario of `authority-edge.ts`. Behaviour change: a pool player alone in a room now moves, once, when another region has players.
+- **A join by code walks on after HTTP 500 (PROTOCOL.md §17.2 *Join by code*).** A region that holds no such room answers Colyseus's 522,
+  which the deployed servers send as HTTP 500 with 522 in the body; the walk stopped at the first region asked. It now goes on after 421, 522 and
+  500 (the client reports 522 when the body says so, else the status 500); held to the new `walks` rows of `room-key.json`.
+- **A region picker needs no join.** `GenexAuthority.MeasureRegions(options)` probes the regions as a join does and answers each region's
+  name and latency in list order (`GenexRegionPing`; no answer: null), and `GenexAuthoritySession.Region` names the region of the seat.
+  Both work on every platform, WebGL included.
 - **Finding players across regions (PROTOCOL.md §17.1 *Finding players*).** Each authority region is its own matchmaking pool, and a
   join used to enter the nearest one, so players in different regions never met. A pool join (not a join by code, a private
   create, a rejoin or an explicit `Url`) now asks the regions within `GenexAuthorityOptions.MaxPingMs` (350) for a room that

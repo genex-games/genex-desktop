@@ -76,6 +76,20 @@ enum class EGenexStatus : uint8
 	Closed,
 };
 
+/** One authority region as a region picker shows it (PROTOCOL.md §17.1 *Regrouping*): its name and its round trip. */
+USTRUCT(BlueprintType)
+struct GENEXMULTIPLAYER_API FGenexRegionPing
+{
+	GENERATED_BODY()
+
+	/** The region's name in the sign-in answer's regions (a Urls entry is its own name). */
+	UPROPERTY(BlueprintReadOnly, Category = "Genex") FString Region;
+	/** The probe's best round trip, ms; 0 when the region did not answer. */
+	UPROPERTY(BlueprintReadOnly, Category = "Genex") float PingMs = 0.f;
+	/** The region answered the probe (false: no answer, or the only region, which is not probed). */
+	UPROPERTY(BlueprintReadOnly, Category = "Genex") bool bAnswered = false;
+};
+
 /** One seat in a relay room. */
 USTRUCT(BlueprintType)
 struct GENEXMULTIPLAYER_API FGenexPlayer

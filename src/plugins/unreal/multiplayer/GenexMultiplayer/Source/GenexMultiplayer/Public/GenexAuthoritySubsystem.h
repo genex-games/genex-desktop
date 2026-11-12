@@ -26,7 +26,7 @@
 
 #include "GenexAuthoritySubsystem.generated.h"
 
-namespace genex { class AuthoritySession; class FirstpersonWorld; }
+namespace genex { class AuthoritySession; class AuthorityRegionMeter; class FirstpersonWorld; }
 class FGenexAuthorityPumpHook;
 class UGenexCollisionWorld;
 
@@ -54,6 +54,12 @@ struct GENEXMULTIPLAYER_API FGenexAuthorityOptions
 	/** The one region to play in, by its name in the sign-in answer's regions (a player's own choice; a Urls entry is
 	 *  its own name): no other is joined or created in. Empty, or a name the cluster does not have, is no pin. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Genex|Regions") FString Region;
+	/** Regrouping (PROTOCOL.md §17.1 *Regrouping*), on by default: while the player is alone in a pool room, the regions
+	 *  listed before the seat's own (in reach) are asked after 2, 4, 9, 15 and then every 30 s for a room that has
+	 *  players, and the seat moves there: On Rejoined fires (Was Moved true inside it) and the old room is left. Two players who
+	 *  started at the same moment in two regions meet this way. A private room, a join by code, Url, a pinned Region
+	 *  and the rule Nearest never regroup. False keeps the player where they are. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Genex|Regions") bool bRegroup = true;
 	/** Predict your own entity with the room's preset (off: draw it from the server's state). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Genex") bool bPredict = true;
 	/** Predict a predicting physics room's bodies near you with the plugin's physics core (PROTOCOL.md
@@ -182,6 +188,13 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Genex|Authority") FGenexAuthorityTelemetry GetTelemetry() const;
 	/** Smoothed round trip (ms), or -1 before the first. */
 	UFUNCTION(BlueprintPure, Category = "Genex|Authority") double GetRtt() const;
+	/** Read it inside an On Rejoined handler: true while On Rejoined is raised for a move (PROTOCOL.md §17.1
+	 *  *Regrouping*: no room was lost; the player was alone and now sits in a room that has players), false for a lost
+	 *  room's rejoin and at any other time. */
+	UFUNCTION(BlueprintPure, Category = "Genex|Authority") bool WasMoved() const { return bRaisingMove; }
+	/** The region the seat is in (PROTOCOL.md §17.1 *Regrouping*): the name of the region whose urls hold the seat's
+	 *  server url (a Urls entry is its own name); "" before a server is picked or for a server no region lists. */
+	UFUNCTION(BlueprintPure, Category = "Genex|Authority") FString GetRegion() const;
 	/** The newest transport line: names the transport (`udp`, `websocket`) and why (PROTOCOL.md §17.12). Empty until it is known. */
 	UFUNCTION(BlueprintPure, Category = "Genex|Authority") FString GetTransportLine() const;
 
@@ -249,10 +262,19 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "Genex|Authority") FGenexAuthorityDrainingSignature OnDraining;
 	/** The room is gone and the seat is on its way back. Say so; there is nothing to do. */
 	UPROPERTY(BlueprintAssignable, Category = "Genex|Authority") FGenexAuthorityReconnectingSignature OnRejoining;
-	/** Back in play: a new seat in a new room. */
+	/** Back in play: a new seat in a new room. Read Was Moved inside the handler to tell a move (§17.1 *Regrouping*)
+	 *  from a lost room's rejoin. */
 	UPROPERTY(BlueprintAssignable, Category = "Genex|Authority") FGenexAuthorityRejoinedSignature OnRejoined;
 	/** An event the room module emitted (server:restart included). */
 	UPROPERTY(BlueprintAssignable, Category = "Genex|Authority") FGenexAuthorityEventSignature OnEvent;
+
+	/**
+	 * C++: what a region picker shows (PROTOCOL.md §17.1 *Regrouping*), with no join: the regions a Join would use
+	 * (Urls, each its own region; empty, the sign-in answer's regions) probed as a join probes them, and Done called
+	 * once, from a later frame, with each region's latency in list order. Nobody signed in and no Urls: Done with
+	 * none. The answer comes only while the returned meter is held.
+	 */
+	TSharedPtr<genex::AuthorityRegionMeter> MeasureRegions(const TArray<FString>& Urls, TFunction<void(const TArray<FGenexRegionPing>&)> Done) const;
 
 	/** C++: the room module's rules for the next Join (and every one after it, until set again). */
 	void SetPredictionRules(FGenexPredictionRules Rules) { PredictionRules = MoveTemp(Rules); }
@@ -296,6 +318,8 @@ private:
 	FGenexAuthorityInput Staged;
 	/** A PredictProjectile's FireButtons wait for the next input sent. */
 	bool bFirePending = false;
+	/** On Rejoined is being raised for a move (WasMoved). */
+	bool bRaisingMove = false;
 	EGenexStatus Status = EGenexStatus::Idle;
 	FString LastError;
 	uint32 JoinGeneration = 0;

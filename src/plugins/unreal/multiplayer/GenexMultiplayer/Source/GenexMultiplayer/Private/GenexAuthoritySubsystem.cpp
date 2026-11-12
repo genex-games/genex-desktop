@@ -243,6 +243,8 @@ void UGenexAuthoritySubsystem::StartSession(const FGenexAuthorityOptions& Option
 	Core.regionRule = Options.RegionRule == EGenexRegionRule::Nearest ? genex::regions::RegionRule::Nearest : genex::regions::RegionRule::Players;
 	Core.maxPingMs = static_cast<double>(Options.MaxPingMs);
 	Core.region = Utf8(Options.Region);
+	// §17.1 *Regrouping*: a player alone in a pool room moves to one that has players, unless the game says not to.
+	Core.regroup = Options.bRegroup;
 	Core.gameId = Utf8(Options.GameId.IsEmpty() ? Settings->Slug : Options.GameId);
 	Core.matchKey = Utf8(Options.MatchKey);
 	Core.name = Utf8(Options.Name);
@@ -388,7 +390,14 @@ void UGenexAuthoritySubsystem::DispatchEvents()
 		case T::ServerRestart: break; // also delivered as a Message (server:restart)
 		case T::Draining: OnDraining.Broadcast(E.ms < 0.0 ? -1.0f : static_cast<float>(E.ms / 1000.0)); break;
 		case T::Rejoining: Status = EGenexStatus::Reconnecting; OnRejoining.Broadcast(E.attempt, E.code); break;
-		case T::Rejoined: Status = EGenexStatus::Connected; OnRejoined.Broadcast(GenexAuthorityDetail::Str(Session->SessionId())); break;
+		case T::Rejoined:
+		{
+			Status = EGenexStatus::Connected;
+			// Read by a handler through WasMoved, so a binding of the delegate keeps its one parameter.
+			TGuardValue<bool> Moving(bRaisingMove, E.moved);
+			OnRejoined.Broadcast(GenexAuthorityDetail::Str(Session->SessionId()));
+			break;
+		}
 		case T::Message: OnEvent.Broadcast(GenexAuthorityDetail::Str(E.name), GenexUnrealJson::ToText(E.data)); break;
 		case T::Warning: OnError.Broadcast(E.code, GenexAuthorityDetail::Str(E.message)); break;
 		default: break;
@@ -401,6 +410,34 @@ bool UGenexAuthoritySubsystem::IsConnected() const { return Session && Session->
 FString UGenexAuthoritySubsystem::GetSessionId() const { return Session ? GenexAuthorityDetail::Str(Session->SessionId()) : FString(); }
 int32 UGenexAuthoritySubsystem::GetTick() const { return Session ? static_cast<int32>(Session->Tick()) : 0; }
 double UGenexAuthoritySubsystem::GetRtt() const { return Session && Session->Rtt() > 0 ? Session->Rtt() : -1.0; }
+
+FString UGenexAuthoritySubsystem::GetRegion() const { return Session ? GenexAuthorityDetail::Str(Session->Region()) : FString(); }
+
+TSharedPtr<genex::AuthorityRegionMeter> UGenexAuthoritySubsystem::MeasureRegions(const TArray<FString>& Urls, TFunction<void(const TArray<FGenexRegionPing>&)> Done) const
+{
+	std::vector<genex::regions::Region> Regions;
+	std::vector<std::string> Flat;
+	for (const FString& U : Urls) Flat.push_back(GenexUnrealJson::Utf8(U));
+	// The regions a Join would read (StartSession): the sign-in answer's, with its urls, when the game names none.
+	const UGenexIdentitySubsystem* Identity = GetGameInstance() ? GetGameInstance()->GetSubsystem<UGenexIdentitySubsystem>() : nullptr;
+	if (Urls.Num() == 0 && Identity && Identity->Core())
+	{
+		Regions = Identity->Core()->AuthorityRegions();
+		for (const FString& U : Identity->GetAuthorityUrls()) Flat.push_back(GenexUnrealJson::Utf8(U));
+	}
+	return MakeShared<genex::AuthorityRegionMeter>(Regions, Flat, [Done = MoveTemp(Done)](const std::vector<genex::regions::RegionPing>& Pings) {
+		TArray<FGenexRegionPing> Out;
+		for (const genex::regions::RegionPing& P : Pings)
+		{
+			FGenexRegionPing Row;
+			Row.Region = GenexAuthorityDetail::Str(P.region);
+			Row.bAnswered = P.pingMs.has_value();
+			Row.PingMs = P.pingMs.has_value() ? static_cast<float>(*P.pingMs) : 0.f;
+			Out.Add(MoveTemp(Row));
+		}
+		if (Done) Done(Out);
+	});
+}
 
 FString UGenexAuthoritySubsystem::GetTransportLine() const { return Session ? FString(UTF8_TO_TCHAR(Session->TransportLine().c_str())) : FString(); }
 
