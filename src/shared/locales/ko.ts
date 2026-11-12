@@ -939,6 +939,7 @@ export default {
   Copied: "복사했어요",
   "Copied.": "복사했어요.",
   Copy: "복사",
+  "Copy Image": "이미지 복사",
   "Copy and change {title}’s project to make their own game.":
     "{title}의 프로젝트를 복사하고 바꿔서 자기 게임을 만들기.",
   "Copy command": "명령어 복사",

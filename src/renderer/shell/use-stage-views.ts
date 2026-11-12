@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { recheckChatFiles } from "../chat-files.ts";
-import { OPEN_BESIDE_EVENT, OPEN_FILE_EVENT, type BesideTarget, type OpenFileRequest } from "../open-beside.ts";
+import {
+  type BesideFile,
+  type BesideTarget,
+  OPEN_BESIDE_EVENT,
+  OPEN_FILE_EVENT,
+  type OpenFileRequest,
+  opensAsPicture,
+} from "../open-beside.ts";
 import { hostPlatform } from "../platform.ts";
 import { noteStageSwitch } from "../analytics/workspace-trackers.ts";
 import { StageSwitchVia } from "../analytics/workspace-vocabulary.ts";
@@ -10,19 +17,28 @@ import type { Studio } from "../state/studio.ts";
 import { notifyProblem } from "../state/toasts.ts";
 import { chatFileWords } from "../words.ts";
 
-type Beside = { threadId: string; target: BesideTarget; returnTo: StageView };
+type Beside = { threadId: string; target: BesideFile; returnTo: StageView };
+/** A picture over the window, from the chat it was opened in. */
+type Picture = { threadId: string; target: BesideTarget };
 
 /**
- * A file or image opened from the chat is a tab of that chat's game until it is closed; closing
- * it returns the stage to the view it came from.
+ * A picture opened from the chat shows over the window until it is closed, and the stage stays
+ * as it was. Any other file is a tab of that chat's game until it is closed; closing it returns
+ * the stage to the view it came from.
  */
 function useBeside(app: Studio, chooseStageView: (view: StageView) => void) {
   const [beside, setBeside] = useState<Beside | null>(null);
+  const [picture, setPicture] = useState<Picture | null>(null);
   useEffect(() => {
     const open = (event: Event): void => {
       const target = (event as CustomEvent<BesideTarget>).detail;
       const threadId = app.threads.getState().activeThreadId;
       if (!target || !threadId) return;
+      if (opensAsPicture(target)) {
+        setPicture({ threadId, target });
+        return;
+      }
+      if (target.kind !== "file") return;
       const now = app.layout.getState().stageView;
       const from = now === StageView.File ? StageView.Live : now;
       setBeside((current) => ({
@@ -44,7 +60,8 @@ function useBeside(app: Studio, chooseStageView: (view: StageView) => void) {
     noteStageSwitch(StageSwitchVia.FileClosed);
     chooseStageView(returnTo);
   }, [chooseStageView]);
-  return { beside, closeBeside };
+  const closePicture = useCallback(() => setPicture(null), []);
+  return { beside, closeBeside, picture, closePicture };
 }
 
 /**
@@ -79,10 +96,10 @@ export function useStageViews(app: Studio) {
     [app],
   );
   const showLive = useCallback(() => chooseStageView(StageView.Live), [chooseStageView]);
-  const { beside, closeBeside } = useBeside(app, chooseStageView);
+  const { beside, closeBeside, picture, closePicture } = useBeside(app, chooseStageView);
   return useMemo(
-    () => ({ chooseStageView, showLive, beside, closeBeside }),
-    [chooseStageView, showLive, beside, closeBeside],
+    () => ({ chooseStageView, showLive, beside, closeBeside, picture, closePicture }),
+    [chooseStageView, showLive, beside, closeBeside, picture, closePicture],
   );
 }
 

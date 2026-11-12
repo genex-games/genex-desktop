@@ -279,7 +279,8 @@ empty, never-welcomed profile first shows the welcome (`onboarding/`), which fad
 Launches open home (`Room.Home`). Its first message runs `launchGame` (`state/launch.ts`):
 `studio:game.name` names the game (`main/core/game-naming.ts`), `createGame` makes it, its chat
 sends the message (`chat/use-launch-handover.ts`). Fixtures open their game from the sidebar. The bell (`notifications.ts`, `NotificationsMenu.tsx`, `studio:notify`, `studio:badge`) and
-file tabs beside the chat (`open-beside.ts`, `FileViewer.tsx`, `main/game-file.ts`) are specified in
+file tabs beside the chat and the pictures it opens over the window (`open-beside.ts`,
+`FileViewer.tsx`, `PictureLightbox.tsx`, `main/game-file.ts`) are specified in
 the [feature map](feature-map.md). A file a chat names links once main confirms it
 (`renderer/chat-files.ts`, `main/chat-files.ts`); programs are only shown.
 

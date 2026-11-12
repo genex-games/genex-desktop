@@ -10,7 +10,7 @@
  */
 import { ObserverLive, PREVIEW_OBSERVER } from "../../../shared/observers.ts";
 import { type LiveView, liveViewLabel, type LivePlugin } from "../../live-views.ts";
-import { type BesideTarget, besideName } from "../../open-beside.ts";
+import { type BesideFile, besideName } from "../../open-beside.ts";
 import { StageView } from "../../stage.ts";
 import type { IconName } from "../../ui/icons.tsx";
 import { STAGE_WORDS } from "../../words.ts";
@@ -92,15 +92,13 @@ export function stageTabs({
   hasBuilds: boolean;
   buildsLive: boolean;
   hasShop?: boolean;
-  beside: BesideTarget | null;
+  beside: BesideFile | null;
 }): StageTab[] {
   const builds: StageTab[] = hasBuilds
     ? [{ key: StageView.Builds, label: `${STAGE_WORDS.tabs.builds}${buildsLive ? " ●" : ""}` }]
     : [];
   const shop: StageTab[] = hasShop ? [{ key: StageView.Shop, label: STAGE_WORDS.tabs.shop }] : [];
-  const file: StageTab[] = beside
-    ? [{ key: StageView.File, label: shortName(besideName(beside)), icon: beside.kind === "image" ? "image" : "file" }]
-    : [];
+  const file: StageTab[] = beside ? [{ key: StageView.File, label: shortName(besideName(beside)), icon: "file" }] : [];
   return [
     ...liveTabs(views, plugins),
     ...builds,

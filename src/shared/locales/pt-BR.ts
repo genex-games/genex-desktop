@@ -1011,6 +1011,7 @@ export default {
   Copied: "Copiado",
   "Copied.": "Copiado.",
   Copy: "Copiar",
+  "Copy Image": "Copiar imagem",
   "Copy and change {title}’s project to make their own game.":
     "Copiar e mudar o projeto de {title} para fazer o próprio jogo.",
   "Copy command": "Copiar comando",

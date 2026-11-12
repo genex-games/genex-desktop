@@ -826,6 +826,7 @@ export const MESSAGES = [
   "Copied",
   "Copied.",
   "Copy",
+  "Copy Image",
   "Copy and change {title}’s project to make their own game.",
   "Copy command",
   "Copy diagnostics",

@@ -37,7 +37,7 @@ import {
   workerThreadsOf,
 } from "../build-progress.ts";
 import { RunState } from "../../shared/run-state.ts";
-import type { BesideTarget } from "../open-beside.ts";
+import type { BesideFile } from "../open-beside.ts";
 import { OPEN_BUILD_EVENT } from "../open-build.ts";
 import { replyAbout } from "../reply-about.ts";
 import { type RunGraph as RunGraphModel, runBuilding, runIdOf } from "../run-graph.ts";
@@ -116,7 +116,7 @@ interface Props {
   visible: boolean;
   sidebarOverlay: boolean;
   /** A file or image opened from the chat: a fourth tab until it is closed. */
-  beside?: BesideTarget | null;
+  beside?: BesideFile | null;
   onCloseBeside?: () => void;
 }
 
@@ -546,7 +546,7 @@ function StageContents({
   runGraph: RunGraphModel | null;
   view: StageContentsView;
   showSetup: boolean;
-  beside: BesideTarget | null;
+  beside: BesideFile | null;
   /** The chat's builds as the Builds bar's tabs, and the one on show. */
   tabs: BuildTabs;
   onView: (view: StageView) => void;
@@ -776,7 +776,7 @@ function useStageSurface({
   visible: boolean;
   /** The stage's run inputs, and the game on the stage as the studio describes it. */
   stage: Omit<Parameters<typeof useStageRun>[0], "buildsVisible"> & { game: GameKind | null };
-  beside: BesideTarget | null;
+  beside: BesideFile | null;
   liveView: ObserverLive;
   pending: boolean;
   live: ReturnType<typeof useLiveLoad>;

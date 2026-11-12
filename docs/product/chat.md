@@ -3,8 +3,8 @@
 ## What the user sees
 
 One conversation per game. User messages are right-aligned bubbles, images above or alone; long
-ones fold with Show more. Any existing file the chat names is a link: game Markdown and
-images open beside it, others in their app (programs only shown). Only the prompt bar sends.
+ones fold with Show more. Any existing file the chat names is a link: Markdown opens beside
+it, pictures pop up, others in their app (programs only shown). Only the prompt bar sends.
 Dropped pictures stay pictures; other files become links. @ tags (max 5): local games read-only,
 Genex ones in `.studio/refs/`, assets `src/assets/`.
 

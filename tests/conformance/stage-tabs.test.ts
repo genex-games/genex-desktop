@@ -44,11 +44,6 @@ describe("the stage strip's tabs", () => {
       label: "main.js",
       icon: "file",
     });
-    assert.deepEqual(beside({ kind: "image", name: "hero.png", src: "data:," }), {
-      key: "file",
-      label: "hero.png",
-      icon: "image",
-    });
     assert.deepEqual(beside({ kind: "file", path: "a-very-long-file-name-that-keeps-going.js" }), {
       key: "file",
       label: "a-very-long-fi…s-going.js",

@@ -29,6 +29,7 @@ import {
   openModeFor,
 } from "../../src/main/chat-files.ts";
 import { fileLinkTitle, fileNameOfPath, linkifyHtml } from "../../src/renderer/ui/file-links.ts";
+import { opensAsPicture } from "../../src/renderer/open-beside.ts";
 import { markdownHtml } from "../../src/renderer/ui/markdown-html.ts";
 import { toEntries } from "../../src/renderer/chat-entries.ts";
 import type { EventData, EventEnvelope } from "../../src/substrate/types.ts";
@@ -143,6 +144,11 @@ test("the hover text says what a click does and where the file is, in the platfo
   assert.equal(
     fileLinkTitle({ open: "beside", path: "docs/DESIGN.md" }, "docs/DESIGN.md", "darwin"),
     "Opens beside the chat",
+  );
+  assert.equal(
+    fileLinkTitle({ open: "beside", path: "art/hero.png" }, "art/hero.png", "darwin"),
+    "Open image",
+    "a picture opens over the window, not beside the chat",
   );
   assert.equal(
     fileLinkTitle({ open: "app", path: "~/AI Games/rift/src/game.js" }, "src/game.js", "darwin"),
@@ -552,4 +558,16 @@ test("a file a person's message carries shows by its own name; a short name is l
   assert.equal(fileNameOfPath("C:\\Users\\me\\notes.txt"), "notes.txt");
   assert.equal(fileNameOfPath("src/game.js"), null);
   assert.equal(fileNameOfPath("notes.txt"), null);
+});
+
+test("a picture the chat opens shows over the window; a document opens beside the chat", () => {
+  const pictures = [
+    { kind: "image", name: "Image 1", src: "data:image/png;base64,AA==" },
+    { kind: "file", path: "screenshots/play-1.png" },
+    { kind: "file", path: "art/Hero.JPEG" },
+    { kind: "file", path: "ui/icon.svg" },
+  ] as const;
+  for (const target of pictures) assert.equal(opensAsPicture(target), true, JSON.stringify(target));
+  for (const path of ["docs/DESIGN.md", "notes.markdown", "src/game.js", "README"])
+    assert.equal(opensAsPicture({ kind: "file", path }), false, path);
 });

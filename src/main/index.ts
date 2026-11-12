@@ -260,6 +260,7 @@ import { PLUGIN_PANEL_CSP } from "./plugin-panel-csp.ts";
 import { HttpStatus, textResponse } from "./page-serve.ts";
 import { applyMainLanguage, pageLanguageArguments, systemLanguages } from "./language.ts";
 import { appMenuTemplate } from "./app-menu.ts";
+import { contextMenuTemplate } from "./context-menu.ts";
 import { intlLocale, t } from "../shared/i18n.ts";
 import { matchLocale, SYSTEM_LANGUAGE } from "../shared/locale.ts";
 import { GamePreview, registerGameScheme } from "./preview.ts";
@@ -1159,6 +1160,7 @@ async function createWindow(studio: StudioCore): Promise<BrowserWindow> {
   attachPreviews(studio, win);
   attachPlay(studio, win);
   collectRendererConsole(win);
+  offerContextMenu(win);
   keepLinksOutside(studio, win);
   holdPluginStartsAtSessionEnd(studio, win);
   if (dev) {
@@ -1916,6 +1918,14 @@ function collectRendererConsole(win: BrowserWindow): void {
     if (rendererConsole.length > RENDERER_CONSOLE_MAX) rendererConsole.shift();
     if (details.level === "error")
       studioLog.write("renderer", `${details.message} (${details.sourceId}:${details.lineNumber})`);
+  });
+}
+
+/** A right-click opens the window's menu for what it landed on: Copy Image, or a field's editing items. */
+function offerContextMenu(win: BrowserWindow): void {
+  win.webContents.on("context-menu", (_event, params) => {
+    const template = contextMenuTemplate(params, win.webContents);
+    if (template.length) Menu.buildFromTemplate(template).popup({ window: win });
   });
 }
 

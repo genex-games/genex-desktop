@@ -3,7 +3,7 @@
  * are tested without React (`PreviewPanel` reads them each render).
  */
 import { ObserverLive } from "../../../shared/observers.ts";
-import type { BesideTarget } from "../../open-beside.ts";
+import type { BesideFile } from "../../open-beside.ts";
 import type { RunGraph as RunGraphModel } from "../../run-graph.ts";
 import { StageView } from "../../stage.ts";
 import type { LiveLoad } from "./live-load.ts";
@@ -41,7 +41,7 @@ export function stageHas({
   project,
   shop,
 }: {
-  beside: BesideTarget | null;
+  beside: BesideFile | null;
   graph: RunGraphModel | null;
   planning: boolean;
   project: string | null;
@@ -68,7 +68,7 @@ export function stageFlags({
   shop = false,
 }: {
   view: StageView;
-  beside: BesideTarget | null;
+  beside: BesideFile | null;
   graph: RunGraphModel | null;
   planning: boolean;
   project: string | null;

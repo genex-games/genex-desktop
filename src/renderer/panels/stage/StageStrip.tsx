@@ -9,7 +9,7 @@ import { t } from "../../../shared/i18n.ts";
 import type { PluginInfo } from "../../../shared/plugins.ts";
 import type { FactRef } from "../../../shared/project-facts.ts";
 import type { LiveView } from "../../live-views.ts";
-import type { BesideTarget } from "../../open-beside.ts";
+import type { BesideFile } from "../../open-beside.ts";
 import type { LiveBehind, StageView } from "../../stage.ts";
 import type { GameProject } from "../../types.ts";
 import { cn } from "../../ui/cn.ts";
@@ -342,7 +342,7 @@ export function StageStrip({
   /** The game sells something: Shop joins the tabs. */
   hasShop: boolean;
   buildsLive: boolean;
-  beside: BesideTarget | null;
+  beside: BesideFile | null;
   stageView: StageView;
   /** Live's views of the folder (`liveViewsFor`) and the one shown: more than one gets a tab each. */
   live: { views: readonly LiveView[]; shown: LiveView };

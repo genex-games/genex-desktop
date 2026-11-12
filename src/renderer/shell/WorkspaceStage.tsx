@@ -2,6 +2,7 @@ import type { ComponentProps, JSX } from "react";
 import { memo } from "react";
 import { t } from "../../shared/i18n.ts";
 import { BootstrapGate } from "../panels/BootstrapGate.tsx";
+import { PictureLightbox } from "../panels/PictureLightbox.tsx";
 import { ReviewPanel } from "../panels/ReviewPanel.tsx";
 import {
   useEngines,
@@ -37,7 +38,7 @@ export const WorkspaceStage = memo(function WorkspaceStage({
   const underRemix = useCoveredByRemix();
   const covered = underHome || underRemix;
   const stageVisible = room === Room.Build && !chrome.workspaceCovered && !welcoming && !covered;
-  const { beside } = views;
+  const { beside, picture } = views;
   return (
     <div className="relative min-h-0 min-w-0">
       <div
@@ -85,6 +86,14 @@ export const WorkspaceStage = memo(function WorkspaceStage({
             }}
           />
         </div>
+      )}
+      {picture && (
+        <PictureLightbox
+          threadId={picture.threadId}
+          target={picture.target}
+          onClose={views.closePicture}
+          onNotice={app.notify}
+        />
       )}
     </div>
   );
