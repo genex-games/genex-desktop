@@ -30,7 +30,7 @@ export const RESUME_RUN = "resume_run";
 const RESUME_RUN_TOOL: StudioToolSpec = {
   name: RESUME_RUN,
   description:
-    "Go on with this chat's paused build and its completed work; you lead it again once your reply ends. Any work on this game beyond a quick fix goes on in it (more of the game, a change, the person's answer to your question, new guidance after Stop) instead of in your reply or a new build. Supply what to do as text, say in a line that you go on, and end your reply.",
+    "Go on with this chat's paused build and its completed work; you lead it again once your reply ends. Work toward its goal goes on in it (more of it, a change to it, the person's answer to your question, new guidance after Stop) instead of in your reply or a new build. When the person asks for something narrower or different (a question, a look, one step, another stage of their project), do that instead, and the build stays paused. Supply what to do as text, say in a line that you go on, and end your reply.",
   parameters: {
     type: "object",
     properties: {

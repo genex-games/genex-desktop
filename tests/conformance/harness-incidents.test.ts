@@ -819,12 +819,9 @@ describe("a change after a paused build (stale-pause)", () => {
     // whole making of the game now, so any work on it beyond a quick fix goes on in it.
     assert.match(words, /Go on with this chat's paused build/);
     assert.doesNotMatch(words, /new instruction after a stop is a request to continue/i);
-    // Flipped: "A question or a quick fix needs no build" repeated what "beyond a quick fix" says.
-    assert.match(
-      words,
-      /Any work on this game beyond a quick fix goes on in it/,
-      "a question or a quick fix needs none",
-    );
+    // Flipped (SC-3): "Any work on this game beyond a quick fix" went on in the paused build, so a
+    // narrower ask resumed a drive to a finished game; only work toward its goal goes on in it.
+    assert.match(words, /Work toward its goal[^.]*goes on in it/, "its goal's work goes on in it");
   });
 });
 
@@ -1434,8 +1431,11 @@ describe("the chat's agent decides when a Loop starts (always-launch)", () => {
     const { startAutopilot } = await import("../../src/harness-seed/loop/start-autopilot.ts");
     const { afterLoopRunGrant } = await import("../../src/harness-seed/loop/after-loop-run.ts");
     const start = String(startAutopilot.description);
-    assert.match(start, /whole making of this game/, "what a build is");
-    assert.match(start, /as soon as you set to making the game/, "when one starts: as the work begins");
+    // Flipped (SC-2): a build was "the whole making of this game", and a scoped ask (a blockout, Fab
+    // picks) became a drive to a finished build; it is the work toward the goal the person set.
+    assert.match(start, /toward the goal the person set/, "what a build is");
+    assert.doesNotMatch(start, /whole making of this game/);
+    assert.match(start, /as soon as you set to making a game/, "when one starts: as the work begins");
     assert.match(start, /instead of doing that work in your reply/, "never built in the reply instead");
     assert.match(start, /paused build[^.]*resume_run/, "a paused build goes on");
     // Flipped: "a new build only when one is needed" said again what going on with a paused one says.
@@ -1450,12 +1450,74 @@ describe("the chat's agent decides when a Loop starts (always-launch)", () => {
       inPlace: true,
     };
     const resume = afterLoopRunGrant(paused).interviewTools?.find((tool) => tool.name === "resume_run");
+    // Flipped (SC-3): "any work on this game" went on in the paused build; work toward its goal does.
     assert.match(
       String(resume?.description),
-      /Any work on this game[^.]*goes on in it/,
-      "work on the game goes on in it",
+      /Work toward its goal[^.]*goes on in it/,
+      "its goal's work goes on in it",
     );
     assert.doesNotMatch(String(resume?.description), /when the user asks to go on/, "not only on an ask to resume");
+  });
+});
+
+/**
+ * DeathWish: an imported Unreal 5.9 game whose HANDOFF.md said pre-production (blockout, layout
+ * feedback, picking Fab assets). The person asked to go on with the blockout and pick Fab assets;
+ * the chat started a build of "the whole making of this game", drove it toward a shipped build, and
+ * ended its turn with "When the build is ready, … walk through the blockout yourself and tell me what
+ * you think of the layout".
+ */
+describe("a scoped ask on a project in pre-production (DeathWish)", () => {
+  it("SC-1. the chat's context said nothing of scope or of the project's own plan: it does what the latest message asks at the project's stage, reads a HANDOFF.md as the plan, and checks its work itself", async () => {
+    const { chatContext } = await import("../../src/harness-seed/loop/chat-session.ts");
+    const context = chatContext({ folderLabel: "Unreal Projects/DeathWishGameJam2026", appLanguage: null });
+    assert.match(context, /Do what the person's latest message asks, at the stage their project is in/);
+    assert.match(context, /HANDOFF\.md[^.]*are the plan/, "a project's own notes are the plan");
+    assert.match(
+      context,
+      /Build, package, publish or take the whole game to a finished version only when the person asks/,
+    );
+    assert.match(context, /Check what you were asked to do with your own tools before you report it/);
+    assert.match(context, /never instead of it/, "the person's opinion comes beside the agent's own look");
+  });
+
+  it("SC-2. the Loop's start made every change beyond a quick fix the whole making of the game: a build does only what the person asked at their project's stage, and a quick game is still a build", async () => {
+    const { startAutopilot } = await import("../../src/harness-seed/loop/start-autopilot.ts");
+    const start = String(startAutopilot.description);
+    assert.match(start, /does only what the person asked, at the stage their project is in/);
+    assert.match(start, /packaging, publishing or finishing the whole game are its goal only when they ask for that/);
+    assert.match(start, /choice the person makes \(assets to pick, a layout to review\)[^.]*needs no build/);
+    assert.match(start, /as soon as you set to making a game/, "a person who asks for a game still gets a build");
+    const goal = String((startAutopilot.parameters as Json).properties.goal.description);
+    assert.match(goal, /at the stage the project is in/);
+    assert.match(goal, /no packaging, publishing or finished game unless they asked/);
+  });
+
+  it("SC-3. after a paused build, any work on the game resumed it: work toward its goal does, and a narrower or different ask leaves it paused", async () => {
+    const { afterLoopRunGrant } = await import("../../src/harness-seed/loop/after-loop-run.ts");
+    const paused = {
+      runId: "r1",
+      state: "paused",
+      engine: "claude-code",
+      onLeadEngine: true,
+      model: null,
+      inPlace: true,
+    };
+    const resume = afterLoopRunGrant(paused).interviewTools?.find((tool) => tool.name === "resume_run");
+    const words = String(resume?.description);
+    assert.doesNotMatch(words, /Any work on this game/);
+    assert.match(words, /something narrower or different[^.]*do that instead, and the build stays paused/);
+  });
+
+  it("SC-4. the Loop's lead read its goal with nothing about its bounds: the goal is all of the Loop's work", async () => {
+    const { LOOP_WORDS } = await import("../../src/harness-seed/loop/director/wake-prompts.ts");
+    for (const line of [LOOP_WORDS.started("Block out the lobby"), LOOP_WORDS.resumed("Block out the lobby")]) {
+      assert.match(line, /Its goal: Block out the lobby/);
+      assert.match(
+        line,
+        /That goal is all of this Loop's work: add none the person didn't ask for, and finish once it is reached\./,
+      );
+    }
   });
 });
 

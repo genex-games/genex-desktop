@@ -193,8 +193,11 @@ text for the chat's whole life, the lead's turns included (`director.ts` `seatTh
 session keeps the system text it started with (Claude Code 2.1.314 until a compaction, `codex exec
 resume`), so it holds only what no turn changes: Genex's identity (`appIdentity`,
 `loop/project-prompts.ts`: the folder, that Genex shows a web game in Live and what a Genex plugin
-is, never what the folder holds), that the person may not be a programmer, the language rule and
-the chat's Run button. What the folder holds is the session's to see: a game's own `CLAUDE.md` names
+is, never what the folder holds), that the person may not be a programmer, the language rule,
+whose plan the work follows (what the latest message asks, at the stage the project is in; a
+project's own notes such as a `HANDOFF.md` are the plan; building, packaging, publishing or a
+finished game only when asked), that the agent checks its own work before it reports it, and the
+chat's Run button. What the folder holds is the session's to see: a game's own `CLAUDE.md` names
 the build Genex runs before every preview, and a plugin's guidance says how its kind is built and
 linked; a turn that changes the kind tells the session in Genex's line (`factsReadyNotice`). The Loop's start,
 workers, the checkpoint, the kind tools, `start_web_game` and `plugins_find` are tools, never
@@ -857,8 +860,8 @@ A Loop has no clock of Genex's own, one rule for every Loop (`director/wake.ts`,
 `afterTurn`): no time limit of Genex's ends a turn, wakes the lead or closes the run, and a lead's turn
 is delegated with no `timeoutMs`. Only a time the person asked for counts (below). The lead's `finish` ends it. A lead turn that ends with nothing at work
 (no worker's run, no running job of the run: `hasWorkAtHand`) and
-nothing to wake it for pauses it, as a bare agent's turn ends and waits for the person: a build is the
-whole making of the game, so their next word goes on with it (`director.ts` `closeLeftOpen`; the
+nothing to wake it for pauses it, as a bare agent's turn ends and waits for the person: their next
+word that asks for more of its goal goes on with it (`director.ts` `closeLeftOpen`; the
 chat's own session holds `resume_run`). Its last message is the summary, with no wrap-up turn after
 it, and the pause says so ("the lead's turn ended with nothing at work"). With
 workers or jobs at work the lead rests, and Genex wakes it when one ends. The run's jobs are read at
@@ -965,10 +968,13 @@ closed `handleRunStart` starts it on the same game with the run's engine, model 
 launch from the chat would (`next-loop.ts`); a Stop pressed since starts nothing. Outside a run, the
 chat's own turn holds the Loop's start on the person's words (`loop/start-autopilot.ts`,
 `delegated-turn.ts` `launches`), after a run it led too, finished or paused. Its description says what
-a build is, the whole making of the game, and when one starts: as the agent sets to making the game
-or a change beyond a quick fix, instead of doing that work in its reply; a paused build is gone on
-with (`resume_run`), and a new one starts only when needed (the last one finished, or the person
-starts over). The agent decides, and every Loop it starts goes until its lead finishes it, paused
+a build is, work toward the goal the person set, and when one starts: as the agent sets to making a
+game or a change of many steps the person asked for, instead of doing that work in its reply. A build
+does only what was asked, at the stage the project is in (packaging, publishing or a finished game
+only when asked), and a question, a look, a choice the person makes or a quick fix needs none. A
+paused build is gone on with (`resume_run`) for more of its goal, and a new one starts only when
+needed (the last one finished, or the person starts over). The lead's first line says its goal is
+all of the Loop's work (`director/wake-prompts.ts`). The agent decides, and every Loop it starts goes until its lead finishes it, paused
 whenever a turn ends with nothing at work.
 
 Worker plugin approvals are recorded in the run owner's conversation, resolved from host

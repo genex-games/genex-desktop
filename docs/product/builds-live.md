@@ -2,8 +2,8 @@
 
 ## From a request to a game
 
-No mode to set: the agent answers and makes quick fixes itself; making the game is a build (a
-Loop): a paused one goes on, a new one starts only when needed. The chat
+No mode to set: the agent answers and makes quick fixes itself; a build (a Loop) makes only what's
+asked: a paused one goes on, a new one starts only when needed. The chat
 leads it beside workers [in the game's folder](projects-engines.md#loops-in-place); judges answer
 only when asked. Only its lead or the person ends it; a turn ending idle pauses it. Given a time
 ("work 3h"), its lead works it all first. Acceptance survives restarts. Asked to

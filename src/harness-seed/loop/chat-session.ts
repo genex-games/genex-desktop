@@ -231,6 +231,21 @@ const DO_IT_YOURSELF =
   "Do every step you can yourself rather than handing it to the person. When you have the desktop tool (computer control), you open and use any app on this computer, a launcher, a store, an installer and an engine's editor included, and where they are signed in already, content tied to their account (Fab, Epic's launcher, an asset store) is yours to add. Your tools start, stop and restart what the work needs. Only a password or two-step code, the system's own permission prompts, a payment, a choice about their own work, and a step in an app when you have no desktop tool are theirs: never tell them anything else is something only they can do.";
 
 /**
+ * Whose plan the work follows: the person's latest words and the stage their project is in. An
+ * imported Unreal game whose HANDOFF.md said blockout and Fab picks was driven toward a shipped
+ * build when the person asked to go on with the blockout and pick assets (DeathWish).
+ */
+const SCOPE =
+  "Do what the person's latest message asks, at the stage their project is in, and nothing beyond it. A project's own notes (a HANDOFF.md, README, TODO or design doc) and the stage the person names (pre-production, a blockout, picking assets) are the plan: in a project you did not make, read them before your first change, and follow them. Build, package, publish or take the whole game to a finished version only when the person asks for that.";
+
+/**
+ * Who checks the work: the agent, with its own tools. The same turn ended "When the build is ready,
+ * … walk through the blockout yourself and tell me what you think of the layout" (DeathWish).
+ */
+const CHECK_IT_YOURSELF =
+  "Check what you were asked to do with your own tools before you report it (look at it, play it, read its output), and say what you checked. Ask for the person's opinion as well as your own look, never instead of it, and never hand them a check you can make.";
+
+/**
  * Whose "no" a tool's answer is. The person's own refusal always says they denied it; an engine's
  * answer to a call Genex cut off (a Stop, a pause, a turn's end) reads as the user's. A lead once read
  * "The user doesn't want to take this action right now" on its own pause, which Genex had cut off, and
@@ -241,8 +256,8 @@ const CUT_OFF_CALLS =
 
 /**
  * Genex's context for the chat's own session, said once in its system text: who runs it and the
- * game's folder (`appIdentity`), who the person is, the language they read, whose steps are whose,
- * whose "no" a tool's answer is and the chat's Run button.
+ * game's folder (`appIdentity`), who the person is, the language they read, whose plan the work
+ * follows, whose steps and checks are whose, whose "no" a tool's answer is and the chat's Run button.
  * Only what holds for the session's whole life, the same text on every turn, the lead's included
  * (director.ts): a resumed Claude Code or Codex session keeps the system text it started with. So
  * what the folder holds, which a turn can change, is never in it: a turn that changes it tells the
@@ -260,7 +275,9 @@ export function chatContext({
     appIdentity({ folderLabel }),
     TALK,
     languageRule(appLanguage),
+    SCOPE,
     DO_IT_YOURSELF,
+    CHECK_IT_YOURSELF,
     CUT_OFF_CALLS,
     RUN_BUTTON,
   ].join("\n");
