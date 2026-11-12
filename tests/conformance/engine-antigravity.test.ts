@@ -35,7 +35,7 @@ import { EngineStatusCode, LoginSource } from "../../src/shared/engine-descripto
 import { EngineFailureKind, StopReason } from "../../src/shared/engine-requests.ts";
 import { PermissionMode, permissionModesFor } from "../../src/shared/permissions.ts";
 import { EngineId, isBeta, isMetered, loginKind } from "../../src/shared/providers.ts";
-import { ProcessSandbox } from "../../src/substrate/spawn.ts";
+import { ProcessSandbox, SandboxMachService } from "../../src/substrate/spawn.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 const FIXTURES = path.join(import.meta.dirname, "..", "fixtures", "transcripts");
@@ -502,6 +502,33 @@ describe("Antigravity's box", () => {
     });
     assert.deepEqual(sandbox.writableRoots, ["/games/pong", "/games/.git/worktrees/pong"]);
     assert.deepEqual(sandbox.secretPaths, ["/studio/secrets"]);
+    assert.deepEqual(sandbox.machServices, [SandboxMachService.Trust]);
+  });
+
+  it("on a Mac its sandbox alone may ask the system's certificate checker, and no sandbox opens any other service", async () => {
+    const root = await tmpDir("antigravity-box-");
+    const box = (machServices: string[] | undefined, platform: NodeJS.Platform) =>
+      ProcessSandbox.create({
+        writableRoots: [root],
+        scratchDir: path.join(root, "scratch"),
+        secretPaths: [],
+        enabled: false,
+        platform,
+        ...(machServices ? { machServices } : {}),
+      });
+    const lookups = async (machServices: string[] | undefined, platform: NodeJS.Platform) => {
+      const sandbox = await box(machServices, platform);
+      return sandbox.toRuntimeConfig(sandbox.policy).network.allowMachLookup;
+    };
+    assert.deepEqual(await lookups(["com.apple.trustd.agent"], "darwin"), ["com.apple.trustd.agent"]);
+    assert.deepEqual(
+      await lookups(["com.apple.trustd.agent", "com.apple.SecurityServer", "*", "com.apple.*"], "darwin"),
+      ["com.apple.trustd.agent"],
+      "a service the table does not list is never opened",
+    );
+    assert.equal(await lookups(undefined, "darwin"), undefined, "every other sandbox opens none");
+    assert.equal(await lookups(["*"], "darwin"), undefined);
+    assert.equal(await lookups(["com.apple.trustd.agent"], "linux"), undefined, "a Mac's services are a Mac's");
   });
 
   it("its process keeps Antigravity's and Gemini's own variables and no other vendor's or any key", () => {

@@ -12,7 +12,17 @@ import { mkdir, readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { EngineStatusCode } from "../../src/shared/engine-descriptor.ts";
-import { AntigravityEngine } from "../../src/substrate/engines/antigravity.ts";
+import { EngineId } from "../../src/shared/providers.ts";
+import { childEnv } from "../../src/substrate/child-env.ts";
+import { antigravityHome } from "../../src/substrate/credential-homes.ts";
+import {
+  AntigravityEngine,
+  type AntigravityInvocation,
+  type AntigravityProcess,
+  antigravityProcess,
+} from "../../src/substrate/engines/antigravity.ts";
+import { resolveCodingCli } from "../../src/substrate/engines/external-cli.ts";
+import { ProcessSandbox, type SandboxOptions } from "../../src/substrate/spawn.ts";
 import { type DelegateEvent, DelegateEventType } from "../../src/substrate/engines/types.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
@@ -23,6 +33,33 @@ const TURN_TIMEOUT_MS = 240_000;
 const SMALL_MODEL = "gemini-3.8-flash-low";
 /** What the build is asked to write in its folder, and outside it. */
 const PROOF = { file: "antigravity-proof.txt", text: "ok" } as const;
+
+/** The session's sandbox as shipped, and with each of its two openings taken away. */
+const BOXES: ReadonlyArray<[string, (shipped: SandboxOptions) => SandboxOptions]> = [
+  ["as shipped", (shipped) => shipped],
+  ["without the Keychain's files", (shipped) => ({ ...shipped, ownHome: [antigravityHome()] })],
+  ["without the certificate service", (shipped) => ({ ...shipped, machServices: [] })],
+];
+/** What the CLI's own words may show in a report: nothing as long as a token. */
+const redact = (words: string) => words.replace(/[\w.~+/=-]{24,}/g, "…").slice(-600);
+
+/** Start the real CLI as the engine does, in a sandbox `box` has changed; what it says on stderr goes to `said`. */
+function startIn(box: (shipped: SandboxOptions) => SandboxOptions, said: string[]) {
+  return async (invocation: AntigravityInvocation): Promise<AntigravityProcess> => {
+    const cli = await resolveCodingCli(EngineId.Antigravity);
+    assert.ok(cli.status.path, `no agy CLI found: ${cli.status.state}`);
+    const sandbox = await ProcessSandbox.create(box(invocation.sandbox));
+    const env = childEnv(cli.env, { base: "contractor", vendor: "antigravity" });
+    const set = Object.fromEntries(
+      Object.entries(env).filter((pair): pair is [string, string] => pair[1] !== undefined),
+    );
+    const agent = await antigravityProcess(sandbox, cli.status.path, { ...invocation, env: set }, () =>
+      sandbox.dispose().catch(() => {}),
+    );
+    void agent.exited.then(({ stderr }) => said.push(stderr));
+    return agent;
+  };
+}
 
 describe("Antigravity's real CLI in the real sandbox", { skip: !LIVE && "STUDIO_ANTIGRAVITY_CLI_TESTS=1" }, () => {
   async function engineAndGame() {
@@ -42,6 +79,19 @@ describe("Antigravity's real CLI in the real sandbox", { skip: !LIVE && "STUDIO_
     const models = await engine.models();
     assert.ok(models.length > 0, "the plan lists a model");
     console.log(`antigravity live: ${status.detail}; models: ${models.map((model) => model.id).join(", ")}`);
+  });
+
+  it("says which of the sandbox's two openings the sign-in needs", async () => {
+    for (const [name, box] of BOXES) {
+      const { game } = await engineAndGame();
+      const said: string[] = [];
+      const engine = new AntigravityEngine({
+        scratchRoot: path.join(game, "..", "scratch"),
+        startFn: startIn(box, said),
+      });
+      const status = await engine.status();
+      console.log(`antigravity live: ${name}: ${status.code}; stderr: ${redact(said.join(" ").trim()) || "(none)"}`);
+    }
   });
 
   it("builds in the game's folder, and cannot write the folder beside it", {

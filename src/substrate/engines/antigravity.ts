@@ -70,7 +70,7 @@ import {
 } from "./types.ts";
 import { abortControllerFor, CompletionStop, interruption, partialDelegateResult, STOPPED_BY_USER } from "./common.ts";
 import type { PartialDelegateState } from "./common.ts";
-import { ProcessSandbox, type SandboxOptions, shellQuote } from "../spawn.ts";
+import { ProcessSandbox, type SandboxOptions, SandboxMachService, shellQuote } from "../spawn.ts";
 import { childEnv } from "../child-env.ts";
 import { antigravityHomes, credentialHomes } from "../credential-homes.ts";
 import { killProcessTree } from "../process-tree.ts";
@@ -812,6 +812,9 @@ export function antigravitySandbox(input: {
     secretPaths: input.secretPaths,
     // Antigravity's settings and conversations, and where its sign-in is kept: its own in this sandbox alone.
     ownHome: antigravityHomes(),
+    // The CLI is a Go program: on a Mac it verifies each HTTPS certificate through the system's
+    // checker, and with that unreachable it cannot renew its sign-in and answers "sign in".
+    machServices: [SandboxMachService.Trust],
     // A game's own Antigravity hooks, plugins and MCP servers are never the session's to plant.
     denyWrite: [path.join(input.gameDir, ".agents")],
     ...(input.toolPath ? { toolPath: input.toolPath } : {}),

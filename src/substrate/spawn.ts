@@ -134,6 +134,8 @@ export interface SandboxPolicy {
   allowRead: string[];
   denyRead: string[];
   denyWrite: string[];
+  /** macOS: the system services, beyond sandbox-runtime's own list, a process here may look up. */
+  machServices?: string[];
 }
 
 export interface RunRequest {
@@ -210,6 +212,11 @@ export interface SandboxOptions {
    * denies it and a secret path or another CLI's home named here stays denied.
    */
   ownHome?: readonly string[];
+  /**
+   * macOS: system services the one CLI that runs inside this sandbox needs beyond sandbox-runtime's
+   * own list. Only a name in `SandboxMachService` is opened; any other is dropped.
+   */
+  machServices?: readonly string[];
   /** Set false only in unit tests that assert the fallback path. */
   enabled?: boolean;
   /**
@@ -582,6 +589,26 @@ export function claudeFoldersIn(folders: readonly string[]): string[] {
 }
 
 /**
+ * The macOS system services a sandbox may be given on top of sandbox-runtime's own list. A value is
+ * the service's own name: never rename one.
+ */
+export const SandboxMachService = {
+  /**
+   * The certificate checker. A Go program (Antigravity's CLI) verifies every HTTPS certificate
+   * through it, so without it none of its connections opens. sandbox-runtime leaves it out by
+   * default because a process can pass data out through the lookups it asks trustd to make.
+   */
+  Trust: "com.apple.trustd.agent",
+} as const;
+export type SandboxMachService = (typeof SandboxMachService)[keyof typeof SandboxMachService];
+
+/** The named services a sandbox may open: the listed ones alone. */
+function ownMachServices(named: readonly string[] = []): string[] {
+  const known: readonly string[] = Object.values(SandboxMachService);
+  return [...new Set(named.filter((name) => known.includes(name)))];
+}
+
+/**
  * The named homes a sandbox may exempt: exactly the sign-in home of a CLI that runs inside the
  * studio's sandbox, never a secret path, another CLI's home, a parent folder or a relative path.
  */
@@ -640,6 +667,7 @@ export class ProcessSandbox {
         ...options.secretPaths,
         ...(options.denyWrite ?? []),
       ],
+      machServices: ownMachServices(options.machServices),
     };
     const sandbox = new ProcessSandbox(policy, options.enabled ?? true, scratchDir, platform);
     sandbox.#toolPath = options.toolPath ?? null;
@@ -899,6 +927,9 @@ export class ProcessSandbox {
         // Windows: loopback is the install's, machine-wide, and Genex installs it closed (commands
         // reach the sandbox's proxies only); srt-win refuses a session or command that asks otherwise.
         allowLocalBinding: this.#platform !== StudioPlatform.Windows && policy.allowLocalBinding,
+        ...(this.#platform === StudioPlatform.Mac && policy.machServices?.length
+          ? { allowMachLookup: policy.machServices }
+          : {}),
       },
       filesystem: {
         allowWrite: policy.allowWrite,
