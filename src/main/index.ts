@@ -786,7 +786,12 @@ const { codexLogin, claudeLogin, openCodeLogin, grokLogin, cursorLogin, antigrav
     pushUiEvent({ type: UiEvent.EnginesChanged, payload: { engine: EngineId.Cursor } });
   },
   onAntigravitySignedIn: async () => {
-    if (core?.engines.has(EngineId.Antigravity)) await core.engines.get(EngineId.Antigravity).refreshModels?.(true);
+    // A check that fails (offline, a CLI that hangs) still tells the row to read the engine again.
+    if (core?.engines.has(EngineId.Antigravity))
+      await core.engines
+        .get(EngineId.Antigravity)
+        .refreshModels?.(true)
+        .catch(() => {});
     pushUiEvent({ type: UiEvent.EnginesChanged, payload: { engine: EngineId.Antigravity } });
   },
   showCodexState: (state) => {

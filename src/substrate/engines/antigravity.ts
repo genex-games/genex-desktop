@@ -41,7 +41,10 @@ import {
   AntigravityAccess,
   type AntigravitySession,
   type AntigravityTier,
+  type Json,
   parseAntigravitySession,
+  record,
+  text,
 } from "./antigravity-cli.ts";
 import {
   type AntigravityStream,
@@ -97,6 +100,10 @@ const PROBE_TIMEOUT_MS = 30 * SECOND_MS;
 const GIT_PROBE_TIMEOUT_MS = 5 * SECOND_MS;
 /** How long a judge's one-shot answer may take before it is a timeout. */
 const COMPLETE_TIMEOUT_MS = 15 * MINUTE_MS;
+/** How long a failed sign-in check (offline, a CLI that hangs) stands before the CLI is asked again. */
+const PROBE_RETRY_MS = 15 * SECOND_MS;
+/** How long the CLI gets to exit by itself once its turn is answered and its input is closed. */
+export const ANTIGRAVITY_EXIT_GRACE_MS = 2 * SECOND_MS;
 /** How long a stopped session gets to exit politely before its whole tree is killed. */
 const KILL_GRACE_MS = 3 * SECOND_MS;
 /** How long a cancelled turn gets to answer its prompt (`cancelled`) before the CLI is stopped. */
@@ -161,13 +168,6 @@ const MESSAGE = {
 
 /** The log's record of a session opening, as every engine's mirror spells it (`shared/context.ts` reads it). */
 const SESSION_OPENED = "init";
-
-type Json = Record<string, unknown>;
-
-const record = (value: unknown): Json =>
-  value && typeof value === "object" && !Array.isArray(value) ? (value as Json) : {};
-
-const text = (value: unknown): string => (typeof value === "string" ? value : "");
 
 const count = (value: unknown): number =>
   typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0;
@@ -301,7 +301,10 @@ export class AntigravityEngine implements Engine {
   /** The last sign-in check, and when it was made: `status()` runs often and each check starts the CLI. */
   #signIn: SignIn | null = null;
   /** The check in flight, shared by every caller that asks meanwhile. */
-  #checking: Promise<SignIn> | null = null;
+  #checking: { asked: number; check: Promise<SignIn> } | null = null;
+  /** Counts the sign-ins and sign-outs Genex knows of: a check answers for the count it started at. */
+  #asked = 0;
+  #probeFailed: { at: number; error: unknown } | null = null;
 
   constructor(options: AntigravityEngineOptions = {}) {
     this.#scratchRoot = options.scratchRoot ?? path.join(os.tmpdir(), `studio-${EngineId.Antigravity}`);
@@ -362,7 +365,7 @@ export class AntigravityEngine implements Engine {
    * check asks. A forced refresh follows a sign-in, so the account is asked again.
    */
   async refreshModels(force = false): Promise<void> {
-    if (force) this.#signIn = null;
+    if (force) this.forgetSignIn();
     const cli = await this.#resolveCli();
     if (cli.ready) await this.#account(cli);
   }
@@ -379,16 +382,39 @@ export class AntigravityEngine implements Engine {
   async #account(cli: AntigravityCli): Promise<SignIn> {
     const known = this.#signIn;
     if (known && this.#now() - known.at < SIGN_IN_FRESH_MS) return known;
-    this.#checking ??= this.#probe(cli).finally(() => {
-      this.#checking = null;
-    });
-    return this.#checking;
+    const failed = this.#probeFailed;
+    if (failed && this.#now() - failed.at < PROBE_RETRY_MS) throw failed.error;
+    // A check that started before a sign-in or a sign-out answers for the account as it was: it
+    // is left to finish, and a new one is asked.
+    const asked = this.#asked;
+    const running = this.#checking;
+    if (running?.asked === asked) return running.check;
+    const check = this.#probe(cli).then(
+      (signIn) => this.#checked(asked, signIn),
+      (error: unknown) => {
+        if (asked === this.#asked) this.#probeFailed = { at: this.#now(), error };
+        throw error;
+      },
+    );
+    const checking = { asked, check };
+    this.#checking = checking;
+    const done = () => {
+      if (this.#checking === checking) this.#checking = null;
+    };
+    check.then(done, done);
+    return check;
+  }
+
+  /** A finished check's answer is kept only when nothing changed the sign-in while it ran. */
+  #checked(asked: number, signIn: SignIn): SignIn {
+    if (asked === this.#asked) this.#signIn = signIn;
+    return signIn;
   }
 
   async #probe(cli: AntigravityCli): Promise<SignIn> {
     const scratch = await this.#scratch("probe-");
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
+    const untimed = this.#schedule(() => controller.abort(), PROBE_TIMEOUT_MS);
     let session: AntigravitySession | null = null;
     try {
       const invocation = await this.#invocation(
@@ -402,7 +428,7 @@ export class AntigravityEngine implements Engine {
       const failed = failure(err);
       if (failed.kind !== EngineFailureKind.Auth) throw failed;
     } finally {
-      clearTimeout(timer);
+      untimed();
       await rm(scratch, { recursive: true, force: true }).catch(() => {});
     }
     const opened = session as AntigravitySession | null;
@@ -414,13 +440,14 @@ export class AntigravityEngine implements Engine {
         true,
       );
     else this.#catalog.invalidate();
-    this.#signIn = { at: this.#now(), signedIn: opened !== null, ...(opened?.tier ? { tier: opened.tier } : {}) };
-    return this.#signIn;
+    return { at: this.#now(), signedIn: opened !== null, ...(opened?.tier ? { tier: opened.tier } : {}) };
   }
 
   /** A sign-in or a sign-out happened outside a check: the next status asks the CLI again. */
   forgetSignIn(): void {
+    this.#asked += 1;
     this.#signIn = null;
+    this.#probeFailed = null;
     this.#catalog.invalidate();
   }
 
@@ -479,7 +506,7 @@ export class AntigravityEngine implements Engine {
     const controller = abortControllerFor(request.signal);
     const ceiling = request.timeoutMs ?? COMPLETE_TIMEOUT_MS;
     let timedOut = false;
-    const timer = setTimeout(() => {
+    const untimed = this.#schedule(() => {
       timedOut = true;
       controller.abort();
     }, ceiling);
@@ -499,7 +526,7 @@ export class AntigravityEngine implements Engine {
     } catch (err) {
       throw stopped() ?? failure(err);
     } finally {
-      clearTimeout(timer);
+      untimed();
     }
     const stop = stopped();
     if (stop) throw stop;
@@ -646,8 +673,9 @@ export function failure(err: unknown): EngineError {
   const message = err instanceof Error ? err.message : String(err);
   if (err instanceof AcpError && err.code === AcpErrorCode.AuthRequired)
     return new EngineError(EngineFailureKind.Auth, EngineId.Antigravity, MESSAGE.SignInFailed);
-  const said = err instanceof AcpError ? `${message} ${JSON.stringify(err.data ?? "")}` : message;
-  const kind = googleFailure(said);
+  // Only the agent's own error names a Google status: a CLI's exit carries its log, where a word
+  // in capitals says nothing about the turn.
+  const kind = err instanceof AcpError ? googleFailure(`${message} ${JSON.stringify(err.data ?? "")}`) : null;
   return new EngineError(kind ?? EngineFailureKind.Other, EngineId.Antigravity, message);
 }
 
@@ -702,7 +730,7 @@ export async function runTurn(
       clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
       clientInfo: ANTIGRAVITY_CLIENT,
     });
-    const session = parseAntigravitySession(await connection.request(...sessionRequest(plan)));
+    const session = parseAntigravitySession(await connection.request(...sessionRequest(plan)), plan.resume);
     sessionId = session.sessionId;
     hooks.onSession(session);
     if (!plan.prompt.length) return null;
@@ -716,7 +744,11 @@ export async function runTurn(
     watch.end();
     agent.end();
     connection.close();
+    // A CLI that keeps its output open (it ignores its input closing, or something it started
+    // holds the pipe) is stopped: nothing else is left that could end the wait.
+    const unstopped = hooks.schedule(() => agent.stop(), ANTIGRAVITY_EXIT_GRACE_MS);
     await reading.catch(() => {});
+    unstopped();
   }
 }
 

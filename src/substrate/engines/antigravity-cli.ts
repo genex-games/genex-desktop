@@ -75,21 +75,26 @@ const MESSAGE = {
   Malformed: () => t("Antigravity's model list could not be read."),
 } as const;
 
-type Json = Record<string, unknown>;
+/** One JSON object of the protocol. */
+export type Json = Record<string, unknown>;
 
-const record = (value: unknown): Json =>
+/** A value as a JSON object: anything else reads as an empty one. */
+export const record = (value: unknown): Json =>
   value && typeof value === "object" && !Array.isArray(value) ? (value as Json) : {};
 
-const text = (value: unknown): string => (typeof value === "string" ? value : "");
+/** A value as text: anything else reads as none. */
+export const text = (value: unknown): string => (typeof value === "string" ? value : "");
 
 /**
  * The answer to `session/new` or `session/load`: the session's id, the models the account can run
  * (`models.availableModels`, the ids `session/set_model` takes; the one the session starts on is
- * the provider's default) and the account's plan. An answer with no session id is refused.
+ * the provider's default) and the account's plan. A loaded session's answer need not repeat its id
+ * (ACP's `session/load` answer carries none), so the id it was loaded by stands in; an answer with
+ * no session id at all is refused.
  */
-export function parseAntigravitySession(result: unknown): AntigravitySession {
+export function parseAntigravitySession(result: unknown, loaded = ""): AntigravitySession {
   const body = record(result);
-  const sessionId = text(body.sessionId);
+  const sessionId = text(body.sessionId) || loaded;
   if (!sessionId) throw new CatalogError(ModelCatalogProblemCode.Malformed, MESSAGE.Malformed());
   const models = record(body.models);
   const current = text(models.currentModelId);

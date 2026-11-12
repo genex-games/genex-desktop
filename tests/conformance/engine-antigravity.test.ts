@@ -16,6 +16,7 @@ import { setImmediate } from "node:timers/promises";
 import { AcpErrorCode, AcpMethod } from "../../src/substrate/engines/acp.ts";
 import {
   ANTIGRAVITY_CANCEL_GRACE_MS,
+  ANTIGRAVITY_EXIT_GRACE_MS,
   ANTIGRAVITY_STALL_MS,
   ANTIGRAVITY_TOOL_STALL_MS,
   AntigravityEngine,
@@ -68,6 +69,8 @@ interface Script {
   session?: (message: Json, agent: Scripted) => SessionAnswer | Promise<SessionAnswer>;
   /** Run the prompt: say things, then give its answer (or none, to stay quiet). */
   prompt?: (message: Json, agent: Scripted) => Json | null | Promise<Json | null>;
+  /** The CLI keeps its output open after its input is closed: only a stop ends it. */
+  lingers?: boolean;
 }
 
 /** One scripted `agy acp`: what the studio sent it, and the ways a script speaks and leaves. */
@@ -136,7 +139,9 @@ async function engineWith(script: Script = {}, options: { schedule?: Antigravity
         }
       })(),
       exited,
-      end: () => close(0),
+      end: () => {
+        if (!script.lingers) close(0);
+      },
       stop: () => {
         agent.stopped = true;
         close(null);
@@ -348,6 +353,16 @@ describe("an Antigravity build", () => {
     assert.equal(result.sessionId, "s-1");
   });
 
+  it("a loaded session whose answer repeats no id keeps the id it was loaded by", async () => {
+    // ACP's `session/load` answer carries no session id: only `session/new` gives one.
+    const { engine, agents } = await engineWith({ session: () => ({ result: {} }) });
+    const result = await engine.delegate({ cwd: await game(), prompt: "And then?", resume: "s-1" });
+    assert.equal(result.stopReason, StopReason.Completed);
+    assert.equal(result.sessionId, "s-1");
+    const prompt = agents[0]?.received.find((message) => message.method === AcpMethod.SessionPrompt);
+    assert.equal((prompt?.params as Json).sessionId, "s-1");
+  });
+
   it("sends the prompt's pictures as pictures, and a judge's question from an empty folder with no tools", async () => {
     const { engine, agents } = await engineWith({
       prompt: (_message, agent) => {
@@ -436,6 +451,58 @@ describe("an Antigravity turn that stops or fails", () => {
     assert.match(result.errorText ?? "", /said nothing for 30 min/);
   });
 
+  it("a sign-in during a check is not answered by that check, and a check that failed is not repeated at once", async () => {
+    let signedIn = false;
+    let release: () => void = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let now = 0;
+    const { engine, agents } = await engineWith(
+      {
+        session: async () => {
+          if (signedIn) return {};
+          await held;
+          return refusal();
+        },
+      },
+      { now: () => now },
+    );
+    const before = engine.status();
+    while (!methods(agents[0]).includes(AcpMethod.SessionNew)) await setImmediate();
+    signedIn = true;
+    const after = engine.refreshModels(true);
+    release();
+    assert.equal((await before).code, EngineStatusCode.NeedsLogin, "the check that started signed out");
+    await after;
+    assert.equal((await engine.status()).code, EngineStatusCode.Ready, "its answer did not replace the sign-in's");
+    assert.equal(agents.length, 2);
+
+    const offline = await engineWith(
+      { session: () => ({ result: undefined, error: { code: AcpErrorCode.Internal, message: "no network" } }) },
+      { now: () => now },
+    );
+    await assert.rejects(offline.engine.refreshModels());
+    await assert.rejects(offline.engine.refreshModels());
+    assert.equal(offline.agents.length, 1, "the failure stands for a while");
+    now += 20_000;
+    await assert.rejects(offline.engine.refreshModels());
+    assert.equal(offline.agents.length, 2, "then the CLI is asked again");
+    await assert.rejects(offline.engine.refreshModels(true));
+    assert.equal(offline.agents.length, 3, "and a sign-in asks at once");
+  });
+
+  it("a CLI that keeps its output open after the turn is stopped, so the turn still ends", async () => {
+    const clock = heldClock();
+    const { engine, agents } = await engineWith({ lingers: true }, { schedule: clock.schedule });
+    const turn = engine.delegate({ cwd: await game(), prompt: "go" });
+    while (!clock.pending().includes(ANTIGRAVITY_EXIT_GRACE_MS)) await setImmediate();
+    assert.equal(agents[0]?.stopped, false);
+    clock.fire(ANTIGRAVITY_EXIT_GRACE_MS);
+    assert.equal((await turn).stopReason, StopReason.Completed);
+    assert.equal(agents[0]?.stopped, true);
+  });
+
   it("a signed-out session is a sign-in failure, and the next status asks the CLI again", async () => {
     let signedIn = true;
     const { engine, agents } = await engineWith({ session: async () => (signedIn ? {} : refusal()) });
@@ -454,6 +521,11 @@ describe("an Antigravity turn that stops or fails", () => {
     assert.equal(googleFailure("rpc error: code = UNAVAILABLE"), EngineFailureKind.Unavailable);
     assert.equal(googleFailure("You have run out of quota"), null, "words alone decide nothing");
     assert.equal(failure(new Error("boom")).kind, EngineFailureKind.Other);
+    assert.equal(
+      failure(new Error("agy exited: INTERNAL log line, UNAUTHENTICATED in a tool's output")).kind,
+      EngineFailureKind.Other,
+      "a CLI's log names no status",
+    );
 
     const { engine } = await engineWith({
       prompt: (message, agent) => {

@@ -16,6 +16,7 @@
  */
 import { ChatActivityPhase } from "../../shared/chat-activity.ts";
 import { AcpToolKind, AcpToolStatus, AcpUpdate } from "./acp.ts";
+import { type Json, record, text } from "./antigravity-cli.ts";
 import { clip } from "./common.ts";
 import type { MirroredEvent } from "./opencode-events.ts";
 import { studioToolName } from "./studio-tool-prompts.ts";
@@ -74,13 +75,6 @@ export interface AntigravityStream {
 export function antigravityStream(): AntigravityStream {
   return { stretch: 0, words: "", thought: "", started: new Set(), ended: new Set() };
 }
-
-type Json = Record<string, unknown>;
-
-const record = (value: unknown): Json =>
-  value && typeof value === "object" && !Array.isArray(value) ? (value as Json) : {};
-
-const text = (value: unknown): string => (typeof value === "string" ? value : "");
 
 /** One `session/update`'s `update`, translated; nothing for a kind the studio does not read. */
 export function translateAntigravityUpdate(update: Json, stream: AntigravityStream): AntigravityTranslated {
