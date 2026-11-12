@@ -90,6 +90,7 @@ const TERMINAL_SIGN_INS: Partial<Record<TerminalKind, EngineId>> = {
   [TerminalKind.OpenCodeLogin]: EngineId.OpenCode,
   [TerminalKind.GrokLogin]: EngineId.Grok,
   [TerminalKind.CursorLogin]: EngineId.Cursor,
+  [TerminalKind.AntigravityLogin]: EngineId.Antigravity,
 };
 
 /** How each provider's sign-in starts. */
@@ -100,6 +101,7 @@ const SIGN_IN_METHODS: Partial<Record<string, SignInMethod>> = {
   [EngineId.OpenCode]: SignInMethod.TerminalTui,
   [EngineId.Grok]: SignInMethod.TerminalTui,
   [EngineId.Cursor]: SignInMethod.TerminalTui,
+  [EngineId.Antigravity]: SignInMethod.TerminalTui,
 };
 
 /** How a download that did not finish ended, by the installer's last phase. */

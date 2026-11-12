@@ -293,6 +293,12 @@ function loginFixture(
         return { started: true };
       },
     },
+    antigravityLogin: {
+      start: async () => {
+        started.push("antigravity");
+        return { started: true };
+      },
+    },
     cursorLogin: {
       start: async () => {
         started.push("cursor");

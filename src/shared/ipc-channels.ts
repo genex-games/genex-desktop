@@ -159,6 +159,7 @@ export const STUDIO_INVOKE_CHANNELS = {
   "studio:grok.signin": "grokSignIn",
   "studio:cursor.signin": "cursorSignIn",
   "studio:cursor.signout": "cursorSignOut",
+  "studio:antigravity.signin": "antigravitySignIn",
   "studio:openrouter.key.save": "openRouterKeySave",
   "studio:openrouter.key.clear": "openRouterKeyClear",
   "studio:typesafe.key.status": "typeSafeKeyStatus",
@@ -484,6 +485,7 @@ export interface StudioInvokePayloads {
   "studio:grok.signin": undefined;
   "studio:cursor.signin": undefined;
   "studio:cursor.signout": undefined;
+  "studio:antigravity.signin": undefined;
   "studio:openrouter.key.save": { key: string };
   "studio:openrouter.key.clear": undefined;
   "studio:typesafe.key.status": undefined;

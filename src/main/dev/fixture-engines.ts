@@ -38,6 +38,7 @@ const FIXTURE_ENGINES = [
   EngineId.OpenCode,
   EngineId.Grok,
   EngineId.Cursor,
+  EngineId.Antigravity,
   EngineId.Genex,
   EngineId.OpenRouter,
   EngineId.LocalServer,
@@ -58,6 +59,11 @@ const FIXTURE_SERVER: LocalServerInfo = {
 };
 /** Cursor's CLI is not on a fixture session's computer, so the picker's lists stay as they were. */
 const NO_CURSOR: EngineStatus = { code: EngineStatusCode.NotInstalled, detail: "AG-933 fixture; no Cursor CLI" };
+/** Nor is Antigravity's. */
+const NO_ANTIGRAVITY: EngineStatus = {
+  code: EngineStatusCode.NotInstalled,
+  detail: "AG-933 fixture; no Antigravity CLI",
+};
 /**
  * The status each fixture starts with when the session names none: ready, but for the local server,
  * Cursor and Genex, whose account is signed out until `STUDIO_FIXTURE_USAGE_FILE` says otherwise.
@@ -65,6 +71,7 @@ const NO_CURSOR: EngineStatus = { code: EngineStatusCode.NotInstalled, detail: "
 const DEFAULT_STATUS: Partial<Record<string, EngineStatus>> = {
   [EngineId.LocalServer]: NO_LOCAL_SERVER,
   [EngineId.Cursor]: NO_CURSOR,
+  [EngineId.Antigravity]: NO_ANTIGRAVITY,
   [EngineId.Genex]: genexStatus(GenexAccess.SignIn),
 };
 /**
@@ -157,6 +164,7 @@ export const FIRST_LAUNCH_STATUS: Record<string, EngineStatus> = {
   [EngineId.OpenCode]: { code: EngineStatusCode.NotInstalled, detail: "AG-933 fixture; no OpenCode CLI" },
   [EngineId.Grok]: { code: EngineStatusCode.NotInstalled, detail: "AG-933 fixture; no Grok Build CLI" },
   [EngineId.Cursor]: NO_CURSOR,
+  [EngineId.Antigravity]: NO_ANTIGRAVITY,
   [EngineId.OpenRouter]: { code: EngineStatusCode.NeedsLogin, detail: "AG-933 fixture; no OpenRouter key" },
   [EngineId.LocalServer]: NO_LOCAL_SERVER,
 };

@@ -6695,4 +6695,28 @@ export default {
     "Dieses Projekt liegt auf einer anderen Festplatte, also lässt Genex es dort.",
   "This project's folder holds other things too, so Genex leaves it where it is.":
     "Im Ordner dieses Projekts liegt noch anderes, also lässt Genex ihn, wo er ist.",
+  "Antigravity didn't answer. Check the installation, then try again.":
+    "Antigravity hat nicht geantwortet. Prüfe die Installation und versuch es noch mal.",
+  "Antigravity isn't installed on this computer.": "Antigravity ist auf diesem Computer nicht installiert.",
+  "Antigravity sign-in": "Anmeldung bei Antigravity",
+  "Antigravity {version}": "Antigravity {version}",
+  "Antigravity's model list could not be read.": "Die Modellliste von Antigravity konnte nicht gelesen werden.",
+  "Install Antigravity": "Antigravity installieren",
+  "Install Antigravity from Settings › Model Providers.":
+    "Installiere Antigravity unter Einstellungen › Modellanbieter.",
+  "Install Antigravity's CLI to build with your Google AI plan.":
+    "Installiere die CLI von Antigravity, um mit deinem Google-AI-Tarif zu bauen.",
+  "Installing Antigravity. This can take a minute.": "Antigravity wird installiert. Das kann eine Minute dauern.",
+  "Not signed in to Antigravity.": "Nicht bei Antigravity angemeldet.",
+  "Open the sign-in page, then paste the code it gives you here. Antigravity keeps the sign-in.":
+    "Öffne die Anmeldeseite und füge den Code, den sie dir gibt, hier ein. Antigravity behält die Anmeldung.",
+  "Sign in to Antigravity from Settings › Model Providers.":
+    "Melde dich unter Einstellungen › Modellanbieter bei Antigravity an.",
+  "Sign in with your Google account to build with your plan.":
+    "Melde dich mit deinem Google-Konto an, um mit deinem Tarif zu bauen.",
+  "Switch to another Google account": "Zu einem anderen Google-Konto wechseln",
+  "Update Antigravity": "Antigravity aktualisieren",
+  "Uses your Google AI plan": "Nutzt deinen Google-AI-Tarif",
+  "Your Google account has no model Antigravity can run.":
+    "Dein Google-Konto hat kein Modell, das Antigravity ausführen kann.",
 } satisfies LocaleCatalog;

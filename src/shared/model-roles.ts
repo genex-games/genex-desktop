@@ -42,6 +42,7 @@ export const ENGINE_LABELS: Readonly<Record<string, string>> = {
   [EngineId.ClaudeCode]: "Claude Code",
   [EngineId.Codex]: "Codex",
   [EngineId.Cursor]: "Cursor",
+  [EngineId.Antigravity]: "Antigravity",
   [EngineId.Genex]: "Genex",
 };
 
@@ -75,6 +76,7 @@ const SESSION_ENGINES: readonly string[] = [
   EngineId.LocalServer,
   EngineId.Grok,
   EngineId.Cursor,
+  EngineId.Antigravity,
   EngineId.Genex,
 ];
 

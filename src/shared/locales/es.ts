@@ -6629,4 +6629,27 @@ export default {
     "Este proyecto está en otro disco, así que Genex lo deja allí.",
   "This project's folder holds other things too, so Genex leaves it where it is.":
     "La carpeta de este proyecto tiene más cosas, así que Genex la deja donde está.",
+  "Antigravity didn't answer. Check the installation, then try again.":
+    "Antigravity no respondió. Revisa la instalación y vuelve a intentarlo.",
+  "Antigravity isn't installed on this computer.": "Antigravity no está instalado en este equipo.",
+  "Antigravity sign-in": "Inicio de sesión de Antigravity",
+  "Antigravity {version}": "Antigravity {version}",
+  "Antigravity's model list could not be read.": "No se pudo leer la lista de modelos de Antigravity.",
+  "Install Antigravity": "Instalar Antigravity",
+  "Install Antigravity from Settings › Model Providers.": "Instala Antigravity desde Ajustes › Proveedores de modelos.",
+  "Install Antigravity's CLI to build with your Google AI plan.":
+    "Instala la CLI de Antigravity para crear con tu plan de Google AI.",
+  "Installing Antigravity. This can take a minute.": "Instalando Antigravity. Puede tardar un minuto.",
+  "Not signed in to Antigravity.": "No has iniciado sesión en Antigravity.",
+  "Open the sign-in page, then paste the code it gives you here. Antigravity keeps the sign-in.":
+    "Abre la página de inicio de sesión y pega aquí el código que te da. Antigravity guarda el inicio de sesión.",
+  "Sign in to Antigravity from Settings › Model Providers.":
+    "Inicia sesión en Antigravity desde Ajustes › Proveedores de modelos.",
+  "Sign in with your Google account to build with your plan.":
+    "Inicia sesión con tu cuenta de Google para crear con tu plan.",
+  "Switch to another Google account": "Cambiar a otra cuenta de Google",
+  "Update Antigravity": "Actualizar Antigravity",
+  "Uses your Google AI plan": "Usa tu plan de Google AI",
+  "Your Google account has no model Antigravity can run.":
+    "Tu cuenta de Google no tiene ningún modelo que Antigravity pueda ejecutar.",
 } satisfies LocaleCatalog;

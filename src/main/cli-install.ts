@@ -50,6 +50,7 @@ const INSTALLABLE: readonly CodingProvider[] = [
   EngineId.OpenCode,
   EngineId.Grok,
   EngineId.Cursor,
+  EngineId.Antigravity,
 ];
 
 const isInstallable = (value: unknown): value is CodingProvider =>

@@ -51,6 +51,7 @@ export interface LoginIpcDeps {
   openCodeLogin: OpenCodeLogin;
   grokLogin: CliLogin;
   cursorLogin: CliLogin;
+  antigravityLogin: CliLogin;
   /** The Cursor engine, to sign it out; null while none is registered. */
   cursor(): CursorAccount | null;
   subscription(id: string): SubscriptionEngine | null;
@@ -69,6 +70,7 @@ export function registerLoginIpc(
     openCodeLogin,
     grokLogin,
     cursorLogin,
+    antigravityLogin,
     cursor,
     subscription,
     busy,
@@ -140,6 +142,9 @@ export function registerLoginIpc(
     pushUiEvent({ type: UiEvent.EnginesChanged, payload: { engine: EngineId.Cursor } });
     return engine.status();
   });
+
+  // Antigravity's own Google sign-in in its Settings row's terminal: the next session asks the CLI again.
+  handle("studio:antigravity.signin", async () => antigravityLogin.start());
 
   handle("studio:codex-login.state", async () => codexLogin.snapshot());
   handle("studio:codex-login.cancel", async () => {

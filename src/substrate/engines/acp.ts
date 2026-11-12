@@ -20,6 +20,8 @@ export const AcpMethod = {
   SessionPrompt: "session/prompt",
   SessionCancel: "session/cancel",
   SessionSetMode: "session/set_mode",
+  /** Antigravity's own: the session's model, by an id its `models.availableModels` lists. */
+  SessionSetModel: "session/set_model",
   SessionSetConfigOption: "session/set_config_option",
   SessionUpdate: "session/update",
   RequestPermission: "session/request_permission",

@@ -550,6 +550,8 @@ export interface StudioApi {
   cursorSignIn(): Promise<{ started: boolean; missingCli?: boolean }>;
   /** Sign Cursor's CLI out of the account Genex runs on; answers Cursor's status. */
   cursorSignOut(): Promise<import("./engine-descriptor.ts").EngineStatus>;
+  /** Antigravity's own Google sign-in (`agy acp --login`), in a terminal in its Settings row. */
+  antigravitySignIn(): Promise<{ started: boolean; missingCli?: boolean }>;
   /**
    * Check a pasted OpenRouter API key with OpenRouter and keep it in the OS secret store when it is
    * accepted. The answer is OpenRouter's status; the key never comes back.

@@ -85,7 +85,7 @@ interface EnginePermissions {
  * drops its sandbox. OpenRouter's and a local server's tools run in the studio's own session
  * loop, as Bonsai's do.
  * OpenCode (`opencode run`), Grok Build (`grok -p`) and Cursor (`cursor-agent --print`) cannot ask
- * mid-turn: Auto runs them in the studio's sandbox, Plan reads only, and Grok Build's Bypass runs it
+ * mid-turn, and Antigravity (`agy acp`) asks before every tool whatever its mode: Auto runs them in the studio's sandbox, Plan reads only, and Grok Build's Bypass runs it
  * as the person outside that sandbox, as Codex's does. Any other engine (Ollama, whose tools run in the harness, or one added later) keeps its
  * own sandboxed contract, which is Auto.
  */
@@ -117,6 +117,10 @@ const ENGINE_PERMISSIONS: Readonly<Record<string, EnginePermissions>> = {
     withheld: UnavailableModeReason.CannotAsk,
   },
   [EngineId.Cursor]: {
+    modes: [PermissionMode.Auto, PermissionMode.Plan],
+    withheld: UnavailableModeReason.CannotAsk,
+  },
+  [EngineId.Antigravity]: {
     modes: [PermissionMode.Auto, PermissionMode.Plan],
     withheld: UnavailableModeReason.CannotAsk,
   },

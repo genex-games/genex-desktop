@@ -444,6 +444,7 @@ function accountCalls(bridge: BridgeCalls) {
     grokSignIn: () => invoke("studio:grok.signin"),
     cursorSignIn: () => invoke("studio:cursor.signin"),
     cursorSignOut: () => invoke("studio:cursor.signout"),
+    antigravitySignIn: () => invoke("studio:antigravity.signin"),
     openRouterKeySave: (key) => invoke("studio:openrouter.key.save", { key }),
     openRouterKeyClear: () => invoke("studio:openrouter.key.clear"),
     typeSafeKeyStatus: () => invoke("studio:typesafe.key.status"),

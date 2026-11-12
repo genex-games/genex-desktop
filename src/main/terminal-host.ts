@@ -164,6 +164,14 @@ function signal(pid: number, name: NodeJS.Signals): void {
   } catch {}
 }
 
+/** The CLI sign-ins that print the page to sign in on: its link is offered beside the terminal. */
+const SIGN_IN_PAGE_TERMINALS: ReadonlySet<TerminalKind> = new Set([
+  TerminalKind.OpenCodeLogin,
+  TerminalKind.GrokLogin,
+  TerminalKind.CursorLogin,
+  TerminalKind.AntigravityLogin,
+]);
+
 function killShell(shell: Pty.IPty, name: NodeJS.Signals): void {
   try {
     shell.kill(name);
@@ -175,11 +183,7 @@ function startShell(launch: TerminalLaunch): void {
   started = true;
   if (launch.kind === TerminalKind.ClaudeLogin)
     filter = new LoginTerminalOutput((url) => send({ type: HostEventType.Link, url }));
-  if (
-    launch.kind === TerminalKind.OpenCodeLogin ||
-    launch.kind === TerminalKind.GrokLogin ||
-    launch.kind === TerminalKind.CursorLogin
-  )
+  if (SIGN_IN_PAGE_TERMINALS.has(launch.kind))
     links = new LinkScanner((url) => send({ type: HostEventType.Link, url }));
   const shell = pty.spawn(launch.file, launch.args, {
     name: "xterm-256color",

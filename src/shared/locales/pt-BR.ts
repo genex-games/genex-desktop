@@ -6616,4 +6616,28 @@ export default {
     "Este projeto está em outro disco, então o Genex deixa ele lá.",
   "This project's folder holds other things too, so Genex leaves it where it is.":
     "A pasta deste projeto tem outras coisas, então o Genex deixa onde está.",
+  "Antigravity didn't answer. Check the installation, then try again.":
+    "O Antigravity não respondeu. Confira a instalação e tente de novo.",
+  "Antigravity isn't installed on this computer.": "O Antigravity não está instalado neste computador.",
+  "Antigravity sign-in": "Login do Antigravity",
+  "Antigravity {version}": "Antigravity {version}",
+  "Antigravity's model list could not be read.": "Não foi possível ler a lista de modelos do Antigravity.",
+  "Install Antigravity": "Instalar Antigravity",
+  "Install Antigravity from Settings › Model Providers.":
+    "Instale o Antigravity em Configurações › Provedores de modelos.",
+  "Install Antigravity's CLI to build with your Google AI plan.":
+    "Instale a CLI do Antigravity para criar com o seu plano do Google AI.",
+  "Installing Antigravity. This can take a minute.": "Instalando o Antigravity. Isso pode levar um minuto.",
+  "Not signed in to Antigravity.": "Você não entrou no Antigravity.",
+  "Open the sign-in page, then paste the code it gives you here. Antigravity keeps the sign-in.":
+    "Abra a página de login e cole aqui o código que ela mostrar. O Antigravity guarda o login.",
+  "Sign in to Antigravity from Settings › Model Providers.":
+    "Entre no Antigravity em Configurações › Provedores de modelos.",
+  "Sign in with your Google account to build with your plan.":
+    "Entre com a sua conta do Google para criar com o seu plano.",
+  "Switch to another Google account": "Trocar para outra conta do Google",
+  "Update Antigravity": "Atualizar Antigravity",
+  "Uses your Google AI plan": "Usa o seu plano do Google AI",
+  "Your Google account has no model Antigravity can run.":
+    "Sua conta do Google não tem nenhum modelo que o Antigravity consiga rodar.",
 } satisfies LocaleCatalog;
