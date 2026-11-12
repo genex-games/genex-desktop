@@ -798,7 +798,7 @@ export interface ModelCatalogStatus {
 }
 // ↑ src/shared/model-catalog.ts
 
-export type CodingProvider = "codex" | "claude-code" | "opencode" | "grok" | "cursor";
+export type CodingProvider = "codex" | "claude-code" | "opencode" | "grok" | "cursor" | "antigravity";
 // ↑ src/shared/coding-cli.ts
 
 export interface CodingCliStatus {
@@ -827,8 +827,8 @@ export interface EngineAccount {
 /**
  * How a provider signs in: Claude through a piped or embedded terminal plus status polling, Codex
  * through its native login reported from the in-app console, OpenCode through its own `auth login`
- * in the embedded terminal (which keeps every provider it signs in to), Grok Build and Cursor through
- * their own sign-in command there (the person's account, in the browser), `none` for an engine with
+ * in the embedded terminal (which keeps every provider it signs in to), Grok Build, Cursor and Antigravity
+ * through their own sign-in command there (the person's account, in the browser), `none` for an engine with
  * no sign-in of its own (a local model, a local server, or OpenRouter, whose key is pasted in Settings).
  */
 export type LoginKind = "terminal" | "console" | "cli" | "none";
