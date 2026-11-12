@@ -376,8 +376,8 @@ so each turn runs in `ProcessSandbox` with `antigravitySandbox`: the workspace (
 session, Plan or a reviewer runs from a scratch folder) is all it writes, the network is Google's
 hosts (`ANTIGRAVITY_HOSTS`), a game's `.agents` folder is not the session's to write, and inside
 the box every tool call the agent asks about is allowed. Its sandbox alone is given `~/.gemini`
-(its settings and conversations) and, on a Mac, `~/Library/Keychains` (`antigravityHomes`,
-`ownHome`) and the system's certificate checker (`SandboxMachService.Trust`,
+(its settings and conversations) and, on a Mac, `~/Library/Keychains` to read and never to write
+(`antigravityHomes`, `ownHome`, `antigravityKeychain`) and the system's certificate checker (`SandboxMachService.Trust`,
 `com.apple.trustd.agent`, which a Go program verifies every HTTPS certificate through and
 sandbox-runtime leaves closed by default), because without either a signed-in CLI answers "sign
 in"; every other sandbox still denies the folders and opens no extra service. Studio tools reach it through the bridge command, as Codex's do.
@@ -388,8 +388,9 @@ unavailable); anything else ends the build with the CLI's words. Stop sends `ses
 gives the CLI five seconds to answer before it is stopped; a turn that says nothing for 10 minutes
 (30 while a tool call is open) is stopped with its process group. Compact now is refused.
 A live run on a signed-in Mac (CLI 1.5.7, free plan) reads the sign-in, builds in the game and
-cannot write beside it, and shows the sign-in needs both openings: with the Keychain's files or the
-certificate service closed, the CLI answers "sign in". Not yet shown: a plan that has run out, and
+cannot write beside it, continues a session from another folder, and shows the sign-in needs both
+openings: with the Keychain's files or the certificate service closed, the CLI answers "sign in",
+and with the files read-only it works. Not yet shown: a plan that has run out, and
 Windows and Linux (where the sandbox runs as another user or has no Secret Service). Tests: `engine-antigravity.test.ts` and `event-antigravity.test.ts` on
 `tests/fixtures/transcripts/antigravity-*`, recorded from Antigravity CLI 1.5.7.
 `STUDIO_ANTIGRAVITY_CLI_TESTS=1` runs the real, signed-in CLI in the real sandbox
@@ -487,7 +488,7 @@ nothing is `unavailable`, so another engine may take over. Tests: `engine-local-
 against `helpers/fake-local-server.ts`, which speaks each server's dialect.
 
 Residual risk: the CLI must read its sign-ins and its shell tool shares its sandbox, so an OpenCode
-session can read OpenCode's own `auth.json` (and a Cursor session Cursor's, and on a Mac an Antigravity session the Keychain's files, whose items macOS still guards one by one), and its commands can reach the provider host the session
+session can read OpenCode's own `auth.json` (and a Cursor session Cursor's, and on a Mac an Antigravity session the Keychain's files: macOS guards each item by its own access list, but an item another command-line tool saved through `/usr/bin/security` trusts that program, which a command in the session can start (the sandbox cannot keep a program it may not read from starting), so such a sign-in is within a misled session's reach, as is the encrypted Keychain file itself, and its commands can reach the provider host the session
 calls. OpenCode's permission rules keep its own tools inside the workspace, but that is not an OS
 boundary. Every other sandbox still denies the folder. Every sandbox allows localhost, where
 OpenCode 2.x's background server listens outside any sandbox; its password

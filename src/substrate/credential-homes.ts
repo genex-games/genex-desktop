@@ -190,11 +190,19 @@ export function antigravityHome(home: string = os.homedir()): string {
  * What an Antigravity session's own sandbox is given of the sign-in stores: its folder and, on a
  * Mac, the Keychain's files. The CLI keeps its Google sign-in in the Keychain and has no file to
  * keep it in instead (1.5.7), and with those files unreadable a signed-in CLI answers "sign in":
- * so this one sandbox reads them, and every other sandbox still does not. Each Keychain item keeps
- * its own access list, which macOS enforces: an item another application saved still asks the
- * person before a command in the session reads it.
+ * so this one sandbox reads them, and every other sandbox still does not. It reads and never
+ * writes them (`antigravityKeychain`). Each Keychain item keeps its own access list, which macOS
+ * enforces, but that is no wall inside the session: an item saved through macOS's own
+ * `/usr/bin/security` trusts that program, and the sandbox cannot keep a command from starting it.
  */
 export function antigravityHomes(home: string = os.homedir(), platform: NodeJS.Platform = process.platform): string[] {
-  const keychain = platform === "darwin" ? [path.join(home, "Library", "Keychains")] : [];
-  return [antigravityHome(home), ...keychain];
+  return [antigravityHome(home), ...antigravityKeychain(home, platform)];
+}
+
+/** The Keychain's files an Antigravity session reads its sign-in from: a Mac's, and none elsewhere. */
+export function antigravityKeychain(
+  home: string = os.homedir(),
+  platform: NodeJS.Platform = process.platform,
+): string[] {
+  return platform === "darwin" ? [path.join(home, "Library", "Keychains")] : [];
 }

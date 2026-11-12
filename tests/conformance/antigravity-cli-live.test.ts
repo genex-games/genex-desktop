@@ -38,8 +38,6 @@ const PROOF = { file: "antigravity-proof.txt", text: "ok" } as const;
 /** The Keychain's files, and macOS's own program that reads an item it saved without asking. */
 const KEYCHAINS = path.join(os.homedir(), "Library", "Keychains");
 const KEYCHAIN_TOOL = "/usr/bin/security";
-/** A harmless program standing in for `KEYCHAIN_TOOL` where the test shows a denied program cannot start. */
-const STAND_IN_TOOL = "/usr/bin/cal";
 /** The hosts a session might need at the least, to learn whether `*.googleapis.com` can be narrowed. */
 const NARROW_HOSTS = [
   "cloudcode-pa.googleapis.com",
@@ -50,19 +48,24 @@ const NARROW_HOSTS = [
   "antigravity.google",
 ];
 type Box = (shipped: SandboxOptions) => SandboxOptions;
-const readOnlyKeychain: Box = (shipped) => ({ ...shipped, denyWrite: [...(shipped.denyWrite ?? []), KEYCHAINS] });
+/** The box before the Keychain's files were made read-only, to compare. */
+const writableKeychain: Box = (shipped) => ({
+  ...shipped,
+  denyWrite: (shipped.denyWrite ?? []).filter((dir) => dir !== KEYCHAINS),
+});
+/**
+ * macOS's Keychain program made unreadable. It still starts (a run on macOS 15 showed a program the
+ * sandbox may not read runs all the same), so this box only shows the CLI does not need to read it.
+ */
 const noKeychainTool: Box = (shipped) => ({ ...shipped, secretPaths: [...shipped.secretPaths, KEYCHAIN_TOOL] });
-/** The tightest box the diagnostics try: the Keychain read-only and macOS's Keychain program unreadable. */
-const tightest: Box = (shipped) => noKeychainTool(readOnlyKeychain(shipped));
 
-/** The session's sandbox as shipped, with each of its two openings taken away, and tightened. */
+/** The session's sandbox as shipped, with each of its two openings taken away, and other shapes to compare. */
 const BOXES: ReadonlyArray<[string, Box, (readonly string[])?]> = [
   ["as shipped", (shipped) => shipped],
   ["without the Keychain's files", (shipped) => ({ ...shipped, ownHome: [antigravityHome()] })],
   ["without the certificate service", (shipped) => ({ ...shipped, machServices: [] })],
-  ["with the Keychain's files read-only", readOnlyKeychain],
+  ["with the Keychain's files writable", writableKeychain],
   ["without macOS's Keychain program", noKeychainTool],
-  ["read-only and without the program", tightest],
   ["with the fewest hosts", (shipped) => shipped, NARROW_HOSTS],
 ];
 /** What the CLI's own words may show in a report: nothing as long as a token. */
@@ -119,30 +122,14 @@ describe("Antigravity's real CLI in the real sandbox", { skip: !LIVE && "STUDIO_
     }
   });
 
-  it("a program the sandbox may not read cannot be started in it", async () => {
-    const { game } = await engineAndGame();
-    const sandbox = await ProcessSandbox.create({
-      writableRoots: [game],
-      scratchDir: path.join(game, "..", "tmp"),
-      secretPaths: [STAND_IN_TOOL],
-    });
-    try {
-      const run = await sandbox.run({ command: STAND_IN_TOOL, cwd: game, timeoutMs: 20_000 });
-      console.log(`antigravity live: denied program: code=${run.code} stderr=${run.stderr.trim().slice(-200)}`);
-      assert.notEqual(run.code, 0, "the denied program did not run");
-    } finally {
-      await sandbox.dispose();
-    }
-  });
-
-  it("continues a session from another folder, in the tightest box, and remembers the turn before", {
+  it("continues a session from another folder and remembers the turn before", {
     timeout: TURN_TIMEOUT_MS * 3,
   }, async () => {
     const { game } = await engineAndGame();
     const said: string[] = [];
     const engine = new AntigravityEngine({
       scratchRoot: path.join(game, "..", "scratch"),
-      startFn: startIn(tightest, said),
+      startFn: startIn((shipped) => shipped, said),
     });
     const listed = (await engine.models()).some((model) => model.id === SMALL_MODEL);
     const model = listed ? { model: SMALL_MODEL } : {};

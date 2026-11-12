@@ -29,7 +29,12 @@ import {
   googleFailure,
 } from "../../src/substrate/engines/antigravity.ts";
 import { ANTIGRAVITY_HOSTS, parseAntigravitySession } from "../../src/substrate/engines/antigravity-cli.ts";
-import { antigravityHome, antigravityHomes, sandboxedCliHomes } from "../../src/substrate/credential-homes.ts";
+import {
+  antigravityHome,
+  antigravityHomes,
+  antigravityKeychain,
+  sandboxedCliHomes,
+} from "../../src/substrate/credential-homes.ts";
 import { childEnv } from "../../src/substrate/child-env.ts";
 import { type DelegateEvent, DelegateEventType, EngineError } from "../../src/substrate/engines/types.ts";
 import { EngineStatusCode, LoginSource } from "../../src/shared/engine-descriptor.ts";
@@ -578,6 +583,13 @@ describe("Antigravity's box", () => {
     assert.deepEqual(sandbox.writableRoots, ["/games/pong", "/games/.git/worktrees/pong"]);
     assert.deepEqual(sandbox.secretPaths, ["/studio/secrets"]);
     assert.deepEqual(sandbox.machServices, [SandboxMachService.Trust]);
+    assert.deepEqual(
+      sandbox.denyWrite,
+      [path.join("/games/pong", ".agents"), ...antigravityKeychain()],
+      "the game's own Antigravity folder and the Keychain's files are never written",
+    );
+    assert.deepEqual(antigravityKeychain(home, "darwin"), [path.join(home, "Library", "Keychains")]);
+    assert.deepEqual(antigravityKeychain(home, "linux"), []);
   });
 
   it("on a Mac its sandbox alone may ask the system's certificate checker, and no sandbox opens any other service", async () => {
