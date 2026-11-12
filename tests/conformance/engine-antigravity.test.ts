@@ -359,8 +359,11 @@ describe("an Antigravity build", () => {
     const result = await engine.delegate({ cwd: await game(), prompt: "And then?", resume: "s-1" });
     assert.equal(result.stopReason, StopReason.Completed);
     assert.equal(result.sessionId, "s-1");
-    const prompt = agents[0]?.received.find((message) => message.method === AcpMethod.SessionPrompt);
-    assert.equal((prompt?.params as Json).sessionId, "s-1");
+    const prompts = (agents[0]?.received ?? []).filter((message) => message.method === AcpMethod.SessionPrompt);
+    assert.deepEqual(
+      prompts.map((message) => (message.params as Json).sessionId),
+      ["s-1"],
+    );
   });
 
   it("sends the prompt's pictures as pictures, and a judge's question from an empty folder with no tools", async () => {
