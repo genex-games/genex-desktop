@@ -27,6 +27,7 @@ import { RestartAnswer, UpdateFailure, UpdateFeedState } from "../../src/shared/
 import {
   BootFailure,
   BootPhase,
+  SandboxLaunchCode,
   SandboxProblemCode,
   type StartFacts,
   StartPassage,
@@ -593,11 +594,20 @@ describe("P7: how the app started", () => {
       type: UiEvent.HarnessStartFailed,
       payload: { failure: HOSTILE[4], failureCode: SandboxProblemCode.IsolationBlocked },
     });
+    heard.ui({
+      type: UiEvent.HarnessStartFailed,
+      payload: { failure: HOSTILE[4], failureCode: SandboxLaunchCode.ProxyPortsRefused },
+    });
     heard.ui({ type: UiEvent.HarnessStartFailed, payload: { failure: HOSTILE[4], failureCode: HOSTILE[0] } });
     heard.ui({ type: UiEvent.HarnessStartFailed, payload: { failure: HOSTILE[6] } });
     heard.stop();
     const failed = sentOf(sent, AnalyticsEvent.AgentsStartFailed);
-    assert.deepEqual(failed, [{ code: SandboxProblemCode.IsolationBlocked }, { code: null }, { code: null }]);
+    assert.deepEqual(failed, [
+      { code: SandboxProblemCode.IsolationBlocked },
+      { code: SandboxLaunchCode.ProxyPortsRefused },
+      { code: null },
+      { code: null },
+    ]);
     for (const properties of failed) assertClean("agents_start_failed", properties);
   });
 });

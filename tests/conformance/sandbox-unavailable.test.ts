@@ -20,6 +20,7 @@ import {
   SandboxUnavailableError,
   missingLinuxTools,
   sandboxProblem,
+  sandboxStartFailureCode,
   windowsProxyPortsError,
   windowsSetupProblem,
 } from "../../src/substrate/sandbox-unavailable.ts";
@@ -146,6 +147,29 @@ describe("Windows proxy ports", () => {
       null,
     ])
       assert.equal(windowsProxyPortsError(error), null, String(error));
+  });
+
+  it("agents that would not start for the sandbox's ports carry its code, even wrapped", () => {
+    const refused = Object.assign(new Error("listen EACCES: permission denied 127.0.0.1:60089"), {
+      code: "EACCES",
+      syscall: "listen",
+    });
+    const ports = windowsProxyPortsError(refused);
+    const unavailable = new SandboxUnavailableError(
+      sandboxProblem({ platform: "win32", supported: true, dependencyErrors: ["x"], missingTools: [] }) ??
+        assert.fail(),
+    );
+    const cases: [unknown, string | null][] = [
+      [ports, SandboxLaunchCode.ProxyPortsRefused],
+      [new Error("harness would not start", { cause: ports }), SandboxLaunchCode.ProxyPortsRefused],
+      [unavailable, SandboxProblemCode.NotProvisioned],
+      [new SandboxLaunchError(SandboxLaunchCode.SandboxUserRefused), SandboxLaunchCode.SandboxUserRefused],
+      [refused, null],
+      [new Error("Windows did not let Genex's sandbox use its network ports (60080-60089)"), null],
+      ["proxy-ports-refused", null],
+      [null, null],
+    ];
+    for (const [error, code] of cases) assert.equal(sandboxStartFailureCode(error), code, String(error));
   });
 });
 

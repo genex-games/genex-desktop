@@ -114,7 +114,8 @@ stops recording, opts out and resets the id.
   with process `main`, `window_unresponsive`), background update failures as `update.failed`
   (`update_background_failed`: the stage, what the feed answered Genex's own request, Chromium's
   network error code, whether Squirrel's Update.exe is there and whether a download was offered), agents that would not start as `harness.start-failed`'s
-  `failureCode` (`agents_start_failed`), and Relaunch to update answers a `RestartAnswer`.
+  `failureCode` (`agents_start_failed`: a `BootFailure`, the sandbox's setup problem, or a
+  `SandboxLaunchCode` such as Windows' reserved proxy ports), and Relaunch to update answers a `RestartAnswer`.
 - **The welcome** keeps the step an unfinished welcome stood on (`studio.analytics.welcomeScreen`),
   so the next launch's `welcome_shown` says it resumed and where. A CLI install whose installer
   download failed says what answered it (`cli_install_finished`'s `http_status`, or Chromium's
