@@ -1923,7 +1923,8 @@ export default {
   "Installing {name}. This can take a minute.": "{name}をインストールしています。1分ほどかかることがあります。",
   "Installing {title}": "{title}をインストール中",
   "Installing…": "インストール中…",
-  "Installing… {percent}%": "インストール中… {percent}%",
+  "Installing… {speed}": "インストール中… {speed}",
+  "about {minutes} min left": "残り約{minutes}分",
   "Installs OpenCode on this Mac. This can take a minute.":
     "このMacにOpenCodeをインストールします。1分ほどかかることがあります。",
   "Install…": "インストール…",
@@ -6514,9 +6515,6 @@ export default {
   "{size} KB/s": "{size} KB/s",
   "Verifying…": "検証中…",
   "Unpacking…": "展開中…",
-  "Installing… {percent}% · {speed} · about {minutes} min left":
-    "インストール中… {percent}% · {speed} · 残り約{minutes}分",
-  "Installing… {percent}% · {speed} · under a minute left": "インストール中… {percent}% · {speed} · 残り1分未満",
   "This plugin stopped several times in a row, so it starts again in {seconds, plural, one {# second} other {# seconds}}. Try again then.":
     "このプラグインが何度も続けて止まったため、{seconds, plural, other {#秒}}後に再起動します。そのあとでもう一度試してね。",
   "Add Genex to {name}?": "{name}にGenexを追加しますか？",

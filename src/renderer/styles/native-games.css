@@ -408,13 +408,22 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 10px;
   height: 100%;
   padding-inline: 18px 10px;
   color: var(--hero-ink);
   font: 14px / 20px var(--font-family-mono);
   letter-spacing: -0.02em;
 }
+/* One line beside Cancel: a long translation ends in an ellipsis instead of pushing Cancel out. */
+.game-installing-line {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .game-installing-cancel {
+  flex: none;
   height: 32px;
   padding-inline: 12px;
   border-radius: 9px;

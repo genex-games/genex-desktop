@@ -1973,7 +1973,8 @@ export default {
   "Installing {name}. This can take a minute.": "Instalando {name}. Isso pode levar um minuto.",
   "Installing {title}": "Instalando {title}",
   "Installing…": "Instalando…",
-  "Installing… {percent}%": "Instalando… {percent}%",
+  "Installing… {speed}": "Instalando… {speed}",
+  "about {minutes} min left": "faltam uns {minutes} min",
   "Installs OpenCode on this Mac. This can take a minute.": "Instala o OpenCode neste Mac. Pode levar um minuto.",
   "Install…": "Instalar…",
   Instructions: "Instruções",
@@ -6590,10 +6591,6 @@ export default {
   "{size} KB/s": "{size} KB/s",
   "Verifying…": "Verificando…",
   "Unpacking…": "Descompactando…",
-  "Installing… {percent}% · {speed} · about {minutes} min left":
-    "Instalando… {percent}% · {speed} · faltam uns {minutes} min",
-  "Installing… {percent}% · {speed} · under a minute left":
-    "Instalando… {percent}% · {speed} · falta menos de um minuto",
   "This plugin stopped several times in a row, so it starts again in {seconds, plural, one {# second} other {# seconds}}. Try again then.":
     "Este plugin parou várias vezes seguidas, então ele volta a iniciar em {seconds, plural, one {# segundo} other {# segundos}}. Tente de novo depois disso.",
   "Add Genex to {name}?": "Adicionar o Genex a {name}?",

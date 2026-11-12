@@ -109,34 +109,42 @@ function usePlayedMinutes(startedAt: string | null): number {
   return startedAt ? minutesSince(startedAt, now) : 0;
 }
 
-/** The progress bar that is the button while a game installs, with Cancel inside it. */
+/** The progress bar that is the button while a game installs, with Cancel inside it, and the time left under it. */
 function Installing({ game, standing }: { game: PlayGameDetail; standing: GameStanding }): JSX.Element {
   const progress = standing.progress;
   const percent = progress ? installPercent(progress) : 0;
-  const label = WORDS.installLine(installLine(progress));
+  const view = installLine(progress);
+  const timeLeft = WORDS.installTimeLeft(view);
   return (
-    <div
-      className="game-installing"
-      role="progressbar"
-      aria-label={WORDS.installingLabel(game.title)}
-      aria-valuemin={0}
-      aria-valuemax={100}
-      aria-valuenow={percent}
-      data-game-installing={progress?.phase}
-    >
-      <span className="game-installing-fill" style={{ width: `${percent}%` }} />
-      <span className="game-installing-row">
-        <span>{label}</span>
-        <button
-          type="button"
-          className="game-installing-cancel"
-          data-game-action="cancel"
-          onClick={() => void studio().play.cancelInstall(game.slug)}
-        >
-          {WORDS.cancel}
-        </button>
-      </span>
-    </div>
+    <>
+      <div
+        className="game-installing"
+        role="progressbar"
+        aria-label={WORDS.installingLabel(game.title)}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={percent}
+        data-game-installing={progress?.phase}
+      >
+        <span className="game-installing-fill" style={{ width: `${percent}%` }} />
+        <span className="game-installing-row">
+          <span className="game-installing-line">{WORDS.installLine(view)}</span>
+          <button
+            type="button"
+            className="game-installing-cancel"
+            data-game-action="cancel"
+            onClick={() => void studio().play.cancelInstall(game.slug)}
+          >
+            {WORDS.cancel}
+          </button>
+        </span>
+      </div>
+      {timeLeft && (
+        <p className="game-primary-note" data-game-note="installing">
+          {timeLeft}
+        </p>
+      )}
+    </>
   );
 }
 

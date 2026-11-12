@@ -1929,7 +1929,8 @@ export default {
   "Installing {name}. This can take a minute.": "Устанавливаем {name}. Это может занять минуту.",
   "Installing {title}": "Установка «{title}»",
   "Installing…": "Устанавливаем…",
-  "Installing… {percent}%": "Установка… {percent}%",
+  "Installing… {speed}": "Устанавливаем… {speed}",
+  "about {minutes} min left": "осталось около {minutes} мин",
   "Installs OpenCode on this Mac. This can take a minute.": "Установит OpenCode на этот Mac. Это может занять минуту.",
   "Install…": "Установить…",
   Instructions: "Инструкции",
@@ -6555,9 +6556,6 @@ export default {
   "{size} KB/s": "{size} КБ/с",
   "Verifying…": "Проверка…",
   "Unpacking…": "Распаковка…",
-  "Installing… {percent}% · {speed} · about {minutes} min left":
-    "Установка… {percent}% · {speed} · осталось около {minutes} мин",
-  "Installing… {percent}% · {speed} · under a minute left": "Установка… {percent}% · {speed} · осталось меньше минуты",
   "This plugin stopped several times in a row, so it starts again in {seconds, plural, one {# second} other {# seconds}}. Try again then.":
     "Плагин остановился несколько раз подряд, поэтому запустится снова через {seconds, plural, one {# секунду} few {# секунды} many {# секунд} other {# секунды}}. Попробуй тогда ещё раз.",
   "Add Genex to {name}?": "Добавить Genex в {name}?",

@@ -269,8 +269,9 @@ is.
   recorded in `<partial>.ranges.json` so a later try asks only for the rest; a host without ranges,
   or any answer that is not the range asked for, is not written and the archive starts over as one
   stream (resumed by range). Each connection is given up after a minute without a byte; a cancel
-  throws the saved bytes away, a failure keeps them. The page's install line says the percent,
-  the smoothed speed and the time left (`shared/download-speed.ts`), then Verifying and Unpacking.
+  throws the saved bytes away, a failure keeps them. The page's install bar fills with the percent
+  and says the smoothed speed, with the time left on a line under it (`shared/download-speed.ts`),
+  then Verifying and Unpacking.
   Its sha256 is checked, its zip directory read before
   anything is unpacked (`native-zip.ts`: no entry or link outside it, nothing written through a
   link, no more than the stated size), unpacked with `ditto --noqtn`, every link resolved inside it,
