@@ -377,17 +377,20 @@ session, Plan or a reviewer runs from a scratch folder) is all it writes, the ne
 hosts (`ANTIGRAVITY_HOSTS`), a game's `.agents` folder is not the session's to write, and inside
 the box every tool call the agent asks about is allowed. Its sandbox alone is given `~/.gemini`
 (its settings and conversations) and, on a Mac, `~/Library/Keychains` (`antigravityHomes`,
-`ownHome`), because with those files unreadable a signed-in CLI answers "sign in"; every other
-sandbox still denies both. Studio tools reach it through the bridge command, as Codex's do.
+`ownHome`) and the system's certificate checker (`SandboxMachService.Trust`,
+`com.apple.trustd.agent`, which a Go program verifies every HTTPS certificate through and
+sandbox-runtime leaves closed by default), because without either a signed-in CLI answers "sign
+in"; every other sandbox still denies the folders and opens no extra service. Studio tools reach it through the bridge command, as Codex's do.
 
 A failed turn is named by ACP's code (`-32000` a sign-in failure) or by Google's status name in
 the error (`RESOURCE_EXHAUSTED` a usage limit; `UNAVAILABLE`, `INTERNAL`, `DEADLINE_EXCEEDED`
 unavailable); anything else ends the build with the CLI's words. Stop sends `session/cancel` and
 gives the CLI five seconds to answer before it is stopped; a turn that says nothing for 10 minutes
 (30 while a tool call is open) is stopped with its process group. Compact now is refused.
-Not yet shown by a live run: a session inside the sandbox on a signed-in Mac, the exact hosts it
-needs, a plan that has run out, and Windows and Linux (where the sandbox runs as another user or
-has no Secret Service). Tests: `engine-antigravity.test.ts` and `event-antigravity.test.ts` on
+A live run on a signed-in Mac (CLI 1.5.7, free plan) reads the sign-in, builds in the game and
+cannot write beside it, and shows the sign-in needs both openings: with the Keychain's files or the
+certificate service closed, the CLI answers "sign in". Not yet shown: a plan that has run out, and
+Windows and Linux (where the sandbox runs as another user or has no Secret Service). Tests: `engine-antigravity.test.ts` and `event-antigravity.test.ts` on
 `tests/fixtures/transcripts/antigravity-*`, recorded from Antigravity CLI 1.5.7.
 `STUDIO_ANTIGRAVITY_CLI_TESTS=1` runs the real, signed-in CLI in the real sandbox
 (`antigravity-cli-live.test.ts`).

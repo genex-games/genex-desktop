@@ -90,6 +90,7 @@ describe("Antigravity's real CLI in the real sandbox", { skip: !LIVE && "STUDIO_
         startFn: startIn(box, said),
       });
       const status = await engine.status();
+      if (box === BOXES[0]?.[1]) assert.equal(status.code, EngineStatusCode.Ready, status.detail);
       console.log(`antigravity live: ${name}: ${status.code}; stderr: ${redact(said.join(" ").trim()) || "(none)"}`);
     }
   });
