@@ -6254,6 +6254,7 @@ const INSTALL_FAILED: Readonly<Record<InstallFailure, (free: string, here: Nativ
   [InstallFailure.TooLarge]: () => t("Couldn’t install: this game is larger than it says."),
   [InstallFailure.UnsupportedOs]: (_free: string, here: NativeHereWords) => here.unsupported,
   [InstallFailure.NeedsRosetta]: () => t("Couldn’t install: this game needs Rosetta to run on this Mac."),
+  [InstallFailure.NeedsUpdate]: () => t("Couldn’t install: this game needs a newer Genex. Update Genex and try again."),
   [InstallFailure.EntryMissing]: () => t("Couldn’t install: the download doesn’t hold the game."),
   [InstallFailure.NotOffered]: (_free: string, here: NativeHereWords) => here.notOffered,
   [InstallFailure.Failed]: () => t("Couldn’t install. Try again."),
@@ -6305,16 +6306,19 @@ export const NATIVE_WORDS = {
   web: t("Web"),
   installLabel: (title: string, size: string) => t("Install {title}, {size}", { title, size }),
   installingLabel: (title: string) => t("Installing {title}", { title }),
-  /** The game page's install line: "Installing… 42% · 38 MB/s · about 2 min left", then each step by name. */
+  /** The game page's install bar: "Installing… 38 MB/s", then each step by name. The fill says how far it is. */
   installLine: (view: InstallLineView): string => {
     if (view.line === InstallLine.Waiting) return t("Waiting for another install…");
     if (view.line === InstallLine.Verifying) return t("Verifying…");
     if (view.line === InstallLine.Unpacking) return t("Unpacking…");
-    const { percent, bytesPerSecond, minutesLeft } = view;
-    if (bytesPerSecond === null || minutesLeft === null) return t("Installing… {percent}%", { percent });
-    const speed = speedWords(bytesPerSecond);
-    if (minutesLeft <= 1) return t("Installing… {percent}% · {speed} · under a minute left", { percent, speed });
-    return t("Installing… {percent}% · {speed} · about {minutes} min left", { percent, speed, minutes: minutesLeft });
+    if (view.bytesPerSecond === null) return t("Installing…");
+    return t("Installing… {speed}", { speed: speedWords(view.bytesPerSecond) });
+  },
+  /** The line under the install bar: how long the download still takes, or null until that is known. */
+  installTimeLeft: (view: InstallLineView): string | null => {
+    if (view.line !== InstallLine.Downloading || view.minutesLeft === null) return null;
+    if (view.minutesLeft <= 1) return t("under a minute left");
+    return t("about {minutes} min left", { minutes: view.minutesLeft });
   },
   cancel: t("Cancel"),
   play: t("Play"),

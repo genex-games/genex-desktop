@@ -18,6 +18,7 @@ import {
   type NativeBuild,
   type NativeHost,
   NativePlatform,
+  type ZipBuild,
 } from "../../src/shared/play-native.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 import { writeZip, type ZipItem } from "../helpers/zip-writer.ts";
@@ -51,7 +52,7 @@ const unityBuild = (program: ZipItem["data"] = elf(ELF_X64), mode = NOT_RUNNABLE
 ];
 
 /** A catalog row for `archive`. */
-const buildOf = (archive: Buffer, overrides: Partial<NativeBuild> = {}): NativeBuild => ({
+const buildOf = (archive: Buffer, overrides: Partial<ZipBuild> = {}): ZipBuild => ({
   platform: NativePlatform.Linux,
   arch: NativeArch.X64,
   version: "1.0",
@@ -87,7 +88,7 @@ const page = (slug: string, build: NativeBuild): PlayGameDetail => ({
 });
 
 /** Install `items` zipped as a build (with `overrides`) into a fresh folder; its outcome and folder. */
-async function install(items: readonly ZipItem[], overrides: Partial<NativeBuild> = {}) {
+async function install(items: readonly ZipItem[], overrides: Partial<ZipBuild> = {}) {
   const archive = writeZip(items);
   const build = buildOf(archive, overrides);
   const root = path.join(await realpath(await tmpDir("native-linux-")), "installed-games");
@@ -128,7 +129,7 @@ describe("Play's native installer on Linux", { skip: SKIP }, () => {
   });
 
   it("refuses each build it cannot run, and keeps no game", async () => {
-    const cases: Array<[string, ZipItem[], Partial<NativeBuild>, InstallFailure]> = [
+    const cases: Array<[string, ZipItem[], Partial<ZipBuild>, InstallFailure]> = [
       ["no such program", unityBuild(), { entry: "Dust Runners/Other.x86_64" }, InstallFailure.EntryMissing],
       [
         "a link in the program's place",

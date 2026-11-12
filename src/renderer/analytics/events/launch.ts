@@ -18,7 +18,13 @@ import {
   UpdateFailure,
   UpdateFeedState,
 } from "../../../shared/app-update.ts";
-import { BootFailure, type BootFailureCode, SandboxProblemCode, StartPassage } from "../../../shared/boot.ts";
+import {
+  BootFailure,
+  type BootFailureCode,
+  SandboxLaunchCode,
+  SandboxProblemCode,
+  StartPassage,
+} from "../../../shared/boot.ts";
 import { DAY_MS, HOUR_MS, MINUTE_MS } from "../../../shared/duration.ts";
 import { EngineStatusCode } from "../../../shared/engine-descriptor.ts";
 import { isStudioErrorCode, type StudioErrorCode } from "../../../shared/error-codes.ts";
@@ -184,7 +190,7 @@ export function previousSessionProperties(previous: unknown): PreviousSessionPro
 
 /** A held start's code, re-checked: the boot's own, or the sandbox's. */
 export const bootFailureCode = (value: unknown): BootFailureCode | null =>
-  oneOf(BootFailure, value) ?? oneOf(SandboxProblemCode, value);
+  oneOf(BootFailure, value) ?? oneOf(SandboxProblemCode, value) ?? oneOf(SandboxLaunchCode, value);
 
 /** `app_ready_measured`'s start facts. */
 export type StartProperties = {

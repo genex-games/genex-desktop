@@ -2,8 +2,35 @@
 
 All notable changes to `com.genex.multiplayer`. Versions follow [semantic versioning](https://semver.org); before 1.0 a minor bump may add API.
 
-## Unreleased
+## 0.9.0
 
+- **A player's home region is tried first (PROTOCOL.md §17.1 *Regions*).** A probe through a proxy measured the path to the Asia
+  region at about 110 ms on some connections and 300 ms on others, which seated players in Bangkok in the EU. The sign-in answer now
+  names the player's region by geography (`colyseus.authorityHome`), which `GenexNativeIdentity.AuthorityHome` reads (null unless
+  it is a non-empty string naming one of `AuthorityRegions`), and the new option `GenexAuthorityOptions.Home` takes it: a join
+  creates in that region first and a pool join asks it first for players, whatever its sample (silent or past `MaxPingMs`), then the
+  regions it asks today, in today's order. A pinned `Region` wins over it, the rule `Nearest` asks no one and creates in the home
+  first, regrouping is unchanged, and an empty or unknown name is no home. `GenexAuthorityRegions.PlanSearch` takes it as `home`.
+  Held to the new home rows of `searches` in `authority-regions.json`. Behaviour change only for a game that passes `Home`.
+
+- **A region's latency is measured by an HTTP ping on an open connection (PROTOCOL.md §17.1 *Regions*).** A probe sample was one ping on
+  a fresh WebSocket, whose time carries the connection's handshakes: through a proxy it measured two to three times the path in about a
+  third of runs, which sent players in Bangkok to the EU, and a browser queues WebSocket handshakes to one address. A sample is now a GET
+  of the server's root (`GenexAuthorityRegions.PingUrl`: `wss://host:port/…` is `https://host:port/`, `ws` is `http`) sent twice through
+  Colyseus's HTTP client, the one the matchmaker's requests go through (`UnityWebRequest` in Unity, so the browser's own requests in a
+  WebGL player): the first opens the connection and its time is thrown away, the second is timed until its answer has been read. Any
+  status below 500 is an answer. A ping still out at the sample's 4 s limit fails the sample and nothing else is tried; one that fails
+  any other way (a 5xx, a request that failed or that a browser blocked, a url with no ping address) is the socket ping as before
+  (`GenexAuthorityRegions.ColyseusProbe`). The samples per region, their urls and launch order, the ceiling, the grace and the ranking
+  are unchanged. `GenexAuthorityRegions.HttpProbe` is the default probe of a join and of `MeasureRegions`. Held to the new `pings` rows
+  of `authority-regions.json` and, in `GenexSmoke authority-regions`, to a local server through .NET's `HttpClient`. Not yet run in a
+  Unity player or a WebGL build. Behaviour change: a join's probe sends two GETs per sample to each authority server's root.
+- **A region that did not answer the probe is still asked for players (PROTOCOL.md §17.1 *Finding players*, *Regrouping*).** Silence is
+  not distance: a browser opens its WebSockets to one address one at a time, so a far region's sample is often still out when the probe
+  ends, and that region was never searched or regrouped into. The search and the regroup now ask the silent regions after the answered
+  ones, in list order; only a region measured past `MaxPingMs` is out of reach. One ask is given the new option `AskMs`
+  (`GenexAuthorityRegions.AskMs`, 3000): past it the next region is asked, and a seat that still arrives is left. The probe launches
+  every region's first sample before any region's second. Held to the regenerated `authority-regions.json`.
 - **A player alone in a room regroups (PROTOCOL.md §17.1 *Regrouping*).** Two players who start at the same moment in two regions each
   find no room and each open one, and *Finding players* never ran again for them. While a player is alone in a pool room, the session now
   asks the regions listed before its own (nearest first, within `MaxPingMs` of the join's probe) for a room that already has players,

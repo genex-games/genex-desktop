@@ -22,7 +22,7 @@ import {
   verifyArchive,
 } from "../../src/main/play/native-download.ts";
 import type { StallClock } from "../../src/main/play/remix.ts";
-import { InstallFailure, NativeArch, type NativeBuild, NativePlatform } from "../../src/shared/play-native.ts";
+import { InstallFailure, NativeArch, NativePlatform, type ZipBuild } from "../../src/shared/play-native.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 const HOST = "builds.example.test";
@@ -37,7 +37,7 @@ const MARK = 0x58;
 const ETAG = '"v1"';
 const ARCHIVE_PATH = "/dust-runners/1.0/mac.zip";
 
-const build = (overrides: Partial<NativeBuild> = {}): NativeBuild => ({
+const build = (overrides: Partial<ZipBuild> = {}): ZipBuild => ({
   platform: NativePlatform.Mac,
   arch: NativeArch.Universal,
   version: "1.0",

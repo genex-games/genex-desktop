@@ -1110,6 +1110,8 @@ export default {
   "Couldn’t install: this game is larger than it says.":
     "インストールできませんでした。このゲームは表示されたサイズより大きいです。",
   "Couldn’t install: this game isn’t signed.": "インストールできませんでした。このゲームは署名されていません。",
+  "Couldn’t install: this game needs a newer Genex. Update Genex and try again.":
+    "インストールできませんでした。このゲームには新しいバージョンのGenexが必要です。Genexをアップデートして、もう一度試してください。",
   "Couldn’t install: this game needs Rosetta to run on this Mac.":
     "インストールできませんでした。このゲームをこのMacで動かすにはRosettaが必要です。",
   "Couldn’t install: this game’s files aren’t safe to open.":
@@ -1921,7 +1923,8 @@ export default {
   "Installing {name}. This can take a minute.": "{name}をインストールしています。1分ほどかかることがあります。",
   "Installing {title}": "{title}をインストール中",
   "Installing…": "インストール中…",
-  "Installing… {percent}%": "インストール中… {percent}%",
+  "Installing… {speed}": "インストール中… {speed}",
+  "about {minutes} min left": "残り約{minutes}分",
   "Installs OpenCode on this Mac. This can take a minute.":
     "このMacにOpenCodeをインストールします。1分ほどかかることがあります。",
   "Install…": "インストール…",
@@ -2534,6 +2537,9 @@ export default {
   "Older messages can still rewind the chat, but not its files.":
     "古いメッセージまでチャットを巻き戻すことはできますが、ファイルは戻りません。",
   "Older models": "以前のモデル",
+  "Ollama could not download this model: {reason}": "Ollamaはこのモデルをダウンロードできませんでした：{reason}",
+  "The download stopped before it finished. Download again to continue.":
+    "ダウンロードが途中で止まりました。もう一度ダウンロードすると続きから再開します。",
   "Ollama is not running at {host}. Install or start Ollama, then download again.":
     "{host}でOllamaが動いていません。Ollamaをインストールまたは起動してから、もう一度ダウンロードしてください。",
   "Ollama keeps its models in its own folder: move them in Ollama → Settings → Model location.":
@@ -6509,9 +6515,6 @@ export default {
   "{size} KB/s": "{size} KB/s",
   "Verifying…": "検証中…",
   "Unpacking…": "展開中…",
-  "Installing… {percent}% · {speed} · about {minutes} min left":
-    "インストール中… {percent}% · {speed} · 残り約{minutes}分",
-  "Installing… {percent}% · {speed} · under a minute left": "インストール中… {percent}% · {speed} · 残り1分未満",
   "This plugin stopped several times in a row, so it starts again in {seconds, plural, one {# second} other {# seconds}}. Try again then.":
     "このプラグインが何度も続けて止まったため、{seconds, plural, other {#秒}}後に再起動します。そのあとでもう一度試してね。",
   "Add Genex to {name}?": "{name}にGenexを追加しますか？",

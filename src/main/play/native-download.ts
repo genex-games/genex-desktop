@@ -7,13 +7,14 @@
  * for the ranges it lacks; an answer that is not exactly the range asked for is never written, and
  * the archive is then downloaded again as one stream, which resumes from the bytes already saved
  * when the host answers the range. Nothing is trusted until its sha256 matches (`verifyArchive`).
+ * A chunked build's manifest and chunks come whole into memory by the same rules ({@link downloadBytes}).
  * Electron-free: the fetch is a dep, the network or a fixture's own files.
  */
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { type FileHandle, open, rm, stat } from "node:fs/promises";
+import { type FileHandle, open, rm, stat, truncate } from "node:fs/promises";
 import { SECOND_MS } from "../../shared/duration.ts";
-import { InstallFailure, type NativeBuild } from "../../shared/play-native.ts";
+import { InstallFailure, type NativeBuild, type ZipBuild } from "../../shared/play-native.ts";
 import {
   believedRanges,
   hasRangeRecord,
@@ -42,6 +43,7 @@ const WEAK_ETAG = "W/";
 /** The most redirects one download follows. */
 const MAX_REDIRECTS = 5;
 /** HTTP statuses read here. */
+const HTTP_OK = 200;
 const HTTP_PARTIAL = 206;
 const HTTP_RANGE_NOT_SATISFIABLE = 416;
 const REDIRECTS: ReadonlySet<number> = new Set([301, 302, 303, 307, 308]);
@@ -95,6 +97,49 @@ async function fetchChecked(deps: DownloadDeps, url: URL, headers: Record<string
     current = checkedBuildUrl(location, deps.hosts, current.href);
   }
   throw new InstallError(InstallFailure.Network, "too many redirects");
+}
+
+/**
+ * A small object of a build (a chunked build's manifest, one chunk) downloaded whole into memory
+ * from `url`, by the rules an archive is: build hosts only, every redirect checked, given up once it
+ * stops moving. Only a plain 200 is read, never more than `maxBytes`: a longer answer throws
+ * `too-large` once it passes that, an answer shorter than it says it is throws `network`.
+ */
+export async function downloadBytes(
+  deps: DownloadDeps,
+  url: URL,
+  maxBytes: number,
+  signal: AbortSignal,
+): Promise<Buffer> {
+  const guard = stallGuard(deps.stallClock, deps.stallMs ?? DOWNLOAD_STALL_MS);
+  try {
+    const response = await fetchChecked(deps, url, {}, AbortSignal.any([signal, guard.signal]));
+    if (response.status !== HTTP_OK) {
+      await response.body?.cancel().catch(() => undefined);
+      throw new InstallError(InstallFailure.Network, `HTTP ${response.status}`);
+    }
+    const length = declaredLength(response);
+    if (length !== null && !(length <= maxBytes)) {
+      await response.body?.cancel().catch(() => undefined);
+      throw new InstallError(InstallFailure.TooLarge, "longer than allowed");
+    }
+    if (!response.body) throw new InstallError(InstallFailure.Network, "no body");
+    guard.moved();
+    const parts: Uint8Array[] = [];
+    let received = 0;
+    for await (const part of response.body) {
+      guard.moved();
+      received += part.byteLength;
+      if (received > maxBytes) throw new InstallError(InstallFailure.TooLarge, "longer than allowed");
+      parts.push(part);
+    }
+    if (length !== null && received !== length) throw new InstallError(InstallFailure.Network, "ended early");
+    return Buffer.concat(parts, received);
+  } catch (error) {
+    throw failureOf(error, guard.signal, signal);
+  } finally {
+    guard.stop();
+  }
 }
 
 /** Bytes of `partial` already saved: none when it is missing, and none (it is deleted) when longer than the archive. */
@@ -241,12 +286,10 @@ async function savedRanges(job: Download, shape: RangeShape, etag: string): Prom
   }
   await writeRangeRecord(partial, newRangeRecord(shape, etag, done ?? []));
   // "a" makes the file when it is missing and keeps what it holds.
-  const file = await open(partial, "a", 0o600);
-  try {
-    if (!done) await file.truncate(0);
-  } finally {
-    await file.close();
-  }
+  await (await open(partial, "a", 0o600)).close();
+  // Emptied by its path, never through that handle: Windows refuses to truncate a file opened
+  // for appending (EPERM), and a download whose record is not believed would then fail there.
+  if (!done) await truncate(partial, 0);
   return done ?? [];
 }
 
@@ -386,7 +429,7 @@ export async function discardDownload(partial: string): Promise<void> {
  */
 export async function downloadArchive(
   deps: DownloadDeps,
-  build: NativeBuild,
+  build: ZipBuild,
   partial: string,
   signal: AbortSignal,
   report: DownloadReport,
@@ -410,7 +453,7 @@ export async function downloadArchive(
 }
 
 /** Whether `file` is `build`'s archive: its exact size and sha256. */
-export async function verifyArchive(file: string, build: NativeBuild): Promise<boolean> {
+export async function verifyArchive(file: string, build: Pick<NativeBuild, "sizeBytes" | "sha256">): Promise<boolean> {
   if ((await stat(file).catch(() => null))?.size !== build.sizeBytes) return false;
   const hash = createHash("sha256");
   for await (const chunk of createReadStream(file)) hash.update(chunk);

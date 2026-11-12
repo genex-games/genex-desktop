@@ -61,6 +61,11 @@ namespace Genex.Multiplayer
         /// GenexAuthorityOptions.Regions beside Urls. Empty where the stand names no regions.</summary>
         public GenexAuthorityRegion[] AuthorityRegions { get; private set; } = Array.Empty<GenexAuthorityRegion>();
 
+        /// <summary>The player's home region (colyseus.authorityHome, PROTOCOL.md §17.1 *Regions*), the region nearest the player
+        /// by geography: pass it as GenexAuthorityOptions.Home beside Regions. Null where the answer names none, or names
+        /// anything but a non-empty string naming one of <see cref="AuthorityRegions"/>.</summary>
+        public string AuthorityHome { get; private set; }
+
         /// <summary>The API base every call goes to: GENEX_API_URL when the launcher set it, else the one passed in.</summary>
         public string ApiBase => apiBase;
 
@@ -178,7 +183,17 @@ namespace Genex.Multiplayer
             {
                 AuthorityUrls = authority;
                 AuthorityRegions = GenexAuthorityRegions.Normalize(coly.TryGetValue("authorityRegions", out var regions) ? regions : null, null).ToArray();
+                AuthorityHome = AuthorityHomeOf(r, AuthorityRegions);
             }
+        }
+
+        /// <summary>The home region a sign-in answer names (colyseus.authorityHome, PROTOCOL.md §17.1 *Regions*), read leniently:
+        /// anything but a non-empty string naming one of <paramref name="regions"/> is no home (null).</summary>
+        public static string AuthorityHomeOf(Dictionary<string, object> answer, IEnumerable<GenexAuthorityRegion> regions)
+        {
+            var coly = GenexJson.Map(answer, "colyseus");
+            if (coly == null || !coly.TryGetValue("authorityHome", out var home) || !(home is string h) || h.Length == 0) return null;
+            return regions.Any(x => x.Region == h) ? h : null;
         }
 
         /// <summary>The URLs a sign-in answer carries: the relay's colyseus.urls (else colyseus.url) and the

@@ -11,14 +11,14 @@ import path from "node:path";
 import { describe, it } from "node:test";
 import { checkedBuildUrl, downloadArchive, InstallError, verifyArchive } from "../../src/main/play/native-download.ts";
 import type { StallClock } from "../../src/main/play/remix.ts";
-import { InstallFailure, NativeArch, type NativeBuild, NativePlatform } from "../../src/shared/play-native.ts";
+import { InstallFailure, NativeArch, NativePlatform, type ZipBuild } from "../../src/shared/play-native.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 const HOST = "builds.example.test";
 const HOSTS: ReadonlySet<string> = new Set([HOST]);
 const ARCHIVE = Buffer.from("PK\u0003\u0004 a stand-in archive of a native game, forty-odd bytes long");
 
-const build = (overrides: Partial<NativeBuild> = {}): NativeBuild => ({
+const build = (overrides: Partial<ZipBuild> = {}): ZipBuild => ({
   platform: NativePlatform.Mac,
   arch: NativeArch.Universal,
   version: "1.0",
@@ -69,7 +69,7 @@ const whole = (signal: AbortSignal | null | undefined, data: Uint8Array = ARCHIV
 
 async function run(
   fetchImpl: typeof fetch,
-  overrides: { build?: NativeBuild; partial?: Uint8Array; signal?: AbortSignal; stallClock?: StallClock } = {},
+  overrides: { build?: ZipBuild; partial?: Uint8Array; signal?: AbortSignal; stallClock?: StallClock } = {},
 ) {
   const dir = await tmpDir("native-download-");
   const partial = path.join(dir, "game.zip.part");

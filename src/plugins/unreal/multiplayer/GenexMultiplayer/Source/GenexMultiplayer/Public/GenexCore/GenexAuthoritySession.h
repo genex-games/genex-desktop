@@ -144,17 +144,25 @@ struct AuthorityOptions {
    *  the regions. */
   std::vector<regions::Region> regions;
   /** How a pool join picks its region (§17.1 *Finding players*). Players (the default): the regions in reach are
-   *  asked for a room that already has players (Colyseus's plain join), nearest first, and a room is opened in the
-   *  nearest one only when none has. Nearest: the nearest region, whoever is elsewhere. A join by code, a private
-   *  create, a rejoin and `url` never search. */
+   *  asked for a room that already has players (Colyseus's plain join), nearest first, then the ones that did not
+   *  answer the probe, in list order, and a room is opened in the nearest one only when none has. Nearest: the
+   *  nearest region, whoever is elsewhere. A join by code, a private create, a rejoin and `url` never search. */
   regions::RegionRule regionRule = regions::RegionRule::Players;
   /** The farthest region asked for players, as a probe's round trip in ms; anything but a finite number >= 0 is
    *  regions::kMaxPingMs (350). */
   double maxPingMs = regions::kMaxPingMs;
+  /** How long one ask for an existing room may take before the next region is asked, ms (§17.1 *Finding players*,
+   *  *Regrouping*): a seat that still arrives is left. Anything but a finite number >= 0 is regions::kAskMs (3000). */
+  double askMs = regions::kAskMs;
   /** The one region to play in, by its name in `regions` (a player's own choice; without `regions` a flat url is its
    *  own name): no other is joined or created in. Empty, or a name the cluster does not have, is no pin. A join by
    *  code ignores it and still walks every region. */
   std::string region;
+  /** The player's home region (EmbedIdentity::AuthorityHome(), §17.1 *Regions*): the region nearest the player by
+   *  geography, which the server names. It is asked for players and created in first, whatever the probe measured;
+   *  `region` wins over it. Set it yourself to override the server's. Empty, or a name the cluster does not have, is
+   *  no home. */
+  std::string home;
   /** The game's slug: everyone who passes the same id shares a room. Must equal the token's `slug`. */
   std::string gameId;
   /** Display-name fallback; the verified token's name wins. */
@@ -181,10 +189,10 @@ struct AuthorityOptions {
    *  by itself (§17.13 *Drain and rejoin*). Default true; false makes that close final. */
   bool rejoin = true;
   /** Whether a player who is alone in a pool room keeps asking for a room that already has players and moves there
-   *  (§17.1 *Regrouping*): only the regions listed before the seat's own, in reach, are asked, after each wait of
-   *  regions::kRegroupWaitsMs, and the game hears Rejoined with `moved`. Default true; false keeps the player where
-   *  they are. Needs `rejoin`; a private room, a join by code, `url`, a pinned region and the rule Nearest never
-   *  regroup. */
+   *  (§17.1 *Regrouping*): only the regions listed before the seat's own, in reach or silent, are asked, after each
+   *  wait of regions::kRegroupWaitsMs, and the game hears Rejoined with `moved`. Default true; false keeps the player
+   *  where they are. Needs `rejoin`; a private room, a join by code, `url`, a pinned region and the rule Nearest
+   *  never regroup. */
   bool regroup = true;
   /** The `firstperson` collision world, as the room module exports it (SetWorld later, too); nullptr =
    *  the empty world. Your own entity is predicted only while its hash is the room's `params.world`. */

@@ -295,7 +295,7 @@ import {
   StartStep,
   StudioPlatform,
 } from "../shared/boot.ts";
-import { SandboxUnavailableError } from "../substrate/sandbox-unavailable.ts";
+import { SandboxUnavailableError, sandboxStartFailureCode } from "../substrate/sandbox-unavailable.ts";
 import { type Painter, paintWhileUsed } from "../substrate/paint-while-used.ts";
 import {
   type DetachedSpawn,
@@ -3047,7 +3047,7 @@ async function startHarness(studio: StudioCore): Promise<boolean> {
     return true;
   } catch (err) {
     if (dev || isSmoke) throw err;
-    const code = err instanceof SandboxUnavailableError ? err.problem.code : BootFailure.HarnessFailed;
+    const code = sandboxStartFailureCode(err) ?? BootFailure.HarnessFailed;
     showAgentsFailure(
       errorMessage(err),
       async () => {

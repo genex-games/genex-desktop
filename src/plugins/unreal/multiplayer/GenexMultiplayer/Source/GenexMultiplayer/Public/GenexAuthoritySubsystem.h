@@ -45,17 +45,21 @@ struct GENEXMULTIPLAYER_API FGenexAuthorityOptions
 	/** The authority cluster; empty = the sign-in answer's authorityUrls. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Genex") TArray<FString> Urls;
 	/** How the join picks its region (PROTOCOL.md §17.1 *Finding players*). Players (default): the regions in reach
-	 *  (MaxPingMs) are asked for a room that already has players, nearest first, and a room is opened in the nearest
-	 *  one only when none has, so players in different regions meet. Nearest: the nearest region, whoever is
-	 *  elsewhere. Url always joins that one server. */
+	 *  (MaxPingMs) are asked for a room that already has players, nearest first, then the ones that did not answer the
+	 *  probe, and a room is opened in the nearest one only when none has, so players in different regions meet.
+	 *  Nearest: the nearest region, whoever is elsewhere. Url always joins that one server. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Genex|Regions") EGenexRegionRule RegionRule = EGenexRegionRule::Players;
 	/** The farthest region asked for players, as a probe's round trip in ms; anything but a finite number >= 0 is 350. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Genex|Regions", meta = (ClampMin = "0")) float MaxPingMs = 350.f;
 	/** The one region to play in, by its name in the sign-in answer's regions (a player's own choice; a Urls entry is
 	 *  its own name): no other is joined or created in. Empty, or a name the cluster does not have, is no pin. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Genex|Regions") FString Region;
+	/** The player's home region (PROTOCOL.md §17.1 *Regions*), asked for players and created in first, whatever the
+	 *  probe measured; Region wins over it. Empty: the sign-in answer's (colyseus.authorityHome, the player's region by
+	 *  geography) when the join uses the sign-in answer's servers. Empty, or a name the cluster does not have, is no home. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Genex|Regions") FString Home;
 	/** Regrouping (PROTOCOL.md §17.1 *Regrouping*), on by default: while the player is alone in a pool room, the regions
-	 *  listed before the seat's own (in reach) are asked after 2, 4, 9, 15 and then every 30 s for a room that has
+	 *  listed before the seat's own (in reach, or silent) are asked after 2, 4, 9, 15 and then every 30 s for a room that has
 	 *  players, and the seat moves there: On Rejoined fires (Was Moved true inside it) and the old room is left. Two players who
 	 *  started at the same moment in two regions meet this way. A private room, a join by code, Url, a pinned Region
 	 *  and the rule Nearest never regroup. False keeps the player where they are. */

@@ -53,20 +53,22 @@ const ENTRY_MAX = 255;
 /** The most folders a Windows entry may sit in. */
 const ENTRY_DEPTH_MAX = 4;
 
-/** One build of a game for one platform and architecture, as the API serves it. */
-export interface NativeBuild {
+/** How a build's files are stored, in the API's spelling; a row that names none is a zip. Wire values: never rename one. */
+export const BuildFormat = { Zip: "zip", Chunks: "chunks" } as const;
+export type BuildFormat = (typeof BuildFormat)[keyof typeof BuildFormat];
+
+/** What every build row says, however its files are stored. */
+interface BuildFacts {
   platform: NativePlatform;
   arch: NativeArch;
   /** The author's build id: what an update compares. */
   version: string;
-  /** The archive's size: what the download is. */
+  /** What a fresh install downloads: the archive, or a chunked build's manifest and every chunk as stored. */
   sizeBytes: number;
   /** The unpacked size: what the disk check asks for before the download starts. */
   installedBytes: number;
-  /** The archive's sha256, lowercase hex: checked before anything is unpacked. */
+  /** The sha256, lowercase hex, of the archive or of a chunked build's manifest: checked before anything is unpacked. */
   sha256: string;
-  /** The archive's https address on a build host. */
-  url: string;
   /** What runs, relative to the archive's root: `Dust Runners.app`, `Dust Runners/DustRunners.exe`. */
   entry: string;
   /** The oldest system it runs on: `13.0` (macOS), `10.0.19041` (Windows). */
@@ -74,6 +76,36 @@ export interface NativeBuild {
   /** When it was published, ISO 8601. */
   publishedAt: string;
 }
+
+/** A build that is one zip archive. */
+export interface ZipBuild extends BuildFacts {
+  /** The archive's https address on a build host. */
+  url: string;
+  chunksUrl?: undefined;
+}
+
+/**
+ * A build stored as a manifest and content-addressed chunks (`main/play/native-chunks.ts`): an
+ * update downloads only the chunks the installed version cannot give it.
+ */
+export interface ChunkedBuild extends BuildFacts {
+  /** The https folder on a build host, ending in `/`, that holds the manifest and every chunk. */
+  chunksUrl: string;
+  url?: undefined;
+}
+
+/** One build of a game for one platform and architecture, as the API serves it. */
+export type NativeBuild = ZipBuild | ChunkedBuild;
+
+/** Whether a build installs from a manifest and chunks, not from one archive. */
+export const isChunkedBuild = (build: NativeBuild): build is ChunkedBuild => build.chunksUrl !== undefined;
+
+/**
+ * The disk space a fresh install of `build` takes while it runs: the unpacked game, and a zip's
+ * archive beside it until it is unpacked. Chunks are written straight into the game's files.
+ */
+export const installSpaceBytes = (build: NativeBuild): number =>
+  isChunkedBuild(build) ? build.installedBytes : build.sizeBytes + build.installedBytes;
 
 /** The engines the catalog names a native build's game by: what Play opens full screen in each one's own way. */
 export const NativeEngine = { Unity: "unity", Godot: "godot", Unreal: "unreal" } as const;
@@ -121,15 +153,47 @@ const isSize = (value: unknown, max: number): value is number =>
   typeof value === "number" && Number.isInteger(value) && value > 0 && value <= max;
 
 /** An https address on one of `hosts`, with no port and no credentials, else null. */
-function buildUrl(value: unknown, hosts: ReadonlySet<string>): string | null {
+function hostedUrl(value: unknown, hosts: ReadonlySet<string>): URL | null {
   if (typeof value !== "string") return null;
   try {
     const url = new URL(value);
     const plain = url.protocol === "https:" && !url.username && !url.password && !url.port;
-    return plain && hosts.has(url.hostname) ? url.href : null;
+    return plain && hosts.has(url.hostname) ? url : null;
   } catch {
     return null;
   }
+}
+
+/** An archive's address on one of `hosts`, else null. */
+const buildUrl = (value: unknown, hosts: ReadonlySet<string>): string | null => hostedUrl(value, hosts)?.href ?? null;
+
+/**
+ * A chunk folder's address on one of `hosts`: it ends in `/` with nothing after (no query, not even
+ * an empty one), so a manifest's or a chunk's name appends to it. Else null.
+ */
+function chunksFolderUrl(value: unknown, hosts: ReadonlySet<string>): string | null {
+  const url = hostedUrl(value, hosts);
+  if (!url || url.search || url.hash) return null;
+  return url.href.endsWith("/") ? url.href : null;
+}
+
+/** Whether a row leaves a field out: absent, or the `null` a server writes for no value. */
+const isAbsent = (value: unknown): boolean => value === undefined || value === null;
+
+/** Where a row's files are: a zip's archive or a chunked build's folder, never both. Null for any other row. */
+function sourceOf(
+  value: Record<string, unknown>,
+  hosts: ReadonlySet<string>,
+): Pick<ZipBuild, "url"> | Pick<ChunkedBuild, "chunksUrl"> | null {
+  const { format, url, chunksUrl } = value;
+  if (!isAbsent(url) && !isAbsent(chunksUrl)) return null;
+  if (format === BuildFormat.Chunks) {
+    const folder = chunksFolderUrl(chunksUrl, hosts);
+    return folder ? { chunksUrl: folder } : null;
+  }
+  if (!isAbsent(format) && format !== BuildFormat.Zip) return null;
+  const archive = buildUrl(url, hosts);
+  return archive ? { url: archive } : null;
 }
 
 /**
@@ -181,16 +245,16 @@ function parseBuild(value: unknown, hosts: ReadonlySet<string>): NativeBuild | n
   if (!identity) return null;
   if (!isSize(sizeBytes, NATIVE_ARCHIVE_MAX_BYTES) || !isSize(installedBytes, NATIVE_INSTALL_MAX_BYTES)) return null;
   const sha256 = typeof value.sha256 === "string" ? value.sha256.toLowerCase() : "";
-  const url = buildUrl(value.url, hosts);
+  const source = sourceOf(value, hosts);
   const publishedAt = isoDate(value.publishedAt);
-  if (!SHA256.test(sha256) || !url || !publishedAt) return null;
+  if (!SHA256.test(sha256) || !source || !publishedAt) return null;
   if (minOs !== undefined && (typeof minOs !== "string" || !OS_VERSION.test(minOs))) return null;
   return {
     ...identity,
     sizeBytes,
     installedBytes,
     sha256,
-    url,
+    ...source,
     ...(typeof minOs === "string" ? { minOs } : {}),
     publishedAt,
   };
@@ -198,7 +262,7 @@ function parseBuild(value: unknown, hosts: ReadonlySet<string>): NativeBuild | n
 
 /**
  * A game's build rows as the API serves them: each one kept only when every field is sane and its
- * archive is on one of `hosts`, one per platform and architecture (the first), at most
+ * archive (or its chunk folder) is on one of `hosts`, one per platform and architecture (the first), at most
  * {@link NATIVE_BUILDS_MAX}. Anything that is not a list is no builds.
  */
 export function parseNativeBuilds(value: unknown, hosts: ReadonlySet<string>): NativeBuild[] {
@@ -352,10 +416,11 @@ export const playableHere = (game: WithNative, host: NativeHost): boolean =>
 export const InstallPhase = {
   /** Waiting for the install before it: one runs at a time. */
   Queued: "queued",
+  /** The archive is downloading, or a chunked build's chunks are being downloaded or taken from the installed version. */
   Downloading: "downloading",
-  /** The archive's checksum is being checked. */
+  /** The archive's checksum is being checked, or the chunks an earlier try saved are. */
   Verifying: "verifying",
-  /** The archive is being unpacked and the app inside checked. */
+  /** The archive is being unpacked (a chunked build's links and programs set) and the app inside checked. */
   Unpacking: "unpacking",
   Ready: "ready",
   Failed: "failed",
@@ -383,6 +448,8 @@ export const InstallFailure = {
   UnsupportedOs: "unsupported-os",
   /** The app is for Intel only, and this Apple silicon Mac has no Rosetta to run it. */
   NeedsRosetta: "needs-rosetta",
+  /** The build is stored in a way this Genex does not read yet (a newer manifest, an unknown chunk codec). */
+  NeedsUpdate: "needs-update",
   /** The archive does not hold the app the catalog names. */
   EntryMissing: "entry-missing",
   /** The catalog offers no build for this computer. */
@@ -418,7 +485,10 @@ export interface InstallProgress {
   slug: string;
   version: string;
   phase: InstallPhase;
-  /** Bytes of the archive downloaded so far, and its whole size. */
+  /**
+   * Bytes of the archive downloaded so far, and its whole size. For a chunked build: the bytes of the
+   * game its finished chunks hold, downloaded or taken from the installed version, and the game's size.
+   */
   receivedBytes: number;
   totalBytes: number;
   /** The download's smoothed speed, or null while it is not known or nothing is downloading. */

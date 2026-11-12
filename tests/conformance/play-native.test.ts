@@ -12,6 +12,8 @@ import {
   FIXTURE_BUILD_HOST,
   hasWebBuild,
   InstallPhase,
+  installSpaceBytes,
+  isChunkedBuild,
   NATIVE_ARCHIVE_MAX_BYTES,
   NATIVE_BUILD_HOSTS,
   NATIVE_BUILDS_MAX,
@@ -28,6 +30,7 @@ import {
   playableHere,
   whyNotHere,
   WhyNotHere,
+  type ZipBuild,
 } from "../../src/shared/play-native.ts";
 import { thisComputer } from "../../src/main/play/native-host.ts";
 
@@ -57,9 +60,9 @@ const MAC_INTEL: NativeHost = { platform: NativePlatform.Mac, arch: NativeArch.X
 const WINDOWS: NativeHost = { platform: NativePlatform.Windows, arch: NativeArch.X64, osVersion: "10.0.22631" };
 const LINUX: NativeHost = { platform: NativePlatform.Linux, arch: NativeArch.X64, osVersion: "6.8.0" };
 
-const build = (overrides: Partial<NativeBuild> = {}): NativeBuild => {
+const build = (overrides: Partial<ZipBuild> = {}): ZipBuild => {
   const [parsed] = parseNativeBuilds([row()], HOSTS);
-  assert.ok(parsed);
+  assert.ok(parsed && !isChunkedBuild(parsed));
   return { ...parsed, ...overrides };
 };
 
@@ -173,6 +176,84 @@ describe("Native build rows", () => {
   it("lowercases a checksum spelled in capitals", () => {
     const [kept] = parseNativeBuilds([row({ sha256: "AB".repeat(32) })], HOSTS);
     assert.equal(kept?.sha256, "ab".repeat(32));
+  });
+});
+
+const CHUNKS_URL = `https://${HOST}/games/dust-runners/native/chunks/`;
+
+/** A chunked build's row as the API serves it: a manifest's checksum and where its chunks are, no archive. */
+const chunkedRow = (overrides: Record<string, unknown> = {}): Record<string, unknown> =>
+  row({ url: undefined, format: "chunks", chunksUrl: CHUNKS_URL, ...overrides });
+
+describe("Chunked build rows", () => {
+  it("keeps a chunked row as the contract spells it, with no archive address", () => {
+    const kept = parseNativeBuilds([chunkedRow()], HOSTS);
+    assert.deepEqual(kept, [
+      {
+        platform: "mac",
+        arch: "universal",
+        version: "1.3.0",
+        sizeBytes: 1_200_000_000,
+        installedBytes: 1_400_000_000,
+        sha256: SHA,
+        chunksUrl: CHUNKS_URL,
+        entry: "Dust Runners.app",
+        minOs: "13.0",
+        publishedAt: "2026-10-17T10:00:00.000Z",
+      },
+    ]);
+    const [chunked] = kept;
+    assert.ok(chunked);
+    assert.equal(isChunkedBuild(chunked), true);
+    assert.equal(isChunkedBuild(build()), false, "a zip row is no chunked build");
+    assert.equal(installSpaceBytes(chunked), 1_400_000_000, "no archive is kept beside a chunked game");
+    assert.equal(installSpaceBytes(build()), 2_600_000_000, "a zip is, until it is unpacked");
+  });
+
+  it("drops each chunked row that is off and keeps the good ones beside it", () => {
+    const hostile: Array<[string, Record<string, unknown>]> = [
+      ["plain http", { chunksUrl: `http://${HOST}/games/a/native/chunks/` }],
+      ["a host the app does not trust", { chunksUrl: "https://evil.example/games/a/native/chunks/" }],
+      ["a lookalike host", { chunksUrl: `https://${HOST}.evil.example/chunks/` }],
+      ["a port", { chunksUrl: `https://${HOST}:8443/games/a/native/chunks/` }],
+      ["credentials in the address", { chunksUrl: `https://user:pw@${HOST}/games/a/native/chunks/` }],
+      ["no trailing slash", { chunksUrl: `https://${HOST}/games/a/native/chunks` }],
+      ["a query after the folder", { chunksUrl: `https://${HOST}/games/a/native/chunks/?v=2` }],
+      ["a fragment after the folder", { chunksUrl: `https://${HOST}/games/a/native/chunks/#x` }],
+      ["no chunk address", { chunksUrl: undefined }],
+      ["not an address", { chunksUrl: "chunks/" }],
+      ["an unknown format", { format: "tar" }],
+      ["a format that is not a word", { format: 2 }],
+      ["an archive address beside the chunks", { url: `https://${HOST}/a.zip` }],
+      ["a short checksum", { sha256: "abc" }],
+      ["no unpacked size", { installedBytes: 0 }],
+    ];
+    for (const [why, overrides] of hostile) {
+      const good = chunkedRow({ arch: "arm64", version: "good" });
+      const kept = parseNativeBuilds([chunkedRow(overrides), good], HOSTS);
+      assert.deepEqual(
+        kept.map((one) => one.version),
+        ["good"],
+        why,
+      );
+    }
+  });
+
+  it("reads a zip row as before, whether or not it says so, and refuses one that also names chunks", () => {
+    const [plain] = parseNativeBuilds([row()], HOSTS);
+    assert.deepEqual(parseNativeBuilds([row({ format: "zip" })], HOSTS), [plain], "format zip is today's row");
+    const nulls = row({ format: null, chunksUrl: null });
+    assert.deepEqual(parseNativeBuilds([nulls], HOSTS), [plain], "a field written as null is a field left out");
+    assert.equal(parseNativeBuilds([chunkedRow({ url: null })], HOSTS).length, 1, "and so for a chunked row");
+    assert.deepEqual(parseNativeBuilds([row({ chunksUrl: CHUNKS_URL })], HOSTS), [], "an archive and chunks");
+    assert.deepEqual(parseNativeBuilds([row({ format: "chunks" })], HOSTS), [], "chunks with only an archive");
+    assert.deepEqual(parseNativeBuilds([chunkedRow({ format: undefined })], HOSTS), [], "chunks that do not say so");
+  });
+
+  it("offers a chunked build to this computer as any other", () => {
+    const [chunked] = parseNativeBuilds([chunkedRow()], HOSTS);
+    assert.ok(chunked);
+    assert.equal(buildFor([chunked], MAC_ARM), chunked);
   });
 });
 

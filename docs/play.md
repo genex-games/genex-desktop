@@ -233,6 +233,11 @@ is.
   trusts (`NATIVE_BUILD_HOSTS`: `cdn.genex.technology` by exact name, so a game's own
   `<slug>.genex.technology` site never hands out an app), with no port or credentials, never
   redirecting elsewhere, and answers `Range`. A row with anything off is dropped, the rest kept.
+  A row with `format: "chunks"` is a chunked build (`ChunkedBuild`, `isChunkedBuild`): it has no
+  `url` but `chunksUrl`, an https folder on a build host ending in `/` (no port, credentials or
+  query), which holds its manifest (`<sha256>.manifest.json`; the row's `sha256` is the
+  manifest's) and its chunks (`<hash>.bin`); its `sizeBytes` is what a fresh install downloads. A
+  row naming both `url` and `chunksUrl`, or any other `format` than `zip`, is dropped.
   A Windows app Genex built from an Unreal game's project on its own computers (Publish's Build on
   Genex, [plugins](plugins.md)) comes as any other row.
 - The build a computer installs is its platform's for its own processor, else a universal Mac app,
@@ -264,8 +269,9 @@ is.
   recorded in `<partial>.ranges.json` so a later try asks only for the rest; a host without ranges,
   or any answer that is not the range asked for, is not written and the archive starts over as one
   stream (resumed by range). Each connection is given up after a minute without a byte; a cancel
-  throws the saved bytes away, a failure keeps them. The page's install line says the percent,
-  the smoothed speed and the time left (`shared/download-speed.ts`), then Verifying and Unpacking.
+  throws the saved bytes away, a failure keeps them. The page's install bar fills with the percent
+  and says the smoothed speed, with the time left on a line under it (`shared/download-speed.ts`),
+  then Verifying and Unpacking.
   Its sha256 is checked, its zip directory read before
   anything is unpacked (`native-zip.ts`: no entry or link outside it, nothing written through a
   link, no more than the stated size), unpacked with `ditto --noqtn`, every link resolved inside it,
@@ -281,6 +287,39 @@ is.
   processor (`unpackWindowsBuild`). Each
   game keeps `installed-games/<slug>/<version>/` and `saves/`; `index.json` lists them. Removing a
   game (refused while it runs) keeps its saves; an update keeps the running version until it quits.
+- Installing a chunked build (`native-chunks.ts`, `native-chunk-assemble.ts`; the `genex-chunks`
+  format, version 1). There is no archive: a manifest lists the game's files, links and empty
+  folders, and chunks of up to 16 MiB tile the bytes of its files in manifest order.
+  - **The manifest** (64 MiB at most) is downloaded by the archive's host rules, must hash to the
+    row's `sha256`, and is refused whole unless every rule holds: no unknown key; paths plain,
+    sorted, no two alike in another case, none under a file, a link or an empty folder (in any
+    case); links relative and inside the game read as text; chunk sizes adding up to the files' and to the
+    row's `installedBytes`; the row's `entry` present. Nothing is written before that. A later
+    manifest version or an unknown chunk codec fails as `needs-update` ("needs a newer Genex").
+  - **Assembling** happens in `installed-games/.downloads/<slug>-<sha16>.chunked/`: the files are
+    laid out at their sizes under `game/` (each folder made part by part, never through a link),
+    then six chunks at a time are finished. A chunk whose hash the installed version's manifest
+    lists is rebuilt from the installed files (a file of another size gives none), else downloaded
+    (`<hash>.bin`: at most its size and a codec byte, asked for up to three times after a network
+    or checksum failure, one then two seconds apart, given up after a minute without a byte) and
+    decoded (as stored or raw deflate, never past its size). Either way it is written only once
+    its sha256 is the manifest's. Genex changes a Mac app's programs and Info.plist when it signs
+    it, so those chunks fail the check and are downloaded: that is expected.
+  - **Resuming.** Each finished chunk is added to `done.log`. The next try reads every recorded
+    chunk back and checks it (Verifying), since a power loss can leave the record ahead of the
+    disk, does only the rest, and starts the folder afresh when the record is another manifest's.
+    A cancel throws the work folder away; a failure keeps it.
+  - **Finishing.** Whatever the work folder holds that the manifest does not list is removed
+    (Verifying); empty folders, program modes and, last, links are set; the game moves to the
+    staging folder and is checked, made Genex's and recorded exactly as an unpacked zip is
+    (`finishMacBuild`, `finishLinuxBuild`, `finishWindowsBuild`), and the work folder goes.
+  - **The next update.** The manifest is kept as `installed-games/<slug>/.manifest.json`, named
+    by `manifestSha256` in the index; clearing old versions leaves it, a changed link moves it
+    with the game and Remove deletes it. A zip install drops it, so the first chunked update
+    after a zip downloads every chunk.
+  - **Space and progress.** The space check asks for the part of the game the work folder does
+    not hold on disk yet, and 1 GiB. Progress counts the game's bytes in finished chunks,
+    downloaded or reused, out of `installedBytes`.
 - Playing (`main/play/native-launch.ts`): one copy per game, in the game sandbox (`spawnNativeGame`:
   the app read-only, `saves/` its HOME and `CFFIXED_USER_HOME`, its own preference domain, its
   `NSIRD_` atomic-save folder, window, GPU and sound; its only network is its Genex gateway, below).

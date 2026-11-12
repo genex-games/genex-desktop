@@ -33,7 +33,7 @@ Both paths start here. Call `unity__multiplayer` once. It adds:
 - `Assets/Genex/link.xml`, which keeps IL2CPP builds from stripping what the relay's messages use.
 - `Assets/Genex/GenexGame.cs` (and its `.jslib`): `GenexGame.Slug`, the game's Genex project
   wherever the build runs, `GenexGame.ApiUrl`, and for server rooms `GenexGame.LocalRoomUrl` and
-  `GenexGame.PageAuthorityUrls`. Keep the game's online code in the default
+  `GenexGame.PageAuthorityUrls`, `PageAuthorityRegions` and `PageAuthorityHome`. Keep the game's online code in the default
   assembly (no `.asmdef` of its own) so it can use them.
 - `Assets/Resources/GenexSettings.json`: the game's Genex project (`slug`) and API (`apiUrl`).
 - The matchmaking you pass, in the game's `genex.json` (Genex reads it when the game is published).
@@ -216,6 +216,8 @@ public sealed class Arena : MonoBehaviour
             else if (GenexWebGL.Available)
             {
                 options.Urls = GenexGame.PageAuthorityUrls;      // the published page's room servers
+                options.Regions = GenexGame.PageAuthorityRegions; // the same, by region: each tried by its own urls
+                options.Home = GenexGame.PageAuthorityHome;      // the player's region by geography: tried first
                 options.GetEmbedToken = GenexWebGL.EmbedToken;   // a fresh token per join: never store one
             }
             else
@@ -225,6 +227,8 @@ public sealed class Arena : MonoBehaviour
                 if (ticket != null) await identity.RedeemTicket(ticket);
                 else await identity.SignInAsGuest();
                 options.Urls = identity.AuthorityUrls;
+                options.Regions = identity.AuthorityRegions;
+                options.Home = identity.AuthorityHome;
                 options.GetEmbedToken = identity.TokenProvider;
             }
             if (options.Url == null && (options.Urls == null || options.Urls.Length == 0)) return false;
@@ -268,7 +272,9 @@ public sealed class Arena : MonoBehaviour
   aim into `Session.Input` and draw `Session.Me`.
 - **Regions need nothing.** A join first asks every region within reach for a room that already
   has players, nearest first, and opens a room in the nearest region only when none has one, so a
-  player in Asia joins a friend's room in Europe instead of waiting alone. Three fields of
+  player in Asia joins a friend's room in Europe instead of waiting alone. A lone player's room
+  opens in their home region (`Home`, the region nearest them by geography, which Genex names from
+  where the player connects), whatever a latency probe measured. Three fields of
   `GenexAuthorityOptions` change it, and most games set none: `MaxPingMs` (350, the farthest region
   asked, as round-trip ping), `RegionRule` (`GenexRegionRule.Nearest` keeps a player in their
   nearest region) and `Region` (a region the player picked by name: `"asia"`, `"eu"` or `"us"`;

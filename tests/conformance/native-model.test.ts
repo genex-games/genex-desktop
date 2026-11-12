@@ -32,12 +32,13 @@ import {
   type NativeSession,
   NativeSessionPhase,
   WhyNotHere,
+  type ZipBuild,
 } from "../../src/shared/play-native.ts";
 import { NATIVE_WORDS, nativeHereWords, notHereWords } from "../../src/renderer/words.ts";
 
 const HOST: NativeHost = { platform: NativePlatform.Mac, arch: NativeArch.Arm64, osVersion: "15.0" };
 
-const build = (overrides: Partial<NativeBuild> = {}): NativeBuild => ({
+const build = (overrides: Partial<ZipBuild> = {}): ZipBuild => ({
   platform: NativePlatform.Mac,
   arch: NativeArch.Universal,
   version: "1.3",
@@ -249,24 +250,33 @@ describe("a native game's card", () => {
     }
   });
 
-  it("says how an install is going in one line: percent, speed and time left, then each step by name", () => {
+  it("says how an install is going: the speed in the bar, the time left under it, then each step by name", () => {
+    const view = (phase: InstallProgress["phase"], overrides: Partial<InstallProgress> = {}) =>
+      installLine(progress(phase, overrides));
     const line = (phase: InstallProgress["phase"], overrides: Partial<InstallProgress> = {}) =>
-      NATIVE_WORDS.installLine(installLine(progress(phase, overrides)));
-    assert.deepEqual(installLine(progress(InstallPhase.Downloading)), {
+      NATIVE_WORDS.installLine(view(phase, overrides));
+    const left = (phase: InstallProgress["phase"], overrides: Partial<InstallProgress> = {}) =>
+      NATIVE_WORDS.installTimeLeft(view(phase, overrides));
+    assert.deepEqual(view(InstallPhase.Downloading), {
       line: InstallLine.Downloading,
       percent: 38,
       bytesPerSecond: 38 * 1024 ** 2,
       minutesLeft: 2,
     });
-    assert.equal(line(InstallPhase.Downloading), "Installing… 38% · 38 MB/s · about 2 min left");
-    assert.equal(line(InstallPhase.Downloading, { etaMs: 61_000 }), "Installing… 38% · 38 MB/s · about 2 min left");
-    assert.equal(line(InstallPhase.Downloading, { etaMs: 40_000 }), "Installing… 38% · 38 MB/s · under a minute left");
-    for (const unknown of [{ bytesPerSecond: null }, { etaMs: null }, { bytesPerSecond: 0 }])
-      assert.equal(line(InstallPhase.Downloading, unknown), "Installing… 38%", "no speed or time is said until known");
+    assert.equal(line(InstallPhase.Downloading), "Installing… 38 MB/s");
+    assert.equal(left(InstallPhase.Downloading), "about 2 min left");
+    assert.equal(left(InstallPhase.Downloading, { etaMs: 61_000 }), "about 2 min left");
+    assert.equal(left(InstallPhase.Downloading, { etaMs: 40_000 }), "under a minute left");
+    for (const unknown of [{ bytesPerSecond: null }, { etaMs: null }, { bytesPerSecond: 0 }]) {
+      assert.equal(line(InstallPhase.Downloading, unknown), "Installing…", "no speed is said until known");
+      assert.equal(left(InstallPhase.Downloading, unknown), null, "no time is said until known");
+    }
     assert.equal(line(InstallPhase.Queued), "Waiting for another install…");
     assert.equal(line(InstallPhase.Verifying), "Verifying…");
     assert.equal(line(InstallPhase.Unpacking), "Unpacking…");
-    assert.equal(NATIVE_WORDS.installLine(installLine(undefined)), "Installing… 0%");
+    for (const step of [InstallPhase.Queued, InstallPhase.Verifying, InstallPhase.Unpacking])
+      assert.equal(left(step), null, "a step has no time left");
+    assert.equal(NATIVE_WORDS.installLine(installLine(undefined)), "Installing…");
   });
 
   it("reads a download's percent whole and never past 100", () => {

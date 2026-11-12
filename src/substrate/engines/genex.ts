@@ -12,7 +12,7 @@
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 import { EngineStatusCode, EngineStatusReason } from "../../shared/engine-descriptor.ts";
 import {
-  GENEX_HELPER_MODEL,
+  GENEX_DEFAULT_MODEL,
   GENEX_MODELS,
   GenexAccess,
   GenexBuildRoute,
@@ -243,9 +243,9 @@ export function createGenexLane(deps: GenexLaneDeps) {
         supportsThinking: true,
       }));
     },
-    /** The default model, and every helper's. */
+    /** The default model: the first genex.games lists. */
     defaultModel(): string {
-      return models[0]?.id ?? GENEX_HELPER_MODEL;
+      return models[0]?.id ?? GENEX_DEFAULT_MODEL;
     },
     /** A relay lease for one session, named by its chat. */
     open(chat: string): Promise<GenexLease> {

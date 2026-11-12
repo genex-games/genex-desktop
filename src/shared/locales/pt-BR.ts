@@ -1163,6 +1163,8 @@ export default {
   "Couldn’t install: this game doesn’t run on this Mac.": "Não foi possível instalar: este jogo não roda neste Mac.",
   "Couldn’t install: this game is larger than it says.": "Não foi possível instalar: este jogo é maior do que diz.",
   "Couldn’t install: this game isn’t signed.": "Não foi possível instalar: este jogo não tem assinatura.",
+  "Couldn’t install: this game needs a newer Genex. Update Genex and try again.":
+    "Não foi possível instalar: este jogo precisa de uma versão mais nova do Genex. Atualize o Genex e tente de novo.",
   "Couldn’t install: this game needs Rosetta to run on this Mac.":
     "Não foi possível instalar: este jogo precisa do Rosetta para rodar neste Mac.",
   "Couldn’t install: this game’s files aren’t safe to open.":
@@ -1971,7 +1973,8 @@ export default {
   "Installing {name}. This can take a minute.": "Instalando {name}. Isso pode levar um minuto.",
   "Installing {title}": "Instalando {title}",
   "Installing…": "Instalando…",
-  "Installing… {percent}%": "Instalando… {percent}%",
+  "Installing… {speed}": "Instalando… {speed}",
+  "about {minutes} min left": "faltam uns {minutes} min",
   "Installs OpenCode on this Mac. This can take a minute.": "Instala o OpenCode neste Mac. Pode levar um minuto.",
   "Install…": "Instalar…",
   Instructions: "Instruções",
@@ -2577,6 +2580,9 @@ export default {
   "Older messages can still rewind the chat, but not its files.":
     "As mensagens antigas ainda podem voltar o chat, mas não os arquivos dele.",
   "Older models": "Modelos antigos",
+  "Ollama could not download this model: {reason}": "O Ollama não conseguiu baixar este modelo: {reason}",
+  "The download stopped before it finished. Download again to continue.":
+    "O download parou antes de terminar. Baixe de novo para continuar.",
   "Ollama is not running at {host}. Install or start Ollama, then download again.":
     "O Ollama não está rodando em {host}. Instale ou inicie o Ollama e baixe de novo.",
   "Ollama keeps its models in its own folder: move them in Ollama → Settings → Model location.":
@@ -6585,10 +6591,6 @@ export default {
   "{size} KB/s": "{size} KB/s",
   "Verifying…": "Verificando…",
   "Unpacking…": "Descompactando…",
-  "Installing… {percent}% · {speed} · about {minutes} min left":
-    "Instalando… {percent}% · {speed} · faltam uns {minutes} min",
-  "Installing… {percent}% · {speed} · under a minute left":
-    "Instalando… {percent}% · {speed} · falta menos de um minuto",
   "This plugin stopped several times in a row, so it starts again in {seconds, plural, one {# second} other {# seconds}}. Try again then.":
     "Este plugin parou várias vezes seguidas, então ele volta a iniciar em {seconds, plural, one {# segundo} other {# segundos}}. Tente de novo depois disso.",
   "Add Genex to {name}?": "Adicionar o Genex a {name}?",

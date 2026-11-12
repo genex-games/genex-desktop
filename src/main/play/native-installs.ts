@@ -5,6 +5,9 @@
  * `<root>/<slug>/<version>/` (the app, read-only to the game) beside `<root>/<slug>/saves/` (its
  * home), and `<root>/index.json` lists what is installed. Removing a game keeps its saves; a game
  * whose owner changed its link moves to the new one, saves and all.
+ * A chunked build (`native-chunks.ts`) has no archive: its manifest is read, its chunks assembled in
+ * a work folder (`native-chunk-assemble.ts`), and the manifest kept as `<root>/<slug>/.manifest.json`
+ * so the next update takes every chunk it can from the installed files and downloads only the rest.
  * Electron-free: the catalog read, the fetch, the tools and the push to the window are deps.
  */
 import { lstat, mkdir, mkdtemp, readdir, rename, rm, statfs } from "node:fs/promises";
@@ -14,10 +17,13 @@ import { SECOND_MS } from "../../shared/duration.ts";
 import { isPlaySlug, type PlayGameDetail } from "../../shared/play.ts";
 import {
   buildFor,
+  type ChunkedBuild,
   type InstalledGame,
   InstallFailure,
   InstallPhase,
   type InstallProgress,
+  installSpaceBytes,
+  isChunkedBuild,
   isNativeArch,
   isNativePlatform,
   NativeArch,
@@ -25,13 +31,25 @@ import {
   type NativeHost,
   type NativeInstalls,
   NativePlatform,
+  type ZipBuild,
 } from "../../shared/play-native.ts";
-import { atomicWriteJson, readJsonIfExists } from "../../substrate/fsx.ts";
+import { atomicWriteJson, atomicWriteText, readJsonIfExists, readRegularFile } from "../../substrate/fsx.ts";
 import { diskBytes, removeOwnedFolder } from "../../substrate/storage-folders.ts";
+import {
+  assembleChunks,
+  type ChunkDeps,
+  chunkWorkBytes,
+  chunkWorkOf,
+  discardChunkWork,
+  type InstalledSource,
+} from "./native-chunk-assemble.ts";
+import { fetchManifest, MANIFEST_MAX_BYTES, parseManifest, sha256Hex } from "./native-chunks.ts";
 import { discardDownload, downloadArchive, InstallError, verifyArchive } from "./native-download.ts";
 import {
+  finishBuild,
   type ToolRun,
   type UnpackedApp,
+  type UnpackedFor,
   unpackLinuxBuild,
   unpackMacBuild,
   unpackWindowsBuild,
@@ -48,6 +66,11 @@ const INCOMING = ".incoming-";
 const TRASH = ".trash-";
 /** Each game's saves folder, kept across versions and removals. */
 export const SAVES = "saves";
+/**
+ * The manifest of a game's installed version, when it came as chunks: a file beside its versions
+ * (no version can be named so: none starts with a dot), which clearing old versions leaves alone.
+ */
+export const KEPT_MANIFEST = ".manifest.json";
 const INDEX = "index.json";
 const INDEX_VERSION = 1;
 
@@ -62,6 +85,8 @@ export interface InstallRecord extends InstalledGame, UnpackedApp {
   entry: string;
   /** The engine the catalog says it was made with (`unity`), or null: how the launcher opens it full screen. */
   engine: string | null;
+  /** The sha256 of the manifest kept for it ({@link KEPT_MANIFEST}), when it was installed from chunks. */
+  manifestSha256?: string;
 }
 
 /** How an install ended, for notifications. */
@@ -72,7 +97,7 @@ export interface InstallOutcome {
   platform: NativePlatform;
   /** Null when it is ready to play. */
   failure: InstallFailure | null;
-  /** The space the download and the game take together: what a full disk must free. */
+  /** The space the install takes (`installSpaceBytes`): what a full disk must free. */
   neededBytes: number;
 }
 
@@ -98,6 +123,8 @@ export interface NativeInstallDeps {
   inUse?(slug: string): boolean;
   stallClock?: StallClock;
   stallMs?: number;
+  /** How the wait before a chunk is asked for again passes (a timer by default). */
+  sleep?: ChunkDeps["sleep"];
 }
 
 /** The index on disk. */
@@ -123,12 +150,13 @@ async function systemFreeBytes(dir: string): Promise<number> {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 const STRING_FIELDS = ["title", "version", "entry", "executable", "bundleId", "bundleName", "installedAt"] as const;
+const SHA256 = /^[0-9a-f]{64}$/;
 
 /** One index record as the installer wrote it, or null when anything in it is off. */
 function readRecord(slug: string, value: unknown): InstallRecord | null {
   if (!isPlaySlug(slug) || !isRecord(value) || value.slug !== slug) return null;
   if (!STRING_FIELDS.every((field) => typeof value[field] === "string" && value[field] !== "")) return null;
-  const { platform, arch, bytes, coverUrl, lastPlayedAt } = value;
+  const { platform, arch, bytes, coverUrl, lastPlayedAt, manifestSha256 } = value;
   if (!isNativePlatform(platform) || !isNativeArch(arch)) return null;
   if (typeof bytes !== "number" || !Number.isFinite(bytes) || bytes < 0) return null;
   return {
@@ -148,6 +176,7 @@ function readRecord(slug: string, value: unknown): InstallRecord | null {
     // A record from before these were kept: an engine nobody named, and full screen.
     engine: typeof value.engine === "string" ? value.engine : null,
     windowed: value.windowed === true,
+    ...(typeof manifestSha256 === "string" && SHA256.test(manifestSha256) ? { manifestSha256 } : {}),
   };
 }
 
@@ -225,7 +254,7 @@ export class NativeInstaller {
       version: job.build.version,
       phase: InstallPhase.Queued,
       receivedBytes: before?.receivedBytes ?? 0,
-      totalBytes: job.build.sizeBytes,
+      totalBytes: isChunkedBuild(job.build) ? job.build.installedBytes : job.build.sizeBytes,
       bytesPerSecond: null,
       etaMs: null,
       failure: null,
@@ -236,14 +265,13 @@ export class NativeInstaller {
   /** Tell how an install ended. */
   #tell(job: Pick<Job, "slug" | "build" | "game">, failure: InstallFailure | null): void {
     const { slug, game, build } = job;
-    const neededBytes = build.sizeBytes + build.installedBytes;
     this.#deps.outcome?.({
       slug,
       title: game.title,
       version: build.version,
       platform: build.platform,
       failure,
-      neededBytes,
+      neededBytes: installSpaceBytes(build),
     });
   }
 
@@ -254,18 +282,23 @@ export class NativeInstaller {
     this.#tell(job, failure);
   }
 
-  #partialOf(job: Pick<Job, "slug" | "build">): string {
-    return path.join(this.folder, DOWNLOADS, `${job.slug}-${job.build.sha256.slice(0, 16)}.zip.part`);
+  #partialOf(slug: string, build: ZipBuild): string {
+    return path.join(this.folder, DOWNLOADS, `${slug}-${build.sha256.slice(0, 16)}.zip.part`);
+  }
+
+  /** Where a chunked build of `slug` is assembled: kept after a failure, for the next try. */
+  #workOf(slug: string, build: ChunkedBuild): string {
+    return chunkWorkOf(path.join(this.folder, DOWNLOADS), slug, build);
   }
 
   /** Download `job`'s archive and check it, pushing progress at most every quarter second. */
-  async #download(job: Job): Promise<string> {
+  async #download(job: Job, build: ZipBuild): Promise<string> {
     await mkdir(path.join(this.folder, DOWNLOADS), { recursive: true });
-    const partial = this.#partialOf(job);
+    const partial = this.#partialOf(job.slug, build);
     let meter: SpeedMeter | null = null;
     this.#setProgress(job, { phase: InstallPhase.Downloading });
     await this.#push();
-    await downloadArchive(this.#deps, job.build, partial, job.stop.signal, (received, total) => {
+    await downloadArchive(this.#deps, build, partial, job.stop.signal, (received, total) => {
       const now = this.#deps.now();
       meter = meter ? speedAfter(meter, received, now) : speedMeter(received, now);
       const { bytesPerSecond } = meter;
@@ -273,29 +306,93 @@ export class NativeInstaller {
       this.#setProgress(job, { phase: InstallPhase.Downloading, receivedBytes: received, bytesPerSecond, etaMs });
       if (now - this.#lastPush >= PROGRESS_EVERY_MS) void this.#push();
     });
-    this.#setProgress(job, { phase: InstallPhase.Verifying, receivedBytes: job.build.sizeBytes, etaMs: null });
+    this.#setProgress(job, { phase: InstallPhase.Verifying, receivedBytes: build.sizeBytes, etaMs: null });
     await this.#push();
-    if (!(await verifyArchive(partial, job.build))) {
+    if (!(await verifyArchive(partial, build))) {
       await discardDownload(partial);
       throw new InstallError(InstallFailure.Checksum);
     }
     return partial;
   }
 
-  /** Throw `no-space` unless the disk holds the rest of the download, the game and a reserve. */
+  /**
+   * The space `job` still needs: for a zip, the rest of the download and the game; for a chunked
+   * build, the part of the game its work folder does not hold on disk yet (its files are laid out at
+   * their sizes, so what a disk without sparse files already gave them is not asked for twice).
+   */
+  async #spaceNeeded(job: Job): Promise<number> {
+    const { slug, build } = job;
+    if (isChunkedBuild(build)) {
+      const held = await chunkWorkBytes(this.#workOf(slug, build));
+      return Math.max(0, build.installedBytes - held);
+    }
+    const saved = (await lstat(this.#partialOf(slug, build)).catch(() => null))?.size ?? 0;
+    return build.sizeBytes - saved + build.installedBytes;
+  }
+
+  /** Throw `no-space` unless the disk holds what the install still needs and a reserve. */
   async #assertSpace(job: Job): Promise<void> {
-    const saved = (await lstat(this.#partialOf(job)).catch(() => null))?.size ?? 0;
-    const needed = job.build.sizeBytes - saved + job.build.installedBytes + INSTALL_RESERVE_BYTES;
+    const needed = (await this.#spaceNeeded(job)) + INSTALL_RESERVE_BYTES;
     if ((await this.#freeBytes(this.folder)) < needed) throw new InstallError(InstallFailure.NoSpace);
   }
 
-  /** Move the unpacked version into place, record it, and drop older versions not in use. */
-  async #settle(job: Job, staging: string, app: UnpackedApp): Promise<void> {
+  /** Throw away what `job` saved so far: a zip's partial archive, a chunked build's work folder. */
+  #discard(job: Job): Promise<void> {
+    const { slug, build } = job;
+    return isChunkedBuild(build)
+      ? discardChunkWork(this.#workOf(slug, build))
+      : discardDownload(this.#partialOf(slug, build));
+  }
+
+  /**
+   * The installed version of `slug` as a source of chunks, or null: it was not installed from
+   * chunks, or the manifest kept for it is not the one its record names.
+   */
+  async #installedSource(slug: string): Promise<InstalledSource | null> {
+    const record = (await this.#indexNow()).games[slug];
+    if (!record?.manifestSha256) return null;
+    try {
+      const bytes = await readRegularFile(path.join(this.folder, slug, KEPT_MANIFEST), MANIFEST_MAX_BYTES);
+      if ((await sha256Hex(bytes)) !== record.manifestSha256) return null;
+      return { dir: path.join(this.folder, slug, record.version), manifest: parseManifest(bytes) };
+    } catch {
+      return null;
+    }
+  }
+
+  /** Keep `manifest` for `slug`'s next update, or (a zip has none) drop the one a chunked version left. */
+  async #keepManifest(slug: string, manifest: Buffer | null): Promise<void> {
+    const kept = path.join(this.folder, slug, KEPT_MANIFEST);
+    if (manifest) await atomicWriteText(kept, manifest.toString("utf8"));
+    else await rm(kept, { force: true });
+  }
+
+  /** What a chunked build's progress reports do: each phase pushed at once, bytes at most every quarter second. */
+  #chunkReport(job: Job, build: ChunkedBuild): (phase: InstallPhase, doneBytes: number) => void {
+    let meter: SpeedMeter | null = null;
+    return (phase, receivedBytes) => {
+      const now = this.#deps.now();
+      const moved = this.#progress.get(job.slug)?.phase !== phase;
+      if (phase !== InstallPhase.Downloading) meter = null;
+      else meter = meter ? speedAfter(meter, receivedBytes, now) : speedMeter(receivedBytes, now);
+      const bytesPerSecond = meter?.bytesPerSecond ?? null;
+      const etaMs = meter ? etaMsAt(meter, build.installedBytes - receivedBytes) : null;
+      this.#setProgress(job, { phase, receivedBytes, bytesPerSecond, etaMs });
+      if (moved || now - this.#lastPush >= PROGRESS_EVERY_MS) void this.#push();
+    };
+  }
+
+  /**
+   * Move the unpacked version into place, record it (with the `manifest` it came from, when it came
+   * as chunks), and drop older versions not in use.
+   */
+  async #settle(job: Job, staging: string, app: UnpackedApp, manifest: Buffer | null): Promise<void> {
     const gameDir = path.join(this.folder, job.slug);
     await mkdir(path.join(gameDir, SAVES), { recursive: true });
     const versionDir = path.join(gameDir, job.build.version);
     if (await lstat(versionDir).catch(() => null)) await rename(versionDir, `${staging}${TRASH}old`);
     await rename(staging, versionDir);
+    await this.#keepManifest(job.slug, manifest);
     const bytes = await diskBytes(versionDir);
     const at = new Date(this.#deps.now()).toISOString();
     const { slug, game, build } = job;
@@ -313,6 +410,7 @@ export class NativeInstaller {
         entry: build.entry,
         engine: game.native?.engine ?? null,
         ...app,
+        ...(manifest ? { manifestSha256: build.sha256 } : {}),
       };
     });
     await this.sweep(slug);
@@ -320,22 +418,45 @@ export class NativeInstaller {
 
   /** Download, check, unpack and record one game into `staging`'s parent. */
   async #installInto(job: Job, staging: string): Promise<void> {
-    const archive = await this.#download(job);
+    const unpacked = path.join(staging, "game");
+    const game: UnpackedFor = { slug: job.slug, host: this.#deps.host };
+    const { build } = job;
+    if (isChunkedBuild(build)) return this.#installChunks(job, build, unpacked, game);
+    const archive = await this.#download(job, build);
     this.#setProgress(job, { phase: InstallPhase.Unpacking });
     await this.#push();
-    const unpacked = path.join(staging, "game");
-    const game = { slug: job.slug, host: this.#deps.host };
-    const app = await this.#unpack(job, archive, unpacked, game);
+    const app = await this.#unpack(build, archive, unpacked, game);
     job.stop.signal.throwIfAborted();
-    await this.#settle(job, unpacked, app);
+    await this.#settle(job, unpacked, app, null);
     await rm(archive, { force: true });
   }
 
+  /**
+   * Install a chunked build: its manifest read and checked, its chunks assembled in its work folder
+   * (those the installed version holds taken from it), the game moved to `unpacked` and from there
+   * checked and recorded exactly as an unpacked zip is. The work folder is gone once the game leaves it.
+   */
+  async #installChunks(job: Job, build: ChunkedBuild, unpacked: string, game: UnpackedFor): Promise<void> {
+    const { signal } = job.stop;
+    this.#setProgress(job, { phase: InstallPhase.Downloading });
+    await this.#push();
+    const { manifest, bytes } = await fetchManifest(this.#deps, build, signal);
+    const dir = this.#workOf(job.slug, build);
+    const installed = await this.#installedSource(job.slug);
+    const report = this.#chunkReport(job, build);
+    const assembled = await assembleChunks({ deps: this.#deps, build, manifest, dir, installed, signal, report });
+    await rename(assembled, unpacked);
+    await discardChunkWork(dir);
+    const app = await finishBuild(this.#deps.run, unpacked, build, game);
+    signal.throwIfAborted();
+    await this.#settle(job, unpacked, app, bytes);
+  }
+
   /** Unpack a verified archive the way its platform's builds are packed. */
-  #unpack(job: Job, archive: string, unpacked: string, game: { slug: string; host: NativeHost }): Promise<UnpackedApp> {
-    if (job.build.platform === NativePlatform.Linux) return unpackLinuxBuild(archive, unpacked, job.build, game);
-    if (job.build.platform === NativePlatform.Windows) return unpackWindowsBuild(archive, unpacked, job.build, game);
-    return unpackMacBuild(this.#deps.run, archive, unpacked, job.build, game);
+  #unpack(build: ZipBuild, archive: string, unpacked: string, game: UnpackedFor): Promise<UnpackedApp> {
+    if (build.platform === NativePlatform.Linux) return unpackLinuxBuild(archive, unpacked, build, game);
+    if (build.platform === NativePlatform.Windows) return unpackWindowsBuild(archive, unpacked, build, game);
+    return unpackMacBuild(this.#deps.run, archive, unpacked, build, game);
   }
 
   /** Download, check and unpack one game; its progress and outcome say how it went. */
@@ -353,7 +474,7 @@ export class NativeInstaller {
       if (!job.stop.signal.aborted)
         return this.#fail(job, error instanceof InstallError ? error.failure : InstallFailure.Failed);
       this.#progress.delete(job.slug);
-      await discardDownload(this.#partialOf(job));
+      await this.#discard(job);
       await this.#push();
     } finally {
       if (staging) await rm(staging, { recursive: true, force: true });
@@ -369,7 +490,10 @@ export class NativeInstaller {
     }
   }
 
-  /** Remove `slug`'s version folders other than its installed one, unless it is running. */
+  /**
+   * Remove `slug`'s version folders other than its installed one, unless it is running. Only folders
+   * go: the manifest kept beside them ({@link KEPT_MANIFEST}) stays until the game is removed.
+   */
   async sweep(slug: string): Promise<void> {
     if (this.#deps.inUse?.(slug)) return;
     const keep = (await this.#indexNow()).games[slug]?.version;
@@ -416,6 +540,7 @@ export class NativeInstaller {
     await this.#changeIndex((games) => {
       delete games[slug];
     });
+    await this.#keepManifest(slug, null);
     await this.sweep(slug);
     await this.#push();
   }

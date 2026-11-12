@@ -37,6 +37,7 @@ import { HOUR_MS, SECOND_MS } from "../../shared/duration.ts";
 import { StudioPlatform } from "../../shared/boot.ts";
 import { EngineKind, EngineStatusCode } from "../../shared/engine-descriptor.ts";
 import { EngineFailureKind } from "../../shared/engine-requests.ts";
+import { ModelPullStatus } from "../../shared/model-install.ts";
 import { ReasoningEffort } from "../../shared/model-preferences.ts";
 import { RAISED_CONTEXT_TOKENS, raisedContextName } from "../../shared/ollama-context.ts";
 import { EngineId } from "../../shared/providers.ts";
@@ -91,6 +92,8 @@ const MESSAGE = {
     t("Runtime context is unknown; 8K is an estimated planning budget. Load the model to measure it."),
   NotAnswering: (host: string) =>
     `Ollama is not running at ${host} (it no longer answers). Start Ollama and try again.`,
+  PullRefused: (reason: string) => t("Ollama could not download this model: {reason}", { reason }),
+  PullCutShort: () => t("The download stopped before it finished. Download again to continue."),
   NotRunningForDownload: (host: string) =>
     t("Ollama is not running at {host}. Install or start Ollama, then download again.", { host }),
   ModelMissing: (model: string) =>
@@ -111,6 +114,11 @@ export interface OllamaTag {
   size: number;
   digest: string;
   details?: { family?: string; parameter_size?: string; quantization_level?: string };
+}
+
+/** One line of Ollama's download stream: a step, or the refusal that ends it (sent with HTTP 200). */
+interface PullLine extends Partial<PullProgress> {
+  error?: string;
 }
 
 export interface PullProgress {
@@ -183,7 +191,12 @@ export class OllamaClient {
     if (!response.ok) throw classifyHttpFailure(EngineId.Ollama, response.status, await response.text());
   }
 
-  /** Streaming NDJSON pull. Resumable; concurrent pulls of the same model share progress. */
+  /**
+   * Streaming NDJSON pull. Resumable; concurrent pulls of the same model share progress. It ends
+   * only on Ollama's `success`: a refusal Ollama streams as a line (an unknown tag, a model its
+   * version cannot run, a full disk) and a stream that just stops both throw, so no download ends
+   * quietly without its model.
+   */
   async *pull(model: string, signal?: AbortSignal): AsyncGenerator<PullProgress> {
     const response = await fetch(`${this.host}/api/pull`, {
       method: "POST",
@@ -194,19 +207,31 @@ export class OllamaClient {
     if (!response.ok || !response.body) {
       throw classifyHttpFailure(EngineId.Ollama, response.status, await response.text().catch(() => ""));
     }
-    const reader = response.body.getReader();
+    let succeeded = false;
+    for await (const line of this.#pullLines(response.body)) {
+      if (line.error) throw new EngineError(EngineFailureKind.Other, EngineId.Ollama, MESSAGE.PullRefused(line.error));
+      if (!line.status) continue;
+      succeeded = line.status === ModelPullStatus.Success;
+      yield { ...line, status: line.status };
+    }
+    if (!succeeded) throw new Error(MESSAGE.PullCutShort());
+  }
+
+  /** The lines of a download's stream, the last one included when it ends without a newline. */
+  async *#pullLines(body: ReadableStream<Uint8Array>): AsyncGenerator<PullLine> {
+    const reader = body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
     while (true) {
       const { done, value } = await reader.read().catch((err: unknown) => this.#rethrowUnlessGone(err));
-      if (done) break;
-      const lines = `${buffer}${decoder.decode(value, { stream: true })}`.split("\n");
-      // The last piece has no newline yet: it is a line still arriving.
-      buffer = lines.pop() ?? "";
+      const lines = `${buffer}${done ? decoder.decode() : decoder.decode(value, { stream: true })}`.split("\n");
+      // Until the stream ends, the last piece has no newline yet: it is a line still arriving.
+      buffer = done ? "" : (lines.pop() ?? "");
       for (const raw of lines) {
         const line = raw.trim();
-        if (line) yield JSON.parse(line) as PullProgress;
+        if (line) yield JSON.parse(line) as PullLine;
       }
+      if (done) return;
     }
   }
 

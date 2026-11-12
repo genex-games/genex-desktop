@@ -37,5 +37,39 @@ mergeInto(LibraryManager.library, {
       urls = [];
     }
     return GenexGameText(urls.filter(function (u) { return typeof u === 'string' && u; }).join('\n'));
+  },
+  $GenexGameRegions: function () {
+    var sdk = typeof window !== 'undefined' ? window.genexEmbed : undefined;
+    var plain = function (s) { return typeof s === 'string' && s !== '' && !/[\t\n\r]/.test(s); };
+    var list = [];
+    try {
+      if (sdk && typeof sdk.getAuthorityRegions === 'function') list = sdk.getAuthorityRegions() || [];
+    } catch (e) {
+      list = [];
+    }
+    var out = [];
+    for (var i = 0; i < list.length; i++) {
+      var entry = list[i];
+      if (!entry || !plain(entry.region) || !Array.isArray(entry.urls)) continue;
+      var urls = entry.urls.filter(plain);
+      if (urls.length) out.push({ region: entry.region, urls: urls });
+    }
+    return out;
+  },
+  GenexGame_PageAuthorityRegions__deps: ['$GenexGameText', '$GenexGameRegions'],
+  GenexGame_PageAuthorityRegions: function () {
+    return GenexGameText(GenexGameRegions().map(function (r) { return [r.region].concat(r.urls).join('\t'); }).join('\n'));
+  },
+  GenexGame_PageAuthorityHome__deps: ['$GenexGameText', '$GenexGameRegions'],
+  GenexGame_PageAuthorityHome: function () {
+    var sdk = typeof window !== 'undefined' ? window.genexEmbed : undefined;
+    var home = '';
+    try {
+      if (sdk && typeof sdk.getAuthorityHome === 'function') home = sdk.getAuthorityHome();
+    } catch (e) {
+      home = '';
+    }
+    var named = typeof home === 'string' && GenexGameRegions().some(function (r) { return r.region === home; });
+    return GenexGameText(named ? home : '');
   }
 });

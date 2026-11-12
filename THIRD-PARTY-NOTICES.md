@@ -76,9 +76,9 @@ text behind a Studio-written preface; `vendor.json` records each source, version
 `npm run genex:skills` refreshes them.
 
 - Fourteen platform cards and their references, copied with Studio's cuts (`cuts.json`) taken out
-  from `@genex-ai/cli-demo` 1.42.0 `templates/skills` (MIT, Copyright (c) 2026 me-ai-org). The
+  from `@genex-ai/cli-demo` 1.43.1 `templates/skills` (MIT, Copyright (c) 2026 me-ai-org). The
   license text ships beside them as `skills/LICENSE-cards`, copied from the CLI's `LICENSE`.
-- `genex/SKILL.md` wraps https://genex.games/SKILL.md (v1.42.0), which is not part of the npm
+- `genex/SKILL.md` wraps https://genex.games/SKILL.md (v1.43.1), which is not part of the npm
   package. It is attributed to Genex here; its license is not yet confirmed (see "Status not yet
   recorded" below).
 

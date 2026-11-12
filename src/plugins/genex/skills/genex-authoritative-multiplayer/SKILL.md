@@ -88,7 +88,7 @@ as listed, for example
 `genex__publish {"operation":"gallery"}`; both carry the room module (above). Other commands map
 onto Studio tools as the `genex` skill describes (`genex__skill {"name":"genex"}`).
 
-<!-- upstream @genex-ai/cli-demo/templates/skills/genex-authoritative-multiplayer/SKILL.md v1.42.0 sha256 30b8627e994af2a9d221ee97dc0016bcbe8432c003b0dfe0cc4476fc40d13c35 -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-authoritative-multiplayer/SKILL.md v1.43.1 sha256 7cea981f9d186d1e5e5c665ec903d5f3626a5f4d0f443da030e42e99eda94528 -->
 ---
 name: genex-authoritative-multiplayer
 description: Server-authoritative multiplayer for Genex games — the game's own room module runs on Genex's servers, players only send input, and the server decides every move and hit (lag-compensated). Use for competitive play where cheating matters: ranked PvP, arenas, shooters (first-person, hitscan or dodgeable projectiles), car football, "so nobody can cheat". Casual co-op and hangouts use genex-threejs-multiplayer instead. Load before writing the room module or any networking code.
@@ -231,12 +231,14 @@ launched.
 
 ```ts
 import { connectAuthority } from "@genex-ai/multiplayer/authority";
-import { getAuthorityUrls, getColyseusAuth, waitForPlayer } from "@genex-ai/embed-sdk";
+import { getAuthorityHome, getAuthorityRegions, getAuthorityUrls, getColyseusAuth, waitForPlayer } from "@genex-ai/embed-sdk";
 import { GENEX } from "./genex.config";
 
 await waitForPlayer();
 const session = await connectAuthority({
   urls: getAuthorityUrls(),
+  regions: getAuthorityRegions(), // each region is its own pool
+  home: getAuthorityHome(), // the player's region by geography: joined first
   room: GENEX.slug,
   auth: () => getColyseusAuth(),
 });

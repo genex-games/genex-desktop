@@ -132,6 +132,40 @@ describe("unreal__multiplayer adds Genex's Unreal plugin and the core it links",
     assert.deepEqual(mac.fetched, [RELEASE.url], "the checked core is kept and not downloaded again");
   });
 
+  it("on a Mac also places the Win64 core the app ships, so Genex can build the game for Windows", async () => {
+    const fx = await project();
+    const mac = deps("darwin");
+    const answer = await addMultiplayer(mac.value, fx.storage, fx.file, signal());
+    assert.deepEqual(answer.core, { ready: true });
+    assert.deepEqual(answer.windows, { ready: true });
+    assert.deepEqual(mac.fetched, [RELEASE.url], "only the Mac release is downloaded");
+    const installed = await files(path.join(fx.dir, "Plugins", "GenexMultiplayer", CORE));
+    assert.equal(installed.get("lib/Mac/libcolyseus.a")?.toString(), LIBRARY, "the Mac core is kept");
+    assert.equal(sha256(installed.get("lib/Win64/colyseus.dll")), WIN64_DLL_SHA256);
+    assert.equal(sha256(installed.get("lib/Win64/colyseus.lib")), WIN64_LIB_SHA256);
+    assert.match(installed.get("THIRD-PARTY-NOTICES-Win64")?.toString() ?? "", /Mbed TLS/);
+    assert.match(installed.get("LICENSE")?.toString() ?? "", /MIT License/);
+  });
+
+  it("on a Mac keeps the Mac core when the shipped Win64 core isn't the pinned one, and says so", async () => {
+    const fx = await project();
+    const shipped = path.join(fx.root, "shipped");
+    await cp(SHIPPED_MULTIPLAYER, shipped, { recursive: true });
+    await flipLastByte(path.join(shipped, "colyseus-win64", "lib/Win64/colyseus.dll"));
+    const mac = deps("darwin");
+    const answer = await addMultiplayer({ ...mac.value, shipped }, fx.storage, fx.file, signal());
+    assert.deepEqual(answer.core, { ready: true }, "the game still builds on this Mac");
+    assert.equal(answer.windows?.ready, false);
+    assert.match(answer.windows && "why" in answer.windows ? answer.windows.why : "", /isn't the one it pins/);
+    const installed = await files(path.join(fx.dir, "Plugins", "GenexMultiplayer", CORE));
+    assert.equal(installed.get("lib/Mac/libcolyseus.a")?.toString(), LIBRARY);
+    assert.equal(
+      installed.has("lib/Win64/colyseus.dll") || installed.has("lib/Win64/colyseus.lib"),
+      false,
+      "no Win64 file was written",
+    );
+  });
+
   it("never uses a download that isn't the pinned core, and still adds the plugin", async () => {
     const fx = await project();
     const tampered = deps("darwin", Buffer.from("something else"));
@@ -140,7 +174,7 @@ describe("unreal__multiplayer adds Genex's Unreal plugin and the core it links",
     assert.match("why" in answer.core ? answer.core.why : "", /isn't the one it pins/);
     assert.deepEqual(tampered.unzipped, [], "nothing of it was unpacked");
     const plugin = path.join(fx.dir, "Plugins", "GenexMultiplayer");
-    assert.equal(await lstat(path.join(plugin, "Source/ThirdParty/ColyseusNative/lib")).catch(() => null), null);
+    assert.equal(await lstat(path.join(plugin, "Source/ThirdParty/ColyseusNative/lib/Mac")).catch(() => null), null);
     assert.ok((await lstat(path.join(plugin, "GenexMultiplayer.uplugin"))).isFile());
     assert.deepEqual(await readdir(path.join(fx.storage, "multiplayer")), [], "the download is gone");
   });

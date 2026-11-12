@@ -1087,6 +1087,8 @@ export default {
   "Couldn’t install: this game doesn’t run on this Mac.": "설치하지 못했어요. 이 게임은 이 Mac에서 실행되지 않아요.",
   "Couldn’t install: this game is larger than it says.": "설치하지 못했어요. 이 게임이 표시된 크기보다 커요.",
   "Couldn’t install: this game isn’t signed.": "설치하지 못했어요. 이 게임은 서명되지 않았어요.",
+  "Couldn’t install: this game needs a newer Genex. Update Genex and try again.":
+    "설치하지 못했어요. 이 게임에는 더 새로운 Genex가 필요해요. Genex를 업데이트하고 다시 시도하세요.",
   "Couldn’t install: this game needs Rosetta to run on this Mac.":
     "설치하지 못했어요. 이 Mac에서 이 게임을 실행하려면 Rosetta가 필요해요.",
   "Couldn’t install: this game’s files aren’t safe to open.":
@@ -1875,7 +1877,8 @@ export default {
   "Installing {name}. This can take a minute.": "{name} 설치 중이에요. 1분 정도 걸릴 수 있어요.",
   "Installing {title}": "{title} 설치 중",
   "Installing…": "설치 중…",
-  "Installing… {percent}%": "설치 중… {percent}%",
+  "Installing… {speed}": "설치 중… {speed}",
+  "about {minutes} min left": "약 {minutes}분 남음",
   "Installs OpenCode on this Mac. This can take a minute.": "이 Mac에 OpenCode를 설치해요. 1분쯤 걸릴 수 있어요.",
   "Install…": "설치…",
   Instructions: "지침",
@@ -2471,6 +2474,9 @@ export default {
   "Older messages can still rewind the chat, but not its files.":
     "이전 메시지로 채팅을 되감을 수는 있지만 파일은 되돌릴 수 없어요.",
   "Older models": "이전 모델",
+  "Ollama could not download this model: {reason}": "Ollama가 이 모델을 다운로드하지 못했어요: {reason}",
+  "The download stopped before it finished. Download again to continue.":
+    "다운로드가 끝나기 전에 멈췄어요. 다시 다운로드하면 이어서 받아요.",
   "Ollama is not running at {host}. Install or start Ollama, then download again.":
     "{host}에서 Ollama가 실행 중이 아니에요. Ollama를 설치하거나 시작한 뒤 다시 다운로드해 주세요.",
   "Ollama keeps its models in its own folder: move them in Ollama → Settings → Model location.":
@@ -6360,8 +6366,6 @@ export default {
   "{size} KB/s": "{size}KB/s",
   "Verifying…": "검증 중…",
   "Unpacking…": "압축 푸는 중…",
-  "Installing… {percent}% · {speed} · about {minutes} min left": "설치 중… {percent}% · {speed} · 약 {minutes}분 남음",
-  "Installing… {percent}% · {speed} · under a minute left": "설치 중… {percent}% · {speed} · 1분 미만 남음",
   "This plugin stopped several times in a row, so it starts again in {seconds, plural, one {# second} other {# seconds}}. Try again then.":
     "이 플러그인이 여러 번 연달아 멈춰서 {seconds, plural, other {#초}} 후에 다시 시작해요. 그때 다시 시도해 줘.",
   "Add Genex to {name}?": "{name}에 Genex를 추가할까요?",

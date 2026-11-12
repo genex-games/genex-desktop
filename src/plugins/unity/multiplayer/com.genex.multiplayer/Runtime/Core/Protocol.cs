@@ -198,7 +198,7 @@ namespace Genex.Multiplayer
             {
                 /// <summary>The capabilities this client implements: at most <see cref="Caps.MaxCaps"/> strings of at most <see cref="Caps.MaxCapChars"/> characters.</summary>
                 public const string Caps = "caps";
-                /// <summary>The SDK and version, <c>unity/0.8.0</c>: telemetry, never refused.</summary>
+                /// <summary>The SDK and version, <c>unity/0.9.0</c>: telemetry, never refused.</summary>
                 public const string Sdk = "sdk";
                 /// <summary>The pool this join asks for (§17.2 *Choosing a room*); absent = the game's one pool.</summary>
                 public const string MatchKey = "matchKey";
@@ -211,7 +211,7 @@ namespace Genex.Multiplayer
             }
 
             /// <summary>What this package sends as <see cref="JoinOption.Sdk"/>.</summary>
-            public const string SdkLabel = "unity/0.8.0";
+            public const string SdkLabel = "unity/0.9.0";
 
             /// <summary>AuthorityCaps (§17.10): what a client declares in its <c>caps</c> join option.</summary>
             public static class Caps

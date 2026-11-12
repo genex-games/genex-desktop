@@ -8,12 +8,21 @@
  * and its program must be an ELF binary for this computer's processor; Linux has no signature or
  * bundle to check. A Windows build is unpacked the same way, and its program must be a PE `.exe` for
  * this computer's processor.
+ * Everything after the unpacking itself (`finishMacBuild`, `finishLinuxBuild`, `finishWindowsBuild`)
+ * is the same for a build that came as chunks (`native-chunk-assemble.ts`): its tree is checked and
+ * made Genex's exactly as an unpacked zip's is.
  */
 import { execFile } from "node:child_process";
 import { chmod, lstat, mkdir, readdir, readlink, realpath } from "node:fs/promises";
 import path from "node:path";
 import { MINUTE_MS } from "../../shared/duration.ts";
-import { InstallFailure, type NativeBuild, NativeArch, type NativeHost } from "../../shared/play-native.ts";
+import {
+  InstallFailure,
+  NativeArch,
+  type NativeBuild,
+  type NativeHost,
+  NativePlatform,
+} from "../../shared/play-native.ts";
 import { elfArch, machOProcessors, peArch } from "../core/native-builds.ts";
 import { InstallError } from "./native-download.ts";
 import { listZip, unpackZip, ZipEntryKind, ZipError, ZipRefusal } from "./native-zip.ts";
@@ -186,26 +195,25 @@ async function assertRunsOn(program: string, host: NativeHost): Promise<void> {
   throw refused(InstallFailure.UnsupportedOs, processors.join(" ") || "no processor Genex knows");
 }
 
+/** The game an unpacked build is installed for: its link, and the computer it must run on. */
+export interface UnpackedFor {
+  slug: string;
+  host: NativeHost;
+}
+
 /**
- * Unpack the verified `archive` of `build` into `staging` (a new, empty folder) and make the app
- * Genex's: checked before and after unpacking, its bundle id `games.genex.play.<slug>`, signed
- * again ad hoc. Throws {@link InstallError} with the failure it is.
+ * Make the Mac app unpacked in `staging` Genex's: every link resolved inside it, the app `build`
+ * names found, signed (ad hoc is enough) and for this Mac's processor, then its bundle id
+ * `games.genex.play.<slug>` and signed again ad hoc. Throws {@link InstallError} with the failure it is.
  */
-export async function unpackMacBuild(
+export async function finishMacBuild(
   run: ToolRun,
-  archive: string,
   staging: string,
   build: NativeBuild,
-  game: { slug: string; host: NativeHost },
+  game: UnpackedFor,
 ): Promise<UnpackedApp> {
-  const listing = await checkedListing(archive, build);
-  const top = build.entry;
-  if (!listing.entries.some((entry) => entry.name === top || entry.name.startsWith(`${top}/`)))
-    throw refused(InstallFailure.EntryMissing, top);
-  await mkdir(staging, { recursive: true });
-  await tool(run, TOOL.Ditto, ["-x", "-k", "--noqtn", archive, staging], InstallFailure.UnsafeArchive);
   await assertContained(staging);
-  const { app, executable } = await appOf(run, staging, top);
+  const { app, executable } = await appOf(run, staging, build.entry);
   await makeRunnable(path.join(app, executable));
   await tool(run, TOOL.Codesign, ["--verify", "--deep", "--strict", app], InstallFailure.Unsigned);
   await assertRunsOn(path.join(app, executable), game.host);
@@ -220,21 +228,32 @@ export async function unpackMacBuild(
 }
 
 /**
- * Unpack the verified `archive` of a Linux `build` into `staging` (a new, empty folder): checked
- * before and after unpacking, its program (the build's entry) a regular file, an ELF binary for
- * this computer's processor, and runnable. The whole version folder is the game's app. Throws
- * {@link InstallError} with the failure it is.
+ * Unpack the verified `archive` of `build` into `staging` (a new, empty folder) and make the app
+ * Genex's ({@link finishMacBuild}): checked before and after unpacking. Throws {@link InstallError}
+ * with the failure it is.
  */
-export async function unpackLinuxBuild(
+export async function unpackMacBuild(
+  run: ToolRun,
   archive: string,
   staging: string,
   build: NativeBuild,
-  game: { slug: string; host: NativeHost },
+  game: UnpackedFor,
 ): Promise<UnpackedApp> {
   const listing = await checkedListing(archive, build);
-  const named = listing.entries.find((entry) => entry.name === build.entry);
-  if (named?.kind !== ZipEntryKind.File) throw refused(InstallFailure.EntryMissing, build.entry);
-  await zipStep(() => unpackZip(archive, staging, unpackedCap(build)));
+  const top = build.entry;
+  if (!listing.entries.some((entry) => entry.name === top || entry.name.startsWith(`${top}/`)))
+    throw refused(InstallFailure.EntryMissing, top);
+  await mkdir(staging, { recursive: true });
+  await tool(run, TOOL.Ditto, ["-x", "-k", "--noqtn", archive, staging], InstallFailure.UnsafeArchive);
+  return finishMacBuild(run, staging, build, game);
+}
+
+/**
+ * Check the Linux build unpacked in `staging`: every link resolved inside it, its program (the
+ * build's entry) a regular file, an ELF binary for this computer's processor, and made runnable.
+ * The whole version folder is the game's app. Throws {@link InstallError} with the failure it is.
+ */
+export async function finishLinuxBuild(staging: string, build: NativeBuild, game: UnpackedFor): Promise<UnpackedApp> {
   await assertContained(staging);
   const program = path.join(staging, build.entry);
   if (!(await lstat(program).catch(() => null))?.isFile()) throw refused(InstallFailure.EntryMissing, build.entry);
@@ -250,22 +269,35 @@ export async function unpackLinuxBuild(
   };
 }
 
-/**
- * Unpack the verified `archive` of a Windows `build` into `staging` (a new, empty folder): checked
- * before and after unpacking, its program (the build's entry) a regular file and a PE program for
- * this computer's processor. The whole version folder is the game's app. Throws
- * {@link InstallError} with the failure it is.
- */
-export async function unpackWindowsBuild(
-  archive: string,
-  staging: string,
-  build: NativeBuild,
-  game: { slug: string; host: NativeHost },
-): Promise<UnpackedApp> {
+/** Unpack the zip `archive` of a Linux or Windows `build` into `staging`, its listing checked first and its entry a file. */
+async function unpackFolderBuild(archive: string, staging: string, build: NativeBuild): Promise<void> {
   const listing = await checkedListing(archive, build);
   const named = listing.entries.find((entry) => entry.name === build.entry);
   if (named?.kind !== ZipEntryKind.File) throw refused(InstallFailure.EntryMissing, build.entry);
   await zipStep(() => unpackZip(archive, staging, unpackedCap(build)));
+}
+
+/**
+ * Unpack the verified `archive` of a Linux `build` into `staging` (a new, empty folder): checked
+ * before and after unpacking ({@link finishLinuxBuild}). Throws {@link InstallError} with the
+ * failure it is.
+ */
+export async function unpackLinuxBuild(
+  archive: string,
+  staging: string,
+  build: NativeBuild,
+  game: UnpackedFor,
+): Promise<UnpackedApp> {
+  await unpackFolderBuild(archive, staging, build);
+  return finishLinuxBuild(staging, build, game);
+}
+
+/**
+ * Check the Windows build unpacked in `staging`: every link resolved inside it, its program (the
+ * build's entry) a regular file and a PE program for this computer's processor. The whole version
+ * folder is the game's app. Throws {@link InstallError} with the failure it is.
+ */
+export async function finishWindowsBuild(staging: string, build: NativeBuild, game: UnpackedFor): Promise<UnpackedApp> {
   await assertContained(staging);
   const program = path.join(staging, build.entry);
   if (!(await lstat(program).catch(() => null))?.isFile()) throw refused(InstallFailure.EntryMissing, build.entry);
@@ -278,4 +310,31 @@ export async function unpackWindowsBuild(
     bundleName: path.posix.basename(build.entry, path.posix.extname(build.entry)),
     windowed: false,
   };
+}
+
+/**
+ * Unpack the verified `archive` of a Windows `build` into `staging` (a new, empty folder): checked
+ * before and after unpacking ({@link finishWindowsBuild}). Throws {@link InstallError} with the
+ * failure it is.
+ */
+export async function unpackWindowsBuild(
+  archive: string,
+  staging: string,
+  build: NativeBuild,
+  game: UnpackedFor,
+): Promise<UnpackedApp> {
+  await unpackFolderBuild(archive, staging, build);
+  return finishWindowsBuild(staging, build, game);
+}
+
+/** Check a build whose files are already in `staging` and make it Genex's, the way its platform's builds are. */
+export function finishBuild(
+  run: ToolRun,
+  staging: string,
+  build: NativeBuild,
+  game: UnpackedFor,
+): Promise<UnpackedApp> {
+  if (build.platform === NativePlatform.Linux) return finishLinuxBuild(staging, build, game);
+  if (build.platform === NativePlatform.Windows) return finishWindowsBuild(staging, build, game);
+  return finishMacBuild(run, staging, build, game);
 }

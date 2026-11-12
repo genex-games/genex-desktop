@@ -1046,6 +1046,8 @@ export default {
   "Couldn’t install: this game doesn’t run on this Mac.": "无法安装：这个游戏无法在这台 Mac 上运行。",
   "Couldn’t install: this game is larger than it says.": "无法安装：这个游戏比标注的更大。",
   "Couldn’t install: this game isn’t signed.": "无法安装：这个游戏没有签名。",
+  "Couldn’t install: this game needs a newer Genex. Update Genex and try again.":
+    "无法安装：这个游戏需要更新版本的 Genex。请更新 Genex 后再试。",
   "Couldn’t install: this game needs Rosetta to run on this Mac.":
     "无法安装：这个游戏需要 Rosetta 才能在这台 Mac 上运行。",
   "Couldn’t install: this game’s files aren’t safe to open.": "无法安装：打开这个游戏的文件不安全。",
@@ -1805,7 +1807,8 @@ export default {
   "Installing {name}. This can take a minute.": "正在安装 {name}，可能需要一分钟。",
   "Installing {title}": "正在安装 {title}",
   "Installing…": "正在安装…",
-  "Installing… {percent}%": "正在安装… {percent}%",
+  "Installing… {speed}": "正在安装… {speed}",
+  "about {minutes} min left": "剩余约 {minutes} 分钟",
   "Installs OpenCode on this Mac. This can take a minute.": "将在这台 Mac 上安装 OpenCode，可能需要一分钟。",
   "Install…": "安装…",
   Instructions: "说明",
@@ -2381,6 +2384,8 @@ export default {
   "Older builds of {game} and Rewind copies take {size}.": "{game} 的旧构建和回退副本占用了 {size}。",
   "Older messages can still rewind the chat, but not its files.": "仍可将对话回退到较早的消息，但文件不会回退。",
   "Older models": "旧模型",
+  "Ollama could not download this model: {reason}": "Ollama 无法下载这个模型：{reason}",
+  "The download stopped before it finished. Download again to continue.": "下载在完成前停止了。再次下载即可继续。",
   "Ollama is not running at {host}. Install or start Ollama, then download again.":
     "{host} 上的 Ollama 没有运行。请安装或启动 Ollama，然后重新下载。",
   "Ollama keeps its models in its own folder: move them in Ollama → Settings → Model location.":
@@ -6145,9 +6150,6 @@ export default {
   "{size} KB/s": "{size} KB/s",
   "Verifying…": "正在验证…",
   "Unpacking…": "正在解压…",
-  "Installing… {percent}% · {speed} · about {minutes} min left":
-    "正在安装… {percent}% · {speed} · 剩余约 {minutes} 分钟",
-  "Installing… {percent}% · {speed} · under a minute left": "正在安装… {percent}% · {speed} · 剩余不到 1 分钟",
   "This plugin stopped several times in a row, so it starts again in {seconds, plural, one {# second} other {# seconds}}. Try again then.":
     "这个插件连续停止了好几次，所以会在 {seconds, plural, other {# 秒}}后重新启动。到时候再试一次吧。",
   "Add Genex to {name}?": "把 Genex 添加到 {name}？",

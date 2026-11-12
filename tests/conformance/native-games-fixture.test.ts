@@ -17,7 +17,7 @@ import { playGallery } from "../../src/main/play/gallery.ts";
 import { nativeInstalls } from "../../src/main/play/native-installs.ts";
 import { runTool } from "../../src/main/play/native-unpack.ts";
 import { buildHostsFor } from "../../src/main/play/gallery.ts";
-import { NativeArch, type NativeHost, NativePlatform } from "../../src/shared/play-native.ts";
+import { isChunkedBuild, NativeArch, type NativeHost, NativePlatform } from "../../src/shared/play-native.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 const SKIP = (await canBuildFixtureApp()) ? false : "needs a Mac with the Xcode toolchain";
@@ -45,7 +45,7 @@ describe("the native-games fixture", { skip: SKIP }, () => {
     const built = (await findNativeBuilds(libraryGame)).map((build) => [build.platform, build.arch, build.entry]);
     assert.deepEqual(built, [[NativePlatform.Mac, NativeArch.Universal, "Builds/Mac/Fixture Game.app"]]);
     const dust = (await gallery.game("dust-runners")).native?.builds[0];
-    assert.ok(dust, "Dust Runners has a Mac build");
+    assert.ok(dust && !isChunkedBuild(dust), "Dust Runners has a Mac build");
     const archive = await fixtureNativeFetch(dust.url);
     const bytes = new Uint8Array(await archive.arrayBuffer());
     assert.equal(bytes.length, dust.sizeBytes, "the catalog states the archive's real size");

@@ -103,6 +103,13 @@ folder listing wins. Rules for tests are in [tests/AGENTS.md](../AGENTS.md).
   ([tests/AGENTS.md](../AGENTS.md#runner)).
 - `pe-image.ts`: minimal Windows PE images naming the DLLs a test gives (import and delay-load
   tables, a machine type), for the package's Visual C++ runtime checks.
+- `chunk-store.ts`: chunked native builds made by hand (a manifest and stored chunks cut at a fixed
+  size, from a list of entries or a folder on disk) and a fetch serving their chunk folders that
+  keeps what it was asked; `chunk-hostile.ts`: every way a manifest or a stored chunk can break
+  the `genex-chunks` contract, each with the install failure it must end as. For the chunked
+  native installer's suites.
+- `mac-app.ts`: a minimal Mac app made and signed ad hoc with macOS's own tools, for the native
+  installer's Mac tests.
 - `failure-codes.ts`: the analytics failure-code suites' hostile inputs (words, paths, Node codes
   and ids that must never reach an event property, thrown values that must read as no code) and
   `crossed`, a failure carried across IPC as the app carries it (main's `handle`, then the preload).

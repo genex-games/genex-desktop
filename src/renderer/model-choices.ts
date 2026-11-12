@@ -79,7 +79,7 @@ function engineChoices(
 }
 
 /**
- * Genex's three models, listed and pickable whether or not the account can build yet: sending on
+ * Genex's models, listed and pickable whether or not the account can build yet: sending on
  * one says what is missing (a sign-in, Pro or credits) and holds the message until it is done. Only
  * where genex.games offers no building with credits are they hidden, so a saved pick still resolves.
  */

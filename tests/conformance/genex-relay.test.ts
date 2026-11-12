@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import http, { type IncomingMessage } from "node:http";
 import type { AddressInfo } from "node:net";
 import { after, describe, it } from "node:test";
-import { GenexAccess, GENEX_HELPER_MODEL, GENEX_MODELS } from "../../src/shared/genex-build.ts";
+import { GenexAccess, GENEX_DEFAULT_MODEL, GENEX_MODELS } from "../../src/shared/genex-build.ts";
 import { createGenexRelay, RELAY_MAX_REQUEST_BYTES } from "../../src/substrate/engines/genex-relay.ts";
 
 const TOKEN = "genex-person-token";
@@ -137,8 +137,8 @@ describe("Genex relay", () => {
     assert.deepEqual(
       genex.seen.map((seen) => [seen.url, seen.headers["x-genex-model"]]),
       [
-        ["/api/desktop/llm/v1/messages", GENEX_HELPER_MODEL],
-        ["/api/desktop/llm/v1/messages/count_tokens", GENEX_HELPER_MODEL],
+        ["/api/desktop/llm/v1/messages", GENEX_DEFAULT_MODEL],
+        ["/api/desktop/llm/v1/messages/count_tokens", GENEX_DEFAULT_MODEL],
       ],
     );
   });
@@ -211,7 +211,7 @@ describe("Genex relay refusals", () => {
     const other = await relay.open({ chat: "../../etc" });
     const otherKey = other.env.ANTHROPIC_AUTH_TOKEN ?? "";
     assert.notEqual(otherKey, key);
-    assert.equal(other.env.ANTHROPIC_DEFAULT_OPUS_MODEL, GENEX_HELPER_MODEL, "helpers run on the default");
+    assert.equal(other.env.ANTHROPIC_DEFAULT_OPUS_MODEL, GENEX_DEFAULT_MODEL, "helpers run on the default");
     await send(base, { path: "/v1/messages", headers: { "x-api-key": otherKey }, body: call(OPUS) });
     assert.equal(genex.seen[0]?.headers["x-genex-chat"], "default");
     other.close();

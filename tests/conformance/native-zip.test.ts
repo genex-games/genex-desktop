@@ -122,11 +122,16 @@ describe("a native build's zip", () => {
       const into = path.join(dir, "game");
       const listing = await unpackZip(file, into, BIG);
       assert.equal(listing.entries.length, items.length);
-      assert.equal(((await lstat(path.join(into, "Dust/Dust.x86_64"))).mode & 0o777).toString(8), "755");
-      assert.equal(((await lstat(path.join(into, "Dust/Dust_Data/level.bin"))).mode & 0o111).toString(8), "0");
+      // A Windows disk keeps no execute bit: the modes are a unix disk's to check.
+      if (process.platform !== "win32") {
+        assert.equal(((await lstat(path.join(into, "Dust/Dust.x86_64"))).mode & 0o777).toString(8), "755");
+        assert.equal(((await lstat(path.join(into, "Dust/Dust_Data/level.bin"))).mode & 0o111).toString(8), "0");
+      }
       assert.equal(await readFile(path.join(into, "Dust/Dust_Data/level.bin"), "utf8"), "x".repeat(5000));
       assert.equal(await readFile(path.join(into, "Dust/Dust_Data/empty"), "utf8"), "");
-      assert.equal(await readlink(path.join(into, "Dust/libgame.so")), "Dust_Data/level.bin");
+      // Windows hands a link's target back with its own separators.
+      const target = (await readlink(path.join(into, "Dust/libgame.so"))).split(path.sep).join("/");
+      assert.equal(target, "Dust_Data/level.bin");
     }
   });
 

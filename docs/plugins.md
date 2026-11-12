@@ -2823,8 +2823,11 @@ the headers: the Genex SDK's reproducible zig build of the same release, `COLYSE
 vendored from genex-demo's `win64-core` CI artifact by `scripts/vendor-unreal-colyseus-win64.ts`, whose
 `vendor.json` records the provenance and every file's sha256), checking each file against its pin before
 any is written, with its license and the notices of what the dll links statically; nothing is
-downloaded. A core that isn't the pinned one, or a link in its way, is a note in `core.why`, never a
-refusal; a link anywhere on the plugin's way refuses the call before anything is written. The `unreal-multiplayer` skill takes the builder from there: the room module
+downloaded. A Mac places that Win64 core too, before its own (the two share `include/` and the license,
+byte for byte the same release's), so a game made on a Mac can be built for Windows by Build on Genex,
+whose machine compiles the plugin as the project holds it; the answer's `windows` says whether it was
+placed. A core that isn't the pinned one, or a link in its way, is a note in `core.why` (or
+`windows.why`), never a refusal; a link anywhere on the plugin's way refuses the call before anything is written. The `unreal-multiplayer` skill takes the builder from there: the room module
 and `genex.json`'s `authority` block, the `Genex Authority Subsystem` client, `genex__room` with bots
 (Play joins it through `.studio/authority.json`) and publish, which stages the room as for any game.
 Any Unreal game also gets `unreal__package-game {stop?, system?}` and `unreal__package-status {system?}`
@@ -3178,7 +3181,10 @@ the online play) puts Genex multiplayer into the game's Unity project, WebGL and
   the matchmaking), `GenexAuthority.Connect` on the client. `GenexGame.LocalRoomUrl` is
   `genex__room`'s local room: `GENEX_AUTHORITY_URL` in a native build, the preview's
   `genex_authority_url` in a WebGL one (only a `ws://` loopback room on a loopback page);
-  `GenexGame.PageAuthorityUrls` is the published page's `window.genexEmbed.getAuthorityUrls()`. The
+  `GenexGame.PageAuthorityUrls` is the published page's `window.genexEmbed.getAuthorityUrls()`,
+  `PageAuthorityRegions` its `getAuthorityRegions()` (one region a line, name and urls tab-separated
+  across the jslib) and `PageAuthorityHome` its `getAuthorityHome()`, only when it names one of those
+  regions. The
   room travels with the WebGL build through the same staging as any game's (`readGenexGameManifest`
   reads `genex.json` once the project embeds the package).
 - **Verified so far:** a Unity 6 Mono Mac build, named by `GENEX_GAME`, signed in as a guest and

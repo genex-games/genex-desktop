@@ -7,12 +7,12 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmod, cp, mkdir, readdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { promisify } from "node:util";
 import { type InstallOutcome, nativeInstalls, SAVES } from "../../src/main/play/native-installs.ts";
-import { GAME_BUNDLE_PREFIX, runTool, type ToolRun, WINDOWED_KEY } from "../../src/main/play/native-unpack.ts";
+import { GAME_BUNDLE_PREFIX, runTool, type ToolRun } from "../../src/main/play/native-unpack.ts";
 import type { PlayGameDetail } from "../../src/shared/play.ts";
 import {
   InstallFailure,
@@ -22,7 +22,9 @@ import {
   type NativeHost,
   type NativeInstalls,
   NativePlatform,
+  type ZipBuild,
 } from "../../src/shared/play-native.ts";
+import { makeApp } from "../helpers/mac-app.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 import { writeZip, type ZipItem } from "../helpers/zip-writer.ts";
 
@@ -47,27 +49,6 @@ const withoutDeveloperTools: ToolRun = (file, args, options) =>
     });
   });
 
-/** A minimal app: `/usr/bin/true` as its program (both processors), signed ad hoc unless `unsigned`. */
-async function makeApp(
-  dir: string,
-  title: string,
-  options: { unsigned?: boolean; intelOnly?: boolean; windowed?: boolean } = {},
-) {
-  const app = path.join(dir, `${title}.app`);
-  await mkdir(path.join(app, "Contents", "MacOS"), { recursive: true });
-  const program = path.join(app, "Contents", "MacOS", "Game");
-  if (options.intelOnly) await exec("/usr/bin/lipo", ["/usr/bin/true", "-thin", "x86_64", "-output", program]);
-  else await cp("/usr/bin/true", program);
-  const plist = `<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CFBundleExecutable</key><string>Game</string><key>CFBundleIdentifier</key><string>com.googlecode.iterm2</string><key>CFBundleName</key><string>${title}</string><key>CFBundlePackageType</key><string>APPL</string></dict></plist>`;
-  await writeFile(path.join(app, "Contents", "Info.plist"), plist);
-  // What the agent does for a game that should open in a window: one key in its Info.plist.
-  if (options.windowed)
-    await exec("/usr/bin/plutil", ["-insert", WINDOWED_KEY, "-bool", "YES", path.join(app, "Contents", "Info.plist")]);
-  if (options.unsigned) await exec("/usr/bin/codesign", ["--remove-signature", program]);
-  else await exec("/usr/bin/codesign", ["--sign", "-", "--force", "--deep", app]);
-  return app;
-}
-
 /** `app` zipped as ditto does for a release. */
 async function zipApp(app: string, zip: string): Promise<Buffer> {
   await exec("/usr/bin/ditto", ["-c", "-k", "--keepParent", app, zip]);
@@ -75,7 +56,7 @@ async function zipApp(app: string, zip: string): Promise<Buffer> {
 }
 
 /** A catalog row for `archive`. */
-const buildOf = (slug: string, archive: Buffer, overrides: Partial<NativeBuild> = {}): NativeBuild => ({
+const buildOf = (slug: string, archive: Buffer, overrides: Partial<ZipBuild> = {}): ZipBuild => ({
   platform: NativePlatform.Mac,
   arch: NativeArch.Universal,
   version: "1.0",
@@ -330,7 +311,7 @@ describe("Play's native installer", { skip: SKIP }, () => {
       { name: "Dust Runners.app/d/e/b", link: ".." },
       { name: "Dust Runners.app/a", link: "d/e/b/../../.." },
     ];
-    const cases: Array<[string, Buffer, Partial<NativeBuild>, InstallFailure]> = [
+    const cases: Array<[string, Buffer, Partial<ZipBuild>, InstallFailure]> = [
       ["a checksum that does not match", good, { sha256: "0".repeat(64) }, InstallFailure.Checksum],
       ["no signature", unsigned, {}, InstallFailure.Unsigned],
       ["only for Intel, with no Rosetta", intel, {}, InstallFailure.NeedsRosetta],

@@ -13,7 +13,9 @@
  * this backend, never by a sandboxed job. Colyseus publishes no MSVC build, so on Windows the core is
  * Genex's reproducible Win64 build of the same release, which the app ships (`multiplayer/colyseus-win64`,
  * vendored by `scripts/vendor-unreal-colyseus-win64.ts`): every file is checked against its sha256
- * before any is placed, and nothing is downloaded. A core that couldn't be added is a note, never a refusal.
+ * before any is placed, and nothing is downloaded. A Mac places that Win64 core too, beside its own:
+ * a game made on a Mac is built for Windows by Build on Genex, whose machine compiles the plugin as
+ * the project holds it. A core that couldn't be added is a note, never a refusal.
  *
  * Every file is the person's: nothing is written through a link, and a folder on the way that is
  * a link refuses the whole call before anything is written.
@@ -135,8 +137,10 @@ export type MultiplayerAnswer = {
   plugin: string;
   sdk: ShippedPin;
   enabled: boolean;
-  /** Whether the Colyseus core is in the plugin, or why not. */
+  /** Whether the Colyseus core for this computer is in the plugin, or why not. */
   core: { ready: true } | { ready: false; why: string };
+  /** On a Mac: whether the Win64 core a Windows build of the game links is in the plugin too, or why not. */
+  windows?: { ready: true } | { ready: false; why: string };
   next: string;
 };
 
@@ -274,6 +278,16 @@ async function placeWin64Core(shipped: string, plugin: string): Promise<void> {
   await writeFileNoFollow(path.join(core, WIN64_NOTICES_NAME), await readFile(path.join(shipped, WIN64_NOTICES)));
 }
 
+/** The shipped Win64 core into the plugin beside a Mac's own, or why not: a Windows build of the game links it. */
+async function addWin64CoreOnMac(shipped: string, plugin: string): Promise<NonNullable<MultiplayerAnswer["windows"]>> {
+  try {
+    await placeWin64Core(shipped, plugin);
+    return { ready: true };
+  } catch (error) {
+    return { ready: false, why: errorMessage(error) };
+  }
+}
+
 /** The pinned Mac release, downloaded once, into the plugin. */
 async function addMacCore(deps: UnrealMultiplayerDeps, storage: string, plugin: string, signal: AbortSignal) {
   const slice = await colyseusCore(deps, storage, signal);
@@ -318,12 +332,16 @@ export async function addMultiplayer(
   const plugin = await ensureDirBelow(project, ["Plugins", MULTIPLAYER_PLUGIN]);
   await copyTree(path.join(shipped, MULTIPLAYER_PLUGIN), plugin, `Plugins/${MULTIPLAYER_PLUGIN}`);
   const enabled = await enableProjectPlugin(projectFile, MULTIPLAYER_PLUGIN);
+  // Before the Mac core: the two share `include/` and the license, the same release's bytes, and the
+  // Mac core is then laid down exactly as it was before a Mac placed the Win64 one.
+  const windows = deps.platform === "darwin" ? await addWin64CoreOnMac(shipped, plugin) : undefined;
   const core = await addCore(deps, storage, plugin, signal);
   return {
     plugin: `Plugins/${MULTIPLAYER_PLUGIN}`,
     sdk: { source: sdk.source, commit: sdk.commit, tree: sdk.tree },
     enabled,
     core,
+    ...(windows ? { windows } : {}),
     next: core.ready
       ? "Read the unreal-multiplayer skill (unreal__skill), then: cpp-status (add-cpp-module if the game has none), write server/room.ts and genex.json's authority block, genex__room validate, the client on the Genex Authority Subsystem, a rebuild with Unreal closed so it builds the plugin, then genex__room start and Play."
       : "The plugin is in the project, but Unreal can't build it without the Colyseus core (see core.why); call unreal__multiplayer again to retry.",

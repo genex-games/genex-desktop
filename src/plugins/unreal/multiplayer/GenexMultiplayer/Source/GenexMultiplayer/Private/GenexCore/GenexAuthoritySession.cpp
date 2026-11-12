@@ -430,6 +430,10 @@ struct Impl {
    *  tries `targets`, and the one being asked; the search runs while searchAt < search.size(). */
   std::vector<std::string> search;
   std::size_t searchAt = 0;
+  /** An ask for an existing room is in the air (the search's, or a regroup's), and when it has taken its time
+   *  (§17.1 *Finding players*); negative until the first Update that sees the ask. */
+  bool asking = false;
+  double askDue = -1.0;
   /** §17.1 *Regrouping*: set by a pool join's probe when the join may regroup, until the session takes it
    *  (AuthoritySession::DriveRegroup). */
   std::optional<RegroupBasis> regroupBasis;
@@ -663,16 +667,14 @@ struct Impl {
     }
   }
 
-  /** Starts the region probe (§17.1 *Regions*): every sample of every region at once, one url each, through the
-   *  core's latency call over a single endpoint. The choice is made in Update (FinishProbe). */
+  /** Starts the region probe (§17.1 *Regions*): every sample of every region at once, one url each, every region's
+   *  first before any region's second, through the core's latency call over a single endpoint. The choice is made
+   *  in Update (FinishProbe). */
   void ProbeRegions(std::vector<regions::Region> regs) {
     selecting = true;
     RegionProbe p;
-    std::vector<std::string> calls;
-    for (const regions::Region& r : regs) {
-      p.best.emplace_back(r.urls.size());
-      for (std::string& u : regions::ProbePlan(r.urls, regions::kProbeSamples)) calls.push_back(std::move(u));
-    }
+    for (const regions::Region& r : regs) p.best.emplace_back(r.urls.size());
+    const std::vector<std::string> calls = regions::ProbeOrder(regs, regions::kProbeSamples);
     p.regions = std::move(regs);
     p.pending = calls.size();
     probe = std::move(p);
@@ -705,8 +707,8 @@ struct Impl {
   }
 
   /** Makes the region choice once every sample settled, the grace after the first answer ran out or the ceiling
-   *  passed; then a pool join asks the regions in reach for players (§17.1 *Finding players*), and any other joins
-   *  the nearest region. */
+   *  passed; then a pool join asks the regions in reach, and the silent ones after them, for players (§17.1 *Finding
+   *  players*), and any other joins the nearest region. */
   void FinishProbe(double now) {
     if (!probe || closed) return;
     if (probe->ceiling < 0.0) probe->ceiling = now + regions::kProbeTimeoutMs;
@@ -731,7 +733,7 @@ struct Impl {
   }
 
   /** What this join may do about regions (session.ts joinTargets): only a pool join searches, and a join by code
-   *  walks every region, pinned or not. */
+   *  walks every region, pinned or not. The home orders every join's regions. */
   regions::SearchOptions SearchOptionsNow() const {
     const room_key::JoinMethod method =
         room_key::PlanAuthorityJoin({options.matchKey, options.createPrivate, options.joinCode}).method;
@@ -739,11 +741,31 @@ struct Impl {
     o.rule = method == room_key::JoinMethod::JoinOrCreate ? options.regionRule : regions::RegionRule::Nearest;
     o.maxPingMs = options.maxPingMs;
     if (method != room_key::JoinMethod::JoinById) o.region = options.region;
+    o.home = options.home;
     return o;
   }
 
   /** A pool join is still asking the regions in reach for a room that already exists. */
   bool Searching() const { return searchAt < search.size(); }
+
+  /** An ask for an existing room that has not seated the player in its time is a dead path (§17.1 *Finding players*,
+   *  *Regrouping*): the search asks the next region and a regroup's ask is refused, instead of the join waiting on a
+   *  region that never answers. A seat that still arrives is left: its attempt is stale by then (CbRoom), or its
+   *  session closed. The time runs from the first Update that sees the ask, as the probe's ceiling does. */
+  void DriveAsk(double now) {
+    if (!asking || closed) return;
+    const double limit = std::isfinite(options.askMs) && options.askMs >= 0.0 ? options.askMs : regions::kAskMs;
+    if (askDue < 0.0) askDue = now + limit;
+    if (now < askDue) return;
+    asking = false;
+    if (room != nullptr) {
+      // Connected but never seated: the room is left like one that arrives late.
+      colyseus_room_leave(room, true);
+      leavingRooms.push_back(room);
+      room = nullptr;
+    }
+    OnRefused(0, "genex: a region did not answer an ask for a room in time", now);
+  }
 
   /** Whether a player alone in this join's room may move (§17.1 *Regrouping*): a pool join of a game that left
    *  regrouping and rejoining on. A private room and a room joined by code are where the player asked to be. */
@@ -755,6 +777,11 @@ struct Impl {
 
   /** Left and nothing of it is still out: its rooms are all freed. */
   bool Settled() const { return closed && room == nullptr && leavingRooms.empty() && graveyard.empty(); }
+
+  /** A matchmake or latency request of this session has not answered yet. */
+  bool RequestOut() const {
+    return std::any_of(ctxs.begin(), ctxs.end(), [](const std::unique_ptr<Ctx>& ctx) { return ctx->inFlight; });
+  }
 
   Ctx* NewCtx() {
     std::unique_ptr<Ctx> ctx(new Ctx());
@@ -801,6 +828,9 @@ struct Impl {
     // §17.1 *Finding players*: a region asked for players is asked for a room that already exists, with the options
     // the join-or-create would send, and never opens one.
     if (Searching() || joinOnly) plan.method = room_key::JoinMethod::Join;
+    // The ask is given its time (DriveAsk); a join that may open a room is not an ask.
+    asking = plan.method == room_key::JoinMethod::Join;
+    askDue = -1.0;
     JoinSpec spec;
     spec.gameId = options.gameId;
     spec.name = options.name;
@@ -1027,6 +1057,8 @@ struct Impl {
         if (closed || item.room != room) return;
         sid = Str(colyseus_room_get_session_id(room));
         roomId = Str(colyseus_room_get_id(room));
+        // Seated: the ask for an existing room is answered.
+        asking = false;
         // §8 settings, applied again at `joined` (Godot: a binding may reset options set before).
         SetReconnection(room);
         ApplyNoDelayNow();
@@ -1140,9 +1172,9 @@ struct Impl {
 
   void OnRefused(int code, const std::string& message, double now) {
     if (closed) return;
-    // §17.1 *Finding players*: no room in a region asked for players (Colyseus's 521), a dead path or a full region
-    // asks the next one, and once none had a room the join itself walks `targets` from the nearest. An answer about
-    // this player or game ends the join: every region would repeat it, and no room is opened.
+    // §17.1 *Finding players*: no room in a region asked for players (Colyseus's 521), a dead path, a full region or
+    // an ask past its time asks the next one, and once none had a room the join itself walks `targets` from the
+    // nearest. An answer about this player or game ends the join: every region would repeat it, and no room is opened.
     if (Searching() && !leaving) {
       if (regions::KindOfSearchRefusal(code) == regions::SearchRefusal::Final) {
         Refuse(code, message);
@@ -3614,6 +3646,7 @@ struct Impl {
       retryAt = -1.0;
       JoinRoom();
     }
+    DriveAsk(now);
     if (awaitingResync && now > resyncDeadline) FinishResync();
     if (room != nullptr && joined && !connected && !awaitingResync && !closed) UnstickReconnect(now);
     if (joined && !ready && !closed) BecameReady(now);  // the warm-up deadline also passes without Frame()
@@ -3631,10 +3664,15 @@ struct Impl {
     for (colyseus_room_t* r : graveyard) colyseus_room_free(r);
     // A matchmake or latency request still out keeps its userdata: the callback then finds no session
     // and leaves the room it brings. Those few bytes are never freed.
+    const bool requestOut = RequestOut();
     for (std::unique_ptr<Ctx>& ctx : ctxs) {
       if (ctx->inFlight) (void)ctx.release();
     }
     ctxs.clear();
+    // ...and the clients it runs on: colyseus_client_free waits for a request in flight, and a region that never
+    // answers holds one for as long as its connection lives (an ask past its time, §17.1 *Finding players*). Never
+    // freed under a request, as in the Rust session.
+    if (requestOut) return;
     for (const auto& old : oldClients) {
       colyseus_client_free(old.second);
       colyseus_settings_free(old.first);
@@ -3856,6 +3894,9 @@ struct asd::RegroupRun {
   std::unique_ptr<asd::Impl> next;
   /** Rooms the seat moved out of, with when it left each. */
   std::vector<std::pair<std::unique_ptr<asd::Impl>, double>> left;
+  /** Asks that did not answer in their time, kept until their request has (a seat it brings is left then), so
+   *  that their clients are freed, not left behind. */
+  std::vector<std::unique_ptr<asd::Impl>> late;
 
   double Wait(std::size_t at) const { return waits[std::min(at, waits.size() - 1)]; }
 };
@@ -4063,6 +4104,9 @@ void AuthoritySession::DriveRegroup(double nowMs) {
   if (regroup_ == nullptr) return;
   asd::RegroupRun& run = *regroup_;
   SettleLeftRooms(nowMs);
+  for (std::unique_ptr<asd::Impl>& ask : run.late) ask->Update(nowMs);
+  run.late.erase(std::remove_if(run.late.begin(), run.late.end(), [](const auto& ask) { return !ask->RequestOut(); }),
+                 run.late.end());
   // Nothing is asked while a lost room is being replaced (§17.13): the schedule waits and starts over.
   const bool rejoining = rejoin_ != nullptr || impl_->lostCode.has_value();
   if (run.next != nullptr) {
@@ -4143,7 +4187,9 @@ void AuthoritySession::DriveRegroupAsk(double nowMs) {
     AdoptRegroup(nowMs);
     return;
   }
-  // A refused ask is never an error: no room there, or no way there. The next region is asked.
+  // A refused ask is never an error: no room there, or no way there. The next region is asked. An ask past its
+  // time still has its request out: it is kept until that answers.
+  if (run.next->RequestOut()) run.late.push_back(std::move(run.next));
   run.next.reset();
   run.askAt += 1;
   if (run.askAt < run.asking.size()) {
