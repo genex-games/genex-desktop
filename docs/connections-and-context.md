@@ -372,7 +372,8 @@ the answer lists the models the account can run and its plan, or refuses with AC
 Antigravity keeps its Google sign-in in the operating system's own store (the Keychain on a Mac)
 and has no file to keep it in instead, and Genex never reads it. Its own controls are no box (its
 terminal sandbox leaves its file tools out, and its permission rules do not reach an ACP session),
-so each turn runs in `ProcessSandbox` with `antigravitySandbox`: the workspace (a read-only
+so each turn runs in `ProcessSandbox` with `antigravitySandbox` (a build for a chat the person set to
+Bypass runs as them outside it, `runsAsPerson`, as Codex's and Grok Build's do): the workspace (a read-only
 session, Plan or a reviewer runs from a scratch folder) is all it writes, the network is Google's
 hosts (`ANTIGRAVITY_HOSTS`), a game's `.agents` folder is not the session's to write, and inside
 the box every tool call the agent asks about is allowed, except a command the never-touch screen

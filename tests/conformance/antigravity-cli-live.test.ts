@@ -13,6 +13,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { EngineStatusCode } from "../../src/shared/engine-descriptor.ts";
+import { PermissionMode } from "../../src/shared/permissions.ts";
 import { EngineId } from "../../src/shared/providers.ts";
 import { childEnv } from "../../src/substrate/child-env.ts";
 import { antigravityHome } from "../../src/substrate/credential-homes.ts";
@@ -76,6 +77,7 @@ function startIn(box: Box, said: string[], hosts?: readonly string[]) {
   return async (invocation: AntigravityInvocation): Promise<AntigravityProcess> => {
     const cli = await resolveCodingCli(EngineId.Antigravity);
     assert.ok(cli.status.path, `no agy CLI found: ${cli.status.state}`);
+    assert.ok(invocation.sandbox, "these sessions are boxed");
     const sandbox = await ProcessSandbox.create(box(invocation.sandbox));
     const env = childEnv(cli.env, { base: "contractor", vendor: "antigravity" });
     const set = Object.fromEntries(
@@ -158,6 +160,24 @@ describe("Antigravity's real CLI in the real sandbox", { skip: !LIVE && "STUDIO_
     );
     assert.equal(second.ok, true, second.errorText ?? second.stopReason);
     assert.match(second.summary, /PLUM/i);
+  });
+
+  it("in Bypass builds as the person, outside the sandbox, with the same sign-in", {
+    timeout: TURN_TIMEOUT_MS * 2,
+  }, async () => {
+    const { engine, game } = await engineAndGame();
+    const listed = (await engine.models()).some((model) => model.id === SMALL_MODEL);
+    const bypass = { mode: PermissionMode.Bypass, ask: async () => ({ allow: true }) };
+    const result = await engine.delegate({
+      cwd: game,
+      prompt: `Create a file named ${PROOF.file} in the current folder containing exactly: ${PROOF.text}`,
+      permissions: bypass as never,
+      ...(listed ? { model: SMALL_MODEL } : {}),
+      timeoutMs: TURN_TIMEOUT_MS,
+    });
+    console.log(`antigravity live: bypass ok=${result.ok} stop=${result.stopReason} error=${result.errorText ?? ""}`);
+    assert.equal(result.ok, true, result.errorText ?? result.stopReason);
+    assert.equal((await readFile(path.join(game, PROOF.file), "utf8")).trim(), PROOF.text);
   });
 
   it("builds in the game's folder, and cannot write the folder beside it", {

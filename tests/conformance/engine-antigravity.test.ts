@@ -193,6 +193,12 @@ function heldClock() {
   };
 }
 
+/** The sandbox a scripted session was started in: every session but a Bypass build has one. */
+function boxOf(invocation: AntigravityInvocation | undefined) {
+  assert.ok(invocation?.sandbox, "the session is boxed");
+  return invocation.sandbox;
+}
+
 const methods = (agent: Scripted | undefined) => (agent?.received ?? []).map((message) => message.method ?? "answer");
 const refusal = async () => ({
   result: undefined,
@@ -232,7 +238,7 @@ describe("Antigravity's sign-in, plan and models", () => {
     assert.deepEqual(await engine.models(), []);
     assert.equal(agents.length, 1, "the answer is kept for a minute");
     assert.deepEqual(methods(agents[0]), ["initialize", "session/new"], "a check opens a session and prompts nothing");
-    assert.equal(agents[0]?.invocation.sandbox.writableRoots.includes(agents[0].invocation.cwd), true);
+    assert.equal(boxOf(agents[0]?.invocation).writableRoots.includes(agents[0].invocation.cwd), true);
 
     signedIn = true;
     await engine.refreshModels(true);
@@ -249,7 +255,12 @@ describe("Antigravity's sign-in, plan and models", () => {
     assert.equal(isBeta(EngineId.Antigravity), true);
     assert.equal(isMetered(EngineId.Antigravity), true);
     assert.equal(loginKind(EngineId.Antigravity), "cli");
-    assert.deepEqual(permissionModesFor(EngineId.Antigravity), [PermissionMode.Auto, PermissionMode.Plan]);
+    // Flipped (Bypass): a chat the person set to Bypass runs Antigravity as them, as Codex and Grok Build do.
+    assert.deepEqual(permissionModesFor(EngineId.Antigravity), [
+      PermissionMode.Auto,
+      PermissionMode.Plan,
+      PermissionMode.Bypass,
+    ]);
   });
 });
 
@@ -314,11 +325,43 @@ describe("an Antigravity build", () => {
     assert.deepEqual(invocation.argv, ["acp"]);
     assert.equal(invocation.cwd, cwd);
     assert.deepEqual(invocation.domains, [...ANTIGRAVITY_HOSTS]);
-    assert.ok(invocation.sandbox.writableRoots.includes(cwd));
-    assert.deepEqual(invocation.sandbox.ownHome, antigravityHomes());
-    assert.deepEqual(invocation.sandbox.denyWrite, [path.join(cwd, ".agents")]);
+    assert.ok(boxOf(invocation).writableRoots.includes(cwd));
+    assert.deepEqual(boxOf(invocation).ownHome, antigravityHomes());
+    assert.deepEqual(boxOf(invocation).denyWrite, [path.join(cwd, ".agents")]);
     for (const secret of [path.join(root, "secrets"), path.join(root, "engine-homes"), "/Users/me/private"])
-      assert.ok(invocation.sandbox.secretPaths.includes(secret), secret);
+      assert.ok(boxOf(invocation).secretPaths.includes(secret), secret);
+  });
+
+  it("Bypass runs a build as the person, unboxed, its commands still screened; its reviewer stays boxed", async () => {
+    const { engine, agents } = await engineWith();
+    const cwd = await game();
+    const bypass = { mode: PermissionMode.Bypass, ask: async () => ({ allow: true }) };
+    await engine.delegate({ cwd, prompt: "go", permissions: bypass as never });
+    await engine.delegate({ cwd, prompt: "Look", permissions: bypass as never, readOnly: true });
+    assert.equal(agents[0]?.invocation.sandbox, null, "the build runs as the person");
+    assert.equal(agents[0]?.invocation.cwd, cwd);
+    assert.ok(boxOf(agents[1]?.invocation), "a read-only session of that chat keeps the box");
+    const keychain = await engineWith({
+      prompt: async (message, agent) => {
+        agent.say({
+          id: "ask-1",
+          method: AcpMethod.RequestPermission,
+          params: {
+            sessionId: (message.params as Json).sessionId,
+            toolCall: { kind: "execute", rawInput: { CommandLine: "security find-generic-password -s x -w" } },
+            options: [
+              { optionId: "allow", kind: "allow_once" },
+              { optionId: "deny", kind: "reject_once" },
+            ],
+          },
+        });
+        while (!agent.received.some((sent) => sent.id === "ask-1")) await setImmediate();
+        return { stopReason: "end_turn" };
+      },
+    });
+    await keychain.engine.delegate({ cwd, prompt: "go", permissions: bypass as never });
+    const answer = keychain.agents[0]?.received.find((sent) => sent.id === "ask-1");
+    assert.deepEqual(answer?.result, { outcome: { outcome: "selected", optionId: "deny" } });
   });
 
   it("Plan and a read-only session run from a folder of their own, removed after, and only read the game", async () => {
@@ -329,7 +372,7 @@ describe("an Antigravity build", () => {
     await engine.delegate({ cwd, prompt: "Review it", readOnly: true });
     for (const agent of agents) {
       assert.notEqual(agent.invocation.cwd, cwd);
-      assert.ok(!agent.invocation.sandbox.writableRoots.includes(cwd), "the game is not its to change");
+      assert.ok(!boxOf(agent.invocation).writableRoots.includes(cwd), "the game is not its to change");
       await assert.rejects(stat(agent.invocation.cwd), "its folder is removed");
     }
     const prompt = agents[0]?.received.find((message) => message.method === AcpMethod.SessionPrompt)?.params as Json;

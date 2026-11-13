@@ -23,6 +23,7 @@ import os from "node:os";
 import { type NeverTouchList, neverTouchVerdict, SHELL_TOOL } from "./never-touch.ts";
 import path from "node:path";
 import { createInterface } from "node:readline";
+import type { Writable } from "node:stream";
 import { promisify } from "node:util";
 import {
   ACP_PROTOCOL_VERSION,
@@ -79,6 +80,8 @@ import { ProcessSandbox, type SandboxOptions, SandboxMachService, shellQuote } f
 import { childEnv } from "../child-env.ts";
 import { antigravityHomes, antigravityKeychain, credentialHomes } from "../credential-homes.ts";
 import { killProcessTree } from "../process-tree.ts";
+import { spawnCommand } from "../command-launch.ts";
+import { withEnvPath } from "../toolchain.ts";
 import type { Usage } from "../types.ts";
 import { ChatActivityPhase } from "../../shared/chat-activity.ts";
 import { CodingCliState } from "../../shared/coding-cli.ts";
@@ -188,8 +191,8 @@ export interface AntigravityInvocation {
   /** Where the session runs: the workspace, or a read-only session's scratch folder. */
   cwd: string;
   env: Record<string, string>;
-  /** The sandbox the real CLI is started in. */
-  sandbox: SandboxOptions;
+  /** The sandbox the real CLI is started in; none for a chat the person set to Bypass, which runs as them. */
+  sandbox: SandboxOptions | null;
   /** The hosts the session may reach. */
   domains: string[];
 }
@@ -477,7 +480,8 @@ export class AntigravityEngine implements Engine {
       : null;
     const partial = (): PartialDelegateState => partialState(run, startedAt, request.model, bridge, request);
     try {
-      const invocation = await this.#invocation({ access, cwd, runDir }, request.denyReads ?? []);
+      const asPerson = runsAsPerson(request, access);
+      const invocation = await this.#invocation({ access, cwd, runDir, asPerson }, request.denyReads ?? []);
       const plan: AntigravityTurnPlan = {
         cwd: runDir,
         resume: request.resume,
@@ -615,12 +619,21 @@ export class AntigravityEngine implements Engine {
       .join("\n\n");
   }
 
-  /** The command, environment and sandbox of one process. */
+  /** The command, environment and sandbox of one process; no sandbox for the person's Bypass. */
   async #invocation(
-    ctx: { access: AntigravityAccess; cwd: string; runDir: string },
+    ctx: { access: AntigravityAccess; cwd: string; runDir: string; asPerson?: boolean },
     denyReads: string[],
   ): Promise<AntigravityInvocation> {
     const builds = ctx.access === AntigravityAccess.Build;
+    if (ctx.asPerson)
+      return {
+        argv: [...ANTIGRAVITY_SESSION_ARGV],
+        cwd: ctx.runDir,
+        // The studio's toolchain PATH, which a sandboxed session gets from its sandbox (`toolPath`).
+        env: this.#toolPath ? { PATH: await this.#toolPath() } : {},
+        sandbox: null,
+        domains: [...ANTIGRAVITY_HOSTS],
+      };
     return {
       argv: [...ANTIGRAVITY_SESSION_ARGV],
       cwd: ctx.runDir,
@@ -887,7 +900,17 @@ function sessionAccess(request: DelegateRequest): AntigravityAccess {
   return readOnly || chatMode(request) === PermissionMode.Plan ? AntigravityAccess.ReadOnly : AntigravityAccess.Build;
 }
 
-/** The chat's mode as Antigravity honours it (Auto or Plan), or null for unattended work. */
+/**
+ * A session that builds for a chat the person set to Bypass (and confirmed): it runs as them,
+ * outside the studio's sandbox, as Codex's and Grok Build's Bypass do. A read-only session of that
+ * chat (a lead while its build runs) and unattended work keep the sandbox. The never-touch screen
+ * still answers each command it asks about, as it does for Claude Code's Bypass.
+ */
+function runsAsPerson(request: DelegateRequest, access: AntigravityAccess): boolean {
+  return access === AntigravityAccess.Build && chatMode(request) === PermissionMode.Bypass;
+}
+
+/** The chat's mode as Antigravity honours it (Auto, Plan or Bypass), or null for unattended work. */
 function chatMode(request: DelegateRequest): PermissionMode | null {
   return request.permissions ? engineMode(EngineId.Antigravity, request.permissions.mode) : null;
 }
@@ -1064,11 +1087,12 @@ async function gitMetadata(cwd: string): Promise<string[]> {
   return [...new Set(dirs)];
 }
 
-/** Start `agy acp` inside the studio's sandbox. */
+/** Start `agy acp` inside the studio's sandbox, or as the person for their Bypass. */
 async function startAntigravity(invocation: AntigravityInvocation): Promise<AntigravityProcess> {
   const installation = await resolveCodingCli(EngineId.Antigravity);
   const binary = installation.status.path;
   if (!binary) throw new EngineError(EngineFailureKind.Unavailable, EngineId.Antigravity, MESSAGE.NotInstalled);
+  if (!invocation.sandbox) return antigravityOutside(binary, invocation, installation.env);
   const sandbox = await ProcessSandbox.create(invocation.sandbox);
   try {
     const env = childEnv(installation.env, { base: "contractor", vendor: "antigravity", set: invocation.env });
@@ -1108,6 +1132,34 @@ export async function antigravityProcess(
     policy: { allowedDomains: invocation.domains },
     liveInput: true,
   });
+  return attached(child, input, gone);
+}
+
+/**
+ * Start `binary` as the person, for a chat they set to Bypass: no sandbox, as Codex's and Grok
+ * Build's Bypass, in their environment less every credential and other vendors' variables
+ * (`childEnv`), the invocation's PATH under the one key `PATH`, in a process group of its own so a
+ * stop takes everything it started.
+ */
+export function antigravityOutside(
+  binary: string,
+  invocation: Omit<AntigravityInvocation, "sandbox">,
+  parent: Record<string, string | undefined>,
+): AntigravityProcess {
+  const env = childEnv(parent, { base: "contractor", vendor: "antigravity", set: invocation.env });
+  const toolPath = invocation.env.PATH;
+  const child = spawnCommand(binary, invocation.argv, {
+    cwd: invocation.cwd,
+    env: toolPath === undefined ? env : withEnvPath(env, toolPath),
+    stdio: ["pipe", "pipe", "pipe"],
+    detached: process.platform !== "win32",
+  });
+  if (!child.stdin) throw new EngineError(EngineFailureKind.Unavailable, EngineId.Antigravity, MESSAGE.NotInstalled);
+  return attached(child, child.stdin, () => {});
+}
+
+/** A started CLI as the turn speaks to it: its lines, its input, its exit and its stop. */
+function attached(child: ChildProcess, input: Writable, gone: () => unknown): AntigravityProcess {
   let stderr = "";
   child.stderr?.setEncoding("utf8");
   child.stderr?.on("data", (chunk: string) => {
