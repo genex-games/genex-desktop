@@ -12,7 +12,7 @@ this preface wins.
   `no-download`: Studio submits every create without waiting and delivers the file into the
   game. Pick it up with operation `wait` and its generationId.
 
-<!-- upstream @genex-ai/cli-demo/templates/skills/genex-tool-image/SKILL.md v1.43.1 sha256 6c759be788c22aee35b9327a92efe1da5c41f4401e5f2aa7dbf4e71f29fb2995 -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-tool-image/SKILL.md v1.43.3 sha256 164974cb1243b5de9bf22b09d2b1603c64ab1701030f33556d69530fbb30a080 -->
 ---
 name: genex-tool-image
 description: Generate a real image (PNG/JPEG) from a text prompt with `npx genex image` — posters, signs, logos, sprites, icons, card and item art, loading screens, decals, art for in-game screens. Pass `--transparent` for an alpha channel, `--edit` to modify an existing image, `--remove-bg` to cut a background. The file downloads to ./assets and is yours.
@@ -49,7 +49,7 @@ Wire the **local path**. The URL is provenance — never fetch it at runtime.
 - `--bg-mode <sprite|glyph|sheet|matte>` — which removal model. `matte` gives soft alpha for hair, glow and smoke edges.
 - `--clean <url>` — remove the background of an existing image, no generation.
 - `--upscale <url>` — 2× an existing image.
-- `--aspect <ratio>` · `--size <WxH>` · `--quality <low|medium|high|xhigh|max>` — framing and fidelity (GPT Image 2.5 tiers; `xhigh` and `max` are for hero art and cost the most).
+- `--aspect <ratio>` · `--size <WxH>` · `--quality <low|medium|high|xhigh|max>` — framing and fidelity (GPT Image 2.6 tiers; `xhigh` and `max` are for hero art and cost the most).
 - `--candidates <2-4>` — several variants in ONE call, so you pick instead of re-rolling. Needs `--quality` or `--size`.
 - `--open` — also open it in a browser, for something the user must look at and approve.
 - `--out-dir <dir>` — where the file lands (default `./assets`).
@@ -58,10 +58,11 @@ Wire the **local path**. The URL is provenance — never fetch it at runtime.
 
 ## Cost
 
-From **7 credits** per image at the default high quality (1 credit = $0.01);
-`--quality xhigh`, `--quality max` and 4K canvases cost more, `--quality low`,
-`--quality medium` and `--transparent` cost less, and `--candidates` bills per
-variant - the command prints the exact quote. Live prices and your balance:
+From **5 credits** per image at the default high quality and default size
+(1 credit = $0.01); `--quality xhigh`, `--quality max`, `--transparent`, a
+custom `--size` or `--aspect` and 4K canvases cost more, `--quality low` and
+`--quality medium` cost less, and `--candidates` bills per variant - the
+command prints the exact quote. Live prices and your balance:
 `npx genex doctor`.
 
 ## Waiting
