@@ -2,8 +2,8 @@
  * What Genex puts on every design page it serves: a few default styles the page's own styles come
  * after, and the bridge, the one script a page runs. The bridge tells the Design tab the page's
  * title and size, hands it the wheel and drags (the wall zooms and pans; a page never scrolls) and
- * says what the person pressed: something with `data-say`, or a link. It asks the tab for nothing
- * and reads nothing of the game. Both are text served inside the page, so plain strings.
+ * says when the person pressed a link. It asks the tab for nothing and reads nothing of the game.
+ * Both are text served inside the page, so plain strings.
  */
 import { DESIGN_MESSAGE_SOURCE, DesignSignal, DesignTheme } from "../shared/design-board.ts";
 

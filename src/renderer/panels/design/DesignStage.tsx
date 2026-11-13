@@ -3,9 +3,9 @@
  * artboard is a file of the game's `docs/design/`: a page its agent wrote, drawn in its own closed
  * frame at the size it asks for, a picture, large, or a 3D model that turns once pressed; a folder
  * of the board is a section, named above its artboards. The person zooms and pans the canvas as
- * they do Builds and Assets, and a picture dropped on it joins the board (`from-you`). A page runs
- * nothing of its own: Genex's bridge on it says what was pressed, and pressing something with
- * `data-say` leaves its words in the game's chat for the person to send.
+ * they do Builds and Assets, moves any artboard, and a picture dropped on it stays where it was
+ * dropped (kept in `from-you`). A page runs nothing of its own and carries no buttons: what the
+ * person has to say goes on the canvas, as notes and picks that Tell Genex sends to the chat.
  */
 import {
   type DragEvent as ReactDragEvent,
