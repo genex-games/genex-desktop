@@ -87,4 +87,23 @@ export function registerGamesIpc(handle: IpcHandle, { core, runSummaryReader, pu
     return core.projectAssets(payload.project, events);
   });
   handle("studio:game.asset.still", async (payload) => core.readProjectAsset(payload));
+  // The Design stage: the pages of the game's board, read from its folder.
+  handle("studio:design.board", async (payload) => {
+    if (!payload || typeof payload.project !== "string") throw new Error(MESSAGE.projectRequired);
+    return core.design.board(payload.project);
+  });
+  // A picture the person dropped on the Design canvas: kept in the game's board, or refused.
+  handle("studio:design.drop", async (payload) => {
+    if (!payload || typeof payload.project !== "string") throw new Error(MESSAGE.projectRequired);
+    return core.design.drop(payload.project, payload.name, payload.data);
+  });
+  // What the person did on the Design canvas (places, notes, picks): read from, and kept in, the game's board.
+  handle("studio:design.marks", async (payload) => {
+    if (!payload || typeof payload.project !== "string") throw new Error(MESSAGE.projectRequired);
+    return core.design.marks(payload.project);
+  });
+  handle("studio:design.marks.save", async (payload) => {
+    if (!payload || typeof payload.project !== "string") throw new Error(MESSAGE.projectRequired);
+    return core.design.saveMarks(payload.project, payload.marks);
+  });
 }

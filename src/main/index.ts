@@ -39,7 +39,8 @@ import { appendFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync } from
 import os from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { DESIGN_SCHEME } from "../shared/design-board.ts";
 import { type ThreadStatusMap, UiEvent } from "../shared/ui-events.ts";
 import { onSoundShortcut } from "./game-sound.ts";
 import type { GameFullScreen } from "./game-full-screen.ts";
@@ -257,6 +258,8 @@ import { DataFolderProblem } from "../shared/data-folder.ts";
 import { migrateLegacyUserData, userDataMigrationLine } from "./user-data-migration.ts";
 import { confirmPluginInstall, reacquirePlugin } from "./plugin-install-dialog.ts";
 import { PLUGIN_PANEL_CSP } from "./plugin-panel-csp.ts";
+import { DesignTheme } from "../shared/design-board.ts";
+import { designFontFile, designHeaders, subframeMayLoad } from "./design-pages.ts";
 import { HttpStatus, textResponse } from "./page-serve.ts";
 import { applyMainLanguage, pageLanguageArguments, systemLanguages } from "./language.ts";
 import { appMenuTemplate } from "./app-menu.ts";
@@ -477,7 +480,13 @@ const dev =
 let devRuntime: Awaited<ReturnType<typeof import("./dev/runtime.ts").startRuntime>> | null = null;
 
 // Must happen before `app.whenReady()`.
-registerGameScheme([{ scheme: "studio-plugin", privileges: { standard: true, secure: true } }]);
+registerGameScheme([
+  { scheme: "studio-plugin", privileges: { standard: true, secure: true } },
+  // A game's design pages, for the Design tab's frames; a page may hold a video, so it streams. A
+  // page's closed frame has no origin, so the fonts Genex serves it are asked for across origins:
+  // the scheme takes such requests, and only the font answers allow one (`serveDesignFont`).
+  { scheme: DESIGN_SCHEME, privileges: { standard: true, secure: true, stream: true, corsEnabled: true } },
+]);
 
 const isSelfTest = hasFlag(StudioFlag.SelfTest);
 /** Boots the real app (window, UI, harness) and reports whether it came up clean, then quits. */
@@ -1944,6 +1953,11 @@ function keepLinksOutside(studio: StudioCore, win: BrowserWindow): void {
     void openOutside(studio, win, url);
     return { action: "deny" };
   });
+  // A frame of the window (a design page, a plugin panel) loads only the app's own schemes: an
+  // agent-written page that sends itself to the web stays where it is.
+  win.webContents.on("will-frame-navigate", (event) => {
+    if (!event.isMainFrame && !subframeMayLoad(event.url)) event.preventDefault();
+  });
 }
 
 async function openOutside(studio: StudioCore, win: BrowserWindow, raw: string): Promise<void> {
@@ -2917,6 +2931,7 @@ async function launchStudio(studio: StudioCore): Promise<StartedStudio | null> {
     // The update-ready fixture shows the window's restart prompt; nothing was downloaded.
     if (fixtureProviders && dev?.fixture === FixtureName.UpdateReady) updates.downloaded(FIXTURE_UPDATE_RELEASE);
     protocol.handle("studio-plugin", (request) => servePluginPanel(studio, request));
+    protocol.handle(DESIGN_SCHEME, (request) => serveDesignFile(studio, request));
     serveFixtureLibraryFiles();
     const fixture = fixtureProviders && dev ? await prepareFixture(studio, dev.fixture) : null;
     await prepareNativeGames(studio).catch((error: unknown) => studioLog.write("main", `native games: ${error}`));
@@ -2994,6 +3009,42 @@ async function servePluginPanel(studio: StudioCore, request: Request): Promise<R
   } catch {
     return textResponse(HttpStatus.NotFound, MESSAGE.pluginUnavailable());
   }
+}
+
+/**
+ * A file of a game's design board, for the Design tab's frames: a page with Genex's bridge in it,
+ * or a picture, sound, video or style sheet of the game, each under the policy its kind gets
+ * (`design-pages.ts`). A part of a file is answered as the file reader answers it, so a video seeks.
+ */
+async function serveDesignFile(studio: StudioCore, request: Request): Promise<Response> {
+  try {
+    const url = new URL(request.url);
+    const font = designFontFile(url.pathname);
+    if (font) return serveDesignFont(font);
+    const theme = url.searchParams.get("t") === DesignTheme.Light ? DesignTheme.Light : DesignTheme.Dark;
+    const served = await studio.design.serve(url.hostname, url.pathname, theme);
+    if (served.status !== HttpStatus.Ok) return textResponse(served.status);
+    const policy = designHeaders(served);
+    if ("text" in served.body) return new Response(served.body.text, { headers: policy });
+    const range = request.headers.get("range");
+    const file = await net.fetch(pathToFileURL(served.body.file).toString(), range ? { headers: { range } } : {});
+    const headers = new Headers(file.headers);
+    for (const [name, value] of Object.entries(policy)) headers.set(name, value);
+    return new Response(file.body, { status: file.status, headers });
+  } catch {
+    return textResponse(HttpStatus.NotFound);
+  }
+}
+
+/** One of Genex's own typefaces, for a design page drawn in the app's look: the app's font file, as a font only. */
+async function serveDesignFont(name: string): Promise<Response> {
+  const file = await net.fetch(pathToFileURL(path.join(distRoot, "renderer", "fonts", name)).toString());
+  const headers = new Headers(file.headers);
+  headers.set("Content-Type", "font/woff2");
+  headers.set("X-Content-Type-Options", "nosniff");
+  // The app's own font, the same for every game: a page's frame, which has no origin, may read it.
+  headers.set("Access-Control-Allow-Origin", "*");
+  return new Response(file.body, { status: file.status, headers });
 }
 
 /** A plugin's picture, as an image only: navigated to, it runs nothing and is never sniffed as anything else. */

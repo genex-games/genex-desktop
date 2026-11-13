@@ -85,7 +85,7 @@ export function FileLink({
       data-file-base={fileRef.base}
       data-file-open={link.open}
       data-file-target={link.path}
-      title={fileLinkTitle(link, words)}
+      title={fileLinkTitle(link, words, undefined, fileRef)}
       onClick={(event) => clickFileLink(event, threadId)}
     >
       {children}

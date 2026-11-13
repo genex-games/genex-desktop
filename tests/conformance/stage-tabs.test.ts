@@ -28,11 +28,13 @@ describe("the stage strip's tabs", () => {
         stageTabs({ views: [view], plugins, hasBuilds, buildsLive, beside: null });
       assert.deepEqual(tabs(false, false), [
         { key: "live", label: "Live" },
+        { key: "design", label: "Design" },
         { key: "assets", label: "Assets" },
       ]);
       assert.deepEqual(tabs(true, false), [
         { key: "live", label: "Live" },
         { key: "builds", label: "Builds" },
+        { key: "design", label: "Design" },
         { key: "assets", label: "Assets" },
       ]);
       assert.deepEqual(tabs(true, true)[1], { key: "builds", label: "Builds ●" });
@@ -62,6 +64,7 @@ describe("the stage strip's tabs", () => {
       { key: "live", label: "Web game" },
       { key: "live-unreal-card", label: "Unreal" },
       { key: "builds", label: "Builds" },
+      { key: "design", label: "Design" },
       { key: "assets", label: "Assets" },
     ]);
     const unrealFirst = stageTabs({
@@ -76,6 +79,7 @@ describe("the stage strip's tabs", () => {
       [
         ["live", "Unreal"],
         ["live-preview", "Web game"],
+        ["design", "Design"],
         ["assets", "Assets"],
       ],
     );

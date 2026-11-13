@@ -40,6 +40,9 @@ export const consentCardKey = (consentId: string): string => `consent:${consentI
 /** Claude's own permission request, as the dock keys its card. */
 export const permissionCardKey = (requestId: string): string => `permission:${requestId}`;
 
+/** An agent's question, as the dock keys its card: by the record that asked it. */
+export const questionCardKey = (entryId: string): string => `question:${entryId}`;
+
 /** The cards still waiting: an answered card goes at the press, not once the host settles it. */
 export function unansweredCards<T extends WaitingCard>(cards: readonly T[], answered: ReadonlySet<string>): T[] {
   return cards.filter((card) => !answered.has(card.key));
@@ -47,16 +50,18 @@ export function unansweredCards<T extends WaitingCard>(cards: readonly T[], answ
 
 /**
  * Sends a card's answer with the card already gone: `mark` takes it away at the press and brings
- * it back should the answer fail, so it can say why; the failure still reaches the caller.
+ * it back should the answer fail, so it can say why; the failure still reaches the caller. A send
+ * that answers false went nowhere (a pressed answer to a question is a message, and a sign-in
+ * first sends none): the card comes back as it was, since what it asks still waits.
  */
 export async function answerAtPress(
   key: string,
-  send: () => Promise<void>,
+  send: () => Promise<boolean | void>,
   mark: (key: string, answered: boolean) => void,
 ): Promise<void> {
   mark(key, true);
   try {
-    await send();
+    if ((await send()) === false) mark(key, false);
   } catch (error) {
     mark(key, false);
     throw error;

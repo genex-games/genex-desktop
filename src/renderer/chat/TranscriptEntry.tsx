@@ -1,7 +1,7 @@
 /**
  * One entry of the transcript, drawn by its kind (`chat-entries.ts` decides what the entries are).
  */
-import { type JSX, memo, useCallback, useMemo } from "react";
+import { type JSX, lazy, memo, Suspense, useCallback, useMemo } from "react";
 import { t } from "../../shared/i18n.ts";
 import { track } from "../analytics/client.ts";
 import { AnalyticsEvent } from "../analytics/events.ts";
@@ -40,6 +40,9 @@ import { UserMessage } from "./UserMessage.tsx";
 import { MentionResults } from "./MentionResults.tsx";
 import type { MentionOutcome } from "../../shared/prompt-mention.ts";
 import { WorkLog } from "./WorkLog.tsx";
+
+/** The design board's block: loaded with the first one a chat shows, so a chat with none never carries it. */
+const DesignPageCard = lazy(() => import("./DesignPageCard.tsx").then((card) => ({ default: card.DesignPageCard })));
 
 /** A paused run while nothing else runs: its own card offers Resume. */
 const resumable = (runId: string | null | undefined, context: TranscriptContext): runId is string =>
@@ -179,7 +182,7 @@ export const TranscriptEntry = memo(function TranscriptEntry({
   }
 });
 
-/** A card the host put in the conversation: the Genex cover, a plugin to turn on, a store item's Listing draft. */
+/** A card the host put in the conversation: the Genex cover, a plugin to turn on, a store item's Listing draft, a design page. */
 function CardEntry({ entry, context }: { entry: ConversationEntry; context: TranscriptContext }): JSX.Element | null {
   switch (entry.kind) {
     case EntryKind.GenexCover:
@@ -190,6 +193,12 @@ function CardEntry({ entry, context }: { entry: ConversationEntry; context: Tran
       return <ListingDraftCard draft={entry.draft} />;
     case EntryKind.GenexReview:
       return <GenexReviewCard entry={entry} project={context.project} />;
+    case EntryKind.DesignPage:
+      return (
+        <Suspense fallback={<div className="build-card-place" />}>
+          <DesignPageCard entry={entry} />
+        </Suspense>
+      );
     default:
       return null;
   }

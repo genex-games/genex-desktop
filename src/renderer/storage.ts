@@ -82,6 +82,8 @@ export const storageKeyFor = {
   engineStepsDismissed: (project: string): string => `studio.engineSteps.dismissed.${project}`,
   /** A game's asks for another Genex cover or clip and how long the last took (`genex/cover-asks.ts` owns the format). */
   coverAsks: (project: string): string => `studio.genex.coverAsks.${project}`,
+  /** The stamp of a game's design board as the person last saw it (`panels/design/use-design-board.ts`). */
+  designSeen: (project: string): string => `studio.design.seen.${project}`,
   /** The Live view last chosen for a game whose folder has more than one, as its observer key (`live-views.ts`). */
   liveView: (project: string): string => `studio.liveView.${project}`,
   /** Set ("1") once a Genex account has met its generated avatar (`play/AvatarWelcome.tsx`). */

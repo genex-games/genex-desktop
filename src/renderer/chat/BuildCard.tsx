@@ -8,6 +8,8 @@ const MESSAGE = { open: t("Open in Builds") } as const;
 export interface BuildCardOpen {
   onClick: () => void;
   runId?: string;
+  /** What a press opens, as the title's tooltip says it, for a card that is no build's: "Open in Design". */
+  hint?: string;
 }
 
 /** The card as a disclosure: whether what it holds (`below`) is open, the element it opens, and the turn. */
@@ -44,7 +46,7 @@ function CardTitle({
         "aria-label": toggle.label,
         "data-build-toggle": true,
       }
-    : { title: MESSAGE.open, "data-open-build": open?.runId };
+    : { title: open?.hint ?? MESSAGE.open, "data-open-build": open?.runId };
   return (
     <button
       type="button"
@@ -73,6 +75,7 @@ function CardTitle({
 export function BuildCard({
   picture,
   title,
+  tag,
   line,
   aside,
   open,
@@ -83,6 +86,8 @@ export function BuildCard({
   /** the build's picture, omitted until one exists */
   picture?: ReactNode;
   title: string;
+  /** a small tag above the title, for a card that is no build's: "Game design" */
+  tag?: ReactNode;
   /** the one line under the title */
   line?: ReactNode;
   /** what sits on the right: the clock, or Play */
@@ -99,6 +104,7 @@ export function BuildCard({
         <div
           className={`build-card-text flex min-h-[55px] min-w-0 flex-1 flex-col justify-center ${picture ? "" : "ps-2"}`}
         >
+          {tag}
           <CardTitle title={title} {...(open ? { open } : {})} {...(toggle ? { toggle } : {})} />
           {line}
         </div>

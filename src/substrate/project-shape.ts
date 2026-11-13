@@ -6,6 +6,7 @@ import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { GAME_RUNTIMES, TargetRuntime } from "../shared/computer-target.ts";
 import type { GameCandidate, PlayCommand, PlayEngine, ProjectKind, ProjectShape } from "../shared/game-project.ts";
+import { DESIGN_FOLDER } from "../shared/design-board.ts";
 import { pageLoadsGenexSdk } from "../shared/genex-page.ts";
 import { CoreFact, FolderHolds, hasFact } from "../shared/project-facts.ts";
 import { pathExists, readJsonIfExists } from "./fsx.ts";
@@ -35,11 +36,18 @@ const NOT_OWN_FILES = {
   Bookkeeping: ["studio.json", "references"],
   /**
    * The folder Genex's asset tools deliver into (`main/game-assets.ts`): what they write into a game
-   * with no kind yet never makes it a project of its own. `public/` counts only while it holds
-   * nothing but this folder (the bundled shape's `public/assets/`).
+   * with no kind yet never makes it a project of its own.
    */
   AssetFolder: "assets",
-  BundledParent: "public",
+  /**
+   * A top-level folder that is Genex's output while it holds nothing but the one folder Genex writes
+   * there: the bundled shape's `public/assets/`, and the design board (`docs/design/`), which a new
+   * game gets before it is built, so the game it designs still starts as its first build decides.
+   */
+  GenexInside: new Map([
+    ["public", "assets"],
+    [path.posix.dirname(DESIGN_FOLDER), path.posix.basename(DESIGN_FOLDER)],
+  ]),
   /** A loose note at the root, by its lower-cased extension. */
   NoteExtensions: [".md", ".txt"],
 } as const;
@@ -396,17 +404,17 @@ function isOwnEntry(entry: TopEntry): boolean {
 }
 
 /**
- * Whether a top-level entry is the folder's own work (`isOwnEntry`), reading into `public/`: one that
- * holds nothing but Genex's asset folder (and hidden files) is Genex's output, not the folder's own.
+ * Whether a top-level entry is the folder's own work (`isOwnEntry`), reading into `public/` and
+ * `docs/`: one that holds nothing but the folder Genex writes there (and hidden files) is Genex's
+ * output, not the folder's own.
  */
 async function ownEntry(dir: string, entry: TopEntry): Promise<boolean> {
   if (!isOwnEntry(entry)) return false;
-  if (!entry.isDirectory() || entry.name !== NOT_OWN_FILES.BundledParent) return true;
+  const genexFolder = entry.isDirectory() ? NOT_OWN_FILES.GenexInside.get(entry.name) : undefined;
+  if (!genexFolder) return true;
   const inside = await readdir(path.join(dir, entry.name), { withFileTypes: true }).catch(() => null);
   if (!inside) return true;
-  return inside.some(
-    (child) => !child.name.startsWith(".") && !(child.isDirectory() && child.name === NOT_OWN_FILES.AssetFolder),
-  );
+  return inside.some((child) => !child.name.startsWith(".") && !(child.isDirectory() && child.name === genexFolder));
 }
 
 /** Whether any top-level entry is the folder's own work (`ownEntry`). */
@@ -428,7 +436,8 @@ function isNote(entry: TopEntry): boolean {
 /**
  * Whether a folder holds files of its own: any top-level entry but a hidden one, Genex's own
  * bookkeeping (`studio.json`, `references/`), the folder its asset tools deliver into (`assets/`, or a
- * `public/` holding only that) and loose notes at the root (`*.md`, `*.txt`).
+ * `public/` holding only that), its design board (a `docs/` holding only `design/`) and loose notes at
+ * the root (`*.md`, `*.txt`).
  */
 export async function holdsOwnFiles(dir: string): Promise<boolean> {
   const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);

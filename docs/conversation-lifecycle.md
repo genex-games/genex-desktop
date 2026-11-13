@@ -620,8 +620,7 @@ contract check go by the folder's facts (`servedAsWeb` in `loop/folder-facts.ts`
 root, or no kind yet; never a folder of a kind Genex can't name): a Godot folder gets none of the
 web's. Its context (`chatContext`) names the folder, never what it holds, and plugin tools,
 guidance and connectors go by the game's facts ([scope by facts](plugins.md#scope-by-facts)): no web-only skills, and the Unreal
-editor's tools only for a game that holds an Unreal project. A game with no kind yet, while an
-engine plugin offers a kind (`plugins.tools`'s `kinds`), is handed `ask_user` beside the kind tools;
+editor's tools only for a game that holds an Unreal project. A game with no kind yet is handed `ask_user` beside the kind tools;
 a recorded question is asked, and the next turn resumes the same session, which calls
 `unreal__new-game` for Unreal. A build it starts there before the game has its kind
 (`start_autopilot` recorded, no question) waits once (`kindsBeforeLaunch`): the same session is told
@@ -649,4 +648,4 @@ turn is (`intake-continuation.test.ts`); no text match takes it away. While a ru
 follow-up goes to its lead; after the run the chat's own session has the Loop's start again, for a
 new run, and nothing commissions a duplicate run while one owns the project.
 
-A chat asks with `ask_user` when it is handed it (a game with no kind yet, while a plugin on offers one). The question card answers on one press of an answer button (⌘↩ presses the recommended one), and the composer takes custom text. The selected answer remains an ordinary durable user message; reference images are not duplicated in the chat context. No worker or native provider turn waits while the question is open. Routine decisions, repairs and failure reports never become answer forms. Handoff/session bookkeeping is recorded as `contractor_handoff` diagnostics rather than assistant prose.
+A chat asks with `ask_user` when it is handed it (a game with no kind yet), and in its reply's own words when it is not: its context has it ask before designing or building a new game (all but a small one the person's words give whole, or one they said to just build), at most four short questions, one at a time ([harness runtime](harness-runtime.md)). A card that is one of such a run says which ("Question 2 of 4", from `ask_user`'s `step` and `of`). The question card answers on one press of an answer button (⌘↩ presses the recommended one), and the composer takes custom text. The selected answer remains an ordinary durable user message; reference images are not duplicated in the chat context. No worker or native provider turn waits while the question is open. Routine decisions, repairs and failure reports never become answer forms. Handoff/session bookkeeping is recorded as `contractor_handoff` diagnostics rather than assistant prose.

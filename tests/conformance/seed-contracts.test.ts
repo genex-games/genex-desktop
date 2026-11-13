@@ -18,6 +18,7 @@ import {
   OPEN_LEAD_PART as seedOpenLeadPart,
   SAVE_POINT_VERDICT_SOURCE as seedSavePointSource,
 } from "../../src/harness-seed/loop/director/open/graph.ts";
+import { interviewQuestion as seedInterviewQuestion } from "../../src/harness-seed/loop/interview-question.ts";
 import * as seedInbox from "../../src/harness-seed/loop/run-inbox.ts";
 import * as seedQueue from "../../src/harness-seed/loop/message-queue.ts";
 import * as seedRoles from "../../src/harness-seed/loop/model-roles.ts";
@@ -57,6 +58,7 @@ import {
   RunStartRefusal,
   StopCode,
   customPayload,
+  questionStepOf,
 } from "../../src/shared/custom-events.ts";
 import * as duration from "../../src/shared/duration.ts";
 import { TargetRuntime } from "../../src/shared/computer-target.ts";
@@ -578,6 +580,19 @@ describe("vocabularies (src/shared ↔ the seed's copies)", () => {
       { second: seedTime.SECOND_MS, minute: seedTime.MINUTE_MS, hour: seedTime.HOUR_MS },
       { second: duration.SECOND_MS, minute: duration.MINUTE_MS, hour: duration.HOUR_MS },
     );
+  });
+});
+
+describe("a question's place in a short run of them (shared/custom-events.ts ↔ loop/interview-question.ts)", () => {
+  it("the app reads the count the seed's ask_user writes, and both drop the same senseless ones", () => {
+    const numbers = [0, 1, 2, 3, 4, 5, 1.5];
+    for (const step of numbers)
+      for (const of of numbers) {
+        const written = seedInterviewQuestion({ question: "Which camera?", step, of });
+        const kept = "step" in written ? { step: written.step, of: written.of } : null;
+        assert.deepEqual(questionStepOf(written), kept, `${step} of ${of}, as the seed wrote it`);
+        assert.deepEqual(questionStepOf({ step, of }), kept, `${step} of ${of}, as a record names it`);
+      }
   });
 });
 

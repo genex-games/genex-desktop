@@ -176,7 +176,7 @@ no Plan answer, and a call with no thread (a Loop's start, which runs only once 
 checked. Its `plugins_find` and `plugins_suggest`
 (`tools/plugin-finder.ts`) call `plugins.find` and `plugins.suggest`; a shown card ends the turn
 ([plugins](plugins.md#finding-and-suggesting-a-plugin)). It has no `plugin_check`, which only a
-delegated chat's own session is handed.
+delegated chat's own session is handed, and no `show_design` ([design board](design-board.md#when-the-agent-uses-it)).
 
 Genex's own gates (`loop/builtin-hooks.ts`, `BUILTIN_HOOKS`) run beside the plugins' hooks, each
 registered for a moment and the facts it guards, reading typed fields only. `web.ready` at
@@ -196,14 +196,27 @@ resume`), so it holds only what no turn changes: Genex's identity (`appIdentity`
 is, never what the folder holds), that the person may not be a programmer, the language rule,
 whose plan the work follows (what the latest message asks, at the stage the project is in; a
 project's own notes such as a `HANDOFF.md` are the plan; building, packaging, publishing or a
-finished game only when asked), that the agent checks its own work before it reports it, and the
+finished game only when asked), that it asks before it designs or builds a new game, or a large new part of one (at most four
+short questions, one at a time, on what the person's words leave open, each with up to three
+answers and its pick first, with `ask_user` where the session has it and in its reply where it
+does not; a game named only by a likeness or a genre, "a game like GunZ", is open; then the design
+on the Design tab where it has `show_design`, and the build once the person agrees to it; only an
+ask to just build, or a small game their words give whole, "make me Pong", builds at once, and
+nothing the project's notes or the chat already answer is asked), that the agent checks its own
+work before it reports it, and the
 chat's Run button. What the folder holds is the session's to see: a game's own `CLAUDE.md` names
 the build Genex runs before every preview, and a plugin's guidance says how its kind is built and
 linked; a turn that changes the kind tells the session in Genex's line (`factsReadyNotice`). The Loop's start,
 workers, the checkpoint, the kind tools, `start_web_game` and `plugins_find` are tools, never
 restated: Genex's own project and worker tools load with the prompt on Claude Code
 (`LiveToolSpec.alwaysLoad`), and the question card (`ask_user`) is bridged while the folder has no
-kind and a plugin on offers one (`plugins.tools`'s `kinds`). A session that starts in a chat that
+kind. `ask_user` asks one question with up
+to three answers; one of a short run of questions names its place in `step` and `of` (whole
+numbers, 1 ≤ step ≤ of ≤ 4, as numbers or their digits), which its `interview_question` record
+keeps and the card shows as a counter; any other count is dropped and the question is asked
+without one (`loop/interview-question.ts`; the app reads it with `questionStepOf`,
+`shared/custom-events.ts`). The Loop's start says a build starts once the game's direction is
+settled, by the person's words or their answers. A session that starts in a chat that
 began before it (a resume that failed, another engine) is told the chat so far as one Genex notice
 (`chat-continuity.ts` `historyNotice`: the last compaction's handover, then the newest messages
 that fit, `brief-window.ts`), beside the same words. Every other brief still opens with Genex's

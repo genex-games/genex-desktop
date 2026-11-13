@@ -107,6 +107,11 @@ export const FixtureName = {
    * arrives once the window is up: the bell, the Dock, a toast, the sidebar's lines and the Publish dot.
    */
   NativeReview: "native-review",
+  /**
+   * The Design tab with a board on it: three concepts to choose from, the core loop and the first
+   * level's map, and the chat that asked for them.
+   */
+  DesignBoard: "design-board",
 } as const;
 export type FixtureName = (typeof FixtureName)[keyof typeof FixtureName];
 

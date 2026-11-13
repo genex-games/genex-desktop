@@ -1880,11 +1880,31 @@ export const STAGE_WORDS = {
   tabs: {
     live: t("Live"),
     builds: t("Builds"),
+    design: t("Design"),
     shop: t("Shop"),
     assets: t("Assets"),
     webGame: t("Web game"),
     unreal: "Unreal",
   },
+} as const;
+
+/** The stage's Design tab (`panels/design/DesignStage.tsx`): what an empty board says and offers. */
+export const DESIGN_WORDS = {
+  emptyTitle: t("No design pages yet"),
+  emptySubtitle: t("Concepts, maps and choices land here."),
+  /** Leaves the request in the game's chat for the person to finish and send. */
+  ask: t("Ask for a design"),
+  /** The board's block in the chat (`chat/DesignPageCard.tsx`): its tag above the title, and what a press does. */
+  cardKind: t("Game design"),
+  /** How many artboards the board holds, under a block's title when the agent left no note. */
+  artboards: (count: number) => t("{count, plural, one {# artboard} other {# artboards}}", { count }),
+  /** A 3D model's tile: what a press on it does. */
+  turnModel: t("Turn the model"),
+  openInDesign: t("Open in Design"),
+  /** The card of a page that left the board. */
+  gone: (title: string) => t("{title} was removed from Design", { title }),
+  /** A page's name in the chat: what a press on it does. */
+  opensInDesign: t("Opens in Design"),
 } as const;
 
 /** Live for a folder with no view of its own (Godot, Blender, files of its own): the latest pictures its runs kept. */
@@ -3234,6 +3254,7 @@ const STUDIO_TOOLS: Record<string, ToolWords> = {
   land_build: { icon: "write", label: t("put the build in your game") },
   ask_user: { icon: "think", label: t("asked you a question") },
   set_game_cover: { icon: "write", label: t("painted the game's cover") },
+  show_design: { icon: "see", label: t("showed you a design page") },
   checkpoint: { icon: "see", label: t("marked a moment worth seeing") },
   capture: { icon: "see", label: t("captured the game"), active: t("Capturing the game") },
   // The lead's run tools. `wait` stays neutral.

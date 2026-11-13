@@ -358,10 +358,11 @@ describe("a new game's first turn while a plugin offers a kind", () => {
     }
   });
 
-  it("a host that lists no kinds bridges no card", async () => {
+  // Flipped: no kinds on offer bridged no card. A folder with no kind yet now always has it.
+  it("a host that lists no kinds still bridges the card: a new game's questions need no plugin", async () => {
     const none = await engineQuestion([]);
     assert.equal(none.prompt, "make a lantern-lit city game");
-    assert.deepEqual(none.bridged, ["start_autopilot"]);
+    assert.deepEqual(none.bridged, ["start_autopilot", "ask_user"]);
   });
 });
 

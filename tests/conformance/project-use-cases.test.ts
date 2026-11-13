@@ -1421,7 +1421,13 @@ describe("an Unreal game with a web site: two facts, two views", () => {
     const tabs = stageTabs({ views, plugins, hasBuilds: true, buildsLive: false, beside: null });
     assert.deepEqual(
       tabs.map((tab) => tab.label),
-      [STAGE_WORDS.tabs.unreal, STAGE_WORDS.tabs.webGame, STAGE_WORDS.tabs.builds, STAGE_WORDS.tabs.assets],
+      [
+        STAGE_WORDS.tabs.unreal,
+        STAGE_WORDS.tabs.webGame,
+        STAGE_WORDS.tabs.builds,
+        STAGE_WORDS.tabs.design,
+        STAGE_WORDS.tabs.assets,
+      ],
     );
   });
 });

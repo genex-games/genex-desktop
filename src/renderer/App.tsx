@@ -17,7 +17,6 @@ import type { JSX } from "react";
 import { lazy, Suspense, useEffect, useRef } from "react";
 import { t } from "../shared/i18n.ts";
 import { ColorTweakerHost } from "./appearance/tweaker/ColorTweakerHost.tsx";
-import { Onboarding } from "./onboarding/Onboarding.tsx";
 import { AnalyticsConsent } from "./panels/AnalyticsConsent.tsx";
 import { AppDialogs } from "./panels/AppDialogs.tsx";
 import { GenexPromo } from "./panels/GenexPromo.tsx";
@@ -37,6 +36,10 @@ import { CodexLoginPanel } from "./ui/CodexLoginPanel.tsx";
 
 /** Create › Items, a room over the workspace: loaded the first time it opens, as most sessions never do. */
 const ItemsPage = lazy(() => import("./panels/items/ItemsPage.tsx").then((room) => ({ default: room.ItemsPage })));
+/** The welcome, shown once on a first launch: loaded only then, so every later session starts without it. */
+const Onboarding = lazy(() =>
+  import("./onboarding/Onboarding.tsx").then((welcome) => ({ default: welcome.Onboarding })),
+);
 /** Play's pages over the workspace: loaded the first time Play opens. */
 const PlayPages = lazy(() => import("./play/PlayPages.tsx").then((room) => ({ default: room.PlayPages })));
 
@@ -166,14 +169,16 @@ export function App(): JSX.Element {
         onRemoveGame={navigation.removeGame}
       />
       {welcoming && (
-        <Onboarding
-          engines={engines}
-          onEnginesRefresh={app.engines.refresh}
-          onReady={welcome.readyAfterWelcome}
-          onFinish={welcome.finishWelcome}
-          held={analytics.asking}
-          onScreen={analytics.onWelcomeScreen}
-        />
+        <Suspense fallback={null}>
+          <Onboarding
+            engines={engines}
+            onEnginesRefresh={app.engines.refresh}
+            onReady={welcome.readyAfterWelcome}
+            onFinish={welcome.finishWelcome}
+            held={analytics.asking}
+            onScreen={analytics.onWelcomeScreen}
+          />
+        </Suspense>
       )}
       {/* The first-run cards wait for the analytics question: two never stack. */}
       <GenexPromo welcoming={welcoming || analytics.asking} pluginsOpen={chrome.workspaceCovered} project={project} />

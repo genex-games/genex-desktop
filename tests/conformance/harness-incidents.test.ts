@@ -1522,6 +1522,123 @@ describe("a scoped ask on a project in pre-production (DeathWish)", () => {
 });
 
 /**
+ * A new game asked for in a line that left its direction open ("make me a game about the sea") was
+ * built at once, on the agent's own guess of how it feels, how it is seen and played and how big it
+ * is. The chat's agent asks first: a few short questions, one at a time, then the design on the
+ * Design tab, then the build. A small game the person's words give whole ("make me Pong"), and an
+ * ask to just build, still build at once. A game named by a likeness ("a game like GunZ") is not
+ * one of those: it was read as words that say what to make, and built with no question and no design.
+ */
+describe("a new game whose direction the person's words leave open (ask first)", () => {
+  // Flipped: the rule asked only when the agent judged the direction open, and built at once on any
+  // game the person "named or described". It now asks on every new game but the two cases it names.
+  it("AF-1. the chat's context said nothing of asking before a design or a build: a new game is asked about in a few short questions, one at a time, and only a small game given whole, or an ask to just build, builds at once", async () => {
+    const { chatContext } = await import("../../src/harness-seed/loop/chat-session.ts");
+    const context = chatContext({ folderLabel: "AI Games/sea", appLanguage: null });
+    assert.match(context, /A new game, or a large new part of one, starts with the person's own direction/);
+    assert.match(context, /Ask before you design or build: at most four short questions, one at a time/);
+    assert.match(
+      context,
+      /what their words leave open \(which part of the idea matters most to them, how it looks and feels, how it is played, how big the first version is\)/,
+    );
+    assert.match(context, /up to three answers and your pick first/);
+    assert.match(context, /ask_user where you have it, in your reply where you don't/, "the card is not always there");
+    assert.match(
+      context,
+      /where you have show_design, put the design on the Design tab and show it to them, and build when they agree to it/,
+    );
+    assert.match(
+      context,
+      /Build at once, with no questions and no design, only when they said to just build, or when their words already give the whole of a small game \([^)]*"make me Pong"[^)]*\)/,
+      "make me Pong still builds at once",
+    );
+    assert.match(context, /Never ask what the project's own notes or the chat already answer/);
+    assert.match(
+      context,
+      /Do what the person's latest message asks/,
+      "beside whose plan the work follows, not instead",
+    );
+  });
+
+  // Flipped: "settled (by the person's words or their answers)" let a likeness in their words settle it.
+  it("AF-2. the Loop's start said to build as soon as the agent set to making a game, open direction or not: a build starts once the game's direction is settled, and says what settles it", async () => {
+    const { startAutopilot } = await import("../../src/harness-seed/loop/start-autopilot.ts");
+    const start = String(startAutopilot.description);
+    assert.match(start, /as soon as you set to making a game whose direction is settled/);
+    assert.match(
+      start,
+      /settled \(the person answered your questions and agreed to the design, said to just build, or asked for a small game their words give whole\)/,
+    );
+    assert.doesNotMatch(start, /as soon as you set to making a game, or/, "not whatever its direction");
+    assert.doesNotMatch(start, /by the person's words or their answers/, "a likeness in their words settles nothing");
+    assert.match(start, /instead of doing that work in your reply/, "and still never built in the reply");
+  });
+
+  it('AF-4. "Plz lets make a game like a GunZ" was built at once, with no question and no design, as a game the person named: a game named by a likeness or a genre is open', async () => {
+    const { chatContext } = await import("../../src/harness-seed/loop/chat-session.ts");
+    const context = chatContext({ folderLabel: "AI Games/a-game-like-gunz", appLanguage: null });
+    assert.match(
+      context,
+      /A game named only by a likeness or a genre \("a game like GunZ", "a roguelike"\) is open: that says what theirs resembles, not what theirs is/,
+    );
+    assert.doesNotMatch(context, /a game they named or described/, "naming a game no longer builds at once");
+    assert.doesNotMatch(
+      context,
+      /leave its direction open[^.]*, ask before/,
+      "asking is not left to a reading of how open the words are",
+    );
+  });
+
+  it("AF-3. several questions came as one card each with nothing to say how many were left: ask_user records which question this is, drops a count that makes no sense, and still offers three answers at most", async () => {
+    const { askUser, interviewQuestion } = await import("../../src/harness-seed/loop/interview-question.ts");
+    const ask = { question: "Which camera?", options: "Behind the car\nHood view\nTop-down\nFrom the stands" };
+    const recorder = ctxRecorder({ unknown: { value: null }, extra: { turnId: "turn-1" } });
+    await askUser.execute({ ...ask, step: 2, of: 4 }, recorder.ctx as never);
+    type Recorded = { event_type: string; payload: { step?: number; of?: number; choices?: unknown[] } };
+    const recorded = recorder.paramsOf("turn.append").flatMap((appended) => appended.batch as Recorded[]);
+    assert.deepEqual(
+      recorded.map(({ event_type, payload }) => [event_type, payload.step, payload.of, payload.choices?.length]),
+      [["interview_question", 2, 4, 3]],
+      "which question it is, and three answers at most",
+    );
+
+    // A bridge sends every argument as text.
+    const asText = interviewQuestion({ ...ask, step: "3", of: "3" });
+    assert.deepEqual([asText.step, asText.of], [3, 3]);
+
+    const senseless: Array<[unknown, unknown]> = [
+      [0, 4],
+      [5, 4],
+      [3, 2],
+      [2, 5],
+      [-1, 3],
+      [1.5, 4],
+      [2, undefined],
+      [undefined, 4],
+      [null, null],
+      ["two", 4],
+      [2, "4 or so"],
+      ["", ""],
+      [true, 4],
+      [2, Number.POSITIVE_INFINITY],
+      [{ step: 1 }, [4]],
+    ];
+    for (const [step, of] of senseless) {
+      const asked = interviewQuestion({ ...ask, step, of });
+      assert.equal(asked.question, ask.question, `the question is still asked (${String(step)} of ${String(of)})`);
+      assert.equal("step" in asked || "of" in asked, false, `no count for ${String(step)} of ${String(of)}`);
+    }
+
+    assert.match(String(askUser.description), /one question at a time/);
+    assert.match(String(askUser.description), /up to 3 concise choices/, "the answers' limit stays");
+    const properties = (askUser.parameters as Json).properties;
+    assert.equal(properties.step.type, "integer");
+    assert.equal(properties.of.type, "integer");
+    assert.deepEqual((askUser.parameters as Json).required, ["question"], "the count is optional");
+  });
+});
+
+/**
  * A new game's chat asked for Unreal, and its session started a build before the game had a kind: the
  * build's start wrote the web starter, so the Loop ran on a web page, Unreal's new-game was refused
  * while that Loop ran, and its finish failed the web check ("the page's frame is blank") on what was

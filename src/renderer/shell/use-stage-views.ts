@@ -1,6 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { recheckChatFiles } from "../chat-files.ts";
-import { OPEN_BESIDE_EVENT, OPEN_FILE_EVENT, type BesideTarget, type OpenFileRequest } from "../open-beside.ts";
+import {
+  OPEN_BESIDE_EVENT,
+  OPEN_DESIGN_EVENT,
+  OPEN_FILE_EVENT,
+  type BesideTarget,
+  type OpenFileRequest,
+} from "../open-beside.ts";
+import { askForPage, noteMaking, type PagePoint } from "../panels/design/design-asks.ts";
+import { UiEvent } from "../../shared/ui-events.ts";
+import { projectOf } from "../state/threads.ts";
 import { hostPlatform } from "../platform.ts";
 import { noteStageSwitch } from "../analytics/workspace-trackers.ts";
 import { StageSwitchVia } from "../analytics/workspace-vocabulary.ts";
@@ -71,6 +80,46 @@ function useOpenChatFiles(app: Studio): void {
   }, [app]);
 }
 
+/**
+ * A page of a game's design board brought in front of the person: by the game's agent
+ * (`show_design`) or by a press on the page's name in the chat. The Design tab opens on it when its
+ * game is the one on the stage; another game's page waits for that game's Design tab.
+ */
+function useShownDesign(app: Studio, chooseStageView: (view: StageView) => void): void {
+  useEffect(() => {
+    const open = (project: string, via: StageSwitchVia): void => {
+      if (projectOf(app.threads.getState()) !== project) return;
+      noteStageSwitch(via);
+      chooseStageView(StageView.Design);
+    };
+    const show = (project: string | null, file: string, via: StageSwitchVia, point: PagePoint = {}): void => {
+      if (!project) return;
+      askForPage(project, file, point);
+      open(project, via);
+    };
+    const fromChat = (event: Event): void => {
+      const file = (event as CustomEvent<string>).detail;
+      if (typeof file === "string") show(projectOf(app.threads.getState()), file, StageSwitchVia.ChatLink);
+    };
+    const stop = window.studio.onEvent((event) => {
+      if (event.type === UiEvent.DesignShown) {
+        const { project, file, note, spot } = event.payload;
+        show(project, file, StageSwitchVia.Other, { note, ...(spot ? { spot } : {}) });
+      }
+      // The agent said what it is about to draw: the tab opens, so the person watches it appear.
+      if (event.type === UiEvent.DesignMaking) {
+        noteMaking(event.payload.project, event.payload.files, Date.now());
+        open(event.payload.project, StageSwitchVia.Other);
+      }
+    });
+    window.addEventListener(OPEN_DESIGN_EVENT, fromChat);
+    return () => {
+      stop();
+      window.removeEventListener(OPEN_DESIGN_EVENT, fromChat);
+    };
+  }, [app, chooseStageView]);
+}
+
 /** The stage's view, chosen by the user or by what opens it. */
 export function useStageViews(app: Studio) {
   useOpenChatFiles(app);
@@ -78,6 +127,7 @@ export function useStageViews(app: Studio) {
     (next: StageView) => app.layout.setState((s) => stageViewChosen(s, next), true),
     [app],
   );
+  useShownDesign(app, chooseStageView);
   const showLive = useCallback(() => chooseStageView(StageView.Live), [chooseStageView]);
   const { beside, closeBeside } = useBeside(app, chooseStageView);
   return useMemo(

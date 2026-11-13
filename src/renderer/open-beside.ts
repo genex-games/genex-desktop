@@ -16,6 +16,8 @@ export function besideName(target: BesideTarget): string {
 
 export const OPEN_BESIDE_EVENT = "studio:open-beside";
 export const OPEN_FILE_EVENT = "studio:open-file";
+/** A page of the game's design board, named in the chat, opens on the Design tab. */
+export const OPEN_DESIGN_EVENT = "studio:open-design";
 
 /** A file link clicked in a chat: the words it names, in that chat. */
 export interface OpenFileRequest {
@@ -32,4 +34,9 @@ export function openBeside(target: BesideTarget): void {
 /** Asks the shell to open a file the chat named in its app (main decides how). */
 export function openChatFile(request: OpenFileRequest): void {
   window.dispatchEvent(new CustomEvent<OpenFileRequest>(OPEN_FILE_EVENT, { detail: request }));
+}
+
+/** Open the Design tab on a page of the open chat's game (`docs/design/<name>.html`). */
+export function openDesignPage(file: string): void {
+  window.dispatchEvent(new CustomEvent<string>(OPEN_DESIGN_EVENT, { detail: file }));
 }

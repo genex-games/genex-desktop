@@ -13,8 +13,9 @@ import {
   type ChatFileRef,
   chatFileKey,
 } from "../shared/chat-files.ts";
+import { namedDesignPage } from "../shared/design-board.ts";
 import { SECOND_MS } from "../shared/duration.ts";
-import { openBeside, openChatFile } from "./open-beside.ts";
+import { openBeside, openChatFile, openDesignPage } from "./open-beside.ts";
 
 /** The chat whose files the text inside names. Without one, nothing becomes a file link. */
 export const ChatFilesScope = createContext<string | null>(null);
@@ -197,5 +198,11 @@ export function clickFileLink(event: MouseEvent<HTMLElement>, threadId: string |
   }
   const name = element.getAttribute("data-file-path") ?? "";
   const base = element.getAttribute("data-file-base");
+  // A page of the game's design board opens where it is drawn, on the Design tab.
+  const page = namedDesignPage(name, base);
+  if (page) {
+    openDesignPage(page);
+    return;
+  }
   openChatFile({ threadId, ref: base ? { name, base } : { name }, label: element.textContent?.trim() || name });
 }

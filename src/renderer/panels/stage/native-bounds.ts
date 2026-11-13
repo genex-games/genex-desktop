@@ -118,6 +118,7 @@ export interface StageCover {
   buildsOpen: boolean;
   assetsOpen: boolean;
   shopOpen: boolean;
+  designOpen: boolean;
   fileOpen: boolean;
   showEmpty: boolean;
   liveLoading: boolean;
@@ -156,6 +157,7 @@ const showsGame = (cover: StageCover, windowShown: boolean): boolean =>
     cover.buildsOpen,
     cover.assetsOpen,
     cover.shopOpen,
+    cover.designOpen,
     cover.fileOpen,
     cover.showEmpty,
     cover.liveLoading,
@@ -183,6 +185,7 @@ export function useNativeViewBounds(slot: RefObject<HTMLDivElement | null>, cove
     buildsOpen,
     assetsOpen,
     shopOpen,
+    designOpen,
     fileOpen,
     showEmpty,
     liveLoading,
@@ -251,6 +254,7 @@ export function useNativeViewBounds(slot: RefObject<HTMLDivElement | null>, cove
     buildsOpen,
     assetsOpen,
     shopOpen,
+    designOpen,
     fileOpen,
     showEmpty,
     liveLoading,

@@ -152,7 +152,7 @@ function EngineSteps(parts: ChatParts): JSX.Element {
 
 /** The composer and the cards docked above it: sign-in, questions, the plan and consents. */
 function ChatComposer(parts: ChatParts & { composerRef: RefObject<PromptBarHandle | null> }): JSX.Element {
-  const { chat, composer, work, submit, composerRef, reply } = parts;
+  const { chat, composer, work, submit, sendAnswered, composerRef, reply } = parts;
   const { threadId, transcript, working, run } = chat;
   const { drafts, gate, model, compact } = composer;
   const { plan } = work;
@@ -178,7 +178,7 @@ function ChatComposer(parts: ChatParts & { composerRef: RefObject<PromptBarHandl
       genex={heldAsksSignIn(parts) ? null : gate.genex}
       questions={transcript.interviewQuestions.filter((entry) => entry.kind === EntryKind.Question)}
       questionsDisabled={busy || working}
-      onAnswerQuestion={(answer) => submit(answer, undefined, true, SendSource.QuestionCard)}
+      onAnswerQuestion={(answer) => sendAnswered(answer, undefined, true, SendSource.QuestionCard)}
       plan={planPrompt(parts, composerRef)}
       consents={transcript.pendingConsents.filter((entry) => entry.kind === EntryKind.Action)}
       onConsent={answerConsent}

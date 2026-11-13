@@ -4,6 +4,8 @@
  * The person's words reach it as they wrote them; a chat never guesses a different game folder.
  */
 import { EventKind, RunEvent } from "./run-events.ts";
+import { ProjectTool } from "./folder-facts.ts";
+import { askUser } from "./interview-question.ts";
 import { appIdentity } from "./project-prompts.ts";
 import type { AppLanguage } from "./app-language.ts";
 import { languageRule } from "./language-prompts.ts";
@@ -239,6 +241,16 @@ const SCOPE =
   "Do what the person's latest message asks, at the stage their project is in, and nothing beyond it. A project's own notes (a HANDOFF.md, README, TODO or design doc) and the stage the person names (pre-production, a blockout, picking assets) are the plan: in a project you did not make, read them before your first change, and follow them. Build, package, publish or take the whole game to a finished version only when the person asks for that.";
 
 /**
+ * Who settles a new game's direction: the person, asked before the design and the build. Asking is
+ * the rule, not a reading of how open their words are: "Plz lets make a game like a GunZ" was read
+ * as a game the person named, and built at once with no question and no design. Only an ask to just
+ * build, and a small game their words give whole ("make me Pong"), build at once. A session is
+ * handed the question card and the design board on some turns only and keeps this text for its
+ * whole life, so the rule says what to do without them.
+ */
+const ASK_FIRST = `A new game, or a large new part of one, starts with the person's own direction, never with your guess of it. Ask before you design or build: at most four short questions, one at a time, about what their words leave open (which part of the idea matters most to them, how it looks and feels, how it is played, how big the first version is), each with up to three answers and your pick first, with ${askUser.name} where you have it, in your reply where you don't. A game named only by a likeness or a genre ("a game like GunZ", "a roguelike") is open: that says what theirs resembles, not what theirs is. Once they have answered, where you have ${ProjectTool.ShowDesign}, put the design on the Design tab and show it to them, and build when they agree to it. Build at once, with no questions and no design, only when they said to just build, or when their words already give the whole of a small game (one whose rules everyone knows, as in "make me Pong", or one they described in full). Never ask what the project's own notes or the chat already answer.`;
+
+/**
  * Who checks the work: the agent, with its own tools. The same turn ended "When the build is ready,
  * … walk through the blockout yourself and tell me what you think of the layout" (DeathWish).
  */
@@ -257,7 +269,8 @@ const CUT_OFF_CALLS =
 /**
  * Genex's context for the chat's own session, said once in its system text: who runs it and the
  * game's folder (`appIdentity`), who the person is, the language they read, whose plan the work
- * follows, whose steps and checks are whose, whose "no" a tool's answer is and the chat's Run button.
+ * follows, when to ask before a design or a build, whose steps and checks are whose, whose "no" a
+ * tool's answer is and the chat's Run button.
  * Only what holds for the session's whole life, the same text on every turn, the lead's included
  * (director.ts): a resumed Claude Code or Codex session keeps the system text it started with. So
  * what the folder holds, which a turn can change, is never in it: a turn that changes it tells the
@@ -276,6 +289,7 @@ export function chatContext({
     TALK,
     languageRule(appLanguage),
     SCOPE,
+    ASK_FIRST,
     DO_IT_YOURSELF,
     CHECK_IT_YOURSELF,
     CUT_OFF_CALLS,

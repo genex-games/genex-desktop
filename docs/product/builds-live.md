@@ -16,7 +16,7 @@ An active run opens Builds once; a build shown from chat, or empty Builds, opens
 
 **Live** plays the browser game natively; previews pause unwatched or hidden. Pages load
 hidden at Live's size, never at none. The strip
-holds Live/Builds/Assets, Reload, Play/Stop and Sound (⌥⌘M; heard when shown) once the
+holds Live/Builds/[Design](../design-board.md)/Assets, Reload, Play/Stop and Sound (⌥⌘M; heard when shown) once the
 game has content, Full screen (hold Esc), plugin actions, Multiplayer, Publish. Stop halts it until
 Play/Reload. An empty scaffold shows “Ready for your first idea”, or
 “Building your game” with Watch progress, then Play latest; the first healthy build shows itself.

@@ -161,6 +161,7 @@ import { TurnFactory } from "../substrate/turns.ts";
 import type { EventData, EventEnvelope } from "../substrate/types.ts";
 import { AssetCheckpoints } from "./asset-checkpoints.ts";
 import { AssetService } from "./core/assets.ts";
+import { DesignBoardService } from "./core/design-board.ts";
 import { ChatPermissionService } from "./core/chat-permissions.ts";
 import { ConnectionService } from "./core/connections.ts";
 import { ConversationService } from "./core/conversation.ts";
@@ -575,6 +576,8 @@ export class StudioCore {
   readonly fastDecisions: FastDecisions;
   readonly contextPreferences: ContextPreferences;
   readonly games: GameWorkspaces;
+  /** The games' design boards: read for the Design tab, served to its frames, shown by a game's agent. */
+  readonly design: DesignBoardService = new DesignBoardService(this);
   readonly journal: UpdateJournal;
   readonly ollamaSidecar: OllamaSidecar;
   /** Token bookkeeping + improvement-class caps, enforced at the engine seam (A9). */

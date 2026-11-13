@@ -30,6 +30,7 @@ import {
 } from "./fixture-kit.ts";
 import { NOTIFICATIONS_START_MS, notificationArrivals, seedNotificationGames } from "./fixture-notifications.ts";
 import { announceOpenLoopWait, seedOpenLoops, seedOpenProjects } from "./fixture-open-projects.ts";
+import { designAgentArrivals, seedDesignBoard } from "./fixture-design.ts";
 import { seedStillsGame } from "./fixture-stills.ts";
 import { seedAssetLibrary } from "./fixture-assets-tab.ts";
 import { seedRobloxGame } from "./fixture-roblox.ts";
@@ -163,6 +164,7 @@ async function seedFreshFixture(game: FixtureGame): Promise<void> {
   if (id === FixtureName.AssetLibrary) return seedAssetLibrary(game.project.dir);
   if (id === FixtureName.ItemsStore) return seedItemsStore(core, game.project.name, threadId);
   if (id === FixtureName.NativeReview) return seedNativeReview(core, game.project.name, threadId);
+  if (id === FixtureName.DesignBoard) return seedDesignBoard(core, game.project, threadId);
 }
 
 async function seedGraphOnce(game: FixtureGame): Promise<void> {
@@ -269,6 +271,15 @@ export async function activateChatFixture(
     // After the window has read its first feed, so these arrive as news: one every half second.
     setTimeout(
       () => void notificationArrivals(core).catch((error) => console.error("Notification fixture failed", error)),
+      NOTIFICATIONS_START_MS,
+    );
+    return;
+  }
+  if (fixture.fixture === FixtureName.DesignBoard) {
+    // After the window is up, so the canvas hears the agent offer, announce and point as it would live.
+    setTimeout(
+      () =>
+        void designAgentArrivals(core, fixture.project).catch((error) => console.error("Design fixture failed", error)),
       NOTIFICATIONS_START_MS,
     );
     return;

@@ -26,6 +26,7 @@ import type { Usage } from "./event-log.ts";
 import type { LoopProfile } from "./project-facts.ts";
 import type { BuildObservation, HealthFinding, ReadyResult, ReadyVia } from "./preview-contract.ts";
 import type { EngineLinkedPayload, EngineLinkUndonePayload, EngineStepsPayload } from "./game-engine.ts";
+import type { DesignShownPayload } from "./design-board.ts";
 import type { PluginSuggestedPayload } from "./project-tools.ts";
 import type { AppLookAccessPayload, JobEndedPayload, JobStartedPayload } from "./jobs.ts";
 import type { AgentWentAheadPayload } from "./plugin-hooks.ts";
@@ -48,6 +49,8 @@ export const CustomEvent = {
   /** What each @ tag of a message gave the agent; written by the host after the message is sent. */
   MentionTagged: "mention_tagged",
   BlenderAsset: "blender_asset",
+  /** A page of the game's design board its agent showed from a chat (`show_design`): its card there; written by the host only. */
+  DesignShown: "design_shown",
   ConnectorTool: "connector_tool",
   /** A connector call on its way out, paired with its `connector_tool` by `callId`; written by the host only. */
   ConnectorToolStarted: "connector_tool_started",
@@ -248,6 +251,29 @@ export interface InterviewChoice {
   id: string;
   label: string;
   description?: string;
+}
+
+/** The most questions one short run of an agent's questions holds: the top of a question's `of`. */
+export const MAX_QUESTION_STEPS = 4;
+
+/** Which question of a short run of them one is: the `step`-th `of` so many. */
+export interface QuestionStep {
+  step: number;
+  of: number;
+}
+
+/**
+ * The place a question's record names in its run of questions: whole numbers with
+ * 1 ≤ step ≤ of ≤ `MAX_QUESTION_STEPS`. Null for a record that names none (a single question, an
+ * older record) or a senseless one (an edited harness's). The seed's `ask_user` writes by the same
+ * rule (`loop/interview-question.ts`, held equal by seed-contracts).
+ */
+export function questionStepOf(asked: { step?: unknown; of?: unknown }): QuestionStep | null {
+  const { step, of } = asked;
+  if (typeof step !== "number" || typeof of !== "number") return null;
+  if (!Number.isInteger(step) || !Number.isInteger(of)) return null;
+  const inRun = step >= 1 && step <= of && of <= MAX_QUESTION_STEPS;
+  return inRun ? { step, of } : null;
 }
 
 /** A check scoreboard as a round records it. */
@@ -765,14 +791,18 @@ export interface CustomEventMap {
     picture?: string;
     worker?: string;
   };
-  /** `recap`: one line the agent wrote on what it found or did, shown above the question. */
-  interview_question: { question?: string; recap?: string; choices?: InterviewChoice[] };
+  /**
+   * `recap`: one line the agent wrote on what it found or did, shown above the question. `step` and
+   * `of`: which question of a short run of them this is, read with `questionStepOf`.
+   */
+  interview_question: { question?: string; recap?: string; choices?: InterviewChoice[]; step?: number; of?: number };
   /** A provider signed out mid-turn (harness `turn-loop.ts`); `message` is the provider's own error. */
   needs_signin: { engine?: string; message?: string };
   plan_review: PlanReviewRecord;
   preview_ready: PreviewReadyPayload;
   plugin_consent: PluginConsentEvent;
   plugin_suggested: Partial<PluginSuggestedPayload>;
+  design_shown: Partial<DesignShownPayload>;
   plugin_tool: PluginToolFinishedPayload & { facetTitle?: string };
   plugin_tool_started: PluginToolStartedPayload & { facetTitle?: string };
   tool_permission: ToolPermissionEvent;

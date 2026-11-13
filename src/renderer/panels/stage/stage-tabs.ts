@@ -1,7 +1,6 @@
 /**
- * The stage strip's tabs: Live, Builds once there is a build to draw, Shop once the game sells
- * something, Assets, and a file opened
- * beside. A folder with more than one Live view (`liveViewsFor`: a web game and an Unreal project)
+ * The stage strip's tabs: Live, Builds once there is a build to draw, Design, Shop once the game
+ * sells something, Assets, and a file opened beside. A folder with more than one Live view (`liveViewsFor`: a web game and an Unreal project)
  * gets a tab per view in Live's place, each named by what it shows ("Web game", "Unreal"); a folder
  * with one keeps the bar exactly as it was. The default view's tab keeps Live's key, so the strip's
  * selector for it never changes.
@@ -28,7 +27,13 @@ const TAB_NAME_TAIL = 10;
 const LIVE_TAB_PREFIX = `${StageView.Live}-`;
 
 /** The stage views whose tab is the view itself. */
-const PLAIN_VIEWS: readonly StageView[] = [StageView.Builds, StageView.Shop, StageView.Assets, StageView.File];
+const PLAIN_VIEWS: readonly StageView[] = [
+  StageView.Builds,
+  StageView.Design,
+  StageView.Shop,
+  StageView.Assets,
+  StageView.File,
+];
 
 /** A tab's key, also its `data-stage-action`: a stage view, or a Live view other than the default. */
 export type StageTabKey =
@@ -76,8 +81,9 @@ function liveTabs(views: readonly LiveView[], plugins: readonly LivePlugin[]): S
 }
 
 /**
- * The view switcher's tabs: Live's (one per view), Builds once there is a build to draw, Shop once
- * the game sells something, Assets, and a file opened beside.
+ * The view switcher's tabs: Live's (one per view), Builds once there is a build to draw, Design
+ * (marked while its board holds something the person has not seen), Shop once the game sells
+ * something, Assets, and a file opened beside.
  */
 export function stageTabs({
   views,
@@ -85,6 +91,7 @@ export function stageTabs({
   hasBuilds,
   buildsLive,
   hasShop = false,
+  designNew = false,
   beside,
 }: {
   views: readonly LiveView[];
@@ -92,6 +99,8 @@ export function stageTabs({
   hasBuilds: boolean;
   buildsLive: boolean;
   hasShop?: boolean;
+  /** The game's design board changed since the person last looked at it. */
+  designNew?: boolean;
   beside: BesideTarget | null;
 }): StageTab[] {
   const builds: StageTab[] = hasBuilds
@@ -104,6 +113,7 @@ export function stageTabs({
   return [
     ...liveTabs(views, plugins),
     ...builds,
+    { key: StageView.Design, label: `${STAGE_WORDS.tabs.design}${designNew ? " ●" : ""}` },
     ...shop,
     { key: StageView.Assets, label: STAGE_WORDS.tabs.assets },
     ...file,
@@ -125,10 +135,11 @@ function tabView(key: StageTabKey, views: readonly LiveView[]): LiveView | null 
   return views.find((view) => view.observer === choice.live) ?? views[0] ?? null;
 }
 
-/** A tab's glyph where the folded views list it (`StageStrip`): a file's own, Builds' graph, Assets' tiles, a Live view's kind. */
+/** A tab's glyph where the folded views list it (`StageStrip`): a file's own, Builds' graph, Design's palette, Assets' tiles, a Live view's kind. */
 export function tabGlyph(tab: StageTab, views: readonly LiveView[]): IconName {
   if (tab.icon) return tab.icon;
   if (tab.key === StageView.Builds) return "graph";
+  if (tab.key === StageView.Design) return "palette";
   if (tab.key === StageView.Assets) return "assets";
   if (tab.key === StageView.Shop) return "layers";
   return LIVE_GLYPH[tabView(tab.key, views)?.live ?? ObserverLive.Preview];

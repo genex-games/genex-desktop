@@ -5,7 +5,7 @@ import type { EventData } from "../../substrate/types.ts";
 
 const MESSAGE = {
   hostOnly:
-    "permission, consent, recovery, self-change, plugin suggestion, don't-wait, unsaved-file, job, app access, automatic resume, finish check, chat judge, interaction evidence, tag result and listing draft rows are written by the studio only",
+    "permission, consent, recovery, self-change, plugin suggestion, design page, don't-wait, unsaved-file, job, app access, automatic resume, finish check, chat judge, interaction evidence, tag result and listing draft rows are written by the studio only",
 } as const;
 const HOST_CUSTOM_EVENTS: ReadonlySet<unknown> = new Set([
   CustomEvent.ToolPermission,
@@ -18,6 +18,8 @@ const HOST_CUSTOM_EVENTS: ReadonlySet<unknown> = new Set([
   CustomEvent.ToolInstalled,
   // A turn-it-on card is shown by `plugins_suggest` only, after its checks: its button turns a plugin on.
   CustomEvent.PluginSuggested,
+  // A design page's card is left by `show_design` only, for a page of the game's own board.
+  CustomEvent.DesignShown,
   // Files too large to save are reported by the host that ran the rewind.
   CustomEvent.CheckpointSkipped,
   // A job's start and end are recorded by the app that owns the job (`substrate/jobs.ts`).

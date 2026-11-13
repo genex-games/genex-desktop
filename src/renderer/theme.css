@@ -5098,6 +5098,32 @@ button.chat-header-title:hover {
 .chat-question-body > :first-child {
   padding-inline-end: 28px;
 }
+/* Which question of a short run this is: its count, and a dash for each, filled up to this one. */
+.chat-question-step {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  color: var(--ink-3);
+  font-family: var(--font-family-mono);
+  font-size: 12px;
+  line-height: 18px;
+}
+.chat-question-dashes {
+  display: inline-flex;
+  flex-shrink: 0;
+  gap: 4px;
+}
+.chat-question-dashes > span {
+  width: 18px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line-strong);
+}
+.chat-question-dashes > [data-filled] {
+  background: var(--accent);
+}
 .chat-question-recap {
   margin-bottom: 6px;
   color: var(--ink-2);
@@ -5178,10 +5204,20 @@ button.chat-header-title:hover {
   line-height: 20px;
   text-align: start;
   cursor: pointer;
+  transition: opacity var(--duration-quick) ease-out;
 }
+/* An answer that cannot be pressed dims only once the wait is long enough to read: a question shown
+   as the reply that asked it is still ending, or answered in the composer, would otherwise flash
+   half-lit for a moment. The starting style keeps a card that arrives disabled from opening dimmed. */
 .chat-answer:disabled {
   opacity: 0.5;
   cursor: default;
+  transition-delay: 600ms;
+}
+@starting-style {
+  .chat-answer:disabled {
+    opacity: 1;
+  }
 }
 /* An answer on its way looks as it did when pressed: only the pointer says it is working. */
 .chat-answer[aria-busy="true"] {

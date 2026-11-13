@@ -3,7 +3,7 @@
  * the person's words to decide. The words go as written; Genex's context is the session's system
  * text, the same whatever the folder holds: who runs it (Genex, the folder, what a Genex plugin is),
  * never the folder's kinds, which a turn can change while a resumed session keeps the text it started
- * with. A folder with no kind yet is handed the question card while a plugin on offers a kind, and
+ * with. A folder with no kind yet is handed the question card, with or without a plugin on, and
  * what the session records with it is asked; the kind tools, `start_web_game` and `plugins_find` are
  * its tools, never restated in words.
  */
@@ -110,11 +110,12 @@ async function firstMessage(
 
 describe("the first message on a project with no kind", () => {
   // Flipped: the brief told it to start web with start_web_game or find a plugin, and asked web or
-  // an engine in words with the card. The words go alone; the card is bridged while kinds are on offer.
-  it("reads the words alone; the card is bridged only while a plugin on offers a kind", async () => {
+  // an engine in words with the card. The words go alone. Flipped again: the card was bridged only
+  // while kinds were on offer; a new game's questions (how it feels, how it is seen) need no plugin.
+  it("reads the words alone; the card is bridged whether or not a plugin on offers a kind", async () => {
     const none = await firstMessage(game([]), NONE_ON);
     assert.equal(none.prompt, ASK);
-    assert.deepEqual(none.bridged, [AUTO_LOOP], "no question card");
+    assert.deepEqual(none.bridged, [AUTO_LOOP, "ask_user"], "the question card, with no plugin on");
     assert.equal(none.capture, true, "served as a web game until it picks");
     const on = await firstMessage(game([]), UNREAL_ON);
     assert.equal(on.prompt, ASK);

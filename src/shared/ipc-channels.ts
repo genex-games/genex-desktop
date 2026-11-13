@@ -17,6 +17,7 @@
 import type { StudioApi } from "./studio-api.ts";
 import type { StudioErrorCode } from "./error-codes.ts";
 import type { AddSource, ShareItem } from "./asset-library.ts";
+import type { DesignMarks } from "./design-marks.ts";
 import type { ExportReview, GithubVersion } from "./plugins.ts";
 import type { PlayControl, PlayPoint, PlayShelf } from "./play.ts";
 import type { SessionAction } from "./play-native.ts";
@@ -282,6 +283,10 @@ export const STUDIO_INVOKE_CHANNELS = {
   "studio:game.asset.thumbnail": "readAssetThumbnail",
   "studio:game.asset.thumbnail.keep": "keepAssetThumbnail",
   "studio:game.assets": "projectAssets",
+  "studio:design.board": "designBoard",
+  "studio:design.drop": "dropOnDesign",
+  "studio:design.marks": "designMarks",
+  "studio:design.marks.save": "saveDesignMarks",
   "studio:game.asset.still": "readProjectAsset",
   "studio:run.feedback": "runFeedback",
   "studio:review.play": "playSnapshot",
@@ -603,6 +608,10 @@ export interface StudioInvokePayloads {
   "studio:game.asset.thumbnail": Arg<"readAssetThumbnail", 0>;
   "studio:game.asset.thumbnail.keep": Arg<"keepAssetThumbnail", 0>;
   "studio:game.assets": { project: string };
+  "studio:design.board": { project: string };
+  "studio:design.drop": { project: string; name: string; data: Uint8Array };
+  "studio:design.marks": { project: string };
+  "studio:design.marks.save": { project: string; marks: DesignMarks };
   "studio:assets.library": Arg<"assetLibrary", 0>;
   "studio:assets.states": { project: string };
   "studio:assets.save": { project: string; files: string[]; saved: boolean };

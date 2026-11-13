@@ -458,6 +458,7 @@ describe("Live's views of a folder with more than one", () => {
       [
         ["live", "Viewport"],
         ["live-stills-sketches/board", "Board"],
+        ["design", "Design"],
         ["assets", "Assets"],
       ],
     );
@@ -495,6 +496,7 @@ describe("Live's views of a folder with more than one", () => {
       [
         ["live", "Godot"],
         ["live-stills-snaps/view", "Board"],
+        ["design", "Design"],
         ["assets", "Assets"],
       ],
     );
