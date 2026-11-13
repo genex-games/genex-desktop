@@ -360,8 +360,6 @@ export function AssetsPanel(props: InspectorProps): JSX.Element {
       label={t("Assets")}
       title={t("Assets")}
       sub={assetsSub(jobs, modelled)}
-      onPrev={props.onPrev}
-      onNext={props.onNext}
       onClose={props.onClose}
     >
       {jobGroups(jobs)
@@ -415,15 +413,7 @@ export function AssetCardPanel(props: InspectorProps & { card: AssetCard }): JSX
     count > 1 ? ASSET_VERSION_WORDS.count(count) : null,
   ]);
   return (
-    <Panel
-      id={card.id}
-      label={card.name}
-      title={card.name}
-      sub={sub}
-      onPrev={props.onPrev}
-      onNext={props.onNext}
-      onClose={props.onClose}
-    >
+    <Panel id={card.id} label={card.name} title={card.name} sub={sub} onClose={props.onClose}>
       {[...card.versions].reverse().map((job) => (
         <JobRow
           key={`${job.callId ?? job.jobId ?? ""}@${job.at}`}

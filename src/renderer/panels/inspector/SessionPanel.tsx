@@ -147,8 +147,6 @@ export function SessionPanel(props: StepPanelProps): JSX.Element {
       label={t("Selected part")}
       title={step.name}
       status={<Status tone={STATE_TONE[step.state]}>{sessionPill(props)}</Status>}
-      onPrev={props.onPrev}
-      onNext={props.onNext}
       onClose={props.onClose}
       reply={{ label: step.name, placeholder: t("Anything to change here?"), target: { facetId: step.facetId } }}
       onReply={props.onReply}

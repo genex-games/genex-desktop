@@ -55,8 +55,6 @@ export interface InspectorProps {
   timeline: BuildTimeline | null;
   onClose: () => void;
   onSelect: (id: string) => void;
-  onPrev: () => void;
-  onNext: () => void;
   /** The try whose judges' notes its card opens on, already showing — a gate on the graph asked for them. */
   notesFor: string | null;
   onLight: (items: LightItem[], index: number) => void;

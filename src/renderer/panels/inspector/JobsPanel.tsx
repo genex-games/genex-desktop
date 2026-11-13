@@ -36,8 +36,6 @@ export function JobsPanel(props: InspectorProps): JSX.Element {
       label={JOBS_WORDS.title}
       title={JOBS_WORDS.title}
       status={<Status tone={status.tone}>{status.status}</Status>}
-      onPrev={props.onPrev}
-      onNext={props.onNext}
       onClose={props.onClose}
     >
       <Para quiet>{JOBS_WORDS.about}</Para>

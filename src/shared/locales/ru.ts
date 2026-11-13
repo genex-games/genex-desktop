@@ -5425,6 +5425,9 @@ export default {
     "{count, plural, one {# попытка} few {# попытки} many {# попыток} other {# попытки}}",
   "{count, plural, one {# update from your games} other {# updates from your games}}":
     "{count, plural, one {# обновление в твоих играх} few {# обновления в твоих играх} many {# обновлений в твоих играх} other {# обновления в твоих играх}}",
+  "Working now": "Сейчас в работе",
+  "{count, plural, one {# earlier step} other {# earlier steps}}":
+    "{count, plural, one {# предыдущий шаг} few {# предыдущих шага} many {# предыдущих шагов} other {# предыдущего шага}}",
   "{count, plural, one {# version} other {# versions}}":
     "{count, plural, one {# версия} few {# версии} many {# версий} other {# версии}}",
   "{count, plural, one {# worker didn't deliver} other {# workers didn't deliver}}":

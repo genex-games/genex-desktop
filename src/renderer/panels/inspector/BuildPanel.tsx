@@ -37,8 +37,6 @@ export function BuildPanel(props: InspectorProps & { build: BuildCard }): JSX.El
       title={name}
       sub={madeBy(props, build)}
       status={<Status tone={OUTCOME_LOOK[build.outcome].tone}>{BUILD_LINE_WORDS.outcome[build.outcome]}</Status>}
-      onPrev={props.onPrev}
-      onNext={props.onNext}
       onClose={props.onClose}
       reply={{ label: name, placeholder: t("Ask for a change to this build") }}
       onReply={props.onReply}

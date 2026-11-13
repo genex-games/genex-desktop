@@ -156,8 +156,6 @@ export function PartPanel(props: InspectorProps & { row: PartRow }): JSX.Element
       title={facet.title}
       sub={joinDots([session ? null : stepCount, partDuration(row, graph.active)])}
       status={<Status tone={pill.tone}>{pill.text}</Status>}
-      onPrev={props.onPrev}
-      onNext={props.onNext}
       onClose={props.onClose}
       reply={{
         label: facet.title,

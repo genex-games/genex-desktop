@@ -76,6 +76,7 @@ describe("which pictures may pair", () => {
     picture,
     worker: null,
     seq: n,
+    at: null,
   });
 
   it("a build's screenshot pairs only with the build's before it, both taken by its health check", () => {

@@ -331,8 +331,6 @@ function StepView(props: StepPanelProps & { node: IterationNode; onPick: (at: nu
           {stepPill(step, graph.active)}
         </Status>
       }
-      onPrev={props.onPrev}
-      onNext={props.onNext}
       onClose={props.onClose}
       reply={reply}
       onReply={props.onReply}

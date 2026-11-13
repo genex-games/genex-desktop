@@ -1,5 +1,6 @@
 import { type JSX, useId, useMemo, useState } from "react";
 import { t } from "../../shared/i18n.ts";
+import { openBuildStep } from "../open-build.ts";
 import { useNow } from "../panels/run-graph/use-builds-model.ts";
 import { Elapsed, useStartedAt } from "../ui/LoadingState.tsx";
 import { Presence } from "../ui/Presence.tsx";
@@ -72,7 +73,20 @@ export function BuildStatus({
               ? [
                   {
                     key: "parts",
-                    node: <BuildChecklist id={listId} list={list} {...(onOpenBuilds ? { onOpenBuilds } : {})} />,
+                    node: (
+                      <BuildChecklist
+                        id={listId}
+                        list={list}
+                        {...(onOpenBuilds
+                          ? {
+                              onOpenStep: (stepId: string) => {
+                                openBuildStep(stepId);
+                                onOpenBuilds();
+                              },
+                            }
+                          : {})}
+                      />
+                    ),
                   },
                 ]
               : []}

@@ -48,6 +48,16 @@ export interface WorkerInfo {
   startedSeq: number | null;
   /** the place in the log of its last record, its end or the lead's word on it; null while it works */
   settledSeq: number | null;
+  /** when its latest start was written; null when no start of it is on the page */
+  startedAt: string | null;
+  /** when its last record was written, its end or the lead's word on it; null while it works */
+  settledAt: string | null;
+}
+
+/** Where a record sits in the log: its place, and when it was written. */
+export interface LogPlace {
+  seq: number;
+  at: string | null;
 }
 
 /** One job the lead's node carries: a long process an agent of this graph started. */
@@ -102,6 +112,8 @@ function emptyInfo(): WorkerInfo {
     merged: false,
     startedSeq: null,
     settledSeq: null,
+    startedAt: null,
+    settledAt: null,
   };
 }
 
@@ -112,7 +124,7 @@ function emptyInfo(): WorkerInfo {
  * id after a pause) is a new attempt on the same row: nothing of the old end or the lead's word
  * on it carries over. Returns whether the record named a worker.
  */
-export function onWorkerStarted(ledger: WorkerLedger, row: WorkerRow, payload: Payload, seq: number): boolean {
+export function onWorkerStarted(ledger: WorkerLedger, row: WorkerRow, payload: Payload, at: LogPlace): boolean {
   const workerId = strOrNull(payload.workerId);
   if (!workerId) return false;
   ledger.placed = true;
@@ -130,7 +142,8 @@ export function onWorkerStarted(ledger: WorkerLedger, row: WorkerRow, payload: P
     where: placeOf(payload.where),
     task: strOrNull(payload.task),
     turn: strOrNull(payload.turn),
-    startedSeq: seq,
+    startedSeq: at.seq,
+    startedAt: at.at,
   };
   // A new attempt at the part: what the one before ended on is not this one's word.
   node.building = true;
@@ -151,7 +164,7 @@ const workerEnded = (info: WorkerInfo | undefined): boolean =>
  * verdict keeps the earlier end and an end never clears what `director_worker` set. Returns
  * whether the record named a worker.
  */
-export function onWorkerFinished(ledger: WorkerLedger, row: WorkerRow, payload: Payload, seq: number): boolean {
+export function onWorkerFinished(ledger: WorkerLedger, row: WorkerRow, payload: Payload, at: LogPlace): boolean {
   const workerId = strOrNull(payload.workerId);
   if (!workerId) return false;
   ledger.placed = true;
@@ -161,7 +174,8 @@ export function onWorkerFinished(ledger: WorkerLedger, row: WorkerRow, payload: 
   const state = workerEnd(payload.state);
   if (state) endWorker(node, node.worker, state, payload);
   foldVerdict(node, node.worker, payload);
-  node.worker.settledSeq = seq;
+  node.worker.settledSeq = at.seq;
+  node.worker.settledAt = at.at;
   return true;
 }
 

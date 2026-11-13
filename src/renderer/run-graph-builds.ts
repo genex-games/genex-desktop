@@ -55,6 +55,8 @@ export interface BuildCard {
   worker: string | null;
   /** its first check's place in the log: when the build was made */
   seq: number;
+  /** when that first check was written */
+  at: string | null;
 }
 
 /** Where one worker hangs: the build (0 for the lead, before the first build) and whether its work is in it. */
@@ -136,6 +138,7 @@ export function buildsOf(graph: RunGraph): BuildCard[] {
       picture: look.picture,
       worker: look.worker,
       seq: look.seq,
+      at: look.at,
     });
   }
   return builds;

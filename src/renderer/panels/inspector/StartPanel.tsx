@@ -152,9 +152,6 @@ export function StartPanel(props: InspectorProps): JSX.Element {
       id={GraphSelection.Start}
       label={t("What you asked")}
       title={t("You asked")}
-      nav={false}
-      onPrev={props.onPrev}
-      onNext={props.onNext}
       onClose={props.onClose}
       reply={{ label: t("Every part"), placeholder: t("A note for every part") }}
       onReply={props.onReply}

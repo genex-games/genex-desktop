@@ -2367,7 +2367,8 @@ export const BUILD_CHECKLIST_WORDS = {
   caption: (done: number, working: number) =>
     working ? t("{done} done · {working} working", { done, working }) : t("{done} done", { done }),
   finishing: (working: number) => (working ? t("Finishing up · {working} working", { working }) : t("Finishing up")),
-  open: t("Open in Builds"),
+  /** The row of a long list that stands for its earlier steps: pressing it shows them. */
+  earlier: (count: number) => t("{count, plural, one {# earlier step} other {# earlier steps}}", { count }),
   /** The card's toggle, as a screen reader names it. */
   toggle: t("Building: show or hide its parts"),
   /** The list's own name, for a screen reader. */

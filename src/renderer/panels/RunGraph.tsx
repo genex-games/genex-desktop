@@ -1,76 +1,48 @@
 import type { KeepBuildingTap } from "../keep-building.ts";
-import { gridTransform } from "../canvas-view.ts";
 import { PerformanceComponent, PerformanceMarkName } from "../../shared/performance.ts";
 import { markPerformance, PerformanceBoundary } from "../performance.tsx";
 /**
- * The Builds tab — a run drawn as a graph a player can read without knowing the harness: what you
- * asked → one row per part, its steps on a line → your build. What reached the build is the line;
- * what did not hangs below it. The judges are an eye on the edge into every node they looked at.
- * A run or a chat turn whose lead started workers or background work is a tree: what you asked →
- * the lead (its background work under it) → a row per worker → your build → the finish check; in place
- * the lead's save points are one line and each worker hangs off it (`run-graph-comb.ts`).
+ * The Builds tab — a run as a list a player can read without knowing the harness: once it is over
+ * its build, then what works now, then what changed, newest first. A run or a chat turn whose lead
+ * started workers lists each worker as a row; the lead is a row only while it works itself.
  *
- * `run-steps.ts` folds the log into steps and lays them out; this file owns the canvas (pan, zoom,
- * keeping live work in view, bringing a selected node to the middle), the selection and the keyboard.
- * `run-graph/` holds the nodes, the gates, the status bar, the zoom pill and the camera;
- * `RunInspector.tsx` is the card a selected node opens into, in place over the canvas —
- * there is no side panel. Harness words never reach the screen: facet = part, iteration = try,
+ * `run-steps.ts` folds the log into steps and `run-graph/builds-list.ts` into rows; this file owns
+ * the selection and the keyboard. `run-graph/` holds the list, its rows and the status bar;
+ * `RunInspector.tsx` is the card a pressed row opens into, in its place in the list — there is no
+ * side panel and no canvas. Harness words never reach the screen: facet = part, iteration = try,
  * accepted = kept, rolled back = undone.
  */
 import type { JSX, ReactNode } from "react";
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
-import { type AssetInfo, IterationStatus, type RunGraph as RunGraphModel, runIdOf } from "../run-graph.ts";
-import {
-  frontier,
-  Gate,
-  type GatePoint,
-  isJudgedTry,
-  resultStatus,
-  rowMeta,
-  START_WORDS,
-  StepState,
-  statusLine,
-} from "../run-steps.ts";
+import { type AssetInfo, type RunGraph as RunGraphModel, runIdOf } from "../run-graph.ts";
+import { resultStatus, StepState, statusLine } from "../run-steps.ts";
 import { RunState } from "../../shared/run-state.ts";
 import { t } from "../../shared/i18n.ts";
 import type { HistoryEntry } from "../build-progress.ts";
-import { GraphSelection, isPartSelection, partOf, partSelection } from "./inspector/selection.ts";
+import { OPEN_BUILD_STEP_EVENT, takeBuildStep } from "../open-build.ts";
+import { readingNodes } from "../run-tree.ts";
+import { GraphSelection, isPartSelection } from "./inspector/selection.ts";
 import { type Notify, notifyProblem } from "../state/toasts.ts";
 import { keyTakenElsewhere } from "./keyboard.ts";
 import { barPlay } from "./run-graph/bar-shape.ts";
-import { BuildStatus, type BuildTabs, PlayButton, ZoomPill } from "./run-graph/chrome.tsx";
-import { GateButton, GateTip, gateWords } from "./run-graph/gates.tsx";
-import {
-  AssetCardNode,
-  AssetsTile,
-  BuildNode,
-  FinishCheckNode,
-  FoldCard,
-  JobsTile,
-  LeadNode,
-  ResultNode,
-  StartNode,
-  StepNode,
-} from "./run-graph/nodes.tsx";
-import { foldId } from "../run-graph-builds.ts";
-import { leadRest } from "../run-tree.ts";
+import { BuildsList } from "./run-graph/BuildsList.tsx";
+import { type BuildsList as List, buildsList, listRows, rowOfChecklist } from "./run-graph/builds-list.ts";
+import { BuildStatus, type BuildTabs, PlayButton } from "./run-graph/chrome.tsx";
 import { useBuildsModel, useNow, useRunStills } from "./run-graph/use-builds-model.ts";
-import { GLIDE_MS, useGraphCamera } from "./run-graph/use-graph-camera.ts";
 import { Inspector, Lightbox, type LightItem, type Reply } from "./RunInspector.tsx";
 import { webBuildShown } from "../web-build-shown.ts";
 import { Pending } from "../ui/Pending.tsx";
-import { Skeleton, SkeletonLines } from "../ui/Skeleton.tsx";
+import { SkeletonLines } from "../ui/Skeleton.tsx";
 import { nodeKindOf } from "../analytics/builds-stage.ts";
 import { track } from "../analytics/client.ts";
 import { AnalyticsEvent } from "../analytics/events.ts";
 import { BuildSurface, NodeVia } from "../analytics/events/builds.ts";
 
-/** A node opened on the graph, and how. */
+/** A row opened on the list, and how. */
 function noteNodeOpened(id: string, via: NodeVia, active: boolean): void {
   track(AnalyticsEvent.BuildsNodeOpened, { node_kind: nodeKindOf(id), via, run_active: active });
 }
 
-export { gateWords } from "./run-graph/gates.tsx";
 export { assetsStatus } from "./inspector/asset-jobs.ts";
 
 interface Props {
@@ -80,7 +52,7 @@ interface Props {
   /** A game that plays as its own app (an Unreal game): Play starts it (`game-play.ts`) instead of showing Live. */
   onPlayGame?: (() => Promise<void>) | null;
   onShowAsset?: (jobId: string) => void;
-  /** Follow up in chat: the composer takes a chip naming the node; null when there is no chat to reply in. */
+  /** Follow up in chat: the composer takes a chip naming the row; null when there is no chat to reply in. */
   onReply: ((reply: Reply) => void) | null;
   /** Keep building on what the run left, in the chat that owns it; null when there is no chat. */
   onKeepBuilding?: KeepBuildingTap | null;
@@ -94,30 +66,8 @@ type BuildsModel = ReturnType<typeof useBuildsModel>;
 type Stills = ReturnType<typeof useRunStills>;
 type LightState = { items: LightItem[]; index: number } | null;
 
-/** Below this zoom a node is its picture and its status glyph; from NEAR it adds what it was asked. */
-const FAR = 0.6;
-const NEAR = 1.35;
-/** The canvas's dot grid, in canvas pixels. */
-const GRID_PX = 22;
-/** The graph under an open node's card: still live and clickable, only quieter. */
-const OPEN_CARD_OPACITY = 0.4;
-
-const EDGE_INK = "color-mix(in oklab, var(--ink-3) 38%, var(--canvas))";
-const EDGE: Record<string, { stroke: string; strokeDasharray?: string; strokeLinecap?: "round" }> = {
-  solid: { stroke: EDGE_INK },
-  pending: { stroke: EDGE_INK, strokeDasharray: "5 4" },
-  dotted: { stroke: EDGE_INK, strokeDasharray: "1 4", strokeLinecap: "round" },
-  live: { stroke: "var(--accent)", strokeDasharray: "4 4" },
-};
-
-/** How much a node shows at a zoom: its picture only, its words, or also what it was asked. */
-function zoomLevel(k: number): "far" | "mid" | "near" {
-  if (k < FAR) return "far";
-  return k >= NEAR ? "near" : "mid";
-}
-
 /**
- * Whether ← or → walks the graph: only from the graph or its card (or nowhere in particular),
+ * Whether ← or → walks the list: only from the list or its card (or nowhere in particular),
  * with no modifier; a control that uses the arrows itself — the compare slider, the tab switcher,
  * a menu — keeps them.
  */
@@ -137,36 +87,25 @@ const ringStep = <T,>(items: readonly T[], at: number, dir: number): T | undefin
 
 // ── the view ──────────────────────────────────────────────────────────────────────────────
 
-/**
- * What is open over the canvas — the selected node's panel (with the try whose judges' notes it
- * opened on, when a gate asked for them), the lightbox — and the gate tooltip.
- */
+/** What is open on the list — the pressed row's card — and the lightbox over the tab. */
 function useOverlays(selectable: string[]) {
-  const [selectedId, setSelected] = useState<string | null>(null);
-  const [notesFor, setNotesFor] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [light, setLight] = useState<LightState>(null);
-  const [tip, setTip] = useState<GatePoint | null>(null);
-  const onGraph = (id: string): boolean => selectable.includes(id) || isPartSelection(id);
-  const selected = selectedId && onGraph(selectedId) ? selectedId : null;
-  /** Open a node's card (or close it with null); `notes` names the try whose judges' notes it opens on. */
-  const setSelectedId = useCallback((id: string | null, notes: string | null = null) => {
-    setSelected(id);
-    setNotesFor(notes);
-  }, []);
+  const onList = (id: string): boolean => selectable.includes(id) || isPartSelection(id);
+  const selected = selectedId && onList(selectedId) ? selectedId : null;
   const clear = useCallback(() => {
     setSelectedId(null);
     setLight(null);
-  }, [setSelectedId]);
-  const deselect = useCallback(() => setSelectedId(null), [setSelectedId]);
-  return { selected, setSelectedId, deselect, notesFor, light, setLight, tip, setTip, clear };
+  }, []);
+  return { selected, setSelectedId, light, setLight, clear };
 }
 type Overlays = ReturnType<typeof useOverlays>;
 
-/** Escape closes the topmost overlay and stops there; 0 fits everything; ← and → walk an open node's neighbours. */
-function useGraphKeys(overlays: Overlays, fitAll: () => void, step: (dir: number) => void): void {
+/** Escape closes the topmost overlay and stops there; ← and → walk an open row's neighbours. */
+function useListKeys(overlays: Overlays, step: (dir: number) => void): void {
   const { light, selected, setLight, setSelectedId } = overlays;
   useEffect(() => {
-    /** Close the lightbox, else the panel; false when neither is open. */
+    /** Close the lightbox, else the card; false when neither is open. */
     const closeTopmost = (): boolean => {
       if (light) setLight(null);
       else if (selected) setSelectedId(null);
@@ -186,59 +125,39 @@ function useGraphKeys(overlays: Overlays, fitAll: () => void, step: (dir: number
         // One press, one dismissal: what this panel closes must not also reach the chat behind it.
         if (closeTopmost()) event.stopPropagation();
         else return;
-      } else if (event.key === "0") {
-        fitAll();
       } else walk(event);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [fitAll, step, light, selected, setLight, setSelectedId]);
+  }, [step, light, selected, setLight, setSelectedId]);
 }
 
-/** Previous and next walk the graph in reading order; from a part, next is its first step. */
-function useStepper(overlays: Overlays, model: BuildsModel): (dir: number) => void {
+/** Previous and next walk the list in the order it reads, top to bottom. */
+function useStepper(overlays: Overlays, selectable: string[], active: boolean): (dir: number) => void {
   const { selected, setSelectedId } = overlays;
-  const { rows, selectable } = model;
   return useCallback(
     (dir: number): void => {
-      const facetId = partOf(selected);
-      const first = facetId ? rows.find((row) => row.facet.facetId === facetId)?.steps[0]?.id : undefined;
-      const next = first && dir > 0 ? first : ringStep(selectable, selectable.indexOf(first ?? selected ?? ""), dir);
+      const next = ringStep(selectable, selectable.indexOf(selected ?? ""), dir);
       if (!next) return;
-      noteNodeOpened(next, NodeVia.Arrow, model.graph.active === true);
+      noteNodeOpened(next, NodeVia.Arrow, active);
       setSelectedId(next);
     },
-    [rows, selectable, selected, setSelectedId, model.graph.active],
+    [selectable, selected, setSelectedId, active],
   );
 }
 
-/** What a press on the canvas does: select a node, clear, or open a gate's node on its judges' notes. */
-function useCanvasActions(overlays: Overlays, moved: { current: boolean }, active: boolean) {
-  const { setSelectedId, setTip } = overlays;
-  const select = useCallback(
-    (id: string): void => {
-      if (moved.current) return;
-      setTip(null);
-      noteNodeOpened(id, NodeVia.Click, active);
-      setSelectedId(id);
-    },
-    [moved, setSelectedId, setTip, active],
-  );
-  const onBackgroundClick = useCallback((): void => {
-    if (moved.current) return;
-    setSelectedId(null);
-    setTip(null);
-  }, [moved, setSelectedId, setTip]);
-  const openGate = useCallback(
-    (gate: GatePoint, notesId: string | null): void => {
-      if (moved.current) return;
-      setTip(null);
-      noteNodeOpened(gate.target, NodeVia.GateNotes, active);
-      setSelectedId(gate.target, notesId);
-    },
-    [moved, setSelectedId, setTip, active],
-  );
-  return useMemo(() => ({ select, onBackgroundClick, openGate }), [select, onBackgroundClick, openGate]);
+/** A step pressed on the chat's Building card opens its row here, also when Builds was not yet on show. */
+function useChatStep(list: List, open: (id: string) => void): void {
+  useEffect(() => {
+    const take = (): void => {
+      const step = takeBuildStep();
+      const row = step ? rowOfChecklist(list, step) : null;
+      if (row) open(row);
+    };
+    take();
+    window.addEventListener(OPEN_BUILD_STEP_EVENT, take);
+    return () => window.removeEventListener(OPEN_BUILD_STEP_EVENT, take);
+  }, [list, open]);
 }
 
 /**
@@ -281,20 +200,40 @@ function turnActions(graph: BuildsModel["graph"], onShowLive: Props["onShowLive"
   return { hasBuild, play: (): void => onShowLive?.(), openJob: (): void => {} };
 }
 
-/** Over the hidden canvas until the run's recorded outcome arrives: the graph's shape, on its dots. */
+/** Over the hidden list until the run's recorded outcome arrives: the list's shape. */
 function OutcomePending(): JSX.Element {
   return (
-    <div data-builds-loading className="absolute inset-0 bg-canvas" style={{ visibility: "visible" }}>
-      <Pending label={t("Loading builds")} className="skeleton-graph">
-        <SkeletonLines widths={[50, 110]} className="w-[110px]" />
-        <span className="skeleton-graph-column">
-          <Skeleton width={208} height={124} radius={14} />
-          <Skeleton width={208} height={124} radius={14} />
-        </span>
-        <Skeleton width={208} height={124} radius={14} />
+    <div data-builds-loading className="absolute inset-0 bg-canvas p-6" style={{ visibility: "visible" }}>
+      <Pending label={t("Loading builds")}>
+        <SkeletonLines widths={[110, 260, 220, 240]} className="w-[260px]" />
       </Pending>
     </div>
   );
+}
+
+/** The list of a model, at `now`: its rows, and every row a press or an arrow can open, top to bottom. */
+function useList(model: BuildsModel, now: number, over: boolean) {
+  const { graph, rows, outcome, timeline, face, lead, leadNode, finishCheck } = model;
+  const list = useMemo(
+    () =>
+      buildsList({
+        graph,
+        rows,
+        timeline,
+        nodes: readingNodes(graph, rows, outcome),
+        face,
+        leadAtWork: lead,
+        jobs: leadNode?.jobs ?? [],
+        finishCheck,
+        now,
+      }),
+    [graph, rows, outcome, timeline, face, lead, leadNode, finishCheck, now],
+  );
+  const selectable = useMemo(
+    () => [...(over ? [GraphSelection.Final] : []), ...listRows(list).map((row) => row.id)],
+    [list, over],
+  );
+  return { list, selectable };
 }
 
 export const RunGraph = memo(function RunGraph({
@@ -310,32 +249,36 @@ export const RunGraph = memo(function RunGraph({
 }: Props): JSX.Element {
   useEffect(() => markPerformance(PerformanceMarkName.GraphCommit));
   const model = useBuildsModel(suppliedGraph, project);
-  const { graph, rows } = model;
+  const { graph } = model;
   const stills = useRunStills(model);
-  const overlays = useOverlays(model.selectable);
-  const { selected } = overlays;
-  const camera = useGraphCamera({
-    graph,
-    ready: model.loaded,
-    layout: model.layout,
-    rows,
-    live: frontier(rows),
-    selected,
-    onNewRun: overlays.clear,
-    onDeselect: overlays.deselect,
-  });
-  const step = useStepper(overlays, model);
-  useGraphKeys(overlays, camera.fitAll, step);
-  const actions = useCanvasActions(overlays, camera.moved, model.graph.active === true);
+  const active = graph.active === true;
+  const now = useNow(active);
+  // The run's build heads the list once the run is over; while it runs the bar's Play offers it.
+  const { list, selectable } = useList(model, now, !active);
+  const overlays = useOverlays(selectable);
+  const { selected, setSelectedId, clear } = overlays;
+  // Another run's rows are not this one's: nothing of the last one stays open.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the run on show is the trigger
+  useEffect(() => clear(), [graph.runId, clear]);
+  const step = useStepper(overlays, selectable, active);
+  useListKeys(overlays, step);
+  const select = useCallback(
+    (id: string): void => {
+      noteNodeOpened(id, NodeVia.Click, active);
+      setSelectedId(id);
+    },
+    [setSelectedId, active],
+  );
+  useChatStep(list, setSelectedId);
   const { hasBuild, play, openJob } = useBuildActions(project, model, { onShowLive, onShowAsset, onNotice });
   const playBar = onPlayGame ?? barPlay(hasBuild, play, onShowLive);
 
-  // Keep the viewport mounted for measurements/listeners while hiding non-authoritative fallback totals.
+  // Keep the list mounted for its listeners while hiding non-authoritative fallback totals.
   return (
     <PerformanceBoundary id={PerformanceComponent.RunGraph}>
       <div
         data-stage-graph
-        className="absolute inset-0 flex flex-col overflow-hidden bg-canvas select-none"
+        className="absolute inset-0 flex flex-col overflow-hidden bg-canvas"
         style={{ visibility: model.loaded ? "visible" : "hidden" }}
       >
         {!model.loaded && <OutcomePending />}
@@ -349,45 +292,32 @@ export const RunGraph = memo(function RunGraph({
           }
         />
         <div className="@container/stage relative flex min-h-0 flex-1 overflow-hidden">
-          <div className="relative min-w-0 flex-1 overflow-hidden">
-            <GraphCanvas
-              model={model}
-              camera={camera}
-              project={project}
-              stills={stills}
-              selected={selected}
-              tip={overlays.tip}
-              onSelect={actions.select}
-              onBackgroundClick={actions.onBackgroundClick}
-              onOpenGate={actions.openGate}
-              onTip={overlays.setTip}
-            />
-            <ZoomPill
-              pct={Math.round(camera.view.k * 100)}
-              onOut={camera.zoomOut}
-              onIn={camera.zoomIn}
-              onFit={camera.fitAll}
-              onNow={camera.jumpToNow}
-            />
-          </div>
-
-          {selected ? (
-            <SelectedPanel
-              key={selected}
-              selection={selected}
-              model={model}
-              overlays={overlays}
-              project={project}
-              stills={stills}
-              onStep={step}
-              onOpenJob={openJob}
-              onReply={onReply}
-              onKeepBuilding={onKeepBuilding}
-              onNotice={onNotice}
-              onPlay={hasBuild ? play : null}
-            />
-          ) : null}
-
+          <BuildsList
+            list={list}
+            project={project}
+            runId={graph.runId}
+            active={active}
+            result={active ? null : { status: stills.result, src: stills.resultSrc }}
+            selected={selected}
+            onSelect={select}
+            card={
+              selected ? (
+                <SelectedPanel
+                  key={selected}
+                  selection={selected}
+                  model={model}
+                  overlays={overlays}
+                  project={project}
+                  stills={stills}
+                  onOpenJob={openJob}
+                  onReply={onReply}
+                  onKeepBuilding={onKeepBuilding}
+                  onNotice={onNotice}
+                  onPlay={hasBuild ? play : null}
+                />
+              ) : null
+            }
+          />
           <LightboxOf light={overlays.light} onLight={overlays.setLight} />
         </div>
       </div>
@@ -395,14 +325,13 @@ export const RunGraph = memo(function RunGraph({
   );
 });
 
-/** The inspector of the selected node, wired to the overlays it opens. */
+/** The card of the open row, wired to the overlays it opens. */
 function SelectedPanel({
   selection,
   model,
   overlays,
   project,
   stills,
-  onStep,
   onOpenJob,
   onReply,
   onKeepBuilding,
@@ -414,7 +343,6 @@ function SelectedPanel({
   overlays: Overlays;
   project: string | null;
   stills: Stills;
-  onStep: (dir: number) => void;
   onOpenJob: (job: AssetInfo) => void;
   onReply: Props["onReply"];
   onKeepBuilding: KeepBuildingTap | null;
@@ -440,9 +368,7 @@ function SelectedPanel({
       timeline={model.timeline}
       onClose={() => overlays.setSelectedId(null)}
       onSelect={(id) => overlays.setSelectedId(id)}
-      onPrev={() => onStep(-1)}
-      onNext={() => onStep(1)}
-      notesFor={overlays.notesFor}
+      notesFor={null}
       onLight={(items, index) => overlays.setLight({ items, index })}
       onOpenJob={onOpenJob}
       onReply={onReply}
@@ -479,323 +405,10 @@ function LightboxOf({
   );
 }
 
-// ── the canvas ────────────────────────────────────────────────────────────────────────────
-
-/** Select the same reviewed try whether its gate opened before or after another step arrived. */
-function gateNotesId(gate: GatePoint, model: BuildsModel): string | null {
-  if (gate.gate === Gate.Looking) return null;
-  const target = model.stepById.get(gate.target);
-  const judged = target?.tries.filter(isJudgedTry) ?? [];
-  const notes = target?.tries.find((node) => node.status === IterationStatus.Accepted) ?? judged.at(-1);
-  return notes?.id ?? null;
-}
-
-/** The pannable, zoomable canvas: the edges, the row labels, the nodes and the judges' gates. */
-function GraphCanvas({
-  model,
-  camera,
-  project,
-  stills,
-  selected,
-  tip,
-  onSelect,
-  onBackgroundClick,
-  onOpenGate,
-  onTip,
-}: {
-  model: BuildsModel;
-  camera: ReturnType<typeof useGraphCamera>;
-  project: string | null;
-  stills: Stills;
-  selected: string | null;
-  tip: GatePoint | null;
-  onSelect: (id: string) => void;
-  onBackgroundClick: () => void;
-  onOpenGate: (gate: GatePoint, notesId: string | null) => void;
-  onTip: (gate: GatePoint | null) => void;
-}): JSX.Element {
-  const { graph, layout } = model;
-  const { view, viewport, panning, onBackgroundDown, gliding } = camera;
-  return (
-    <div
-      ref={viewport}
-      data-zoom={zoomLevel(view.k)}
-      className={`group/canvas absolute inset-0 ${panning ? "cursor-grabbing" : "cursor-grab"}`}
-      onPointerDown={onBackgroundDown}
-      onClick={onBackgroundClick}
-    >
-      <div
-        ref={camera.grid}
-        data-grid-scale={view.k}
-        aria-hidden="true"
-        className="pointer-events-none absolute top-0 left-0"
-        style={{
-          width: `calc(150% + ${GRID_PX * 2}px)`,
-          height: `calc(150% + ${GRID_PX * 2}px)`,
-          backgroundImage: "radial-gradient(var(--line-strong) 1px, transparent 1.25px)",
-          backgroundSize: `${GRID_PX * view.k}px ${GRID_PX * view.k}px`,
-          transform: gridTransform(view, view.k),
-          transformOrigin: "0 0",
-        }}
-      />
-      {/* An open node's card sits over this layer; the graph stays live and clickable, only quieter. */}
-      <div
-        ref={camera.layer}
-        className="absolute top-0 left-0"
-        style={{
-          width: layout.width,
-          height: layout.height,
-          transform: `translate(${view.tx}px, ${view.ty}px) scale(${view.k})`,
-          transformOrigin: "0 0",
-          opacity: selected ? OPEN_CARD_OPACITY : 1,
-          transition: `opacity ${GLIDE_MS}ms var(--ease)${gliding ? `, transform ${GLIDE_MS}ms var(--ease)` : ""}`,
-        }}
-      >
-        <svg
-          aria-hidden="true"
-          className="pointer-events-none absolute top-0 left-0 overflow-visible"
-          width={layout.width}
-          height={layout.height}
-        >
-          {layout.edges.map((edge) => (
-            <path key={edge.id} d={edge.d} fill="none" strokeWidth={1.5} {...EDGE[edge.kind]} />
-          ))}
-        </svg>
-
-        <RowLabels model={model} selected={selected} onSelect={onSelect} />
-        <GraphNodes model={model} project={project} stills={stills} selected={selected} onSelect={onSelect} />
-
-        {layout.gates.map((gate) => (
-          <GateButton
-            key={gate.target}
-            gate={gate}
-            notesId={gateNotesId(gate, model)}
-            onOpen={onOpenGate}
-            onTip={onTip}
-          />
-        ))}
-        {tip ? <GateTip gate={tip} words={gateWords(tip, model.stepById.get(tip.target) ?? null, graph)} /> : null}
-      </div>
-    </div>
-  );
-}
-
-/** Each part's title and meta over its row: pressing it opens the part's card. A part built in one session has no label. */
-const RowLabels = memo(function RowLabels({
-  model,
-  selected,
-  onSelect,
-}: {
-  model: BuildsModel;
-  selected: string | null;
-  onSelect: (id: string) => void;
-}): JSX.Element {
-  const { rows, layout, graph } = model;
-  return (
-    <>
-      {rows.map((row) => {
-        const rect = layout.rects[`row:${row.facet.facetId}`];
-        if (!rect) return null;
-        const meta = rowMeta(row, graph.active);
-        const id = partSelection(row.facet.facetId);
-        return (
-          <button
-            key={row.facet.id}
-            type="button"
-            data-graph-row={row.facet.facetId}
-            // A part is named by the build, from the person's request.
-            data-analytics-mask
-            aria-pressed={selected === id}
-            className="absolute flex min-w-0 cursor-pointer items-baseline gap-1.5 overflow-hidden rounded-[6px] px-0.5 text-left whitespace-nowrap hover:[&>span:first-child]:underline focus-visible:outline-2 focus-visible:outline-accent group-data-[zoom=far]/canvas:hidden"
-            style={{ left: rect.x - 2, top: rect.y, maxWidth: rect.w }}
-            title={meta ? `${row.facet.title} · ${meta}` : row.facet.title}
-            onClick={(event) => {
-              event.stopPropagation();
-              onSelect(id);
-            }}
-          >
-            <span className="min-w-0 truncate text-xs font-semibold text-ink">{row.facet.title}</span>
-            {meta ? <span className="min-w-0 shrink-[3] truncate text-xs text-ink-3">{meta}</span> : null}
-          </button>
-        );
-      })}
-    </>
-  );
-});
-
-/** Every node of the graph, from what you asked to your build (and in a tree, the finish check). */
-const GraphNodes = memo(function GraphNodes({
-  model,
-  project,
-  stills,
-  selected,
-  onSelect,
-}: {
-  model: BuildsModel;
-  project: string | null;
-  stills: Stills;
-  selected: string | null;
-  onSelect: (id: string) => void;
-}): JSX.Element {
-  const { graph, layout, leadNode, finishCheck } = model;
-  const rest = useMemo(
-    () => (model.face ? leadRest(model.graph, model.rows, model.face, stills.finalPath) : null),
-    [model.graph, model.rows, model.face, stills.finalPath],
-  );
-  const jobsRect = layout.rects[GraphSelection.Jobs];
-  const finishRect = layout.rects[GraphSelection.FinishCheck];
-  return (
-    <>
-      <StartNode
-        run={model.run}
-        base={model.base}
-        rect={layout.rects.start}
-        wordsRect={layout.rects[START_WORDS]}
-        active={graph.active}
-        selected={selected === GraphSelection.Start}
-        onSelect={() => onSelect(GraphSelection.Start)}
-      />
-      {layout.rects.assets ? (
-        <AssetsTile
-          blender={model.blender}
-          assets={model.assets}
-          project={project}
-          rect={layout.rects.assets}
-          active={graph.active}
-          selected={selected === GraphSelection.Assets}
-          onSelect={() => onSelect(GraphSelection.Assets)}
-        />
-      ) : null}
-      <StepNodes model={model} project={project} selected={selected} onSelect={onSelect} />
-      <BuildLine model={model} selected={selected} onSelect={onSelect} />
-      <ResultNode
-        active={graph.active}
-        status={stills.result}
-        rect={layout.rects.final}
-        src={stills.resultSrc}
-        borrowed={stills.borrowed}
-        selected={selected === GraphSelection.Final}
-        onSelect={() => onSelect(GraphSelection.Final)}
-      />
-      {layout.rects.lead ? (
-        <LeadNode
-          rect={layout.rects.lead}
-          face={model.face ?? undefined}
-          rest={rest}
-          selected={selected === GraphSelection.Lead}
-          onSelect={() => onSelect(GraphSelection.Lead)}
-        />
-      ) : null}
-      {leadNode && jobsRect ? (
-        <JobsTile
-          jobs={leadNode.jobs}
-          rect={jobsRect}
-          selected={selected === GraphSelection.Jobs}
-          onSelect={() => onSelect(GraphSelection.Jobs)}
-        />
-      ) : null}
-      {finishCheck && finishRect ? (
-        <FinishCheckNode
-          node={finishCheck}
-          rect={finishRect}
-          selected={selected === GraphSelection.FinishCheck}
-          onSelect={() => onSelect(GraphSelection.FinishCheck)}
-        />
-      ) : null}
-    </>
-  );
-});
-
-/** Every step of the graph, and under a worker that delivered assets, a card for each of them. */
-function StepNodes({
-  model,
-  project,
-  selected,
-  onSelect,
-}: {
-  model: BuildsModel;
-  project: string | null;
-  selected: string | null;
-  onSelect: (id: string) => void;
-}): JSX.Element {
-  const { graph, layout } = model;
-  return (
-    <>
-      {model.steps.map((node) => {
-        const place = model.timeline?.places.get(node.id);
-        return (
-          <StepNode
-            key={node.id}
-            project={project}
-            runId={graph.runId}
-            active={graph.active}
-            step={node}
-            rect={layout.rects[node.id]}
-            ghost={layout.ghosts.has(node.id)}
-            selected={selected === node.id}
-            onSelect={onSelect}
-            place={place ?? null}
-          />
-        );
-      })}
-      {model.steps.flatMap((node) =>
-        (node.assets ?? []).map((card) => (
-          <AssetCardNode
-            key={card.id}
-            project={project}
-            card={card}
-            rect={layout.rects[card.id]}
-            ghost={layout.ghosts.has(card.id)}
-            selected={selected === card.id}
-            onSelect={onSelect}
-          />
-        )),
-      )}
-    </>
-  );
-}
-
-/** A Loop's builds on their line, and the cards that fold a build's finished workers. */
-function BuildLine({
-  model,
-  selected,
-  onSelect,
-}: {
-  model: BuildsModel;
-  selected: string | null;
-  onSelect: (id: string) => void;
-}): JSX.Element | null {
-  const { timeline, layout, toggleFold } = model;
-  if (!timeline) return null;
-  return (
-    <>
-      {timeline.builds.map((build) => (
-        <BuildNode
-          key={build.id}
-          build={build}
-          rect={layout.rects[build.id]}
-          selected={selected === build.id}
-          onSelect={onSelect}
-        />
-      ))}
-      {timeline.hangers.map((hangers) =>
-        hangers.folded ? (
-          <FoldCard
-            key={hangers.build}
-            hangers={hangers}
-            rect={layout.rects[foldId(hangers.build)]}
-            onToggle={toggleFold}
-          />
-        ) : null,
-      )}
-    </>
-  );
-}
-
 /** Opening the only build there is does nothing. */
 const STAY = (): void => {};
 
-/** The bar's tabs: the chat's builds, or, before its history names any, the graph on show as the one. */
+/** The bar's tabs: the chat's builds, or, before its history names any, the run on show as the one. */
 function barTabs(tabs: BuildTabs | null, graph: RunGraphModel, goal: string): BuildTabs {
   if (tabs?.builds.length) return tabs;
   const only: HistoryEntry = {
@@ -809,7 +422,7 @@ function barTabs(tabs: BuildTabs | null, graph: RunGraphModel, goal: string): Bu
   return { builds: [only], open: graph.runId, onOpen: tabs?.onOpen ?? STAY };
 }
 
-/** Only the status words and the tabs' clocks tick; the graph's nodes and camera stay untouched. */
+/** Only the status words and the tabs' clocks tick; the list's rows stay untouched. */
 function BuildStatusClock({
   model,
   tabs,

@@ -5426,6 +5426,8 @@ export default {
   "{count, plural, one {# try} other {# tries}}": "{count, plural, other {#回試行}}",
   "{count, plural, one {# update from your games} other {# updates from your games}}":
     "{count, plural, other {ゲームの更新が#件あります}}",
+  "Working now": "作業中",
+  "{count, plural, one {# earlier step} other {# earlier steps}}": "{count, plural, other {以前のステップ #件}}",
   "{count, plural, one {# version} other {# versions}}": "{count, plural, other {#バージョン}}",
   "{count, plural, one {# worker didn't deliver} other {# workers didn't deliver}}":
     "{count, plural, other {#人のワーカーが提出なし}}",

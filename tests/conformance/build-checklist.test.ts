@@ -7,7 +7,15 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { savePointRound } from "../../src/harness-seed/loop/director/open/graph.ts";
-import { buildChecklist, checklistCaption, PartMark } from "../../src/renderer/chat/build-checklist.ts";
+import {
+  buildChecklist,
+  CHECKLIST_FOLD_PAST,
+  CHECKLIST_ROWS_SHOWN,
+  type ChecklistRow,
+  checklistCaption,
+  foldChecklist,
+  PartMark,
+} from "../../src/renderer/chat/build-checklist.ts";
 import { EntryAction, EntryKind, toEntries } from "../../src/renderer/chat-entries.ts";
 import { buildHistory } from "../../src/renderer/build-progress.ts";
 import { BuildBarShape, buildBarShape } from "../../src/renderer/panels/run-graph/bar-shape.ts";
@@ -288,5 +296,34 @@ describe("the building-card dev fixture", () => {
       "each build is named by what was asked",
     );
     assert.equal(buildBarShape(history.length, Number.POSITIVE_INFINITY), BuildBarShape.Picker);
+  });
+});
+
+describe("the Building card's fold", () => {
+  const rows = (count: number): ChecklistRow[] =>
+    Array.from({ length: count }, (_, index) => ({
+      id: `step-${index + 1}`,
+      title: `Step ${index + 1}`,
+      mark: PartMark.Added,
+      status: BUILD_CHECKLIST_WORDS.added,
+    }));
+  const ids = (list: ChecklistRow[]): string[] => list.map((row) => row.id);
+
+  it("shows every row of a short list", () => {
+    const all = rows(CHECKLIST_FOLD_PAST);
+    assert.deepEqual(foldChecklist(all, false), { rows: all, hidden: 0 });
+  });
+
+  it("past that, shows the latest rows and counts the earlier ones", () => {
+    const all = rows(CHECKLIST_FOLD_PAST + 5);
+    const folded = foldChecklist(all, false);
+    assert.equal(folded.rows.length, CHECKLIST_ROWS_SHOWN);
+    assert.deepEqual(ids(folded.rows), ids(all.slice(-CHECKLIST_ROWS_SHOWN)));
+    assert.equal(folded.hidden, all.length - CHECKLIST_ROWS_SHOWN);
+  });
+
+  it("shows them all once the person opened the earlier ones", () => {
+    const all = rows(CHECKLIST_FOLD_PAST + 5);
+    assert.deepEqual(foldChecklist(all, true), { rows: all, hidden: 0 });
   });
 });

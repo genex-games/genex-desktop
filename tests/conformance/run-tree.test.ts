@@ -457,6 +457,7 @@ describe("the lead says what it is doing", () => {
       problems: [],
       findings: null,
       seq: 0,
+      at: null,
     });
     assert.equal(savedAt(leadRest(graph, rows, LeadFace.Done)), "step:lead:11");
   });

@@ -253,9 +253,6 @@ export function ResultPanel(props: InspectorProps): JSX.Element {
           {status.word}
         </Status>
       }
-      nav={false}
-      onPrev={props.onPrev}
-      onNext={props.onNext}
       onClose={props.onClose}
       reply={{ label: title, placeholder: t("Ask for a change to this build") }}
       onReply={props.onReply}

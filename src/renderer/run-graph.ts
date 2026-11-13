@@ -610,6 +610,8 @@ export interface HealthLook {
   findings: HealthFinding[] | null;
   /** its record's place in the log */
   seq: number;
+  /** when its record was written; null on a draft that read no time */
+  at: string | null;
 }
 
 export interface RunGraph {
@@ -1399,7 +1401,7 @@ function onDirectorWorker(graph: GraphDraft, payload: Payload): void {
 function onWorkerRecord(graph: GraphDraft, entry: RunEntry, started: boolean): void {
   const row = (workerId: string, title: string | undefined) => facet(graph, restartOf(graph, workerId).id, title).node;
   const fold = started ? onWorkerStarted : onWorkerFinished;
-  if (!fold(graph.workers, row, entry.payload, graph.seq) || !graph.turn) return;
+  if (!fold(graph.workers, row, entry.payload, { seq: graph.seq, at: graph.eventAt }) || !graph.turn) return;
   graph.run.startedAt ??= entry.event.created_at;
   if (started && !graph.run.goal) graph.run.goal = str(entry.payload.ask, "").trim();
 }
@@ -1621,6 +1623,7 @@ function onHealth(graph: GraphDraft, payload: Payload): void {
     problems: strings(payload.problems),
     findings: Array.isArray(payload.findings) ? payload.findings.filter(isHealthFinding) : null,
     seq: graph.seq,
+    at: graph.eventAt,
   });
 }
 

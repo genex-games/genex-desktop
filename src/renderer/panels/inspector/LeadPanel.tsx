@@ -30,8 +30,6 @@ export function LeadPanel(props: InspectorProps): JSX.Element {
       label={LEAD_WORDS.name}
       title={LEAD_WORDS.name}
       status={<Status tone={FACE_TONE[face]}>{LEAD_WORDS.face[face]}</Status>}
-      onPrev={props.onPrev}
-      onNext={props.onNext}
       onClose={props.onClose}
       reply={{ label: LEAD_WORDS.name, placeholder: t("Anything the lead should do next?") }}
       onReply={props.onReply}

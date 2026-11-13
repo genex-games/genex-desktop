@@ -5299,6 +5299,8 @@ export default {
   "{count, plural, one {# try} other {# tries}}": "{count, plural, other {시도 #번}}",
   "{count, plural, one {# update from your games} other {# updates from your games}}":
     "{count, plural, other {내 게임 업데이트 #건}}",
+  "Working now": "작업 중",
+  "{count, plural, one {# earlier step} other {# earlier steps}}": "{count, plural, other {이전 단계 #개}}",
   "{count, plural, one {# version} other {# versions}}": "{count, plural, other {버전 #개}}",
   "{count, plural, one {# worker didn't deliver} other {# workers didn't deliver}}":
     "{count, plural, other {작업자 #명이 전달 못 함}}",

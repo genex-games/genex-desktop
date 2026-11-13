@@ -5488,6 +5488,9 @@ export default {
   "{count, plural, one {# try} other {# tries}}": "{count, plural, one {# tentativa} other {# tentativas}}",
   "{count, plural, one {# update from your games} other {# updates from your games}}":
     "{count, plural, one {# atualização dos seus jogos} other {# atualizações dos seus jogos}}",
+  "Working now": "Trabalhando agora",
+  "{count, plural, one {# earlier step} other {# earlier steps}}":
+    "{count, plural, one {# etapa anterior} other {# etapas anteriores}}",
   "{count, plural, one {# version} other {# versions}}": "{count, plural, one {# versão} other {# versões}}",
   "{count, plural, one {# worker didn't deliver} other {# workers didn't deliver}}":
     "{count, plural, one {# ajudante não entregou} other {# ajudantes não entregaram}}",

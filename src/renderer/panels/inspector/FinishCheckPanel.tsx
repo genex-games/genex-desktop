@@ -62,10 +62,7 @@ export function FinishCheckPanel(props: InspectorProps): JSX.Element {
           {FINISH_CHECK_WORDS.state[state]}
         </Status>
       }
-      onPrev={props.onPrev}
-      onNext={props.onNext}
       onClose={props.onClose}
-      neutralEdge
     >
       {node ? (
         <Now node={node} round={currentRound(node)} onKeepBuilding={props.onKeepBuilding} />

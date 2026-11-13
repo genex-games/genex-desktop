@@ -70,6 +70,23 @@ export function buildChecklist(summary: RunSummary | null, now: number): BuildCh
   return { rows, done, working };
 }
 
+/** A list longer than this many rows folds: the card would otherwise push the chat away. */
+export const CHECKLIST_FOLD_PAST = 7;
+/** How many of its latest rows a folded list shows. */
+export const CHECKLIST_ROWS_SHOWN = 5;
+
+/** The rows a card shows, and how many earlier ones it folds away. */
+export interface FoldedChecklist {
+  rows: ChecklistRow[];
+  hidden: number;
+}
+
+/** A long list as the card shows it: its latest rows, the earlier ones counted, until the person opens them. */
+export function foldChecklist(rows: ChecklistRow[], opened: boolean): FoldedChecklist {
+  if (opened || rows.length <= CHECKLIST_FOLD_PAST) return { rows, hidden: 0 };
+  return { rows: rows.slice(-CHECKLIST_ROWS_SHOWN), hidden: rows.length - CHECKLIST_ROWS_SHOWN };
+}
+
 /** The card's one line, counted from its checklist: how many steps are done, and how many work. */
 export function checklistCaption(list: BuildChecklist, finishing: boolean): string {
   return finishing ? WORDS.finishing(list.working) : WORDS.caption(list.done, list.working);

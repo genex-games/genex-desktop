@@ -80,51 +80,16 @@ function CardFooter({
   );
 }
 
-const SIDE_BUTTON =
-  "pointer-events-auto absolute top-1/2 hidden size-10 -translate-y-1/2 cursor-pointer place-items-center rounded-full bg-surface text-ink-2 shadow-card hover:bg-control-hover hover:text-control-text-hover focus-visible:outline-2 focus-visible:outline-accent @2xl/stage:grid";
-
-/** Previous and next beside the card, on a stage wide enough to have room for them. */
-function SideNav({ onPrev, onNext }: { onPrev: () => void; onNext: () => void }): JSX.Element {
-  return (
-    <>
-      <button
-        type="button"
-        aria-label={t("Previous (←)")}
-        title={t("Previous (←)")}
-        className={`${SIDE_BUTTON} left-4`}
-        onClick={onPrev}
-      >
-        <Icon name="chevron-left" size={18} />
-      </button>
-      <button
-        type="button"
-        aria-label={t("Next (→)")}
-        title={t("Next (→)")}
-        className={`${SIDE_BUTTON} right-4`}
-        onClick={onNext}
-      >
-        <Icon name="chevron-right" size={18} />
-      </button>
-    </>
-  );
-}
-
-/** The ring and the entrance of an open card: it opens in place, over the canvas. */
+/** An open card's edge and entrance: it opens in its row's place in the list. */
 const CARD_STYLE = {
-  boxShadow: "0 0 0 1.5px var(--accent), 0 0 0 6px var(--accent-tint), var(--shadow-overlay)",
+  boxShadow: "0 0 0 1px var(--line-strong)",
   animation: "focus-in .22s var(--ease)",
 };
 
 /**
- * A card whose own status carries the colour (the finish check's) wears a neutral edge instead of
- * the accent ring, so a Not yet, Done or Stopped check never reads blue.
- */
-const NEUTRAL_CARD_STYLE = { ...CARD_STYLE, boxShadow: "0 0 0 1px var(--line), var(--shadow-overlay)" };
-
-/**
- * The card a selected node opens into. It sits over the canvas, centred where the camera
- * put the node; the graph stays visible and live around it. Previous and next walk the graph
- * beside the card (inside it when the stage is narrow); ← and → do the same.
+ * The card a pressed row opens into, in that row's place in the list: the list stays live around
+ * it. Wide enough, what there is to look at sits on the left and what there is to read on the
+ * right; otherwise they stack. ← and → walk to the rows beside it; Esc closes it.
  */
 export function Panel({
   id,
@@ -133,14 +98,10 @@ export function Panel({
   sub,
   status,
   media,
-  nav = true,
-  onPrev,
-  onNext,
   onClose,
   reply,
   onReply,
   actions,
-  neutralEdge = false,
   children,
 }: {
   id: string;
@@ -149,58 +110,41 @@ export function Panel({
   sub?: string | null;
   status?: ReactNode;
   media?: ReactNode;
-  nav?: boolean;
-  onPrev: () => void;
-  onNext: () => void;
   onClose: () => void;
   reply?: Reply | null;
   onReply?: ((reply: Reply) => void) | null;
   actions?: ReactNode;
-  /** A neutral edge for the open card instead of the accent ring: only the finish check's card. */
-  neutralEdge?: boolean;
   children?: ReactNode;
 }): JSX.Element {
   const card = useRef<HTMLElement>(null);
-  // Keyboard users land in the card they opened; Tab walks its controls, Esc gives the graph back.
+  // Keyboard users land in the card they opened; Tab walks its controls, Esc gives the list back.
   useEffect(() => {
     card.current?.focus({ preventScroll: true });
+    card.current?.scrollIntoView({ block: "nearest" });
   }, []);
+  const sides = media ? "@min-[760px]/card:grid-cols-[minmax(0,520px)_minmax(0,1fr)]" : "";
   return (
-    <div className="pointer-events-none absolute inset-0 z-[4] flex items-center justify-center px-3 pt-4 pb-14 @2xl/stage:px-[72px]">
-      <section
-        ref={card}
-        tabIndex={-1}
-        role="dialog"
-        data-graph-panel={id}
-        aria-label={label}
-        className="pointer-events-auto flex max-h-full w-full max-w-[560px] flex-col overflow-hidden rounded-[18px] bg-surface outline-none select-text"
-        style={neutralEdge ? NEUTRAL_CARD_STYLE : CARD_STYLE}
-        onPointerDown={(event) => event.stopPropagation()}
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
-          <header className="flex items-start gap-2">
-            <PanelHeading title={title} sub={sub} status={status} />
-            <div className="-mt-1 -mr-1.5 flex shrink-0 gap-0.5">
-              {nav ? (
-                <span className="contents @2xl/stage:hidden">
-                  <PanelButton label={t("Previous (←)")} icon="chevron-left" onClick={onPrev} />
-                  <PanelButton label={t("Next (→)")} icon="chevron-right" onClick={onNext} />
-                </span>
-              ) : null}
-              <PanelButton label={t("Close (Esc)")} icon="close" onClick={onClose} />
-            </div>
-          </header>
-          {/* A card shows the build's own work: its steps, notes, files and pictures. */}
-          <div data-analytics-mask className="contents">
-            {media}
-            {children}
-          </div>
+    <section
+      ref={card}
+      tabIndex={-1}
+      data-graph-panel={id}
+      aria-label={label}
+      className="@container/card -mx-3 my-1 flex flex-col rounded-card bg-surface outline-none select-text"
+      style={CARD_STYLE}
+    >
+      <header className="flex items-start gap-2 px-4 pt-3">
+        <PanelHeading title={title} sub={sub} status={status} />
+        <div className="-mt-0.5 -mr-1.5 flex shrink-0">
+          <PanelButton label={t("Close (Esc)")} icon="caret-up" onClick={onClose} />
         </div>
-        <CardFooter actions={actions} reply={reply} onReply={onReply} />
-      </section>
-      {nav ? <SideNav onPrev={onPrev} onNext={onNext} /> : null}
-    </div>
+      </header>
+      {/* A card shows the build's own work: its steps, notes, files and pictures. */}
+      <div data-analytics-mask className={`grid gap-x-6 gap-y-4 p-4 ${sides}`}>
+        {media ? <div className="flex min-w-0 flex-col gap-4">{media}</div> : null}
+        <div className="flex max-w-[720px] min-w-0 flex-col gap-4">{children}</div>
+      </div>
+      <CardFooter actions={actions} reply={reply} onReply={onReply} />
+    </section>
   );
 }
 
