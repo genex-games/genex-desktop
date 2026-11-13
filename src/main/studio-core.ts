@@ -3083,9 +3083,6 @@ export class StudioCore {
     return this.#assets.projectModelRigs(...args);
   }
 
-  saveReferenceFrames(
-    ...args: Parameters<AssetService["saveReferenceFrames"]>
-  ): ReturnType<AssetService["saveReferenceFrames"]> {
   readAssetThumbnail(
     ...args: Parameters<AssetService["readAssetThumbnail"]>
   ): ReturnType<AssetService["readAssetThumbnail"]> {
@@ -3098,6 +3095,9 @@ export class StudioCore {
     return this.#assets.keepAssetThumbnail(...args);
   }
 
+  saveReferenceFrames(
+    ...args: Parameters<AssetService["saveReferenceFrames"]>
+  ): ReturnType<AssetService["saveReferenceFrames"]> {
     return this.#assets.saveReferenceFrames(...args);
   }
 

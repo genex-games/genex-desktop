@@ -4436,6 +4436,21 @@ export const ASSET_LIBRARY_WORDS = {
   search: t("Search assets"),
   searchLabel: t("Search this game, your library and the community"),
   clearSearch: t("Clear the search"),
+  /** The canvas's tabs and the order its cards run in. */
+  tabsLabel: t("Kinds of asset"),
+  tabs: {
+    [AssetTab.All]: t("All"),
+    [AssetTab.Models]: t("Models"),
+    [AssetTab.Images]: t("Images"),
+    [AssetTab.Sounds]: t("Sounds"),
+    [AssetTab.Video]: t("Video"),
+  } satisfies Record<AssetTab, string>,
+  sortLabel: t("Sort assets"),
+  orders: {
+    [AssetOrder.Newest]: t("Newest"),
+    [AssetOrder.Name]: t("Name"),
+    [AssetOrder.Size]: t("Size"),
+  } satisfies Record<AssetOrder, string>,
   thisGame: t("This game"),
   myLibrary: t("My library"),
   community: t("Community"),
@@ -4459,21 +4474,6 @@ export const MAKING_WORDS = {
     [MakingKind.Creature]: t("Creature"),
     [MakingKind.Model]: t("3D model"),
     [MakingKind.RiggedModel]: t("Rigged model"),
-  /** The canvas's tabs and the order its cards run in. */
-  tabsLabel: t("Kinds of asset"),
-  tabs: {
-    [AssetTab.All]: t("All"),
-    [AssetTab.Models]: t("Models"),
-    [AssetTab.Images]: t("Images"),
-    [AssetTab.Sounds]: t("Sounds"),
-    [AssetTab.Video]: t("Video"),
-  } satisfies Record<AssetTab, string>,
-  sortLabel: t("Sort assets"),
-  orders: {
-    [AssetOrder.Newest]: t("Newest"),
-    [AssetOrder.Name]: t("Name"),
-    [AssetOrder.Size]: t("Size"),
-  } satisfies Record<AssetOrder, string>,
     [MakingKind.Animation]: t("Animation"),
     [MakingKind.Image]: t("Image"),
     [MakingKind.Texture]: t("Texture"),

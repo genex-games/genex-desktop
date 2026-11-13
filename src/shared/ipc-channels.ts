@@ -279,9 +279,9 @@ export const STUDIO_INVOKE_CHANNELS = {
   "studio:game.asset.preview": "previewProjectAsset",
   "studio:game.asset.present": "presentProjectAssets",
   "studio:game.asset.rigs": "projectModelRigs",
-  "studio:game.assets": "projectAssets",
   "studio:game.asset.thumbnail": "readAssetThumbnail",
   "studio:game.asset.thumbnail.keep": "keepAssetThumbnail",
+  "studio:game.assets": "projectAssets",
   "studio:game.asset.still": "readProjectAsset",
   "studio:run.feedback": "runFeedback",
   "studio:review.play": "playSnapshot",
@@ -600,13 +600,13 @@ export interface StudioInvokePayloads {
   "studio:game.asset.preview": Arg<"previewProjectAsset", 0>;
   "studio:game.asset.present": Arg<"presentProjectAssets", 0>;
   "studio:game.asset.rigs": Arg<"projectModelRigs", 0>;
+  "studio:game.asset.thumbnail": Arg<"readAssetThumbnail", 0>;
+  "studio:game.asset.thumbnail.keep": Arg<"keepAssetThumbnail", 0>;
   "studio:game.assets": { project: string };
   "studio:assets.library": Arg<"assetLibrary", 0>;
   "studio:assets.states": { project: string };
   "studio:assets.save": { project: string; files: string[]; saved: boolean };
   "studio:assets.share": { project: string; items: ShareItem[] };
-  "studio:game.asset.thumbnail": Arg<"readAssetThumbnail", 0>;
-  "studio:game.asset.thumbnail.keep": Arg<"keepAssetThumbnail", 0>;
   "studio:assets.unshare": { project: string; file: string };
   "studio:assets.add": { project: string; source: AddSource };
   "studio:assets.file": { url: string };
