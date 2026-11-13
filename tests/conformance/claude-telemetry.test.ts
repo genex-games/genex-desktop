@@ -4,6 +4,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { setImmediate } from "node:timers/promises";
 import {
+  readClaudeAppliedEffort,
   readClaudeTelemetry,
   readClaudeUsage,
   withClaudeModelCapabilities,
@@ -20,6 +21,7 @@ delete process.env.CLAUDE_CONFIG_DIR;
 
 const USAGE_CONTROL = "usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET";
 const CONTEXT_CONTROL = "getContextUsage";
+const SETTINGS_CONTROL = "getSettings";
 const CONTEXT = { totalTokens: 24000, maxTokens: 200000, percentage: 12, model: "claude-test" };
 /** A control that never answers, such as plan usage scanning a large transcript history. */
 const never = () => new Promise<never>(() => {});
@@ -220,6 +222,111 @@ test("provider names and distinct context variants replace the Studio shortlist"
   assert.equal(rows[2]?.contextSource, "unknown");
   assert.equal(rows[2]?.contextWindow, 0);
   assert.equal(rows[2]?.supportsFast, true);
+});
+
+const LEVELS = ["low", "medium", "high", "xhigh", "max"];
+/** The settings answer of Claude Code 2.1: what the session applies sits beside the merged settings. */
+const settingsAnswer = (applied: unknown) => ({ effective: {}, sources: [], applied });
+/** A model list as the CLI names it: its default and an alias on one model, and another model. */
+const LISTED = [
+  { value: "default", resolvedModel: "claude-opus-5-5", displayName: "Default", supportedEffortLevels: LEVELS },
+  { value: "opus", resolvedModel: "claude-opus-5-5", displayName: "Opus 5.5", supportedEffortLevels: LEVELS },
+  { value: "sonnet", resolvedModel: "claude-sonnet-5-5", displayName: "Sonnet 5.5", supportedEffortLevels: LEVELS },
+];
+const defaultEfforts = (rows: Array<{ id: string; defaultEffort?: string }>) =>
+  Object.fromEntries(rows.map((row) => [row.id, row.defaultEffort]));
+
+test("the effort a session applies by itself is read from its settings", async () => {
+  const stream = sessionStream(
+    { [SETTINGS_CONTROL]: async () => settingsAnswer({ model: "claude-opus-5-5", effort: "medium" }) },
+    [],
+  );
+  assert.deepEqual(await readClaudeAppliedEffort(stream, 20), { model: "claude-opus-5-5", effort: "medium" });
+});
+
+test("an applied effort that is missing, late or malformed is unknown, never guessed", async () => {
+  const answers: Record<string, (() => Promise<unknown>) | undefined> = {
+    "a CLI without the settings control": undefined,
+    "a control that never answers": never,
+    "a control that throws": async () => {
+      throw new Error("control channel closed");
+    },
+    "no applied block": async () => ({ effective: { effortLevel: "high" }, sources: [] }),
+    "no effort sent (a model without a dial)": async () => settingsAnswer({ model: "claude-haiku", effort: null }),
+    "a numeric budget": async () => settingsAnswer({ model: "claude-opus-5-5", effort: 4000 }),
+    "an unnamed model": async () => settingsAnswer({ model: "", effort: "medium" }),
+    "not an object": async () => "medium",
+  };
+  for (const [name, answer] of Object.entries(answers)) {
+    const stream = sessionStream(answer ? { [SETTINGS_CONTROL]: answer } : {}, []);
+    assert.equal(await readClaudeAppliedEffort(stream, 20), undefined, name);
+  }
+});
+
+test("the applied effort is the default of the rows of its own model, where they offer it", () => {
+  const applied = { model: "claude-opus-5-5", effort: "medium" };
+  assert.deepEqual(defaultEfforts(withClaudeModelCapabilities([], LISTED, applied)), {
+    default: "medium",
+    opus: "medium",
+    sonnet: undefined,
+  });
+  const unoffered = { model: "claude-opus-5-5", effort: "ultra" };
+  assert.deepEqual(defaultEfforts(withClaudeModelCapabilities([], LISTED, unoffered)), {
+    default: undefined,
+    opus: undefined,
+    sonnet: undefined,
+  });
+});
+
+test("a list read again without an applied effort keeps the defaults already known", () => {
+  const known = withClaudeModelCapabilities([], LISTED, { model: "claude-opus-5-5", effort: "medium" });
+  const moved = LISTED.map((model) => (model.value === "opus" ? { ...model, resolvedModel: "claude-opus-6" } : model));
+  assert.deepEqual(defaultEfforts(withClaudeModelCapabilities(known, moved)), {
+    default: "medium",
+    opus: undefined,
+    sonnet: undefined,
+  });
+});
+
+test("a running session's model list keeps the default effort the catalog read, and never asks its own", async () => {
+  const root = await tmpDir("studio-default-effort-");
+  const home = path.join(root, "claude-home");
+  await mkdir(home, { recursive: true });
+  await writeFile(path.join(home, ".credentials.json"), "{}");
+  const { controls, asked } = fifoControls({
+    supportedModels: async () => LISTED,
+    // A running session applies the effort its send named, which is no default.
+    [SETTINGS_CONTROL]: async () => settingsAnswer({ model: "claude-opus-5-5", effort: "max" }),
+  });
+  const streams = [
+    sessionStream(
+      {
+        supportedModels: async () => LISTED,
+        [SETTINGS_CONTROL]: async () => settingsAnswer({ model: "claude-opus-5-5", effort: "medium" }),
+        close: async () => undefined,
+      },
+      [],
+    ),
+    sessionStream(controls, [
+      { type: "system", subtype: "init", session_id: "ses_effort", model: "claude-opus-5-5", tools: [] },
+      { type: "assistant", message: { content: [{ type: "text", text: "Built." }] } },
+      { type: "result", subtype: "success", is_error: false, result: "Built.", num_turns: 1, usage: {} },
+    ]),
+  ];
+  const engine = new ClaudeCodeEngine({
+    resolveCli: fixtureCodingCli,
+    engineHome: home,
+    systemHome: path.join(root, "no-system-login"),
+    judgeCwd: path.join(root, "judge"),
+    queryFn: (() => streams.shift()) as never,
+  });
+  await engine.refreshModels();
+  assert.deepEqual(defaultEfforts(await engine.models()), { default: "medium", opus: "medium", sonnet: undefined });
+  await engine.delegate({ cwd: await tmpDir("claude-effort-run-"), prompt: "Build", onEvent: () => {} });
+  await setImmediate();
+  assert.ok(asked.includes("supportedModels"), "the running session listed its models again");
+  assert.ok(!asked.includes(SETTINGS_CONTROL), "a running session is never asked for a default effort");
+  assert.deepEqual(defaultEfforts(await engine.models()), { default: "medium", opus: "medium", sonnet: undefined });
 });
 
 /** Plan usage as the CLI answers it, with the 5-hour window at `percent`. */

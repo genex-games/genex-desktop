@@ -22,8 +22,35 @@ export interface ClaudeModelInfo {
   supportsFastMode?: boolean;
 }
 
-/** Provider request identities and names take precedence over cached display metadata. */
-export function withClaudeModelCapabilities(fallback: EngineModel[], models: ClaudeModelInfo[]): EngineModel[] {
+/** The effort a session sends when none is asked for, and the model it sends it to. */
+export interface ClaudeAppliedEffort {
+  model: string;
+  effort: string;
+}
+
+/**
+ * A row's default effort, when the row offers that level: the one the CLI applies to the row's
+ * own model, else — for a list read without one — the default already known for the row.
+ */
+function defaultEffortOf(
+  model: ClaudeModelInfo,
+  known: string | undefined,
+  applied: ClaudeAppliedEffort | undefined,
+): string | undefined {
+  let named = known;
+  if (applied) named = applied.model === model.resolvedModel ? applied.effort : undefined;
+  return named && model.supportedEffortLevels?.includes(named) ? named : undefined;
+}
+
+/**
+ * Provider request identities and names take precedence over cached display metadata. `applied`
+ * is the effort an idle session reports (`readClaudeAppliedEffort`): the default of its model's rows.
+ */
+export function withClaudeModelCapabilities(
+  fallback: EngineModel[],
+  models: ClaudeModelInfo[],
+  applied?: ClaudeAppliedEffort,
+): EngineModel[] {
   const seen = new Set<string>();
   return models
     .filter((model) => {
@@ -33,6 +60,7 @@ export function withClaudeModelCapabilities(fallback: EngineModel[], models: Cla
     })
     .map((model) => {
       const previous = fallback.find((row) => row.id === model.value && row.resolvedModel === model.resolvedModel);
+      const defaultEffort = defaultEffortOf(model, previous?.defaultEffort, applied);
       return {
         id: model.value,
         label: model.displayName?.trim() || model.value,
@@ -45,6 +73,7 @@ export function withClaudeModelCapabilities(fallback: EngineModel[], models: Cla
         supportsVision: true,
         supportsThinking: true,
         efforts: model.supportedEffortLevels ?? [],
+        ...(defaultEffort ? { defaultEffort } : {}),
         supportsFast: model.supportsFastMode === true,
       };
     });
@@ -57,6 +86,8 @@ type TelemetryQuery = {
   getContextUsage?: (options: { detail: "summary" }) => Promise<ClaudeContextSummary>;
   supportedModels?: () => Promise<ClaudeModelInfo[]>;
   usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET?: () => Promise<unknown>;
+  /** The CLI's `get_settings` control: the SDK's query object answers it, its typings do not list it. */
+  getSettings?: () => Promise<unknown>;
 };
 async function bounded<T>(read: () => Promise<T> | undefined, deadlineMs: number): Promise<T | undefined> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -85,6 +116,27 @@ export async function readClaudeUsage(stream: unknown, deadlineMs = USAGE_DEADLI
   const answer = await bounded(() => ask.call(query), deadlineMs);
   if (answer === undefined) throw new Error(USAGE_UNANSWERED);
   return normalizeClaudeUsage(answer);
+}
+
+/** What `get_settings` says a session applies; the settings themselves are never read. */
+const appliedSettings = z.object({
+  applied: z.object({ model: z.string().min(1), effort: z.string().min(1) }),
+});
+
+/**
+ * The effort a session sends when none is asked for, from a session opened only to ask
+ * (`get_settings`'s `applied`): the model's default as this account and CLI resolve it. Undefined
+ * when the CLI has no such control, does not answer in time, or sends no named effort. A running
+ * session is never asked: it applies the effort its own send named.
+ */
+export async function readClaudeAppliedEffort(
+  stream: unknown,
+  deadlineMs = TELEMETRY_DEADLINE_MS,
+): Promise<ClaudeAppliedEffort | undefined> {
+  const query = stream as TelemetryQuery;
+  const answer = await bounded(() => query.getSettings?.(), deadlineMs);
+  const parsed = appliedSettings.safeParse(answer);
+  return parsed.success ? parsed.data.applied : undefined;
 }
 
 /** What a running session's telemetry reading waits for and asks for. */
