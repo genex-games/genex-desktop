@@ -371,23 +371,12 @@
     opacity: 1;
   }
 }
-/* The builds graph draws what is live or selected in its own accent (themes.ts `graph`), the app's until set. */
+/* The Builds tab draws what is live or selected in its own accent (themes.ts `graph`), the app's until set. */
 [data-stage-graph] {
   --accent: var(--graph, var(--accent-primary));
   --accent-tint: color-mix(in srgb, var(--accent) 16%, transparent);
 }
-/* Ours: the run graph's "building right now" halo, and the still that is not there yet. */
-@keyframes graph-pulse {
-  0%,
-  100% {
-    opacity: 0.5;
-    transform: scale(1);
-  }
-  50% {
-    opacity: 0;
-    transform: scale(1.06);
-  }
-}
+/* A dot that breathes once: a gate on a card, the stage's Reload when Live is behind. */
 @keyframes gate-pulse {
   0%,
   100% {
@@ -398,16 +387,6 @@
     opacity: 0.45;
     transform: scale(1.2);
   }
-}
-/* The start node has no card, so its halo pulses on the ring around its words, not on them. */
-:is([data-graph-node], [data-graph-ring])[data-working="true"]::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  border: 2px solid var(--accent);
-  pointer-events: none;
-  animation: graph-pulse 1.6s ease-in-out infinite;
 }
 [inert] [data-stage-graph] *,
 [inert] [data-stage-graph] *::after {
@@ -430,7 +409,7 @@
   .loader-grid > span,
   [style*="infinite"]
 ),
-:root[data-motion="rest"] :is([data-graph-node], [data-graph-ring], .graph-shimmer)::after {
+:root[data-motion="rest"] .graph-shimmer::after {
   animation-play-state: paused !important;
 }
 /* A selected node opening into its card over the zoomed canvas. */
@@ -4379,22 +4358,6 @@ button.chat-header-title:hover {
   flex-direction: column;
   gap: 8px;
   min-width: 0;
-}
-/* Builds on its way (RunGraph.tsx): what you asked, two parts and the build, on the graph's dots. */
-.skeleton-graph {
-  display: flex;
-  align-items: center;
-  justify-content: safe center;
-  gap: 48px;
-  height: 100%;
-  padding: 32px;
-  background-image: radial-gradient(var(--line-strong) 1px, transparent 1.25px);
-  background-size: 22px 22px;
-}
-.skeleton-graph-column {
-  display: flex;
-  flex-direction: column;
-  gap: 40px;
 }
 /* The Assets tab on its way (AssetsCanvas.tsx): a first screen of tiles, each with its name. */
 .skeleton-tiles {

@@ -19,7 +19,7 @@ import { TOAST_WORDS } from "../../words.ts";
 import { OutcomeChecks, OutcomeDetails } from "../RunOutcome.tsx";
 import { Details, Panel, PanelRow, Para, Quote, Row, Rows, Section } from "./chrome.tsx";
 import { formatTime, modelLine } from "./format.ts";
-import { Compare, Single } from "./pictures.tsx";
+import { Single } from "./pictures.tsx";
 import { GraphSelection } from "./selection.ts";
 import { Status } from "./tone.tsx";
 import type { InspectorProps } from "./types.ts";
@@ -202,33 +202,26 @@ function resultSub(graph: RunGraphModel, run: RunNode, outcome: RunSummary | nul
 }
 
 /**
- * The build's picture: before and now side by side when both were captured the same way, or now
- * alone. A build still being tried has no picture of its own yet, and says so rather than wear a part's.
+ * The build's picture, now. A build still being tried has no picture of its own yet, and says so
+ * rather than wear a part's.
  */
 function ResultMedia({
-  baseSrc,
   resultSrc,
   borrowed,
-  pairs,
   onOpen,
 }: {
-  baseSrc: string | null;
   resultSrc: string | null;
   borrowed: boolean;
-  /** the two pictures show the same frame: the starting capture and the final one */
-  pairs: boolean;
   onOpen: () => void;
 }): JSX.Element {
   if (borrowed)
     return <Single src={null} label={t("Now")} empty={t("Checking the new build starts. Its picture comes next.")} />;
-  if (baseSrc && resultSrc && pairs)
-    return <Compare left={baseSrc} right={resultSrc} leftLabel={t("Before")} rightLabel={t("Now")} onOpen={onOpen} />;
   return <Single src={resultSrc} label={t("Now")} onOpen={onOpen} />;
 }
 
-/** The card of the run's build: the picture before and now, and everything said about it. */
+/** The card of the run's build: its picture now, and everything said about it. */
 export function ResultPanel(props: InspectorProps): JSX.Element {
-  const { graph, outcome, run, baseSrc, resultSrc, resultPath, resultBorrowed, onNotice } = props;
+  const { graph, outcome, run, resultSrc, resultPath, resultBorrowed, onNotice } = props;
   const final = finalNodeOf(graph);
   // The node and its card say the same words about the same build.
   const status = resultStatus(graph, outcome);
@@ -258,13 +251,7 @@ export function ResultPanel(props: InspectorProps): JSX.Element {
       onReply={props.onReply}
       actions={<BuildActions build={unlandedBuild(graph, final, run)} onNotice={onNotice} />}
       media={
-        <ResultMedia
-          baseSrc={baseSrc}
-          resultSrc={resultSrc}
-          borrowed={resultBorrowed}
-          pairs={props.resultPairsWithBase}
-          onOpen={open}
-        />
+<ResultMedia resultSrc={resultSrc} borrowed={resultBorrowed} onOpen={open} />
       }
     >
       <LastLook graph={graph} />

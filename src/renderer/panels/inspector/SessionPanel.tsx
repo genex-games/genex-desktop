@@ -1,7 +1,6 @@
 /**
  * The card of a part built in one session: its picture, who checked it, and what happened to it.
- * A worker's card says what the lead asked it, its own report and the lead's note, never how it
- * works in the game.
+ * A worker's card says what it did in its own words, never what the lead asked it or noted about it.
  */
 import { placedWord } from "../../run-graph-builds.ts";
 import type { JSX } from "react";
@@ -21,7 +20,7 @@ import {
   stoppedShort,
   workerStopWords,
 } from "../../run-steps.ts";
-import { stoppedWords, verdictSentence, WORKER_WORDS } from "../../words.ts";
+import { stoppedWords, verdictSentence } from "../../words.ts";
 import { useRoundStill, useWorkerStill } from "../run-stills.ts";
 import { AssetThumbnail } from "../AssetThumbnail.tsx";
 import { type DetailRow, Details, Panel, PanelRow, Para, Quote, Row, Rows } from "./chrome.tsx";
@@ -86,18 +85,13 @@ function PartAbout({ props, step }: { props: StepPanelProps; step: Step }): JSX.
   );
 }
 
-/**
- * A worker's account: the reviewers' word when they compared its build, what the lead asked it,
- * its own report, the lead's note, why it stopped short.
- */
+/** A worker's account: the reviewers' word when they compared its build, its own report, why it stopped short. */
 function WorkerAbout({ step, worker }: { step: Step; worker: WorkerInfo }): JSX.Element {
   const failed = workerStopWords(worker);
   return (
     <>
       {step.verdict ? <WhoChecked step={step} /> : null}
-      {worker.task ? <Quote label={WORKER_WORDS.asked}>{worker.task}</Quote> : null}
       {worker.summary ? <Para>{worker.summary}</Para> : null}
-      {worker.note ? <Quote label={WORKER_WORDS.leadSaid}>{worker.note}</Quote> : null}
       {failed ? <Para quiet>{failed}.</Para> : null}
     </>
   );

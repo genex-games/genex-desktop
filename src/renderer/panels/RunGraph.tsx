@@ -364,7 +364,6 @@ function SelectedPanel({
       resultSrc={stills.resultSrc}
       resultPath={stills.resultPath}
       resultBorrowed={stills.borrowed}
-      resultPairsWithBase={stills.pairsWithBase}
       timeline={model.timeline}
       onClose={() => overlays.setSelectedId(null)}
       onSelect={(id) => overlays.setSelectedId(id)}

@@ -1,9 +1,8 @@
 /**
- * The Builds graph as a tree (`RunGraph.tree`): a graph that holds a worker's or a job's records
- * draws the lead between what you asked and the rows, its background work hanging under it, and a
- * run's tree ends in the finish check. This module says where the lead stands, what its background
- * tile reads and the order Previous and Next step through; `run-steps.ts` lays the tree out. Every
- * other graph keeps today's layout.
+ * The Builds list's lead and its company: a graph that holds a worker's or a job's records
+ * (`RunGraph.tree`) has a lead working between its workers, its background work and, in a run, the
+ * finish check. This module says what the lead is doing, what its background work's row reads and
+ * which of these rows the list has (`panels/run-graph/builds-list.ts`).
  *
  * Pure: no DOM, no window. `panels/run-graph/use-builds-model.ts` and the tests share it.
  */
@@ -12,7 +11,6 @@ import { FinishCheckStep } from "../shared/finish-check.ts";
 import { JobState } from "../shared/jobs.ts";
 import { ExecutionStatus } from "../shared/run-state.ts";
 import type { RunSummary } from "../shared/run-summary.ts";
-import { GraphSelection } from "./panels/inspector/selection.ts";
 import {
   type FinishCheckNode,
   FinishCheckState,
@@ -28,20 +26,13 @@ import type { JobInfo } from "./run-graph-workers.ts";
 import {
   isWorkerAtWork,
   lastSavePoint,
-  layoutSteps,
   leadWorking,
   type PartRow,
-  resultGate,
   runExecution,
   type Step,
-  type StepsLayout,
-  stepAndAssetIds,
   Tone,
 } from "./run-steps.ts";
 import { backgroundCount, FINISH_CHECK_WORDS, jobStatusWords, LEAD_WORDS } from "./words.ts";
-import { isInPlaceTree, layoutComb } from "./run-graph-comb.ts";
-import { buildTimeline } from "./run-graph-builds.ts";
-import { layoutTimeline } from "./panels/run-graph/timeline-layout.ts";
 
 /** What the lead's node says it is doing: working itself, waiting for its workers, paused, done or stopped. */
 export const LeadFace = {
@@ -66,41 +57,6 @@ export const leadNodeOf = (graph: RunGraph): LeadNode | null =>
 
 const hasNode = (graph: RunGraph, kind: RunGraph["nodes"][number]["kind"]): boolean =>
   graph.nodes.some((node) => node.kind === kind);
-
-/** The run was asked with pictures: its start shows them, its words under them. */
-const asksWithPictures = (graph: RunGraph): boolean =>
-  graph.nodes.some((node) => node.kind === GraphNodeKind.Run && node.asked !== null);
-
-/**
- * The Builds tab's layout of a graph: today's options (the assets under the start, the
- * optimisation card, the result's gate, the lead while it has the run), plus the tree's when the
- * graph is one: the lead's background work when it has any, the finish check when it waits. A
- * Loop with a build history draws its builds on one line, its workers beside them
- * (`run-graph-builds.ts`; `open` names the builds whose folded workers show); a lead's tree in place
- * (workers and its own save points) hangs its workers off the save points (`run-graph-comb.ts`);
- * every other graph lays out a row per part.
- */
-export function buildsLayout(
-  graph: RunGraph,
-  rows: PartRow[],
-  summary: RunSummary | null,
-  open: ReadonlySet<number> = new Set(),
-): StepsLayout {
-  const lead = leadNodeOf(graph);
-  const tree = graph.tree
-    ? { tree: { jobs: (lead?.jobs.length ?? 0) > 0, finishCheck: hasNode(graph, GraphNodeKind.FinishCheck) } }
-    : {};
-  const options = {
-    assets: hasNode(graph, GraphNodeKind.Blender) || hasNode(graph, GraphNodeKind.Assets),
-    startWords: asksWithPictures(graph),
-    resultGate: resultGate(graph),
-    lead: leadWorking(graph, summary, rows),
-    ...tree,
-  };
-  const timeline = buildTimeline(graph, rows, open);
-  if (timeline) return layoutTimeline(timeline, options);
-  return graph.tree && isInPlaceTree(rows) ? layoutComb(rows, options) : layoutSteps(rows, options);
-}
 
 /** How a run's close reads on the lead: stopped for a failure or a cancel, done for any other. */
 const CLOSED_FACE: Partial<Record<string, LeadFace>> = {
@@ -212,30 +168,6 @@ export function readingNodes(graph: RunGraph, rows: PartRow[], summary: RunSumma
     finishCheck: hasNode(graph, GraphNodeKind.FinishCheck),
     lead: leadWorking(graph, summary, rows),
   };
-}
-
-/**
- * The graph's reading order, left to right: what you asked and its assets, the lead and its
- * background work (in a tree), every step and the asset cards under it (row by row, or in the
- * layout's own `steps` order), the result, then the finish check (in a tree) or the lead while it
- * has the run.
- */
-export function readingOrder(
-  rows: PartRow[],
-  nodes: ReadingNodes,
-  steps: string[] = rows.flatMap((row) => row.steps.flatMap(stepAndAssetIds)),
-): string[] {
-  const head = nodes.tree ? [GraphSelection.Lead, ...(nodes.jobs ? [GraphSelection.Jobs] : [])] : [];
-  const last = nodes.tree ? nodes.finishCheck && GraphSelection.FinishCheck : nodes.lead && GraphSelection.Lead;
-  const tail = last ? [last] : [];
-  return [
-    GraphSelection.Start,
-    ...(nodes.assets ? [GraphSelection.Assets] : []),
-    ...head,
-    ...steps,
-    GraphSelection.Final,
-    ...tail,
-  ];
 }
 
 /** Whether the Builds tab may draw a graph: a run's waits for its recorded outcome; a chat turn has none to wait for. */

@@ -1,24 +1,19 @@
 /**
- * A Loop's build history on the Builds graph: its integration head as a timeline. Each health check
+ * A Loop's build history on the Builds list: its integration head as a timeline. Each health check
  * the Loop ran (`integration_health`) is one build, "Build 1", "Build 2", …: the merge before it and
  * the check itself, wearing the check's screenshot and outcome. A check of the head the build before
  * it already had (the finish looking again at an unchanged head) is that build looked at again.
  *
- * A worker hangs off the build its work was merged into; one not merged (working, not used,
- * stopped) hangs off the build it started from, or the lead when it started before the first build.
- * Per build, finished workers past a few fold into one card that opens in place.
+ * A worker belongs to the build its work was merged into; one not merged (working, not used,
+ * stopped) to the build it started from, or the lead when it started before the first build.
  *
- * Only a run whose checks name their pictures, workers or findings has a history: older runs keep
- * the graph they always had. Pure: no DOM, no window. `run-tree.ts` lays it out through
- * `panels/run-graph/timeline-layout.ts`; the tests read it directly.
+ * Only a run whose checks name their pictures, workers or findings has a history. Pure: no DOM, no
+ * window. `panels/run-graph/builds-list.ts` lists it; the tests read it directly.
  */
 import { HealthFinding } from "../shared/preview-contract.ts";
 import type { HealthLook, RunGraph } from "./run-graph.ts";
-import { isLiveStep, type PartRow, type Step, StepState, stepWord } from "./run-steps.ts";
-import { BUILD_LINE_WORDS, workerPlaceWords } from "./words.ts";
-
-/** How many finished workers a build shows before the rest fold into one card. */
-export const WORKERS_SHOWN = 3;
+import { type PartRow, type Step, StepState, stepWord } from "./run-steps.ts";
+import { BUILD_LINE_WORDS } from "./words.ts";
 
 /** What a build's health check found: it passed, its frame was blank, it threw, or it failed some other way. */
 export const BuildOutcome = {
@@ -59,41 +54,25 @@ export interface BuildCard {
   at: string | null;
 }
 
-/** Where one worker hangs: the build (0 for the lead, before the first build) and whether its work is in it. */
+/** Where one worker belongs: the build (0 for the lead, before the first build) and whether its work is in it. */
 export interface WorkerPlace {
   build: number;
   merged: boolean;
 }
 
-/** What hangs off one build: the workers it shows, and how many finished ones are folded. */
-export interface BuildHangers {
-  /** 0 for the lead, else the build's `n` */
-  build: number;
-  steps: Step[];
-  /** how many finished workers the fold card stands for (open or not) */
-  folded: number;
-  /** the fold is open: every worker shows, and its card folds them again */
-  open: boolean;
-}
-
-/** A run's build history as the graph draws it. */
+/** A run's build history as the list reads it. */
 export interface BuildTimeline {
   builds: BuildCard[];
   /** every worker's place, by its step's id */
   places: Map<string, WorkerPlace>;
-  /** what hangs off the lead (index 0) and each build, in order */
-  hangers: BuildHangers[];
 }
 
 const BUILD_PREFIX = "build:";
-const FOLD_PREFIX = "fold:";
 
 /** The selection id of build `n`. */
 export const buildSelection = (n: number): string => `${BUILD_PREFIX}${n}`;
 /** Whether a selection id names a build of the timeline. */
 export const isBuildSelection = (id: string): boolean => id.startsWith(BUILD_PREFIX);
-/** The layout id of the card that folds a build's workers (0: the lead's). */
-export const foldId = (build: number): string => `${FOLD_PREFIX}${build}`;
 
 /** A check written since checks named their pictures, workers or findings. */
 const isNewCheck = (look: HealthLook): boolean =>
@@ -144,22 +123,12 @@ export function buildsOf(graph: RunGraph): BuildCard[] {
   return builds;
 }
 
-/**
- * The build whose screenshot `build`'s may be compared with: the one right before it, when both have
- * one. Both were taken the same way, by a health check (one page load, one window size); nothing
- * else is ever paired with a build.
- */
-export function buildBefore(builds: readonly BuildCard[], build: BuildCard): BuildCard | null {
-  const before = builds.find((item) => item.n === build.n - 1);
-  return before?.picture && build.picture ? before : null;
-}
-
 /** How many builds were made before the log reached `seq`: the build a worker started then started from. */
 const builtBefore = (builds: readonly BuildCard[], seq: number): number =>
   builds.filter((build) => build.seq < seq).length;
 
 /**
- * Where a worker hangs: the build its merge made (its check names it), else for a worker whose work
+ * Where a worker belongs: the build its merge made (its check names it), else for a worker whose work
  * went in unnamed the first build made after it settled; any other off the build it started from.
  */
 export function workerPlace(builds: readonly BuildCard[], step: Step): WorkerPlace {
@@ -181,55 +150,19 @@ export function placedWord(step: Step, place: WorkerPlace | undefined, active: b
   return place?.merged && step.state === StepState.InBuild ? BUILD_LINE_WORDS.addedToBuild : stepWord(step, active);
 }
 
-/** A worker node's words: its status, and over its name on the build line the build it hangs off. */
-export function placedFace(
-  step: Step,
-  place: WorkerPlace | null,
-  active: boolean,
-): { word: string; eyebrow: string | null } {
-  if (!place) return { word: stepWord(step, active), eyebrow: null };
-  return { word: placedWord(step, place, active), eyebrow: workerPlaceWords(place) };
-}
-
-/** Which finished workers of a build stay in sight: the merged one first, then the newest to settle. */
-function keptInSight(finished: readonly Step[], places: Map<string, WorkerPlace>): Set<Step> {
-  const settled = (step: Step): number => step.worker?.settledSeq ?? step.worker?.startedSeq ?? 0;
-  const ranked = [...finished].sort(
-    (a, b) => Number(places.get(b.id)?.merged) - Number(places.get(a.id)?.merged) || settled(b) - settled(a),
-  );
-  return new Set(ranked.slice(0, WORKERS_SHOWN));
-}
-
-/** One build's hangers: every worker at work and the finished ones in sight, in the order they started. */
-function hangersAt(build: number, steps: Step[], places: Map<string, WorkerPlace>, open: boolean): BuildHangers {
-  const finished = steps.filter((step) => !isLiveStep(step));
-  const folded = Math.max(0, finished.length - WORKERS_SHOWN);
-  if (!folded || open) return { build, steps, folded, open: open && folded > 0 };
-  const inSight = keptInSight(finished, places);
-  return { build, steps: steps.filter((step) => isLiveStep(step) || inSight.has(step)), folded, open: false };
-}
-
 /** A worker's row: its one node, built in one session. */
 const isWorkerRow = (row: PartRow): boolean =>
   row.facet.worker !== undefined && row.steps.length === 1 && row.steps.every((step) => step.session);
 
 /**
- * The run's build history, or null when it has none to draw: its checks name nothing new, or a row
- * is not a worker's one node. `open` names the builds (0: the lead) whose folded workers show.
+ * The run's build history, or null when it has none: its checks name nothing new, or a row is not a
+ * worker's one step.
  */
-export function buildTimeline(
-  graph: RunGraph,
-  rows: readonly PartRow[],
-  open: ReadonlySet<number> = new Set(),
-): BuildTimeline | null {
+export function buildTimeline(graph: RunGraph, rows: readonly PartRow[]): BuildTimeline | null {
   if (!graph.tree || !hasBuildHistory(graph) || !rows.every(isWorkerRow)) return null;
   const builds = buildsOf(graph);
   const startedAt = (step: Step): number => step.worker?.startedSeq ?? step.worker?.settledSeq ?? 0;
   const steps = rows.flatMap((row) => row.steps).sort((a, b) => startedAt(a) - startedAt(b));
   const places = new Map(steps.map((step) => [step.id, workerPlace(builds, step)] as const));
-  const hangers = [0, ...builds.map((build) => build.n)].map((build) => {
-    const here = steps.filter((step) => places.get(step.id)?.build === build);
-    return hangersAt(build, here, places, open.has(build));
-  });
-  return { builds, places, hangers };
+  return { builds, places };
 }
