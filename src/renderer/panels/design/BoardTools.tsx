@@ -188,7 +188,7 @@ export function BoardChrome({
   onDraft: (draft: NoteDraft) => void;
   onPictures: (files: readonly File[]) => void;
 }): JSX.Element {
-  const notes = untoldNotes(marks);
+  const notes = untoldNotes(marks, frames);
   const picks = untoldPicks(marks);
   const tell = (): void => {
     const ids = notes.map((note) => note.id);

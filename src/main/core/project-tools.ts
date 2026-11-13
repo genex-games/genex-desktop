@@ -174,7 +174,8 @@ export async function pluginsSuggest(
 /**
  * `show_design`: the design board's answer, and, for a page it showed from the game's own chat,
  * that page's card in the chat (`design_shown`): its file, its title and the agent's note. It
- * writes no file, so Plan mode lets it run.
+ * writes none of the game's files (`choose` keeps its offer in the board's own marks file, as the
+ * person's moves are kept), so Plan mode lets it run.
  */
 async function showDesign(core: StudioCore, args: Record<string, unknown>, call: ProjectToolCall): Promise<string> {
   const { threadId, project } = call;

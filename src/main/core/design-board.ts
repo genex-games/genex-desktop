@@ -74,6 +74,12 @@ export class DesignBoardService {
   readonly #hosts = new DesignHosts();
   /** What was read in each page listed, so a board read every two seconds reads a page's text once. */
   readonly #facts: DesignPageFacts = new Map();
+  /**
+   * Each game's last change to its marks file: a change waits for the one before it, so two saves
+   * never write the file at once (a mix of both would read back as an empty board) and an offer's
+   * read and write keep what a save in between wrote.
+   */
+  readonly #marksChanges = new Map<string, Promise<unknown>>();
 
   constructor(core: DesignCore) {
     this.#core = core;
@@ -153,7 +159,23 @@ export class DesignBoardService {
    * (anything else in `marks` is dropped), in the board's own folder, reached by no link. False
    * when the game is not there or the file could not be written.
    */
-  async saveMarks(project: string, marks: unknown): Promise<boolean> {
+  saveMarks(project: string, marks: unknown): Promise<boolean> {
+    return this.#inTurn(project, () => this.#writeMarks(project, marks));
+  }
+
+  /** `change` once the game's change to its marks before it has ended, however that ended. */
+  #inTurn<T>(project: string, change: () => Promise<T>): Promise<T> {
+    const before = this.#marksChanges.get(project) ?? Promise.resolve();
+    const turn = before.then(change, change);
+    const settled = turn.catch(() => undefined);
+    this.#marksChanges.set(project, settled);
+    void settled.then(() => {
+      if (this.#marksChanges.get(project) === settled) this.#marksChanges.delete(project);
+    });
+    return turn;
+  }
+
+  async #writeMarks(project: string, marks: unknown): Promise<boolean> {
     const root = await this.#root(project);
     if (!root) return false;
     const parts = DESIGN_MARKS_FILE.split("/");
@@ -187,7 +209,7 @@ export class DesignBoardService {
     if (!root) return null;
     const held = new Set((await listDesignBoard(root, this.#facts)).items.map((item) => item.file));
     const choices = readDesignFiles(files, CHOICES_MAX).filter((file) => held.has(file));
-    await this.saveMarks(project, { ...(await this.marks(project)), choices });
+    await this.#inTurn(project, async () => this.#writeMarks(project, { ...(await this.marks(project)), choices }));
     this.#core.emit(UiEvent.DesignChoices, { project, files: choices });
     return choices;
   }
@@ -195,7 +217,7 @@ export class DesignBoardService {
   /**
    * `show_design`: with no artboard, how to design on the board and what it holds now; with an
    * artboard of the game's board, the Design tab opens on it, with the agent's few words and the
-   * spot it points at, if it pointed. It writes no file, so Plan mode lets it run.
+   * spot it points at, if it pointed. It writes no file.
    */
   async show(project: string, page: unknown, said: { note?: unknown; spot?: unknown } = {}): Promise<DesignShowResult> {
     const root = await this.#root(project);

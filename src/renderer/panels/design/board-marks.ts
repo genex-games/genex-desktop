@@ -83,8 +83,13 @@ export const withoutNote = (marks: DesignMarks, id: string): DesignMarks => ({
   notes: marks.notes.filter((note) => note.id !== id),
 });
 
-/** The notes the agent has not been told about. */
-export const untoldNotes = (marks: DesignMarks): DesignNote[] => marks.notes.filter((note) => !note.told);
+/**
+ * The notes the agent has not been told about that the person can see on the canvas. The marks
+ * file is the game's and read as untrusted, so a note pinned to an artboard no longer on the board,
+ * which is not drawn, is never sent as the person's words.
+ */
+export const untoldNotes = (marks: DesignMarks, frames: readonly Hung[]): DesignNote[] =>
+  marks.notes.filter((note) => !note.told && notePoint(note, frames) !== null);
 
 /** The marks with these notes told to the agent. */
 export const toldNotes = (marks: DesignMarks, ids: readonly string[]): DesignMarks => ({

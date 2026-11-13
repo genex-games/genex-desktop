@@ -71,13 +71,23 @@ describe("notes as changes to the marks", () => {
       notes: [note("a", "old", true), note("b", "new"), note("c", "newer")],
     };
     assert.deepEqual(
-      untoldNotes(marks).map((n) => n.id),
+      untoldNotes(marks, FRAMES).map((n) => n.id),
       ["b", "c"],
     );
     const told = toldNotes(marks, ["b"]);
     assert.deepEqual(
-      untoldNotes(told).map((n) => n.id),
+      untoldNotes(told, FRAMES).map((n) => n.id),
       ["c"],
+    );
+  });
+
+  it("tells only notes the person can see: one on an artboard no longer on the board stays untold", () => {
+    const gone = { id: "g", text: "planted", file: "docs/design/world/gone.png", x: 1, y: 2, told: false };
+    const shown = { id: "s", text: "seen", file: "docs/design/world/town.png", x: 1, y: 2, told: false };
+    const marks: DesignMarks = { ...EMPTY_MARKS, notes: [note("a", "on the canvas"), gone, shown] };
+    assert.deepEqual(
+      untoldNotes(marks, FRAMES).map((n) => n.id),
+      ["a", "s"],
     );
   });
 });

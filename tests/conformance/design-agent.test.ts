@@ -152,6 +152,30 @@ describe("show_design, offering artboards to pick among", () => {
   });
 });
 
+describe("the board's marks, saved while another save is still writing", () => {
+  it("keeps the last save whole, never a mix of two", async () => {
+    const { core, close } = await studio();
+    try {
+      const notes = (count: number) =>
+        Array.from({ length: count }, (_, i) => ({ id: `n${i}`, text: "x".repeat(500), x: i, y: i, told: false }));
+      const saves = [120, 60, 30, 1].map((count) =>
+        core.design.saveMarks("bees", { places: {}, notes: notes(count), picks: {}, choices: [] }),
+      );
+      assert.deepEqual(await Promise.all(saves), [true, true, true, true]);
+      const root = core.games.dirFor("bees");
+      const text = fs.readFileSync(path.join(root, "docs/design/.genex-board.json"), "utf8");
+      assert.doesNotThrow(() => JSON.parse(text), "the file parses");
+      assert.deepEqual(
+        (await core.design.marks("bees")).notes.map((note) => note.id),
+        ["n0"],
+        "the last save is what the board holds",
+      );
+    } finally {
+      await close();
+    }
+  });
+});
+
 describe("the canvas, asked to point", () => {
   it("keeps where the agent pointed with the artboard it asked for, taken once", () => {
     askForPage("bees", "docs/design/world/town.png", { spot: { x: 40, y: 70 }, note: "The well" });
