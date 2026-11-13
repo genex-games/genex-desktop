@@ -12,7 +12,7 @@ this preface wins.
   generationId.
 - Operation `status` names the lanes that are live.
 
-<!-- upstream @genex-ai/cli-demo/templates/skills/genex-tool-texture/SKILL.md v1.43.1 sha256 d89a284d5b05fe24f69aecee1f860f18e2aeed607be27983168f1a9eaa402829 -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-tool-texture/SKILL.md v1.43.3 sha256 a82b8473c8a2969010d4e0d71eacf932bdae2f6aa40d6f888aec33da2d7e7f2f -->
 ---
 name: genex-tool-texture
 description: Generate a tiling PBR texture set with `npx genex texture` — ground, floors, walls, rock, bark, metal, fabric, any repeating surface. Produces several maps (base colour, normal, roughness and friends) as separate files in ./assets, and `--terrain` makes the result seamless for large ground planes.
@@ -54,7 +54,7 @@ repeat — the file names carry the role, so the mapping is unambiguous.
 
 ## Cost
 
-From **9 credits** for the whole set (1 credit = $0.01). Live prices and
+From **6 credits** for the whole set (1 credit = $0.01). Live prices and
 your balance: `npx genex doctor`.
 
 ## Waiting
