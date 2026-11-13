@@ -5,9 +5,16 @@
  * Only text between tags is touched, never attributes, and text inside a link or button stays
  * as it is. A piece of text with no file in it is returned byte for byte.
  */
-import { type ChatFileLink, type ChatFileLookup, type ChatFileRef, fileMentions } from "../../shared/chat-files.ts";
+import {
+  type ChatFileLink,
+  type ChatFileLookup,
+  ChatFileOpen,
+  type ChatFileRef,
+  fileMentions,
+} from "../../shared/chat-files.ts";
+import { namedDesignPage } from "../../shared/design-board.ts";
 import { hostPlatform } from "../platform.ts";
-import { chatFileWords } from "../words.ts";
+import { chatFileWords, DESIGN_WORDS } from "../words.ts";
 
 export const escapeHtml = (text: string): string =>
   text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -36,10 +43,22 @@ export function fileNameOfPath(name: string): string | null {
   }
 }
 
-/** The hover text of a file link: what a click does, then where the file is when the label hides it. */
-export function fileLinkTitle(link: ChatFileLink, label: string, platform: string = platformHere()): string {
+/** Whether a press on a file link opens the Design tab: the name is a page of the game's board, and nothing opens it beside the chat. */
+const opensInDesign = (link: ChatFileLink, ref: ChatFileRef | undefined): boolean =>
+  ref !== undefined && link.open !== ChatFileOpen.Beside && namedDesignPage(ref.name, ref.base) !== null;
+
+/**
+ * The hover text of a file link: what a click does (for `ref`, the name as the chat wrote it, a
+ * page of the design board opens in Design), then where the file is when the label hides it.
+ */
+export function fileLinkTitle(
+  link: ChatFileLink,
+  label: string,
+  platform: string = platformHere(),
+  ref?: ChatFileRef,
+): string {
   const words = chatFileWords(platform);
-  const lines = [words.open[link.open]];
+  const lines = [opensInDesign(link, ref) ? DESIGN_WORDS.opensInDesign : words.open[link.open]];
   if (link.path !== label.trim()) lines.push(link.path);
   if (link.build) lines.push(words.build);
   return lines.join("\n");
@@ -64,7 +83,7 @@ export function fileLinkHtml(
     ...(ref.base ? [`data-file-base="${escapeAttribute(ref.base)}"`] : []),
     `data-file-open="${link.open}"`,
     `data-file-target="${escapeAttribute(link.path)}"`,
-    `title="${escapeAttribute(fileLinkTitle(link, text))}"`,
+    `title="${escapeAttribute(fileLinkTitle(link, text, platformHere(), ref))}"`,
   ].join(" ");
   return chip
     ? `<button ${attributes}>${FILE_ICON}<span>${label}</span></button>`

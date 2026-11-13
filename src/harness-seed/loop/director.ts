@@ -240,7 +240,7 @@ function sessionEndWords(loopRun: LoopRun, result: Partial<DelegateResult>): str
  * The run the lead left open — its turn ended with nothing at work, its wrap-up ended, or a lost
  * provider paused it: the harness closes it in place, as `finish` does. A run a lost provider or a
  * Stop paused keeps what it did for a Resume, and so does one whose lead's turn ended with nothing
- * at work: a build is the whole making of the game, so the person's next word goes on with it.
+ * at work: the person's next word that asks for more of its goal goes on with it.
  */
 export async function closeLeftOpen(
   loopRun: LoopRun,

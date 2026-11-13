@@ -6,6 +6,7 @@
 import { assetWorkspaces } from "../asset-workspaces.ts";
 import { buildDeliveries, resolveBuildRef } from "../build-assets.ts";
 import { isBuildRef } from "../../shared/build-ref.ts";
+import { DESIGN_FOLDER } from "../../shared/design-board.ts";
 import { assertAssetPath, readAssetPreview } from "../asset-preview.ts";
 import { readModelRig } from "../model-rigs.ts";
 import { type KeptThumbnail, keepThumbnail, readThumbnail } from "../asset-thumbnails.ts";
@@ -70,6 +71,8 @@ const MAX_PRESENCE_FILES = 200;
 const RIG_READS_AT_ONCE = 8;
 /** The longest label a run's feedback keeps. */
 const FEEDBACK_LABEL_CHARS = 120;
+/** Where a game's design board lies in its folder, as a preview's file names it: the one folder beside the asset folders a preview reads. */
+const DESIGN_BOARD_PREFIX = `${DESIGN_FOLDER}/`;
 /** How long a game's asset folders are reused by its previews and thumbnails: the Assets stage's poll. */
 const ASSET_FOLDERS_FRESH_MS = 10 * SECOND_MS;
 
@@ -381,6 +384,10 @@ export class AssetService {
       if (!(await this.#ownsGenexJob(p.project, ref.jobId))) throw new Error(MESSAGE.recordedAssetUnavailable());
       return readAssetPreview(path.join(dir, "output"), ref.path.join("/"), [], p.maxBytes);
     }
+    // A model or picture of the game's design board, which its canvas turns with the app's own
+    // viewer: read from the board's folder and nowhere beside it, by the reader's own checks.
+    if (p.file.startsWith(DESIGN_BOARD_PREFIX))
+      return readAssetPreview(this.#core.games.dirFor(p.project), p.file, [DESIGN_BOARD_PREFIX], p.maxBytes);
     assertAssetPath(p.file, await this.assetFolders(p.project));
     // The folders were checked above; the reader keeps its own hidden-part, link and file checks.
     return readAssetPreview(this.#core.games.dirFor(p.project), p.file, [], p.maxBytes);

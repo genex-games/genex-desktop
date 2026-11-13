@@ -29,6 +29,7 @@ import {
   consentCardKey,
   type OwnAnswer,
   permissionCardKey,
+  questionCardKey,
   unansweredCards,
   type WaitingCard,
   waitingHead,
@@ -150,8 +151,8 @@ interface ComposerDockProps {
   genex: GenexNoticeProps | null;
   /** The intake's questions still waiting for an answer. */
   questions: Question[];
-  /** A pressed answer's words, sent as the person's next message. */
-  onAnswerQuestion: (answer: string) => Promise<void>;
+  /** A pressed answer's words, sent as the person's next message: false when it went nowhere (a sign-in first). */
+  onAnswerQuestion: (answer: string) => Promise<boolean>;
   questionsDisabled: boolean;
   /** A plan that is waiting for approval, or failed to be written. */
   plan: PlanPrompt | null;
@@ -169,6 +170,11 @@ interface ComposerDockProps {
   children: (own: OwnAnswer | null) => ReactNode;
 }
 
+/** The dock's props as its cards take them: a pressed answer names the question it answers, whose card goes at the press. */
+type CardProps = Omit<ComposerDockProps, "onAnswerQuestion"> & {
+  onAnswerQuestion: (entryId: string, answer: string) => Promise<void>;
+};
+
 /** A card waiting on the user, what it draws, and what it makes of the composer's words. */
 type DockCard = WaitingCard & { node: ReactNode; own?: OwnAnswer };
 
@@ -180,7 +186,7 @@ const QUESTION_OWN_ANSWER: OwnAnswer = { placeholder: t("Write your own answerâ€
  * running, in the order they were asked (entry ids are time-ordered); then the plan to approve;
  * then the intake's questions, which cannot be answered while the chat works.
  */
-function waitingCards(props: ComposerDockProps): DockCard[] {
+function waitingCards(props: CardProps): DockCard[] {
   const { questions, questionsDisabled, onAnswerQuestion, plan, onConsent, onPermission } = props;
   const asks = [...props.consents, ...props.permissions].sort((a, b) => a.id.localeCompare(b.id));
   return [
@@ -224,12 +230,13 @@ function waitingCards(props: ComposerDockProps): DockCard[] {
         ]
       : []),
     ...questions.map((entry) => ({
-      key: `question:${entry.id}`,
+      key: questionCardKey(entry.id),
       blocked: questionsDisabled,
       own: QUESTION_OWN_ANSWER,
       node: (
         <ChatQuestion
           title={entry.text}
+          {...(entry.step && entry.of ? { counter: { step: entry.step, of: entry.of } } : {})}
           {...(entry.recap ? { recap: entry.recap } : {})}
           choices={entry.choices}
           disabled={questionsDisabled}
@@ -238,7 +245,7 @@ function waitingCards(props: ComposerDockProps): DockCard[] {
             const answer = entry.choices[index];
             if (!answer) return;
             await sendQuestionAnswer({ thread: props.conversationKey, via: QuestionVia.Choice, index }, () =>
-              onAnswerQuestion(choiceLabel(answer)),
+              onAnswerQuestion(entry.id, choiceLabel(answer)),
             );
           }}
         />
@@ -262,8 +269,9 @@ function useWaitingHead(cards: readonly WaitingCard[], conversation: string | un
 const NONE_ANSWERED: ReadonlySet<string> = new Set();
 
 /**
- * The permission cards answered in this chat, each gone at its press (`answerAtPress`): the answer
- * is all but sure to be taken, so nothing waits on the host to say so. Another chat starts afresh.
+ * The cards answered in this chat (a permission, an agent's question), each gone at its press
+ * (`answerAtPress`): the answer is all but sure to be taken, so nothing waits on the host to say
+ * so, and the card never stands there dimmed while its answer is on its way. Another chat starts afresh.
  */
 function useAnsweredCards(conversation: string | undefined) {
   const [state, setState] = useState({ conversation, keys: NONE_ANSWERED });
@@ -275,7 +283,7 @@ function useAnsweredCards(conversation: string | undefined) {
       else next.delete(key);
       return { conversation, keys: next };
     });
-  return { keys, answer: (key: string, send: () => Promise<void>) => answerAtPress(key, send, mark) };
+  return { keys, answer: (key: string, send: () => Promise<boolean | void>) => answerAtPress(key, send, mark) };
 }
 
 /**
@@ -325,6 +333,8 @@ export function ComposerDock(props: ComposerDockProps): JSX.Element {
       answered.answer(consentCardKey(consentId), () => props.onConsent(consentId, ...rest)),
     onPermission: (requestId, answer) =>
       answered.answer(permissionCardKey(requestId), () => props.onPermission(requestId, answer)),
+    onAnswerQuestion: (entryId, answer) =>
+      answered.answer(questionCardKey(entryId), () => props.onAnswerQuestion(answer)),
   });
   const waiting = unansweredCards(cards, answered.keys);
   const head = useWaitingHead(waiting, props.conversationKey);

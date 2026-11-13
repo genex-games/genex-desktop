@@ -43,7 +43,7 @@ const str = (description: string) => ({ type: "string", description });
  * work with props and lighting, until the person said "not work on a map" (sword duel).
  */
 const GOAL_WORDS =
-  "What the person asked for: their own words, quoted as they wrote them, then what that means in this game in a sentence or two. Add no work they didn't ask for, and where a word could mean more than one thing, read it by what they made the priority earlier in this chat.";
+  "What the person asked for: their own words, quoted as they wrote them, then what that means in this game in a sentence or two, at the stage the project is in (as they or its own notes, such as a HANDOFF.md, say). Add no work they didn't ask for (no packaging, publishing or finished game unless they asked), and where a word could mean more than one thing, read it by what they made the priority earlier in this chat.";
 /** What a launch's reference is: whatever the user named, if anything. */
 const DIRECTION_WORDS = "optional: a game, film or picture the user named as a reference, in their words";
 
@@ -101,7 +101,7 @@ function slugProject(text: unknown): string {
 export const startAutopilot: HarnessTool = {
   name: "start_autopilot",
   description:
-    "Start a build: the whole making of this game, which you lead with workers in parallel and save points until you call finish or the person stops it. Call it as soon as you set to making the game or a change beyond a quick fix, instead of doing that work in your reply: say in a line what the build will do and end your reply. It goes on in this session from this folder as you leave it. When this chat has a paused build, go on with it (resume_run) unless the person wants to start over.",
+    "Start a build: work toward the goal the person set, which you lead with workers in parallel and save points until you call finish or the person stops it. Call it as soon as you set to making a game whose direction is settled (the person answered your questions and agreed to the design, said to just build, or asked for a small game their words give whole), or to a change of many steps the person asked for, instead of doing that work in your reply: say in a line what the build will do and end your reply. A build does only what the person asked, at the stage their project is in (a blockout stays a blockout, an asset search stays a search): packaging, publishing or finishing the whole game are its goal only when they ask for that. A question, a look, a choice the person makes (assets to pick, a layout to review) or a quick fix needs no build. It goes on in this session from this folder as you leave it. When this chat has a paused build and the person asks for more of its goal, go on with it (resume_run) unless the person wants to start over.",
   parameters: {
     type: "object",
     properties: {

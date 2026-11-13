@@ -28,6 +28,7 @@ export function resolveStageView(
 ): StageView {
   if (view === StageView.File && has.beside) return StageView.File;
   if (view === StageView.Builds && has.builds) return StageView.Builds;
+  if (view === StageView.Design && has.project) return StageView.Design;
   if (view === StageView.Shop && has.shop && has.project) return StageView.Shop;
   if (view === StageView.Assets && has.project) return StageView.Assets;
   return StageView.Live;
@@ -111,6 +112,8 @@ export function stageFlags({
     assetsOpen: stageView === StageView.Assets,
     /** Shop is a full-stage surface too. */
     shopOpen: stageView === StageView.Shop,
+    /** …and so is Design: its pages take the whole stage. */
+    designOpen: stageView === StageView.Design,
     fileOpen: stageView === StageView.File,
   };
 }

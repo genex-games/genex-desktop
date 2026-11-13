@@ -5,6 +5,10 @@
  * run stands is `run_status`'s answer. Model-facing: the lead reads them as written.
  */
 
+/** What a Loop's goal is to its lead: all of its work, and where it ends. */
+const GOAL_BOUNDS =
+  "That goal is all of this Loop's work: add none the person didn't ask for, and finish once it is reached.";
+
 /** What Genex tells a Loop's lead. */
 export const LOOP_WORDS = {
   /**
@@ -14,10 +18,15 @@ export const LOOP_WORDS = {
    */
   personWaits:
     "The person wrote the message below in the chat while the Loop works, and waits there for your answer: answer it first, in a sentence or two, then go on.",
-  /** The Loop's first line: its goal, as the chat's session wrote it when it started the Loop. */
-  started: (goal: string) => `The Loop started. Its goal: ${goal}`,
+  /**
+   * The Loop's first line: its goal, as the chat's session wrote it when it started the Loop, and that
+   * the goal bounds the work. A Loop started to go on with a blockout and pick Fab assets drove on
+   * toward a shipped build (DeathWish).
+   */
+  started: (goal: string) => `The Loop started. Its goal: ${goal}\n${GOAL_BOUNDS}`,
   /** A resumed Loop's first line. */
-  resumed: (goal: string) => `The Loop resumed after a pause; workers from before it no longer run. Its goal: ${goal}`,
+  resumed: (goal: string) =>
+    `The Loop resumed after a pause; workers from before it no longer run. Its goal: ${goal}\n${GOAL_BOUNDS}`,
   /** The wrap-up turn the person's Finish starts. */
   finishAsked: "The person asked the Loop to finish: it closes when this turn ends.",
   /** The wrap-up turn a failed turn starts. */

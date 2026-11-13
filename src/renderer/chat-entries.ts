@@ -4,6 +4,7 @@ import { EngineId, providerInfo } from "../shared/providers.ts";
 import { harnessTurnFailure, TurnFailureCode } from "../shared/engine-requests.ts";
 import { isRaisedContextName } from "../shared/ollama-context.ts";
 import type { ExportReview } from "../shared/plugins.ts";
+import { type DesignShownPayload, readDesignShown } from "../shared/design-board.ts";
 import type { PluginSuggestedPayload } from "../shared/project-tools.ts";
 import { type ListingRecord, listingDraftOf, listingKey } from "../shared/item-draft.ts";
 import { parseSuggestion } from "./chat/plugin-suggestion.ts";
@@ -33,6 +34,7 @@ import {
   delegatedPayload,
   type LoopRefusal,
   loopRefusalOf,
+  questionStepOf,
 } from "../shared/custom-events.ts";
 import { isHandoffNarration } from "../shared/chat-presentation.ts";
 import { isHostRunTool } from "../shared/chat-run.ts";
@@ -136,6 +138,8 @@ export const EntryKind = {
   ListingDraft: "listing-draft",
   /** Genex's review of the game's apps or its takedown, or a Fix with agent press (`genex_review`, `genex_review_fix`). */
   GenexReview: "genex-review",
+  /** A page of the game's design board its agent showed (`design_shown`): the page's card, drawn from the board as it is now. */
+  DesignPage: "design-page",
 } as const;
 export type EntryKind = (typeof EntryKind)[keyof typeof EntryKind];
 
@@ -206,6 +210,8 @@ export type Entry =
   | { kind: typeof EntryKind.Mentions; id: string; messageId?: string; tags: MentionOutcome[] }
   /** The turn-it-on card a session showed: its button is read from the live plugin list. */
   | { kind: typeof EntryKind.PluginSuggestion; id: string; suggestion: PluginSuggestedPayload }
+  /** A design page the agent showed: one card per page, where it was last shown. */
+  | { kind: typeof EntryKind.DesignPage; id: string; design: DesignShownPayload }
   /** One plain line about what Harness learned; `link` opens Activity. */
   | { kind: typeof EntryKind.Learning; id: string; text: string; link: string }
   | {
@@ -214,6 +220,9 @@ export type Entry =
       text: string;
       /** The agent's one line above its question: what it found or did. */
       recap?: string;
+      /** Which question of a short run of them this is (`step` of `of`), when its record names one. */
+      step?: number;
+      of?: number;
       choices: Array<{ id: string; label: string; description?: string }>;
       pending: boolean;
     }
@@ -343,6 +352,7 @@ type ToolsEntry = Extract<Entry, { kind: typeof EntryKind.Tools }>;
 export type GenexCoverEntry = Extract<Entry, { kind: typeof EntryKind.GenexCover }>;
 /** A store item's Listing draft card. */
 export type ListingDraftEntry = Extract<Entry, { kind: typeof EntryKind.ListingDraft }>;
+export type DesignPageEntry = Extract<Entry, { kind: typeof EntryKind.DesignPage }>;
 export type GenexReviewEntry = Extract<Entry, { kind: typeof EntryKind.GenexReview }>;
 type ActionEntry = Extract<Entry, { kind: typeof EntryKind.Action }>;
 
@@ -831,6 +841,7 @@ function readConversation(chat: ChatDraft, event: EventEnvelope): boolean {
       id: event.id,
       text: asked.question,
       ...(asked.recap ? { recap: asked.recap } : {}),
+      ...(questionStepOf(asked) ?? {}),
       choices: asked.choices ?? [],
       pending: true,
     });
@@ -1586,6 +1597,25 @@ function narratePluginSuggested(chat: ChatDraft, event: EventEnvelope): void {
   if (!suggestion) return;
   closeGroup(chat);
   chat.entries.push({ kind: EntryKind.PluginSuggestion, id: event.id, suggestion });
+}
+
+/**
+ * A page of the design board the agent showed: its card. A page shown again takes its earlier
+ * card's place, so a page worked on live has one card, at its latest; an old or partial record
+ * draws nothing.
+ */
+function narrateDesignShown(chat: ChatDraft, event: EventEnvelope): void {
+  const design = readDesignShown(customPayload(event.data, CustomEvent.DesignShown));
+  if (!design) return;
+  closeGroup(chat);
+  const earlier = chat.entries.findIndex(
+    (entry) =>
+      entry.kind === EntryKind.DesignPage &&
+      entry.design.file === design.file &&
+      entry.design.project === design.project,
+  );
+  if (earlier >= 0) chat.entries.splice(earlier, 1);
+  chat.entries.push({ kind: EntryKind.DesignPage, id: event.id, design });
 }
 
 /** Undo took a link back: its line says what the game builds in now, and offers Undo no more. */
@@ -2370,6 +2400,7 @@ const NARRATORS: readonly Narrator[] = [
   narrateWentAhead,
   narrateChatJudge,
   narratePluginSuggested,
+  narrateDesignShown,
   narrateImprovement,
   narrateSkillAccepted,
   narrateRunStart,

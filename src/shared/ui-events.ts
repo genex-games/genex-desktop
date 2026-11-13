@@ -12,6 +12,7 @@ import type { AgentScreenEvent, AgentScreenFrame } from "./agent-screen.ts";
 import type { ReadyUpdate, UpdateFailedNote } from "./app-update.ts";
 import type { MainDiagnostic } from "./app-session.ts";
 import type { BootFailureCode, SandboxFolderKind } from "./boot.ts";
+import type { DesignChoices, DesignMaking, DesignShown } from "./design-board.ts";
 import type { AssetDeliveredPayload } from "./game-assets.ts";
 import type { LiveBehindEvent } from "./live-behind.ts";
 import type { McpChange } from "./mcp.ts";
@@ -131,6 +132,12 @@ export interface UiEventMap {
   // — games and builds —
   "game.changed": { project?: string; file?: string; warning?: string };
   "game.archived": { project: string; trash: boolean };
+  /** The game's agent showed the person a page of its design board (`show_design`). */
+  "design.shown": DesignShown;
+  /** The game's agent said which artboards it is about to make: the canvas shows them being drawn. */
+  "design.making": DesignMaking;
+  /** The game's agent offered artboards to pick among: only those wear Use this and Not this. */
+  "design.choices": DesignChoices;
   "delegation.started": { project: string; engine: string; active: number };
   "delegation.finished": { project: string; engine: string; active: number };
   "delegation.checkpoint": { project: string; cwd: string; note: string };
@@ -277,6 +284,9 @@ export const UiEvent = {
   ModelPull: "model.pull",
   GameChanged: "game.changed",
   GameArchived: "game.archived",
+  DesignShown: "design.shown",
+  DesignMaking: "design.making",
+  DesignChoices: "design.choices",
   DelegationStarted: "delegation.started",
   DelegationFinished: "delegation.finished",
   DelegationCheckpoint: "delegation.checkpoint",

@@ -417,6 +417,8 @@ this machine; Set up, Open Studio and Get Roblox Studio are native, so a fixture
 and items-store (with `STUDIO_FIXTURE_GENEX_ACCOUNT=1`: the fixture game is the account's Snowball on
 Genex, so Create › Items' Add to and Ask the agent reach its chat, which ends with Frost Axe's Listing draft
 card; [the item store](play.md#the-item-store))
+and design-board (the Design tab with three pages on its wall and the chat that asked for them;
+[design board](design-board.md))
 and native-review (with `STUDIO_FIXTURE_GENEX_ACCOUNT=1`: five games on Genex. The fixture game,
 Midnight Asphalt, is taken down for three things to fix; Skate Dog is with a person, Stick & Steel
 and Lost Cathedral are public, The Long Silence is being checked. Their news arrives 4 s after the

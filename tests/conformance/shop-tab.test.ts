@@ -62,13 +62,13 @@ const view = (fields: Partial<LocalItemsView> = {}): LocalItemsView => ({
 });
 
 describe("the Shop tab on the stage strip", () => {
-  it("joins between Builds and Assets once the game sells something, and is a plain view", () => {
+  it("joins between Design and Assets once the game sells something, and is a plain view", () => {
     const tabs = (hasShop: boolean) =>
       stageTabs({ views: [preview], plugins: [], hasBuilds: true, buildsLive: false, hasShop, beside: null }).map(
         (tab) => tab.key,
       );
-    assert.deepEqual(tabs(false), ["live", "builds", "assets"]);
-    assert.deepEqual(tabs(true), ["live", "builds", "shop", "assets"]);
+    assert.deepEqual(tabs(false), ["live", "builds", "design", "assets"]);
+    assert.deepEqual(tabs(true), ["live", "builds", "design", "shop", "assets"]);
     assert.deepEqual(tabChoice("shop", [preview]), { view: StageView.Shop });
     assert.equal(tabGlyph({ key: StageView.Shop, label: "Shop" }, [preview]), "layers");
     assert.equal(isStageView("shop"), true, "a remembered Shop opens again");

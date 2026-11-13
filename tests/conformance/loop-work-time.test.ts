@@ -19,6 +19,7 @@ import { MESSAGE as OPEN_END } from "../../src/harness-seed/loop/director/open/f
 import { chatContext } from "../../src/harness-seed/loop/chat-session.ts";
 import { askedMinutes, MAX_WORK_MINUTES, spanWords } from "../../src/harness-seed/loop/work-time.ts";
 import { WORK_WORDS } from "../../src/harness-seed/loop/work-time-prompts.ts";
+import { LOOP_WORDS } from "../../src/harness-seed/loop/director/wake-prompts.ts";
 import { gameRepo, type LoopHost, type LoopTurn, loopHost } from "../helpers/loop-host.ts";
 import { copyProject, Project } from "../helpers/project-fixtures.ts";
 import { tmpDir } from "../helpers/tmp.ts";
@@ -106,7 +107,8 @@ describe("a Loop the person gave a time", () => {
       ]);
       const report = await host.start();
       const [first, second] = host.prompts();
-      assert.equal(first, `The Loop started. Its goal: ${String(host.run.goal)}\n${WORK_WORDS.asked("1 h", "1 h")}`);
+      // Flipped (SC-4): the first line is the goal and its bounds (LOOP_WORDS.started), then the time asked.
+      assert.equal(first, `${LOOP_WORDS.started(String(host.run.goal))}\n${WORK_WORDS.asked("1 h", "1 h")}`);
       assert.equal(answers[0], WORK_WORDS.tooSoon("1 h", "20 min", "40 min"));
       // The refused turn ended with nothing at work: the lead was woken to go on, not closed.
       assert.equal(second, WORK_WORDS.keepWorking("1 h", "20 min", "40 min"));
@@ -133,7 +135,8 @@ describe("a Loop the person gave a time", () => {
       ],
     });
     const report = await host.start();
-    assert.equal(host.prompts()[0], `The Loop started. Its goal: ${String(host.run.goal)}`);
+    // Flipped (SC-4): the goal's line carries its bounds (LOOP_WORDS.started).
+    assert.equal(host.prompts()[0], LOOP_WORDS.started(String(host.run.goal)));
     assert.doesNotMatch(String(answers[0]), /worked/);
     assert.equal(report.victory, true);
   });

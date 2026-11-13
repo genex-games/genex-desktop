@@ -1,10 +1,12 @@
 /**
  * A question waiting on the person, asked the way Claude asks: a bold question (a short grey recap
- * above it, or one grey line under it), then its answers as buttons from the card's left edge. The
+ * above it, or one grey line under it), then its answers as buttons from the card's left edge. One
+ * of a short run of questions says which it is in a small line on top ("Question 2 of 4"). The
  * first answer is the recommended one, filled, with the keys that press it from anywhere in the chat
  * (⌘↩, Ctrl+Enter elsewhere). A press answers at once; the person's own words go in the composer.
  */
 import { type ReactNode, type RefObject, useEffect, useId, useRef, useState } from "react";
+import type { QuestionStep } from "../../shared/custom-events.ts";
 import { t } from "../../shared/i18n.ts";
 import { hostPlatform } from "../platform.ts";
 import { problemWords } from "../words.ts";
@@ -200,12 +202,32 @@ function Fineprint({
 }
 
 /**
+ * Where a question stands in a short run of them: "Question 2 of 4" on the left, and on the right a
+ * dash for each question, filled up to this one. The words say it all, so the dashes are not read out.
+ */
+function StepCounter({ step, of }: QuestionStep) {
+  const dashes = Array.from({ length: of }, (_, index) => index + 1);
+  return (
+    <p data-question-step={step} className="chat-question-step">
+      <span>{t("Question {step} of {of}", { step, of })}</span>
+      <span aria-hidden="true" className="chat-question-dashes">
+        {dashes.map((dash) => (
+          <span key={dash} data-filled={dash <= step ? "" : undefined} />
+        ))}
+      </span>
+    </p>
+  );
+}
+
+/**
  * A waiting question: the caller keys it by request id, and only the host settles a request.
- * `recap` sits above the question (an agent's own question); `description` is one grey line under
- * it, with `details` behind "Details ›". `keys` off leaves the answer keys to the docked cards.
+ * `counter` says which question of a short run this is, above everything else; `recap` sits above
+ * the question (an agent's own question); `description` is one grey line under it, with `details`
+ * behind "Details ›". `keys` off leaves the answer keys to the docked cards.
  */
 export function ChatQuestion({
   title,
+  counter,
   recap,
   description,
   details,
@@ -218,6 +240,7 @@ export function ChatQuestion({
   keys = true,
 }: {
   title: string;
+  counter?: QuestionStep;
   recap?: string;
   description?: string;
   details?: ReactNode;
@@ -275,6 +298,7 @@ export function ChatQuestion({
       className="chat-question"
     >
       <div className="chat-question-body">
+        {counter && <StepCounter step={counter.step} of={counter.of} />}
         {recap && (
           <p data-question-recap className="chat-question-recap">
             {recap}

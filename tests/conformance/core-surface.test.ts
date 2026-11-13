@@ -149,6 +149,8 @@ const FIELDS = [
   "budget",
   "builds",
   "contextPreferences",
+  // The games' design boards: read for the Design tab, served to its frames, shown by `show_design`.
+  "design",
   "engineLinks",
   "engines",
   "fastDecisions",

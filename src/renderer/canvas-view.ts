@@ -95,8 +95,8 @@ const INITIAL_ZOOM = 0.72;
 /** How far from the left edge `panTo` leaves the point it brings into view. */
 const PAN_TO_MARGIN = 40;
 /** Wheel zoom speed per pixel of scroll: a pinch (ctrl/meta held) moves faster than a wheel. */
-const PINCH_ZOOM_RATE = 0.012;
-const WHEEL_ZOOM_RATE = 0.0025;
+export const PINCH_ZOOM_RATE = 0.012;
+export const WHEEL_ZOOM_RATE = 0.0025;
 const WHEEL_SETTLE_MS = 120;
 const VIEW_EPSILON = 0.001;
 const GRID_PX = 22;

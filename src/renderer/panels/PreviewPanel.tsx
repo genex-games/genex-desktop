@@ -61,7 +61,9 @@ import { useStill } from "../stills.ts";
 import { readText, storageKeyFor, writeText } from "../storage.ts";
 import { WEB_BUILD_SHOWN_EVENT } from "../web-build-shown.ts";
 import { isPlanning, runIdIn } from "../words.ts";
+import { useDesignBoard } from "./design/use-design-board.ts";
 import { useShopItems } from "./shop/use-shop-items.ts";
+import type { DesignBoard } from "../../shared/design-board.ts";
 import type { ListingRecord } from "../../shared/item-draft.ts";
 import { FileViewer } from "./FileViewer.tsx";
 import type { Notify } from "../state/toasts.ts";
@@ -82,6 +84,8 @@ import { StillsStage } from "./stage/StillsStage.tsx";
 
 /** Shop loads when it opens: the stage's first paint carries none of it. */
 const ShopStage = lazy(() => import("./shop/ShopStage.tsx"));
+/** …and so does Design. */
+const DesignStage = lazy(() => import("./design/DesignStage.tsx"));
 /** …and the Assets canvas, with its tabs, search and share window. */
 const AssetsCanvas = lazy(() => import("./AssetsCanvas.tsx").then((stage) => ({ default: stage.AssetsCanvas })));
 import { UnrealStage } from "./stage/UnrealStage.tsx";
@@ -520,6 +524,36 @@ interface StageContentsView {
   firstPlan: { since?: number } | null;
 }
 
+/** What the stage views that load when they open show. */
+interface StageBoards {
+  /** The game's store items, which Shop shows. */
+  shop: readonly ListingRecord[];
+  /** The game's design board, which Design hangs. */
+  design: DesignBoard;
+}
+
+/** The stage views that load when they open: Design's wall and Shop's tiles. */
+function LazyStage({
+  view,
+  project,
+  boards,
+}: {
+  view: StageView;
+  project: string;
+  boards: StageBoards;
+}): JSX.Element | null {
+  if (view !== StageView.Design && view !== StageView.Shop) return null;
+  return (
+    <Suspense fallback={null}>
+      {view === StageView.Design ? (
+        <DesignStage project={project} board={boards.design} />
+      ) : (
+        <ShopStage project={project} items={boards.shop} />
+      )}
+    </Suspense>
+  );
+}
+
 /** What fills the stage's rectangle over (or instead of) the running game. */
 function StageContents({
   project,
@@ -530,7 +564,7 @@ function StageContents({
   showSetup,
   beside,
   tabs,
-  shop,
+  boards,
   onView,
   onNotice,
   onPlayBuild,
@@ -541,8 +575,8 @@ function StageContents({
   project: string | null;
   threadId: string | null;
   graph: RunGraphModel | null;
-  /** The game's store items, which Shop shows. */
-  shop: readonly ListingRecord[];
+  /** What the views that load when they open show: the game's design board and its store items. */
+  boards: StageBoards;
   /** the run Live answers to (`stageRunGraph`) */
   runGraph: RunGraphModel | null;
   view: StageContentsView;
@@ -609,11 +643,7 @@ function StageContents({
           <AssetsCanvas focusJob={focusedAsset} project={project} onNotice={onNotice} />
         </Suspense>
       ) : null}
-      {stageView === StageView.Shop && project ? (
-        <Suspense fallback={null}>
-          <ShopStage project={project} items={shop} />
-        </Suspense>
-      ) : null}
+      {project ? <LazyStage view={stageView} project={project} boards={boards} /> : null}
       {stageView === StageView.File && beside ? (
         <FileViewer threadId={threadId} target={beside} onClose={() => onCloseBeside?.()} onNotice={onNotice} />
       ) : null}
@@ -794,7 +824,8 @@ function useStageSurface({
   const flags = stageFlags({ view: shownView, beside, graph, planning, project, liveView, pending, live, shop: sells });
   useWebGamePage({ project, game, onWebGame: visible && flags.previewOnStage }, live);
   const has = stageHas({ beside, graph, planning, project, shop: sells });
-  return { run, flags, pressedView: resolveStageView(view, has), shop };
+  const design = useDesignBoard(project, visible && flags.designOpen);
+  return { run, flags, pressedView: resolveStageView(view, has), shop, design };
 }
 
 /** A game that plays as its own app (an Unreal game): its Play, in Builds and on Live, starts that app. */
@@ -825,7 +856,7 @@ export function PreviewPanel({
   const holds = useThreads((s) => project !== null && s.liveProject === project);
   const live = useLiveLoad(project, holds);
   const pending = useLoadOnceStarted({ project, pending: kindPendingGame(loaded), noPage: !preview }, live.loadLive);
-  const { run, flags, pressedView, shop } = useStageSurface({
+  const { run, flags, pressedView, shop, design } = useStageSurface({
     view,
     visible,
     stage: { project, threadId, runsRoot, status, onView, game: loaded },
@@ -874,6 +905,7 @@ export function PreviewPanel({
         hasBuilds={Boolean(graph || planning)}
         buildsLive={Boolean(graph?.active || planning)}
         hasShop={shop.length > 0}
+        designNew={design.isNew}
         beside={beside}
         stageView={pressedView}
         live={{ views, shown: liveView }}
@@ -900,7 +932,7 @@ export function PreviewPanel({
           showSetup={!project && !engines.some(canBuildWith)}
           beside={beside}
           tabs={run.tabs}
-          shop={shop}
+          boards={{ shop, design: design.board }}
           onView={onView}
           onNotice={onNotice}
           onPlayBuild={showBuild}

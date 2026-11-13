@@ -2,7 +2,8 @@
  * Empty-state wireframes: small 3D line scenes drawn on a 160×116 2D canvas. Strokes fade with
  * depth in six alpha buckets per colour, so a scene costs a handful of canvas paths per frame.
  * Geometry lives in world units; each scene brings its own camera. The idea's computer is opaque
- * and has its own module (`wire-computer.ts`).
+ * and has its own module (`wire-computer.ts`). The Design tab's page (`wire-design.ts`) arrives
+ * with that tab's own chunk and adds itself here (`addWireScene`), so the main bundle never carries it.
  */
 import { computerYaw, drawComputer } from "./wire-computer.ts";
 
@@ -13,12 +14,13 @@ export const WireKind = {
   Assets: "assets",
   Harness: "harness",
   Stopped: "stopped",
+  Design: "design",
 } as const;
 export type WireKind = (typeof WireKind)[keyof typeof WireKind];
-type Vec3 = [number, number, number];
+export type Vec3 = [number, number, number];
 type Vec2 = [number, number];
 /** Colour slot: 0 accent, 1 ink (the moving part), 2 muted ink. `k` scales the stroke alpha. */
-type Line = { c: 0 | 1 | 2; k: number; p: Vec3[] };
+export type Line = { c: 0 | 1 | 2; k: number; p: Vec3[] };
 export type Rgb = [number, number, number];
 export interface WireColors {
   accent: Rgb;
@@ -28,7 +30,8 @@ export interface WireColors {
   /** What the art stands on: the opaque computer's faces are painted in it. */
   page: Rgb;
 }
-interface Camera {
+/** How a scene is looked at: where its origin lands in the art, how large, and the depth its lines fade over (`R`). */
+export interface Camera {
   yaw: number;
   pitch: number;
   scale: number;
@@ -55,7 +58,23 @@ export const STILL: Record<WireKind, number> = {
   [WireKind.Assets]: 6.3,
   [WireKind.Harness]: 6.3,
   [WireKind.Stopped]: 0,
+  [WireKind.Design]: 0,
 };
+
+/** One moment of a scene added from outside this module: its lines, the face tinted under them, its fade and its camera. */
+export interface WireScene {
+  lines: Line[];
+  face: Vec3[];
+  fade: number;
+  cam: Camera;
+}
+/** Scenes a lazily loaded panel brought with it, by kind. */
+const addedScenes = new Map<WireKind, (t: number) => WireScene>();
+/** Add a scene this module does not carry, with its still frame for Reduce Motion. */
+export function addWireScene(kind: WireKind, scene: (t: number) => WireScene, still: number): void {
+  addedScenes.set(kind, scene);
+  STILL[kind] = still;
+}
 
 const ease = (x: number) => (x < 0.5 ? 4 * x * x * x : 1 - (-2 * x + 2) ** 3 / 2);
 const easeOut = (x: number) => 1 - (1 - x) ** 3;
@@ -719,6 +738,24 @@ function strokeLines(ctx: CanvasRenderingContext2D, L: Line[], cam: Camera, colo
   });
 }
 
+/** How strongly an added scene's face is tinted under its lines. */
+const FACE_TINT = 0.07;
+
+/** An added scene: its face tinted, then its lines. */
+function drawScene(ctx: CanvasRenderingContext2D, scene: WireScene, colors: WireColors) {
+  const { cam } = scene;
+  ctx.fillStyle = rgba(colors.fill, FACE_TINT * scene.fade);
+  ctx.beginPath();
+  scene.face.forEach((point, i) => {
+    const q = project(point, cam);
+    if (i === 0) ctx.moveTo(q[0], q[1]);
+    else ctx.lineTo(q[0], q[1]);
+  });
+  ctx.closePath();
+  ctx.fill();
+  strokeLines(ctx, scene.lines, cam, colors);
+}
+
 /** The crane's camera takes in the whole site. */
 const CRANE_CAM: Camera = {
   yaw: 0.2,
@@ -749,6 +786,8 @@ export function drawWire(ctx: CanvasRenderingContext2D, frame: WireFrame, colors
   if (frame.kind === WireKind.Idea)
     return drawComputer(ctx, { yaw: ideaSpin(t), t, boot: null, alpha: 1 }, colors, colors.page);
   if (frame.kind === WireKind.Building) return strokeLines(ctx, crane(t), CRANE_CAM, colors);
+  const added = addedScenes.get(frame.kind);
+  if (added) return drawScene(ctx, added(t), colors);
   if (frame.kind === WireKind.Stopped)
     return strokeLines(
       ctx,

@@ -10,7 +10,7 @@ a real local project to open, edit and export.
 The sidebar's **Play** runs published games; **Create** opens games, Plugins and
 Settings. Each game has one conversation on the left and a stage on the right. The stage
 switches between **Live** (the playable
-game), **Builds** (work and results) and **Assets** (files and generated media).
+game), **Builds** (work and results), **Design** ([pages](../design-board.md)) and **Assets** (media).
 
 The prompt bar chooses the model, permissions, planning, references and tools; the chat's agent
 decides whether a request needs a Loop. Chat shows replies, questions, compact status and results; details expand on demand.

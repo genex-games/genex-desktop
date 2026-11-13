@@ -57,6 +57,31 @@ describe("waiting cards", () => {
     assert.deepEqual(marks, [["a", true]]);
   });
 
+  it("brings a card back, with no failure, when its answer went nowhere", async () => {
+    // A pressed answer to an agent's question is a message: a sign-in first, or no model to send
+    // with, sends none, and the question still waits.
+    const marks: [string, boolean][] = [];
+    await answerAtPress(
+      "question",
+      async () => false,
+      (key, answered) => marks.push([key, answered]),
+    );
+    assert.deepEqual(marks, [
+      ["question", true],
+      ["question", false],
+    ]);
+    // An answer that went (true, or a send that says nothing) keeps the card gone.
+    for (const went of [true, undefined]) {
+      const kept: [string, boolean][] = [];
+      await answerAtPress(
+        "question",
+        async () => went,
+        (key, answered) => kept.push([key, answered]),
+      );
+      assert.deepEqual(kept, [["question", true]]);
+    }
+  });
+
   it("brings a card back when its answer fails, and still reports the failure", async () => {
     const marks: [string, boolean][] = [];
     await assert.rejects(

@@ -14,6 +14,8 @@ export const ProjectTool = {
   PluginCheck: "plugin_check",
   /** Plays the game folder's own newest app for this computer, for the person (an Unreal game's). The chat's own session's. */
   PlayBuild: "play_build",
+  /** Says how to write a page of the game's design board, and opens the Design tab on one. The chat's own session's. */
+  ShowDesign: "show_design",
 } as const;
 export type ProjectTool = (typeof ProjectTool)[keyof typeof ProjectTool];
 

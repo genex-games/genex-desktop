@@ -52,8 +52,8 @@ project, and graph: a request to wait for the remaining workers could start a se
 - After a run its lead led, the chat goes on in that same session with its hands back
   ([after the build](#after-the-build-the-same-session)): it answers, after a finished run does
   requested work itself or starts a new Loop for more, goes on with a paused one for any work on the
-  game beyond a quick fix (a question or a quick fix it handles itself, and the build stays
-  paused), and shows or
+  game toward that build's goal (a question, a quick fix or a narrower or different ask it handles
+  itself, and the build stays paused), and shows or
   lands the build. Questions alone do not restart builders. Sending a message needs no Keep going
   button.
   Optional **Resume** also keeps the journal; a run interrupted by a quit or a crash is repaired
@@ -103,8 +103,8 @@ Wrap up (Builds, `studio:run.finish`, `conversation.ts` `requestRunFinish`; the 
 new facet rounds, then merges, performs an integration attempt and validation, and displays
 accepted work. It does not promise the result passes all checks. Stop is explicit cancellation, the
 composer's and Builds' alone; Resume (`autopilot.resume`) goes on with a paused build.
-After a pause, `resume_run` goes on with that build for any work on the game beyond a quick fix; a
-question or a quick fix the chat's own session handles itself, and the build stays paused.
+After a pause, `resume_run` goes on with that build for work toward its goal; a question, a quick
+fix or a narrower or different ask the chat's own session handles itself, and the build stays paused.
 `resume_run` can only resume a paused journal and cannot create a replacement run; a finished
 run is never started again: more work is a new Loop ([after the build](#after-the-build-the-same-session)).
 
@@ -598,8 +598,9 @@ bridged in as a tool it may call or not (`delegated-turn.ts` `launches`): never 
 and never on words Genex wrote itself (`from: genex`: a command's result, the cover step, a
 plugin's words in the chat), except its word after the person's held Loop. An engine without sessions is handed none: the tool lives
 outside `tools/`, so the direct engines' tool loop never lists it. The tool's description says
-what a build is, the whole making of the game, and when one starts: as the agent sets to making the
-game or a change beyond a quick fix, instead of doing that work in its reply, going on with a paused
+what a build is, work toward the goal the person set at the stage the project is in, and when one
+starts: as the agent sets to making a game or a change of many steps the person asked for, instead of
+doing that work in its reply (packaging, publishing or a finished game only when asked), going on with a paused
 build (`resume_run`) and starting a new one only when needed; it starts from the folder as the reply
 leaves it. When to call it is the agent's own decision. It answers, researches, writes plans or makes
 a quick fix itself, or starts a build, and the chat never says a Loop started unless that call
@@ -619,8 +620,7 @@ contract check go by the folder's facts (`servedAsWeb` in `loop/folder-facts.ts`
 root, or no kind yet; never a folder of a kind Genex can't name): a Godot folder gets none of the
 web's. Its context (`chatContext`) names the folder, never what it holds, and plugin tools,
 guidance and connectors go by the game's facts ([scope by facts](plugins.md#scope-by-facts)): no web-only skills, and the Unreal
-editor's tools only for a game that holds an Unreal project. A game with no kind yet, while an
-engine plugin offers a kind (`plugins.tools`'s `kinds`), is handed `ask_user` beside the kind tools;
+editor's tools only for a game that holds an Unreal project. A game with no kind yet is handed `ask_user` beside the kind tools;
 a recorded question is asked, and the next turn resumes the same session, which calls
 `unreal__new-game` for Unreal. A build it starts there before the game has its kind
 (`start_autopilot` recorded, no question) waits once (`kindsBeforeLaunch`): the same session is told
@@ -648,4 +648,4 @@ turn is (`intake-continuation.test.ts`); no text match takes it away. While a ru
 follow-up goes to its lead; after the run the chat's own session has the Loop's start again, for a
 new run, and nothing commissions a duplicate run while one owns the project.
 
-A chat asks with `ask_user` when it is handed it (a game with no kind yet, while a plugin on offers one). The question card answers on one press of an answer button (⌘↩ presses the recommended one), and the composer takes custom text. The selected answer remains an ordinary durable user message; reference images are not duplicated in the chat context. No worker or native provider turn waits while the question is open. Routine decisions, repairs and failure reports never become answer forms. Handoff/session bookkeeping is recorded as `contractor_handoff` diagnostics rather than assistant prose.
+A chat asks with `ask_user` when it is handed it (a game with no kind yet), and in its reply's own words when it is not: its context has it ask before designing or building a new game (all but a small one the person's words give whole, or one they said to just build), at most four short questions, one at a time ([harness runtime](harness-runtime.md)). A card that is one of such a run says which ("Question 2 of 4", from `ask_user`'s `step` and `of`). The question card answers on one press of an answer button (⌘↩ presses the recommended one), and the composer takes custom text. The selected answer remains an ordinary durable user message; reference images are not duplicated in the chat context. No worker or native provider turn waits while the question is open. Routine decisions, repairs and failure reports never become answer forms. Handoff/session bookkeeping is recorded as `contractor_handoff` diagnostics rather than assistant prose.

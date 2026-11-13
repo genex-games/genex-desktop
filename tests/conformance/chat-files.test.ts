@@ -160,6 +160,22 @@ test("the hover text says what a click does and where the file is, in the platfo
   assert.equal(fileLinkTitle({ open: "folder", path: "x" }, "x", ""), "Opens in Finder", "macOS words until main says");
 });
 
+test("a page of the design board says it opens in Design, as a press on it does", () => {
+  const page = "docs/design/01-concept.html";
+  const link: ChatFileLink = { open: "app", path: `~/AI Games/rift/${page}` };
+  assert.equal(fileLinkTitle(link, page, "darwin", { name: page }), `Opens in Design\n~/AI Games/rift/${page}`);
+  assert.equal(fileLinkTitle(link, page, "darwin", { name: `./${page}` }).split("\n")[0], "Opens in Design");
+  const elsewhere: Array<{ name: string; base?: string }> = [
+    { name: page, base: "/Users/me/other" },
+    { name: "docs/design/img/inner.html" },
+    { name: "docs/design/notes.md" },
+    { name: "index.html" },
+  ];
+  for (const ref of elsewhere)
+    assert.equal(fileLinkTitle(link, ref.name, "darwin", ref).split("\n")[0], "Opens in its default app", ref.name);
+  assert.equal(fileLinkTitle(link, page, "darwin").split("\n")[0], "Opens in its default app", "no name, no page");
+});
+
 const known = new Map<string, ChatFileLink | null>([
   ["src/game.js", { open: "app", path: "~/AI Games/rift/src/game.js" }],
   ["docs/DESIGN.md", { open: "beside", path: "docs/DESIGN.md" }],

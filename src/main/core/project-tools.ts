@@ -2,12 +2,14 @@
  * Genex's own project tools (`ProjectTool`), handed by seat (`ProjectToolSeat`): `start_web_game`
  * writes the web starter into a game with no kind yet; `plugins_find` looks for a Genex plugin and
  * `plugins_suggest` shows the person a card to turn one on; `plugin_check` checks a plugin the agent
- * wrote in the game, installing nothing (`plugin-check.ts`). They sit beside the cover tool in delegation
+ * wrote in the game, installing nothing (`plugin-check.ts`); `show_design` says how to write a page of
+ * the game's design board and opens the Design tab on one (`design-board.ts`). They sit beside the cover tool in delegation
  * (`delegation.ts`); the harness's `game.start`, `plugins.find` and `plugins.suggest` do the same
  * for a local model.
  */
 import type { LiveToolResult, LiveToolSpec } from "../../shared/engine-requests.ts";
 import { CustomEvent, customEventData } from "../../shared/custom-events.ts";
+import { noteWords } from "../../shared/design-board.ts";
 import type { GameProject } from "../../shared/game-project.ts";
 import { PluginCallBlocker, PluginSourceKind } from "../../shared/plugins.ts";
 import { CoreFact, type GameKind, kindPending, ProjectStarter } from "../../shared/project-facts.ts";
@@ -20,6 +22,7 @@ import {
 import { UiEvent } from "../../shared/ui-events.ts";
 import type { StudioCore } from "../studio-core.ts";
 import type { CoreInternals } from "./internals.ts";
+import { SHOW_DESIGN_ANSWER, SHOW_DESIGN_TOOL } from "./design-board-prompts.ts";
 import { findPlugins, type PluginQuery, suggestable } from "./plugin-finder.ts";
 import { checkPluginFolder } from "./plugin-check.ts";
 import {
@@ -68,8 +71,9 @@ export type ProjectToolSeat = (typeof ProjectToolSeat)[keyof typeof ProjectToolS
 /**
  * The project tools a session is handed, by its seat: the chat's own gets the web starter while its
  * game has no kind yet (never for a folder of its own files of a kind Genex can't name), the plugin
- * search, card and check; a lead the search and the card; a worker the search; anyone else (a
- * reviewer included) nothing.
+ * search, card and check and the design board; a lead the search and the card (it works in its
+ * build's own folder, which the board does not read); a worker the search; anyone else (a reviewer
+ * included) nothing.
  */
 export function projectTools(game: GameKind, seat: ProjectToolSeat): LiveToolSpec[] {
   if (seat === ProjectToolSeat.Worker) return [PLUGINS_FIND_TOOL];
@@ -77,7 +81,7 @@ export function projectTools(game: GameKind, seat: ProjectToolSeat): LiveToolSpe
   if (seat !== ProjectToolSeat.Chat) return [];
   const start = kindPending(game) ? [START_WEB_GAME_TOOL] : [];
   const play = playsItsApp(game) ? [PLAY_BUILD_TOOL] : [];
-  return [...start, PLUGINS_FIND_TOOL, PLUGINS_SUGGEST_TOOL, PLUGIN_CHECK_TOOL, ...play];
+  return [...start, PLUGINS_FIND_TOOL, PLUGINS_SUGGEST_TOOL, PLUGIN_CHECK_TOOL, ...play, SHOW_DESIGN_TOOL];
 }
 
 /** Whether a game plays as the app its folder holds rather than as a page: an Unreal game. */
@@ -99,6 +103,7 @@ export async function callProjectTool(
   if (name === ProjectTool.PluginCheck)
     return JSON.stringify(await checkPluginFolder(core.games.dirFor(call.project), args, localPluginOn(core)));
   if (name === ProjectTool.StartWebGame) return startWebGame(core, x, call.project, call.threadId);
+  if (name === ProjectTool.ShowDesign) return showDesign(core, args, call);
   if (name === ProjectTool.PlayBuild) {
     const { state, app } = await core.playGameBuild(call.project);
     return PLAY_BUILD_ANSWER[state](app ?? "");
@@ -164,6 +169,41 @@ export async function pluginsSuggest(
   };
   await core.append([customEventData(CustomEvent.PluginSuggested, payload)], threadId);
   return { shown: true, message: PLUGINS_SUGGEST_ANSWER.shown };
+}
+
+/**
+ * `show_design`: the design board's answer, and, for a page it showed from the game's own chat,
+ * that page's card in the chat (`design_shown`): its file, its title and the agent's note. It
+ * writes none of the game's files (`choose` keeps its offer in the board's own marks file, as the
+ * person's moves are kept), so Plan mode lets it run.
+ */
+async function showDesign(core: StudioCore, args: Record<string, unknown>, call: ProjectToolCall): Promise<string> {
+  const { threadId, project } = call;
+  const said = await announceDesign(core, project, args);
+  const namesNoPage = args.page === undefined || args.page === null || args.page === "";
+  if (said.length > 0 && namesNoPage) return said.join("\n");
+  const { answer, item } = await core.design.show(project, args.page, { note: args.note, spot: args.spot });
+  const answers = [...said, answer].join("\n");
+  if (!item || typeof threadId !== "string" || !threadId) return answers;
+  if (!(await chatOf(core, project, threadId))) return answers;
+  const card = { project, file: item.file, title: item.title || item.name, note: noteWords(args.note) };
+  await core.append([customEventData(CustomEvent.DesignShown, card)], threadId);
+  return answers;
+}
+
+/**
+ * What a `show_design` call announces beside showing an artboard: the artboards offered to pick
+ * among (`choose`) and the ones about to be made (`making`). The answer to each that was given.
+ */
+async function announceDesign(core: StudioCore, project: string, args: Record<string, unknown>): Promise<string[]> {
+  const said: string[] = [];
+  if (args.choose !== undefined) {
+    const offered = await core.design.offer(project, args.choose);
+    if (offered) said.push(SHOW_DESIGN_ANSWER.offered(offered));
+  }
+  const making = core.design.making(project, args.making);
+  if (making.length > 0) said.push(SHOW_DESIGN_ANSWER.making(making));
+  return said;
 }
 
 /** Write a starter into a game with no kind yet and tell the app its game changed. */

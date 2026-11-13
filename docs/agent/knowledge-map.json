@@ -57,7 +57,8 @@
         "docs/tool-permissions.md",
         "docs/performance.md",
         "docs/play.md",
-        "docs/usage-analytics.md"
+        "docs/usage-analytics.md",
+        "docs/design-board.md"
       ],
       "commands": ["typecheck", "test:build-ui"]
     },
@@ -178,7 +179,12 @@
         "src/shared/computer-target.ts",
         "src/shared/play-protocol.ts",
         "src/substrate/play-protocol-client.ts",
-        "src/main/core/game-bridge-target.ts"
+        "src/main/core/game-bridge-target.ts",
+        "src/main/design-pages.ts",
+        "src/main/design-bridge.ts",
+        "src/main/core/design-board*.ts",
+        "src/shared/design-board.ts",
+        "tests/conformance/design-*.test.ts"
       ],
       "documents": [
         "docs/agent/context.md",
@@ -186,7 +192,8 @@
         "docs/product/builds-live.md",
         "docs/performance.md",
         "docs/computer-use.md",
-        "docs/play-protocol.md"
+        "docs/play-protocol.md",
+        "docs/design-board.md"
       ],
       "commands": ["check", "test:fast", "test:ui"]
     },

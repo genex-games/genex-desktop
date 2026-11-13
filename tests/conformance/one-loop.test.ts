@@ -187,7 +187,8 @@ describe("the one Loop's start", () => {
     const host = await hostOn(Project.GodotGame, { facts: GODOT, turns: [finishes] });
     await host.start();
     const [first] = host.leadCalls();
-    assert.equal(first?.prompt, `The Loop started. Its goal: ${String(host.run.goal)}`);
+    // Flipped (SC-4): the goal's line carries its bounds (LOOP_WORDS.started).
+    assert.equal(first?.prompt, LOOP_WORDS.started(String(host.run.goal)));
     assert.equal(first?.from, "genex", "Genex's line: the goal is the chat agent's own words, not the person's");
     assert.equal(first?.notices, undefined);
     assert.match(String(first?.system), /You are working inside Genex/, "Genex's context is the system text, once");
@@ -556,10 +557,8 @@ describe("the one Loop's stop, pause and resume", () => {
       const resumed = host.prompts().at(-1) ?? "";
       // Flipped: the resumed brief named its save points; Genex's one line says it resumed, and
       // run_status answers the save points it kept (below: the journal's).
-      assert.equal(
-        resumed,
-        `The Loop resumed after a pause; workers from before it no longer run. Its goal: ${String(host.run.goal)}`,
-      );
+      // Flipped (SC-4): the goal's line carries its bounds (LOOP_WORDS.resumed).
+      assert.equal(resumed, LOOP_WORDS.resumed(String(host.run.goal)));
       assert.doesNotMatch(resumed, /working time/, "no time left is named");
       const journal = host.artifacts.get(id) as { director: { open: { savePoints: Array<{ label: string }> } } };
       assert.deepEqual(

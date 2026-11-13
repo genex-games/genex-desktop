@@ -24,9 +24,9 @@ asking about plugins never resumes a build. A reply may start workers in the cha
 with it; each is one line opening its work on Builds. Background work is one line with Stop until Genex
 quits; agents may [look at apps](projects-engines.md#plugins-on-or-off) in any mode.
 
-- An `ask_user` question shows above the composer with up to three answers; ⌘↩ presses the
-  first, and typed words answer too.
-  Progress is never a question; an unsaid game, look or engine before a build is.
+- `ask_user` questions show above the composer with up to three answers; ⌘↩ presses the
+  first, typed words answer.
+  Progress is never one; an unsaid game, look or engine before a build is: **Question 2 of 4**.
 - Permission requests wait above the composer; a worker's plugin
   questions appear in its run, cancelled with it. Plugins ask Allow once or Don't allow; Claude asks **Allow once**, the grant it offers
   (**Always allow …**) or **Deny**, or takes words instead; a plan leaving Plan is approved

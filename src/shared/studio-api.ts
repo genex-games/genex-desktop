@@ -86,6 +86,8 @@ import type { BuildProblem, InstallResult } from "./build-problem.ts";
 import type { LoopRunReview } from "./run-review.ts";
 import type { CodexLoginState } from "./codex-login.ts";
 import type { ClaudeLoginState } from "./claude-login.ts";
+import type { DesignBoard } from "./design-board.ts";
+import type { DesignMarks } from "./design-marks.ts";
 import type { ProjectAsset, ProjectAssetRead, ProjectAssets } from "./game-assets.ts";
 import type { ModelRig } from "./model-rig.ts";
 import type { UiEvent } from "./ui-events.ts";
@@ -812,6 +814,14 @@ export interface StudioApi {
   /** Keep a card's thumbnail (base64 of a small picture) in Studio's own data for the next session; false when refused. */
   keepAssetThumbnail(p: { project: string; key: string; data: string }): Promise<boolean>;
   projectAssets(project: string): Promise<ProjectAssets>;
+  /** The game's design board: the pages of its `docs/design/`, each with the address the Design tab loads. */
+  designBoard(project: string): Promise<DesignBoard>;
+  /** Keep a picture the person dropped on the Design canvas in the game's board (`docs/design/from-you/`): its file, or null when it is no picture or too large. */
+  dropOnDesign(project: string, name: string, data: Uint8Array): Promise<string | null>;
+  /** What the person did on the game's design board: where they put artboards, their notes and their picks. */
+  designMarks(project: string): Promise<DesignMarks>;
+  /** Keep what the person did on the game's design board, in the board's own folder; false when it could not be kept. */
+  saveDesignMarks(project: string, marks: DesignMarks): Promise<boolean>;
   /** The Genex account's asset library on genex.games, newest first; throws signed out. */
   assetLibrary(query: LibraryQuery): Promise<LibraryPage>;
   /** Where each of a game's files stands with the library: saved, shared, can be shared. */

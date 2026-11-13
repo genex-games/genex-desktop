@@ -130,7 +130,7 @@ interface Handoff {
   descriptor: GameProject | null;
   projectDir: string | null;
   scaffolded: boolean;
-  /** The question card is bridged in: on a folder that still has no kind while a plugin on offers one (`offersCard`). */
+  /** The question card is bridged in: on a folder that still has no kind (`offersCard`). */
   questionCard: boolean;
   /** "folder AI Games/rift", never an absolute path — the last two segments say it all. */
   folderLabel: string;
@@ -296,8 +296,7 @@ async function afterDelegation(ctx: HarnessCtx, seat: Seat, delegation: Delegati
 
 /**
  * The kinds a launch the session recorded waits for, or none when it starts as recorded. It waits on
- * the chat's own turn (the question card's case: a folder with no kind yet while a plugin on offers a
- * kind that makes a game) when the session answered with a session to go on in and recorded no
+ * the chat's own turn (the question card's case: a folder with no kind yet) when the session answered with a session to go on in and recorded no
  * question or resume, which the turn answers first, and the game still has no kind as the turn ends
  * (the session may have made it before its launch). A launch that starts on a game with no kind
  * takes the web starter, which no later call of the build can change.
@@ -805,7 +804,7 @@ async function placeHandoff(ctx: HarnessCtx, options: DelegatedOptions, chat: Ch
       descriptor,
       projectDir,
       scaffolded: false,
-      questionCard: await offersCard(ctx, options, chat.project, kindPending(descriptor)),
+      questionCard: offersCard(options, kindPending(descriptor)),
       folderLabel: folderLabelOf(projectDir, chat.project),
       extraReads,
       startedAt: Date.now(),
@@ -828,7 +827,7 @@ async function placeHandoff(ctx: HarnessCtx, options: DelegatedOptions, chat: Ch
     projectDir: created.dir,
     scaffolded: true,
     // A game the studio just made has no kind yet.
-    questionCard: await offersCard(ctx, options, project, true),
+    questionCard: offersCard(options, true),
     folderLabel: folderLabelOf(created.dir, project),
     extraReads,
     startedAt: Date.now(),
@@ -836,20 +835,11 @@ async function placeHandoff(ctx: HarnessCtx, options: DelegatedOptions, chat: Ch
 }
 
 /**
- * Whether the question card is bridged in: on a folder that still has no kind (`pending`) while a
- * plugin on offers a kind for it (`plugins.tools {project}`'s `kinds`), outside a run's own turn. A
- * host that cannot say offers none.
+ * Whether the question card is bridged in: on a folder that still has no kind (`pending`), outside
+ * a run's own turn. That is where a new game's direction is still open, so the chat asks its few
+ * questions there (which engine, how the game should feel) before it designs or builds.
  */
-async function offersCard(
-  ctx: HarnessCtx,
-  options: DelegatedOptions,
-  project: string,
-  pending: boolean,
-): Promise<boolean> {
-  if (!pending || options.runId) return false;
-  const plugins = await ctx.call(HostMethod.PluginsTools, { project }).catch(() => null);
-  return Array.isArray(plugins?.kinds) && plugins.kinds.length > 0;
-}
+const offersCard = (options: DelegatedOptions, pending: boolean): boolean => pending && !options.runId;
 
 /** "Claude Code (opus) · high effort": who the contractor is, as the handoff names it. */
 function effortLabel(options: DelegatedOptions): string {
@@ -954,7 +944,7 @@ function senses(options: DelegatedOptions, handoff: Handoff): AnyRecord {
 const bridged = (tool: HarnessTool) =>
   ({ name: tool.name, description: tool.description, parameters: tool.parameters }) as StudioToolSpec;
 
-/** The question card, while the folder has no kind and a plugin on offers one (`offersCard`). */
+/** The question card, while the folder has no kind (`offersCard`). */
 function questionCard(handoff: Handoff): StudioToolSpec[] {
   return handoff.questionCard ? [bridged(askUser)] : [];
 }

@@ -1,5 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { build } from "esbuild";
+import { rendererBuildOptions } from "../../scripts/renderer-build.mjs";
 import type { EventData, EventEnvelope } from "../../src/substrate/types.ts";
 import { toEntries } from "../../src/renderer/chat-entries.ts";
 import { chatContext } from "../../src/shared/chat-history.ts";
@@ -78,6 +80,78 @@ test("an agent's question keeps its one-line recap above it, and the card reads 
   assert.equal("recap" in interviewQuestion({ question: "Which camera?", recap: " " }), false, "no empty recap");
   const card = toEntries([custom(1, "interview_question", asked)]).find((e) => e.kind === "question");
   assert.equal(card?.kind === "question" ? card.recap : undefined, "The road, two cars and the lap timer are in.");
+});
+
+test("a question of a short run of them says which one it is; a record with no count, or a senseless one, says none", () => {
+  /** The count the chat's question card is given for a recorded question. */
+  const counted = (payload: Record<string, unknown>): [number | undefined, number | undefined] | null => {
+    const card = toEntries([custom(1, "interview_question", { question: "Which camera?", ...payload })]).find(
+      (e) => e.kind === "question",
+    );
+    return card?.kind === "question" ? [card.step, card.of] : null;
+  };
+  const asked = interviewQuestion({ question: "Which camera?", options: "Behind the car\nHood view", step: 2, of: 4 });
+  assert.deepEqual(counted(asked), [2, 4]);
+  assert.deepEqual(counted({ step: 4, of: 4 }), [4, 4]);
+  const none: Record<string, unknown>[] = [
+    {},
+    { step: 2 },
+    { of: 4 },
+    { step: 0, of: 4 },
+    { step: 5, of: 4 },
+    { step: 2, of: 5 },
+    { step: 3, of: 2 },
+    { step: 1.5, of: 4 },
+    { step: "2", of: "4" },
+    { step: null, of: null },
+    { step: Number.NaN, of: 4 },
+  ];
+  for (const payload of none)
+    assert.deepEqual(counted(payload), [undefined, undefined], `no count for ${JSON.stringify(payload)}`);
+});
+
+/** The question card as the plain renderer build compiles it, and React's server renderer. */
+async function questionCard() {
+  const result = await build({
+    stdin: {
+      contents: [
+        'export { ChatQuestion } from "./src/renderer/chat/ChatQuestion.tsx";',
+        'export { createElement } from "react";',
+        'export { renderToStaticMarkup } from "react-dom/server.edge";',
+      ].join("\n"),
+      resolveDir: process.cwd(),
+      loader: "tsx",
+    },
+    bundle: true,
+    write: false,
+    format: "esm",
+    jsx: "automatic",
+    logLevel: "silent",
+    platform: "browser",
+    ...rendererBuildOptions(),
+  });
+  const code = result.outputFiles[0]?.text ?? "";
+  return import(`data:text/javascript;base64,${Buffer.from(code).toString("base64")}`);
+}
+
+test("the question card says which question it is above the question, with a dash for each filled up to this one, and draws no count it was not given", async () => {
+  const { ChatQuestion, createElement, renderToStaticMarkup } = await questionCard();
+  const card = (counter?: { step: number; of: number }): string =>
+    renderToStaticMarkup(
+      createElement(ChatQuestion, {
+        title: "Which camera?",
+        ...(counter ? { counter } : {}),
+        keys: false,
+        choices: [{ id: "0", label: "Behind the car" }],
+        onConfirm: () => undefined,
+      }),
+    );
+  const counted = card({ step: 2, of: 4 });
+  assert.match(counted, /Question 2 of 4/);
+  assert.equal(counted.match(/<span( data-filled="")?><\/span>/g)?.length, 4, "a dash for each question");
+  assert.equal(counted.match(/<span data-filled=""><\/span>/g)?.length, 2, "filled up to this one");
+  assert.ok(counted.indexOf("data-question-step") < counted.indexOf("Which camera?"), "above the question");
+  assert.doesNotMatch(card(), /data-question-step|Question \d/, "no count it was not given");
 });
 
 test("host handoff diagnostics disappear while ordinary explanations and errors remain", () => {
