@@ -213,6 +213,14 @@ describe("the Builds list", () => {
     assert.ok(titles(over.leftOut).includes("A timber house"));
   });
 
+  it("keeps a paused run's steps that have not ended with what works now: a pause is not the end", () => {
+    const input = withStep(inputOf(loop().events), "A timber house", StepState.Paused);
+    const nodes = input.graph.nodes.map((node) => (node.kind === GraphNodeKind.Run ? { ...node, paused: true } : node));
+    const paused = buildsList({ ...input, graph: { ...input.graph, active: false, nodes } });
+    assert.ok(titles(paused.working).includes("A timber house"));
+    assert.ok(!titles(paused.leftOut).includes("A timber house"));
+  });
+
   it("marks a stopped finish check as left out, not as a problem", () => {
     const input = inputOf(loop().events);
     const stopped: FinishCheckNode = {

@@ -15,7 +15,7 @@ import { type AssetInfo, type FinishCheckNode, FinishCheckState, type RunGraph }
 import { BLENDER_SOURCE } from "../../run-graph-assets.ts";
 import { type BuildCard, BuildOutcome, type BuildTimeline, placedWord } from "../../run-graph-builds.ts";
 import type { JobInfo } from "../../run-graph-workers.ts";
-import { type AssetCard, isLiveStep, type PartRow, type Step, StepState } from "../../run-steps.ts";
+import { type AssetCard, isLiveStep, type PartRow, runMayStillAdd, type Step, StepState } from "../../run-steps.ts";
 import { finishCheckFace, jobsTileStatus, LeadFace, type ReadingNodes } from "../../run-tree.ts";
 import { BUILD_LINE_WORDS, LEAD_WORDS, MADE_WORDS } from "../../words.ts";
 import { assetsStatus, isMaking } from "../inspector/asset-jobs.ts";
@@ -50,8 +50,8 @@ export interface ListRow {
 }
 
 /**
- * The list: what works now, in the order it started, then the steps still to come while the run is
- * live; what changed, newest first; what was left out, newest first.
+ * The list: what works now, in the order it started, then the steps still to come while the run goes
+ * on or is paused; what changed, newest first; what was left out, newest first.
  */
 export interface BuildsList {
   working: ListRow[];
@@ -212,9 +212,9 @@ export function buildsList(input: BuildsListInput): BuildsList {
   const failed = (input.timeline?.builds ?? []).filter((build) => build.outcome !== BuildOutcome.Passed).map(buildRow);
   const fixedOnes = fixedRows(input);
   const atWork = (row: ListRow): boolean => row.mark === RowMark.Working;
-  // A step not ended yet waits with the work while the run is live; once it is over, it was left out.
+  // A step not ended yet waits with the work while the run goes on or is paused; once it is over, it was left out.
   const waits = (row: ListRow): boolean => row.mark === RowMark.Waiting;
-  const live = input.graph.active === true;
+  const live = runMayStillAdd(input.graph);
   const current = (row: ListRow): boolean => atWork(row) || (live && waits(row));
   const plain = ({ order: _order, ...row }: Placed): ListRow => row;
   const working = [

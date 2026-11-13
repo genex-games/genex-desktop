@@ -387,15 +387,11 @@ function YourBuild({
   );
 }
 
-/** The Builds tab's list. A card of something that is no row (a part, opened from another card) opens first. */
+/** The Builds tab's list. */
 export function BuildsList({ list, result, ...props }: Props): JSX.Element {
-  const { selected } = props;
-  const isRow = [...list.working, ...list.changes, ...list.leftOut].some((row) => row.id === selected);
-  const apart = selected !== null && !isRow && !(result && selected === GraphSelection.Final);
   return (
     <div data-builds-list className="absolute inset-0 overflow-y-auto px-6 pt-6 pb-12 select-none">
       <div className="flex flex-col gap-8">
-        {apart ? props.card : null}
         {result && props.selected === GraphSelection.Final ? props.card : null}
         {result && props.selected !== GraphSelection.Final ? (
           <YourBuild result={result} onSelect={props.onSelect} />

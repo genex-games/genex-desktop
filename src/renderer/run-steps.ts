@@ -524,7 +524,7 @@ function madeNothing(facet: FacetNode, made: Delivery[]): boolean {
 }
 
 /** Whether the run can still add work kept from a stopped try: it goes on, or it is paused. */
-function runMayStillAdd(graph: RunGraph): boolean {
+export function runMayStillAdd(graph: RunGraph): boolean {
   if (graph.active) return true;
   const run = graph.nodes.find((node): node is RunNode => node.kind === GraphNodeKind.Run);
   return run?.paused === true;
