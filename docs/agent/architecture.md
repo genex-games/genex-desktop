@@ -247,8 +247,8 @@ drives the stores with `tests/helpers/fake-studio-api.ts`. See the
 [store recipe](recipes.md#zustand-store).
 
 **Layout.** A large panel is a folder of its parts beside its entry component:
-`panels/inspector/` (`RunInspector.tsx`'s sheets), `panels/run-graph/` (`RunGraph.tsx`'s nodes,
-gates and camera), `panels/stage/` (`PreviewPanel.tsx`'s body and strip), `panels/plugins/` and
+`panels/inspector/` (`RunInspector.tsx`'s sheets), `panels/run-graph/` (`RunGraph.tsx`'s list,
+its rows and status bar), `panels/stage/` (`PreviewPanel.tsx`'s body and strip), `panels/plugins/` and
 `panels/connectors/`. `panels/ChatPanel.tsx` keeps its parts in `chat/`: its hooks are
 `chat/use-*.ts` (wired by `use-chat-panel.ts`), sending routes in `send-route.ts`, the
 conversation in `ChatConversation.tsx`. First launch is `onboarding/` (pure
@@ -911,7 +911,7 @@ managed local runtime; core has no Blender tool of its own.
 - **Ledger.** `PluginServices.onDelivered` fires after every `assets.deliver`; `StudioCore` records
   `asset_delivered` (project, plugin, job, files, worker attribution) and emits `asset.delivered`.
   [`src/main/plugin-activity.ts`](../../src/main/plugin-activity.ts) builds the
-  `plugin_tool_started`/`plugin_tool` pair for both agent paths. The Builds graph joins them on
+  `plugin_tool_started`/`plugin_tool` pair for both agent paths. The Builds list joins them on
   `callId` and `jobId`.
 - **Inventory.** [`src/main/game-assets.ts`](../../src/main/game-assets.ts) enumerates `assets/**` and
   `public/assets/**` read-only (lstat, symlinks skipped, capped), reads Genex `job.json`

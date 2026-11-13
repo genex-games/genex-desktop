@@ -6307,36 +6307,9 @@ a:focus-visible {
   position: relative;
   z-index: 1;
 }
-/* Open in Builds, at the foot of the Building card's parts: a small filled button (`pill-quiet`)
- * above the card's own toggle. */
-.build-checklist-open {
-  position: relative;
-  z-index: 1;
-  display: inline-flex;
-  align-self: flex-start;
-  align-items: center;
-  gap: 4px;
-  margin-top: 4px;
-  padding: 3px 8px 3px 10px;
-  border: 0;
-  border-radius: var(--radius-control);
-  font-family: var(--font-family-content);
-  font-size: 13px;
-  line-height: 18px;
-  letter-spacing: -0.2px;
-  cursor: pointer;
-  transition:
-    background-color var(--duration-quick),
-    color var(--duration-quick);
-}
-.build-checklist-open:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
 @media (prefers-reduced-motion: reduce) {
   .build-card,
-  .build-card-open svg,
-  .build-checklist-open {
+  .build-card-open svg {
     transition: none;
   }
 }

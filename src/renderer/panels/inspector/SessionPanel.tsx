@@ -109,7 +109,7 @@ function WorkerAssetPicture({ project, asset }: { project: string; asset: Projec
   );
 }
 
-/** The card's picture when no agent's screen is live: a still, else the worker's delivered model, else why there is none. */
+/** The card's picture when no agent's screen is live: a still, else the worker's delivered model. */
 function StillMedia({ props, src, asset }: { props: StepPanelProps; src: string | null; asset: ProjectAsset | null }) {
   const { step, project } = props;
   if (!src && project && asset) return <WorkerAssetPicture project={project} asset={asset} />;
@@ -135,6 +135,20 @@ export function SessionPanel(props: StepPanelProps): JSX.Element {
   const round = useRoundStill(graph, step.facetId, 1, null, working && graph.active);
   const worker = useWorkerStill(props.project, step.picture);
   const screen = usePartScreen(props.project, runIdOf(graph), step.facetId, working && graph.active);
+  const src = round ?? worker.src;
+  // A worker that kept no picture and delivered nothing to draw has a card of words alone.
+  const pictured = src !== null || (props.project !== null && worker.asset !== null);
+  const still = pictured ? <StillMedia props={props} src={src} asset={worker.asset} /> : null;
+  const media = screen.frame ? (
+    <LiveScreen
+      frame={screen.frame}
+      trail={screen.trail}
+      label={step.name}
+      onOpen={(shown, caption) => props.onLight([{ path: null, src: shown, title: step.name, caption }], 0)}
+    />
+  ) : (
+    still
+  );
   return (
     <Panel
       id={step.id}
@@ -144,18 +158,7 @@ export function SessionPanel(props: StepPanelProps): JSX.Element {
       onClose={props.onClose}
       reply={{ label: step.name, placeholder: t("Anything to change here?"), target: { facetId: step.facetId } }}
       onReply={props.onReply}
-      media={
-        screen.frame ? (
-          <LiveScreen
-            frame={screen.frame}
-            trail={screen.trail}
-            label={step.name}
-            onOpen={(shown, caption) => props.onLight([{ path: null, src: shown, title: step.name, caption }], 0)}
-          />
-        ) : (
-          <StillMedia props={props} src={round ?? worker.src} asset={worker.asset} />
-        )
-      }
+      media={media}
     >
       {step.worker ? <WorkerAbout step={step} worker={step.worker} /> : <PartAbout props={props} step={step} />}
     </Panel>

@@ -26,17 +26,15 @@ build lights Reload; hidden and not stopped, they go in at once. The
 preview's network is open, as a web page's. Other folders' views:
 [projects](projects-engines.md#lives-views).
 
-**Builds** is a graph: You asked (latest ask, its pictures), a row per part, Your build, then the lead while no part
-works. Tries at one step fold into one node; what reached the build forms the line, the rest
-hangs below. Tries a pause cut off show Paused until added. An eye opens the reviewers' notes. A
-working node shows its agent's screen; a selected one opens as a card. **Follow up in chat** notes
-the next message to its build. Tabs (one per build; past three, one picker, newest first) and chat
-cards open earlier builds. A Loop, workers, jobs or a claim make a tree: the lead (jobs below),
-then, when asked, a finish check. A Loop's line is its save points
-(an earlier Genex's web Loop: its builds); workers hang off them, solid under the one taking their
-work, else ghosts, each asset they made a card below (made again: a version); past three finished
-per point fold into “+N workers”. Compares show one frame (consecutive points or builds, asset
-versions) only where pixels differ, else say nothing visibly changed.
+**Builds** is a list filling the panel: Working now, then What changed, newest first; a finished run's
+build heads it. A row is a step: its mark, when it ended, what it made (“Model · 2 versions”,
+“12 sounds”) or how it stands, and its pictures (at work: its agent's screen). Steps left out of the
+build gather under one “N left out” row. A failed build check is a row; the lead is one only while
+it works itself. Pressing a row opens its card in place (arrows walk, Esc closes); an eye opens the
+reviewers' notes. Tries a pause cut off show Paused until added. **Follow up in chat** notes the
+next message to its build. Tabs (one per build; past three, one picker, newest first) and chat
+cards open earlier builds. The chat's Building card shows its latest five steps past seven;
+pressing one opens it here.
 
 Agents test hidden (Godot too), never Live. A finished worker, its merge and Live's revision
 differ; chat shows a delivery's capture, failures too. A web game's finish loads its page once
@@ -55,7 +53,8 @@ pauses wait. A crash or restart settles leftover activity.
 
 - [WorkspaceStage](../../src/renderer/shell/WorkspaceStage.tsx) picks the stage,
   [PreviewPanel](../../src/renderer/panels/PreviewPanel.tsx) its tabs; [run-steps](../../src/renderer/run-steps.ts)
-  folds steps that [RunGraph](../../src/renderer/panels/RunGraph.tsx) and
+  folds steps that [builds-list](../../src/renderer/panels/run-graph/builds-list.ts) lists,
+  [RunGraph](../../src/renderer/panels/RunGraph.tsx) and
   [RunInspector](../../src/renderer/panels/RunInspector.tsx) draw.
 - [Conversation lifecycle](../conversation-lifecycle.md): queue, continuation and Stop.
 - [Architecture](../agent/architecture.md) and [Verification](../agent/verification.md): the run,

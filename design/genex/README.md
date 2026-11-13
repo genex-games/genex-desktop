@@ -122,7 +122,7 @@ Workers remain compact 32px rows with 6px insets/gaps, named tasks and disclosed
 Successful tools need no repeated status. Code uses mono; tool labels, filenames and prose
 use the body font. A shown path is not repeated in the result.
 
-Working status belongs to the chat's own work (a turn, a plan, Stop, a pending permission). While only a build runs, chat shows one build card instead, and nothing under it: an 8px-inset 16px-radius composer-colored surface with "Building" and a chevron at 15px, one line of where it stands at 14px ink-3 (its steps counted once it has some, "2 done · 1 working", else what is happening now: the part at work, "and N more" when several are, else what the lead is doing — never "Running a tool"), and its clock on the right at 14px: the elapsed time alone (a Loop runs until its lead finishes, so the card names no cap). Open, it lists those steps: the lead's save points by their labels, then each worker's part (added, working or not added), a long title on up to two lines; the lead itself is no row. The finished build is the same card: its capture, the outcome and chevron, one line of failed checks, parts added and duration ("4 parts added · 5h 17m"; orange and led by "1 check failed" when one failed), and Play on the right in the model pill's fill (`pill-quiet`, as every result button, “See it” included) with a filled play glyph. Nothing wraps under it. The whole card is one button to the build's graph on Builds (its title stretched over the card, tooltip "Open in Builds"): the pointer on it steps the card to composer-panel with a line-strong ring and inks the nudging chevron; keyboard focus rings the card in accent; Play sits above it, and the pointer on Play leaves the card unlit. Studio learning after a build is a static line. The composer placeholder during a build reads "Talk to the lead while it builds…" when its lead takes the chat (live chat), else "Sends when the build finishes…". A message sent during a build never takes the card's place: one the lead takes opens above the card, any other waits below it, and the card holds still. The card stands 32px below the last line above it.
+Working status belongs to the chat's own work (a turn, a plan, Stop, a pending permission). While only a build runs, chat shows one build card instead, and nothing under it: an 8px-inset 16px-radius composer-colored surface with "Building" and a chevron at 15px, one line of where it stands at 14px ink-3 (its steps counted once it has some, "2 done · 1 working", else what is happening now: the part at work, "and N more" when several are, else what the lead is doing — never "Running a tool"), and its clock on the right at 14px: the elapsed time alone (a Loop runs until its lead finishes, so the card names no cap). Open, it lists those steps: the lead's save points by their labels, then each worker's part (added, working or not added), a long title on up to two lines; the lead itself is no row. Past seven steps it shows the latest five under one "N earlier steps" row that opens the rest; pressing a step opens its row on Builds. The finished build is the same card: its capture, the outcome and chevron, one line of failed checks, parts added and duration ("4 parts added · 5h 17m"; orange and led by "1 check failed" when one failed), and Play on the right in the model pill's fill (`pill-quiet`, as every result button, “See it” included) with a filled play glyph. Nothing wraps under it. The whole card is one button to the build's graph on Builds (its title stretched over the card, tooltip "Open in Builds"): the pointer on it steps the card to composer-panel with a line-strong ring and inks the nudging chevron; keyboard focus rings the card in accent; Play sits above it, and the pointer on Play leaves the card unlit. Studio learning after a build is a static line. The composer placeholder during a build reads "Talk to the lead while it builds…" when its lead takes the chat (live chat), else "Sends when the build finishes…". A message sent during a build never takes the card's place: one the lead takes opens above the card, any other waits below it, and the card holds still. The card stands 32px below the last line above it.
 The current status names the latest running tool, falling back to the actual task. Explicit
 reply, tool and waiting phases retain priority. The live status line (home's Naming and Opening
 too) is 12/18 type after a 14px halftone plasma orb (the Live loader's, `ui/StatusOrb.tsx`), 8px
@@ -599,22 +599,20 @@ is a 14px state mark (green check, red cross, ink-3 dash) beside the title, whic
 **Show all** only when it hides words; one 12px line under it says the state in words, who checked and, for
 a check that played, what it rests on ("Passed · Judge who played it · verified by the studio"), red when
 it failed; then the checker's note. No category or revision on a row (`outcome-checks.ts`).
-The Builds graph stays a node graph: every node is one size (208×130), its picture filling it, a
-name and one status on a dark fade at its bottom, and a count in a chip at the top right; a ring
-outside it, never a border, so no state changes its size. Colour means state only (no per-part
-colours); a ring in the graph accent means happening now. The graph draws its rings, live edge
-and live status in the palette's `graph` (`--graph`, scoped to `[data-stage-graph]` in
-`theme.css`), the app accent until set. Words match the chat: Added, Working, Being checked,
-Left out. A part with steps has a row label; a part built in one session is its node. The build
-says "Checking it starts…" (with the newest part's picture, softened) until a picture or a health
-pass shows it runs, then "Ready to play"; node and card use the same words. While no part works
-and nothing waits on a check, a node for the lead follows the build, so the run never looks done.
-A node at work, the lead's included, is its agent's screen: the newest frame with the agent's
-cursor, and a status that is the action in plain words with its age ("Pressing Space · 3s"; a step
-being checked keeps "Being checked · …"). Its card shows that frame live and What it did, the
-window's last frames with the newest as Now. No strip of screens sits above the stage.
-The reviewers are an eye gate on the edge into what they looked at; one 40px bar of the chat's
-builds replaces per-card chips and per-node status boxes: a tab each, oldest on the left, on one
+Builds is a list that fills the panel edge to edge and scrolls: **Working now**, then **What
+changed**, newest first, each under a 14px heading with its count in ink-3; a finished run's build
+heads it, its picture beside its state. Every row is one height (68px): the chat's step mark, the
+name, and one 12px ink-3 line with the time it ended and what it made ("Model · 2 versions", "12
+sounds") or, when its work is not in the build, how it stands; on the right its pictures at 96×60
+(what it made, up to three then "+N", else its own picture). A row at work shows its agent's screen
+in a ring of the graph accent (`--graph`, scoped to `[data-stage-graph]` in `theme.css`) and its
+action in words with its age ("Pressing Space · 3s"), in the chat's shimmer. Steps left out of the
+build gather under one "N left out" row with a chevron at the end of What changed, dim when opened.
+A build check that did not pass is a row with an orange warning mark; the lead is a row only while it
+works itself. Words match the chat: Added, Working, Being checked, Left out. No "You asked", no
+gallery of what was made, no before/after pairs.
+The reviewers' notes open from an eye on the card they looked at; one 40px bar of the chat's
+builds sits over the list: a tab each, oldest on the left, on one
 quiet track with the open tab raised (surface fill, a ring halfway from `line` to `line-strong`) and wider. A tab is what was
 asked, ellipsized, after a bare ✓ once done, a muted dot while paused, or the status line's orb
 while it works, then its clock at 12px in the chat's shimmer. No "Building", budget or progress
@@ -626,13 +624,13 @@ count. Its list is the shared dropdown, newest first, one 32px line per build wi
 (its clock while it works). The open build's row is filled and scrolled into view, and focused when
 the list opens from the keyboard. Past ten rows it scrolls, the last row shown fading under a
 gradient that keeps the menu's shadow. Play keeps its place at the right end and shows for every
-build; one that made nothing yet plays Live as it is. A selected node opens in place: the camera glides to it at 160%, the graph dims to
-40% and stays clickable, and one card (max 560px, centred, scrolling inside) carries the detail —
-never a side panel. Replies go through the chat composer, so the app keeps one input. Semantic zoom
-trades words for pictures below 60% and adds the asked sentence from 135%.
-An Unreal Loop draws in the same grammar: the lead's milestones are rows ("Lead · <milestone>") of
+build; one that made nothing yet plays Live as it is. A pressed row opens its card in its place in
+the list, two columns when wide (what to look at, what to read) and stacked when narrow; arrows
+walk the rows, Esc closes it — never a side panel. Replies go through the chat composer, so the app
+keeps one input.
+An Unreal Loop reads the same way: the lead's milestones are rows ("Lead · <milestone>") of
 the saves it kept itself, which carry no eye and read "Not reviewed — the lead saved it after
-looking at its own captures."; each sub-agent is a node ("Blender: <title>", "Meshy: …", "Sound: …")
+looking at its own captures."; each sub-agent is a row ("Blender: <title>", "Meshy: …", "Sound: …")
 with its asset cards, and once its files are in the game it says Delivered (a green check; card pill
 "Delivered, not used yet") until a save uses it. The critic's advice is a "Critic's advice" row on
 the save it looked at (each defect with "Fix:" beneath in ink-3, one bold move as a quote, its art

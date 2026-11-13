@@ -69,7 +69,7 @@ counters carry the regression gates.
   invoke/push histogram per IPC channel, renderer journey pairs and event-loop delay.
 - Dev-control `diagnostics` operations: `window.resize` (stepped resize of the studio window;
   returns how far Live's view trails its slot right after each change and just before the next,
-  and how long it takes to settle), `graph.drag`, `cpu.start`/`cpu.stop` (a renderer),
+  and how long it takes to settle), `cpu.start`/`cpu.stop` (a renderer),
   `main.cpu.start`/`main.cpu.stop` (the main process), `heap`, `trace.start`/`trace.stop`
   ([field guide](STUDIO-DEVELOPER-FIELD-GUIDE.md#owned-development-sessions)). Each operation checks
   the build is current from cached file fingerprints, so it does not stall the main process it measures.

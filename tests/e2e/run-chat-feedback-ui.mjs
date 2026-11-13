@@ -178,16 +178,19 @@ try {
         return !s.text.includes("Loading conversation") && s.controls.some((c) => c.text === "Builds");
       }, "director conversation loaded");
       await pressStageView(click, "builds");
-      await key("0", "Digit0");
+      // Flipped: Builds is a list with no "You asked" card; the run's build heads it, with its capture.
       await until(async () => {
         const s = await snap();
-        return (
-          s.text.includes("You asked") && s.text.includes("Your build") && s.images.filter((i) => i.loaded).length >= 2
-        );
+        return s.text.includes("Your build") && s.images.some((i) => i.loaded);
       }, "saved run captures");
-      await click('[data-graph-node="start"]');
-      // Flipped: the start card no longer names the build length (AG-968); a finished build shows none.
-      await until(async () => (await snap()).text.includes("Started from"), "the start card");
+      await click('[data-graph-node="final"]');
+      await until(
+        async () =>
+          (await op("snapshot", { surface: "desktop", scope: '[data-graph-panel="final"]' })).images.some(
+            (i) => i.loaded,
+          ),
+        "the build's card with its capture",
+      );
       const s = await snap();
       assert.doesNotMatch(
         s.text,

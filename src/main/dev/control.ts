@@ -1,4 +1,3 @@
-import { setTimeout as sleep } from "node:timers/promises";
 import type { WebContents } from "electron";
 import { errorMessage } from "../../shared/errors.ts";
 import { fileDragEvents, writeDragSample } from "./file-drag.ts";
@@ -7,10 +6,6 @@ import { DevErrorCode, DevError, DevMethod, type Operation } from "./protocol.ts
 
 /** The Chrome DevTools Protocol version the control attaches with. */
 const CDP_VERSION = "1.3";
-/** Let React finish the initial takeover and the final camera adoption before sampling. */
-const DRAG_START_SETTLE_MS = 32;
-const DRAG_RELEASE_SETTLE_MS = 180;
-const GRAPH_DRAG_POINT_Y = 0.93;
 /** CDP modifier bits. */
 const CDP_MODIFIER: Record<string, number> = { Alt: 1, Control: 2, Meta: 4, Shift: 8 };
 /** Windows virtual key codes of the named keys the control presses; a character uses its own. */
@@ -119,8 +114,6 @@ export class DesktopControl {
         return this.inspect(wc, { ...op.params, snapshot: true });
       case DevMethod.Click:
         return this.click(wc, op.params);
-      case DevMethod.GraphDrag:
-        return this.#graphDrag(wc, op.params);
       case DevMethod.Key:
         return this.key(wc, op.params);
       case DevMethod.Move:
@@ -133,42 +126,6 @@ export class DesktopControl {
         return this.#scroll(wc, op);
       default:
         throw new DevError(DevErrorCode.UnsupportedSurface);
-    }
-  }
-  async #graphDrag(wc: WebContents, params: ActionOf<typeof DevMethod.GraphDrag>["params"]) {
-    const selector = "[data-stage-graph] [data-zoom]";
-    const point = await this.inspect(wc, { selector, pointY: GRAPH_DRAG_POINT_Y });
-    const sample = async () => (await this.inspect(wc, { performanceOnly: true })).performance;
-    const before = await sample();
-    const send = (type: string, x: number, buttons: number) =>
-      this.cdp(wc, "Input.dispatchMouseEvent", {
-        type,
-        x,
-        y: point.y,
-        button: "left",
-        buttons,
-        clickCount: 1,
-      });
-    await send("mousePressed", point.x, 1);
-    let started: unknown;
-    let midpoint: unknown;
-    const begin = performance.now();
-    try {
-      for (let step = 1; step <= params.steps; step++) {
-        await sleep(Math.max(0, begin + (step * params.durationMs) / params.steps - performance.now()));
-        await send("mouseMoved", point.x + (params.distanceX * step) / params.steps, 1);
-        if (step === 2) {
-          await sleep(DRAG_START_SETTLE_MS);
-          started = await sample();
-        }
-        if (step === Math.floor(params.steps / 2)) midpoint = await sample();
-      }
-      const beforeRelease = await sample();
-      await send("mouseReleased", point.x + params.distanceX, 0);
-      await sleep(DRAG_RELEASE_SETTLE_MS);
-      return { before, started, midpoint, beforeRelease, after: await sample(), elapsedMs: performance.now() - begin };
-    } finally {
-      await send("mouseReleased", point.x + params.distanceX, 0);
     }
   }
   async #type(wc: WebContents, op: ActionOf<typeof DevMethod.Type>) {

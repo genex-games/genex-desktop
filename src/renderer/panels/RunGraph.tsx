@@ -15,7 +15,7 @@ import { markPerformance, PerformanceBoundary } from "../performance.tsx";
 import type { JSX, ReactNode } from "react";
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { type AssetInfo, type RunGraph as RunGraphModel, runIdOf } from "../run-graph.ts";
-import { resultStatus, StepState, statusLine } from "../run-steps.ts";
+import { graphAssetCards, resultStatus, StepState, statusLine } from "../run-steps.ts";
 import { RunState } from "../../shared/run-state.ts";
 import { t } from "../../shared/i18n.ts";
 import type { HistoryEntry } from "../build-progress.ts";
@@ -214,6 +214,7 @@ function OutcomePending(): JSX.Element {
 /** The list of a model, at `now`: its rows, and every row a press or an arrow can open, top to bottom. */
 function useList(model: BuildsModel, now: number, over: boolean) {
   const { graph, rows, outcome, timeline, face, lead, leadNode, finishCheck } = model;
+  const assetJobs = useMemo(() => graphAssetCards(graph), [graph]);
   const list = useMemo(
     () =>
       buildsList({
@@ -224,16 +225,17 @@ function useList(model: BuildsModel, now: number, over: boolean) {
         face,
         leadAtWork: lead,
         jobs: leadNode?.jobs ?? [],
+        assetJobs,
         finishCheck,
         now,
       }),
-    [graph, rows, outcome, timeline, face, lead, leadNode, finishCheck, now],
+    [graph, rows, outcome, timeline, face, lead, leadNode, assetJobs, finishCheck, now],
   );
   const selectable = useMemo(
     () => [...(over ? [GraphSelection.Final] : []), ...listRows(list).map((row) => row.id)],
     [list, over],
   );
-  return { list, selectable };
+  return { list, selectable, assetJobs };
 }
 
 export const RunGraph = memo(function RunGraph({
@@ -254,7 +256,7 @@ export const RunGraph = memo(function RunGraph({
   const active = graph.active === true;
   const now = useNow(active);
   // The run's build heads the list once the run is over; while it runs the bar's Play offers it.
-  const { list, selectable } = useList(model, now, !active);
+  const { list, selectable, assetJobs } = useList(model, now, !active);
   const overlays = useOverlays(selectable);
   const { selected, setSelectedId, clear } = overlays;
   // Another run's rows are not this one's: nothing of the last one stays open.
@@ -295,6 +297,7 @@ export const RunGraph = memo(function RunGraph({
           <BuildsList
             list={list}
             project={project}
+            assetJobs={assetJobs}
             runId={graph.runId}
             active={active}
             result={active ? null : { status: stills.result, src: stills.resultSrc }}

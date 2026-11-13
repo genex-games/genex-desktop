@@ -2,24 +2,11 @@ import assert from "node:assert/strict";
 import { it } from "node:test";
 import { operationSchema } from "../../src/main/dev/protocol.ts";
 
-it("developer graph operations accept bounded diagnostics and reject arbitrary injection", () => {
-  assert.equal(
-    operationSchema.safeParse({ method: "graph.drag", params: { durationMs: 2000, distanceX: 160, steps: 60 } })
-      .success,
-    true,
-  );
+it("developer graph fixture operations accept named actions and reject arbitrary injection", () => {
   assert.equal(
     operationSchema.safeParse({ method: "fixture.graph", params: { action: "other-project-frames" } }).success,
     true,
   );
-  for (const params of [
-    { durationMs: 60000, distanceX: 1, steps: 60 },
-    { durationMs: 2000, distanceX: 10000, steps: 60 },
-    { durationMs: 2000, distanceX: 1, steps: 100000 },
-    { durationMs: 2000, distanceX: 1, steps: 60, script: "arbitrary()" },
-  ]) {
-    assert.equal(operationSchema.safeParse({ method: "graph.drag", params }).success, false);
-  }
   for (const action of ["eval", "../live", "preview.frame", "", "append-round;unlink"]) {
     assert.equal(operationSchema.safeParse({ method: "fixture.graph", params: { action } }).success, false);
   }

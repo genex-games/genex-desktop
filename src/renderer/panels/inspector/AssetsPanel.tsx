@@ -40,7 +40,7 @@ const BLENDER_ERROR_CHARS = 140;
  * when the same file was delivered again since), its Assets-stage thumbnail, the modeller's render,
  * a still of it in the game, or its kind in words (a sound has no picture).
  */
-function DeliveredPicture({ job, project }: { job: AssetInfo; project: string | null }): JSX.Element {
+export function DeliveredPicture({ job, project }: { job: AssetInfo; project: string | null }): JSX.Element {
   const kept = useStill(job.picture ? { run: job.picture, maxPx: ASSET_THUMB_PX } : null);
   const drawn = job.picture || job.preview?.kind === "audio" ? null : (job.preview ?? null);
   const picture = !job.preview && !job.picture ? firstImage(job) : null;

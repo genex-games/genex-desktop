@@ -1,15 +1,18 @@
 /**
  * The Builds tab's list, drawn: once the run is over its build first, then what works now, then what
- * changed, newest first (`builds-list.ts`). It fills the panel edge to edge and scrolls; there is no
- * canvas to pan. A row is its mark, its name, when it ended and how it stands, and on its right what
- * it left to look at: each thing it made, else its own picture; a row at work shows its agent's
- * screen. Pressing a row opens its card in its place.
+ * changed, newest first, ending in one row that opens the steps left out of the build
+ * (`builds-list.ts`). It fills the panel edge to edge and scrolls; there is no canvas to pan. A row is
+ * its mark, its name, when it ended and what it made or how it stands, and on its right what it left
+ * to look at: each thing it made, else its own picture; a row at work shows its agent's screen.
+ * Pressing a row opens its card in its place.
  */
 import type { JSX, ReactNode } from "react";
+import { useState } from "react";
 import { assetKind } from "../../../shared/game-assets.ts";
 import { t } from "../../../shared/i18n.ts";
 import { StepMark } from "../../chat/StepMark.tsx";
-import { runIdOf } from "../../run-graph.ts";
+import { type AssetInfo, runIdOf } from "../../run-graph.ts";
+import { AssetCardState } from "../../run-graph-assets.ts";
 import type { BuildCard } from "../../run-graph-builds.ts";
 import {
   type AssetCard,
@@ -22,6 +25,7 @@ import {
 import { useStill } from "../../stills.ts";
 import { Icon } from "../../ui/icons.tsx";
 import { AssetThumbnail } from "../AssetThumbnail.tsx";
+import { DeliveredPicture } from "../inspector/AssetsPanel.tsx";
 import { formatTime } from "../inspector/format.ts";
 import { IMAGE_OUTLINE } from "../inspector/pictures.tsx";
 import { ScreenWords, useFrameSrc, usePartFrame } from "../inspector/screen.tsx";
@@ -34,6 +38,7 @@ const MESSAGE = {
   working: t("Working now"),
   changed: t("What changed"),
   yourBuild: t("Your build"),
+  leftOut: (count: number) => t("{count, plural, other {# left out}}", { count }),
 } as const;
 
 /** How many pictures a row shows before it counts the rest. */
@@ -49,6 +54,8 @@ const BORROWED: ReadonlySet<WorkerPicture["source"]> = new Set([PictureSource.Bu
 interface Props {
   list: List;
   project: string | null;
+  /** the run's asset jobs, for the Assets row's pictures */
+  assetJobs: AssetInfo[];
   runId: string;
   active: boolean;
   /** the run's build once it is over: its words and picture; null while it runs */
@@ -145,18 +152,37 @@ function StepPictures({
   if (frame && screen) return <Picture src={screen} live screen={frame.handle} />;
   const made = step.assets ?? [];
   if (!made.length) return <StepStill step={step} project={project} runId={runId} />;
-  const hidden = made.length - PICTURES_SHOWN;
+  return <Several items={made} draw={(card) => <MadePicture key={card.id} project={project} card={card} />} />;
+}
+
+/** The first few of a row's pictures, then how many more there are. */
+function Several<T>({ items, draw }: { items: readonly T[]; draw: (item: T) => JSX.Element }): JSX.Element {
+  const hidden = items.length - PICTURES_SHOWN;
   return (
     <>
-      {made.slice(0, PICTURES_SHOWN).map((card) => (
-        <MadePicture key={card.id} project={project} card={card} />
-      ))}
+      {items.slice(0, PICTURES_SHOWN).map(draw)}
       {hidden > 0 ? (
         <Picture>
           <span className="text-chat-sub text-ink-2">{`+${hidden}`}</span>
         </Picture>
       ) : null}
     </>
+  );
+}
+
+/** The Assets row's pictures: what the run's asset jobs delivered, newest first. */
+function AssetsPictures({ jobs, project }: { jobs: AssetInfo[]; project: string | null }): JSX.Element | null {
+  const delivered = jobs.filter((job) => job.state === AssetCardState.Delivered).reverse();
+  if (!delivered.length) return null;
+  return (
+    <Several
+      items={delivered}
+      draw={(job) => (
+        <Picture key={job.jobId ?? job.callId ?? job.at}>
+          <DeliveredPicture job={job} project={project} />
+        </Picture>
+      )}
+    />
   );
 }
 
@@ -200,20 +226,11 @@ function metaWords(row: ListRow): string {
   return [formatTime(row.at), row.detail].filter(Boolean).join(" · ");
 }
 
+/** What every row is drawn with, besides itself. */
+type RowProps = Pick<Props, "project" | "runId" | "active" | "assetJobs" | "onSelect">;
+
 /** One row of the list: pressing it opens its card in its place. */
-function Row({
-  row,
-  project,
-  runId,
-  active,
-  onSelect,
-}: {
-  row: ListRow;
-  project: string | null;
-  runId: string;
-  active: boolean;
-  onSelect: (id: string) => void;
-}): JSX.Element {
+function Row({ row, project, runId, active, assetJobs, onSelect }: RowProps & { row: ListRow }): JSX.Element {
   const working = row.mark === RowMark.Working;
   const muted = row.mark === RowMark.Out || row.mark === RowMark.Waiting;
   const meta = metaWords(row);
@@ -248,8 +265,48 @@ function Row({
       <span className="flex items-center gap-2">
         {row.step ? <StepPictures step={row.step} project={project} runId={runId} active={active} /> : null}
         {row.build ? <BuildPicture build={row.build} /> : null}
+        {row.id === GraphSelection.Assets ? <AssetsPictures jobs={assetJobs} project={project} /> : null}
       </span>
     </button>
+  );
+}
+
+/** Rows of the list, the open one as its card. */
+function Rows({ rows, props }: { rows: ListRow[]; props: Omit<Props, "list" | "result"> }): JSX.Element {
+  return (
+    <>
+      {rows.map((row) =>
+        props.selected === row.id ? <div key={row.id}>{props.card}</div> : <Row key={row.id} row={row} {...props} />,
+      )}
+    </>
+  );
+}
+
+/**
+ * The steps left out of the build, under one row that opens them in place. It is open while one of
+ * them is (pressed on the chat's Building card, or walked to with an arrow).
+ */
+function LeftOut({ rows, props }: { rows: ListRow[]; props: Omit<Props, "list" | "result"> }): JSX.Element | null {
+  const [pressed, setPressed] = useState(false);
+  const holdsOpen = rows.some((row) => row.id === props.selected);
+  const open = pressed || holdsOpen;
+  if (!rows.length) return null;
+  return (
+    <>
+      <button
+        type="button"
+        data-builds-left-out
+        aria-expanded={open}
+        onClick={() => setPressed((value) => !value)}
+        className="-mx-3 grid min-h-[48px] w-[calc(100%+24px)] cursor-pointer grid-cols-[16px_minmax(0,1fr)_auto] items-center gap-x-3 rounded-[12px] px-3 py-1 text-left text-chat text-ink-3 hover:bg-control-hover hover:text-control-text-hover focus-visible:outline-2 focus-visible:outline-accent"
+      >
+        <span aria-hidden="true" className="flex size-4 items-center justify-center">
+          <Icon name={open ? "chevron-down" : "chevron-right"} size={14} />
+        </span>
+        <span className="truncate">{MESSAGE.leftOut(rows.length)}</span>
+      </button>
+      {open ? <Rows rows={rows} props={props} /> : null}
+    </>
   );
 }
 
@@ -258,12 +315,15 @@ function Section({
   label,
   rows,
   props,
+  leftOut = [],
 }: {
   label: string;
   rows: ListRow[];
   props: Omit<Props, "list" | "result">;
+  /** the steps left out of the build, under one row after the rest */
+  leftOut?: ListRow[];
 }): JSX.Element | null {
-  if (!rows.length) return null;
+  if (!rows.length && !leftOut.length) return null;
   return (
     <section className="flex min-w-0 flex-col">
       <h2 className="mb-3 flex items-baseline gap-2 text-chat-sub text-ink">
@@ -271,20 +331,8 @@ function Section({
         <span className="text-ink-3">{rows.length}</span>
       </h2>
       <div className="@container/rows -my-1 flex flex-col">
-        {rows.map((row) =>
-          props.selected === row.id ? (
-            <div key={row.id}>{props.card}</div>
-          ) : (
-            <Row
-              key={row.id}
-              row={row}
-              project={props.project}
-              runId={props.runId}
-              active={props.active}
-              onSelect={props.onSelect}
-            />
-          ),
-        )}
+        <Rows rows={rows} props={props} />
+        <LeftOut rows={leftOut} props={props} />
       </div>
     </section>
   );
@@ -335,7 +383,7 @@ function YourBuild({
 /** The Builds tab's list. A card of something that is no row (a part, opened from another card) opens first. */
 export function BuildsList({ list, result, ...props }: Props): JSX.Element {
   const { selected } = props;
-  const isRow = [...list.working, ...list.changes].some((row) => row.id === selected);
+  const isRow = [...list.working, ...list.changes, ...list.leftOut].some((row) => row.id === selected);
   const apart = selected !== null && !isRow && !(result && selected === GraphSelection.Final);
   return (
     <div data-builds-list className="absolute inset-0 overflow-y-auto px-6 pt-6 pb-12 select-none">
@@ -346,7 +394,7 @@ export function BuildsList({ list, result, ...props }: Props): JSX.Element {
           <YourBuild result={result} onSelect={props.onSelect} />
         ) : null}
         <Section label={MESSAGE.working} rows={list.working} props={props} />
-        <Section label={MESSAGE.changed} rows={list.changes} props={props} />
+        <Section label={MESSAGE.changed} rows={list.changes} props={props} leftOut={list.leftOut} />
       </div>
     </div>
   );

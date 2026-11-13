@@ -7,6 +7,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { buildChecklist } from "../../src/renderer/chat/build-checklist.ts";
+import { assetsStatus } from "../../src/renderer/panels/inspector/asset-jobs.ts";
 import { GraphSelection } from "../../src/renderer/panels/inspector/selection.ts";
 import {
   type BuildsList,
@@ -17,9 +18,9 @@ import {
 } from "../../src/renderer/panels/run-graph/builds-list.ts";
 import { buildRunGraph, GraphNodeKind, type FinishCheckNode } from "../../src/renderer/run-graph.ts";
 import { buildTimeline } from "../../src/renderer/run-graph-builds.ts";
-import { leadWorking, partRows, stepWord } from "../../src/renderer/run-steps.ts";
+import { graphAssetCards, leadWorking, partRows, stepWord } from "../../src/renderer/run-steps.ts";
 import { leadFace, leadNodeOf, readingNodes } from "../../src/renderer/run-tree.ts";
-import { BUILD_LINE_WORDS, LEAD_WORDS } from "../../src/renderer/words.ts";
+import { BUILD_LINE_WORDS, LEAD_WORDS, MADE_WORDS } from "../../src/renderer/words.ts";
 import { CustomEvent } from "../../src/shared/custom-events.ts";
 import { type EventEnvelope, EventKind } from "../../src/shared/event-log.ts";
 import { HealthFinding } from "../../src/shared/preview-contract.ts";
@@ -53,6 +54,56 @@ const used = (id: string, title: string) =>
   inRun(CustomEvent.WorkerFinished, { workerId: poolWorkerId(id), title, verdict: WorkerVerdict.Used, merged: true });
 const rejected = (id: string, title: string) =>
   inRun(CustomEvent.WorkerFinished, { workerId: poolWorkerId(id), title, verdict: WorkerVerdict.Rejected });
+/** A model worker `id` made in Blender and delivered into its build, by the job and the model's name. */
+function model(id: string, job: string, name: string): EventEnvelope[] {
+  const files = [`assets/blender/${job}/model.glb`];
+  return [
+    inRun(CustomEvent.PluginToolStarted, {
+      callId: `call-${job}`,
+      pluginId: "blender",
+      pluginName: "Local Blender",
+      tool: "model",
+      facetId: id,
+      args: `name=${name}`,
+      making: { kind: "model" },
+    }),
+    inRun(CustomEvent.AssetDelivered, {
+      project: PROJECT,
+      source: "blender",
+      pluginId: "blender",
+      jobId: job,
+      files: files.map((file) => ({ file, bytes: 1, kind: "model" })),
+      workspace: "build",
+      facetId: id,
+    }),
+    inRun(CustomEvent.PluginTool, { callId: `call-${job}`, facetId: id, ok: true, files }),
+  ];
+}
+
+/** A sound worker `id` made with Genex and delivered into its build. */
+function sound(id: string, job: string, file: string): EventEnvelope[] {
+  return [
+    inRun(CustomEvent.PluginToolStarted, {
+      callId: `call-${job}`,
+      pluginId: "genex",
+      pluginName: "Genex",
+      tool: "asset",
+      facetId: id,
+      args: `operation=sound prompt=${file}`,
+    }),
+    inRun(CustomEvent.AssetDelivered, {
+      project: PROJECT,
+      source: "genex",
+      pluginId: "genex",
+      jobId: job,
+      files: [{ file, bytes: 1, kind: "audio" }],
+      workspace: "build",
+      facetId: id,
+    }),
+    inRun(CustomEvent.PluginTool, { callId: `call-${job}`, facetId: id, ok: true, jobId: job, files: [file] }),
+  ];
+}
+
 const check = (head: string, extra: Record<string, unknown> = {}) =>
   inRun(CustomEvent.IntegrationHealth, { head, ok: true, problems: [], findings: [], picture: null, ...extra });
 
@@ -72,6 +123,7 @@ function listOf(events: EventEnvelope[], now = Date.UTC(2026, 0, 1, 10, 0, 0)): 
     face: graph.tree ? leadFace(graph, summary, rows) : null,
     leadAtWork: leadWorking(graph, summary, rows),
     jobs: leadNodeOf(graph)?.jobs ?? [],
+    assetJobs: graphAssetCards(graph),
     finishCheck,
     now,
   });
@@ -114,22 +166,63 @@ describe("the Builds list", () => {
 
   it("lists what changed newest first", () => {
     const { changes } = listOf(loop().events);
-    assert.deepEqual(titles(changes), [
-      BUILD_LINE_WORDS.finding[HealthFinding.Uncaught],
-      "A night version",
-      "A timber house",
-    ]);
+    assert.deepEqual(titles(changes), [BUILD_LINE_WORDS.finding[HealthFinding.Uncaught], "A timber house"]);
   });
 
-  it("marks a step by where its work stands, and says so only when it is not in the build", () => {
-    const { changes } = listOf(loop().events);
-    const house = named(changes, "A timber house");
-    const night = named(changes, "A night version");
-    assert.equal(house.mark, RowMark.Added);
-    assert.equal(house.detail, null);
+  it("gathers the steps left out of the build apart from what changed, saying how each stands", () => {
+    const { changes, leftOut } = listOf(loop().events);
+    assert.deepEqual(titles(leftOut), ["A night version"]);
+    assert.ok(!titles(changes).includes("A night version"));
+    const night = named(leftOut, "A night version");
     assert.equal(night.mark, RowMark.Out);
     assert.ok(night.step);
     assert.equal(night.detail, stepWord(night.step, true));
+  });
+
+  it("marks a step by where its work stands, and says nothing more of one in the build that made nothing", () => {
+    const house = named(listOf(loop().events).changes, "A timber house");
+    assert.equal(house.mark, RowMark.Added);
+    assert.equal(house.detail, null);
+  });
+
+  it("says what a step in the build made: one thing by its kind and versions, more by their count", () => {
+    seq = 0;
+    const events = [
+      inRun(CustomEvent.RunStarted, { goal: "A quiet village" }),
+      inRun(CustomEvent.AutopilotStarted, { director: true, facets: [], workerRecords: true }),
+      start("w1", "A timber house"),
+      ...model("w1", "j1", "house"),
+      ...model("w1", "j2", "house"),
+      end("w1", "A timber house"),
+      used("w1", "A timber house"),
+      start("w2", "Village sounds"),
+      ...sound("w2", "s1", "assets/genex/bell.mp3"),
+      ...sound("w2", "s2", "assets/genex/dog.mp3"),
+      ...sound("w2", "s3", "assets/genex/well.mp3"),
+      end("w2", "Village sounds"),
+      used("w2", "Village sounds"),
+      check(H(1), { worker: poolWorkerId("w2") }),
+    ];
+    const { changes } = listOf(events);
+    assert.equal(named(changes, "A timber house").detail, MADE_WORDS.one("model", 2));
+    assert.equal(named(changes, "Village sounds").detail, MADE_WORDS.many({ audio: 3 }));
+  });
+
+  it("says on the Assets row how the run's assets stand", () => {
+    seq = 0;
+    const events = [
+      inRun(CustomEvent.RunStarted, { goal: "A quiet village" }),
+      inRun(CustomEvent.AutopilotStarted, { director: true, facets: [], workerRecords: true }),
+      start("w1", "A timber house"),
+      ...model("w1", "j1", "house"),
+      end("w1", "A timber house"),
+      used("w1", "A timber house"),
+    ];
+    const graph = buildRunGraph(events);
+    assert.ok(graph);
+    const row = listOf(events).changes.find((item) => item.id === GraphSelection.Assets);
+    assert.equal(row?.mark, RowMark.Added);
+    assert.equal(row?.detail, assetsStatus(graphAssetCards(graph)).text);
   });
 
   it("gives a worker's row the time its last record was written", () => {
@@ -171,6 +264,9 @@ describe("the Builds list", () => {
     assert.ok(bow && house);
     assert.equal(rowOfChecklist(list, bow.id), named(list.working, "The archer draws the bow").id);
     assert.equal(rowOfChecklist(list, house.id), named(list.changes, "A timber house").id);
+    const night = card?.rows.find((row) => row.title === "A night version");
+    assert.ok(night);
+    assert.equal(rowOfChecklist(list, night.id), named(list.leftOut, "A night version").id);
     assert.equal(rowOfChecklist(list, "no-such-step"), null);
   });
 });

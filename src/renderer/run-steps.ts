@@ -410,8 +410,8 @@ interface Delivery {
   inGame?: boolean;
 }
 
-/** Every asset card of the graph: the plugins' jobs and the modeller's own. */
-function graphAssetCards(graph: RunGraph): AssetInfo[] {
+/** Every asset job of the graph: the plugins' and the modeller's own. */
+export function graphAssetCards(graph: RunGraph): AssetInfo[] {
   return graph.nodes.flatMap((node) => {
     if (node.kind === GraphNodeKind.Assets) return node.jobs;
     return node.kind === GraphNodeKind.Blender ? node.assets : [];

@@ -431,8 +431,6 @@ export default {
   "Assets are for web games.": "アセットはWebゲーム用です。",
   "Assets being made": "作成中のアセット",
   "Assets you make with Genex show up here.": "Genexでつくったアセットがここに表示されます。",
-  "Assets · {count}": "アセット · {count}",
-  "Assets: {status}": "アセット：{status}",
   "Attach app logs": "アプリのログを添付",
   "Attach images": "画像を添付",
   "Attach this chat": "このチャットを添付",
@@ -1434,7 +1432,6 @@ export default {
   Fit: "全体表示",
   "Fit every asset": "すべてのアセットを表示",
   "Fit everything": "全体を表示",
-  "Fit everything (0)": "全体を表示（0）",
   "Fit the picture": "画像を全体表示",
   Fix: "修正",
   "Fix the build error, then try again.": "ビルドエラーを直してから、もう一度試してください。",
@@ -1986,8 +1983,6 @@ export default {
     "Genexの次のタイミングで実行されます：{steps}。これらのステップは事前に確認しません。",
   "It runs with your access: Genex doesn't sandbox its code.":
     "あなたの権限で動作します。Genexはこのコードをサンドボックス化しません。",
-  "It runs, but no reviewer compared it with the game you had.":
-    "動作はしますが、レビュアーは前のゲームと比較していません。",
   "It shows up here as soon as it runs.": "動くようになったら、すぐここに表示されます。",
   "It starts off: turn it on in Plugins; each of its tools asks you before it runs.":
     "最初はオフです。「プラグイン」でオンにしてください。各ツールは実行前に確認します。",
@@ -2036,7 +2031,6 @@ export default {
   "Joined {when}": "{when}に参加",
   "Judge who played it": "プレイした審査員",
   "Jump to latest": "最新へ移動",
-  "Jump to now": "現在に移動",
   Keep: "残す",
   "Keep building": "続きをつくる",
   "Keep building where you left off.": "中断したところから続きをつくってください。",
@@ -2398,7 +2392,6 @@ export default {
   "No plugin.json at that path in the pinned commit": "固定されたコミットのそのパスにplugin.jsonがありません",
   "No plugins installed yet. Add one from the Add menu.":
     "まだプラグインがありません。「追加」メニューから追加してください。",
-  "No prompt recorded": "プロンプトの記録がありません",
   "No prompt was recorded.": "プロンプトは記録されていません。",
   "No provider signed in. OpenCode's free models run without an account.":
     "サインイン済みのプロバイダーはありません。OpenCodeの無料モデルはアカウントなしで使えます。",
@@ -2407,7 +2400,6 @@ export default {
     "このMacに合うおすすめモデルはありません。「その他のモデル」で、より大きなMacで動くモデルを確認できます。",
   "No recommended model fits this PC. More models lists what each one needs.":
     "このPCに合うおすすめモデルはありません。「その他のモデル」で、それぞれに必要な容量を確認できます。",
-  "No reviewer compared it": "レビュアーの比較なし",
   "No reviewer saw it; the lead merged the part's work into your build.":
     "レビュアーは見ていません。メインエージェントがパートの作業をビルドに追加しました。",
   "No screenshot was saved for this stage.": "この段階のスクリーンショットは保存されていません。",
@@ -2427,7 +2419,6 @@ export default {
   "Nobody named “{query}”.": "「{query}」という名前の人はいません。",
   Noise: "ノイズ",
   None: "なし",
-  "None made": "作成なし",
   "None yet": "まだありません",
   "Not a public file: {path}": "公開ファイルではありません：{path}",
   "Not added": "未追加",
@@ -3145,15 +3136,8 @@ export default {
   Reviewers: "レビュアー",
   "Reviewers compare instructions; they don’t rebuild your games. An applied change isn’t proof of better results.":
     "レビュアーが比べるのは指示で、ゲームをつくり直すわけではありません。変更を適用しても、結果がよくなった証明にはなりません。",
-  "Reviewers kept it": "レビュアーが採用",
-  "Reviewers kept try {number}": "レビュアーが{number}回目を採用",
-  "Reviewers looking now": "レビュアーが確認中",
   "Reviewers model": "レビュアーのモデル",
-  "Reviewers preferred it": "レビュアーはこちらを選びました",
-  "Reviewers preferred the game you had": "レビュアーは前のゲームを選びました",
   "A second opinion": "セカンドオピニオン",
-  "Reviewers undid it": "レビュアーが取り消し",
-  "Reviewers undid {count, plural, other {# tries}}": "レビュアーが{count, plural, other {#回}}取り消し",
   "Reviewers · try {number}": "レビュアー · {number}回目",
   "Reviewers' notes": "レビュアーのメモ",
   "Reviewers: {model}": "レビュアー：{model}",
@@ -3553,7 +3537,6 @@ export default {
   "Start Speaking": "読み上げを開始",
   "Start a game here": "ここでゲームを始める",
   "Start building": "つくり始める",
-  "Start failed": "開始できませんでした",
   "Start free with OpenCode's own models, or sign in to a provider you already use.":
     "OpenCode独自のモデルで無料で始めるか、いま使っているプロバイダーにサインインしましょう。",
   "Start in folder": "開始フォルダー",
@@ -3573,7 +3556,6 @@ export default {
   "Starting background work": "バックグラウンド作業を開始中",
   "Starting game": "ゲームを起動中",
   "Starting point": "土台",
-  "Starting point…": "土台…",
   "Starting the protected workspace": "保護されたワークスペースを起動中",
   "Starting your build": "ビルドを開始しています",
   "Starting…": "起動中…",
@@ -3872,7 +3854,6 @@ export default {
   "The last version is still live.": "前のバージョンは公開されたままです。",
   "The latest build is ready to play.": "最新のビルドをプレイできます。",
   "The lead": "メインエージェント",
-  "The lead asked": "メインエージェントの依頼",
   "The lead didn't merge it, so it isn't in your build.":
     "メインエージェントが追加しなかったので、ビルドには入っていません。",
   "The lead is building in your project": "メインエージェントがプロジェクト内で直接つくっています",
@@ -4282,8 +4263,6 @@ export default {
   "Try again, or choose another model.": "もう一度試すか、別のモデルを選んでください。",
   "Try the build again": "ビルドをもう一度試す",
   "Try your changes before you update.": "アップデート前に変更を試せます。",
-  "Try {count}": "{count}回目",
-  "Try {count} · the worker is done": "{count}回目 · ワーカーの作業が完了",
   "Try {number}": "{number}回目",
   "Try {number}: {state}": "{number}回目：{state}",
   "Trying again…": "再試行中…",
@@ -4324,7 +4303,6 @@ export default {
     "フィードバックを送信できませんでした。少し待ってから、もう一度試してください。",
   "Unclosed TOML array": "TOMLの配列が閉じられていません",
   "Unclosed TOML string": "TOMLの文字列が閉じられていません",
-  "Undid {count, plural, one {# try} other {# tries}} before it": "それまでに{count, plural, other {#回}}取り消し",
   Undo: "元に戻す",
   "Undo this change": "この変更を元に戻す",
   Undone: "取り消し済み",
@@ -4664,7 +4642,6 @@ export default {
   Yesterday: "昨日",
   "You approved": "あなたが承認",
   "You asked": "あなたのリクエスト",
-  "You asked: {request}": "あなたのリクエスト：{request}",
   "You build.": "あなたがつくる。",
   "You can ask about Harness and its improvements here. Games are built in their own chats.":
     "ここではHarnessとその改善について質問できます。ゲームはそれぞれのチャットでつくります。",
@@ -4766,7 +4743,6 @@ export default {
   "Zoom into the assets canvas": "アセットキャンバスを拡大",
   "Zoom out": "縮小",
   "Zoom out of the assets canvas": "アセットキャンバスを縮小",
-  "Zoom {percent}%": "ズーム{percent}%",
   "[Long login output omitted]": "[長いサインイン出力は省略しました]",
   "a 2D canvas game": "2Dキャンバスゲーム",
   "a 3D game that runs as written": "書かれたまま動く3Dゲーム",
@@ -5350,7 +5326,6 @@ export default {
     "{caption} · スクリーンショットだけでは、ゲームプレイのチェックに合格したことにはなりません。",
   "{change} {names}": "{change}：{names}",
   "{chart}: {readings}": "{chart}：{readings}",
-  "{check}: {name} · {status}": "{check}：{name} · {status}",
   "{chosen} of {total}": "{chosen}/{total}",
   "{coins} of your Nex is on hold until {date}.": "Nexのうち{coins}は{date}まで保留中です。",
   "{command} (exit {code})": "{command}（終了コード{code}）",
@@ -5469,7 +5444,6 @@ export default {
   "{count, plural, other {# in game}}": "{count, plural, other {#件がゲーム内}}",
   "{count, plural, other {# kept}}": "{count, plural, other {#個保存済み}}",
   "{count, plural, other {# made for this build}}": "{count, plural, other {このビルド用に#個作成}}",
-  "{count, plural, other {# modelled}}": "{count, plural, other {#個モデリング済み}}",
   "{count, plural, other {# not confirmed}}": "{count, plural, other {#件未確認}}",
   "{count, plural, other {# not downloaded}}": "{count, plural, other {#件未ダウンロード}}",
   "{count, plural, other {# not in your game}}": "{count, plural, other {#件がゲームに未追加}}",
@@ -5583,7 +5557,6 @@ export default {
   "{kind} from {tool}: {title}": "{tool}の{kind}：{title}",
   "{kind} queued for {tool}": "{tool}で{kind}の作成待ち",
   "{kind}, failed": "{kind}（失敗）",
-  "{kind}: {name}, {status}": "{kind}：{name}、{status}",
   "{kind}: {title}": "{kind}：{title}",
   "{landing} — open Live to play it.": "{landing}。「ライブ」を開いてプレイしましょう。",
   "{lastChange}: {change}": "{lastChange}：{change}",
@@ -5663,7 +5636,6 @@ export default {
     "{name}：{key}はインポートされません。保存する前にコネクタを確認してください。",
   "{name}: {state}": "{name}：{state}",
   "{name}: {status}": "{name}：{status}",
-  "{name}: {status}, {count, plural, other {# tries}}": "{name}：{status}、{count, plural, other {#回試行}}",
   "{name}’s friends": "{name}のフレンド",
   "{open, plural, =1 {One step left so Unreal can build C++ on this PC.} other {# steps left so Unreal can build C++ on this PC.}}":
     "{open, plural, =1 {あと1ステップで、このPCでUnrealがC++をビルドできるようになります。} other {あと#ステップで、このPCでUnrealがC++をビルドできるようになります。}}",
@@ -5828,7 +5800,6 @@ export default {
     "{total, plural, other {#ステップ中{landed}個が反映}}",
   "{undone, plural, one {The reviewers undid {count} try.} other {The reviewers undid {count} tries.}}":
     "{undone, plural, other {レビュアーが{count}回の試行を取り消しました。}}",
-  "{verdict} — show what they said": "{verdict}：レビュアーの意見を見る",
   "{version} · bundled with Studio": "{version} · Studioに同梱",
   "{what} links somewhere else, so Genex won't use it.": "{what}は別の場所へのリンクなので、Genexは使いません。",
   "{where} in this project links somewhere else, so Genex won't write through it.":
@@ -6200,23 +6171,16 @@ export default {
   "Compare with the earlier version": "前のバージョンと比べる",
   "Did not pass": "不合格",
   Errors: "エラー",
-  "Merged into Build {number}": "ビルド {number} にマージ済み",
-  "Started before the first build": "最初のビルドより前に開始",
-  "Started from Build {number}": "ビルド {number} から開始",
   "The main agent's own changes": "メインエージェント自身の変更",
   "The page crashed.": "ページがクラッシュしました。",
   "The page did not load.": "ページが読み込まれませんでした。",
   "The page threw an error it did not catch.": "ページが処理されないエラーを出しました。",
-  "The picture did not visibly change from Build {number}.": "ビルド {number} から画像は目に見えて変わっていません。",
   "The picture did not visibly change from the earlier version.":
     "前のバージョンから画像は目に見えて変わっていません。",
   "The screen was blank: one flat colour, nothing drawn.": "画面が空でした：単色で、何も描かれていません。",
   "What the check found": "チェックで見つかったこと",
   commit: "コミット",
   found: "検出",
-  "{count, plural, one {+# worker} other {+# workers}}": "{count, plural, other {+# ワーカー}}",
-  "{count, plural, one {Show # more worker} other {Show # more workers}}":
-    "{count, plural, other {ワーカーをあと # 件表示}}",
   "In the running build": "実行中のビルド内",
   "Not in your game yet. It arrives when the build lands.":
     "まだゲームには入っていません。ビルドが反映されると入ります。",
@@ -6570,4 +6534,8 @@ export default {
   "Uses your Google AI plan": "Google AIのプランを使います",
   "Your Google account has no model Antigravity can run.":
     "GoogleアカウントにAntigravityで実行できるモデルがありません。",
+  Model: "モデル",
+  "{count, plural, one {# sound} other {# sounds}}": "{count, plural, other {サウンド # 件}}",
+  "{count, plural, one {# video} other {# videos}}": "{count, plural, other {動画 # 件}}",
+  "{count, plural, other {# left out}}": "{count, plural, other {使われなかった # 件}}",
 } satisfies LocaleCatalog;

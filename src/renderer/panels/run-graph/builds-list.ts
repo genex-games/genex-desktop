@@ -1,20 +1,24 @@
 /**
- * The Builds tab as a list: what works now, then what changed, newest first. Each step of the run is
- * a row: its mark, when it ended and, when its work is not in the build, how it stands. A build check
- * that did not pass is a row of its own (one that passed is not: its step is the row). The lead is a
- * row only while it works itself; its background work, the finish check and the run's assets are
- * rows while the run has them.
+ * The Builds tab as a list: what works now, then what changed, newest first, then the steps whose work
+ * was left out of the build, gathered under one row. Each step of the run is a row: its mark, when it
+ * ended and what it made or, when its work is not in the build, how it stands. A build check that did
+ * not pass is a row of its own (one that passed is not: its step is the row). The lead is a row only
+ * while it works itself; its background work, the finish check and the run's assets are rows while
+ * the run has them.
  *
  * Pure: no DOM, no window. `BuildsList.tsx` draws it and the tests read it directly.
  */
+import { type AssetKind, assetKind } from "../../../shared/game-assets.ts";
 import { t } from "../../../shared/i18n.ts";
 import { JobState } from "../../../shared/jobs.ts";
-import { type FinishCheckNode, FinishCheckState, type RunGraph } from "../../run-graph.ts";
+import { type AssetInfo, type FinishCheckNode, FinishCheckState, type RunGraph } from "../../run-graph.ts";
+import { BLENDER_SOURCE } from "../../run-graph-assets.ts";
 import { type BuildCard, BuildOutcome, type BuildTimeline, placedWord } from "../../run-graph-builds.ts";
 import type { JobInfo } from "../../run-graph-workers.ts";
-import { isLiveStep, type PartRow, type Step, StepState } from "../../run-steps.ts";
+import { type AssetCard, isLiveStep, type PartRow, type Step, StepState } from "../../run-steps.ts";
 import { finishCheckFace, jobsTileStatus, LeadFace, type ReadingNodes } from "../../run-tree.ts";
-import { BUILD_LINE_WORDS, LEAD_WORDS } from "../../words.ts";
+import { BUILD_LINE_WORDS, LEAD_WORDS, MADE_WORDS } from "../../words.ts";
+import { assetsStatus, isMaking } from "../inspector/asset-jobs.ts";
 import { GraphSelection } from "../inspector/selection.ts";
 
 const MESSAGE = { assets: t("Assets") } as const;
@@ -45,10 +49,11 @@ export interface ListRow {
   build: BuildCard | null;
 }
 
-/** The list: what works now, in the order it started; what changed, newest first. */
+/** The list: what works now, in the order it started; what changed, newest first; what was left out, newest first. */
 export interface BuildsList {
   working: ListRow[];
   changes: ListRow[];
+  leftOut: ListRow[];
 }
 
 /** What the list is folded from: the Builds model's parts. */
@@ -62,6 +67,8 @@ export interface BuildsListInput {
   /** the lead has the run to itself between parts */
   leadAtWork: boolean;
   jobs: JobInfo[];
+  /** the run's asset jobs: the plugins' and the modeller's own */
+  assetJobs: AssetInfo[];
   finishCheck: FinishCheckNode | null;
   now: number;
 }
@@ -106,7 +113,25 @@ function stepOrder(step: Step): number {
   return step.shown?.judgedSeq ?? step.shown?.startedSeq ?? 0;
 }
 
-/** A step's row. A step in the build says nothing more; any other says how it stands. */
+/** What one thing a step made is: its newest version's kind, by its files, else the modeller's model. */
+function madeKind(card: AssetCard): AssetKind {
+  const newest = card.versions.at(-1);
+  const file = newest?.preview?.file ?? newest?.files[0] ?? newest?.file;
+  if (file) return assetKind(file);
+  return newest?.source === BLENDER_SOURCE ? "model" : "other";
+}
+
+/** What a step made, in words: one thing by its kind and versions, more by each kind's count; null for nothing. */
+export function madeWords(cards: readonly AssetCard[]): string | null {
+  const [only] = cards;
+  if (!only) return null;
+  if (cards.length === 1) return MADE_WORDS.one(madeKind(only), only.versions.length);
+  const counts: Partial<Record<AssetKind, number>> = {};
+  for (const card of cards) counts[madeKind(card)] = (counts[madeKind(card)] ?? 0) + 1;
+  return MADE_WORDS.many(counts);
+}
+
+/** A step's row. A step in the build says what it made; any other says how it stands. */
 function stepRow(step: Step, input: BuildsListInput): Placed {
   const mark = stepMark(step);
   const place = input.timeline?.places.get(step.id);
@@ -115,7 +140,7 @@ function stepRow(step: Step, input: BuildsListInput): Placed {
     title: step.name,
     mark,
     at: stepAt(step),
-    detail: mark === RowMark.Added ? null : placedWord(step, place, input.graph.active),
+    detail: mark === RowMark.Added ? madeWords(step.assets ?? []) : placedWord(step, place, input.graph.active),
     step,
     build: null,
     order: stepOrder(step),
@@ -161,10 +186,16 @@ function finishRow(node: FinishCheckNode | null): ListRow | null {
   return fixed(GraphSelection.FinishCheck, face.name, marks[node.state] ?? RowMark.Problem, face.word || null);
 }
 
+/** The run's assets' row: at work while one is being made, and how they stand. */
+function assetsRow(jobs: AssetInfo[]): ListRow {
+  const status = jobs.length ? assetsStatus(jobs).text : null;
+  return fixed(GraphSelection.Assets, MESSAGE.assets, jobs.some(isMaking) ? RowMark.Working : RowMark.Added, status);
+}
+
 /** The run's own rows that are no step: the ones at work, and the ones that head what changed. */
 function fixedRows(input: BuildsListInput): ListRow[] {
   const lead = leadWorks(input) ? fixed(GraphSelection.Lead, LEAD_WORDS.name, RowMark.Working) : null;
-  const assets = input.nodes.assets ? fixed(GraphSelection.Assets, MESSAGE.assets, RowMark.Added) : null;
+  const assets = input.nodes.assets ? assetsRow(input.assetJobs) : null;
   return [lead, finishRow(input.finishCheck), jobsRow(input), assets].filter((row): row is ListRow => row !== null);
 }
 
@@ -182,15 +213,18 @@ export function buildsList(input: BuildsListInput): BuildsList {
       .sort((a, b) => a.order - b.order)
       .map(plain),
   ];
+  const ended = steps.filter((row) => !atWork(row));
+  const left = (row: Placed): boolean => row.mark === RowMark.Out;
+  const newestFirst = (rows: Placed[]): ListRow[] => rows.sort((a, b) => b.order - a.order).map(plain);
   const changes = [
     ...fixedOnes.filter((row) => !atWork(row)),
-    ...[...steps.filter((row) => !atWork(row)), ...failed].sort((a, b) => b.order - a.order).map(plain),
+    ...newestFirst([...ended.filter((row) => !left(row)), ...failed]),
   ];
-  return { working, changes };
+  return { working, changes, leftOut: newestFirst(ended.filter(left)) };
 }
 
-/** Every row of the list, what works first. */
-export const listRows = (list: BuildsList): ListRow[] => [...list.working, ...list.changes];
+/** Every row of the list in the order it reads: what works, what changed, what was left out. */
+export const listRows = (list: BuildsList): ListRow[] => [...list.working, ...list.changes, ...list.leftOut];
 
 /**
  * The row of a step of the chat's Building card (`chat/build-checklist.ts`), or null when the list

@@ -280,15 +280,18 @@ describe("workers on the graph", () => {
   it("draws each worker of a run as one session node on its own row", () => {
     const physics = poolWorkerId("w1");
     const steering = poolWorkerId("w2");
-    const graph = buildRunGraph([
-      ...runOpened(),
-      started(runScope, physics, "Check the physics", { type: "researcher" }),
+    const physicsStarted = started(runScope, physics, "Check the physics", { type: "researcher" });
+    const physicsFinished = (opened: EventEnvelope[]) => [
+      ...opened,
+      physicsStarted,
       started(runScope, steering, "Center the steering", { isolation: WorkerIsolation.Copy }),
       finished(runScope, physics, "Check the physics", {
         state: WorkerEnd.Done,
         summary: "The physics holds up.",
       }),
-    ]);
+    ];
+    const events = physicsFinished(runOpened());
+    const graph = buildRunGraph(events);
     assert.ok(graph);
     assert.deepEqual(
       graph.facets.map((facet) => [facet.facetId, facet.title]),
@@ -319,6 +322,8 @@ describe("workers on the graph", () => {
       merged: false,
       startedSeq: 3,
       settledSeq: 5,
+      startedAt: physicsStarted.created_at,
+      settledAt: events.at(-1)?.created_at,
     });
     assert.equal(partOf(graph, steering)?.building, true);
     assert.equal(partRows(graph)[1]?.steps[0]?.state, StepState.Building);
@@ -862,6 +867,8 @@ it("a hostile field of a worker record reads as if it were absent, and the row k
     const { [field]: _dropped, ...absent } = payload;
     for (const prior of [[], [before]]) {
       const read = (end: Record<string, unknown>) => {
+        // Both reads write their records at the same clock times: only the hostile field differs.
+        seq = 0;
         const graph = buildRunGraph([
           ...runOpened(),
           started(runScope, car, "Port the car", { isolation: WorkerIsolation.Copy }),

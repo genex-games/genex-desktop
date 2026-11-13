@@ -20,7 +20,6 @@ import {
 } from "../../src/renderer/run-graph.ts";
 import { partRows, Tone } from "../../src/renderer/run-steps.ts";
 import {
-  buildsLayout,
   endedOnNo,
   FinishLook,
   finishCheckFace,
@@ -116,12 +115,6 @@ describe("the finish check on the Builds graph", () => {
     const over = buildRunGraph([...rounds, inRun(CustomEvent.RunFinished, { victory: true })]);
     assert.equal(over?.active, false);
     assert.equal(finishCheckOf(over)?.state, FinishCheckState.Done, "still drawn once the run finished");
-    assert.ok(over);
-    const layout = buildsLayout(over, partRows(over, null), null);
-    const { final } = layout.rects;
-    const box = layout.rects[GraphNodeKind.FinishCheck];
-    assert.ok(final && box);
-    assert.ok(box.x >= final.x + final.w, "right of the result");
   });
 
   it("a no reads as not yet with how many things are left, three no's as not finished, and no answer says so", () => {
@@ -368,7 +361,7 @@ describe("the finish check on the Builds graph", () => {
     );
   });
 
-  it("a lead that claims through a finish check is a tree from its start: nothing moves at its first claim", () => {
+  it("a lead that claims through a finish check is a tree from its start", () => {
     seq = 0;
     const started = [
       inRun(CustomEvent.RunStarted, { goal: "A katana tower", project: "game" }),
@@ -381,11 +374,6 @@ describe("the finish check on the Builds graph", () => {
     const before = buildRunGraph(started);
     assert.ok(before);
     assert.equal(before.tree, true);
-    const claimed = buildRunGraph([...started, check(1, FinishCheckStep.Checking, { claim: CLAIM })]);
-    assert.ok(claimed);
-    const placed = (graph: RunGraph) => buildsLayout(graph, partRows(graph, null), null).rects;
-    const [was, now] = [placed(before), placed(claimed)];
-    for (const [id, rect] of Object.entries(was)) assert.deepEqual(now[id], rect, `${id} stays where it was`);
   });
 
   it("a run that is no tree draws its finish check after its result", async () => {
@@ -414,11 +402,6 @@ describe("the finish check on the Builds graph", () => {
       graph.edges.some((edge) => edge.from === GraphNodeKind.Final && edge.to === GraphNodeKind.FinishCheck),
       "after its result",
     );
-    const layout = buildsLayout(graph, partRows(graph, null), null);
-    const { final } = layout.rects;
-    const box = layout.rects[GraphNodeKind.FinishCheck];
-    assert.ok(final && box, "the layout places it");
-    assert.ok(box.x >= final.x + final.w, "right of the result");
   });
 
   it("ignores finish records it cannot place", () => {

@@ -14,8 +14,8 @@ import { BuildChecklist } from "./BuildChecklist.tsx";
  * A build running while the chat itself is free — the only thing the chat shows for it. Its one
  * line is where it stands: its steps counted once it has some, else what is happening now. Its
  * clock sits on the right: how long it has run. With steps, the card opens to their list (the
- * lead's save points, its workers' parts added, working or not added) and Open in Builds; without,
- * the whole card opens Builds.
+ * lead's save points, its workers' parts added, working or not added), each opening its row on
+ * Builds; without, the whole card opens Builds.
  */
 export function BuildStatus({
   since,

@@ -490,7 +490,7 @@ async function runBuildSmoke(smoke: Smoke): Promise<void> {
   await checkScaffoldHealth(buildSmoke);
   const asset = await deliverFixtureAsset(buildSmoke);
   await checkAssetsView(buildSmoke, asset.delivered);
-  const captureDir = await checkStartNodes(buildSmoke);
+  const captureDir = await checkFirstParts(buildSmoke);
   await checkPluginJobInGraph(buildSmoke, asset.assetJobId);
   await checkComposerDuringBuild(buildSmoke);
   await checkStopAndKeepAwake(buildSmoke, await checkInterruptControls(buildSmoke));
@@ -1452,8 +1452,8 @@ async function checkAssetsView(buildSmoke: BuildSmoke, delivered: string[]): Pro
   }
 }
 
-/** The start, the parallel nodes and the base failure appear before any verdict. */
-async function checkStartNodes(buildSmoke: BuildSmoke): Promise<string> {
+/** The parallel parts' rows and the base failure appear before any verdict. */
+async function checkFirstParts(buildSmoke: BuildSmoke): Promise<string> {
   const { wc, check, runId, append, waitFor } = buildSmoke;
   const { core, pushUiEvent } = buildSmoke.ctx;
   // The stage goes back to the game before the Builds checks below, which start from Live.
@@ -1468,18 +1468,6 @@ async function checkStartNodes(buildSmoke: BuildSmoke): Promise<string> {
     await waitFor(
       `document.querySelector('[data-testid="build-status"]')?.textContent.includes('building the starting point')`,
     ),
-  );
-  await wc.executeJavaScript(`document.querySelector('[data-graph-node="start"]')?.click()`);
-  check(
-    "the start opens before the base has any screenshots",
-    await waitFor(`!!document.querySelector('[data-graph-panel="start"] [data-testid="build-capture"]')`),
-  );
-  await wc.executeJavaScript(
-    `document.querySelector('[data-graph-panel="start"] [data-panel-row="technical-details"]')?.click()`,
-  );
-  check(
-    "the start names the cross-provider builder",
-    await waitFor(`document.querySelector('[data-graph-panel="start"]')?.textContent.includes('Claude Code · sonnet')`),
   );
   await append(CustomEvent.AutopilotBase, { ok: false, error: "Camera views were identical" });
   await append(CustomEvent.DirectorWorker, { workerId: "river", title: "River and bridge", state: "running" });
@@ -1502,7 +1490,7 @@ async function checkStartNodes(buildSmoke: BuildSmoke): Promise<string> {
   check(
     "parallel nodes and base failure appear before any verdict",
     await waitFor(
-      `(()=>{const t=document.querySelector('[data-testid="build-status"]')?.textContent??'';return t.includes('2 parts working')&&t.includes('the starting point failed')&&document.querySelector('[data-graph-node="start"]')?.textContent.includes('Start failed')&&document.querySelector('[data-graph-panel="start"]')?.textContent.includes('Camera views were identical');})()`,
+      `(()=>{const t=document.querySelector('[data-testid="build-status"]')?.textContent??'';return t.includes('2 parts working')&&t.includes('the starting point failed')&&!!document.querySelector('[data-graph-node="step:river:1"][data-working]')&&!!document.querySelector('[data-graph-node="step:cottages:1"][data-working]');})()`,
     ),
   );
   check(
@@ -1552,7 +1540,7 @@ async function checkPluginJobInGraph(buildSmoke: BuildSmoke, assetJobId: string)
   check(
     "a plugin's asset job appears in the graph under the part that asked for it",
     await waitFor(
-      `(() => { const node = document.querySelector('[data-graph-node="assets"]'); if (!node || !node.textContent.includes('Making 1')) return false; node.click(); const panel = document.querySelector('[data-graph-panel="assets"]')?.textContent || ""; return panel.includes('Genex plugin') && panel.includes('Part 1') && panel.includes('Making'); })()`,
+      `(() => { const panel = document.querySelector('[data-graph-panel="assets"]')?.textContent; if (panel !== undefined) return panel.includes('Genex plugin') && panel.includes('Part 1') && panel.includes('Making'); const row = document.querySelector('[data-graph-node="assets"]'); if (row?.textContent.includes('Making 1')) row.click(); return false; })()`,
     ),
   );
   pushUiEvent({
@@ -1830,7 +1818,7 @@ async function checkConcurrentPlay(buildSmoke: BuildSmoke): Promise<void> {
   check("repeated Play reopens the existing scratch location safely", replayResult === true, String(replayResult));
 }
 
-/** Parallel rounds stay in view; moving the canvas offers Jump to now. */
+/** Parallel rounds are listed as working; a row opens its card in place and Escape closes it. */
 async function checkFollowRounds(buildSmoke: BuildSmoke): Promise<FollowRun> {
   const { wc, check, project, append, waitFor } = buildSmoke;
   const { pushUiEvent } = buildSmoke.ctx;
@@ -1851,49 +1839,37 @@ async function checkFollowRounds(buildSmoke: BuildSmoke): Promise<FollowRun> {
   await followEvent(CustomEvent.FacetBuildStarted, { facetId: "water", facetTitle: "water", iteration: 2 });
   pushUiEvent({ type: UiEvent.AutopilotFacet, payload: { runId: followRun } });
   await waitFor(`(()=>{${openBuildScript(followRun)};return ${selectedRunIs(followRun)};})()`);
-  // A live run keeps its work in view until the user moves the canvas; then "Jump to now" brings it back.
-  const inView = (id: string) =>
-    `(()=>{const n=document.querySelector('[data-graph-node="${id}"]')?.getBoundingClientRect(),v=document.querySelector('[data-zoom]')?.getBoundingClientRect();return !!n&&!!v&&n.width>0&&n.left>=v.left&&n.right<=v.right&&n.top>=v.top&&n.bottom<=v.bottom;})()`;
+  // A live run lists its work at the top, each part's newest step a working row; a press opens its card in place.
+  const working = (id: string) =>
+    `!!document.querySelector('[data-builds-list] [data-graph-node="${id}"][data-working]')`;
   check(
-    "live work is in view without opening anything",
-    await waitFor(
-      `${inView("step:water:2")}&&!document.querySelector('[data-graph-panel]')&&!Array.from(document.querySelectorAll('button')).some(b=>b.textContent==='Jump to now')`,
-    ),
+    "live work is listed as working without opening anything",
+    await waitFor(`${working("step:water:2")}&&!document.querySelector('[data-graph-panel]')`),
   );
   await followEvent(CustomEvent.FacetBuildStarted, { facetId: "fish", facetTitle: "fish", iteration: 2 });
   pushUiEvent({ type: UiEvent.AutopilotFacet, payload: { runId: followRun } });
   check(
-    "a parallel part's new work stays in view too",
-    await waitFor(`${inView("step:fish:2")}&&${inView("step:water:2")}`),
+    "a parallel part's new work is listed as working too",
+    await waitFor(`${working("step:fish:2")}&&${working("step:water:2")}`),
   );
-  // The zoom pill names the canvas's zoom; opening a node keeps it.
-  const zoomLabel = `document.querySelector('[aria-label^="Zoom "][aria-label$="%"]')?.getAttribute('aria-label')`;
-  const zoomBefore = await wc.executeJavaScript(zoomLabel);
   await wc.executeJavaScript(`document.querySelector('[data-graph-node="step:water:1"]')?.click()`);
-  check(
-    "selecting a node opens its card in place without zooming the canvas",
-    await waitFor(
-      `!!document.querySelector('[data-graph-panel="step:water:1"]')&&${inView("step:water:1")}&&${zoomLabel}===${JSON.stringify(zoomBefore)}`,
-    ),
-  );
-  await wc.executeJavaScript(
-    `document.querySelector('[data-zoom]')?.dispatchEvent(new WheelEvent('wheel',{deltaY:400,bubbles:true,cancelable:true}))`,
-  );
-  check(
-    "moving the canvas closes the card where it is and offers Jump to now",
-    await waitFor(
-      `!document.querySelector('[data-graph-panel]')&&Array.from(document.querySelectorAll('button')).some(b=>b.textContent==='Jump to now')`,
-    ),
-  );
+  const waterCard = `!!document.querySelector('[data-builds-list] [data-graph-panel="step:water:1"]')&&!document.querySelector('[data-graph-node="step:water:1"]')`;
+  check("selecting a row opens its card in place of the row", await waitFor(waterCard));
   await followEvent(CustomEvent.FacetBuildStarted, { facetId: "water", facetTitle: "water", iteration: 3 });
   pushUiEvent({ type: UiEvent.AutopilotFacet, payload: { runId: followRun } });
-  await wc.executeJavaScript(
-    `Array.from(document.querySelectorAll('button')).find(b=>b.textContent==='Jump to now')?.click()`,
-  );
   check(
-    "Jump to now brings the newest work back into view",
+    "new work joins the list while the open card stays where it is",
+    await waitFor(`${working("step:water:3")}&&${waterCard}`),
+  );
+  // From the page itself, not from the composer, which keeps Escape for its own text.
+  wc.focus();
+  await wc.executeJavaScript(`document.activeElement?.blur();true`);
+  wc.sendInputEvent({ type: "keyDown", keyCode: "Escape" });
+  wc.sendInputEvent({ type: "keyUp", keyCode: "Escape" });
+  check(
+    "Escape closes the open card back into its row",
     await waitFor(
-      `${inView("step:water:3")}&&!Array.from(document.querySelectorAll('button')).some(b=>b.textContent==='Jump to now')`,
+      `!document.querySelector('[data-graph-panel]')&&!!document.querySelector('[data-graph-node="step:water:1"]')`,
     ),
   );
   return { followRun, followEvent };
@@ -1980,7 +1956,7 @@ async function checkLiveRevisions(buildSmoke: BuildSmoke, { followRun, followEve
   check(
     "a build just merged is being checked, not ready to play, until it has run",
     await waitFor(
-      `document.querySelector('[data-graph-node="final"]')?.textContent.includes('Checking it starts')&&!document.querySelector('[data-graph-node="lead"]')&&document.querySelector('[data-testid="build-status"]')?.textContent.includes('checking the new build starts')`,
+      `!document.querySelector('[data-graph-node="final"]')&&!document.querySelector('[data-graph-node="lead"]')&&document.querySelector('[data-testid="build-status"]')?.textContent.includes('checking the new build starts')`,
     ),
   );
   await followShot(buildSmoke, "follow-checking");
@@ -2248,48 +2224,48 @@ async function checkOutcomePanel(buildSmoke: BuildSmoke): Promise<void> {
       `(()=>{const t=document.querySelector('[data-graph-panel="final"]')?.textContent??'';return t.includes('A visual question failed.')&&t.includes('Independent interaction coverage is incomplete');})()`,
     ),
   );
+  // The step the build kept is listed under what changed; the stopped follow-up waits under the left-out row.
+  await wc.executeJavaScript(`document.querySelector('[data-builds-left-out][aria-expanded="false"]')?.click()`);
   check(
-    "the lead's stopped follow-up hangs below the line it followed",
+    "the lead's stopped follow-up is listed under the steps left out of the build",
     await waitFor(
-      `(()=>{const a=document.querySelector('[data-graph-node="step:task-1:1"]')?.getBoundingClientRect(),b=document.querySelector('[data-graph-node="step:task-1:2"]')?.getBoundingClientRect();return !!a&&!!b&&b.top>a.bottom&&!!document.querySelector('[data-graph-row="task-1"]');})()`,
+      `(()=>{const toggle=document.querySelector('[data-builds-left-out]'),kept=document.querySelector('[data-graph-node="step:task-1:1"]'),stopped=document.querySelector('[data-graph-node="step:task-1:2"]');return toggle?.getAttribute('aria-expanded')==='true'&&!!kept&&!!stopped&&!!(kept.compareDocumentPosition(toggle)&Node.DOCUMENT_POSITION_FOLLOWING)&&!!(toggle.compareDocumentPosition(stopped)&Node.DOCUMENT_POSITION_FOLLOWING);})()`,
     ),
   );
 }
 
-/** A replaced worker stays one part; parts open from the keyboard. */
+/** A replaced worker stays one part; a row opens from the keyboard. */
 async function checkPartRows(buildSmoke: BuildSmoke): Promise<void> {
   const { wc, check, waitFor } = buildSmoke;
-  // A part built in one session is its one node (no label over it); one built in steps has its label.
+  // A part built in one session is one row, its session step.
+  await wc.executeJavaScript(`document.querySelector('[data-graph-node="session:task-5"]')?.click()`);
+  await waitFor(`!!document.querySelector('[data-graph-panel="session:task-5"]')`);
   await wc.executeJavaScript(
-    `(document.querySelector('[data-graph-row="task-5"]')??document.querySelector('[data-graph-node="session:task-5"]'))?.click()`,
-  );
-  await waitFor(`!!document.querySelector('[data-graph-panel="part:task-5"],[data-graph-panel="session:task-5"]')`);
-  await wc.executeJavaScript(
-    `document.querySelector(':is([data-graph-panel="part:task-5"],[data-graph-panel="session:task-5"]) [data-panel-row="technical-details"]')?.click()`,
+    `document.querySelector('[data-graph-panel="session:task-5"] [data-panel-row="technical-details"]')?.click()`,
   );
   check(
     "a replaced single worker stays one part with its replacement named",
     await waitFor(
-      `document.querySelector('[data-graph-panel="part:task-5"],[data-graph-panel="session:task-5"]')?.textContent.includes('task-5 → task-6')&&!document.querySelector('[data-graph-row="task-6"],[data-graph-node="session:task-6"]')`,
+      `document.querySelector('[data-graph-panel="session:task-5"]')?.textContent.includes('task-5 → task-6')&&!document.querySelector('[data-graph-node="session:task-6"],[data-graph-panel="session:task-6"]')`,
     ),
   );
   wc.focus();
-  await wc.executeJavaScript(`document.querySelector('[data-graph-row="task-1"]')?.focus()`);
+  await wc.executeJavaScript(`document.querySelector('[data-graph-node="step:task-1:1"]')?.focus()`);
   check(
-    "a part's label accepts keyboard focus",
-    await waitFor(`document.activeElement===document.querySelector('[data-graph-row="task-1"]')`),
+    "a step's row accepts keyboard focus",
+    await waitFor(`document.activeElement===document.querySelector('[data-graph-node="step:task-1:1"]')`),
   );
   wc.sendInputEvent({ type: "keyDown", keyCode: "Return" });
   wc.sendInputEvent({ type: "char", keyCode: "\r" });
   wc.sendInputEvent({ type: "keyUp", keyCode: "Return" });
   check(
-    "a part opens from the keyboard",
-    await waitFor(`!!document.querySelector('[data-graph-panel="part:task-1"]')`),
+    "a step opens from the keyboard",
+    await waitFor(`!!document.querySelector('[data-graph-panel="step:task-1:1"]')`),
   );
   check(
     "graph controls have the pointer cursor",
     await waitFor(
-      `[...document.querySelectorAll('[data-testid="build-status"] button,[data-graph-node],[data-graph-row],[data-graph-gate]')].every(b=>getComputedStyle(b).cursor==='pointer')&&document.querySelectorAll('[data-graph-gate]').length>0`,
+      `[...document.querySelectorAll('[data-testid="build-status"] button,[data-graph-node],[data-builds-left-out]')].every(b=>getComputedStyle(b).cursor==='pointer')&&document.querySelectorAll('[data-graph-node]').length>0&&!!document.querySelector('[data-builds-left-out]')`,
     ),
   );
 }
@@ -2360,7 +2336,9 @@ async function checkActivityAndMcp(buildSmoke: BuildSmoke): Promise<void> {
   await wc.executeJavaScript(`document.querySelector('nav [data-thread="${threadId}"]')?.click()`);
   check(
     "returning from Studio preserves the selected run",
-    await waitFor(`${selectedRunIs("run_outcome_smoke")}&&!!document.querySelector('[data-graph-row="task-1"]')`),
+    await waitFor(
+      `${selectedRunIs("run_outcome_smoke")}&&!!document.querySelector('[data-graph-node="step:task-1:1"],[data-graph-panel="step:task-1:1"]')`,
+    ),
   );
 }
 
@@ -2374,7 +2352,6 @@ async function captureBuildShot(buildSmoke: BuildSmoke): Promise<void> {
     await fs.writeFile(shotPath, (await wc.capturePage()).toPNG());
     await wc.executeJavaScript(`document.querySelector('[data-graph-panel] button[title="Close (Esc)"]')?.click()`);
     await waitFor(`!document.querySelector('[data-graph-panel]')`);
-    await wc.executeJavaScript(`document.querySelector('button[title="Fit everything (0)"]')?.click()`);
     await fs.writeFile(shotPath.replace(/\.png$/, "-overview.png"), (await wc.capturePage()).toPNG());
     window.setContentSize(1000, 720);
     check(
@@ -2801,7 +2778,7 @@ async function openOnBuilds(
  */
 const AGENT_SCREEN_REPORT = `JSON.stringify({
   stage: document.querySelector('[data-stage-view]')?.getAttribute('data-stage-view') ?? null,
-  nodes: [...document.querySelectorAll('[data-graph-node]')].map((n) => [n.getAttribute('data-graph-node'), n.getAttribute('data-agent-screen'), n.querySelectorAll('img').length]),
+  nodes: [...document.querySelectorAll('[data-graph-node]')].map((n) => [n.getAttribute('data-graph-node'), n.querySelector('[data-agent-screen]')?.getAttribute('data-agent-screen') ?? null, n.querySelectorAll('img').length]),
   buildRow: document.querySelector('[data-build-status]') ? document.querySelectorAll('[data-build-status] img').length : null,
 })`;
 
@@ -2940,7 +2917,7 @@ async function driveComputer(computerSmoke: ComputerSmoke, request: DelegateRequ
   const reported = () => reportedState(computerSmoke, project.name);
   results.tools = (request.liveTools ?? []).map((t) => t.name);
   results.shot = await computer({ action: "screenshot" });
-  results.uiNode = await waitFor(`!!document.querySelector('[data-graph-node][data-agent-screen] img')`);
+  results.uiNode = await waitFor(`!!document.querySelector('[data-graph-node] [data-agent-screen] img')`);
   if (results.uiNode !== true) results.uiNodeReport = await agentScreenReport(computerSmoke.wc);
   results.state0 = await reported();
   results.key = await computer({ action: "key", text: "i" });
@@ -2965,7 +2942,9 @@ async function captureComputerShot({ wc, ctx }: ComputerSmoke): Promise<void> {
   const { window } = ctx;
   if (window.isMinimized()) window.restore();
   window.showInactive();
-  await wc.executeJavaScript(`document.querySelector('[data-graph-node][data-agent-screen]')?.click()`).catch(() => {});
+  await wc
+    .executeJavaScript(`document.querySelector('[data-graph-node]:has([data-agent-screen])')?.click()`)
+    .catch(() => {});
   await sleep(600);
   await fs.writeFile(shot, (await wc.capturePage()).toPNG());
   await wc.executeJavaScript(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))`).catch(() => {});

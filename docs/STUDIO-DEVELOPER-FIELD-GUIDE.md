@@ -454,8 +454,7 @@ screen still blank and the clips playing), click (selector/scope, desktop or `pl
 surface, as a mouse would), select (selector/scope/value), scroll (surface/deltas/target),
 game.input (existing bounded action union), game.state, window.resize, capture, logs, runs, cpu.start/stop,
 main.cpu.start/stop (a profile of the main process), heap,
-trace.start/stop and stop. `graph.drag` takes bounded duration/distance/steps and returns
-commit counters through release; `window.resize` takes bounded width/height deltas, steps and
+trace.start/stop and stop. `window.resize` takes bounded width/height deltas, steps and
 duration, resizes the studio window step by step with a game in Live, and returns how far the
 game view trailed its slot right after each change and before the next ([performance](performance.md));
 `fixture.graph` takes `other-project-frames` or `append-round`

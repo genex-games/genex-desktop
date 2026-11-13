@@ -1,8 +1,8 @@
 /**
- * Before and after on the Builds graph: the compare shows only two pictures of the same frame — a
- * build's health-check screenshot and the build's before it, or two versions of one asset seen from
- * the same view — and only when the pixels measurably changed. Otherwise the card says plainly that
- * the picture did not visibly change. Nobody asks an agent: the pixels are measured.
+ * Before and after on the Builds graph: the compare shows only two pictures of the same frame — two
+ * versions of one asset seen from the same view — and only when the pixels measurably changed.
+ * Otherwise the card says plainly that the picture did not visibly change. Nobody asks an agent: the
+ * pixels are measured.
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
@@ -17,7 +17,6 @@ import { buildRef } from "../../src/shared/build-ref.ts";
 import { CustomEvent } from "../../src/shared/custom-events.ts";
 import { type EventEnvelope, EventKind } from "../../src/shared/event-log.ts";
 import { AssetCardState, earlierVersion } from "../../src/renderer/run-graph-assets.ts";
-import { type BuildCard, BuildOutcome, buildBefore } from "../../src/renderer/run-graph-builds.ts";
 import { changedShare, PairView, pairView, UNCHANGED_SHARE } from "../../src/renderer/run-graph-pictures.ts";
 
 const W = 160;
@@ -66,28 +65,6 @@ describe("whether a picture changed", () => {
 });
 
 describe("which pictures may pair", () => {
-  const build = (n: number, picture: string | null): BuildCard => ({
-    id: `build:${n}`,
-    n,
-    head: String(n).repeat(40),
-    outcome: BuildOutcome.Passed,
-    problems: [],
-    findings: [],
-    picture,
-    worker: null,
-    seq: n,
-    at: null,
-  });
-
-  it("a build's screenshot pairs only with the build's before it, both taken by its health check", () => {
-    const builds = [build(1, "/runs/r/director/merge_w1.jpg"), build(2, "/runs/r/director/merge_w2.jpg")];
-    assert.equal(buildBefore(builds, builds[1] as BuildCard)?.n, 1);
-    assert.equal(buildBefore(builds, builds[0] as BuildCard), null, "the first build has none before it");
-    const unpictured = [build(1, null), build(2, "/b.jpg"), build(3, "/c.jpg")];
-    assert.equal(buildBefore(unpictured, unpictured[1] as BuildCard), null, "no screenshot before it: no pair");
-    assert.equal(buildBefore(unpictured, unpictured[2] as BuildCard)?.n, 2);
-  });
-
   const delivered = (over: Partial<AssetInfo>): AssetInfo =>
     ({
       name: "shop sign",

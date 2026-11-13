@@ -10,32 +10,14 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import {
-  type AssetInfo,
-  buildRunGraph,
-  GraphNodeKind,
-  rectsOverlap,
-  type Rect,
-  type RunGraph,
-} from "../../src/renderer/run-graph.ts";
+import { type AssetInfo, buildRunGraph, GraphNodeKind, type RunGraph } from "../../src/renderer/run-graph.ts";
 import { AssetCardState, assetVersions, earlierVersion } from "../../src/renderer/run-graph-assets.ts";
-import { buildTimeline } from "../../src/renderer/run-graph-builds.ts";
-import { isInPlaceTree } from "../../src/renderer/run-graph-comb.ts";
-import {
-  isAssetSelection,
-  PictureSource,
-  partRows,
-  STEPS,
-  type Step,
-  stepAndAssetIds,
-} from "../../src/renderer/run-steps.ts";
-import { buildsLayout, readingNodes, readingOrder } from "../../src/renderer/run-tree.ts";
+import { isAssetSelection, PictureSource, partRows, type Step } from "../../src/renderer/run-steps.ts";
 import { CustomEvent } from "../../src/shared/custom-events.ts";
 import { type EventEnvelope, EventKind } from "../../src/shared/event-log.ts";
 import { poolWorkerId, WorkerEnd, WorkerIsolation, WorkerVerdict } from "../../src/shared/workers.ts";
 
 const RUN = "run-castle";
-const H = (digit: number): string => String(digit).repeat(40);
 
 let seq = 0;
 /** One record of the run, a second after the one before. */
@@ -184,29 +166,6 @@ const stepOf = (graph: RunGraph, id: string): Step => {
 
 const versionsOf = (step: Step): Array<[string, number]> =>
   (step.assets ?? []).map((card) => [card.name, card.versions.length]);
-
-/** Every rect of a layout against every other: none lies on another. */
-function assertNoOverlap(rects: Record<string, Rect>): void {
-  const boxes = Object.entries(rects);
-  for (const [a, ra] of boxes)
-    for (const [b, rb] of boxes) if (a < b) assert.equal(rectsOverlap(ra, rb), false, `${a} on ${b}`);
-}
-
-/** Each of a worker's asset cards sits under its node, two to a row, inside the node's own width. */
-function assertUnderItsWorker(rects: Record<string, Rect>, step: Step): void {
-  const node = rects[step.id];
-  assert.ok(node, `${step.id} is drawn`);
-  const cards = (step.assets ?? []).map((card) => rects[card.id]);
-  assert.ok(cards.length > 0, "the worker has asset cards");
-  cards.forEach((card, index) => {
-    assert.ok(card, `card ${index} is drawn`);
-    assert.ok(card.y >= node.y + node.h, `card ${index} is under the worker`);
-    assert.ok(card.x >= node.x && card.x + card.w <= node.x + node.w, `card ${index} keeps to the worker's width`);
-    const left = cards[index - (index % 2)];
-    assert.equal(card.y, left?.y, `card ${index} shares its row with its neighbour`);
-  });
-  assert.equal(cards[0]?.y, node.y + node.h + STEPS.shelfGap, "the first row right under the worker");
-}
 
 describe("a worker's assets as cards of their own", () => {
   it("is one card per distinct asset, in the order each was first made; making one again is its next version", () => {
@@ -389,79 +348,5 @@ describe("grouping delivered cards into assets", () => {
         sizes,
         why,
       );
-  });
-});
-
-describe("the cards on the canvas", () => {
-  it("in place: under the worker, two to a row, never on another node; Previous and Next take each after its worker", () => {
-    const graph = graphOf(castle());
-    const rows = partRows(graph);
-    const layout = buildsLayout(graph, rows, null);
-    const w3 = stepOf(graph, "w3");
-    assertUnderItsWorker(layout.rects, w3);
-    assertUnderItsWorker(layout.rects, stepOf(graph, "w4"));
-    assertNoOverlap(layout.rects);
-    const order = readingOrder(rows, readingNodes(graph, rows, null), layout.order);
-    const from = order.indexOf(w3.id);
-    assert.deepEqual(order.slice(from, from + 7), stepAndAssetIds(w3), "the worker, then each of its assets");
-  });
-
-  it("a worker whose work was not used has ghost cards; a used one's are not", () => {
-    const graph = graphOf(castle());
-    const layout = buildsLayout(graph, partRows(graph), null);
-    const ghosts = (id: string) => (stepOf(graph, id).assets ?? []).map((card) => layout.ghosts.has(card.id));
-    assert.deepEqual(ghosts("w4"), [true]);
-    assert.deepEqual(ghosts("w3"), [false, false, false, false, false, false]);
-  });
-
-  it("on a Loop's build line: under the worker beside its build, never on another node", () => {
-    const events = [
-      ...castle(),
-      inRun(CustomEvent.IntegrationHealth, { head: H(1), ok: true, problems: [], findings: [], worker: "w3" }),
-    ];
-    const graph = graphOf(events);
-    const rows = partRows(graph);
-    assert.ok(buildTimeline(graph, rows), "the run has a build history");
-    const layout = buildsLayout(graph, rows, null);
-    const w3 = stepOf(graph, "w3");
-    assert.equal(layout.rects[w3.id]?.x, layout.rects["build:1"]?.x, "w3 hangs off Build 1");
-    assertUnderItsWorker(layout.rects, w3);
-    assertNoOverlap(layout.rects);
-    const order = layout.order ?? [];
-    assert.deepEqual(order.slice(order.indexOf(w3.id), order.indexOf(w3.id) + 7), stepAndAssetIds(w3));
-  });
-
-  it("in rows: under the worker, the next row below its cards", () => {
-    seq = 0;
-    const events = [
-      ...opened(),
-      inRun(CustomEvent.DirectorWorker, { workerId: "keep", title: "Keep", state: "running", mode: "single" }),
-      start("w3", W3),
-      ...ARTILLERY.slice(0, 5).flatMap(([job, name]) => blenderJob("w3", job, name)),
-      start("w6", "Raise the gate"),
-      ...blenderJob("w6", "m1", "gate"),
-    ];
-    const graph = graphOf(events);
-    const rows = partRows(graph);
-    assert.equal(isInPlaceTree(rows) || buildTimeline(graph, rows) !== null, false, "a row per part");
-    const layout = buildsLayout(graph, rows, null);
-    assertUnderItsWorker(layout.rects, stepOf(graph, "w3"));
-    assertUnderItsWorker(layout.rects, stepOf(graph, "w6"));
-    assertNoOverlap(layout.rects);
-  });
-
-  it("a graph whose workers delivered nothing lays out exactly as it did", () => {
-    seq = 0;
-    const events = [...opened(), start("w1", "Study the walls", WorkerIsolation.Read), start("w2", "Plan the moat")];
-    const graph = graphOf(events);
-    const layout = buildsLayout(graph, partRows(graph), null);
-    const lead = layout.rects.lead;
-    assert.ok(lead);
-    const below = layout.rects[stepOf(graph, "w1").id];
-    const above = layout.rects[stepOf(graph, "w2").id];
-    const pitch = STEPS.nodeH + STEPS.hangGap;
-    assert.equal(below?.y, lead.y + pitch, "the first lane below");
-    assert.equal(above?.y, lead.y - pitch, "the first lane above");
-    assert.equal(lead.y, STEPS.pad + pitch, "the spine sits one lane down");
   });
 });

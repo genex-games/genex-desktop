@@ -11,7 +11,7 @@ import { transcriptEntries } from "../../src/renderer/chat/transcript.ts";
 import { buildChecklist, PartMark } from "../../src/renderer/chat/build-checklist.ts";
 import { buildRunGraph } from "../../src/renderer/run-graph.ts";
 import { partRows, StepState, stepWord } from "../../src/renderer/run-steps.ts";
-import { buildsLayout, LeadFace, leadFace } from "../../src/renderer/run-tree.ts";
+import { LeadFace, leadFace } from "../../src/renderer/run-tree.ts";
 import { summarizeRun } from "../../src/shared/run-summary.ts";
 import { CHAT_PAGE_SIZE, chatContext, mergeChatEvents } from "../../src/shared/chat-history.ts";
 import { planRewind, withoutRewound } from "../../src/shared/chat-rewind.ts";
@@ -387,22 +387,16 @@ it("a closed run's open workers read stopped on their rows, and draw no line in 
     const summary = summarizeRun(log, "valley", RUN);
     graph.summary = summary;
     const rows = partRows(graph, summary);
-    const layout = buildsLayout(graph, rows, summary);
     const rowSaid = rows.flatMap((row) =>
-      row.steps.map((step) => [
-        row.facet.title,
-        stepWord(step, graph.active),
-        step.state,
-        layout.ghosts.has(`session:${row.facet.facetId}`),
-      ]),
+      row.steps.map((step) => [row.facet.title, stepWord(step, graph.active), step.state]),
     );
     assert.deepEqual(
       rowSaid,
       [
-        ["Port the car", "Stopped", StepState.NotInBuild, true],
-        ["Check the physics", "Stopped", StepState.NotInBuild, true],
+        ["Port the car", "Stopped", StepState.NotInBuild],
+        ["Check the physics", "Stopped", StepState.NotInBuild],
       ],
-      `${name}: each row stopped, a ghost`,
+      `${name}: each row stopped`,
     );
     assert.notEqual(leadFace(graph, summary, rows), LeadFace.Waiting, `${name}: the lead waits for nobody`);
     // Flipped: the lines said what the rows say; a run's workers have no lines now.

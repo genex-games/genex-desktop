@@ -13,7 +13,6 @@ export interface InspectParams {
   limit?: number;
   snapshot?: boolean;
   focus?: boolean;
-  pointY?: number;
   performanceOnly?: boolean;
 }
 
@@ -240,7 +239,7 @@ function locate(root: Element, p: InspectParams, errors: PageErrors) {
   if (disabled) return { error: errors.targetNotVisible };
   const r = e.getBoundingClientRect();
   const x = r.left + r.width / 2;
-  const y = r.top + r.height * (p.pointY ?? 0.5);
+  const y = r.top + r.height / 2;
   if (!hitsAt(e, x, y)) return { error: errors.targetNotVisible };
   if (p.focus) e.focus({ preventScroll: true });
   return {

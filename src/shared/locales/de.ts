@@ -487,8 +487,6 @@ export default {
   "Assets are for web games.": "Assets gibt’s nur für Webspiele.",
   "Assets being made": "Assets in Arbeit",
   "Assets you make with Genex show up here.": "Assets, die du mit Genex machst, erscheinen hier.",
-  "Assets · {count}": "Assets · {count}",
-  "Assets: {status}": "Assets: {status}",
   "Attach app logs": "App-Logs anhängen",
   "Attach images": "Bilder anhängen",
   "Attach this chat": "Diesen Chat anhängen",
@@ -1497,7 +1495,6 @@ export default {
   Fit: "Einpassen",
   "Fit every asset": "Alle Assets einpassen",
   "Fit everything": "Alles einpassen",
-  "Fit everything (0)": "Alles einpassen (0)",
   "Fit the picture": "Bild einpassen",
   Fix: "Fix",
   "Fix the build error, then try again.": "Behebe den Build-Fehler und versuch es dann erneut.",
@@ -2051,8 +2048,6 @@ export default {
     "Es läuft an festen Stellen in Genex: {steps}; diese Schritte fragen dich vorher nicht.",
   "It runs with your access: Genex doesn't sandbox its code.":
     "Es läuft mit deinen Rechten: Genex isoliert seinen Code nicht.",
-  "It runs, but no reviewer compared it with the game you had.":
-    "Es läuft, aber kein Prüfer hat es mit deinem bisherigen Spiel verglichen.",
   "It shows up here as soon as it runs.": "Es erscheint hier, sobald es läuft.",
   "It starts off: turn it on in Plugins; each of its tools asks you before it runs.":
     "Es startet ausgeschaltet: Schalte es unter „Plugins“ ein; jedes seiner Tools fragt dich, bevor es läuft.",
@@ -2102,7 +2097,6 @@ export default {
   "Joined {when}": "Dabei seit {when}",
   "Judge who played it": "Juror, der es gespielt hat",
   "Jump to latest": "Zum Neuesten",
-  "Jump to now": "Zu jetzt springen",
   Keep: "Behalten",
   "Keep building": "Weiterbauen",
   "Keep building where you left off.": "Bau dort weiter, wo du aufgehört hast.",
@@ -2464,7 +2458,6 @@ export default {
     "Im festgelegten Commit gibt es unter diesem Pfad keine plugin.json",
   "No plugins installed yet. Add one from the Add menu.":
     "Noch keine Plugins installiert. Füg eins über das Menü „Hinzufügen“ hinzu.",
-  "No prompt recorded": "Kein Prompt gespeichert",
   "No prompt was recorded.": "Es wurde kein Prompt gespeichert.",
   "No provider signed in. OpenCode's free models run without an account.":
     "Bei keinem Anbieter angemeldet. Die kostenlosen Modelle von OpenCode laufen ohne Konto.",
@@ -2473,7 +2466,6 @@ export default {
     "Kein empfohlenes Modell passt auf diesen Mac. Unter „Weitere Modelle“ steht, was größere Macs schaffen.",
   "No recommended model fits this PC. More models lists what each one needs.":
     "Kein empfohlenes Modell passt auf diesen PC. Unter „Weitere Modelle“ steht, was jedes braucht.",
-  "No reviewer compared it": "Kein Prüfer hat es verglichen",
   "No reviewer saw it; the lead merged the part's work into your build.":
     "Kein Prüfer hat es gesehen; der Hauptagent hat die Arbeit des Teils in deinen Build übernommen.",
   "No screenshot was saved for this stage.": "Für diese Phase wurde kein Screenshot gespeichert.",
@@ -2493,7 +2485,6 @@ export default {
   "Nobody named “{query}”.": "Niemand heißt „{query}“.",
   Noise: "Rauschen",
   None: "Keine",
-  "None made": "Nichts erstellt",
   "None yet": "Noch nichts",
   "Not a public file: {path}": "Keine öffentliche Datei: {path}",
   "Not added": "Nicht hinzugefügt",
@@ -3220,16 +3211,8 @@ export default {
   Reviewers: "Prüfer",
   "Reviewers compare instructions; they don’t rebuild your games. An applied change isn’t proof of better results.":
     "Prüfer vergleichen Anweisungen; sie bauen deine Spiele nicht neu. Eine übernommene Änderung beweist noch keine besseren Ergebnisse.",
-  "Reviewers kept it": "Prüfer haben es behalten",
-  "Reviewers kept try {number}": "Prüfer haben Versuch {number} behalten",
-  "Reviewers looking now": "Prüfer sehen es sich gerade an",
   "Reviewers model": "Modell der Prüfer",
-  "Reviewers preferred it": "Prüfer fanden es besser",
-  "Reviewers preferred the game you had": "Prüfer fanden dein bisheriges Spiel besser",
   "A second opinion": "Eine zweite Meinung",
-  "Reviewers undid it": "Prüfer haben es rückgängig gemacht",
-  "Reviewers undid {count, plural, other {# tries}}":
-    "Prüfer haben {count, plural, one {# Versuch} other {# Versuche}} rückgängig gemacht",
   "Reviewers · try {number}": "Prüfer · Versuch {number}",
   "Reviewers' notes": "Notizen der Prüfer",
   "Reviewers: {model}": "Prüfer: {model}",
@@ -3633,7 +3616,6 @@ export default {
   "Start Speaking": "Sprachausgabe starten",
   "Start a game here": "Hier ein Spiel starten",
   "Start building": "Loslegen",
-  "Start failed": "Start fehlgeschlagen",
   "Start free with OpenCode's own models, or sign in to a provider you already use.":
     "Starte kostenlos mit den eigenen Modellen von OpenCode oder melde dich bei einem Anbieter an, den du schon nutzt.",
   "Start in folder": "In Ordner starten",
@@ -3653,7 +3635,6 @@ export default {
   "Starting background work": "Startet Hintergrundarbeit",
   "Starting game": "Spiel startet",
   "Starting point": "Ausgangspunkt",
-  "Starting point…": "Ausgangspunkt…",
   "Starting the protected workspace": "Geschützter Arbeitsbereich startet",
   "Starting your build": "Startet deinen Build",
   "Starting…": "Startet…",
@@ -3960,7 +3941,6 @@ export default {
   "The last version is still live.": "Die letzte Version ist weiter online.",
   "The latest build is ready to play.": "Der neueste Build ist spielbereit.",
   "The lead": "Hauptagent",
-  "The lead asked": "Auftrag vom Hauptagenten",
   "The lead didn't merge it, so it isn't in your build.":
     "Der Hauptagent hat es nicht übernommen, deshalb ist es nicht in deinem Build.",
   "The lead is building in your project": "Der Hauptagent baut direkt in deinem Projekt",
@@ -4376,8 +4356,6 @@ export default {
   "Try again, or choose another model.": "Versuch es noch mal oder wähle ein anderes Modell.",
   "Try the build again": "Build erneut versuchen",
   "Try your changes before you update.": "Teste deine Änderungen vor dem Update.",
-  "Try {count}": "Versuch {count}",
-  "Try {count} · the worker is done": "Versuch {count} · der Helfer ist fertig",
   "Try {number}": "Versuch {number}",
   "Try {number}: {state}": "Versuch {number}: {state}",
   "Trying again…": "Neuer Versuch…",
@@ -4419,8 +4397,6 @@ export default {
     "Feedback konnte nicht gesendet werden. Versuch es gleich noch mal.",
   "Unclosed TOML array": "Nicht geschlossenes TOML-Array",
   "Unclosed TOML string": "Nicht geschlossener TOML-String",
-  "Undid {count, plural, one {# try} other {# tries}} before it":
-    "Davor {count, plural, one {# Versuch} other {# Versuche}} rückgängig gemacht",
   Undo: "Rückgängig",
   "Undo this change": "Änderung rückgängig machen",
   Undone: "Rückgängig gemacht",
@@ -4764,7 +4740,6 @@ export default {
   Yesterday: "Gestern",
   "You approved": "Von dir freigegeben",
   "You asked": "Dein Auftrag",
-  "You asked: {request}": "Deine Anfrage: {request}",
   "You build.": "Du baust.",
   "You can ask about Harness and its improvements here. Games are built in their own chats.":
     "Hier kannst du nach Harness und seinen Verbesserungen fragen. Spiele werden in ihren eigenen Chats gebaut.",
@@ -4866,7 +4841,6 @@ export default {
   "Zoom into the assets canvas": "In die Asset-Ansicht hineinzoomen",
   "Zoom out": "Herauszoomen",
   "Zoom out of the assets canvas": "Aus der Asset-Ansicht herauszoomen",
-  "Zoom {percent}%": "Zoom {percent} %",
   "[Long login output omitted]": "[Lange Anmeldeausgabe ausgelassen]",
   "a 2D canvas game": "ein 2D-Canvas-Spiel",
   "a 3D game that runs as written": "ein 3D-Spiel, das so läuft, wie es geschrieben ist",
@@ -5463,7 +5437,6 @@ export default {
     "{caption} · Ein Screenshot beweist nicht, dass die Gameplay-Prüfungen bestanden wurden.",
   "{change} {names}": "{change}: {names}",
   "{chart}: {readings}": "{chart}: {readings}",
-  "{check}: {name} · {status}": "{check}: {name} · {status}",
   "{chosen} of {total}": "{chosen} von {total}",
   "{coins} of your Nex is on hold until {date}.": "{coins} deiner Nex sind bis {date} zurückgehalten.",
   "{command} (exit {code})": "{command} (Exit: {code})",
@@ -5601,7 +5574,6 @@ export default {
   "{count, plural, other {# kept}}": "{count, plural, one {# gespeichert} other {# gespeichert}}",
   "{count, plural, other {# made for this build}}":
     "{count, plural, one {# für diesen Build erstellt} other {# für diesen Build erstellt}}",
-  "{count, plural, other {# modelled}}": "{count, plural, one {# modelliert} other {# modelliert}}",
   "{count, plural, other {# not confirmed}}": "{count, plural, one {# nicht bestätigt} other {# nicht bestätigt}}",
   "{count, plural, other {# not downloaded}}":
     "{count, plural, one {# nicht heruntergeladen} other {# nicht heruntergeladen}}",
@@ -5722,7 +5694,6 @@ export default {
   "{kind} from {tool}: {title}": "{kind} von {tool}: {title}",
   "{kind} queued for {tool}": "{kind} wartet auf {tool}",
   "{kind}, failed": "{kind}, fehlgeschlagen",
-  "{kind}: {name}, {status}": "{kind}: {name}, {status}",
   "{kind}: {title}": "{kind}: {title}",
   "{landing} — open Live to play it.": "{landing} – öffne „Live“, um es zu spielen.",
   "{lastChange}: {change}": "{lastChange}: {change}",
@@ -5802,8 +5773,6 @@ export default {
     "{name}: {key} wird nicht importiert. Prüf den Konnektor vor dem Speichern.",
   "{name}: {state}": "{name}: {state}",
   "{name}: {status}": "{name}: {status}",
-  "{name}: {status}, {count, plural, other {# tries}}":
-    "{name}: {status}, {count, plural, one {# Versuch} other {# Versuche}}",
   "{name}’s friends": "Freunde von {name}",
   "{open, plural, =1 {One step left so Unreal can build C++ on this PC.} other {# steps left so Unreal can build C++ on this PC.}}":
     "{open, plural, =1 {Noch ein Schritt, dann kann Unreal auf diesem PC C++ bauen.} one {Noch # Schritt, dann kann Unreal auf diesem PC C++ bauen.} other {Noch # Schritte, dann kann Unreal auf diesem PC C++ bauen.}}",
@@ -5971,7 +5940,6 @@ export default {
     "{total, plural, one {{landed} von # Schritt im Spiel} other {{landed} von # Schritten im Spiel}}",
   "{undone, plural, one {The reviewers undid {count} try.} other {The reviewers undid {count} tries.}}":
     "{undone, plural, one {Die Prüfer haben {count} Versuch rückgängig gemacht.} other {Die Prüfer haben {count} Versuche rückgängig gemacht.}}",
-  "{verdict} — show what they said": "{verdict} – zeigen, was sie gesagt haben",
   "{version} · bundled with Studio": "{version} · in Studio enthalten",
   "{what} links somewhere else, so Genex won't use it.":
     "{what} verweist woandershin, deshalb verwendet Genex es nicht.",
@@ -6347,15 +6315,10 @@ export default {
   "Compare with the earlier version": "Mit der früheren Version vergleichen",
   "Did not pass": "Nicht bestanden",
   Errors: "Fehler",
-  "Merged into Build {number}": "In Build {number} eingeflossen",
-  "Started before the first build": "Vor dem ersten Build gestartet",
-  "Started from Build {number}": "Von Build {number} aus gestartet",
   "The main agent's own changes": "Eigene Änderungen des Hauptagenten",
   "The page crashed.": "Die Seite ist abgestürzt.",
   "The page did not load.": "Die Seite hat nicht geladen.",
   "The page threw an error it did not catch.": "Die Seite hat einen Fehler geworfen, den sie nicht abgefangen hat.",
-  "The picture did not visibly change from Build {number}.":
-    "Das Bild hat sich seit Build {number} nicht sichtbar verändert.",
   "The picture did not visibly change from the earlier version.":
     "Das Bild hat sich seit der früheren Version nicht sichtbar verändert.",
   "The screen was blank: one flat colour, nothing drawn.":
@@ -6363,9 +6326,6 @@ export default {
   "What the check found": "Was die Prüfung gefunden hat",
   commit: "Commit",
   found: "gefunden",
-  "{count, plural, one {+# worker} other {+# workers}}": "{count, plural, one {+# Helfer} other {+# Helfer}}",
-  "{count, plural, one {Show # more worker} other {Show # more workers}}":
-    "{count, plural, one {# weiteren Helfer zeigen} other {# weitere Helfer zeigen}}",
   "In the running build": "Im laufenden Build",
   "Not in your game yet. It arrives when the build lands.":
     "Noch nicht in deinem Spiel. Es kommt an, wenn der Build übernommen wird.",
@@ -6724,4 +6684,8 @@ export default {
   "Uses your Google AI plan": "Nutzt deinen Google-AI-Tarif",
   "Your Google account has no model Antigravity can run.":
     "Dein Google-Konto hat kein Modell, das Antigravity ausführen kann.",
+  Model: "Modell",
+  "{count, plural, one {# sound} other {# sounds}}": "{count, plural, one {# Sound} other {# Sounds}}",
+  "{count, plural, one {# video} other {# videos}}": "{count, plural, one {# Video} other {# Videos}}",
+  "{count, plural, other {# left out}}": "{count, plural, one {# nicht übernommen} other {# nicht übernommen}}",
 } satisfies LocaleCatalog;

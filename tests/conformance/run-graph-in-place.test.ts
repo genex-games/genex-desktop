@@ -1,8 +1,7 @@
 /**
- * A lead's Loop in place on the Builds graph: its save points are the spine, each worker hangs off
- * the save point that took its work, every worker that delivered has a picture, each save point
- * wears its own picture, the assets card says what became of every job once the run is over, and
- * the words say a refused worker never started. `fixtures/lead-in-place-run.json` is a trimmed,
+ * A lead's Loop in place on the Builds graph: every worker that delivered has a picture, each save
+ * point wears its own picture, the assets card says what became of every job once the run is over,
+ * and the words say a refused worker never started. `fixtures/lead-in-place-run.json` is a trimmed,
  * synthetic Loop of that shape: fourteen workers, eleven save points, Blender and Genex jobs.
  */
 import assert from "node:assert/strict";
@@ -14,7 +13,6 @@ import {
   GraphNodeKind,
   type IterationNode,
   joinAssetInventory,
-  rectsOverlap,
   type RunGraph,
 } from "../../src/renderer/run-graph.ts";
 import { AssetCardState, assetCounts } from "../../src/renderer/run-graph-assets.ts";
@@ -29,15 +27,11 @@ import {
   lastSavePoint,
   PictureSource,
   partRows,
-  STEPS,
   type Step,
-  shelfHeight,
-  StepEdgeKind,
   StepState,
   statusLine,
   stepWord,
 } from "../../src/renderer/run-steps.ts";
-import { buildsLayout, readingNodes, readingOrder } from "../../src/renderer/run-tree.ts";
 import { CustomEvent } from "../../src/shared/custom-events.ts";
 import { type EventData, type EventEnvelope, EventKind } from "../../src/shared/event-log.ts";
 import type { ProjectAssets } from "../../src/shared/game-assets.ts";
@@ -209,98 +203,7 @@ describe("a worker's picture", () => {
     const empty = stepOf(rows, worker(1));
     assert.equal(stepWord(empty, graph.active), "Nothing made");
     assert.equal(empty.onLine, false, "nothing of it to stand on the line with");
-    const layout = buildsLayout(graph, rows, null);
-    assert.equal(layout.ghosts.has(empty.id), true);
-    assert.equal(layout.edges.find((edge) => edge.id === `hang:${empty.id}`)?.kind, StepEdgeKind.Dotted);
     assert.equal(stepWord(stepOf(rows, worker(2)), graph.active), "Done", "a reader changes nothing by design");
-  });
-});
-
-describe("a lead's Loop in place is a comb", () => {
-  /** Each step's column on the spine: 0 is the lead, n the nth save point. */
-  function columns() {
-    const { graph, summary, rows } = fold();
-    const layout = buildsLayout(graph, rows, summary);
-    const lead = layout.rects.lead;
-    assert.ok(lead);
-    const column = (id: string) => {
-      const rect = layout.rects[id];
-      assert.ok(rect, `${id} is drawn`);
-      return (rect.x - lead.x) / STEPS.pitch;
-    };
-    return { graph, summary, rows, layout, lead, column };
-  }
-
-  it("the save points are one line from the lead into the result, and no row spans the graph", () => {
-    const { layout, lead, column } = columns();
-    for (let n = 1; n <= 11; n++) {
-      assert.equal(column(save(n)), n, `save point ${n} in its own column`);
-      assert.equal(layout.rects[save(n)]?.y, lead.y, "on the lead's line");
-    }
-    assert.ok((layout.rects.final?.x ?? 0) > (layout.rects[save(11)]?.x ?? Infinity), "the result after the last");
-    assert.deepEqual(
-      Object.keys(layout.rects).filter((id) => id.startsWith("row:")),
-      [],
-      "no row label: every worker is its one node",
-    );
-    const boxes = Object.entries(layout.rects);
-    for (const [a, ra] of boxes)
-      for (const [b, rb] of boxes) if (a < b) assert.equal(rectsOverlap(ra, rb), false, `${a} on ${b}`);
-  });
-
-  it("each worker hangs under the save point that took its work, or after the one current when it started", () => {
-    const { column, layout, lead } = columns();
-    const expected: Array<[number, number]> = [
-      [4, 1],
-      [5, 1],
-      [6, 1],
-      [1, 2],
-      [2, 2],
-      [3, 2],
-      [7, 5],
-      [8, 5],
-      [9, 5],
-      [10, 7],
-      [11, 8],
-      [12, 9],
-      [13, 10],
-      [14, 10],
-    ];
-    for (const [n, at] of expected) {
-      assert.equal(column(worker(n)), at, `worker ${n} under save point ${at}`);
-      assert.notEqual(layout.rects[worker(n)]?.y, lead.y, `worker ${n} off the line`);
-    }
-    for (const n of [5, 6]) {
-      assert.equal(layout.ghosts.has(worker(n)), true, "a worker that never ran is a ghost");
-      assert.equal(layout.edges.find((edge) => edge.id === `hang:${worker(n)}`)?.kind, StepEdgeKind.Dotted);
-    }
-    assert.equal(layout.edges.find((edge) => edge.id === `hang:${worker(1)}`)?.kind, StepEdgeKind.Solid);
-  });
-
-  // Flipped from "no taller than three lanes, so Fit is set by the save points alone": a worker's
-  // assets are cards of their own under it now, so what the workers made adds height; how many there are still does not.
-  it("fourteen workers make it no taller than three lanes and the asset cards under them", () => {
-    const { rows, layout, lead } = columns();
-    const lanes = 3;
-    const shelves = { above: new Map<number, number>(), below: new Map<number, number>() };
-    for (const step of rows.flatMap((row) => row.steps).filter((each) => each.worker)) {
-      const rect = layout.rects[step.id];
-      assert.ok(rect);
-      const side = rect.y < lead.y ? shelves.above : shelves.below;
-      side.set(rect.x, (side.get(rect.x) ?? 0) + shelfHeight(step));
-    }
-    const tallest = (side: Map<number, number>) => Math.max(0, ...side.values());
-    assert.ok(tallest(shelves.below) > 0, "the fixture's workers delivered assets");
-    const lanesHigh = 2 * STEPS.pad + STEPS.nodeH + lanes * (STEPS.nodeH + STEPS.hangGap);
-    assert.ok(layout.height <= lanesHigh + tallest(shelves.above) + tallest(shelves.below));
-  });
-
-  it("Previous and Next walk along the spine: each save point after the workers it took", () => {
-    const { graph, summary, rows, layout } = columns();
-    const order = readingOrder(rows, readingNodes(graph, rows, summary), layout.order);
-    const at = (id: string) => order.indexOf(id);
-    assert.ok(at(worker(4)) < at(save(1)) && at(save(1)) < at(worker(1)) && at(worker(3)) < at(save(2)));
-    assert.equal(order.at(-1), "finish_check" in layout.rects ? "finish_check" : "final");
   });
 });
 

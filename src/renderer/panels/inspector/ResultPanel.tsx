@@ -250,9 +250,7 @@ export function ResultPanel(props: InspectorProps): JSX.Element {
       reply={{ label: title, placeholder: t("Ask for a change to this build") }}
       onReply={props.onReply}
       actions={<BuildActions build={unlandedBuild(graph, final, run)} onNotice={onNotice} />}
-      media={
-<ResultMedia resultSrc={resultSrc} borrowed={resultBorrowed} onOpen={open} />
-      }
+      media={<ResultMedia resultSrc={resultSrc} borrowed={resultBorrowed} onOpen={open} />}
     >
       <LastLook graph={graph} />
       <LeadSummary final={final} />

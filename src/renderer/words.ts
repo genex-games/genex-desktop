@@ -22,6 +22,7 @@
 
 import { InteractionObjective, InteractionSource } from "../shared/run-summary.ts";
 import type { GameEngine } from "../shared/game-engine.ts";
+import type { AssetKind } from "../shared/game-assets.ts";
 import { WorkerStopCode } from "../shared/workers.ts";
 import { type PackageManager, type SandboxProblemCode, type StartStep, StudioPlatform } from "../shared/boot.ts";
 import { ChatFileOpen } from "../shared/chat-files.ts";
@@ -2473,6 +2474,36 @@ export const BUILD_LINE_WORDS = {
   /** The technical details' key for the check's own words. */
   found: t("found"),
 } as const;
+
+/** The order a step's row counts what it made in. */
+const MADE_ORDER: readonly AssetKind[] = ["model", "image", "audio", "video", "other"];
+
+/** What a step made, on its row of the Builds list: one thing by its kind and versions, more by their kinds' counts. */
+export const MADE_WORDS = {
+  kind: {
+    image: t("Image"),
+    model: t("Model"),
+    audio: t("Sound"),
+    video: t("Video"),
+    other: t("File"),
+  } satisfies Record<AssetKind, string>,
+  count: {
+    image: (count: number) => t("{count, plural, one {# image} other {# images}}", { count }),
+    model: (count: number) => t("{count, plural, one {# model} other {# models}}", { count }),
+    audio: (count: number) => t("{count, plural, one {# sound} other {# sounds}}", { count }),
+    video: (count: number) => t("{count, plural, one {# video} other {# videos}}", { count }),
+    other: (count: number) => t("{count, plural, one {# file} other {# files}}", { count }),
+  } satisfies Record<AssetKind, (count: number) => string>,
+  /** One thing: its kind, then how many versions of it, when more than one. */
+  one: (kind: AssetKind, versions: number): string =>
+    versions > 1 ? `${MADE_WORDS.kind[kind]} · ${ASSET_VERSION_WORDS.count(versions)}` : MADE_WORDS.kind[kind],
+  /** More: each kind's count, models first, then images, sounds, videos and files. */
+  many: (counts: Partial<Record<AssetKind, number>>): string =>
+    MADE_ORDER.flatMap((kind) => {
+      const n = counts[kind];
+      return n ? [MADE_WORDS.count[kind](n)] : [];
+    }).join(" · "),
+};
 
 /** An asset delivered again: its card's count of versions, and its compare with the version before it. */
 export const ASSET_VERSION_WORDS = {

@@ -327,7 +327,6 @@
   "tests/conformance/smoke-wait.test.ts",
   "tests/conformance/snapshot-restore-rpc.test.ts",
   "tests/conformance/snapshots.test.ts",
-  "tests/conformance/step-node-performance.test.ts",
   "tests/conformance/still-cache.test.ts",
   "tests/conformance/store-publication.test.ts",
   "tests/conformance/studio-activity.test.ts",

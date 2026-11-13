@@ -305,10 +305,7 @@ describe("the surfaces that obey it", () => {
       "the portaled picker consumes Escape before the app can act on it",
     );
     const graph = read("src/renderer/panels/RunGraph.tsx");
-    const escape = graph.slice(
-      graph.indexOf('if (event.key === "Escape") {'),
-      graph.indexOf('} else if (event.key === "0")'),
-    );
+    const escape = graph.slice(graph.indexOf('if (event.key === "Escape") {'), graph.indexOf("} else walk(event);"));
     assert.match(escape, /event\.stopPropagation\(\)/);
     assert.match(escape, /else return;/, "an Escape this panel does not use must travel on");
   });

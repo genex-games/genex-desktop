@@ -1,12 +1,12 @@
 /**
  * Steps — what the Builds graph draws. Tries fold into steps, a step's state comes from the build
- * before the judges, the judges show as gates, and the layout keeps what landed on the line.
+ * before the judges, and the judges show as gates.
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { EventEnvelope } from "../../src/substrate/types.ts";
 import { summarizeRun } from "../../src/shared/run-summary.ts";
-import { buildRunGraph, IterationStatus, rectsOverlap } from "../../src/renderer/run-graph.ts";
+import { buildRunGraph, IterationStatus } from "../../src/renderer/run-graph.ts";
 import { TRY_WORD } from "../../src/renderer/round-status.ts";
 import {
   askedRest,
@@ -16,7 +16,6 @@ import {
   frontier,
   headline,
   judgesOn,
-  layoutSteps,
   leadStopped,
   leadWorking,
   partRows,
@@ -28,7 +27,6 @@ import {
   stepPill,
   stepSentence,
   stepWord,
-  STEPS,
   triesWord,
   workedShortWords,
   workerStopWords,
@@ -168,20 +166,6 @@ describe("tries fold into steps", () => {
       "Add a wreck-lifecycle system",
     );
     assert.equal(headline("[defect-x] make the hay less plastic"), "Make the hay less plastic");
-  });
-});
-
-describe("the start node", () => {
-  it("with pictures, keeps a strip for its words under them, and the assets move down past it", () => {
-    const plain = layoutSteps([], { assets: true });
-    const pictured = layoutSteps([], { assets: true, startWords: true });
-    const start = pictured.rects.start!;
-    const words = pictured.rects["start:words"]!;
-    assert.deepEqual(start, plain.rects.start, "the pictures keep the start's place on the middle line");
-    assert.equal(plain.rects["start:words"], undefined, "words alone fit the start's own place");
-    assert.deepEqual(words, { x: start.x, y: start.y + start.h, w: STEPS.startW, h: STEPS.startWordsH });
-    assert.equal(pictured.rects.assets!.y, words.y + words.h + STEPS.assetsGap);
-    assert.ok(pictured.height > plain.height, "the canvas makes room for it");
   });
 });
 
@@ -352,63 +336,6 @@ describe("the status line", () => {
   it("gives a build made live on health alone the grey eye", () => {
     const { graph } = rowsOf(loopRun());
     assert.equal(resultGate(graph), "waiting");
-  });
-});
-
-describe("the layout", () => {
-  it("puts what landed on the line, hangs the rest below its anchor, and overlaps nothing", () => {
-    const { rows } = rowsOf(loopRun());
-    const layout = layoutSteps(rows, { resultGate: "waiting" });
-    const boxes = Object.entries(layout.rects).filter(([id]) => !id.startsWith("row:"));
-    for (const [a, ra] of boxes)
-      for (const [b, rb] of boxes) if (a < b) assert.equal(rectsOverlap(ra, rb), false, `${a} overlaps ${b}`);
-    const land = rows.find((row) => row.facet.facetId === "land")!;
-    const [first, shore, mountain] = land.steps.map((step) => layout.rects[step.id]!);
-    assert.equal(shore!.x - first!.x, STEPS.pitch, "the kept steps run left to right");
-    assert.equal(shore!.y, first!.y, "on one line");
-    assert.equal(mountain!.x, shore!.x, "the undone step hangs under the step it followed");
-    assert.equal(mountain!.y, shore!.y + STEPS.nodeH + STEPS.hangGap);
-    assert.ok(layout.ghosts.has(land.steps[2]!.id));
-    assert.equal(layout.rects["row:sword"], undefined, "a part built in one session is its node: no label over it");
-    assert.ok(layout.rects["row:land"], "a part with steps keeps its label");
-    for (const [id, rect] of boxes)
-      if (id !== "assets") assert.deepEqual([rect.w, rect.h], [STEPS.nodeW, STEPS.nodeH], `${id} is the one node size`);
-    const start = layout.rects.start!,
-      final = layout.rects.final!;
-    assert.equal(start.y + start.h / 2, final.y + final.h / 2, "the start and the result share the middle");
-    assert.ok(
-      final.x >
-        Math.max(
-          ...boxes
-            .filter(([id]) => id.startsWith("step:") || id.startsWith("session:"))
-            .map(([, rect]) => rect.x + rect.w),
-        ),
-    );
-    // Gates: one on the way into each kept step, one on top of the hanging step, one before the result.
-    assert.deepEqual(layout.gates.map((gate) => gate.gate).sort(), ["kept", "kept", "undone", "waiting"]);
-    const hang = layout.gates.find((gate) => gate.gate === "undone")!;
-    assert.deepEqual([hang.x, hang.y], [mountain!.x + STEPS.nodeW / 2, mountain!.y]);
-  });
-
-  it("keeps a part with nothing in the build on its row, ghosted, and never joins it to the result", () => {
-    minute = 0;
-    const { rows } = rowsOf([
-      event("run_started", { goal: "g", mode: "director" }),
-      event("autopilot_started", { director: true, facets: [] }),
-      event("director_worker", { workerId: "sky", title: "Sky", state: "running", mode: "loop" }),
-      judged("sky", 1, "incumbent"),
-      event("run_finished", { landed: false }),
-    ]);
-    const layout = layoutSteps(rows);
-    const [step] = rows[0]!.steps;
-    assert.equal(layout.rects[step!.id]!.y, layout.rects["row:sky"]!.y + STEPS.labelH, "on the row, not below it");
-    assert.ok(layout.ghosts.has(step!.id));
-    assert.ok(
-      !layout.edges.some(
-        (edge) => edge.kind === "solid" && edge.d.includes(`M${layout.rects[step!.id]!.x + STEPS.nodeW} `),
-      ),
-      "no line to the result",
-    );
   });
 });
 
@@ -585,17 +512,6 @@ describe("between parts", () => {
     ]);
     assert.equal(leadWorking(graph, summary, rows), true);
     assert.equal(statusLine(graph, summary, rows).rest, "the lead is working on the next step");
-    const layout = layoutSteps(rows, { lead: true });
-    const final = layout.rects.final!;
-    const lead = layout.rects.lead!;
-    assert.equal(lead.x, final.x + final.w + STEPS.leadGap);
-    assert.equal(lead.y + lead.h / 2, final.y + final.h / 2, "on the result's line");
-    assert.ok(
-      layout.edges.some(
-        (edge) => edge.kind === "live" && edge.d === `M${final.x + final.w} ${final.y + final.h / 2} H${lead.x}`,
-      ),
-    );
-    assert.equal(layoutSteps(rows).rects.lead, undefined);
   });
 
   it("hands the graph back to the parts when one starts working", () => {

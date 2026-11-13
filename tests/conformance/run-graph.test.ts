@@ -16,7 +16,6 @@ import {
   plannedFlips,
   roundStep,
   type IterationNode,
-  type Rect,
 } from "../../src/renderer/run-graph.ts";
 import { checkCounts } from "../../src/renderer/words.ts";
 import { customRecord } from "../../src/shared/custom-events.ts";
@@ -546,10 +545,6 @@ describe("the plan's checks and the judge's own notes", () => {
   });
 });
 
-/** Two cards share pixels: what no timeline layout may do. */
-const rectsOverlap = (a: Rect, b: Rect): boolean =>
-  a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
-
 // ── the Builds tab: notes, plain words, timeline ─────────────────────────────────────────
 
 import {
@@ -563,7 +558,7 @@ import {
   runStillPath,
   thumbShot,
 } from "../../src/renderer/run-graph.ts";
-import { layoutSteps, partRows, STEPS, Tone } from "../../src/renderer/run-steps.ts";
+import { Tone } from "../../src/renderer/run-steps.ts";
 import { assetsStatus, isMaking, stoppedShort } from "../../src/renderer/panels/inspector/asset-jobs.ts";
 import { MakingPhase } from "../../src/shared/asset-making.ts";
 
@@ -772,13 +767,6 @@ describe("the modeller in the run graph (AG-930)", () => {
     assert.equal(node.assets[0]!.renderFront, "/runs/run_x/facet_buildings/blender/barn-1-front.png");
     assert.equal(node.assets[1]!.renderFront, null, "an event without the second view still folds");
     assert.equal(graph.runDir, "/runs/run_x", "the first render names the run folder like any still");
-    // The modeller is part of the one assets node, under the start.
-    const layout = layoutSteps(partRows(graph), { assets: true });
-    assert.ok(layout.rects.assets!.y >= layout.rects.start!.y + layout.rects.start!.h, "below the start");
-    // A part built in one session has no label, only its node; neither may sit under the assets.
-    for (const [id, rect] of Object.entries(layout.rects))
-      if (/^(row|step|session):/.test(id))
-        assert.equal(rectsOverlap(layout.rects.assets!, rect), false, `never over ${id}`);
   });
 
   it("no Blender node when the run had none, and an asset event alone still creates one", () => {
@@ -791,7 +779,6 @@ describe("the modeller in the run graph (AG-930)", () => {
       without.nodes.some((n) => n.kind === "blender"),
       false,
     );
-    assert.equal(layoutSteps(partRows(without)).rects.assets, undefined);
     counter = 0;
     const lateGrant = buildRunGraph([
       event("run_started", { goal: "g", project: "p", reference: { name: "x" } }),
@@ -921,10 +908,6 @@ describe("the plugins' asset jobs in the run graph", () => {
     assert.equal(
       status.nodes.some((n) => n.kind === "assets"),
       false,
-    );
-    assert.equal(
-      layoutSteps(partRows(status), { assets: status.nodes.some((n) => n.kind === "assets") }).rects.assets,
-      undefined,
     );
   });
 
@@ -1319,49 +1302,6 @@ describe("the plugins' asset jobs in the run graph", () => {
     assert.deepEqual(blender.assets[0]!.files, ["assets/barn.glb"]);
   });
 
-  it("hangs the assets under the start, and crosses no part's row", () => {
-    counter = 0;
-    const graph = buildRunGraph([
-      event("run_started", { goal: "a farm", project: "farm", blender: { version: "5.2.1" } }),
-      event("autopilot_started", { facets, maxParallel: 2 }),
-      verdict("buildings", 1, "challenger"),
-      verdict("ground", 1, "challenger"),
-      event("blender_asset", {
-        facetId: "buildings",
-        iteration: 1,
-        name: "barn",
-        file: "assets/barn.glb",
-        bytes: 1,
-        render: null,
-        ok: true,
-        error: null,
-        stats: null,
-      }),
-      started("call-1", { facetId: "ground", iteration: 1 }),
-      finished("call-1", { facetId: "ground", iteration: 1, jobId: "job-1", files: ["assets/genex/job-1/hay.png"] }),
-    ])!;
-    const layout = layoutSteps(partRows(graph), { assets: true });
-    assert.ok(layout.rects.assets, "the graph places one assets node for the modeller and the plugins");
-    assert.equal(layout.rects.assets!.x, layout.rects.start!.x, "the same column as the start");
-    assert.ok(
-      layout.rects.assets!.x + layout.rects.assets!.w <= STEPS.pad + STEPS.startW + STEPS.busGap,
-      "clear of the parts' bus",
-    );
-    assert.ok(layout.rects.assets!.y >= layout.rects.start!.y + layout.rects.start!.h, "under the start, not over it");
-    const entries = Object.entries(layout.rects).filter(([id]) => !id.startsWith("row:"));
-    for (const [aId, a] of entries) {
-      for (const [bId, b] of entries) {
-        if (aId >= bId) continue;
-        assert.equal(rectsOverlap(a, b), false, `${aId} overlaps ${bId}`);
-      }
-    }
-    // A dotted thread hangs it off the start: a tool every part reaches for, not a step.
-    assert.ok(
-      layout.edges.some((edge) => edge.kind === "dotted" && edge.d.endsWith(`V${layout.rects.assets!.y}`)),
-      "hung off the start",
-    );
-  });
-
   it("reads one field out of the host's arguments digest, and nothing out of a digest without it", () => {
     const digest = "operation=create prompt=a red barn with a weathervane style=painterly count=2";
     assert.equal(digestField(digest, "operation"), "create");
@@ -1673,19 +1613,4 @@ describe("a finished lead run its chat's own session reopens", () => {
     const final = graph.nodes.find((node) => node.kind === "final")!;
     assert.deepEqual(final.kind === "final" && final.facets.map((row) => row.facetId), ["a", "b"]);
   });
-});
-
-it("a director working without worker rows has a compact, connected input-to-result path", () => {
-  const graph = buildRunGraph([
-    event("run_started", { budgets: { wallClockMs: 3_600_000 } }),
-    event("autopilot_started", { director: true, facets: [] }),
-  ])!;
-  const layout = layoutSteps(partRows(graph)),
-    start = layout.rects.start!,
-    final = layout.rects.final!;
-  assert.ok(final.x - start.x - start.w <= 80, "no empty worker-sized gap");
-  assert.ok(
-    layout.edges.some((edge) => edge.d === `M${start.x + start.w} ${start.y + start.h / 2} H${final.x}`),
-    "one continuous connector",
-  );
 });

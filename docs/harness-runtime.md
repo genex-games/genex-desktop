@@ -828,8 +828,8 @@ running app bundle. Fixture checks need no paid assets, real CLIs or credentials
 
 Build actions regression: real Git showBuild requests overlap in director conformance; Electron
 Build smoke overlaps two showBuild IPC requests with loadPreview, repeats Play, and checks
-live work staying in view, Jump to now and graph cursors. run-steps tests own step folding,
-merge-first state, gates and layout. No production game is used as a fixture.
+live work listed as working, cards opening in place of their rows and the list's cursors.
+run-steps tests own step folding and merge-first state; builds-list tests own the list's order. No production game is used as a fixture.
 
 The Build UI smoke also controls pending/failing bootstrap and selected-thread IPC reads to
 assert the startup loader, no premature Ready or empty games, explicit errors, and successful Retry.

@@ -6,10 +6,9 @@
 import { z } from "zod";
 import { SECOND_MS } from "../../shared/duration.ts";
 
-const GRAPH_DRAG_MIN_MS = 100;
-const GRAPH_DRAG_MAX_MS = 5 * SECOND_MS;
-const GRAPH_DRAG_MAX_DISTANCE = 300;
-const GRAPH_DRAG_MAX_STEPS = 120;
+/** The shortest and longest a `window.resize` gesture may take. */
+const WINDOW_RESIZE_MIN_MS = 100;
+const WINDOW_RESIZE_MAX_MS = 5 * SECOND_MS;
 const WINDOW_RESIZE_MAX_DELTA = 600;
 const WINDOW_RESIZE_MAX_STEPS = 120;
 
@@ -71,7 +70,6 @@ export const DevMethod = {
   Select: "select",
   Scroll: "scroll",
   GameInput: "game.input",
-  GraphDrag: "graph.drag",
   FileDrag: "file.drag",
   WindowResize: "window.resize",
   FixtureGraph: "fixture.graph",
@@ -189,16 +187,11 @@ export const operationSchema = z.discriminatedUnion("method", [
     stage: z.enum(DevDragStage),
     file: z.enum(DevDragFile).default(DevDragFile.Picture),
   }),
-  operation(DevMethod.GraphDrag, {
-    durationMs: z.number().int().min(GRAPH_DRAG_MIN_MS).max(GRAPH_DRAG_MAX_MS),
-    distanceX: z.number().min(-GRAPH_DRAG_MAX_DISTANCE).max(GRAPH_DRAG_MAX_DISTANCE),
-    steps: z.number().int().min(2).max(GRAPH_DRAG_MAX_STEPS),
-  }),
   operation(DevMethod.WindowResize, {
     deltaWidth: z.number().int().min(-WINDOW_RESIZE_MAX_DELTA).max(WINDOW_RESIZE_MAX_DELTA),
     deltaHeight: z.number().int().min(-WINDOW_RESIZE_MAX_DELTA).max(WINDOW_RESIZE_MAX_DELTA),
     steps: z.number().int().min(2).max(WINDOW_RESIZE_MAX_STEPS),
-    durationMs: z.number().int().min(GRAPH_DRAG_MIN_MS).max(GRAPH_DRAG_MAX_MS),
+    durationMs: z.number().int().min(WINDOW_RESIZE_MIN_MS).max(WINDOW_RESIZE_MAX_MS),
   }),
   operation(DevMethod.FixtureGraph, { action: z.enum(GraphFixtureAction) }),
   operation(DevMethod.GameState, {}),

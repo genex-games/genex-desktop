@@ -374,26 +374,29 @@ try {
   await check(
     "build history pointer navigation and graph details",
     "desktop",
-    "earlier run and actual saved health/capture visible",
+    "earlier run and a step's actual saved capture visible",
     async () => {
       await openBuildFromChat(a, "fixture-build-1");
       await until(async () => {
         const s = await snapshot(a);
         return s.stage.selectedRun === "fixture-build-1" && s.text.includes("River and bridge");
       }, "earlier history graph");
-      // The selected run changes before its complete host summary has arrived. Wait for the
-      // actual pointer target to become visible; chat text alone can belong to the earlier render.
-      await reach(a, "click", { selector: '[data-graph-node="start"]' });
-      await until(
-        async () => (await snapshot(a)).text.includes("Fixture base: camera views were identical"),
-        "base health",
-      );
+      // The run stopped with its only step's work outside the build: that row waits under the
+      // left-out row, which a press opens. The selected run changes before its complete host
+      // summary has arrived, so wait for each pointer target to become visible.
+      const step = '[data-graph-node="step:river:1"]';
+      const listed = async () =>
+        (await op(a, "snapshot", { surface: "desktop", scope: "[data-builds-list]" })).controls.some(
+          (c) => c.node === "step:river:1",
+        );
+      if (!(await listed())) await reach(a, "click", { selector: '[data-builds-left-out][aria-expanded="false"]' });
+      await reach(a, "click", { selector: step });
       await until(
         async () =>
-          (await op(a, "snapshot", { surface: "desktop", scope: '[data-testid="build-capture"]' })).images.some(
+          (await op(a, "snapshot", { surface: "desktop", scope: '[data-graph-panel="step:river:1"]' })).images.some(
             (i) => i.loaded,
           ),
-        "saved base capture loaded",
+        "the step's saved capture loaded in its card",
       );
       await screenshot(a, "desktop", "build-history");
       await assert.rejects(op(a, "capture", { surface: "game", name: "unavailable-game" }), /missing-prerequisite/);
