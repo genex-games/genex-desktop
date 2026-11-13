@@ -62,6 +62,8 @@ interface Props {
   result: { status: ResultStatus; src: string | null } | null;
   selected: string | null;
   onSelect: (id: string) => void;
+  /** close the open row's card */
+  onClose: () => void;
   /** the open row's card, drawn in its place */
   card: ReactNode;
 }
@@ -284,12 +286,17 @@ function Rows({ rows, props }: { rows: ListRow[]; props: Omit<Props, "list" | "r
 
 /**
  * The steps left out of the build, under one row that opens them in place. It is open while one of
- * them is (pressed on the chat's Building card, or walked to with an arrow).
+ * them is (pressed on the chat's Building card, or walked to with an arrow); closing it closes that
+ * card too.
  */
 function LeftOut({ rows, props }: { rows: ListRow[]; props: Omit<Props, "list" | "result"> }): JSX.Element | null {
   const [pressed, setPressed] = useState(false);
   const holdsOpen = rows.some((row) => row.id === props.selected);
   const open = pressed || holdsOpen;
+  const toggle = (): void => {
+    if (holdsOpen) props.onClose();
+    setPressed(!open);
+  };
   if (!rows.length) return null;
   return (
     <>
@@ -297,7 +304,7 @@ function LeftOut({ rows, props }: { rows: ListRow[]; props: Omit<Props, "list" |
         type="button"
         data-builds-left-out
         aria-expanded={open}
-        onClick={() => setPressed((value) => !value)}
+        onClick={toggle}
         className="-mx-3 grid min-h-[48px] w-[calc(100%+24px)] cursor-pointer grid-cols-[16px_minmax(0,1fr)_auto] items-center gap-x-3 rounded-[12px] px-3 py-1 text-left text-chat text-ink-3 hover:bg-control-hover hover:text-control-text-hover focus-visible:outline-2 focus-visible:outline-accent"
       >
         <span aria-hidden="true" className="flex size-4 items-center justify-center">
@@ -332,7 +339,7 @@ function Section({
       </h2>
       <div className="@container/rows -my-1 flex flex-col">
         <Rows rows={rows} props={props} />
-        <LeftOut rows={leftOut} props={props} />
+        <LeftOut key={props.runId} rows={leftOut} props={props} />
       </div>
     </section>
   );

@@ -19,9 +19,6 @@ export type GraphSelection = (typeof GraphSelection)[keyof typeof GraphSelection
 
 const PART_PREFIX = "part:";
 
-/** The selection id of a part's row. */
-export const partSelection = (facetId: string): string => `${PART_PREFIX}${facetId}`;
-
 /** Whether a selection id names a part's row. */
 export const isPartSelection = (id: string): boolean => id.startsWith(PART_PREFIX);
 

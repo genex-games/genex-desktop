@@ -179,9 +179,6 @@ export const assetSelection = (facetId: string, first: AssetInfo): string =>
 /** Whether a selection id names one of a worker's asset cards. */
 export const isAssetSelection = (id: string): boolean => id.startsWith(ASSET_PREFIX);
 
-/** A step's id, then its asset cards' in order: how Previous and Next walk a worker and what it made. */
-export const stepAndAssetIds = (step: Step): string[] => [step.id, ...(step.assets ?? []).map((card) => card.id)];
-
 export interface PartRow {
   facet: FacetNode;
   steps: Step[];

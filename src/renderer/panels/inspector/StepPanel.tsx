@@ -44,10 +44,8 @@ const stepBefore = (row: PartRow, step: Step): Step | null =>
     .filter((item) => item.onLine)
     .at(-1) ?? null;
 
-/** The try a step's panel opens on: the one whose notes were asked for, else the one its node shows, else the latest. */
-function openingTry(step: Step, notesFor: string | null): number {
-  const asked = step.tries.findIndex((node) => node.id === notesFor);
-  if (asked >= 0) return asked;
+/** The try a step's panel opens on: the one its row shows, else the latest. */
+function openingTry(step: Step): number {
   const shown = step.shown ?? step.tries.at(-1);
   return shown ? Math.max(0, step.tries.indexOf(shown)) : 0;
 }
@@ -182,18 +180,7 @@ function StepStory({ step, node }: { step: Step; node: IterationNode }): JSX.Ele
   );
 }
 
-function StepRows({
-  graph,
-  run,
-  node,
-  notesOpen,
-}: {
-  graph: RunGraphModel;
-  run: RunNode;
-  node: IterationNode;
-  /** the judges' notes open already showing: a gate on the graph asked for them */
-  notesOpen: boolean;
-}): JSX.Element {
+function StepRows({ graph, run, node }: { graph: RunGraphModel; run: RunNode; node: IterationNode }): JSX.Element {
   const judged = isJudgedTry(node);
   return (
     <Rows>
@@ -202,7 +189,6 @@ function StepRows({
           row={PanelRow.ReviewersNotes}
           label={t("Reviewers' notes")}
           right={node.defects.length ? String(node.defects.length) : null}
-          defaultOpen={notesOpen}
         >
           <JudgesNotes node={node} graph={graph} quoted={judgesOn(node)} />
         </Row>
@@ -274,7 +260,7 @@ function TryStills({
 /** The panel of one step of a part, opened on the try its node shows. */
 export function StepPanel(props: StepPanelProps): JSX.Element | null {
   const tries = props.step.tries;
-  const [index, setIndex] = useState(() => openingTry(props.step, props.notesFor));
+  const [index, setIndex] = useState(() => openingTry(props.step));
   const node = tries[Math.min(index, tries.length - 1)];
   if (!node) return null;
   return <StepView {...props} node={node} onPick={setIndex} />;
@@ -352,7 +338,7 @@ function StepView(props: StepPanelProps & { node: IterationNode; onPick: (at: nu
     >
       <StepStory step={step} node={node} />
       <NotesSection notes={node.notes} />
-      <StepRows graph={graph} run={run} node={node} notesOpen={props.notesFor === node.id} />
+      <StepRows graph={graph} run={run} node={node} />
     </Panel>
   );
 }

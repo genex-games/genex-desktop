@@ -21,7 +21,7 @@ import { t } from "../../shared/i18n.ts";
 import type { HistoryEntry } from "../build-progress.ts";
 import { OPEN_BUILD_STEP_EVENT, takeBuildStep } from "../open-build.ts";
 import { readingNodes } from "../run-tree.ts";
-import { GraphSelection, isPartSelection } from "./inspector/selection.ts";
+import { GraphSelection } from "./inspector/selection.ts";
 import { type Notify, notifyProblem } from "../state/toasts.ts";
 import { keyTakenElsewhere } from "./keyboard.ts";
 import { barPlay } from "./run-graph/bar-shape.ts";
@@ -91,8 +91,12 @@ const ringStep = <T,>(items: readonly T[], at: number, dir: number): T | undefin
 function useOverlays(selectable: string[]) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [light, setLight] = useState<LightState>(null);
-  const onList = (id: string): boolean => selectable.includes(id) || isPartSelection(id);
-  const selected = selectedId && onList(selectedId) ? selectedId : null;
+  const selected = selectedId && selectable.includes(selectedId) ? selectedId : null;
+  // A card whose row left the list (the lead stops working itself) closes for good: it must not
+  // open again by itself, taking focus, when its row comes back.
+  useEffect(() => {
+    if (selectedId && !selected) setSelectedId(null);
+  }, [selectedId, selected]);
   const clear = useCallback(() => {
     setSelectedId(null);
     setLight(null);
@@ -303,6 +307,7 @@ export const RunGraph = memo(function RunGraph({
             result={active ? null : { status: stills.result, src: stills.resultSrc }}
             selected={selected}
             onSelect={select}
+            onClose={() => setSelectedId(null)}
             card={
               selected ? (
                 <SelectedPanel
@@ -370,7 +375,6 @@ function SelectedPanel({
       timeline={model.timeline}
       onClose={() => overlays.setSelectedId(null)}
       onSelect={(id) => overlays.setSelectedId(id)}
-      notesFor={null}
       onLight={(items, index) => overlays.setLight({ items, index })}
       onOpenJob={onOpenJob}
       onReply={onReply}
@@ -424,7 +428,7 @@ function barTabs(tabs: BuildTabs | null, graph: RunGraphModel, goal: string): Bu
   return { builds: [only], open: graph.runId, onOpen: tabs?.onOpen ?? STAY };
 }
 
-/** Only the status words and the tabs' clocks tick; the list's rows stay untouched. */
+/** The status words and the tabs' clocks, on the run's 30-second tick (the list reads the same tick for its background work). */
 function BuildStatusClock({
   model,
   tabs,

@@ -31,11 +31,11 @@ import { Status } from "./tone.tsx";
 import type { StepPanelProps } from "./types.ts";
 
 /** The recorded outcome's task for a part, when there is one. */
-export const taskOf = (outcome: RunSummary | null, facetId: string): RunTask | null =>
+const taskOf = (outcome: RunSummary | null, facetId: string): RunTask | null =>
   outcome?.tasks.find((item) => item.id === facetId) ?? null;
 
 /** The technical rows a part's task adds: how often it merged and who built it. */
-export const taskRows = (task: RunTask | null): DetailRow[] => [
+const taskRows = (task: RunTask | null): DetailRow[] => [
   [t("integrations"), task ? String(task.integrations) : null],
   [t("workers"), task && task.workers.length > 1 ? task.workers.join(" → ") : null],
 ];

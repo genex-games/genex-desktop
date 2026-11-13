@@ -49,7 +49,10 @@ export interface ListRow {
   build: BuildCard | null;
 }
 
-/** The list: what works now, in the order it started; what changed, newest first; what was left out, newest first. */
+/**
+ * The list: what works now, in the order it started, then the steps still to come while the run is
+ * live; what changed, newest first; what was left out, newest first.
+ */
 export interface BuildsList {
   working: ListRow[];
   changes: ListRow[];
@@ -175,15 +178,19 @@ function jobsRow(input: BuildsListInput): ListRow | null {
   return fixed(GraphSelection.Jobs, status.title, running ? RowMark.Working : RowMark.Added, status.status || null);
 }
 
-/** The finish check's row: at work while it looks, a problem after a no, else done. */
+/** Each finish check state's mark: at work while it looks, done, a problem after a no, quiet once stopped. */
+const FINISH_MARK: Record<FinishCheckState, RowMark> = {
+  [FinishCheckState.Checking]: RowMark.Working,
+  [FinishCheckState.Done]: RowMark.Added,
+  [FinishCheckState.NotYet]: RowMark.Problem,
+  [FinishCheckState.Stopped]: RowMark.Out,
+};
+
+/** The finish check's row, marked by its state. */
 function finishRow(node: FinishCheckNode | null): ListRow | null {
   if (!node) return null;
   const face = finishCheckFace(node);
-  const marks: Partial<Record<FinishCheckState, RowMark>> = {
-    [FinishCheckState.Checking]: RowMark.Working,
-    [FinishCheckState.Done]: RowMark.Added,
-  };
-  return fixed(GraphSelection.FinishCheck, face.name, marks[node.state] ?? RowMark.Problem, face.word || null);
+  return fixed(GraphSelection.FinishCheck, face.name, FINISH_MARK[node.state], face.word || null);
 }
 
 /** The run's assets' row: at work while one is being made, and how they stand. */
@@ -205,16 +212,20 @@ export function buildsList(input: BuildsListInput): BuildsList {
   const failed = (input.timeline?.builds ?? []).filter((build) => build.outcome !== BuildOutcome.Passed).map(buildRow);
   const fixedOnes = fixedRows(input);
   const atWork = (row: ListRow): boolean => row.mark === RowMark.Working;
+  // A step not ended yet waits with the work while the run is live; once it is over, it was left out.
+  const waits = (row: ListRow): boolean => row.mark === RowMark.Waiting;
+  const live = input.graph.active === true;
+  const current = (row: ListRow): boolean => atWork(row) || (live && waits(row));
   const plain = ({ order: _order, ...row }: Placed): ListRow => row;
   const working = [
     ...fixedOnes.filter(atWork),
     ...steps
-      .filter(atWork)
-      .sort((a, b) => a.order - b.order)
+      .filter(current)
+      .sort((a, b) => Number(waits(a)) - Number(waits(b)) || a.order - b.order)
       .map(plain),
   ];
-  const ended = steps.filter((row) => !atWork(row));
-  const left = (row: Placed): boolean => row.mark === RowMark.Out;
+  const ended = steps.filter((row) => !current(row));
+  const left = (row: Placed): boolean => row.mark === RowMark.Out || waits(row);
   const newestFirst = (rows: Placed[]): ListRow[] => rows.sort((a, b) => b.order - a.order).map(plain);
   const changes = [
     ...fixedOnes.filter((row) => !atWork(row)),

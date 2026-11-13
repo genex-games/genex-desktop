@@ -53,8 +53,6 @@ export interface InspectorProps {
   timeline: BuildTimeline | null;
   onClose: () => void;
   onSelect: (id: string) => void;
-  /** The try whose judges' notes its card opens on, already showing — a gate on the graph asked for them. */
-  notesFor: string | null;
   onLight: (items: LightItem[], index: number) => void;
   onOpenJob: (job: AssetInfo) => void;
   /** Put a chip naming this node in the chat's composer; null when there is no chat to reply in. */

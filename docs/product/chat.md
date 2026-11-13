@@ -9,7 +9,7 @@ Dropped pictures stay pictures; other files become links. @ tags (max 5): local 
 Genex ones in `.studio/refs/`, assets `src/assets/`.
 
 Chat work shows its status and clock; waiting is static. A running build is one card that holds
-still: steps counted, their list, Open in Builds. Run workers get no lines.
+still: steps counted and their list, each step opening its row on Builds. Run workers get no lines.
 
 Neighboring tools group under **Worked on N steps** (or **Worked in Unreal**);
 failures stay visible. Play views and assets sit under their work. Build updates use a short

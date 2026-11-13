@@ -136,7 +136,6 @@ export default {
   "A new version of Genex is ready and may fix this.": "Genex 새 버전이 준비됐어요. 이 문제가 해결될 수도 있어요.",
   "A night-vision security camera, its timestamp burned in": "타임스탬프가 박힌 야간 투시 보안 카메라",
   "A ninja who can only move when the music plays": "음악이 나올 때만 움직일 수 있는 닌자",
-  "A note for every part": "모든 파트에 남길 메모",
   "A one-button game about a whale jumping out of the ocean": "바다 위로 뛰어오르는 고래가 주인공인 원버튼 게임",
   "A paper airplane flying through an office without hitting coworkers":
     "동료와 부딪히지 않고 사무실을 나는 종이비행기",
@@ -340,8 +339,6 @@ export default {
   "Always allowed": "항상 허용됨",
   "An agent used {app} while you were playing.": "플레이하는 동안 에이전트가 {app} 앱을 사용했어요.",
   "An empty level to build from scratch.": "처음부터 만들 수 있는 빈 레벨.",
-  "An empty scene. It runs and its cameras see it; nothing else was checked yet.":
-    "빈 장면이에요. 실행되고 카메라에도 보여요. 다른 건 아직 검사하지 않았어요.",
   "An external Codex CLI is required.": "외부 Codex CLI가 필요해요.",
   "An http or sse connector has no command": "http 또는 sse 커넥터에는 명령이 없어요",
   "An independent interaction check failed.": "독립 상호작용 검사가 실패했어요.",
@@ -380,7 +377,6 @@ export default {
     "누구나 만들 수 있어요. 매니페스트, 도구, 패널이 든 폴더 하나면 돼요. Local Blender와 Genex도 같은 방식으로 만들었어요.",
   "Anyone with the link can play it.": "링크가 있으면 누구나 플레이할 수 있어요.",
   "Anything the lead should do next?": "메인 에이전트가 다음에 할 일이 있나요?",
-  "Anything this part should do differently?": "이 파트가 다르게 했으면 하는 게 있나요?",
   "Anything to change here?": "여기서 바꿀 게 있나요?",
   "App language": "앱 언어",
   Appearance: "모양",
@@ -581,7 +577,6 @@ export default {
   Building: "만드는 중",
   "Building the game": "게임 빌드 중",
   "Building the starting point": "시작점을 만드는 중",
-  "Building the starting point…": "시작점을 만드는 중…",
   "Building your game": "게임을 만드는 중",
   "Building {what}": "만드는 중: {what}",
   "Building · Earlier build available": "만드는 중 · 이전 빌드 있음",
@@ -668,8 +663,6 @@ export default {
   Checked: "확인됨",
   "Checked the project": "프로젝트를 확인했어요",
   "Checked whether play runs": "플레이가 돌아가는지 확인했어요",
-  "Checked: it loads and its cameras see it. Gameplay is reviewed step by step.":
-    "검사 완료: 잘 불러와지고 카메라에도 보여요. 게임플레이는 단계별로 리뷰해요.",
   Checking: "확인 중",
   "Checking Blender…": "Blender 확인 중…",
   "Checking it starts…": "시작되는지 확인 중…",
@@ -1311,7 +1304,6 @@ export default {
   "Error copied.": "오류를 복사했어요.",
   "Every game chat and Loop run is recorded under Recent runs.": "모든 게임 채팅과 Loop 빌드는 ‘최근 빌드’에 기록돼요.",
   "Every game dev tool": "모든 게임 개발 도구",
-  "Every part": "모든 파트",
   "Every part can reach for it when a shape needs real modelling.":
     "제대로 된 모델링이 필요한 형태가 있으면 어떤 파트든 쓸 수 있어요.",
   "Every part starts from it · {count, plural, one {# part} other {# parts}} waiting.":
@@ -2358,7 +2350,6 @@ export default {
   "No plugin.json at that path in the pinned commit": "고정된 커밋의 그 경로에 plugin.json이 없어요",
   "No plugins installed yet. Add one from the Add menu.":
     "아직 설치된 플러그인이 없어요. ‘추가’ 메뉴에서 추가해 보세요.",
-  "No prompt was recorded.": "기록된 프롬프트가 없어요.",
   "No provider signed in. OpenCode's free models run without an account.":
     "로그인한 제공자가 없어요. OpenCode의 무료 모델은 계정 없이 실행돼요.",
   "No published games yet.": "아직 게시한 게임이 없어요.",
@@ -2690,7 +2681,6 @@ export default {
   "Part of {plugin}": "{plugin}에 포함",
   "Part {number}": "파트 {number}",
   "Particles orbiting a faint signal": "희미한 신호 주위를 도는 입자",
-  "Partly added": "일부 추가됨",
   "Parts of the build": "빌드 파트",
   Passed: "통과",
   "Passed {count}": "통과 {count}",
@@ -3483,7 +3473,6 @@ export default {
   "Start your server, then check again.": "서버를 시작한 뒤 다시 확인해 주세요.",
   "Started by the lead": "메인 에이전트가 시작함",
   "Started by {who}": "시작: {who}",
-  "Started from": "시작점",
   "Started {time}": "{time} 시작",
   "Started {time} · {duration} so far": "{time} 시작 · 지금까지 {duration}",
   Starting: "시작 중",
@@ -3501,7 +3490,6 @@ export default {
     "에이전트용 {count, plural, other {프로그램 #개}}를 실행해요:",
   Stats: "통계",
   "Status unavailable": "상태를 알 수 없음",
-  Steps: "단계",
   "Still checking the payment": "아직 결제를 확인하는 중이에요",
   "Still failing": "아직 실패 중",
   "Still open": "남은 일",
@@ -3522,7 +3510,6 @@ export default {
   "Stop your builds and replies first, then move.": "먼저 빌드와 답변을 멈춘 다음 옮기세요.",
   Stopped: "중지됨",
   "Stopped adding the Luau checks. Nothing was kept.": "Luau 검사 추가를 중지했어요. 아무것도 보관하지 않았어요.",
-  "Stopped by the lead": "메인 에이전트가 멈춤",
   "Stopped getting Roblox Studio.": "Roblox Studio 받기를 멈췄어요.",
   "Stopped getting Roblox Studio. Anything Roblox's installer already put on this computer stays.":
     "Roblox Studio 받기를 멈췄어요. Roblox 설치 프로그램이 이미 이 컴퓨터에 넣은 것은 그대로 남아요.",
@@ -3875,10 +3862,6 @@ export default {
     "시작 버전이 검사를 통과했어요. 각 파트는 아직 각자의 판정이 필요해요.",
   "The starting point runs but is empty — no scenery or gameplay yet.":
     "시작 버전은 실행되지만 비어 있어요 — 아직 배경도 게임플레이도 없어요.",
-  "The starting point was rejected, and the game was put back the way it started.":
-    "시작점이 거부되어 게임을 처음 상태로 되돌렸어요.",
-  "The starting point was rejected, and the game was put back the way it started. What the checks saw: {problem}":
-    "시작점이 거부되어 게임을 처음 상태로 되돌렸어요. 검사에서 발견한 내용: {problem}",
   "The starting point was rejected; the parts carry on from an empty game.":
     "시작 버전이 거절됐어요. 파트는 빈 게임에서 이어 가요.",
   "The studio could not see the game — looking again in {seconds}s":
@@ -4472,7 +4455,6 @@ export default {
   "What the worker is asked next": "작업자에게 다음으로 요청할 일",
   "What to show": "표시할 항목",
   "What was learned": "배운 것",
-  "What you asked": "요청한 내용",
   "What's missing: {task}": "빠진 것: {task}",
   "When a session limit resets, a while after a model provider’s outage, or when Studio’s loop restarts, a paused build picks up where it left off, up to twice per build. A build you stop stays stopped, and one paused on a sign-in waits for you.":
     "세션 한도가 초기화되거나, 모델 제공자 장애 후 잠시 지나거나, Studio 루프가 다시 시작되면 일시 정지된 빌드가 멈춘 곳부터 다시 이어가요(빌드당 최대 두 번). 직접 멈춘 빌드는 그대로 멈춰 있고, 로그인 때문에 멈춘 빌드는 내가 로그인할 때까지 기다려요.",
@@ -4485,9 +4467,7 @@ export default {
   Whose: "누구의",
   "Whose assets": "누구의 에셋",
   "Who’s playing shows again when you’re back online.": "다시 온라인이 되면 누가 플레이 중인지 보여요.",
-  "Why it stopped": "멈춘 이유",
   "Why the agents didn’t start": "에이전트가 시작되지 않은 이유",
-  "Why the lead stopped it": "메인 에이전트가 멈춘 이유",
   Window: "창",
   "Windows app": "Windows 앱",
   "Windows didn't get permission to install. Press Do it for me again and choose Yes when Windows asks.":
@@ -4547,7 +4527,6 @@ export default {
   "Yes, in Auto mode": "네, Auto 모드로",
   Yesterday: "어제",
   "You approved": "직접 승인함",
-  "You asked": "내 요청",
   "You build.": "직접 만들어요.",
   "You can ask about Harness and its improvements here. Games are built in their own chats.":
     "여기서는 Harness와 그 개선 사항에 대해 물어볼 수 있어요. 게임은 각자의 채팅에서 만들어요.",
@@ -4590,7 +4569,6 @@ export default {
   "Your Nex arrived. Review the purchase, then pay.": "Nex가 들어왔어요. 구매 내용을 확인하고 결제하세요.",
   "Your files": "내 파일",
   "Your game appears here": "여기에 게임이 표시돼요",
-  "Your game as it was when the run started.": "빌드를 시작했을 때의 게임이에요.",
   "Your game folder has edits of its own, and the studio will not write over them — save or undo them, then try again.":
     "게임 폴더에 따로 수정한 내용이 있어서 Studio가 덮어쓰지 않아요 — 저장하거나 되돌린 다음 다시 시도하세요.",
   "Your game is as you left it — {why}": "게임은 그대로예요 — {why}",
@@ -4624,8 +4602,6 @@ export default {
   "Your profile, friends and Publish stay.": "프로필, 친구, 게시 기능은 그대로예요.",
   "Your profile, friends and Publish wait until you sign in again, and the Genex plugin’s tools stop.":
     "다시 로그인할 때까지 프로필, 친구, 게시 기능을 쓸 수 없고, Genex 플러그인의 도구도 멈춰요.",
-  "Your reference": "내 참고 이미지",
-  "Your references": "내 참고 이미지",
   "Your saved sign-in couldn’t be opened on this Mac. Sign in again in your browser.":
     "이 Mac에서 저장된 로그인 정보를 열 수 없어요. 브라우저에서 다시 로그인해 주세요.",
   "Your stats start with your first game": "첫 게임부터 통계가 시작돼요",
@@ -4708,18 +4684,15 @@ export default {
   "asks for a key": "키 필요",
   asset: "에셋",
   "asset group\u0004Delivered": "전달됨",
-  attempts: "시도",
   back: "후면",
   "badge\u0004Set up": "설정 필요",
   "balance couldn’t be read": "잔액을 불러올 수 없음",
-  "base commit": "기준 커밋",
   "before a Loop starts": "Loop 시작 전",
   "before a project of its kind is made": "해당 종류의 프로젝트를 만들기 전",
   "before a restore": "복원 전",
   "before a save point": "저장 지점 전",
   "before its tools run": "도구 실행 전",
   "began finishing the build": "빌드 마무리를 시작했어요",
-  "budget share": "예산 비중",
   "build with": "만들 모델",
   "build {commit} changes the game's .claude folder ({files}), Claude Code's own settings, so it was not landed":
     "{commit} 빌드는 게임의 .claude 폴더({files}), 즉 Claude Code 자체 설정을 바꿔서 적용하지 않았어요",
@@ -4867,7 +4840,6 @@ export default {
   kept: "유지됨",
   "latest release": "최신 릴리스",
   "latest release, {date}": "최신 릴리스, {date}",
-  lead: "메인 에이전트",
   left: "왼쪽",
   light: "빛",
   "listed its own files": "자기 파일 목록을 확인했어요",
@@ -4944,9 +4916,7 @@ export default {
   or: "또는",
   "or use": "다른 방법",
   outage: "장애",
-  outages: "장애",
   "painted the game's cover": "게임 커버를 그렸어요",
-  parallel: "병렬 수",
   part: "파트",
   "passed on your guidance": "내 지시를 전달했어요",
   paused: "일시 정지됨",
@@ -4963,7 +4933,6 @@ export default {
   "playing now": "플레이 중",
   "pressed keys": "키를 눌렀어요",
   "programs on this Mac": "이 Mac의 프로그램",
-  project: "프로젝트",
   "put the build in your game": "빌드를 게임에 반영했어요",
   "ran a command": "명령어를 실행했어요",
   "reach the internet": "인터넷 접속",
@@ -5010,7 +4979,6 @@ export default {
   "section\u0004Play": "플레이",
   "see the running game": "실행 중인 게임 보기",
   "sees images": "이미지 인식",
-  session: "세션",
   "set out the plan": "계획을 세웠어요",
   seventh: "일곱 번째",
   "showed you a build": "빌드를 보여 줬어요",
@@ -5022,7 +4990,6 @@ export default {
   slit: "실눈",
   slower: "느림",
   squint: "찡그린",
-  started: "시작",
   "started a new game": "새 게임을 만들었어요",
   "started a worker": "작업자를 시작했어요",
   "started background work": "백그라운드 작업을 시작했어요",
@@ -5184,7 +5151,6 @@ export default {
     "도구가 시작한 작업이 실행 중일 때, 끝났는지 확인할 때",
   "while it holds a lock, to see whether you are using it": "잠금 중, 사용자가 쓰고 있는지 확인할 때",
   wide: "크게 뜬",
-  worker: "작업자",
   workers: "작업자",
   working: "작업 중",
   "working on {part}": "{part} 작업 중",
@@ -5284,7 +5250,6 @@ export default {
   "{count, plural, one {# save point} other {# save points}}": "{count, plural, other {저장 지점 #개}}",
   "{count, plural, one {# self-edited file} other {# self-edited files}} kept":
     "{count, plural, other {에이전트가 편집한 파일 #개 유지}}",
-  "{count, plural, one {# step} other {# steps}}": "{count, plural, other {#단계}}",
   "{count, plural, one {# structural check} other {# structural checks}} passed.":
     "구조 검사 {count, plural, other {#개}}를 통과했어요.",
   "{count, plural, one {# thing} other {# things}} left": "{count, plural, other {#개 남음}}",
@@ -5329,7 +5294,6 @@ export default {
   "{count, plural, one {play} other {plays}}": "{count, plural, other {회 플레이}}",
   "{count, plural, one {{names} is a repository of its own — Genex adds its files to this folder's history the first time a build goes live, so work inside it is not lost.} other {{names} are repositories of their own — Genex adds their files to this folder's history the first time a build goes live, so work inside them is not lost.}}":
     "{count, plural, other {{names} 폴더는 별도의 저장소예요. 빌드가 처음 게임에 반영될 때 Genex가 그 파일을 이 폴더의 기록에 추가해서 안에서 한 작업이 사라지지 않아요.}}",
-  "{count, plural, other {# added by the reviewers}}": "{count, plural, other {리뷰어가 #개 추가}}",
   "{count, plural, other {# added so far}}": "{count, plural, other {지금까지 #개 추가됨}}",
   "{count, plural, other {# bytes}}": "{count, plural, other {#바이트}}",
   "{count, plural, other {# delivered}}": "{count, plural, other {#개 완성}}",
@@ -5342,9 +5306,7 @@ export default {
   "{count, plural, other {# not confirmed}}": "{count, plural, other {#개 미확인}}",
   "{count, plural, other {# not downloaded}}": "{count, plural, other {#개 다운로드 안 됨}}",
   "{count, plural, other {# not in your game}}": "{count, plural, other {#개 게임에 없음}}",
-  "{count, plural, other {# planned}}": "{count, plural, other {계획 #개}}",
   "{count, plural, other {# polygons}}": "{count, plural, other {폴리곤 #개}}",
-  "{count, plural, other {# re-pointed}}": "{count, plural, other {#개 조정}}",
   "{count, plural, other {# stopped}}": "{count, plural, other {#개 중지됨}}",
   "{count, plural, other {# triangles}}": "{count, plural, other {삼각형 #개}}",
   "{count, plural, other {# tries}}": "{count, plural, other {#번 시도}}",

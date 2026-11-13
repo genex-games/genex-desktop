@@ -30,8 +30,8 @@ preview's network is open, as a web page's. Other folders' views:
 build heads it. A row is a step: its mark, when it ended, what it made (“Model · 2 versions”,
 “12 sounds”) or how it stands, and its pictures (at work: its agent's screen). Steps left out of the
 build gather under one “N left out” row. A failed build check is a row; the lead is one only while
-it works itself. Pressing a row opens its card in place (arrows walk, Esc closes); an eye opens the
-reviewers' notes. Tries a pause cut off show Paused until added. **Follow up in chat** notes the
+it works itself. Pressing a row opens its card in place (arrows walk, Esc closes), with the
+reviewers' word when they compared it. Tries a pause cut off show Paused until added. **Follow up in chat** notes the
 next message to its build. Tabs (one per build; past three, one picker, newest first) and chat
 cards open earlier builds. The chat's Building card shows its latest five steps past seven;
 pressing one opens it here.

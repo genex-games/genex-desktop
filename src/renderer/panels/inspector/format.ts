@@ -19,13 +19,5 @@ export function formatTime(iso: string | null | undefined): string {
   return date.toLocaleTimeString(intlLocale(), { hour: "2-digit", minute: "2-digit" });
 }
 
-/** A day and a clock time such as "3 Sep, 14:05", or nothing for a missing or unreadable date. */
-export function formatWhen(iso: string | null | undefined): string {
-  if (!iso) return "";
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return "";
-  return `${date.toLocaleDateString(intlLocale(), { day: "numeric", month: "short" })}, ${formatTime(iso)}`;
-}
-
 /** An engine and its model as one "codex · gpt" line, or null when neither is known. */
 export const modelLine = (...parts: Array<string | null | undefined>): string | null => joinDots(parts) || null;

@@ -11,14 +11,15 @@ import { assetsStatus } from "../../src/renderer/panels/inspector/asset-jobs.ts"
 import { GraphSelection } from "../../src/renderer/panels/inspector/selection.ts";
 import {
   type BuildsList,
+  type BuildsListInput,
   buildsList,
   type ListRow,
   RowMark,
   rowOfChecklist,
 } from "../../src/renderer/panels/run-graph/builds-list.ts";
-import { buildRunGraph, GraphNodeKind, type FinishCheckNode } from "../../src/renderer/run-graph.ts";
+import { buildRunGraph, type FinishCheckNode, FinishCheckState, GraphNodeKind } from "../../src/renderer/run-graph.ts";
 import { buildTimeline } from "../../src/renderer/run-graph-builds.ts";
-import { graphAssetCards, leadWorking, partRows, stepWord } from "../../src/renderer/run-steps.ts";
+import { graphAssetCards, leadWorking, partRows, StepState, stepWord } from "../../src/renderer/run-steps.ts";
 import { leadFace, leadNodeOf, readingNodes } from "../../src/renderer/run-tree.ts";
 import { BUILD_LINE_WORDS, LEAD_WORDS, MADE_WORDS } from "../../src/renderer/words.ts";
 import { CustomEvent } from "../../src/shared/custom-events.ts";
@@ -107,15 +108,15 @@ function sound(id: string, job: string, file: string): EventEnvelope[] {
 const check = (head: string, extra: Record<string, unknown> = {}) =>
   inRun(CustomEvent.IntegrationHealth, { head, ok: true, problems: [], findings: [], picture: null, ...extra });
 
-/** The list of a log, as the Builds tab folds it. */
-function listOf(events: EventEnvelope[], now = Date.UTC(2026, 0, 1, 10, 0, 0)): BuildsList {
+/** What the Builds tab folds a log's list from. */
+function inputOf(events: EventEnvelope[], now = Date.UTC(2026, 0, 1, 10, 0, 0)): BuildsListInput {
   const graph = buildRunGraph(events);
   assert.ok(graph, "the log folds into a graph");
   const summary = summarizeRun(events, PROJECT, RUN);
   const rows = partRows(graph, summary);
   const finishCheck =
     graph.nodes.find((node): node is FinishCheckNode => node.kind === GraphNodeKind.FinishCheck) ?? null;
-  return buildsList({
+  return {
     graph,
     rows,
     timeline: buildTimeline(graph, rows),
@@ -126,7 +127,23 @@ function listOf(events: EventEnvelope[], now = Date.UTC(2026, 0, 1, 10, 0, 0)): 
     assetJobs: graphAssetCards(graph),
     finishCheck,
     now,
-  });
+  };
+}
+
+/** The list of a log, as the Builds tab folds it. */
+const listOf = (events: EventEnvelope[], now?: number): BuildsList => buildsList(inputOf(events, now));
+
+/** The input with the step titled `title` standing as `state`. */
+function withStep(input: BuildsListInput, title: string, state: StepState): BuildsListInput {
+  const rows = input.rows.map((row) => ({
+    ...row,
+    steps: row.steps.map((step) => (step.name === title ? { ...step, state } : step)),
+  }));
+  assert.ok(
+    rows.some((row) => row.steps.some((step) => step.name === title && step.state === state)),
+    `no step "${title}"`,
+  );
+  return { ...input, rows };
 }
 
 const titles = (rows: ListRow[]): string[] => rows.map((row) => row.title);
@@ -183,6 +200,36 @@ describe("the Builds list", () => {
     const house = named(listOf(loop().events).changes, "A timber house");
     assert.equal(house.mark, RowMark.Added);
     assert.equal(house.detail, null);
+  });
+
+  it("keeps a step that has not ended with what works now while the run is live, and leaves it out once it is over", () => {
+    const input = withStep(inputOf(loop().events), "A timber house", StepState.Waiting);
+    const live = buildsList({ ...input, graph: { ...input.graph, active: true } });
+    assert.deepEqual(titles(live.working), ["The archer draws the bow", "A timber house"]);
+    assert.equal(named(live.working, "A timber house").mark, RowMark.Waiting);
+    assert.ok(!titles(live.changes).includes("A timber house"));
+    const over = buildsList({ ...input, graph: { ...input.graph, active: false } });
+    assert.ok(!titles(over.changes).includes("A timber house"));
+    assert.ok(titles(over.leftOut).includes("A timber house"));
+  });
+
+  it("marks a stopped finish check as left out, not as a problem", () => {
+    const input = inputOf(loop().events);
+    const stopped: FinishCheckNode = {
+      kind: GraphNodeKind.FinishCheck,
+      id: GraphNodeKind.FinishCheck,
+      state: FinishCheckState.Stopped,
+      reasons: [],
+      round: 1,
+      rejections: 0,
+      why: null,
+      rounds: [],
+      over: true,
+    };
+    const row = buildsList({ ...input, finishCheck: stopped }).changes.find(
+      (item) => item.id === GraphSelection.FinishCheck,
+    );
+    assert.equal(row?.mark, RowMark.Out);
   });
 
   it("says what a step in the build made: one thing by its kind and versions, more by their count", () => {

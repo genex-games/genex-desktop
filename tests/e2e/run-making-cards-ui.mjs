@@ -145,7 +145,7 @@ const RUN=buildRunGraph([ev('run_started',{goal:'a keep',project:'fixture'}),
   ...genexCall('c-refused','A refused guard',{jobId:'j-refused',result:'{"status":"failed","error":"Cannot quote this generation"}'})]);
 const BUILDS=buildsView(RUN,null,{project:'fixture',assets:[],jobs:[{source:'genex',jobId:'gen-stale',phase:'unsure'},{source:'genex',jobId:'gen-live',phase:'making'}],truncated:false,skipped:[]});
 const noop=()=>{};
-function BuildsPanel(){return <div className="relative h-[640px] w-[600px]"><AssetsPanel graph={BUILDS} assets={BUILDS.nodes.find(n=>n.kind==='assets')} blender={null} project="fixture" onPrev={noop} onNext={noop} onClose={noop} onLight={noop} onOpenJob={noop}/></div>;}
+function BuildsPanel(){return <div className="relative h-[640px] w-[600px]"><AssetsPanel graph={BUILDS} assets={BUILDS.nodes.find(n=>n.kind==='assets')} blender={null} project="fixture" onClose={noop} onLight={noop} onOpenJob={noop}/></div>;}
 window.mk.showBuilds=()=>{window.showBuilds();return true;};
 window.mk.buildsText=()=>document.querySelector('[data-graph-panel=assets]')?.textContent??'';
 window.mk.buildsShimmers=()=>document.querySelectorAll('[data-graph-panel=assets] .graph-shimmer').length;

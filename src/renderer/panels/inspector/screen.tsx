@@ -13,11 +13,10 @@ import { partFrameOf, trailOf } from "../../state/agent-screens.ts";
 import { useAgentScreens } from "../../state/hooks.ts";
 import { screenAgo, screenDoing, screenDone } from "../../words.ts";
 import { Section } from "./chrome.tsx";
-import { coverCursor } from "./screen-cursor.ts";
 import { IMAGE_OUTLINE } from "./pictures.tsx";
 
-/** The pointer's size on a node and on a card, in pixels of the canvas or the card. */
-const CURSOR_PX = { node: 13, card: 20 } as const;
+/** The pointer's size on a card, in pixels of the card. */
+const CURSOR_PX = { card: 20 } as const;
 /** The trail's thumbnails, in pixels. */
 const TRAIL_THUMB = { w: 76, h: 48 } as const;
 /** The dark pill words sit on over a picture, and the light accent its dot takes there. */
@@ -64,12 +63,6 @@ function Cursor({ left, top, size }: { left: number; top: number; size: number }
       <path d="M4.037 4.688a.495.495 0 0 1 .651-.651l16 6.5a.5.5 0 0 1-.063.947l-6.124 1.58a2 2 0 0 0-1.438 1.435l-1.579 6.126a.5.5 0 0 1-.947.063z" />
     </svg>
   );
-}
-
-/** The agent's cursor over a node's picture, which covers the node. */
-export function NodeCursor({ frame, box }: { frame: AgentScreenFrame; box: { w: number; h: number } }): JSX.Element {
-  const at = coverCursor(frame, box);
-  return <Cursor left={at.left} top={at.top} size={CURSOR_PX.node} />;
 }
 
 /**
