@@ -23,6 +23,7 @@ import {
   type AntigravityInvocation,
   type AntigravityProcess,
   type AntigravitySchedule,
+  antigravityPermission,
   antigravityProcess,
   antigravitySandbox,
   failure,
@@ -562,6 +563,37 @@ describe("an Antigravity turn that stops or fails", () => {
 });
 
 describe("Antigravity's box", () => {
+  it("allows a tool once, and refuses the keychain's tool, a command it cannot read and one with no command line", () => {
+    const options = [
+      { optionId: "allow", name: "Allow", kind: "allow_once" },
+      { optionId: "deny", name: "Deny", kind: "reject_once" },
+    ];
+    const answer = (toolCall: Json) =>
+      ((antigravityPermission({ toolCall, options }, "/games/pong").outcome ?? {}) as Json).optionId;
+    const run = (CommandLine: string) => answer({ kind: "execute", rawInput: { CommandLine } });
+    assert.equal(answer({ kind: "edit", rawInput: { Path: "/games/pong/main.js" } }), "allow");
+    for (const command of ["ls -la", "npm test", "node .studio/bridge/tool.mjs capture_screenshot --json '{}'"])
+      assert.equal(run(command), "allow", command);
+    for (const command of [
+      "security find-generic-password -s anything -w",
+      "/usr/bin/security dump-keychain",
+      "cd /tmp && security find-generic-password -s x",
+      "sh -c 'security find-generic-password -s x'",
+      "echo $(security find-generic-password -s x)",
+      "",
+    ])
+      assert.equal(run(command), "deny", command || "no command line");
+    assert.equal(answer({ kind: "execute", rawInput: {} }), "deny", "a command with no command line");
+    assert.deepEqual(
+      antigravityPermission(
+        { toolCall: { kind: "execute", rawInput: { CommandLine: "security list" } }, options: [options[0]] },
+        "/games/pong",
+      ),
+      { outcome: { outcome: "cancelled" } },
+      "with no way to refuse offered, the question is left unanswered, never allowed",
+    );
+  });
+
   it("its session's sandbox may keep its own folder and, on a Mac alone, read the Keychain it signs in from", () => {
     const home = path.join(os.tmpdir(), "home");
     assert.deepEqual(antigravityHomes(home, "darwin"), [

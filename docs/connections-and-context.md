@@ -375,7 +375,9 @@ terminal sandbox leaves its file tools out, and its permission rules do not reac
 so each turn runs in `ProcessSandbox` with `antigravitySandbox`: the workspace (a read-only
 session, Plan or a reviewer runs from a scratch folder) is all it writes, the network is Google's
 hosts (`ANTIGRAVITY_HOSTS`), a game's `.agents` folder is not the session's to write, and inside
-the box every tool call the agent asks about is allowed. Its sandbox alone is given `~/.gemini`
+the box every tool call the agent asks about is allowed, except a command the never-touch screen
+stops (`antigravityPermission`, `neverTouchVerdict`): macOS's keychain tool, a command the screen
+cannot read and a command with no command line are refused, as a worker's hook refuses them. Its sandbox alone is given `~/.gemini`
 (its settings and conversations) and, on a Mac, `~/Library/Keychains` to read and never to write
 (`antigravityHomes`, `ownHome`, `antigravityKeychain`) and the system's certificate checker (`SandboxMachService.Trust`,
 `com.apple.trustd.agent`, which a Go program verifies every HTTPS certificate through and
@@ -488,7 +490,7 @@ nothing is `unavailable`, so another engine may take over. Tests: `engine-local-
 against `helpers/fake-local-server.ts`, which speaks each server's dialect.
 
 Residual risk: the CLI must read its sign-ins and its shell tool shares its sandbox, so an OpenCode
-session can read OpenCode's own `auth.json` (and a Cursor session Cursor's, and on a Mac an Antigravity session the Keychain's files: macOS guards each item by its own access list, but an item another command-line tool saved through `/usr/bin/security` trusts that program, which a command in the session can start (the sandbox cannot keep a program it may not read from starting), so such a sign-in is within a misled session's reach, as is the encrypted Keychain file itself, and its commands can reach the provider host the session
+session can read OpenCode's own `auth.json` (and a Cursor session Cursor's, and on a Mac an Antigravity session the Keychain's files: macOS guards each item by its own access list, but an item another command-line tool saved through `/usr/bin/security` trusts that program, which the sandbox cannot keep from starting (a program it may not read starts all the same), so the never-touch screen refuses every command that calls it, as it does for a Claude Code session; what is left within a misled session's reach is what that screen cannot see, a program the session writes that calls the tool, and the encrypted Keychain file itself, and its commands can reach the provider host the session
 calls. OpenCode's permission rules keep its own tools inside the workspace, but that is not an OS
 boundary. Every other sandbox still denies the folder. Every sandbox allows localhost, where
 OpenCode 2.x's background server listens outside any sandbox; its password

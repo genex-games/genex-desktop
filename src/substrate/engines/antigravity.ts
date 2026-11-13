@@ -20,6 +20,7 @@ import { execFile } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import os from "node:os";
+import { type NeverTouchList, neverTouchVerdict, SHELL_TOOL } from "./never-touch.ts";
 import path from "node:path";
 import { createInterface } from "node:readline";
 import { promisify } from "node:util";
@@ -30,6 +31,7 @@ import {
   AcpErrorCode,
   AcpMethod,
   AcpPermissionKind,
+  AcpToolKind,
   AcpStopReason,
   AcpToolStatus,
   AcpUpdate,
@@ -263,6 +265,8 @@ export interface AntigravityTurnPlan {
   /** The prompt's content blocks; none for a sign-in check, which only opens a session. */
   prompt: Json[];
   signal: AbortSignal;
+  /** What a worker's seat never reaches: its commands are screened against it as well. */
+  neverTouch?: NeverTouchList | undefined;
 }
 
 /** What a session has done so far. */
@@ -480,6 +484,7 @@ export class AntigravityEngine implements Engine {
         model: request.model,
         prompt: promptBlocks(this.#brief(request, { cwd, scratch, bridge }), request.images ?? []),
         signal: controller.signal,
+        neverTouch: request.worker?.neverTouch,
       };
       const answer = await this.#runTurn(
         invocation,
@@ -711,7 +716,7 @@ export async function runTurn(
       if (live) hooks.onUpdate(update);
     },
     request: async (method, params) => {
-      if (method === AcpMethod.RequestPermission) return allowed(params);
+      if (method === AcpMethod.RequestPermission) return antigravityPermission(params, plan.cwd, plan.neverTouch);
       throw new AcpError(AcpErrorCode.MethodNotFound, MESSAGE.NoSuchRequest(method));
     },
   });
@@ -758,17 +763,39 @@ function sessionRequest(plan: AntigravityTurnPlan): [string, Json] {
   return plan.resume ? [AcpMethod.SessionLoad, { sessionId: plan.resume, ...where }] : [AcpMethod.SessionNew, where];
 }
 
+/** A list that names no folder: the sandbox fences folders, and the screen is left the keychain's tool. */
+const NO_FOLDERS: NeverTouchList = { roots: [], open: [] };
+
 /**
- * The agent asks before a tool runs. Inside the studio's sandbox the answer is yes, once: the
- * first option that allows. A question that offers none is left unanswered-for (`cancelled`).
+ * The agent asks before a tool runs. Inside the studio's sandbox the answer is yes, once (the
+ * first option that allows), except for a command the never-touch screen stops: the Keychain's
+ * files are readable in this sandbox, and macOS's keychain tool, which no file deny reaches, is
+ * what reads another program's sign-in from them. Such a command, one the screen cannot read and
+ * a command with no command line are refused. A question that offers no fitting option is left
+ * unanswered-for (`cancelled`).
  */
-function allowed(params: Json): Json {
+export function antigravityPermission(params: Json, cwd: string, neverTouch: NeverTouchList = NO_FOLDERS): Json {
   const options = (Array.isArray(params.options) ? params.options : []).map(record);
-  const pick =
-    options.find((option) => option.kind === AcpPermissionKind.AllowOnce) ??
-    options.find((option) => option.kind === AcpPermissionKind.AllowAlways);
+  const offered = (...kinds: AcpPermissionKind[]) =>
+    kinds.map((kind) => options.find((option) => option.kind === kind)).find((option) => option !== undefined);
+  const pick = commandStopped(record(params.toolCall), cwd, neverTouch)
+    ? offered(AcpPermissionKind.RejectOnce, AcpPermissionKind.RejectAlways)
+    : offered(AcpPermissionKind.AllowOnce, AcpPermissionKind.AllowAlways);
   if (!pick) return { outcome: { outcome: "cancelled" } };
   return { outcome: { outcome: "selected", optionId: pick.optionId } };
+}
+
+/** Whether the call is a command the never-touch screen stops; a call that runs no command never is. */
+function commandStopped(call: Json, cwd: string, neverTouch: NeverTouchList): boolean {
+  if (call.kind !== AcpToolKind.Execute) return false;
+  const command = text(record(call.rawInput).CommandLine);
+  if (!command.trim()) return true;
+  try {
+    return neverTouchVerdict({ tool: SHELL_TOOL, input: { command } }, neverTouch, cwd, os.homedir()) !== null;
+  } catch {
+    // A command the screen cannot read is refused, as the worker hook refuses it.
+    return true;
+  }
 }
 
 /** Feed the CLI's lines to the connection; once it is gone, every open question fails with its exit. */

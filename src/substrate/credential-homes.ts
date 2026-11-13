@@ -193,7 +193,8 @@ export function antigravityHome(home: string = os.homedir()): string {
  * so this one sandbox reads them, and every other sandbox still does not. It reads and never
  * writes them (`antigravityKeychain`). Each Keychain item keeps its own access list, which macOS
  * enforces, but that is no wall inside the session: an item saved through macOS's own
- * `/usr/bin/security` trusts that program, and the sandbox cannot keep a command from starting it.
+ * `/usr/bin/security` trusts that program, and the sandbox cannot keep a command from starting it:
+ * the engine's never-touch screen refuses each command that calls it (`antigravityPermission`).
  */
 export function antigravityHomes(home: string = os.homedir(), platform: NodeJS.Platform = process.platform): string[] {
   return [antigravityHome(home), ...antigravityKeychain(home, platform)];
