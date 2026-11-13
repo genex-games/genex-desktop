@@ -7,7 +7,7 @@ setup. Blocked plans keep the request, offering settings or retry.
 
 Claude Code and Codex discover models without generating. The list names each family's newest
 model of the newest generation; older ones switch on in Settings; one in use stays listed.
-An unset pick runs the CLI's named default, else a default row. Aliases follow the CLI;
+Unset picks or effort run the CLI's named default, else a default row. Aliases follow the CLI;
 versions stay pinned.
 
 Settings shows CLI versions; Account rechecks or updates; failed refreshes offer Try again.
@@ -15,7 +15,7 @@ Tabs switch [accounts](../connections-and-context.md#several-accounts-per-subscr
 Unavailable picks block sends; without models, Connect AI model replaces the pill. A
 listing proves no access.
 
-Each chat keeps its model and effort; fresh games inherit the last picks. One effort, on the
+Chats keep their model and effort; fresh games inherit the last picks. One effort, on the
 main agent's levels, serves every role (Workers and Reviewers at most high).
 The Workers pick runs the chat's workers too; Reviewers
 run only in a Loop. Both survive a main-agent change; models unlisted twice fall back. Each Ollama job picks its model; Reviewers must see images and

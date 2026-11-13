@@ -151,7 +151,7 @@ import type { PreviewConsoleEntry, PreviewPixelStats, PreviewPort } from "../sub
 import { SnapshotEngine, SnapshotIndex, HARNESS_WORKSPACE } from "../substrate/snapshots.ts";
 import { gitMissingProblem, SandboxUnavailableError } from "../substrate/sandbox-unavailable.ts";
 import { claudeFolderDenyWrites, ProcessSandbox } from "../substrate/spawn.ts";
-import { ensureHostGit } from "../substrate/windows-sandbox.ts";
+import { ensureHostGit, leftOutFolder } from "../substrate/windows-sandbox.ts";
 import { ensureMacGit } from "../substrate/git-policy.ts";
 import { type JobProbe, JobService, type JobSpawn } from "../substrate/jobs.ts";
 import { type AppLookPort, type ScreenAccess, unsupportedAppLook } from "../substrate/app-look.ts";
@@ -1192,9 +1192,32 @@ export class StudioCore {
       // Windows: the window opens on the games while the network check and folder grants finish.
       startInBackground: true,
       log: (line) => this.options.onLog?.(`[sandbox] ${line}`, "stderr"),
+      onWriteRefused: (dir) => void this.#folderLeftOut(dir),
       // A Finder-launched app has no npm on its PATH; every build the studio ever ran exited 127.
       toolPath: async () => (await toolchain()).path,
     });
+  }
+
+  /**
+   * Windows refused the sandbox's write grant on `dir` (feedback cmwdpn67: a game folder whose
+   * permissions the person may not change), and the agents start without it: analytics hears what
+   * the folder is to Genex and whether it is on another drive, never where it is.
+   */
+  async #folderLeftOut(dir: string): Promise<void> {
+    const games = await this.games.list().catch(() => []);
+    const places = {
+      profile: os.homedir(),
+      gamesRoot: this.layout.gamesRoot,
+      games: games.map((game) => game.dir),
+      data: [
+        this.layout.workspaces,
+        this.layout.runs,
+        this.layout.exports,
+        this.layout.nativeWork,
+        this.layout.scratch,
+      ],
+    };
+    this.emit(UiEvent.SandboxFolderLeftOut, leftOutFolder(dir, places));
   }
 
   /**

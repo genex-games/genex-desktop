@@ -248,6 +248,12 @@ export interface SandboxOptions {
   /** Where the sandbox says how long each step of its start took (Windows). */
   log?: (line: string) => void;
   /**
+   * Windows: told of each write root the sandbox left out because Windows refused its grant (the
+   * person may not change the folder's permissions); commands there fail with
+   * `SandboxLaunchCode.WriteRefused` and the rest run.
+   */
+  onWriteRefused?: (dir: string) => void;
+  /**
    * Linux: the bubblewrap to run (default: the app's own copy beside its executable when there is
    * one, else the system's on PATH; substrate/linux-bubblewrap.ts says why).
    */
@@ -633,6 +639,7 @@ export class ProcessSandbox {
   #starting: Promise<void> | null = null;
   #initError: Error | null = null;
   #log: ((line: string) => void) | null = null;
+  #onWriteRefused: ((dir: string) => void) | undefined;
   /** Linux: the bubblewrap sandbox-runtime runs, when not the system's on PATH. */
   #bubblewrap: string | null = null;
   #toolPath: (() => Promise<string>) | null = null;
@@ -675,6 +682,7 @@ export class ProcessSandbox {
     sandbox.#seams = options.windows ?? {};
     sandbox.#dataRoot = longDataRoot(options.dataRoot, platform);
     sandbox.#log = options.log ?? null;
+    sandbox.#onWriteRefused = options.onWriteRefused;
     sandbox.#bubblewrap = platform === StudioPlatform.Linux ? (options.bubblewrap ?? ownBubblewrap()) : null;
     if (!sandbox.enabled) return sandbox;
     if (options.startInBackground && platform === StudioPlatform.Windows) await sandbox.#startInBackground();
@@ -871,6 +879,7 @@ export class ProcessSandbox {
         installDir,
         ...(this.#dataRoot ? { dataRoot: this.#dataRoot } : {}),
         ...(this.#log ? { log: this.#log } : {}),
+        ...(this.#onWriteRefused ? { refused: this.#onWriteRefused } : {}),
       });
     const backend = { session, bash, read, profile, curlHome: await writeCurlHome(this.scratchDir) };
     await session
@@ -1133,6 +1142,9 @@ export class ProcessSandbox {
     const files: string[] = [];
     const removeFiles = () => Promise.all(files.map((file) => rm(file, { force: true })));
     try {
+      // A folder Windows refused the write grant on: a command there would fail on its first write.
+      const refused = backend.session.refusedAt([...needed.write, longPath(request.cwd, this.#platform)]);
+      if (refused !== null) throw new SandboxLaunchError(SandboxLaunchCode.WriteRefused, refused);
       if (!backend.session.covers(needed))
         throw new SandboxLaunchError(SandboxLaunchCode.NotGranted, [...needed.write, ...needed.read].join(", "));
       if (request.longLived) await backend.session.refreshAncestors();

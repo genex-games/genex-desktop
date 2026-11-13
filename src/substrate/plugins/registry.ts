@@ -37,6 +37,7 @@ import {
   PluginAccountState,
   PluginCapability,
   PluginChangeReason,
+  PluginCallFailure,
   PluginFailure,
   PluginHealth,
   PluginInstallProblem,
@@ -97,7 +98,7 @@ import {
 import { createRestartPause, type RestartPause } from "./restart-pause.ts";
 import { MAX_ARTIFACT_BYTES, packageCopyFilter, unpackEnvelope } from "./pack.ts";
 import { asInstallProblem, refusedAs } from "./install-problem.ts";
-import { CodedError } from "../../shared/errors.ts";
+import { CodedError, errorMessage } from "../../shared/errors.ts";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 import { currentLocale, t } from "../../shared/i18n.ts";
 import type { Locale } from "../../shared/locale.ts";
@@ -684,6 +685,24 @@ export class PluginConsentDeclined extends Error {
     super((Object.hasOwn(DECLINED_MESSAGE, by) ? DECLINED_MESSAGE[by] : DECLINED_MESSAGE.turn)(name));
     this.name = "PluginConsentDeclined";
     this.by = by;
+  }
+}
+
+/** The refusals of a call the registry makes before its plugin is asked. */
+type PluginCallRefusal =
+  | typeof PluginCallFailure.Unavailable
+  | typeof PluginCallFailure.UnknownTool
+  | typeof PluginCallFailure.InvalidArguments;
+
+/**
+ * A call the registry refused before its plugin was asked, with why (`failure`). It keeps Error's
+ * own name, so its text is the one these refusals always read.
+ */
+export class PluginCallRefused extends Error {
+  readonly failure: PluginCallRefusal;
+  constructor(failure: PluginCallRefusal, message: string) {
+    super(message);
+    this.failure = failure;
   }
 }
 
@@ -1389,7 +1408,7 @@ export class PluginRegistry {
   }
   #active(id: string) {
     const p = this.#installed.get(id);
-    if (!p || !isLive(p)) throw new Error(MESSAGE.Unavailable(id));
+    if (!p || !isLive(p)) throw new PluginCallRefused(PluginCallFailure.Unavailable, MESSAGE.Unavailable(id));
     return p;
   }
   /** Whether `p` is the app's account plugin, installed: on or off, its account stays. */
@@ -2217,9 +2236,14 @@ export class PluginRegistry {
     if (!extra.length && tool === PLUGIN_SKILL_TOOL && p.manifest.skills.some(isFileSkill))
       return async () => this.#readSkill(id, p, args);
     const declaration = p.manifest.tools.find((t) => t.name === tool);
-    if (extra.length || !declaration) throw new Error(MESSAGE.UnknownTool);
-    if (!isAgentTool(declaration) && caller !== PluginToolAudience.Harness) throw new Error(MESSAGE.UnknownTool);
-    validateArguments(declaration, args);
+    if (extra.length || !declaration) throw new PluginCallRefused(PluginCallFailure.UnknownTool, MESSAGE.UnknownTool);
+    if (!isAgentTool(declaration) && caller !== PluginToolAudience.Harness)
+      throw new PluginCallRefused(PluginCallFailure.UnknownTool, MESSAGE.UnknownTool);
+    try {
+      validateArguments(declaration, args);
+    } catch (error) {
+      throw new PluginCallRefused(PluginCallFailure.InvalidArguments, errorMessage(error));
+    }
     const host = declaration.host;
     if (host) this.#assertHostTool(p);
     const asked = { p, name, declaration, args, binding, ...(signal ? { signal } : {}) };

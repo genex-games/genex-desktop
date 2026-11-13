@@ -1,6 +1,6 @@
 import { fork, type ChildProcess } from "node:child_process";
 import { outlivesHarness } from "../../shared/plugin-hooks.ts";
-import { CallCutOff, type PluginBinding, PluginFailure } from "../../shared/plugins.ts";
+import { CallCutOff, type PluginBinding, PluginFailure, pluginErrorCode } from "../../shared/plugins.ts";
 import { errorMessage } from "../../shared/errors.ts";
 import { activeCatalog, currentLocale } from "../../shared/i18n.ts";
 import type { Locale } from "../../shared/locale.ts";
@@ -27,6 +27,8 @@ interface BackendMessage {
   args?: unknown;
   result?: unknown;
   error?: string;
+  /** The `code` of the error a call's handler threw, when it had a string one. */
+  code?: string;
 }
 const NO_INVOCATION = "No active authorized invocation";
 const STOPPED_BEFORE = "Stopped before plugin invocation";
@@ -65,6 +67,20 @@ export class PluginCallCutOff extends Error {
 export class PluginCallNotSent extends Error {
   constructor() {
     super(STOPPED_BEFORE);
+  }
+}
+
+/**
+ * A call's failure as its plugin's backend answered it, with the plugin's own error code when it
+ * gave one shaped like a code (`pluginErrorCode`). It keeps Error's own name, so its text is the
+ * one a backend's failure always read; `pluginCode`, not `code`, so the IPC edge never takes a
+ * plugin's code for one of the app's (`shared/errors.ts`).
+ */
+export class PluginBackendError extends Error {
+  readonly pluginCode: string | null;
+  constructor(message: string, code: unknown) {
+    super(message);
+    this.pluginCode = pluginErrorCode(code);
   }
 }
 
@@ -322,7 +338,7 @@ export class PluginProcess {
     if (!p) return;
     this.#pending.delete(m.id);
     p.cleanup();
-    if (m.error) p.reject(new Error(m.error));
+    if (m.error) p.reject(new PluginBackendError(m.error, m.code));
     else p.resolve(m.result);
   }
   /** Answer a backend's host-service request, but only on behalf of a call still in flight. */

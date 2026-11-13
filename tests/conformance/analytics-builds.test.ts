@@ -72,7 +72,7 @@ import { type EventEnvelope, EventKind } from "../../src/shared/event-log.ts";
 import { FinishCheckStep, StopWhy } from "../../src/shared/finish-check.ts";
 import { JobRole, JobState } from "../../src/shared/jobs.ts";
 import { LiveBehindReason } from "../../src/shared/live-behind.ts";
-import { PluginSourceKind } from "../../src/shared/plugins.ts";
+import { PluginCallFailure, PluginSourceKind } from "../../src/shared/plugins.ts";
 import { ReadyVia } from "../../src/shared/preview-contract.ts";
 import { LoopProfile } from "../../src/shared/project-facts.ts";
 import { EngineId } from "../../src/shared/providers.ts";
@@ -501,6 +501,37 @@ describe("chat builds, jobs and plugin calls from the log", () => {
         ["genex", "tripo", false],
         ["genex", "tripo", true],
         [PluginSourceKind.Local, null, false],
+      ],
+    );
+  });
+
+  it("says why a call failed, with a catalog plugin's own error code and never a local one's", () => {
+    const plugins = () => [
+      { manifest: { id: "roblox" }, source: PluginSourceKind.Bundled },
+      { manifest: { id: "my-tools" }, source: PluginSourceKind.Local },
+    ];
+    const call = (pluginId: string, payload: Record<string, unknown>, ms: number) =>
+      record(CustomEvent.PluginTool, { pluginId, images: 0, ...payload }, ms);
+    const found = read(memoryWith(plugins), [
+      call("roblox", { ok: false, failure: PluginCallFailure.Plugin, errorCode: "not-bound" }, 0),
+      call("roblox", { ok: false, failure: PluginCallFailure.InvalidArguments }, 1),
+      call("my-tools", { ok: false, failure: PluginCallFailure.Plugin, errorCode: "alice-secret" }, 2),
+      call("roblox", { ok: false, failure: "made-up", errorCode: "/Users/alice/x" }, 3),
+      call("roblox", { ok: false }, 4),
+      call("roblox", { ok: true, failure: PluginCallFailure.Plugin, errorCode: "not-bound" }, 5),
+    ]);
+    assert.deepEqual(
+      found.map((item) => {
+        assert.equal(item.event, BuildsEvent.PluginToolFinished);
+        return [item.properties.failure, item.properties.error_code];
+      }),
+      [
+        [PluginCallFailure.Plugin, "not-bound"],
+        [PluginCallFailure.InvalidArguments, null],
+        [PluginCallFailure.Plugin, null],
+        [PluginCallFailure.Other, null],
+        [null, null],
+        [null, null],
       ],
     );
   });
@@ -955,12 +986,21 @@ function hostileRecords(): EventEnvelope[] {
         making: { kind: SECRET, tool: SECRET, prompt: SECRET },
         cutOff: SECRET,
         blocked: SECRET,
+        failure: SECRET,
+        errorCode: SECRET,
       },
       22,
     ),
     record(
       CustomEvent.PluginTool,
-      { ...scope, pluginId: "genex", making: { kind: MakingKind.Image, tool: SECRET, prompt: SECRET }, error: SECRET },
+      {
+        ...scope,
+        pluginId: "genex",
+        making: { kind: MakingKind.Image, tool: SECRET, prompt: SECRET },
+        error: SECRET,
+        failure: SECRET,
+        errorCode: PATH,
+      },
       23,
     ),
   ];

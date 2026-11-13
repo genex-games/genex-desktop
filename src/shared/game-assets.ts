@@ -13,7 +13,7 @@
 
 import type { CallMaking, MakingJob } from "./asset-making.ts";
 import type { GenexBlocked } from "./genex.ts";
-import type { CallCutOff } from "./plugins.ts";
+import type { CallCutOff, PluginCallFailure } from "./plugins.ts";
 
 export type AssetKind = "image" | "model" | "audio" | "video" | "other";
 /** `genex` and `blender` are the two the studio ships; any other value is a plugin id. */
@@ -219,6 +219,10 @@ export function digestOperation(args: string | undefined): string | null {
 export interface PluginToolFinishedPayload extends PluginToolStartedPayload {
   ok: boolean;
   error?: string;
+  /** Why a failed call failed: set on every failure this version records, never on an answer. */
+  failure?: PluginCallFailure;
+  /** The plugin's own error code when its failure gave one shaped like a code (`pluginErrorCode`). */
+  errorCode?: string;
   /** A digest of the result record, at most 4 KiB, with base64 payloads removed. */
   result: string;
   /** How many images came back with the result — counted before they are stripped from the record. */

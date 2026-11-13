@@ -27,7 +27,13 @@ the setup screen opens on `git-missing`. What differs from macOS:
   `initialize()` is tried a second time when srt-win's egress check (`wfp`) times out, and again
   after 5 s and 10 s when Windows refuses that check's start of srt-win as the sandbox user
   (below); a timed-out ACL step fails at once, since a retry would repeat its walk under each
-  folder srt-win grants and each denied path's parent.
+  folder srt-win grants and each denied path's parent. A write root whose persistent grant Windows
+  refuses with ERROR_ACCESS_DENIED (a game folder on another drive whose permissions the person
+  may not change: a field PC's agents never started) is left out, with the write denies inside it,
+  and `initialize()` runs again with the rest (`refusedWriteRoot`). It stays out for the launch; a
+  command that works in it or writes to it is refused (`write-refused`, which says to move the game
+  or own the folder and restart), the log says `left … out of the sandbox`, and analytics hears
+  `sandbox_folder_left_out`. Any other grant failure still stops the start.
 - Core startup awaits `ProcessSandbox.ensureReady()` before migrating or booting the harness.
   A failed background sandbox start reports its original error without rewinding or reseeding
   valid harness edits. A later Try again can retry initialization; broken harness code still

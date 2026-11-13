@@ -17,7 +17,7 @@ import { PassThrough } from "node:stream";
 import { describe, it } from "node:test";
 import { setImmediate as turn, setTimeout as delay } from "node:timers/promises";
 import type { SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
-import { SandboxProblemCode, WindowsSetupNeed } from "../../src/shared/boot.ts";
+import { SandboxFolderKind, SandboxProblemCode, WindowsSetupNeed } from "../../src/shared/boot.ts";
 import { launchGameBridge } from "../../src/main/core/game-bridge-target.ts";
 import { openCodeEvents } from "../../src/substrate/engines/opencode.ts";
 import { HarnessHost } from "../../src/substrate/harness-host.ts";
@@ -47,6 +47,7 @@ import {
   grantsCover,
   insideWindowsPath,
   keepWindowsDenies,
+  leftOutFolder,
   msysPath,
   msysPathList,
   granteeOf,
@@ -1637,6 +1638,24 @@ function refusedLogon(hresult: string, words: string): InitializeFailure {
   };
 }
 
+/**
+ * sandbox-runtime's error for a session start whose persistent write grant on `root` Windows
+ * refused, in srt-win's words (`code`: Windows' error, 0x00000005 ERROR_ACCESS_DENIED). From the
+ * field: a game folder on another drive whose entries the person may not change (feedback
+ * cmwdpn67, `D:\<game>\client`). srt-win names the root by its extended-length path, and from
+ * the second start on also warns that its replay of the root's pending grant failed.
+ */
+function refusedWriteGrant(root: string, code = "0x00000005", replay = true): InitializeFailure {
+  const named = `\\\\?\\${root}`;
+  const refusal = `persistent ACEs '${named}': SetNamedSecurityInfoW('${named}'): WIN32_ERROR=${code}`;
+  const warning = replay ? `srt-win: WARNING: replay persistent write '${named}': ${refusal}\n` : "";
+  return {
+    code: "acl_grant_failed",
+    subcommand: "acl",
+    message: `srt-win acl grant --persistent exited 1 (failed): ${warning}srt-win: error: persistent grant '${named}': ${refusal}`,
+  };
+}
+
 function fakeSessionRuntime() {
   const calls: string[] = [];
   const configs: SandboxRuntimeConfig[] = [];
@@ -1759,6 +1778,7 @@ function session(
   } = {},
 ) {
   const runtime = fakeSessionRuntime();
+  const refused: string[] = [];
   const ancestors = fakeAncestors();
   const own = fakeOwnEntries(runtime.calls, {
     available: options.ownDenies !== "unavailable",
@@ -1776,8 +1796,9 @@ function session(
     ...(options.walkDelayMs === undefined ? {} : { walkDelayMs: options.walkDelayMs }),
     ...(options.logonRetryMs ? { logonRetryMs: options.logonRetryMs } : {}),
     log: (line) => logged.push(line),
+    refused: (root) => refused.push(root),
   });
-  return { session: value, runtime, ancestors, own, logged };
+  return { session: value, runtime, ancestors, own, logged, refused };
 }
 
 const GAMES = at("AI Games");
@@ -2054,6 +2075,114 @@ describe("the grant session", () => {
       /0x80070422/,
     );
     assert.deepEqual(s.runtime.calls, ["initialize"]);
+  });
+
+  it("leaves out a write root Windows refuses srt-win's grant on, and starts with the rest", async () => {
+    // Feedback cmwdpn67: Windows refused the persistent grant on one game folder on another drive
+    // (ERROR_ACCESS_DENIED: the person may not change its entries), and no agent started at all.
+    const s = session();
+    const claude = path.win32.join(LATE, ".claude");
+    const config = { ...BASE_CONFIG, filesystem: { ...BASE_CONFIG.filesystem, denyWrite: [claude, at(".ssh")] } };
+    s.runtime.failInitializeWith(refusedWriteGrant(LATE));
+    await s.session.join({}, { grants: { write: [GAMES, LATE], read: [] }, config });
+    assert.deepEqual(s.runtime.calls, ["initialize", "initialize"]);
+    assert.deepEqual(s.runtime.last().filesystem.allowWrite, [GAMES]);
+    assert.deepEqual(
+      s.runtime.last().filesystem.denyWrite,
+      [at(".ssh")],
+      "nothing writes in a root srt-win did not grant, so a write deny there has nothing to stop",
+    );
+    assert.deepEqual(s.session.applied, { write: [GAMES], read: [] });
+    assert.deepEqual(s.refused, [LATE]);
+    assert.ok(
+      s.logged.some((line) => line.includes(LATE) && line.includes("0x00000005")),
+      `the log names the folder and Windows' code: ${s.logged.join("\n")}`,
+    );
+
+    assert.equal(s.session.refusedAt([path.win32.join(LATE, "src").toUpperCase()]), LATE);
+    assert.equal(s.session.refusedAt([GAMES, `${LATE}2`, "D:\\Elsewhere"]), null);
+  });
+
+  it("does not try a refused root again for the rest of the launch, and grants the others it gains", async () => {
+    const s = session();
+    const member = {};
+    s.runtime.failInitializeWith(refusedWriteGrant(LATE));
+    await s.session.join(member, { grants: { write: [GAMES, LATE], read: [] }, config: BASE_CONFIG });
+    s.session.update(member, { write: [GAMES, LATE], read: [] });
+    await s.session.join({}, { grants: { write: [LATE], read: [] }, config: BASE_CONFIG });
+    await s.session.settled();
+    assert.equal(s.session.regrants, 0, "a member that only asks for the refused root again changes nothing");
+
+    const other = "E:\\Games\\Tetris";
+    s.session.update(member, { write: [GAMES, LATE, other], read: [] });
+    await s.session.settled();
+    assert.equal(s.session.regrants, 1);
+    assert.deepEqual(s.runtime.calls, ["initialize", "initialize", "reset", "initialize"]);
+    assert.deepEqual(s.runtime.last().filesystem.allowWrite, [GAMES, other]);
+    assert.deepEqual(s.refused, [LATE], "told once");
+  });
+
+  it("leaves out each refused root in turn, a folder inside one with it", async () => {
+    const s = session();
+    const inner = path.win32.join(LATE, "client");
+    const other = "E:\\Games\\Tetris";
+    // The first start of a root has no earlier grant to replay, so srt-win's error is all it says.
+    s.runtime.failInitializeWith(refusedWriteGrant(LATE), refusedWriteGrant(other, undefined, false));
+    await s.session.join({}, { grants: { write: [GAMES, LATE, other], read: [] }, config: BASE_CONFIG });
+    assert.deepEqual(s.runtime.calls, ["initialize", "initialize", "initialize"]);
+    assert.deepEqual(s.runtime.last().filesystem.allowWrite, [GAMES]);
+    assert.deepEqual(s.refused, [LATE, other]);
+    await s.session.join({}, { grants: { write: [inner], read: [] }, config: BASE_CONFIG });
+    await s.session.settled();
+    assert.equal(s.session.regrants, 0, "a folder inside a refused root is refused with it");
+    assert.equal(s.session.refusedAt([inner]), LATE);
+  });
+
+  it("still fails a start whose grant failed any other way, leaving every root in", async () => {
+    // Hostile and near-miss refusals: only Windows' ERROR_ACCESS_DENIED on a root the session
+    // asked for is let go; a root's parent or child, another error or another step fails as before.
+    const cases: Array<[string, InitializeFailure]> = [
+      ["another Windows error", refusedWriteGrant(LATE, "0x00000020")],
+      ["a folder above the root", refusedWriteGrant("D:\\Elsewhere")],
+      ["a folder inside the root", refusedWriteGrant(path.win32.join(LATE, "src"))],
+      ["a root no member asked for", refusedWriteGrant("F:\\Other")],
+      ["another step's failure", { ...refusedWriteGrant(LATE), code: "wfp_fence_inactive" }],
+      [
+        "only the replay's warning",
+        { ...refusedWriteGrant(LATE), message: refusedWriteGrant(LATE).message?.split("\n")[0] },
+      ],
+    ];
+    for (const [name, failure] of cases) {
+      const s = session();
+      s.runtime.failInitializeWith(failure);
+      await assert.rejects(
+        s.session.join({}, { grants: { write: [GAMES, LATE], read: [] }, config: BASE_CONFIG }),
+        (error: unknown) => error instanceof Error && error.message === failure.message,
+        name,
+      );
+      assert.deepEqual(s.runtime.calls, ["initialize"], name);
+      assert.deepEqual(s.refused, [], name);
+      assert.equal(s.session.refusedAt([LATE]), null, name);
+    }
+  });
+
+  it("tells analytics what a left-out folder is to Genex and whether it is on another drive", () => {
+    const places = {
+      profile: PROFILE,
+      gamesRoot: GAMES,
+      games: [path.win32.join(GAMES, "Pong"), "D:\\EverPlanet\\client"],
+      data: [WS, at("AppData", "Roaming", "Genex", "runs")],
+    };
+    const cases: Array<[string, { kind: SandboxFolderKind; otherDrive: boolean }]> = [
+      ["d:\\everplanet\\CLIENT", { kind: SandboxFolderKind.Game, otherDrive: true }],
+      [path.win32.join(GAMES, "Snake"), { kind: SandboxFolderKind.Game, otherDrive: false }],
+      [GAMES.toUpperCase(), { kind: SandboxFolderKind.GamesRoot, otherDrive: false }],
+      [path.win32.join(WS, "harness"), { kind: SandboxFolderKind.GenexData, otherDrive: false }],
+      ["E:\\Projects\\shooter", { kind: SandboxFolderKind.Other, otherDrive: true }],
+      ["D:\\EverPlanet", { kind: SandboxFolderKind.Other, otherDrive: true }],
+      [at(".grok"), { kind: SandboxFolderKind.Other, otherDrive: false }],
+    ];
+    for (const [dir, expected] of cases) assert.deepEqual(leftOutFolder(dir, places), expected, dir);
   });
 
   it("network changes apply live, with every member's domains and no regrant", async () => {
@@ -3079,6 +3208,8 @@ async function windowsSandbox(
     failInitializeIn?: { subcommand: string; code: string };
     /** Genex sets the denies outside the grants itself. */
     ownDenies?: boolean;
+    /** Windows refuses srt-win's persistent grant on the workspace at the first initialize. */
+    refuseWorkspace?: boolean;
   } = {},
 ) {
   const root = realpathSync.native(await tmpDir("windows-launch-"));
@@ -3091,6 +3222,7 @@ async function windowsSandbox(
   const openInitialize = options.holdInitialize ? s.runtime.hold() : () => {};
   if (options.failInitializeIn)
     s.runtime.failInitializeIn(options.failInitializeIn.subcommand, options.failInitializeIn.code);
+  if (options.refuseWorkspace) s.runtime.failInitializeWith(refusedWriteGrant(workspace));
   if (options.initializeError) {
     const error = options.initializeError;
     s.runtime.runtime.initialize = async () => {
@@ -3338,6 +3470,31 @@ describe("ProcessSandbox on Windows", () => {
     await w.session.session.settled();
     assert.equal(w.session.session.applied, null);
     assert.equal(w.session.runtime.calls.at(-1), "reset");
+  });
+
+  it("refuses a command in a folder Windows would not grant, in plain words, and runs the others", async () => {
+    // Feedback cmwdpn67: the session starts without the game folder Windows refused; a command
+    // there would only meet "Permission denied" on its first write, so it does not start.
+    const w = await windowsSandbox({ refuseWorkspace: true });
+    // The session spells its roots the Windows way, as on a PC.
+    const workspace = path.win32.resolve(w.workspace);
+    assert.deepEqual(w.session.refused, [workspace]);
+    const refused = (error: unknown) => {
+      assert.ok(error instanceof SandboxLaunchError, String(error));
+      assert.equal(error.code, SandboxLaunchCode.WriteRefused);
+      assert.ok(error.message.includes(workspace), error.message);
+      assert.doesNotMatch(error.message, /srt-win|WIN32_ERROR|SetNamedSecurityInfo/, "plain words");
+      return true;
+    };
+    await assert.rejects(w.sandbox.run({ command: "true", cwd: path.join(w.workspace, "src") }), refused);
+    await assert.rejects(
+      w.sandbox.run({ command: "true", cwd: w.sandbox.scratchDir, policy: { allowWrite: [w.workspace] } }),
+      refused,
+    );
+    assert.equal(w.wraps.length, 0, "nothing was wrapped, so nothing started");
+    assert.equal(w.session.session.active, 0);
+    const elsewhere = await w.sandbox.run({ command: "true", cwd: w.sandbox.scratchDir });
+    assert.equal(elsewhere.code, 0);
   });
 
   it("refuses a per-run write outside the session's grants, and releases everything", async () => {

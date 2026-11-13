@@ -21,6 +21,7 @@ import {
 import {
   BootFailure,
   type BootFailureCode,
+  SandboxFolderKind,
   SandboxLaunchCode,
   SandboxProblemCode,
   StartPassage,
@@ -62,6 +63,7 @@ export const LaunchEvent = {
   PreviousSessionEnded: "previous_session_ended",
   UpdateBackgroundFailed: "update_background_failed",
   AgentsStartFailed: "agents_start_failed",
+  SandboxFolderLeftOut: "sandbox_folder_left_out",
   WindowUnresponsive: "window_unresponsive",
 } as const;
 
@@ -127,6 +129,7 @@ export type LaunchEventProperties = {
   [LaunchEvent.PreviousSessionEnded]: PreviousSessionProperties;
   [LaunchEvent.UpdateBackgroundFailed]: UpdateFailedProperties;
   [LaunchEvent.AgentsStartFailed]: { code: BootFailureCode | null };
+  [LaunchEvent.SandboxFolderLeftOut]: SandboxFolderLeftOutProperties;
   [LaunchEvent.WindowUnresponsive]: { duration_ms: number | null };
 };
 
@@ -249,6 +252,15 @@ export function updateFailedProperties(payload: unknown): UpdateFailedProperties
 /** `agents_start_failed`: why an open studio's agents would not start, as its code. */
 export const agentsStartFailedProperties = (payload: unknown): { code: BootFailureCode | null } => ({
   code: isRecord(payload) ? bootFailureCode(payload.failureCode) : null,
+});
+
+/** `sandbox_folder_left_out`: what the folder is and whether it is on another drive; never where. */
+export type SandboxFolderLeftOutProperties = { kind: SandboxFolderKind | null; other_drive: boolean | null };
+
+/** `sandbox_folder_left_out`'s properties from main's `UiEvent.SandboxFolderLeftOut`, each re-checked. */
+export const sandboxFolderLeftOutProperties = (payload: unknown): SandboxFolderLeftOutProperties => ({
+  kind: isRecord(payload) ? oneOf(SandboxFolderKind, payload.kind) : null,
+  other_drive: isRecord(payload) && typeof payload.otherDrive === "boolean" ? payload.otherDrive : null,
 });
 
 /** Main's own error kinds, as the window's error kinds name them. */
@@ -694,8 +706,8 @@ function watchErrorToasts(app: Studio): () => void {
 }
 
 /**
- * What this area hears: main's update announcements and failures, its diagnostics and agents that
- * would not start, the session (with how the one before it ended), the window's errors, its long
+ * What this area hears: main's update announcements and failures, its diagnostics, agents that
+ * would not start and a folder their sandbox left out, the session (with how the one before it ended), the window's errors, its long
  * tasks and error toasts.
  */
 export function createLaunchObservers(
@@ -716,6 +728,9 @@ export function createLaunchObservers(
           return;
         case UiEvent.HarnessStartFailed:
           track(LaunchEvent.AgentsStartFailed, agentsStartFailedProperties(event.payload));
+          return;
+        case UiEvent.SandboxFolderLeftOut:
+          track(LaunchEvent.SandboxFolderLeftOut, sandboxFolderLeftOutProperties(event.payload));
           return;
         case UiEvent.AppDiagnostic:
           reportMainDiagnostic(event.payload);

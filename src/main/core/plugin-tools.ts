@@ -1,13 +1,19 @@
 import { allowedInChat, consentAudience, priorConsentDecline } from "./consent-audience.ts";
-import { STUDIO_CONSENT_NAMES, type StudioConsentSource } from "../../shared/plugins.ts";
+import { PluginCallFailure, STUDIO_CONSENT_NAMES, type StudioConsentSource } from "../../shared/plugins.ts";
 /**
  * Plugin and connector tools as agents call them: the consent a confirmed tool waits for, the
  * call itself with its durable record, and the MCP servers a plugin declares. Composed by
  * `StudioCore`; its state stays in the core.
  */
-import { PluginConsentDeclined, type PluginMcpLaunch } from "../../substrate/plugins/registry.ts";
+import { PluginCallRefused, PluginConsentDeclined, type PluginMcpLaunch } from "../../substrate/plugins/registry.ts";
 import { shownCardTool } from "../../substrate/plugins/manifest-words.ts";
-import { PluginCallCutOff, PluginCallNotSent, type PluginInvocation } from "../../substrate/plugins/process.ts";
+import {
+  PluginBackendError,
+  PluginCallCutOff,
+  PluginCallNotSent,
+  type PluginInvocation,
+  PluginRestartPaused,
+} from "../../substrate/plugins/process.ts";
 import { containedReal } from "../../substrate/paths.ts";
 import { finishedPayload, roleOf, startedPayload } from "../plugin-activity.ts";
 import type { PluginToolStartedPayload } from "../../shared/game-assets.ts";
@@ -182,6 +188,41 @@ class NotRunInTime extends Error {
     super(MESSAGE.tooLate);
     this.name = "NotRunInTime";
   }
+}
+
+/** An agent's call that ran past the time one call may take: whether it took effect is unknown. Error's own name keeps its text. */
+class CallOutOfTime extends Error {
+  constructor() {
+    super(MESSAGE.outOfTime);
+  }
+}
+
+/** An agent's paid call refused before Genex is asked: its run's jobs reached the credit cap. Error's own name keeps its text. */
+class OverCreditCap extends Error {}
+
+/** The typed stops of an agent's call, each with the failure its record names. */
+const CALL_STOPS: ReadonlyArray<readonly [(err: unknown) => boolean, PluginCallFailure]> = [
+  [(err) => err instanceof PluginCallCutOff, PluginCallFailure.CutOff],
+  [(err) => err instanceof CallOutOfTime, PluginCallFailure.OutOfTime],
+  [(err) => err instanceof NotRunInTime, PluginCallFailure.NotRunInTime],
+  [(err) => err instanceof PluginConsentDeclined, PluginCallFailure.Declined],
+  [(err) => err instanceof ToolMomentBlocked, PluginCallFailure.Blocked],
+  [isLockRefused, PluginCallFailure.LockRefused],
+  [(err) => err instanceof OverCreditCap, PluginCallFailure.CreditCap],
+  [(err) => err instanceof PluginRestartPaused, PluginCallFailure.RestartPaused],
+  [(err) => err instanceof PluginCallNotSent, PluginCallFailure.NotSent],
+];
+
+/**
+ * Why an agent's plugin call failed, as a code its record keeps: the plugin's own failure with
+ * its error code when it gave one, the registry's refusal, or a typed stop; anything else is other.
+ */
+export function pluginCallFailure(err: unknown): { failure: PluginCallFailure; code?: string } {
+  if (err instanceof PluginBackendError)
+    return { failure: PluginCallFailure.Plugin, ...(err.pluginCode ? { code: err.pluginCode } : {}) };
+  if (err instanceof PluginCallRefused) return { failure: err.failure };
+  const stop = CALL_STOPS.find(([is]) => is(err));
+  return { failure: stop?.[1] ?? PluginCallFailure.Other };
 }
 
 /**
@@ -605,14 +646,7 @@ export class PluginToolService {
     try {
       result = await this.#callAgentTool(name, args, binding, signal, ctx, deadline);
     } catch (err) {
-      // The plugin's own `tool.before` step blocked it: the block is the answer, and the record's
-      // words (the card came first, so the call shows, not run, with why).
-      await this.pluginToolFinished(
-        started,
-        { error: err instanceof ToolMomentBlocked ? err.reason : err },
-        0,
-        binding,
-      );
+      await this.pluginToolFinished(started, { error: err }, 0, binding);
       const notRun = notRunAnswer(err);
       if (notRun) return notRun;
       throw err;
@@ -702,7 +736,7 @@ export class PluginToolService {
     if (name === GenexStudioTool.Publish) await assertPublishable(this.#core, binding.project);
     // Refused before Genex is asked: the run's paid jobs have committed its credit cap.
     const overCap = this.#credits.refusal(name, ctx.credits ?? null);
-    if (overCap) throw new Error(overCap);
+    if (overCap) throw new OverCreditCap(overCap);
     // Its arguments are checked and its card answered first: a refused call runs no step of its
     // plugin's and never waits its turn, and no lock is held while the person reads the card. Then
     // the plugin's own `tool.before` steps, then its turn at its locks.
@@ -737,7 +771,7 @@ export class PluginToolService {
       const outOfTime = runEnds.signal.aborted && !signal?.aborted;
       // Ended before it was sent: it never ran, so it may be called again.
       if (outOfTime && err instanceof PluginCallNotSent) throw new NotRunInTime();
-      if (outOfTime) throw new Error(MESSAGE.outOfTime);
+      if (outOfTime) throw new CallOutOfTime();
       throw err;
     } finally {
       (ends as AbortSignal | null)?.removeEventListener("abort", cut);
@@ -1374,14 +1408,24 @@ export class PluginToolService {
     const { payload: call } = started;
     if (cutOff)
       noteCutOff(this.#x.cutOffCalls, call.threadId, { tool: call.toolName, args: call.args, reason: cutOff });
+    const ended = "error" in outcome ? failedOutcome(outcome.error) : outcome;
     const payload = {
-      ...finishedPayload(call, { ...outcome, ...(version ? { version } : {}) }, images, Date.now() - started.startedAt),
+      ...finishedPayload(call, { ...ended, ...(version ? { version } : {}) }, images, Date.now() - started.startedAt),
       ...(cutOff ? { cutOff } : {}),
     };
     await this.#core
       .append([customEventData(CustomEvent.PluginTool, { ...payload })], started.payload.threadId)
       .catch(() => {});
   }
+}
+
+/**
+ * A failed call's outcome as its record keeps it: why it failed, and its words. The plugin's own
+ * `tool.before` step blocked it: the block's reason is the record's words (the card came first,
+ * so the call shows, not run, with why).
+ */
+function failedOutcome(error: unknown): { error: unknown; failure: PluginCallFailure; code?: string } {
+  return { error: error instanceof ToolMomentBlocked ? error.reason : error, ...pluginCallFailure(error) };
 }
 
 /** Where a consent card belongs: the asking thread, the chat it shows in, and the run it came from. */

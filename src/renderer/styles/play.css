@@ -6,6 +6,12 @@
      (`--play-selected*`, `--play-switch-track`, `--play-switch-edge`, `--play-tab-*`), and the focused
      search's edge (`--play-search-focus`). */
   --play-blue: var(--accent);
+  /* The selected pill's fill and edge (below), which Show game also wears on the light theme's plain page. */
+  --play-pill: color-mix(in srgb, var(--play-selected, var(--play-blue)) var(--select-share), transparent);
+  --play-pill-edge: var(
+    --play-selected-edge,
+    color-mix(in srgb, var(--play-selected, var(--play-blue)) var(--select-edge-share), transparent)
+  );
   --play-icon: #4da3ff;
   --play-track: rgb(77 81 96 / 0.1);
   --play-track-edge: rgb(121 127 139 / 0.21);
@@ -36,12 +42,8 @@
 .genex-tab[aria-selected="true"],
 .stats-period[aria-selected="true"],
 .store-tab[aria-selected="true"] {
-  background: color-mix(in srgb, var(--play-selected, var(--play-blue)) var(--select-share), transparent);
-  box-shadow: inset 0 0 0 1px
-    var(
-      --play-selected-edge,
-      color-mix(in srgb, var(--play-selected, var(--play-blue)) var(--select-edge-share), transparent)
-    );
+  background: var(--play-pill);
+  box-shadow: inset 0 0 0 1px var(--play-pill-edge);
   color: var(--play-selected-text, var(--ink));
 }
 

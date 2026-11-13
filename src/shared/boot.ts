@@ -72,12 +72,30 @@ export const SandboxLaunchCode = {
   NetworkDrive: "network-drive",
   /** Windows: a run asked to write or read a folder outside the session's grants. */
   NotGranted: "not-granted",
+  /**
+   * Windows: a run works in or writes to a folder Windows refused the sandbox's write grant on
+   * (the person may not change its permissions), which the session left out to start the rest.
+   */
+  WriteRefused: "write-refused",
   /** Windows: every port of srt-win's proxy range is reserved by Windows or held by another program. */
   ProxyPortsRefused: "proxy-ports-refused",
   /** Windows: Windows kept refusing to start srt-win as the sandbox user, after Genex tried again. */
   SandboxUserRefused: "sandbox-user-refused",
 } as const;
 export type SandboxLaunchCode = (typeof SandboxLaunchCode)[keyof typeof SandboxLaunchCode];
+
+/** What a folder the Windows sandbox left out is to Genex (`UiEvent.SandboxFolderLeftOut`). */
+export const SandboxFolderKind = {
+  /** A game's folder, or a folder inside the games folder. */
+  Game: "game",
+  /** The folder new games are made in. */
+  GamesRoot: "games_root",
+  /** A folder in Genex's own data: its workspaces, runs, exports or native work. */
+  GenexData: "genex_data",
+  /** Anything else: a linked project, a coding CLI's own folder. */
+  Other: "other",
+} as const;
+export type SandboxFolderKind = (typeof SandboxFolderKind)[keyof typeof SandboxFolderKind];
 
 /** Why startup is held on a failure (`BootState.failureCode`), beside the words the window shows. */
 export const BootFailure = {

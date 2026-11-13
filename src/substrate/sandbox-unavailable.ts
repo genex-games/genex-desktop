@@ -64,6 +64,8 @@ const MESSAGE = {
       "Commands cannot run in a folder on a mapped or network drive. Move the game to a local drive.",
     [SandboxLaunchCode.NotGranted]:
       "This folder is not open to sandboxed commands yet. It opens once the running commands finish; try again then.",
+    [SandboxLaunchCode.WriteRefused]:
+      "Windows did not let Genex open this folder to its agents: your account may not change the folder's permissions (another account owns it, or it is protected). Move the game into a folder of your own, or make your account the folder's owner, then restart Genex.",
     [SandboxLaunchCode.ProxyPortsRefused]: `Windows did not let Genex's sandbox use its network ports (${SRT_PROXY_PORTS}). Hyper-V, WSL or Docker often reserve them. Restart the PC, or run "net stop winnat" and then "net start winnat" in a terminal opened as administrator, and try again.`,
     [SandboxLaunchCode.SandboxUserRefused]:
       "Windows would not start Genex's sandbox user. Restart the PC, then try again.",

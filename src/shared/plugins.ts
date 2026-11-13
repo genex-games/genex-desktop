@@ -243,6 +243,51 @@ export const CallCutOff = {
 } as const;
 export type CallCutOff = (typeof CallCutOff)[keyof typeof CallCutOff];
 /**
+ * Why an agent's plugin call failed, as its `plugin_tool` record says: a code, never the error's
+ * words, so usage analytics tells a plugin's own failure from the host's refusals. Written in call
+ * records: never rename a value.
+ */
+export const PluginCallFailure = {
+  /** The plugin's backend answered with an error; its own code, when it gave one, is `errorCode`. */
+  Plugin: "plugin",
+  /** It went out and ended before it answered (`cutOff` says why). */
+  CutOff: "cut-off",
+  /** It ran past the time one call may take, so its outcome is unknown. */
+  OutOfTime: "out-of-time",
+  /** Too little of its time was left when its turn came: it never ran. */
+  NotRunInTime: "not-run-in-time",
+  /** Its card was declined. */
+  Declined: "declined",
+  /** Its plugin's own `tool.before` step blocked it. */
+  Blocked: "blocked",
+  /** A lock it needs was not given. */
+  LockRefused: "lock-refused",
+  /** The run's paid jobs had reached its credit cap. */
+  CreditCap: "credit-cap",
+  /** Its plugin is off, removed or not installed. */
+  Unavailable: "unavailable",
+  /** Its plugin declares no such tool for the caller. */
+  UnknownTool: "unknown-tool",
+  /** Its arguments don't fit the tool's declared parameters. */
+  InvalidArguments: "invalid-arguments",
+  /** Its plugin's backend is waiting out a pause after ending again and again. */
+  RestartPaused: "restart-paused",
+  /** It was stopped before it was sent to its plugin. */
+  NotSent: "not-sent",
+  /** Any other failure: a stop, a host step's own error. */
+  Other: "other",
+} as const;
+export type PluginCallFailure = (typeof PluginCallFailure)[keyof typeof PluginCallFailure];
+/**
+ * A plugin's own error code: a short identifier (`not-bound`, `ECONNREFUSED`), never words or a
+ * path, so it can sit in a call's record and in usage analytics.
+ */
+const PLUGIN_ERROR_CODE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,47}$/;
+/** The `code` a plugin's error carries when it is shaped like one ({@link PLUGIN_ERROR_CODE}), else null. */
+export function pluginErrorCode(value: unknown): string | null {
+  return typeof value === "string" && PLUGIN_ERROR_CODE.test(value) ? value : null;
+}
+/**
  * The one text parameter of a confirmed tool that the person may edit on its card (API 3): the
  * card shows the agent's value under its question, in a field with this label, and the person's
  * Allow sends their edit as that parameter.

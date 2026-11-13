@@ -11,7 +11,7 @@
 import type { AgentScreenEvent, AgentScreenFrame } from "./agent-screen.ts";
 import type { ReadyUpdate, UpdateFailedNote } from "./app-update.ts";
 import type { MainDiagnostic } from "./app-session.ts";
-import type { BootFailureCode } from "./boot.ts";
+import type { BootFailureCode, SandboxFolderKind } from "./boot.ts";
 import type { DesignChoices, DesignMaking, DesignShown } from "./design-board.ts";
 import type { AssetDeliveredPayload } from "./game-assets.ts";
 import type { LiveBehindEvent } from "./live-behind.ts";
@@ -99,6 +99,11 @@ export interface UiEventMap {
   "harness.boot": Partial<BootNotice>;
   /** The open studio's harness would not start (main's own, never the harness's): why, for its line. */
   "harness.start-failed": { failure: string; failureCode?: BootFailureCode };
+  /**
+   * Windows refused the sandbox's write grant on a folder, and the agents started without it: what
+   * the folder is, and whether it is on another drive than the person's profile (never its path).
+   */
+  "sandbox.folder-left-out": { kind?: SandboxFolderKind; otherDrive?: boolean };
   "seed.upgraded": { added: string[]; updated: string[]; kept: string[]; retired: string[] };
   "watchdog.triggered": { reason: string; snapshot: string | null };
   "watchdog.recovered": { reason: string; ok: boolean; reseeded?: boolean };
@@ -260,6 +265,7 @@ export const UiEvent = {
   HarnessLog: "harness.log",
   HarnessBoot: "harness.boot",
   HarnessStartFailed: "harness.start-failed",
+  SandboxFolderLeftOut: "sandbox.folder-left-out",
   SeedUpgraded: "seed.upgraded",
   WatchdogTriggered: "watchdog.triggered",
   WatchdogRecovered: "watchdog.recovered",

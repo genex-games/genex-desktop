@@ -25,6 +25,7 @@ import { createIpcHandle, type IpcResult, type IpcSender } from "../../src/main/
 import { MainDiagnostic, type PreviousSession, RendererGone, SessionExit } from "../../src/shared/app-session.ts";
 import { RestartAnswer, UpdateFailure, UpdateFeedState } from "../../src/shared/app-update.ts";
 import {
+  SandboxFolderKind,
   BootFailure,
   BootPhase,
   SandboxLaunchCode,
@@ -609,6 +610,28 @@ describe("P7: how the app started", () => {
       { code: null },
     ]);
     for (const properties of failed) assertClean("agents_start_failed", properties);
+  });
+});
+
+describe("a folder the Windows sandbox left out", () => {
+  it("says only what kind of folder and whether it is on another drive, never where", async () => {
+    // Feedback cmwdpn67: Windows refused the sandbox's grant on one game folder on another drive.
+    const sent = await recorder();
+    const session = createStore<Record<string, unknown>>(() => ({ status: SessionStatus.Ready, launch: null }));
+    const heard = launchHeard(session);
+    heard.ui({ type: UiEvent.SandboxFolderLeftOut, payload: { kind: SandboxFolderKind.Game, otherDrive: true } });
+    heard.ui({ type: UiEvent.SandboxFolderLeftOut, payload: { kind: SandboxFolderKind.GenexData, otherDrive: false } });
+    heard.ui({ type: UiEvent.SandboxFolderLeftOut, payload: { kind: HOSTILE[0], otherDrive: HOSTILE[1] } });
+    heard.ui({ type: UiEvent.SandboxFolderLeftOut, payload: HOSTILE[4] });
+    heard.stop();
+    const left = sentOf(sent, AnalyticsEvent.SandboxFolderLeftOut);
+    assert.deepEqual(left, [
+      { kind: SandboxFolderKind.Game, other_drive: true },
+      { kind: SandboxFolderKind.GenexData, other_drive: false },
+      { kind: null, other_drive: null },
+      { kind: null, other_drive: null },
+    ]);
+    for (const properties of left) assertClean("sandbox_folder_left_out", properties);
   });
 });
 

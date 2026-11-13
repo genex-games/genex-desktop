@@ -40,7 +40,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { promisify } from "node:util";
 import type { FilesystemPathEntry, SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
 import { MINUTE_MS, SECOND_MS } from "../shared/duration.ts";
-import { StudioPlatform, WindowsSetupNeed } from "../shared/boot.ts";
+import { SandboxFolderKind, StudioPlatform, WindowsSetupNeed } from "../shared/boot.ts";
 import { ROBLOX_WINDOWS_SIGN_IN_STORES, sandboxedCliHomes } from "./credential-homes.ts";
 import { errorMessage } from "../shared/errors.ts";
 import {
@@ -94,6 +94,18 @@ const ACCESS_DENIED_HRESULT = 0x80070005;
 const LOGON_REFUSAL = /CreateProcessWithLogonW\(srt-sandbox\):.*?\((0x[0-9A-Fa-f]{8})\)/s;
 /** sandbox-runtime's code for an srt-win call that ran out of time. */
 const SRT_WIN_TIMEOUT = "srt_win_timeout";
+/** sandbox-runtime's code for an `srt-win acl grant` that failed (its words name the step and the path). */
+const ACL_GRANT_FAILED = "acl_grant_failed";
+/**
+ * srt-win's error line for a session's persistent write grant Windows refused: the root, in its
+ * extended-length spelling, then Windows' error code. A replay of an earlier grant that failed is
+ * only a warning, on a line of its own.
+ */
+const PERSISTENT_GRANT_REFUSAL = /srt-win: error: persistent grant '([^']+)':[^\n]*WIN32_ERROR=(0x[0-9A-Fa-f]+)/;
+/** Windows' ERROR_ACCESS_DENIED: the person may not change the folder's entries. */
+const ERROR_ACCESS_DENIED = 5;
+/** The prefix of an extended-length path (`\\?\C:\…`, `\\?\UNC\server\…`), which srt-win names paths by. */
+const EXTENDED_PATH = /^\\\\\?\\(UNC\\)?/i;
 /** The srt-win subcommands sandbox-runtime names on its errors (the first CLI argument). */
 const SrtWinSubcommand = { Wfp: "wfp" } as const;
 /** The registry key Git for Windows records its install folder under. */
@@ -204,6 +216,9 @@ const MESSAGE = {
   /** A read grant Windows refused where the sandbox user may read everything it would open anyway ({@link FolderAceOutcome}). */
   UnneededGrant: (dir: string, refused: string) =>
     `own entries: left ${dir} as it is: Windows refused the grant (${refused}), and the sandbox user may already read everything in it`,
+  /** A write root Windows refused srt-win's grant on ({@link refusedWriteRoot}): the session starts without it. */
+  WriteRootLeftOut: (root: string, error: unknown) =>
+    `left ${root} out of the sandbox: Windows refused its write grant, so no sandboxed command works in it this launch: ${errorMessage(error)}`,
   /** srt-win's grant and stamp walk each folder again, so a later grant or stamp timeout reads as this. */
   OwnEntriesOff: (count: number) =>
     `own entries off: srt-win sets all ${count} grants and denies (no sandbox users' group, or PowerShell could not set them)`,
@@ -1498,6 +1513,8 @@ export interface WindowsSessionDeps {
   walkDelayMs?: number;
   /** The waits before each new try after Windows refused srt-win's start as the sandbox user (default {@link LOGON_RETRY_MS}). */
   logonRetryMs?: readonly number[];
+  /** Told of each write root the session left out because Windows refused its grant ({@link refusedWriteRoot}), once a launch. */
+  refused?: (root: string) => void;
 }
 
 /** How many grants and denies a config hands srt-win. */
@@ -1527,6 +1544,51 @@ export function sandboxUserRefused(error: unknown): boolean {
   if (!("code" in error) || error.code !== WFP_VERIFY_UNPARSEABLE) return false;
   const hresult = LOGON_REFUSAL.exec(errorMessage(error))?.[1];
   return hresult !== undefined && Number(hresult) === ACCESS_DENIED_HRESULT;
+}
+
+/** `p` without the extended-length prefix srt-win names paths with: `\\?\D:\x` is `D:\x`, `\\?\UNC\s\x` is `\\s\x`. */
+function withoutExtendedPrefix(p: string): string {
+  return p.replace(EXTENDED_PATH, (_prefix, unc: string | undefined) => (unc ? "\\\\" : ""));
+}
+
+/**
+ * The write root among `roots` whose persistent grant Windows refused with ERROR_ACCESS_DENIED at
+ * a session's start, by srt-win's error line (feedback cmwdpn67: a game folder on another drive
+ * whose entries the person may not change); null for any other failure, any other Windows error
+ * and any path that is not one of `roots` itself.
+ */
+export function refusedWriteRoot(error: unknown, roots: readonly string[]): string | null {
+  if (typeof error !== "object" || error === null) return null;
+  if (!("code" in error) || error.code !== ACL_GRANT_FAILED) return null;
+  const refusal = PERSISTENT_GRANT_REFUSAL.exec(errorMessage(error));
+  if (!refusal || Number(refusal[2]) !== ERROR_ACCESS_DENIED) return null;
+  const refused = pathKey(withoutExtendedPrefix(refusal[1] ?? ""));
+  return roots.find((root) => pathKey(root) === refused) ?? null;
+}
+
+/** Where Genex keeps what a left-out folder may be ({@link leftOutFolder}). */
+export interface GenexPlaces {
+  /** The real user's profile folder: a folder on another drive is told apart. */
+  profile: string;
+  gamesRoot: string;
+  /** Every game's folder. */
+  games: readonly string[];
+  /** Genex's own data folders the sandbox writes. */
+  data: readonly string[];
+}
+
+/** What a folder the sandbox left out is to Genex, and whether it sits on another drive than the profile: for analytics, never the path. */
+export function leftOutFolder(dir: string, places: GenexPlaces): { kind: SandboxFolderKind; otherDrive: boolean } {
+  const otherDrive = pathKey(win.parse(win.resolve(dir)).root) !== pathKey(win.parse(win.resolve(places.profile)).root);
+  return { kind: folderKind(dir, places), otherDrive };
+}
+
+function folderKind(dir: string, places: GenexPlaces): SandboxFolderKind {
+  if (pathKey(dir) === pathKey(places.gamesRoot)) return SandboxFolderKind.GamesRoot;
+  const inside = (roots: readonly string[]) => roots.some((root) => insideWindowsPath(root, dir));
+  if (inside([places.gamesRoot, ...places.games])) return SandboxFolderKind.Game;
+  if (inside(places.data)) return SandboxFolderKind.GenexData;
+  return SandboxFolderKind.Other;
 }
 
 /** Whether sandbox-runtime failed because an srt-win call ran out of time. */
@@ -1575,6 +1637,11 @@ export class WindowsSandboxSession {
   readonly #walkStops = new Set<AbortController>();
   /** The paths srt-win set entries on in the applied config: a reset takes them back. */
   #srtPaths: string[] = [];
+  /**
+   * The write roots Windows refused srt-win's grant on, by path identity: every apply of this
+   * launch leaves them out, with the folders inside them, and the next launch tries them again.
+   */
+  readonly #refused = new Map<string, string>();
 
   constructor(deps: WindowsSessionDeps) {
     this.#deps = deps;
@@ -1619,7 +1686,18 @@ export class WindowsSandboxSession {
   #needsRegrant(member: SessionMember): boolean {
     if (!this.#applied) return true;
     const denied = memberDenies(member).every((p) => this.#appliedDenies.has(pathKey(p)));
-    return !denied || !grantsCover(this.#applied, member.grants);
+    return !denied || !grantsCover(this.#applied, this.#grantable(member.grants));
+  }
+
+  /** `grants` without the write roots Windows refused this launch, or any inside one. */
+  #grantable(grants: WindowsGrants): WindowsGrants {
+    return { write: grants.write.filter((root) => this.refusedAt([root]) === null), read: grants.read };
+  }
+
+  /** The write root Windows refused this launch that holds any of `paths`, or null ({@link refusedWriteRoot}). */
+  refusedAt(paths: readonly string[]): string | null {
+    for (const root of this.#refused.values()) if (paths.some((p) => insideWindowsPath(root, p))) return root;
+    return null;
   }
 
   /**
@@ -1729,6 +1807,30 @@ export class WindowsSandboxSession {
   }
 
   /**
+   * Set Genex's own entries and initialize with `wanted`, leaving out each write root Windows
+   * refuses srt-win's grant on ({@link refusedWriteRoot}) and starting again with the rest: one
+   * folder whose permissions the person may not change stopped every agent. Answers the plan
+   * applied and the grants it holds.
+   */
+  async #start(
+    wanted: WindowsGrants,
+  ): Promise<{ plan: { config: SandboxRuntimeConfig; own: OwnAclEntry[] }; grants: WindowsGrants }> {
+    for (let grants = wanted; ; grants = this.#grantable(grants)) {
+      const plan = await this.#setOwnEntries(grants);
+      try {
+        await this.#initialize(plan.config);
+        return { plan, grants };
+      } catch (error) {
+        const root = refusedWriteRoot(error, grants.write);
+        if (root === null) throw error;
+        this.#refused.set(pathKey(root), root);
+        this.#deps.log?.(MESSAGE.WriteRootLeftOut(root, error));
+        this.#deps.refused?.(root);
+      }
+    }
+  }
+
+  /**
    * Whether to initialize again after a failure: once more after an egress check that ran out of
    * time, and after each pause while Windows refuses srt-win's start as the sandbox user.
    */
@@ -1789,14 +1891,13 @@ export class WindowsSandboxSession {
         await this.#clearOfWalks(() => this.#srtPaths);
         return this.#release();
       }
-      const grants = grantUnion([...this.#members.values()].map((member) => member.grants));
-      await this.#clearOfWalks(() => this.#changedPaths(grants));
+      const wanted = this.#grantable(grantUnion([...this.#members.values()].map((member) => member.grants)));
+      await this.#clearOfWalks(() => this.#changedPaths(wanted));
       const wasApplied = this.#applied;
       this.#applied = null;
       if (wasApplied) await this.#deps.runtime.reset();
       const denies = [...this.#members.values()].flatMap(memberDenies);
-      const plan = await this.#setOwnEntries(grants);
-      await this.#initialize(plan.config);
+      const { plan, grants } = await this.#start(wanted);
       await this.#grantAncestors(grants);
       this.#applied = grants;
       this.#appliedDenies = new Set(denies.map(pathKey));
@@ -1971,13 +2072,11 @@ export class WindowsSandboxSession {
     const union = (pick: (member: SessionMember) => readonly string[]) => keep(members.flatMap(pick), scope);
     const domains = [...new Set(members.flatMap((member) => member.config.network.allowedDomains ?? []))];
     const read = union((member) => entryPaths(member.config.filesystem.denyRead));
-    const deny = {
-      read,
-      write: writeDeniesBeyondRead(
-        union((member) => entryPaths(member.config.filesystem.denyWrite)),
-        read,
-      ),
-    };
+    // A command writes only where srt-win granted, so a write deny in a refused root stops nothing.
+    const write = union((member) => entryPaths(member.config.filesystem.denyWrite)).filter(
+      (p) => this.refusedAt([p]) === null,
+    );
+    const deny = { read, write: writeDeniesBeyondRead(write, read) };
     // Where Genex cannot set entries, srt-win grants the folders it starts from with the session's.
     const routes = own
       ? this.#ownRoutes(grants, deny)
@@ -2311,7 +2410,14 @@ async function logSrtSteps(log: (line: string) => void): Promise<void> {
  */
 export function windowsSessionFor(
   runtime: SessionRuntime,
-  options: { profile: string; srtWin: string; installDir: string; dataRoot?: string; log?: (line: string) => void },
+  options: {
+    profile: string;
+    srtWin: string;
+    installDir: string;
+    dataRoot?: string;
+    log?: (line: string) => void;
+    refused?: (root: string) => void;
+  },
 ): WindowsSandboxSession {
   const existing = sessions.get(runtime);
   if (existing) return existing;
@@ -2338,6 +2444,7 @@ export function windowsSessionFor(
     own,
     launchDirs,
     ...(log ? { log } : {}),
+    ...(options.refused ? { refused: options.refused } : {}),
   });
   // Genex's own grants and denies stay for the next start; the folder entries above them go, and
   // a walk after the start stops (what it did not finish stays recorded).

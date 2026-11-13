@@ -7,7 +7,7 @@
  * hooks with the builders in `builds-stage.ts`. Every value is a code from the app's vocabularies,
  * a switch, a count or a duration: never a title, a task, a reason, a path or a name.
  */
-import { CallCutOff, PluginSourceKind } from "../../../shared/plugins.ts";
+import { CallCutOff, PluginCallFailure, PluginSourceKind, pluginErrorCode } from "../../../shared/plugins.ts";
 import {
   AutoResumeCause,
   CustomEvent,
@@ -457,6 +457,10 @@ export type BuildsEventProperties = {
     ok: boolean;
     cut_off: CallCutOff | null;
     blocked: GenexBlocked | null;
+    /** Why a failed call failed; null for an answer or a record from before it was written. */
+    failure: PluginCallFailure | Unlisted | null;
+    /** A catalog plugin's own error code; null for a plugin the person brought. */
+    error_code: string | null;
     duration_ms: number | null;
     images: number;
     retry_of_failed: boolean;
@@ -1010,6 +1014,7 @@ const pluginTool: Reader = (payload, at, memory) => {
   const kind = oneOf(MakingKind, fieldsOf(payload.making).kind) ?? Unlisted.Other;
   const ok = payload.ok === true;
   const tool = named ? wordOrOther(GenexTool, fieldsOf(payload.making).tool) : null;
+  const failure = ok ? null : wordOrOther(PluginCallFailure, payload.failure);
   return {
     event: BuildsEvent.PluginToolFinished,
     properties: {
@@ -1019,6 +1024,8 @@ const pluginTool: Reader = (payload, at, memory) => {
       ok,
       cut_off: oneOf(CallCutOff, payload.cutOff),
       blocked: oneOf(GenexBlocked, payload.blocked),
+      failure,
+      error_code: named && failure ? pluginErrorCode(payload.errorCode) : null,
       duration_ms: amountOf(payload.durationMs),
       images: amountOf(payload.images) ?? 0,
       retry_of_failed: retryOfFailed(memory, { key: `${at.thread}\n${ref}\n${kind}`, ok, at: at.at }),

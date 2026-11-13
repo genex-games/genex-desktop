@@ -13,6 +13,7 @@
 import { randomUUID } from "node:crypto";
 import type { CallMaking } from "../shared/asset-making.ts";
 import { GenexBlocked } from "../shared/genex.ts";
+import { PluginCallFailure, pluginErrorCode } from "../shared/plugins.ts";
 import type { PluginToolFinishedPayload, PluginToolRole, PluginToolStartedPayload } from "../shared/game-assets.ts";
 import { isJsonObject } from "../substrate/fsx.ts";
 
@@ -165,8 +166,10 @@ export function startedPayload(call: PluginToolCall): PluginToolStartedPayload {
   return payload;
 }
 
-/** What the call returned, or what it threw. */
-export type PluginToolOutcome = { result: unknown; version?: string } | { error: unknown; version?: string };
+/** What the call returned, or what it threw: with why it failed and the plugin's own error code, when known. */
+export type PluginToolOutcome =
+  | { result: unknown; version?: string }
+  | { error: unknown; failure?: PluginCallFailure; code?: string; version?: string };
 
 /**
  * The `plugin_tool` payload: the start, plus how it ended. A result shaped like a plugin job
@@ -181,14 +184,15 @@ export function finishedPayload(
   durationMs: number,
 ): PluginToolFinishedPayload {
   const failed = "error" in outcome;
-  const record = failed ? null : (outcome as { result: unknown }).result;
+  const record = failed ? null : outcome.result;
   const { files, jobId, generationId } = jobIds(record);
-  const error = failed ? String((outcome as { error: unknown }).error ?? "") : null;
+  const error = failed ? String(outcome.error ?? "") : null;
   const blocked = blockedBy(record);
   return {
     ...started,
     ok: !failed,
     ...(error ? { error: clip(error.replace(/^Error:\s*/, ""), 600) } : {}),
+    ...(failed ? failureFields(outcome) : {}),
     result: failed ? "" : resultDigest(record),
     images: positiveOrZero(images, Math.floor),
     ...(files?.length ? { files } : {}),
@@ -198,6 +202,15 @@ export function finishedPayload(
     durationMs: positiveOrZero(durationMs, Math.round),
     ...(outcome.version ? { version: outcome.version } : {}),
   };
+}
+
+/** Why a call failed, other when its caller could not say, and the plugin's own code when it is one. */
+function failureFields(outcome: {
+  failure?: PluginCallFailure;
+  code?: string;
+}): Pick<PluginToolFinishedPayload, "failure" | "errorCode"> {
+  const code = pluginErrorCode(outcome.code);
+  return { failure: outcome.failure ?? PluginCallFailure.Other, ...(code ? { errorCode: code } : {}) };
 }
 
 /** What a job-shaped result says the job is waiting on the person for, when it names a known reason. */

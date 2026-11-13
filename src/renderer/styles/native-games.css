@@ -339,6 +339,17 @@
 .game-hero .game-primary.play-tint:enabled:hover {
   background: color-mix(in srgb, var(--people-primary-bottom) 48%, var(--hero-glass));
 }
+/* On the light theme's plain page (no cover) that glass blue turns muddy: there Show game wears the Play /
+   Create switch's selected pill (play.css), twice its blue under the pointer (one colour, so it fades). */
+:root[data-theme="light"] .game-hero[data-game-hero="none"] .game-primary.play-tint {
+  background: var(--play-pill);
+  box-shadow: inset 0 0 0 1px var(--play-pill-edge);
+  color: var(--play-selected-text, var(--ink));
+  backdrop-filter: none;
+}
+:root[data-theme="light"] .game-hero[data-game-hero="none"] .game-primary.play-tint:enabled:hover {
+  background: color-mix(in srgb, var(--play-selected, var(--play-blue)) calc(var(--select-share) * 2), transparent);
+}
 .game-primary-row {
   display: flex;
   gap: 10px;
@@ -402,6 +413,13 @@
   inset-inline-start: 0;
   background: color-mix(in srgb, var(--people-primary-bottom) 55%, transparent);
   transition: width var(--duration-quick) linear;
+}
+/* On the light theme's plain page the bar is the same pill as Show game, growing across its track: laid
+   on the page's own colour rather than the grey track, so it keeps the pill's clear blue. */
+:root[data-theme="light"] .game-hero[data-game-hero="none"] .game-installing-fill {
+  border-radius: inherit;
+  background: linear-gradient(var(--play-pill), var(--play-pill)), var(--page);
+  box-shadow: inset 0 0 0 1px var(--play-pill-edge);
 }
 .game-installing-row {
   position: relative;

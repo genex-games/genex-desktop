@@ -59,7 +59,9 @@ process.on("message", async (message) => {
     const result = await answer(instance, message, context);
     process.send({ kind: "result", id: message.id, result });
   } catch (error) {
-    process.send({ kind: "result", id: message.id, error: error?.message ?? String(error) });
+    // A plugin's own error code (`error.code`) goes with its words; the host keeps it only when it is one.
+    const code = typeof error?.code === "string" ? { code: error.code } : {};
+    process.send({ kind: "result", id: message.id, error: error?.message ?? String(error), ...code });
   } finally {
     running.delete(message.id);
   }

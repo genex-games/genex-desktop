@@ -75,6 +75,10 @@ export async function activate(host) {
 - `ctx` carries `project`, `directory`, `threadId`, an `AbortSignal`, a `callId` and `host`. **Do
   not store it**: concurrent calls can belong to different games and different workers, and host
   services answer only during an active invocation.
+- A tool fails by throwing. The agent reads the error's message; give the error a short `code`
+  too (`Object.assign(new Error("…"), { code: "not-connected" })`: letters, digits, `.`, `_`, `-`,
+  at most 48 characters) and Studio keeps it in the call's record as `errorCode`, so a failure
+  can be counted without its words. A code of another shape is dropped.
 - The host never retries a failed invocation. Persist a remote reference before you return, and
   reconcile an uncertain submission instead of creating it again. Cancellation stops local
   waiting; it promises nothing about remote work or refunds.
