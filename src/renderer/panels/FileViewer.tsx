@@ -1,7 +1,7 @@
 /**
- * A file the chat named, or an image someone sent, read beside the conversation. The game view
- * gives this rectangle back the way Builds and Assets do. Files the viewer cannot draw say so;
- * Show in Finder reaches everything that is in the game folder.
+ * A file the chat named, read beside the conversation; a picture opens over the window instead
+ * (PictureLightbox.tsx). The game view gives this rectangle back the way Builds and Assets do.
+ * Files the viewer cannot draw say so; Show in Finder reaches everything in the game folder.
  */
 import type { JSX } from "react";
 import { useEffect, useMemo, useState } from "react";
@@ -13,7 +13,7 @@ import { codeLanguage, highlightCode } from "../ui/syntax-highlight.ts";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip.tsx";
 import { type Notify, notifyProblem } from "../state/toasts.ts";
 import { fileManagerWords, problemWords } from "../words.ts";
-import { type BesideTarget, besideName } from "../open-beside.ts";
+import { type BesideFile, besideName } from "../open-beside.ts";
 import { hostPlatform } from "../platform.ts";
 import { Pending } from "../ui/Pending.tsx";
 import { t } from "../../shared/i18n.ts";
@@ -37,19 +37,12 @@ export function FileViewer({
   onNotice,
 }: {
   threadId: string | null;
-  target: BesideTarget;
+  target: BesideFile;
   onClose: () => void;
   onNotice: Notify;
 }): JSX.Element {
   const [loaded, setLoaded] = useState<Loaded>({ state: LoadState.Loading });
   useEffect(() => {
-    if (target.kind === "image") {
-      setLoaded({
-        state: LoadState.Ready,
-        file: { path: target.name, name: target.name, where: "build", kind: "image", src: target.src },
-      });
-      return;
-    }
     if (!threadId) {
       setLoaded({ state: LoadState.Failed, problem: t("This chat has no game folder yet.") });
       return;
@@ -73,19 +66,16 @@ export function FileViewer({
     () => (file?.kind === "text" && file.text !== undefined ? highlightCode(file.text, codeLanguage(file.path)) : ""),
     [file],
   );
-  const inFolder = target.kind === "file" && file?.where === "game";
+  const inFolder = file?.where === "game";
   const folderFile = inFolder ? file : null;
   return (
     <section data-file-viewer aria-label={besideName(target)} className="absolute inset-0 flex flex-col bg-page">
       <div className="flex min-h-15 shrink-0 items-center gap-3 border-b border-line ps-5 pe-3">
         <div className="flex min-w-0 flex-1 flex-col">
-          <span
-            title={file?.path ?? (target.kind === "file" ? target.path : target.name)}
-            className="truncate text-[15px] leading-5 font-medium text-ink"
-          >
+          <span title={file?.path ?? target.path} className="truncate text-[15px] leading-5 font-medium text-ink">
             {besideName(target)}
           </span>
-          {target.kind === "file" && file?.where === "build" && (
+          {file?.where === "build" && (
             <span className="truncate text-[13px] leading-[18px] text-ink-3">
               {t("In the build · not in your game folder yet")}
             </span>
@@ -118,7 +108,7 @@ export function FileViewer({
   );
 }
 
-/** The file as the viewer shows it: opening, its problem, a document, highlighted code, an image, or a refusal. */
+/** The file as the viewer shows it: opening, its problem, a document, highlighted code, or a refusal. */
 function FileBody({ loaded, name, code }: { loaded: Loaded; name: string; code: string }): JSX.Element {
   if (loaded.state === LoadState.Loading)
     return (
@@ -145,12 +135,6 @@ function FileBody({ loaded, name, code }: { loaded: Loaded; name: string; code: 
       <pre className="file-code m-0 px-5 py-4">
         <code dangerouslySetInnerHTML={{ __html: code }} />
       </pre>
-    );
-  if (file.kind === "image")
-    return (
-      <div className="hatch grid min-h-full place-items-center p-6">
-        <img src={file.src} alt={file.name} className="max-h-full max-w-full object-contain" />
-      </div>
     );
   return <p className="m-0 px-11 py-7 text-chat text-ink-2">{t("This file can’t be shown here.")}</p>;
 }

@@ -3,13 +3,15 @@
  *
  * Anything in a chat can name a file: a reply, a person's own message, a tool row, a plan. The
  * renderer finds the names here and asks main which of them exist; only those become links.
- * Markdown and images of the game open beside the chat; every other file opens in the app the
- * system uses for it. Main decides (src/main/chat-files.ts) and never launches programs.
+ * Markdown of the game opens beside the chat and its images over the window; every other file
+ * opens in the app the system uses for it. Main decides (src/main/chat-files.ts) and never
+ * launches programs.
  */
 
 /**
  * How a file the chat names opens:
- * - `beside`: a tab next to the chat (Markdown and images the game or its build has)
+ * - `beside`: the renderer shows it (Markdown the game or its build has in a tab next to the chat,
+ *   an image over the window)
  * - `app`: the file's default app
  * - `folder`: a folder, opened in the file manager
  * - `finder`: shown in the file manager, never launched (apps, scripts, installers, unknown types)

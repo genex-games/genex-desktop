@@ -1,13 +1,22 @@
 /**
- * Opening a file the chat names. Markdown and images of the game open beside the chat, as do
- * the images someone sent; any surface can ask and the shell owns the stage. Every other file
- * opens in its app through main, and the shell reports what went wrong (renderer/chat-files.ts
- * finds the names).
+ * Opening a file the chat names. A picture (an image someone sent, a screenshot, an image of the
+ * game) opens over the window, as an asset does; Markdown of the game opens beside the chat. Any
+ * surface can ask and the shell owns both. Every other file opens in its app through main, and
+ * the shell reports what went wrong (renderer/chat-files.ts finds the names).
  */
 import type { ChatFileRef } from "../shared/chat-files.ts";
+import { fileKind } from "../shared/game-file.ts";
 import { pathLeaf } from "../shared/path-label.ts";
 
-export type BesideTarget = { kind: "file"; path: string } | { kind: "image"; name: string; src: string };
+/** A game file the chat names, by its path in the game. */
+export type BesideFile = { kind: "file"; path: string };
+/** What the chat asks to open: a game file, or a picture it already holds. */
+export type BesideTarget = BesideFile | { kind: "image"; name: string; src: string };
+
+/** Whether a target opens over the window as a picture rather than beside the chat. */
+export function opensAsPicture(target: BesideTarget): boolean {
+  return target.kind === "image" || fileKind(target.path) === "image";
+}
 
 /** A file's or image's own name, as its tab and its viewer show it. */
 export function besideName(target: BesideTarget): string {

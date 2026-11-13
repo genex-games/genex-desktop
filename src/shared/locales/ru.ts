@@ -975,6 +975,7 @@ export default {
   Copied: "Скопировано",
   "Copied.": "Скопировано.",
   Copy: "Копировать",
+  "Copy Image": "Копировать изображение",
   "Copy and change {title}’s project to make their own game.":
     "Скопировать и изменить проект {title}, чтобы сделать свою игру.",
   "Copy command": "Скопировать команду",

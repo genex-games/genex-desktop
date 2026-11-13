@@ -5,7 +5,14 @@
  * Only text between tags is touched, never attributes, and text inside a link or button stays
  * as it is. A piece of text with no file in it is returned byte for byte.
  */
-import { type ChatFileLink, type ChatFileLookup, type ChatFileRef, fileMentions } from "../../shared/chat-files.ts";
+import {
+  type ChatFileLink,
+  type ChatFileLookup,
+  type ChatFileRef,
+  ChatFileOpen,
+  fileMentions,
+} from "../../shared/chat-files.ts";
+import { fileKind } from "../../shared/game-file.ts";
 import { hostPlatform } from "../platform.ts";
 import { chatFileWords } from "../words.ts";
 
@@ -39,7 +46,8 @@ export function fileNameOfPath(name: string): string | null {
 /** The hover text of a file link: what a click does, then where the file is when the label hides it. */
 export function fileLinkTitle(link: ChatFileLink, label: string, platform: string = platformHere()): string {
   const words = chatFileWords(platform);
-  const lines = [words.open[link.open]];
+  const picture = link.open === ChatFileOpen.Beside && fileKind(link.path) === "image";
+  const lines = [picture ? words.picture : words.open[link.open]];
   if (link.path !== label.trim()) lines.push(link.path);
   if (link.build) lines.push(words.build);
   return lines.join("\n");

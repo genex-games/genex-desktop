@@ -955,6 +955,7 @@ export default {
   Copied: "コピーしました",
   "Copied.": "コピーしました。",
   Copy: "コピー",
+  "Copy Image": "画像をコピー",
   "Copy and change {title}’s project to make their own game.":
     "{title} のプロジェクトをコピーして変え、自分のゲームを作る。",
   "Copy command": "コマンドをコピー",

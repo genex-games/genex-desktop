@@ -1709,8 +1709,8 @@ function activeStepWords(doing: string, where: string): string {
 
 /** A connector's pictures in the chat: the work's play views and a row's own screenshots. */
 export const CHAT_SHOT_WORDS = {
-  /** A picture's tooltip, as a file the chat opens beside it says (`MAC_FILE_WORDS`). */
-  opensBeside: t("Opens beside the chat"),
+  /** A picture's tooltip: a click opens it over the window, as a picture file's link says (`MAC_FILE_WORDS`). */
+  opens: t("Open image"),
   playView: (n: number) => t("Play view {index}", { index: n }),
   screenshot: t("Screenshot"),
 } as const;
@@ -4521,6 +4521,8 @@ export function modelAnimationsWords(model: string): string {
 /** A file link's words: what a click does, by how it opens (`shared/chat-files.ts`), and why it failed. */
 export interface ChatFileWords {
   open: Readonly<Record<ChatFileOpen, string>>;
+  /** A picture's link instead of `open.beside`: it opens over the window. */
+  picture: string;
   /** Under the path of a file only the run's build has. */
   build: string;
   /** No app claimed the file, so the file manager shows it. */
@@ -4534,6 +4536,7 @@ const MAC_FILE_WORDS: ChatFileWords = {
     [ChatFileOpen.Folder]: t("Opens in Finder"),
     [ChatFileOpen.Finder]: t("Shows in Finder"),
   },
+  picture: t("Open image"),
   build: t("In the build · not in your game folder yet"),
   noApp: (label) => t("No app on this Mac opens {file}, so it’s shown in Finder.", { file: label }),
 };

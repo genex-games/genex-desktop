@@ -66,7 +66,7 @@ function useShot(path: string) {
   return { host, src, failed };
 }
 
-/** One picture as a button that opens it beside the chat. */
+/** One picture as a button that opens it over the window. */
 function Shot({ path, label, className }: { path: string; label: string; className: string }): JSX.Element {
   const { host, src, failed } = useShot(path);
   return (
@@ -75,7 +75,7 @@ function Shot({ path, label, className }: { path: string; label: string; classNa
       type="button"
       data-chat-shot={path}
       aria-label={label}
-      title={CHAT_SHOT_WORDS.opensBeside}
+      title={CHAT_SHOT_WORDS.opens}
       onClick={() => openBeside({ kind: "file", path })}
       className={`chat-shot ${failed ? "hatch" : "bg-inset"} ${className}`}
     >

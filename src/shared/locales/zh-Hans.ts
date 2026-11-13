@@ -908,6 +908,7 @@ export default {
   Copied: "已复制",
   "Copied.": "已复制。",
   Copy: "复制",
+  "Copy Image": "复制图片",
   "Copy and change {title}’s project to make their own game.": "复制并修改 {title} 的项目，做出自己的游戏。",
   "Copy command": "复制命令",
   "Copy diagnostics": "复制诊断信息",
