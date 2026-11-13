@@ -17,6 +17,7 @@
 import type { MakingJob } from "../shared/asset-making.ts";
 import { type AssetKind, type AssetSource, assetKind, type ProjectAsset } from "../shared/game-assets.ts";
 import { t } from "../shared/i18n.ts";
+import { AssetOrder } from "./assets-filter.ts";
 import { ASSET_LIBRARY_WORDS } from "./words.ts";
 
 /** The sources the studio names itself (`AssetSource`); any other source is a plugin id. */
@@ -120,18 +121,53 @@ function compareJobs(a: AssetGroupJob, b: AssetGroupJob): number {
   return (a.jobId ?? "").localeCompare(b.jobId ?? "");
 }
 
+/** A file's own name, without its folders. */
+const baseName = (file: string): string => file.slice(file.lastIndexOf("/") + 1);
+
+/** How a source's files run under each order that ignores their jobs; ties fall back to the path. */
+const FILE_ORDER = {
+  [AssetOrder.Name]: (a: ProjectAsset, b: ProjectAsset) =>
+    baseName(a.file).localeCompare(baseName(b.file), undefined, { sensitivity: "base" }) ||
+    a.file.localeCompare(b.file),
+  [AssetOrder.Size]: (a: ProjectAsset, b: ProjectAsset) => b.bytes - a.bytes || a.file.localeCompare(b.file),
+} as const satisfies Record<
+  Exclude<AssetOrder, typeof AssetOrder.Newest>,
+  (a: ProjectAsset, b: ProjectAsset) => number
+>;
+
+/**
+ * A source's files in one run across its jobs: the jobs still on their way keep their place at the
+ * top, and every delivered file follows in `compare`'s order as one bucket.
+ */
+function acrossJobs(
+  source: string,
+  jobs: readonly AssetGroupJob[],
+  compare: (a: ProjectAsset, b: ProjectAsset) => number,
+): AssetGroupJob[] {
+  const waiting = jobs.filter((job) => job.waiting);
+  const files = jobs.flatMap((job) => job.assets).sort(compare);
+  if (!files.length) return waiting;
+  return [...waiting, { id: `job:${source}:sorted`, jobId: null, at: null, assets: files }];
+}
+
 /**
  * Sort a project's assets into source → job → file. Files with no job id share one bucket per
- * source, which is what "the folder" means for hand-dropped files.
+ * source, which is what "the folder" means for hand-dropped files. An `order` other than newest
+ * runs a source's files by name or size instead, whatever job made them.
  */
-export function groupAssets(assets: readonly ProjectAsset[], waiting: readonly MakingJob[] = []): AssetGroup[] {
+export function groupAssets(
+  assets: readonly ProjectAsset[],
+  waiting: readonly MakingJob[] = [],
+  order: AssetOrder = AssetOrder.Newest,
+): AssetGroup[] {
   const bySource = new Map<string, Map<string, AssetGroupJob>>();
   for (const asset of assets) addAsset(jobsOf(bySource, asset.source || Source.Imported), asset);
   for (const job of waiting) addWaiting(jobsOf(bySource, job.source || Source.Imported), job);
   const groups: AssetGroup[] = [];
   for (const [source, jobs] of bySource) {
-    const ordered = [...jobs.values()].sort(compareJobs);
-    for (const job of ordered) job.assets.sort((a, b) => a.file.localeCompare(b.file));
+    const newestFirst = [...jobs.values()].sort(compareJobs);
+    for (const job of newestFirst) job.assets.sort((a, b) => a.file.localeCompare(b.file));
+    const ordered = order === AssetOrder.Newest ? newestFirst : acrossJobs(source, newestFirst, FILE_ORDER[order]);
     groups.push({
       id: `group:${source}`,
       source,
@@ -203,8 +239,9 @@ export function layoutAssets(
   assets: readonly ProjectAsset[],
   waiting: readonly MakingJob[] = [],
   lines: ReadonlyMap<string, number> = NO_LINES,
+  order: AssetOrder = AssetOrder.Newest,
 ): AssetsLayout {
-  const groups = groupAssets(assets, waiting);
+  const groups = groupAssets(assets, waiting, order);
   const rects: Record<string, AssetRect> = {};
   const widths: number[] = [];
   let y = PAD;

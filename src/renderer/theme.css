@@ -6957,6 +6957,15 @@ a:focus-visible {
   border-radius: var(--radius-card);
   background: var(--surface);
   box-shadow: var(--shadow-overlay);
+/* The caller's actions and Close in the top corner. Windows and Linux draw the window's own controls
+ * over that corner (theme.css `--window-controls-end`), so there the row sits under the title bar. */
+.lightbox-actions {
+  top: 20px;
+}
+:root[data-platform="win32"] .lightbox-actions,
+:root[data-platform="linux"] .lightbox-actions {
+  top: 56px;
+}
 }
 .lightbox-bar {
   position: absolute;

@@ -77,7 +77,7 @@ export function Lightbox({
             <Dialog.Description>{title}</Dialog.Description>
           </div>
           {children}
-          <div className="absolute top-5 right-5 z-10 flex gap-2">
+          <div className="lightbox-actions absolute right-5 z-10 flex gap-2">
             {actions}
             <Dialog.Close aria-label={t("Close")} title={t("Close")} data-icon-only className="lightbox-button">
               <Icon name="close" size={18} />

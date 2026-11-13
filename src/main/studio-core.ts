@@ -3086,6 +3086,18 @@ export class StudioCore {
   saveReferenceFrames(
     ...args: Parameters<AssetService["saveReferenceFrames"]>
   ): ReturnType<AssetService["saveReferenceFrames"]> {
+  readAssetThumbnail(
+    ...args: Parameters<AssetService["readAssetThumbnail"]>
+  ): ReturnType<AssetService["readAssetThumbnail"]> {
+    return this.#assets.readAssetThumbnail(...args);
+  }
+
+  keepAssetThumbnail(
+    ...args: Parameters<AssetService["keepAssetThumbnail"]>
+  ): ReturnType<AssetService["keepAssetThumbnail"]> {
+    return this.#assets.keepAssetThumbnail(...args);
+  }
+
     return this.#assets.saveReferenceFrames(...args);
   }
 

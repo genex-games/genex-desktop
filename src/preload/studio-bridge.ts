@@ -179,6 +179,8 @@ function gameCalls(bridge: BridgeCalls) {
     previewProjectAsset: (p) => invoke("studio:game.asset.preview", p),
     presentProjectAssets: (p) => invoke("studio:game.asset.present", p),
     projectModelRigs: (p) => invoke("studio:game.asset.rigs", p),
+    readAssetThumbnail: (p) => invoke("studio:game.asset.thumbnail", p),
+    keepAssetThumbnail: (p) => invoke("studio:game.asset.thumbnail.keep", p),
     projectAssets: (project) => invoke("studio:game.assets", { project }),
     assetLibrary: (query) => invoke("studio:assets.library", query),
     assetLibraryStates: (project) => invoke("studio:assets.states", { project }),

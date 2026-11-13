@@ -809,6 +809,10 @@ export interface StudioApi {
   projectModelRigs(p: { project: string; files: string[] }): Promise<ModelRig[]>;
   projectAssets(project: string): Promise<ProjectAssets>;
   /** The Genex account's asset library on genex.games, newest first; throws signed out. */
+  /** A card's thumbnail Studio kept in an earlier session under the key the card made it for; null when none. */
+  readAssetThumbnail(p: { project: string; key: string }): Promise<{ mimeType: string; data: string } | null>;
+  /** Keep a card's thumbnail (base64 of a small picture) in Studio's own data for the next session; false when refused. */
+  keepAssetThumbnail(p: { project: string; key: string; data: string }): Promise<boolean>;
   assetLibrary(query: LibraryQuery): Promise<LibraryPage>;
   /** Where each of a game's files stands with the library: saved, shared, can be shared. */
   assetLibraryStates(project: string): Promise<GameLibraryStates>;

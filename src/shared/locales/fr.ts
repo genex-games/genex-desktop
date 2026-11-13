@@ -2397,6 +2397,7 @@ export default {
   "New versions arrive with your system's updates: Software Updater, sudo apt upgrade or sudo dnf upgrade.":
     "Les nouvelles versions arrivent avec les mises à jour de ton système : Software Updater, sudo apt upgrade ou sudo dnf upgrade.",
   "Newer integrated build not delivered": "Le nouveau build intégré n’est pas arrivé dans le jeu",
+  Newest: "Plus récents",
   "Newest code on {branch}": "Code le plus récent sur {branch}",
   "Newly passing": "Passent maintenant",
   "Newspaper halftone, the ink bleeding": "Trame de journal, l’encre qui bave",
@@ -3600,6 +3601,7 @@ export default {
   Sound: "Son",
   "Sound effect": "Effet sonore",
   "Sound, music and art": "Son, musique et graphismes",
+  "Sort assets": "Trier les ressources",
   Sounds: "Sons",
   Source: "Source",
   "Source code": "Code source",

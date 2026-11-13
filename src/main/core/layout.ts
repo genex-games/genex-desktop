@@ -41,6 +41,11 @@ export type StudioLayout = {
    * Outside every agent-writable root, like `jobs`.
    */
   itemPictures: string;
+  /**
+   * The Assets canvas's thumbnails kept between sessions, one folder per game
+   * (`main/asset-thumbnails.ts`). Outside every agent-writable root, like `jobs`.
+   */
+  assetThumbnails: string;
 };
 
 export function layoutFor(userData: string): StudioLayout {
@@ -61,5 +66,6 @@ export function layoutFor(userData: string): StudioLayout {
     nativeRuntimes: path.join(userData, "native-runtimes"),
     installedGames: path.join(userData, "installed-games"),
     itemPictures: path.join(userData, "item-pictures"),
+    assetThumbnails: path.join(userData, "asset-thumbnails"),
   };
 }

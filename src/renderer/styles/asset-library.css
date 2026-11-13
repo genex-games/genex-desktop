@@ -199,16 +199,33 @@
   font-size: 12.5px;
 }
 
-/* The search box at the canvas's top left. */
-.asset-search {
+/* The canvas's top row: the search box, then the tabs, with the sort order at its end. A narrow
+ * stage wraps it; only its controls take the pointer, so the canvas still pans between them. */
+.asset-toolbar {
   position: absolute;
   top: 10px;
+  right: 10px;
   left: 10px;
   z-index: 3;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-  width: min(280px, calc(100% - 20px));
+  pointer-events: none;
+}
+.asset-toolbar > * {
+  pointer-events: auto;
+}
+.asset-sort {
+  height: 32px;
+  margin-inline-start: auto;
+  gap: 6px;
+}
+.asset-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: min(280px, 100%);
   height: 32px;
   padding: 0 8px 0 10px;
   border-radius: var(--radius-button);
