@@ -4412,7 +4412,8 @@ the online play) puts Genex multiplayer into the game's Godot project, web and n
   a game with the addon copies the pinned SDK's `bridge.global.js` beside the page, with `genex-multiplayer-bridge.LICENSES.md` (the licenses of what it bundles, made at build by `bridgeLicenses`), which the
   addon's web backend drives through `window.GenexMultiplayerBridge`. The publish connect module
   hands that bridge the page's one player (`setIdentity` with Studio's embed SDK), exposes it as
-  `window.genexEmbed` for a Unity WebGL build (a page's own kept), and puts the game's slug into
+  `window.genexEmbed` for a Unity WebGL build (a page's own kept): the player, its token, and the
+  authority servers as urls, by region and with the player's home region. It also puts the game's slug into
   `window.__GENEX__`.
 - **Not yet.** Native play inside Studio's sandbox has no network, so online play is tested in an
   exported build or on the published web page.

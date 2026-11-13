@@ -378,7 +378,9 @@ with nothing ready, the plans are quiet links (Connect Claude Code, Connect Code
 unverified email, **Continue in browser** opens genex.games's build page through
 `studio:genex-account.build` (native): it signs the person in with the app's device code, offers Pro
 or a credit pack, and shows the waiting idea back; the app asks Genex again every 3 seconds for 15
-minutes, and a game's first message held above the notice sends itself once Genex is ready. Out of
+minutes, and a game's first message held above the notice sends itself once Genex is ready. A game
+started from home is still made then: naming hears Genex's refusal as what the account needs, never
+as a usage cap that sends the words back home (`core/game-naming.ts`). Out of
 credits, the step is **Get credits**. Claude Code missing or too old is **Set up**, which installs it in the app.
 `genex_notice_shown` says what the notice needed and offered, `genex_notice_action` which way was
 taken, and `message_send_blocked`'s `genex_need` tells a missing plan from a real sign-in.

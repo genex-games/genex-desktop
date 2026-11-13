@@ -368,7 +368,7 @@ SOFTWARE.
 
 These npm packages ship in the app without a license file of their own; their notices follow.
 
-### @genex-ai/embed-sdk 0.35.0
+### @genex-ai/embed-sdk 0.36.0
 
 Bundled into `vendor/genex/`, the player-identity SDK a game made from Studio's template maps in its import
 map. Its package and repository (https://github.com/genex-games/genex) declare the MIT license
@@ -447,7 +447,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-### @genex-ai/multiplayer 0.17.11
+### @genex-ai/multiplayer 0.17.12
 
 Bundled into `vendor/genex/`, the multiplayer SDK a game made from Studio's template maps in its import
 map, and shipped as `genex-multiplayer-bridge.js` (its `dist/bridge.global.js`) beside a multiplayer

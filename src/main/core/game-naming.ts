@@ -9,6 +9,7 @@
 import { SECOND_MS } from "../../shared/duration.ts";
 import type { GameLibraryEntry, GameUpdate } from "../../shared/game-library.ts";
 import type { GameName, GameNameRequest } from "../../shared/game-project.ts";
+import { EngineStatusCode } from "../../shared/engine-descriptor.ts";
 import { EngineFailureKind } from "../../shared/engine-requests.ts";
 import { WorkClass } from "../../shared/harness-api.ts";
 import type { CompleteRequest, CompleteResponse, Engine } from "../../substrate/engines/types.ts";
@@ -94,6 +95,17 @@ function usageLimit(err: unknown): string | undefined {
     : undefined;
 }
 
+/**
+ * Whether the engine's own status says the person must act first (Genex without Pro or credits, or
+ * signed out): its refusal then reads as a usage cap, but the game's chat holds the first message
+ * over the engine's notice instead. An engine with no status, or one that cannot tell, reads ready.
+ */
+async function waitsOnPerson(engine: Engine): Promise<boolean> {
+  if (typeof engine.status !== "function") return false;
+  const status = await engine.status().catch(() => null);
+  return status?.code === EngineStatusCode.NeedsLogin;
+}
+
 /** The model's reply, or null when it fails or runs out of time, with the words of a usage cap it hit. */
 async function askForName(deps: NamingDeps, engine: Engine, request: GameNameRequest): Promise<NamingAnswer> {
   const timeoutMs = deps.timeoutMs ?? NAMING_TIMEOUT_MS;
@@ -121,7 +133,8 @@ async function askForName(deps: NamingDeps, engine: Engine, request: GameNameReq
     return { reply: typeof content === "string" ? content : null };
   } catch (err) {
     const limited = usageLimit(err);
-    return limited === undefined ? { reply: null } : { reply: null, limited };
+    if (limited === undefined || (await waitsOnPerson(engine))) return { reply: null };
+    return { reply: null, limited };
   } finally {
     answered.catch(() => {});
   }
