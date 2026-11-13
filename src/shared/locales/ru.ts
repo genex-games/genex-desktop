@@ -2342,6 +2342,7 @@ export default {
   "New versions arrive with your system's updates: Software Updater, sudo apt upgrade or sudo dnf upgrade.":
     "Новые версии приходят с обновлениями системы: Software Updater, sudo apt upgrade или sudo dnf upgrade.",
   "Newer integrated build not delivered": "Новая объединённая сборка не попала в игру",
+  Newest: "Новые",
   "Newest code on {branch}": "Свежий код из ветки {branch}",
   "Newly passing": "Теперь проходят",
   "Newspaper halftone, the ink bleeding": "Газетный растр с растёкшейся краской",
@@ -3521,6 +3522,7 @@ export default {
   Sound: "Звук",
   "Sound effect": "Звуковой эффект",
   "Sound, music and art": "Звук, музыка и графика",
+  "Sort assets": "Сортировать ассеты",
   Sounds: "Звуки",
   Source: "Источник",
   "Source code": "Исходный код",

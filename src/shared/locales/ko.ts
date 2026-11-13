@@ -2286,6 +2286,7 @@ export default {
   "New versions arrive with your system's updates: Software Updater, sudo apt upgrade or sudo dnf upgrade.":
     "새 버전은 시스템 업데이트로 받아요: Software Updater, sudo apt upgrade 또는 sudo dnf upgrade.",
   "Newer integrated build not delivered": "새 통합 빌드가 반영되지 않음",
+  Newest: "최신순",
   "Newest code on {branch}": "{branch}의 최신 코드",
   "Newly passing": "새로 통과",
   "Newspaper halftone, the ink bleeding": "잉크가 번진 신문 망점",
@@ -3454,6 +3455,7 @@ export default {
   Sound: "사운드",
   "Sound effect": "효과음",
   "Sound, music and art": "사운드, 음악, 아트",
+  "Sort assets": "에셋 정렬",
   Sounds: "사운드",
   Source: "소스",
   "Source code": "소스 코드",

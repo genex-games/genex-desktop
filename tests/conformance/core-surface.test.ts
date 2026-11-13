@@ -74,6 +74,9 @@ const METHODS = [
   "previewProjectAsset",
   "projectAssets",
   "projectModelRigs",
+  // The Assets canvas's thumbnails kept between sessions (studio:game.asset.thumbnail, .keep).
+  "readAssetThumbnail",
+  "keepAssetThumbnail",
   // Publish's file list, shown in Studio's dialog before anything is uploaded (studio:plugins.genex-publish-review).
   "publicCopyFiles",
   "readGameFile",

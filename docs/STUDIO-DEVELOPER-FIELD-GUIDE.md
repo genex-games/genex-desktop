@@ -309,7 +309,11 @@ controls, immediate thread cancellation, the blocker held past the request, the 
 mounting — lives in the build smoke, which is why `npm run test:build-ui` is now part of `npm
 run verify`. The Assets stage tab is covered by `assets-layout.test.ts`, `game-assets.test.ts` and
 `canvas-view.test.ts` (grouping, deterministic non-overlapping rects, the read-only walk and join,
-containment and size caps, the fit and zoom maths) and by five build-smoke checks that offer the
+containment and size caps, the fit and zoom maths), by `assets-filter.test.ts` (tabs, counts, sort
+order, cards before the model headers are read), by `thumbnail-lanes.test.ts`,
+`kept-thumbnails.test.ts` and `asset-thumbnails.test.ts` (pictures made a few at a time, and kept
+between sessions in `<userData>/asset-thumbnails/<game hash>/<key hash>`, only small pictures, the
+oldest forgotten past 2,000 a game) and by five build-smoke checks that offer the
 tab, hide the native game, render a real fixture delivery back through the contained reader, find
 the delivery in the project's log and give the stage back to the game. A sixth appends the host's
 own `plugin_tool_started` / `plugin_tool` pair and asserts the Builds graph draws the asset job

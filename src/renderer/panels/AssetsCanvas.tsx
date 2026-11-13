@@ -3,7 +3,6 @@ import type { JSX } from "react";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ProjectAsset } from "../../shared/game-assets.ts";
 import { isGenexSource, type MakingJob, MakingPhase } from "../../shared/asset-making.ts";
-import { withoutGenexSources } from "../../shared/genex.ts";
 import type { MakingSource } from "../asset-making.ts";
 import { foldMotions, type FoldedMotions } from "../../shared/model-rig.ts";
 import type { GameLibraryStates } from "../../shared/asset-library.ts";
@@ -15,6 +14,7 @@ import {
   stateOf,
   toggledSelection,
 } from "../asset-library-view.ts";
+import { AssetOrder, AssetTab, assetsOfTab, cardedAssets, tabCounts, waitingOfTab } from "../assets-filter.ts";
 import { layoutAssets } from "../assets-layout.ts";
 import { gridTransform, keepView, keptView, useCanvasView, useOnWheel } from "../canvas-view.ts";
 import { boundsOf } from "../run-graph.ts";
@@ -34,6 +34,7 @@ import { Pending } from "../ui/Pending.tsx";
 import { MakingCard, usePluginSources } from "./MakingCard.tsx";
 import { MakingReviewsProvider } from "./MakingReviews.tsx";
 import { AssetSearchField, AssetSearchResults } from "./assets/AssetSearch.tsx";
+import { AssetSort, AssetTabs } from "./assets/AssetTabs.tsx";
 import { BuildingMark, CardTagMark, PickCircle, ShareLineMark } from "./assets/CardMarks.tsx";
 import { SelectionBar } from "./assets/SelectionBar.tsx";
 import { ShareDialog } from "./assets/ShareDialog.tsx";
@@ -355,7 +356,7 @@ const assetsViewKey = (project: string): string => `assets\n${project}`;
  * their natural size. A camera the user moved (a pan, the wheel, the zoom buttons) comes back as
  * they left it when the tab or the game returns; Fit hands it back to fitting.
  */
-function useAssetsCamera(project: string, loaded: boolean, layout: Layout) {
+function useAssetsCamera(project: string, loaded: boolean, layout: Layout, tab: AssetTab) {
   const touched = useRef(false);
   const touch = useCallback(() => {
     touched.current = true;
@@ -392,6 +393,16 @@ function useAssetsCamera(project: string, loaded: boolean, layout: Layout) {
     fitted.current = project;
     fitAssets(bounds);
   }, [loaded, project, layout, fitAssets]);
+  // Another tab is another arrangement of the same game: fitted again, wherever the camera was.
+  const shown = useRef({ project, tab });
+  useLayoutEffect(() => {
+    const before = shown.current;
+    shown.current = { project, tab };
+    const sameGameNewTab = before.project === project && before.tab !== tab;
+    if (!sameGameNewTab || fitted.current !== project) return;
+    const bounds = boundsOf(Object.values(layout.rects));
+    if (bounds) fitAssets(bounds);
+  }, [project, tab, layout, fitAssets]);
   const zoomByHand = useCallback(
     (factor: number) => {
       touch();
@@ -460,16 +471,13 @@ function useFoldedMotions(project: string, assets: ProjectAsset[]): FoldedMotion
   return useMemo(() => (rigs ? foldMotions(rigs) : null), [rigs]);
 }
 
-/**
- * The files that get a card, once the models' headers are read: clips ride on their model (a clip
- * whose model came earlier keeps its own), and a Genex source copy on the finished model it was
- * made into.
- */
-function cardedAssets(assets: ProjectAsset[], folded: FoldedMotions | null): ProjectAsset[] {
-  if (!folded) return [];
-  return withoutGenexSources(
-    assets.filter((asset) => !folded.motions.has(asset.file) || folded.loose.includes(asset.file)),
-  );
+/** The tab and the sort order the canvas shows: All again for another game, the order kept. */
+function useArrangement(project: string) {
+  const [chosen, setChosen] = useState<{ project: string; tab: AssetTab }>({ project, tab: AssetTab.All });
+  const [order, setOrder] = useState<AssetOrder>(AssetOrder.Newest);
+  const tab = chosen.project === project ? chosen.tab : AssetTab.All;
+  const setTab = useCallback((next: AssetTab) => setChosen({ project, tab: next }), [project]);
+  return { tab, setTab, order, setOrder };
 }
 
 /**
@@ -523,20 +531,22 @@ function useAssetsCanvas(project: string, focusJob: string | null | undefined) {
   const { library, shares } = useLibraryStates(project, ledger);
   const pick = usePicked(project, selection.selected, selection.setSelected);
   const search = useSearchQuery(project);
+  const arrangement = useArrangement(project);
+  const { tab, order } = arrangement;
   const folded = useFoldedMotions(project, assets);
+  // Every file has a card at once; the animation files fold into their models when the headers are read.
   const carded = useMemo(() => cardedAssets(assets, folded), [assets, folded]);
+  const counts = useMemo(() => tabCounts(carded), [carded]);
   const companions = useMemo(() => assets.map((a) => a.assetRef ?? a.file), [assets]);
   const lines = useMemo(
     () => new Map(Object.entries(shares).map(([file, progress]) => [file, lineRows(progress)])),
     [shares],
   );
-  // Nothing is laid out until the models' headers are read, so no card shows that then folds away.
-  const headersRead = folded !== null;
   const layout = useMemo(
-    () => layoutAssets(carded, headersRead ? waiting : NO_WAITING, lines),
-    [carded, waiting, headersRead, lines],
+    () => layoutAssets(assetsOfTab(carded, tab), waitingOfTab(waiting, tab), lines, order),
+    [carded, waiting, tab, lines, order],
   );
-  const camera = useAssetsCamera(project, Boolean(ledger) && headersRead, layout);
+  const camera = useAssetsCamera(project, Boolean(ledger), layout, tab);
   const marks = useMemo<CardMarks>(
     () => ({ library, shares, picked: pick.picked, onToggle: pick.toggle }),
     [library, shares, pick.picked, pick.toggle],
@@ -546,6 +556,8 @@ function useAssetsCanvas(project: string, focusJob: string | null | undefined) {
     ...inventory,
     ...selection,
     ...search,
+    ...arrangement,
+    counts,
     library,
     shares,
     pick,
@@ -735,7 +747,7 @@ export function AssetsCanvas({ project, onNotice, focusJob }: Props): JSX.Elemen
       ) : null}
 
       {ledger?.truncated ? (
-        <div className="absolute top-2.5 right-2.5 rounded-control bg-surface px-2 py-1 text-micro text-ink-3 shadow-btn">
+        <div className="absolute top-[52px] right-2.5 rounded-control bg-surface px-2 py-1 text-micro text-ink-3 shadow-btn">
           {t("This game has more files than the canvas lists.")}
         </div>
       ) : null}
@@ -767,7 +779,15 @@ export function AssetsCanvas({ project, onNotice, focusJob }: Props): JSX.Elemen
           <PickedBar model={model} project={project} onShare={setSharing} onNotice={onNotice} />
         </>
       )}
-      <AssetSearchField query={query} onQuery={setQuery} />
+      <div className="asset-toolbar">
+        <AssetSearchField query={query} onQuery={setQuery} />
+        {searching ? null : (
+          <>
+            <AssetTabs tab={model.tab} counts={model.counts} onTab={model.setTab} />
+            <AssetSort order={model.order} onOrder={model.setOrder} />
+          </>
+        )}
+      </div>
 
       {previewAsset ? (
         <OpenedAsset

@@ -2341,6 +2341,7 @@ export default {
   "New versions arrive with your system's updates: Software Updater, sudo apt upgrade or sudo dnf upgrade.":
     "新しいバージョンはシステムのアップデート（Software Updater、sudo apt upgrade、sudo dnf upgrade）で届きます。",
   "Newer integrated build not delivered": "新しい統合ビルドは反映されていません",
+  Newest: "新しい順",
   "Newest code on {branch}": "{branch}の最新コード",
   "Newly passing": "新たに合格",
   "Newspaper halftone, the ink bleeding": "インクがにじむ新聞の網点",
@@ -3539,6 +3540,7 @@ export default {
   Sound: "サウンド",
   "Sound effect": "効果音",
   "Sound, music and art": "サウンド、音楽、アート",
+  "Sort assets": "アセットを並べ替え",
   Sounds: "サウンド",
   Source: "ソース",
   "Source code": "ソースコード",

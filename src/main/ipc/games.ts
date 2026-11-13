@@ -77,6 +77,8 @@ export function registerGamesIpc(handle: IpcHandle, { core, runSummaryReader, pu
   handle("studio:game.asset.preview", async (payload) => core.previewProjectAsset(payload));
   handle("studio:game.asset.present", async (payload) => core.presentProjectAssets(payload));
   handle("studio:game.asset.rigs", async (payload) => core.projectModelRigs(payload));
+  handle("studio:game.asset.thumbnail", async (payload) => core.readAssetThumbnail(payload));
+  handle("studio:game.asset.thumbnail.keep", async (payload) => core.keepAssetThumbnail(payload));
   handle("studio:game.assets", async (payload) => {
     if (!payload || typeof payload.project !== "string") throw new Error(MESSAGE.projectRequired);
     const events = await runSummaryReader.forProject(payload.project, core.mainThread).catch((error: unknown) => {

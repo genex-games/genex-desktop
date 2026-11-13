@@ -2206,6 +2206,7 @@ export default {
   "New versions arrive with your system's updates: Software Updater, sudo apt upgrade or sudo dnf upgrade.":
     "新版本会随系统更新推送：Software Updater、sudo apt upgrade 或 sudo dnf upgrade。",
   "Newer integrated build not delivered": "较新的整合构建未进入游戏",
+  Newest: "最新",
   "Newest code on {branch}": "{branch} 上的最新代码",
   "Newly passing": "新通过",
   "Newspaper halftone, the ink bleeding": "报纸网点，油墨晕开",
@@ -3342,6 +3343,7 @@ export default {
   Sound: "声音",
   "Sound effect": "音效",
   "Sound, music and art": "音效、音乐和美术",
+  "Sort assets": "排序素材",
   Sounds: "音效",
   Source: "源代码",
   "Source code": "源代码",

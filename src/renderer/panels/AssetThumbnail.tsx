@@ -1,4 +1,4 @@
-/** Visible-file previews: one decoder at a time, no persistent per-card WebGL contexts. */
+/** Visible-file previews: a few pictures at a time, one decoder at a time, no persistent per-card WebGL contexts. */
 import type { JSX } from "react";
 import { useEffect, useRef, useState } from "react";
 import { assetPreviewMode } from "../../shared/asset-preview.ts";
@@ -7,6 +7,8 @@ import type { ProjectAsset } from "../../shared/game-assets.ts";
 import { previewBytes } from "../asset-bytes.ts";
 import { type SnapshotRead, viewerSnapshot } from "../asset-snapshot.ts";
 import { assetTitle } from "../asset-names.ts";
+import { dataUrlOf, keptOrMade } from "../kept-thumbnails.ts";
+import { createLane, type Lane } from "../thumbnail-lanes.ts";
 import { Icon } from "../ui/icons.tsx";
 import { t } from "../../shared/i18n.ts";
 
@@ -16,8 +18,11 @@ const THUMB_HEIGHT = 220;
 const IMAGE_THUMB_PX = 512;
 /** How long a video may take to decode before its thumbnail gives up. */
 const DECODE_TIMEOUT_MS = 15 * SECOND_MS;
-/** The most thumbnails kept in memory; the oldest goes first. */
-const CACHE_MAX = 96;
+/** The most thumbnails kept in memory; the oldest goes first. A game's whole canvas fits, so its tab reopens drawn. */
+const CACHE_MAX = 600;
+/** How many pictures are read at once. A model, a texture or a clip takes a decoder: one at a time. */
+const IMAGE_LANE_WIDTH = 4;
+const DECODER_LANE_WIDTH = 1;
 
 /** What a card shows in place of a thumbnail it could not draw. */
 const MESSAGE = {
@@ -33,12 +38,18 @@ const MESSAGE = {
 const THUMBNAIL_MODES = new Set(["image", "model", "texture", "video"]);
 
 const cache = new Map<string, string>();
-let queue: Promise<unknown> = Promise.resolve();
+/** Pictures and saved renders are plain reads; anything drawn or decoded waits its turn. */
+const imageLane = createLane(IMAGE_LANE_WIDTH);
+const decoderLane = createLane(DECODER_LANE_WIDTH);
+
+/** The lane a file's thumbnail is made in: a picture, or a render already saved, needs no decoder. */
+function laneOf(asset: ProjectAsset): Lane {
+  const plainRead = Boolean(asset.render) || assetPreviewMode(asset.file) === "image";
+  return plainRead ? imageLane : decoderLane;
+}
 
 /** The bytes of a previewed file, as the model viewer module hands them over. */
 type PreviewBytes = ReturnType<typeof previewBytes>;
-
-const dataUrl = (still: { mimeType: string; data: string }): string => `data:${still.mimeType};base64,${still.data}`;
 
 /** A model or texture drawn once off screen at the thumbnail's size, read from the game's own files. */
 function viewerThumbnail(project: string, file: string, companions: string[], signal: AbortSignal): Promise<string> {
@@ -110,13 +121,13 @@ async function thumbnail(
   if (asset.render) {
     const still = await window.studio.readRunStill(asset.render).catch(() => null);
     signal.throwIfAborted();
-    if (still) return dataUrl(still);
+    if (still) return dataUrlOf(still);
   }
   if (mode === "image") {
     const image = await window.studio.readProjectAsset({ project, file, maxPx: IMAGE_THUMB_PX });
     signal.throwIfAborted();
     if (!image) throw new Error(MESSAGE.unavailable);
-    return dataUrl(image);
+    return dataUrlOf(image);
   }
   if (mode === "model" || mode === "texture") return viewerThumbnail(project, file, companions, signal);
   return clipThumbnail(project, file, mode, signal);
@@ -130,7 +141,7 @@ function remember(key: string, value: string): void {
   if (oldest !== undefined) cache.delete(oldest);
 }
 
-/** A thumbnail made once the card scrolls into view, one at a time across the page, and cached by the file's identity. */
+/** A thumbnail made once the card scrolls into view, in its lane across the page, and cached by the file's identity. */
 function useThumbnail(
   project: string,
   asset: ProjectAsset,
@@ -159,9 +170,12 @@ function useThumbnail(
     const observer = new IntersectionObserver((entries) => {
       if (started || !entries.some((e) => e.isIntersecting)) return;
       started = true;
-      const task = queue.catch(() => {}).then(() => thumbnail(project, asset, companions, controller.signal));
-      queue = task;
-      void task
+      // The picture Studio kept in an earlier session is a plain read; only a missing one is made.
+      void keptOrMade({
+        read: () => imageLane(() => window.studio.readAssetThumbnail({ project, key })),
+        make: () => laneOf(asset)(() => thumbnail(project, asset, companions, controller.signal)),
+        keep: (data) => window.studio.keepAssetThumbnail({ project, key, data }),
+      })
         .then((value) => {
           if (controller.signal.aborted) return;
           remember(key, value);

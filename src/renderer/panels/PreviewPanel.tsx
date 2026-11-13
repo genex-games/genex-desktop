@@ -63,7 +63,6 @@ import { WEB_BUILD_SHOWN_EVENT } from "../web-build-shown.ts";
 import { isPlanning, runIdIn } from "../words.ts";
 import { useShopItems } from "./shop/use-shop-items.ts";
 import type { ListingRecord } from "../../shared/item-draft.ts";
-import { AssetsCanvas } from "./AssetsCanvas.tsx";
 import { FileViewer } from "./FileViewer.tsx";
 import type { Notify } from "../state/toasts.ts";
 import { RunGraph } from "./RunGraph.tsx";
@@ -83,6 +82,8 @@ import { StillsStage } from "./stage/StillsStage.tsx";
 
 /** Shop loads when it opens: the stage's first paint carries none of it. */
 const ShopStage = lazy(() => import("./shop/ShopStage.tsx"));
+/** …and the Assets canvas, with its tabs, search and share window. */
+const AssetsCanvas = lazy(() => import("./AssetsCanvas.tsx").then((stage) => ({ default: stage.AssetsCanvas })));
 import { UnrealStage } from "./stage/UnrealStage.tsx";
 import { firstMessageAt, type GraphProjection, planningEnded, slowGraphProperties } from "../analytics/builds-stage.ts";
 import { track } from "../analytics/client.ts";
@@ -604,7 +605,9 @@ function StageContents({
         />
       ) : null}
       {stageView === StageView.Assets && project ? (
-        <AssetsCanvas focusJob={focusedAsset} project={project} onNotice={onNotice} />
+        <Suspense fallback={null}>
+          <AssetsCanvas focusJob={focusedAsset} project={project} onNotice={onNotice} />
+        </Suspense>
       ) : null}
       {stageView === StageView.Shop && project ? (
         <Suspense fallback={null}>
