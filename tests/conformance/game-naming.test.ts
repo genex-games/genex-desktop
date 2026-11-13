@@ -12,6 +12,7 @@ import {
   type Engine,
 } from "../../src/substrate/engines/types.ts";
 import { EngineFailureKind } from "../../src/shared/engine-requests.ts";
+import { EngineStatusCode, EngineStatusReason } from "../../src/shared/engine-descriptor.ts";
 
 const REQUEST = "A cozy fishing game on a tiny island. Catch fish, sell them at the dock, upgrade your rod.";
 
@@ -148,6 +149,30 @@ describe("naming a game", () => {
       const named = await nameGame(deps([engine("claude-code", failure)]), { prompt: REQUEST, engine: "claude-code" });
       assert.deepEqual(named, { title: "A cozy fishing game on a tiny island", provisional: true }, failure.message);
     }
+  });
+
+  it("leaves a Genex account that still needs a plan or credits to the game's chat, which holds the idea", async () => {
+    // genex.games refuses a call without Pro or a credit pack as a usage cap, but its status says
+    // what the person must do: the game is made and its first message waits over the Genex notice.
+    const needsPlan = "Pick Pro or a credit pack on genex.games to start building.";
+    const genex = {
+      ...engine("genex", new EngineError(EngineFailureKind.UsageLimit, "genex", needsPlan)),
+      status: async () => ({
+        code: EngineStatusCode.NeedsLogin,
+        detail: needsPlan,
+        reason: EngineStatusReason.NeedsPlan,
+      }),
+    } as unknown as Engine;
+    assert.deepEqual(await nameGame(deps([genex]), { prompt: REQUEST, engine: "genex" }), {
+      title: "A cozy fishing game on a tiny island",
+      provisional: true,
+    });
+    // A cap on an engine that still reads ready is the turn's own: no game waits empty for it.
+    const capped = {
+      ...engine("genex", new EngineError(EngineFailureKind.UsageLimit, "genex", "out of credits")),
+      status: async () => ({ code: EngineStatusCode.Ready, detail: "" }),
+    } as unknown as Engine;
+    assert.equal((await nameGame(deps([capped]), { prompt: REQUEST, engine: "genex" })).limited, "out of credits");
   });
 
   it("does not wait past its time for a slow model", async () => {
