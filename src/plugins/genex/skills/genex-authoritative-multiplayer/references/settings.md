@@ -111,20 +111,29 @@ config: { tickHz: 120, maxPlayers: 4, preset: { name: "vehicle", params: {} }, p
 
 ## Regions
 
-Pass the stand's regions beside its urls. The client measures its ping to each and goes where the
-players are:
+Pass the stand's regions and the player's home region beside its urls. The client goes where the
+players are, starting with the home region:
 
 ```ts
 const session = await connectAuthority({
-  urls: getAuthorityUrls(), regions: getAuthorityRegions(), room: GENEX.slug, auth: () => getColyseusAuth(),
+  urls: getAuthorityUrls(), regions: getAuthorityRegions(), home: getAuthorityHome(),
+  room: GENEX.slug, auth: () => getColyseusAuth(),
 });
 ```
 
+The home region is the region nearest the player by geography, which the server names from the country
+the player connects from (a VPN's country, which is where its traffic leaves). It is joined and created
+in first, whatever a ping measured: pings through the network edge vary from one connection to the next
+and once seated players a continent away. With no country there is no home, and the ping orders the
+regions.
+
 Each region is its own matchmaking pool: players meet others who entered through the same region. So
 a join first asks every region within reach for a room that already has players, nearest first, and
-opens a new room in the nearest region only when none has one. A player in Asia therefore joins a
-friend's room in Europe instead of waiting alone. A region that answers no probe is never asked. A
-full region (503) is retried, and moves on to the next-best after a second refusal. Nothing to
+opens a new room in the home region (else the nearest) only when none has one. A player in Asia
+therefore joins a friend's room in Europe instead of waiting alone. A region that answers no ping is
+still asked, after the others: a browser opens its connections to one address one at a time, so a far
+region's ping is often still out when the measurement ends. A full region (503) is retried, and moves on
+to the next-best after a second refusal. Nothing to
 configure in the module.
 
 Three options on `connectAuthority` change this, and most games need none:
@@ -133,7 +142,8 @@ Three options on `connectAuthority` change this, and most games need none:
 |---|---|---|
 | `maxPingMs` | `350` | The farthest region asked for players, as round-trip ping. A twitch-competitive game sets it lower. |
 | `regionRule` | `'players'` | `'nearest'` joins the nearest region only, whoever is elsewhere. |
-| `region` | none | A region the player picked by name (`'asia'`, `'eu'`, `'us'`): only it is joined. Offer it as a setting when players ask to choose. |
+| `region` | none | A region the player picked by name (`'asia'`, `'eu'`, `'us'`): only it is joined. Offer it as a setting when players ask to choose. It wins over `home`. |
+| `home` | none | The player's home region, from `getAuthorityHome()`: joined and created in first. |
 
 A player who ends up alone keeps looking. Two players who start at the same moment in two regions each
 open a room; within a few seconds one of them is moved into the other's room. The session object stays
@@ -162,7 +172,7 @@ const rows = [{ value: '', label: 'Auto (recommended)' }, ...pings.map((p) => ({
 // The choice is the player's: keep it, and pass it on the next join. '' is Auto.
 const picked = localStorage.getItem('genex-region') ?? '';
 const session = await connectAuthority({
-  urls: getAuthorityUrls(), regions, room: GENEX.slug, auth: () => getColyseusAuth(),
+  urls: getAuthorityUrls(), regions, home: getAuthorityHome(), room: GENEX.slug, auth: () => getColyseusAuth(),
   ...(picked === '' ? {} : { region: picked }),
 });
 

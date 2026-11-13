@@ -32,6 +32,14 @@ export function studioToolName(name: string): string {
   return `${STUDIO_TOOL_PREFIX}${name}`;
 }
 
+/** A bridge call as a command: `node .studio/bridge/tool.mjs <name> …`. */
+const STUDIO_BRIDGE_COMMAND = /^node \.studio\/bridge\/tool\.mjs ([\w-]+)/;
+
+/** The studio tool a shell command calls through the bridge, or none for any other command. */
+export function bridgedStudioTool(command: string | null | undefined): string | undefined {
+  return command ? STUDIO_BRIDGE_COMMAND.exec(command)?.[1] : undefined;
+}
+
 /** The studio's shell as the contractor calls it; the host and the never-touch screen read it as `Bash`. */
 export const STUDIO_SHELL_TOOL = studioToolName(StudioTool.RunCommand);
 

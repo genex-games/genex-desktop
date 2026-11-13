@@ -1,8 +1,14 @@
 // Which authority region a session enters through (PROTOCOL.md §17.1 *Regions*; TypeScript authority/regions.ts):
 // the regions read from the sign-in answer (colyseus.authorityRegions, else one per flat url), the url each probe
-// sample of a region goes to, the order regions are tried in from each url's best sample, and where each attempt of
-// a join refused 503 goes, which regions a pool join asks for a room with players before it opens one (§17.1
-// *Finding players*), and which regions a player alone in a room keeps asking (§17.1 *Regrouping*). Pure;
+// sample of a region goes to and the address its HTTP ping is sent to (a sample is a second GET of the server's root on
+// the connection a first one opened; the socket ping where that fails), the order regions are tried in from each url's
+// best sample, and where each attempt of a join refused 503 goes, which regions a pool join asks for a room with
+// players before it opens one (§17.1 *Finding players*), and which regions a player alone in a room keeps asking
+// (§17.1 *Regrouping*). Silence is not
+// distance: a browser opens its sockets to one address one at a time, so a far region's sample is often still out
+// when the probe ends. A silent region is therefore still asked, after the answered ones; only a region measured past
+// the limit is out of reach. Each ask is given AskMs, and the probe gives every region its first sample before any
+// gets a second. Pure;
 // Tests~/GenexSmoke/RegionsCheck.cs holds authority-regions.json exactly, as every SDK does, so every SDK picks the
 // same region from the same probe results.
 using System;
@@ -120,6 +126,9 @@ namespace Genex.Multiplayer.Authority
         /// <summary>How far a join looks for players by default, as a probe's round trip in ms (§17.1 *Finding players*):
         /// far enough that a player in one region reaches the others.</summary>
         public const double MaxPingMs = 350;
+        /// <summary>How long one ask for an existing room may take before the next region is asked, ms (§17.1 *Finding
+        /// players*, *Regrouping*): a region that never answers costs a join this once, never the whole join.</summary>
+        public const double AskMs = 3000;
         /// <summary>Probe samples per region (relay-select.ts RELAY_SELECT_DEFAULTS.SAMPLES).</summary>
         public const int ProbeSamples = 3;
         /// <summary>A sample still unanswered after this is a failed sample; also the whole selection's ceiling, ms.</summary>
@@ -181,6 +190,25 @@ namespace Genex.Multiplayer.Authority
             return plan;
         }
 
+        /// <summary>The address a sample's HTTP ping goes to (§17.1 *Regions*): the server's root, on the scheme HTTP has for
+        /// the socket's (<c>wss</c> is <c>https</c>, <c>ws</c> is <c>http</c>), with the same host and port. Null for anything
+        /// but a ws or wss url with a host: no HTTP ping.</summary>
+        public static string PingUrl(string url)
+        {
+            if (url == null) return null;
+            var secure = url.StartsWith("wss://", StringComparison.Ordinal);
+            if (!secure && !url.StartsWith("ws://", StringComparison.Ordinal)) return null;
+            var from = secure ? "wss://".Length : "ws://".Length;
+            var to = from;
+            while (to < url.Length && !EndsHost(url[to])) to++;
+            return to == from ? null : (secure ? "https://" : "http://") + url.Substring(from, to - from) + "/";
+        }
+
+        /// <summary>Where a url's host and port stop: its path, query or fragment, or white space as the TypeScript's
+        /// <c>\s</c> reads it.</summary>
+        private static bool EndsHost(char c) =>
+            c == '/' || c == '?' || c == '#' || c == '\uFEFF' || (char.IsWhiteSpace(c) && c != '\u0085');
+
         /// <summary>The order regions are tried in, from each url's best sample (<c>best[region][url]</c>; null, a negative or
         /// a non-finite number is no answer): answered regions nearest first (ties in list order), entered through their best
         /// url (the first on a tie), then the silent regions in list order through their first url.</summary>
@@ -215,22 +243,28 @@ namespace Genex.Multiplayer.Authority
         }
 
         /// <summary>Where a pool join goes (§17.1 *Finding players*), from each url's best sample: the answered regions no
-        /// farther than the limit are asked for an existing room, nearest first, and the room is opened in the ranked order.
-        /// Fewer than two regions in reach is no search (the join-or-create finds its own region's room), as is the rule
+        /// farther than the limit are asked for an existing room, nearest first, then the silent ones in list order (silence
+        /// is not distance), and the room is opened in the ranked order.
+        /// Fewer than two regions to ask is no search (the join-or-create finds its own region's room), as is the rule
         /// <see cref="GenexRegionRule.Nearest"/>. A pinned region (one the list has) is the only one joined and created in.
+        /// The <paramref name="home"/> region (§17.1 *Regions*: the sign-in answer's <c>colyseus.authorityHome</c>, the region
+        /// nearest the player by geography) is asked and created in first, whatever its sample, and the others follow in the order
+        /// they have without it; a pin wins over it, and null, an empty string or a name the list does not have is no home.
         /// <paramref name="maxPingMs"/> that is null, not finite or below 0 is <see cref="MaxPingMs"/>.</summary>
-        public static GenexAuthoritySearchPlan PlanSearch(IList<GenexAuthorityRegion> regions, IList<double?[]> best, GenexRegionRule rule = GenexRegionRule.Players, double? maxPingMs = null, string region = null)
+        public static GenexAuthoritySearchPlan PlanSearch(IList<GenexAuthorityRegion> regions, IList<double?[]> best, GenexRegionRule rule = GenexRegionRule.Players, double? maxPingMs = null, string region = null, string home = null)
         {
             var ranked = RankWithLatency(regions, best);
-            var create = ranked.Select(x => x.Pick).ToList();
             if (region != null)
             {
                 foreach (var x in ranked)
                     if (x.Pick.Region == region) return new GenexAuthoritySearchPlan(new List<GenexRegionPick>(), new List<GenexRegionPick> { x.Pick });
             }
+            var at = string.IsNullOrEmpty(home) ? -1 : ranked.FindIndex(x => x.Pick.Region == home);
+            var order = at < 0 ? ranked : ranked.Skip(at).Take(1).Concat(ranked.Where((_, i) => i != at)).ToList();
+            var create = order.Select(x => x.Pick).ToList();
             if (rule == GenexRegionRule.Nearest) return new GenexAuthoritySearchPlan(new List<GenexRegionPick>(), create);
             var limit = ReachLimit(maxPingMs);
-            var reach = ranked.Where(x => x.Ms.HasValue && x.Ms.Value <= limit).Select(x => x.Pick).ToList();
+            var reach = order.Where((x, i) => (at >= 0 && i == 0) || !x.Ms.HasValue || x.Ms.Value <= limit).Select(x => x.Pick).ToList();
             return new GenexAuthoritySearchPlan(reach.Count >= 2 ? reach : new List<GenexRegionPick>(), create);
         }
 
@@ -241,7 +275,8 @@ namespace Genex.Multiplayer.Authority
         /// <summary>Where a player who is alone in a room keeps asking for one that has players (§17.1 *Regrouping*), from each
         /// url's best sample and the region <paramref name="joined"/> its seat is in. Every client reads the regions in one
         /// order, so of two players each alone in their own region exactly one moves: only the regions listed BEFORE
-        /// <paramref name="joined"/> are asked, nearest first, among the answered ones no farther than the limit. The rule
+        /// <paramref name="joined"/> are asked: the answered ones no farther than the limit, nearest first, then the silent
+        /// ones in list order. The rule
         /// <see cref="GenexRegionRule.Nearest"/>, a pinned region (one the list has) and a region the list does not have ask no one.</summary>
         public static List<GenexRegionPick> PlanRegroup(IList<GenexAuthorityRegion> regions, IList<double?[]> best, GenexRegionRule rule, double? maxPingMs, string region, string joined)
         {
@@ -253,7 +288,7 @@ namespace Genex.Multiplayer.Authority
                 if (regions[i].Region == joined) at = i;
             if (at < 0) return none;
             var limit = ReachLimit(maxPingMs);
-            return RankWithLatency(regions, best).Where(x => x.Index < at && x.Ms.HasValue && x.Ms.Value <= limit).Select(x => x.Pick).ToList();
+            return RankWithLatency(regions, best).Where(x => x.Index < at && (!x.Ms.HasValue || x.Ms.Value <= limit)).Select(x => x.Pick).ToList();
         }
 
         /// <summary>The region <paramref name="url"/> enters, by its name in <paramref name="regions"/>; null when none lists it.</summary>
@@ -336,9 +371,85 @@ namespace Genex.Multiplayer.Authority
         /// <summary>One latency sample of a url, ms; throws (or never finishes) when it does not answer.</summary>
         public delegate Task<double> Probe(string url, int timeoutMs);
 
-        /// <summary>One Colyseus ping on a fresh client (the TypeScript default).</summary>
+        /// <summary>The socket ping: one Colyseus ping on a fresh client (what a sample is where its HTTP ping fails).</summary>
         public static Task<double> ColyseusProbe(string url, int timeoutMs) =>
             new Client(url).GetLatency(new LatencyOptions { PingCount = 1, Timeout = timeoutMs });
+
+        /// <summary>The first status that is a proxy's or a failing server's, not an answer along the path being measured.</summary>
+        private const int PingNoAnswerStatus = 500;
+
+        /// <summary>An HTTP ping that had not answered at its time limit: the sample fails, and nothing else is tried.</summary>
+        private sealed class PingTimeoutException : Exception
+        {
+            public PingTimeoutException(string message) : base(message) { }
+        }
+
+        /// <summary>One latency sample of an authority server (§17.1 *Regions*; the TypeScript's authorityProbe), the default
+        /// probe of a join and of <see cref="Measure"/>: an HTTP ping. A first GET of the server's root opens the connection
+        /// and its time is thrown away (it carries the handshakes, and through a proxy it measured two to three times the
+        /// path in a third of runs); a second GET on that connection is the sample. Unlike a WebSocket handshake it does not
+        /// queue behind a browser's other sockets to the same address. It goes through Colyseus's HTTP client, as the
+        /// matchmaker's requests do (UnityWebRequest inside Unity, a browser's own requests in a WebGL player, HttpClient
+        /// elsewhere). Where there is no ping address, or the ping fails for any reason but its time limit, the sample is
+        /// <see cref="ColyseusProbe"/>.</summary>
+        public static Task<double> HttpProbe(string url, int timeoutMs) => HttpProbe(url, timeoutMs, ColyseusProbe);
+
+        /// <summary><see cref="HttpProbe(string, int)"/> with the socket ping it falls back to (a test's own).</summary>
+        internal static async Task<double> HttpProbe(string url, int timeoutMs, Probe socket)
+        {
+            var ping = PingUrl(url);
+            if (ping == null || ColyseusContext.HttpClient == null) return await socket(url, timeoutMs);
+            try
+            {
+                await TimedGet(ping, timeoutMs);
+                return await TimedGet(ping, timeoutMs);
+            }
+            catch (PingTimeoutException)
+            {
+                throw;
+            }
+            catch (Exception)
+            {
+                return await socket(url, timeoutMs);
+            }
+        }
+
+        /// <summary>One GET of <paramref name="ping"/>, timed until its answer has been read, ms. Any status below
+        /// <see cref="PingNoAnswerStatus"/> is an answer; throws on a 5xx or a request that failed, and a
+        /// <see cref="PingTimeoutException"/> past <paramref name="timeoutMs"/> (the wait is <see cref="GenexTime"/>'s, so a
+        /// WebGL player runs it too).</summary>
+        private static async Task<double> TimedGet(string ping, int timeoutMs)
+        {
+            var started = System.Diagnostics.Stopwatch.GetTimestamp();
+            var get = ColyseusContext.HttpClient.Request("GET", ping, null, null);
+            if (await Task.WhenAny(get, GenexTime.Delay(timeoutMs)) != get)
+            {
+                _ = Forget(get);
+                throw new PingTimeoutException("genex multiplayer: " + ping + " did not answer in " + timeoutMs + " ms");
+            }
+            try
+            {
+                await get;
+            }
+            catch (HttpException e) when (e.StatusCode > 0 && e.StatusCode < PingNoAnswerStatus)
+            {
+                // The client throws on every status but a 2xx; below 500 the server itself answered, which is all a ping asks.
+            }
+            return (System.Diagnostics.Stopwatch.GetTimestamp() - started) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+        }
+
+        /// <summary>Reads the end of a request nobody waits for any more; its failure is nobody's to read.</summary>
+        private static async Task Forget(Task<string> late)
+        {
+            try
+            {
+                await late;
+            }
+            catch (Exception)
+            {
+                // Past its time limit the sample already failed.
+            }
+        }
 
         /// <summary>Probes every region (every sample at once, one url each; a failed sample is silence) and answers the order
         /// to try them in. One region is not probed. The choice is made once every sample settled, <see cref="ProbeGraceMs"/>
@@ -356,16 +467,20 @@ namespace Genex.Multiplayer.Authority
         internal static async Task<List<double?[]>> ProbeBest(IList<GenexAuthorityRegion> regions, Probe probe)
         {
             if (regions.Count <= 1) return null;
-            probe = probe ?? ColyseusProbe;
+            probe = probe ?? HttpProbe;
             var best = regions.Select(r => new double?[r.Urls.Length]).ToList();
             var gate = new object();
             var firstAnswer = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             var samples = new List<Task>();
-            for (var i = 0; i < regions.Count; i++)
+            var plans = regions.Select(r => ProbePlan(r.Urls, ProbeSamples)).ToList();
+            // Every region's first sample before any region's second: a browser opens its sockets to one address one at a
+            // time, so launched region by region the last region's first sample would wait behind every other sample.
+            for (var n = 0; n < ProbeSamples; n++)
             {
-                var plan = ProbePlan(regions[i].Urls, ProbeSamples);
-                foreach (var url in plan)
+                for (var i = 0; i < regions.Count; i++)
                 {
+                    if (n >= plans[i].Length) continue;
+                    var url = plans[i][n];
                     var region = i;
                     var at = Array.IndexOf(regions[i].Urls, url);
                     samples.Add(Sample(probe, url, () => { }, ms =>

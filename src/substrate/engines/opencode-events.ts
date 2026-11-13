@@ -14,7 +14,7 @@
 import { ChatActivityPhase } from "../../shared/chat-activity.ts";
 import { clip } from "./common.ts";
 import { DelegateEventType } from "./types.ts";
-import { studioToolName } from "./studio-tool-prompts.ts";
+import { bridgedStudioTool, studioToolName } from "./studio-tool-prompts.ts";
 import type { Usage } from "../types.ts";
 
 /** OpenCode's event types (`--format json`). Its wire spelling: never rename a value. */
@@ -52,8 +52,6 @@ const TOOL_NAMES: Readonly<Record<string, string>> = {
 const TRACE_TOOL_INPUT_CHARS = 2_000;
 const TRACE_TOOL_RESULT_CHARS = 4_000;
 const TRACE_THINKING_CHARS = 4_000;
-/** A bridge call as a command: `node .studio/bridge/tool.mjs <name> …`. */
-const STUDIO_BRIDGE_COMMAND = /^node \.studio\/bridge\/tool\.mjs ([\w-]+)/;
 
 /** A contractor message mirrored into the log. */
 export interface MirroredEvent {
@@ -133,7 +131,7 @@ function toolUse(part: Record_): Translated {
   const tool = String(part.tool ?? "tool");
   const id = String(part.callID ?? part.id ?? "");
   const command = typeof input.command === "string" ? input.command : null;
-  const bridged = command ? STUDIO_BRIDGE_COMMAND.exec(command)?.[1] : undefined;
+  const bridged = bridgedStudioTool(command);
   const name = bridged ? studioToolName(bridged) : (TOOL_NAMES[tool] ?? tool);
   const shown = command ?? JSON.stringify(input);
   const failed = state.status === ToolStatus.Error;

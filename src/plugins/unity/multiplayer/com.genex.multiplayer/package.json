@@ -1,6 +1,6 @@
 {
   "name": "com.genex.multiplayer",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "displayName": "Genex Multiplayer",
   "description": "Genex multiplayer for Unity, a thin layer over the official Colyseus Unity SDK 0.18.8: the relay (protocol 3: players, shared state, owned objects, host, inputs, game events, chat, reconnection, sender-clock interpolation, matchmaking) and server-authoritative rooms (protocol 4: typed input per fixed step, own-entity prediction with the room's movement preset (topdown, firstperson Source movement or a vehicle arcade car through the room's collision world), lag-compensated rendering of everyone else, projectiles drawn from their flight with the shooter's own predicted, and a physics room's bodies drawn at the server's present, or predicted near you on the native physics core it ships).",
   "unity": "2021.3",

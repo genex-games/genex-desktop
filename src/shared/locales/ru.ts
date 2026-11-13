@@ -6581,4 +6581,28 @@ export default {
     "Этот проект на другом диске, поэтому Genex оставит его там.",
   "This project's folder holds other things too, so Genex leaves it where it is.":
     "В папке проекта лежит и другое, поэтому Genex оставит его на месте.",
+  "Antigravity didn't answer. Check the installation, then try again.":
+    "Antigravity не ответил. Проверь установку и попробуй ещё раз.",
+  "Antigravity isn't installed on this computer.": "Antigravity не установлен на этом компьютере.",
+  "Antigravity sign-in": "Вход в Antigravity",
+  "Antigravity {version}": "Antigravity {version}",
+  "Antigravity's model list could not be read.": "Не удалось прочитать список моделей Antigravity.",
+  "Install Antigravity": "Установить Antigravity",
+  "Install Antigravity from Settings › Model Providers.":
+    "Установи Antigravity в разделе «Настройки › Провайдеры моделей».",
+  "Install Antigravity's CLI to build with your Google AI plan.":
+    "Установи CLI Antigravity, чтобы собирать по твоему тарифу Google AI.",
+  "Installing Antigravity. This can take a minute.": "Устанавливаем Antigravity. Это может занять минуту.",
+  "Not signed in to Antigravity.": "Вход в Antigravity не выполнен.",
+  "Open the sign-in page, then paste the code it gives you here. Antigravity keeps the sign-in.":
+    "Открой страницу входа и вставь сюда код, который она даст. Antigravity сам хранит вход.",
+  "Sign in to Antigravity from Settings › Model Providers.":
+    "Войди в Antigravity в разделе «Настройки › Провайдеры моделей».",
+  "Sign in with your Google account to build with your plan.":
+    "Войди в аккаунт Google, чтобы собирать по своему тарифу.",
+  "Switch to another Google account": "Перейти на другой аккаунт Google",
+  "Update Antigravity": "Обновить Antigravity",
+  "Uses your Google AI plan": "По твоему тарифу Google AI",
+  "Your Google account has no model Antigravity can run.":
+    "У твоего аккаунта Google нет моделей, которые Antigravity может запустить.",
 } satisfies LocaleCatalog;

@@ -104,6 +104,7 @@ import { createGenexLane, type GenexLaneDeps } from "../substrate/engines/genex.
 import { CodexEngine } from "../substrate/engines/codex.ts";
 import { OllamaEngine, OllamaSidecar } from "../substrate/engines/ollama.ts";
 import { OpenCodeEngine, openCodeSessionFolders } from "../substrate/engines/opencode.ts";
+import { AntigravityEngine } from "../substrate/engines/antigravity.ts";
 import { CursorEngine } from "../substrate/engines/cursor.ts";
 import { GrokEngine } from "../substrate/engines/grok.ts";
 import { cursorHomes, grokHome } from "../substrate/credential-homes.ts";
@@ -1588,9 +1589,29 @@ export class StudioCore {
       EngineId.OpenCode,
       EngineId.Grok,
       EngineId.Cursor,
+      EngineId.Antigravity,
       EngineId.Genex,
       EngineId.OpenRouter,
     ]);
+  }
+
+  /**
+   * Antigravity on the person's Google AI plan, on a Mac alone for now: its Google sign-in is in
+   * the operating system's own store, which a session in the studio's sandbox reaches on macOS
+   * (the Keychain) and has not been shown to reach on Windows (the sandbox runs as another user)
+   * or Linux.
+   */
+  #antigravityEngines(): Engine[] {
+    if (process.platform !== StudioPlatform.Mac) return [];
+    return [
+      new AntigravityEngine({
+        scratchRoot: path.join(this.layout.scratch, EngineId.Antigravity),
+        protectedPaths: this.#protectedPaths(),
+        toolPath: async () => (await this.sandbox.toolPath()) ?? process.env.PATH ?? "",
+        lockRecovery: path.join(this.layout.engineHomes, LOCK_RECOVERY_DIR),
+        onModelsChanged: () => this.emit(UiEvent.EnginesChanged, { engine: EngineId.Antigravity }),
+      }),
+    ];
   }
 
   #defaultEngines(): Engine[] {
@@ -1644,6 +1665,7 @@ export class StudioCore {
         lockRecovery: path.join(this.layout.engineHomes, LOCK_RECOVERY_DIR),
         onModelsChanged: () => this.emit(UiEvent.EnginesChanged, { engine: EngineId.Cursor }),
       }),
+      ...this.#antigravityEngines(),
       // Metered: OpenCode on whatever the person signed it in to, OpenRouter on the key pasted in
       // Settings. Registered like the subscriptions, so the picker can offer them.
       new OpenCodeEngine({

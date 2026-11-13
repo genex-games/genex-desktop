@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <string_view>
 
 namespace genex::regions {
 namespace {
@@ -19,6 +20,22 @@ std::vector<std::string> UrlList(const Json* v) {
 }
 
 bool Answered(const std::optional<double>& v) { return v.has_value() && std::isfinite(*v) && *v >= 0.0; }
+
+/** Whether the bytes of `url` at `at` begin white space as the TypeScript's `\s` reads it (UTF-8). */
+bool PingSpaceAt(const std::string& url, std::size_t at) {
+  const unsigned char c = static_cast<unsigned char>(url[at]);
+  if (c == ' ' || (c >= 0x09 && c <= 0x0D)) return true;
+  // U+00A0, U+1680, U+2028, U+2029, U+202F, U+205F, U+3000 and U+FEFF.
+  static constexpr std::string_view kSpaces[] = {"\xC2\xA0",     "\xE1\x9A\x80", "\xE2\x80\xA8", "\xE2\x80\xA9",
+                                                 "\xE2\x80\xAF", "\xE2\x81\x9F", "\xE3\x80\x80", "\xEF\xBB\xBF"};
+  for (const std::string_view space : kSpaces) {
+    if (url.compare(at, space.size(), space) == 0) return true;
+  }
+  // U+2000 to U+200A.
+  if (url.compare(at, 2, "\xE2\x80") != 0 || at + 2 >= url.size()) return false;
+  const unsigned char last = static_cast<unsigned char>(url[at + 2]);
+  return last >= 0x80 && last <= 0x8A;
+}
 
 }  // namespace
 
@@ -61,6 +78,28 @@ std::vector<std::string> ProbePlan(const std::vector<std::string>& urls, int sam
   if (urls.empty()) return plan;
   for (int n = 0; n < samples; ++n) plan.push_back(urls[static_cast<std::size_t>(n) % urls.size()]);
   return plan;
+}
+
+std::optional<std::string> PingUrl(const std::string& url) {
+  const bool secure = url.rfind("wss://", 0) == 0;
+  if (!secure && url.rfind("ws://", 0) != 0) return std::nullopt;
+  const std::size_t from = secure ? 6 : 5;
+  std::size_t to = from;
+  while (to < url.size() && url[to] != '/' && url[to] != '?' && url[to] != '#' && !PingSpaceAt(url, to)) ++to;
+  if (to == from) return std::nullopt;
+  return (secure ? "https://" : "http://") + url.substr(from, to - from) + "/";
+}
+
+std::vector<std::string> ProbeOrder(const std::vector<Region>& regions, int samples) {
+  std::vector<std::vector<std::string>> plans;
+  for (const Region& r : regions) plans.push_back(ProbePlan(r.urls, samples));
+  std::vector<std::string> order;
+  for (int n = 0; n < samples; ++n) {
+    for (std::vector<std::string>& plan : plans) {
+      if (static_cast<std::size_t>(n) < plan.size()) order.push_back(std::move(plan[static_cast<std::size_t>(n)]));
+    }
+  }
+  return order;
 }
 
 namespace {
@@ -116,9 +155,8 @@ std::vector<Pick> Rank(const std::vector<Region>& regions, const std::vector<std
 
 SearchPlan PlanSearch(const std::vector<Region>& regions, const std::vector<std::vector<std::optional<double>>>& best,
                       const SearchOptions& options) {
-  const std::vector<Ranked> ranked = RankMs(regions, best);
+  std::vector<Ranked> ranked = RankMs(regions, best);
   SearchPlan plan;
-  for (const Ranked& r : ranked) plan.create.push_back(r.pick);
   // An empty name is no pin: Normalize never keeps a region without one.
   const auto pinned = std::find_if(ranked.begin(), ranked.end(),
                                    [&](const Ranked& r) { return !options.region.empty() && r.pick.region == options.region; });
@@ -126,13 +164,23 @@ SearchPlan PlanSearch(const std::vector<Region>& regions, const std::vector<std:
     plan.create = {pinned->pick};
     return plan;
   }
+  // The home region (§17.1 *Regions*) goes first, whatever its sample; the others keep the order they have without it.
+  const auto home = std::find_if(ranked.begin(), ranked.end(),
+                                 [&](const Ranked& r) { return !options.home.empty() && r.pick.region == options.home; });
+  const bool hasHome = home != ranked.end();
+  if (hasHome) std::rotate(ranked.begin(), home, home + 1);
+  for (const Ranked& r : ranked) plan.create.push_back(r.pick);
   if (options.rule == RegionRule::Nearest) return plan;
   const double limit = Answered(options.maxPingMs) ? options.maxPingMs : kMaxPingMs;
   std::vector<Pick> reach;
-  for (const Ranked& r : ranked) {
-    if (r.ms.has_value() && *r.ms <= limit) reach.push_back(r.pick);
+  for (std::size_t i = 0; i < ranked.size(); ++i) {
+    const Ranked& r = ranked[i];
+    // Silence is not distance: a region that did not answer is asked too; only one measured past the limit is not.
+    // The home is the player's own region: asked even silent or past the limit.
+    const bool isHome = hasHome && i == 0;
+    if (isHome || !r.ms.has_value() || *r.ms <= limit) reach.push_back(r.pick);
   }
-  // Fewer than two in reach is no search: the join-or-create finds its own region's room itself.
+  // Fewer than two to ask is no search: the join-or-create finds its own region's room itself.
   if (reach.size() >= 2) plan.search = std::move(reach);
   return plan;
 }
@@ -152,7 +200,7 @@ std::vector<Pick> PlanRegroup(const std::vector<Region>& regions, const std::vec
   std::vector<Pick> out;
   for (Ranked& r : RankMs(regions, best)) {
     // Only the regions listed before this one: of two players each alone in their own region, exactly one moves.
-    if (r.index < joinedAt && r.ms.has_value() && *r.ms <= limit) out.push_back(std::move(r.pick));
+    if (r.index < joinedAt && (!r.ms.has_value() || *r.ms <= limit)) out.push_back(std::move(r.pick));
   }
   return out;
 }

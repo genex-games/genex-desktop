@@ -441,6 +441,8 @@ onInput(ctx, playerId, input) {
 // the client
 const session = await connectAuthority({
   urls: getAuthorityUrls(),
+  regions: getAuthorityRegions(), // each region is its own pool
+  home: getAuthorityHome(), // the player's region by geography: joined first
   room: GENEX.slug,
   auth: () => getColyseusAuth(),
   predict: { step, fields: ["x", "y", "yaw"] },

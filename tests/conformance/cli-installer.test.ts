@@ -45,6 +45,7 @@ test("each CLI's installer is its vendor's own script: shell on macOS and Linux,
     opencode: ["https://opencode.ai/install", null],
     grok: ["https://x.ai/cli/install.sh", "https://x.ai/cli/install.ps1"],
     cursor: ["https://cursor.com/install", "https://cursor.com/install?win32=true"],
+    antigravity: ["https://antigravity.google/cli/install.sh", "https://antigravity.google/cli/install.ps1"],
   };
   for (const [provider, [unix, windows]] of Object.entries(expected) as [CodingProvider, [string, string | null]][]) {
     for (const platform of ["darwin", "linux"] as const)

@@ -243,6 +243,9 @@ void UGenexAuthoritySubsystem::StartSession(const FGenexAuthorityOptions& Option
 	Core.regionRule = Options.RegionRule == EGenexRegionRule::Nearest ? genex::regions::RegionRule::Nearest : genex::regions::RegionRule::Players;
 	Core.maxPingMs = static_cast<double>(Options.MaxPingMs);
 	Core.region = Utf8(Options.Region);
+	// §17.1 *Regions*: the game's home, else the sign-in answer's when its servers are the ones joined.
+	const bool bIdentityHome = Options.Home.IsEmpty() && bIdentityUrls && Identity && Identity->Core();
+	Core.home = bIdentityHome ? Identity->Core()->AuthorityHome() : Utf8(Options.Home);
 	// §17.1 *Regrouping*: a player alone in a pool room moves to one that has players, unless the game says not to.
 	Core.regroup = Options.bRegroup;
 	Core.gameId = Utf8(Options.GameId.IsEmpty() ? Settings->Slug : Options.GameId);

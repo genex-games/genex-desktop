@@ -132,7 +132,7 @@ the module writes to an entity reaches every client; anything in `ctx.state` sta
 // src/arena.ts: joins the room, sends input, draws what the server says.
 import * as THREE from "three";
 import { connectAuthority, type AuthorityEntityView } from "@genex-ai/multiplayer/authority";
-import { getAuthorityUrls, getColyseusAuth, waitForPlayer } from "@genex-ai/embed-sdk";
+import { getAuthorityHome, getAuthorityRegions, getAuthorityUrls, getColyseusAuth, waitForPlayer } from "@genex-ai/embed-sdk";
 import { GENEX } from "./genex.config";
 
 /** The fire button: the same bit as FIRE in server/room.js. */
@@ -180,6 +180,8 @@ const aim = new THREE.Vector3();
 await waitForPlayer();
 const session = await connectAuthority({
   urls: getAuthorityUrls(),
+  regions: getAuthorityRegions(), // each region is its own pool
+  home: getAuthorityHome(), // the player's region by geography: joined first
   room: GENEX.slug,
   auth: () => getColyseusAuth(),
 }).catch((err: { code?: number }) => {
@@ -856,7 +858,7 @@ the sub-step budget in [presets.md](presets.md).
 // src/cars.ts: joins the car arena, sends throttle, steer and buttons, draws what the server says.
 import * as THREE from "three";
 import { connectAuthority, type AuthorityEntityView } from "@genex-ai/multiplayer/authority";
-import { getAuthorityUrls, getColyseusAuth, waitForPlayer } from "@genex-ai/embed-sdk";
+import { getAuthorityHome, getAuthorityRegions, getAuthorityUrls, getColyseusAuth, waitForPlayer } from "@genex-ai/embed-sdk";
 import { GENEX } from "./genex.config";
 import { BALL_R, CAR_H, GOAL_H, GOAL_W, WORLD, X } from "./car-world";
 
@@ -914,6 +916,8 @@ addEventListener("keyup", (e) => keys.delete(e.code));
 await waitForPlayer();
 const session = await connectAuthority({
   urls: getAuthorityUrls(),
+  regions: getAuthorityRegions(), // each region is its own pool
+  home: getAuthorityHome(), // the player's region by geography: joined first
   room: GENEX.slug,
   auth: () => getColyseusAuth(),
   world: WORLD,

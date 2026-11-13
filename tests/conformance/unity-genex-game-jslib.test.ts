@@ -33,6 +33,7 @@ async function linked(window: Record<string, unknown>) {
   // Emscripten links a `$name` helper under its bare name for the functions that depend on it.
   context.GenexGameText = (library.$GenexGameText as (...args: unknown[]) => unknown).bind(context);
   vm.createContext(context);
+  context.GenexGameRegions = vm.runInContext(`(${String(library.$GenexGameRegions)})`, context);
   const call = (name: string): string => {
     const fn = vm.runInContext(`(${String(library[name])})`, context) as () => number;
     return memory.get(fn()) ?? "";
@@ -82,5 +83,56 @@ describe("GenexGame in a WebGL build", () => {
       },
     });
     assert.equal((await linked(throwing))("GenexGame_PageAuthorityUrls"), "");
+  });
+
+  it("reads the page's room servers by region, one region a line, its name and urls tab-separated", async () => {
+    const regions = [
+      { region: "asia", urls: ["wss://asia.genex.games:8443", "wss://asia.genex.games"] },
+      { region: "eu", urls: ["wss://eu.genex.games:2053", "", 7] },
+      { region: "us", urls: [] },
+      { region: "", urls: ["wss://nameless.genex.games"] },
+      { region: "a\tb", urls: ["wss://tab.genex.games"] },
+      { region: "line", urls: ["wss://x.genex.games\nwss://y.genex.games"] },
+      { region: 9, urls: ["wss://number.genex.games"] },
+      null,
+      "asia",
+    ];
+    const call = await linked(
+      page("https://genex.games/play/arena", { genexEmbed: { getAuthorityRegions: () => regions } }),
+    );
+    assert.equal(
+      call("GenexGame_PageAuthorityRegions"),
+      "asia\twss://asia.genex.games:8443\twss://asia.genex.games\neu\twss://eu.genex.games:2053",
+    );
+  });
+
+  it("names the page's home region only when it is one of the page's regions", async () => {
+    const regions = () => [
+      { region: "asia", urls: ["wss://asia.genex.games"] },
+      { region: "eu", urls: ["wss://eu.genex.games"] },
+    ];
+    const cases: Array<[string, unknown, string]> = [
+      ["a region of the list", () => "asia", "asia"],
+      ["a region the list lacks", () => "us", ""],
+      ["empty", () => "", ""],
+      ["not a string", () => 7, ""],
+      ["absent", () => undefined, ""],
+      [
+        "throws",
+        () => {
+          throw new Error("not initialised");
+        },
+        "",
+      ],
+      ["an SDK without the call", undefined, ""],
+    ];
+    for (const [name, getAuthorityHome, expected] of cases) {
+      const embed = { getAuthorityRegions: regions, ...(getAuthorityHome ? { getAuthorityHome } : {}) };
+      const call = await linked(page("https://genex.games/play/arena", { genexEmbed: embed }));
+      assert.equal(call("GenexGame_PageAuthorityHome"), expected, name);
+    }
+    const bare = await linked(page("http://127.0.0.1:51234/"));
+    assert.equal(bare("GenexGame_PageAuthorityRegions"), "");
+    assert.equal(bare("GenexGame_PageAuthorityHome"), "");
   });
 });

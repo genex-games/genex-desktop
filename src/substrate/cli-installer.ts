@@ -45,7 +45,7 @@ interface Installer {
   windows: string | null;
   shell: string;
   set: Record<string, string>;
-  vendor: "claude" | "codex" | "opencode" | "grok" | "cursor";
+  vendor: "claude" | "codex" | "opencode" | "grok" | "cursor" | "antigravity";
 }
 
 /** Each coding CLI's official installers, from its vendor's install instructions. */
@@ -86,6 +86,14 @@ const INSTALLERS = {
     shell: "/bin/bash",
     set: {},
     vendor: "cursor",
+  },
+  // Installs `agy` into `~/.local/bin`, where discovery looks; it asks nothing.
+  [EngineId.Antigravity]: {
+    unix: "https://antigravity.google/cli/install.sh",
+    windows: "https://antigravity.google/cli/install.ps1",
+    shell: "/bin/bash",
+    set: {},
+    vendor: "antigravity",
   },
 } as const satisfies Record<CodingProvider, Installer>;
 

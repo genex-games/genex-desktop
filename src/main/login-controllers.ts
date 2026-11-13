@@ -8,6 +8,7 @@ import { UiEvent } from "../shared/ui-events.ts";
 import { findClaudeBinary } from "../substrate/engines/claude-cli.ts";
 import { requireCodingCli } from "../substrate/engines/external-cli.ts";
 import { openCodeSignInArgs } from "../substrate/engines/opencode-cli.ts";
+import { ANTIGRAVITY_LOGIN_ARGV } from "../substrate/engines/antigravity-cli.ts";
 import { CURSOR_FILE_STORE, CursorCommand } from "../substrate/engines/cursor-cli.ts";
 import { childEnv } from "../substrate/child-env.ts";
 import { grokHome } from "../substrate/credential-homes.ts";
@@ -72,6 +73,8 @@ export interface LoginControllerDeps {
   onGrokSignedIn?(): Promise<unknown>;
   /** Cursor's sign-in ended: check the sign-in and read the models it can run now. */
   onCursorSignedIn?(): Promise<unknown>;
+  /** Antigravity's sign-in ended: ask the CLI whose plan it runs on, and its models, now. */
+  onAntigravitySignedIn?(): Promise<unknown>;
   /** The installed CLI each sign-in runs; the studio's own resolver unless a test gives another. */
   requireCli?: typeof requireCodingCli;
   findBinary?: typeof findClaudeBinary;
@@ -91,6 +94,7 @@ export function createLoginControllers({
   onOpenCodeSignedIn,
   onGrokSignedIn,
   onCursorSignedIn,
+  onAntigravitySignedIn,
   log,
 }: LoginControllerDeps): {
   codexLogin: CodexLoginController;
@@ -98,6 +102,7 @@ export function createLoginControllers({
   openCodeLogin: OpenCodeLogin;
   grokLogin: CliLogin;
   cursorLogin: CliLogin;
+  antigravityLogin: CliLogin;
 } {
   let lastCodexLoginPhase = "idle";
   const codexLogin = new CodexLoginController({
@@ -195,7 +200,41 @@ export function createLoginControllers({
     },
   };
   const cursorLogin = cursorSignIn({ terminals, requireCli, onCursorSignedIn });
-  return { codexLogin, claudeLogin, openCodeLogin, grokLogin, cursorLogin };
+  const antigravityLogin = antigravitySignIn({ terminals, requireCli, onAntigravitySignedIn });
+  return { codexLogin, claudeLogin, openCodeLogin, grokLogin, cursorLogin, antigravityLogin };
+}
+
+/**
+ * Antigravity's sign-in: `agy acp --login` in a terminal in its Settings row. It prints Google's
+ * page, takes the code that page gives, and keeps the sign-in in the operating system's own store,
+ * as the person, outside any sandbox; when the terminal closes, the studio asks the CLI again.
+ */
+function antigravitySignIn({
+  terminals,
+  requireCli,
+  onAntigravitySignedIn,
+}: Pick<LoginControllerDeps, "terminals" | "onAntigravitySignedIn"> & {
+  requireCli: typeof requireCodingCli;
+}): CliLogin {
+  return {
+    async start() {
+      const cli = await requireCli(EngineId.Antigravity).catch(() => null);
+      if (!cli) return { started: false, missingCli: true };
+      terminals.open({
+        file: cli.path,
+        args: [...ANTIGRAVITY_LOGIN_ARGV],
+        cwd: os.tmpdir(),
+        // No other vendor's variables and no Gemini key, which would stand in for the account.
+        env: childEnv(cli.env, { base: "contractor", vendor: "antigravity" }),
+        title: t("Antigravity sign-in"),
+        kind: TerminalKind.AntigravityLogin,
+        onExit: () => {
+          void onAntigravitySignedIn?.()?.catch(() => {});
+        },
+      });
+      return { started: true };
+    },
+  };
 }
 
 /**

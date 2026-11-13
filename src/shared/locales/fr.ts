@@ -6653,4 +6653,28 @@ export default {
     "Ce projet est sur un autre disque, donc Genex le laisse là.",
   "This project's folder holds other things too, so Genex leaves it where it is.":
     "Le dossier de ce projet contient d'autres choses, donc Genex le laisse où il est.",
+  "Antigravity didn't answer. Check the installation, then try again.":
+    "Antigravity n’a pas répondu. Vérifie l’installation, puis réessaie.",
+  "Antigravity isn't installed on this computer.": "Antigravity n’est pas installé sur cet ordinateur.",
+  "Antigravity sign-in": "Connexion à Antigravity",
+  "Antigravity {version}": "Antigravity {version}",
+  "Antigravity's model list could not be read.": "Impossible de lire la liste des modèles d’Antigravity.",
+  "Install Antigravity": "Installer Antigravity",
+  "Install Antigravity from Settings › Model Providers.":
+    "Installe Antigravity depuis Réglages › Fournisseurs de modèles.",
+  "Install Antigravity's CLI to build with your Google AI plan.":
+    "Installe la CLI d’Antigravity pour créer avec ton forfait Google AI.",
+  "Installing Antigravity. This can take a minute.": "Installation d’Antigravity. Ça peut prendre une minute.",
+  "Not signed in to Antigravity.": "Tu n’es pas connecté à Antigravity.",
+  "Open the sign-in page, then paste the code it gives you here. Antigravity keeps the sign-in.":
+    "Ouvre la page de connexion, puis colle ici le code qu’elle te donne. Antigravity garde la connexion.",
+  "Sign in to Antigravity from Settings › Model Providers.":
+    "Connecte-toi à Antigravity depuis Réglages › Fournisseurs de modèles.",
+  "Sign in with your Google account to build with your plan.":
+    "Connecte-toi avec ton compte Google pour créer avec ton forfait.",
+  "Switch to another Google account": "Passer à un autre compte Google",
+  "Update Antigravity": "Mettre à jour Antigravity",
+  "Uses your Google AI plan": "Utilise ton forfait Google AI",
+  "Your Google account has no model Antigravity can run.":
+    "Ton compte Google n’a aucun modèle qu’Antigravity peut lancer.",
 } satisfies LocaleCatalog;

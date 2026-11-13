@@ -124,7 +124,9 @@ fails as `unsupported`, never as a download; Grok Build from `x.ai/cli/install.s
 `~/.grok/bin`, updated with `grok update`; and Cursor from `cursor.com/install` (`?win32=true` on
 Windows) into `~/.local/bin` (`%LOCALAPPDATA%\cursor-agent` on Windows), updated with
 `cursor-agent update`. Cursor's installer also links `~/.local/bin/agent`, a name Grok Build's
-installer uses too, so discovery looks only for `cursor-agent`. Main fetches the script over HTTPS
+installer uses too, so discovery looks only for `cursor-agent`. Antigravity's CLI (`agy`) comes from
+`antigravity.google/cli/install.sh` (`install.ps1` on Windows) into `~/.local/bin`, updated with
+`agy update`. Main fetches the script over HTTPS
 itself, with a program's user agent (cursor.com answers a browser's with its web page), runs it as the person with the
 contractor environment (no keys, none of the other vendor's variables; Codex with
 `CODEX_NON_INTERACTIVE=1` so it asks nothing), keeps only its last output for `studio.log` and
@@ -346,6 +348,57 @@ else ends the build with the CLI's words, its session kept. A turn that prints n
 stopped and kept; either way its process group goes with it. Compact now is refused: Cursor compacts
 its own sessions. Tests: `engine-cursor.test.ts` on `tests/fixtures/transcripts/cursor-*`.
 
+## Antigravity
+
+**Antigravity** ([antigravity.ts](../src/substrate/engines/antigravity.ts)) is a delegated engine
+that runs Google's Antigravity CLI on the person's Google AI plan (Beta, on a Mac only for now:
+`StudioCore` registers it there alone). The only mode Genex starts is `agy acp`, the CLI's Agent
+Client Protocol server on stdio ([acp.ts](../src/substrate/engines/acp.ts)): Google's own words are
+that wrapping its print mode (`agy -p`) is not for consumer plans, while any ACP client may launch
+`agy acp`. One turn is one process: `initialize`, `session/new` (or `session/load` to continue a
+session, whose replayed history is not mirrored), `session/set_model`, `session/prompt`, and every
+`session/update` ([antigravity-events.ts](../src/substrate/engines/antigravity-events.ts)) until
+the prompt is answered with the turn's ending and tokens. Its tokens are the plan's quota, never a
+bill, but the provider is `metered` in the table so the app never picks a Beta on its own.
+
+Settings › Model Providers has its row (`CliSignInRow`): Install, Sign in (`agy acp --login` in a
+terminal inside the row, as the person and outside any sandbox: it prints Google's page for Open
+sign-in page and takes the code that page gives; `studio:antigravity.signin`, native), and once
+connected Check connection, Sign in again and Update. The CLI has no command that says whether it
+is signed in, so the engine asks by opening a session in an empty folder, at most once a minute:
+the answer lists the models the account can run and its plan, or refuses with ACP's sign-in code
+(`-32000`). The row's status names the CLI's version and the plan.
+
+Antigravity keeps its Google sign-in in the operating system's own store (the Keychain on a Mac)
+and has no file to keep it in instead, and Genex never reads it. Its own controls are no box (its
+terminal sandbox leaves its file tools out, and its permission rules do not reach an ACP session),
+so each turn runs in `ProcessSandbox` with `antigravitySandbox` (a build for a chat the person set to
+Bypass runs as them outside it, `runsAsPerson`, as Codex's and Grok Build's do): the workspace (a read-only
+session, Plan or a reviewer runs from a scratch folder) is all it writes, the network is Google's
+hosts (`ANTIGRAVITY_HOSTS`), a game's `.agents` folder is not the session's to write, and inside
+the box every tool call the agent asks about is allowed, except a command the never-touch screen
+stops (`antigravityPermission`, `neverTouchVerdict`): macOS's keychain tool, a command the screen
+cannot read and a command with no command line are refused, as a worker's hook refuses them. Its sandbox alone is given `~/.gemini`
+(its settings and conversations) and, on a Mac, `~/Library/Keychains` to read and never to write
+(`antigravityHomes`, `ownHome`, `antigravityKeychain`) and the system's certificate checker (`SandboxMachService.Trust`,
+`com.apple.trustd.agent`, which a Go program verifies every HTTPS certificate through and
+sandbox-runtime leaves closed by default), because without either a signed-in CLI answers "sign
+in"; every other sandbox still denies the folders and opens no extra service. Studio tools reach it through the bridge command, as Codex's do.
+
+A failed turn is named by ACP's code (`-32000` a sign-in failure) or by Google's status name in
+the error (`RESOURCE_EXHAUSTED` a usage limit; `UNAVAILABLE`, `INTERNAL`, `DEADLINE_EXCEEDED`
+unavailable); anything else ends the build with the CLI's words. Stop sends `session/cancel` and
+gives the CLI five seconds to answer before it is stopped; a turn that says nothing for 10 minutes
+(30 while a tool call is open) is stopped with its process group. Compact now is refused.
+A live run on a signed-in Mac (CLI 1.5.7, free plan) reads the sign-in, builds in the game and
+cannot write beside it, continues a session from another folder, and shows the sign-in needs both
+openings: with the Keychain's files or the certificate service closed, the CLI answers "sign in",
+and with the files read-only it works. Not yet shown: a plan that has run out, and
+Windows and Linux (where the sandbox runs as another user or has no Secret Service). Tests: `engine-antigravity.test.ts` and `event-antigravity.test.ts` on
+`tests/fixtures/transcripts/antigravity-*`, recorded from Antigravity CLI 1.5.7.
+`STUDIO_ANTIGRAVITY_CLI_TESTS=1` runs the real, signed-in CLI in the real sandbox
+(`antigravity-cli-live.test.ts`).
+
 ## Build with Genex credits
 
 **Genex** (`genex` in the provider table, `billing: "metered"`, `runsClaudeCode`) lets someone with
@@ -378,7 +431,9 @@ with nothing ready, the plans are quiet links (Connect Claude Code, Connect Code
 unverified email, **Continue in browser** opens genex.games's build page through
 `studio:genex-account.build` (native): it signs the person in with the app's device code, offers Pro
 or a credit pack, and shows the waiting idea back; the app asks Genex again every 3 seconds for 15
-minutes, and a game's first message held above the notice sends itself once Genex is ready. Out of
+minutes, and a game's first message held above the notice sends itself once Genex is ready. A game
+started from home is still made then: naming hears Genex's refusal as what the account needs, never
+as a usage cap that sends the words back home (`core/game-naming.ts`). Out of
 credits, the step is **Get credits**. Claude Code missing or too old is **Set up**, which installs it in the app.
 `genex_notice_shown` says what the notice needed and offered, `genex_notice_action` which way was
 taken, and `message_send_blocked`'s `genex_need` tells a missing plan from a real sign-in.
@@ -439,7 +494,7 @@ nothing is `unavailable`, so another engine may take over. Tests: `engine-local-
 against `helpers/fake-local-server.ts`, which speaks each server's dialect.
 
 Residual risk: the CLI must read its sign-ins and its shell tool shares its sandbox, so an OpenCode
-session can read OpenCode's own `auth.json` (and a Cursor session Cursor's), and its commands can reach the provider host the session
+session can read OpenCode's own `auth.json` (and a Cursor session Cursor's, and on a Mac an Antigravity session the Keychain's files: macOS guards each item by its own access list, but an item another command-line tool saved through `/usr/bin/security` trusts that program, which the sandbox cannot keep from starting (a program it may not read starts all the same), so the never-touch screen refuses every command that calls it, as it does for a Claude Code session; what is left within a misled session's reach is what that screen cannot see, a program the session writes that calls the tool, and the encrypted Keychain file itself, and its commands can reach the provider host the session
 calls. OpenCode's permission rules keep its own tools inside the workspace, but that is not an OS
 boundary. Every other sandbox still denies the folder. Every sandbox allows localhost, where
 OpenCode 2.x's background server listens outside any sandbox; its password

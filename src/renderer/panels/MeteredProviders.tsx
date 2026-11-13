@@ -327,6 +327,7 @@ export function MeteredProviderRows({ engines, onEnginesRefresh }: MeteredProvid
   const openCode = engines.find((engine) => engine.id === EngineId.OpenCode);
   const grok = engines.find((engine) => engine.id === EngineId.Grok);
   const cursor = engines.find((engine) => engine.id === EngineId.Cursor);
+  const antigravity = engines.find((engine) => engine.id === EngineId.Antigravity);
   const openRouter = engines.find((engine) => engine.id === EngineId.OpenRouter);
   return (
     <>
@@ -337,6 +338,9 @@ export function MeteredProviderRows({ engines, onEnginesRefresh }: MeteredProvid
         )}
         {grok && <CliSignInRow engine={grok} onEnginesRefresh={onEnginesRefresh} provider={EngineId.Grok} />}
         {cursor && <CliSignInRow engine={cursor} onEnginesRefresh={onEnginesRefresh} provider={EngineId.Cursor} />}
+        {antigravity && (
+          <CliSignInRow engine={antigravity} onEnginesRefresh={onEnginesRefresh} provider={EngineId.Antigravity} />
+        )}
       </Suspense>
       {openRouter && <OpenRouterRow engine={openRouter} onEnginesRefresh={onEnginesRefresh} />}
     </>

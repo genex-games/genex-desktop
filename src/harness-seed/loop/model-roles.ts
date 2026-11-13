@@ -44,6 +44,7 @@ export const EngineId = {
   LocalServer: "local-server",
   Grok: "grok",
   Cursor: "cursor",
+  Antigravity: "antigravity",
   Genex: "genex",
 } as const;
 export type EngineId = (typeof EngineId)[keyof typeof EngineId];
@@ -61,6 +62,7 @@ const SESSION_ENGINES: readonly string[] = [
   EngineId.LocalServer,
   EngineId.Grok,
   EngineId.Cursor,
+  EngineId.Antigravity,
   EngineId.Genex,
 ];
 
@@ -118,6 +120,7 @@ export const ENGINE_LABELS: Record<string, string> = {
   [EngineId.ClaudeCode]: "Claude Code",
   [EngineId.Codex]: "Codex",
   [EngineId.Cursor]: "Cursor",
+  [EngineId.Antigravity]: "Antigravity",
   [EngineId.Genex]: "Genex",
 };
 
@@ -327,7 +330,7 @@ export function plannerModel(run: RoleRun | null | undefined): string | undefine
 }
 
 /**
- * How a Codex, OpenCode, Grok Build or Cursor session spells a studio tool. Claude Code (on a plan or on
+ * How a Codex, OpenCode, Grok Build, Cursor or Antigravity session spells a studio tool. Claude Code (on a plan or on
  * Genex credits) receives the
  * studio's tools as MCP tools and calls them by name; the others have no tool channel of the studio's, so the
  * studio ships a bridge and the session runs it as a shell command. The two spellings are the ONLY thing in
@@ -350,7 +353,13 @@ function speaksMcp(engine: string | null | undefined): boolean {
 }
 
 /** The engines whose sessions reach the studio's tools through the bridge command. */
-const BRIDGE_ENGINES: readonly string[] = [EngineId.Codex, EngineId.OpenCode, EngineId.Grok, EngineId.Cursor];
+const BRIDGE_ENGINES: readonly string[] = [
+  EngineId.Codex,
+  EngineId.OpenCode,
+  EngineId.Grok,
+  EngineId.Cursor,
+  EngineId.Antigravity,
+];
 
 /** One studio tool, spelled the way this engine's session must write it. */
 export function toolCall(engine: string | null | undefined, name: unknown): string {

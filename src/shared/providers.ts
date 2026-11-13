@@ -11,8 +11,8 @@ import { t } from "./i18n.ts";
 /**
  * How a provider signs in: Claude through a piped or embedded terminal plus status polling, Codex
  * through its native login reported from the in-app console, OpenCode through its own `auth login`
- * in the embedded terminal (which keeps every provider it signs in to), Grok Build and Cursor through
- * their own sign-in command there (the person's account, in the browser), `none` for an engine with
+ * in the embedded terminal (which keeps every provider it signs in to), Grok Build, Cursor and Antigravity
+ * through their own sign-in command there (the person's account, in the browser), `none` for an engine with
  * no sign-in of its own (a local model, a local server, or OpenRouter, whose key is pasted in Settings).
  */
 export type LoginKind = "terminal" | "console" | "cli" | "none";
@@ -73,6 +73,7 @@ export const EngineId = {
   LocalServer: "local-server",
   Grok: "grok",
   Cursor: "cursor",
+  Antigravity: "antigravity",
   Genex: "genex",
 } as const;
 export type EngineId = (typeof EngineId)[keyof typeof EngineId];
@@ -186,6 +187,18 @@ export const PROVIDERS = [
     roles: "sessions",
     // Cursor's own models draw on the plan's weekly pool, but Claude, GPT and Gemini in Cursor, and
     // anything past the pool, are paid from the account's credit: only the person's pick runs it.
+    billing: "metered",
+    signIn: null,
+    beta: true,
+  },
+  {
+    id: EngineId.Antigravity,
+    label: "Antigravity",
+    subscription: false,
+    login: "cli",
+    roles: "sessions",
+    // Runs on the Google AI plan's own quota and is never billed per token, but it ships before a
+    // live test of every platform: as with a metered provider, only the person's pick runs it.
     billing: "metered",
     signIn: null,
     beta: true,

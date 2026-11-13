@@ -133,6 +133,7 @@ const METHODS = [
   "grokSignIn",
   "cursorSignIn",
   "cursorSignOut",
+  "antigravitySignIn",
   "openRouterKeySave",
   "openRouterKeyClear",
   "typeSafeKeyStatus",

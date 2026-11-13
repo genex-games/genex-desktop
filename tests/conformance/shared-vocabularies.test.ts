@@ -75,6 +75,7 @@ describe("engines", () => {
       // Flipped (OpenCode, OpenRouter, a local server, Grok Build): the metered providers follow the
       // local ones, and a server the person runs comes last. Flipped (Cursor): a metered one, after Grok Build.
       // Flipped (Genex): Claude Code on Genex credits, metered, after Cursor.
+      // Flipped (Antigravity): on a Google AI plan, after Cursor.
       [
         EngineId.ClaudeCode,
         EngineId.Codex,
@@ -83,6 +84,7 @@ describe("engines", () => {
         EngineId.OpenCode,
         EngineId.Grok,
         EngineId.Cursor,
+        EngineId.Antigravity,
         EngineId.Genex,
         EngineId.OpenRouter,
         EngineId.LocalServer,

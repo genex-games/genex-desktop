@@ -766,7 +766,7 @@ app.on("accessibility-support-changed", (_event, enabled) => {
 let liveThreadStatus: ThreadStatusMap = {};
 /** An eval-lane launch's view of the core's UI events (it digests the game its chat seeds); null otherwise. */
 let evalLaneUiTap: ((event: UiEvent) => void) | null = null;
-const { codexLogin, claudeLogin, openCodeLogin, grokLogin, cursorLogin } = createLoginControllers({
+const { codexLogin, claudeLogin, openCodeLogin, grokLogin, cursorLogin, antigravityLogin } = createLoginControllers({
   terminals,
   openExternal: (url) => shell.openExternal(url),
   subscription,
@@ -784,6 +784,15 @@ const { codexLogin, claudeLogin, openCodeLogin, grokLogin, cursorLogin } = creat
   onCursorSignedIn: async () => {
     if (core?.engines.has(EngineId.Cursor)) await core.engines.get(EngineId.Cursor).refreshModels?.(true);
     pushUiEvent({ type: UiEvent.EnginesChanged, payload: { engine: EngineId.Cursor } });
+  },
+  onAntigravitySignedIn: async () => {
+    // A check that fails (offline, a CLI that hangs) still tells the row to read the engine again.
+    if (core?.engines.has(EngineId.Antigravity))
+      await core.engines
+        .get(EngineId.Antigravity)
+        .refreshModels?.(true)
+        .catch(() => {});
+    pushUiEvent({ type: UiEvent.EnginesChanged, payload: { engine: EngineId.Antigravity } });
   },
   showCodexState: (state) => {
     preview?.setOccluded(state.visible);
@@ -2343,6 +2352,7 @@ function registerIpc(studio: StudioCore, engines: EngineBoot): void {
     openCodeLogin,
     grokLogin,
     cursorLogin,
+    antigravityLogin,
     cursor: () => {
       const engine = core?.engines.has(EngineId.Cursor) ? core.engines.get(EngineId.Cursor) : null;
       return engine instanceof CursorEngine ? engine : null;

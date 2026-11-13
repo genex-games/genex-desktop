@@ -524,12 +524,13 @@ thread keeps the mode the person picked, so a chat moved back to Claude Code fin
 | OpenCode | Auto, Plan | `opencode run` cannot ask mid-turn and always runs in the studio's sandbox |
 | Grok Build | Auto, Plan, Bypass | `grok -p` cannot ask mid-turn: Auto runs it in the studio's sandbox, Bypass as the person outside it, as Codex's; Plan reads from a folder of its own |
 | Cursor | Auto, Plan | `cursor-agent --print` cannot ask mid-turn and always runs in the studio's sandbox |
+| Antigravity | Auto, Plan, Bypass | `agy acp` asks before every tool and the studio answers: Auto runs it in the studio's sandbox, Bypass as the person outside it, as Codex's; in both the never-touch screen refuses the keychain's tool; Plan reads from a folder of its own |
 | Ollama, a new engine | Auto | its harness tool loop keeps its sandbox |
 
 The chat's own session on any engine is handed `permissions` (`#personSession`, no
 `permissionPrompts` needed); only an engine with `permissionPrompts` gets the person's reach (no
 sibling-folder deny list) and a lead's `leadAsks`. Another engine's chat session, and a Loop's lead in place on it, keeps the unattended
-fence and the same denied paths (only named in its brief in Codex's and Grok Build's Bypass, which
+fence and the same denied paths (only named in its brief in Codex's, Grok Build's and Antigravity's Bypass, which
 have no sandbox).
 
 Bonsai ([`local-session-permissions.ts`](../src/substrate/engines/local-session-permissions.ts)

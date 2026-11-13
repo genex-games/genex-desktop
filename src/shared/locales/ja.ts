@@ -6541,4 +6541,29 @@ export default {
     "このプロジェクトは別のディスクにあるため、Genexはそのままにします。",
   "This project's folder holds other things too, so Genex leaves it where it is.":
     "このプロジェクトのフォルダーには他のものも入っているため、Genexはそのままにします。",
+  "Antigravity didn't answer. Check the installation, then try again.":
+    "Antigravityから応答がありません。インストールを確認して、もう一度試してください。",
+  "Antigravity isn't installed on this computer.": "このコンピューターにAntigravityがインストールされていません。",
+  "Antigravity sign-in": "Antigravityへのサインイン",
+  "Antigravity {version}": "Antigravity {version}",
+  "Antigravity's model list could not be read.": "Antigravityのモデル一覧を読み取れませんでした。",
+  "Install Antigravity": "Antigravityをインストール",
+  "Install Antigravity from Settings › Model Providers.":
+    "設定 › モデルプロバイダーからAntigravityをインストールしてください。",
+  "Install Antigravity's CLI to build with your Google AI plan.":
+    "AntigravityのCLIをインストールすると、Google AIのプランでつくれます。",
+  "Installing Antigravity. This can take a minute.":
+    "Antigravityをインストールしています。1分ほどかかることがあります。",
+  "Not signed in to Antigravity.": "Antigravityにサインインしていません。",
+  "Open the sign-in page, then paste the code it gives you here. Antigravity keeps the sign-in.":
+    "サインインページを開き、表示されたコードをここに貼り付けてください。サインイン情報はAntigravityが保持します。",
+  "Sign in to Antigravity from Settings › Model Providers.":
+    "設定 › モデルプロバイダーからAntigravityにサインインしてください。",
+  "Sign in with your Google account to build with your plan.":
+    "Googleアカウントでサインインすると、あなたのプランでつくれます。",
+  "Switch to another Google account": "別のGoogleアカウントに切り替える",
+  "Update Antigravity": "Antigravityをアップデート",
+  "Uses your Google AI plan": "Google AIのプランを使います",
+  "Your Google account has no model Antigravity can run.":
+    "GoogleアカウントにAntigravityで実行できるモデルがありません。",
 } satisfies LocaleCatalog;

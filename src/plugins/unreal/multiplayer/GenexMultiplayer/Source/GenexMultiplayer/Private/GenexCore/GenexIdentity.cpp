@@ -124,6 +124,11 @@ SignInUrls ColyseusUrls(const Json& answer) {
   }
   out.authority = identity_detail::NonEmptyStrings(colyseus->Find("authorityUrls"));
   out.authorityRegions = regions::Normalize(colyseus->Find("authorityRegions"), nullptr);
+  // A home is a non-empty string naming a listed region; Normalize keeps no region without a name.
+  const Json* home = colyseus->Find("authorityHome");
+  const bool named = home != nullptr && home->IsString() && !home->AsString().empty();
+  const auto listed = [&](const regions::Region& r) { return r.name == home->AsString(); };
+  if (named && std::any_of(out.authorityRegions.begin(), out.authorityRegions.end(), listed)) out.authorityHome = home->AsString();
   return out;
 }
 
@@ -247,6 +252,7 @@ bool EmbedIdentity::Adopt(const Json& answer, bool guest, IdentityError* error) 
     if (!urls.relay.empty()) relayUrls_ = std::move(urls.relay);
     authorityUrls_ = std::move(urls.authority);
     authorityRegions_ = std::move(urls.authorityRegions);
+    authorityHome_ = std::move(urls.authorityHome);
   }
   return true;
 }
@@ -556,6 +562,7 @@ void EmbedIdentity::SignOut() {
   relayUrls_.clear();
   authorityUrls_.clear();
   authorityRegions_.clear();
+  authorityHome_.clear();
   user_ = Json::MakeObject();
   project_ = Json();
 }

@@ -123,6 +123,25 @@ const CURSOR_WORDS = {
   unreachable: t("Cursor didn't answer. Check the installation, then try again."),
 } as const;
 
+/** Antigravity's row, in the person's language (the renderer loads it before this module). */
+const ANTIGRAVITY_WORDS = {
+  name: "Antigravity",
+  guide: "https://antigravity.google/docs/cli",
+  install: t("Install Antigravity"),
+  installLine: t("Install Antigravity's CLI to build with your Google AI plan."),
+  installingLine: t("Installing Antigravity. This can take a minute."),
+  signIn: t("Sign in"),
+  signInLine: t("Sign in with your Google account to build with your plan."),
+  signingIn: t("Open the sign-in page, then paste the code it gives you here. Antigravity keeps the sign-in."),
+  cancelSignIn: t("Cancel"),
+  openSignInPage: t("Open sign-in page"),
+  signInAgain: t("Sign in again…"),
+  signInAgainLine: t("Switch to another Google account"),
+  update: t("Update Antigravity"),
+  connectedLine: t("Uses your Google AI plan"),
+  unreachable: t("Antigravity didn't answer. Check the installation, then try again."),
+} as const;
+
 const OPEN_CODE_ROW: CliRowWords = {
   ...WORDS.openCode,
   card: { name: WORDS.openCode.name, plans: "", guide: WORDS.openCode.guide },
@@ -141,6 +160,12 @@ const CURSOR_ROW: CliRowWords = {
   card: { name: CURSOR_WORDS.name, plans: "", guide: CURSOR_WORDS.guide },
   again: { title: CURSOR_WORDS.signInAgain, line: CURSOR_WORDS.signInAgainLine },
   signOut: { title: CURSOR_WORDS.signOut, line: CURSOR_WORDS.signOutLine },
+};
+
+const ANTIGRAVITY_ROW: CliRowWords = {
+  ...ANTIGRAVITY_WORDS,
+  card: { name: ANTIGRAVITY_WORDS.name, plans: "", guide: ANTIGRAVITY_WORDS.guide },
+  again: { title: ANTIGRAVITY_WORDS.signInAgain, line: ANTIGRAVITY_WORDS.signInAgainLine },
 };
 
 /** Not installed: Install, or where Genex can't install it, the CLI's install guide; and Check again. */
@@ -321,6 +346,7 @@ const CLI_WORDS: Record<CliProvider, CliRowWords> = {
   [EngineId.OpenCode]: OPEN_CODE_ROW,
   [EngineId.Grok]: GROK_ROW,
   [EngineId.Cursor]: CURSOR_ROW,
+  [EngineId.Antigravity]: ANTIGRAVITY_ROW,
 };
 
 /** The row of one CLI that signs in in its own terminal. */

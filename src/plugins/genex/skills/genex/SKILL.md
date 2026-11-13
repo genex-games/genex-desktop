@@ -66,10 +66,10 @@ refuses for too few credits keeps its card in Studio, which says so and offers G
 Make it. So never relay the balance, price or refill date, and never retry: add at most one short
 sentence saying what waits for credits, and carry on.
 
-<!-- upstream https://genex.games/SKILL.md v1.43.0 sha256 6557818b66bcd897c66612eb1119a124c14b31469e444aa703ec45e53c10fd97 -->
+<!-- upstream https://genex.games/SKILL.md v1.43.1 sha256 44e7af7665d615f8c5a9fa9e6c5a6217a20da015fc8b35759819249505c43790 -->
 ---
 name: genex
-version: 1.43.0
+version: 1.43.1
 description: >-
   Game-dev asset generation for your agent: 3D models (segment/rig/animate), images, video,
   textures, sound effects, music, voice, and rigged characters - generated from

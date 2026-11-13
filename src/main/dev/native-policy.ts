@@ -45,6 +45,8 @@ const NATIVE_CHANNELS = [
   // the CLI forget the account it keeps.
   "studio:cursor.signin",
   "studio:cursor.signout",
+  // Antigravity's sign-in runs its CLI in a terminal and signs in to the person's Google account.
+  "studio:antigravity.signin",
   // Opens the sign-in page a terminal printed in the person's browser.
   "studio:terminal.open-link",
   // Saving checks the key with OpenRouter and writes it to the OS secret store; forgetting it

@@ -320,6 +320,7 @@ const CONTRACTOR_VENDOR = {
   [EngineId.OpenCode]: "opencode",
   [EngineId.Grok]: "grok",
   [EngineId.Cursor]: "cursor",
+  [EngineId.Antigravity]: "antigravity",
 } as const satisfies Record<CodingProvider, string>;
 
 /** The marker `laneFlagsDigest` folds in for the raw lanes' credential policy, so a change to it moves the pin. */

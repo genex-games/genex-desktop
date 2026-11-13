@@ -54,6 +54,7 @@ const CLI_BINARY = {
   [EngineId.OpenCode]: "opencode",
   [EngineId.Grok]: "grok",
   [EngineId.Cursor]: "cursor-agent",
+  [EngineId.Antigravity]: "agy",
 } as const satisfies Record<CodingProvider, string>;
 /** Whose variables each CLI's own process keeps (`childEnv`'s vendor). */
 const CLI_VENDOR = {
@@ -62,6 +63,7 @@ const CLI_VENDOR = {
   [EngineId.OpenCode]: "opencode",
   [EngineId.Grok]: "grok",
   [EngineId.Cursor]: "cursor",
+  [EngineId.Antigravity]: "antigravity",
 } as const satisfies Record<CodingProvider, string>;
 /** Where the user is sent to install each CLI. */
 const GUIDANCE_URL = {
@@ -70,6 +72,7 @@ const GUIDANCE_URL = {
   [EngineId.OpenCode]: "https://opencode.ai/docs/",
   [EngineId.Grok]: "https://docs.x.ai/build/overview",
   [EngineId.Cursor]: "https://cursor.com/docs/cli/installation",
+  [EngineId.Antigravity]: "https://antigravity.google/docs/cli",
 } as const satisfies Record<CodingProvider, string>;
 /** The help each CLI is asked for, and the options it must list: every one Studio passes. */
 const HELP_ARGS: Record<CodingProvider, string[]> = {
@@ -78,6 +81,8 @@ const HELP_ARGS: Record<CodingProvider, string[]> = {
   [EngineId.OpenCode]: ["run", "--help"],
   [EngineId.Grok]: ["--help"],
   [EngineId.Cursor]: ["--help"],
+  // The ACP server's own help: the only command Genex starts.
+  [EngineId.Antigravity]: ["acp", "--help"],
 };
 const REQUIRED_FLAGS: Record<Exclude<CodingProvider, typeof EngineId.OpenCode>, string[]> = {
   [EngineId.Codex]: ["--json", "--output-schema", "--ignore-user-config", "--skip-git-repo-check"],
@@ -107,6 +112,7 @@ const REQUIRED_FLAGS: Record<Exclude<CodingProvider, typeof EngineId.OpenCode>, 
     "--cwd",
   ],
   [EngineId.Cursor]: ["--print", "--output-format", "--resume", "--model", "--force", "--trust", "--sandbox", "--mode"],
+  [EngineId.Antigravity]: ["--login"],
 };
 /**
  * `opencode run`'s options by the command line its version speaks: 1.18 lists every one (an older

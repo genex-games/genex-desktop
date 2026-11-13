@@ -90,6 +90,9 @@ struct SignInUrls {
   /** `colyseus.authorityRegions` (PROTOCOL.md §17.1 *Regions*), read as every SDK reads them (regions::Normalize);
    *  empty when the answer names none. */
   std::vector<regions::Region> authorityRegions;
+  /** `colyseus.authorityHome` (PROTOCOL.md §17.1 *Regions*), the player's region by geography: empty unless it is a
+   *  non-empty string naming one of authorityRegions. */
+  std::string authorityHome;
 };
 GENEX_CORE_API SignInUrls ColyseusUrls(const Json& answer);
 
@@ -200,6 +203,9 @@ class GENEX_CORE_API EmbedIdentity final : public IPumped {
   /** The authority cluster by region (`colyseus.authorityRegions`, §17.1 *Regions*): pass them as
    *  AuthorityOptions::regions beside urls. Empty where a stand names none. */
   const std::vector<regions::Region>& AuthorityRegions() const { return authorityRegions_; }
+  /** The player's home region (`colyseus.authorityHome`, §17.1 *Regions*), the region nearest the player by
+   *  geography: pass it as AuthorityOptions::home beside regions. Empty where the answer names none of AuthorityRegions. */
+  const std::string& AuthorityHome() const { return authorityHome_; }
   /** The `user` object of the last sign-in answer ({} when none). */
   const Json& User() const { return user_; }
   /** The `project` object of the last sign-in answer (null when none). */
@@ -243,6 +249,7 @@ class GENEX_CORE_API EmbedIdentity final : public IPumped {
   std::vector<std::string> relayUrls_;
   std::vector<std::string> authorityUrls_;
   std::vector<regions::Region> authorityRegions_;
+  std::string authorityHome_;
   Json user_ = Json::MakeObject();
   Json project_;
   std::vector<IdentityCallback> refreshWaiters_;

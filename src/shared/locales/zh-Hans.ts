@@ -6171,4 +6171,22 @@ export default {
   "This project is on another disk, so Genex leaves it there.": "这个项目在另一个磁盘上，所以 Genex 让它留在那里。",
   "This project's folder holds other things too, so Genex leaves it where it is.":
     "这个项目的文件夹里还有别的东西，所以 Genex 让它留在原处。",
+  "Antigravity didn't answer. Check the installation, then try again.": "Antigravity 没有响应。请检查安装后重试。",
+  "Antigravity isn't installed on this computer.": "这台电脑上没有安装 Antigravity。",
+  "Antigravity sign-in": "Antigravity 登录",
+  "Antigravity {version}": "Antigravity {version}",
+  "Antigravity's model list could not be read.": "无法读取 Antigravity 的模型列表。",
+  "Install Antigravity": "安装 Antigravity",
+  "Install Antigravity from Settings › Model Providers.": "请在“设置 › 模型提供方”中安装 Antigravity。",
+  "Install Antigravity's CLI to build with your Google AI plan.": "安装 Antigravity CLI，用你的 Google AI 套餐来制作。",
+  "Installing Antigravity. This can take a minute.": "正在安装 Antigravity，可能需要一分钟。",
+  "Not signed in to Antigravity.": "未登录 Antigravity。",
+  "Open the sign-in page, then paste the code it gives you here. Antigravity keeps the sign-in.":
+    "打开登录页面，把它给你的代码粘贴到这里。登录信息由 Antigravity 保存。",
+  "Sign in to Antigravity from Settings › Model Providers.": "请在“设置 › 模型提供方”中登录 Antigravity。",
+  "Sign in with your Google account to build with your plan.": "登录你的 Google 账号，用你的套餐来制作。",
+  "Switch to another Google account": "切换到另一个 Google 账号",
+  "Update Antigravity": "更新 Antigravity",
+  "Uses your Google AI plan": "使用你的 Google AI 套餐",
+  "Your Google account has no model Antigravity can run.": "你的 Google 账号没有 Antigravity 可运行的模型。",
 } satisfies LocaleCatalog;

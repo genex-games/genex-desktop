@@ -645,6 +645,8 @@ describe("SEC-3: both CLIs' sign-in homes are off limits to every agent process"
       at("Users", "me", ".grok"),
       at("Users", "me", ".cursor"),
       ...[cursorSignIn[process.platform]].filter((dir): dir is string => Boolean(dir)),
+      // Flipped (Antigravity): so do its settings, conversations and its MCP servers' sign-ins.
+      at("Users", "me", ".gemini"),
     ];
     assert.deepEqual(credentialHomes([], {}, home), defaults);
     assert.deepEqual(

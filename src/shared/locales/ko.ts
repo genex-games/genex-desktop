@@ -6391,4 +6391,24 @@ export default {
     "이 프로젝트는 다른 디스크에 있어서 Genex가 그대로 둡니다.",
   "This project's folder holds other things too, so Genex leaves it where it is.":
     "이 프로젝트의 폴더에 다른 것도 있어서 Genex가 그대로 둡니다.",
+  "Antigravity didn't answer. Check the installation, then try again.":
+    "Antigravity가 응답하지 않았어요. 설치를 확인한 뒤 다시 시도해 주세요.",
+  "Antigravity isn't installed on this computer.": "이 컴퓨터에 Antigravity가 설치되어 있지 않아요.",
+  "Antigravity sign-in": "Antigravity 로그인",
+  "Antigravity {version}": "Antigravity {version}",
+  "Antigravity's model list could not be read.": "Antigravity의 모델 목록을 읽을 수 없어요.",
+  "Install Antigravity": "Antigravity 설치",
+  "Install Antigravity from Settings › Model Providers.": "설정 › 모델 제공자에서 Antigravity를 설치해 주세요.",
+  "Install Antigravity's CLI to build with your Google AI plan.":
+    "Antigravity CLI를 설치하면 Google AI 요금제로 만들 수 있어요.",
+  "Installing Antigravity. This can take a minute.": "Antigravity를 설치하는 중이에요. 1분 정도 걸릴 수 있어요.",
+  "Not signed in to Antigravity.": "Antigravity에 로그인되어 있지 않아요.",
+  "Open the sign-in page, then paste the code it gives you here. Antigravity keeps the sign-in.":
+    "로그인 페이지를 열고, 거기서 받은 코드를 여기에 붙여 넣어 주세요. 로그인 정보는 Antigravity가 보관해요.",
+  "Sign in to Antigravity from Settings › Model Providers.": "설정 › 모델 제공자에서 Antigravity에 로그인해 주세요.",
+  "Sign in with your Google account to build with your plan.": "Google 계정으로 로그인하면 요금제로 만들 수 있어요.",
+  "Switch to another Google account": "다른 Google 계정으로 전환",
+  "Update Antigravity": "Antigravity 업데이트",
+  "Uses your Google AI plan": "Google AI 요금제를 사용해요",
+  "Your Google account has no model Antigravity can run.": "Google 계정에 Antigravity가 실행할 수 있는 모델이 없어요.",
 } satisfies LocaleCatalog;

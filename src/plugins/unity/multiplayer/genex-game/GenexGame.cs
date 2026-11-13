@@ -7,10 +7,12 @@
 // Null means nothing names it yet: the game is not published, so keep playing offline.
 //
 // For a server-authoritative room it also names where the room is: Studio's local room
-// (genex__room) as LocalRoomUrl, and the published web page's room servers as PageAuthorityUrls
-// (a native build reads its own from GenexNativeIdentity.AuthorityUrls).
+// (genex__room) as LocalRoomUrl, and the published web page's room servers as PageAuthorityUrls, by
+// region as PageAuthorityRegions, with the player's home region as PageAuthorityHome (a native build
+// reads its own from GenexNativeIdentity.AuthorityUrls, AuthorityRegions and AuthorityHome).
 using System;
 using System.Runtime.InteropServices;
+using Genex.Multiplayer.Authority;
 using UnityEngine;
 
 namespace Genex.Multiplayer.Unity
@@ -35,6 +37,8 @@ namespace Genex.Multiplayer.Unity
         [DllImport("__Internal")] private static extern string GenexGame_PageSlug();
         [DllImport("__Internal")] private static extern string GenexGame_LocalRoomUrl();
         [DllImport("__Internal")] private static extern string GenexGame_PageAuthorityUrls();
+        [DllImport("__Internal")] private static extern string GenexGame_PageAuthorityRegions();
+        [DllImport("__Internal")] private static extern string GenexGame_PageAuthorityHome();
 #endif
 
         /// <summary>The game's slug on Genex: Play's, the page's, then GenexSettings.json's; null before its first publish.</summary>
@@ -71,6 +75,43 @@ namespace Genex.Multiplayer.Unity
                 return lines.Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries);
 #else
                 return Array.Empty<string>();
+#endif
+            }
+        }
+
+        /// <summary>The published web page's room servers by region (its embed SDK's getAuthorityRegions); empty elsewhere.</summary>
+        public static GenexAuthorityRegion[] PageAuthorityRegions
+        {
+            get
+            {
+#if UNITY_WEBGL && !UNITY_EDITOR
+                var lines = (GenexGame_PageAuthorityRegions() ?? "").Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries);
+                var regions = new System.Collections.Generic.List<GenexAuthorityRegion>();
+                foreach (var line in lines)
+                {
+                    var fields = line.Split(new[] { '\t' }, StringSplitOptions.RemoveEmptyEntries);
+                    if (fields.Length < 2) continue;
+                    var urls = new string[fields.Length - 1];
+                    Array.Copy(fields, 1, urls, 0, urls.Length);
+                    regions.Add(new GenexAuthorityRegion(fields[0], urls));
+                }
+                return regions.ToArray();
+#else
+                return Array.Empty<GenexAuthorityRegion>();
+#endif
+            }
+        }
+
+        /// <summary>The player's home region the published web page names (its embed SDK's getAuthorityHome), one of
+        /// <see cref="PageAuthorityRegions"/>; null elsewhere or where the page names none.</summary>
+        public static string PageAuthorityHome
+        {
+            get
+            {
+#if UNITY_WEBGL && !UNITY_EDITOR
+                return Clean(GenexGame_PageAuthorityHome());
+#else
+                return null;
 #endif
             }
         }
