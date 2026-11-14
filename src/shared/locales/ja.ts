@@ -3150,7 +3150,7 @@ export default {
   "Reviewers compare instructions; they don’t rebuild your games. An applied change isn’t proof of better results.":
     "レビュアーが比べるのは指示で、ゲームをつくり直すわけではありません。変更を適用しても、結果がよくなった証明にはなりません。",
   "Reviewers model": "レビュアーのモデル",
-  "See the design": "デザインを見る",
+  "Approve the game design": "ゲームのデザインを承認",
   "Reviewers · try {number}": "レビュアー · {number}回目",
   "Reviewers' notes": "レビュアーのメモ",
   "Reviewers: {model}": "レビュアー：{model}",

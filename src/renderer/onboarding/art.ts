@@ -814,7 +814,7 @@ const CAM_O: Camera = {
 const CAM_D: Camera = {
   yaw: 0,
   pitch: PITCH,
-  scale: 82,
+  scale: 76,
   cx: ROLE_X.design,
   cy: GROUND_Y,
   dist: 7,

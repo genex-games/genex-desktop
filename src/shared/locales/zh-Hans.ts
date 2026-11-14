@@ -2973,7 +2973,7 @@ export default {
   "Reviewers compare instructions; they don’t rebuild your games. An applied change isn’t proof of better results.":
     "审查员比较的是指令；他们不会重新制作你的游戏。已应用的更改并不能证明结果更好。",
   "Reviewers model": "审查员模型",
-  "See the design": "先看设计",
+  "Approve the game design": "确认游戏设计",
   "Reviewers · try {number}": "审查员 · 第 {number} 次尝试",
   "Reviewers' notes": "审查员笔记",
   "Reviewers: {model}": "审查员：{model}",

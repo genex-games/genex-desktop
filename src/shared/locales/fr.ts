@@ -3209,7 +3209,7 @@ export default {
   "Reviewers compare instructions; they don’t rebuild your games. An applied change isn’t proof of better results.":
     "Les vérificateurs comparent des instructions ; ils ne recréent pas tes jeux. Un changement appliqué ne prouve pas que les résultats sont meilleurs.",
   "Reviewers model": "Modèle des vérificateurs",
-  "See the design": "Regarde le design",
+  "Approve the game design": "Valide le design du jeu",
   "Reviewers · try {number}": "Vérificateurs · essai {number}",
   "Reviewers' notes": "Notes des vérificateurs",
   "Reviewers: {model}": "Vérificateurs : {model}",

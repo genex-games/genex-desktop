@@ -725,7 +725,7 @@ composer: the same panel, Add circle and Send circle. The first step waits
 1.4 s with a blinking caret, types 50 ms a letter, lets the prompt be read, then the pointer moves
 to Send and presses it. Its stage is a fixed 760×380 drawing scaled between 0.5× and 1.2× to fit;
 the second step shows **Share your idea** (the prompt lands on a translucent sheet in midair; a pen
-writes the plan in about 1.5 s, once, and ticks three tasks), **See the design** (the Design tab's
+writes the plan in about 1.5 s, once, and ticks three tasks), **Approve the game design** (the Design tab's
 empty-state page, a pencil drawing the core loop) and **Get your game** (a crane stacks blocks), in
 one row on identical fading floors. The two step bars sit at the bottom under Next. The connect screen is one group centred
 under Back and Skip for now, with Start building's place reserved below it. Claude Code and Codex

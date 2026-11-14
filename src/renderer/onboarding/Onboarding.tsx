@@ -120,7 +120,7 @@ const COMPOSER = { left: 120, top: 130, width: 520 } as const;
 const SEND = { x: COMPOSER.left + COMPOSER.width - 26, y: COMPOSER.top + 62 } as const;
 const ROLES = [
   { name: t("Share your idea"), does: t("the AI plans the game"), left: 7, at: ROLE_AT.lead },
-  { name: t("See the design"), does: t("change anything you want"), left: 260, at: ROLE_AT.design },
+  { name: t("Approve the game design"), does: t("change anything you want"), left: 260, at: ROLE_AT.design },
   { name: t("Get your game"), does: t("the AI builds it for you"), left: 513, at: ROLE_AT.build },
 ] as const;
 /** The welcome's typing: a calm start while the caret blinks, then each letter. */

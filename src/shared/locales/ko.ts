@@ -3074,7 +3074,7 @@ export default {
   "Reviewers compare instructions; they don’t rebuild your games. An applied change isn’t proof of better results.":
     "리뷰어는 지침을 비교할 뿐 게임을 다시 만들지 않아요. 변경을 적용했다고 결과가 더 좋아졌다는 증거는 아니에요.",
   "Reviewers model": "리뷰어 모델",
-  "See the design": "디자인을 확인해요",
+  "Approve the game design": "게임 디자인을 승인해요",
   "Reviewers · try {number}": "리뷰어 · 시도 {number}",
   "Reviewers' notes": "리뷰어 메모",
   "Reviewers: {model}": "리뷰어: {model}",

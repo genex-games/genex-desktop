@@ -3226,7 +3226,7 @@ export default {
   "Reviewers compare instructions; they don’t rebuild your games. An applied change isn’t proof of better results.":
     "Prüfer vergleichen Anweisungen; sie bauen deine Spiele nicht neu. Eine übernommene Änderung beweist noch keine besseren Ergebnisse.",
   "Reviewers model": "Modell der Prüfer",
-  "See the design": "Sieh dir das Design an",
+  "Approve the game design": "Gib das Spieldesign frei",
   "Reviewers · try {number}": "Prüfer · Versuch {number}",
   "Reviewers' notes": "Notizen der Prüfer",
   "Reviewers: {model}": "Prüfer: {model}",

@@ -3136,7 +3136,7 @@ export default {
   "Reviewers compare instructions; they don’t rebuild your games. An applied change isn’t proof of better results.":
     "Проверяющие сравнивают инструкции, а не пересобирают твои игры. Применённое изменение ещё не доказывает, что результаты стали лучше.",
   "Reviewers model": "Модель проверяющих",
-  "See the design": "Посмотри дизайн",
+  "Approve the game design": "Одобри дизайн игры",
   "Reviewers · try {number}": "Проверяющие · попытка {number}",
   "Reviewers' notes": "Заметки проверяющих",
   "Reviewers: {model}": "Проверяющие: {model}",
