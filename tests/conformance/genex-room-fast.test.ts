@@ -275,6 +275,10 @@ function assertPlayed(player: Player, fastUrl: string | undefined): void {
   assert.deepEqual(off, [], "live on UDP with no fallback on every sample after binding");
   assert.equal(player.session.fast.fallbacks, 0, "never fell back to the WebSocket");
   assert.deepEqual(player.wire.opened, [fastUrl], "one socket, to the room's fast port");
+  // What a game shows a player about the link (a template game's ping line reads both).
+  assert.equal(player.session.region, "", "a room joined by its url alone is in no listed region");
+  const { rttMs } = player.session;
+  assert.ok(Number.isFinite(rttMs) && rttMs >= 0, `the room clock measured a round trip, got ${rttMs}`);
   for (const field of ["snapshots", "heard", "sent"] as const) {
     const rate = ratePerSecond(player.samples, field);
     assert.ok(
