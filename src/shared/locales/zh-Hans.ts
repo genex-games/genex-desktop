@@ -552,7 +552,7 @@ export default {
   "Visual Studio's C++ tools are ready": "Visual Studio 的 C++ 工具已就绪",
   "When off, Harness doesn’t change its own instructions. Changes it already made stay until you undo them.":
     "关闭后，Harness 不会修改自己的指令。已做的修改会保留，直到你撤销。",
-  "Then it builds": "然后开始构建",
+  "Get your game": "拿到你的游戏",
   Building: "制作中",
   "Building the game": "正在构建游戏",
   "Building the starting point": "正在制作起点",
@@ -2647,7 +2647,7 @@ export default {
   "Plan ready": "计划就绪",
   "Plan ready for review": "计划待审阅",
   "Plan usage isn’t available right now.": "暂时无法获取套餐用量。",
-  "Your agent leads": "智能体主导",
+  "Share your idea": "说出你的想法",
   Planning: "规划中",
   "Planning the build": "正在规划构建",
   "Planning the next step": "正在规划下一步",
@@ -2973,7 +2973,7 @@ export default {
   "Reviewers compare instructions; they don’t rebuild your games. An applied change isn’t proof of better results.":
     "审查员比较的是指令；他们不会重新制作你的游戏。已应用的更改并不能证明结果更好。",
   "Reviewers model": "审查员模型",
-  "A design first": "先做设计",
+  "See the design": "先看设计",
   "Reviewers · try {number}": "审查员 · 第 {number} 次尝试",
   "Reviewers' notes": "审查员笔记",
   "Reviewers: {model}": "审查员：{model}",
@@ -4499,7 +4499,7 @@ export default {
   "an earlier build is ready to play · resume from chat": "之前的构建可以玩 · 在对话中继续",
   "an empty folder": "空文件夹",
   "an input": "输入",
-  "you pick what goes in": "由你挑选要放进去的",
+  "change anything you want": "想改什么都行",
   "and {count} more": "还有 {count} 项",
   "another project or no recorded preview": "其他项目，或没有记录的预览",
   "app update left every harness file as it was": "应用更新未改动任何 Harness 文件",
@@ -4595,7 +4595,7 @@ export default {
   eighth: "第八",
   ended: "已结束",
   "every object has a reason to be there": "每个物体都有存在的理由",
-  "workers pitch in on parts": "助手分头做各个部分",
+  "the AI builds it for you": "AI 帮你做出来",
   "every step landed": "每一步都已进入游戏",
   "exit {code}": "退出码 {code}",
   "export games": "导出游戏",
@@ -4868,7 +4868,7 @@ export default {
   "the game had not finished loading when it was looked at": "检查时游戏还没加载完",
   "the game inside it stays exactly where it is": "里面的游戏会原地保留",
   "the game's app": "游戏的应用",
-  "and plans when it helps": "需要时也会做计划",
+  "the AI plans the game": "AI 规划游戏",
   "the kept {file} still has its own {names}, but {callers} now use {target}":
     "保留的 {file} 仍有自己的 {names}，但 {callers} 现在使用 {target}",
   "the lead ended it before it was finished, so nobody reviewed it and the work it had done is kept":

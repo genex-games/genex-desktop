@@ -535,7 +535,7 @@ describe("first-launch art", () => {
     );
   });
 
-  it("keeps the design card's artboards and pointer inside its own third of the stage at every moment", () => {
+  it("keeps the design page inside its own third of the stage at every moment", () => {
     const style = { font: "15px sans-serif", spacing: "0px" };
     const pathXs = (t: number, still = false) => {
       const { ctx, calls } = recorder();

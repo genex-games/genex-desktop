@@ -632,7 +632,7 @@ export default {
   "Visual Studio's C++ tools are ready": "Las herramientas de C++ de Visual Studio están listas",
   "When off, Harness doesn’t change its own instructions. Changes it already made stay until you undo them.":
     "Si está desactivada, Harness no cambia sus propias instrucciones. Los cambios que ya hizo se quedan hasta que los deshagas.",
-  "Then it builds": "Luego lo construye",
+  "Get your game": "Recibe tu juego",
   Building: "Creando",
   "Building the game": "Creando el juego",
   "Building the starting point": "Creando el punto de partida",
@@ -2863,7 +2863,7 @@ export default {
   "Plan ready": "Plan listo",
   "Plan ready for review": "Plan listo para revisar",
   "Plan usage isn’t available right now.": "El uso del plan no está disponible ahora mismo.",
-  "Your agent leads": "Tu agente dirige",
+  "Share your idea": "Cuenta tu idea",
   Planning: "Planificando",
   "Planning the build": "Planificando el build",
   "Planning the next step": "Planeando el siguiente paso",
@@ -3197,7 +3197,7 @@ export default {
   "Reviewers compare instructions; they don’t rebuild your games. An applied change isn’t proof of better results.":
     "Los revisores comparan instrucciones; no vuelven a crear tus juegos. Un cambio aplicado no demuestra que los resultados sean mejores.",
   "Reviewers model": "Modelo de los revisores",
-  "A design first": "Primero el diseño",
+  "See the design": "Mira el diseño",
   "Reviewers · try {number}": "Revisores · intento {number}",
   "Reviewers' notes": "Notas de los revisores",
   "Reviewers: {model}": "Revisores: {model}",
@@ -4837,7 +4837,7 @@ export default {
   "an earlier build is ready to play · resume from chat": "ya puedes jugar un build anterior · reanuda desde el chat",
   "an empty folder": "una carpeta vacía",
   "an input": "un control",
-  "you pick what goes in": "tú eliges qué entra",
+  "change anything you want": "cambia lo que quieras",
   "and {count} more": "y {count} más",
   "another project or no recorded preview": "otro proyecto o sin vista previa registrada",
   "app update left every harness file as it was":
@@ -4935,7 +4935,7 @@ export default {
   eighth: "octavo",
   ended: "finalizado",
   "every object has a reason to be there": "cada objeto tiene una razón para estar ahí",
-  "workers pitch in on parts": "los ayudantes se reparten las partes",
+  "the AI builds it for you": "la IA lo crea por ti",
   "every step landed": "todos los pasos llegaron al juego",
   "exit {code}": "salida {code}",
   "export games": "exportar juegos",
@@ -5217,7 +5217,7 @@ export default {
     "el juego aún no había terminado de cargar cuando se revisó",
   "the game inside it stays exactly where it is": "el juego que contiene se queda justo donde está",
   "the game's app": "la app del juego",
-  "and plans when it helps": "y planea cuando ayuda",
+  "the AI plans the game": "la IA planea el juego",
   "the kept {file} still has its own {names}, but {callers} now use {target}":
     "el {file} conservado aún tiene sus propios {names}, pero {callers} ahora usan {target}",
   "the lead ended it before it was finished, so nobody reviewed it and the work it had done is kept":

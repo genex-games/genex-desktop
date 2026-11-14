@@ -2,9 +2,8 @@
  * The first-launch art, in the empty states' wireframe language (see ui/wire-art.ts).
  *
  * Welcome: the sent prompt streams letter by letter onto the lead's sheet, where a pen writes it
- * down with three tasks and ticks them off; the design offers three artboards and a pointer picks
- * one, as the person does on the Design tab before anything is built; then the workers' crane
- * stacks blocks: the build.
+ * down with three tasks and ticks them off; a pencil draws the design page the Design tab shows
+ * before it has any; then the workers' crane stacks blocks: the build.
  * Connect: the Claude Code, Codex and Genex marks, extruded, rocking over their buttons; OpenRouter's and
  * OpenCode's screens each show their own mark the same way, alone.
  * Local: a chip whose pins and layers fill while a model downloads.
@@ -13,6 +12,7 @@
  */
 import { SECOND_MS } from "../../shared/duration.ts";
 import { crane } from "../ui/wire-art.ts";
+import { DESIGN_STILL, designScene } from "../ui/wire-design.ts";
 import {
   CLAUDE_CODE_MARK,
   CODEX_MARK,
@@ -580,159 +580,16 @@ function rnd(i: number) {
   const x = Math.sin(i * 127.1 + 311.7) * 43758.5453;
   return x - Math.floor(x);
 }
-/** Seconds into one round of the design: the pointer comes, picks an artboard, it stays picked, then all rest. */
-const DESIGN_CYCLE = 6;
-const DESIGN_POINT = { from: 0.7, to: 1.9 } as const;
-const DESIGN_PICK = { at: 2.05, out: 4.9 } as const;
-/** The three artboards the agent offers, left to right: where each stands and how far forward. */
-const ARTBOARDS = [
-  { x: -1.08, z: -0.15 },
-  { x: 0, z: 0.15 },
-  { x: 1.08, z: -0.15 },
-] as const;
-const ARTBOARD = { width: 0.86, height: 1.14, lift: 0.55, corner: 0.06 } as const;
-/** The artboard the pointer picks. */
-const PICKED = ARTBOARDS[1];
-
-/** A rounded rectangle on an artboard's face, in its own 0..1 coordinates, as one closed line. */
-function boardRect(at: (u: number, v: number) => Vec3, u0: number, v0: number, u1: number, v1: number, r: number) {
-  const pts: Vec3[] = [];
-  const corners: Array<[number, number, number]> = [
-    [u1 - r, v1 - r, 0],
-    [u0 + r, v1 - r, 1],
-    [u0 + r, v0 + r, 2],
-    [u1 - r, v0 + r, 3],
-  ];
-  const ry = (r * ARTBOARD.width) / ARTBOARD.height;
-  // The line starts where the first corner's arc does, and comes back to it.
-  const first = at(u1, v1 - r);
-  for (const [cu, cv, quarter] of corners)
-    for (let i = 0; i <= 4; i++) {
-      const a = (quarter + i / 4) * (Math.PI / 2);
-      pts.push(at(cu + Math.cos(a) * r, cv + Math.sin(a) * ry));
-    }
-  return [...pts, first];
-}
-
-/** A ring on an artboard's face, round in the world. */
-function boardRing(at: (u: number, v: number) => Vec3, cu: number, cv: number, r: number): Vec3[] {
-  const pts: Vec3[] = [];
-  for (let i = 0; i <= 18; i++) {
-    const a = (i / 18) * TAU;
-    pts.push(at(cu + Math.cos(a) * r, cv + (Math.sin(a) * r * ARTBOARD.width) / ARTBOARD.height));
-  }
-  return pts;
-}
-
-/** What each artboard shows: a hero, a level's path, the game's colours. */
-function artboardDrawing(S: Scene, i: number, at: (u: number, v: number) => Vec3, k: number) {
-  const ink = (p: Vec3[], kk = 0.9) => S.L.push({ c: 1, k: kk * k, p });
-  const muted = (p: Vec3[], kk = 0.8) => S.L.push({ c: 2, k: kk * k, p });
-  muted([at(0.12, 0.88), at(0.5, 0.88)], 0.9);
-  if (i === 0) {
-    ink(boardRing(at, 0.5, 0.66, 0.09));
-    ink([at(0.5, 0.58), at(0.5, 0.34)]);
-    ink([at(0.3, 0.5), at(0.5, 0.54), at(0.7, 0.5)]);
-    ink([at(0.38, 0.14), at(0.5, 0.34), at(0.62, 0.14)]);
-    return;
-  }
-  if (i === 1) {
-    ink([at(0.14, 0.2), at(0.42, 0.2), at(0.42, 0.46), at(0.66, 0.46), at(0.66, 0.7), at(0.86, 0.7)]);
-    muted(boardRect(at, 0.1, 0.12, 0.2, 0.2, 0.02));
-    muted(boardRect(at, 0.36, 0.38, 0.48, 0.46, 0.02));
-    ink([at(0.86, 0.7), at(0.86, 0.82), at(0.78, 0.79), at(0.86, 0.76)]);
-    return;
-  }
-  for (const [n, u] of [0.28, 0.5, 0.72].entries()) {
-    const ring = boardRing(at, u, 0.62, 0.09);
-    ink(ring);
-    S.F.push({ c: n === 0 ? 0 : 2, a: 0.25 * k, p: ring });
-  }
-  muted([at(0.14, 0.36), at(0.86, 0.36)]);
-  muted([at(0.14, 0.24), at(0.62, 0.24)]);
-}
-
-/** One artboard: its face, its edge and its drawing; a picked one shines in accent. */
-function artboard(S: Scene, i: number, board: (typeof ARTBOARDS)[number], shine: number, dim: number) {
-  const { x, z } = board;
-  const { width: W, height: H, lift } = ARTBOARD;
-  const at = (u: number, v: number): Vec3 => [x - W / 2 + u * W, lift + v * H, z];
-  const edge = boardRect(at, 0, 0, 1, 1, ARTBOARD.corner);
-  S.F.push({ c: 0, a: (0.05 + 0.1 * shine) * dim, p: edge });
-  S.L.push({ c: 0, k: (0.75 + 0.25 * shine) * dim, p: edge });
-  artboardDrawing(S, i, at, dim);
-  S.L.push({
-    c: 2,
-    k: 0.35 * dim,
-    p: [
-      [x, 0.02, z],
-      [x, lift, z],
-    ],
-  });
-}
-
-/** The tick on the picked artboard's corner: a filled disc, then the check drawing itself. */
-function pickTick(S: Scene, p: number, fade: number) {
-  if (p <= 0 || fade <= 0.01) return;
-  const { x, z } = PICKED;
-  const c: Vec3 = [x + ARTBOARD.width / 2 - 0.02, ARTBOARD.lift + ARTBOARD.height - 0.02, z + 0.04];
-  const r = 0.13 * (0.6 + 0.4 * easeOut(clamp(p / 0.15)));
-  const disc: Vec3[] = [];
-  for (let i = 0; i <= 20; i++) {
-    const a = (i / 20) * TAU;
-    disc.push([c[0] + Math.cos(a) * r, c[1] + Math.sin(a) * r, c[2]]);
-  }
-  const a = clamp(p / 0.12) * fade;
-  S.F.push({ c: 0, a: 0.85 * a, p: disc });
-  S.L.push({ c: 0, k: a, p: disc });
-  const check: Vec3[] = [
-    [c[0] - 0.06, c[1], c[2] + 0.01],
-    [c[0] - 0.015, c[1] - 0.045, c[2] + 0.01],
-    [c[0] + 0.065, c[1] + 0.05, c[2] + 0.01],
-  ];
-  const drawn = subPath(check, 0, clamp((p - 0.1) / 0.3));
-  if (drawn.length > 1) S.L.push({ c: 1, k: fade, p: drawn, flat: true });
-}
-
-/** The pointer, its tip at `tip`: an arrow cursor facing the camera. */
-function pointer(S: Scene, tip: Vec3, k: number, press: number) {
-  if (k <= 0.01) return;
-  const s = 0.42 * (1 - 0.12 * press);
-  const shape: Array<[number, number]> = [
-    [0, 0],
-    [0, -0.78],
-    [0.2, -0.6],
-    [0.34, -0.9],
-    [0.46, -0.85],
-    [0.32, -0.56],
-    [0.58, -0.56],
-    [0, 0],
-  ];
-  const pts = shape.map(([u, v]): Vec3 => [tip[0] + u * s, tip[1] + v * s, tip[2]]);
-  S.F.push({ c: 1, a: 0.85 * k, p: pts.slice(0, 7) });
-  S.L.push({ c: 1, k, p: pts });
-}
-
 /**
- * Design: the agent offers three artboards on a canvas, a pointer picks one, it lights with a
- * tick and the others step back: the person chooses what goes in before anything is built.
+ * Design: the Design tab's own empty-state page (ui/wire-design.ts), a pencil drawing the game's
+ * core loop, standing on the welcome's floor as a sheet like the lead's.
  */
-function designBoard(t: number): Scene {
+function designPage(t: number): { S: Scene; cam: Camera } {
+  const page = designScene(t);
   const S = scene();
-  const f = ((t % DESIGN_CYCLE) + DESIGN_CYCLE) % DESIGN_CYCLE;
-  const picked = f < DESIGN_PICK.out ? clamp((f - DESIGN_PICK.at) / 0.3) : 1 - clamp((f - DESIGN_PICK.out) / 0.6);
-  for (const [i, board] of ARTBOARDS.entries()) {
-    const mine = board === PICKED;
-    artboard(S, i, board, mine ? picked : 0, mine ? 1 : 1 - 0.55 * picked);
-  }
-  pickTick(S, f - DESIGN_PICK.at, picked);
-  const target: Vec3 = [PICKED.x + 0.12, ARTBOARD.lift + 0.5, PICKED.z + 0.3];
-  const start: Vec3 = [1.7, 0.5, 0.9];
-  const travel = ease((f - DESIGN_POINT.from) / (DESIGN_POINT.to - DESIGN_POINT.from));
-  const shown = clamp((f - DESIGN_POINT.from) / 0.3) * (1 - clamp((f - DESIGN_PICK.out + 0.3) / 0.4));
-  const press = Math.max(0, 1 - Math.abs(f - DESIGN_PICK.at) / 0.12);
-  pointer(S, lerp3(start, target, travel), shown, press);
-  return S;
+  S.F.push({ c: 1, a: page.fade, p: page.face, paper: true });
+  for (const line of page.lines) S.L.push({ c: line.c, k: line.k, p: line.p });
+  return { S, cam: { ...CAM_D, yaw: page.cam.yaw } };
 }
 
 /** The letters' flight runs 12% slower than the first cut (the owner asked for 10–15%). */
@@ -953,17 +810,18 @@ const CAM_O: Camera = {
   tz: 0,
   R: 1.6,
 };
+/** The design page's camera; its yaw sways with the page (wire-design.ts). */
 const CAM_D: Camera = {
-  yaw: 0.3,
+  yaw: 0,
   pitch: PITCH,
-  scale: 50,
+  scale: 82,
   cx: ROLE_X.design,
   cy: GROUND_Y,
-  dist: 12,
+  dist: 7,
   tx: 0,
   ty: 0,
-  tz: 0,
-  R: 1.8,
+  tz: 0.3,
+  R: 0.6,
 };
 const CAM_C: Camera = {
   yaw: 0.2,
@@ -981,8 +839,6 @@ const CAM_C: Camera = {
 export const ROLE_AT = { lead: 0.4, design: 2.5, build: 4.2 } as const;
 /** Each role's art fades in over half a second, a little before its label. */
 const ARRIVE = { lead: 0, design: 2.2, build: 3.9 } as const;
-/** A still frame's design: an artboard already picked, its tick drawn and the pointer on it. */
-const DESIGN_REST = 3.4;
 
 /** The lead's page starts as the letters leave, and plays once. */
 const PLANNER_START = 0.35;
@@ -1002,12 +858,12 @@ export function drawWelcome(
     build: clamp((t - ARRIVE.build) / 0.5),
   };
   const p = still ? PLANNER_REST : Math.max(0, t - PLANNER_START);
-  const designTime = still ? DESIGN_REST : Math.max(0, t - ROLE_AT.design);
+  const design = designPage(still ? DESIGN_STILL : Math.max(0, t - ROLE_AT.design));
   roleFloor(ctx, ROLE_X.lead, shown.lead, P);
   roleFloor(ctx, ROLE_X.design, shown.design, P);
   roleFloor(ctx, ROLE_X.build, shown.build, P);
   standing(ctx, planner(p, t), CAM_O, shown.lead, P);
-  standing(ctx, designBoard(designTime), CAM_D, shown.design, P);
+  standing(ctx, design.S, design.cam, shown.design, P);
   standing(ctx, workers(t), CAM_C, shown.build, P);
   streamText(ctx, prompt, t, style, P);
 }

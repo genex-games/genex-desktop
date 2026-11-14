@@ -600,7 +600,7 @@ export default {
   "Visual Studio's C++ tools are ready": "Инструменты C++ из Visual Studio готовы",
   "When off, Harness doesn’t change its own instructions. Changes it already made stay until you undo them.":
     "Когда выключено, Harness не меняет свои инструкции. Уже сделанные изменения остаются, пока ты их не отменишь.",
-  "Then it builds": "Потом сборка",
+  "Get your game": "Получи игру",
   Building: "Собирает",
   "Building the game": "Собираем игру",
   "Building the starting point": "Собирает основу",
@@ -2802,7 +2802,7 @@ export default {
   "Plan ready": "План готов",
   "Plan ready for review": "План готов к проверке",
   "Plan usage isn’t available right now.": "Лимиты тарифа сейчас недоступны.",
-  "Your agent leads": "Ведёт твой агент",
+  "Share your idea": "Расскажи идею",
   Planning: "Планирует",
   "Planning the build": "Планирует сборку",
   "Planning the next step": "Планирует следующий шаг",
@@ -3136,7 +3136,7 @@ export default {
   "Reviewers compare instructions; they don’t rebuild your games. An applied change isn’t proof of better results.":
     "Проверяющие сравнивают инструкции, а не пересобирают твои игры. Применённое изменение ещё не доказывает, что результаты стали лучше.",
   "Reviewers model": "Модель проверяющих",
-  "A design first": "Сначала дизайн",
+  "See the design": "Посмотри дизайн",
   "Reviewers · try {number}": "Проверяющие · попытка {number}",
   "Reviewers' notes": "Заметки проверяющих",
   "Reviewers: {model}": "Проверяющие: {model}",
@@ -4751,7 +4751,7 @@ export default {
   "an earlier build is ready to play · resume from chat": "можно играть в прежнюю сборку · продолжи из чата",
   "an empty folder": "пустая папка",
   "an input": "элемент управления",
-  "you pick what goes in": "ты выбираешь, что войдёт",
+  "change anything you want": "поменяй что захочешь",
   "and {count} more": "и ещё {count}",
   "another project or no recorded preview": "другой проект или превью не записано",
   "app update left every harness file as it was": "обновление приложения не тронуло файлы Harness",
@@ -4849,7 +4849,7 @@ export default {
   eighth: "восьмую",
   ended: "завершено",
   "every object has a reason to be there": "у каждого предмета есть причина быть здесь",
-  "workers pitch in on parts": "помощники берут части",
+  "the AI builds it for you": "ИИ соберёт её за тебя",
   "every step landed": "все шаги попали в игру",
   "exit {code}": "код {code}",
   "export games": "экспортировать игры",
@@ -5129,7 +5129,7 @@ export default {
   "the game had not finished loading when it was looked at": "игра ещё не загрузилась, когда её проверяли",
   "the game inside it stays exactly where it is": "игра внутри остаётся на своём месте",
   "the game's app": "приложение игры",
-  "and plans when it helps": "и планирует, когда это помогает",
+  "the AI plans the game": "ИИ спланирует игру",
   "the kept {file} still has its own {names}, but {callers} now use {target}":
     "в сохранённом файле {file} остались свои {names}, но вызовы из {callers} теперь идут в {target}",
   "the lead ended it before it was finished, so nobody reviewed it and the work it had done is kept":
