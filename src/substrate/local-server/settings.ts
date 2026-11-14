@@ -6,7 +6,12 @@
  */
 import { rm } from "node:fs/promises";
 import { atomicWriteJson, isJsonObject, readJsonIfExists } from "../fsx.ts";
-import { LocalServerKind } from "../../shared/local-server.ts";
+import {
+  LocalServerKind,
+  MAX_OVERRIDE_CONTEXT,
+  MIN_OVERRIDE_CONTEXT,
+  type ModelOverride,
+} from "../../shared/local-server.ts";
 import { readServerAddress } from "./address.ts";
 
 /** The saved server: the API's base URL and, when known, which software answers there. */
@@ -52,6 +57,71 @@ export function memoryServerSettings(initial: SavedServer | null = null): Server
     },
     clear: async () => {
       value = null;
+    },
+  };
+}
+
+/** Persists per-model overrides (context window, vision, tools) for a local server. */
+export interface ModelOverridesStore {
+  readonly file: string;
+  read(): Promise<Record<string, ModelOverride>>;
+  write(id: string, override: ModelOverride | null): Promise<void>;
+}
+
+/** Sanitize a model override: finite numbers in sane range, boolean capabilities. */
+export function sanitizeModelOverride(raw: unknown): ModelOverride | null {
+  if (!isJsonObject(raw)) return null;
+  const clean: ModelOverride = {};
+  if (typeof raw.contextWindow === "number" && Number.isFinite(raw.contextWindow)) {
+    const tokens = Math.floor(raw.contextWindow);
+    if (tokens >= MIN_OVERRIDE_CONTEXT && tokens <= MAX_OVERRIDE_CONTEXT) {
+      clean.contextWindow = tokens;
+    }
+  }
+  if (typeof raw.supportsVision === "boolean") {
+    clean.supportsVision = raw.supportsVision;
+  }
+  if (typeof raw.supportsTools === "boolean") {
+    clean.supportsTools = raw.supportsTools;
+  }
+  return Object.keys(clean).length > 0 ? clean : null;
+}
+
+function sanitizeOverridesRecord(data: unknown): Record<string, ModelOverride> {
+  if (!isJsonObject(data)) return {};
+  const clean: Record<string, ModelOverride> = {};
+  for (const [id, value] of Object.entries(data)) {
+    const validated = sanitizeModelOverride(value);
+    if (validated) clean[id] = validated;
+  }
+  return clean;
+}
+
+/** File-backed JSON store for per-model overrides. */
+export function modelOverridesStore(file: string): ModelOverridesStore {
+  return {
+    file,
+    read: async () => sanitizeOverridesRecord(await readJsonIfExists<unknown>(file).catch(() => null)),
+    write: async (id: string, override: ModelOverride | null) => {
+      const current = sanitizeOverridesRecord(await readJsonIfExists<unknown>(file).catch(() => null));
+      const validated = override ? sanitizeModelOverride(override) : null;
+      if (validated) current[id] = validated;
+      else delete current[id];
+      await atomicWriteJson(file, current);
+    },
+  };
+}
+
+/** In-memory store for per-model overrides, for tests. */
+export function memoryModelOverridesStore(): ModelOverridesStore {
+  const value: Record<string, ModelOverride> = {};
+  return {
+    file: ":memory:",
+    read: async () => ({ ...value }),
+    write: async (id, override) => {
+      const validated = override ? sanitizeModelOverride(override) : null;
+      if (validated) value[id] = validated;
+      else delete value[id];
     },
   };
 }

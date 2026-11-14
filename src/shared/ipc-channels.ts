@@ -19,6 +19,7 @@ import type { StudioErrorCode } from "./error-codes.ts";
 import type { AddSource, ShareItem } from "./asset-library.ts";
 import type { DesignMarks } from "./design-marks.ts";
 import type { ExportReview, GithubVersion } from "./plugins.ts";
+import type { ModelOverride } from "./local-server.ts";
 import type { PlayControl, PlayPoint, PlayShelf } from "./play.ts";
 import type { SessionAction } from "./play-native.ts";
 import type { PlayBarHold } from "./play-bar.ts";
@@ -172,6 +173,7 @@ export const STUDIO_INVOKE_CHANNELS = {
   "studio:local-server.connect": "localServerConnect",
   "studio:local-server.forget": "localServerForget",
   "studio:local-server.find": "localServerFind",
+  "studio:local-server.set-model-override": "localServerSetModelOverride",
   "studio:terminal.list": "terminalList",
   "studio:terminal.accessibility": "terminalAccessibility",
   "studio:terminal.open": "terminalOpen",
@@ -504,6 +506,7 @@ export interface StudioInvokePayloads {
   "studio:local-server.connect": { url: string; key?: string };
   "studio:local-server.forget": undefined;
   "studio:local-server.find": undefined;
+  "studio:local-server.set-model-override": { id: string; override: ModelOverride | null };
   "studio:terminal.list": undefined;
   "studio:terminal.accessibility": undefined;
   "studio:terminal.open": { project: string };

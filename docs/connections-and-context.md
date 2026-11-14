@@ -463,7 +463,7 @@ server the person runs: TabbyAPI (ExLlamaV3 on an NVIDIA card), LM Studio, llama
 or an Ollama elsewhere on the network, through its OpenAI-compatible API. Like OpenRouter it is a
 direct engine on the pi-ai path whose game chats and builds run as Genex sessions (`LocalSessions`
 under its own id), so Loop's workers and reviewers can use it; unlike OpenRouter it is
-`billing: "local"`, so it may be picked by itself and may take over a throttled run.
+`billing: "local"`, so it may be picked by itself and may take over a throttled run. When a server or proxy does not report a model's context length or vision capabilities, configure them through the model row's configuration dialog or in `models.json`.
 
 Its row is the last in Settings → Model Providers (`LocalServerRow.tsx`); Local Models and the
 welcome's local screen link to it. Until a server is saved the row lists the servers answering on

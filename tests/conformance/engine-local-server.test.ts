@@ -7,13 +7,18 @@
  * failure's mapping are exercised for real, with no network and no model.
  */
 import assert from "node:assert/strict";
+import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { after, describe, it } from "node:test";
 import { LocalServerEngine } from "../../src/substrate/engines/local-server.ts";
 import { EngineRegistry } from "../../src/substrate/engines/registry.ts";
 import { EngineError } from "../../src/substrate/engines/types.ts";
 import {
+  memoryModelOverridesStore,
+  modelOverridesStore,
   memoryServerSettings,
+  type ModelOverridesStore,
+  sanitizeModelOverride,
   serverSettings,
   type ServerSettings,
 } from "../../src/substrate/local-server/settings.ts";
@@ -52,6 +57,7 @@ const lookup = async (host: string) => {
 interface Setup {
   settings?: ServerSettings;
   keys?: ApiKeyStore;
+  overrides?: ModelOverridesStore;
   ollamaHost?: string;
   findPorts?: number[];
 }
@@ -62,6 +68,7 @@ async function engine(setup: Setup = {}) {
     root: path.join(root, "engine"),
     settings: setup.settings ?? memoryServerSettings(),
     keys: setup.keys ?? memoryKeyStore(),
+    ...(setup.overrides ? { overridesStore: setup.overrides } : {}),
     lookup,
     ...(setup.ollamaHost ? { ollamaHost: setup.ollamaHost } : {}),
     ...(setup.findPorts ? { findPorts: setup.findPorts } : {}),
@@ -286,6 +293,89 @@ describe("reading each server's models", () => {
       messages: [{ role: "user", content: "w ".repeat(60_000) }],
     });
     assert.equal(response.message.content, "ok", "the server's own limit decides");
+  });
+
+  it("uses model overrides from models.json when server does not report context or vision", async () => {
+    const server = await fake();
+    const overrides = memoryModelOverridesStore();
+    await overrides.write("my-model", { contextWindow: 200_000, supportsVision: true });
+    const local = await connected(server, { overrides });
+    const [row] = await local.models();
+    assert.equal(row?.contextWindow, 200_000);
+    assert.equal(row?.contextSource, "configured");
+    assert.equal(row?.supportsVision, true);
+  });
+
+  it("shows overrides saved through setModelOverride in models()", async () => {
+    const server = await fake();
+    const local = await connected(server, { overrides: memoryModelOverridesStore() });
+    const [before] = await local.models();
+    assert.equal(before?.contextWindow, 32_768);
+    assert.equal(before?.contextSource, "unknown");
+
+    await local.setModelOverride("my-model", { contextWindow: 262_144, supportsVision: true, supportsTools: false });
+    const [after] = await local.models();
+    assert.equal(after?.contextWindow, 262_144);
+    assert.equal(after?.contextSource, "configured");
+    assert.equal(after?.supportsVision, true);
+    assert.equal(after?.supportsTools, false);
+
+    await local.setModelOverride("my-model", null);
+    const [cleared] = await local.models();
+    assert.equal(cleared?.contextWindow, 32_768);
+    assert.equal(cleared?.contextSource, "unknown");
+  });
+
+  it("server reported context and vision win over models.json overrides", async () => {
+    const server = await fake({ flavor: "tabbyapi", props: { nCtx: 131_072, vision: false } });
+    const overrides = memoryModelOverridesStore();
+    await overrides.write(FAKE_MODEL, { contextWindow: 65_536, supportsVision: true });
+    const local = await connected(server, { overrides });
+    const [row] = await local.models();
+    assert.equal(row?.contextWindow, 131_072, "what the server reports always wins");
+    assert.equal(row?.supportsVision, false, "what the server reports always wins");
+  });
+
+  it("sanitizes invalid entries in models.json overrides", () => {
+    assert.equal(sanitizeModelOverride(null), null);
+    assert.equal(sanitizeModelOverride({ contextWindow: "huge" }), null);
+    assert.equal(sanitizeModelOverride({ contextWindow: 100 }), null);
+    assert.deepEqual(sanitizeModelOverride({ contextWindow: 65536, supportsVision: true, extra: "drop" }), {
+      contextWindow: 65536,
+      supportsVision: true,
+    });
+  });
+
+  it("reads hand-edited or broken models.json safely and replaces entries on write", async () => {
+    const file = path.join(await tmpDir("local-server-overrides-"), "models.json");
+    const store = modelOverridesStore(file);
+
+    // Broken JSON falls back to an empty map without throwing
+    await writeFile(file, "{not valid json", "utf8");
+    assert.deepEqual(await store.read(), {});
+
+    // Hand-edited JSON keeps only valid sanitized entries
+    await writeFile(
+      file,
+      JSON.stringify({
+        "bad-model": { contextWindow: 100, supportsVision: "yes" },
+        "good-model": { contextWindow: 65_536, supportsVision: true, unknownField: 123 },
+      }),
+      "utf8",
+    );
+    assert.deepEqual(await store.read(), {
+      "good-model": { contextWindow: 65_536, supportsVision: true },
+    });
+
+    // Write replaces the existing entry rather than merging old fields
+    await store.write("good-model", { contextWindow: 131_072 });
+    assert.deepEqual(await store.read(), {
+      "good-model": { contextWindow: 131_072 },
+    });
+
+    // Write null removes the entry
+    await store.write("good-model", null);
+    assert.deepEqual(await store.read(), {});
   });
 });
 

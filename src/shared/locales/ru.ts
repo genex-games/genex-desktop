@@ -6572,4 +6572,15 @@ export default {
   "{title} was removed from Design": "{title}: страница удалена из «Дизайна»",
   "Opens in Design": "Откроется в «Дизайне»",
   "Question {step} of {of}": "Вопрос {step} из {of}",
+  "Can call tools": "Может вызывать инструменты",
+  Configure: "Настроить",
+  "Context size": "Размер контекста",
+  "Context size must be between 1,024 and 10,000,000 tokens.":
+    "Размер контекста должен составлять от 1 024 до 10 000 000 токенов.",
+  "Custom context length and vision for this model on your local server. Saved to models.json.":
+    "Пользовательский размер контекста и распознавание изображений для этой модели на локальном сервере. Сохранено в models.json.",
+  "Failed to save settings.": "Не удалось сохранить настройки.",
+  "Reported by server": "Сообщено сервером",
+  "Reset to default": "Сбросить по умолчанию",
+  "Sees images": "Распознает изображения",
 } satisfies LocaleCatalog;

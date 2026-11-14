@@ -6,6 +6,8 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   addressHint,
+  buildOverride,
+  isValidOverrideContext,
   LocalServerRowState,
   localServerRowState,
   modelDetails,
@@ -77,5 +79,37 @@ describe("the local server row's words", () => {
       "an action's own error first",
     );
     assert.equal(rowProblem(null, null), null);
+  });
+});
+describe("the local server row's model override rules", () => {
+  it("accepts whole numbers within the context override range, and rejects anything else", () => {
+    assert.equal(isValidOverrideContext("1024"), true);
+    assert.equal(isValidOverrideContext("131072"), true);
+    assert.equal(isValidOverrideContext("10000000"), true);
+    assert.equal(isValidOverrideContext("  65536  "), true);
+
+    assert.equal(isValidOverrideContext("1023"), false);
+    assert.equal(isValidOverrideContext("10000001"), false);
+    assert.equal(isValidOverrideContext("0"), false);
+    assert.equal(isValidOverrideContext("-1024"), false);
+    assert.equal(isValidOverrideContext("1024.5"), false);
+    assert.equal(isValidOverrideContext(""), false);
+    assert.equal(isValidOverrideContext("   "), false);
+    assert.equal(isValidOverrideContext("abc"), false);
+  });
+
+  it("builds an override saving only what the server did not report, or null when all reported", () => {
+    assert.deepEqual(
+      buildOverride({ context: false, vision: false, tools: false }, { context: 65_536, vision: true, tools: false }),
+      { contextWindow: 65_536, supportsVision: true, supportsTools: false },
+    );
+    assert.deepEqual(
+      buildOverride({ context: true, vision: false, tools: true }, { context: 65_536, vision: true, tools: false }),
+      { supportsVision: true },
+    );
+    assert.deepEqual(
+      buildOverride({ context: true, vision: true, tools: true }, { context: 65_536, vision: true, tools: false }),
+      null,
+    );
   });
 });

@@ -6607,4 +6607,15 @@ export default {
   "{title} was removed from Design": "{title} foi removida de Design",
   "Opens in Design": "Abre em Design",
   "Question {step} of {of}": "Pergunta {step} de {of}",
+  "Can call tools": "Pode chamar ferramentas",
+  Configure: "Configurar",
+  "Context size": "Tamanho do contexto",
+  "Context size must be between 1,024 and 10,000,000 tokens.":
+    "O tamanho do contexto deve estar entre 1.024 e 10.000.000 tokens.",
+  "Custom context length and vision for this model on your local server. Saved to models.json.":
+    "Tamanho de contexto e visão personalizados para este modelo no seu servidor local. Salvo em models.json.",
+  "Failed to save settings.": "Falha ao salvar as configurações.",
+  "Reported by server": "Informado pelo servidor",
+  "Reset to default": "Restaurar padrão",
+  "Sees images": "Vê imagens",
 } satisfies LocaleCatalog;

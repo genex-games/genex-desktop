@@ -67,6 +67,7 @@ const NATIVE_CHANNELS = [
   "studio:local-server.connect",
   "studio:local-server.forget",
   "studio:local-server.find",
+  "studio:local-server.set-model-override",
   "studio:codex-login.browser",
   "studio:codex-login.retry",
   "studio:claude-login.browser",

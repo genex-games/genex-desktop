@@ -9,6 +9,9 @@ import {
   type LocalServerInfo,
   LocalServerKind,
   LocalServerProblem,
+  MAX_OVERRIDE_CONTEXT,
+  MIN_OVERRIDE_CONTEXT,
+  type ModelOverride,
 } from "../../shared/local-server.ts";
 import type { EngineDescriptor } from "../types.ts";
 import { formatTokens } from "../chat-labels.ts";
@@ -111,4 +114,27 @@ export function rowHint(
 /** What the row says went wrong: the last action's error, else why the last connection saved nothing. */
 export function rowProblem(error: string | null, refusal: Refusal | null): string | null {
   return error ?? (refusal ? WORDS.problem[refusal.problem] : null);
+}
+
+/** Is a typed context window an integer between MIN_OVERRIDE_CONTEXT and MAX_OVERRIDE_CONTEXT? */
+export function isValidOverrideContext(raw: string): boolean {
+  const trimmed = raw.trim();
+  if (trimmed === "") return false;
+  const parsed = Number(trimmed);
+  return Number.isInteger(parsed) && parsed >= MIN_OVERRIDE_CONTEXT && parsed <= MAX_OVERRIDE_CONTEXT;
+}
+
+/**
+ * What to save for a model: only the values the server did not report, or null when
+ * everything was reported.
+ */
+export function buildOverride(
+  reported: { context: boolean; vision: boolean; tools: boolean },
+  values: { context: number; vision: boolean; tools: boolean },
+): ModelOverride | null {
+  const override: ModelOverride = {};
+  if (!reported.context && Number.isFinite(values.context)) override.contextWindow = values.context;
+  if (!reported.vision) override.supportsVision = values.vision;
+  if (!reported.tools) override.supportsTools = values.tools;
+  return Object.keys(override).length ? override : null;
 }

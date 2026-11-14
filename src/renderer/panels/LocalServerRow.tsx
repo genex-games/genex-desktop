@@ -8,7 +8,13 @@
  */
 import { type FormEvent, type JSX, useEffect, useRef, useState } from "react";
 import { EngineId } from "../../shared/providers.ts";
-import type { FoundLocalServer, LocalServerInfo } from "../../shared/local-server.ts";
+import {
+  MAX_OVERRIDE_CONTEXT,
+  MIN_OVERRIDE_CONTEXT,
+  type FoundLocalServer,
+  type LocalServerInfo,
+  type ModelOverride,
+} from "../../shared/local-server.ts";
 import {
   reportClock,
   reportLocalServerConnect,
@@ -19,10 +25,15 @@ import {
 import { LocalServerVia, ProviderAction, ProviderSurface } from "../analytics/welcome-vocabulary.ts";
 import type { EngineDescriptor } from "../types.ts";
 import { Button } from "../ui/Button.tsx";
+import { Checkbox } from "../ui/Checkbox.tsx";
+import { DialogSurface } from "../ui/dialog.tsx";
 import { DropdownMenuItem } from "../ui/dropdown-menu.tsx";
+import { Icon } from "../ui/icons.tsx";
 import { LOCAL_SERVER_WORDS, METERED_PROVIDER_WORDS } from "../words.ts";
 import {
+  buildOverride,
   isKeyRefusal,
+  isValidOverrideContext,
   kindName,
   LocalServerRowState,
   localServerRowState,
@@ -288,8 +299,223 @@ function KeyEntry({ busy, onSave }: { busy: boolean; onSave: (key: string) => vo
   );
 }
 
+const PRESET_CONTEXTS = [
+  { label: "32K", value: 32_768 },
+  { label: "64K", value: 65_536 },
+  { label: "128K", value: 131_072 },
+  { label: "200K", value: 200_000 },
+  { label: "1M", value: 1_048_576 },
+];
+
+function ModelCapabilities({
+  isVisionReported,
+  isToolsReported,
+  supportsVision,
+  supportsTools,
+  onVisionChange,
+  onToolsChange,
+}: {
+  isVisionReported: boolean;
+  isToolsReported: boolean;
+  supportsVision: boolean;
+  supportsTools: boolean;
+  onVisionChange: (val: boolean) => void;
+  onToolsChange: (val: boolean) => void;
+}): JSX.Element {
+  return (
+    <div className="flex flex-col gap-2.5 pt-2 border-t border-line">
+      <label
+        className={`flex items-center justify-between gap-2 text-xs text-foreground select-none ${isVisionReported ? "opacity-60 cursor-not-allowed" : "cursor-pointer"}`}
+      >
+        <span className="flex items-center gap-2">
+          <Checkbox
+            checked={supportsVision}
+            disabled={isVisionReported}
+            onChange={(e) => onVisionChange(e.target.checked)}
+          />
+          <span>{WORDS.seesImagesOption}</span>
+        </span>
+        {isVisionReported && (
+          <span className="text-micro font-medium text-ink-3 uppercase tracking-wide">{WORDS.reportedByServer}</span>
+        )}
+      </label>
+      <label
+        className={`flex items-center justify-between gap-2 text-xs text-foreground select-none ${isToolsReported ? "opacity-60 cursor-not-allowed" : "cursor-pointer"}`}
+      >
+        <span className="flex items-center gap-2">
+          <Checkbox
+            checked={supportsTools}
+            disabled={isToolsReported}
+            onChange={(e) => onToolsChange(e.target.checked)}
+          />
+          <span>{WORDS.canCallToolsOption}</span>
+        </span>
+        {isToolsReported && (
+          <span className="text-micro font-medium text-ink-3 uppercase tracking-wide">{WORDS.reportedByServer}</span>
+        )}
+      </label>
+    </div>
+  );
+}
+
+function ModelConfigDialog({
+  model,
+  onClose,
+  onSave,
+}: {
+  model: EngineDescriptor["models"][number];
+  onClose: () => void;
+  onSave: (override: ModelOverride | null) => Promise<void>;
+}): JSX.Element {
+  const isContextReported = model.reportedContextWindow !== undefined;
+  const isVisionReported = model.reportedVision !== undefined;
+  const isToolsReported = model.reportedTools !== undefined;
+
+  const [contextWindow, setContextWindow] = useState(String(model.contextWindow || 131072));
+  const [supportsVision, setSupportsVision] = useState(Boolean(model.supportsVision));
+  const [supportsTools, setSupportsTools] = useState(model.supportsTools !== false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const save = async (): Promise<void> => {
+    setError(null);
+    if (!isContextReported && !isValidOverrideContext(contextWindow)) {
+      setError(WORDS.invalidContext);
+      return;
+    }
+    setSaving(true);
+    try {
+      const override = buildOverride(
+        { context: isContextReported, vision: isVisionReported, tools: isToolsReported },
+        { context: Number(contextWindow.trim()), vision: supportsVision, tools: supportsTools },
+      );
+      await onSave(override);
+      onClose();
+    } catch {
+      setError(WORDS.saveFailed);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const reset = async (): Promise<void> => {
+    setError(null);
+    setSaving(true);
+    try {
+      await onSave(null);
+      onClose();
+    } catch {
+      setError(WORDS.saveFailed);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <DialogSurface
+      title={WORDS.configure}
+      titleIcon={
+        /* Model identifiers are user-configured on their own server and may name private projects: mask them in analytics */
+        <span data-analytics-mask className="font-mono text-xs text-ink-2 truncate max-w-[200px]">
+          ({model.label || model.id})
+        </span>
+      }
+      description={WORDS.configureLine}
+      onDismiss={onClose}
+      size="md"
+    >
+      <div className="flex flex-col gap-4 py-2">
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-center justify-between">
+            <label htmlFor="model-context-size" className="text-xs font-medium text-foreground">
+              {WORDS.contextSize}
+            </label>
+            {isContextReported && (
+              <span className="text-micro font-medium text-ink-3 uppercase tracking-wide">
+                {WORDS.reportedByServer}
+              </span>
+            )}
+          </div>
+          <input
+            id="model-context-size"
+            type="number"
+            min={MIN_OVERRIDE_CONTEXT}
+            max={MAX_OVERRIDE_CONTEXT}
+            step={1024}
+            disabled={isContextReported}
+            value={contextWindow}
+            onChange={(e) => {
+              setContextWindow(e.target.value);
+              if (error) setError(null);
+            }}
+            className={`h-8 rounded border border-input bg-field px-2.5 font-mono text-xs text-foreground focus:outline-none focus:border-accent-ink ${
+              isContextReported ? "opacity-60 cursor-not-allowed" : ""
+            }`}
+          />
+          {!isContextReported && (
+            <div className="flex flex-wrap gap-1.5 pt-1">
+              {PRESET_CONTEXTS.map((preset) => (
+                <button
+                  type="button"
+                  key={preset.value}
+                  onClick={() => {
+                    setContextWindow(String(preset.value));
+                    if (error) setError(null);
+                  }}
+                  className={`rounded border px-2 py-0.5 text-micro transition-colors ${
+                    contextWindow === String(preset.value)
+                      ? "border-accent bg-accent/10 font-medium text-accent"
+                      : "border-input bg-surface-raised text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {preset.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <ModelCapabilities
+          isVisionReported={isVisionReported}
+          isToolsReported={isToolsReported}
+          supportsVision={supportsVision}
+          supportsTools={supportsTools}
+          onVisionChange={setSupportsVision}
+          onToolsChange={setSupportsTools}
+        />
+
+        {error && (
+          <p role="alert" className="text-xs text-red">
+            {error}
+          </p>
+        )}
+
+        <div className="flex items-center justify-between gap-2 pt-4 border-t border-line">
+          <Button variant="ghost" size="sm" onClick={reset} disabled={saving}>
+            {WORDS.resetDefault}
+          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={onClose} disabled={saving}>
+              {WORDS.cancel}
+            </Button>
+            <Button variant="default" size="sm" onClick={save} disabled={saving}>
+              {saving ? WORDS.saving : WORDS.save}
+            </Button>
+          </div>
+        </div>
+      </div>
+    </DialogSurface>
+  );
+}
+
 /** The saved server's models: each with its context, and whether it sees or cannot build. */
-function ServerModels({ models }: { models: EngineDescriptor["models"] }): JSX.Element | null {
+function ServerModels({
+  models,
+  onConfigure,
+}: {
+  models: EngineDescriptor["models"];
+  onConfigure: (model: EngineDescriptor["models"][number]) => void;
+}): JSX.Element | null {
   if (models.length === 0) return null;
   return (
     // The person's own server names its models: a replay shows them masked.
@@ -300,11 +526,35 @@ function ServerModels({ models }: { models: EngineDescriptor["models"] }): JSX.E
       data-analytics-mask
     >
       {models.map((model) => (
-        <li key={model.id} className="flex min-h-8 flex-wrap items-baseline gap-x-2.5 px-2.5 py-1">
-          <span className="min-w-0 break-all font-mono text-xs text-ink">{model.label}</span>
-          <span className={`text-micro ${model.supportsTools ? "text-muted-foreground" : "text-orange"}`}>
-            {modelDetails(model)}
-          </span>
+        <li
+          key={model.id}
+          className="group flex min-h-8 flex-wrap items-center justify-between gap-x-2.5 px-2.5 py-1.5 rounded-md hover:bg-surface-raised cursor-pointer transition-colors"
+          onClick={() => onConfigure(model)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              onConfigure(model);
+            }
+          }}
+          title={WORDS.configure}
+        >
+          <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2.5">
+            <span className="min-w-0 break-all font-mono text-xs text-ink">{model.label}</span>
+            <span className={`text-micro ${model.supportsTools ? "text-muted-foreground" : "text-orange"}`}>
+              {modelDetails(model)}
+            </span>
+          </div>
+          <button
+            type="button"
+            className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent-ink p-1 text-ink-3 hover:text-ink focus-visible:text-ink transition-opacity rounded"
+            aria-label={WORDS.configure}
+            onClick={(e) => {
+              e.stopPropagation();
+              onConfigure(model);
+            }}
+          >
+            <Icon name="settings" size={13} />
+          </button>
         </li>
       ))}
     </ul>
@@ -354,6 +604,7 @@ export function LocalServerRow({
   const actions = useServerActions(onEnginesRefresh);
   const { checking, recheck } = useRecheck(EngineId.LocalServer, onEnginesRefresh);
   const [editing, setEditing] = useState(false);
+  const [configModel, setConfigModel] = useState<EngineDescriptor["models"][number] | null>(null);
   const server = engine.server ?? null;
   const state = localServerRowState(engine, { connecting: actions.connecting });
   useRowViewed(EngineId.LocalServer, state, ProviderSurface.Settings, null);
@@ -400,7 +651,19 @@ export function LocalServerRow({
           onSave={(key) => void actions.connect(server.url, key, LocalServerVia.SavedKey, () => {})}
         />
       )}
-      {state === LocalServerRowState.Connected && !editing && <ServerModels models={engine.models} />}
+      {state === LocalServerRowState.Connected && !editing && (
+        <ServerModels models={engine.models} onConfigure={setConfigModel} />
+      )}
+      {configModel && (
+        <ModelConfigDialog
+          model={configModel}
+          onClose={() => setConfigModel(null)}
+          onSave={async (override) => {
+            await window.studio.localServerSetModelOverride(configModel.id, override);
+            await onEnginesRefresh();
+          }}
+        />
+      )}
       {problem && (
         <p role="alert" className="text-body-sm text-red">
           {problem}

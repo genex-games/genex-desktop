@@ -2031,6 +2031,10 @@ export default {
   "Local models": "本地模型",
   "Local server": "本地服务器",
   "Local server options": "本地服务器选项",
+  "Reported by server": "服务端已报告",
+  "Custom context length and vision for this model on your local server. Saved to models.json.":
+    "为此本地服务器模型自定义上下文长度和视觉支持。已保存至 models.json。",
+  "Reset to default": "恢复默认",
   "Local servers are unavailable": "本地服务器不可用",
   "Long work the lead or a worker started, like a build. It runs on while the agents go on working.":
     "主智能体或助手启动的长时间工作，比如构建。智能体继续工作时，它也会一直运行。",
@@ -6160,4 +6164,10 @@ export default {
   "{title} was removed from Design": "{title} 已从“设计”中移除",
   "Opens in Design": "在“设计”中打开此页",
   "Question {step} of {of}": "第 {step} 个问题，共 {of} 个",
+  "Can call tools": "可调用工具",
+  Configure: "配置",
+  "Context size": "上下文大小",
+  "Context size must be between 1,024 and 10,000,000 tokens.": "上下文大小必须在 1,024 到 10,000,000 个 Token 之间。",
+  "Failed to save settings.": "保存设置失败。",
+  "Sees images": "可识图",
 } satisfies LocaleCatalog;

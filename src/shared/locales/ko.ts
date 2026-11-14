@@ -6380,4 +6380,15 @@ export default {
   "{title} was removed from Design": "{title} 페이지가 디자인에서 삭제됐어요",
   "Opens in Design": "디자인에서 열려요",
   "Question {step} of {of}": "질문 {step}/{of}",
+  "Can call tools": "도구 호출 가능",
+  Configure: "구성",
+  "Context size": "컨텍스트 크기",
+  "Context size must be between 1,024 and 10,000,000 tokens.":
+    "컨텍스트 크기는 1,024에서 10,000,000 토큰 사이여야 합니다.",
+  "Custom context length and vision for this model on your local server. Saved to models.json.":
+    "로컬 서버의 이 모델에 대한 사용자 정의 컨텍스트 길이 및 비전. models.json에 저장됩니다.",
+  "Failed to save settings.": "설정을 저장하지 못했습니다.",
+  "Reported by server": "서버에서 보고됨",
+  "Reset to default": "기본값으로 재설정",
+  "Sees images": "이미지 인식",
 } satisfies LocaleCatalog;

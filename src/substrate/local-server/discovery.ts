@@ -17,7 +17,7 @@ import { OllamaClient } from "../engines/ollama.ts";
 import { type EngineModel, ModelContextSource } from "../engines/types.ts";
 import { SECOND_MS } from "../../shared/duration.ts";
 import { errorMessage } from "../../shared/errors.ts";
-import { type FoundLocalServer, LocalServerKind } from "../../shared/local-server.ts";
+import { type FoundLocalServer, LocalServerKind, type ModelOverride } from "../../shared/local-server.ts";
 import { t } from "../../shared/i18n.ts";
 
 /** How long one discovery request waits. */
@@ -374,19 +374,28 @@ function merged(first: ModelFacts, later: ModelFacts | undefined): ModelFacts {
 }
 
 /** A model as a picker row: unknown context planned for, tool calling taken as given unless refused. */
-function modelRow(id: string, facts: ModelFacts): EngineModel {
-  const context = facts.context ?? { tokens: UNKNOWN_CONTEXT_TOKENS, source: ModelContextSource.Unknown };
+function modelRow(id: string, facts: ModelFacts, override?: ModelOverride): EngineModel {
+  const contextTokens = facts.context?.tokens ?? override?.contextWindow ?? UNKNOWN_CONTEXT_TOKENS;
+  const contextSource =
+    facts.context?.source ?? (override?.contextWindow ? ModelContextSource.Configured : ModelContextSource.Unknown);
+
+  const supportsVision = facts.vision ?? override?.supportsVision ?? false;
+  const supportsTools = facts.tools ?? override?.supportsTools ?? true;
+
   return {
     id,
     label: facts.label ?? id,
-    contextWindow: context.tokens,
-    contextSource: context.source,
-    maxTokens: Math.min(MAX_REPLY_TOKENS, Math.floor(context.tokens / 4)),
-    supportsTools: facts.tools ?? true,
-    supportsVision: facts.vision ?? false,
+    contextWindow: contextTokens,
+    contextSource,
+    reportedContextWindow: facts.context?.tokens,
+    reportedVision: facts.vision,
+    reportedTools: facts.tools,
+    maxTokens: Math.min(MAX_REPLY_TOKENS, Math.floor(contextTokens / 4)),
+    supportsTools,
+    supportsVision,
     supportsThinking: false,
     installed: true,
-    ...(facts.context ? {} : { note: MESSAGE.UnknownContext() }),
+    ...(facts.context || override?.contextWindow ? {} : { note: MESSAGE.UnknownContext() }),
   };
 }
 
@@ -395,13 +404,14 @@ export async function serverModels(
   access: ServerAccess,
   kind: LocalServerKind | null,
   entries: ListedModel[],
+  overrides?: Record<string, ModelOverride>,
 ): Promise<EngineModel[]> {
   const ids = entries.map((entry) => String(entry.id));
   const extra = await kindFacts(access, kind, ids).catch(() => new Map<string, ModelFacts>());
   return entries.flatMap((entry) => {
     const id = String(entry.id);
     const facts = merged(entryFacts(entry), extra.get(id));
-    return facts.skip ? [] : [modelRow(id, facts)];
+    return facts.skip ? [] : [modelRow(id, facts, overrides?.[id])];
   });
 }
 

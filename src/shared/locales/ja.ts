@@ -6535,4 +6535,15 @@ export default {
   "{title} was removed from Design": "{title} は「デザイン」から削除されました",
   "Opens in Design": "「デザイン」で開きます",
   "Question {step} of {of}": "質問{step}/{of}",
+  "Can call tools": "ツール呼び出し可能",
+  Configure: "設定",
+  "Context size": "コンテキストサイズ",
+  "Context size must be between 1,024 and 10,000,000 tokens.":
+    "コンテキストサイズは1,024から10,000,000トークンの間である必要があります。",
+  "Custom context length and vision for this model on your local server. Saved to models.json.":
+    "ローカルサーバー上のこのモデルのカスタムコンテキスト長と画像認識。models.json に保存されます。",
+  "Failed to save settings.": "設定の保存に失敗しました。",
+  "Reported by server": "サーバーから報告",
+  "Reset to default": "デフォルトに戻す",
+  "Sees images": "画像認識",
 } satisfies LocaleCatalog;

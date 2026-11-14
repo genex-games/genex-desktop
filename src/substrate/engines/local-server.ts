@@ -53,11 +53,17 @@ import {
   serverModels,
 } from "../local-server/discovery.ts";
 import { answerDeltas, splitInlineThinking } from "../local-server/inline-thinking.ts";
-import type { SavedServer, ServerSettings } from "../local-server/settings.ts";
+import {
+  type ModelOverridesStore,
+  modelOverridesStore,
+  type SavedServer,
+  type ServerSettings,
+} from "../local-server/settings.ts";
 import { HOUR_MS, SECOND_MS } from "../../shared/duration.ts";
 import { ContextSource } from "../../shared/context.ts";
 import { EngineKind, EngineStatusCode } from "../../shared/engine-descriptor.ts";
 import { EngineFailureKind } from "../../shared/engine-requests.ts";
+import type { ModelOverride } from "../../shared/local-server.ts";
 import {
   type FoundLocalServer,
   LOCAL_SERVER_NAMES,
@@ -188,6 +194,8 @@ export interface LocalServerEngineOptions {
   toolPath?: () => Promise<string>;
   /** Where the server's address is saved. */
   settings: ServerSettings;
+  /** Where per-model capability overrides are kept; defaults to models.json in root. */
+  overridesStore?: ModelOverridesStore;
   /** Where its API key is kept. */
   keys: ApiKeyStore;
   /** The Ollama the app already reaches as its own provider, which is never connected twice. */
@@ -211,6 +219,7 @@ export class LocalServerEngine implements Engine {
   readonly steersMidTurn = true;
   readonly sessions: LocalSessions;
   readonly #settings: ServerSettings;
+  readonly #overrides: ModelOverridesStore;
   readonly #keys: ApiKeyStore;
   readonly #catalog: ModelCatalog;
   readonly #ollamaHost: string;
@@ -223,6 +232,7 @@ export class LocalServerEngine implements Engine {
 
   constructor(options: LocalServerEngineOptions) {
     this.#settings = options.settings;
+    this.#overrides = options.overridesStore ?? modelOverridesStore(path.join(options.root, "models.json"));
     this.#keys = options.keys;
     this.#ollamaHost = options.ollamaHost ?? DEFAULT_OLLAMA_HOST;
     this.#lookup = options.lookup;
@@ -405,7 +415,14 @@ export class LocalServerEngine implements Engine {
     const kind = (await identifyServer(access, list)) ?? saved.kind;
     // The software can change behind one address (LM Studio stopped, llama.cpp started on its port).
     if (kind !== saved.kind) await this.#settings.write({ url: saved.url, kind });
-    return { models: await serverModels(access, kind, list.entries), source: ModelCatalogSource.Provider };
+    const overrides = await this.#overrides.read();
+    return { models: await serverModels(access, kind, list.entries, overrides), source: ModelCatalogSource.Provider };
+  }
+
+  /** Save or clear a user-configured override for one model, then refresh the catalog. */
+  async setModelOverride(id: string, override: ModelOverride | null): Promise<void> {
+    await this.#overrides.write(id, override);
+    await this.refreshModels(true);
   }
 
   /** The first model the server lists: a local model costs nothing, so the app may pick it. */

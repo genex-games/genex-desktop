@@ -6,6 +6,7 @@ import type { ProviderUsageService } from "../core/provider-usage.ts";
 import { isBonsaiModelId } from "../../substrate/bonsai/manifest.ts";
 import { BonsaiEngine } from "../../substrate/engines/bonsai.ts";
 import { LocalServerEngine } from "../../substrate/engines/local-server.ts";
+import { sanitizeModelOverride } from "../../substrate/local-server/settings.ts";
 import { detectHardware, fitFor } from "../../substrate/hardware.ts";
 import { lookupOllamaModel } from "../../substrate/ollama-registry.ts";
 import { hardwareReport } from "../core/hardware-report.ts";
@@ -265,4 +266,10 @@ function registerLocalServerIpc(
     return status;
   });
   handle("studio:local-server.find", async () => localServer().find());
+  handle("studio:local-server.set-model-override", async (payload) => {
+    if (!payload || typeof payload.id !== "string" || !payload.id.trim()) return;
+    const cleanOverride = sanitizeModelOverride(payload.override);
+    await localServer().setModelOverride(payload.id.trim(), cleanOverride);
+    changed();
+  });
 }

@@ -87,3 +87,16 @@ export interface FoundLocalServer {
   /** How many models it lists; zero while it asks for a key. */
   models: number;
 }
+
+/** The fewest tokens a person may set as a model's context window. */
+export const MIN_OVERRIDE_CONTEXT = 1024;
+
+/** The most tokens a person may set as a model's context window. */
+export const MAX_OVERRIDE_CONTEXT = 10_000_000;
+
+/** User-customized model overrides for local server models. */
+export interface ModelOverride {
+  contextWindow?: number;
+  supportsVision?: boolean;
+  supportsTools?: boolean;
+}
