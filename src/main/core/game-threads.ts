@@ -117,7 +117,8 @@ export class GameThreadService {
     // Keep the first-ask title (or "New chat"). Naming the chat after the folder made every
     // row in that folder identical — the rail then had nothing to tell chats apart.
     // updateThread merges: only the keys this changes, so a stale copy never overwrites others.
-    await this.#core.store.updateThread(threadId, { metadata: { kind: ThreadKind.Game, project } });
+    await this.#core.store.updateThread(threadId, { metadata: { kind: ThreadKind.Game, project, archived: false } });
+    await this.#core.games.rememberThread(project, threadId);
     this.#core.emit(UiEvent.ThreadBound, { threadId, project });
   }
 
@@ -136,11 +137,15 @@ export class GameThreadService {
     const bound = new Map<string, ConversationRecord>();
     for (const t of threads) {
       const m = metaOf(t);
-      if (isBoundGameThread(m)) bound.set(m.project, t);
+      if (isBoundGameThread(m) && games.has(m.project)) bound.set(m.project, t);
     }
 
     for (const thread of threads) {
-      if (!isUnboundGameThread(metaOf(thread))) continue;
+      const m = metaOf(thread);
+      const isEligible =
+        isUnboundGameThread(m) ||
+        (m.kind === ThreadKind.Game && !m.archived && Boolean(m.project) && !games.has(m.project as string));
+      if (!isEligible) continue;
       const events = await this.#core.store.listEvents(thread.id).catch(() => []);
       const project = this.projectBuiltIn(events, games);
       if (!project) continue;

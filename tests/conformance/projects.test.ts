@@ -25,7 +25,19 @@ after(async () => {
 describe("project folders", () => {
   it("slugFromName and tildePath are what the sidebar shows", () => {
     assert.equal(slugFromName("My Cool Game"), "my-cool-game");
-    assert.equal(tildePath("/Users/simeon/coding/rift", "/Users/simeon"), "~/coding/rift");
+    const expectedTilde = process.platform === "win32" ? "~\\coding\\rift" : "~/coding/rift";
+    assert.equal(tildePath("/Users/simeon/coding/rift", "/Users/simeon"), expectedTilde);
+  });
+
+  it("slugFromName handles non-ASCII and edge-case titles without trailing hyphens", () => {
+    assert.equal(slugFromName("做一个贪吃蛇游戏"), "game");
+    assert.equal(slugFromName("贪吃蛇 游戏"), "game");
+    assert.equal(slugFromName("сделай змейку"), "game");
+    assert.equal(slugFromName("🎮🎲"), "game");
+    assert.equal(slugFromName("game-"), "game");
+    assert.equal(slugFromName("-cool-game-"), "cool-game");
+    assert.equal(slugFromName("123"), "123");
+    assert.equal(slugFromName(""), "game");
   });
 
   it("adopts a folder anywhere, keeps the user's stills, and its web starter brings the missing game files", async () => {

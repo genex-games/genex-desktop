@@ -2567,6 +2567,9 @@ export class StudioCore {
       if (run?.state === RunState.Running)
         throw new CodedError(WorkspaceRefusal.BuildRunning, MESSAGE.buildStillRunning());
     }
+    for (const thread of threads) {
+      await this.store.updateThread(thread.id, { metadata: { archived: true } });
+    }
     await this.games.forget(project);
     this.emit(UiEvent.GameChanged, { project });
   }

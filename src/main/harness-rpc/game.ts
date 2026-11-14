@@ -4,6 +4,7 @@ import path from "node:path";
 import { readFile, realpath } from "node:fs/promises";
 import { ensureDir, realpathNearest, writeFileNoFollow } from "../../substrate/fsx.ts";
 import { isImageFile } from "../../substrate/game-workspace.ts";
+import { slugFromName } from "../../shared/game-folder-name.ts";
 import { ThreadKind } from "../../shared/event-log.ts";
 import { starterOfKind } from "../../shared/project-facts.ts";
 import {
@@ -115,15 +116,21 @@ async function scaffold(
   // No kind makes a game with no kind yet; the web starter only when the caller names it.
   const starter = starterOfKind(p.kind);
   if (starter === undefined) throw new Error(MESSAGE.onlyBrowserGames);
-  const options = p.title ? { title: p.title } : {};
-  const made = starter ? await core.games.scaffold(p.name, options) : await core.games.makeEmpty(p.name, options);
+  const name = slugFromName(p.name);
+  const title = p.title?.trim() || (p.name !== name ? p.name.trim() : name);
+  const options = title ? { title } : {};
+  const made = starter ? await core.games.scaffold(name, options) : await core.games.makeEmpty(name, options);
   const project = await x.readyProject(made);
   // A brief sent from an unbound "new game" thread names that thread the moment the
   // folder exists — the chat and the project become one thing.
   if (p.threadId && p.threadId !== core.mainThread) {
     const record = await core.store.getRecord(p.threadId).catch(() => null);
     const meta = record?.metadata as { kind?: string; project?: string | null } | undefined;
-    if (meta?.kind === ThreadKind.Game && !meta.project) await core.bindThreadToProject(p.threadId, project.name);
+    if (meta?.kind === ThreadKind.Game) {
+      const games = new Set((await core.games.list()).map((g) => g.name));
+      const unboundOrDangling = !meta.project || !games.has(meta.project) || meta.project !== project.name;
+      if (unboundOrDangling) await core.bindThreadToProject(p.threadId, project.name);
+    }
   }
   return project;
 }

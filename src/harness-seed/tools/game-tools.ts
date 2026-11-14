@@ -75,9 +75,11 @@ export const tools: HarnessTool[] = [
         title: args.title ?? args.name,
         ...(web ? { kind: ProjectStarter.Web } : {}),
       });
-      if (!web) return `Created ${project.name} at ${project.dir}: an empty folder, yours to fill.`;
-      await ctx.call(HostMethod.PreviewLoad, { project: args.name });
-      return `Created ${project.name} at ${project.dir} and loaded it in the preview.`;
+      const content = !web
+        ? `Created ${project.name} at ${project.dir}: an empty folder, yours to fill.`
+        : `Created ${project.name} at ${project.dir} and loaded it in the preview.`;
+      if (web) await ctx.call(HostMethod.PreviewLoad, { project: project.name });
+      return { ok: true, content, details: { project: project.name } };
     },
   },
 
