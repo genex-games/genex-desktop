@@ -406,22 +406,12 @@
   .animate-spin,
   .making-spinner,
   .genex-connect-shine,
+  .step-mark-turn,
   .loader-grid > span,
   [style*="infinite"]
 ),
 :root[data-motion="rest"] .graph-shimmer::after {
   animation-play-state: paused !important;
-}
-/* A selected node opening into its card over the zoomed canvas. */
-@keyframes focus-in {
-  0% {
-    opacity: 0;
-    transform: scale(0.96);
-  }
-  100% {
-    opacity: 1;
-    transform: scale(1);
-  }
 }
 @keyframes graph-shimmer {
   0% {
@@ -6617,6 +6607,12 @@ a:focus-visible {
 .asset-thumbnail {
   animation: fade-in 150ms ease-out;
 }
+/* A thumbnail that keeps its whole shape (a sprite, a model's render; panels/AssetThumbnail.tsx)
+   shows on what is behind its frame: the frame drops its fill, so no band of it shows beside it. */
+.bg-inset:has(> [data-thumbnail-fit="contain"]),
+.asset-tile:has([data-thumbnail-fit="contain"]) {
+  background: transparent;
+}
 /* An asset card while its asset is being made (panels/MakingCard.tsx), in the spot it will land:
    the kind's drawing, the tool at top left, the clock at top right, the kind and prompt below. */
 .making-card {
@@ -8791,6 +8787,21 @@ p.usage-divider {
     transition: none;
   }
   .remix-stage {
+    animation: none;
+  }
+}
+
+/* A step at work: its dashed ring turns slowly, so the person sees something is happening (StepMark). */
+@keyframes step-mark-turn {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.step-mark-turn {
+  animation: step-mark-turn 2.4s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .step-mark-turn {
     animation: none;
   }
 }

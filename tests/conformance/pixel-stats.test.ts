@@ -3,7 +3,7 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { computePixelStats, isEffectivelyBlack } from "../../src/substrate/pixel-stats.ts";
+import { computePixelStats, hasTransparency, isEffectivelyBlack } from "../../src/substrate/pixel-stats.ts";
 
 /** A width×height BGRA buffer with every pixel set to the same [b, g, r, a] quad. */
 function bitmap(width: number, height: number, quad: [number, number, number, number]): Buffer {
@@ -70,5 +70,18 @@ describe("pixel stats", () => {
     assert.equal(stats.sampled, 40_000);
     assert.equal(stats.litFraction, 1);
     assert.ok(stats.meanLuma > 250);
+  });
+
+  it("tells a see-through picture from an opaque one by its alpha alone", () => {
+    assert.equal(hasTransparency(bitmap(8, 8, [0, 0, 0, 255])), false, "opaque black");
+    assert.equal(hasTransparency(bitmap(8, 8, [255, 255, 255, 255])), false, "opaque white");
+    const sprite = bitmap(8, 8, [40, 80, 120, 255]);
+    paint(sprite, 63, [0, 0, 0, 0]);
+    assert.equal(hasTransparency(sprite), true, "one clear corner pixel");
+    const soft = bitmap(8, 8, [40, 80, 120, 255]);
+    paint(soft, 0, [40, 80, 120, 254]);
+    assert.equal(hasTransparency(soft), true, "one softened pixel");
+    assert.equal(hasTransparency(Buffer.alloc(0)), false, "no pixels");
+    assert.equal(hasTransparency(Buffer.from([0, 0, 0])), false, "no whole pixel");
   });
 });

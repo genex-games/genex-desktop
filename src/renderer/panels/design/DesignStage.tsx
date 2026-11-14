@@ -8,8 +8,10 @@
  * person has to say goes on the canvas, as notes and picks that Tell Genex sends to the chat.
  */
 import {
+  type CSSProperties,
   type DragEvent as ReactDragEvent,
   type JSX,
+  memo,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
   type RefObject,
@@ -31,11 +33,13 @@ import {
   DesignSignal,
   type DesignSpot,
   DesignTheme,
+  displayName,
   themedPageUrl,
 } from "../../../shared/design-board.ts";
 import { SECOND_MS } from "../../../shared/duration.ts";
 import { t } from "../../../shared/i18n.ts";
 import {
+  CANVAS_ZOOM_PROPERTY,
   type CanvasBounds,
   gridTransform,
   keepView,
@@ -43,6 +47,7 @@ import {
   PINCH_ZOOM_RATE,
   useCanvasView,
   useOnWheel,
+  viewportPoint,
   WHEEL_ZOOM_RATE,
   zoomAt,
 } from "../../canvas-view.ts";
@@ -64,7 +69,6 @@ import { BoardChrome, BoardTool } from "./BoardTools.tsx";
 import {
   CAPTION_HEIGHT,
   changedFiles,
-  displayName,
   heldAfter,
   heldFrames,
   MODEL_SIZE,
@@ -75,7 +79,9 @@ import {
   withGhosts,
   sizeAfter,
   turnedModels,
+  UNZOOMED,
   type WallFrame,
+  zoomedWidth,
 } from "./design-model.ts";
 import { ASK_FOR_DESIGN_PROMPT } from "./design-prompts.ts";
 import { type ArtboardDrag, type ArtboardDragger, useArtboardDrag } from "./use-artboard-drag.ts";
@@ -238,7 +244,12 @@ function useWallCamera(project: string, bounds: CanvasBounds | null) {
   const touch = useCallback(() => {
     touched.current = true;
   }, []);
-  const canvas = useCanvasView({ initial: keptView(wallViewKey(project)) ?? { k: 1, tx: 0, ty: 0 }, onPan: touch });
+  // The pages' frames would take the wheel from the canvas mid-gesture: the layer lets it through.
+  const canvas = useCanvasView({
+    initial: keptView(wallViewKey(project)) ?? { k: 1, tx: 0, ty: 0 },
+    onPan: touch,
+    holdLayer: true,
+  });
   const { viewRef, fit, zoomBy, apply, viewport } = canvas;
   useOnWheel(viewport, touch);
   useLayoutEffect(() => {
@@ -284,24 +295,36 @@ const pageRect = (frame: WallFrame): CanvasBounds => ({
 });
 
 /** The parts of the canvas's camera a page's signals move. */
-type SignalCamera = Pick<WallCamera, "touch" | "update" | "viewport" | "viewRef">;
+type SignalCamera = Pick<WallCamera, "touch" | "viewRef" | "wheelGlide" | "dragGlide">;
 
-/** A wheel over a page zooms the canvas about the point under the cursor, as a wheel over the canvas does. */
+/**
+ * A wheel over a page zooms the canvas about the point under the cursor, as a wheel over the
+ * canvas does, and as smoothly: the point is read off the camera and where the page hangs (no
+ * layout is read per tick), and the camera moves in the compositor until the wheel rests.
+ */
 function zoomOverPage(
   camera: SignalCamera,
-  frame: HTMLIFrameElement,
+  sheet: WallFrame,
   wheel: Extract<DesignFrameSignal, { type: typeof DesignSignal.Wheel }>,
 ): void {
-  const port = camera.viewport.current;
-  if (!port) return;
-  const sheet = frame.getBoundingClientRect();
-  const box = port.getBoundingClientRect();
-  const { k } = camera.viewRef.current;
+  const view = camera.viewRef.current;
   const rate = wheel.pinch ? PINCH_ZOOM_RATE : WHEEL_ZOOM_RATE;
-  const px = sheet.left - box.left + wheel.x * k;
-  const py = sheet.top - box.top + wheel.y * k;
+  const at = viewportPoint(view, { x: sheet.x + wheel.x, y: sheet.y + wheel.y });
+  const next = zoomAt(view, Math.exp(-wheel.dy * rate), at.x, at.y);
+  if (next === view) return;
   camera.touch();
-  camera.update((view) => zoomAt(view, Math.exp(-wheel.dy * rate), px, py));
+  camera.wheelGlide.move(next);
+}
+
+/** A drag over a page pans the canvas, in the compositor, until the page says the drag ended. */
+function panOverPage(camera: SignalCamera, drag: Extract<DesignFrameSignal, { type: typeof DesignSignal.Drag }>): void {
+  if (drag.end) {
+    camera.dragGlide.end();
+    return;
+  }
+  const view = camera.viewRef.current;
+  camera.touch();
+  camera.dragGlide.move({ ...view, tx: view.tx + drag.dx, ty: view.ty + drag.dy });
 }
 
 /** What a frame told the tab, kept by its address: its title and a size that only grows while the address is the same. */
@@ -315,17 +338,18 @@ function toldAfter(
 
 /** What the canvas does with the pages' signals. */
 interface SignalHandlers {
-  project: string;
   camera: SignalCamera;
   onTold: (next: (now: Told) => Told) => void;
   onShowFile: (file: string) => void;
+  /** Where an artboard hangs this moment. */
+  hangOf: (file: string) => WallFrame | undefined;
 }
 
-/** One signal of one frame, acted on. */
+/** One signal of one page, acted on. */
 function actOnSignal(
-  { project, camera, onTold, onShowFile }: SignalHandlers,
+  { camera, onTold, onShowFile, hangOf }: SignalHandlers,
   url: string,
-  frame: HTMLIFrameElement,
+  file: string,
   signal: DesignFrameSignal,
 ): void {
   switch (signal.type) {
@@ -338,12 +362,13 @@ function actOnSignal(
     case DesignSignal.Link:
       window.open(signal.url, "_blank", "noopener");
       break;
-    case DesignSignal.Wheel:
-      zoomOverPage(camera, frame, signal);
+    case DesignSignal.Wheel: {
+      const sheet = hangOf(file);
+      if (sheet) zoomOverPage(camera, sheet, signal);
       break;
+    }
     case DesignSignal.Drag:
-      camera.touch();
-      camera.update((view) => ({ ...view, tx: view.tx + signal.dx, ty: view.ty + signal.dy }));
+      panOverPage(camera, signal);
       break;
   }
 }
@@ -355,11 +380,11 @@ function actOnSignal(
  * loading behind the one on show says only what it holds.
  */
 function usePageSignals(hung: readonly HungItem[], frames: FrameMap, handlers: SignalHandlers): void {
-  useFrameSignals(frames, (url, frame, signal) => {
+  useFrameSignals(frames, (url, _frame, signal) => {
     const sheet = hung.find((one) => one.shown === url || one.next === url);
     if (!sheet) return;
     if (sheet.shown !== url && signal.type !== DesignSignal.Page) return;
-    actOnSignal(handlers, url, frame, signal);
+    actOnSignal(handlers, url, sheet.item.file, signal);
   });
 }
 
@@ -548,11 +573,20 @@ function useWallSheets(board: DesignBoard, places: DesignMarks["places"], making
     [hung, natural, pageSize, places, making],
   );
   /** An artboard's caption as the person reads it. */
-  const captionOf = (file: string): string => {
-    const sheet = hung.find((one) => one.item.file === file);
-    return sheet ? pageCaption(sheet.item, told[sheet.shown]?.title) : captionOfFile(file);
-  };
-  return { hung, told, setTold, settle, setNatural, pageSize, layout, captionOf, making };
+  const captionOf = useCallback(
+    (file: string): string => {
+      const sheet = hung.find((one) => one.item.file === file);
+      return sheet ? pageCaption(sheet.item, told[sheet.shown]?.title) : captionOfFile(file);
+    },
+    [hung, told],
+  );
+  /** A picture has loaded, at its own size. */
+  const onNatural = useCallback((url: string, size: PageSize) => setNatural((now) => ({ ...now, [url]: size })), []);
+  // One object while nothing in it changed: a camera move renders the canvas, not its artboards.
+  return useMemo(
+    () => ({ hung, told, setTold, settle, onNatural, pageSize, layout, captionOf, making }),
+    [hung, told, setTold, settle, onNatural, pageSize, layout, captionOf, making],
+  );
 }
 
 type WallSheets = ReturnType<typeof useWallSheets>;
@@ -588,14 +622,13 @@ const hangsNow = (frames: readonly WallFrame[], moving: ArtboardDrag | null): re
     ? frames.map((frame) => (frame.file === moving.file ? { ...frame, x: moving.x, y: moving.y } : frame))
     : frames;
 
-/** Every artboard of the canvas, each where it hangs. */
-function WallItems({
+/** Every artboard of the canvas, each where it hangs; a camera move renders none of them. */
+const WallItems = memo(function WallItems({
   project,
   board,
   sheets,
   marks,
   change,
-  zoom,
   dragger,
   frames,
   onShow,
@@ -605,32 +638,33 @@ function WallItems({
   sheets: WallSheets;
   marks: DesignMarks;
   change: (update: MarksChange) => void;
-  zoom: number;
   dragger: ArtboardDragger;
   frames: FrameMap;
   /** Bring one artboard into view. */
   onShow: (frame: WallFrame) => void;
 }): JSX.Element {
-  const { hung, told, layout, pageSize, settle, setNatural } = sheets;
+  const { hung, told, layout, pageSize, settle, onNatural } = sheets;
   const fresh = useFresh(board.items);
-  /** The name of the section an artboard starts, as the person reads it; null for one that starts none. */
-  const sectionAt = (file: string): string | null => {
-    const label = layout.labels.find((one) => one.file === file);
-    return label ? displayName(label.section) : null;
-  };
   const turned = useMemo(() => turnedModels(board.items), [board.items]);
+  const byFile = useMemo(() => new Map(hung.map((sheet) => [sheet.item.file, sheet])), [hung]);
+  /** The name of the section each artboard starts, as the person reads it. */
+  const sections = useMemo(
+    () => new Map(layout.labels.map((label) => [label.file, displayName(label.section)])),
+    [layout.labels],
+  );
+  const onPick = useCallback((file: string, pick: DesignPick) => change((now) => withPick(now, file, pick)), [change]);
   return (
     <>
       {layout.frames.map((frame) => {
-        const sheet = hung.find((one) => one.item.file === frame.file);
+        const sheet = byFile.get(frame.file);
+        const section = sections.get(frame.file) ?? null;
         if (!sheet)
           return (
             <MakingSheet
               key={frame.file}
               frame={frame}
               caption={sheets.captionOf(frame.file)}
-              section={sectionAt(frame.file)}
-              zoom={zoom}
+              section={section}
               drawing={sheets.making[0] === frame.file}
             />
           );
@@ -641,27 +675,26 @@ function WallItems({
             sheet={sheet}
             frame={frame}
             caption={pageCaption(sheet.item, told[sheet.shown]?.title)}
-            section={sectionAt(frame.file)}
-            zoom={zoom}
+            section={section}
             drag={dragger.drag?.file === frame.file ? dragger.drag : null}
-            onGrab={(event) => dragger.begin(frame, event)}
+            onGrab={dragger.begin}
             takeMoved={dragger.takeMoved}
             pick={marks.picks[frame.file]?.pick ?? null}
             offered={marks.choices.includes(frame.file)}
-            onPick={(pick) => change((now) => withPick(now, frame.file, pick))}
+            onPick={onPick}
             fresh={fresh.has(frame.file) && sheet.item.section !== DESIGN_DROPS}
             turnsItself={turned.has(frame.file)}
             frames={frames}
             pageSize={pageSize}
-            onLoaded={(url) => settle(sheet.item.file, url)}
-            onNatural={(size) => setNatural((now) => ({ ...now, [sheet.item.url]: size }))}
-            onShow={() => onShow(frame)}
+            onLoaded={settle}
+            onNatural={onNatural}
+            onShow={onShow}
           />
         );
       })}
     </>
   );
-}
+});
 
 /**
  * The canvas: every artboard of the board under the camera, the person's notes on them, the tools
@@ -685,22 +718,24 @@ function Wall({
   const { hung, layout } = sheets;
   const frames = useRef(new Map<string, HTMLIFrameElement>());
   const camera = useWallCamera(project, layout.bounds);
-  const { show } = camera;
-  const dragger = useArtboardDrag({
-    zoom: camera.view.k,
-    onStart: camera.touch,
-    onPlace: (file, place) => change((now) => placed(now, file, place)),
-  });
+  const { show, viewRef } = camera;
+  const zoomNow = useCallback(() => viewRef.current.k, [viewRef]);
+  const onPlace = useCallback(
+    (file: string, place: DesignPlace) => change((now) => placed(now, file, place)),
+    [change],
+  );
+  const dragger = useArtboardDrag({ zoomNow, onStart: camera.touch, onPlace });
   useDropOnWall(dropOnWall, project, camera, change);
   const hand = useBoardHand(camera, dropOnWall);
+  const hangs = useMemo(() => hangsNow(layout.frames, dragger.drag), [layout.frames, dragger.drag]);
   const showFile = (file: string): void => {
     const frame = layout.frames.find((placed) => placed.file === file);
     if (frame) show(pageRect(frame));
   };
-  usePageSignals(hung, frames, { project, camera, onTold: sheets.setTold, onShowFile: showFile });
+  const hangOf = (file: string): WallFrame | undefined => hangs.find((frame) => frame.file === file);
+  usePageSignals(hung, frames, { camera, onTold: sheets.setTold, onShowFile: showFile, hangOf });
   const { pointer, forget } = useAskedPage(project, layout.frames, show);
-  const zoom = camera.view.k;
-  const hangs = hangsNow(layout.frames, dragger.drag);
+  const showFrame = useCallback((frame: WallFrame) => show(pageRect(frame)), [show]);
   const pointed = pointer ? hangs.find((frame) => frame.file === pointer.file) : undefined;
   return (
     <div className="absolute inset-0 overflow-hidden bg-canvas select-none" onPointerDownCapture={forget}>
@@ -711,22 +746,19 @@ function Wall({
           sheets={sheets}
           marks={marks}
           change={change}
-          zoom={zoom}
           dragger={dragger}
           frames={frames}
-          onShow={(frame) => show(pageRect(frame))}
+          onShow={showFrame}
         />
         <BoardNotes
           marks={marks}
           frames={hangs}
-          zoom={zoom}
+          zoomNow={zoomNow}
           draft={hand.draft}
           change={change}
           onDraft={hand.setDraft}
         />
-        {pointer && pointed ? (
-          <AgentPointer frame={pointed} spot={pointer.spot} note={pointer.note} zoom={zoom} />
-        ) : null}
+        {pointer && pointed ? <AgentPointer frame={pointed} spot={pointer.spot} note={pointer.note} /> : null}
       </WallCanvas>
       <BoardChrome
         project={project}
@@ -741,7 +773,7 @@ function Wall({
         onPictures={hand.addPictures}
       />
       <WallZoom
-        percent={Math.round(zoom * 100)}
+        percent={Math.round(camera.view.k * 100)}
         onZoom={camera.zoomBy}
         onFit={camera.fitWall}
         onTidy={hasPlaces(marks) ? () => change(tidied) : null}
@@ -749,6 +781,9 @@ function Wall({
     </div>
   );
 }
+
+/** The layer's style: where the camera has it, and its zoom as the marks drawn against it read it. */
+type LayerStyle = CSSProperties & Record<typeof CANVAS_ZOOM_PROPERTY, number>;
 
 /** The canvas under its camera: the dotted grid and the layer the artboards hang on. A drag of the bare canvas pans it. */
 function WallCanvas({
@@ -775,6 +810,13 @@ function WallCanvas({
     window.addEventListener("pointerup", release);
     window.addEventListener("pointercancel", release);
   };
+  const layerStyle: LayerStyle = {
+    width: bounds?.w ?? 0,
+    height: bounds?.h ?? 0,
+    transform: `translate(${view.tx}px, ${view.ty}px) scale(${view.k})`,
+    transformOrigin: "0 0",
+    [CANVAS_ZOOM_PROPERTY]: view.k,
+  };
   return (
     <div ref={viewport} className="absolute inset-0 cursor-grab" onPointerDown={onDown}>
       <div
@@ -791,16 +833,7 @@ function WallCanvas({
           transformOrigin: "0 0",
         }}
       />
-      <div
-        ref={layer}
-        className="absolute top-0 left-0"
-        style={{
-          width: bounds?.w ?? 0,
-          height: bounds?.h ?? 0,
-          transform: `translate(${view.tx}px, ${view.ty}px) scale(${view.k})`,
-          transformOrigin: "0 0",
-        }}
-      >
+      <div ref={layer} className="absolute top-0 left-0" style={layerStyle}>
         {children}
       </div>
     </div>
@@ -808,13 +841,13 @@ function WallCanvas({
 }
 
 /** Genex's mark on an artboard that was just added or changed: its ring, and the cursor that drew it. */
-function FreshMark({ zoom }: { zoom: number }): JSX.Element {
+function FreshMark(): JSX.Element {
   return (
     <span
       data-design-fresh=""
       aria-hidden="true"
       className="pointer-events-none absolute top-full left-full z-10 flex items-start gap-0.5"
-      style={{ transform: `translate(-28px, -28px) scale(${1 / zoom})`, transformOrigin: "left top" }}
+      style={{ transform: `translate(-28px, -28px) ${UNZOOMED}`, transformOrigin: "left top" }}
     >
       <svg width="16" height="16" viewBox="0 0 24 24" className="shrink-0 text-accent">
         <path d="M4 3l15 8-7 2-3 7z" fill="currentColor" />
@@ -923,15 +956,15 @@ function ModelTile({
  * One artboard on the canvas: its caption (a press brings it into view) above it, then the page in
  * its closed frame, the picture, or the model. The caption keeps its size on screen whatever the
  * canvas's zoom, so a far canvas still reads; an artboard that just changed carries Genex's mark.
- * A drag of the caption, or of a picture itself, moves the artboard (`use-artboard-drag.ts`).
+ * A drag of the caption, or of a picture itself, moves the artboard (`use-artboard-drag.ts`). It
+ * renders only when something of its own changed.
  */
-function WallItem({
+const WallItem = memo(function WallItem({
   project,
   sheet,
   frame,
   caption,
   section,
-  zoom,
   drag,
   onGrab,
   takeMoved,
@@ -952,18 +985,16 @@ function WallItem({
   caption: string;
   /** Its section's name, on the section's first artboard: it stands above the caption. */
   section: string | null;
-  /** The canvas's zoom: the caption is drawn against it. */
-  zoom: number;
   /** Where the person is dragging it to, while they are. */
   drag: ArtboardDrag | null;
   /** A press on what moves it. */
-  onGrab: (event: ReactPointerEvent<HTMLElement>) => void;
+  onGrab: (frame: WallFrame, event: ReactPointerEvent<HTMLElement>) => void;
   /** Whether the press that just ended moved it. */
   takeMoved: () => boolean;
   /** What the person said of it, if anything; whether the agent offers it to pick among; and picking. */
   pick: DesignPick | null;
   offered: boolean;
-  onPick: (pick: DesignPick) => void;
+  onPick: (file: string, pick: DesignPick) => void;
   fresh: boolean;
   /** A model that loads without a press (`turnedModels`). */
   turnsItself: boolean;
@@ -971,14 +1002,15 @@ function WallItem({
   /** The size a page's frame of this address hangs at. */
   pageSize: (url: string) => PageSize;
   /** A changed page has loaded behind its sheet. */
-  onLoaded: (url: string) => void;
-  /** A picture has loaded: its own size. */
-  onNatural: (size: PageSize) => void;
-  onShow: () => void;
+  onLoaded: (file: string, url: string) => void;
+  /** A picture has loaded: its own size, by its address. */
+  onNatural: (url: string, size: PageSize) => void;
+  onShow: (frame: WallFrame) => void;
 }): JSX.Element {
   const { item } = sheet;
   const size = { width: frame.width, height: frame.height };
   const at = drag ?? frame;
+  const grab = (event: ReactPointerEvent<HTMLElement>): void => onGrab(frame, event);
   return (
     <div
       data-design-page={item.file}
@@ -992,7 +1024,7 @@ function WallItem({
       <div className="flex items-end" style={{ height: CAPTION_HEIGHT }}>
         <div
           className="flex flex-col items-start"
-          style={{ maxWidth: frame.width * zoom, transform: `scale(${1 / zoom})`, transformOrigin: "left bottom" }}
+          style={{ maxWidth: zoomedWidth(frame.width), transform: UNZOOMED, transformOrigin: "left bottom" }}
         >
           {section ? (
             <span
@@ -1006,9 +1038,9 @@ function WallItem({
             type="button"
             className="block max-w-full cursor-grab truncate pb-1.5 text-left text-ink-3 text-sm hover:text-ink"
             title={caption}
-            onPointerDown={onGrab}
+            onPointerDown={grab}
             onClick={() => {
-              if (!takeMoved()) onShow();
+              if (!takeMoved()) onShow(frame);
             }}
           >
             {caption}
@@ -1025,7 +1057,7 @@ function WallItem({
             next={sheet.next}
             title={caption}
             frames={frames}
-            onLoaded={onLoaded}
+            onLoaded={(url) => onLoaded(item.file, url)}
             styleOf={pageSize}
             className="rounded-[12px] shadow-card"
           />
@@ -1035,23 +1067,27 @@ function WallItem({
             src={item.url}
             alt={caption}
             draggable={false}
+            decoding="async"
             className={`block rounded-[12px] bg-inset object-cover ${drag ? "cursor-grabbing" : "cursor-grab"}`}
             style={size}
-            onPointerDown={onGrab}
+            onPointerDown={grab}
             onLoad={(event) =>
-              onNatural({ width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight })
+              onNatural(item.url, {
+                width: event.currentTarget.naturalWidth,
+                height: event.currentTarget.naturalHeight,
+              })
             }
           />
         ) : null}
         {item.kind === DesignItemKind.Model ? (
           <ModelTile key={item.url} project={project} item={item} size={size} turnsItself={turnsItself} />
         ) : null}
-        {offered || pick ? <BoardPick pick={pick} zoom={zoom} onPick={onPick} /> : null}
-        {fresh ? <FreshMark zoom={zoom} /> : null}
+        {offered || pick ? <BoardPick pick={pick} onPick={(chosen) => onPick(item.file, chosen)} /> : null}
+        {fresh ? <FreshMark /> : null}
       </div>
     </div>
   );
-}
+});
 
 /**
  * The canvas's zoom control, as Assets has: out, the zoom, in, and fit everything; and, once the

@@ -43,8 +43,12 @@ import { DelegationRefusal as seedDelegationRefusal } from "../../src/harness-se
 import * as seedWorkers from "../../src/harness-seed/loop/workers/contract.ts";
 import * as seedJobs from "../../src/harness-seed/loop/jobs/contract.ts";
 import { RESUME_RUN as seedResumeRun } from "../../src/harness-seed/loop/after-loop-run.ts";
-import { startAutopilot as seedStartAutopilot } from "../../src/harness-seed/loop/start-autopilot.ts";
+import {
+  buildTitleOf as seedBuildTitleOf,
+  startAutopilot as seedStartAutopilot,
+} from "../../src/harness-seed/loop/start-autopilot.ts";
 import * as seedVerdict from "../../src/harness-seed/loop/verdict.ts";
+import { cleanBuildTitle } from "../../src/shared/build-title.ts";
 import { endsChatSessions } from "../../src/shared/chat-rewind.ts";
 import * as chatRun from "../../src/shared/chat-run.ts";
 import { throughClaudeFolder as seedThroughClaudeFolder } from "../../src/harness-seed/loop/workers/claude-folder.ts";
@@ -192,6 +196,15 @@ const LOGS: Record<string, EventEnvelope[]> = {
     custom(5, "run_steering_delivered", { runId: "r1", sourceMessageId: "red", how: "lead" }),
   ],
 };
+
+describe("a build's title (shared/build-title.ts ↔ loop/start-autopilot.ts)", () => {
+  it("reads the title a launch names the same way: one line, unquoted, cut at a word", () => {
+    const long = "Пицца-кот на крышах ночного города ".repeat(4);
+    for (const raw of ["Pizza cat", '  "Neon   drift\nracer" ', "«Кот»", long, "x".repeat(90), "", "  ", 7, null]) {
+      assert.equal(cleanBuildTitle(raw), seedBuildTitleOf(raw), JSON.stringify(raw));
+    }
+  });
+});
 
 describe("the chat's run (shared/chat-run.ts ↔ loop/run-inbox.ts)", () => {
   it("the chat's own session after a run keeps the host's own tools: live run controls, and the resume it records", () => {

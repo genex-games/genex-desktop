@@ -7,8 +7,9 @@ import type { ProjectAsset } from "../../shared/game-assets.ts";
 import { previewBytes } from "../asset-bytes.ts";
 import { type SnapshotRead, viewerSnapshot } from "../asset-snapshot.ts";
 import { assetTitle } from "../asset-names.ts";
-import { dataUrlOf, keptOrMade } from "../kept-thumbnails.ts";
+import { dataUrlOf, keptOrMade, thumbnailKey } from "../kept-thumbnails.ts";
 import { createLane, type Lane } from "../thumbnail-lanes.ts";
+import { ThumbnailFit, thumbnailFit } from "../thumbnail-fit.ts";
 import { Icon } from "../ui/icons.tsx";
 import { t } from "../../shared/i18n.ts";
 
@@ -57,6 +58,14 @@ function viewerThumbnail(project: string, file: string, companions: string[], si
   return viewerSnapshot({ file, companions, read, width: THUMB_WIDTH, height: THUMB_HEIGHT }, signal);
 }
 
+/** Size the canvas to a `width`×`height` picture's shape, at most the thumbnail's size; an unknown size keeps the canvas. */
+function fitCanvas(canvas: HTMLCanvasElement, width: number, height: number): void {
+  if (!(width > 0 && height > 0)) return;
+  const scale = Math.min(1, THUMB_WIDTH / width, THUMB_HEIGHT / height);
+  canvas.width = Math.max(1, Math.round(width * scale));
+  canvas.height = Math.max(1, Math.round(height * scale));
+}
+
 /** A clip's first frame, drawn onto the thumbnail's canvas. */
 function firstFrame(
   bytes: PreviewBytes,
@@ -87,7 +96,9 @@ function firstFrame(
     video.muted = true;
     video.preload = "auto";
     video.onloadeddata = () => {
-      ctx.drawImage(video, 0, 0, THUMB_WIDTH, THUMB_HEIGHT);
+      // The frame keeps the clip's shape, so filling a card never stretches it.
+      fitCanvas(canvas, video.videoWidth, video.videoHeight);
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       finish();
     };
     video.onerror = () => finish(new Error(MESSAGE.videoCodec));
@@ -149,7 +160,7 @@ function useThumbnail(
   fallback: string | null,
   supported: boolean,
 ) {
-  const key = JSON.stringify([project, asset.assetRef ?? asset.file, asset.mtime, asset.bytes, asset.render]);
+  const key = thumbnailKey(project, asset);
   const ref = useRef<HTMLSpanElement>(null);
   const [src, setSrc] = useState<string | null>(() => fallback ?? cache.get(key) ?? null);
   const [error, setError] = useState(false);
@@ -202,6 +213,12 @@ function thumbnailState(src: string | null, error: boolean, supported: boolean):
   return supported ? "loading" : "unsupported";
 }
 
+/** The picture's classes by how it fills its frame (`thumbnail-fit.ts`). */
+const FIT_CLASS = {
+  [ThumbnailFit.Cover]: "object-cover",
+  [ThumbnailFit.Contain]: "object-contain",
+} as const satisfies Record<ThumbnailFit, string>;
+
 /** The thumbnail picture's alt text, by what it shows. */
 const ALT_WORDS: Partial<Record<ProjectAsset["kind"], string>> = { model: t("3D model preview") };
 
@@ -243,17 +260,21 @@ export function AssetThumbnail({
     <span className="px-2 text-center text-micro">{placeholderWords(error, supported, asset.file)}</span>
   );
   if (motion) return <MotionStandIn file={asset.file} />;
+  // A whole-shape picture shows on what is behind its frame: the frame drops its fill (theme.css).
+  const fit = src ? thumbnailFit(asset, src) : undefined;
   return (
     <span
       ref={ref}
       className="absolute inset-0 grid place-items-center"
       data-thumbnail-state={thumbnailState(src, error, supported)}
+      data-thumbnail-fit={fit}
     >
-      {src ? (
+      {src && fit ? (
         <img
           src={src}
           alt={ALT_WORDS[asset.kind] ?? t("Asset preview")}
-          className={`h-full w-full object-contain ${fresh ? "asset-thumbnail" : ""}`}
+          // Placed over the whole frame: a grid row would grow to a tall picture and cut its foot off.
+          className={`absolute inset-0 h-full w-full ${FIT_CLASS[fit]} ${fresh ? "asset-thumbnail" : ""}`}
           draggable={false}
         />
       ) : (

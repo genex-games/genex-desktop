@@ -384,6 +384,13 @@ export function exposureStats(bgra: Buffer, width: number, height: number): Stil
   return { lumaMean, lumaStdDev, nearBlackFraction: nearBlack / pixelCount, litFraction: lit / pixelCount };
 }
 
+/** Whether any pixel of a BGRA bitmap lets what is behind it show: a sprite, never a photo or a frame. */
+export function hasTransparency(bgra: Buffer): boolean {
+  const whole = bgra.length - (bgra.length % 4);
+  for (let alpha = 3; alpha < whole; alpha += 4) if (bgra[alpha] !== 255) return true;
+  return false;
+}
+
 /** Under half a percent lit is a blank screen, whatever the probes claim. */
 export function isEffectivelyBlack(stats: PixelStats): boolean {
   return stats.litFraction < 0.005;

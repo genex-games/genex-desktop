@@ -1,6 +1,7 @@
 /** The Builds tab's bar of the chat's builds, its Play button, and the zoom pill in the canvas corner. */
 import type { JSX, KeyboardEvent, ReactNode, RefObject } from "react";
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
+import { buildTitle } from "../../../shared/build-title.ts";
 import { t } from "../../../shared/i18n.ts";
 import { RunState } from "../../../shared/run-state.ts";
 import { buildWhen, type HistoryEntry, historyLabel, isNewestBuild } from "../../build-progress.ts";
@@ -30,9 +31,14 @@ export interface BuildTabs {
   onOpen: (runId: string) => void;
 }
 
-/** A tab's name: what the person asked for it, else what the history calls it ("This Loop"). */
-function tabName(builds: readonly HistoryEntry[], build: HistoryEntry): string {
-  return build.ask || historyLabel(build, { newest: isNewestBuild(builds, build) });
+/**
+ * A tab's name: a Loop's own name (`buildTitle`, shared/build-title.ts), a chat turn's message, else
+ * what the history calls it ("This Loop"). The chat's title is left out: every tab of the bar is a
+ * build of the same chat, so it would name them all alike.
+ */
+function tabName(tabs: BuildTabs, build: HistoryEntry): string {
+  const named = build.chat ? build.ask : buildTitle({ title: build.title, goal: build.ask });
+  return named || historyLabel(build, { newest: isNewestBuild(tabs.builds, build) });
 }
 
 /** How a build stands, before its name: the status line's loader while it works, a bare ✓ once done, a dot while paused. */
@@ -108,7 +114,7 @@ function BuildTabTrack({ tabs, said }: { tabs: BuildTabs; said: string }): JSX.E
   return (
     <div ref={track} role="tablist" aria-label={WORDS.tabs} className="build-tabs surface-glass">
       {builds.map((build, index) => {
-        const name = tabName(builds, build);
+        const name = tabName(tabs, build);
         const isOpen = build.runId === open;
         return (
           <BuildTab
@@ -208,7 +214,7 @@ function useOpenRowShown() {
 function BuildPicker({ tabs, said }: { tabs: BuildTabs; said: string }): JSX.Element {
   const { builds, open, onOpen } = tabs;
   const shown = builds.find((build) => build.runId === open) ?? builds.at(-1);
-  const name = shown ? tabName(builds, shown) : "";
+  const name = shown ? tabName(tabs, shown) : "";
   const { attach, onOpenChange, trigger } = useOpenRowShown();
   return (
     <DropdownMenu onOpenChange={onOpenChange}>
@@ -233,7 +239,7 @@ function BuildPicker({ tabs, said }: { tabs: BuildTabs; said: string }): JSX.Ele
       <DropdownMenuContent ref={attach} align="start" className="build-picker-menu">
         <DropdownMenuRadioGroup value={open ?? ""} onValueChange={onOpen}>
           {newestFirst(builds).map((build) => (
-            <BuildRow key={build.runId} build={build} name={tabName(builds, build)} />
+            <BuildRow key={build.runId} build={build} name={tabName(tabs, build)} />
           ))}
         </DropdownMenuRadioGroup>
         <span aria-hidden="true" data-list-fade className="build-picker-fade" />

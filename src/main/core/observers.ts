@@ -431,11 +431,14 @@ export class ObserverService {
     const out: CapturedImage[] = [];
     for (const picture of pictures) {
       const resized = await this.#resize(picture.bytes, OBSERVE_IMAGE_PX);
+      // The smaller bytes name their own type (a see-through picture stays a PNG); bytes that are no picture are not used.
+      const resizedType = resized ? sniffImage(resized)?.mimeType : undefined;
+      const shrunk = resizedType && resized ? { mimeType: resizedType, bytes: resized } : null;
       out.push({
         name: picture.name,
         file: picture.file,
-        mimeType: resized ? "image/jpeg" : picture.mimeType,
-        data: (resized ?? picture.bytes).toString("base64"),
+        mimeType: shrunk?.mimeType ?? picture.mimeType,
+        data: (shrunk?.bytes ?? picture.bytes).toString("base64"),
       });
     }
     return out;

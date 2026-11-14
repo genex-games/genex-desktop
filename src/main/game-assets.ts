@@ -754,8 +754,10 @@ export async function readContainedImage(
   const sniffed = sniffImage(data);
   if (!sniffed) return null;
   if (resize) {
+    // The smaller bytes name their own type: a see-through picture stays a PNG.
     const smaller = await resize(data).catch(() => null);
-    if (smaller) return { mimeType: "image/jpeg", data: smaller.toString("base64") };
+    const smallerType = smaller && sniffImage(smaller);
+    if (smaller && smallerType) return { mimeType: smallerType.mimeType, data: smaller.toString("base64") };
   }
   return { mimeType: sniffed.mimeType, data: data.toString("base64") };
 }

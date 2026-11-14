@@ -140,6 +140,22 @@ test("eight builds render one picker with the open build's full name and the cou
   assert.equal(count(markup, /data-play/g), 1);
 });
 
+test("a tab calls a Loop by its title, else its goal without an older seed's lead; a chat turn by its message", async () => {
+  const legacy = 'The person asked: "Make a game about a pizza cat". This means a runner.';
+  const [first, second, third] = builds(3);
+  assert.ok(first && second && third);
+  const history = [
+    { ...first, ask: legacy, title: "Rooftop pizza cat" },
+    { ...second, ask: legacy },
+    { ...third, ask: "The car drifts left.", chat: true as const },
+  ];
+  const markup = await renderBar(history, "run-3");
+  assert.match(markup, />Rooftop pizza cat</);
+  assert.match(markup, />Make a game about a pizza cat</, "no title of its own: its goal, shortened");
+  assert.match(markup, />The car drifts left\.</, "a chat turn keeps the words of the message it answers");
+  assert.doesNotMatch(markup, /person asked/i);
+});
+
 test("Play stays on the bar for every build: its own build, else Live as the game is now", () => {
   const played: string[] = [];
   const play = () => {

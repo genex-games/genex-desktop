@@ -45,3 +45,19 @@ test("run still thumbnails refuse oversized and escaping files before resizing",
   assert.equal((await service.readRunStill(inside, 640))?.mimeType, "image/jpeg");
   assert.deepEqual(resized, [640]);
 });
+
+test("a run still made smaller says the type its new bytes are", async () => {
+  const root = await tmpDir("run-still-type-");
+  const runs = path.join(root, "runs");
+  await mkdir(runs);
+  const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(32)]);
+  const sprite = path.join(runs, "sprite.png");
+  await writeFile(sprite, png);
+  const core = {
+    layout: { runs },
+    // The preview keeps a see-through picture a PNG when it makes it smaller.
+    options: { previewPoolMax: 0, preview: { resizeImage: async () => png } },
+  } as unknown as StudioCore;
+  const service = new PreviewService(core, unservedPreviews() as CoreInternals);
+  assert.equal((await service.readRunStill(sprite, 640))?.mimeType, "image/png");
+});

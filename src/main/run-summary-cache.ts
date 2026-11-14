@@ -3,7 +3,7 @@ import path from "node:path";
 import { lstat, readdir, realpath } from "node:fs/promises";
 import { compareIds } from "../shared/compare-ids.ts";
 import { EventKind } from "../shared/event-log.ts";
-import { summarizeRun, type RunSummary } from "../shared/run-summary.ts";
+import { buildVersion, summarizeRun, type RunSummary } from "../shared/run-summary.ts";
 import type { EventEnvelope } from "../substrate/types.ts";
 import { isBelow } from "../substrate/paths.ts";
 import { supplementRunEvidence } from "./run-evidence.ts";
@@ -141,6 +141,9 @@ export class RunSummaryCache {
     }: { key: string; version: string; project: string; runId: string; runs: string },
   ): Promise<RunSummary> {
     const summary = this.#fold(events, project, runId);
+    // The game's whole history is at hand here (every chat of the project): number its version.
+    const gameVersion = buildVersion(events, project, runId);
+    if (gameVersion !== null) summary.version = gameVersion;
     if (RUN_ID.test(runId)) summary.runDirectory = path.join(runs, runId);
     summary.graphEvents = compactGraphEvents([
       // The message the run answers, ahead of its own records: its start shows that message's pictures.

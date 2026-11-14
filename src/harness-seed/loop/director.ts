@@ -223,8 +223,8 @@ async function prepareTheStart(loopRun: LoopRun): Promise<StartOfRun> {
  * The time the person asked for goes beside the first as each is sent (wake.ts, `withWorkLine`).
  */
 function startLines(loopRun: LoopRun, start: StartOfRun): string[] {
-  const { goal } = loopRun.run;
-  const line = resumedFromJournal(loopRun) ? LOOP_WORDS.resumed(goal) : LOOP_WORDS.started(goal);
+  const { goal, steps = [] } = loopRun.run;
+  const line = resumedFromJournal(loopRun) ? LOOP_WORDS.resumed(goal, steps) : LOOP_WORDS.started(goal, steps);
   return [line, ...start.notes];
 }
 

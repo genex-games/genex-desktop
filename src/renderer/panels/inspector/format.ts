@@ -8,9 +8,6 @@ export const capitalise = (text: string): string => (text ? text.charAt(0).toUpp
 export const joinDots = (parts: ReadonlyArray<string | null | undefined | false>): string =>
   parts.filter(Boolean).join(" · ");
 
-/** Every item joined with a middle dot, or null for none. */
-export const listOrNull = (items: readonly string[]): string | null => (items.length ? items.join(" · ") : null);
-
 /** A clock time such as 14:05, or nothing for a missing or unreadable date. */
 export function formatTime(iso: string | null | undefined): string {
   if (!iso) return "";
@@ -18,6 +15,3 @@ export function formatTime(iso: string | null | undefined): string {
   if (Number.isNaN(date.getTime())) return "";
   return date.toLocaleTimeString(intlLocale(), { hour: "2-digit", minute: "2-digit" });
 }
-
-/** An engine and its model as one "codex · gpt" line, or null when neither is known. */
-export const modelLine = (...parts: Array<string | null | undefined>): string | null => joinDots(parts) || null;

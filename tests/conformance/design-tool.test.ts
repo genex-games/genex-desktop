@@ -39,7 +39,7 @@ async function studio() {
       return card ? [card] : [];
     });
   const shown = () => told.filter((event) => event.type === UiEvent.DesignShown).map((event) => event.payload);
-  return { ...lite, root, write, show, shown, cards };
+  return { ...lite, root, write, show, shown, cards, told };
 }
 
 describe("show_design", () => {
@@ -246,6 +246,81 @@ describe("what the person did on the board", () => {
       assert.deepEqual(await core.design.marks("bees"), EMPTY_MARKS, "a broken file is nothing done");
       assert.equal(await core.design.saveMarks("no-such-game", marks), false);
       assert.deepEqual(await core.design.marks("no-such-game"), EMPTY_MARKS);
+    } finally {
+      await close();
+    }
+  });
+});
+
+describe("the person's notes and picks going to the agent", () => {
+  const town = "docs/design/world/town.png";
+  const unsent = () => ({
+    places: {},
+    notes: [
+      { id: "n1", text: "Two more streets?", file: town, x: 20, y: 30, fx: 0.5, fy: 0.25, told: false },
+      { id: "n2", text: "Old news", x: 0, y: 0, told: true },
+      { id: "n3", text: "On a page that is gone", file: "docs/design/world/gone.png", x: 1, y: 1, told: false },
+    ],
+    picks: { [town]: { pick: "use" as const, told: false } },
+    choices: [],
+  });
+
+  it("phrases what waits for the agent, only on artboards the board holds, and marks it told as it is taken", async () => {
+    const { core, write, close } = await studio();
+    try {
+      assert.equal(await core.design.news("bees"), null, "nothing waits on an empty board");
+      write(town, "PNG");
+      await core.design.saveMarks("bees", unsent());
+      const news = await core.design.takeNews("bees");
+      assert.ok(news);
+      assert.match(
+        news.context,
+        /Town \(docs\/design\/world\/town\.png\), 50% across and 25% down: Two more streets\?/,
+      );
+      assert.match(news.context, /Use this: Town/);
+      assert.doesNotMatch(news.context, /Old news|gone\.png/, "only what is new and on the board");
+      const marks = await core.design.marks("bees");
+      assert.deepEqual(
+        marks.notes.map((note) => [note.id, note.told]),
+        [
+          ["n1", true],
+          ["n2", true],
+          ["n3", false],
+        ],
+      );
+      assert.equal(marks.picks[town]?.told, true);
+      assert.equal(await core.design.news("bees"), null, "told once");
+    } finally {
+      await close();
+    }
+  });
+
+  it("keeps a told note told when the canvas saves its older copy, and tells the canvas", async () => {
+    const { core, write, told, close } = await studio();
+    try {
+      write(town, "PNG");
+      const before = unsent();
+      await core.design.saveMarks("bees", before);
+      const news = await core.design.takeNews("bees");
+      assert.ok(news);
+      // The canvas saves a move on its copy from before it heard the notes were sent.
+      await core.design.saveMarks("bees", { ...before, places: { [town]: { x: 5, y: 5 } } });
+      assert.deepEqual(
+        told.filter((event) => event.type === UiEvent.DesignTold).map((event) => event.payload),
+        [{ project: "bees", ...news.told }],
+        "the canvas hears what was told",
+      );
+      const marks = await core.design.marks("bees");
+      assert.equal(marks.notes.find((note) => note.id === "n1")?.told, true, "not new again");
+      assert.equal(marks.picks[town]?.told, true);
+      assert.deepEqual(marks.places, { [town]: { x: 5, y: 5 } }, "and the move is kept");
+      // A note reworded after it was sent is news again.
+      const reworded = {
+        ...marks,
+        notes: marks.notes.map((note) => ({ ...note, text: `${note.text}!`, told: false })),
+      };
+      await core.design.saveMarks("bees", reworded);
+      assert.equal((await core.design.marks("bees")).notes.find((note) => note.id === "n1")?.told, false);
     } finally {
       await close();
     }

@@ -61,7 +61,7 @@ import { anchoredBounds, placedBounds, slotHidden } from "./preview-anchor.ts";
 import { gameViewPreferences } from "./game-view.ts";
 import { capActions, type PreviewInputAction } from "../substrate/preview-input.ts";
 import { applyInputAction, type PageDispatch } from "./preview-input-driver.ts";
-import { cropImageFile, diffImageFiles, encodedImageStats, pairJpeg, resizeToJpeg } from "./preview-images.ts";
+import { cropImageFile, diffImageFiles, encodedImageStats, pairJpeg, resizeStill } from "./preview-images.ts";
 import { DEFAULT_SHOT_QUALITY, encodeStill, stillFit } from "./core/capture.ts";
 import {
   ATTACH_PROBE,
@@ -1205,8 +1205,9 @@ export class GamePreview {
 
   /**
    * What the Live stage needs before it uncovers the native view: whose page is loaded, whether a
-   * navigation is still under way, and whether the page's own requests have settled. Frames are
-   * no signal here — a view kept out of sight while it loads does not animate until it is shown.
+   * navigation is still under way, whether the page's own requests have settled, and whether its
+   * game has a canvas and has asked for a frame yet. Frames are no signal here — a view kept out of
+   * sight while it loads does not animate until it is shown.
    */
   async liveStatus(): Promise<PreviewLiveStatus> {
     const wc = this.#view?.webContents;
@@ -1221,7 +1222,8 @@ export class GamePreview {
     };
     if (!wc || wc.isDestroyed()) return { ...base, navigating: false, page: null };
     if (this.#navigating || wc.isLoading()) return { ...base, navigating: true, page: null };
-    const probe = `(() => { let state = null; try { const clock = window.__studioClock; const full = clock && clock.state ? clock.state() : null; state = full ? { drawCalls: full.render ? full.render.drawCalls : null } : null; } catch {} return { complete: document.readyState === "complete", resources: performance.getEntriesByType("resource").length, state }; })()`;
+    // `frameAsked`: the game has asked for a frame or run one; with a canvas and neither, it is still setting up.
+    const probe = `(() => { let state = null; try { const clock = window.__studioClock; const full = clock && clock.state ? clock.state() : null; const stats = clock && clock.stats ? clock.stats() : null; state = full ? { drawCalls: full.render ? full.render.drawCalls : null, canvas: document.querySelector("canvas") !== null, frameAsked: stats ? stats.pendingRaf > 0 || stats.frames > 0 : null } : null; } catch {} return { complete: document.readyState === "complete", resources: performance.getEntriesByType("resource").length, state }; })()`;
     const page = (await Promise.race([
       this.evaluate(probe).catch(() => null),
       delay(LIVE_PROBE_MS, null),
@@ -1318,7 +1320,7 @@ export class GamePreview {
 
   /** Re-encode as JPEG with the long side capped — reference stills at judge/builder size. */
   async resizeImage(data: Buffer, maxPx: number, quality?: number): Promise<Buffer> {
-    return resizeToJpeg(data, maxPx, quality);
+    return resizeStill(data, maxPx, quality);
   }
 
   /**

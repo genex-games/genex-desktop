@@ -1,10 +1,10 @@
-/** The round mark beside a line of the chat's step lists: ticked once its step is done, a dashed ring while it works, an empty ring before. */
+/** The round mark beside a line of the chat's step lists: ticked once its step is done, a dashed ring that turns while it works, an empty ring before. */
 import type { JSX } from "react";
 import { Icon } from "../ui/icons.tsx";
 
 /** The ring's line: dashed while under way, orange while it waits for the person, else solid — faint, or `clear` on a card's fill. */
 function ringClass(working: boolean, clear: boolean, you: boolean): string {
-  if (working) return "border-dashed border-ink-3";
+  if (working) return "step-mark-turn border-dashed border-ink-3";
   if (you) return "border-orange";
   return clear ? "border-line-strong" : "border-line";
 }

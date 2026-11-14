@@ -18,8 +18,8 @@ import { useSharedSnapshot } from "../use-shared-snapshot.ts";
  * build-problem strip, what waits for Live's Reload, the strip over the stage and its empty states.
  */
 import { keepBuilding, keepsBuildingOn } from "../keep-building.ts";
-import type { JSX } from "react";
-import { lazy, Suspense, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import type { JSX, ReactNode } from "react";
+import { Activity, lazy, Suspense, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { mergeChatEvents } from "../../shared/chat-history.ts";
 import { canBuildWith } from "../../shared/engine-descriptor.ts";
 import { ObserverLive } from "../../shared/observers.ts";
@@ -79,7 +79,7 @@ import { PluginCardStage } from "./stage/PluginCardStage.tsx";
 import { resolveStageView, stageFlags, stageHas } from "./stage/stage-flags.ts";
 import { EmptyGame, LiveLoading, NoGame, PlanningBuild, StoppedGame } from "./stage/StageBody.tsx";
 import { StageStrip } from "./stage/StageStrip.tsx";
-import { type StageTabKey, tabChoice, webBuildView } from "./stage/stage-tabs.ts";
+import { keptViews, type StageTabKey, tabChoice, webBuildView } from "./stage/stage-tabs.ts";
 import { StillsStage } from "./stage/StillsStage.tsx";
 
 /** Shop loads when it opens: the stage's first paint carries none of it. */
@@ -532,25 +532,59 @@ interface StageBoards {
   design: DesignBoard;
 }
 
-/** The stage views that load when they open: Design's wall and Shop's tiles. */
+/** No stage view kept yet. */
+const NO_KEPT_VIEWS: readonly StageView[] = [];
+
+/**
+ * The panels this game's stage has shown (`keptViews`): each stays mounted from its first showing,
+ * so switching back to it draws at once. Another game starts with none.
+ */
+function useKeptViews(project: string | null, shown: StageView): readonly StageView[] {
+  const [kept, setKept] = useState({ project, views: NO_KEPT_VIEWS });
+  const sameGame = kept.project === project;
+  const views = keptViews(sameGame ? kept.views : NO_KEPT_VIEWS, shown);
+  // Adjusted while rendering, so a panel opened now draws in this same pass.
+  if (!sameGame || views !== kept.views) setKept({ project, views });
+  return views;
+}
+
+/**
+ * A kept stage panel: on show, or hidden with its effects stopped (no timers, listeners or
+ * keys taken) while another view is up, its drawing and state kept for when it comes back.
+ */
+function Kept({ shown, children }: { shown: boolean; children: ReactNode }): JSX.Element {
+  return (
+    <Activity mode={shown ? "visible" : "hidden"}>
+      <Suspense fallback={null}>{children}</Suspense>
+    </Activity>
+  );
+}
+
+/** The stage views that load when they open, kept once opened: Design's wall and Shop's tiles. */
 function LazyStage({
   view,
+  kept,
   project,
   boards,
 }: {
   view: StageView;
+  kept: readonly StageView[];
   project: string;
   boards: StageBoards;
-}): JSX.Element | null {
-  if (view !== StageView.Design && view !== StageView.Shop) return null;
+}): JSX.Element {
   return (
-    <Suspense fallback={null}>
-      {view === StageView.Design ? (
-        <DesignStage project={project} board={boards.design} />
-      ) : (
-        <ShopStage project={project} items={boards.shop} />
-      )}
-    </Suspense>
+    <>
+      {kept.includes(StageView.Design) ? (
+        <Kept shown={view === StageView.Design}>
+          <DesignStage project={project} board={boards.design} />
+        </Kept>
+      ) : null}
+      {kept.includes(StageView.Shop) ? (
+        <Kept shown={view === StageView.Shop}>
+          <ShopStage project={project} items={boards.shop} />
+        </Kept>
+      ) : null}
+    </>
   );
 }
 
@@ -607,8 +641,9 @@ function StageContents({
     [onView],
   );
   const reply = useMemo(() => (graph ? replyFor(threadId, graph) : null), [threadId, graph]);
+  const kept = useKeptViews(project, stageView);
   // Builds shows the plan while the run is still planning, and the run's graph after.
-  const graphShown = buildsOpen && !planning ? graph : null;
+  const graphKept = kept.includes(StageView.Builds) && !planning ? graph : null;
   return (
     <>
       {!project ? <NoGame showSetup={showSetup} /> : null}
@@ -621,29 +656,31 @@ function StageContents({
         onResume={onResume}
       />
       {buildsOpen && planning ? <PlanningBuild /> : null}
-      {graphShown ? (
-        <RunGraph
-          graph={graphShown}
-          project={project}
-          onShowLive={showLive}
-          onPlayGame={onPlayGame}
-          onShowAsset={showAsset}
-          onReply={reply}
-          onKeepBuilding={
-            threadId && keepsBuildingOn(tabs.builds, graphShown.runId)
-              ? (notDone) => keepBuilding({ threadId, notDone, surface: BuildSurface.BuildsCard })
-              : null
-          }
-          tabs={tabs}
-          onNotice={onNotice}
-        />
+      {graphKept ? (
+        <Kept shown={buildsOpen}>
+          <RunGraph
+            graph={graphKept}
+            project={project}
+            onShowLive={showLive}
+            onPlayGame={onPlayGame}
+            onShowAsset={showAsset}
+            onReply={reply}
+            onKeepBuilding={
+              threadId && keepsBuildingOn(tabs.builds, graphKept.runId)
+                ? (notDone) => keepBuilding({ threadId, notDone, surface: BuildSurface.BuildsCard })
+                : null
+            }
+            tabs={tabs}
+            onNotice={onNotice}
+          />
+        </Kept>
       ) : null}
-      {stageView === StageView.Assets && project ? (
-        <Suspense fallback={null}>
+      {kept.includes(StageView.Assets) && project ? (
+        <Kept shown={stageView === StageView.Assets}>
           <AssetsCanvas focusJob={focusedAsset} project={project} onNotice={onNotice} />
-        </Suspense>
+        </Kept>
       ) : null}
-      {project ? <LazyStage view={stageView} project={project} boards={boards} /> : null}
+      {project ? <LazyStage view={stageView} kept={kept} project={project} boards={boards} /> : null}
       {stageView === StageView.File && beside ? (
         <FileViewer threadId={threadId} target={beside} onClose={() => onCloseBeside?.()} onNotice={onNotice} />
       ) : null}

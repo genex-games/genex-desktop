@@ -823,7 +823,15 @@ export interface CustomEventMap {
   run_control: RunScope & { action?: string };
   run_finished: RunFinishedPayload;
   run_iteration: RunScope & { winner?: string; biggest_gap?: string; verdict?: RoundVerdict | null };
-  run_registered: RunScope & { budgets?: RecordedRunBudgets; resumed?: boolean };
+  /** The run as it was dispatched; `title` is the build's name (shared/build-title.ts), absent on older runs. */
+  run_registered: RunScope & {
+    budgets?: RecordedRunBudgets;
+    resumed?: boolean;
+    goal?: string;
+    title?: string;
+    /** The lead's plan as short steps (seed loop/plan-steps.ts); each save point ticks the next. */
+    steps?: string[];
+  };
   run_start_blocked: RunStartBlockedPayload;
   run_started: RunScope & {
     budgets?: RecordedRunBudgets;

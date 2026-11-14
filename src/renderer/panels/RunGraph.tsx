@@ -14,13 +14,15 @@ import { markPerformance, PerformanceBoundary } from "../performance.tsx";
  */
 import type { JSX, ReactNode } from "react";
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
-import { type AssetInfo, type RunGraph as RunGraphModel, runIdOf } from "../run-graph.ts";
+import { type AssetInfo, type RunGraph as RunGraphModel, type RunNode, runIdOf } from "../run-graph.ts";
 import { graphAssetCards, resultStatus, StepState, statusLine } from "../run-steps.ts";
 import { RunState } from "../../shared/run-state.ts";
+import { inGameVersion } from "../../shared/run-summary.ts";
 import { t } from "../../shared/i18n.ts";
 import type { HistoryEntry } from "../build-progress.ts";
 import { OPEN_BUILD_STEP_EVENT, takeBuildStep } from "../open-build.ts";
 import { readingNodes } from "../run-tree.ts";
+import { leadLine } from "../chat/build-checklist.ts";
 import { GraphSelection } from "./inspector/selection.ts";
 import { type Notify, notifyProblem } from "../state/toasts.ts";
 import { keyTakenElsewhere } from "./keyboard.ts";
@@ -231,6 +233,7 @@ function useList(model: BuildsModel, now: number, over: boolean) {
         jobs: leadNode?.jobs ?? [],
         assetJobs,
         finishCheck,
+        leadSays: leadLine(outcome, now),
         now,
       }),
     [graph, rows, outcome, timeline, face, lead, leadNode, assetJobs, finishCheck, now],
@@ -304,7 +307,15 @@ export const RunGraph = memo(function RunGraph({
             assetJobs={assetJobs}
             runId={graph.runId}
             active={active}
-            result={active ? null : { status: stills.result, src: stills.resultSrc }}
+            result={
+              active
+                ? null
+                : {
+                    status: stills.result,
+                    version: model.outcome ? inGameVersion(model.outcome) : null,
+                    endedAt: model.outcome?.endedAt ?? null,
+                  }
+            }
             selected={selected}
             onSelect={select}
             onClose={() => setSelectedId(null)}
@@ -414,16 +425,20 @@ function LightboxOf({
 /** Opening the only build there is does nothing. */
 const STAY = (): void => {};
 
-/** The bar's tabs: the chat's builds, or, before its history names any, the run on show as the one. */
-function barTabs(tabs: BuildTabs | null, graph: RunGraphModel, goal: string): BuildTabs {
+/**
+ * The bar's tabs: the chat's builds, or, before its history names any, the run on show as the one,
+ * named by its title when it has one.
+ */
+function barTabs(tabs: BuildTabs | null, graph: RunGraphModel, run: RunNode): BuildTabs {
   if (tabs?.builds.length) return tabs;
   const only: HistoryEntry = {
     runId: graph.runId,
     rounds: 0,
     state: graph.active ? RunState.Running : RunState.Finished,
     startedAt: null,
-    ask: goal,
+    ask: run.goal,
     since: null,
+    ...(run.title ? { title: run.title } : {}),
   };
   return { builds: [only], open: graph.runId, onOpen: tabs?.onOpen ?? STAY };
 }
@@ -442,7 +457,7 @@ function BuildStatusClock({
   return (
     <BuildStatus
       status={statusLine(model.graph, model.outcome, model.rows, now)}
-      tabs={barTabs(tabs, model.graph, model.run.goal)}
+      tabs={barTabs(tabs, model.graph, model.run)}
       action={action}
     />
   );

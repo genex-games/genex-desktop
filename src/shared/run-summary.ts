@@ -1,7 +1,9 @@
 /** Reporting projection only. No decisions here may control execution or acceptance. */
+import { cleanBuildTitle } from "./build-title.ts";
+import { SessionActivityRole } from "./chat-activity.ts";
 import { compareIds } from "./compare-ids.ts";
 import { LoopProfile } from "./project-facts.ts";
-import { CustomEvent } from "./custom-events.ts";
+import { CustomEvent, DELEGATED_PREFIX } from "./custom-events.ts";
 import { EventKind, type EventEnvelope } from "./event-log.ts";
 import { t } from "./i18n.ts";
 import { isWorkerEnd } from "./workers.ts";
@@ -18,6 +20,26 @@ import {
   type RunWorked,
 } from "./run-state.ts";
 type Row = Record<string, any>;
+
+/** How many of the lead's latest lines a summary keeps. */
+const LEAD_LINES_KEPT = 5;
+/** The longest one lead line a summary keeps, in characters; a longer one is cut with an ellipsis. */
+const LEAD_LINE_MAX = 240;
+
+/** One thing the lead said in its own words while the run went on. */
+export interface LeadLine {
+  /** When it said it (the record's time). */
+  at: string;
+  /** What it said, on one line. */
+  text: string;
+}
+
+/** The lead in its own words: its plan, and its latest lines, oldest first. */
+export interface RunLead {
+  /** The plan it last wrote for the person (its decision card's plain words). */
+  plan: string | null;
+  said: LeadLine[];
+}
 export interface RunAttempt {
   id: string;
   worker: string;
@@ -117,6 +139,14 @@ export interface RunSummary {
     completedUnevaluated: number;
   };
   learning: string | null;
+  /** Which version of its game this build is, once it reached the game (`buildVersion`); absent before. */
+  version?: number;
+  /** The build's name as the chat gave it when it started it (shared/build-title.ts); absent on older runs. */
+  title?: string;
+  /** The lead's plan as short steps, in order, as it last named them; absent when it named none. Each save point ticks the next. */
+  steps?: string[];
+  /** What the lead said and planned in its own words; absent until it has said something. */
+  lead?: RunLead;
   graphEvents?: EventEnvelope[];
   /** Index in the run's graph events where `graphEvents` starts; absent or 0 means all of them. */
   graphEventsFrom?: number;
@@ -328,10 +358,29 @@ function forgetClose(result: RunSummary): void {
   result.deliveredSourceHead = null;
 }
 
+/** A plan's steps as a record names them: its non-empty texts, trimmed; null when it names none. */
+function stepsOf(value: unknown): string[] | null {
+  if (!Array.isArray(value)) return null;
+  const steps = value.flatMap((step) => {
+    const name = typeof step === "string" ? oneLine(step) : "";
+    return name ? [name] : [];
+  });
+  return steps.length ? steps : null;
+}
+
+/** The lead's plan as a record names it, replacing the one before. */
+function readSteps(result: RunSummary, payload: Row): void {
+  const steps = stepsOf(payload.steps);
+  if (steps) result.steps = steps;
+}
+
 // Its working time counts from its first start, or from the start that reopened it once finished.
 const readRunStart: RecordReader = ({ result, execution }, { event, payload }) => {
   result.startedAt = execution?.openedAt ?? result.startedAt ?? event.created_at;
   result.completeHistory ||= payload.resumed !== true;
+  readSteps(result, payload);
+  const title = cleanBuildTitle(payload.title);
+  if (title) result.title = title;
 };
 
 const readAutopilotBase: RecordReader = ({ result }, { payload }) => {
@@ -379,6 +428,7 @@ const readRound: RecordReader = (run, { event_type, payload, workerId }) => {
   const label = string(payload.label);
   if (label) attempt.label = label;
   if (payload.auto === true) attempt.auto = true;
+  readSteps(run.result, payload);
 };
 
 /** Does this merge move the integrated head somewhere new (and not back onto the base)? */
@@ -546,6 +596,39 @@ const readRunLearning: RecordReader = ({ result }, { payload }) => {
   result.learning = string(payload.state);
 };
 
+/** The summary's lead, made on its first word. */
+function leadOf(run: Summarizing): RunLead {
+  run.result.lead ??= { plan: null, said: [] };
+  return run.result.lead;
+}
+
+/** A text on one line, cut to the longest a lead line keeps. */
+function oneLine(text: string): string {
+  const flat = text.replace(/\s+/g, " ").trim();
+  return flat.length > LEAD_LINE_MAX ? `${flat.slice(0, LEAD_LINE_MAX).trimEnd()}…` : flat;
+}
+
+const readDecision: RecordReader = (run, { payload }) => {
+  const plain = string(payload.plain);
+  if (plain) leadOf(run).plan = oneLine(plain);
+};
+
+/** The lead's own words: the planner's assistant text, never a worker's or a reviewer's. */
+const readDelegated: RecordReader = (run, { event, payload, workerId }) => {
+  if (workerId || payload.kind !== "assistant" || payload.role !== SessionActivityRole.Planner) return;
+  const parts: unknown[] = Array.isArray(record(payload.data).parts) ? record(payload.data).parts : [];
+  const text = oneLine(
+    parts
+      .map((part) => record(part))
+      .filter((part) => part.type === "text")
+      .map((part) => string(part.text) ?? "")
+      .join(" "),
+  );
+  if (!text) return;
+  const lead = leadOf(run);
+  lead.said = [...lead.said, { at: event.created_at, text }].slice(-LEAD_LINES_KEPT);
+};
+
 /** What each record of a run adds to its summary, after its execution step. */
 const READERS: ReadonlyMap<string, RecordReader> = new Map([
   [CustomEvent.RunStarted, readRunStart],
@@ -567,7 +650,13 @@ const READERS: ReadonlyMap<string, RecordReader> = new Map([
   [CustomEvent.WorkerFinished, readWorkerFinished],
   [CustomEvent.RunFinished, readRunFinished],
   [CustomEvent.RunLearning, readRunLearning],
+  [CustomEvent.AutopilotDecision, readDecision],
 ]);
+
+/** The reader of one record: a delegated builder's trace is one family of types. */
+function readerOf(own: RunRecord): RecordReader | undefined {
+  return own.event_type.startsWith(DELEGATED_PREFIX) ? readDelegated : READERS.get(own.event_type);
+}
 
 /** The log's records once each, oldest first (ties by id). */
 function chronological(events: EventEnvelope[]): EventEnvelope[] {
@@ -674,13 +763,38 @@ export class RunSummaryAccumulator {
     const own = runRecord(event, this.#run.result.project, this.#run.result.runId);
     if (!own) return;
     readRunRecord(this.#run, own);
-    READERS.get(own.event_type)?.(this.#run, own);
+    readerOf(own)?.(this.#run, own);
   }
 
   /** A detached result: repeated reads never accumulate the final counts into the reducer. */
   summary(): RunSummary {
     return finish(structuredClone(this.#run));
   }
+}
+
+/**
+ * Which version of its game a build is: each time a run's build reached the game (`run_finished`
+ * with `landed`) is the game's next version, so a run resumed and landed again later is a newer one
+ * and earlier numbers never move. A run's repeated record of the same landing counts once. Null for
+ * a run that did not land. Only the finish records are sorted, never the whole log.
+ */
+export function buildVersion(events: EventEnvelope[], project: string, runId: string): number | null {
+  const landings = events.filter((event) => {
+    if (event.data.type !== EventKind.Custom || event.data.event_type !== CustomEvent.RunFinished) return false;
+    const payload = record(event.data.payload);
+    return payload.landed === true && (!payload.project || payload.project === project);
+  });
+  let version = 0;
+  let previous: string | null = null;
+  let ours: number | null = null;
+  for (const event of chronological(landings)) {
+    const id = string(record(event.data.type === EventKind.Custom ? event.data.payload : null).runId);
+    if (!id || id === previous) continue;
+    version += 1;
+    previous = id;
+    if (id === runId) ours = version;
+  }
+  return ours;
 }
 
 /** One run's summary from the log: its execution, tasks, attempts, integrations and evidence. */
@@ -690,7 +804,7 @@ export function summarizeRun(events: EventEnvelope[], project: string, runId: st
     const own = runRecord(event, project, runId);
     if (!own) continue;
     readRunRecord(run, own);
-    READERS.get(own.event_type)?.(run, own);
+    readerOf(own)?.(run, own);
   }
   return finish(run);
 }
@@ -755,6 +869,13 @@ export function summaryOutcome(s: RunSummary): OutcomeView {
   if (s.landed !== true) return { state, delivered: "none", verification };
   if (s.profile === LoopProfile.Open) return { state, delivered: "delivered", verification, inPlace: true };
   return { state, delivered: s.deliveredSourceHead !== s.head ? "superseded" : "delivered", verification };
+}
+
+/** The version a finished build is in its game, when it reached the game and no check failed on it; else null. */
+export function inGameVersion(s: RunSummary): number | null {
+  const view = summaryOutcome(s);
+  const clean = view.state === "finished" && view.delivered === "delivered" && view.verification !== "attention";
+  return clean && s.version ? s.version : null;
 }
 
 /** The summary's counts as one line of text. */
