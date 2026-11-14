@@ -351,6 +351,23 @@ function useRereadMissingPicks(wanted: Array<{ engine: string; revision: number 
   }, [signature]);
 }
 
+/**
+ * The model a dropped pick's own provider runs instead: its default, else its first usable row. Used
+ * when no model runs without credits (`autoChoice`): the person chose this metered provider, so its
+ * own default is a pick they made, where the dropped model blocked every send.
+ */
+function sameProviderChoice(
+  dropped: ModelChoice | undefined,
+  choices: readonly ModelChoice[],
+): ModelChoice | undefined {
+  if (!dropped) return undefined;
+  const engine = parseModelKey(dropped.key).engine;
+  const usable = choices.filter(
+    (choice) => !choice.disabled && !choice.hidden && parseModelKey(choice.key).engine === engine,
+  );
+  return usable.find((choice) => choice.providerDefault) ?? usable[0];
+}
+
 /** Everything the composer derives from the engines and the chat's own picks (roles and effort). */
 export function resolveComposerModel(input: {
   studio: boolean;
@@ -366,7 +383,7 @@ export function resolveComposerModel(input: {
   const rereads = input.rereads ?? {};
   const resolved = resolveChoice(choices, input.modelKey);
   const dropped = noLongerOffered(resolved, choices, { engines: input.engines, rereads });
-  const choice = dropped ? (autoChoice(choices) ?? resolved) : resolved;
+  const choice = dropped ? (autoChoice(choices) ?? sameProviderChoice(resolved, choices) ?? resolved) : resolved;
   if (choice && !choices.some((row) => row.key === choice.key)) choices.push(choice);
   const selected = choice?.key ?? null;
   const selectedChoice = choices.find((choice) => choice.key === selected);

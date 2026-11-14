@@ -284,6 +284,16 @@ describe("Genex engine", () => {
     assert.equal((await engine.account()).source, "none");
   });
 
+  it("lists genex.games's models as its own answer, never as a CLI catalog that stays loading", async () => {
+    // Field case (Windows, 0.1.40): Genex read ready, but its descriptor's catalog was the unused
+    // Claude Code one, loading for ever, so a saved Genex model genex.games does not list was never
+    // counted gone and every send was refused as model unavailable.
+    const { gateway } = fakeGateway();
+    const { engine } = await genexEngine(gateway);
+    await engine.refreshModels();
+    assert.equal(engine.catalogSnapshot?.(), undefined);
+  });
+
   it("runs each session through its own lease, in the studio's home, with none of this Mac's Claude variables", async (t) => {
     const saved = { ...process.env };
     t.after(() => {

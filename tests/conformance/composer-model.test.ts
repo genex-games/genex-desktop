@@ -175,6 +175,39 @@ describe("a saved model the plan no longer offers", () => {
   });
 });
 
+describe("a saved model its ready provider no longer offers", () => {
+  // Field case (Windows, 0.1.40 and 0.1.41): the app's built-in Genex list and its first-launch
+  // default named a model genex.games does not list; every send on it was refused (model_unavailable,
+  // 9 in a row) until the person picked another Genex model by hand.
+  const genex: EngineDescriptor = {
+    id: "genex",
+    label: "Genex",
+    kind: "delegated",
+    supportsSessions: true,
+    status: { code: "ready", detail: "" },
+    defaultModel: "sonnet-5.5-medium-or",
+    models: [model("sonnet-5.5-medium-or"), model("opus-5.5-medium-or")],
+  };
+  const pick = "genex::gemini-4-hydrogen-medium-or";
+  const view = (engines: EngineDescriptor[]) =>
+    resolveComposerModel({ studio: false, engines, modelKey: pick, effort: null });
+
+  it("opens on that provider's own default when no other model runs without credits", () => {
+    assert.equal(view([genex]).selected, "genex::sonnet-5.5-medium-or");
+    assert.equal(sendBlockOf(view([genex]), view([genex]).selected), null);
+    assert.equal(
+      view([codex, genex]).selected?.split("::")[0],
+      "codex",
+      "a plan the person already has comes first, as for any dropped pick",
+    );
+  });
+
+  it("keeps the pick while the provider is not ready: its sign-in or plan comes first", () => {
+    const needsPlan = { ...genex, status: { code: "needs_login" as const, detail: "", reason: "needs_plan" as const } };
+    assert.equal(view([needsPlan]).selected, pick);
+  });
+});
+
 describe("a saved model one listing left out", () => {
   // Field case (Windows, 0.1.34): after each restart the chat's OpenCode model was swapped out and
   // every Send refused. OpenCode lists the models of its cached models.dev catalog, and its built-in

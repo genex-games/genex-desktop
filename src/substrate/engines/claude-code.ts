@@ -992,7 +992,9 @@ export class ClaudeCodeEngine implements Engine {
     }
   }
 
-  catalogSnapshot = () => this.#catalog.snapshot();
+  // On Genex the gateway's own list is the answer (`models()`); the CLI's catalog never reads, so
+  // it would stay loading and a pick the gateway no longer lists would never be replaced.
+  catalogSnapshot = () => (this.#gateway ? undefined : this.#catalog.snapshot());
 
   async models(): Promise<EngineModel[]> {
     if (this.#gateway) return this.#gateway.models();

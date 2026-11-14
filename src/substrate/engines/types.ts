@@ -522,7 +522,7 @@ export interface Engine {
   /** Cheap liveness/auth probe used by the UI and by engine fallback. */
   status(): Promise<EngineStatus>;
   models(): Promise<EngineModel[]>;
-  catalogSnapshot?(): ModelCatalogStatus;
+  catalogSnapshot?(): ModelCatalogStatus | undefined;
   refreshModels?(force?: boolean): Promise<void>;
   /** Local engines: delete an installed model from this Mac. */
   removeModel?(id: string): Promise<void>;
