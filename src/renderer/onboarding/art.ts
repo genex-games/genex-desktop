@@ -2,9 +2,9 @@
  * The first-launch art, in the empty states' wireframe language (see ui/wire-art.ts).
  *
  * Welcome: the sent prompt streams letter by letter onto the lead's sheet, where a pen writes it
- * down with three tasks and ticks them off; the workers' crane stacks blocks; the second opinion's
- * screen plays the prompt's game (a space shooter), a scan passes and a speech bubble lands: an
- * opinion the lead asked for, not a verdict that gates anything.
+ * down with three tasks and ticks them off; the design offers three artboards and a pointer picks
+ * one, as the person does on the Design tab before anything is built; then the workers' crane
+ * stacks blocks: the build.
  * Connect: the Claude Code, Codex and Genex marks, extruded, rocking over their buttons; OpenRouter's and
  * OpenCode's screens each show their own mark the same way, alone.
  * Local: a chip whose pins and layers fill while a model downloads.
@@ -569,7 +569,7 @@ function planner(p: number, time: number): Scene {
   return S;
 }
 
-/** Workers: the app's own crane. */
+/** Build: the app's own crane, the workers putting the game together. */
 const workers = (t: number): Scene => ({
   L: crane(t).map((line) => ({ c: line.c, k: line.k, p: line.p })),
   F: [],
@@ -580,398 +580,158 @@ function rnd(i: number) {
   const x = Math.sin(i * 127.1 + 311.7) * 43758.5453;
   return x - Math.floor(x);
 }
-let ICO: { v: Vec3[]; e: Array<[number, number]> } | null = null;
-function icosahedron() {
-  if (ICO) return ICO;
-  const g = (1 + Math.sqrt(5)) / 2;
-  const raw: Vec3[] = [
-    [-1, g, 0],
-    [1, g, 0],
-    [-1, -g, 0],
-    [1, -g, 0],
-    [0, -1, g],
-    [0, 1, g],
-    [0, -1, -g],
-    [0, 1, -g],
-    [g, 0, -1],
-    [g, 0, 1],
-    [-g, 0, -1],
-    [-g, 0, 1],
+/** Seconds into one round of the design: the pointer comes, picks an artboard, it stays picked, then all rest. */
+const DESIGN_CYCLE = 6;
+const DESIGN_POINT = { from: 0.7, to: 1.9 } as const;
+const DESIGN_PICK = { at: 2.05, out: 4.9 } as const;
+/** The three artboards the agent offers, left to right: where each stands and how far forward. */
+const ARTBOARDS = [
+  { x: -1.08, z: -0.15 },
+  { x: 0, z: 0.15 },
+  { x: 1.08, z: -0.15 },
+] as const;
+const ARTBOARD = { width: 0.86, height: 1.14, lift: 0.55, corner: 0.06 } as const;
+/** The artboard the pointer picks. */
+const PICKED = ARTBOARDS[1];
+
+/** A rounded rectangle on an artboard's face, in its own 0..1 coordinates, as one closed line. */
+function boardRect(at: (u: number, v: number) => Vec3, u0: number, v0: number, u1: number, v1: number, r: number) {
+  const pts: Vec3[] = [];
+  const corners: Array<[number, number, number]> = [
+    [u1 - r, v1 - r, 0],
+    [u0 + r, v1 - r, 1],
+    [u0 + r, v0 + r, 2],
+    [u1 - r, v0 + r, 3],
   ];
-  const faces = [
-    [0, 11, 5],
-    [0, 5, 1],
-    [0, 1, 7],
-    [0, 7, 10],
-    [0, 10, 11],
-    [1, 5, 9],
-    [5, 11, 4],
-    [11, 10, 2],
-    [10, 7, 6],
-    [7, 1, 8],
-    [3, 9, 4],
-    [3, 4, 2],
-    [3, 2, 6],
-    [3, 6, 8],
-    [3, 8, 9],
-    [4, 9, 5],
-    [2, 4, 11],
-    [6, 2, 10],
-    [8, 6, 7],
-    [9, 8, 1],
-  ];
-  const seen = new Set<string>(),
-    e: Array<[number, number]> = [];
-  for (const f of faces)
-    for (const [a, b] of [
-      [f[0]!, f[1]!],
-      [f[1]!, f[2]!],
-      [f[2]!, f[0]!],
-    ] as const) {
-      const key = a < b ? `${a}_${b}` : `${b}_${a}`;
-      if (!seen.has(key)) {
-        seen.add(key);
-        e.push([a, b]);
-      }
+  const ry = (r * ARTBOARD.width) / ARTBOARD.height;
+  // The line starts where the first corner's arc does, and comes back to it.
+  const first = at(u1, v1 - r);
+  for (const [cu, cv, quarter] of corners)
+    for (let i = 0; i <= 4; i++) {
+      const a = (quarter + i / 4) * (Math.PI / 2);
+      pts.push(at(cu + Math.cos(a) * r, cv + Math.sin(a) * ry));
     }
-  return (ICO = {
-    v: raw.map((p) => {
-      const l = len(p);
-      return [p[0] / l, p[1] / l, p[2] / l] as Vec3;
-    }),
-    e,
-  });
-}
-function orient(p: Vec3, spin: number, tilt: number, r: number, c: Vec3): Vec3 {
-  const y = p[1] * Math.cos(tilt) - p[2] * Math.sin(tilt),
-    z = p[1] * Math.sin(tilt) + p[2] * Math.cos(tilt);
-  const x = p[0] * Math.cos(spin) + z * Math.sin(spin),
-    z2 = -p[0] * Math.sin(spin) + z * Math.cos(spin);
-  return [c[0] + x * r, c[1] + y * r, c[2] + z2 * r];
+  return [...pts, first];
 }
 
-/** The game's scrolling floor grid and its drifting stars. */
-function spaceField(I: Scene, t: number) {
-  for (let i = 0; i < 9; i++) {
-    const gz = -3 + ((i / 9 + t * 0.5) % 1) * 4.5;
-    I.L.push({
-      c: 2,
-      k: 0.5,
-      p: [
-        [-2.2, -0.7, gz],
-        [2.2, -0.7, gz],
-      ],
-    });
+/** A ring on an artboard's face, round in the world. */
+function boardRing(at: (u: number, v: number) => Vec3, cu: number, cv: number, r: number): Vec3[] {
+  const pts: Vec3[] = [];
+  for (let i = 0; i <= 18; i++) {
+    const a = (i / 18) * TAU;
+    pts.push(at(cu + Math.cos(a) * r, cv + (Math.sin(a) * r * ARTBOARD.width) / ARTBOARD.height));
   }
-  for (let i = -4; i <= 4; i++)
-    I.L.push({
-      c: 2,
-      k: 0.4,
-      p: [
-        [i * 0.5, -0.7, -3],
-        [i * 0.5, -0.7, 1.5],
-      ],
-    });
-  for (let i = 0; i < 20; i++) {
-    I.D.push({
-      c: 1,
-      a: 0.3 + 0.5 * rnd(i + 230),
-      p: [-2.5 + 5 * rnd(i + 260), -0.3 + 2.1 * rnd(i + 290), -3.5 + ((rnd(i + 200) + t * 0.35) % 1) * 5],
-      r: 0.8,
-    });
+  return pts;
+}
+
+/** What each artboard shows: a hero, a level's path, the game's colours. */
+function artboardDrawing(S: Scene, i: number, at: (u: number, v: number) => Vec3, k: number) {
+  const ink = (p: Vec3[], kk = 0.9) => S.L.push({ c: 1, k: kk * k, p });
+  const muted = (p: Vec3[], kk = 0.8) => S.L.push({ c: 2, k: kk * k, p });
+  muted([at(0.12, 0.88), at(0.5, 0.88)], 0.9);
+  if (i === 0) {
+    ink(boardRing(at, 0.5, 0.66, 0.09));
+    ink([at(0.5, 0.58), at(0.5, 0.34)]);
+    ink([at(0.3, 0.5), at(0.5, 0.54), at(0.7, 0.5)]);
+    ink([at(0.38, 0.14), at(0.5, 0.34), at(0.62, 0.14)]);
+    return;
   }
-}
-
-/** The ship weaving and banking, its engine glow and its shots flying ahead; returns its height. */
-function ship(I: Scene, t: number): number {
-  const sx = 0.55 * Math.sin(t * 1.1),
-    bank = -0.5 * Math.cos(t * 1.1),
-    sy = 0.05 * Math.sin(t * 2.3),
-    sz = 0.9;
-  const cb = Math.cos(bank),
-    sb = Math.sin(bank);
-  const Sh = (x: number, y: number, z: number): Vec3 => [sx + x * cb - y * sb, sy + x * sb + y * cb, sz + z];
-  const nose = Sh(0, 0, -0.38),
-    wl = Sh(-0.32, -0.02, 0.12),
-    wr = Sh(0.32, -0.02, 0.12),
-    fin = Sh(0, 0.12, 0.1),
-    tail = Sh(0, -0.05, 0.14);
-  I.L.push(
-    { c: 0, k: 1, p: [nose, wl, tail, wr, nose] },
-    { c: 0, k: 1, p: [nose, fin, wl] },
-    { c: 0, k: 1, p: [fin, wr] },
-    { c: 0, k: 0.8, p: [fin, tail] },
-  );
-  I.F.push({ c: 0, a: 0.18, p: [nose, wl, tail, wr] });
-  I.D.push({ c: 4, a: 0.6 + 0.4 * Math.sin(t * 30), p: Sh(0, 0.02, 0.18), r: 1.8 });
-  for (let i = 0; i < 3; i++) {
-    const u = (t * 2 + i / 3) % 1,
-      tf = t - u * 0.5,
-      bx = 0.55 * Math.sin(tf * 1.1),
-      bz = sz - 0.45 - u * 3.5;
-    I.L.push({
-      c: 0,
-      k: 1 - u * 0.6,
-      p: [
-        [bx, sy, bz],
-        [bx, sy, bz - 0.25],
-      ],
-    });
+  if (i === 1) {
+    ink([at(0.14, 0.2), at(0.42, 0.2), at(0.42, 0.46), at(0.66, 0.46), at(0.66, 0.7), at(0.86, 0.7)]);
+    muted(boardRect(at, 0.1, 0.12, 0.2, 0.2, 0.02));
+    muted(boardRect(at, 0.36, 0.38, 0.48, 0.46, 0.02));
+    ink([at(0.86, 0.7), at(0.86, 0.82), at(0.78, 0.79), at(0.86, 0.76)]);
+    return;
   }
-  return sy;
-}
-
-/** Four asteroids tumbling towards the ship, fading in and out at the ends of their run. */
-function asteroids(I: Scene, t: number) {
-  const ico = icosahedron();
-  for (let i = 0; i < 4; i++) {
-    const ph = (rnd(i + 300) + t * 0.28) % 1,
-      ar = 0.16 + 0.14 * rnd(i + 390);
-    const ac: Vec3 = [-1.3 + 2.6 * rnd(i + 330), -0.2 + 0.9 * rnd(i + 360), -3 + ph * 4.2];
-    const P = ico.v.map((p) => orient(p, t * (0.8 + i * 0.3), t * 0.6 + i, ar, ac));
-    const fade = Math.min(1, ph * 4, (1 - ph) * 6);
-    for (const [a, b] of ico.e) I.L.push({ c: 2, k: 0.9 * fade, p: [P[a]!, P[b]!] });
+  for (const [n, u] of [0.28, 0.5, 0.72].entries()) {
+    const ring = boardRing(at, u, 0.62, 0.09);
+    ink(ring);
+    S.F.push({ c: n === 0 ? 0 : 2, a: 0.25 * k, p: ring });
   }
+  muted([at(0.14, 0.36), at(0.86, 0.36)]);
+  muted([at(0.14, 0.24), at(0.62, 0.24)]);
 }
 
-/** The asteroid ahead bursting, once every 2.6 s, at the ship's height `sy`. */
-function blast(I: Scene, t: number, sy: number) {
-  const ec = t % 2.6,
-    ek = ec / 0.6;
-  if (ek < 1) {
-    const ex = 0.55 * Math.sin((t - ec) * 1.1),
-      ez = -1.5;
-    for (let j = 0; j < 8; j++) {
-      const ea = (j / 8) * TAU + 0.3,
-        r0 = 0.08 + 0.35 * easeOut(ek),
-        r1 = r0 + 0.12,
-        dz = 0.1 * Math.sin(j);
-      I.L.push({
-        c: 4,
-        k: 1 - ek,
-        p: [
-          [ex + r0 * Math.cos(ea), sy + r0 * Math.sin(ea), ez + dz],
-          [ex + r1 * Math.cos(ea), sy + r1 * Math.sin(ea), ez + dz],
-        ],
-      });
-    }
-    I.D.push({ c: 1, a: 1 - ek, p: [ex, sy, ez], r: 2.5 * (1 - ek) + 0.5 });
-  }
-}
-
-/** The prompt's game: a ship weaves through tumbling asteroids and blasts the one ahead. */
-function space(t: number): Scene & { cam: Camera } {
-  const I = scene();
-  spaceField(I, t);
-  const sy = ship(I, t);
-  asteroids(I, t);
-  blast(I, t, sy);
-  return {
-    ...I,
-    cam: {
-      yaw: 0.12 * Math.sin(t * 0.3),
-      pitch: 0.28,
-      scale: 0.75,
-      cx: 0,
-      cy: 0.1,
-      dist: 5,
-      tx: 0,
-      ty: 0.2,
-      tz: 0,
-      R: 2.5,
-    },
-  };
-}
-
-/** Liang–Barsky: the part of segment ab inside the rectangle, or null. */
-function clipSeg(
-  a: [number, number],
-  b: [number, number],
-  u0: number,
-  u1: number,
-  v0: number,
-  v1: number,
-): [[number, number], [number, number]] | null {
-  const dx = b[0] - a[0],
-    dy = b[1] - a[1];
-  const edges: Array<[p: number, q: number]> = [
-    [-dx, a[0] - u0],
-    [dx, u1 - a[0]],
-    [-dy, a[1] - v0],
-    [dy, v1 - a[1]],
-  ];
-  const span = { t0: 0, t1: 1 };
-  for (const [p, q] of edges) if (!clipEdge(p, q, span)) return null;
-  return [
-    [a[0] + span.t0 * dx, a[1] + span.t0 * dy],
-    [a[0] + span.t1 * dx, a[1] + span.t1 * dy],
-  ];
-}
-
-/** One edge of the clip rectangle: narrows the kept span of the segment, or rejects it (false). */
-function clipEdge(p: number, q: number, span: { t0: number; t1: number }): boolean {
-  if (p === 0) return !(q < 0);
-  const r = q / p;
-  if (p < 0) {
-    if (r > span.t1) return false;
-    if (r > span.t0) span.t0 = r;
-    return true;
-  }
-  if (r < span.t0) return false;
-  if (r < span.t1) span.t1 = r;
-  return true;
-}
-
-/** Seconds into one round of the second opinion's screen: the scan sweeps, the answer lands, then it rests. */
-const OPINION_CYCLE = 6;
-const OPINION_SCAN = { from: 0.6, to: 2.2 } as const;
-const OPINION_ANSWER = { at: 2.3, out: 5.2 } as const;
-
-/** Where a round of the second opinion's screen is. */
-interface OpinionBeat {
-  /** Seconds into the round. */
-  f: number;
-  /** The scan line's height on the screen (0 to 1), or -1 with no scan. */
-  scanV: number;
-}
-
-/** The round `t` falls in: a scan down the picture, then the answer. */
-function opinionBeat(t: number): OpinionBeat {
-  const f = ((t % OPINION_CYCLE) + OPINION_CYCLE) % OPINION_CYCLE;
-  const scanning = f >= OPINION_SCAN.from && f < OPINION_SCAN.to;
-  const progress = (f - OPINION_SCAN.from) / (OPINION_SCAN.to - OPINION_SCAN.from);
-  return { f, scanV: scanning ? 1 - progress : -1 };
-}
-
-/** The monitor: its glass, the front and back frames and the edges between them, and its stand. */
-function monitor(S: Scene) {
-  const X0 = -1.7,
-    X1 = 1.7,
-    Y0 = 0.45,
-    Y1 = 2.55;
-  const front: Vec3[] = [
-    [X0, Y0, 0.04],
-    [X1, Y0, 0.04],
-    [X1, Y1, 0.04],
-    [X0, Y1, 0.04],
-  ];
-  const back: Vec3[] = [
-    [X0, Y0, -0.04],
-    [X1, Y0, -0.04],
-    [X1, Y1, -0.04],
-    [X0, Y1, -0.04],
-  ];
-  S.F.push({ c: 0, a: 0.05, p: front });
-  S.L.push({ c: 0, k: 0.95, p: [...front, front[0]!] }, { c: 2, k: 0.5, p: [...back, back[0]!] });
-  for (let i = 0; i < 4; i++) S.L.push({ c: 2, k: 0.5, p: [front[i]!, back[i]!] });
+/** One artboard: its face, its edge and its drawing; a picked one shines in accent. */
+function artboard(S: Scene, i: number, board: (typeof ARTBOARDS)[number], shine: number, dim: number) {
+  const { x, z } = board;
+  const { width: W, height: H, lift } = ARTBOARD;
+  const at = (u: number, v: number): Vec3 => [x - W / 2 + u * W, lift + v * H, z];
+  const edge = boardRect(at, 0, 0, 1, 1, ARTBOARD.corner);
+  S.F.push({ c: 0, a: (0.05 + 0.1 * shine) * dim, p: edge });
+  S.L.push({ c: 0, k: (0.75 + 0.25 * shine) * dim, p: edge });
+  artboardDrawing(S, i, at, dim);
   S.L.push({
     c: 2,
-    k: 0.7,
+    k: 0.35 * dim,
     p: [
-      [0, Y0, -0.04],
-      [0, 0.04, -0.04],
+      [x, 0.02, z],
+      [x, lift, z],
     ],
   });
-  square(S, 2, 0.7, 0, 0.02, -0.04, 0.55, 0.26, 0);
 }
 
-/** A point on the screen's face, from its lower-left corner (0 to 1 across and up). */
-const onScreen = (u: number, v: number): Vec3 => [-1.6 + 3.2 * u, 0.55 + 1.9 * v, 0.045];
-/** The game's picture on the screen: its middle's height and its half-width and half-height. */
-const PICTURE = { middle: 1.5, halfWidth: 1.57, halfHeight: 0.92 } as const;
-/** A point of the game's projected picture, placed on the screen. */
-const inPicture = (x: number, y: number): Vec3 => [x, PICTURE.middle - y, 0.045];
-
-/** One of the game's lines, projected and clipped to the picture. */
-function gameLine(S: Scene, ln: Line, cam: Camera) {
-  const { halfWidth: HX, halfHeight: HY } = PICTURE;
-  let prev: [number, number] | null = null,
-    pz = 0;
-  for (const point of ln.p) {
-    const q = project(point, cam),
-      cur: [number, number] = [q[0], q[1]];
-    const cl = prev ? clipSeg(prev, cur, -HX, HX, -HY, HY) : null;
-    if (cl) {
-      const d = clamp(((q[2] + pz) / 2 + cam.R) / (2 * cam.R));
-      S.L.push({
-        c: ln.c,
-        k: ln.k * (0.45 + 0.55 * d),
-        p: [inPicture(cl[0][0], cl[0][1]), inPicture(cl[1][0], cl[1][1])],
-        flat: true,
-      });
-    }
-    prev = cur;
-    pz = q[2];
+/** The tick on the picked artboard's corner: a filled disc, then the check drawing itself. */
+function pickTick(S: Scene, p: number, fade: number) {
+  if (p <= 0 || fade <= 0.01) return;
+  const { x, z } = PICKED;
+  const c: Vec3 = [x + ARTBOARD.width / 2 - 0.02, ARTBOARD.lift + ARTBOARD.height - 0.02, z + 0.04];
+  const r = 0.13 * (0.6 + 0.4 * easeOut(clamp(p / 0.15)));
+  const disc: Vec3[] = [];
+  for (let i = 0; i <= 20; i++) {
+    const a = (i / 20) * TAU;
+    disc.push([c[0] + Math.cos(a) * r, c[1] + Math.sin(a) * r, c[2]]);
   }
-}
-
-/** The game, played with its own camera on the screen. */
-function gameOnScreen(S: Scene, t: number) {
-  const { halfWidth: HX, halfHeight: HY } = PICTURE;
-  const G = space(t),
-    cam = G.cam;
-  const inside = (q: Vec3) => q[0] > -HX && q[0] < HX && q[1] > -HY && q[1] < HY;
-  for (const ln of G.L) gameLine(S, ln, cam);
-  for (const fl of G.F) {
-    const q = fl.p.map((p) => project(p, cam));
-    if (q.every(inside)) S.F.push({ c: fl.c, a: fl.a, p: q.map((v) => inPicture(v[0], v[1])) });
-  }
-  for (const dd of G.D) {
-    const q = project(dd.p, cam);
-    if (inside(q)) S.D.push({ c: dd.c, a: dd.a, p: inPicture(q[0], q[1]), r: dd.r });
-  }
-}
-
-/** The scan line and the fainter one trailing it. */
-function scanLine(S: Scene, scanV: number) {
-  if (scanV < 0) return;
-  S.L.push({ c: 0, k: 1, p: [onScreen(0, scanV), onScreen(1, scanV)] });
-  if (scanV + 0.04 <= 1) S.L.push({ c: 0, k: 0.35, p: [onScreen(0, scanV + 0.04), onScreen(1, scanV + 0.04)] });
-}
-
-/** The answer landing on the screen, `f` seconds into its round: a speech bubble with three dots, fading as it leaves. */
-function answer(S: Scene, f: number) {
-  if (f < OPINION_ANSWER.at) return;
-  const p = clamp((f - OPINION_ANSWER.at) / 0.25);
-  const fo = f > OPINION_ANSWER.out ? clamp(1 - (f - OPINION_ANSWER.out) / 0.5) : 1;
-  const al = Math.min(1, p * 1.4) * fo;
-  if (al < 0.01) return;
-  const sc = 1 + 0.7 * (1 - easeOut(p)),
-    cx = 1.18,
-    cy = 0.95,
-    cz = 0.12;
-  const P = (x: number, y: number): Vec3 => [cx + x * sc, cy + y * sc, cz];
-  const outline = [
-    P(-0.3, 0.17),
-    P(0.3, 0.17),
-    P(0.3, -0.13),
-    P(-0.08, -0.13),
-    P(-0.2, -0.27),
-    P(-0.18, -0.13),
-    P(-0.3, -0.13),
-    P(-0.3, 0.17),
+  const a = clamp(p / 0.12) * fade;
+  S.F.push({ c: 0, a: 0.85 * a, p: disc });
+  S.L.push({ c: 0, k: a, p: disc });
+  const check: Vec3[] = [
+    [c[0] - 0.06, c[1], c[2] + 0.01],
+    [c[0] - 0.015, c[1] - 0.045, c[2] + 0.01],
+    [c[0] + 0.065, c[1] + 0.05, c[2] + 0.01],
   ];
-  S.L.push({ c: 0, k: al, p: outline });
-  S.F.push({ c: 0, a: 0.5 * al, p: outline.slice(0, 7) }, { c: 0, a: 0.2 * al, p: outline.slice(0, 7) });
-  for (const [i, x] of [-0.15, 0, 0.15].entries()) {
-    const wave = Math.sin((f - OPINION_ANSWER.at) * 6 - i * 0.9);
-    S.D.push({ c: 0, a: al * (0.7 + 0.3 * wave), p: P(x, 0.02), r: 1.6 });
-  }
+  const drawn = subPath(check, 0, clamp((p - 0.1) / 0.3));
+  if (drawn.length > 1) S.L.push({ c: 1, k: fade, p: drawn, flat: true });
+}
+
+/** The pointer, its tip at `tip`: an arrow cursor facing the camera. */
+function pointer(S: Scene, tip: Vec3, k: number, press: number) {
+  if (k <= 0.01) return;
+  const s = 0.42 * (1 - 0.12 * press);
+  const shape: Array<[number, number]> = [
+    [0, 0],
+    [0, -0.78],
+    [0.2, -0.6],
+    [0.34, -0.9],
+    [0.46, -0.85],
+    [0.32, -0.56],
+    [0.58, -0.56],
+    [0, 0],
+  ];
+  const pts = shape.map(([u, v]): Vec3 => [tip[0] + u * s, tip[1] + v * s, tip[2]]);
+  S.F.push({ c: 1, a: 0.85 * k, p: pts.slice(0, 7) });
+  S.L.push({ c: 1, k, p: pts });
 }
 
 /**
- * Second opinion: the screen plays the build, a scan sweeps it and an answer lands in a speech
- * bubble: what a second reader said when the lead asked. The game is its own 3D scene, projected
- * with its own camera onto the screen.
+ * Design: the agent offers three artboards on a canvas, a pointer picks one, it lights with a
+ * tick and the others step back: the person chooses what goes in before anything is built.
  */
-function opinion(t: number): Scene {
+function designBoard(t: number): Scene {
   const S = scene();
-  const beat = opinionBeat(t);
-  monitor(S);
-  S.L.push({ c: 2, k: 0.3, p: [onScreen(0, 0), onScreen(1, 0), onScreen(1, 1), onScreen(0, 1), onScreen(0, 0)] });
-  gameOnScreen(S, t);
-  scanLine(S, beat.scanV);
-  answer(S, beat.f);
+  const f = ((t % DESIGN_CYCLE) + DESIGN_CYCLE) % DESIGN_CYCLE;
+  const picked = f < DESIGN_PICK.out ? clamp((f - DESIGN_PICK.at) / 0.3) : 1 - clamp((f - DESIGN_PICK.out) / 0.6);
+  for (const [i, board] of ARTBOARDS.entries()) {
+    const mine = board === PICKED;
+    artboard(S, i, board, mine ? picked : 0, mine ? 1 : 1 - 0.55 * picked);
+  }
+  pickTick(S, f - DESIGN_PICK.at, picked);
+  const target: Vec3 = [PICKED.x + 0.12, ARTBOARD.lift + 0.5, PICKED.z + 0.3];
+  const start: Vec3 = [1.7, 0.5, 0.9];
+  const travel = ease((f - DESIGN_POINT.from) / (DESIGN_POINT.to - DESIGN_POINT.from));
+  const shown = clamp((f - DESIGN_POINT.from) / 0.3) * (1 - clamp((f - DESIGN_PICK.out + 0.3) / 0.4));
+  const press = Math.max(0, 1 - Math.abs(f - DESIGN_PICK.at) / 0.12);
+  pointer(S, lerp3(start, target, travel), shown, press);
   return S;
 }
 
@@ -1153,7 +913,7 @@ function faded(S: Scene, m: number): Scene {
  */
 const GROUND_Y = 222;
 const PITCH = 0.34;
-const ROLE_X = { lead: 127, workers: 380, opinion: 633 } as const;
+const ROLE_X = { lead: 127, design: 380, build: 633 } as const;
 const floorCam = (cx: number): Camera => ({
   yaw: 0.5,
   pitch: PITCH,
@@ -1193,23 +953,11 @@ const CAM_O: Camera = {
   tz: 0,
   R: 1.6,
 };
-const CAM_C: Camera = {
-  yaw: 0.2,
+const CAM_D: Camera = {
+  yaw: 0.3,
   pitch: PITCH,
-  scale: 14.4,
-  cx: ROLE_X.workers,
-  cy: GROUND_Y,
-  dist: 40,
-  tx: 1.5,
-  ty: 0,
-  tz: 0,
-  R: 4.5,
-};
-const CAM_J: Camera = {
-  yaw: -0.38,
-  pitch: PITCH,
-  scale: 34.2,
-  cx: ROLE_X.opinion,
+  scale: 50,
+  cx: ROLE_X.design,
   cy: GROUND_Y,
   dist: 12,
   tx: 0,
@@ -1217,10 +965,24 @@ const CAM_J: Camera = {
   tz: 0,
   R: 1.8,
 };
+const CAM_C: Camera = {
+  yaw: 0.2,
+  pitch: PITCH,
+  scale: 14.4,
+  cx: ROLE_X.build,
+  cy: GROUND_Y,
+  dist: 40,
+  tx: 1.5,
+  ty: 0,
+  tz: 0,
+  R: 4.5,
+};
 /** When each role arrives in the second state, in seconds; its label follows. */
-export const ROLE_AT = { lead: 0.4, workers: 2.5, opinion: 4.2 } as const;
+export const ROLE_AT = { lead: 0.4, design: 2.5, build: 4.2 } as const;
 /** Each role's art fades in over half a second, a little before its label. */
-const ARRIVE = { lead: 0, workers: 2.2, opinion: 3.9 } as const;
+const ARRIVE = { lead: 0, design: 2.2, build: 3.9 } as const;
+/** A still frame's design: an artboard already picked, its tick drawn and the pointer on it. */
+const DESIGN_REST = 3.4;
 
 /** The lead's page starts as the letters leave, and plays once. */
 const PLANNER_START = 0.35;
@@ -1236,16 +998,17 @@ export function drawWelcome(
 ) {
   const shown = {
     lead: clamp(t / 0.35),
-    workers: clamp((t - ARRIVE.workers) / 0.5),
-    opinion: clamp((t - ARRIVE.opinion) / 0.5),
+    design: clamp((t - ARRIVE.design) / 0.5),
+    build: clamp((t - ARRIVE.build) / 0.5),
   };
   const p = still ? PLANNER_REST : Math.max(0, t - PLANNER_START);
+  const designTime = still ? DESIGN_REST : Math.max(0, t - ROLE_AT.design);
   roleFloor(ctx, ROLE_X.lead, shown.lead, P);
-  roleFloor(ctx, ROLE_X.workers, shown.workers, P);
-  roleFloor(ctx, ROLE_X.opinion, shown.opinion, P);
+  roleFloor(ctx, ROLE_X.design, shown.design, P);
+  roleFloor(ctx, ROLE_X.build, shown.build, P);
   standing(ctx, planner(p, t), CAM_O, shown.lead, P);
-  standing(ctx, workers(t), CAM_C, shown.workers, P);
-  standing(ctx, opinion(Math.max(0, t - ROLE_AT.opinion)), CAM_J, shown.opinion, P);
+  standing(ctx, designBoard(designTime), CAM_D, shown.design, P);
+  standing(ctx, workers(t), CAM_C, shown.build, P);
   streamText(ctx, prompt, t, style, P);
 }
 

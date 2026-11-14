@@ -631,7 +631,7 @@ export default {
   "Visual Studio's C++ tools are ready": "As ferramentas de C++ do Visual Studio estão prontas",
   "When off, Harness doesn’t change its own instructions. Changes it already made stay until you undo them.":
     "Quando desligado, o Harness não muda as próprias instruções. As mudanças que ele já fez ficam até você desfazer.",
-  "Workers pitch in": "Os ajudantes entram junto",
+  "Then it builds": "Depois ele constrói",
   Building: "Criando",
   "Building the game": "Criando o jogo",
   "Building the starting point": "Criando o ponto de partida",
@@ -3195,7 +3195,7 @@ export default {
   "Reviewers compare instructions; they don’t rebuild your games. An applied change isn’t proof of better results.":
     "Os revisores comparam instruções; eles não recriam seus jogos. Uma mudança aplicada não prova que os resultados melhoraram.",
   "Reviewers model": "Modelo dos revisores",
-  "A second opinion": "Uma segunda opinião",
+  "A design first": "Primeiro o design",
   "Reviewers · try {number}": "Revisores · tentativa {number}",
   "Reviewers' notes": "Notas dos revisores",
   "Reviewers: {model}": "Revisores: {model}",
@@ -4825,7 +4825,7 @@ export default {
   "an earlier build is ready to play · resume from chat": "um build anterior está pronto para jogar · retome pelo chat",
   "an empty folder": "uma pasta vazia",
   "an input": "um controle",
-  "when the lead asks for one": "quando o agente principal pede",
+  "you pick what goes in": "você escolhe o que entra",
   "and {count} more": "e mais {count}",
   "another project or no recorded preview": "outro projeto ou nenhuma prévia registrada",
   "app update left every harness file as it was":
@@ -4922,7 +4922,7 @@ export default {
   eighth: "oitava",
   ended: "encerrado",
   "every object has a reason to be there": "cada objeto tem um motivo para estar ali",
-  "on parts at the same time": "em várias partes ao mesmo tempo",
+  "workers pitch in on parts": "os ajudantes dividem as partes",
   "every step landed": "todos os passos chegaram ao jogo",
   "exit {code}": "saída {code}",
   "export games": "exportar jogos",

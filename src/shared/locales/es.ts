@@ -632,7 +632,7 @@ export default {
   "Visual Studio's C++ tools are ready": "Las herramientas de C++ de Visual Studio están listas",
   "When off, Harness doesn’t change its own instructions. Changes it already made stay until you undo them.":
     "Si está desactivada, Harness no cambia sus propias instrucciones. Los cambios que ya hizo se quedan hasta que los deshagas.",
-  "Workers pitch in": "Los ayudantes echan una mano",
+  "Then it builds": "Luego lo construye",
   Building: "Creando",
   "Building the game": "Creando el juego",
   "Building the starting point": "Creando el punto de partida",
@@ -3197,7 +3197,7 @@ export default {
   "Reviewers compare instructions; they don’t rebuild your games. An applied change isn’t proof of better results.":
     "Los revisores comparan instrucciones; no vuelven a crear tus juegos. Un cambio aplicado no demuestra que los resultados sean mejores.",
   "Reviewers model": "Modelo de los revisores",
-  "A second opinion": "Una segunda opinión",
+  "A design first": "Primero el diseño",
   "Reviewers · try {number}": "Revisores · intento {number}",
   "Reviewers' notes": "Notas de los revisores",
   "Reviewers: {model}": "Revisores: {model}",
@@ -4837,7 +4837,7 @@ export default {
   "an earlier build is ready to play · resume from chat": "ya puedes jugar un build anterior · reanuda desde el chat",
   "an empty folder": "una carpeta vacía",
   "an input": "un control",
-  "when the lead asks for one": "cuando el agente principal la pide",
+  "you pick what goes in": "tú eliges qué entra",
   "and {count} more": "y {count} más",
   "another project or no recorded preview": "otro proyecto o sin vista previa registrada",
   "app update left every harness file as it was":
@@ -4935,7 +4935,7 @@ export default {
   eighth: "octavo",
   ended: "finalizado",
   "every object has a reason to be there": "cada objeto tiene una razón para estar ahí",
-  "on parts at the same time": "en varias partes a la vez",
+  "workers pitch in on parts": "los ayudantes se reparten las partes",
   "every step landed": "todos los pasos llegaron al juego",
   "exit {code}": "salida {code}",
   "export games": "exportar juegos",

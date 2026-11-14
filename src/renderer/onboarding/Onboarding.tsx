@@ -2,7 +2,7 @@
  * First launch: one welcome screen in two states, then the subscription to build with.
  *
  * Welcome: a prompt types itself into a copy of the composer and the pointer sends
- * it; the prompt lands on the lead's sheet, then the workers and a second opinion join (art.ts).
+ * it; the prompt lands on the lead's sheet, then a design is picked and the build starts (art.ts).
  * Clicking the composer takes the person's own idea, which waits in the real composer afterwards.
  * Connect: Claude Code and ChatGPT sign in through the same flows as Settings → Model Providers.
  * Each has one button that hugs its words and changes them as the sign-in moves on. Where
@@ -120,8 +120,8 @@ const COMPOSER = { left: 120, top: 130, width: 520 } as const;
 const SEND = { x: COMPOSER.left + COMPOSER.width - 26, y: COMPOSER.top + 62 } as const;
 const ROLES = [
   { name: t("Your agent leads"), does: t("and plans when it helps"), left: 7, at: ROLE_AT.lead },
-  { name: t("Workers pitch in"), does: t("on parts at the same time"), left: 260, at: ROLE_AT.workers },
-  { name: t("A second opinion"), does: t("when the lead asks for one"), left: 513, at: ROLE_AT.opinion },
+  { name: t("A design first"), does: t("you pick what goes in"), left: 260, at: ROLE_AT.design },
+  { name: t("Then it builds"), does: t("workers pitch in on parts"), left: 513, at: ROLE_AT.build },
 ] as const;
 /** The welcome's typing: a calm start while the caret blinks, then each letter. */
 const TYPE_START_MS = 1400;
