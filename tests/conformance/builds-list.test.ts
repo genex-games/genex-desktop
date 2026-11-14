@@ -6,7 +6,7 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { buildChecklist } from "../../src/renderer/chat/build-checklist.ts";
+import { buildChecklist, leadLine } from "../../src/renderer/chat/build-checklist.ts";
 import { assetsStatus } from "../../src/renderer/panels/inspector/asset-jobs.ts";
 import { GraphSelection } from "../../src/renderer/panels/inspector/selection.ts";
 import {
@@ -21,7 +21,7 @@ import { buildRunGraph, type FinishCheckNode, FinishCheckState, GraphNodeKind } 
 import { buildTimeline } from "../../src/renderer/run-graph-builds.ts";
 import { graphAssetCards, leadWorking, partRows, StepState, stepWord } from "../../src/renderer/run-steps.ts";
 import { leadFace, leadNodeOf, readingNodes } from "../../src/renderer/run-tree.ts";
-import { BUILD_LINE_WORDS, LEAD_WORDS, MADE_WORDS } from "../../src/renderer/words.ts";
+import { BUILD_CHECKLIST_WORDS, BUILD_LINE_WORDS, LEAD_WORDS, MADE_WORDS } from "../../src/renderer/words.ts";
 import { CustomEvent } from "../../src/shared/custom-events.ts";
 import { type EventEnvelope, EventKind } from "../../src/shared/event-log.ts";
 import { HealthFinding } from "../../src/shared/preview-contract.ts";
@@ -126,6 +126,7 @@ function inputOf(events: EventEnvelope[], now = Date.UTC(2026, 0, 1, 10, 0, 0)):
     jobs: leadNodeOf(graph)?.jobs ?? [],
     assetJobs: graphAssetCards(graph),
     finishCheck,
+    leadSays: leadLine(summary, now),
     now,
   };
 }
@@ -307,6 +308,21 @@ describe("the Builds list", () => {
     const lead = listOf(alone).working.find((row) => row.id === GraphSelection.Lead);
     assert.equal(lead?.title, LEAD_WORDS.name);
     assert.equal(lead?.mark, RowMark.Working);
+  });
+
+  it("says on the lead's row the same line the chat's Building card says: its plan's step, else its own last words", () => {
+    const { events } = loop();
+    const alone = [...events, end("w3", "The archer draws the bow"), used("w3", "The archer draws the bow")];
+    const planned = [inRun(CustomEvent.RunRegistered, { steps: ["The archers", "The house", "The light"] }), ...alone];
+    const lead = listOf(planned).working.find((row) => row.id === GraphSelection.Lead);
+    assert.equal(lead?.detail, BUILD_CHECKLIST_WORDS.step(1, 3, "The archers"));
+    const said = inRun("delegated.claude-code", {
+      kind: "assistant",
+      role: "planner",
+      data: { role: "assistant", parts: [{ type: "text", text: "Now the house." }] },
+    });
+    const unplanned = listOf([...alone, said]).working.find((row) => row.id === GraphSelection.Lead);
+    assert.equal(unplanned?.detail, "Now the house.");
   });
 
   it("finds the row of a step of the chat's Building card", () => {

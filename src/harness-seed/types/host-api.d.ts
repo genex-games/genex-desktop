@@ -2157,6 +2157,10 @@ export interface RunReference {
 export interface RunSpec {
   runId: string;
   goal: string;
+  /** A short name the chat gave the build as it started it (start_autopilot `title`); older runs have none. */
+  title?: string;
+  /** The plan as a few short steps (start_autopilot `steps`); each save point ticks the next. Older runs have none. */
+  steps?: string[];
   project: string;
   /** "autopilot": the wire name of a Loop's run, kept for the records it is in. */
   mode?: "autopilot";

@@ -6,7 +6,6 @@ import { placedWord } from "../../run-graph-builds.ts";
 import type { JSX } from "react";
 import type { ProjectAsset } from "../../../shared/game-assets.ts";
 import { t } from "../../../shared/i18n.ts";
-import type { RunSummary, RunTask } from "../../../shared/run-summary.ts";
 import { runIdOf } from "../../run-graph.ts";
 import type { WorkerInfo } from "../../run-graph-workers.ts";
 import {
@@ -23,22 +22,12 @@ import {
 import { stoppedWords, verdictSentence } from "../../words.ts";
 import { useRoundStill, useWorkerStill } from "../run-stills.ts";
 import { AssetThumbnail } from "../AssetThumbnail.tsx";
-import { type DetailRow, Details, Panel, PanelRow, Para, Quote, Row, Rows } from "./chrome.tsx";
+import { Panel, Para, Quote } from "./chrome.tsx";
 import { capitalise } from "./format.ts";
 import { IMAGE_OUTLINE, Single } from "./pictures.tsx";
 import { LiveScreen, usePartScreen } from "./screen.tsx";
 import { Status } from "./tone.tsx";
 import type { StepPanelProps } from "./types.ts";
-
-/** The recorded outcome's task for a part, when there is one. */
-const taskOf = (outcome: RunSummary | null, facetId: string): RunTask | null =>
-  outcome?.tasks.find((item) => item.id === facetId) ?? null;
-
-/** The technical rows a part's task adds: how often it merged and who built it. */
-const taskRows = (task: RunTask | null): DetailRow[] => [
-  [t("integrations"), task ? String(task.integrations) : null],
-  [t("workers"), task && task.workers.length > 1 ? task.workers.join(" → ") : null],
-];
 
 function WhoChecked({ step }: { step: Step }): JSX.Element | null {
   if (!step.checkedBy) return null;
@@ -57,10 +46,9 @@ function WhoChecked({ step }: { step: Step }): JSX.Element | null {
   return <Quote label={t("Reviewers")}>{verdictSentence(step.verdict) || preferred}</Quote>;
 }
 
-/** A part's own account: who checked it, what happened to it, why it stopped short, its details. */
+/** A part's own account: who checked it, what happened to it, and why it stopped short. */
 function PartAbout({ props, step }: { props: StepPanelProps; step: Step }): JSX.Element {
-  const { graph, row, outcome } = props;
-  const task = taskOf(outcome, step.facetId);
+  const { graph, row } = props;
   const stopped = row.facet.stoppedBecause;
   return (
     <>
@@ -69,18 +57,6 @@ function PartAbout({ props, step }: { props: StepPanelProps; step: Step }): JSX.
         <Para>{stepSentence(step, graph.active)}</Para>
         {stoppedShort(stopped) ? <Para quiet>{capitalise(stoppedWords(stopped))}.</Para> : null}
       </div>
-      <Rows>
-        <Row row={PanelRow.TechnicalDetails} label={t("Technical details")}>
-          <Details
-            rows={[
-              [t("run"), runIdOf(graph)],
-              [t("part"), step.facetId],
-              ...taskRows(task),
-              [t("state"), task?.state ?? null],
-            ]}
-          />
-        </Row>
-      </Rows>
     </>
   );
 }

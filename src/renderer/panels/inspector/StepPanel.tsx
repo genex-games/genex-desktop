@@ -4,34 +4,18 @@ import { useMemo, useState } from "react";
 import { t } from "../../../shared/i18n.ts";
 import {
   cameraWords,
-  checkWords,
   type IterationNode,
   IterationStatus,
-  type MergeInfo,
-  type OutageInfo,
-  plannedFlips,
   type RunGraph as RunGraphModel,
-  type RunNode,
   runIdOf,
 } from "../../run-graph.ts";
 import { openingView, type ShotView, shotViews, viewBefore } from "../../run-graph-pictures.ts";
-import {
-  isJudgedTry,
-  isLiveStep,
-  judgesOn,
-  leadStopped,
-  type PartRow,
-  STATE_TONE,
-  type Step,
-  stepPill,
-} from "../../run-steps.ts";
+import { isLiveStep, judgesOn, leadStopped, type PartRow, STATE_TONE, type Step, stepPill } from "../../run-steps.ts";
 import { useStill } from "../../stills.ts";
-import { Icon, type IconName } from "../../ui/icons.tsx";
-import { checkCounts, undoneBecause } from "../../words.ts";
+import { undoneBecause } from "../../words.ts";
 import { useRoundStill, useSavePointShot } from "../run-stills.ts";
-import { Details, NotesSection, Panel, PanelRow, Para, Quote, Row, Rows } from "./chrome.tsx";
-import { capitalise, listOrNull, modelLine } from "./format.ts";
-import { JudgesNotes } from "./JudgesNotes.tsx";
+import { NotesSection, Panel, Para, Quote } from "./chrome.tsx";
+import { capitalise } from "./format.ts";
 import { Cameras, Compare, Single, TryThumb } from "./pictures.tsx";
 import { LiveScreen, usePartScreen } from "./screen.tsx";
 import { Status } from "./tone.tsx";
@@ -49,17 +33,6 @@ function openingTry(step: Step): number {
   const shown = step.shown ?? step.tries.at(-1);
   return shown ? Math.max(0, step.tries.indexOf(shown)) : 0;
 }
-
-const mergeLine = (merge: MergeInfo | null): string | null => {
-  if (!merge) return null;
-  return `${merge.head?.slice(0, 8) ?? ""}${merge.conflict ? ` · ${t("conflict")}` : ""}${merge.union ? ` · ${t("union")}` : ""}`;
-};
-
-const outageLine = (outage: OutageInfo | null): string | null => {
-  if (!outage) return null;
-  if (outage.phase) return t("×{count} during {phase}", { count: outage.count, phase: outage.phase });
-  return `×${outage.count}`;
-};
 
 /** A picture's name on the camera switch and in the viewer: the lead's named one says what it is for. */
 const viewLabel = (view: ShotView): string => (view.changed ? t("What changed") : cameraWords(view.shot.camera));
@@ -88,43 +61,6 @@ function useStepPicture(props: StepPanelProps, node: IterationNode) {
   const compare = beforeNode ? Boolean(leftShot) : Boolean(baseLeft);
   const pick = (key: string): void => setPicked({ node: node.id, key });
   return { views, view, pick, right, left, compare };
-}
-
-const PASS_MARK: Record<"pass" | "fail" | "unknown", { color: string; icon: IconName }> = {
-  pass: { color: "var(--green)", icon: "check" },
-  fail: { color: "var(--red)", icon: "close" },
-  unknown: { color: "var(--ink-3)", icon: "minus" },
-};
-
-const passMark = (pass: boolean | null | undefined): (typeof PASS_MARK)[keyof typeof PASS_MARK] => {
-  if (pass === true) return PASS_MARK.pass;
-  if (pass === false) return PASS_MARK.fail;
-  return PASS_MARK.unknown;
-};
-
-function CheckList({ node }: { node: IterationNode }): JSX.Element {
-  const board = node.scoreboard;
-  const flips = new Set(plannedFlips(node));
-  if (!board?.results.length) return <Para quiet>{checkCounts(board)}</Para>;
-  return (
-    <ul className="flex flex-col gap-1.5">
-      {board.results.map((row) => {
-        const mark = passMark(row.pass);
-        return (
-          <li key={row.id} className="flex items-start gap-2 text-body-sm">
-            <span className="mt-[3px]" style={{ color: mark.color }}>
-              <Icon name={mark.icon} size={11} strokeWidth={2.4} />
-            </span>
-            <span className="min-w-0 text-ink-2 [overflow-wrap:anywhere]">
-              {capitalise(checkWords(row.id))}
-              {flips.has(row.id) ? <span className="text-green"> · {t("newly passing")}</span> : null}
-              {row.reason ? <span className="block text-ink-3">{row.reason}</span> : null}
-            </span>
-          </li>
-        );
-      })}
-    </ul>
-  );
 }
 
 /** Folded into one node on the graph, the tries unfold here: pick one to see it above. */
@@ -180,43 +116,6 @@ function StepStory({ step, node }: { step: Step; node: IterationNode }): JSX.Ele
   );
 }
 
-function StepRows({ graph, run, node }: { graph: RunGraphModel; run: RunNode; node: IterationNode }): JSX.Element {
-  const judged = isJudgedTry(node);
-  return (
-    <Rows>
-      {judged ? (
-        <Row
-          row={PanelRow.ReviewersNotes}
-          label={t("Reviewers' notes")}
-          right={node.defects.length ? String(node.defects.length) : null}
-        >
-          <JudgesNotes node={node} graph={graph} quoted={judgesOn(node)} />
-        </Row>
-      ) : null}
-      {node.scoreboard ? (
-        <Row row={PanelRow.Checks} label={t("Checks")} right={checkCounts(node.scoreboard)}>
-          <CheckList node={node} />
-        </Row>
-      ) : null}
-      <Row row={PanelRow.TechnicalDetails} label={t("Technical details")}>
-        <Details
-          rows={[
-            [t("run"), runIdOf(graph)],
-            [t("part"), node.facetId],
-            [t("round"), String(node.iteration)],
-            [t("verdict by"), node.verdictSource],
-            [t("merged"), mergeLine(node.merge)],
-            [t("cameras"), listOrNull(node.shots.map((shot) => cameraWords(shot.camera)))],
-            [t("model"), modelLine(run.engine, run.model)],
-            [t("flags"), listOrNull(node.flags.map((flag) => flag.what))],
-            [t("outage"), outageLine(node.outage)],
-          ]}
-        />
-      </Row>
-    </Rows>
-  );
-}
-
 /** The label of the still on the right: the try on show, this step, or this one try. */
 function rightLabelOf(step: Step, n: number): string {
   if (step.tries.length > 1) return t("Try {number}", { number: n });
@@ -267,7 +166,7 @@ export function StepPanel(props: StepPanelProps): JSX.Element | null {
 }
 
 function StepView(props: StepPanelProps & { node: IterationNode; onPick: (at: number) => void }): JSX.Element {
-  const { graph, step, run, node } = props;
+  const { graph, step, node } = props;
   const tries = step.tries;
   const picture = useStepPicture(props, node);
   // The try in hand, while its agent works: the card shows its screen, live, instead of its stills.
@@ -338,7 +237,6 @@ function StepView(props: StepPanelProps & { node: IterationNode; onPick: (at: nu
     >
       <StepStory step={step} node={node} />
       <NotesSection notes={node.notes} />
-      <StepRows graph={graph} run={run} node={node} />
     </Panel>
   );
 }

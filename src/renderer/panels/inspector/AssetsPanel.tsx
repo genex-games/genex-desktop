@@ -6,7 +6,7 @@ import type { JSX } from "react";
 import { useState } from "react";
 import { t, tc } from "../../../shared/i18n.ts";
 import type { AssetInfo, BlenderNode, RunGraph as RunGraphModel } from "../../run-graph.ts";
-import { runIdOf, truncate } from "../../run-graph.ts";
+import { truncate } from "../../run-graph.ts";
 import { AssetCardState, earlierVersion } from "../../run-graph-assets.ts";
 import { useStill } from "../../stills.ts";
 import { BlenderLogo } from "../../ui/brand.tsx";
@@ -23,7 +23,7 @@ import {
   stoppedShort,
   trianglesWords,
 } from "./asset-jobs.ts";
-import { Details, Panel, PanelRow, Row, Rows, Section } from "./chrome.tsx";
+import { Panel, Section } from "./chrome.tsx";
 import { joinDots } from "./format.ts";
 import { IMAGE_OUTLINE, PictureChange } from "./pictures.tsx";
 import { GraphSelection } from "./selection.ts";
@@ -279,32 +279,6 @@ function assetsSub(jobs: AssetInfo[], modelled: AssetInfo[]): string {
   return [madeWords, ...plugins].join(" · ");
 }
 
-function AssetDetails({
-  graph,
-  jobs,
-  modelled,
-}: {
-  graph: RunGraphModel;
-  jobs: AssetInfo[];
-  modelled: AssetInfo[];
-}): JSX.Element {
-  const files = [
-    ...jobs.flatMap((job) => [...job.files, ...(job.derived ?? []).flatMap((step) => step.files)]),
-    ...modelled.map((asset) => asset.file ?? ""),
-  ];
-  return (
-    <Row row={PanelRow.TechnicalDetails} label={t("Technical details")}>
-      <Details
-        rows={[
-          [t("run"), runIdOf(graph)],
-          [t("files"), joinDots(files) || null],
-          [t("jobs"), joinDots(jobs.map((job) => job.jobId)) || null],
-        ]}
-      />
-    </Row>
-  );
-}
-
 /** The lightbox of the modeller's renders: both views of every asset it made. */
 function blenderViews(modelled: AssetInfo[]): Array<{ item: AssetInfo; path: string }> {
   return modelled.flatMap((item) => {
@@ -378,9 +352,6 @@ export function AssetsPanel(props: InspectorProps): JSX.Element {
           </Section>
         ))}
       <BlenderSection blender={blender} project={project} partNumber={partNumber} onOpen={openBlender} />
-      <Rows>
-        <AssetDetails graph={graph} jobs={jobs} modelled={modelled} />
-      </Rows>
     </Panel>
   );
 }

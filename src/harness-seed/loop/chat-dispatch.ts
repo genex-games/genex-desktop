@@ -427,6 +427,10 @@ function intakeRun(
   return {
     runId: `run_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
     goal: intakeGoal(spec, store),
+    // The name the chat gave the build (start_autopilot `title`): the app's tabs call it by it.
+    ...(typeof spec.title === "string" && spec.title ? { title: spec.title } : {}),
+    // The lead's plan (start_autopilot `steps`): each save point ticks the next on the Building card.
+    ...(Array.isArray(spec.steps) && spec.steps.length ? { steps: spec.steps } : {}),
     project,
     reference: spec.reference,
     budgets: launchBudgets(spec),

@@ -10,6 +10,7 @@ import { secondOpinionSpec } from "../../second-opinion.ts";
 import { workerTools } from "../../workers/specs.ts";
 import { DirectorTool, NOTE_SPEC, WRAP_UP_SPEC } from "../tool-specs.ts";
 import { MAX_SAVE_POINT_LABEL, OpenTool } from "./contract.ts";
+import { STEPS_WORDS } from "../../plan-steps.ts";
 
 /** One string property of a tool's schema. */
 const text = (description: string) => ({ type: "string", description });
@@ -50,6 +51,7 @@ const SAVE_POINT: LiveToolSpec = {
       ),
       summary: text("What this save point holds, in one sentence."),
       shows: text("Optional: the path in the project's folder of a picture (PNG or JPEG) for this save point."),
+      steps: text(`Optional, only when your plan changed: ${STEPS_WORDS} One step per line.`),
     },
     required: ["label"],
   },

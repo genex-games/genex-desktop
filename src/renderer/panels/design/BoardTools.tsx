@@ -161,7 +161,7 @@ export function TellGenex({
 /**
  * Everything over the canvas that is the person's: while the Note tool is on, a press anywhere pins
  * a new note there and opens it to type; the tools; and Tell Genex, which sends the new notes and
- * picks as the person's message and marks them told once the chat has really sent them.
+ * picks now, as the person's message, rather than with the next one they write.
  */
 export function BoardChrome({
   project,
@@ -193,12 +193,10 @@ export function BoardChrome({
   const tell = (): void => {
     const ids = notes.map((note) => note.id);
     const files = picks.map((pick) => pick.file);
-    composeInChat({
-      project,
-      text: tellMessage({ notes, picks }, frames, captionOf),
-      send: true,
-      sent: () => change((now) => toldPicks(toldNotes(now, ids), files)),
-    });
+    const text = tellMessage({ notes, picks }, frames, captionOf);
+    // Told before the message leaves: the send would otherwise carry them a second time, unseen.
+    change((now) => toldPicks(toldNotes(now, ids), files));
+    composeInChat({ project, text, send: true });
   };
   const pin = (event: ReactPointerEvent<HTMLDivElement>): void => {
     const point = pointOf({ x: event.clientX, y: event.clientY });

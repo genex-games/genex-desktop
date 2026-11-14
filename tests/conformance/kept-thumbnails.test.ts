@@ -4,7 +4,7 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { keptOrMade, pictureOfDataUrl } from "../../src/renderer/kept-thumbnails.ts";
+import { keptOrMade, pictureOfDataUrl, thumbnailKey } from "../../src/renderer/kept-thumbnails.ts";
 
 const PNG_URL = "data:image/png;base64,iVBORw0KGgo=";
 
@@ -74,5 +74,27 @@ describe("a card's thumbnail", () => {
     const store = recorder(null);
     await assert.rejects(keptOrMade({ ...store, make: () => Promise.reject(new Error("no decoder")) }), /no decoder/);
     assert.deepEqual(store.calls, ["read"]);
+  });
+});
+
+describe("a thumbnail's key", () => {
+  const sprite = { file: "assets/hero.png", mtime: "2026-11-14T10:00:00.000Z", bytes: 900 };
+  it("names one version of one file of one game", () => {
+    assert.equal(thumbnailKey("keep", sprite), thumbnailKey("keep", { ...sprite }));
+    assert.notEqual(thumbnailKey("keep", sprite), thumbnailKey("other", sprite));
+    assert.notEqual(
+      thumbnailKey("keep", sprite),
+      thumbnailKey("keep", { ...sprite, mtime: "2026-11-14T10:00:01.000Z" }),
+    );
+    assert.notEqual(thumbnailKey("keep", sprite), thumbnailKey("keep", { ...sprite, assetRef: "genex:job/hero.png" }));
+  });
+
+  it("never reads back a picture's thumbnail kept before see-through pictures stayed see-through", () => {
+    // Earlier thumbnails of pictures were JPEGs, a sprite's transparency painted black.
+    const earlier = JSON.stringify(["keep", sprite.file, sprite.mtime, sprite.bytes, undefined]);
+    assert.notEqual(thumbnailKey("keep", sprite), earlier);
+    // A model's render never lost anything: its kept thumbnail stands.
+    const model = { file: "assets/knight.glb", mtime: sprite.mtime, bytes: 900 };
+    assert.equal(thumbnailKey("keep", model), JSON.stringify(["keep", model.file, model.mtime, 900, undefined]));
   });
 });

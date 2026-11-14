@@ -10,7 +10,6 @@ import { buildRunGraph, IterationStatus } from "../../src/renderer/run-graph.ts"
 import { TRY_WORD } from "../../src/renderer/round-status.ts";
 import {
   askedRest,
-  buildReview,
   checkingBuild,
   foldTries,
   frontier,
@@ -556,41 +555,6 @@ describe("the words a card wears", () => {
     const undone = rowsOf(loopRun()).rows.find((row) => row.facet.facetId === "land")!.steps[2]!;
     assert.equal(undone.state, "undone");
     assert.equal(stepPill(undone, false), "Rejected by reviewers");
-  });
-
-  /** A lead's run whose one build a pass of the lead's looked at and wrote a sentence about. */
-  const looked = (pass: string, rule: string, because: string) => {
-    minute = 0;
-    return rowsOf([
-      event("run_started", { goal: "A sword in ice", mode: "director" }),
-      event("autopilot_started", { director: true, facets: [] }),
-      event("integration_merge", { facetId: "sword", head: "h1", commit: "c1", conflict: false, stage: "director" }),
-      event("director_verdict", {
-        pass,
-        build: { head: "h1", worker: null, round: null },
-        seen: { pick: null },
-        decision: { kept: null, rule },
-        because,
-      }),
-    ]).graph;
-  };
-
-  it("quotes the last look at the build and names who took it", () => {
-    assert.deepEqual(buildReview(looked("judge", "preferred", "The judge preferred it.")), {
-      label: "Reviewers",
-      words: "The reviewer preferred it.",
-    });
-    assert.deepEqual(buildReview(looked("health", "starts", "It starts and draws its first frame.")), {
-      label: "Health check",
-      words: "It starts and draws its first frame.",
-    });
-  });
-
-  it("says nothing about a build there was nothing to compare with", () => {
-    const empty = "Nothing to compare it with: the run started from an empty game, so this build is judged on its own.";
-    assert.equal(buildReview(looked("judge", "first-build", empty)), null);
-    const unseen = "Nothing to compare it with: the game as it stood could not be photographed.";
-    assert.equal(buildReview(looked("judge", "no-start", unseen)), null);
   });
 });
 

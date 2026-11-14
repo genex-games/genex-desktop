@@ -35,6 +35,7 @@ import {
 import type { CoreInternals, StudioCore } from "../studio-core.ts";
 import { errorMessage } from "../../shared/errors.ts";
 import { NEW_CHAT_TITLE, NEW_GAME_TITLE } from "./game-threads.ts";
+import type { DesignNews } from "./design-board.ts";
 import { SECOND_MS } from "../../shared/duration.ts";
 import { settleWithin } from "../app-lifecycle.ts";
 import { threadOr } from "./main-thread.ts";
@@ -256,8 +257,10 @@ export class ConversationService {
       this.#core.emit(UiEvent.GameChanged, { project: target.project });
     }
     const pictures = await this.#savePictures(target.project, sendOptions);
-    // The agent reads the tags' lines after the person's words; the chat shows the words alone.
-    const action = this.#userMessageAction(text + tags.context, target, sendOptions, {
+    const board = await this.#boardNews(target, options);
+    // The agent reads the tags' lines, then the Design board's news, after the person's words; the
+    // chat shows the words alone.
+    const action = this.#userMessageAction(text + tags.context + (board?.context ?? ""), target, sendOptions, {
       resume,
       extraReads,
       stills,
@@ -299,6 +302,17 @@ export class ConversationService {
       thread: threadId,
       origin: MessageOrigin.TagRetry,
     });
+  }
+
+  /**
+   * The notes and picks the person left on their game's Design board since they last wrote, which
+   * go with their own message in the game's chat, told as they are taken; none with a message Genex writes itself, outside
+   * a game's chat, or when the board cannot be read (the message goes anyway).
+   */
+  async #boardNews(target: MessageTarget, options: ComposerSendOptions): Promise<DesignNews | null> {
+    if (!target.project || target.studioThread || options.origin) return null;
+    // Taken as told before the send: a second send racing this one finds nothing left to carry.
+    return this.#core.design.takeNews(target.project).catch(() => null);
   }
 
   /** The message's @ tags made real for its game; none outside a game's chat. */

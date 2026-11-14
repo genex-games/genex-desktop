@@ -33,7 +33,7 @@ export interface DeliveredFiles {
 export interface KeepPictureIo {
   /** Writes one file in the run's folder (`StudioCore.saveRunArtifact`) and answers its path. */
   save: (runId: string, name: string, data: Buffer) => Promise<string>;
-  /** A JPEG of a picture at most `maxPx` on its longest side, or null when nothing here can make one. */
+  /** A picture at most `maxPx` on its longest side (a PNG when see-through), or null when nothing here can make one. */
   resize?: (data: Buffer, maxPx: number) => Promise<Buffer | null>;
 }
 

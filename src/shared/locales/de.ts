@@ -261,7 +261,6 @@ export default {
   "A typing game where words are monsters marching toward your castle":
     "Ein Tippspiel, in dem Wörter Monster sind, die auf deine Burg zumarschieren",
   "A vertical climber up a beanstalk above the clouds": "Ein Kletterspiel eine Bohnenranke hinauf bis über die Wolken",
-  "A visual question failed.": "Eine visuelle Frage ist fehlgeschlagen.",
   "A volcano island where you build before the next eruption":
     "Eine Vulkaninsel, auf der du vor dem nächsten Ausbruch bauen musst",
   "A wizard duel where spells are drawn with the mouse":
@@ -401,9 +400,6 @@ export default {
   "An empty level to build from scratch.": "Ein leeres Level, um bei null anzufangen.",
   "An external Codex CLI is required.": "Eine externe Codex-CLI ist nötig.",
   "An http or sse connector has no command": "Ein http- oder sse-Konnektor hat keinen Befehl",
-  "An independent interaction check failed.": "Eine unabhängige Interaktionsprüfung ist fehlgeschlagen.",
-  "An independent interaction test was incomplete; its revision was not recorded.":
-    "Ein unabhängiger Interaktionstest war unvollständig; seine Version wurde nicht aufgezeichnet.",
   "An independent reviewer compares the current and suggested instructions on your past requests. It doesn’t rebuild your games, so an applied change isn’t proof of better results.":
     "Ein unabhängiger Prüfer vergleicht die aktuellen und die vorgeschlagenen Anweisungen anhand deiner früheren Anfragen. Er baut deine Spiele nicht neu, eine übernommene Änderung beweist also keine besseren Ergebnisse.",
   "An installed plugin declares an MCP server under that id — give this connector a different one":
@@ -497,8 +493,6 @@ export default {
   "Auto would let phones play: no crash reports flagged it.":
     "Auto würde Handys spielen lassen: Absturzberichte melden keine Probleme.",
   "Auto · desktop only": "Auto · nur Desktop",
-  "Available revision: none recorded": "Verfügbare Version: keine aufgezeichnet",
-  "Available revision: {revision}": "Verfügbare Version: {revision}",
   Avatar: "Avatar",
   Back: "Zurück",
   "Back to Play": "Zurück zu „Spielen“",
@@ -546,7 +540,6 @@ export default {
   "Bring All to Front": "Alle nach vorne bringen",
   "Bring back newer version": "Neuere Version zurückholen",
   "Bring your AI subscription": "Nutze dein KI-Abo",
-  "Broke again": "Wieder kaputt",
   "Browser OAuth is available for HTTP/SSE connectors only": "Browser-OAuth gibt es nur für HTTP/SSE-Konnektoren",
   "Browser showed a code?": "Code im Browser angezeigt?",
   Build: "Build",
@@ -749,8 +742,6 @@ export default {
   "Checking {what} in the preview": "Prüft {what} in der Vorschau",
   "Checking…": "Wird geprüft…",
   Checkpoint: "Checkpoint",
-  Checks: "Prüfungen",
-  "Checks — {counts}": "Prüfungen – {counts}",
   Choose: "Auswählen",
   "Choose Blender…": "Blender auswählen…",
   "Choose PQ2_0 (recommended) or PTQ1_0 in Model setup.":
@@ -845,7 +836,6 @@ export default {
   "Close (Esc)": "Schließen (Esc)",
   "Close Window": "Fenster schließen",
   "Close a terminal session before opening another.": "Schließe eine Terminal-Sitzung, bevor du eine neue öffnest.",
-  "Close capture": "Aufnahme schließen",
   "Close file": "Datei schließen",
   "Close plugin panel": "Plugin-Panel schließen",
   "Close search": "Suche schließen",
@@ -1257,8 +1247,6 @@ export default {
   "Delete…": "Löschen…",
   "Deleting…": "Wird gelöscht…",
   Delivered: "Geliefert",
-  "Delivered revision: {revision} · from integration {source}":
-    "Gelieferte Version: {revision} · aus Integration {source}",
   "Delivered, not used yet": "Geliefert, noch nicht genutzt",
   Demon: "Dämon",
   Denied: "Verweigert",
@@ -1297,7 +1285,6 @@ export default {
   "Do it for me": "Mach das für mich",
   "Do it for me opens the launcher, and this chat installs it there with computer control. About {gb} GB. Only you sign in to Epic, when it asks.":
     "„Mach das für mich“ öffnet den Launcher, und dieser Chat installiert Unreal dort per Computersteuerung. Etwa {gb} GB. Bei Epic meldest nur du dich an, wenn es danach fragt.",
-  "Does it feel alive? {score} of {max}": "Wirkt es lebendig? {score} von {max}",
   "Don't allow": "Nicht erlauben",
   "Don't ask again for this action in {source}.": "In {source} für diese Aktion nicht mehr fragen.",
   "Don't use Godot": "Godot nicht nutzen",
@@ -1349,7 +1336,6 @@ export default {
     "Loslassen, um {count, plural, one {# Bild} other {# Bilder}} hinzuzufügen",
   "Drove the route": "Strecke abgefahren",
   Earlier: "Früher",
-  "Earlier builds": "Frühere Builds",
   "Earlier conversation · no folder": "Früherer Chat · kein Ordner",
   Edit: "Bearbeiten",
   "Edit connector {id}": "Konnektor {id} bearbeiten",
@@ -1514,7 +1500,6 @@ export default {
   "Fit the picture": "Bild einpassen",
   Fix: "Fix",
   "Fix the build error, then try again.": "Behebe den Build-Fehler und versuch es dann erneut.",
-  "Fix: {fix}": "Lösung: {fix}",
   "Fixes: {task}": "Korrekturen: {task}",
   "Fixing a shader error…": "Behebt einen Shader-Fehler…",
   Flare: "Flare",
@@ -1851,7 +1836,6 @@ export default {
   Headers: "Header",
   "Headers: name": "Header: Name",
   Headset: "Headset",
-  "Health check": "Funktionscheck",
   "Held {input}": "{input} gedrückt gehalten",
   Help: "Hilfe",
   Hide: "Ausblenden",
@@ -1863,8 +1847,6 @@ export default {
   "Hide this card until the agent shows it again": "Diese Karte ausblenden, bis der Agent sie wieder zeigt",
   "Hide what would be sent": "Ausblenden, was gesendet würde",
   "Hide {app}": "{app} ausblenden",
-  "History incomplete — counts describe recorded events.":
-    "Verlauf unvollständig – die Zahlen beschreiben nur aufgezeichnete Ereignisse.",
   "Hold {key} to exit full screen": "Halte {key} gedrückt, um das Vollbild zu beenden",
   "Holding {input}": "Hält {input} gedrückt",
   "Holo foil": "Holo-Folie",
@@ -1921,7 +1903,6 @@ export default {
   "In the game's folder": "Im Spielordner",
   "In the launcher, sign in, then {clickPath}. About {gb} GB. Only you can sign in to Epic.":
     "Melde dich im Launcher an, dann {clickPath}. Etwa {gb} GB. Bei Epic kannst nur du dich anmelden.",
-  "In the reviewers' words: {words}": "In den Worten der Prüfer: {words}",
   "In this game’s folder. Workers load them from there.": "Im Ordner dieses Spiels. Helfer laden sie von dort.",
   "In total": "Insgesamt",
   "In use": "Wird genutzt",
@@ -1930,10 +1911,6 @@ export default {
   "In {folder}": "In {folder}",
   "In-game economy": "In-Game-Wirtschaft",
   Incomplete: "Unvollständig",
-  "Independent interaction coverage is incomplete.": "Die unabhängige Interaktionsabdeckung ist unvollständig.",
-  "Independent interaction coverage is unavailable for this revision.":
-    "Für diese Version gibt es keine unabhängige Interaktionsabdeckung.",
-  "Independent interaction coverage is unknown.": "Die unabhängige Interaktionsabdeckung ist unbekannt.",
   "Independent playtest": "Unabhängiger Spieltest",
   "Independent playtest {number} — {check} (question not recorded)":
     "Unabhängiger Spieltest {number} – {check} (Frage nicht gespeichert)",
@@ -2128,14 +2105,8 @@ export default {
   "Kept by reviewers": "Von Prüfern behalten",
   "Kept by reviewers, not added": "Von Prüfern behalten, nicht hinzugefügt",
   "Kept in your project": "In deinem Projekt behalten",
-  "Kept, and the reviewers are satisfied with this part: every identity check passes and the side-by-side reviewer has nothing left to ask.":
-    "Behalten, und die Prüfer sind mit diesem Teil zufrieden: Jede Kernprüfung besteht, und der Prüfer im direkten Vergleich hat keine Wünsche mehr.",
   "Kept, not added": "Behalten, nicht hinzugefügt",
   "Kept.": "Behalten.",
-  "Kept. No check changed, but the step landed and the side-by-side reviewer preferred the new build to the one before.":
-    "Behalten. Keine Prüfung hat sich geändert, aber der Schritt hat geklappt, und der Prüfer im direkten Vergleich fand den neuen Build besser als den vorherigen.",
-  "Kept. {count, plural, one {# check that failed before now passes} other {# checks that failed before now pass}}, nothing that passed before broke, and the side-by-side reviewer did not object.":
-    "Behalten. {count, plural, one {# Prüfung, die vorher fehlschlug, besteht jetzt} other {# Prüfungen, die vorher fehlschlugen, bestehen jetzt}}, nichts, was vorher bestand, ist kaputtgegangen, und der Prüfer im direkten Vergleich hatte keine Einwände.",
   Kind: "Art",
   "Kinds of asset": "Asset-Arten",
   "Koi drifting through a neon night market, seen from above":
@@ -2153,7 +2124,6 @@ export default {
   "Latest build": "Neuester Build",
   "Latin only": "Nur lateinische Buchstaben",
   "Laying the terrain": "Legt das Gelände an",
-  "Lead's last look": "Letzter Blick des Hauptagenten",
   Learn: "Mehr erfahren",
   "Learn about Genex": "Mehr über Genex",
   "Learn more": "Mehr erfahren",
@@ -2190,8 +2160,6 @@ export default {
   "Listing the toolsets": "Lädt die Toolset-Liste",
   Live: "Live",
   "Live in your game": "In deinem Spiel",
-  "Live is showing: {shown}": "Live zeigt: {shown}",
-  "Live is showing: {shown} — {error}": "Live zeigt: {shown} – {error}",
   "Live · just now": "Live · gerade eben",
   "Live · {when} ago": "Live · vor {when}",
   "Load a local plugin package": "Lokales Plugin-Paket laden",
@@ -2418,7 +2386,6 @@ export default {
   "Newer integrated build not delivered": "Neuerer zusammengeführter Build nicht übernommen",
   Newest: "Neueste",
   "Newest code on {branch}": "Neuester Code auf {branch}",
-  "Newly passing": "Neu bestanden",
   "Newspaper halftone, the ink bleeding": "Zeitungsraster mit verlaufender Druckfarbe",
   Next: "Weiter",
   "Next (→)": "Weiter (→)",
@@ -2445,7 +2412,6 @@ export default {
     "Keine App auf diesem Computer öffnet {file}, daher wird die Datei im Explorer gezeigt.",
   "No assets yet": "Noch keine Assets",
   "No build": "Kein Build",
-  "No checks recorded.": "Keine Prüfungen aufgezeichnet.",
   "No checks yet": "Noch keine Prüfungen",
   "No comments on {title} yet": "Noch keine Kommentare zu {title}",
   "No compatible newer release is available for this installed plugin":
@@ -2507,7 +2473,6 @@ export default {
   "Not asked — the step did not land.": "Nicht gefragt – der Schritt hat nicht geklappt.",
   "Not confirmed": "Nicht bestätigt",
   "Not connected": "Nicht verbunden",
-  "Not decided yet.": "Noch nicht entschieden.",
   "Not downloaded": "Nicht heruntergeladen",
   "Not enabled": "Nicht aktiviert",
   "Not enough space: {required, plural, other {# bytes}} needed for remaining downloads, temporary extraction and reserve; {available} available.":
@@ -2559,7 +2524,6 @@ export default {
   "Nothing beyond its own tools": "Nichts außer den eigenen Tools",
   "Nothing changed. Try again in a moment.": "Nichts geändert. Versuch es gleich noch mal.",
   "Nothing is added to this folder.": "Diesem Ordner wird nichts hinzugefügt.",
-  "Nothing is failing.": "Nichts schlägt fehl.",
   "Nothing is installing.": "Gerade wird nichts installiert.",
   "Nothing is online for this game yet": "Für dieses Spiel ist noch nichts online",
   "Give the link a letter or a number.": "Gib dem Link einen Buchstaben oder eine Zahl.",
@@ -2585,8 +2549,6 @@ export default {
     "Noch nichts. Wählst du in einem Chat „Immer erlauben“, landet die Aktion hier.",
   "Nothing yet. Finish a build and its row appears here.":
     "Noch nichts. Schließ einen Build ab, dann erscheint seine Zeile hier.",
-  "Nothing — this part has stopped ({reason}).": "Nichts – dieser Teil wurde gestoppt ({reason}).",
-  "Nothing — this part is done.": "Nichts – dieser Teil ist fertig.",
   Notifications: "Benachrichtigungen",
   "Notifications, new activity": "Benachrichtigungen, neue Aktivität",
   "Notifications, {count} waiting for you": "Benachrichtigungen, {count} offen",
@@ -3042,7 +3004,6 @@ export default {
   "Ran {script}": "{script} ausgeführt",
   "Read Blueprint {blueprint}": "Blueprint {blueprint} gelesen",
   "Read a toolset": "Ein Toolset gelesen",
-  "Read all": "Alles lesen",
   "Read by agents on demand": "Agenten lesen sie bei Bedarf",
   "Read files in {path}": "Dateien in {path} lesen",
   "Read the Blueprint guide": "Blueprint-Anleitung gelesen",
@@ -3088,7 +3049,6 @@ export default {
   "Recorded build capture": "Aufnahme des Builds",
   "Recorded check": "Gespeicherte Prüfung",
   "Recorded check capture": "Aufnahme aus der Prüfung",
-  "Recorded interaction check passed.": "Aufgezeichnete Interaktionsprüfung bestanden.",
   Redo: "Wiederholen",
   "Reference or mood board": "Referenz oder Moodboard",
   "Refresh marketplace index": "Marketplace-Index aktualisieren",
@@ -3161,7 +3121,6 @@ export default {
   "Replace the key in Settings › Model Providers.": "Ersetze den Schlüssel unter Einstellungen › Modellanbieter.",
   "Replace {old} with {name} {version}?": "{old} durch {name} {version} ersetzen?",
   "Replayed route": "Wiederholte Route",
-  "Replayed the judge's route": "Route des Jurors wiederholt",
   "Report sent": "Bericht gesendet",
   "Reported by the selected Codex CLI profile. Availability does not mean a skill was used in a conversation.":
     "Vom gewählten Codex-CLI-Profil gemeldet. Verfügbar heißt nicht, dass ein Skill in einem Chat genutzt wurde.",
@@ -3228,7 +3187,6 @@ export default {
   "Reviewers model": "Modell der Prüfer",
   "A second opinion": "Eine zweite Meinung",
   "Reviewers · try {number}": "Prüfer · Versuch {number}",
-  "Reviewers' notes": "Notizen der Prüfer",
   "Reviewers: {model}": "Prüfer: {model}",
   Reviewing: "Prüft",
   "Reviewing a build": "Prüft einen Build",
@@ -3521,7 +3479,6 @@ export default {
   "Shows in its folder": "Wird im Ordner gezeigt",
   "Shows on Play under {shelf} · {tags}.": "Erscheint in „Spielen“ unter {shelf} · {tags}.",
   "Shows on Play under {shelf}.": "Erscheint in „Spielen“ unter {shelf}.",
-  "Side by side with the build before": "Im Vergleich mit dem vorherigen Build",
   Sidebar: "Seitenleiste",
   Sigil: "Siegel",
   "Sign in": "Anmelden",
@@ -3574,8 +3531,6 @@ export default {
   "Signed out. Sign in again to keep building.": "Abgemeldet. Melde dich wieder an, um weiterzubauen.",
   "Signing in…": "Anmeldung läuft…",
   "Single player": "Einzelspieler",
-  "Six things the critic looks for; the weakest here is {thing}.":
-    "Der Kritiker achtet auf sechs Dinge; am schwächsten ist hier: {thing}.",
   Size: "Größe",
   "Skill details": "Skill-Details",
   Skills: "Skills",
@@ -3656,7 +3611,6 @@ export default {
   Stats: "Statistiken",
   "Status unavailable": "Status nicht verfügbar",
   "Still checking the payment": "Zahlung wird noch geprüft",
-  "Still failing": "Schlägt noch fehl",
   "Still open": "Noch offen",
   "Still testing": "Wird noch getestet",
   "Still to fix": "Noch zu beheben",
@@ -3715,8 +3669,6 @@ export default {
   "Studio is offline in this profile": "Studio ist in diesem Profil offline",
   "Studio is restarting. Try again in a moment.": "Studio startet neu. Versuch es gleich noch mal.",
   "Studio is still starting": "Studio startet noch",
-  "Studio learning: {learning} — separate from game execution.":
-    "Studio-Lernen: {learning} – getrennt vom Spielablauf.",
   "Studio no longer has that saved version.": "Studio hat diese gespeicherte Version nicht mehr.",
   "Studio plugins": "Studio-Plugins",
   "Studio restarted": "Studio neu gestartet",
@@ -3763,7 +3715,6 @@ export default {
   "Taking a still from {camera}": "Nimmt ein Standbild von {camera} auf",
   "Taking longer than usual.": "Dauert länger als sonst.",
   "Talk to the lead while it builds…": "Sprich mit dem Hauptagenten, während er baut…",
-  "Technical details": "Technische Details",
   "Tell Claude what to do instead…": "Sag Claude, was stattdessen passieren soll…",
   "Tell the worker what to do instead…": "Sag dem Helfer, was er stattdessen machen soll…",
   Terminal: "Terminal",
@@ -3943,8 +3894,6 @@ export default {
   "The installer stopped before it finished. Try again.":
     "Das Installationsprogramm hat vor dem Ende aufgehört. Versuch es noch mal.",
   "The judge didn't play": "Der Juror hat nicht gespielt",
-  "The judge's moves were replayed on this build, and the goal held.":
-    "Die Züge des Jurors wurden auf diesem Build wiederholt, und das Ziel wurde wieder erreicht.",
   "The key is checked with OpenRouter, then kept on this Mac.":
     "Der Schlüssel wird bei OpenRouter geprüft und dann auf diesem Mac gespeichert.",
   "The last publish failed. Open Publish to read why.":
@@ -3978,7 +3927,6 @@ export default {
   "The lead stopped the {ordinal}.": "Der Hauptagent hat den {ordinal} Versuch gestoppt.",
   "The lead stopped {count}.": "Der Hauptagent hat {count} davon gestoppt.",
   "The lead wants to run {job} in the background": "Der Hauptagent möchte {job} im Hintergrund ausführen",
-  "The lead's summary": "Zusammenfassung des Hauptagenten",
   "The lead: done": "Hauptagent: fertig",
   "The lead: paused": "Hauptagent: pausiert",
   "The lead: stopped": "Hauptagent: gestoppt",
@@ -4061,7 +4009,6 @@ export default {
   "The studio window keeps crashing": "Das Studio-Fenster stürzt immer wieder ab",
   "The terminal could not start. Try opening it again.":
     "Das Terminal konnte nicht starten. Versuch, es erneut zu öffnen.",
-  "The weakest thing: {thing}.": "Am schwächsten: {thing}.",
   "The worker is on try {tryNumber}.": "Der Helfer ist bei Versuch {tryNumber}.",
   "The worker tried something outside the rules of its workspace.":
     "Der Helfer hat etwas versucht, das die Regeln seines Arbeitsbereichs nicht erlauben.",
@@ -4129,7 +4076,6 @@ export default {
   "This account is signed out": "Dieses Konto ist abgemeldet",
   "This audio codec could not be played. Try a WAV, MP3 or Ogg export.":
     "Dieser Audio-Codec kann nicht abgespielt werden. Versuch einen Export als WAV, MP3 oder Ogg.",
-  "This build": "Dieser Build",
   "This build doesn't check for updates.": "Dieser Build sucht nicht nach Updates.",
   "This build is your game now": "Dieser Build ist jetzt dein Spiel",
   "This build is your game now — open Live to play it.":
@@ -4408,9 +4354,6 @@ export default {
   "Undo this change": "Änderung rückgängig machen",
   Undone: "Rückgängig gemacht",
   "Undone because {reason}.": "Rückgängig gemacht: {reason}.",
-  "Undone — {reason}.": "Rückgängig gemacht – {reason}.",
-  "Undone — {reason}. The reviewers' biggest objection: {objection}.":
-    "Rückgängig gemacht – {reason}. Größter Einwand der Prüfer: {objection}.",
   "Undone. {game} builds in {engine} again, and {project} is no longer set up for Genex.":
     "Rückgängig gemacht. {game} wird wieder in {engine} gebaut, und {project} ist nicht mehr für Genex eingerichtet.",
   "Undone. {game} builds in {engine} again.": "Rückgängig gemacht. {game} wird wieder in {engine} gebaut.",
@@ -4577,7 +4520,6 @@ export default {
   "Vaporwave sun": "Vaporwave-Sonne",
   "Variable names use capital letters, digits and _; header names letters, digits and -.":
     "Variablennamen nutzen Großbuchstaben, Ziffern und _; Header-Namen Buchstaben, Ziffern und -.",
-  Verdict: "Urteil",
   Version: "Version",
   "Version {version}": "Version {version}",
   "Versions of your games saved for Rewind and builds.":
@@ -4592,7 +4534,6 @@ export default {
   "Video, 5 s": "Video, 5 s",
   Videos: "Videos",
   View: "Ansicht",
-  "View capture": "Aufnahme ansehen",
   "View plugin": "Plugin ansehen",
   "View {name}": "{name} ansehen",
   Vision: "Sieht Bilder",
@@ -4665,9 +4606,6 @@ export default {
   "What should it show? Or leave it empty": "Was soll es zeigen? Oder leer lassen",
   "What should the worker do instead?": "Was soll der Helfer stattdessen tun?",
   "What the new cover should show": "Was das neue Cover zeigen soll",
-  "What the reviewers named": "Was die Prüfer genannt haben",
-  "What the studio learned": "Was Studio gelernt hat",
-  "What the worker is asked next": "Was der Helfer als Nächstes tun soll",
   "What to show": "Was anzeigen",
   "What was learned": "Was gelernt wurde",
   "What's missing: {task}": "Was fehlt: {task}",
@@ -4877,7 +4815,6 @@ export default {
   "after a save point": "nach einem Speicherpunkt",
   "after its tools run": "nachdem seine Tools gelaufen sind",
   "after paying": "nach dem Bezahlen",
-  "age and weather on things": "Alter und Wetter an den Dingen",
   "all but {steps} landed": "alles außer {steps} ist im Spiel",
   "an actor": "ein Objekt",
   "an asset": "ein Asset",
@@ -4886,8 +4823,6 @@ export default {
   "an empty folder": "ein leerer Ordner",
   "an input": "eine Eingabe",
   "when the lead asks for one": "wenn der Hauptagent darum bittet",
-  "and {count} more": "und {count} weitere",
-  "another project or no recorded preview": "anderes Projekt oder keine aufgezeichnete Vorschau",
   "app update left every harness file as it was": "das App-Update hat alle Harness-Dateien so gelassen, wie sie waren",
   "app update refreshed {count, plural, one {# harness file} other {# harness files}}":
     "das App-Update hat {count, plural, one {# Harness-Datei} other {# Harness-Dateien}} erneuert",
@@ -4928,7 +4863,6 @@ export default {
   by: "von",
   "by {owner}": "von {owner}",
   "camera: {camera}": "Kamera: {camera}",
-  cameras: "Kameras",
   "can't call tools, so it can't build": "kann keine Tools aufrufen, also nicht bauen",
   "captured the game": "Spiel aufgenommen",
   "change files in your games": "Dateien in deinen Spielen ändern",
@@ -4946,9 +4880,7 @@ export default {
   close: "schließen",
   cold: "kalt",
   "column\u0004Change": "Änderung",
-  "commit not recorded": "Commit nicht aufgezeichnet",
   compact: "komprimieren",
-  conflict: "Konflikt",
   connected: "verbunden",
   "connecting…": "verbindet…",
   "continued the build": "Build fortgesetzt",
@@ -4981,7 +4913,6 @@ export default {
   "effort\u0004xHigh": "Sehr hoch",
   eighth: "achten",
   ended: "beendet",
-  "every object has a reason to be there": "jedes Objekt hat einen Grund, da zu sein",
   "on parts at the same time": "an mehreren Teilen gleichzeitig",
   "every step landed": "jeder Schritt ist im Spiel",
   "exit {code}": "Exit {code}",
@@ -4994,7 +4925,6 @@ export default {
   "failed · {time}": "fehlgeschlagen · {time}",
   "feedback text is empty": "Feedback-Text ist leer",
   fifth: "fünften",
-  files: "Dateien",
   "files of its own, no web page": "eigene Dateien, keine Webseite",
   "files on {host} do not open from the studio": "Dateien auf {host} öffnen sich nicht aus Studio",
   "finish sign-in in your browser": "schließ die Anmeldung im Browser ab",
@@ -5002,7 +4932,6 @@ export default {
   "finished · {time}": "fertig · {time}",
   first: "ersten",
   fixed: "behoben",
-  flags: "Markierungen",
   "forgot something": "etwas vergessen",
   fourth: "vierten",
   "from <b>{price}</b>": "ab <b>{price}</b>",
@@ -5028,7 +4957,6 @@ export default {
   "how alive it feels": "wie lebendig es sich anfühlt",
   "how alive it feels {score}": "wie lebendig es sich anfühlt: {score}",
   "how alive it feels {score} out of {max}": "wie lebendig es sich anfühlt: {score} von {max}",
-  "how far the world goes": "wie weit die Welt reicht",
   "how well the screen reads": "wie gut der Bildschirm lesbar ist",
   "how well the screen reads {score}": "wie gut der Bildschirm lesbar ist: {score}",
   "how well the screen reads {score} out of {max}": "wie gut der Bildschirm lesbar ist: {score} von {max}",
@@ -5047,7 +4975,6 @@ export default {
   "The room module's server/ folder and imports are too large to publish as a room module":
     "Der Ordner server/ des Raummoduls und seine Importe sind zu groß, um als Raummodul veröffentlicht zu werden",
   "runs the game's multiplayer room on this computer": "führt den Mehrspieler-Raum des Spiels auf diesem Computer aus",
-  integrations: "Integrationen",
   "it finished": "abgeschlossen",
   "it landed": "ist im Spiel",
   "it ran out of time": "die Zeit ist abgelaufen",
@@ -5055,7 +4982,6 @@ export default {
   "it was not clearly better than the round before": "die Runde war nicht klar besser als die davor",
   "its own craft": "seinem eigenen Handwerk",
   "its work was kept": "die Arbeit bleibt erhalten",
-  jobs: "Jobs",
   "just now": "gerade eben",
   "just started": "gerade gestartet",
   "keep its own settings": "eigene Einstellungen speichern",
@@ -5063,7 +4989,6 @@ export default {
   "latest release": "neuestes Release",
   "latest release, {date}": "neuestes Release, {date}",
   left: "links",
-  light: "Licht",
   "listed its own files": "eigene Dateien aufgelistet",
   "listed the files": "Dateien aufgelistet",
   "listed your games": "deine Spiele aufgelistet",
@@ -5087,18 +5012,14 @@ export default {
     "mcp add: {option} wird nicht importiert. Prüf den Server vor dem Speichern.",
   menace: "bedrohlich",
   "menu\u0004Edit": "Bearbeiten",
-  merged: "zusammengeführt",
   "merged a worker's work": "Arbeit eines Helfers übernommen",
   "mobile support\u0004Auto": "Auto",
-  model: "Modell",
-  "movement and inhabitants": "Bewegung und Bewohner",
   "must be fixed — a round that leaves it cannot be kept":
     "muss behoben werden – eine Runde, die es nicht behebt, kann nicht behalten werden",
   "native games are not available on this computer": "native Spiele sind auf diesem Computer nicht verfügbar",
   navigate: "navigieren",
   "new": "neu",
   "new: nothing before to compare": "neu: kein Zeitraum davor zum Vergleichen",
-  "newly passing": "besteht jetzt",
   "next gap: {gap}": "nächste Lücke: {gap}",
   "nickname\u0004Free": "Frei",
   ninth: "neunten",
@@ -5139,9 +5060,7 @@ export default {
   "opens {entry} directly, with no build step": "öffnet {entry} direkt, ohne Build-Schritt",
   or: "oder",
   "or use": "oder nutze",
-  outage: "Ausfall",
   "painted the game's cover": "Cover des Spiels gemalt",
-  part: "Teil",
   "passed on your guidance": "deine Hinweise weitergegeben",
   paused: "pausiert",
   "permission mode\u0004Auto": "Auto",
@@ -5181,11 +5100,8 @@ export default {
   "resume from chat": "im Chat fortsetzen",
   "resumed the saved build": "gespeicherten Build fortgesetzt",
   "reviewed a build": "Build geprüft",
-  "revision unknown ({state})": "Version unbekannt ({state})",
   right: "rechts",
-  round: "Runde",
   "round {round}: {verdict} · next gap: {gap}": "Runde {round}: {verdict} · nächste Lücke: {gap}",
-  run: "Build",
   "run background jobs": "Hintergrundjobs ausführen",
   "run long jobs and report their progress": "lange Jobs ausführen und ihren Fortschritt melden",
   "run {runId} already finished — nothing to resume": "Build {runId} ist schon fertig – nichts fortzusetzen",
@@ -5220,7 +5136,6 @@ export default {
   "started background work": "Hintergrundarbeit gestartet",
   "started the build": "Build gestartet",
   "starts in {minutes}m": "startet in {minutes} Min.",
-  state: "Status",
   steady: "ruhig",
   "step\u0004Check": "Prüfen",
   "still there": "noch da",
@@ -5334,7 +5249,6 @@ export default {
   "the web": "dem Web",
   'there is no "{child}" folder in {where}': "in {where} gibt es keinen Ordner „{child}“",
   'there is no game called "{game}"': "es gibt kein Spiel namens „{game}“",
-  "things at every size": "Dinge in jeder Größe",
   third: "dritten",
   "this build": "dieser Build",
   "this build is split into {count, plural, one {# part} other {# parts}} ({names}) — {pace}, each reviewed on its own":
@@ -5353,7 +5267,6 @@ export default {
   "under a minute": "unter einer Minute",
   "under a minute left": "noch unter einer Minute",
   undone: "rückgängig gemacht",
-  union: "Vereinigung",
   unknown: "unbekannt",
   "unknown error": "unbekannter Fehler",
   "unknown project {name}": "unbekanntes Projekt {name}",
@@ -5367,7 +5280,6 @@ export default {
   "uses ~{need} of {usable} GB": "nutzt ~{need} von {usable} GB",
   "using CLAUDE_CONFIG_DIR ({home})": "nutzt CLAUDE_CONFIG_DIR ({home})",
   "using your existing Claude Code sign-in on this Mac": "nutzt deine bestehende Claude-Code-Anmeldung auf diesem Mac",
-  "verdict by": "Urteil von",
   "verified by the studio": "von Studio geprüft",
   "version history, so any change can be undone": "Versionsverlauf, damit sich jede Änderung rückgängig machen lässt",
   "vs previous {days} days": "vs. vorherige {days} Tage",
@@ -5388,7 +5300,6 @@ export default {
   "while it holds a lock, to see whether you are using it":
     "während es eine Sperre hält, um zu prüfen, ob du gerade selbst daran arbeitest",
   wide: "weit",
-  workers: "Helfer",
   working: "arbeitet",
   "working on {part}": "arbeitet an {part}",
   "wrapped up the build": "Build beendet",
@@ -5501,8 +5412,6 @@ export default {
     "{count, plural, one {# Speicherpunkt} other {# Speicherpunkte}}",
   "{count, plural, one {# self-edited file} other {# self-edited files}} kept":
     "{count, plural, one {# vom Agenten bearbeitete Datei behalten} other {# vom Agenten bearbeitete Dateien behalten}}",
-  "{count, plural, one {# structural check} other {# structural checks}} passed.":
-    "{count, plural, one {# Strukturprüfung bestanden} other {# Strukturprüfungen bestanden}}.",
   "{count, plural, one {# thing} other {# things}} left":
     "{count, plural, one {Noch # Punkt offen} other {Noch # Punkte offen}}",
   "{count, plural, one {# tool call} other {# tool calls}}":
@@ -5854,7 +5763,6 @@ export default {
   "{scheme, select, light {light} other {dark}} {color} hex":
     "{color}: Hex-Wert im {scheme, select, light {hellen} other {dunklen}} Design",
   "{scheme} links do not open from the studio": "{scheme}-Links öffnen sich nicht aus Studio",
-  "{score} of {max}": "{score} von {max}",
   "{seconds}s": "{seconds} s",
   "{seconds}s ago": "vor {seconds} s",
   "{server} asks for an API key.": "{server} fragt nach einem API-Schlüssel.",
@@ -5954,8 +5862,6 @@ export default {
   "{worker} didn't deliver": "{worker} hat nicht geliefert",
   "{worker} wants to run {job} in the background": "{worker} möchte {job} im Hintergrund ausführen",
   "~{minutes} min": "~{minutes} Min.",
-  "×{count} during {phase}": "×{count} während {phase}",
-  "— the biggest of them: {problem}": "– das größte Problem: {problem}",
   "… Preview truncated at 256 KiB; original unchanged.": "… Vorschau bei 256 KiB abgeschnitten; Original unverändert.",
   "On this computer": "Auf diesem Computer",
   "On this computer · {size}": "Auf diesem Computer · {size}",
@@ -6309,7 +6215,6 @@ export default {
   "The screen was blank: one flat colour, nothing drawn.":
     "Der Bildschirm war leer: eine einzige Farbe, nichts gezeichnet.",
   "What the check found": "Was die Prüfung gefunden hat",
-  commit: "Commit",
   found: "gefunden",
   "In the running build": "Im laufenden Build",
   "Not in your game yet. It arrives when the build lands.":
@@ -6685,4 +6590,6 @@ export default {
   "{title} was removed from Design": "{title} wurde aus Design entfernt",
   "Opens in Design": "Öffnet sich in Design",
   "Question {step} of {of}": "Frage {step} von {of}",
+  "Step {n} of {total} · {name}": "Schritt {n} von {total} · {name}",
+  "Version {version} is in your game": "Version {version} ist in deinem Spiel",
 } satisfies LocaleCatalog;

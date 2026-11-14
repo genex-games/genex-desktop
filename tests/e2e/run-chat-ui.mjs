@@ -217,7 +217,8 @@ try {
     assert.doesNotMatch(s.text, /Warm lights in the villageFinished/);
     // The build is its one card: the part at work in one line, and on the right its clock. Intentionally
     // flipped: the clock was followed by the Loop's cap ("up to 30m"); a Loop has no time the person set now.
-    assert.match(s.text, /BuildingWooden bridge across the river · working\d+[hms]/);
+    // The card is named by its build (its title, else its first save point), "Building" without either.
+    assert.match(s.text, /Wooden bridge across the river · working\d+[hms]/);
     // Only the build runs now (the question is answered): chat shows the build row, not its own working status.
     assert.ok(!s.chatLayout.some((row) => row.kind === "status"), "a running build is not chat work");
     const build = await op("snapshot", {
@@ -225,9 +226,8 @@ try {
       scope: "[data-chat-scroll] [data-build-status]",
       limit: 20,
     });
-    assert.match(build.text, /^Building/);
     assert.ok(
-      build.controls.some((c) => c.text === "Building" && c.title === "Open in Builds"),
+      build.controls.some((c) => c.title === "Open in Builds"),
       "the build card opens Builds",
     );
     report.measurements.push({ phase: "reference-geometry", rows: s.chatLayout });

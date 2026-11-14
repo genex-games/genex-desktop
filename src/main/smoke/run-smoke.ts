@@ -503,7 +503,6 @@ async function runBuildSmoke(smoke: Smoke): Promise<void> {
   await finishOutcomeRun(buildSmoke, await seedOutcomeRun(buildSmoke), captureDir);
   await checkOutcomePanel(buildSmoke);
   await checkPartRows(buildSmoke);
-  await checkChecksAndCapture(buildSmoke);
   await checkActivityAndMcp(buildSmoke);
   await captureBuildShot(buildSmoke);
   await checkSharedDesign(buildSmoke);
@@ -1853,8 +1852,8 @@ async function checkFollowRounds(buildSmoke: BuildSmoke): Promise<FollowRun> {
     await waitFor(`${working("step:fish:2")}&&${working("step:water:2")}`),
   );
   await wc.executeJavaScript(`document.querySelector('[data-graph-node="step:water:1"]')?.click()`);
-  const waterCard = `!!document.querySelector('[data-builds-list] [data-graph-panel="step:water:1"]')&&!document.querySelector('[data-graph-node="step:water:1"]')`;
-  check("selecting a row opens its card in place of the row", await waitFor(waterCard));
+  const waterCard = `!!document.querySelector('[data-builds-list] [data-graph-node="step:water:1"][aria-expanded="true"] + [data-graph-panel="step:water:1"]')`;
+  check("selecting a row opens its card in place, under the row's own header", await waitFor(waterCard));
   await followEvent(CustomEvent.FacetBuildStarted, { facetId: "water", facetTitle: "water", iteration: 3 });
   pushUiEvent({ type: UiEvent.AutopilotFacet, payload: { runId: followRun } });
   check(
@@ -1869,7 +1868,7 @@ async function checkFollowRounds(buildSmoke: BuildSmoke): Promise<FollowRun> {
   check(
     "Escape closes the open card back into its row",
     await waitFor(
-      `!document.querySelector('[data-graph-panel]')&&!!document.querySelector('[data-graph-node="step:water:1"]')`,
+      `!document.querySelector('[data-graph-panel]')&&!!document.querySelector('[data-graph-node="step:water:1"][aria-expanded="false"]')`,
     ),
   );
   return { followRun, followEvent };
@@ -2190,20 +2189,17 @@ async function checkOutcomePanel(buildSmoke: BuildSmoke): Promise<void> {
   await waitFor(`!!document.querySelector('[data-graph-node="final"]')`);
   await wc.executeJavaScript(`document.querySelector('[data-graph-node="final"]')?.click()`);
   await waitFor(`!!document.querySelector('[data-graph-panel="final"]')`);
-  await wc.executeJavaScript(
-    `document.querySelector('[data-graph-panel="final"] [data-panel-row="technical-details"]')?.click()`,
-  );
   check(
     "chat outcome hides technical details by default",
     await waitFor(
       `!!document.querySelector('[data-chat-outcome]')&&!document.querySelector('[data-chat-outcome-details]')`,
     ),
   );
-  // Counts belong to Builds, not to the chat's card (it names the delivery and its capture).
+  // The build's card is for the person: no counts, revisions or check lists (they live in the run's files).
   check(
-    "the build's technical details carry the recorded integration and evaluated-attempt counts",
+    "the build's card carries no developer details",
     await waitFor(
-      `(()=>{const t=document.querySelector('[data-graph-panel="final"] [data-testid="build-details"]')?.textContent??'';return t.includes('6 recorded integrations')&&t.includes('4 evaluated attempts (3 accepted, 1 rejected)')&&!document.querySelector('[data-chat-outcome]')?.textContent.includes('recorded integrations');})()`,
+      `(()=>{const p=document.querySelector('[data-graph-panel="final"]');return !!p&&!p.querySelector('[data-panel-row]')&&!p.textContent.includes('recorded integrations');})()`,
     ),
     String(
       await wc.executeJavaScript(
@@ -2212,16 +2208,15 @@ async function checkOutcomePanel(buildSmoke: BuildSmoke): Promise<void> {
     ),
   );
   check(
+    "the build's card still names the check that failed on it",
+    await waitFor(
+      `document.querySelector('[data-graph-panel="final"]')?.textContent.includes('Is the requested first-person view confirmed?')`,
+    ),
+  );
+  check(
     "delivery keeps its failed check in the status line",
     await waitFor(
       `(()=>{const t=document.querySelector('[data-testid="build-status"]')?.textContent??'';return t.includes('Live in your game')&&t.includes('1 check failed');})()`,
-    ),
-  );
-  // The recorded checks sit under the technical details opened above.
-  check(
-    "delivery retains failed visual and incomplete interaction evidence",
-    await waitFor(
-      `(()=>{const t=document.querySelector('[data-graph-panel="final"]')?.textContent??'';return t.includes('A visual question failed.')&&t.includes('Independent interaction coverage is incomplete');})()`,
     ),
   );
   // The step the build kept is listed under what changed; the stopped follow-up waits under the left-out row.
@@ -2240,13 +2235,10 @@ async function checkPartRows(buildSmoke: BuildSmoke): Promise<void> {
   // A part built in one session is one row, its session step.
   await wc.executeJavaScript(`document.querySelector('[data-graph-node="session:task-5"]')?.click()`);
   await waitFor(`!!document.querySelector('[data-graph-panel="session:task-5"]')`);
-  await wc.executeJavaScript(
-    `document.querySelector('[data-graph-panel="session:task-5"] [data-panel-row="technical-details"]')?.click()`,
-  );
   check(
-    "a replaced single worker stays one part with its replacement named",
+    "a replaced single worker stays one part",
     await waitFor(
-      `document.querySelector('[data-graph-panel="session:task-5"]')?.textContent.includes('task-5 → task-6')&&!document.querySelector('[data-graph-node="session:task-6"],[data-graph-panel="session:task-6"]')`,
+      `!!document.querySelector('[data-graph-panel="session:task-5"]')&&!document.querySelector('[data-graph-node="session:task-6"],[data-graph-panel="session:task-6"]')`,
     ),
   );
   wc.focus();
@@ -2266,40 +2258,6 @@ async function checkPartRows(buildSmoke: BuildSmoke): Promise<void> {
     "graph controls have the pointer cursor",
     await waitFor(
       `[...document.querySelectorAll('[data-testid="build-status"] button,[data-graph-node],[data-builds-left-out]')].every(b=>getComputedStyle(b).cursor==='pointer')&&document.querySelectorAll('[data-graph-node]').length>0&&!!document.querySelector('[data-builds-left-out]')`,
-    ),
-  );
-}
-
-/** Checks name the failed question, and its capture loads through the host. */
-async function checkChecksAndCapture(buildSmoke: BuildSmoke): Promise<void> {
-  const { wc, check, waitFor } = buildSmoke;
-  await wc.executeJavaScript(`document.querySelector('[data-graph-node="final"]')?.click()`);
-  await waitFor(`!!document.querySelector('[data-graph-panel="final"]')`);
-  await wc.executeJavaScript(
-    `document.querySelectorAll('[data-graph-panel="final"] [data-panel-row][aria-expanded="false"]').forEach(b=>b.click())`,
-  );
-  check(
-    "checks show the failed question on its own revision",
-    await waitFor(
-      `(()=>{const groups=Array.from(document.querySelectorAll('[data-graph-panel="final"] [data-outcome-checks] section'));const current=groups.find(e=>e.querySelector('h4')?.textContent==='This build'),earlier=groups.find(e=>e.querySelector('h4')?.textContent==='Earlier builds');return !!current?.querySelector('[data-check-status="failed"]')?.textContent.includes('Is the requested first-person view confirmed?')&&current.textContent.includes('Failed · Reviewer')&&!current.textContent.includes('Earlier revision walkthrough')&&!!earlier?.textContent.includes('Earlier revision walkthrough')&&document.querySelector('[data-graph-panel="final"] [data-testid="build-details"]')?.textContent.includes('Available revision: head-6');})()`,
-    ),
-  );
-  await wc.executeJavaScript(
-    `Array.from(document.querySelectorAll('button')).filter(b=>b.textContent==='View capture').at(-1)?.click()`,
-  );
-  check(
-    "check capture loads through the protected host reader",
-    await waitFor(
-      `Array.from(document.querySelectorAll('img[alt="Recorded check capture"]')).some(i=>i.complete&&i.naturalWidth===1)&&document.body.innerText.includes('Fixture observation on head-6')`,
-    ),
-  );
-  await wc.executeJavaScript(
-    `Array.from(document.querySelectorAll('button')).filter(b=>b.textContent==='Close capture').forEach(b=>b.click())`,
-  );
-  check(
-    "learning remains separate from delivered build",
-    await waitFor(
-      `document.querySelector('[data-graph-panel="final"]')?.textContent.includes('Studio learning: running — separate from game execution.')&&document.querySelector('[data-testid="build-status"]')?.textContent.includes('Live in your game')`,
     ),
   );
 }

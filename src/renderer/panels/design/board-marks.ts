@@ -52,15 +52,34 @@ function covers(frame: Hung, point: DesignPlace): boolean {
   return across && down;
 }
 
+/** Where a note is pinned: a place, and on an artboard that artboard and the shares of it across and down. */
+export type NoteAnchor = DesignPlace & Partial<Pick<DesignNote, "file" | "fx" | "fy">>;
+
+/** How finely a share of an artboard is kept, as the marks file keeps it. */
+const SHARE_STEPS = 1000;
+
+/** `part` of `whole` as a share from 0 to 1, to a thousandth. */
+const shareOf = (part: number, whole: number): number =>
+  whole > 0 ? Math.round(Math.min(1, Math.max(0, part / whole)) * SHARE_STEPS) / SHARE_STEPS : 0;
+
 /**
  * Where a note put at `point` is pinned: to the artboard under it (the one on top, where several
- * overlap), counted from that artboard's corner, so it stays on it wherever the artboard goes;
- * else to the bare canvas, counted from the canvas's origin.
+ * overlap), counted from that artboard's corner, so it stays on it wherever the artboard goes, with
+ * the shares of the artboard it stands at (how the agent is told where it is); else to the bare
+ * canvas, counted from the canvas's origin.
  */
-export function noteAnchor(point: DesignPlace, frames: readonly Hung[]): DesignPlace & { file?: string } {
+export function noteAnchor(point: DesignPlace, frames: readonly Hung[]): NoteAnchor {
   const under = frames.findLast((frame) => covers(frame, point));
   if (!under) return { x: Math.round(point.x), y: Math.round(point.y) };
-  return { file: under.file, x: Math.round(point.x - under.x), y: Math.round(point.y - under.y) };
+  const x = point.x - under.x;
+  const y = point.y - under.y;
+  return {
+    file: under.file,
+    x: Math.round(x),
+    y: Math.round(y),
+    fx: shareOf(x, under.width),
+    fy: shareOf(y, under.height),
+  };
 }
 
 /** Where a note stands on the canvas now; null for a note whose artboard is no longer on the board. */

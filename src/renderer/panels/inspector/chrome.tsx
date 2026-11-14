@@ -1,10 +1,10 @@
 /**
- * The inspector's shell: the card a selected node opens into, its sections and quotes, the rows
- * that open in place and the technical-details grid. A card ends with Follow up in chat: replies go
- * through the chat's composer, so the app keeps one input.
+ * The inspector's shell: the card a selected node opens into (under its row's header in Builds), its
+ * sections and quotes. A card ends with Follow up in chat: replies go through the chat's composer,
+ * so the app keeps one input.
  */
 import type { JSX, ReactNode } from "react";
-import { useEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useRef } from "react";
 import { t } from "../../../shared/i18n.ts";
 import type { NoteInfo } from "../../run-graph.ts";
 import { Button } from "../../ui/Button.tsx";
@@ -60,15 +60,18 @@ function CardFooter({
   actions,
   reply,
   onReply,
+  inset,
 }: {
   actions?: ReactNode;
   reply?: Reply | null;
   onReply?: ((reply: Reply) => void) | null;
+  /** the card's side padding */
+  inset: string;
 }): JSX.Element | null {
   const canReply = Boolean(reply && onReply);
   if (!actions && !canReply) return null;
   return (
-    <footer className="flex shrink-0 flex-wrap items-center gap-2 border-t border-line px-4 py-3">
+    <footer className={`flex shrink-0 flex-wrap items-center gap-2 border-t border-line py-3 ${inset}`}>
       {actions}
       {reply && onReply ? (
         <Button onClick={() => onReply(reply)}>
@@ -80,16 +83,40 @@ function CardFooter({
   );
 }
 
-/** An open card's edge and entrance: it opens in its row's place in the list. */
-const CARD_STYLE = {
-  boxShadow: "0 0 0 1px var(--line-strong)",
-  animation: "focus-in .22s var(--ease)",
-};
+/** The soft line around an open card, or around an open row with its card: it does not take up room. */
+export const OPEN_EDGE = "0 0 0 1px var(--line-soft)";
 
 /**
- * The card a pressed row opens into, in that row's place in the list: the list stays live around
- * it. Wide enough, what there is to look at sits on the left and what there is to read on the
- * right; otherwise they stack. ← and → walk to the rows beside it; Esc closes it.
+ * True inside a row of the Builds list that is open: the row's own header (its mark, name and how
+ * it stands) heads the card, which draws only its body under it (BuildsList.tsx).
+ */
+export const UnderRowHeader = createContext(false);
+
+/** A card's side padding under its row's header: its text starts where the row's name does. */
+const UNDER_ROW_INSET = "pl-10 pr-3";
+/** A card's side padding on its own. */
+const OWN_INSET = "px-4";
+
+/** How a card under its row's header says how it stands: the status and the line its own heading would carry. */
+function UnderRowLine({ sub, status }: { sub?: string | null; status?: ReactNode }): JSX.Element | null {
+  if (!sub && !status) return null;
+  return (
+    <div className={`flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 ${UNDER_ROW_INSET}`}>
+      {status}
+      {sub ? (
+        <p className="line-clamp-2 text-body-sm text-ink-3" title={sub}>
+          {sub}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * The card a pressed row opens into. In the list it opens in place under the row's own header,
+ * which stays where it was, and pushes the rows below it down; with no row above it (Your build)
+ * it carries its own heading. Wide enough, what there is to look at sits on the left and what there
+ * is to read on the right; otherwise they stack. ← and → walk to the rows beside it; Esc closes it.
  */
 export function Panel({
   id,
@@ -117,33 +144,43 @@ export function Panel({
   children?: ReactNode;
 }): JSX.Element {
   const card = useRef<HTMLElement>(null);
+  const underRow = useContext(UnderRowHeader);
   // Keyboard users land in the card they opened; Tab walks its controls, Esc gives the list back.
+  // The list does not move for it: the card opens where it is.
+  // Once per card: showing the Builds tab again (a kept, hidden panel) leaves the focus where it is.
+  const focused = useRef(false);
   useEffect(() => {
+    if (focused.current) return;
+    focused.current = true;
     card.current?.focus({ preventScroll: true });
-    card.current?.scrollIntoView({ block: "nearest" });
   }, []);
   const sides = media ? "@min-[760px]/card:grid-cols-[minmax(0,520px)_minmax(0,1fr)]" : "";
+  const inset = underRow ? UNDER_ROW_INSET : OWN_INSET;
   return (
     <section
       ref={card}
       tabIndex={-1}
       data-graph-panel={id}
       aria-label={label}
-      className="@container/card -mx-3 my-1 flex flex-col rounded-card bg-surface outline-none select-text"
-      style={CARD_STYLE}
+      className={`@container/card flex flex-col outline-none select-text ${underRow ? "-mx-3 w-[calc(100%+24px)]" : "-mx-3 my-1 rounded-card bg-surface"}`}
+      style={underRow ? undefined : { boxShadow: OPEN_EDGE }}
     >
-      <header className="flex items-start gap-2 px-4 pt-3">
-        <PanelHeading title={title} sub={sub} status={status} />
-        <div className="-mt-0.5 -mr-1.5 flex shrink-0">
-          <PanelButton label={t("Close (Esc)")} icon="caret-up" onClick={onClose} />
-        </div>
-      </header>
+      {underRow ? (
+        <UnderRowLine sub={sub} status={status} />
+      ) : (
+        <header className="flex items-start gap-2 px-4 pt-3">
+          <PanelHeading title={title} sub={sub} status={status} />
+          <div className="-mt-0.5 -mr-1.5 flex shrink-0">
+            <PanelButton label={t("Close (Esc)")} icon="caret-up" onClick={onClose} />
+          </div>
+        </header>
+      )}
       {/* A card shows the build's own work: its steps, notes, files and pictures. */}
-      <div data-analytics-mask className={`grid gap-x-6 gap-y-4 p-4 ${sides}`}>
+      <div data-analytics-mask className={`grid gap-x-6 gap-y-4 pb-4 ${underRow ? "pt-3" : "pt-4"} ${inset} ${sides}`}>
         {media ? <div className="flex min-w-0 flex-col gap-4">{media}</div> : null}
         <div className="flex max-w-[720px] min-w-0 flex-col gap-4">{children}</div>
       </div>
-      <CardFooter actions={actions} reply={reply} onReply={onReply} />
+      <CardFooter actions={actions} reply={reply} onReply={onReply} inset={inset} />
     </section>
   );
 }
@@ -182,83 +219,6 @@ export function Quote({ label, children }: { label: string; children: ReactNode 
       <figcaption className="text-xs text-ink-3">{label}</figcaption>
       <blockquote className="text-body-sm text-ink-2 [overflow-wrap:anywhere]">{children}</blockquote>
     </figure>
-  );
-}
-
-/**
- * The disclosure rows a card holds, by their `data-panel-row` value: the smoke opens rows by it,
- * whatever language their label is in. Never rename a value.
- */
-export const PanelRow = {
-  TechnicalDetails: "technical-details",
-  Checks: "checks",
-  ReviewersNotes: "reviewers-notes",
-  StudioLearned: "what-the-studio-learned",
-} as const;
-export type PanelRow = (typeof PanelRow)[keyof typeof PanelRow];
-
-/** A row that opens in place — Checks, Technical details — or, with `onOpen`, opens elsewhere. */
-export function Row({
-  row,
-  label,
-  right,
-  defaultOpen = false,
-  onOpen,
-  children,
-}: {
-  /** which row this is, for selectors; the label is only what it says */
-  row: PanelRow;
-  label: string;
-  right?: string | null;
-  /** The row opens already open: the card was opened to show what it holds. */
-  defaultOpen?: boolean;
-  onOpen?: () => void;
-  children?: ReactNode;
-}): JSX.Element {
-  const [open, setOpen] = useState(defaultOpen);
-  return (
-    <div className="flex flex-col border-t border-line first:border-t-0">
-      <button
-        type="button"
-        data-panel-row={row}
-        aria-expanded={onOpen ? undefined : open}
-        onClick={() => (onOpen ? onOpen() : setOpen((value) => !value))}
-        className="flex h-10 cursor-pointer items-center justify-between gap-3 text-left text-chat-sub text-ink hover:text-control-text-hover focus-visible:outline-2 focus-visible:outline-accent"
-      >
-        <span className="truncate">{label}</span>
-        <span className="flex min-w-0 items-center gap-1.5 text-body-sm text-ink-3">
-          {right ? <span className="truncate">{right}</span> : null}
-          <span className="transition-transform duration-150" style={{ transform: open ? "rotate(90deg)" : undefined }}>
-            <Icon name="chevron-right" size={14} />
-          </span>
-        </span>
-      </button>
-      {open && children ? <div className="pb-3">{children}</div> : null}
-    </div>
-  );
-}
-
-/** The column the disclosure rows stack in. */
-export function Rows({ children }: { children: ReactNode }): JSX.Element {
-  return <div className="flex flex-col">{children}</div>;
-}
-
-/** One technical fact: a key and its value, left out when the value is empty. */
-export type DetailRow = [string, string | null | undefined];
-
-/** The technical-details grid: key and value, empty values left out. */
-export function Details({ rows }: { rows: DetailRow[] }): JSX.Element {
-  return (
-    <div className="grid grid-cols-[112px_minmax(0,1fr)] gap-x-2.5 gap-y-1 font-mono text-micro text-ink-2 [overflow-wrap:anywhere]">
-      {rows
-        .filter(([, value]) => value)
-        .map(([key, value]) => (
-          <span key={key} className="contents">
-            <span className="text-ink-3">{key}</span>
-            <span>{value}</span>
-          </span>
-        ))}
-    </div>
   );
 }
 

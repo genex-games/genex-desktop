@@ -1,5 +1,6 @@
+import { cleanBuildTitle } from "../shared/build-title.ts";
 import { mergeChatEvents } from "../shared/chat-history.ts";
-import { CustomEvent, customEvent, customRecord, DELEGATED_PREFIX } from "../shared/custom-events.ts";
+import { CustomEvent, customEvent, customRecord, DELEGATED_PREFIX, LEAD_PART } from "../shared/custom-events.ts";
 import { type ConversationRecord, type EventEnvelope, EventKind } from "../shared/event-log.ts";
 import { intlLocale, t } from "../shared/i18n.ts";
 import { messageQueueState, type QueueView } from "../shared/message-queue.ts";
@@ -266,6 +267,12 @@ export interface HistoryEntry {
   startedAt: string | null;
   /** What the person asked for it: the Loop's goal, or the words of the message the turn answers; "" when unknown. */
   ask: string;
+  /**
+   * A Loop's own name: the title the chat gave it as it started it, else the label of the first save
+   * point its lead named; absent when it has neither (an older run, a chat turn). `buildTitle`
+   * (shared/build-title.ts) names a build from it.
+   */
+  title?: string;
   /** While it works, when its clock began (ms): the time it has worked so far, counted back from now. */
   since: number | null;
   chat?: true;
@@ -280,11 +287,21 @@ interface TurnDraft {
   ask: string;
 }
 
-/** A run while the history is read: its rounds, when it opened, and the goal it was given. */
+/** A run while the history is read: its rounds, when it opened, the goal it was given and what names it. */
 interface RunDraft {
   rounds: number;
   startedAt: string | null;
   ask: string;
+  /** the title its registration carries */
+  title: string | null;
+  /** the label of the first save point its lead named */
+  savePoint: string | null;
+}
+
+/** The label of a save point the lead named (not an autosave); null for any other record. */
+function savePointLabel(eventType: string, payload: Record<string, unknown>): string | null {
+  const named = eventType === CustomEvent.FacetIteration && payload.facetId === LEAD_PART && payload.auto !== true;
+  return named ? cleanBuildTitle(payload.label) : null;
 }
 
 /** Note one worker record of a chat turn; true when it is the turn's first, which opens it in the history. */
@@ -318,10 +335,19 @@ function readRunRecord(
   const run = runs.get(id);
   if (RUN_OPEN_EVENTS.has(eventType)) {
     const goal = typeof payload.goal === "string" ? payload.goal.trim() : "";
-    runs.set(id, { rounds: run?.rounds ?? 0, startedAt: run?.startedAt ?? at, ask: run?.ask || goal });
+    runs.set(id, {
+      rounds: run?.rounds ?? 0,
+      startedAt: run?.startedAt ?? at,
+      ask: run?.ask || goal,
+      title: run?.title ?? cleanBuildTitle(payload.title),
+      savePoint: run?.savePoint ?? null,
+    });
     return true;
   }
-  if (run && ROUND_EVENTS.has(eventType)) run.rounds++;
+  if (run && ROUND_EVENTS.has(eventType)) {
+    run.rounds++;
+    run.savePoint ??= savePointLabel(eventType, payload);
+  }
   return run !== undefined && RUN_ID_EVENTS.has(eventType);
 }
 
@@ -377,7 +403,8 @@ export function buildHistory(events: EventEnvelope[], threadId: string | null): 
   return draft.order.map((key): HistoryEntry => {
     const turn = draft.turns.get(key);
     if (turn) return turnEntry(own, queue, key, turn);
-    return runEntry(key, draft.runs.get(key) ?? { rounds: 0, startedAt: null, ask: "" }, executions.get(key));
+    const run = draft.runs.get(key) ?? { rounds: 0, startedAt: null, ask: "", title: null, savePoint: null };
+    return runEntry(key, run, executions.get(key));
   });
 }
 
@@ -401,7 +428,16 @@ function turnEntry(events: EventEnvelope[], queue: QueueView, key: string, turn:
 function runEntry(key: string, run: RunDraft, execution: RunExecution | undefined): HistoryEntry {
   const state = execution?.state ?? RunState.Running;
   const since = state === RunState.Running ? runClockStart(run, execution) : null;
-  return { runId: key, rounds: run.rounds, state, startedAt: run.startedAt, ask: run.ask, since };
+  const title = run.title ?? run.savePoint;
+  return {
+    runId: key,
+    rounds: run.rounds,
+    state,
+    startedAt: run.startedAt,
+    ask: run.ask,
+    since,
+    ...(title ? { title } : {}),
+  };
 }
 
 /** Where a working run's clock starts: the time it has worked counted back from now, not the time it spent paused; else when it opened. */

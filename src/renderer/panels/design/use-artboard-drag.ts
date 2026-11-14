@@ -3,7 +3,7 @@
  * enough becomes a drag; the artboard follows the pointer and is put where it is let go. A press
  * that stays put is a press, left to whatever it was on.
  */
-import { type PointerEvent as ReactPointerEvent, useCallback, useRef, useState } from "react";
+import { type PointerEvent as ReactPointerEvent, useCallback, useMemo, useRef, useState } from "react";
 import type { DesignPlace } from "../../../shared/design-marks.ts";
 import type { WallFrame } from "./design-model.ts";
 
@@ -24,8 +24,8 @@ export interface ArtboardDragger {
 }
 
 export function useArtboardDrag(options: {
-  /** The canvas's zoom as a drag begins: screen pixels to canvas pixels. */
-  zoom: number;
+  /** The canvas's zoom this moment, read as a drag begins: screen pixels to canvas pixels. */
+  zoomNow: () => number;
   /** A drag has begun. */
   onStart: () => void;
   /** The artboard was let go at `place`. */
@@ -35,17 +35,24 @@ export function useArtboardDrag(options: {
   const moved = useRef(false);
   const latest = useRef(options);
   latest.current = options;
-  const begin = useCallback((frame: WallFrame, event: ReactPointerEvent<HTMLElement>): void => {
+  const begin = useCallback((board: WallFrame, event: ReactPointerEvent<HTMLElement>): void => {
     if (event.button !== 0) return;
     event.stopPropagation();
     const handle = event.currentTarget;
     const { pointerId, clientX: fromX, clientY: fromY } = event;
-    const zoom = latest.current.zoom || 1;
+    const zoom = latest.current.zoomNow() || 1;
     let dragging = false;
+    // The artboard follows the pointer once a frame, however often the pointer reports.
+    let frame = 0;
+    let next: ArtboardDrag | null = null;
+    const follow = (): void => {
+      frame = 0;
+      if (next) setDrag(next);
+    };
     moved.current = false;
     const at = (now: PointerEvent): DesignPlace => ({
-      x: frame.x + (now.clientX - fromX) / zoom,
-      y: frame.y + (now.clientY - fromY) / zoom,
+      x: board.x + (now.clientX - fromX) / zoom,
+      y: board.y + (now.clientY - fromY) / zoom,
     });
     const move = (now: PointerEvent): void => {
       if (now.pointerId !== pointerId) return;
@@ -56,14 +63,17 @@ export function useArtboardDrag(options: {
         handle.setPointerCapture(pointerId);
         latest.current.onStart();
       }
-      setDrag({ file: frame.file, ...at(now) });
+      next = { file: board.file, ...at(now) };
+      if (!frame) frame = requestAnimationFrame(follow);
     };
     const end = (now: PointerEvent): void => {
       if (now.pointerId !== pointerId) return;
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", end);
       window.removeEventListener("pointercancel", end);
-      if (dragging && now.type === "pointerup") latest.current.onPlace(frame.file, at(now));
+      cancelAnimationFrame(frame);
+      frame = 0;
+      if (dragging && now.type === "pointerup") latest.current.onPlace(board.file, at(now));
       setDrag(null);
     };
     // The window hears the whole press: before the drag begins nothing has captured the pointer.
@@ -76,5 +86,6 @@ export function useArtboardDrag(options: {
     moved.current = false;
     return was;
   }, []);
-  return { drag, begin, takeMoved };
+  // One object while the drag is unchanged: what it is handed to renders only when it moves.
+  return useMemo(() => ({ drag, begin, takeMoved }), [drag, begin, takeMoved]);
 }

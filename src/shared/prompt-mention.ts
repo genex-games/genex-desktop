@@ -10,6 +10,7 @@
  * it), and the `@` must start a word, so `you@example.com` is never a tag.
  */
 import { isGenerationId, type LibraryKind } from "./asset-library.ts";
+import { DESIGN_NEWS_HEADING } from "./design-tell-prompts.ts";
 
 /** What a tagged thing is, as the picker's chip names it. */
 export const MentionKind = { Game: "game", Tool: "tool", Asset: "asset", Plugin: "plugin" } as const;
@@ -356,10 +357,13 @@ export interface MentionTaggedPayload {
  */
 export const MENTION_CONTEXT_HEADING = "\n\nTagged in this message:\n";
 
-/** The person's own words of a sent message: everything before the tags' lines. */
+/** Where the lines Genex adds after the person's words start: the tags', then the Design board's news. */
+const ADDED_CONTEXT_HEADINGS = [MENTION_CONTEXT_HEADING, DESIGN_NEWS_HEADING] as const;
+
+/** The person's own words of a sent message: everything before the lines Genex added after them. */
 export function withoutMentionContext(text: string): string {
-  const at = text.indexOf(MENTION_CONTEXT_HEADING);
-  return at < 0 ? text : text.slice(0, at);
+  const starts = ADDED_CONTEXT_HEADINGS.map((heading) => text.indexOf(heading)).filter((at) => at >= 0);
+  return starts.length ? text.slice(0, Math.min(...starts)) : text;
 }
 
 /** The longest title or name a tag carries. */

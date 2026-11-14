@@ -189,7 +189,7 @@ export interface PreviewPort {
   diffImages?(fileA: string, fileB: string): Promise<{ diff: PixelDiff; heatmap: Buffer | null }>;
   /** Optional: pixel stats of an encoded image (a reference still) — the same numbers a capture yields. */
   statsOf?(data: Buffer): Promise<{ stats: PixelStats; width: number; height: number }>;
-  /** Optional: re-encode an image as JPEG with its long side capped at `maxPx`. */
+  /** Optional: re-encode an image with its long side capped at `maxPx`: a JPEG, or a PNG when it is see-through. */
   resizeImage?(data: Buffer, maxPx: number, quality?: number): Promise<Buffer>;
   /** Optional: LEFT | RIGHT composite of two encoded images at `height` px, JPEG (pair images). */
   pairImages?(left: Buffer, right: Buffer, opts?: { height?: number; quality?: number }): Promise<Buffer>;

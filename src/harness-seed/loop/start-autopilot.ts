@@ -11,10 +11,20 @@ import { RunMode } from "./run-events.ts";
 import { storeItemsOf } from "./store-items.ts";
 import { TurnStop } from "./turn-record.ts";
 import { askedMinutes, WORK_TIME_PARAMS, workBudget } from "./work-time.ts";
+import { planSteps, STEPS_WORDS } from "./plan-steps.ts";
 
 /** How many words of the ask a new folder's name keeps, and how long that name may be. */
 const SLUG_WORDS = 3;
 const MAX_SLUG_CHARS = 40;
+/**
+ * The longest a build's title may be, in characters; a longer one is cut at a word and ends in "…".
+ * The app's copy is `MAX_BUILD_TITLE_CHARS` in shared/build-title.ts.
+ */
+const MAX_TITLE_CHARS = 60;
+/** A cut keeps at least this share of the longest title before it looks back for a word's end. */
+const MIN_CUT_SHARE = 0.5;
+/** Quote marks a title may come wrapped in, dropped from its ends. */
+const WRAPPING_QUOTES = /^["'“”«»„]+|["'“”«»„]+$/g;
 /** The folder a run builds in when its words leave no name. */
 const FALLBACK_FOLDER = "game";
 /** Words that say nothing about which game this is, left out of its folder's name. */
@@ -44,6 +54,9 @@ const str = (description: string) => ({ type: "string", description });
  */
 const GOAL_WORDS =
   "What the person asked for: their own words, quoted as they wrote them, then what that means in this game in a sentence or two, at the stage the project is in (as they or its own notes, such as a HANDOFF.md, say). Add no work they didn't ask for (no packaging, publishing or finished game unless they asked), and where a word could mean more than one thing, read it by what they made the priority earlier in this chat.";
+/** What a launch's title is: the name the Builds tab and the chat call the build by. */
+const TITLE_WORDS =
+  'A short name for this build, 2 to 5 words, in the language the person writes in, such as "Rooftop pizza cat" or "Night race track": the Builds tab and the chat call the build by it. Not a sentence, no quotes.';
 /** What a launch's reference is: whatever the user named, if anything. */
 const DIRECTION_WORDS = "optional: a game, film or picture the user named as a reference, in their words";
 
@@ -85,6 +98,35 @@ function attachedFrames(stills: unknown): AnyRecord[] {
   return (Array.isArray(stills) ? stills : []).filter((frame: AnyRecord | null) => frame?.data);
 }
 
+/**
+ * A build's title as one line of at most `MAX_TITLE_CHARS`, cut at a word; null when it says nothing.
+ * The app reads titles with its copy, `cleanBuildTitle` in shared/build-title.ts
+ * (tests/conformance/seed-contracts.test.ts holds the two together).
+ */
+export function buildTitleOf(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const line = raw.replace(/\s+/g, " ").trim().replace(WRAPPING_QUOTES, "").trim();
+  if (!line) return null;
+  const chars = Array.from(line);
+  if (chars.length <= MAX_TITLE_CHARS) return line;
+  const cut = chars.slice(0, MAX_TITLE_CHARS - 1).join("");
+  const space = cut.lastIndexOf(" ");
+  const kept = space > MAX_TITLE_CHARS * MIN_CUT_SHARE ? cut.slice(0, space) : cut;
+  return `${kept.trimEnd()}…`;
+}
+
+/** A launch's title as the run carries it; none when the chat gave none (an older session's call). */
+function titleArgs(args: AnyRecord): { title?: string } {
+  const title = buildTitleOf(args.title);
+  return title ? { title } : {};
+}
+
+/** A launch's plan as the run carries it; none when the chat named no steps. */
+function stepsArgs(args: AnyRecord): { steps?: string[] } {
+  const steps = planSteps(args.steps);
+  return steps ? { steps } : {};
+}
+
 /** A new folder's name from the words of the ask: its first few telling words, joined by dashes. */
 function slugProject(text: unknown): string {
   const words = String(text ?? "")
@@ -106,18 +148,24 @@ export const startAutopilot: HarnessTool = {
     type: "object",
     properties: {
       goal: str(GOAL_WORDS),
+      title: str(TITLE_WORDS),
+      steps: { type: "array", items: { type: "string" }, description: STEPS_WORDS },
       direction: str(DIRECTION_WORDS),
       project: str("folder slug for a chat that has no folder yet, lowercase; a chat already bound to one keeps it"),
       ...WORK_TIME_PARAMS,
       store_items: storeList(),
     },
-    required: ["goal"],
+    // A call without a title still starts its build (`titleArgs`): the app names it another way. Steps stay
+    // optional: a launch is never refused for its plan, and the card falls back to the lead's own words.
+    required: ["goal", "title"],
   },
   execute(args: AnyRecord, ctx: ToolCtx) {
     const goal = String(args.goal).trim();
     const frames = attachedFrames(ctx.stills);
     const run = {
       goal,
+      ...titleArgs(args),
+      ...stepsArgs(args),
       // This slug only ever names a chat that has no folder yet: the launch stamps the chat's own
       // folder over it (delegated-turn.ts `withChatProject`) and a bound thread wins outright.
       project: slugProject(args.project || args.direction || args.goal),

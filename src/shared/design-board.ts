@@ -52,6 +52,19 @@ export const DesignItemKind = {
 } as const;
 export type DesignItemKind = (typeof DesignItemKind)[keyof typeof DesignItemKind];
 
+/**
+ * A file's or a section's name as the person reads it: its dashes and underscores as spaces, the
+ * number that only orders it gone, and a capital first: `01-the-warden` is "The warden".
+ */
+export function displayName(name: string): string {
+  const words = name
+    .replace(/^\d+[-_. ]+/, "")
+    .replace(/[-_]+/g, " ")
+    .trim();
+  const shown = words || name;
+  return shown.charAt(0).toUpperCase() + shown.slice(1);
+}
+
 /** One artboard of a game's board, as the Design tab reads it. */
 export interface DesignItem {
   /** Its file, posix-relative to the game folder: `docs/design/world/town.png`. */

@@ -1,24 +1,21 @@
-/** The card of "Your build": before and now, the last look anybody took at it, the lead's summary and what is still open. */
+/** The card of "Your build": which version of the game it is, its picture now and what is still open on it. */
 import type { JSX } from "react";
-import { useState } from "react";
 import { t } from "../../../shared/i18n.ts";
-import { type RunSummary, summaryOutcome } from "../../../shared/run-summary.ts";
+import { inGameVersion, type RunSummary, summaryOutcome } from "../../../shared/run-summary.ts";
 import {
   type FinalNode,
   finalNodeOf,
   plainDefect,
   type RunGraph as RunGraphModel,
   type RunNode,
-  runIdOf,
 } from "../../run-graph.ts";
-import { buildReview, elapsedWords, resultStatus, workedSpan } from "../../run-steps.ts";
+import { elapsedWords, resultStatus, workedSpan } from "../../run-steps.ts";
 import { endedWords } from "../../round-status.ts";
 import { Button } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/icons.tsx";
-import { TOAST_WORDS } from "../../words.ts";
-import { OutcomeChecks, OutcomeDetails } from "../RunOutcome.tsx";
-import { Details, Panel, PanelRow, Para, Quote, Row, Rows, Section } from "./chrome.tsx";
-import { formatTime, modelLine } from "./format.ts";
+import { OUTCOME_WORDS, TOAST_WORDS } from "../../words.ts";
+import { Panel, Para, Section } from "./chrome.tsx";
+import { formatTime } from "./format.ts";
 import { Single } from "./pictures.tsx";
 import { GraphSelection } from "./selection.ts";
 import { Status } from "./tone.tsx";
@@ -61,8 +58,6 @@ function landBuild(build: { project: string; head: string }, onNotice: Notify, r
 
 /** The most open problems the panel lists. */
 const STILL_OPEN_SHOWN = 5;
-/** A summary longer than this is clamped until the user asks to read it all. */
-const SUMMARY_CLAMP_CHARS = 220;
 
 /** A delivered build whose current checks failed: the recorded outcome's own field, never its title. */
 const checksNeedAttention = (outcome: RunSummary): boolean => {
@@ -98,29 +93,6 @@ function BuildActions({
   );
 }
 
-function LeadSummary({ final }: { final: FinalNode | null }): JSX.Element | null {
-  const [readAll, setReadAll] = useState(false);
-  if (!final?.summary) return null;
-  return (
-    <Section label={t("The lead's summary")} gap="gap-1">
-      <p
-        className={`text-chat-sub whitespace-pre-wrap text-ink-2 [overflow-wrap:anywhere] ${readAll ? "" : "line-clamp-4"}`}
-      >
-        {final.summary}
-      </p>
-      {final.summary.length > SUMMARY_CLAMP_CHARS ? (
-        <button
-          type="button"
-          className="w-fit cursor-pointer text-body-sm text-accent-ink hover:underline"
-          onClick={() => setReadAll((value) => !value)}
-        >
-          {readAll ? t("Show less") : t("Read all")}
-        </button>
-      ) : null}
-    </Section>
-  );
-}
-
 function StillOpen({ items }: { items: string[] }): JSX.Element | null {
   if (!items.length) return null;
   return (
@@ -142,51 +114,6 @@ function stillOpenOf(outcome: RunSummary | null, final: FinalNode | null): strin
   return [...failed.map((row) => row.label), ...(final?.globalVerdict?.defects ?? []).map(plainDefect)]
     .filter(Boolean)
     .slice(0, STILL_OPEN_SHOWN);
-}
-
-/** The paper trail, disclosed: what the studio learned, then counts, revisions and every recorded check. */
-function ResultRows({
-  graph,
-  run,
-  outcome,
-}: {
-  graph: RunGraphModel;
-  run: RunNode;
-  outcome: RunSummary | null;
-}): JSX.Element {
-  return (
-    <Rows>
-      {outcome?.learning ? (
-        <Row row={PanelRow.StudioLearned} label={t("What the studio learned")} right={outcome.learning}>
-          <Para quiet>
-            {t("Studio learning: {learning} — separate from game execution.", { learning: outcome.learning })}
-          </Para>
-        </Row>
-      ) : null}
-      <Row row={PanelRow.TechnicalDetails} label={t("Technical details")}>
-        {outcome ? <OutcomeDetails summary={outcome} /> : null}
-        <div className="mt-2">
-          <Details
-            rows={[
-              [t("run"), runIdOf(graph)],
-              [t("model"), modelLine(run.engine, run.model)],
-            ]}
-          />
-        </div>
-        {outcome ? (
-          <div className="mt-3">
-            <OutcomeChecks summary={outcome} />
-          </div>
-        ) : null}
-      </Row>
-    </Rows>
-  );
-}
-
-/** The last look anybody took at the build on offer, in the words that look wrote. */
-function LastLook({ graph }: { graph: RunGraphModel }): JSX.Element | null {
-  const review = buildReview(graph);
-  return review ? <Quote label={review.label}>{review.words}</Quote> : null;
 }
 
 /** The card's subtitle: when the run started or finished, and how long it worked. A paused run is not finished. */
@@ -219,13 +146,15 @@ function ResultMedia({
   return <Single src={resultSrc} label={t("Now")} onOpen={onOpen} />;
 }
 
-/** The card of the run's build: its picture now, and everything said about it. */
+/** The card of the run's build: which version it is, its picture now, and what is still open on it. */
 export function ResultPanel(props: InspectorProps): JSX.Element {
   const { graph, outcome, run, resultSrc, resultPath, resultBorrowed, onNotice } = props;
   const final = finalNodeOf(graph);
   // The node and its card say the same words about the same build.
   const status = resultStatus(graph, outcome);
-  const title = graph.active ? t("Latest build") : t("Your build");
+  const version = outcome ? inGameVersion(outcome) : null;
+  const yours = version ? OUTCOME_WORDS.inGame(version) : t("Your build");
+  const title = graph.active ? t("Latest build") : yours;
   const ended = endedWords(graph);
   const open = (): void => {
     if (resultSrc)
@@ -252,11 +181,8 @@ export function ResultPanel(props: InspectorProps): JSX.Element {
       actions={<BuildActions build={unlandedBuild(graph, final, run)} onNotice={onNotice} />}
       media={<ResultMedia resultSrc={resultSrc} borrowed={resultBorrowed} onOpen={open} />}
     >
-      <LastLook graph={graph} />
-      <LeadSummary final={final} />
       {ended ? <Para quiet>{ended}</Para> : null}
       <StillOpen items={stillOpenOf(outcome, final)} />
-      <ResultRows graph={graph} run={run} outcome={outcome} />
     </Panel>
   );
 }

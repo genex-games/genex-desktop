@@ -135,7 +135,8 @@ function useWorkWords(
     caption: list
       ? checklistCaption(list, finishing)
       : buildCaption(activity, outcome, finishing, workItems, plan?.state),
-    summary: list ? outcome : null,
+    // The card names its build and lists its steps from the summary; a list is null before it has a step.
+    summary: outcome,
     runStarted,
   };
 }

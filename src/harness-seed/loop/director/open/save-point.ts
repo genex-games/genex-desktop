@@ -22,12 +22,13 @@ import { heldForLead } from "../held-words.ts";
 import { OPEN_WORDS } from "./prompts.ts";
 import { APP_NEWS } from "./app-prompts.ts";
 import { shownPicture } from "./shown-picture.ts";
+import { planSteps } from "../../plan-steps.ts";
 
 /** A taken checkpoint's answer. */
 type Taken = Extract<CheckpointAnswer, { snapshot: unknown }>;
 
 /** What a save point is asked for: its label and summary, and whether Genex asked for it (an autosave). */
-export type SavePointAsk = { label: string; summary: string; auto: boolean };
+export type SavePointAsk = { label: string; summary: string; auto: boolean; steps?: string[] };
 
 /** A git write to the game folder after every one queued before it. */
 export function queued<T>(loopRun: LoopRun, write: () => Promise<T>): Promise<T> {
@@ -68,6 +69,7 @@ export async function recordSavePoint(
     at: loopRun.open.clock.now(),
     notes: savePointNotes(taken),
     ...(shown ? { shows: shown.rel } : {}),
+    ...(ask.steps?.length ? { steps: ask.steps } : {}),
   };
   journal.savePoints.push(point);
   await loopRun.saveJournal().catch(() => {});
@@ -93,7 +95,13 @@ export async function savePointTool(loopRun: LoopRun, args: AnyRecord): Promise<
   const taken = await checkpointNow(loopRun, label);
   if (!("snapshot" in taken)) return OPEN_WORDS.notSaved(notKept(taken));
   const shown = picture && "image" in picture ? { rel, image: picture.image } : null;
-  const point = await recordSavePoint(loopRun, { label, summary, auto: false }, taken, shown);
+  const steps = planSteps(args.steps);
+  const point = await recordSavePoint(
+    loopRun,
+    { label, summary, auto: false, ...(steps ? { steps } : {}) },
+    taken,
+    shown,
+  );
   return OPEN_WORDS.saved(point.label, point.notes, showsWords(rel, picture));
 }
 

@@ -6,7 +6,7 @@ import { Elapsed, useStartedAt } from "../ui/LoadingState.tsx";
 import { Presence } from "../ui/Presence.tsx";
 import { BUILD_CHECKLIST_WORDS } from "../words.ts";
 import type { RunSummary } from "../../shared/run-summary.ts";
-import { buildChecklist } from "./build-checklist.ts";
+import { buildChecklist, summaryTitle } from "./build-checklist.ts";
 import { BuildCard } from "./BuildCard.tsx";
 import { BuildChecklist } from "./BuildChecklist.tsx";
 
@@ -37,10 +37,11 @@ export function BuildStatus({
   // The rows' time left moves on only while they are on show.
   const now = useNow(expanded);
   const list = useMemo(() => (summary ? buildChecklist(summary, now) : null), [summary, now]);
+  const title = useMemo(() => summaryTitle(summary), [summary]);
   return (
     <section data-build-status aria-label={t("Build running")} className="min-w-0">
       <BuildCard
-        title={t("Building")}
+        title={title || t("Building")}
         {...(list
           ? {
               toggle: {
@@ -54,7 +55,12 @@ export function BuildStatus({
         {...(!list && onOpenBuilds ? { open: { onClick: onOpenBuilds } } : {})}
         line={
           // The lead's own words about what it does on its screen.
-          <p role="status" title={caption} data-analytics-mask className="m-0 truncate text-status text-ink-3">
+          <p
+            role="status"
+            title={caption}
+            data-analytics-mask
+            className="chat-status-shimmer m-0 truncate text-status text-ink-3"
+          >
             {caption}
           </p>
         }
