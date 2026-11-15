@@ -8,7 +8,7 @@ import { UiEvent } from "../shared/ui-events.ts";
 import { findClaudeBinary } from "../substrate/engines/claude-cli.ts";
 import { requireCodingCli } from "../substrate/engines/external-cli.ts";
 import { openCodeSignInArgs } from "../substrate/engines/opencode-cli.ts";
-import { antigravitySignInLaunch } from "../substrate/engines/antigravity.ts";
+import { antigravitySignInLaunch, stringEnv } from "../substrate/engines/antigravity.ts";
 import { CURSOR_FILE_STORE, CursorCommand } from "../substrate/engines/cursor-cli.ts";
 import { childEnv } from "../substrate/child-env.ts";
 import { grokHome } from "../substrate/credential-homes.ts";
@@ -229,7 +229,7 @@ function antigravitySignIn({
       if (!cli) return { started: false, missingCli: true };
       // No other vendor's variables and no Gemini key, which would stand in for the account.
       const env = childEnv(cli.env, { base: "contractor", vendor: "antigravity" });
-      const boxed = await boxAntigravitySignIn({ binary: cli.path, env: definedEnv(env) });
+      const boxed = await boxAntigravitySignIn({ binary: cli.path, env: stringEnv(env) });
       const before = new Set(terminals.list().map((session) => session.id));
       const launch = {
         file: boxed.file,
@@ -253,13 +253,6 @@ function antigravitySignIn({
       return { started: true };
     },
   };
-}
-
-/** An environment's set variables alone. */
-function definedEnv(env: NodeJS.ProcessEnv): Record<string, string> {
-  return Object.fromEntries(
-    Object.entries(env).filter((pair): pair is [string, string] => typeof pair[1] === "string"),
-  );
 }
 
 /**

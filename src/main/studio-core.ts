@@ -1626,10 +1626,9 @@ export class StudioCore {
   }
 
   /**
-   * Antigravity on the person's Google AI plan, on a Mac alone for now: its Google sign-in is in
-   * the operating system's own store, which a session in the studio's sandbox reaches on macOS
-   * (the Keychain) and has not been shown to reach on Windows (the sandbox runs as another user)
-   * or Linux.
+   * Antigravity on the person's Google AI plan, on a Mac alone for now: its sign-in runs in the
+   * session's sandbox and lands in the CLI's own file there (macOS shown live), while on Windows the
+   * sandbox runs as another user and cannot start a sign-in terminal, and Linux is untested.
    */
   #antigravityEngines(): Engine[] {
     if (process.platform !== StudioPlatform.Mac) return [];
