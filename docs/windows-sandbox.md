@@ -37,7 +37,9 @@ the setup screen opens on `git-missing`. What differs from macOS:
 - Core startup awaits `ProcessSandbox.ensureReady()` before migrating or booting the harness.
   A failed background sandbox start reports its original error without rewinding or reseeding
   valid harness edits. A later Try again can retry initialization; broken harness code still
-  uses its existing recovery once the sandbox is ready.
+  uses its existing recovery once the sandbox is ready. A message sent while that start runs
+  waits for it (the chat shows it sending), up to five minutes, and goes once the harness is up;
+  it is refused only when the start failed or ran past that.
 - SRT 0.0.81 starts a session off the event loop (one `acl grant --persistent`, ten minutes for a
   root's first walk, then the egress check). The version-guarded
   [SRT patch](../scripts/patch-sandbox-runtime.mjs) runs the failed-initialization rollback and the

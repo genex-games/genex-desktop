@@ -36,7 +36,7 @@ import type { CoreInternals, StudioCore } from "../studio-core.ts";
 import { errorMessage } from "../../shared/errors.ts";
 import { NEW_CHAT_TITLE, NEW_GAME_TITLE } from "./game-threads.ts";
 import type { DesignNews } from "./design-board.ts";
-import { SECOND_MS } from "../../shared/duration.ts";
+import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 import { settleWithin } from "../app-lifecycle.ts";
 import { threadOr } from "./main-thread.ts";
 import { isQueueMessageId } from "./rewind.ts";
@@ -75,6 +75,11 @@ const STOP_DISPATCH_TIMEOUT_MS = 5 * SECOND_MS;
  * reach the chat's queue. A harness that takes neither must not keep Stop from aborting its work.
  */
 const STOP_SEND_WAIT_MS = 5 * SECOND_MS;
+/**
+ * How long a message sent while the agents start waits for them before it is refused: a Windows
+ * sandbox came up three minutes after the window in the field.
+ */
+const SEND_WAITS_FOR_START_MS = 5 * MINUTE_MS;
 
 /** A plan review in one of these states still owns the thread's next message. */
 const OPEN_PLAN_REVIEW: readonly string[] = [
@@ -241,6 +246,9 @@ export class ConversationService {
   }
 
   async #send(text: string, options: ComposerSendOptions): Promise<void> {
+    // The composer shows it as sending meanwhile; a start that fails leaves it refused below.
+    const starting = this.#x.agentsStarting;
+    if (starting) await settleWithin(starting, SEND_WAITS_FOR_START_MS, undefined);
     const sentAt = Date.now();
     if (await this.#requestPlanReview(text, options, sentAt)) return;
     const target = await this.#messageTarget(text, options);
