@@ -339,7 +339,7 @@ const LINE_TIMES: Array<[number, number]> = [
 ];
 
 let LINES: PlanLine[] | null = null;
-/** Everything the pen writes, line by line: the idea as a title, three tasks, and an arrow to the workers. */
+/** Everything the pen writes, line by line: the idea as a title, three tasks, and an arrow to the next card. */
 function planLines(): PlanLine[] {
   if (LINES) return LINES;
   const title = [
@@ -450,7 +450,7 @@ function writtenInk(S: Scene, sheet: Sheet, p: number) {
   }
 }
 
-/** Ready: each task's box fills and ticks, and a light leaves its row towards the workers, once. */
+/** Ready: each task's box fills and ticks, and a light leaves its row towards the next card, once. */
 function readyRows(S: Scene, sheet: Sheet, p: number) {
   TASK_ROWS.forEach((v, row) => {
     const q = clamp((p - readyAt(row)) / 0.18);
@@ -555,7 +555,7 @@ const plannerSheet = (time: number) => sheetAt(0.035 * Math.sin(1.3 * time));
 /**
  * Lead: a sheet in midair that a pen writes the plan on, once, `p` seconds in: the idea as a
  * title, three tasks (a box, the piece, a few words) and an arrow, in about a second and a half;
- * then the boxes tick one by one, a light leaves each row towards the workers, and the page stays.
+ * then the boxes tick one by one, a light leaves each row towards the next card, and the page stays.
  */
 function planner(p: number, time: number): Scene {
   const S = scene();

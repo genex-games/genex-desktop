@@ -2,8 +2,8 @@
  * Empty-state wireframes: small 3D line scenes drawn on a 160×116 2D canvas. Strokes fade with
  * depth in six alpha buckets per colour, so a scene costs a handful of canvas paths per frame.
  * Geometry lives in world units; each scene brings its own camera. The idea's computer is opaque
- * and has its own module (`wire-computer.ts`). The Design tab's page (`wire-design.ts`) arrives
- * with that tab's own chunk and adds itself here (`addWireScene`), so the main bundle never carries it.
+ * and has its own module (`wire-computer.ts`). The Design tab's page (`wire-design.ts`) is added
+ * here by that tab (`addWireScene`), so this module never imports it; the welcome draws it too.
  */
 import { computerYaw, drawComputer } from "./wire-computer.ts";
 
